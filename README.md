@@ -15,6 +15,12 @@ npx fv-skills-baif
 
 **Works on Mac, Windows, and Linux. Supports Claude Code, OpenCode, and Gemini CLI.**
 
+<br>
+
+![FVS Install](assets/FVS.png)
+
+<br>
+
 </div>
 
 ---
