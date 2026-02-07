@@ -1,0 +1,18 @@
+{
+  "project": {
+    "extracted_functions_file": null,
+    "specs_dir": null,
+    "rust_source_dir": null,
+    "stubs_dir": "stubs",
+    "defs_file": null,
+    "lakefile_path": null,
+    "lean_toolchain_path": null,
+    "status_tracking_file": null
+  },
+  "model": {
+    "model_profile": "balanced"
+  },
+  "behavior": {
+    "mode": "interactive"
+  }
+}
