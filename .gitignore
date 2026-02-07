@@ -1,3 +1,9 @@
-# local files
+# Local files
 .planning
 .claude
+
+node_modules/
+.DS_Store
+
+# Build artifacts (committed to npm, not git)
+hooks/dist/
