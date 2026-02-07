@@ -1,0 +1,5 @@
+# This file defines code owners for the repository
+# These users will be automatically requested for review when someone opens a pull request
+
+# Default owner for files in the repository
+* @a-dangelo
