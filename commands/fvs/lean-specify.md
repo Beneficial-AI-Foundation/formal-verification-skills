@@ -12,9 +12,9 @@ allowed-tools:
 ---
 
 <objective>
-Generate a Lean specification file for a single function. Takes a verification target (function name), analyzes it deeply via Rust source and Lean translation, checks dependency spec status, and generates a .lean spec file with @[progress] theorem, existential postconditions, and sorry placeholder.
+Generate a Lean specification file for a single function using two-phase subagent dispatch. Takes a verification target (function name), dispatches a researcher to gather context (Funs.lean, Types.lean, Rust source, existing stubs, similar specs), then dispatches an executor to write the spec file.
 
-Output: Specs/{path}/{FunctionName}.lean with theorem statement and sorry.
+Output: Specs/{path}/{FunctionName}.lean with @[progress] theorem, existential postconditions, and sorry placeholder.
 </objective>
 
 <execution_context>
@@ -66,9 +66,27 @@ If exists: warn user. Ask whether to overwrite or open for editing.
 - If has sorry: suggest `/fvs:lean-verify` instead.
 - If fully proved: confirm verified status.
 
-## Step 3: Read Reference Files for Agent Dispatch
+## Step 3: Read Config and Resolve Models
 
-Read the three reference files. These MUST be inlined into Task() prompts because @-references do not cross Task boundaries.
+Read the project config to determine which models to use for subagent dispatch:
+
+```bash
+CONFIG=$(cat .formalising/fvs-config.json 2>/dev/null || echo '{"model_profile":"quality","model_overrides":{}}')
+```
+
+Resolve models using the profile table from `fv-skills/references/model-profiles.md`:
+
+1. Parse `model_profile` from config (default: `"quality"`)
+2. Check `model_overrides` for `"fvs-researcher"` and `"fvs-executor"`
+3. If no override, look up profile table:
+   - quality: fvs-researcher=inherit, fvs-executor=inherit
+   - balanced: fvs-researcher=sonnet, fvs-executor=sonnet
+   - budget: fvs-researcher=haiku, fvs-executor=sonnet
+4. Store resolved models as `RESEARCH_MODEL` and `EXECUTOR_MODEL`
+
+## Step 4: Read Reference Files for Inlining
+
+Read the reference files that MUST be inlined into Task() prompts because @-references do not cross Task boundaries:
 
 ```bash
 AENEAS_PATTERNS=$(cat ~/.claude/fv-skills/references/aeneas-patterns.md)
@@ -76,117 +94,81 @@ SPEC_CONVENTIONS=$(cat ~/.claude/fv-skills/references/lean-spec-conventions.md)
 SPEC_TEMPLATE=$(cat ~/.claude/fv-skills/templates/spec-file.lean)
 ```
 
-## Step 4: Extract Function Body from Funs.lean
+All three must be captured as content strings for inlining into subagent prompts.
 
-Read the target function's complete definition from Funs.lean. Also extract relevant type definitions from Types.lean that the function references.
-
-```bash
-FUNS_LEAN=$(find . -name "Funs.lean" -not -path "./.lake/*" | head -1)
-TYPES_LEAN=$(find . -name "Types.lean" -not -path "./.lake/*" | head -1)
-```
-
-Extract the function body (from `def` to the next top-level `def` or end of file). Extract referenced types from Types.lean by searching for struct/enum names used in the function signature.
-
-## Step 5: Dispatch fvs-code-reader for Deep Analysis
+## Step 5: Dispatch Research Subagent
 
 ```
 Task(
-  prompt="Deep analysis of function for spec generation.
+  subagent_type="fvs-researcher",
+  model="$RESEARCH_MODEL",
+  description="Research context for spec generation of $FUNCTION_NAME",
+  prompt="Research mode: spec-generation
 
-<function_body>
-$FUNCTION_BODY_FROM_FUNS_LEAN
-</function_body>
-
-<rust_source>
-$RUST_FUNCTION_SOURCE (if available from Rust source directory)
-</rust_source>
-
-<type_context>
-$RELEVANT_TYPES_FROM_TYPES_LEAN
-</type_context>
+<target_function>$FUNCTION_NAME</target_function>
+<funs_lean_path>$FUNS_LEAN</funs_lean_path>
 
 <aeneas_patterns>
-$AENEAS_PATTERNS
+$AENEAS_PATTERNS_CONTENT
 </aeneas_patterns>
 
 <spec_conventions>
-$SPEC_CONVENTIONS
+$SPEC_CONVENTIONS_CONTENT
 </spec_conventions>
 
-Mode: deep-analysis
-Analyze: control flow, type deps, arithmetic ops, error paths, postcondition candidates.
-Return with ## ANALYSIS COMPLETE or ## ERROR.",
-  subagent_type="fvs-code-reader",
-  description="Deep analysis of $TARGET for spec generation"
+Tasks:
+1. Read target function body from Funs.lean
+2. Read Types.lean for type dependencies used in the function
+3. Find Rust source for bounds analysis and pre/post conditions
+4. Check .formalising/stubs/ for existing NL explanation (if exists, use it!)
+5. Find similar verified specs in Specs/ directory for patterns to follow
+6. Determine the correct output path: Specs/{module_path}/{FunctionName}.lean
+
+Return with ## RESEARCH COMPLETE"
 )
 ```
 
-Parse the returned analysis:
-- Postcondition candidates
-- Precondition bounds (from Rust source analysis)
-- Complexity assessment
-- Proof strategy notes
+Parse the returned research findings for use by the executor.
 
-## Step 6: Check Dependency Spec Status
-
-From CODEMAP.md dependency graph (or from the code reader analysis), identify callees of the target function:
-
-```bash
-for dep in $DEPENDENCIES; do
-  SPEC=$(find Specs/ -name "${dep}*_spec.lean" -o -name "${dep}*.lean" 2>/dev/null | head -1)
-  if [ -n "$SPEC" ]; then
-    SORRY=$(grep -c "sorry" "$SPEC" 2>/dev/null || echo 0)
-    echo "FOUND: $dep (sorry=$SORRY)"
-  else
-    echo "MISSING: $dep"
-  fi
-done
-```
-
-If dependencies lack specs: warn user with options.
-- Continue anyway (proof will need these specs later)
-- Specify a dependency first (`/fvs:lean-specify dep_function_name`)
-
-Warn but allow continuation.
-
-## Step 7: Dispatch fvs-lean-spec-generator
+## Step 6: Dispatch Executor Subagent
 
 ```
 Task(
-  prompt="Generate Lean spec file for $TARGET.
+  subagent_type="fvs-executor",
+  model="$EXECUTOR_MODEL",
+  description="Generate spec for $FUNCTION_NAME",
+  prompt="Execute mode: spec-generation
 
-<function_analysis>
-$CODE_READER_ANALYSIS_FROM_STEP_5
-</function_analysis>
-
-<dependency_spec_status>
-$DEPENDENCY_STATUS_FROM_STEP_6
-</dependency_spec_status>
+<research_findings>
+$RESEARCH_SUBAGENT_OUTPUT
+</research_findings>
 
 <spec_template>
-$SPEC_TEMPLATE
+$SPEC_FILE_TEMPLATE_CONTENT
 </spec_template>
 
-<spec_conventions>
-$SPEC_CONVENTIONS
-</spec_conventions>
-
 <target_path>$SPEC_OUTPUT_PATH</target_path>
-<lean_namespace>$LEAN_NAMESPACE_FROM_FUNS_LEAN</lean_namespace>
-<project_name>$PROJECT_NAME</project_name>
 
-Write the spec file to $SPEC_OUTPUT_PATH via Write tool.
-Return with ## SPEC GENERATED or ## ERROR.",
-  subagent_type="fvs-lean-spec-generator",
-  description="Generating spec for $TARGET"
+Generate the Lean spec file following these conventions:
+- @[progress] theorem pattern
+- exists result for return type
+- Array types use (Array U64 5#usize) notation
+- Interpretation functions where applicable
+- sorry as proof placeholder
+- Correct import paths
+
+Write the spec file using the Write tool (VS Code diff).
+User will approve the diff inline.
+
+Return with ## EXECUTION COMPLETE"
 )
 ```
 
-Wait for `## SPEC GENERATED`. If `## ERROR`, display the error and stop.
+Wait for `## EXECUTION COMPLETE`. If `## ERROR`, display the error and stop.
 
-## Step 8: Validate Spec Structure
+## Step 7: Validate Spec Structure
 
-After agent returns, verify the generated spec file:
+After executor returns, verify the generated spec file:
 
 ```bash
 # File exists
@@ -209,7 +191,7 @@ Check:
 - Has existential form (`exists result`) with sorry
 - Module path matches project namespace
 
-## Step 9: Optional Build Check
+## Step 8: Optional Build Check
 
 ```bash
 nice -n 19 lake build 2>&1 | tail -20
@@ -221,7 +203,7 @@ nice -n 19 lake build 2>&1 | tail -20
 
 NEVER run plain `lake build`. Always use `nice -n 19 lake build`.
 
-## Step 10: Display Summary
+## Step 9: Display Summary
 
 ```
 FVS >> GENERATING SPEC
@@ -233,7 +215,7 @@ Dependencies: [N] specs found, [M] missing
 Status: [??] Ready for verification (contains sorry)
 ```
 
-## Step 11: Suggest Next Command
+## Step 10: Suggest Next Command
 
 ```
 >> Next Up
@@ -245,8 +227,9 @@ Status: [??] Ready for verification (contains sorry)
 
 <success_criteria>
 - [ ] Target function resolved to Lean name and Funs.lean location
-- [ ] Deep analysis of function body, types, and control flow completed
-- [ ] Dependency specs checked with clear status report
+- [ ] Config read and models resolved for fvs-researcher and fvs-executor
+- [ ] Research subagent dispatched with inlined aeneas-patterns and spec-conventions
+- [ ] Executor subagent dispatched with research findings, spec template, and target path
 - [ ] Spec file generated with correct imports, @[progress], existential form, sorry
 - [ ] Spec file written to Specs/ directory via VS Code diff
 - [ ] Clear next step offered to user

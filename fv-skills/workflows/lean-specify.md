@@ -1,11 +1,12 @@
 <purpose>
-Orchestrate specification generation for a single Lean function.
+Orchestrate specification generation for a single Lean function using two-phase
+subagent dispatch (research -> execute).
 
-Takes a verification target (function name), analyzes it deeply via Rust source
-and Lean translation, checks dependency spec status, and generates a .lean spec
-file with the correct structure and a sorry placeholder for the proof.
+Takes a verification target (function name), dispatches fvs-researcher to gather
+context (Funs.lean, Types.lean, Rust source, existing stubs, similar specs), then
+dispatches fvs-executor to write the spec file.
 
-Output: Specs/{path}/{function_name}_spec.lean with theorem statement and sorry.
+Output: Specs/{path}/{FunctionName}.lean with @[progress] theorem and sorry placeholder.
 </purpose>
 
 <process>
@@ -17,7 +18,7 @@ Accept function name and resolve to concrete paths.
 
 ```bash
 # Search in CODEMAP.md if available
-grep -i "$TARGET" CODEMAP.md 2>/dev/null
+grep -i "$TARGET" .formalising/CODEMAP.md 2>/dev/null
 
 # Search directly in Funs.lean
 grep "def ${TARGET}" $(find . -name "Funs.lean" -not -path "./.lake/*" | head -1) 2>/dev/null
@@ -27,7 +28,7 @@ grep "def ${TARGET}" $(find . -name "Funs.lean" -not -path "./.lake/*" | head -1
 - Full Lean qualified name (e.g., `MyProject.my_module.my_function`)
 - Path to containing Funs.lean
 - Function signature (args and return type)
-- Output spec path: `Specs/{module_path}/{function_name}_spec.lean`
+- Output spec path: `Specs/{module_path}/{FunctionName}.lean`
 
 **If function not found:**
 ```
@@ -42,87 +43,70 @@ Or run /fvs:map-code to refresh the function index.
 Wait for user clarification.
 </step>
 
-<step name="analyze_function">
-Dispatch **fvs-code-reader** for deep analysis of the target function.
-
-Agent inputs:
-- Lean function body from Funs.lean
-- Rust source function (if available)
-- Types referenced by the function from Types.lean
-
-Expected outputs:
-- **Control flow**: Branches, loops, early returns (mapped to Result in Lean)
-- **Type dependencies**: Structs/enums used, their Lean representations
-- **Arithmetic operations**: Field ops, scalar ops, bitwise (for tactic selection)
-- **Error paths**: Which branches produce Error vs Ok
-- **Postcondition candidates**: What properties should the spec assert?
-
-Reference: @fv-skills/references/aeneas-patterns.md (type translation patterns)
-Reference: @fv-skills/references/lean-spec-conventions.md (postcondition patterns)
-</step>
-
-<step name="check_dependencies">
-Verify dependency specs are available.
-
-From the dependency graph (CODEMAP.md or re-analysis), identify callees:
+<step name="resolve_models">
+Read config and resolve models for subagent dispatch.
 
 ```bash
-# Check each dependency for existing spec
-for dep in $DEPENDENCIES; do
-  SPEC=$(find Specs/ -name "${dep}*_spec.lean" 2>/dev/null | head -1)
-  if [ -n "$SPEC" ]; then
-    SORRY=$(grep -c "sorry" "$SPEC" 2>/dev/null || echo 0)
-    echo "FOUND: $dep (sorry=$SORRY)"
-  else
-    echo "MISSING: $dep"
-  fi
-done
+CONFIG=$(cat .formalising/fvs-config.json 2>/dev/null || echo '{"model_profile":"quality","model_overrides":{}}')
 ```
 
-**If dependencies lack specs:**
-```
-Warning: These dependency functions do not have specs yet:
-  - dep_function_a (called 2x in target)
-  - dep_function_b (called 1x in target)
+Resolution sequence:
+1. Parse `model_profile` from config (default: `"quality"`)
+2. Check `model_overrides` for `"fvs-researcher"` and `"fvs-executor"`
+3. If no override, look up profile table for the agent and profile
+4. Store resolved models as `RESEARCH_MODEL` and `EXECUTOR_MODEL`
 
-The spec can still be written, but the proof may need these specs later.
-Options:
-1. Continue anyway (proof will use sorry for dependency lemmas)
-2. Specify a dependency first (/fvs:lean-specify dep_function_a)
-```
-
-Warn but allow user to continue.
+Reference: fv-skills/references/model-profiles.md (profile table and dispatch pattern)
 </step>
 
-<step name="generate_spec">
-Dispatch **fvs-spec-generator** to produce the specification file.
+<step name="research_phase">
+Dispatch **fvs-researcher** subagent in spec-generation mode to gather all context.
 
-Agent inputs:
-- Function analysis from step 2
-- Dependency spec status from step 3
-- Template: @fv-skills/templates/spec-file.lean
+Read and inline reference files before dispatch:
+- fv-skills/references/aeneas-patterns.md (type translation patterns)
+- fv-skills/references/lean-spec-conventions.md (postcondition patterns)
+
+Researcher tasks:
+1. Read target function body from Funs.lean
+2. Read Types.lean for type dependencies used in the function
+3. Find Rust source for bounds analysis and pre/post conditions
+4. Check .formalising/stubs/ for existing NL explanation (if exists, use it!)
+5. Find similar verified specs in Specs/ directory for patterns to follow
+6. Determine the correct output path: Specs/{module_path}/{FunctionName}.lean
+
+Expected output: Structured findings with function analysis, type context, postcondition
+candidates, similar specs, and dependency status. Ends with `## RESEARCH COMPLETE`.
+
+**If researcher returns ## ERROR:** Display the error and stop.
+</step>
+
+<step name="execute_phase">
+Dispatch **fvs-executor** subagent in spec-generation mode to write the spec file.
+
+Inline into executor prompt:
+- Research findings from previous step
+- Spec file template (fv-skills/templates/spec-file.lean)
+- Target output path
 
 **Spec structure requirements:**
 - Correct module path and imports (Types, Funs, dependencies)
 - `open` declarations for relevant namespaces
 - `@[progress]` attribute on theorem
-- Theorem name: `{function_name}_spec`
 - Existential form: `exists result, fn args = ok result /\ postconditions`
+- Array types use `(Array U64 5#usize)` notation
+- Interpretation functions where applicable
 - `sorry` as proof placeholder
 - Comments explaining postcondition intent
 
-**Write spec file:**
-```bash
-mkdir -p Specs/{module_path}
-```
+Executor writes the spec file using the Write tool (VS Code diff).
+User approves the diff inline.
 
-Write to `Specs/{module_path}/{function_name}_spec.lean`.
+Expected output: Ends with `## EXECUTION COMPLETE`.
 
-Reference: @fv-skills/references/lean-spec-conventions.md (naming, structure, attributes)
-Reference: @fv-skills/references/aeneas-patterns.md (import patterns, Result types)
+**If executor returns ## ERROR:** Display the error and stop.
 </step>
 
-<step name="validate_spec">
+<step name="validate_and_report">
 Validate the generated spec meets structural requirements.
 
 **Checklist:**
@@ -144,17 +128,17 @@ Build warnings about `sorry` are expected and correct at this stage.
 
 **Report result:**
 ```
-FVS -- SPEC GENERATED
+FVS >> GENERATING SPEC
 
 Function: {lean_qualified_name}
-Spec file: Specs/{path}/{function_name}_spec.lean
+Spec file: Specs/{path}/{FunctionName}.lean
 Postconditions: [summary of what the spec asserts]
 Dependencies: [N] specs found, [M] missing
-Status: Ready for verification (contains sorry)
+Status: [??] Ready for verification (contains sorry)
 
 ---
 
-Next: /fvs:lean-verify Specs/{path}/{function_name}_spec.lean
+Next: /fvs:lean-verify Specs/{path}/{FunctionName}.lean
 ```
 </step>
 
@@ -162,10 +146,10 @@ Next: /fvs:lean-verify Specs/{path}/{function_name}_spec.lean
 
 <success_criteria>
 - Target function resolved to Lean name and Funs.lean location
-- Deep analysis of function body, types, and control flow completed
-- Dependency specs checked with clear status report
-- Spec file generated with correct imports, @[progress], existential form, sorry
-- Spec file written to Specs/ directory with proper path structure
+- Config read and models resolved for fvs-researcher and fvs-executor
+- Research subagent gathered context: function body, types, stubs, similar specs
+- Executor subagent wrote spec file with correct structure and sorry placeholder
+- Spec file written to Specs/ directory via VS Code diff
 - Optional build check confirms spec compiles (with sorry warning expected)
 - Clear next step offered to user
 </success_criteria>

@@ -1,11 +1,10 @@
 <purpose>
 Orchestrate codebase analysis for Aeneas-generated Lean projects to produce CODEMAP.md.
 
-Parses Funs.lean to extract all translated functions, builds a dependency graph,
-maps Lean names back to Rust source, and identifies leaf functions suitable as
-verification starting points.
+Uses a two-phase subagent dispatch: fvs-researcher gathers all project context (read-only),
+then fvs-executor writes the structured CODEMAP.md file.
 
-Output: CODEMAP.md in the project root with function inventory, dependency edges,
+Output: .formalising/CODEMAP.md with function inventory, dependency graph, type inventory,
 and recommended verification entry points.
 </purpose>
 
@@ -14,9 +13,9 @@ and recommended verification entry points.
 <step name="detect_project">
 Locate project configuration. Check in order:
 
-1. **fvs-config.json** in project root:
+1. **fvs-config.json** in .formalising/:
 ```bash
-cat fvs-config.json 2>/dev/null
+cat .formalising/fvs-config.json 2>/dev/null
 ```
 
 2. **Auto-detect** via marker files:
@@ -43,96 +42,119 @@ Wait for user response.
 If auto-detected, confirm paths with user before proceeding.
 </step>
 
-<step name="parse_functions">
-Dispatch **fvs-dependency-analyzer** agent to parse Funs.lean.
+<step name="resolve_models">
+Read `.formalising/fvs-config.json` for model profile configuration.
 
-Agent inputs:
-- Path to Funs.lean
-- Path to Types.lean (for type context)
+If config exists: extract `model_profile` and `model_overrides`.
+If config missing: default to `quality` profile with no overrides.
+
+Resolve models for both subagents using the profile table
+(see fv-skills/references/model-profiles.md):
+
+- `fvs-researcher`: quality=inherit, balanced=sonnet, budget=haiku
+- `fvs-executor`: quality=inherit, balanced=sonnet, budget=sonnet
+
+Check `model_overrides` for per-agent overrides before using profile defaults.
+
+Reference: @fv-skills/references/model-profiles.md (dispatch pattern, resolution sequence)
+</step>
+
+<step name="research_phase">
+Dispatch **fvs-researcher** in map-code mode (read-only context gathering).
+
+Read reference files for inlining into the Task() prompt:
+- aeneas-patterns.md (naming conventions, project structure, dependency patterns)
+- lean-spec-conventions.md (for understanding code structure and spec naming)
+
+These are INLINED because @-references do NOT cross Task() boundaries.
+
+Agent inputs (all inlined in prompt):
+- Path to Funs.lean and Types.lean
+- Rust source root (if available)
+- aeneas-patterns.md content
+- lean-spec-conventions.md content
 
 Expected outputs:
 - Function list with signatures (name, args, return type)
 - Dependency edges (which functions call which)
-- Identification of leaf functions (no outgoing calls to other project functions)
+- Leaf function identification (no outgoing calls to project functions)
 - Recursive vs non-recursive classification
-- Functions using loops (translated as `loop` in Lean)
+- Type inventory from Types.lean
+- Rust-to-Lean name mappings (if Rust source available)
+- Existing spec status (sorry counts)
+
+Agent returns with `## RESEARCH COMPLETE` containing structured `<findings>`,
+`<relevant_files>`, and `<recommendations>` sections.
+
+For large projects, the researcher may fan out parallel sub-tasks using
+`run_in_background=true` for scanning multiple source directories.
 
 Reference: @fv-skills/references/aeneas-patterns.md (Pattern 2: naming conventions, Pattern 4: Result/Error types)
 </step>
 
-<step name="enrich_with_rust">
-If Rust source path is available, dispatch **fvs-code-reader** agent to map Lean names back to Rust.
+<step name="execution_phase">
+Dispatch **fvs-executor** in map-code mode with research findings.
 
-Agent inputs:
-- Function list from previous step
-- Rust source directory path
+Agent inputs (all inlined in prompt):
+- Complete research findings from fvs-researcher output
+- No additional reference files needed (researcher already processed them)
 
-Expected outputs:
-- Lean function name to Rust function name mapping
-- Rust source file and line number for each function
-- Original Rust doc comments (useful for spec intent)
-- Rust type annotations (may be clearer than Lean translations)
-
-If no Rust source available: Skip this step, note in CODEMAP.md that Rust mapping is unavailable.
-
-Reference: @fv-skills/references/aeneas-patterns.md (Pattern 1: project structure)
-</step>
-
-<step name="generate_codemap">
-Combine analysis results into CODEMAP.md.
-
-**Required sections:**
+The executor writes `.formalising/CODEMAP.md` with:
 
 ```markdown
 # CODEMAP
 
 ## Project Info
-- Lean toolchain: [version from lean-toolchain]
+- Lean toolchain: [from lean-toolchain]
 - Aeneas backend: [revision from lakefile.toml if available]
 - Function count: [N total]
 - Leaf functions: [M identified]
+- Defs file: [detected or user-confirmed path]
+- Interpretation functions: [detected definitions, if any]
 
 ## Function Inventory
-| # | Lean Name | Rust Name | Args | Returns | Recursive | Leaf | Spec Exists |
-|---|-----------|-----------|------|---------|-----------|------|-------------|
+| # | Lean Name | Rust Name | Deps | Leaf | Status |
+|---|-----------|-----------|------|------|--------|
 
 ## Dependency Graph
 [Adjacency list: function -> [callees]]
 
 ## Verification Entry Points
-[Leaf functions sorted by estimated complexity (fewer args, simpler types first)]
+[Leaf functions sorted by estimated complexity]
+
+## Type Inventory
+[Types from Types.lean]
 
 ## Existing Specs
-[List of Specs/*.lean files found, with sorry count per file]
+| File | Status | Sorry Count |
+|------|--------|-------------|
 ```
 
-**Check for existing specs:**
-```bash
-find Specs/ -name "*.lean" 2>/dev/null | while read f; do
-  SORRY_COUNT=$(grep -c "sorry" "$f" 2>/dev/null || echo 0)
-  echo "$f: $SORRY_COUNT sorry remaining"
-done
-```
+Status symbols: `[OK]` verified, `[??]` in progress, `[--]` no spec.
 
-Write CODEMAP.md to project root.
+Agent returns with `## EXECUTION COMPLETE` confirming files written.
+All writes use the Write tool (VS Code diffs) for user approval.
 </step>
 
 <step name="report_results">
 Display summary to user.
 
 ```
-FVS -- CODEMAP GENERATED
+FVS >> MAP COMPLETE
 
 Project: [name from config or directory]
 Functions: [N] total, [M] leaf functions
 Existing specs: [K] files ([J] with sorry remaining)
 Recommended starting points: [top 5 leaf functions]
 
-Written: CODEMAP.md
+Written: .formalising/CODEMAP.md
+```
 
----
+Suggest next command:
+```
+>> Next Up
 
-Next: /fvs:plan to select verification targets
+/fvs:plan to select verification targets
 ```
 </step>
 
@@ -140,9 +162,9 @@ Next: /fvs:plan to select verification targets
 
 <success_criteria>
 - Project detected via fvs-config.json or auto-detection
-- Funs.lean parsed with all functions extracted
-- Dependency graph built with edges and leaf identification
-- CODEMAP.md written with all required sections
-- Existing specs scanned for sorry status
+- Model profile resolved from config or quality default
+- fvs-researcher dispatched with inlined references, returns structured findings
+- fvs-executor dispatched with research findings, writes CODEMAP.md
+- CODEMAP.md written with all required sections via VS Code diff
 - Clear summary displayed with recommended next steps
 </success_criteria>

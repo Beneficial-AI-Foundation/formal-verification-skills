@@ -14,9 +14,8 @@ allowed-tools:
 <objective>
 Analyze an Aeneas-generated Lean project to produce .formalising/CODEMAP.md.
 
-Scans Funs.lean to extract all translated functions, builds a dependency graph,
-maps Lean names back to Rust source, and identifies leaf functions as verification
-entry points.
+Dispatches a two-phase subagent pipeline: fvs-researcher gathers context (read-only),
+then fvs-executor writes the structured CODEMAP.md file.
 
 Output: .formalising/CODEMAP.md with function inventory, dependency graph, and
 recommended verification entry points.
@@ -45,7 +44,7 @@ Check for an Aeneas project. Look for config first, then auto-detect:
 
 ```bash
 # Check for FVS config override
-cat fvs-config.json 2>/dev/null
+cat .formalising/fvs-config.json 2>/dev/null
 
 # Auto-detect via marker files
 [ -f lakefile.toml ] && [ -f lean-toolchain ] && echo "Lean project detected"
@@ -69,6 +68,7 @@ FUNS_LEAN=$(find . -name "Funs.lean" -not -path "*/.lake/*" 2>/dev/null | head -
 TYPES_LEAN=$(find . -name "Types.lean" -not -path "*/.lake/*" 2>/dev/null | head -1)
 SPECS_DIR=$(find . -type d -name "Specs" -not -path "*/.lake/*" 2>/dev/null | head -1)
 LEAN_TOOLCHAIN=$(cat lean-toolchain 2>/dev/null)
+RUST_SRC=$(find . -name "Cargo.toml" -not -path "*/.lake/*" 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
 ```
 
 If fvs-config.json exists, use its paths as overrides.
@@ -80,7 +80,7 @@ Detected project paths:
   Types.lean: {TYPES_LEAN}
   Specs/:     {SPECS_DIR}
   Toolchain:  {LEAN_TOOLCHAIN}
-  Rust source: {RUST_SOURCE_DIR or "not found"}
+  Rust source: {RUST_SRC or "not found"}
 
 Correct? (y/n)
 ```
@@ -93,187 +93,143 @@ mkdir -p .formalising/fv-plans
 
 If .formalising/ already exists, ask user whether to refresh CODEMAP.md or abort.
 
-## Step 3: Read reference files for agent dispatch
+## Step 3: Read config and resolve models
 
-Read reference content into variables. These will be inlined into Task() prompts
-because @-references do NOT cross Task() boundaries.
+Read the project config to determine which models to use for subagent dispatch:
+
+```bash
+CONFIG=$(cat .formalising/fvs-config.json 2>/dev/null)
+```
+
+If config exists, extract `model_profile` and `model_overrides`.
+If config is missing, use defaults: `model_profile = "quality"`, no overrides.
+
+**Resolve models from profile table** (see fv-skills/references/model-profiles.md):
+
+For `fvs-researcher`:
+- Check `model_overrides["fvs-researcher"]` first
+- Otherwise use profile table: quality=inherit, balanced=sonnet, budget=haiku
+
+For `fvs-executor`:
+- Check `model_overrides["fvs-executor"]` first
+- Otherwise use profile table: quality=inherit, balanced=sonnet, budget=sonnet
+
+Store resolved models as `$RESEARCH_MODEL` and `$EXECUTOR_MODEL`.
+
+## Step 4: Read reference files for inlining
+
+Read ALL reference files that the subagents need. These MUST be inlined into Task()
+prompts because @-references do NOT cross Task() boundaries.
 
 ```bash
 AENEAS_PATTERNS=$(cat ~/.claude/fv-skills/references/aeneas-patterns.md)
 SPEC_CONVENTIONS=$(cat ~/.claude/fv-skills/references/lean-spec-conventions.md)
 ```
 
-## Step 4: Dispatch fvs-dependency-analyzer
+## Step 5: Dispatch fvs-researcher (read-only scan)
 
 Display dispatch indicator:
 ```
->> Dispatching fvs-dependency-analyzer...
+>> Dispatching fvs-researcher (map-code)...
 ```
 
-Spawn the agent to parse Funs.lean and build the dependency graph:
+Spawn the research subagent to scan the project and gather context:
 
 ```
 Task(
-  prompt="Parse Funs.lean and build dependency graph.
+  subagent_type="fvs-researcher",
+  model="$RESEARCH_MODEL",
+  description="Map codebase dependencies",
+  prompt="Research mode: map-code
 
-<funs_lean_path>{FUNS_LEAN}</funs_lean_path>
-<types_lean_path>{TYPES_LEAN}</types_lean_path>
+<project_root>$PROJECT_ROOT</project_root>
+<funs_lean_path>$FUNS_LEAN</funs_lean_path>
+<types_lean_path>$TYPES_LEAN</types_lean_path>
+<rust_source_root>$RUST_SRC</rust_source_root>
 
 <aeneas_patterns>
 $AENEAS_PATTERNS
 </aeneas_patterns>
 
-Return with ## MAPPING COMPLETE or ## ERROR.",
-  subagent_type="fvs-dependency-analyzer",
-  description="Parsing Funs.lean for dependency graph"
+<spec_conventions>
+$SPEC_CONVENTIONS
+</spec_conventions>
+
+Tasks:
+1. Read Funs.lean -- extract ALL function definitions (name, signature, body)
+2. Build dependency graph (which functions call which)
+3. Map Lean names back to Rust source files + line numbers
+4. Identify leaf functions (no outgoing calls = verification entry points)
+5. Read Types.lean for type inventory
+6. Scan existing Specs/ for sorry status
+
+Return with ## RESEARCH COMPLETE"
 )
 ```
 
+For large projects, the research subagent may fan out parallel sub-tasks using
+`run_in_background=true` for scanning multiple source directories simultaneously.
+
 Wait for agent to return. Parse the result:
-- If `## MAPPING COMPLETE`: extract function inventory, adjacency list, and leaf functions
+- If `## RESEARCH COMPLETE`: extract findings for executor
 - If `## ERROR`: display error, offer user to retry or abort
 
 Display:
 ```
-[OK] fvs-dependency-analyzer complete: {N} functions, {M} leaf
+[OK] fvs-researcher complete: {N} functions found, {M} types catalogued
 ```
 
-## Step 5: Dispatch fvs-code-reader for Rust enrichment
+## Step 6: Dispatch fvs-executor (write CODEMAP.md)
 
-If Rust source directory was found or configured, dispatch fvs-code-reader in
-enrichment mode to map Lean names back to Rust source:
+Display dispatch indicator:
+```
+>> Dispatching fvs-executor (map-code)...
+```
 
-```
->> Dispatching fvs-code-reader (enrichment mode)...
-```
+Spawn the executor subagent with research findings:
 
 ```
 Task(
-  prompt="Enrich function inventory with Rust source mappings.
+  subagent_type="fvs-executor",
+  model="$EXECUTOR_MODEL",
+  description="Write CODEMAP.md",
+  prompt="Execute mode: map-code
 
-<function_list>
-$FUNCTION_LIST_FROM_STEP_4
-</function_list>
-<rust_source_dir>{RUST_SOURCE_DIR}</rust_source_dir>
+<research_findings>
+$RESEARCH_SUBAGENT_OUTPUT
+</research_findings>
 
-<aeneas_patterns>
-$AENEAS_PATTERNS
-</aeneas_patterns>
+Write .formalising/CODEMAP.md with:
+- Project info (toolchain, function count, leaf count)
+- Function inventory table (Lean name, Rust name, source file, line, deps, leaf, status)
+- Dependency graph (caller -> callee adjacency list)
+- Verification entry points (leaf functions sorted by estimated complexity)
+- Type inventory
+- Existing specs with sorry counts
 
-Mode: enrichment
-Return with ## ANALYSIS COMPLETE or ## ERROR.",
-  subagent_type="fvs-code-reader",
-  description="Mapping Lean names to Rust source"
+Status symbols:
+- [OK] verified (spec exists, zero sorry)
+- [??] in progress (spec exists, has sorry)
+- [--] no spec exists
+
+Use the Write tool (VS Code diff). User will approve the diff.
+Return with ## EXECUTION COMPLETE"
 )
 ```
 
-If no Rust source directory available: skip this step, note in CODEMAP.md that
-Rust mapping is unavailable.
+Wait for executor to return. Parse the result:
+- If `## EXECUTION COMPLETE`: confirm CODEMAP.md written
+- If `## ERROR`: display error, offer user to retry or abort
 
 Display:
 ```
-[OK] fvs-code-reader complete: {N} functions mapped to Rust source
+[OK] fvs-executor complete: CODEMAP.md written
 ```
 
-## Step 6: Auto-detect project definitions
-
-Scan for hand-written .lean files that are NOT Aeneas-generated:
-
-```bash
-find {PROJECT_DIR} -name "*.lean" -not -path "*/.lake/*" \
-  -not -name "Types.lean" -not -name "Funs.lean" \
-  -not -name "TypesExternal.lean" -not -name "FunsExternal.lean" \
-  -not -path "*/Specs/*" 2>/dev/null
-```
-
-For each candidate file, check for definition patterns:
-```bash
-grep -l "^def \|^noncomputable def \|^abbrev " {file} 2>/dev/null
-```
-
-Present findings to user:
-```
-Found project definitions:
-  {file}: {list of definitions}
-
-Are these the project's mathematical definitions? (y/n)
-Where do project-specific definitions live? (e.g., Defs.lean, MathDefs.lean)
-```
-
-Record confirmed definitions path and any interpretation functions or constants
-found for inclusion in CODEMAP.md.
-
-## Step 7: Scan existing specs
-
-Check for existing specification files and their sorry status:
-
-```bash
-find Specs/ -name "*.lean" 2>/dev/null | while read f; do
-  SORRY_COUNT=$(grep -c "sorry" "$f" 2>/dev/null || echo 0)
-  if [ "$SORRY_COUNT" -eq 0 ]; then
-    echo "[OK] $f"
-  else
-    echo "[??] $f ($SORRY_COUNT sorry remaining)"
-  fi
-done
-```
-
-If no Specs/ directory found:
-```
-No Specs/ directory found. This project has no existing specifications yet.
-```
-
-## Step 8: Combine results into CODEMAP.md
-
-Assemble all analysis results into a single CODEMAP.md document:
-
-```markdown
-# CODEMAP
-
-## Project Info
-- Lean toolchain: [from lean-toolchain]
-- Aeneas backend: [revision from lakefile.toml if available]
-- Function count: [N total]
-- Leaf functions: [M identified]
-- Defs file: [detected or user-confirmed path]
-- Interpretation functions: [detected definitions, if any]
-- Constants: [detected named constants, if any]
-
-## Function Inventory
-| # | Lean Name | Rust Name | Deps | Leaf | Status |
-|---|-----------|-----------|------|------|--------|
-| 1 | Project.mod.fn | mod::fn | 2 | no | [--] |
-| 2 | Project.mod.fn2 | mod::fn2 | 0 | yes | [OK] |
-
-## Dependency Graph
-- Project.mod.fn_a -> Project.mod.fn_b, Project.mod.fn_c
-- Project.mod.fn_b -> (leaf)
-
-## Verification Entry Points
-[Leaf functions sorted by estimated complexity (fewer args, simpler types first)]
-
-## Existing Specs
-[Specs/*.lean files with sorry counts and status symbols]
-| File | Status | Sorry Count |
-|------|--------|-------------|
-| Specs/Mod/Fn.lean | [OK] | 0 |
-| Specs/Mod/Fn2.lean | [??] | 3 |
-```
-
-Status symbols:
-- `[OK]` verified (spec exists, zero sorry)
-- `[??]` in progress (spec exists, has sorry)
-- `[--]` no spec exists
-
-## Step 9: Write CODEMAP.md via VS Code diff
-
-Write the assembled CODEMAP.md to `.formalising/CODEMAP.md` using the Write tool.
-The user will see a diff and approve or reject the write.
-
-## Step 10: Display summary with FVS >> banner
+## Step 7: Display summary with FVS >> banner
 
 ```
-FVS >> MAPPING CODE
+FVS >> MAP COMPLETE
 
 Project: [name from directory or config]
 Functions: [N] total, [M] leaf functions
@@ -283,7 +239,7 @@ Recommended starting points: [top 5 leaf functions]
 Written: .formalising/CODEMAP.md
 ```
 
-## Step 11: Suggest next command
+## Step 8: Suggest next command
 
 ```
 >> Next Up
@@ -296,11 +252,9 @@ Written: .formalising/CODEMAP.md
 <success_criteria>
 - [ ] Project detected via lakefile.toml + lean-toolchain (or fvs-config.json)
 - [ ] .formalising/ directory created
-- [ ] Funs.lean parsed with all functions extracted
-- [ ] Dependency graph built with edges and leaf identification
-- [ ] Rust source enrichment attempted (if available)
-- [ ] Project definitions auto-detected and confirmed by user
+- [ ] Model profile resolved from .formalising/fvs-config.json (or quality default)
+- [ ] fvs-researcher dispatched with inlined references, returns function inventory
+- [ ] fvs-executor dispatched with research findings, writes CODEMAP.md
 - [ ] CODEMAP.md written to .formalising/ via VS Code diff
-- [ ] Existing specs scanned for sorry status
 - [ ] Summary displayed with recommended next steps
 </success_criteria>
