@@ -1,6 +1,6 @@
 ---
 name: fvs:natural-language
-description: Generate detailed NL explanation of module/function into stubs/ MD files
+description: Generate detailed NL explanation of module/function into .formalising/stubs/ MD files
 argument-hint: "<function_name> (Lean or Rust name)"
 allowed-tools:
   - Read
@@ -16,7 +16,7 @@ Generate a detailed natural-language explanation of a Rust function. Resolves th
 
 Stubs capture the human reasoning (pre/postconditions, bounds, mathematical meaning) that informs later spec writing.
 
-Output: stubs/{ModuleName}/{FunctionName}.md
+Output: .formalising/stubs/{ModuleName}/{FunctionName}.md
 </objective>
 
 <execution_context>
@@ -56,7 +56,7 @@ Resolve to:
 - Lean qualified name (e.g., `MyProject.my_module.my_function`)
 - Rust source file + line range
 - Module path (the containing Rust module)
-- Output stub path: `stubs/{ModuleName}/{FunctionName}.md`
+- Output stub path: `.formalising/stubs/{ModuleName}/{FunctionName}.md`
 
 If not found: show fuzzy matches and suggest `/fvs:map-code`.
 
@@ -153,7 +153,7 @@ Display:
 Parse agent output sections. Merge with stub template format from Step 2.
 
 ```bash
-mkdir -p stubs/$(dirname "$STUB_PATH")
+mkdir -p .formalising/stubs/$(dirname "$STUB_PATH")
 ```
 
 Assemble the stub file using the stub.md template structure with agent-provided content for each section:
@@ -165,14 +165,14 @@ Assemble the stub file using the stub.md template structure with agent-provided 
 - Bounds Reasoning (worst-case arithmetic walkthrough)
 - Mathematical Meaning (interpretation functions, core theorem in English)
 
-Write stub file to `stubs/{ModuleName}/{FunctionName}.md` using the Write tool (VS Code diff).
+Write stub file to `.formalising/stubs/{ModuleName}/{FunctionName}.md` using the Write tool (VS Code diff).
 
 ## Step 6: Validate Stub
 
 Check all required sections present in the written file:
 
 ```bash
-STUB_FILE="stubs/${MODULE_NAME}/${FUNCTION_NAME}.md"
+STUB_FILE=".formalising/stubs/${MODULE_NAME}/${FUNCTION_NAME}.md"
 for section in "Module Context" "What It Does" "Preconditions" "Postconditions" "Bounds Reasoning" "Mathematical Meaning"; do
   grep -q "## .*${section}\|### ${section}" "$STUB_FILE" && echo "[OK] ${section}" || echo "[XX] ${section} MISSING"
 done
@@ -187,7 +187,7 @@ FVS >> STUB GENERATED
 
 Function: {function_name}
 Module:   {rust_module_path}
-Stub:     stubs/{ModuleName}/{FunctionName}.md
+Stub:     .formalising/stubs/{ModuleName}/{FunctionName}.md
 Sections: [OK] all required sections present
 ```
 

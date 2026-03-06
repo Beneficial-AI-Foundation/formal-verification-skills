@@ -8,7 +8,7 @@ preconditions, postconditions, bounds reasoning, and mathematical meaning.
 Stubs serve as the bridge between Rust understanding and Lean verification -- they
 capture the human reasoning that informs spec writing.
 
-Output: stubs/{module_path}/{function_name}.md
+Output: .formalising/stubs/{module_path}/{function_name}.md
 </purpose>
 
 <process>
@@ -27,7 +27,7 @@ Search for the target:
 - Rust source file path and line range
 - Corresponding Lean function name in Funs.lean
 - Module context (which Rust file/module contains this function)
-- Output stub path: `stubs/{module_path}/{function_name}.md`
+- Output stub path: `.formalising/stubs/{module_path}/{function_name}.md`
 
 **If not found:**
 ```
@@ -91,10 +91,10 @@ Agent writes stub file using the stub.md template.
 
 Template: @fv-skills/templates/stub.md
 
-**Output path:** `stubs/{module_path}/{function_name}.md`
+**Output path:** `.formalising/stubs/{module_path}/{function_name}.md`
 
 ```bash
-mkdir -p stubs/{module_path}
+mkdir -p .formalising/stubs/{module_path}
 ```
 
 The stub must include all required sections:
@@ -127,7 +127,7 @@ FVS >> STUB GENERATED
 
 Function: {function_name}
 Module:   {rust_module_path}
-Stub:     stubs/{module_path}/{function_name}.md
+Stub:     .formalising/stubs/{module_path}/{function_name}.md
 Sections: [OK] all required sections present
 
 ---
