@@ -1,0 +1,34 @@
+# Changelog
+
+All notable changes to FVS (Formal Verification Skills) will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/).
+
+## [1.1.0] - 2026-03-06
+
+### Added
+- Codex runtime support in installer (#18) -- `npx fv-skills-baif --codex`
+- `/fvs:pause-work` command for session context handoff (#10)
+- `/fvs:resume-work` command for session context restoration (#10)
+- `/fvs:checkpoint` command for structured verification commits (#12)
+- `fvs-researcher` generic research subagent for two-phase command dispatch
+- `fvs-executor` generic executor subagent with VS Code diff file writing
+- Model profile system (quality/balanced/budget) in `fv-skills/references/model-profiles.md`
+
+### Fixed
+- NL stubs now written to `.formalising/stubs/` instead of project root `stubs/` (#6)
+- Statusline delegates to GSD when installed, uses correct 16.5% autocompact buffer in standalone mode (#11)
+
+### Changed
+- `/fvs:map-code` refactored to agentic two-phase dispatch (research -> execute)
+- `/fvs:plan` refactored to agentic two-phase dispatch (research -> execute)
+- `/fvs:lean-specify` refactored to agentic two-phase dispatch (research -> execute)
+- `/fvs:lean-verify` refactored to agentic two-phase dispatch with iterative one-sorry-at-a-time executor
+- Installer description updated to include Codex
+
+## [0.1.0] - 2026-02-07
+
+### Added
+- Initial release: 7 commands, 5 agents, 5 references, 6 workflows, 3 templates
+- Multi-runtime installer (Claude Code, OpenCode, Gemini)
+- Session hooks (update checker, statusline)
