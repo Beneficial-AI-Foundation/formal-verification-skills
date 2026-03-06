@@ -1,7 +1,7 @@
 {
   "name": "fv-skills-baif",
   "version": "0.1.0",
-  "description": "Formal verification skills for Claude Code, OpenCode, and Gemini. Rust -> Lean 4 via Aeneas.",
+  "description": "Formal verification skills for Claude Code, Codex, OpenCode, and Gemini. Rust -> Lean 4 via Aeneas.",
   "bin": {
     "fv-skills-baif": "bin/install.js"
   },
@@ -24,7 +24,9 @@
     "rust",
     "proof",
     "gemini",
-    "gemini-cli"
+    "gemini-cli",
+    "codex",
+    "openai"
   ],
   "author": "BAIF",
   "license": "MIT",
