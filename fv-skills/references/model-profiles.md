@@ -22,11 +22,13 @@ subagent before calling Task(). The profile table below defines the mapping.
 |--------------------------|---------|----------|--------|
 | fvs-researcher           | inherit | sonnet   | haiku  |
 | fvs-executor             | inherit | sonnet   | sonnet |
-| fvs-lean-prover          | inherit | sonnet   | sonnet |
-| fvs-lean-spec-generator  | inherit | sonnet   | sonnet |
+| fvs-explainer            | inherit | sonnet   | haiku  |
 | fvs-dependency-analyzer  | sonnet  | haiku    | haiku  |
 | fvs-code-reader          | sonnet  | sonnet   | haiku  |
-| fvs-explainer            | sonnet  | sonnet   | haiku  |
+
+Quality uses `inherit` (= parent model, typically Opus) for the agents that matter most:
+researcher, executor, and explainer. These handle spec generation, proof attempts, and
+NL explanation — tasks where reasoning quality directly impacts correctness.
 
 ## Resolution
 
@@ -146,6 +148,39 @@ Each main command dispatches two subagents in sequence:
 The researcher gathers context (read-only), the executor writes files based on findings.
 
 </patterns>
+
+<runtime_models>
+
+## Runtime-Specific Model Handling
+
+Model selection works differently across runtimes. Commands should only use `Task(model=...)`
+on runtimes that support it.
+
+### Claude Code
+
+Supports inline model selection via `Task(model="...")`. The profile system works natively:
+- `"inherit"` — subagent uses the parent session's model (typically Opus)
+- `"sonnet"` — Claude Sonnet
+- `"haiku"` — Claude Haiku
+
+### Codex
+
+Does NOT support dynamic model selection. Models are pre-configured per agent in `.toml`
+files at install time. The `Task(model="...")` parameter is omitted when converting commands
+to Codex skills. Model choice is determined by the Codex configuration, not by FVS.
+
+### OpenCode / Gemini CLI
+
+Similar to Claude Code — support inline model parameters with runtime-specific model name
+mappings. The same `Task(model="...")` pattern applies.
+
+### Implication for Commands
+
+Commands should resolve the model from the profile table and pass it to `Task()`. On runtimes
+that don't support dynamic model selection (Codex), the parameter is silently ignored. This
+means the same command files work across all runtimes without conditional logic.
+
+</runtime_models>
 
 <anti_patterns>
 
