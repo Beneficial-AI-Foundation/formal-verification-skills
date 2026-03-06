@@ -1,6 +1,7 @@
 ---
 name: fvs:pause-work
-description: Create context handoff when pausing verification work
+description: Save verification context for session handoff
+argument-hint: "[optional: brief note about current state]"
 allowed-tools:
   - Read
   - Write
@@ -10,9 +11,9 @@ allowed-tools:
 ---
 
 <objective>
-Create `.formalising/.continue-here.md` handoff file preserving complete verification work state across sessions. Simpler than GSD -- no STATE.md or gsd-tools dependency. Self-contained command with inline process.
+Create a handoff document in `.formalising/fv-plans/` that preserves complete verification context across session boundaries (compaction, new conversation, etc.).
 
-Output: `.formalising/.continue-here.md` with XML-tagged context sections.
+This is NOT about git commits — it's about capturing the mental model and proof state that would be lost when context resets.
 </objective>
 
 <execution_context>
@@ -20,130 +21,104 @@ Output: `.formalising/.continue-here.md` with XML-tagged context sections.
 </execution_context>
 
 <context>
-No arguments needed. Works in any project with a `.formalising/` directory.
+User note: $ARGUMENTS
 
-- Check for `.formalising/CODEMAP.md` for verification project context
-- Check for `.formalising/.continue-here.md` for existing paused state
-- Framework-agnostic (no lean- prefix)
+The handoff file goes to `.formalising/fv-plans/.continue-here.md`.
+Only one active handoff at a time — overwrite any existing one.
+
+This command has access to the FULL current conversation context. Extract everything relevant from prior messages, tool results, and discoveries made during this session.
 </context>
 
 <process>
 
-## Step 1: Gather current state
+## Step 1: Gather State from Conversation
 
-Read existing project context:
+Extract from the current conversation context:
 
-```bash
-# Check for CODEMAP (verification project context)
-[ -f .formalising/CODEMAP.md ] && echo "[OK] CODEMAP found" || echo "[--] No CODEMAP"
+1. **Target file(s)**: Which spec/proof file(s) are being worked on
+2. **Branch**: Current git branch
+3. **Proof gaps**: Locations of unfinished proofs (line numbers and what each needs)
+4. **Proof state**: Available hypotheses, goal structure
+5. **Discoveries**: Insights found during this session (lemma identities, tactic behavior, gotchas)
+6. **Blockers**: What's preventing progress and why
+7. **Decisions made**: Approaches chosen/rejected with rationale
+8. **Strategy**: The current plan of attack
+9. **Next action**: Exactly what to do first when resuming
 
-# Check for existing handoff file
-[ -f .formalising/.continue-here.md ] && echo "[!!] Existing handoff found -- will overwrite" || echo "[OK] No existing handoff"
-
-# Check git status for uncommitted changes
-git status --short 2>/dev/null
-
-# Check current branch
-git branch --show-current 2>/dev/null
-```
-
-Count remaining sorry in spec files (if any):
+## Step 2: Check Modified Files
 
 ```bash
-SORRY_FILES=$(grep -rl "sorry" --include="*.lean" Specs/ 2>/dev/null | wc -l | tr -d ' ')
-SORRY_TOTAL=$(grep -r "sorry" --include="*.lean" Specs/ 2>/dev/null | wc -l | tr -d ' ')
-echo "Spec files with sorry: $SORRY_FILES"
-echo "Total sorry count: $SORRY_TOTAL"
+git diff --stat HEAD
+git branch --show-current
 ```
 
-If CODEMAP.md exists, read it for function inventory and verification status summary.
+## Step 3: Read Current State of Target Files
 
-## Step 2: Ask user for context
+Read the proof gap locations and surrounding proof context from the target file(s) to capture the exact current state.
 
-Ask the user these questions conversationally:
-
-1. **"What were you working on?"** (current function, module, or proof)
-2. **"What's left to do?"** (remaining work summary)
-3. **"Any blockers or notes for next session?"**
-
-Wait for user responses before proceeding.
-
-## Step 3: Write handoff file
+## Step 4: Write Handoff
 
 ```bash
-mkdir -p .formalising
+mkdir -p .formalising/fv-plans
 ```
 
-Write `.formalising/.continue-here.md` using the Write tool (VS Code diff) with this structure:
+Write to `.formalising/fv-plans/.continue-here.md` using the Write tool:
 
 ```markdown
 ---
-status: paused
-last_updated: {ISO timestamp}
+target: <spec file path>
+branch: <git branch>
+last_updated: <UTC timestamp>
+status: <in_progress|blocked|stuck>
+proof_gaps: <number of unfinished proofs>
 ---
 
-<current_state>
-{user's description of current work}
-</current_state>
+# Verification Handoff
 
-<completed_work>
-{auto-detected from git log and spec files}
-- Recent commits: {last 5 commit messages from git log --oneline -5}
-- Verified specs: {count of sorry-free spec files}
-- In-progress specs: {count of spec files with sorry}
-</completed_work>
+## What We're Proving
+[Function name, theorem name, what it means]
 
-<remaining_work>
-{user's description of remaining work}
-- Spec files with sorry: {count}
-- Total sorry remaining: {count}
-</remaining_work>
+## Current State
+[Exact position: which proof gap, what the goal looks like, what's been established]
 
-<decisions_made>
-{any decisions from the session, or "None noted"}
-</decisions_made>
+## Discoveries
+[Key insights, gotchas, things that would take time to rediscover]
 
-<blockers>
-{user-provided blockers, or "None"}
-</blockers>
+## Blockers
+[What's preventing progress, with full technical detail]
 
-<context>
-- CODEMAP: {exists/missing}
-- Branch: {current git branch}
-- Uncommitted files: {list from git status}
-</context>
+## Decisions
+[Approaches chosen/rejected with rationale]
 
-<next_action>
-{what to do first when resuming, based on user input}
-</next_action>
+## Strategy
+[The plan of attack going forward]
+
+## Key Hypotheses & Definitions
+[Important hypothesis names, file locations, definition references]
+
+## Next Action
+[Exactly what to do first when resuming — be specific enough for a fresh session]
 ```
 
-## Step 4: Git commit as WIP
-
-Stage and commit the handoff file:
-
-```bash
-git add .formalising/.continue-here.md
-git commit -m "wip: paused at {brief description from user's current work}"
-```
-
-If the commit fails (nothing to commit, etc.), warn but do not block.
-
-## Step 5: Display confirmation
+## Step 5: Confirm
 
 ```
-FVS >> WORK PAUSED
+FVS >> PAUSED
 
-Handoff: .formalising/.continue-here.md
-Resume:  /fvs:resume-work
+Handoff: .formalising/fv-plans/.continue-here.md
+Target:  [file]
+Branch:  [branch]
+Status:  [status]
+
+To resume: /fvs:resume-work
 ```
 
 </process>
 
 <success_criteria>
-- [ ] `.formalising/.continue-here.md` created with all XML-tagged sections
-- [ ] User's current work context captured
-- [ ] Auto-detected state included (git, sorry counts, CODEMAP)
-- [ ] Committed as WIP
-- [ ] User knows how to resume
+- [ ] Handoff captures enough context for a fresh session to continue immediately
+- [ ] Technical details are precise (line numbers, hypothesis names, exact errors)
+- [ ] Discoveries/gotchas that took time to find are preserved
+- [ ] Next action is specific and actionable
+- [ ] File written to `.formalising/fv-plans/.continue-here.md`
 </success_criteria>

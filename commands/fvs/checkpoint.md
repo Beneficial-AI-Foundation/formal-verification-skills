@@ -10,7 +10,7 @@ allowed-tools:
 ---
 
 <objective>
-Stage verification-related files and create a structured git commit with a framework-adaptive prefix. Tracks verification progress by counting sorry occurrences in spec files.
+Stage verification-related files and create a structured git commit with a framework-adaptive prefix. Tracks verification progress by counting unfinished proof gaps across the project.
 
 Output: Git commit with message `checkpoint({framework}): {description} - {progress}`
 </objective>
@@ -22,9 +22,8 @@ Output: Git commit with message `checkpoint({framework}): {description} - {progr
 <context>
 Checkpoint description: $ARGUMENTS (optional -- will prompt if empty).
 
-- Framework-agnostic command (no lean- prefix) that adapts commit prefix by detected framework
-- Locked decision: commit prefix uses detected framework name
-- Stages .lean files and .formalising/ changes automatically
+- Framework-agnostic command that adapts commit prefix by detected framework
+- Stages all modified verification-related files automatically
 </context>
 
 <process>
@@ -34,48 +33,46 @@ Checkpoint description: $ARGUMENTS (optional -- will prompt if empty).
 Use project markers to determine the verification framework:
 
 ```bash
-# Check for Lean project markers
-if [ -f "lakefile.toml" ] && [ -f "lean-toolchain" ]; then
+# Detect from project files — extend this list as new frameworks are supported
+if [ -f "lakefile.toml" ] || [ -f "lakefile.lean" ] || [ -f "lean-toolchain" ]; then
   FRAMEWORK="lean"
-  echo "[OK] Lean project detected"
-# Check for Verus project markers (future-proofing)
-elif find . -name "*.rs" -path "*/verus*" 2>/dev/null | head -1 | grep -q .; then
+  PROOF_EXTENSIONS="*.lean"
+  GAP_PATTERN="sorry"
+elif [ -f "Cargo.toml" ] && grep -rq "verus!" --include="*.rs" . 2>/dev/null; then
   FRAMEWORK="verus"
-  echo "[OK] Verus project detected"
+  PROOF_EXTENSIONS="*.rs"
+  GAP_PATTERN="assume(false)\|todo!()"
+elif [ -f "dune-project" ] || [ -f "_CoqProject" ]; then
+  FRAMEWORK="coq"
+  PROOF_EXTENSIONS="*.v"
+  GAP_PATTERN="Admitted\.\|admit\."
 else
   FRAMEWORK="fv"
-  echo "[--] No specific framework detected, using generic 'fv' prefix"
+  PROOF_EXTENSIONS=""
+  GAP_PATTERN=""
 fi
+echo "Framework: $FRAMEWORK"
 ```
 
 ## Step 2: Count verification progress
 
-For Lean projects, count sorry occurrences in spec files:
+If a framework was detected, count proof gaps:
 
 ```bash
-if [ "$FRAMEWORK" = "lean" ]; then
-  # Count files with sorry
-  SORRY_FILES=$(grep -rl "sorry" --include="*.lean" Specs/ 2>/dev/null | wc -l | tr -d ' ')
-
-  # Count total sorry occurrences
-  SORRY_TOTAL=$(grep -r "sorry" --include="*.lean" Specs/ 2>/dev/null | wc -l | tr -d ' ')
-
-  # Count fully verified specs (zero sorry)
-  VERIFIED_FILES=$(find Specs/ -name "*.lean" 2>/dev/null | while read f; do
-    grep -q "sorry" "$f" || echo "$f"
+if [ -n "$GAP_PATTERN" ] && [ -n "$PROOF_EXTENSIONS" ]; then
+  GAP_COUNT=$(grep -r "$GAP_PATTERN" --include="$PROOF_EXTENSIONS" . 2>/dev/null | wc -l | tr -d ' ')
+  PROOF_FILES=$(find . -name "$PROOF_EXTENSIONS" 2>/dev/null | wc -l | tr -d ' ')
+  COMPLETE_FILES=$(find . -name "$PROOF_EXTENSIONS" 2>/dev/null | while read f; do
+    grep -q "$GAP_PATTERN" "$f" || echo "$f"
   done | wc -l | tr -d ' ')
-
-  TOTAL_SPECS=$(find Specs/ -name "*.lean" 2>/dev/null | wc -l | tr -d ' ')
-
-  echo "Specs: $TOTAL_SPECS total, $VERIFIED_FILES verified, $SORRY_FILES with sorry"
-  echo "Sorry count: $SORRY_TOTAL"
+  echo "Proof files: $PROOF_FILES total, $COMPLETE_FILES complete, $GAP_COUNT gaps remaining"
 fi
 ```
 
 Parse `$ARGUMENTS` as the checkpoint description. If `$ARGUMENTS` is empty:
 
 ```
-What did you verify? (e.g., "FieldElement51.add" or "scalar_mul bounds proof")
+What did you verify? (e.g., "mul bounds proof" or "switching to ring strategy")
 ```
 
 Wait for user to provide description.
@@ -85,20 +82,15 @@ Wait for user to provide description.
 Stage modified verification files:
 
 ```bash
-# Stage all modified .lean files in Specs/ directory
-git add Specs/**/*.lean 2>/dev/null
+# Stage all modified proof and spec files
+git add -A .formalising/ 2>/dev/null
 
-# Stage .formalising/ directory changes (stubs, CODEMAP updates, handoff)
-git add .formalising/ 2>/dev/null
+# Stage proof files based on detected framework
+if [ -n "$PROOF_EXTENSIONS" ]; then
+  git add $(git diff --name-only --diff-filter=M | grep "$PROOF_EXTENSIONS" | head -50) 2>/dev/null
+fi
 
 # Show what will be committed
-STAGED_COUNT=$(git diff --staged --stat | tail -1)
-echo "Staged: $STAGED_COUNT"
-```
-
-Display staged files for user confirmation:
-
-```bash
 git diff --staged --stat
 ```
 
@@ -112,51 +104,52 @@ No modified verification files found. Make changes first, then run /fvs:checkpoi
 
 Exit -- do not proceed.
 
-## Step 4: Create structured commit
+## Step 4: Propose commit message
 
-Build the commit message with framework-adaptive prefix:
+Draft a commit message following these rules:
+- Conventional commit format: `checkpoint({framework}): {description}`
+- Subject line under 50 characters, imperative mood
+- Add a body only if changes are complex (wrap at 72 chars)
+- Focus on WHAT changed and WHY, not how
+- Be as SHORT as possible while remaining descriptive
+- NEVER add "Co-Authored-By" lines or reference AI tools/assistants
 
-```bash
-# Format: checkpoint({framework}): {description} - {progress}
-# Example: checkpoint(lean): FieldElement51.add - 3/5 sorry resolved
+Present the proposed message and staged diff to the user for approval:
 
-DESCRIPTION="$ARGUMENTS"
+```
+FVS >> PROPOSED CHECKPOINT
 
-if [ "$FRAMEWORK" = "lean" ] && [ "$TOTAL_SPECS" -gt 0 ]; then
-  PROGRESS="$VERIFIED_FILES/$TOTAL_SPECS specs verified, $SORRY_TOTAL sorry remaining"
-  git commit -m "checkpoint($FRAMEWORK): $DESCRIPTION - $PROGRESS"
-else
-  git commit -m "checkpoint($FRAMEWORK): $DESCRIPTION"
-fi
+checkpoint({framework}): {description}
+
+{body, only if needed}
+
+Staged files:
+{git diff --staged --stat output}
+
+Approve this commit message, or provide an alternative:
 ```
 
-## Step 5: Display confirmation
+Wait for user confirmation. If the user provides an alternative message, use that instead.
+
+## Step 5: Commit and confirm
 
 ```bash
+git commit -m "{approved message}"
 COMMIT_HASH=$(git rev-parse --short HEAD)
-COMMITTED_FILES=$(git diff-tree --no-commit-id --name-only -r HEAD | wc -l | tr -d ' ')
 ```
 
 ```
 FVS >> CHECKPOINT CREATED
 
-Commit:   checkpoint({framework}): {description}
-Hash:     {commit_hash}
-Files:    {N} files committed
-Progress: {verified}/{total} specs verified, {sorry_total} sorry remaining
-```
-
-If this was a Lean project and sorry count decreased since the last checkpoint, also display:
-
-```
-[OK] Progress: sorry count reduced
+{commit hash} {commit subject}
+Progress: {complete}/{total} proof files complete, {gap_count} gaps remaining
 ```
 
 </process>
 
 <success_criteria>
-- [ ] Framework detected from project markers (lean/verus/fv)
-- [ ] Sorry count tracked for progress reporting
+- [ ] Framework detected from project markers
+- [ ] Proof gap count tracked for progress reporting
 - [ ] Verification-related files staged automatically
 - [ ] Structured commit with framework-adaptive prefix created
 - [ ] Progress summary displayed
