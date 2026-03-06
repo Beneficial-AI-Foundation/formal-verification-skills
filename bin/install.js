@@ -12,6 +12,17 @@ const yellow = '\x1b[33m';
 const dim = '\x1b[2m';
 const reset = '\x1b[0m';
 
+// Codex config.toml constants
+const FVS_CODEX_MARKER = '# FVS Agent Configuration \u2014 managed by fv-skills-baif installer';
+
+const CODEX_AGENT_SANDBOX = {
+  'fvs-code-reader': 'read-only',
+  'fvs-dependency-analyzer': 'read-only',
+  'fvs-explainer': 'read-only',
+  'fvs-lean-spec-generator': 'full-auto',
+  'fvs-lean-prover': 'full-auto',
+};
+
 // Get version from package.json
 const pkg = require('../package.json');
 
@@ -22,23 +33,26 @@ const hasLocal = args.includes('--local') || args.includes('-l');
 const hasOpencode = args.includes('--opencode');
 const hasClaude = args.includes('--claude');
 const hasGemini = args.includes('--gemini');
+const hasCodex = args.includes('--codex');
 const hasAll = args.includes('--all');
 const hasUninstall = args.includes('--uninstall') || args.includes('-u');
 
 // Runtime selection - can be set by flags or interactive prompt
 let selectedRuntimes = [];
 if (hasAll) {
-  selectedRuntimes = ['claude', 'opencode', 'gemini'];
+  selectedRuntimes = ['claude', 'opencode', 'gemini', 'codex'];
 } else {
   if (hasOpencode) selectedRuntimes.push('opencode');
   if (hasClaude) selectedRuntimes.push('claude');
   if (hasGemini) selectedRuntimes.push('gemini');
+  if (hasCodex) selectedRuntimes.push('codex');
 }
 
 // Helper to get directory name for a runtime (used for local/project installs)
 function getDirName(runtime) {
   if (runtime === 'opencode') return '.opencode';
   if (runtime === 'gemini') return '.gemini';
+  if (runtime === 'codex') return '.codex';
   return '.claude';
 }
 
@@ -69,10 +83,21 @@ function getOpencodeGlobalDir() {
 
 /**
  * Get the global config directory for a runtime
- * @param {string} runtime - 'claude', 'opencode', or 'gemini'
+ * @param {string} runtime - 'claude', 'opencode', 'gemini', or 'codex'
  * @param {string|null} explicitDir - Explicit directory from --config-dir flag
  */
 function getGlobalDir(runtime, explicitDir = null) {
+  if (runtime === 'codex') {
+    // Codex: --config-dir > CODEX_HOME > ~/.codex
+    if (explicitDir) {
+      return expandTilde(explicitDir);
+    }
+    if (process.env.CODEX_HOME) {
+      return expandTilde(process.env.CODEX_HOME);
+    }
+    return path.join(os.homedir(), '.codex');
+  }
+
   if (runtime === 'opencode') {
     // For OpenCode, --config-dir overrides env vars
     if (explicitDir) {
@@ -145,7 +170,7 @@ console.log(banner);
 
 // Show help if requested
 if (hasHelp) {
-  console.log(`  ${yellow}Usage:${reset} npx fv-skills-baif [options]\n\n  ${yellow}Options:${reset}\n    ${orange}-g, --global${reset}              Install globally (to config directory)\n    ${orange}-l, --local${reset}               Install locally (to current directory)\n    ${orange}--claude${reset}                  Install for Claude Code only\n    ${orange}--opencode${reset}                Install for OpenCode only\n    ${orange}--gemini${reset}                  Install for Gemini only\n    ${orange}--all${reset}                     Install for all runtimes\n    ${orange}-u, --uninstall${reset}           Uninstall FVS (remove all FVS files)\n    ${orange}-c, --config-dir <path>${reset}   Specify custom config directory\n    ${orange}-h, --help${reset}                Show this help message\n    ${orange}--force-statusline${reset}        Replace existing statusline config\n\n  ${yellow}Examples:${reset}\n    ${dim}# Interactive install (prompts for runtime and location)${reset}\n    npx fv-skills-baif\n\n    ${dim}# Install for Claude Code globally${reset}\n    npx fv-skills-baif --claude --global\n\n    ${dim}# Install for Gemini globally${reset}\n    npx fv-skills-baif --gemini --global\n\n    ${dim}# Install for all runtimes globally${reset}\n    npx fv-skills-baif --all --global\n\n    ${dim}# Install to custom config directory${reset}\n    npx fv-skills-baif --claude --global --config-dir ~/.claude-bc\n\n    ${dim}# Install to current project only${reset}\n    npx fv-skills-baif --claude --local\n\n    ${dim}# Uninstall FVS from Claude Code globally${reset}\n    npx fv-skills-baif --claude --global --uninstall\n\n  ${yellow}Notes:${reset}\n    The --config-dir option is useful when you have multiple configurations.\n    It takes priority over CLAUDE_CONFIG_DIR / GEMINI_CONFIG_DIR environment variables.\n`);
+  console.log(`  ${yellow}Usage:${reset} npx fv-skills-baif [options]\n\n  ${yellow}Options:${reset}\n    ${orange}-g, --global${reset}              Install globally (to config directory)\n    ${orange}-l, --local${reset}               Install locally (to current directory)\n    ${orange}--claude${reset}                  Install for Claude Code only\n    ${orange}--opencode${reset}                Install for OpenCode only\n    ${orange}--gemini${reset}                  Install for Gemini only\n    ${orange}--codex${reset}                   Install for Codex only\n    ${orange}--all${reset}                     Install for all runtimes\n    ${orange}-u, --uninstall${reset}           Uninstall FVS (remove all FVS files)\n    ${orange}-c, --config-dir <path>${reset}   Specify custom config directory\n    ${orange}-h, --help${reset}                Show this help message\n    ${orange}--force-statusline${reset}        Replace existing statusline config\n\n  ${yellow}Examples:${reset}\n    ${dim}# Interactive install (prompts for runtime and location)${reset}\n    npx fv-skills-baif\n\n    ${dim}# Install for Claude Code globally${reset}\n    npx fv-skills-baif --claude --global\n\n    ${dim}# Install for Codex globally${reset}\n    npx fv-skills-baif --codex --global\n\n    ${dim}# Install for Gemini globally${reset}\n    npx fv-skills-baif --gemini --global\n\n    ${dim}# Install for all runtimes globally${reset}\n    npx fv-skills-baif --all --global\n\n    ${dim}# Install to custom config directory${reset}\n    npx fv-skills-baif --claude --global --config-dir ~/.claude-bc\n\n    ${dim}# Install to current project only${reset}\n    npx fv-skills-baif --claude --local\n\n    ${dim}# Uninstall FVS from Claude Code globally${reset}\n    npx fv-skills-baif --claude --global --uninstall\n\n  ${yellow}Notes:${reset}\n    The --config-dir option is useful when you have multiple configurations.\n    It takes priority over CLAUDE_CONFIG_DIR / GEMINI_CONFIG_DIR / CODEX_HOME environment variables.\n`);
   process.exit(0);
 }
 
@@ -513,6 +538,419 @@ function convertClaudeToGeminiToml(content) {
   return toml;
 }
 
+// ── Codex conversion functions ──────────────────────────────────────────────
+
+/**
+ * Extract frontmatter and body from markdown content
+ */
+function extractFrontmatterAndBody(content) {
+  if (!content.startsWith('---')) {
+    return { frontmatter: null, body: content };
+  }
+
+  const endIndex = content.indexOf('---', 3);
+  if (endIndex === -1) {
+    return { frontmatter: null, body: content };
+  }
+
+  return {
+    frontmatter: content.substring(3, endIndex).trim(),
+    body: content.substring(endIndex + 3),
+  };
+}
+
+/**
+ * Extract a single field value from frontmatter string
+ */
+function extractFrontmatterField(frontmatter, fieldName) {
+  const regex = new RegExp(`^${fieldName}:\\s*(.+)$`, 'm');
+  const match = frontmatter.match(regex);
+  if (!match) return null;
+  return match[1].trim().replace(/^['"]|['"]$/g, '');
+}
+
+/**
+ * Collapse multi-line text to a single line
+ */
+function toSingleLine(value) {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Quote a value for YAML output
+ */
+function yamlQuote(value) {
+  return JSON.stringify(value);
+}
+
+/**
+ * Convert /fvs:command references to $fvs-command for Codex skill mentions
+ */
+function convertSlashCommandsToCodexSkillMentions(content) {
+  let converted = content.replace(/\/fvs:([a-z0-9-]+)/gi, (_, commandName) => {
+    return `$fvs-${String(commandName).toLowerCase()}`;
+  });
+  converted = converted.replace(/\/fvs-help\b/g, '$fvs-help');
+  return converted;
+}
+
+/**
+ * Convert Claude Code markdown to Codex-compatible markdown
+ * Replaces $ARGUMENTS, slash commands, and tool names
+ */
+function convertClaudeToCodexMarkdown(content) {
+  let converted = convertSlashCommandsToCodexSkillMentions(content);
+  converted = converted.replace(/\$ARGUMENTS\b/g, '{{FVS_ARGS}}');
+  converted = converted.replace(/\bAskUserQuestion\b/g, 'request_user_input');
+  converted = converted.replace(/\bTask\(/g, 'spawn_agent(');
+  return converted;
+}
+
+/**
+ * Generate the Codex skill adapter header for a command-turned-skill
+ * Provides invocation syntax, AskUserQuestion mapping, and Task() mapping
+ */
+function getCodexSkillAdapterHeader(skillName) {
+  const invocation = `$${skillName}`;
+  return `<codex_skill_adapter>
+## A. Skill Invocation
+- This skill is invoked by mentioning \`${invocation}\`.
+- Treat all user text after \`${invocation}\` as \`{{FVS_ARGS}}\`.
+- If no arguments are present, treat \`{{FVS_ARGS}}\` as empty.
+
+## B. AskUserQuestion -> request_user_input Mapping
+FVS workflows use \`AskUserQuestion\` (Claude Code syntax). Translate to Codex \`request_user_input\`:
+
+Parameter mapping:
+- \`header\` -> \`header\`
+- \`question\` -> \`question\`
+- Options formatted as \`"Label" -- description\` -> \`{label: "Label", description: "description"}\`
+- Generate \`id\` from header: lowercase, replace spaces with underscores
+
+Batched calls:
+- \`AskUserQuestion([q1, q2])\` -> single \`request_user_input\` with multiple entries in \`questions[]\`
+
+Multi-select workaround:
+- Codex has no \`multiSelect\`. Use sequential single-selects, or present a numbered freeform list asking the user to enter comma-separated numbers.
+
+Execute mode fallback:
+- When \`request_user_input\` is rejected (Execute mode), present a plain-text numbered list and pick a reasonable default.
+
+## C. Task() -> spawn_agent Mapping
+FVS workflows use \`Task(...)\` (Claude Code syntax). Translate to Codex collaboration tools:
+
+Direct mapping:
+- \`Task(subagent_type="X", prompt="Y")\` -> \`spawn_agent(agent_type="X", message="Y")\`
+- \`Task(model="...")\` -> omit (Codex uses per-role config, not inline model selection)
+- \`fork_context: false\` by default -- FVS agents load their own context via \`<files_to_read>\` blocks
+
+Parallel fan-out:
+- Spawn multiple agents -> collect agent IDs -> \`wait(ids)\` for all to complete
+
+Result parsing:
+- Look for structured markers in agent output: \`CHECKPOINT\`, \`PLAN COMPLETE\`, \`SUMMARY\`, etc.
+- \`close_agent(id)\` after collecting results from each agent
+</codex_skill_adapter>`;
+}
+
+/**
+ * Convert a Claude Code command to a Codex skill
+ * Adds skill adapter header and reformats frontmatter
+ */
+function convertClaudeCommandToCodexSkill(content, skillName) {
+  const converted = convertClaudeToCodexMarkdown(content);
+  const { frontmatter, body } = extractFrontmatterAndBody(converted);
+  let description = `Run FVS workflow ${skillName}.`;
+  if (frontmatter) {
+    const maybeDescription = extractFrontmatterField(frontmatter, 'description');
+    if (maybeDescription) {
+      description = maybeDescription;
+    }
+  }
+  description = toSingleLine(description);
+  const shortDescription = description.length > 180 ? `${description.slice(0, 177)}...` : description;
+  const adapter = getCodexSkillAdapterHeader(skillName);
+
+  return `---\nname: ${yamlQuote(skillName)}\ndescription: ${yamlQuote(description)}\nmetadata:\n  short-description: ${yamlQuote(shortDescription)}\n---\n\n${adapter}\n\n${body.trimStart()}`;
+}
+
+/**
+ * Convert Claude Code agent markdown to Codex agent format.
+ * Applies base markdown conversions, then adds a <codex_agent_role> header
+ * and cleans up frontmatter (removes tools/color fields).
+ */
+function convertClaudeAgentToCodexAgent(content) {
+  let converted = convertClaudeToCodexMarkdown(content);
+
+  const { frontmatter, body } = extractFrontmatterAndBody(converted);
+  if (!frontmatter) return converted;
+
+  const name = extractFrontmatterField(frontmatter, 'name') || 'unknown';
+  const description = extractFrontmatterField(frontmatter, 'description') || '';
+  const tools = extractFrontmatterField(frontmatter, 'tools') || '';
+
+  const roleHeader = `<codex_agent_role>
+role: ${name}
+tools: ${tools}
+purpose: ${toSingleLine(description)}
+</codex_agent_role>`;
+
+  const cleanFrontmatter = `---\nname: ${yamlQuote(name)}\ndescription: ${yamlQuote(toSingleLine(description))}\n---`;
+
+  return `${cleanFrontmatter}\n\n${roleHeader}\n${body}`;
+}
+
+/**
+ * Generate a per-agent .toml config file for Codex.
+ * Sets sandbox_mode and developer_instructions from the agent markdown body.
+ */
+function generateCodexAgentToml(agentName, agentContent) {
+  const sandboxMode = CODEX_AGENT_SANDBOX[agentName] || 'read-only';
+  const { body } = extractFrontmatterAndBody(agentContent);
+  const instructions = body.trim();
+
+  const lines = [
+    `sandbox_mode = "${sandboxMode}"`,
+    `developer_instructions = """`,
+    instructions,
+    `"""`,
+  ];
+  return lines.join('\n') + '\n';
+}
+
+/**
+ * Generate the FVS config block for Codex config.toml.
+ * @param {Array<{name: string, description: string}>} agents
+ */
+function generateCodexConfigBlock(agents) {
+  const lines = [
+    FVS_CODEX_MARKER,
+    '[features]',
+    'multi_agent = true',
+    'default_mode_request_user_input = true',
+    '',
+    '[agents]',
+    'max_threads = 4',
+    'max_depth = 2',
+    '',
+  ];
+
+  for (const { name, description } of agents) {
+    lines.push(`[agents.${name}]`);
+    lines.push(`description = ${JSON.stringify(description)}`);
+    lines.push(`config_file = "agents/${name}.toml"`);
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Strip FVS sections from Codex config.toml content.
+ * Returns cleaned content, or null if file would be empty.
+ */
+function stripFvsFromCodexConfig(content) {
+  const markerIndex = content.indexOf(FVS_CODEX_MARKER);
+
+  if (markerIndex !== -1) {
+    // Has FVS marker -- remove everything from marker to EOF
+    let before = content.substring(0, markerIndex).trimEnd();
+    // Also strip FVS-injected feature keys above the marker
+    before = before.replace(/^multi_agent\s*=\s*true\s*\n?/m, '');
+    before = before.replace(/^default_mode_request_user_input\s*=\s*true\s*\n?/m, '');
+    before = before.replace(/^\[features\]\s*\n(?=\[|$)/m, '');
+    before = before.replace(/\n{3,}/g, '\n\n').trim();
+    if (!before) return null;
+    return before + '\n';
+  }
+
+  // No marker but may have FVS-injected feature keys
+  let cleaned = content;
+  cleaned = cleaned.replace(/^multi_agent\s*=\s*true\s*\n?/m, '');
+  cleaned = cleaned.replace(/^default_mode_request_user_input\s*=\s*true\s*\n?/m, '');
+
+  // Remove [agents.fvs-*] sections (from header to next section or EOF)
+  cleaned = cleaned.replace(/^\[agents\.fvs-[^\]]+\]\n(?:(?!\[)[^\n]*\n?)*/gm, '');
+
+  // Remove [features] section if now empty (only header, no keys before next section)
+  cleaned = cleaned.replace(/^\[features\]\s*\n(?=\[|$)/m, '');
+
+  // Remove [agents] section if now empty
+  cleaned = cleaned.replace(/^\[agents\]\s*\n(?=\[|$)/m, '');
+
+  // Clean up excessive blank lines
+  cleaned = cleaned.replace(/\n{3,}/g, '\n\n').trim();
+
+  if (!cleaned) return null;
+  return cleaned + '\n';
+}
+
+/**
+ * Merge FVS config block into an existing or new config.toml.
+ * Three cases: new file, existing with FVS marker, existing without marker.
+ */
+function mergeCodexConfig(configPath, fvsBlock) {
+  // Case 1: No config.toml -- create fresh
+  if (!fs.existsSync(configPath)) {
+    fs.writeFileSync(configPath, fvsBlock + '\n');
+    return;
+  }
+
+  const existing = fs.readFileSync(configPath, 'utf8');
+  const markerIndex = existing.indexOf(FVS_CODEX_MARKER);
+
+  // Case 2: Has FVS marker -- truncate and re-append
+  if (markerIndex !== -1) {
+    let before = existing.substring(0, markerIndex).trimEnd();
+    if (before) {
+      // Strip any FVS-managed sections that leaked above the marker
+      before = before.replace(/^\[agents\.fvs-[^\]]+\]\n(?:(?!\[)[^\n]*\n?)*/gm, '');
+      before = before.replace(/\n{3,}/g, '\n\n').trimEnd();
+
+      // Re-inject feature keys if user has [features] above the marker
+      const hasFeatures = /^\[features\]\s*$/m.test(before);
+      if (hasFeatures) {
+        if (!before.includes('multi_agent')) {
+          before = before.replace(/^\[features\]\s*$/m, '[features]\nmulti_agent = true');
+        }
+        if (!before.includes('default_mode_request_user_input')) {
+          before = before.replace(/^\[features\].*$/m, '$&\ndefault_mode_request_user_input = true');
+        }
+      }
+      // Skip [features] from fvsBlock if user already has it
+      const block = hasFeatures
+        ? FVS_CODEX_MARKER + '\n' + fvsBlock.substring(fvsBlock.indexOf('[agents]'))
+        : fvsBlock;
+      fs.writeFileSync(configPath, before + '\n\n' + block + '\n');
+    } else {
+      fs.writeFileSync(configPath, fvsBlock + '\n');
+    }
+    return;
+  }
+
+  // Case 3: No marker -- inject features if needed, append agents
+  let content = existing;
+  const featuresRegex = /^\[features\]\s*$/m;
+  const hasFeatures = featuresRegex.test(content);
+
+  if (hasFeatures) {
+    if (!content.includes('multi_agent')) {
+      content = content.replace(featuresRegex, '[features]\nmulti_agent = true');
+    }
+    if (!content.includes('default_mode_request_user_input')) {
+      content = content.replace(/^\[features\].*$/m, '$&\ndefault_mode_request_user_input = true');
+    }
+    // Append agents block (skip the [features] section from fvsBlock)
+    const agentsBlock = fvsBlock.substring(fvsBlock.indexOf('[agents]'));
+    content = content.trimEnd() + '\n\n' + FVS_CODEX_MARKER + '\n' + agentsBlock + '\n';
+  } else {
+    content = content.trimEnd() + '\n\n' + fvsBlock + '\n';
+  }
+
+  fs.writeFileSync(configPath, content);
+}
+
+/**
+ * Generate config.toml and per-agent .toml files for Codex.
+ * Reads agent .md files from source, extracts metadata, writes .toml configs.
+ */
+function installCodexConfig(targetDir, agentsSrc) {
+  const configPath = path.join(targetDir, 'config.toml');
+  const agentsTomlDir = path.join(targetDir, 'agents');
+  fs.mkdirSync(agentsTomlDir, { recursive: true });
+
+  const agentEntries = fs.readdirSync(agentsSrc).filter(f => f.startsWith('fvs-') && f.endsWith('.md'));
+  const agents = [];
+
+  // Compute the Codex pathPrefix for replacing .claude paths
+  const codexPathPrefix = `${targetDir.replace(/\\/g, '/')}/`;
+
+  for (const file of agentEntries) {
+    let content = fs.readFileSync(path.join(agentsSrc, file), 'utf8');
+    // Replace .claude paths before generating TOML (source files use ~/.claude)
+    content = content.replace(/~\/\.claude\//g, codexPathPrefix);
+    const { frontmatter } = extractFrontmatterAndBody(content);
+    const name = extractFrontmatterField(frontmatter, 'name') || file.replace('.md', '');
+    const description = extractFrontmatterField(frontmatter, 'description') || '';
+
+    agents.push({ name, description: toSingleLine(description) });
+
+    const tomlContent = generateCodexAgentToml(name, content);
+    fs.writeFileSync(path.join(agentsTomlDir, `${name}.toml`), tomlContent);
+  }
+
+  const fvsBlock = generateCodexConfigBlock(agents);
+  mergeCodexConfig(configPath, fvsBlock);
+
+  return agents.length;
+}
+
+/**
+ * List Codex skill directory names matching a prefix
+ */
+function listCodexSkillNames(skillsDir, prefix = 'fvs-') {
+  if (!fs.existsSync(skillsDir)) return [];
+  const entries = fs.readdirSync(skillsDir, { withFileTypes: true });
+  return entries
+    .filter(entry => entry.isDirectory() && entry.name.startsWith(prefix))
+    .filter(entry => fs.existsSync(path.join(skillsDir, entry.name, 'SKILL.md')))
+    .map(entry => entry.name)
+    .sort();
+}
+
+/**
+ * Copy commands as Codex skills (skills/fvs-help/SKILL.md structure)
+ */
+function copyCommandsAsCodexSkills(srcDir, skillsDir, prefix, pathPrefix, runtime) {
+  if (!fs.existsSync(srcDir)) {
+    return;
+  }
+
+  fs.mkdirSync(skillsDir, { recursive: true });
+
+  // Remove previous FVS Codex skills to avoid stale command skills
+  const existing = fs.readdirSync(skillsDir, { withFileTypes: true });
+  for (const entry of existing) {
+    if (entry.isDirectory() && entry.name.startsWith(`${prefix}-`)) {
+      fs.rmSync(path.join(skillsDir, entry.name), { recursive: true });
+    }
+  }
+
+  function recurse(currentSrcDir, currentPrefix) {
+    const entries = fs.readdirSync(currentSrcDir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const srcPath = path.join(currentSrcDir, entry.name);
+      if (entry.isDirectory()) {
+        recurse(srcPath, `${currentPrefix}-${entry.name}`);
+        continue;
+      }
+
+      if (!entry.name.endsWith('.md')) {
+        continue;
+      }
+
+      const baseName = entry.name.replace('.md', '');
+      const skillName = `${currentPrefix}-${baseName}`;
+      const skillDir = path.join(skillsDir, skillName);
+      fs.mkdirSync(skillDir, { recursive: true });
+
+      let content = fs.readFileSync(srcPath, 'utf8');
+      const globalClaudeRegex = /~\/\.claude\//g;
+      const localClaudeRegex = /\.\/\.claude\//g;
+      const codexDirRegex = /~\/\.codex\//g;
+      content = content.replace(globalClaudeRegex, pathPrefix);
+      content = content.replace(localClaudeRegex, `./${getDirName(runtime)}/`);
+      content = content.replace(codexDirRegex, pathPrefix);
+      content = convertClaudeCommandToCodexSkill(content, skillName);
+
+      fs.writeFileSync(path.join(skillDir, 'SKILL.md'), content);
+    }
+  }
+
+  recurse(srcDir, prefix);
+}
+
 /**
  * Copy commands to a flat structure for OpenCode
  * OpenCode expects: command/fvs-help.md (invoked as /fvs-help)
@@ -573,10 +1011,11 @@ function copyFlattenedCommands(srcDir, destDir, prefix, pathPrefix, runtime) {
  * @param {string} srcDir - Source directory
  * @param {string} destDir - Destination directory
  * @param {string} pathPrefix - Path prefix for file references
- * @param {string} runtime - Target runtime ('claude', 'opencode', 'gemini')
+ * @param {string} runtime - Target runtime ('claude', 'opencode', 'gemini', 'codex')
  */
 function copyWithPathReplacement(srcDir, destDir, pathPrefix, runtime) {
   const isOpencode = runtime === 'opencode';
+  const isCodex = runtime === 'codex';
   const dirName = getDirName(runtime);
 
   // Clean install: remove existing destination to prevent orphaned files
@@ -602,6 +1041,9 @@ function copyWithPathReplacement(srcDir, destDir, pathPrefix, runtime) {
       // Convert frontmatter for opencode compatibility
       if (isOpencode) {
         content = convertClaudeToOpencodeFrontmatter(content);
+        fs.writeFileSync(destPath, content);
+      } else if (isCodex) {
+        content = convertClaudeToCodexMarkdown(content);
         fs.writeFileSync(destPath, content);
       } else if (runtime === 'gemini') {
         // Convert to TOML for Gemini (strip <sub> tags -- terminals can't render subscript)
@@ -685,6 +1127,7 @@ function cleanupOrphanedHooks(settings) {
  */
 function uninstall(isGlobal, runtime = 'claude') {
   const isOpencode = runtime === 'opencode';
+  const isCodex = runtime === 'codex';
   const dirName = getDirName(runtime);
 
   // Get the target directory based on runtime and install type
@@ -699,6 +1142,7 @@ function uninstall(isGlobal, runtime = 'claude') {
   let runtimeLabel = 'Claude Code';
   if (runtime === 'opencode') runtimeLabel = 'OpenCode';
   if (runtime === 'gemini') runtimeLabel = 'Gemini';
+  if (runtime === 'codex') runtimeLabel = 'Codex';
 
   console.log(`  Uninstalling FVS from ${orange}${runtimeLabel}${reset} at ${orange}${locationLabel}${reset}\n`);
 
@@ -711,8 +1155,59 @@ function uninstall(isGlobal, runtime = 'claude') {
 
   let removedCount = 0;
 
-  // 1. Remove FVS commands directory
-  if (isOpencode) {
+  // 1. Remove FVS commands/skills directory
+  if (isCodex) {
+    // Codex: remove skills/fvs-*/SKILL.md skill directories
+    const skillsDir = path.join(targetDir, 'skills');
+    if (fs.existsSync(skillsDir)) {
+      let skillCount = 0;
+      const entries = fs.readdirSync(skillsDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory() && entry.name.startsWith('fvs-')) {
+          fs.rmSync(path.join(skillsDir, entry.name), { recursive: true });
+          skillCount++;
+        }
+      }
+      if (skillCount > 0) {
+        removedCount++;
+        console.log(`  ${green}✓${reset} Removed ${skillCount} Codex skills`);
+      }
+    }
+
+    // Codex: remove FVS agent .toml config files
+    const codexAgentsDir = path.join(targetDir, 'agents');
+    if (fs.existsSync(codexAgentsDir)) {
+      const tomlFiles = fs.readdirSync(codexAgentsDir);
+      let tomlCount = 0;
+      for (const file of tomlFiles) {
+        if (file.startsWith('fvs-') && file.endsWith('.toml')) {
+          fs.unlinkSync(path.join(codexAgentsDir, file));
+          tomlCount++;
+        }
+      }
+      if (tomlCount > 0) {
+        removedCount++;
+        console.log(`  ${green}✓${reset} Removed ${tomlCount} agent .toml configs`);
+      }
+    }
+
+    // Codex: clean FVS sections from config.toml
+    const configPath = path.join(targetDir, 'config.toml');
+    if (fs.existsSync(configPath)) {
+      const content = fs.readFileSync(configPath, 'utf8');
+      const cleaned = stripFvsFromCodexConfig(content);
+      if (cleaned === null) {
+        // File is empty after stripping -- delete it
+        fs.unlinkSync(configPath);
+        removedCount++;
+        console.log(`  ${green}✓${reset} Removed config.toml (was FVS-only)`);
+      } else if (cleaned !== content) {
+        fs.writeFileSync(configPath, cleaned);
+        removedCount++;
+        console.log(`  ${green}✓${reset} Cleaned FVS sections from config.toml`);
+      }
+    }
+  } else if (isOpencode) {
     // OpenCode: remove command/fvs-*.md files
     const commandDir = path.join(targetDir, 'command');
     if (fs.existsSync(commandDir)) {
@@ -760,68 +1255,72 @@ function uninstall(isGlobal, runtime = 'claude') {
     }
   }
 
-  // 4. Remove FVS hooks
-  const hooksDir = path.join(targetDir, 'hooks');
-  if (fs.existsSync(hooksDir)) {
-    const fvsHooks = ['fvs-statusline.js', 'fvs-check-update.js'];
-    let hookCount = 0;
-    for (const hook of fvsHooks) {
-      const hookPath = path.join(hooksDir, hook);
-      if (fs.existsSync(hookPath)) {
-        fs.unlinkSync(hookPath);
-        hookCount++;
+  // 4. Remove FVS hooks (skip for Codex -- no hook system)
+  if (!isCodex) {
+    const hooksDir = path.join(targetDir, 'hooks');
+    if (fs.existsSync(hooksDir)) {
+      const fvsHooks = ['fvs-statusline.js', 'fvs-check-update.js'];
+      let hookCount = 0;
+      for (const hook of fvsHooks) {
+        const hookPath = path.join(hooksDir, hook);
+        if (fs.existsSync(hookPath)) {
+          fs.unlinkSync(hookPath);
+          hookCount++;
+        }
       }
-    }
-    if (hookCount > 0) {
-      removedCount++;
-      console.log(`  ${green}✓${reset} Removed ${hookCount} FVS hooks`);
+      if (hookCount > 0) {
+        removedCount++;
+        console.log(`  ${green}✓${reset} Removed ${hookCount} FVS hooks`);
+      }
     }
   }
 
-  // 5. Clean up settings.json (remove FVS hooks and statusline)
-  const settingsPath = path.join(targetDir, 'settings.json');
-  if (fs.existsSync(settingsPath)) {
-    let settings = readSettings(settingsPath);
-    let settingsModified = false;
+  // 5. Clean up settings.json (remove FVS hooks and statusline) -- skip for Codex
+  if (!isCodex) {
+    const settingsPath = path.join(targetDir, 'settings.json');
+    if (fs.existsSync(settingsPath)) {
+      let settings = readSettings(settingsPath);
+      let settingsModified = false;
 
-    // Remove FVS statusline if it references our hook
-    if (settings.statusLine && settings.statusLine.command &&
-        settings.statusLine.command.includes('fvs-statusline')) {
-      delete settings.statusLine;
-      settingsModified = true;
-      console.log(`  ${green}✓${reset} Removed FVS statusline from settings`);
-    }
-
-    // Remove FVS hooks from SessionStart
-    if (settings.hooks && settings.hooks.SessionStart) {
-      const before = settings.hooks.SessionStart.length;
-      settings.hooks.SessionStart = settings.hooks.SessionStart.filter(entry => {
-        if (entry.hooks && Array.isArray(entry.hooks)) {
-          // Filter out FVS hooks
-          const hasFvsHook = entry.hooks.some(h =>
-            h.command && (h.command.includes('fvs-check-update') || h.command.includes('fvs-statusline'))
-          );
-          return !hasFvsHook;
-        }
-        return true;
-      });
-      if (settings.hooks.SessionStart.length < before) {
+      // Remove FVS statusline if it references our hook
+      if (settings.statusLine && settings.statusLine.command &&
+          settings.statusLine.command.includes('fvs-statusline')) {
+        delete settings.statusLine;
         settingsModified = true;
-        console.log(`  ${green}✓${reset} Removed FVS hooks from settings`);
+        console.log(`  ${green}✓${reset} Removed FVS statusline from settings`);
       }
-      // Clean up empty array
-      if (settings.hooks.SessionStart.length === 0) {
-        delete settings.hooks.SessionStart;
-      }
-      // Clean up empty hooks object
-      if (Object.keys(settings.hooks).length === 0) {
-        delete settings.hooks;
-      }
-    }
 
-    if (settingsModified) {
-      writeSettings(settingsPath, settings);
-      removedCount++;
+      // Remove FVS hooks from SessionStart
+      if (settings.hooks && settings.hooks.SessionStart) {
+        const before = settings.hooks.SessionStart.length;
+        settings.hooks.SessionStart = settings.hooks.SessionStart.filter(entry => {
+          if (entry.hooks && Array.isArray(entry.hooks)) {
+            // Filter out FVS hooks
+            const hasFvsHook = entry.hooks.some(h =>
+              h.command && (h.command.includes('fvs-check-update') || h.command.includes('fvs-statusline'))
+            );
+            return !hasFvsHook;
+          }
+          return true;
+        });
+        if (settings.hooks.SessionStart.length < before) {
+          settingsModified = true;
+          console.log(`  ${green}✓${reset} Removed FVS hooks from settings`);
+        }
+        // Clean up empty array
+        if (settings.hooks.SessionStart.length === 0) {
+          delete settings.hooks.SessionStart;
+        }
+        // Clean up empty hooks object
+        if (Object.keys(settings.hooks).length === 0) {
+          delete settings.hooks;
+        }
+      }
+
+      if (settingsModified) {
+        writeSettings(settingsPath, settings);
+        removedCount++;
+      }
     }
   }
 
@@ -981,6 +1480,7 @@ function verifyFileInstalled(filePath, description) {
 function install(isGlobal, runtime = 'claude') {
   const isOpencode = runtime === 'opencode';
   const isGemini = runtime === 'gemini';
+  const isCodex = runtime === 'codex';
   const dirName = getDirName(runtime);
   const src = path.join(__dirname, '..');
 
@@ -1003,6 +1503,7 @@ function install(isGlobal, runtime = 'claude') {
   let runtimeLabel = 'Claude Code';
   if (isOpencode) runtimeLabel = 'OpenCode';
   if (isGemini) runtimeLabel = 'Gemini';
+  if (isCodex) runtimeLabel = 'Codex';
 
   console.log(`  Installing for ${orange}${runtimeLabel}${reset} to ${orange}${locationLabel}${reset}\n`);
 
@@ -1013,8 +1514,20 @@ function install(isGlobal, runtime = 'claude') {
   cleanupOrphanedFiles(targetDir);
 
   // OpenCode uses 'command/' (singular) with flat structure
+  // Codex uses 'skills/' with skill directories
   // Claude Code & Gemini use 'commands/' (plural) with nested structure
-  if (isOpencode) {
+  if (isCodex) {
+    // Codex: skill directories in skills/ (skills/fvs-help/SKILL.md)
+    const skillsDir = path.join(targetDir, 'skills');
+    const fvsSrc = path.join(src, 'commands', 'fvs');
+    copyCommandsAsCodexSkills(fvsSrc, skillsDir, 'fvs', pathPrefix, runtime);
+    const installedSkillNames = listCodexSkillNames(skillsDir);
+    if (installedSkillNames.length > 0) {
+      console.log(`  ${green}✓${reset} Installed ${installedSkillNames.length} skills to skills/`);
+    } else {
+      failures.push('skills/fvs-*');
+    }
+  } else if (isOpencode) {
     // OpenCode: flat structure in command/ directory
     const commandDir = path.join(targetDir, 'command');
     fs.mkdirSync(commandDir, { recursive: true });
@@ -1079,6 +1592,8 @@ function install(isGlobal, runtime = 'claude') {
         // Convert frontmatter for runtime compatibility
         if (isOpencode) {
           content = convertClaudeToOpencodeFrontmatter(content);
+        } else if (isCodex) {
+          content = convertClaudeAgentToCodexAgent(content);
         } else if (isGemini) {
           content = convertClaudeToGeminiAgent(content);
         }
@@ -1101,29 +1616,39 @@ function install(isGlobal, runtime = 'claude') {
     failures.push('VERSION');
   }
 
-  // Copy hooks from dist/ (bundled with dependencies)
-  const hooksSrc = path.join(src, 'hooks', 'dist');
-  if (fs.existsSync(hooksSrc)) {
-    const hooksDest = path.join(targetDir, 'hooks');
-    fs.mkdirSync(hooksDest, { recursive: true });
-    const hookEntries = fs.readdirSync(hooksSrc);
-    for (const entry of hookEntries) {
-      const srcFile = path.join(hooksSrc, entry);
-      if (fs.statSync(srcFile).isFile()) {
-        const destFile = path.join(hooksDest, entry);
-        fs.copyFileSync(srcFile, destFile);
+  // Copy hooks from dist/ (bundled with dependencies) -- skip for Codex (no hook system)
+  if (!isCodex) {
+    const hooksSrc = path.join(src, 'hooks', 'dist');
+    if (fs.existsSync(hooksSrc)) {
+      const hooksDest = path.join(targetDir, 'hooks');
+      fs.mkdirSync(hooksDest, { recursive: true });
+      const hookEntries = fs.readdirSync(hooksSrc);
+      for (const entry of hookEntries) {
+        const srcFile = path.join(hooksSrc, entry);
+        if (fs.statSync(srcFile).isFile()) {
+          const destFile = path.join(hooksDest, entry);
+          fs.copyFileSync(srcFile, destFile);
+        }
       }
-    }
-    if (verifyInstalled(hooksDest, 'hooks')) {
-      console.log(`  ${green}✓${reset} Installed hooks (bundled)`);
-    } else {
-      failures.push('hooks');
+      if (verifyInstalled(hooksDest, 'hooks')) {
+        console.log(`  ${green}✓${reset} Installed hooks (bundled)`);
+      } else {
+        failures.push('hooks');
+      }
     }
   }
 
   if (failures.length > 0) {
     console.error(`\n  ${yellow}Installation incomplete!${reset} Failed: ${failures.join(', ')}`);
     process.exit(1);
+  }
+
+  // Codex: generate config.toml and per-agent .toml files, then return early
+  if (isCodex) {
+    const agentCount = installCodexConfig(targetDir, agentsSrc);
+    console.log(`  ${green}✓${reset} Generated config.toml with ${agentCount} agent roles`);
+    console.log(`  ${green}✓${reset} Generated ${agentCount} agent .toml config files`);
+    return { settingsPath: null, settings: null, statuslineCommand: null, runtime };
   }
 
   // Configure statusline and hooks in settings.json
@@ -1182,8 +1707,9 @@ function install(isGlobal, runtime = 'claude') {
  */
 function finishInstall(settingsPath, settings, statuslineCommand, shouldInstallStatusline, runtime = 'claude') {
   const isOpencode = runtime === 'opencode';
+  const isCodex = runtime === 'codex';
 
-  if (shouldInstallStatusline && !isOpencode) {
+  if (shouldInstallStatusline && !isOpencode && !isCodex) {
     settings.statusLine = {
       type: 'command',
       command: statuslineCommand
@@ -1191,8 +1717,10 @@ function finishInstall(settingsPath, settings, statuslineCommand, shouldInstallS
     console.log(`  ${green}✓${reset} Configured statusline`);
   }
 
-  // Always write settings
-  writeSettings(settingsPath, settings);
+  // Write settings when runtime supports settings.json
+  if (!isCodex) {
+    writeSettings(settingsPath, settings);
+  }
 
   // Configure OpenCode permissions
   if (isOpencode) {
@@ -1202,8 +1730,12 @@ function finishInstall(settingsPath, settings, statuslineCommand, shouldInstallS
   let program = 'Claude Code';
   if (runtime === 'opencode') program = 'OpenCode';
   if (runtime === 'gemini') program = 'Gemini';
+  if (runtime === 'codex') program = 'Codex';
 
-  const command = isOpencode ? '/fvs-help' : '/fvs:help';
+  let command = '/fvs:help';
+  if (isOpencode) command = '/fvs-help';
+  if (isCodex) command = '$fvs-help';
+
   console.log(`
   ${green}Done!${reset} Launch ${program} and run ${orange}${command}${reset}.
 `);
@@ -1291,15 +1823,18 @@ function promptRuntime(callback) {
   console.log(`  ${yellow}Which runtime(s) would you like to install for?${reset}\n\n  ${orange}1${reset}) Claude Code ${dim}(~/.claude)${reset}
   ${orange}2${reset}) OpenCode    ${dim}(~/.config/opencode)${reset} - open source, free models
   ${orange}3${reset}) Gemini      ${dim}(~/.gemini)${reset}
-  ${orange}4${reset}) All
+  ${orange}4${reset}) Codex       ${dim}(~/.codex)${reset}
+  ${orange}5${reset}) All
 `);
 
   rl.question(`  Choice ${dim}[1]${reset}: `, (answer) => {
     answered = true;
     rl.close();
     const choice = answer.trim() || '1';
-    if (choice === '4') {
-      callback(['claude', 'opencode', 'gemini']);
+    if (choice === '5') {
+      callback(['claude', 'opencode', 'gemini', 'codex']);
+    } else if (choice === '4') {
+      callback(['codex']);
     } else if (choice === '3') {
       callback(['gemini']);
     } else if (choice === '2') {
@@ -1386,11 +1921,23 @@ function installAllRuntimes(runtimes, isGlobal, isInteractive) {
       if (opencodeResult) {
         finishInstall(opencodeResult.settingsPath, opencodeResult.settings, opencodeResult.statuslineCommand, false, 'opencode');
       }
+
+      const codexResult = results.find(r => r.runtime === 'codex');
+      if (codexResult) {
+        finishInstall(codexResult.settingsPath, codexResult.settings, codexResult.statuslineCommand, false, 'codex');
+      }
     });
   } else {
-    // Only OpenCode
-    const opencodeResult = results[0];
-    finishInstall(opencodeResult.settingsPath, opencodeResult.settings, opencodeResult.statuslineCommand, false, 'opencode');
+    // Only OpenCode and/or Codex (no statusline runtimes)
+    const opencodeResult = results.find(r => r.runtime === 'opencode');
+    if (opencodeResult) {
+      finishInstall(opencodeResult.settingsPath, opencodeResult.settings, opencodeResult.statuslineCommand, false, 'opencode');
+    }
+
+    const codexResult = results.find(r => r.runtime === 'codex');
+    if (codexResult) {
+      finishInstall(codexResult.settingsPath, codexResult.settings, codexResult.statuslineCommand, false, 'codex');
+    }
   }
 }
 
