@@ -12,9 +12,9 @@ allowed-tools:
 ---
 
 <objective>
-Orchestrate interactive proof development for a Lean specification. Takes a spec file containing sorry, loads tactic knowledge and proof strategies, dispatches the prover agent to replace sorry with tactic proof steps, and handles the iterative cycle of propose-feedback-adjust that formal verification requires.
+Orchestrate interactive proof development for a Lean specification using two-phase subagent dispatch (research -> iterative execute). Dispatches fvs-researcher to analyze sorry locations and recommend proof strategies, then iteratively dispatches fvs-executor to replace each sorry ONE AT A TIME with small tactic blocks.
 
-This is the most interactive command -- verification often requires multiple attempts, user hints, and strategy adjustments. The prover agent proposes ONE tactic step at a time and explains its reasoning. This is a locked user decision and must not be overridden.
+This is the most interactive command -- it feels like pair programming. The executor proposes a small tactic step, the user checks Lean compiles, and the cycle repeats. This is a locked user decision and must not be overridden.
 
 Output: Spec file with sorry replaced by complete proof (VERIFIED) or clear report of where proof got stuck (STUCK).
 </objective>
@@ -37,7 +37,7 @@ Parse --max-attempts flag from $ARGUMENTS:
 
 <process>
 
-## Step 1: Resolve Spec File
+## Step 1: Parse Spec File Path and Options
 
 Parse $ARGUMENTS for spec file path and optional --max-attempts flag:
 
@@ -61,10 +61,41 @@ find Specs/ -name "*.lean" 2>/dev/null
 
 Wait for valid path.
 
-## Step 2: Verify Sorry Exists
+## Step 2: Read Config and Resolve Models
+
+Read the project config to determine which models to use for subagent dispatch:
 
 ```bash
-grep -c "sorry" "$SPEC_PATH"
+CONFIG=$(cat .formalising/fvs-config.json 2>/dev/null || echo '{"model_profile":"quality","model_overrides":{}}')
+```
+
+Resolve models using the profile table from `fv-skills/references/model-profiles.md`:
+
+1. Parse `model_profile` from config (default: `"quality"`)
+2. Check `model_overrides` for `"fvs-researcher"` and `"fvs-executor"`
+3. If no override, look up profile table:
+   - quality: fvs-researcher=inherit, fvs-executor=inherit
+   - balanced: fvs-researcher=sonnet, fvs-executor=sonnet
+   - budget: fvs-researcher=haiku, fvs-executor=sonnet
+4. Store resolved models as `RESEARCH_MODEL` and `EXECUTOR_MODEL`
+
+## Step 3: Read Reference Files for Inlining
+
+Read the reference files that MUST be inlined into Task() prompts because @-references do not cross Task boundaries:
+
+```bash
+TACTIC_USAGE=$(cat ~/.claude/fv-skills/references/tactic-usage.md)
+PROOF_STRATEGIES=$(cat ~/.claude/fv-skills/references/proof-strategies.md)
+SPEC_CONVENTIONS=$(cat ~/.claude/fv-skills/references/lean-spec-conventions.md)
+```
+
+All three must be captured as content strings for inlining into subagent prompts.
+
+## Step 4: Count Sorry in Spec File
+
+```bash
+SORRY_COUNT=$(grep -c "sorry" "$SPEC_PATH")
+echo "Found $SORRY_COUNT sorry to resolve"
 ```
 
 If zero sorry: spec may already be proved. Run build check to confirm:
@@ -76,212 +107,162 @@ nice -n 19 lake build 2>&1 | tail -20
 - If build clean: report VERIFIED status and exit.
 - If build errors: report errors and exit.
 
-If sorry found: extract theorem name and current proof state. Continue to proof loop.
+If sorry found: extract theorem name and current proof state. Continue to research phase.
 
 ```bash
 grep -E "@\[progress\]|theorem " "$SPEC_PATH"
 ```
 
-## Step 3: Read Reference Files for Prover Dispatch
-
-Read the three reference files. These MUST be inlined into Task() prompts because @-references do not cross Task boundaries.
-
-```bash
-TACTIC_REF=$(cat ~/.claude/fv-skills/references/tactic-usage.md)
-PROOF_STRATEGIES=$(cat ~/.claude/fv-skills/references/proof-strategies.md)
-SPEC_CONVENTIONS=$(cat ~/.claude/fv-skills/references/lean-spec-conventions.md)
-```
-
-## Step 4: Load Function Body from Funs.lean
-
-Extract the function that the spec theorem is about. Find it by looking at the theorem statement (the function call in `= ok result`):
-
-```bash
-# Parse function name from spec theorem
-FUNC_CALL=$(grep "= ok result" "$SPEC_PATH" | head -1)
-
-# Locate Funs.lean
-FUNS_LEAN=$(find . -name "Funs.lean" -not -path "./.lake/*" | head -1)
-```
-
-Read the target function body from Funs.lean.
-
-## Step 5: Load Verified Dependency Specs
-
-```bash
-# Parse imports from spec file to find dependency specs
-grep "^import" "$SPEC_PATH"
-
-# Scan for sorry-free dependency specs (these are available for progress)
-VERIFIED_DEP_SPECS=""
-for dep_spec in $(find Specs/ -name "*.lean" -not -name "$(basename $SPEC_PATH)" 2>/dev/null); do
-  SORRY=$(grep -c "sorry" "$dep_spec" 2>/dev/null || echo 0)
-  if [ "$SORRY" -eq 0 ]; then
-    VERIFIED_DEP_SPECS="$VERIFIED_DEP_SPECS\n--- $dep_spec ---\n$(cat $dep_spec)"
-  fi
-done
-```
-
-These verified theorems are available for `progress` to apply during proof.
-
-## Step 6: Initialize Iteration State
-
-```
-ATTEMPT_COUNT=0
-PREVIOUS_FEEDBACK=""
-PROOF_STATUS="in_progress"
-```
-
-These variables live in the command scope. Agents are stateless -- each Task() invocation receives the full context fresh.
-
-## Step 7: Enter Proof Loop
-
-WHILE PROOF_STATUS == "in_progress" AND ATTEMPT_COUNT < MAX_ATTEMPTS:
-
-### Step 7a: Read Current Spec File State
-
-```bash
-CURRENT_SPEC=$(cat "$SPEC_PATH")
-```
-
-### Step 7b: Dispatch fvs-lean-prover
+## Step 5: Dispatch Research Subagent
 
 ```
 Task(
-  prompt="Attempt proof step for $SPEC_PATH.
+  subagent_type="fvs-researcher",
+  model="$RESEARCH_MODEL",
+  description="Research proof context for $SPEC_FILE",
+  prompt="Research mode: proof-attempt
 
-<spec_file>
-$CURRENT_SPEC
-</spec_file>
+<spec_file_path>$SPEC_FILE</spec_file_path>
+<spec_content>
+$SPEC_FILE_CONTENT
+</spec_content>
 
-<function_body>
-$FUNCTION_BODY
-</function_body>
-
-<verified_dependency_specs>
-$VERIFIED_DEP_SPECS
-</verified_dependency_specs>
-
-<tactic_reference>
-$TACTIC_REF
-</tactic_reference>
+<tactic_usage>
+$TACTIC_USAGE_CONTENT
+</tactic_usage>
 
 <proof_strategies>
-$PROOF_STRATEGIES
+$PROOF_STRATEGIES_CONTENT
 </proof_strategies>
 
 <spec_conventions>
-$SPEC_CONVENTIONS
+$SPEC_CONVENTIONS_CONTENT
 </spec_conventions>
 
-<user_feedback>
-$PREVIOUS_FEEDBACK
-</user_feedback>
+Tasks:
+1. Read the spec file and identify all sorry locations
+2. For each sorry, analyze the goal state (what needs to be proved)
+3. Find related proofs in Specs/ for similar patterns
+4. Check .formalising/stubs/ for NL explanation of the function
+5. Identify which tactics are most likely to work for each sorry
+6. Recommend an order to tackle sorry (easiest first, or dependency order)
 
-<attempt>$ATTEMPT_COUNT of $MAX_ATTEMPTS</attempt>
-
-<constraints>
-- Propose ONE tactic step at a time (1-3 lines max)
-- Write the tactic to the spec file via Write tool
-- Return ## TACTIC PROPOSED, ## VERIFIED, or ## STUCK
-</constraints>",
-  subagent_type="fvs-lean-prover",
-  description="Proof attempt #$ATTEMPT_COUNT for $THEOREM_NAME"
+Return with ## RESEARCH COMPLETE"
 )
 ```
 
-### Step 7c: Route on Prover Return Header
+Parse the returned research findings to get:
+- List of sorry locations with goal descriptions
+- Recommended order to tackle them
+- Tactic suggestions per sorry
+- Related proof examples
 
-**If ## TACTIC PROPOSED:**
-- Display the proposed tactic and reasoning to user
-- ATTEMPT_COUNT += 1
-- Wait for user feedback. The user should:
-  - Report the goal state from Lean infoview (paste the updated goals)
-  - Report any errors from the Lean server
-  - Provide a hint (e.g., "try simp with this lemma", "the key invariant is X")
-  - Say "skip" to abandon this spec
-- Store user's response as PREVIOUS_FEEDBACK
-- If user says "skip": set PROOF_STATUS = "skipped", exit loop
-- Otherwise: continue loop
-
-**If ## VERIFIED:**
-- Set PROOF_STATUS = "verified"
-- Exit loop
-
-**If ## STUCK:**
-- Display stuck report to user (unsolved goal, what was tried, suggestion)
-- Offer options:
-  1. Provide a hint (mathematical insight, invariant, lemma pointer)
-  2. "retry" with different strategy
-  3. "simplify" postconditions and retry
-  4. "skip" and move on
-- If user provides hint or says "retry": store as PREVIOUS_FEEDBACK, continue loop
-- If user says "simplify": store "USER REQUESTS: simplify postconditions" as PREVIOUS_FEEDBACK, continue loop
-- If user says "skip": set PROOF_STATUS = "skipped", exit loop
-
-**If ## ERROR:**
-- Display error to user
-- Attempt automatic fix if it is an import or type issue:
-  - Missing import: add the import and rebuild
-  - Type mismatch: note for user
-- If fixable: store fix info as PREVIOUS_FEEDBACK, continue loop
-- If not fixable: set PROOF_STATUS = "error", exit loop
-
-END WHILE
-
-## Step 8: Check Max-Attempts Guardrail
-
-If ATTEMPT_COUNT >= MAX_ATTEMPTS and PROOF_STATUS == "in_progress":
+## Step 6: Iterative Executor Dispatch (One Sorry at a Time -- LOCKED DECISION)
 
 ```
-FVS >> STUCK
+SORRY_RESOLVED=0
+SORRY_STUCK=0
+SORRY_REMAINING=$SORRY_COUNT
 
-Reached maximum attempts ($MAX_ATTEMPTS). Consider:
-1. Simplify the postcondition (weaker but provable spec)
-2. Add a helper lemma for the difficult sub-goal
-3. Check if the property actually holds (counterexample search)
-4. Move on and return later with more context
+FOR EACH SORRY (in recommended order from research):
+
+  Display:
+  >> Attempting sorry {N}/{TOTAL}: {goal description}
+
+  ATTEMPT_FOR_THIS_SORRY=0
+  MAX_PER_SORRY=3
+
+  WHILE ATTEMPT_FOR_THIS_SORRY < MAX_PER_SORRY:
+
+    # Re-read spec file each iteration (it changes after each write!)
+    CURRENT_SPEC=$(cat "$SPEC_PATH")
+
+    Task(
+      subagent_type="fvs-executor",
+      model="$EXECUTOR_MODEL",
+      description="Prove sorry {N} in $SPEC_FILE",
+      prompt="Execute mode: proof-attempt
+
+<research_findings>
+$RESEARCH_SUBAGENT_OUTPUT
+</research_findings>
+
+<current_spec>
+$CURRENT_SPEC_FILE_CONTENT (re-read each iteration -- it changes!)
+</current_spec>
+
+<target_sorry>sorry #{N}</target_sorry>
+<goal_state>{goal from research findings}</goal_state>
+
+<user_feedback>
+$PREVIOUS_FEEDBACK (empty on first attempt, contains Lean error or user hint after)
+</user_feedback>
+
+<attempt>{ATTEMPT_FOR_THIS_SORRY} of {MAX_PER_SORRY}</attempt>
+
+Write a SMALL tactic block to replace this ONE sorry.
+Use tactics: have, calc, progress, unfold, simp, ring, field_simp, omega.
+Explain your reasoning before writing.
+
+IMPORTANT: Write the change using VS Code diff (Write tool). User will approve inline.
+After the write, the user will check if Lean compiles. Wait for feedback.
+
+If stuck, return ## NEEDS INPUT with what you need.
+If successful, return ## EXECUTION COMPLETE"
+    )
+
+    AFTER EACH EXECUTOR RETURN:
+
+    If ## EXECUTION COMPLETE:
+      - Remind user: "Check compilation: nice -n 19 lake build"
+      - Wait for user feedback on whether Lean compiles
+      - If compiles: SORRY_RESOLVED += 1, break inner loop, move to next sorry
+      - If does not compile: store error as PREVIOUS_FEEDBACK, ATTEMPT_FOR_THIS_SORRY += 1
+
+    If ## NEEDS INPUT:
+      - Present to user: the executor's question, what it tried, what it needs
+      - Wait for user response (hint, invariant, lemma pointer)
+      - If user provides hint: store as PREVIOUS_FEEDBACK, ATTEMPT_FOR_THIS_SORRY += 1
+      - If user says "skip": mark as STUCK, break inner loop, move to next sorry
+
+    If ## ERROR:
+      - Display error to user
+      - ATTEMPT_FOR_THIS_SORRY += 1
+
+  END WHILE
+
+  If ATTEMPT_FOR_THIS_SORRY >= MAX_PER_SORRY:
+    Mark this sorry as STUCK
+    SORRY_STUCK += 1
+    Display: ">> sorry {N} stuck after {MAX_PER_SORRY} attempts. Moving to next."
+
+END FOR
 ```
 
-Set PROOF_STATUS = "stuck".
+**CRITICAL LOCKED DECISIONS:**
+- One sorry at a time (not batch)
+- Small tactic blocks (have, calc, unfold + progress)
+- User checks Lean compiles between each step
+- Feels like pair programming
+- All writes via VS Code diffs
 
-## Step 9: Report Final Result
-
-**If PROOF_STATUS == "verified":**
-
-```
-FVS >> VERIFIED
-
-Function: {function_name}
-Spec:     {spec_path}
-Proof:    Complete ({ATTEMPT_COUNT} tactic steps)
-Status:   [OK] No sorry remaining
-
-Verify: nice -n 19 lake build
-```
-
-**If PROOF_STATUS == "stuck" or "skipped":**
+## Step 7: Display Summary
 
 ```
-FVS >> STUCK
+FVS >> VERIFICATION {STATUS}
 
-Function: {function_name}
-Spec:     {spec_path}
-Status:   [??] {remaining sorry count} goals unsolved
-Attempts: {ATTEMPT_COUNT} of {MAX_ATTEMPTS}
+File:     {spec_file}
+Resolved: {SORRY_RESOLVED}/{SORRY_COUNT} sorry
+Stuck:    {SORRY_STUCK}
+Status:   {VERIFIED if 0 sorry remain, PARTIAL if some remain, STUCK if none resolved}
 ```
 
-**If PROOF_STATUS == "error":**
+**Status classification:**
+- **VERIFIED:** All sorry resolved, zero remaining
+- **PARTIAL:** Some sorry resolved, some remain
+- **STUCK:** No sorry resolved
 
-```
-FVS >> BUILD ERROR
-
-Function: {function_name}
-Spec:     {spec_path}
-Status:   [XX] Does not compile
-```
-
-## Step 10: Update CODEMAP.md Verification Status
+## Step 8: Update CODEMAP.md Verification Status
 
 If .formalising/CODEMAP.md exists, update the function's status:
 
@@ -294,9 +275,9 @@ Update via Write tool (VS Code diff):
 - Still has sorry: change status to `[??]`
 - Build error: change status to `[XX]`
 
-## Step 11: Suggest Next Steps
+## Step 9: Suggest Next Steps
 
-**If verified:**
+**If VERIFIED:**
 
 ```
 >> Next Up
@@ -304,7 +285,7 @@ Update via Write tool (VS Code diff):
 /fvs:plan to select next verification target
 ```
 
-**If stuck or skipped:**
+**If PARTIAL or STUCK:**
 
 ```
 >> Options
@@ -314,25 +295,20 @@ Update via Write tool (VS Code diff):
 - /fvs:lean-specify {function_name} to regenerate the spec with different postconditions
 ```
 
-**If error:**
-
-```
->> Options
-
-- Fix the compilation error manually and run /fvs:lean-verify {spec_path} again
-- /fvs:lean-specify {function_name} to regenerate the spec
-```
-
 </process>
 
 <success_criteria>
 - [ ] Spec file located and sorry confirmed present
-- [ ] Tactic knowledge, proof strategies, and dependency specs loaded
-- [ ] Prover agent dispatched with full inlined context
-- [ ] Interactive proof loop handles: tactic proposals, user feedback, hints, stuck/verified/error
+- [ ] Config read and models resolved for fvs-researcher and fvs-executor
+- [ ] Research subagent dispatched with inlined tactic-usage, proof-strategies, spec-conventions
+- [ ] Research identified all sorry locations with goals and tactic recommendations
+- [ ] Executor dispatched iteratively per sorry (one at a time, not batch)
+- [ ] Each executor writes small tactic blocks via VS Code diff
+- [ ] User checks Lean compiles between each step (pair programming feel)
+- [ ] NEEDS INPUT handling for stuck proofs with user hint collection
+- [ ] Max-attempts guardrail enforced per sorry (3) and total (25 hard cap)
 - [ ] Build checks use nice -n 19 lake build (never plain lake build)
-- [ ] Max-attempts guardrail enforced (default 10, hard cap 25)
-- [ ] Result correctly classified as VERIFIED, STUCK, or ERROR
+- [ ] Result correctly classified as VERIFIED, PARTIAL, or STUCK
 - [ ] CODEMAP.md updated with verification status if available
 - [ ] Clear next steps offered based on outcome
 </success_criteria>
