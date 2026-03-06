@@ -13,11 +13,12 @@ allowed-tools:
 
 <objective>
 Analyze the dependency graph from CODEMAP.md to determine optimal bottom-up
-verification order. Evaluate function complexity, check existing spec coverage,
-and present a prioritized selection interface for the user to choose their next
-verification target.
+verification order. Dispatches a two-phase subagent pipeline: fvs-researcher
+gathers verification state and analyzes targets (read-only), then fvs-executor
+writes the prioritized PLAN.md file.
 
-Output: User-selected verification target ready for /fvs:lean-specify.
+Output: .formalising/PLAN.md with prioritized verification targets, and
+user-selected target ready for /fvs:lean-specify.
 </objective>
 
 <execution_context>
@@ -37,7 +38,7 @@ Check for existing .formalising/fv-plans/ docs from prior sessions.
 
 <process>
 
-## Step 1: Check CODEMAP.md exists
+## Step 1: Check prerequisites
 
 ```bash
 [ -f .formalising/CODEMAP.md ] && echo "CODEMAP found" || echo "CODEMAP missing"
@@ -58,104 +59,73 @@ If $ARGUMENTS is provided (specific function name): check whether that function
 exists in CODEMAP.md. If not found, warn: "Function {name} not found in CODEMAP.
 Available functions: ..." and let user correct.
 
-## Step 2: Load verification state
+## Step 2: Read config and resolve models
 
-Scan the Specs/ directory for existing specifications and their sorry status:
+Read the project config to determine which models to use for subagent dispatch:
 
 ```bash
-for f in $(find Specs/ -name "*.lean" 2>/dev/null); do
-  SORRY=$(grep -c "sorry" "$f" 2>/dev/null || echo 0)
-  VERIFIED=$( [ "$SORRY" -eq 0 ] && echo "yes" || echo "no" )
-  echo "$f sorry=$SORRY verified=$VERIFIED"
-done
+CONFIG=$(cat .formalising/fvs-config.json 2>/dev/null)
 ```
 
-Build verification state for each function in the inventory:
-- **[OK] Verified**: spec file exists, zero sorry (fully proved)
-- **[??] In progress**: spec file exists, has sorry (partially proved)
-- **[--] Unspecified**: no spec file exists
+If config exists, extract `model_profile` and `model_overrides`.
+If config is missing, use defaults: `model_profile = "quality"`, no overrides.
 
-Display current project status:
-```
-Verification: [V] [OK] / [P] [??] / [U] [--] of [T] total
-```
+**Resolve models from profile table** (see fv-skills/references/model-profiles.md):
 
-## Step 3: Read reference files for agent dispatch
+For `fvs-researcher`:
+- Check `model_overrides["fvs-researcher"]` first
+- Otherwise use profile table: quality=inherit, balanced=sonnet, budget=haiku
 
-Read reference content into variables for inlining into Task() prompts:
+For `fvs-executor`:
+- Check `model_overrides["fvs-executor"]` first
+- Otherwise use profile table: quality=inherit, balanced=sonnet, budget=sonnet
+
+Store resolved models as `$RESEARCH_MODEL` and `$EXECUTOR_MODEL`.
+
+## Step 3: Read reference files for inlining
+
+Read ALL reference files that the subagents need. These MUST be inlined into Task()
+prompts because @-references do NOT cross Task() boundaries.
 
 ```bash
 AENEAS_PATTERNS=$(cat ~/.claude/fv-skills/references/aeneas-patterns.md)
 SPEC_CONVENTIONS=$(cat ~/.claude/fv-skills/references/lean-spec-conventions.md)
+PROOF_STRATEGIES=$(cat ~/.claude/fv-skills/references/proof-strategies.md)
 ```
 
-## Step 4: Dispatch fvs-dependency-analyzer for ordering
+Also read the CODEMAP.md content for inlining:
+```bash
+CODEMAP_CONTENT=$(cat .formalising/CODEMAP.md)
+```
+
+And scan for existing spec files:
+```bash
+EXISTING_SPECS=$(find Specs/ -name "*.lean" 2>/dev/null | sort)
+```
+
+## Step 4: Dispatch fvs-researcher (read-only analysis)
 
 Display dispatch indicator:
 ```
->> Dispatching fvs-dependency-analyzer...
+>> Dispatching fvs-researcher (plan)...
 ```
 
-Spawn with dependency graph and current verification state:
-
-```
-Task(
-  prompt="Determine optimal verification order from dependency graph.
-
-<codemap_dependencies>
-$DEPENDENCY_GRAPH_FROM_CODEMAP
-</codemap_dependencies>
-
-<verification_state>
-$VERIFICATION_STATE_FROM_STEP_2
-</verification_state>
-
-<aeneas_patterns>
-$AENEAS_PATTERNS
-</aeneas_patterns>
-
-Bottom-up ordering: verify leaf functions first, then functions whose
-dependencies are all verified. Identify 'ready now' set (deps all verified
-or is leaf) and 'blocked' set (waiting on dependency verification).
-
-Return with ## MAPPING COMPLETE or ## ERROR.",
-  subagent_type="fvs-dependency-analyzer",
-  description="Computing bottom-up verification order"
-)
-```
-
-Parse the result:
-- Topological sort of unverified functions
-- "Ready now" set: functions whose dependencies are all verified or are leaves
-- "Blocked" set: functions waiting on dependency verification, with blocker names
-
-Display:
-```
-[OK] fvs-dependency-analyzer complete: {N} ready, {M} blocked
-```
-
-If $ARGUMENTS was provided (specific function): check whether the target is in
-the "ready now" set. If blocked, show which dependencies need verification first.
-
-## Step 5: Dispatch fvs-code-reader for target evaluation
-
-Take the top 10 functions from the "ready now" set (or just the target function
-if $ARGUMENTS was provided) and dispatch fvs-code-reader in evaluation mode:
-
-```
->> Dispatching fvs-code-reader (evaluation mode)...
-```
+Spawn the research subagent to analyze verification state and identify targets:
 
 ```
 Task(
-  prompt="Evaluate top verification target candidates for complexity and leverage.
+  subagent_type="fvs-researcher",
+  model="$RESEARCH_MODEL",
+  description="Research verification targets",
+  prompt="Research mode: plan
 
-<candidates>
-$TOP_10_READY_NOW_FUNCTIONS
-</candidates>
+<codemap>
+$CODEMAP_CONTENT
+</codemap>
 
-<funs_lean_path>{FUNS_LEAN_PATH}</funs_lean_path>
-<rust_source_dir>{RUST_SOURCE_DIR}</rust_source_dir>
+<existing_specs>
+$EXISTING_SPECS
+</existing_specs>
 
 <aeneas_patterns>
 $AENEAS_PATTERNS
@@ -165,38 +135,82 @@ $AENEAS_PATTERNS
 $SPEC_CONVENTIONS
 </spec_conventions>
 
-Mode: evaluation
-For each candidate evaluate:
-- Complexity (1-5): arg count, branch count, loop presence
-- Pattern match (1-5): how closely it matches known-provable patterns
-- Leverage (1-5): how many other functions depend on this being verified
-- Risk (1-5): opaque externals, trait dispatch, nonlinear arithmetic
+<proof_strategies>
+$PROOF_STRATEGIES
+</proof_strategies>
 
-Return with ## ANALYSIS COMPLETE or ## ERROR.",
-  subagent_type="fvs-code-reader",
-  description="Evaluating verification target candidates"
+Tasks:
+1. Read CODEMAP.md dependency graph
+2. Identify unverified functions (no spec file yet, or spec with sorry)
+3. For each candidate, read Rust source to assess complexity and pre/post conditions
+4. Analyze dependency order (bottom-up: verify leaves first)
+5. Check for existing stubs in .formalising/stubs/ (functions with stubs are easier to specify)
+6. Evaluate top candidates for complexity (1-5), leverage (1-5), risk (1-5)
+
+Return with ## RESEARCH COMPLETE"
 )
 ```
 
+Wait for agent to return. Parse the result:
+- If `## RESEARCH COMPLETE`: extract findings for executor
+- If `## ERROR`: display error, offer user to retry or abort
+
 Display:
 ```
-[OK] fvs-code-reader complete: {N} candidates evaluated
+[OK] fvs-researcher complete: {N} ready, {M} blocked
 ```
 
-## Step 6: Combine ordering with evaluation
+If $ARGUMENTS was provided (specific function): check whether the target is in
+the "ready now" set. If blocked, show which dependencies need verification first.
 
-Merge the dependency ordering (step 4) with the complexity/leverage/risk
-evaluation (step 5). Produce a ranked list sorted by:
-1. Leverage (high first -- verify functions that unblock the most others)
-2. Risk (low first -- start with high-confidence targets)
-3. Complexity (low first -- quick wins build momentum)
+## Step 5: Dispatch fvs-executor (write PLAN.md)
 
-## Step 7: Present prioritized plan to user
+Display dispatch indicator:
+```
+>> Dispatching fvs-executor (plan)...
+```
+
+Spawn the executor subagent with research findings:
+
+```
+Task(
+  subagent_type="fvs-executor",
+  model="$EXECUTOR_MODEL",
+  description="Write verification plan",
+  prompt="Execute mode: plan
+
+<research_findings>
+$RESEARCH_SUBAGENT_OUTPUT
+</research_findings>
+
+Write .formalising/PLAN.md with:
+- Verification progress summary (verified / in-progress / unspecified counts)
+- Prioritized verification target list (bottom-up by dependency depth)
+- For each target: function name, complexity assessment, pre/post conditions, estimated difficulty
+- Recommended verification order
+- Functions with existing stubs marked as ready for /fvs:lean-specify
+- Blocked functions with their dependency blockers listed
+
+Use the Write tool (VS Code diff). User will approve the diff.
+Return with ## EXECUTION COMPLETE"
+)
+```
+
+Wait for executor to return. Parse the result:
+- If `## EXECUTION COMPLETE`: confirm PLAN.md written
+- If `## ERROR`: display error, offer user to retry or abort
+
+Display:
+```
+[OK] fvs-executor complete: PLAN.md written
+```
+
+## Step 6: Present prioritized plan to user
 
 Display the ranked results with the FVS >> banner:
 
 ```
-FVS >> PLANNING TARGETS
+FVS >> PLAN COMPLETE
 
 Status: [V] [OK] / [P] [??] / [U] [--] of [T] total
 
@@ -213,6 +227,8 @@ Blocked (need dependency specs first):
   [!!] multi_scalar_mul (needs: scalar_mul_inner, point_add)
   [!!] verify_signature (needs: hash_to_curve, scalar_mul)
 
+Written: .formalising/PLAN.md
+
 ---
 
 Select a target number, or type a function name directly.
@@ -223,7 +239,7 @@ Wait for user selection.
 If $ARGUMENTS was provided and the function is ready: skip interactive selection,
 display the evaluation directly and confirm with user.
 
-## Step 8: Write planning doc for selected target (optional)
+## Step 7: Write planning doc for selected target (optional)
 
 After user selects a target, offer to write a planning document:
 
@@ -234,13 +250,13 @@ Write planning doc to .formalising/fv-plans/{function_name}.md? (y/n)
 If yes, assemble a planning doc with:
 - Function name, Lean qualified name, Rust source path
 - Dependencies and their verification status
-- Recommended approach (from code-reader evaluation)
+- Recommended approach (from researcher evaluation)
 - Complexity/leverage/risk assessment
 - Known precondition/postcondition candidates (if available from evaluation)
 
 Write via VS Code diff (Write tool).
 
-## Step 9: Suggest next command
+## Step 8: Suggest next command
 
 ```
 Target selected: {function_name}
@@ -254,9 +270,9 @@ Target selected: {function_name}
 
 <success_criteria>
 - [ ] CODEMAP.md loaded and parsed (or user warned if missing)
-- [ ] Existing specs scanned with sorry/verified status
-- [ ] Dependency analysis produces bottom-up ordering
-- [ ] Top candidates analyzed for complexity, leverage, and risk
+- [ ] Model profile resolved from .formalising/fvs-config.json (or quality default)
+- [ ] fvs-researcher dispatched with inlined references, returns verification analysis
+- [ ] fvs-executor dispatched with research findings, writes .formalising/PLAN.md
 - [ ] Prioritized list presented with selection interface
 - [ ] User selects target, next command suggested
 </success_criteria>

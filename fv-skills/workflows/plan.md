@@ -1,12 +1,12 @@
 <purpose>
-Orchestrate verification planning from CODEMAP.md to produce a prioritized list of
-verification targets.
+Orchestrate verification planning from CODEMAP.md to produce a prioritized
+verification plan.
 
-Analyzes the dependency graph to determine optimal bottom-up verification order,
-evaluates function complexity, checks existing spec coverage, and presents an
-interactive selection interface for the user to choose their next verification target.
+Uses a two-phase subagent dispatch: fvs-researcher gathers verification state and
+analyzes targets (read-only), then fvs-executor writes the structured PLAN.md file.
 
-Output: User-selected verification target ready for /fvs:lean-specify.
+Output: .formalising/PLAN.md with prioritized targets, and user-selected target
+ready for /fvs:lean-specify.
 </purpose>
 
 <process>
@@ -15,7 +15,7 @@ Output: User-selected verification target ready for /fvs:lean-specify.
 Verify CODEMAP.md exists and is current.
 
 ```bash
-[ -f CODEMAP.md ] && echo "CODEMAP found" || echo "CODEMAP missing"
+[ -f .formalising/CODEMAP.md ] && echo "CODEMAP found" || echo "CODEMAP missing"
 ```
 
 **If missing:**
@@ -31,73 +31,99 @@ Warn but allow user to skip if they want to specify a target manually.
 **If found:** Parse function inventory and dependency graph from CODEMAP.md.
 </step>
 
-<step name="load_verification_state">
-Scan for existing verification progress.
+<step name="resolve_models">
+Read `.formalising/fvs-config.json` for model profile configuration.
 
-```bash
-# Find all spec files
-find Specs/ -name "*.lean" 2>/dev/null
+If config exists: extract `model_profile` and `model_overrides`.
+If config missing: default to `quality` profile with no overrides.
 
-# Check each for sorry (incomplete proofs)
-for f in $(find Specs/ -name "*.lean" 2>/dev/null); do
-  SORRY=$(grep -c "sorry" "$f" 2>/dev/null || echo 0)
-  VERIFIED=$( [ "$SORRY" -eq 0 ] && echo "yes" || echo "no" )
-  echo "$f sorry=$SORRY verified=$VERIFIED"
-done
-```
+Resolve models for both subagents using the profile table
+(see fv-skills/references/model-profiles.md):
 
-Build verification state:
-- **Verified**: Spec exists, zero sorry (fully proved)
-- **In progress**: Spec exists, has sorry (partially proved)
-- **Unspecified**: No spec file exists
+- `fvs-researcher`: quality=inherit, balanced=sonnet, budget=haiku
+- `fvs-executor`: quality=inherit, balanced=sonnet, budget=sonnet
 
-Reference: @fv-skills/references/lean-spec-conventions.md (spec file naming and location)
+Check `model_overrides` for per-agent overrides before using profile defaults.
+
+Reference: @fv-skills/references/model-profiles.md (dispatch pattern, resolution sequence)
 </step>
 
-<step name="analyze_dependencies">
-Dispatch **fvs-dependency-analyzer** to determine optimal verification order.
+<step name="research_phase">
+Dispatch **fvs-researcher** in plan mode (read-only analysis).
 
-Agent inputs:
-- Dependency graph from CODEMAP.md
-- Current verification state (which functions already verified)
+Read reference files for inlining into the Task() prompt:
+- aeneas-patterns.md (dependency patterns, naming conventions)
+- lean-spec-conventions.md (spec naming, what makes good targets)
+- proof-strategies.md (for understanding verification difficulty)
 
-**Bottom-up ordering principle:**
-Verify leaf functions first, then functions whose dependencies are all verified.
-This ensures each proof can rely on proven specs for callees.
+Also inline:
+- CODEMAP.md content (function inventory and dependency graph)
+- List of existing spec files
+
+These are INLINED because @-references do NOT cross Task() boundaries.
+
+Agent inputs (all inlined in prompt):
+- CODEMAP.md function inventory and dependency graph
+- List of existing spec files in Specs/
+- aeneas-patterns.md content
+- lean-spec-conventions.md content
+- proof-strategies.md content
 
 Expected outputs:
+- Verification state per function (verified, in-progress, unspecified)
 - Topological sort of unverified functions
-- For each function: list of unverified dependencies (blockers)
-- "Ready now" set: functions whose dependencies are all verified or are leaves
+- "Ready now" set: leaves and functions with all deps verified
 - "Blocked" set: functions waiting on dependency verification
+- Complexity/leverage/risk evaluation for top candidates
+- Functions with existing stubs in .formalising/stubs/
+
+Agent returns with `## RESEARCH COMPLETE` containing structured `<findings>`,
+`<relevant_files>`, and `<recommendations>` sections.
 
 Reference: @fv-skills/references/aeneas-patterns.md (dependency patterns)
+Reference: @fv-skills/references/lean-spec-conventions.md (what makes a good spec target)
 </step>
 
-<step name="select_targets">
-Dispatch **fvs-code-reader** for deeper analysis of top candidates.
+<step name="execution_phase">
+Dispatch **fvs-executor** in plan mode with research findings.
 
-Agent inputs:
-- Top 10 "ready now" functions from dependency analysis
-- Paths to Funs.lean and Rust source
+Agent inputs (all inlined in prompt):
+- Complete research findings from fvs-researcher output
+- No additional reference files needed (researcher already processed them)
 
-For each candidate, evaluate:
-- **Complexity estimate**: Arg count, branch count, loop presence
-- **Pattern match**: Does it match known-provable patterns (arithmetic, simple branching)?
-- **Value**: Is this function called by many others (high leverage)?
-- **Risk**: Does it use opaque externals or complex trait dispatch?
+The executor writes `.formalising/PLAN.md` with:
 
-Reference: @fv-skills/references/lean-spec-conventions.md (what makes a good spec target)
-Reference: @fv-skills/references/aeneas-patterns.md (complexity indicators)
+```markdown
+# Verification Plan
+
+## Progress
+- Verified: [V] functions
+- In progress: [P] functions
+- Unspecified: [U] functions
+- Total: [T] functions
+
+## Priority Targets
+| # | Function | Complexity | Leverage | Risk | Status | Notes |
+|---|----------|------------|----------|------|--------|-------|
+
+## Recommended Order
+[Bottom-up verification sequence]
+
+## Blocked Functions
+[Functions waiting on dependency verification, with blocker names]
+```
+
+Agent returns with `## EXECUTION COMPLETE` confirming files written.
+All writes use the Write tool (VS Code diffs) for user approval.
 </step>
 
 <step name="present_plan">
 Display prioritized verification targets for user selection.
 
 ```
-FVS -- VERIFICATION PLAN
+FVS >> PLAN COMPLETE
 
-Status: [V] verified / [P] in progress / [U] unspecified of [T] total
+Status: [V] [OK] / [P] [??] / [U] [--] of [T] total
 
 Ready to verify (dependencies satisfied):
 
@@ -109,8 +135,10 @@ Ready to verify (dependencies satisfied):
   ...
 
 Blocked (need dependency specs first):
-  - multi_scalar_mul (needs: scalar_mul_inner, point_add)
-  - verify_signature (needs: hash_to_curve, scalar_mul)
+  [!!] multi_scalar_mul (needs: scalar_mul_inner, point_add)
+  [!!] verify_signature (needs: hash_to_curve, scalar_mul)
+
+Written: .formalising/PLAN.md
 
 ---
 
@@ -121,9 +149,11 @@ Wait for user selection. Store selected target for use by /fvs:lean-specify.
 
 After selection, suggest next command:
 ```
-Target selected: scalar_mul_inner
+Target selected: {function_name}
 
-Next: /fvs:lean-specify scalar_mul_inner
+>> Next Up
+
+/fvs:lean-specify {function_name}
 ```
 </step>
 
@@ -131,9 +161,9 @@ Next: /fvs:lean-specify scalar_mul_inner
 
 <success_criteria>
 - CODEMAP.md loaded and parsed (or user warned if missing)
-- Existing specs scanned with sorry/verified status
-- Dependency analysis produces bottom-up ordering
-- Top candidates analyzed for complexity, leverage, and risk
+- Model profile resolved from config or quality default
+- fvs-researcher dispatched with inlined references, returns verification analysis
+- fvs-executor dispatched with research findings, writes .formalising/PLAN.md
 - Prioritized list presented with clear selection interface
 - User selects target, next command suggested
 </success_criteria>
