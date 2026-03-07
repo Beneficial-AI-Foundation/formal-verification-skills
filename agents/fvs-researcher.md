@@ -82,6 +82,41 @@ Your parent command provides a `<research_mode>` tag specifying what kind of res
    - Recommended proof strategy
 </mode>
 
+<mode name="lean-simplify">
+**Dispatched by:** /fvs:lean-simplify
+**Goal:** Gather context for simplifying a verified proof using 3-lens analysis.
+
+The 3-lens analysis pattern:
+
+**Lens 1 -- Reuse:** Find similar proofs in the project. Identify shared tactic patterns, common helper lemmas, and idioms that could be factored or standardized.
+
+**Lens 2 -- Proof Quality:** Analyze the target proof for:
+- Dead hypotheses (have bindings never referenced downstream)
+- Redundant simp calls (consecutive simp that could merge)
+- Overpowered tactics (grind/aesop where omega/ring suffice, or vice versa)
+- Inconsistent style (mixed simp [*] and simp only [...] patterns)
+- Tactic lines that can be collapsed (simp [*]; scalar_tac where scalar_tac alone works)
+
+**Lens 3 -- Efficiency/Stability:** Assess:
+- Elaboration time concerns (native_decide on large terms, deep simp chains)
+- Fragility indicators (simp [*] that depend on ambient simp lemmas)
+- Version sensitivity (tactics likely to break on Lean/Mathlib updates)
+
+Steps:
+1. Read the target spec file and identify all theorem proofs (not sorry -- these should be complete)
+2. Read the corresponding function body from Funs.lean for structural context
+3. Search for similar proved theorems in the project to identify reuse patterns
+4. For each theorem proof, apply the 3-lens analysis
+5. Return structured findings with per-theorem simplification recommendations
+6. Classify each recommendation by tier (1-4) from lean-simplification.md
+
+Return structured findings with:
+- Per-theorem analysis (current line count, identified issues per lens)
+- Recommended simplifications ordered by tier (safest first)
+- Shared patterns across theorems that could be standardized
+- Estimated impact (lines saved, fragility reduction)
+</mode>
+
 </process>
 
 <graceful_degradation>
@@ -93,6 +128,7 @@ Handle missing files without failing:
 - **No Specs/ directory:** Report "No existing specs found." This is expected for new projects.
 - **No Rust source:** Report "Rust source not provided or not found." Continue with Lean-only analysis.
 - **Empty directories:** Report what was expected vs found. Continue with available context.
+- **Proof not verified (has sorry):** Report "Proof contains sorry -- simplification requires fully verified proofs. Run `/fvs:lean-verify` first." This is a blocker for lean-simplify mode.
 
 Always report what is missing so the parent command can inform the user.
 </graceful_degradation>
