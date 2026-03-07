@@ -21,6 +21,7 @@ const CODEX_AGENT_SANDBOX = {
   'fvs-explainer': 'read-only',
   'fvs-lean-spec-generator': 'full-auto',
   'fvs-lean-prover': 'full-auto',
+  'fvs-lean-simplifier': 'full-auto',
 };
 
 // Get version from package.json

@@ -25,11 +25,12 @@ Output ONLY the reference content below. Do NOT add:
 2. `/fvs:plan` - Select verification targets
 3. `/fvs:lean-specify <function>` - Generate spec with sorry
 4. `/fvs:lean-verify <spec_path>` - Attempt proof interactively
+5. `/fvs:lean-simplify <spec_path>` - Golf and clean up verified proofs
 
 ## Core Workflow
 
 ```
-/fvs:map-code → /fvs:plan → /fvs:lean-specify → /fvs:lean-verify → repeat
+/fvs:map-code → /fvs:plan → /fvs:lean-specify → /fvs:lean-verify → /fvs:lean-simplify → repeat
 ```
 
 ### Analysis
@@ -86,6 +87,21 @@ Attempt proof using domain tactics with interactive feedback.
 Usage: `/fvs:lean-verify Specs/Backend/Field/Sub.lean`
 Usage: `/fvs:lean-verify Specs/Backend/Field/Sub.lean --max-attempts 15`
 
+### Simplification
+
+**`/fvs:lean-simplify <spec_file_path>`**
+Simplify and golf verified Lean proofs while preserving compilation.
+
+- Requires fully verified spec (zero sorry) -- run `/fvs:lean-verify` first
+- Three modes: safe (zero-risk cleanup), balanced (default), aggressive (smart automation)
+- Applies tiered heuristics: dead code removal, simp sharpening, tactic golf, automation replacement
+- Verifies compilation after every change
+- Optional --report-only flag for analysis without modification
+
+Usage: `/fvs:lean-simplify Specs/Backend/Field/Sub.lean`
+Usage: `/fvs:lean-simplify Specs/Backend/Field/Sub.lean --mode aggressive --max-passes 10`
+Usage: `/fvs:lean-simplify Specs/Backend/Field/Sub.lean --theorem sub_spec --report-only`
+
 ### Support
 
 **`/fvs:natural-language <function_name>`**
@@ -121,7 +137,8 @@ Show this command reference.
 │   ├── fvs-dependency-analyzer.md
 │   ├── fvs-code-reader.md
 │   ├── fvs-lean-spec-generator.md
-│   └── fvs-lean-prover.md
+│   ├── fvs-lean-prover.md
+│   └── fvs-lean-simplifier.md
 ├── commands/fvs/
 │   ├── map-code.md
 │   ├── plan.md

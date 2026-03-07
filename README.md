@@ -113,12 +113,13 @@ Use `--claude`, `--opencode`, `--gemini`, or `--all` to skip the runtime prompt.
 |---------|-------------|
 | `/fvs:lean-specify` | Generate Lean spec skeleton with `@[progress]` theorem pattern |
 | `/fvs:lean-verify` | Attempt proof using domain tactics (progress, simp, ring, omega) |
+| `/fvs:lean-simplify` | Simplify and golf verified proofs (dead code removal, simp sharpening, tactic golf) |
 
 ---
 
 ## How It Works
 
-FVS follows a four-stage workflow. Each stage builds on the previous.
+FVS follows a five-stage workflow. Each stage builds on the previous.
 
 ### 1. Map
 
@@ -135,6 +136,10 @@ FVS follows a four-stage workflow. Each stage builds on the previous.
 ### 4. Verify
 
 `/fvs:lean-verify <function>` — Attempt to prove the specification. For Lean 4: uses domain-specific tactics (`progress`, `simp`, `ring`, `field_simp`, `omega`). Reports proof status and remaining goals if incomplete.
+
+### 5. Simplify
+
+`/fvs:lean-simplify <spec_path>` — Simplify and golf verified proofs. Applies tiered heuristics (dead code removal, simp sharpening, tactic golf, smart automation) while verifying compilation after every change. Three modes: safe, balanced (default), and aggressive.
 
 ---
 
