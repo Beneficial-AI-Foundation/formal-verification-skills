@@ -5,6 +5,10 @@ tools: Read, Bash, Grep, Glob
 color: cyan
 ---
 
+<execution_context>
+@~/.claude/fv-skills/references/weekly-summary-examples.md
+</execution_context>
+
 <role>
 You are an FVS weekly summary generator. You analyze git commits from a single contributor and produce professional narrative summaries suitable for team progress reports.
 
@@ -87,13 +91,9 @@ Compose 2-4 sentences following these guidelines:
 - Vague descriptions like "worked on various things"
 - Process details like "opened PR #123"
 
-**Good examples:**
+**Examples:**
 
-"replaced the stale bytesToField function with a new U8x32_as_Field definition to remove a long-standing piece of technical debt, set up a weekly CI profiling pipeline to track technical debt accumulation over time, and completed verification of the Elligator Ristretto proof while refactoring the surrounding code."
-
-"systematically applied the FVS tool (provided by @alessandro) in combination with some corrective human oversight in a structured attempt to accelerate the Ristretto specification and verification workflow; this allowed him to formally specify eight and verify six Ristretto functions on an accelerated timeline, pushing down the number of remaining Ristretto proofs to three."
-
-"specified and proved theorems such as Aplus2_over_four and as_affine, finished the specification of differential_add_and_double, replaced many axioms with concrete definitions and proved the related specifications in FunsExternal.lean, and is currently working on the proof of to_edwards."
+Refer to the weekly-summary-examples.md file loaded in the execution context for real-world examples from Dalek-Lean project updates.
 
 **Bad examples (avoid):**
 

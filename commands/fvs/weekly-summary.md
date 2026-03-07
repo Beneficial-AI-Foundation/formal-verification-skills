@@ -19,6 +19,7 @@ Output: A formatted markdown report written to the specified file or printed to 
 
 <execution_context>
 @~/.claude/fv-skills/workflows/weekly-summary.md
+@~/.claude/fv-skills/references/weekly-summary-examples.md
 @~/.claude/fv-skills/references/ui-brand.md
 </execution_context>
 
@@ -137,17 +138,13 @@ Analyze the commits above and generate a 2-4 sentence professional narrative sum
 6. Emphasize outcomes: what was completed, what was enabled, what was improved
 7. Use professional technical writing style without excessive praise
 
-Examples of good summaries:
-- 'replaced the stale bytesToField function with a new U8x32_as_Field definition to remove a long-standing piece of technical debt, set up a weekly CI profiling pipeline to track technical debt accumulation over time, and completed verification of the Elligator Ristretto proof while refactoring the surrounding code'
-- 'systematically applied the FVS tool in combination with corrective human oversight to accelerate the Ristretto specification and verification workflow; this allowed formal specification of eight and verification of six Ristretto functions on an accelerated timeline'
-- 'specified and proved theorems such as Aplus2_over_four and as_affine, finished the specification of differential_add_and_double, and replaced many axioms with concrete definitions'
+For real-world examples of good summaries, refer to the examples in the execution context (@weekly-summary-examples.md).
 
 Return your summary starting with ## SUMMARY COMPLETE
 </instructions>",
   subagent_type="fvs-weekly-summary",
   description="Weekly summary for {author_name}"
 )
-```
 
 Wait for each agent to complete. Collect all summaries.
 

@@ -1,6 +1,6 @@
 {
   "name": "fv-skills-baif",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Formal verification skills for Claude Code, OpenCode, and Gemini. Rust -> Lean 4 via Aeneas.",
   "bin": {
     "fv-skills-baif": "bin/install.js"
