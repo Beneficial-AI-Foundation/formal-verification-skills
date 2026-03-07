@@ -8,6 +8,10 @@ const path = require('path');
 const os = require('os');
 const { execSync } = require('child_process');
 
+// Module-level constants (computed once per invocation)
+const homeDir = os.homedir();
+const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(homeDir, '.claude');
+
 // Read JSON from stdin
 let input = '';
 // Timeout guard: if stdin doesn't close within 3s, exit silently.
@@ -41,9 +45,6 @@ process.stdin.on('end', () => {
  * Returns the path if found, null otherwise.
  */
 function findGsdStatusline() {
-  const homeDir = os.homedir();
-  const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(homeDir, '.claude');
-
   const candidates = [
     // Global install (most common)
     path.join(claudeDir, 'hooks', 'gsd-statusline.js'),
@@ -53,7 +54,8 @@ function findGsdStatusline() {
 
   for (const candidate of candidates) {
     try {
-      if (fs.existsSync(candidate)) return candidate;
+      fs.accessSync(candidate);
+      return candidate;
     } catch (e) {}
   }
   return null;
@@ -64,23 +66,24 @@ function findGsdStatusline() {
  * Returns a short description or empty string.
  */
 function detectFvsState() {
-  try {
-    const cwd = process.cwd();
-    const codemap = path.join(cwd, '.formalising', 'CODEMAP.md');
-    const continueHere = path.join(cwd, '.formalising', '.continue-here.md');
+  const cwd = process.cwd();
+  const continueHere = path.join(cwd, '.formalising', 'fv-plans', '.continue-here.md');
+  const codemap = path.join(cwd, '.formalising', 'CODEMAP.md');
 
-    if (fs.existsSync(codemap) || fs.existsSync(continueHere)) {
-      // Try to extract current verification target from .continue-here.md
-      if (fs.existsSync(continueHere)) {
-        try {
-          const content = fs.readFileSync(continueHere, 'utf8');
-          const targetMatch = content.match(/(?:target|function|verifying)[:\s]+(\S+)/i);
-          if (targetMatch) return `verifying ${targetMatch[1]}`;
-        } catch (e) {}
-      }
-      return 'formalising';
-    }
+  // Try .continue-here.md first (more specific)
+  try {
+    const content = fs.readFileSync(continueHere, 'utf8');
+    const targetMatch = content.match(/(?:target|function|verifying)[:\s]+(\S+)/i);
+    if (targetMatch) return `verifying ${targetMatch[1]}`;
+    return 'formalising';
   } catch (e) {}
+
+  // Fall back to CODEMAP existence
+  try {
+    fs.accessSync(codemap);
+    return 'formalising';
+  } catch (e) {}
+
   return '';
 }
 
@@ -148,7 +151,7 @@ function renderStandalone(data) {
 
     // Build progress bar (10 segments)
     const filled = Math.floor(used / 10);
-    const bar = '\u2588'.repeat(filled) + '\u2591'.repeat(10 - filled);
+    const bar = '█'.repeat(filled) + '░'.repeat(10 - filled);
 
     // Color based on usable context thresholds
     if (used < 50) {
@@ -158,17 +161,14 @@ function renderStandalone(data) {
     } else if (used < 80) {
       ctx = ` \x1b[38;5;208m${bar} ${used}%\x1b[0m`;
     } else {
-      ctx = ` \x1b[5;31m\u{1F480} ${bar} ${used}%\x1b[0m`;
+      ctx = ` \x1b[5;31m💀 ${bar} ${used}%\x1b[0m`;
     }
   }
 
   // Current task from todos
   let task = '';
-  const homeDir = os.homedir();
-  // Respect CLAUDE_CONFIG_DIR for custom config directory setups
-  const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(homeDir, '.claude');
   const todosDir = path.join(claudeDir, 'todos');
-  if (session && fs.existsSync(todosDir)) {
+  if (session) {
     try {
       const files = fs.readdirSync(todosDir)
         .filter(f => f.startsWith(session) && f.includes('-agent-') && f.endsWith('.json'))
@@ -176,28 +176,21 @@ function renderStandalone(data) {
         .sort((a, b) => b.mtime - a.mtime);
 
       if (files.length > 0) {
-        try {
-          const todos = JSON.parse(fs.readFileSync(path.join(todosDir, files[0].name), 'utf8'));
-          const inProgress = todos.find(t => t.status === 'in_progress');
-          if (inProgress) task = inProgress.activeForm || '';
-        } catch (e) {}
+        const todos = JSON.parse(fs.readFileSync(path.join(todosDir, files[0].name), 'utf8'));
+        const inProgress = todos.find(t => t.status === 'in_progress');
+        if (inProgress) task = inProgress.activeForm || '';
       }
-    } catch (e) {
-      // Silently fail on file system errors - don't break statusline
-    }
+    } catch (e) {}
   }
 
   // FVS update available?
   let fvsUpdate = '';
-  const cacheFile = path.join(claudeDir, 'cache', 'fvs-update-check.json');
-  if (fs.existsSync(cacheFile)) {
-    try {
-      const cache = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
-      if (cache.update_available) {
-        fvsUpdate = '\x1b[33m\u2b06 /fvs:update\x1b[0m \u2502 ';
-      }
-    } catch (e) {}
-  }
+  try {
+    const cache = JSON.parse(fs.readFileSync(path.join(claudeDir, 'cache', 'fvs-update-check.json'), 'utf8'));
+    if (cache.update_available) {
+      fvsUpdate = '\x1b[33m\u2b06 /fvs:update\x1b[0m \u2502 ';
+    }
+  } catch (e) {}
 
   // FVS verification state
   const fvsState = detectFvsState();
