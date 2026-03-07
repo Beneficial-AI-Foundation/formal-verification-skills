@@ -57,6 +57,43 @@ function getDirName(runtime) {
 }
 
 /**
+ * Convert a pathPrefix (which uses absolute paths for global installs) to a
+ * $HOME-relative form for replacing $HOME/.claude/ references in bash code blocks.
+ * Preserves $HOME as a shell variable so paths remain portable across machines.
+ */
+function toHomePrefix(pathPrefix) {
+  const home = os.homedir().replace(/\\/g, '/');
+  const normalized = pathPrefix.replace(/\\/g, '/');
+  if (normalized.startsWith(home)) {
+    return '$HOME' + normalized.slice(home.length);
+  }
+  // For relative paths or paths not under $HOME, return as-is
+  return normalized;
+}
+
+/**
+ * Get the config directory path relative to home directory for a runtime
+ * Used for templating hooks that use path.join(homeDir, '<configDir>', ...)
+ * @param {string} runtime - 'claude', 'opencode', 'gemini', or 'codex'
+ * @param {boolean} isGlobal - Whether this is a global install
+ */
+function getConfigDirFromHome(runtime, isGlobal) {
+  if (!isGlobal) {
+    // Local installs use the same dir name pattern
+    return `'${getDirName(runtime)}'`;
+  }
+  // Global installs - OpenCode uses XDG path structure
+  if (runtime === 'opencode') {
+    // OpenCode: ~/.config/opencode -> '.config', 'opencode'
+    // Return as comma-separated for path.join() replacement
+    return "'.config', 'opencode'";
+  }
+  if (runtime === 'gemini') return "'.gemini'";
+  if (runtime === 'codex') return "'.codex'";
+  return "'.claude'";
+}
+
+/**
  * Get the global config directory for OpenCode
  * OpenCode follows XDG Base Directory spec and uses ~/.config/opencode/
  * Priority: OPENCODE_CONFIG_DIR > dirname(OPENCODE_CONFIG) > XDG_CONFIG_HOME/opencode > ~/.config/opencode
@@ -390,7 +427,16 @@ function convertClaudeToGeminiAgent(content) {
   }
 
   const newFrontmatter = newLines.join('\n').trim();
-  return `---\n${newFrontmatter}\n---${stripSubTags(body)}`;
+
+  // Escape ${VAR} patterns in agent body for Gemini CLI compatibility.
+  // Gemini's templateString() treats all ${word} patterns as template variables
+  // and throws "Template validation failed: Missing required input parameters"
+  // when they can't be resolved. FVS agents use ${PHASE}, ${PLAN}, etc. as
+  // shell variables in bash code blocks — convert to $VAR (no braces) which
+  // is equivalent bash and invisible to Gemini's /\$\{(\w+)\}/g regex.
+  const escapedBody = body.replace(/\$\{(\w+)\}/g, '$$$1');
+
+  return `---\n${newFrontmatter}\n---${stripSubTags(escapedBody)}`;
 }
 
 function convertClaudeToOpencodeFrontmatter(content) {
@@ -401,8 +447,9 @@ function convertClaudeToOpencodeFrontmatter(content) {
   convertedContent = convertedContent.replace(/\bTodoWrite\b/g, 'todowrite');
   // Replace /fvs:command with /fvs-command for opencode (flat command structure)
   convertedContent = convertedContent.replace(/\/fvs:/g, '/fvs-');
-  // Replace ~/.claude with ~/.config/opencode (OpenCode's correct config location)
+  // Replace ~/.claude and $HOME/.claude with OpenCode's config location
   convertedContent = convertedContent.replace(/~\/\.claude\b/g, '~/.config/opencode');
+  convertedContent = convertedContent.replace(/\$HOME\/\.claude\b/g, '$HOME/.config/opencode');
 
   // Check if content has frontmatter
   if (!convertedContent.startsWith('---')) {
@@ -478,7 +525,7 @@ function convertClaudeToOpencodeFrontmatter(content) {
       }
     }
 
-    // Keep other fields (including name: which opencode ignores)
+    // Keep other fields
     if (!inAllowedTools) {
       newLines.push(line);
     }
@@ -805,6 +852,7 @@ function mergeCodexConfig(configPath, fvsBlock) {
     if (before) {
       // Strip any FVS-managed sections that leaked above the marker
       before = before.replace(/^\[agents\.fvs-[^\]]+\]\n(?:(?!\[)[^\n]*\n?)*/gm, '');
+      before = before.replace(/^\[agents\]\n(?:(?!\[)[^\n]*\n?)*/m, '');
       before = before.replace(/\n{3,}/g, '\n\n').trimEnd();
 
       // Re-inject feature keys if user has [features] above the marker
@@ -867,8 +915,9 @@ function installCodexConfig(targetDir, agentsSrc) {
 
   for (const file of agentEntries) {
     let content = fs.readFileSync(path.join(agentsSrc, file), 'utf8');
-    // Replace .claude paths before generating TOML (source files use ~/.claude)
+    // Replace .claude paths before generating TOML (source files use ~/.claude and $HOME/.claude)
     content = content.replace(/~\/\.claude\//g, codexPathPrefix);
+    content = content.replace(/\$HOME\/\.claude\//g, toHomePrefix(codexPathPrefix));
     const { frontmatter } = extractFrontmatterAndBody(content);
     const name = extractFrontmatterField(frontmatter, 'name') || file.replace('.md', '');
     const description = extractFrontmatterField(frontmatter, 'description') || '';
@@ -937,11 +986,14 @@ function copyCommandsAsCodexSkills(srcDir, skillsDir, prefix, pathPrefix, runtim
 
       let content = fs.readFileSync(srcPath, 'utf8');
       const globalClaudeRegex = /~\/\.claude\//g;
+      const globalClaudeHomeRegex = /\$HOME\/\.claude\//g;
       const localClaudeRegex = /\.\/\.claude\//g;
       const codexDirRegex = /~\/\.codex\//g;
       content = content.replace(globalClaudeRegex, pathPrefix);
+      content = content.replace(globalClaudeHomeRegex, toHomePrefix(pathPrefix));
       content = content.replace(localClaudeRegex, `./${getDirName(runtime)}/`);
       content = content.replace(codexDirRegex, pathPrefix);
+
       content = convertClaudeCommandToCodexSkill(content, skillName);
 
       fs.writeFileSync(path.join(skillDir, 'SKILL.md'), content);
@@ -994,10 +1046,15 @@ function copyFlattenedCommands(srcDir, destDir, prefix, pathPrefix, runtime) {
       const destPath = path.join(destDir, destName);
 
       let content = fs.readFileSync(srcPath, 'utf8');
-      const claudeDirRegex = /~\/\.claude\//g;
+      const globalClaudeRegex = /~\/\.claude\//g;
+      const globalClaudeHomeRegex = /\$HOME\/\.claude\//g;
+      const localClaudeRegex = /\.\/\.claude\//g;
       const opencodeDirRegex = /~\/\.opencode\//g;
-      content = content.replace(claudeDirRegex, pathPrefix);
+      content = content.replace(globalClaudeRegex, pathPrefix);
+      content = content.replace(globalClaudeHomeRegex, toHomePrefix(pathPrefix));
+      content = content.replace(localClaudeRegex, `./${getDirName(runtime)}/`);
       content = content.replace(opencodeDirRegex, pathPrefix);
+
       content = convertClaudeToOpencodeFrontmatter(content);
 
       fs.writeFileSync(destPath, content);
@@ -1013,7 +1070,7 @@ function copyFlattenedCommands(srcDir, destDir, prefix, pathPrefix, runtime) {
  * @param {string} pathPrefix - Path prefix for file references
  * @param {string} runtime - Target runtime ('claude', 'opencode', 'gemini', 'codex')
  */
-function copyWithPathReplacement(srcDir, destDir, pathPrefix, runtime) {
+function copyWithPathReplacement(srcDir, destDir, pathPrefix, runtime, isCommand = false) {
   const isOpencode = runtime === 'opencode';
   const isCodex = runtime === 'codex';
   const dirName = getDirName(runtime);
@@ -1031,12 +1088,16 @@ function copyWithPathReplacement(srcDir, destDir, pathPrefix, runtime) {
     const destPath = path.join(destDir, entry.name);
 
     if (entry.isDirectory()) {
-      copyWithPathReplacement(srcPath, destPath, pathPrefix, runtime);
+      copyWithPathReplacement(srcPath, destPath, pathPrefix, runtime, isCommand);
     } else if (entry.name.endsWith('.md')) {
-      // Always replace ~/.claude/ as it is the source of truth in the repo
+      // Replace ~/.claude/ and $HOME/.claude/ and ./.claude/ with runtime-appropriate paths
       let content = fs.readFileSync(srcPath, 'utf8');
-      const claudeDirRegex = /~\/\.claude\//g;
-      content = content.replace(claudeDirRegex, pathPrefix);
+      const globalClaudeRegex = /~\/\.claude\//g;
+      const globalClaudeHomeRegex = /\$HOME\/\.claude\//g;
+      const localClaudeRegex = /\.\/\.claude\//g;
+      content = content.replace(globalClaudeRegex, pathPrefix);
+      content = content.replace(globalClaudeHomeRegex, toHomePrefix(pathPrefix));
+      content = content.replace(localClaudeRegex, `./${dirName}/`);
 
       // Convert frontmatter for opencode compatibility
       if (isOpencode) {
@@ -1046,12 +1107,16 @@ function copyWithPathReplacement(srcDir, destDir, pathPrefix, runtime) {
         content = convertClaudeToCodexMarkdown(content);
         fs.writeFileSync(destPath, content);
       } else if (runtime === 'gemini') {
-        // Convert to TOML for Gemini (strip <sub> tags -- terminals can't render subscript)
-        content = stripSubTags(content);
-        const tomlContent = convertClaudeToGeminiToml(content);
-        // Replace extension with .toml
-        const tomlPath = destPath.replace(/\.md$/, '.toml');
-        fs.writeFileSync(tomlPath, tomlContent);
+        if (isCommand) {
+          // Convert to TOML for Gemini (strip <sub> tags — terminals can't render subscript)
+          content = stripSubTags(content);
+          const tomlContent = convertClaudeToGeminiToml(content);
+          // Replace extension with .toml
+          const tomlPath = destPath.replace(/\.md$/, '.toml');
+          fs.writeFileSync(tomlPath, tomlContent);
+        } else {
+          fs.writeFileSync(destPath, content);
+        }
       } else {
         fs.writeFileSync(destPath, content);
       }
@@ -1059,64 +1124,6 @@ function copyWithPathReplacement(srcDir, destDir, pathPrefix, runtime) {
       fs.copyFileSync(srcPath, destPath);
     }
   }
-}
-
-/**
- * Clean up orphaned files from previous FVS versions
- */
-function cleanupOrphanedFiles(configDir) {
-  const orphanedFiles = [
-    // Empty scaffold -- add entries here as FVS evolves
-  ];
-
-  for (const relPath of orphanedFiles) {
-    const fullPath = path.join(configDir, relPath);
-    if (fs.existsSync(fullPath)) {
-      fs.unlinkSync(fullPath);
-      console.log(`  ${green}✓${reset} Removed orphaned ${relPath}`);
-    }
-  }
-}
-
-/**
- * Clean up orphaned hook registrations from settings.json
- */
-function cleanupOrphanedHooks(settings) {
-  const orphanedHookPatterns = [
-    // Empty scaffold -- add entries here as FVS evolves
-  ];
-
-  let cleanedHooks = false;
-
-  // Check all hook event types (Stop, SessionStart, etc.)
-  if (settings.hooks && orphanedHookPatterns.length > 0) {
-    for (const eventType of Object.keys(settings.hooks)) {
-      const hookEntries = settings.hooks[eventType];
-      if (Array.isArray(hookEntries)) {
-        // Filter out entries that contain orphaned hooks
-        const filtered = hookEntries.filter(entry => {
-          if (entry.hooks && Array.isArray(entry.hooks)) {
-            // Check if any hook in this entry matches orphaned patterns
-            const hasOrphaned = entry.hooks.some(h =>
-              h.command && orphanedHookPatterns.some(pattern => h.command.includes(pattern))
-            );
-            if (hasOrphaned) {
-              cleanedHooks = true;
-              return false;  // Remove this entry
-            }
-          }
-          return true;  // Keep this entry
-        });
-        settings.hooks[eventType] = filtered;
-      }
-    }
-  }
-
-  if (cleanedHooks) {
-    console.log(`  ${green}✓${reset} Removed orphaned hook registrations`);
-  }
-
-  return settings;
 }
 
 /**
@@ -1275,7 +1282,25 @@ function uninstall(isGlobal, runtime = 'claude') {
     }
   }
 
-  // 5. Clean up settings.json (remove FVS hooks and statusline) -- skip for Codex
+  // 5. Remove FVS package.json (CommonJS mode marker)
+  if (!isCodex) {
+    const pkgJsonPath = path.join(targetDir, 'package.json');
+    if (fs.existsSync(pkgJsonPath)) {
+      try {
+        const content = fs.readFileSync(pkgJsonPath, 'utf8').trim();
+        // Only remove if it's our minimal CommonJS marker
+        if (content === '{"type":"commonjs"}') {
+          fs.unlinkSync(pkgJsonPath);
+          removedCount++;
+          console.log(`  ${green}✓${reset} Removed FVS package.json`);
+        }
+      } catch (e) {
+        // Ignore read errors
+      }
+    }
+  }
+
+  // 6. Clean up settings.json (remove FVS hooks and statusline) -- skip for Codex
   if (!isCodex) {
     const settingsPath = path.join(targetDir, 'settings.json');
     if (fs.existsSync(settingsPath)) {
@@ -1377,12 +1402,77 @@ function uninstall(isGlobal, runtime = 'claude') {
 }
 
 /**
+ * Parse JSONC (JSON with Comments) by stripping comments and trailing commas.
+ * OpenCode supports JSONC format via jsonc-parser, so users may have comments.
+ * This is a lightweight inline parser to avoid adding dependencies.
+ */
+function parseJsonc(content) {
+  // Strip BOM if present
+  if (content.charCodeAt(0) === 0xFEFF) {
+    content = content.slice(1);
+  }
+
+  // Remove single-line and block comments while preserving strings
+  let result = '';
+  let inString = false;
+  let i = 0;
+  while (i < content.length) {
+    const char = content[i];
+    const next = content[i + 1];
+
+    if (inString) {
+      result += char;
+      // Handle escape sequences
+      if (char === '\\' && i + 1 < content.length) {
+        result += next;
+        i += 2;
+        continue;
+      }
+      if (char === '"') {
+        inString = false;
+      }
+      i++;
+    } else {
+      if (char === '"') {
+        inString = true;
+        result += char;
+        i++;
+      } else if (char === '/' && next === '/') {
+        // Skip single-line comment until end of line
+        while (i < content.length && content[i] !== '\n') {
+          i++;
+        }
+      } else if (char === '/' && next === '*') {
+        // Skip block comment
+        i += 2;
+        while (i < content.length - 1 && !(content[i] === '*' && content[i + 1] === '/')) {
+          i++;
+        }
+        i += 2; // Skip closing */
+      } else {
+        result += char;
+        i++;
+      }
+    }
+  }
+
+  // Remove trailing commas before } or ]
+  result = result.replace(/,(\s*[}\]])/g, '$1');
+
+  return JSON.parse(result);
+}
+
+/**
  * Configure OpenCode permissions to allow reading FVS reference docs
  * This prevents permission prompts when FVS accesses the fv-skills directory
+ * @param {boolean} isGlobal - Whether this is a global or local install
  */
-function configureOpencodePermissions() {
-  // OpenCode config file is at ~/.config/opencode/opencode.json
-  const opencodeConfigDir = getOpencodeGlobalDir();
+function configureOpencodePermissions(isGlobal = true) {
+  // For local installs, use ./.opencode/opencode.json
+  // For global installs, use ~/.config/opencode/opencode.json
+  const opencodeConfigDir = isGlobal
+    ? getOpencodeGlobalDir()
+    : path.join(process.cwd(), '.opencode');
   const configPath = path.join(opencodeConfigDir, 'opencode.json');
 
   // Ensure config directory exists
@@ -1392,10 +1482,14 @@ function configureOpencodePermissions() {
   let config = {};
   if (fs.existsSync(configPath)) {
     try {
-      config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      const content = fs.readFileSync(configPath, 'utf8');
+      config = parseJsonc(content);
     } catch (e) {
-      // Invalid JSON - start fresh but warn user
-      console.log(`  ${yellow}⚠${reset} opencode.json had invalid JSON, recreating`);
+      // Cannot parse - DO NOT overwrite user's config
+      console.log(`  ${yellow}⚠${reset} Could not parse opencode.json - skipping permission config`);
+      console.log(`    ${dim}Reason: ${e.message}${reset}`);
+      console.log(`    ${dim}Your config was NOT modified. Fix the syntax manually if needed.${reset}`);
+      return;
     }
   }
 
@@ -1409,7 +1503,7 @@ function configureOpencodePermissions() {
   const defaultConfigDir = path.join(os.homedir(), '.config', 'opencode');
   const fvsPath = opencodeConfigDir === defaultConfigDir
     ? '~/.config/opencode/fv-skills/*'
-    : `${opencodeConfigDir}/fv-skills/*`;
+    : `${opencodeConfigDir.replace(/\\/g, '/')}/fv-skills/*`;
 
   let modified = false;
 
@@ -1510,9 +1604,6 @@ function install(isGlobal, runtime = 'claude') {
   // Track installation failures
   const failures = [];
 
-  // Clean up orphaned files from previous versions
-  cleanupOrphanedFiles(targetDir);
-
   // OpenCode uses 'command/' (singular) with flat structure
   // Codex uses 'skills/' with skill directories
   // Claude Code & Gemini use 'commands/' (plural) with nested structure
@@ -1548,7 +1639,7 @@ function install(isGlobal, runtime = 'claude') {
 
     const fvsSrc = path.join(src, 'commands', 'fvs');
     const fvsDest = path.join(commandsDir, 'fvs');
-    copyWithPathReplacement(fvsSrc, fvsDest, pathPrefix, runtime);
+    copyWithPathReplacement(fvsSrc, fvsDest, pathPrefix, runtime, /* isCommand= */ true);
     if (verifyInstalled(fvsDest, 'commands/fvs')) {
       console.log(`  ${green}✓${reset} Installed commands/fvs`);
     } else {
@@ -1573,11 +1664,9 @@ function install(isGlobal, runtime = 'claude') {
     fs.mkdirSync(agentsDest, { recursive: true });
 
     // Remove old FVS agents (fvs-*.md) before copying new ones
-    if (fs.existsSync(agentsDest)) {
-      for (const file of fs.readdirSync(agentsDest)) {
-        if (file.startsWith('fvs-') && file.endsWith('.md')) {
-          fs.unlinkSync(path.join(agentsDest, file));
-        }
+    for (const file of fs.readdirSync(agentsDest)) {
+      if (file.startsWith('fvs-') && file.endsWith('.md')) {
+        fs.unlinkSync(path.join(agentsDest, file));
       }
     }
 
@@ -1586,9 +1675,9 @@ function install(isGlobal, runtime = 'claude') {
     for (const entry of agentEntries) {
       if (entry.isFile() && entry.name.endsWith('.md')) {
         let content = fs.readFileSync(path.join(agentsSrc, entry.name), 'utf8');
-        // Always replace ~/.claude/ as it is the source of truth in the repo
-        const dirRegex = /~\/\.claude\//g;
-        content = content.replace(dirRegex, pathPrefix);
+        // Replace ~/.claude/ and $HOME/.claude/ with runtime-appropriate paths
+        content = content.replace(/~\/\.claude\//g, pathPrefix);
+        content = content.replace(/\$HOME\/\.claude\//g, toHomePrefix(pathPrefix));
         // Convert frontmatter for runtime compatibility
         if (isOpencode) {
           content = convertClaudeToOpencodeFrontmatter(content);
@@ -1616,18 +1705,34 @@ function install(isGlobal, runtime = 'claude') {
     failures.push('VERSION');
   }
 
-  // Copy hooks from dist/ (bundled with dependencies) -- skip for Codex (no hook system)
   if (!isCodex) {
+    // Write package.json to force CommonJS mode for FVS scripts
+    // Prevents "require is not defined" errors when project has "type": "module"
+    // Node.js walks up looking for package.json - this stops inheritance from project
+    const pkgJsonDest = path.join(targetDir, 'package.json');
+    fs.writeFileSync(pkgJsonDest, '{"type":"commonjs"}\n');
+    console.log(`  ${green}✓${reset} Wrote package.json (CommonJS mode)`);
+
+    // Copy hooks from dist/ (bundled with dependencies)
+    // Template paths for the target runtime (replaces '.claude' with correct config dir)
     const hooksSrc = path.join(src, 'hooks', 'dist');
     if (fs.existsSync(hooksSrc)) {
       const hooksDest = path.join(targetDir, 'hooks');
       fs.mkdirSync(hooksDest, { recursive: true });
       const hookEntries = fs.readdirSync(hooksSrc);
+      const configDirReplacement = getConfigDirFromHome(runtime, isGlobal);
       for (const entry of hookEntries) {
         const srcFile = path.join(hooksSrc, entry);
         if (fs.statSync(srcFile).isFile()) {
           const destFile = path.join(hooksDest, entry);
-          fs.copyFileSync(srcFile, destFile);
+          // Template .js files to replace '.claude' with runtime-specific config dir
+          if (entry.endsWith('.js')) {
+            let content = fs.readFileSync(srcFile, 'utf8');
+            content = content.replace(/'\.claude'/g, configDirReplacement);
+            fs.writeFileSync(destFile, content);
+          } else {
+            fs.copyFileSync(srcFile, destFile);
+          }
         }
       }
       if (verifyInstalled(hooksDest, 'hooks')) {
@@ -1654,7 +1759,7 @@ function install(isGlobal, runtime = 'claude') {
   // Configure statusline and hooks in settings.json
   // Gemini shares same hook system as Claude Code for now
   const settingsPath = path.join(targetDir, 'settings.json');
-  const settings = cleanupOrphanedHooks(readSettings(settingsPath));
+  const settings = readSettings(settingsPath);
   const statuslineCommand = isGlobal
     ? buildHookCommand(targetDir, 'fvs-statusline.js')
     : 'node ' + dirName + '/hooks/fvs-statusline.js';
@@ -1705,7 +1810,7 @@ function install(isGlobal, runtime = 'claude') {
 /**
  * Apply statusline config, then print completion message
  */
-function finishInstall(settingsPath, settings, statuslineCommand, shouldInstallStatusline, runtime = 'claude') {
+function finishInstall(settingsPath, settings, statuslineCommand, shouldInstallStatusline, runtime = 'claude', isGlobal = true) {
   const isOpencode = runtime === 'opencode';
   const isCodex = runtime === 'codex';
 
@@ -1724,7 +1829,7 @@ function finishInstall(settingsPath, settings, statuslineCommand, shouldInstallS
 
   // Configure OpenCode permissions
   if (isOpencode) {
-    configureOpencodePermissions();
+    configureOpencodePermissions(isGlobal);
   }
 
   let program = 'Claude Code';
@@ -1911,32 +2016,32 @@ function installAllRuntimes(runtimes, isGlobal, isInteractive) {
 
     handleStatusline(primaryResult.settings, isInteractive, (shouldInstallStatusline) => {
       if (claudeResult) {
-        finishInstall(claudeResult.settingsPath, claudeResult.settings, claudeResult.statuslineCommand, shouldInstallStatusline, 'claude');
+        finishInstall(claudeResult.settingsPath, claudeResult.settings, claudeResult.statuslineCommand, shouldInstallStatusline, 'claude', isGlobal);
       }
       if (geminiResult) {
-         finishInstall(geminiResult.settingsPath, geminiResult.settings, geminiResult.statuslineCommand, shouldInstallStatusline, 'gemini');
+         finishInstall(geminiResult.settingsPath, geminiResult.settings, geminiResult.statuslineCommand, shouldInstallStatusline, 'gemini', isGlobal);
       }
 
       const opencodeResult = results.find(r => r.runtime === 'opencode');
       if (opencodeResult) {
-        finishInstall(opencodeResult.settingsPath, opencodeResult.settings, opencodeResult.statuslineCommand, false, 'opencode');
+        finishInstall(opencodeResult.settingsPath, opencodeResult.settings, opencodeResult.statuslineCommand, false, 'opencode', isGlobal);
       }
 
       const codexResult = results.find(r => r.runtime === 'codex');
       if (codexResult) {
-        finishInstall(codexResult.settingsPath, codexResult.settings, codexResult.statuslineCommand, false, 'codex');
+        finishInstall(codexResult.settingsPath, codexResult.settings, codexResult.statuslineCommand, false, 'codex', isGlobal);
       }
     });
   } else {
     // Only OpenCode and/or Codex (no statusline runtimes)
     const opencodeResult = results.find(r => r.runtime === 'opencode');
     if (opencodeResult) {
-      finishInstall(opencodeResult.settingsPath, opencodeResult.settings, opencodeResult.statuslineCommand, false, 'opencode');
+      finishInstall(opencodeResult.settingsPath, opencodeResult.settings, opencodeResult.statuslineCommand, false, 'opencode', isGlobal);
     }
 
     const codexResult = results.find(r => r.runtime === 'codex');
     if (codexResult) {
-      finishInstall(codexResult.settingsPath, codexResult.settings, codexResult.statuslineCommand, false, 'codex');
+      finishInstall(codexResult.settingsPath, codexResult.settings, codexResult.statuslineCommand, false, 'codex', isGlobal);
     }
   }
 }
