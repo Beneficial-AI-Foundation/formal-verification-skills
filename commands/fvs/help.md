@@ -97,6 +97,18 @@ Generate detailed natural-language explanation of a function.
 
 Usage: `/fvs:natural-language scalar_mul`
 
+**`/fvs:weekly-summary [days] [output_file]`**
+Generate weekly progress report from git commits.
+
+- Analyzes git commits from the last N days (default: 7)
+- Groups commits by author and generates narrative summaries
+- Produces professional team update format
+- Writes to file or prints to console
+
+Usage: `/fvs:weekly-summary`
+Usage: `/fvs:weekly-summary 14`
+Usage: `/fvs:weekly-summary 7 weekly-report.md`
+
 **`/fvs:update`**
 Update FVS to latest version.
 
