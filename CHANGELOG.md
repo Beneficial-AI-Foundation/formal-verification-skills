@@ -7,9 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ## [1.1.4] - 2026-03-09
 
 ### Fixed
-- Codex install no longer creates `skills/fvs-*/SKILL.md` — uses `commands/fvs/` exclusively
-- Installer cleans up old `skills/fvs-*` from previous Codex installs (<= 1.1.3)
-- Removed dead Codex skill adapter code (convertClaudeCommandToCodexSkill, etc.)
+- Codex install uses `skills/fvs-*/SKILL.md` only (removed incorrect `commands/fvs/`), matching GSD pattern
+- Codex launch message shows `$fvs-help` (skill invocation syntax)
 
 ## [1.1.3] - 2026-03-09
 
