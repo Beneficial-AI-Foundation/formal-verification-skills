@@ -2,28 +2,49 @@
 Orchestrate self-update of the FVS plugin.
 
 Checks the currently installed version against the latest published npm version,
-shows a comparison, and runs the installer to update if a newer version is available.
+fetches and displays changelog entries for what changed, obtains user confirmation,
+and runs the installer to update if a newer version is available.
 
-Output: Updated FVS installation or confirmation that the current version is latest.
+Output: Updated FVS installation with changelog display, or confirmation that the current version is latest.
 </purpose>
 
 <process>
 
 <step name="check_current_version">
-Read the installed VERSION file.
+Detect whether FVS is installed locally or globally by checking both locations:
 
 ```bash
-cat ~/.claude/fv-skills/VERSION 2>/dev/null || cat .claude/fv-skills/VERSION 2>/dev/null
+# Check local first (takes priority)
+if [ -f "./.claude/fv-skills/VERSION" ]; then
+  INSTALLED=$(cat "./.claude/fv-skills/VERSION")
+  echo "$INSTALLED"
+  echo "LOCAL"
+elif [ -f "$HOME/.claude/fv-skills/VERSION" ]; then
+  INSTALLED=$(cat "$HOME/.claude/fv-skills/VERSION")
+  echo "$INSTALLED"
+  echo "GLOBAL"
+else
+  echo "UNKNOWN"
+fi
 ```
 
-If VERSION file not found, FVS may not be installed or is installed from source.
-Report the issue and suggest reinstalling:
-```
-FVS >> VERSION FILE NOT FOUND
+Parse output:
+- If last line is "LOCAL": installed version is first line, use `--local` flag for update
+- If last line is "GLOBAL": installed version is first line, use `--global` flag for update
+- If "UNKNOWN": proceed to install step (treat as version 0.0.0)
 
-Cannot determine installed version.
-Run: npx fv-skills-baif to install or reinstall.
+**If VERSION file missing:**
 ```
+## FVS Update
+
+**Installed version:** Unknown
+
+Your installation doesn't include version tracking.
+
+Running fresh install...
+```
+
+Proceed to install step (treat as version 0.0.0 for comparison).
 </step>
 
 <step name="check_available_version">
@@ -33,60 +54,139 @@ Query npm for the latest published version.
 npm view fv-skills-baif version 2>/dev/null
 ```
 
-If npm is unreachable or the package is not published yet, report:
+**If npm check fails:**
 ```
-FVS >> CANNOT CHECK UPDATES
+Couldn't check for updates (offline or npm unavailable).
 
-npm registry unreachable or package not yet published.
-Current version: {current}
+To update manually: `npx fv-skills-baif --global`
 ```
+
+STOP here if npm unavailable.
 </step>
 
 <step name="compare_versions">
-Compare current and available versions.
+Compare installed vs latest:
 
-**If current >= available:**
+**If installed == latest:**
 ```
-FVS >> UP TO DATE
+## FVS Update
 
-Installed: {current}
-Latest:    {available}
+**Installed:** X.Y.Z
+**Latest:** X.Y.Z
 
-No update needed.
-```
-Stop here.
-
-**If available > current:**
-```
-FVS >> UPDATE AVAILABLE
-
-Installed: {current}
-Latest:    {available}
-
-Proceed with update? (yes/no)
+You're already on the latest version.
 ```
 
-Wait for user confirmation before proceeding.
+STOP here if already up to date.
+
+**If installed > latest:**
+```
+## FVS Update
+
+**Installed:** X.Y.Z
+**Latest:** A.B.C
+
+You're ahead of the latest release (development version?).
+```
+
+STOP here if ahead.
+</step>
+
+<step name="show_changes_and_confirm">
+**If update available**, fetch and show what's new BEFORE updating:
+
+1. Fetch changelog from GitHub:
+
+```bash
+CHANGELOG=$(curl -sL "https://raw.githubusercontent.com/Beneficial-AI-Foundation/formal-verification-skills/main/CHANGELOG.md")
+```
+
+2. Extract entries between installed and latest versions:
+
+```bash
+# CHANGELOG uses headers like: ## [1.1.0] - 2026-03-09
+# Extract everything from latest version header up to (but excluding) installed version header
+echo "$CHANGELOG" | sed -n "/^## \[${LATEST}\]/,/^## \[${INSTALLED}\]/p" | sed '$d'
+```
+
+3. If curl fails or extraction is empty, use fallback:
+
+```
+Changelog not available -- see GitHub releases for details.
+```
+
+4. Display preview and ask for confirmation:
+
+```
+## FVS Update Available
+
+**Installed:** 1.0.0
+**Latest:** 1.1.0
+
+### What's New
+────────────────────────────────────────────────────────────
+
+{extracted changelog entries, or fallback message}
+
+────────────────────────────────────────────────────────────
+
+The installer performs a clean install of FVS folders:
+- commands/fvs/ will be wiped and replaced
+- fv-skills/ will be wiped and replaced
+- agents/fvs-* files will be replaced
+
+(Paths are relative to your install location: ~/.claude/ for global, ./.claude/ for local)
+
+Your custom files are preserved:
+- Custom commands not in commands/fvs/ ✓
+- Custom agents not prefixed with fvs- ✓
+- Your CLAUDE.md files ✓
+```
+
+Use AskUserQuestion:
+- Question: "Proceed with update?"
+- Options:
+  - "Yes, update now"
+  - "No, cancel"
+
+**If user cancels:** STOP here.
 </step>
 
 <step name="run_update">
-Run the installer to update.
+Run the update using the install type detected in step 1:
 
+**If LOCAL install:**
 ```bash
-npx fv-skills-baif
+npx fv-skills-baif@latest --local
 ```
 
-The installer handles:
-- Clean wipe of all fvs-owned files (fvs-* prefix)
-- Fresh copy of all content files
-- settings.json merge (additive hooks, statusline conflict detection)
+**If GLOBAL install (or unknown):**
+```bash
+npx fv-skills-baif@latest --global
+```
+
+Capture output. If install fails, show error and STOP.
+
+Clear the update cache so statusline indicator disappears:
+
+```bash
+# Clear update cache across all runtime directories
+for dir in .claude .config/opencode .opencode .gemini; do
+  rm -f "./$dir/cache/fvs-update-check.json"
+  rm -f "$HOME/$dir/cache/fvs-update-check.json"
+done
+```
 </step>
 
 <step name="verify_update">
-Confirm the update succeeded.
+Confirm the update succeeded using local-first detection:
 
 ```bash
-cat ~/.claude/fv-skills/VERSION 2>/dev/null || cat .claude/fv-skills/VERSION 2>/dev/null
+if [ -f "./.claude/fv-skills/VERSION" ]; then
+  cat "./.claude/fv-skills/VERSION"
+elif [ -f "$HOME/.claude/fv-skills/VERSION" ]; then
+  cat "$HOME/.claude/fv-skills/VERSION"
+fi
 ```
 
 **Report result:**
@@ -96,17 +196,20 @@ FVS >> UPDATED
 Previous: {old_version}
 Current:  {new_version}
 
-Update complete.
+Restart Claude Code to pick up the new commands.
 ```
 </step>
 
 </process>
 
 <success_criteria>
-- Current version read from installed VERSION file
+- Installed version read correctly (local-first-then-global)
 - Latest version checked via npm registry
-- Version comparison displayed clearly
-- User confirms before update proceeds
-- Installer runs and completes without error
-- New version confirmed after update
+- Update skipped if already current
+- Changelog fetched from GitHub and displayed BEFORE update
+- Clean install warning shown
+- User confirmation obtained via AskUserQuestion
+- Installer runs with correct flag (--local or --global)
+- Update cache cleared after success
+- Restart reminder shown
 </success_criteria>

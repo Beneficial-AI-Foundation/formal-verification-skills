@@ -94,9 +94,27 @@ STOP here if ahead.
 <step name="show_changes_and_confirm">
 **If update available**, fetch and show what's new BEFORE updating:
 
-1. Fetch changelog (conditional -- may not exist for new project)
-2. Extract entries between installed and latest versions
-3. Display preview and ask for confirmation:
+1. Fetch changelog from GitHub:
+
+```bash
+CHANGELOG=$(curl -sL "https://raw.githubusercontent.com/Beneficial-AI-Foundation/formal-verification-skills/main/CHANGELOG.md")
+```
+
+2. Extract entries between installed and latest versions:
+
+```bash
+# CHANGELOG uses headers like: ## [1.1.0] - 2026-03-09
+# Extract everything from latest version header up to (but excluding) installed version header
+echo "$CHANGELOG" | sed -n "/^## \[${LATEST}\]/,/^## \[${INSTALLED}\]/p" | sed '$d'
+```
+
+3. If curl fails or extraction is empty, use fallback:
+
+```
+Changelog not available -- see GitHub releases for details.
+```
+
+4. Display preview and ask for confirmation:
 
 ```
 ## FVS Update Available
@@ -107,7 +125,7 @@ STOP here if ahead.
 ### What's New
 ────────────────────────────────────────────────────────────
 
-[changelog entries if available]
+{extracted changelog entries, or fallback message}
 
 ────────────────────────────────────────────────────────────
 
@@ -138,26 +156,24 @@ Run the update using the install type detected in step 1:
 
 **If LOCAL install:**
 ```bash
-npx fv-skills-baif --local
+npx fv-skills-baif@latest --local
 ```
 
 **If GLOBAL install (or unknown):**
 ```bash
-npx fv-skills-baif --global
+npx fv-skills-baif@latest --global
 ```
 
 Capture output. If install fails, show error and STOP.
 
 Clear the update cache so statusline indicator disappears:
 
-**If LOCAL install:**
 ```bash
-rm -f ./.claude/cache/fvs-update-check.json
-```
-
-**If GLOBAL install:**
-```bash
-rm -f ~/.claude/cache/fvs-update-check.json
+# Clear update cache across all runtime directories
+for dir in .claude .config/opencode .opencode .gemini; do
+  rm -f "./$dir/cache/fvs-update-check.json"
+  rm -f "$HOME/$dir/cache/fvs-update-check.json"
+done
 ```
 </step>
 
@@ -178,6 +194,7 @@ Restart Claude Code to pick up the new commands.
 - [ ] Installed version read correctly (local-first-then-global)
 - [ ] Latest version checked via npm
 - [ ] Update skipped if already current
+- [ ] Changelog fetched from GitHub and displayed BEFORE update
 - [ ] Clean install warning shown
 - [ ] User confirmation obtained via AskUserQuestion
 - [ ] Installer runs with correct flag (--local or --global)
