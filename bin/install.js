@@ -1182,6 +1182,14 @@ function uninstall(isGlobal, runtime = 'claude') {
       }
     }
 
+    // Codex: also remove commands/fvs/ (slash commands)
+    const fvsCommandsDir = path.join(targetDir, 'commands', 'fvs');
+    if (fs.existsSync(fvsCommandsDir)) {
+      fs.rmSync(fvsCommandsDir, { recursive: true });
+      removedCount++;
+      console.log(`  ${green}✓${reset} Removed commands/fvs/`);
+    }
+
     // Codex: remove FVS agent .toml config files
     const codexAgentsDir = path.join(targetDir, 'agents');
     if (fs.existsSync(codexAgentsDir)) {
@@ -1602,6 +1610,24 @@ function install(isGlobal, runtime = 'claude') {
 
   console.log(`  Installing for ${orange}${runtimeLabel}${reset} to ${orange}${locationLabel}${reset}\n`);
 
+  // Inform user about existing install of the other type (local overrides global)
+  if (isGlobal) {
+    const localVersionPath = path.join(process.cwd(), dirName, 'fv-skills', 'VERSION');
+    if (fs.existsSync(localVersionPath)) {
+      const localVer = fs.readFileSync(localVersionPath, 'utf8').trim();
+      console.log(`  ${yellow}ℹ${reset} Local FVS install detected (v${localVer}) at ./${dirName}`);
+      console.log(`    ${dim}Local install takes priority when running in this project${reset}\n`);
+    }
+  } else {
+    const globalDir = getGlobalDir(runtime, explicitConfigDir);
+    const globalVersionPath = path.join(globalDir, 'fv-skills', 'VERSION');
+    if (fs.existsSync(globalVersionPath)) {
+      const globalVer = fs.readFileSync(globalVersionPath, 'utf8').trim();
+      console.log(`  ${yellow}ℹ${reset} Global FVS install detected (v${globalVer}) at ${globalDir.replace(os.homedir(), '~')}`);
+      console.log(`    ${dim}This local install takes priority in this project${reset}\n`);
+    }
+  }
+
   // Track installation failures
   const failures = [];
 
@@ -1618,6 +1644,17 @@ function install(isGlobal, runtime = 'claude') {
       console.log(`  ${green}✓${reset} Installed ${installedSkillNames.length} skills to skills/`);
     } else {
       failures.push('skills/fvs-*');
+    }
+
+    // Codex also needs commands/fvs/ for /fvs:* slash commands
+    const commandsDir = path.join(targetDir, 'commands');
+    fs.mkdirSync(commandsDir, { recursive: true });
+    const fvsCommandDest = path.join(commandsDir, 'fvs');
+    copyWithPathReplacement(fvsSrc, fvsCommandDest, pathPrefix, runtime, /* isCommand= */ true);
+    if (verifyInstalled(fvsCommandDest, 'commands/fvs')) {
+      console.log(`  ${green}✓${reset} Installed commands/fvs`);
+    } else {
+      failures.push('commands/fvs');
     }
   } else if (isOpencode) {
     // OpenCode: flat structure in command/ directory

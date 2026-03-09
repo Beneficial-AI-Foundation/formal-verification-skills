@@ -15,12 +15,22 @@ Provides a better update experience than raw `npx fv-skills-baif` by showing ver
 Detect whether FVS is installed locally or globally by checking both locations:
 
 ```bash
-# Check local first (takes priority)
+# Check local first (takes priority), with path canonicalization
+# to prevent misdetection when CWD=$HOME
+LOCAL_DIR="" GLOBAL_DIR=""
 if [ -f "./.claude/fv-skills/VERSION" ]; then
+  LOCAL_DIR="$(cd ./.claude 2>/dev/null && pwd)"
+fi
+if [ -f "$HOME/.claude/fv-skills/VERSION" ]; then
+  GLOBAL_DIR="$(cd "$HOME/.claude" 2>/dev/null && pwd)"
+fi
+
+# Only treat as LOCAL if resolved paths differ (handles CWD=$HOME edge case)
+if [ -n "$LOCAL_DIR" ] && { [ -z "$GLOBAL_DIR" ] || [ "$LOCAL_DIR" != "$GLOBAL_DIR" ]; }; then
   cat "./.claude/fv-skills/VERSION"
   echo "LOCAL"
-elif [ -f ~/.claude/fv-skills/VERSION ]; then
-  cat ~/.claude/fv-skills/VERSION
+elif [ -n "$GLOBAL_DIR" ]; then
+  cat "$HOME/.claude/fv-skills/VERSION"
   echo "GLOBAL"
 else
   echo "UNKNOWN"
