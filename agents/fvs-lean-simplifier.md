@@ -24,11 +24,26 @@ Extract from your prompt context:
 - **Previous pass feedback**: build errors from the last pass, if any
 - **Pass number**: which pass this is (for tracking)
 
-## 2. Analyze Current Proof
+## 2. Analyze Current Proof (MCP-First)
 
-Examine the target theorem's proof body:
+Before editing anything, use MCP tools to inspect the proof state:
+
+1. **Inspect diagnostics** -- Check Lean server diagnostics for the target theorem. Look for
+   warnings, unused variable hints, and type mismatch info that reveals simplification opportunities.
+2. **Inspect goal state** -- For each tactic step, examine the goal state to understand what
+   hypotheses are actually in scope and what the goal looks like after each step.
+3. **Then analyze** -- Only after understanding the proof state via MCP, analyze for simplification
+   candidates. This prevents "golf by guesswork" where changes are attempted without understanding
+   the proof state.
+4. **Test 2-3 candidates** -- Before committing to a change, mentally evaluate 2-3 simplification
+   candidates and pick the one with the highest confidence of success.
+
+**Caution:** Probing before a `case` split or at the wrong branch can produce misleading failures.
+"The candidate failed" may really mean "the candidate was tested against the wrong goal."
+
+Analysis checklist:
 - Count tactic lines
-- Identify dead `have` bindings (declared but never referenced downstream)
+- Identify dead `have` bindings (but see proof-fuel rule -- check for omega/linarith/simp_all below)
 - Find `simp [*]` calls that could be sharpened to `simp only [...]`
 - Detect redundant tactic steps (e.g., `simp [*]; scalar_tac` where `scalar_tac` alone suffices)
 - Check for consecutive `simp` calls that could merge
@@ -86,6 +101,9 @@ When something goes wrong:
 
 <important>
 - ONE change per invocation. Never batch multiple simplifications.
+- PROOF FUEL RULE: Before removing ANY have/let binding, check if omega, linarith, simp_all,
+  scalar_tac, or grind appears below it. These tactics consume hypotheses semantically without
+  textual reference. A binding that "looks dead" may be proof fuel. Always build-test removal.
 - NEVER touch theorem signatures (@[progress] attribute, preconditions, postconditions)
 - NEVER touch `unfold + progress` structural backbone
 - NEVER write changes without explaining the specific heuristic being applied

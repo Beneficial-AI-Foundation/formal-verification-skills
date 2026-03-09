@@ -110,6 +110,8 @@ Tasks:
 2. Read the corresponding function body from Funs.lean for structural context
 3. Search for similar proved theorems in the project to identify reuse patterns
 4. For each theorem proof, apply the 3-lens analysis (reuse, quality, efficiency)
+4b. Classify theorems into simplification layers: pure math -> representation -> bridge -> top-level specs. Recommend processing order from safest (pure math) to riskiest (top-level).
+4c. Apply target selection heuristics: identify "plateau" theorems (stable, self-contained) as good first targets. Flag "cliff edge" theorems (recently modified, many dependents) as defer-to-later.
 5. Return structured findings with per-theorem simplification recommendations
 6. Classify each recommendation by tier (1-4)
 
@@ -124,6 +126,11 @@ passes are run.
 </step>
 
 <step name="iterative_simplify">
+**Theorem ordering:** Process theorems in layer order (pure math first, top-level specs last)
+and within each layer, process "plateau" theorems (stable, self-contained) before "cliff edge"
+theorems (recently modified, many dependents). This ordering minimizes cascade risk from
+simplification failures.
+
 For each theorem (one at a time, in order from research recommendations):
 
 ```
