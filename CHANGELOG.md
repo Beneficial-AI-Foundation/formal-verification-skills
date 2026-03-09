@@ -4,7 +4,7 @@ All notable changes to FVS (Formal Verification Skills) will be documented in th
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [1.1.4] - 2026-03-09
+## [1.1.5] - 2026-03-09
 
 ### Fixed
 - Codex install uses `skills/fvs-*/SKILL.md` only (removed incorrect `commands/fvs/`), matching GSD pattern
