@@ -1,0 +1,9 @@
+[package]
+name = "test-project"
+leanVersion = "v4.16.0"
+
+[[require]]
+name = "aeneas"
+scope = "Aeneas"
+git = "https://github.com/AeneasVerif/aeneas"
+rev = "main"

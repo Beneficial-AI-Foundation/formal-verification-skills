@@ -39,6 +39,7 @@
     "esbuild": "^0.24.0"
   },
   "scripts": {
+    "test": "node scripts/run-tests.cjs",
     "build:hooks": "node scripts/build-hooks.js",
     "prepublishOnly": "npm run build:hooks"
   }
