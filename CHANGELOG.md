@@ -4,6 +4,11 @@ All notable changes to FVS (Formal Verification Skills) will be documented in th
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.1.2] - 2026-03-09
+
+### Fixed
+- Installer now shows interactive runtime menu when `--local` or `--global` is passed without a runtime flag (previously defaulted to Claude silently)
+
 ## [1.1.1] - 2026-03-09
 
 ### Fixed
