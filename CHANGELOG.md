@@ -4,6 +4,13 @@ All notable changes to FVS (Formal Verification Skills) will be documented in th
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.1.3] - 2026-03-09
+
+### Fixed
+- Codex install now creates `commands/fvs/` for `/fvs:*` slash commands (previously only installed skills)
+- Installer shows info when both global and local installs exist (local takes priority)
+- Update version detection uses path canonicalization to handle CWD=$HOME edge case
+
 ## [1.1.2] - 2026-03-09
 
 ### Fixed
