@@ -632,94 +632,15 @@ function yamlQuote(value) {
 }
 
 /**
- * Convert /fvs:command references to $fvs-command for Codex skill mentions
- */
-function convertSlashCommandsToCodexSkillMentions(content) {
-  let converted = content.replace(/\/fvs:([a-z0-9-]+)/gi, (_, commandName) => {
-    return `$fvs-${String(commandName).toLowerCase()}`;
-  });
-  converted = converted.replace(/\/fvs-help\b/g, '$fvs-help');
-  return converted;
-}
-
-/**
  * Convert Claude Code markdown to Codex-compatible markdown
- * Replaces $ARGUMENTS, slash commands, and tool names
+ * Replaces $ARGUMENTS and tool names
  */
 function convertClaudeToCodexMarkdown(content) {
-  let converted = convertSlashCommandsToCodexSkillMentions(content);
+  let converted = content;
   converted = converted.replace(/\$ARGUMENTS\b/g, '{{FVS_ARGS}}');
   converted = converted.replace(/\bAskUserQuestion\b/g, 'request_user_input');
   converted = converted.replace(/\bTask\(/g, 'spawn_agent(');
   return converted;
-}
-
-/**
- * Generate the Codex skill adapter header for a command-turned-skill
- * Provides invocation syntax, AskUserQuestion mapping, and Task() mapping
- */
-function getCodexSkillAdapterHeader(skillName) {
-  const invocation = `$${skillName}`;
-  return `<codex_skill_adapter>
-## A. Skill Invocation
-- This skill is invoked by mentioning \`${invocation}\`.
-- Treat all user text after \`${invocation}\` as \`{{FVS_ARGS}}\`.
-- If no arguments are present, treat \`{{FVS_ARGS}}\` as empty.
-
-## B. AskUserQuestion -> request_user_input Mapping
-FVS workflows use \`AskUserQuestion\` (Claude Code syntax). Translate to Codex \`request_user_input\`:
-
-Parameter mapping:
-- \`header\` -> \`header\`
-- \`question\` -> \`question\`
-- Options formatted as \`"Label" -- description\` -> \`{label: "Label", description: "description"}\`
-- Generate \`id\` from header: lowercase, replace spaces with underscores
-
-Batched calls:
-- \`AskUserQuestion([q1, q2])\` -> single \`request_user_input\` with multiple entries in \`questions[]\`
-
-Multi-select workaround:
-- Codex has no \`multiSelect\`. Use sequential single-selects, or present a numbered freeform list asking the user to enter comma-separated numbers.
-
-Execute mode fallback:
-- When \`request_user_input\` is rejected (Execute mode), present a plain-text numbered list and pick a reasonable default.
-
-## C. Task() -> spawn_agent Mapping
-FVS workflows use \`Task(...)\` (Claude Code syntax). Translate to Codex collaboration tools:
-
-Direct mapping:
-- \`Task(subagent_type="X", prompt="Y")\` -> \`spawn_agent(agent_type="X", message="Y")\`
-- \`Task(model="...")\` -> omit (Codex uses per-role config, not inline model selection)
-- \`fork_context: false\` by default -- FVS agents load their own context via \`<files_to_read>\` blocks
-
-Parallel fan-out:
-- Spawn multiple agents -> collect agent IDs -> \`wait(ids)\` for all to complete
-
-Result parsing:
-- Look for structured markers in agent output: \`CHECKPOINT\`, \`PLAN COMPLETE\`, \`SUMMARY\`, etc.
-- \`close_agent(id)\` after collecting results from each agent
-</codex_skill_adapter>`;
-}
-
-/**
- * Convert a Claude Code command to a Codex skill
- * Adds skill adapter header and reformats frontmatter
- */
-function convertClaudeCommandToCodexSkill(content, skillName) {
-  const converted = convertClaudeToCodexMarkdown(content);
-  const { frontmatter, body } = extractFrontmatterAndBody(converted);
-  let description = `Run FVS workflow ${skillName}.`;
-  if (frontmatter) {
-    const maybeDescription = extractFrontmatterField(frontmatter, 'description');
-    if (maybeDescription) {
-      description = maybeDescription;
-    }
-  }
-  description = toSingleLine(description);
-  const shortDescription = description.length > 180 ? `${description.slice(0, 177)}...` : description;
-  const adapter = getCodexSkillAdapterHeader(skillName);
-
-  return `---\nname: ${yamlQuote(skillName)}\ndescription: ${yamlQuote(description)}\nmetadata:\n  short-description: ${yamlQuote(shortDescription)}\n---\n\n${adapter}\n\n${body.trimStart()}`;
 }
 
 /**
@@ -933,75 +854,6 @@ function installCodexConfig(targetDir, agentsSrc) {
   mergeCodexConfig(configPath, fvsBlock);
 
   return agents.length;
-}
-
-/**
- * List Codex skill directory names matching a prefix
- */
-function listCodexSkillNames(skillsDir, prefix = 'fvs-') {
-  if (!fs.existsSync(skillsDir)) return [];
-  const entries = fs.readdirSync(skillsDir, { withFileTypes: true });
-  return entries
-    .filter(entry => entry.isDirectory() && entry.name.startsWith(prefix))
-    .filter(entry => fs.existsSync(path.join(skillsDir, entry.name, 'SKILL.md')))
-    .map(entry => entry.name)
-    .sort();
-}
-
-/**
- * Copy commands as Codex skills (skills/fvs-help/SKILL.md structure)
- */
-function copyCommandsAsCodexSkills(srcDir, skillsDir, prefix, pathPrefix, runtime) {
-  if (!fs.existsSync(srcDir)) {
-    return;
-  }
-
-  fs.mkdirSync(skillsDir, { recursive: true });
-
-  // Remove previous FVS Codex skills to avoid stale command skills
-  const existing = fs.readdirSync(skillsDir, { withFileTypes: true });
-  for (const entry of existing) {
-    if (entry.isDirectory() && entry.name.startsWith(`${prefix}-`)) {
-      fs.rmSync(path.join(skillsDir, entry.name), { recursive: true });
-    }
-  }
-
-  function recurse(currentSrcDir, currentPrefix) {
-    const entries = fs.readdirSync(currentSrcDir, { withFileTypes: true });
-
-    for (const entry of entries) {
-      const srcPath = path.join(currentSrcDir, entry.name);
-      if (entry.isDirectory()) {
-        recurse(srcPath, `${currentPrefix}-${entry.name}`);
-        continue;
-      }
-
-      if (!entry.name.endsWith('.md')) {
-        continue;
-      }
-
-      const baseName = entry.name.replace('.md', '');
-      const skillName = `${currentPrefix}-${baseName}`;
-      const skillDir = path.join(skillsDir, skillName);
-      fs.mkdirSync(skillDir, { recursive: true });
-
-      let content = fs.readFileSync(srcPath, 'utf8');
-      const globalClaudeRegex = /~\/\.claude\//g;
-      const globalClaudeHomeRegex = /\$HOME\/\.claude\//g;
-      const localClaudeRegex = /\.\/\.claude\//g;
-      const codexDirRegex = /~\/\.codex\//g;
-      content = content.replace(globalClaudeRegex, pathPrefix);
-      content = content.replace(globalClaudeHomeRegex, toHomePrefix(pathPrefix));
-      content = content.replace(localClaudeRegex, `./${getDirName(runtime)}/`);
-      content = content.replace(codexDirRegex, pathPrefix);
-
-      content = convertClaudeCommandToCodexSkill(content, skillName);
-
-      fs.writeFileSync(path.join(skillDir, 'SKILL.md'), content);
-    }
-  }
-
-  recurse(srcDir, prefix);
 }
 
 /**
@@ -1632,23 +1484,33 @@ function install(isGlobal, runtime = 'claude') {
   const failures = [];
 
   // OpenCode uses 'command/' (singular) with flat structure
-  // Codex uses 'skills/' with skill directories
+  // Codex uses 'commands/' (plural) with nested structure (same as Claude/Gemini)
   // Claude Code & Gemini use 'commands/' (plural) with nested structure
   if (isCodex) {
-    // Codex: skill directories in skills/ (skills/fvs-help/SKILL.md)
-    const skillsDir = path.join(targetDir, 'skills');
-    const fvsSrc = path.join(src, 'commands', 'fvs');
-    copyCommandsAsCodexSkills(fvsSrc, skillsDir, 'fvs', pathPrefix, runtime);
-    const installedSkillNames = listCodexSkillNames(skillsDir);
-    if (installedSkillNames.length > 0) {
-      console.log(`  ${green}✓${reset} Installed ${installedSkillNames.length} skills to skills/`);
-    } else {
-      failures.push('skills/fvs-*');
+    // Clean up old skills/fvs-* from <= 1.1.2 (replaced by commands/fvs/)
+    const oldSkillsDir = path.join(targetDir, 'skills');
+    if (fs.existsSync(oldSkillsDir)) {
+      const entries = fs.readdirSync(oldSkillsDir, { withFileTypes: true });
+      let cleaned = 0;
+      for (const entry of entries) {
+        if (entry.isDirectory() && entry.name.startsWith('fvs-')) {
+          fs.rmSync(path.join(oldSkillsDir, entry.name), { recursive: true });
+          cleaned++;
+        }
+      }
+      if (cleaned > 0) {
+        console.log(`  ${green}✓${reset} Cleaned ${cleaned} old skills/fvs-* from previous install`);
+      }
+      // Remove skills/ dir if empty after cleanup
+      if (fs.readdirSync(oldSkillsDir).length === 0) {
+        fs.rmdirSync(oldSkillsDir);
+      }
     }
 
-    // Codex also needs commands/fvs/ for /fvs:* slash commands
+    // Codex: commands/fvs/ for /fvs:* slash commands
     const commandsDir = path.join(targetDir, 'commands');
     fs.mkdirSync(commandsDir, { recursive: true });
+    const fvsSrc = path.join(src, 'commands', 'fvs');
     const fvsCommandDest = path.join(commandsDir, 'fvs');
     copyWithPathReplacement(fvsSrc, fvsCommandDest, pathPrefix, runtime, /* isCommand= */ true);
     if (verifyInstalled(fvsCommandDest, 'commands/fvs')) {
@@ -1877,7 +1739,7 @@ function finishInstall(settingsPath, settings, statuslineCommand, shouldInstallS
 
   let command = '/fvs:help';
   if (isOpencode) command = '/fvs-help';
-  if (isCodex) command = '$fvs-help';
+  if (isCodex) command = '/fvs:help';
 
   console.log(`
   ${green}Done!${reset} Launch ${program} and run ${orange}${command}${reset}.
