@@ -2070,8 +2070,15 @@ if (hasGlobal && hasLocal) {
     installAllRuntimes(selectedRuntimes, hasGlobal, false);
   }
 } else if (hasGlobal || hasLocal) {
-  // Default to Claude if no runtime specified but location is
-  installAllRuntimes(['claude'], hasGlobal, false);
+  // No runtime specified but location is — prompt for runtime
+  if (!process.stdin.isTTY) {
+    console.log(`  ${yellow}Non-interactive terminal detected, defaulting to Claude Code${reset}\n`);
+    installAllRuntimes(['claude'], hasGlobal, false);
+  } else {
+    promptRuntime((runtimes) => {
+      installAllRuntimes(runtimes, hasGlobal, true);
+    });
+  }
 } else {
   // Interactive
   if (!process.stdin.isTTY) {
