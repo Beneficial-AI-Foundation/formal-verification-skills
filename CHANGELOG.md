@@ -4,6 +4,13 @@ All notable changes to FVS (Formal Verification Skills) will be documented in th
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.1.1] - 2026-03-09
+
+### Fixed
+- `/fvs:update` now fetches and displays changelog entries before updating (previously showed no changelog)
+- Update workflow uses local-first version detection instead of hardcoded paths
+- Update cache clearing covers all runtime directories
+
 ## [1.1.0] - 2026-03-09
 
 ### Added
