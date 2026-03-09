@@ -4,9 +4,12 @@ All notable changes to FVS (Formal Verification Skills) will be documented in th
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [1.1.0] - 2026-03-06
+## [1.1.0] - 2026-03-09
 
 ### Added
+- `/fvs:lean-simplify` command for post-verification proof cleanup (#17) -- three modes (safe/balanced/aggressive), tiered heuristics, one change per invocation with build verification
+- `fvs-lean-simplifier` agent for iterative proof simplification
+- `lean-simplification.md` reference with proof-fuel rule, simplification ordering, layering strategy, target selection heuristics, and repo-specific lessons
 - Codex runtime support in installer (#18) -- `npx fv-skills-baif --codex`
 - `/fvs:pause-work` command for session context handoff (#10)
 - `/fvs:resume-work` command for session context restoration (#10)
@@ -14,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - `fvs-researcher` generic research subagent for two-phase command dispatch
 - `fvs-executor` generic executor subagent with VS Code diff file writing
 - Model profile system (quality/balanced/budget) in `fv-skills/references/model-profiles.md`
+- `npm test` regression suite -- 132 tests covering frontmatter integrity, installer round-trip, help/README parity, and cross-reference validation
 
 ### Fixed
 - NL stubs now written to `.formalising/stubs/` instead of project root `stubs/` (#6)

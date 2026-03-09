@@ -13,7 +13,7 @@
 npx fv-skills-baif
 ```
 
-**Works on Mac, Windows, and Linux. Supports Claude Code, OpenCode, and Gemini CLI.**
+**Works on Mac, Windows, and Linux. Supports Claude Code, Codex, OpenCode, and Gemini CLI.**
 
 <br>
 
@@ -78,6 +78,9 @@ npx fv-skills-baif@latest
 npx fv-skills-baif --claude --global   # Install to ~/.claude/
 npx fv-skills-baif --claude --local    # Install to ./.claude/
 
+# Codex
+npx fv-skills-baif --codex --global    # Install to ~/.codex/
+
 # OpenCode
 npx fv-skills-baif --opencode --global # Install to ~/.config/opencode/
 
@@ -89,7 +92,7 @@ npx fv-skills-baif --all --global      # Install to all directories
 ```
 
 Use `--global` (`-g`) or `--local` (`-l`) to skip the location prompt.
-Use `--claude`, `--opencode`, `--gemini`, or `--all` to skip the runtime prompt.
+Use `--claude`, `--codex`, `--opencode`, `--gemini`, or `--all` to skip the runtime prompt.
 
 </details>
 
