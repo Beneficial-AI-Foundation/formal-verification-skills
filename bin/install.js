@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
 const readline = require('readline');
 
 // Colors
@@ -1575,6 +1576,155 @@ function verifyFileInstalled(filePath, description) {
   return true;
 }
 
+// ──────────────────────────────────────────────────────
+// Local Patch Persistence
+// ──────────────────────────────────────────────────────
+
+const PATCHES_DIR_NAME = 'fvs-local-patches';
+const MANIFEST_NAME = 'fvs-file-manifest.json';
+
+/**
+ * Compute SHA256 hash of file contents
+ */
+function fileHash(filePath) {
+  const content = fs.readFileSync(filePath);
+  return crypto.createHash('sha256').update(content).digest('hex');
+}
+
+/**
+ * Recursively collect all files in dir with their hashes
+ */
+function generateManifest(dir, baseDir) {
+  if (!baseDir) baseDir = dir;
+  const manifest = {};
+  if (!fs.existsSync(dir)) return manifest;
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    const relPath = path.relative(baseDir, fullPath).replace(/\\/g, '/');
+    if (entry.isDirectory()) {
+      Object.assign(manifest, generateManifest(fullPath, baseDir));
+    } else {
+      manifest[relPath] = fileHash(fullPath);
+    }
+  }
+  return manifest;
+}
+
+/**
+ * Write file manifest after installation for future modification detection
+ */
+function writeManifest(configDir, runtime = 'claude') {
+  const isCodex = runtime === 'codex';
+  const fvSkillsDir = path.join(configDir, 'fv-skills');
+  const commandsDir = path.join(configDir, 'commands', 'fvs');
+  const codexSkillsDir = path.join(configDir, 'skills');
+  const agentsDir = path.join(configDir, 'agents');
+  const manifest = { version: pkg.version, timestamp: new Date().toISOString(), files: {} };
+
+  const fvHashes = generateManifest(fvSkillsDir);
+  for (const [rel, hash] of Object.entries(fvHashes)) {
+    manifest.files['fv-skills/' + rel] = hash;
+  }
+  if (!isCodex && fs.existsSync(commandsDir)) {
+    const cmdHashes = generateManifest(commandsDir);
+    for (const [rel, hash] of Object.entries(cmdHashes)) {
+      manifest.files['commands/fvs/' + rel] = hash;
+    }
+  }
+  if (isCodex && fs.existsSync(codexSkillsDir)) {
+    for (const skillName of listCodexSkillNames(codexSkillsDir)) {
+      const skillRoot = path.join(codexSkillsDir, skillName);
+      const skillHashes = generateManifest(skillRoot);
+      for (const [rel, hash] of Object.entries(skillHashes)) {
+        manifest.files[`skills/${skillName}/${rel}`] = hash;
+      }
+    }
+  }
+  if (fs.existsSync(agentsDir)) {
+    for (const file of fs.readdirSync(agentsDir)) {
+      if (file.startsWith('fvs-') && file.endsWith('.md')) {
+        manifest.files['agents/' + file] = fileHash(path.join(agentsDir, file));
+      }
+    }
+  }
+
+  fs.writeFileSync(path.join(configDir, MANIFEST_NAME), JSON.stringify(manifest, null, 2));
+  return manifest;
+}
+
+/**
+ * Detect user-modified FVS files by comparing against install manifest.
+ * Backs up modified files to fvs-local-patches/ for reapply after update.
+ */
+function saveLocalPatches(configDir) {
+  const manifestPath = path.join(configDir, MANIFEST_NAME);
+  if (!fs.existsSync(manifestPath)) return [];
+
+  let manifest;
+  try { manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); } catch { return []; }
+
+  const patchesDir = path.join(configDir, PATCHES_DIR_NAME);
+  const modified = [];
+
+  for (const [relPath, originalHash] of Object.entries(manifest.files || {})) {
+    const fullPath = path.join(configDir, relPath);
+    if (!fs.existsSync(fullPath)) continue;
+    const currentHash = fileHash(fullPath);
+    if (currentHash !== originalHash) {
+      const backupPath = path.join(patchesDir, relPath);
+      fs.mkdirSync(path.dirname(backupPath), { recursive: true });
+      fs.copyFileSync(fullPath, backupPath);
+      modified.push(relPath);
+    }
+  }
+
+  if (modified.length > 0) {
+    const meta = {
+      backed_up_at: new Date().toISOString(),
+      from_version: manifest.version,
+      files: modified
+    };
+    fs.writeFileSync(path.join(patchesDir, 'backup-meta.json'), JSON.stringify(meta, null, 2));
+    console.log('  ' + yellow + 'i' + reset + '  Found ' + modified.length + ' locally modified FVS file(s) — backed up to ' + PATCHES_DIR_NAME + '/');
+    for (const f of modified) {
+      console.log('     ' + dim + f + reset);
+    }
+  }
+  return modified;
+}
+
+/**
+ * After install, report backed-up patches for user to reapply.
+ */
+function reportLocalPatches(configDir, runtime = 'claude') {
+  const patchesDir = path.join(configDir, PATCHES_DIR_NAME);
+  const metaPath = path.join(patchesDir, 'backup-meta.json');
+  if (!fs.existsSync(metaPath)) return [];
+
+  let meta;
+  try { meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')); } catch { return []; }
+
+  if (meta.files && meta.files.length > 0) {
+    const reapplyCommand = runtime === 'opencode'
+      ? '/fvs-reapply-patches'
+      : runtime === 'codex'
+        ? '$fvs-reapply-patches'
+        : '/fvs:reapply-patches';
+    console.log('');
+    console.log('  ' + yellow + 'Local patches detected' + reset + ' (from v' + meta.from_version + '):');
+    for (const f of meta.files) {
+      console.log('     ' + orange + f + reset);
+    }
+    console.log('');
+    console.log('  Your modifications are saved in ' + orange + PATCHES_DIR_NAME + '/' + reset);
+    console.log('  Run ' + orange + reapplyCommand + reset + ' to merge them into the new version.');
+    console.log('  Or manually compare and merge the files.');
+    console.log('');
+  }
+  return meta.files || [];
+}
+
 /**
  * Install to the specified directory for a specific runtime
  * @param {boolean} isGlobal - Whether to install globally or locally
@@ -1630,6 +1780,9 @@ function install(isGlobal, runtime = 'claude') {
 
   // Track installation failures
   const failures = [];
+
+  // Save any locally modified FVS files before they get wiped
+  saveLocalPatches(targetDir);
 
   // OpenCode uses 'command/' (singular) with flat structure
   // Codex uses 'skills/' with skill directories
@@ -1775,6 +1928,13 @@ function install(isGlobal, runtime = 'claude') {
     console.error(`\n  ${yellow}Installation incomplete!${reset} Failed: ${failures.join(', ')}`);
     process.exit(1);
   }
+
+  // Write file manifest for future modification detection
+  writeManifest(targetDir, runtime);
+  console.log(`  ${green}✓${reset} Wrote file manifest (${MANIFEST_NAME})`);
+
+  // Report any backed-up local patches
+  reportLocalPatches(targetDir, runtime);
 
   // Codex: generate config.toml and per-agent .toml files, then return early
   if (isCodex) {
