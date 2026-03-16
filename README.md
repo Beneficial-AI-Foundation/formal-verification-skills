@@ -17,7 +17,7 @@ npx fv-skills-baif
 
 <br>
 
-![FVS Install](assets/FVS.png)
+![FVS Install](assets/terminal.svg)
 
 <br>
 
