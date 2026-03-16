@@ -4,6 +4,18 @@ All notable changes to FVS (Formal Verification Skills) will be documented in th
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.2.0] - 2026-03-16
+
+### Added
+- `/fvs:lean-spec-port` command for porting formal verification specs from other languages (Verus, F*, Coq, Dafny) to Lean -- interactive prompts, cross-project Rust source comparison, semantic blueprint translation, `--scan` flag
+- `/fvs:lean-proof-port` command for porting proofs from other languages to Lean -- source proof as strategy blueprint, iterative one-sorry-at-a-time dispatch, tactic mapping (grind, bvify+bv_decide)
+- `/fvs:reapply-patches` command for merging backed-up local modifications after updates
+- Local patches persistence in installer -- file manifest with SHA256 hashing, automatic backup of modified files before update, runtime-specific restore suggestions
+- SVG terminal logo replacing static PNG screenshot
+
+### Changed
+- Update command and workflow now include `check_local_patches` step
+
 ## [1.1.5] - 2026-03-09
 
 ### Fixed
