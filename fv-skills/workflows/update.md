@@ -151,6 +151,8 @@ Your custom files are preserved:
 - Custom commands not in commands/fvs/ ✓
 - Custom agents not prefixed with fvs- ✓
 - Your CLAUDE.md files ✓
+
+If you've modified any FVS files directly, they'll be automatically backed up to `fvs-local-patches/` and can be reapplied with `/fvs:reapply-patches` after the update.
 ```
 
 Use AskUserQuestion:
@@ -208,6 +210,21 @@ Current:  {new_version}
 
 Restart Claude Code to pick up the new commands.
 ```
+</step>
+
+<step name="check_local_patches">
+After update completes, check if the installer detected and backed up any locally modified files:
+
+Check for fvs-local-patches/backup-meta.json in the config directory.
+
+**If patches found:**
+
+```
+Local patches were backed up before the update.
+Run /fvs:reapply-patches to merge your modifications into the new version.
+```
+
+**If no patches:** Continue normally.
 </step>
 
 </process>
