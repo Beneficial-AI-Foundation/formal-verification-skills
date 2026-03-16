@@ -29,7 +29,7 @@ npx fv-skills-baif
 
 FVS encodes the expert formal verification workflow into skills for AI coding assistants. It takes Rust code through a structured pipeline — dependency analysis, deep code understanding, specification generation, and proof — using the AI to handle the tedious parts while you stay in control of the verification strategy.
 
-**v1 focuses on Lean 4 via Aeneas** (Rust → Charon → LLBC → Aeneas → Lean 4). Verus and other verification frameworks are planned for v2.
+**v1 focuses on Lean 4 via Aeneas** (Rust → Charon → LLBC → Aeneas → Lean 4). Cross-language porting from Verus, F*, Coq, and Dafny is supported via `/fvs:lean-spec-port` and `/fvs:lean-proof-port`.
 
 Some capabilities are framework-agnostic and work regardless of your verification target:
 - **Dependency mapping** builds function call graphs from any extracted code
@@ -109,6 +109,7 @@ Use `--claude`, `--codex`, `--opencode`, `--gemini`, or `--all` to skip the runt
 | `/fvs:natural-language` | Generate natural language explanation of module or function with pre/post conditions |
 | `/fvs:help` | Show available FVS commands and usage guide |
 | `/fvs:update` | Self-update to latest version via npx |
+| `/fvs:reapply-patches` | Reapply local modifications after an FVS update |
 
 ### Lean 4 (via Aeneas)
 
@@ -117,6 +118,13 @@ Use `--claude`, `--codex`, `--opencode`, `--gemini`, or `--all` to skip the runt
 | `/fvs:lean-specify` | Generate Lean spec skeleton with `@[progress]` theorem pattern |
 | `/fvs:lean-verify` | Attempt proof using domain tactics (progress, simp, ring, omega) |
 | `/fvs:lean-simplify` | Simplify and golf verified proofs (dead code removal, simp sharpening, tactic golf) |
+
+### Cross-language Porting
+
+| Command | Description |
+|---------|-------------|
+| `/fvs:lean-spec-port` | Port specs from other FV languages (Verus, F*, Coq, Dafny) to Lean |
+| `/fvs:lean-proof-port` | Port proofs from other FV languages to Lean |
 
 ---
 

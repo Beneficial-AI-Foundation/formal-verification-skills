@@ -58,13 +58,14 @@ describe('Commands (commands/fvs/)', () => {
   const files = mdFiles(dir);
 
   const expected = [
-    'checkpoint.md', 'help.md', 'lean-simplify.md', 'lean-specify.md',
-    'lean-verify.md', 'map-code.md', 'natural-language.md', 'pause-work.md',
-    'plan.md', 'resume-work.md', 'update.md',
+    'checkpoint.md', 'help.md', 'lean-proof-port.md', 'lean-simplify.md',
+    'lean-spec-port.md', 'lean-specify.md', 'lean-verify.md', 'map-code.md',
+    'natural-language.md', 'pause-work.md', 'plan.md', 'reapply-patches.md',
+    'resume-work.md', 'update.md',
   ];
 
-  it('has exactly 11 command files', () => {
-    assert.equal(files.length, 11, `Expected 11 commands, got ${files.length}: ${files.join(', ')}`);
+  it('has exactly 14 command files', () => {
+    assert.equal(files.length, 14, `Expected 14 commands, got ${files.length}: ${files.join(', ')}`);
   });
 
   it('has the expected set of command files', () => {
@@ -146,12 +147,13 @@ describe('Workflows (fv-skills/workflows/)', () => {
   const files = mdFiles(dir);
 
   const expected = [
-    'lean-simplify.md', 'lean-specify.md', 'lean-verify.md',
-    'map-code.md', 'natural-language.md', 'plan.md', 'update.md',
+    'lean-proof-port.md', 'lean-simplify.md', 'lean-spec-port.md',
+    'lean-specify.md', 'lean-verify.md', 'map-code.md',
+    'natural-language.md', 'plan.md', 'update.md',
   ];
 
-  it('has exactly 7 workflow files', () => {
-    assert.equal(files.length, 7, `Expected 7 workflows, got ${files.length}: ${files.join(', ')}`);
+  it('has exactly 9 workflow files', () => {
+    assert.equal(files.length, 9, `Expected 9 workflows, got ${files.length}: ${files.join(', ')}`);
   });
 
   it('has the expected set of workflow files', () => {
