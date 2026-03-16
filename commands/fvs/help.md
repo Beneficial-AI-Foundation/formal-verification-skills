@@ -26,11 +26,14 @@ Output ONLY the reference content below. Do NOT add:
 3. `/fvs:lean-specify <function>` - Generate spec with sorry
 4. `/fvs:lean-verify <spec_path>` - Attempt proof interactively
 5. `/fvs:lean-simplify <spec_path>` - Golf and clean up verified proofs
+6. `/fvs:lean-spec-port` - Port specs from other FV languages
+7. `/fvs:lean-proof-port` - Port proofs from other FV languages
 
 ## Core Workflow
 
 ```
 /fvs:map-code → /fvs:plan → /fvs:lean-specify → /fvs:lean-verify → /fvs:lean-simplify → repeat
+Cross-language: /fvs:lean-spec-port → /fvs:lean-proof-port → /fvs:lean-simplify
 ```
 
 ### Analysis
@@ -102,6 +105,34 @@ Usage: `/fvs:lean-simplify Specs/Backend/Field/Sub.lean`
 Usage: `/fvs:lean-simplify Specs/Backend/Field/Sub.lean --mode aggressive --max-passes 10`
 Usage: `/fvs:lean-simplify Specs/Backend/Field/Sub.lean --theorem sub_spec --report-only`
 
+### Porting
+
+**`/fvs:lean-spec-port`**
+Port formal verification spec from another language to Lean.
+
+- Interactive prompts: source language, project path, function name
+- Language-agnostic: supports Verus, F*, Coq, Dafny
+- Compares Rust source between both projects to prevent spec mismatch
+- Generates idiomatic Lean spec using source as semantic blueprint
+- Reads existing verified specs in target project for style matching
+- Optional `--scan` flag: compare verified functions across both projects
+
+Usage: `/fvs:lean-spec-port`
+Usage: `/fvs:lean-spec-port --scan`
+
+**`/fvs:lean-proof-port`**
+Port formal verification proof from another language to Lean.
+
+- Same interactive prompts as lean-spec-port
+- Requires existing Lean spec file (run `/fvs:lean-spec-port` first)
+- Uses source proof as strategy blueprint (not structural mirror)
+- Maps source tactics to Lean equivalents (e.g., Verus SMT -> `grind`)
+- Iterative proof loop: one sorry at a time, user verifies each step
+- Configurable max attempts (default 10, hard cap 25)
+
+Usage: `/fvs:lean-proof-port`
+Usage: `/fvs:lean-proof-port --scan --max-attempts 15`
+
 ### Support
 
 **`/fvs:natural-language <function_name>`**
@@ -121,6 +152,16 @@ Update FVS to latest version.
 - Runs `npx fv-skills-baif` to update
 
 Usage: `/fvs:update`
+
+**`/fvs:reapply-patches`**
+Reapply local modifications after an FVS update.
+
+- Detects backed-up patches from `fvs-local-patches/` directory
+- Merges user modifications into newly installed version
+- Handles conflicts with user input
+- Run after `/fvs:update` if local patches were detected
+
+Usage: `/fvs:reapply-patches`
 
 **`/fvs:help`**
 Show this command reference.
@@ -144,11 +185,17 @@ Show this command reference.
 │   ├── plan.md
 │   ├── lean-specify.md
 │   ├── lean-verify.md
+│   ├── lean-simplify.md
+│   ├── lean-spec-port.md
+│   ├── lean-proof-port.md
+│   ├── reapply-patches.md
 │   └── help.md
 └── fv-skills/
     ├── references/          # Domain knowledge
     ├── templates/           # Spec, config, stub templates
     └── workflows/           # Command orchestration logic
+        ├── lean-spec-port.md
+        └── lean-proof-port.md
 ```
 
 ## Status Symbols
