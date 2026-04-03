@@ -41,7 +41,7 @@ natural language specs:
 - {POSTCONDITION_SUMMARY_2}
 - Requires: {PRECONDITION_SUMMARY}
 -/
-@[progress]
+@[step]
 theorem {FUNCTION_NAME}_spec ({PARAMS})
     ({PRECONDITIONS}) :
     {EXISTS_RESULT} {LEAN_FUNCTION_CALL} = ok {RESULT_BINDING} {AND}
@@ -117,8 +117,8 @@ The NL description and specs are critical for guiding proof development.
    are defined, but the proof body is just `sorry`.
 
 2. **proof phase**: Replace `sorry` with actual tactic proof.
-   Common tactics: progress, unfold, simp, ring, field_simp, omega,
-   scalar_tac, grind. Use `progress` to step through Aeneas-generated
+   Common tactics: step, unfold, simp, ring, field_simp, agrind,
+   scalar_tac, grind. Use `step` to step through Aeneas-generated
    function definitions.
 
 3. **refined phase**: Tighten bounds, add helper lemmas, split into
@@ -178,7 +178,7 @@ natural language specs:
     Field51_as_Nat(sub(a, b)) + Field51_as_Nat(b) = Field51_as_Nat(a) (mod p)
 -/
 
-@[progress]
+@[step]
 theorem sub_spec (a b : Array U64 5#usize)
     (h_bounds_a : forall i < 5, a[i]!.val < 2 ^ 63)
     (h_bounds_b : forall i < 5, b[i]!.val < 2 ^ 54) :

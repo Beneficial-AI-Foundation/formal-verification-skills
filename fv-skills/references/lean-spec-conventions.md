@@ -3,7 +3,7 @@
 <overview>
 Specification conventions ensure that every proof file across a verification project follows
 a uniform structure. Consistent naming, path mapping, theorem shape, and precondition style
-make specs composable -- a spec for function `f` can be consumed by `progress` when proving
+make specs composable -- a spec for function `f` can be consumed by `step` when proving
 a caller of `f`. These conventions are derived from the curve25519-dalek-lean-verify project
 (161 functions, 92 verified) and generalize to any Aeneas-based verification effort.
 </overview>
@@ -77,13 +77,13 @@ namespace curve25519_dalek.backend.serial.u64.field.FieldElement51
 namespace curve25519_dalek.backend.serial.u64.field.AddShared0FieldElement51SharedAFieldElement51FieldElement51
 ```
 
-## Pattern 2: @[progress] Theorem Structure
+## Pattern 2: @[step] Theorem Structure
 
 Every specification theorem follows a canonical shape that enables automated proof
-composition via the `progress` tactic.
+composition via the `step` tactic.
 
 ```lean
-@[progress]
+@[step]
 theorem function_name_spec (param1 : Type1) (param2 : Type2)
     (h_precondition1 : precondition_expression)
     (h_precondition2 : precondition_expression) :
@@ -95,7 +95,7 @@ theorem function_name_spec (param1 : Type1) (param2 : Type2)
 ```
 
 Key structural requirements:
-- **`@[progress]` attribute**: Registers the theorem for use by the `progress` tactic.
+- **`@[step]` attribute**: Registers the theorem for use by the `step` tactic.
   Without this, callers cannot automatically apply this spec.
 - **Existential result**: `∃ result, ... = ok result ∧ ...` proves the function does not
   panic and binds the return value.
@@ -106,7 +106,7 @@ Key structural requirements:
 **Real example -- FieldElement51::add:**
 
 ```lean
-@[progress]
+@[step]
 theorem add_spec (a b : Array U64 5#usize)
     (ha : ∀ i < 5, a[i]!.val < 2 ^ 53)
     (hb : ∀ i < 5, b[i]!.val < 2 ^ 53) :
@@ -114,7 +114,7 @@ theorem add_spec (a b : Array U64 5#usize)
     (∀ i < 5, result[i]!.val = a[i]!.val + b[i]!.val) ∧
     (∀ i < 5, result[i]!.val < 2 ^ 54) := by
   unfold add
-  progress*
+  step*
 ```
 
 ## Pattern 3: Array Types and Interpretation Functions
@@ -208,9 +208,9 @@ signature approach handles this iteratively:
 
 ```lean
 -- Try the direct signature first
-@[progress]
+@[step]
 theorem f_spec (x : T) : ∃ r, f x = ok r ∧ P r := by
-  unfold f; progress
+  unfold f; step
 ```
 
 **Step 2:** If unprovable, analyze why. Common issues:
@@ -222,7 +222,7 @@ theorem f_spec (x : T) : ∃ r, f x = ok r ∧ P r := by
 
 ```lean
 -- Refined: add bounds precondition, weaken to modular equivalence
-@[progress]
+@[step]
 theorem f_spec (x : T)
     (h_bounds : ∀ i < n, x[i]!.val < bound) :
     ∃ r, f x = ok r ∧
@@ -284,12 +284,12 @@ well enough to formalize it.
 
 ```lean
 -- WRONG: no preconditions (will fail on overflow)
-@[progress]
+@[step]
 theorem add_spec (a b : Array U64 5#usize) :
     ∃ result, add a b = ok result ∧ ... := by sorry
 
 -- CORRECT: state the bounds that prevent overflow
-@[progress]
+@[step]
 theorem add_spec (a b : Array U64 5#usize)
     (ha : ∀ i < 5, a[i]!.val < 2 ^ 53)
     (hb : ∀ i < 5, b[i]!.val < 2 ^ 53) :
@@ -318,12 +318,12 @@ functions. Omitting the mathematical property makes the spec meaningless for cor
 
 <summary>
 Specification conventions enforce a uniform structure across all proof files:
-deterministic path mapping from Rust modules to Lean spec files, the `@[progress]` theorem
+deterministic path mapping from Rust modules to Lean spec files, the `@[step]` theorem
 shape with existential result and conjunctive postconditions, project-specific interpretation
 functions for bridging implementation-level values to mathematical ones, and explicit
 precondition bounds (derived from Rust source analysis) that prevent overflow. Following
 these conventions makes specs composable -- each proven theorem becomes a building block
-that `progress` can automatically apply when verifying callers higher in the dependency
+that `step` can automatically apply when verifying callers higher in the dependency
 graph. Examples throughout this document are drawn from curve25519-dalek; your project's
 types, constants, and interpretation functions will differ.
 </summary>

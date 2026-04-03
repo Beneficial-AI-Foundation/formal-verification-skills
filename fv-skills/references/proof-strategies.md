@@ -46,7 +46,7 @@ concrete cases and discharge each independently.
     have (byte : U8) : 8 | (byte &&& 248#u8).val := by bvify 8; bv_decide
     simpa [*] using this _
   . have := List.mem_range.mp hi
-    interval_cases i <;> omega
+    interval_cases i <;> scalar_tac
 ```
 
 **Key insight:** `interval_cases i` generates one goal per value. Combine with
@@ -59,7 +59,7 @@ handle separately with `by_cases` before `interval_cases` on the rest.
 -- From Reduce.lean: show all 5 result limbs satisfy the bound
 . intro i _
   interval_cases i
-  all_goals simp [*]; scalar_tac
+  · simp [*]; scalar_tac
 ```
 
 **Pattern:** `intro i hi; interval_cases i; all_goals tactic` handles finite
@@ -151,11 +151,11 @@ exact final
 
 ```lean
 -- From Reduce.lean: the entire modular congruence in one line
-simp [Field51_as_Nat, Finset.sum_range_succ, p, Nat.ModEq, *]; omega
+simp [Field51_as_Nat, Finset.sum_range_succ, p, Nat.ModEq, *]; agrind
 ```
 
-When the carry structure is simple enough, expanding definitions and using `omega`
-on the resulting linear arithmetic suffices.
+When the carry structure is simple enough, expanding definitions and using `agrind`
+on the resulting arithmetic suffices.
 
 ---
 
@@ -171,15 +171,15 @@ propagation, schoolbook multiply output normalization).
 **Real example** -- Reduce.lean (5-limb carry chain):
 
 ```lean
--- From Reduce.lean: unfold + progress* resolves the entire carry chain
-@[progress]
+-- From Reduce.lean: unfold + step* resolves the entire carry chain
+@[step]
 theorem reduce_spec (limbs : Array U64 5#usize) :
     exists result, reduce limbs = ok result /\
     (forall i < 5, result[i]!.val <= 2^51 + (2^13 - 1) * 19) /\
     Field51_as_Nat limbs === Field51_as_Nat result [MOD p] := by
   unfold reduce
-  progress*
-  -- progress* steps through: extract carry0, mask limb0,
+  step*
+  -- step* steps through: extract carry0, mask limb0,
   -- add carry0 to limb1, extract carry1, mask limb1, ...
   -- Each remaining goal is a bounds obligation:
   . simp [*]; scalar_tac   -- carry0 bound
@@ -190,13 +190,13 @@ theorem reduce_spec (limbs : Array U64 5#usize) :
 ```
 
 **Structure of carry chain proofs:**
-1. `unfold` + `progress*` resolves all monadic steps
+1. `unfold` + `step*` resolves all monadic steps
 2. Each carry step produces a bounds obligation: `simp [*]; scalar_tac`
 3. Final goal: universal bound on all output limbs uses `interval_cases`
-4. Modular congruence: `simp [Field51_as_Nat, ...]; omega`
+4. Modular congruence: `simp [Field51_as_Nat, ...]; agrind`
 
-**Why this works:** The `@[progress]` attribute on helper specs (like mask and
-shift operations) lets `progress*` automatically chain through the carry pipeline.
+**Why this works:** The `@[step]` attribute on helper specs (like mask and
+shift operations) lets `step*` automatically chain through the carry pipeline.
 The attribute `[scalar_tac_simps] LOW_51_BIT_MASK_val_eq` teaches `scalar_tac`
 about the mask constant.
 
@@ -214,7 +214,7 @@ coordinates (EdwardsPoint, CompletedPoint, ProjectivePoint).
 
 ```lean
 -- From AsExtended.lean: 4-coordinate output, each with modular spec
-@[progress]
+@[step]
 theorem as_extended_spec (q : CompletedPoint)
   (h_qX_bounds : forall i, i < 5 -> (q.X[i]!).val < 2 ^ 54)
   (h_qY_bounds : forall i, i < 5 -> (q.Y[i]!).val < 2 ^ 54)
@@ -236,7 +236,7 @@ Z' % p = (Z * T) % p /\
 T' % p = (X * Y) % p
 := by
   unfold as_extended
-  progress*
+  step*
   rw [<- Nat.ModEq, <- Nat.ModEq, <- Nat.ModEq, <- Nat.ModEq]
   simp_all
 ```
@@ -244,8 +244,8 @@ T' % p = (X * Y) % p
 **Key structure:**
 1. **Preconditions:** Bounds on every coordinate of every input point
 2. **Postconditions:** Conjunction of per-coordinate modular equalities
-3. **Proof:** `unfold` + `progress*` resolves all field multiplications (using
-   `@[progress]` attributed `mul_spec`), then `simp_all` closes modular goals
+3. **Proof:** `unfold` + `step*` resolves all field multiplications (using
+   `@[step]` attributed `mul_spec`), then `simp_all` closes modular goals
 
 **Pattern for bounds preconditions:**
 ```lean
@@ -285,7 +285,7 @@ theorem sub_spec ... := by
 ### 2. Don't forget intermediate lemmas (have blocks)
 
 Bring bounds and equalities into scope with `have` before using them. Without
-explicit intermediate results, `scalar_tac` and `omega` cannot see the needed
+explicit intermediate results, `scalar_tac` and `agrind` cannot see the needed
 hypotheses.
 
 **Wrong:**
@@ -316,28 +316,27 @@ have : result[3]!.val < 2^51 := by scalar_tac  -- wrong: ignores carry from limb
 
 **Right:**
 ```lean
--- Let progress* thread carries through, then prove bounds per-goal
+-- Let step* thread carries through, then prove bounds per-goal
 unfold reduce
-progress*
+step*
 -- Each goal now correctly accounts for carry from previous limb
 . simp [*]; scalar_tac
 ```
 
 ### 4. Don't use overpowered tactics when simpler ones suffice
 
-Using `grind` or `aesop` when `omega` or `ring` would close the goal produces
+Using `grind` when `ring` or `agrind` would close the goal produces
 slower, less maintainable proofs that may break on Lean version upgrades.
 
 **Wrong:**
 ```lean
 have : a + b = b + a := by grind  -- overkill
-have : n < n + 1 := by aesop      -- overkill
 ```
 
 **Right:**
 ```lean
 have : a + b = b + a := by ring
-have : n < n + 1 := by omega
+have : n < n + 1 := by agrind
 ```
 
 </anti_patterns>
@@ -358,7 +357,7 @@ What does the function do?
 |
 +-- Carry/reduce normalization
 |   --> Carry chain (Pattern 4)
-|   --> unfold + progress* for monadic chain
+|   --> unfold + step* for monadic chain
 |   --> simp [*]; scalar_tac for each carry bound
 |
 +-- Field operation with modular spec (sub mod p, mul mod p)
@@ -368,10 +367,10 @@ What does the function do?
 +-- Multi-output point operation (add, double, convert)
 |   --> Multi-coordinate (Pattern 5)
 |   --> Per-coordinate modular equality
-|   --> Relies on @[progress] attributed sub-specs
+|   --> Relies on @[step] attributed sub-specs
 
 Proof complexity hierarchy:
-  Simple:  unfold + progress* + simp [*]; scalar_tac
+  Simple:  unfold + step* + simp [*]; scalar_tac
   Medium:  + explicit obtain chains + interval_cases
   Complex: + Nat.ModEq chains + Finset.sum expansion + have blocks
 ```

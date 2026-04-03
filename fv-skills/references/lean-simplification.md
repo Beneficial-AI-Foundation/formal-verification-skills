@@ -21,9 +21,9 @@ change breaks the build, it is reverted immediately.
 | Tier | Name | Risk | Examples |
 |------|------|------|----------|
 | 1 | Zero-risk cleanup | None | Remove duplicate hypotheses, collapse `simp [*]; scalar_tac` into `scalar_tac` when sufficient, normalize whitespace/indentation |
-| 2 | Sharper tactics | Low | Delete dead `have` bindings (with proof-fuel check), replace `simp [*]` with `simp only [...]` (use `simp?` to discover), replace `omega` with `norm_num` where applicable, inline single-use `have` bindings |
+| 2 | Sharper tactics | Low | Delete dead `have` bindings (with proof-fuel check), replace `simp [*]` with `simp only [...]` (use `simp?` to discover), replace `agrind` with `norm_num` where applicable, inline single-use `have` bindings |
 | 3 | Better simp strategy | Medium | Merge consecutive `simp` calls, replace `unfold X; simp [...]` with `simp [X, ...]`, factor repeated tactic blocks into named local lemmas |
-| 4 | Smart automation | High | Replace multi-line tactic scripts with `grind` or `aesop` where they close the goal in one step, consolidate `progress` chains with `progress*` |
+| 4 | Smart automation | High | Replace multi-line tactic scripts with `agrind` or `grind` where they close the goal in one step, consolidate `step` chains with `step*` |
 
 ### Mode-to-Tier Mapping
 
@@ -39,12 +39,12 @@ change breaks the build, it is reverted immediately.
 
 ## Critical Rule: Proof Fuel
 
-Not referenced by name != unused. Tactics like `omega`, `linarith`, `simp_all`, and `scalar_tac`
+Not referenced by name != unused. Tactics like `agrind`, `grind`, `simp_all`, and `scalar_tac`
 consume hypotheses from the local context semantically -- they use every available hypothesis
 matching their domain WITHOUT explicit textual reference. A `have h : x < 10 := ...` followed
-by `omega` is actively used as "proof fuel" even though `h` never appears in the omega call.
+by `agrind` is actively used as "proof fuel" even though `h` never appears in the agrind call.
 
-**Before removing ANY have/let binding, check:** Does the proof below it contain `omega`,
+**Before removing ANY have/let binding, check:** Does the proof below it contain `agrind`,
 `linarith`, `simp_all`, `scalar_tac`, or `grind`? If yes, the binding may be proof fuel.
 Test removal with a build check -- do NOT assume it is dead based on textual absence alone.
 
@@ -57,8 +57,8 @@ When multiple simplifications are possible, prefer this order (most impactful fi
 1. **Lemma reuse** -- Extract shared proof steps into a local lemma used by multiple goals
 2. **Proof tail compression** -- Collapse redundant tactic chains at the end of proof branches
 3. **Helper extraction** -- Factor repeated tactic blocks into named local lemmas
-4. **Backend replacement** -- Replace multi-step manual proofs with single-tactic closers (simp, omega, etc.)
-5. **Automation unification** -- Replace multiple automation calls with one stronger call (grind, aesop)
+4. **Backend replacement** -- Replace multi-step manual proofs with single-tactic closers (simp, agrind, etc.)
+5. **Automation unification** -- Replace multiple automation calls with one stronger call (agrind, grind)
 
 ---
 
@@ -66,10 +66,10 @@ When multiple simplifications are possible, prefer this order (most impactful fi
 
 These operations look safe but frequently break proofs:
 
-- **Removing locals near omega/linarith** -- These tactics consume all matching hypotheses
-  from context. Removing a "dead-looking" have near omega can silently remove proof fuel.
+- **Removing locals near agrind/scalar_tac** -- These tactics consume all matching hypotheses
+  from context. Removing a "dead-looking" have near agrind can silently remove proof fuel.
 - **Removing `set ... with hdef` bindings** -- The `hdef` equation is often used implicitly
-  by `simp` and `omega` without textual reference. Never remove set bindings without a build test.
+  by `simp` and `agrind` without textual reference. Never remove set bindings without a build test.
 - **Reordering branch-local lemmas** -- Lean's elaborator is sensitive to declaration order.
   Moving a `have` above or below another `have` can change what is in scope for subsequent tactics.
 - **Optimizing for proof length over elaboration cost** -- A shorter proof is not always faster.
@@ -85,9 +85,9 @@ Remove the binding entirely.
 
 **Detection:** Search for `have h_name` declarations. Check if `h_name` appears anywhere
 after the declaration in the same proof block. If not referenced textually, it is a candidate
-for removal -- but see the proof-fuel rule. Tactics like `omega`, `linarith`, and `simp_all`
+for removal -- but see the proof-fuel rule. Tactics like `agrind`, `grind`, and `simp_all`
 use hypotheses by name internally even when the hypothesis name does not appear literally in
-the tactic invocation. A `have h_bound` followed by `omega` IS used even though `h_bound`
+the tactic invocation. A `have h_bound` followed by `agrind` IS used even though `h_bound`
 never appears textually after the have. Always build-test before removing.
 
 **Example:**
@@ -95,7 +95,7 @@ never appears textually after the have. Always build-test before removing.
 -- Before: dead binding (h_unused never referenced)
 theorem my_spec ... := by
   unfold my_fn
-  progress
+  step
   have h_unused : x.val < 2^64 := by scalar_tac
   have h_bound : a.val + b.val <= U64.max := by
     have := h_bounds 0 (by simp); scalar_tac
@@ -104,7 +104,7 @@ theorem my_spec ... := by
 -- After: dead binding removed
 theorem my_spec ... := by
   unfold my_fn
-  progress
+  step
   have h_bound : a.val + b.val <= U64.max := by
     have := h_bounds 0 (by simp); scalar_tac
   simp [*]; scalar_tac
@@ -112,7 +112,7 @@ theorem my_spec ... := by
 
 **Verify:** `nice -n 19 lake build` must still pass after removal.
 
-**Tier:** 2 (low risk -- tactics like omega, linarith, simp_all consume hypotheses semantically without textual reference; see proof-fuel rule)
+**Tier:** 2 (low risk -- tactics like agrind, grind, simp_all consume hypotheses semantically without textual reference; see proof-fuel rule)
 
 ---
 
@@ -160,14 +160,14 @@ When a simpler tactic alone closes a goal, remove the preceding setup tactic.
 . scalar_tac
 ```
 
-**Sub-pattern B:** When `omega` closes a goal, remove preceding `norm_num` setup.
+**Sub-pattern B:** When `agrind` closes a goal, remove preceding `norm_num` setup.
 
 ```lean
 -- Before
-. norm_num; omega
+. norm_num; agrind
 
--- After (if omega alone closes the goal)
-. omega
+-- After (if agrind alone closes the goal)
+. agrind
 ```
 
 **Verification:** Always test the simpler version with `nice -n 19 lake build` before
@@ -202,14 +202,14 @@ Bare `simpa` triggers the full simp set which is fragile and slow.
 
 ## Pattern 4: Grind/Aesop Replacement (Aggressive Only)
 
-If a multi-line tactic block (3+ lines) can be replaced by a single `grind` or `aesop`
+If a multi-line tactic block (3+ lines) can be replaced by a single `agrind` or `grind`
 call that closes the goal, do it.
 
 **Constraints:**
 - ONLY in aggressive mode (Tier 4)
 - ONLY when the automation reliably closes the goal
-- NEVER for goals involving Aeneas monadic code (`progress` steps)
-- Test with `grind?` or `aesop?` first to confirm
+- NEVER for goals involving Aeneas monadic code (`step` steps)
+- Test with `agrind` first (fast), then `grind` if agrind fails
 
 **Example:**
 ```lean
@@ -217,13 +217,13 @@ call that closes the goal, do it.
 . have h1 : a + b = b + a := by ring
   rw [h1]
   simp only [Nat.add_comm]
-  omega
+  agrind
 
--- After: grind closes it in one step (confirmed via grind?)
-. grind
+-- After: agrind closes it in one step
+. agrind
 ```
 
-**Tier:** 4 (high risk -- automation may be fragile across Lean versions)
+**Tier:** 4 (high risk -- automation may be fragile across Lean versions; prefer agrind over grind)
 
 ---
 
@@ -235,7 +235,7 @@ call that closes the goal, do it.
 - Simple rewriting chains
 
 **Bad fit:**
-- Aeneas monadic code (use `progress` instead)
+- Aeneas monadic code (use `step` instead)
 - Goals with `Finset.sum` expansion (too complex for grind)
 - Bitwise operations (use `bvify`/`bv_decide` instead)
 
@@ -260,33 +260,33 @@ ambient lemma set may have changed.
 ## Aeneas-Specific Policy
 
 **NEVER simplify:**
-- `unfold + progress` sequences -- these are the structural backbone of Aeneas proofs
-- `progress` steps that correspond to distinct monadic bind points -- merging them loses
+- `unfold + step` sequences -- these are the structural backbone of Aeneas proofs
+- `step` steps that correspond to distinct monadic bind points -- merging them loses
   the 1:1 correspondence between Rust operations and proof steps
 
 **SAFE to simplify:**
 - Bounds obligations (`simp [*]; scalar_tac` patterns)
-- Case split tails (`interval_cases i <;> omega`)
-- Modular arithmetic closers (`simp [Field51_as_Nat, ...]; omega`)
+- Case split tails (`interval_cases i <;> scalar_tac`)
+- Modular arithmetic closers (`simp [Field51_as_Nat, ...]; agrind`)
 
-**progress* policy:**
-`progress*` is acceptable as a replacement for consecutive `progress` calls ONLY when
+**step* policy:**
+`step*` is acceptable as a replacement for consecutive `step` calls ONLY when
 all steps are independent (no intermediate `have` bindings between them). If there are
-`have` bindings or manual `simp` steps between `progress` calls, do NOT merge them.
+`have` bindings or manual `simp` steps between `step` calls, do NOT merge them.
 
 ---
 
 ## Target Selection Heuristics
 
 ### Good Targets (simplify these first)
-- Theorems with 3+ consecutive `simp`/`omega`/`scalar_tac` calls on the same goal
+- Theorems with 3+ consecutive `simp`/`agrind`/`scalar_tac` calls on the same goal
 - Proofs where `simp?` reports a shorter lemma list than current `simp [*]`
 - Proofs with obvious dead bindings confirmed by build test
 - Stable, self-contained theorems with no cross-file dependents
 
 ### Bad Targets (leave these alone)
 - Theorems that other files import (high blast radius on failure)
-- Proofs near `omega`/`linarith` that use many local hypotheses
+- Proofs near `agrind`/`grind` that use many local hypotheses
 - Recently modified proofs that are not yet stable
 - Proofs that are already minimal (2-3 tactic lines)
 
@@ -318,9 +318,9 @@ in higher layers.
 
 Hard-won lessons from real proof cleanup work:
 
-- **Parity/omega fragility** -- `omega` proofs involving parity (even/odd, % 2) are extremely
+- **Parity fragility** -- proofs involving parity (even/odd, % 2) are extremely
   fragile. Small changes to hypothesis ordering or available lemmas can break them. Avoid
-  simplifying near parity-related omega calls.
+  simplifying near parity-related tactic calls.
 - **`simpa only` is safer than broad `simpa`** -- Always use the `only` variant with an
   explicit lemma list. Bare `simpa` pulls in the full simp set which changes across Mathlib
   versions.
@@ -340,9 +340,9 @@ Hard-won lessons from real proof cleanup work:
 
 ## Anti-Patterns
 
-### 1. Never remove @[progress] attributes
+### 1. Never remove @[step] attributes
 
-These attributes are consumed by other proofs via the `progress` tactic. Removing them
+These attributes are consumed by other proofs via the `step` tactic. Removing them
 silently breaks downstream theorems that depend on them.
 
 ### 2. Never change theorem signatures
@@ -350,11 +350,11 @@ silently breaks downstream theorems that depend on them.
 Preconditions and postconditions are the specification contract. Changing them changes
 what is being proved. Simplification operates ONLY on the proof body (the `by ...` block).
 
-### 3. Never replace scalar_tac with omega blindly
+### 3. Never replace scalar_tac with agrind blindly
 
 `scalar_tac` understands Aeneas scalar types (U8, U16, U32, U64, Usize) and their bounds.
-`omega` only handles pure Nat/Int linear arithmetic. Replacing `scalar_tac` with `omega`
-will fail when Aeneas type bounds are involved.
+`agrind` is more general but may not close all goals that `scalar_tac` handles. Test
+replacements with a build check before committing.
 
 ### 4. Never use decide or native_decide on large numeric goals
 
@@ -385,7 +385,7 @@ proof changes makes it impossible to isolate what broke the build.
 
 ### 9. Never delete arithmetic locals because they "look unused"
 
-If a `have h_bound : x < 2^64 := by scalar_tac` appears before `omega` or `linarith`,
+If a `have h_bound : x < 2^64 := by scalar_tac` appears before `agrind` or `grind`,
 it IS used -- these tactics consume all hypotheses matching their domain. See the
 proof-fuel rule above.
 
@@ -415,7 +415,7 @@ What mode?
 |   +-- All Tier 1 changes first
 |   +-- Dead have bindings (proof-fuel check)? --> Remove after build-test
 |   +-- simp [*] present? --> Try simp? to sharpen to simp only [...]
-|   +-- omega where norm_num suffices? --> Replace
+|   +-- agrind where norm_num suffices? --> Replace
 |   +-- Single-use have binding? --> Inline it
 |   +-- Consecutive simp calls? --> Merge them
 |   +-- unfold X; simp [...] pattern? --> Try simp [X, ...]
@@ -425,12 +425,12 @@ What mode?
 +-- aggressive (All tiers)
     +-- All Tier 1-3 changes first
     +-- Multi-line block closeable by grind? --> Replace (test with grind? first)
-    +-- Multi-line block closeable by aesop? --> Replace (test with aesop? first)
-    +-- Consecutive independent progress calls? --> Try progress*
+    +-- Multi-line block closeable by grind? --> Replace (test first)
+    +-- Consecutive independent step calls? --> Try step*
     +-- Nothing else to do --> NO_CHANGE
 
 ALWAYS: Verify with nice -n 19 lake build after every change.
-NEVER: Touch @[progress] attributes, theorem signatures, unfold+progress backbone.
+NEVER: Touch @[step] attributes, theorem signatures, unfold+step backbone.
 ```
 
 </summary>
