@@ -175,7 +175,7 @@ After executor returns, verify the generated spec file:
 [ -f "$SPEC_OUTPUT_PATH" ] && echo "File exists" || echo "MISSING"
 
 # Has @[step] attribute
-grep -c "@\[progress\]" "$SPEC_OUTPUT_PATH"
+grep -c "@\[step\]" "$SPEC_OUTPUT_PATH"
 
 # Has existential form with sorry
 grep -c "sorry" "$SPEC_OUTPUT_PATH"

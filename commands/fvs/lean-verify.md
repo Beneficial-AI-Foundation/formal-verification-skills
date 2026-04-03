@@ -110,7 +110,7 @@ nice -n 19 lake build 2>&1 | tail -20
 If sorry found: extract theorem name and current proof state. Continue to research phase.
 
 ```bash
-grep -E "@\[progress\]|theorem " "$SPEC_PATH"
+grep -E "@\[step\]|theorem " "$SPEC_PATH"
 ```
 
 ## Step 5: Dispatch Research Subagent
@@ -201,7 +201,7 @@ $PREVIOUS_FEEDBACK (empty on first attempt, contains Lean error or user hint aft
 <attempt>{ATTEMPT_FOR_THIS_SORRY} of {MAX_PER_SORRY}</attempt>
 
 Write a SMALL tactic block to replace this ONE sorry.
-Use tactics: have, calc, progress, unfold, simp, ring, field_simp, omega.
+Use tactics: have, calc, step, unfold, simp, ring, field_simp, agrind, scalar_tac.
 Explain your reasoning before writing.
 
 IMPORTANT: Write the change using VS Code diff (Write tool). User will approve inline.
@@ -241,7 +241,7 @@ END FOR
 
 **CRITICAL LOCKED DECISIONS:**
 - One sorry at a time (not batch)
-- Small tactic blocks (have, calc, unfold + progress)
+- Small tactic blocks (have, calc, unfold + step)
 - User checks Lean compiles between each step
 - Feels like pair programming
 - All writes via VS Code diffs
