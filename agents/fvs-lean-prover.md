@@ -24,7 +24,7 @@ Extract from your prompt context:
 - **Function body**: the Lean translation from Funs.lean
 - **Tactic reference**: available tactics and their usage patterns
 - **Proof strategies**: which strategy applies to this function type
-- **Verified dependency specs**: available @[progress] lemmas from other functions
+- **Verified dependency specs**: available @[step] lemmas from other functions
 - **User feedback**: error messages, goal state, or hints from previous iteration
 - **Attempt number**: how many tactic steps have been proposed so far
 
@@ -53,18 +53,18 @@ Based on the goal type, select ONE tactic:
 | Goal Type | Recommended Tactic |
 |---|---|
 | Opaque function definition | `unfold {function_name}` |
-| Aeneas monadic code (Result, bind) | `progress` or `progress*` |
-| Arithmetic bound (x < 2^N) | `scalar_tac` or `omega` |
+| Aeneas monadic code (Result, bind) | `step` or `step*` |
+| Arithmetic bound (x < 2^N) | `scalar_tac` or `agrind` |
 | Algebraic equality | `ring` |
 | Bitwise property | `bvify N; bv_decide` |
 | Bounded quantifier (i < 5) | `interval_cases i` |
-| Modular arithmetic (x === y [MOD p]) | `simp [Nat.ModEq, ...]; omega` |
+| Modular arithmetic (x === y [MOD p]) | `zmodify; ring / simp` |
 | Simplification needed | `simp [*]` or `simp only [...]` |
-| Existential goal | `refine <..., ...>` or let `progress` handle it |
+| Existential goal | `refine <..., ...>` or let `step` handle it |
 | Case split needed | `by_cases h : condition` |
 | Need intermediate fact | `have h : statement := by tactic` |
 
-When using `progress`, specify which @[progress] theorem you expect to fire. For example: "progress should apply {dep_function}_spec here."
+When using `step`, specify which @[step] theorem you expect to fire. For example: "step should apply {dep_function}_spec here."
 
 ## 4. Propose ONE Tactic Step
 
@@ -72,7 +72,7 @@ Write 1-3 lines of tactic code maximum. Not a complete proof.
 
 Examples of appropriate scope:
 - `unfold my_function` (1 line)
-- `progress` (1 line, stepping through one monadic bind)
+- `step` (1 line, stepping through one monadic bind)
 - `have h_bound : a.val + b.val <= U64.max := by\n  have := h_bounds 0 (by simp); scalar_tac` (2-3 lines, establishing one intermediate fact)
 - `simp [*]; scalar_tac` (1 line, closing one subgoal)
 
@@ -131,11 +131,11 @@ When stuck (tried multiple approaches, cannot make progress):
 - When explaining your tactic choice, be brief. One or two sentences.
 - If the user provides feedback, incorporate it. Do not repeat a failed tactic.
 - Use `nice -n 19 lake build` for any build checks, NEVER plain `lake build`.
-- When using `progress`, specify which theorem you expect to fire.
+- When using `step`, specify which theorem you expect to fire.
 - Do NOT hallucinate lemma names. If unsure whether a lemma exists, say so.
 - If you are not confident about a tactic, say so in your reasoning.
 - After 3+ failed attempts on the same goal, return ## STUCK rather than guessing further.
-- Prefer specific tactics (`omega`, `ring`, `scalar_tac`) over general automation (`grind`, `aesop`).
+- Prefer specific tactics (`agrind`, `ring`, `scalar_tac`) over heavier automation (`grind`). Never use omega, linarith, or nlinarith (BANNED).
 </important>
 
 <success_criteria>

@@ -6,7 +6,7 @@ Takes a verification target (function name), dispatches fvs-researcher to gather
 context (Funs.lean, Types.lean, Rust source, existing stubs, similar specs), then
 dispatches fvs-executor to write the spec file.
 
-Output: Specs/{path}/{FunctionName}.lean with @[progress] theorem and sorry placeholder.
+Output: Specs/{path}/{FunctionName}.lean with @[step] theorem and sorry placeholder.
 </purpose>
 
 <process>
@@ -91,7 +91,7 @@ Inline into executor prompt:
 **Spec structure requirements:**
 - Correct module path and imports (Types, Funs, dependencies)
 - `open` declarations for relevant namespaces
-- `@[progress]` attribute on theorem
+- `@[step]` attribute on theorem
 - Existential form: `exists result, fn args = ok result /\ postconditions`
 - Array types use `(Array U64 5#usize)` notation
 - Interpretation functions where applicable
@@ -112,7 +112,7 @@ Validate the generated spec meets structural requirements.
 **Checklist:**
 - [ ] File exists at expected path
 - [ ] Has correct Lean imports (project Types, Funs modules)
-- [ ] Has `@[progress]` attribute on main theorem
+- [ ] Has `@[step]` attribute on main theorem
 - [ ] Theorem uses existential form with `sorry`
 - [ ] Module path matches project namespace
 - [ ] No references to non-existent spec files

@@ -65,12 +65,12 @@ Usage: `/fvs:plan` or `/fvs:plan <function_name>`
 ### Specification
 
 **`/fvs:lean-specify <function_name>`**
-Generate Lean spec skeleton following @[progress] theorem pattern.
+Generate Lean spec skeleton following @[step] theorem pattern.
 
 - Resolves function in CODEMAP.md or Funs.lean directly
 - Deep analysis of function body, types, and control flow
 - Checks dependency spec status
-- Generates spec with correct imports, namespace, @[progress] theorem, sorry
+- Generates spec with correct imports, namespace, @[step] theorem, sorry
 - Validates spec structure and optional build check
 
 Usage: `/fvs:lean-specify scalar_mul_inner`
@@ -220,7 +220,7 @@ Rust → Charon → LLBC → Aeneas → Lean 4
 
 - Types.lean, Funs.lean are auto-generated — NEVER edit
 - Specs are hand-written with FVS assistance
-- Core tactics: progress, unfold, simp, ring, field_simp, omega
+- Core tactics: step, unfold, simp, ring, field_simp, agrind, scalar_tac
 
 ## Getting Help
 

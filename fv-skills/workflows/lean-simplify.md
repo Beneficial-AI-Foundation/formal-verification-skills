@@ -52,8 +52,8 @@ If build fails: STOP. Report build errors.
 **Gather baseline metrics:**
 ```bash
 TOTAL_LINES=$(wc -l < "$SPEC_PATH")
-THEOREM_COUNT=$(grep -c "@\[progress\]\|theorem " "$SPEC_PATH")
-TACTIC_LINES=$(grep -cE "^\s+(unfold|progress|simp|omega|scalar_tac|ring|field_simp|have|obtain|rw|by_cases|interval_cases|grind|aesop|bvify|bv_decide|gcongr|bound|subst_vars|refine|exact|apply|intro|calc)" "$SPEC_PATH")
+THEOREM_COUNT=$(grep -c "@\[step\]\|theorem " "$SPEC_PATH")
+TACTIC_LINES=$(grep -cE "^\s+(unfold|step|simp|agrind|scalar_tac|ring|field_simp|have|obtain|rw|by_cases|interval_cases|grind|bvify|bv_tac|gcongr|bound|subst_vars|refine|exact|apply|intro|calc)" "$SPEC_PATH")
 ```
 </step>
 

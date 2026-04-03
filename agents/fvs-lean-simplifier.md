@@ -101,11 +101,11 @@ When something goes wrong:
 
 <important>
 - ONE change per invocation. Never batch multiple simplifications.
-- PROOF FUEL RULE: Before removing ANY have/let binding, check if omega, linarith, simp_all,
-  scalar_tac, or grind appears below it. These tactics consume hypotheses semantically without
+- PROOF FUEL RULE: Before removing ANY have/let binding, check if agrind, grind, simp_all,
+  scalar_tac appears below it. These tactics consume hypotheses semantically without
   textual reference. A binding that "looks dead" may be proof fuel. Always build-test removal.
-- NEVER touch theorem signatures (@[progress] attribute, preconditions, postconditions)
-- NEVER touch `unfold + progress` structural backbone
+- NEVER touch theorem signatures (@[step] attribute, preconditions, postconditions)
+- NEVER touch `unfold + step` structural backbone
 - NEVER write changes without explaining the specific heuristic being applied
 - If a change breaks the build, REVERT and return ERROR with the build output
 - Use `nice -n 19 lake build` for all build checks, NEVER plain `lake build`
@@ -119,8 +119,8 @@ When something goes wrong:
 - [ ] Exactly ONE simplification applied per invocation
 - [ ] Brief reasoning provided for the change
 - [ ] Change written to spec file via Write tool
-- [ ] No theorem signatures or @[progress] attributes modified
-- [ ] No unfold + progress backbone touched
+- [ ] No theorem signatures or @[step] attributes modified
+- [ ] No unfold + step backbone touched
 - [ ] Result returned with ## SIMPLIFIED, ## NO_CHANGE, or ## ERROR header
 - [ ] Build verification command provided
 </success_criteria>

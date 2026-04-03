@@ -98,7 +98,7 @@ Dispatch **fvs-researcher** subagent in proof-port mode to analyze the source pr
 and map strategies to Lean tactics.
 
 **Read and inline reference files before dispatch:**
-- fv-skills/references/tactic-usage.md (core tactics: progress, simp, omega, grind, bvify)
+- fv-skills/references/tactic-usage.md (core tactics: step, simp, agrind, grind, bvify)
 - fv-skills/references/proof-strategies.md (patterns for common proof shapes)
 - fv-skills/references/lean-spec-conventions.md (spec structure expectations)
 
@@ -187,7 +187,7 @@ For each sorry (in order recommended by research):
 
 **LOCKED BEHAVIORAL CONSTRAINTS:**
 - One sorry at a time (never batch multiple sorry in one executor dispatch)
-- Small tactic blocks: have, calc, unfold + progress, grind, omega (1-3 lines max)
+- Small tactic blocks: have, calc, unfold + step, grind, agrind (1-3 lines max)
 - User checks Lean compiles between each step
 - Feels like pair programming: propose, check, adjust
 - All writes via VS Code diffs (Write tool)
@@ -252,10 +252,10 @@ proofs from other formal verification languages.
 
 | Verus Pattern | Lean Tactic | When to Use |
 |---------------|-------------|-------------|
-| `assert(x < y) by (compute)` | `grind` or `omega` | Numeric bounds, simple arithmetic |
+| `assert(x < y) by (compute)` | `agrind` or `grind` | Numeric bounds, simple arithmetic |
 | `assert(a == b) by { lemma_foo(a, b); }` | `grind` after `have := lemma_foo a b` | Equality after lemma application |
 | `lemma_add_mod_noop(a, b, p)` | `grind` or `Nat.add_mod a b p` | Modular arithmetic identities |
-| `assert(((1u64 << 54) - 1) <= u64::MAX - c) by (compute)` | `grind` or `omega` or `norm_num` | Concrete numeric computation |
+| `assert(((1u64 << 54) - 1) <= u64::MAX - c) by (compute)` | `agrind` or `grind` or `norm_num` | Concrete numeric computation |
 | `assert(self.limbs =~= spec_add.limbs)` | `ext; grind` or `grind [Subtype.ext]` | Array/struct extensional equality |
 | `assert(...) by (bit_vector)` | `bvify N; bv_decide` | Bitwise operations (AND, OR, shift) |
 | `lemma_mul_le(a, max_a, b, max_b)` | `gcongr` or `grind` | Monotonicity of multiplication |
@@ -265,23 +265,24 @@ proofs from other formal verification languages.
 | Source Concept | Lean Tactic | Notes |
 |----------------|-------------|-------|
 | SMT/automated reasoning | `grind` | Primary SMT-like tactic in Lean (282 uses in target project) |
-| Linear arithmetic | `omega` | Pure Nat/Int linear arithmetic |
+| Linear arithmetic | `agrind` or `scalar_tac` | Scalar-aware arithmetic (NEVER omega) |
 | Ring/field equalities | `ring` or `field_simp` | Algebraic identities |
 | Bitwise operations | `bvify N; bv_decide` | Lifts to N-bit bitvectors, then decides |
 | Case analysis | `interval_cases` or `grind only [cases eager Prod]` | Bounded finite domains |
 | Monotonicity | `gcongr` | Congruence for inequalities |
 | Rewriting | `simp` with specific lemmas | Targeted simplification |
 | Decidable propositions | `decide` or `native_decide` | Only for small instances |
-| Aeneas monadic code | `unfold` + `progress` / `progress*` | Always start here for Aeneas proofs |
+| Aeneas monadic code | `unfold` + `step` / `step*` | Always start here for Aeneas proofs |
 | Scalar bounds | `scalar_tac` | Aeneas scalar type bounds |
 
 ### Key Insight
 
-Do NOT map source SMT reasoning to `omega`/`simp`/`decide` alone. The primary analog
-is `grind`, which handles the same class of reasoning (arithmetic, equality, case
-analysis) that SMT solvers handle. Use `omega` for pure linear arithmetic, `simp` for
-rewriting, and `decide`/`native_decide` for decidable propositions. Use `bvify` +
-`bv_decide` for bitwise operations.
+Do NOT map source SMT reasoning to `simp`/`decide` alone. The primary analog
+is `agrind`/`grind`, which handles the same class of reasoning (arithmetic, equality, case
+analysis) that SMT solvers handle. Use `agrind` as the default, `grind` for harder goals,
+`scalar_tac` for scalar bounds, `simp` for rewriting, and `decide`/`native_decide` for
+decidable propositions. Use `bvify` + `bv_tac` for bitwise operations.
+NEVER use `omega`, `linarith`, or `nlinarith` (BANNED in Aeneas proofs).
 
 </tactic_mapping>
 
@@ -300,18 +301,18 @@ structure.
 
 ### 2. Do NOT underuse grind
 `grind` is Lean's SMT-like tactic and is the primary workhorse in verified Lean projects
-(282 occurrences in the target project). Agents that default to `omega`/`simp` chains
+(282 occurrences in the target project). Agents that default to `simp` chains
 when `grind` would close the goal in one step are wasting iterations. When in doubt,
 try `grind` first.
 
-### 3. Do NOT use omega/simp for bitwise proofs
-Bitwise operations (AND, OR, shift, masking) require `bvify N; bv_decide`, NOT `omega`
-or `simp`. `bvify` lifts Nat statements to bitvector form, and `bv_decide` decides the
+### 3. Do NOT use simp alone for bitwise proofs
+Bitwise operations (AND, OR, shift, masking) require `bvify N; bv_tac N`, NOT `simp`.
+`bvify` lifts Nat statements to bitvector form, and `bv_tac` decides the
 bitvector proposition.
 
 ### 4. Do NOT copy vstd imports into Lean
 Verus uses `vstd::arithmetic::div_mod::lemma_add_mod_noop` etc. Lean has `Nat.add_mod`
-in Mathlib or `grind`/`omega` can close many such goals. Never reference vstd in Lean.
+in Mathlib or `agrind`/`grind` can close many such goals. Never reference vstd in Lean.
 
 ### 5. Do NOT generate named spec predicates in Lean
 In Verus, `u64_5_bounded(limbs, 54)` is a named predicate used across many files. In
@@ -340,7 +341,7 @@ Always use `nice -n 19 lake build` (FVS convention).
 - Per-sorry attempt limit (3) and total hard cap (25) enforced
 - Build checks use nice -n 19 lake build (never plain lake build)
 - Source proof insights inlined per sorry (grind for SMT, bvify + bv_decide for bitwise)
-- Anti-patterns enforced: no structural mirroring, no underusing grind, no omega for bitwise
+- Anti-patterns enforced: no structural mirroring, no underusing agrind/grind, no simp for bitwise
 - Result correctly classified as VERIFIED, PARTIAL, or STUCK
 - Interactive iteration loop handles hints, retries, and escalation
 - CODEMAP.md updated with verification status if available

@@ -115,8 +115,8 @@ Use `--claude`, `--codex`, `--opencode`, `--gemini`, or `--all` to skip the runt
 
 | Command | Description |
 |---------|-------------|
-| `/fvs:lean-specify` | Generate Lean spec skeleton with `@[progress]` theorem pattern |
-| `/fvs:lean-verify` | Attempt proof using domain tactics (progress, simp, ring, omega) |
+| `/fvs:lean-specify` | Generate Lean spec skeleton with `@[step]` theorem pattern |
+| `/fvs:lean-verify` | Attempt proof using domain tactics (step, simp, ring, agrind, scalar_tac) |
 | `/fvs:lean-simplify` | Simplify and golf verified proofs (dead code removal, simp sharpening, tactic golf) |
 
 ### Cross-language Porting
@@ -142,11 +142,11 @@ FVS follows a five-stage workflow. Each stage builds on the previous.
 
 ### 3. Specify
 
-`/fvs:lean-specify <function>` — Generate a specification skeleton for the target function. For Lean 4: uses the `@[progress] theorem fn_spec` pattern with preconditions from Rust source analysis and postconditions matching function behavior.
+`/fvs:lean-specify <function>` — Generate a specification skeleton for the target function. For Lean 4: uses the `@[step]` theorem pattern with preconditions from Rust source analysis and postconditions matching function behavior.
 
 ### 4. Verify
 
-`/fvs:lean-verify <function>` — Attempt to prove the specification. For Lean 4: uses domain-specific tactics (`progress`, `simp`, `ring`, `field_simp`, `omega`). Reports proof status and remaining goals if incomplete.
+`/fvs:lean-verify <function>` — Attempt to prove the specification. For Lean 4: uses domain-specific tactics (`step`, `simp`, `ring`, `field_simp`, `agrind`, `scalar_tac`). Reports proof status and remaining goals if incomplete.
 
 ### 5. Simplify
 

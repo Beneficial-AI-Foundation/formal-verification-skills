@@ -16,7 +16,7 @@ Port a formal verification specification from another language (Verus, F*, Coq, 
 
 Two-phase dispatch: fvs-researcher gathers cross-project context, then fvs-executor writes the Lean spec file.
 
-Output: Specs/{path}/{FunctionName}.lean with @[progress] theorem, existential postconditions, and sorry placeholder, ported from the source language spec.
+Output: Specs/{path}/{FunctionName}.lean with @[step] theorem, existential postconditions, and sorry placeholder, ported from the source language spec.
 </objective>
 
 <execution_context>
@@ -242,7 +242,7 @@ $SPEC_FILE_TEMPLATE_CONTENT
 <target_path>$SPEC_OUTPUT_PATH</target_path>
 
 Generate an IDIOMATIC Lean spec using the source spec as a semantic blueprint:
-- Use @[progress] theorem pattern (NOT source language's theorem form)
+- Use @[step] theorem pattern (NOT source language's theorem form)
 - Use Aeneas types: (Array U64 5#usize) notation (NOT source language's type notation)
 - Use target project's interpretation functions (e.g., Field51_as_Nat, NOT source's fe51_as_nat)
 - Inline hypotheses where the target project's convention does so (NOT named predicates from source)
@@ -270,7 +270,7 @@ After executor returns, verify the generated spec file:
 # File exists
 [ -f "$SPEC_OUTPUT_PATH" ] && echo "File exists" || echo "MISSING"
 
-# Has @[progress] attribute
+# Has @[step] attribute
 grep -c "@\[progress\]" "$SPEC_OUTPUT_PATH"
 
 # Has existential form with sorry
@@ -283,7 +283,7 @@ grep "^import" "$SPEC_OUTPUT_PATH"
 Check:
 - File exists at expected path
 - Has correct Lean imports (project Funs, Types/Defs)
-- Has `@[progress]` attribute
+- Has `@[step]` attribute
 - Has existential form with sorry
 - Module path matches project namespace
 - Has natural language description block
@@ -319,7 +319,7 @@ or
 - [ ] Researcher compares Rust source function from both projects, warns on diff
 - [ ] Researcher reads source spec as semantic blueprint (extracts mathematical content)
 - [ ] Researcher reads 2-3 existing verified Lean specs for style conventions
-- [ ] Executor generates idiomatic Lean spec using @[progress] pattern and target conventions
+- [ ] Executor generates idiomatic Lean spec using @[step] pattern and target conventions
 - [ ] Spec file written to Specs/ directory via VS Code diff
 - [ ] --scan mode shows comparison table and allows function selection
 - [ ] Build checks use nice -n 19 lake build (never plain lake build)

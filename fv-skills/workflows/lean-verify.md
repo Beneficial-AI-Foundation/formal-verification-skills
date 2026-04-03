@@ -61,7 +61,7 @@ Reference: fv-skills/references/model-profiles.md (profile table and dispatch pa
 Dispatch **fvs-researcher** subagent in proof-attempt mode to analyze all sorry locations.
 
 Read and inline reference files before dispatch:
-- fv-skills/references/tactic-usage.md (core tactics: progress, simp, omega, etc.)
+- fv-skills/references/tactic-usage.md (core tactics: step, simp, agrind, etc.)
 - fv-skills/references/proof-strategies.md (patterns for common proof shapes)
 - fv-skills/references/lean-spec-conventions.md (spec structure expectations)
 
@@ -116,7 +116,7 @@ This is the core proof loop. For each sorry (in order recommended by research):
 
 **LOCKED BEHAVIORAL CONSTRAINTS:**
 - One sorry at a time (never batch multiple sorry in one executor dispatch)
-- Small tactic blocks: have, calc, unfold + progress, simp, omega (1-3 lines max)
+- Small tactic blocks: have, calc, unfold + step, simp, agrind (1-3 lines max)
 - User checks Lean compiles between each step
 - Feels like pair programming: propose, check, adjust
 - All writes via VS Code diffs (Write tool)

@@ -1,6 +1,6 @@
 ---
 name: fvs:lean-specify
-description: Generate Lean spec skeleton following @[progress] theorem pattern
+description: Generate Lean spec skeleton following @[step] theorem pattern
 argument-hint: "<function_name> (Lean or Rust name)"
 allowed-tools:
   - Read
@@ -14,7 +14,7 @@ allowed-tools:
 <objective>
 Generate a Lean specification file for a single function using two-phase subagent dispatch. Takes a verification target (function name), dispatches a researcher to gather context (Funs.lean, Types.lean, Rust source, existing stubs, similar specs), then dispatches an executor to write the spec file.
 
-Output: Specs/{path}/{FunctionName}.lean with @[progress] theorem, existential postconditions, and sorry placeholder.
+Output: Specs/{path}/{FunctionName}.lean with @[step] theorem, existential postconditions, and sorry placeholder.
 </objective>
 
 <execution_context>
@@ -150,7 +150,7 @@ $SPEC_FILE_TEMPLATE_CONTENT
 <target_path>$SPEC_OUTPUT_PATH</target_path>
 
 Generate the Lean spec file following these conventions:
-- @[progress] theorem pattern
+- @[step] theorem pattern
 - exists result for return type
 - Array types use (Array U64 5#usize) notation
 - Interpretation functions where applicable
@@ -174,7 +174,7 @@ After executor returns, verify the generated spec file:
 # File exists
 [ -f "$SPEC_OUTPUT_PATH" ] && echo "File exists" || echo "MISSING"
 
-# Has @[progress] attribute
+# Has @[step] attribute
 grep -c "@\[progress\]" "$SPEC_OUTPUT_PATH"
 
 # Has existential form with sorry
@@ -187,7 +187,7 @@ grep "^import" "$SPEC_OUTPUT_PATH"
 Check:
 - File exists at expected path
 - Has correct Lean imports (project Funs, Types/Defs)
-- Has `@[progress]` attribute
+- Has `@[step]` attribute
 - Has existential form (`exists result`) with sorry
 - Module path matches project namespace
 
@@ -230,7 +230,7 @@ Status: [??] Ready for verification (contains sorry)
 - [ ] Config read and models resolved for fvs-researcher and fvs-executor
 - [ ] Research subagent dispatched with inlined aeneas-patterns and spec-conventions
 - [ ] Executor subagent dispatched with research findings, spec template, and target path
-- [ ] Spec file generated with correct imports, @[progress], existential form, sorry
+- [ ] Spec file generated with correct imports, @[step], existential form, sorry
 - [ ] Spec file written to Specs/ directory via VS Code diff
 - [ ] Clear next step offered to user
 </success_criteria>
