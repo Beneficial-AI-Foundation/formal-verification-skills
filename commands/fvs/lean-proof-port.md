@@ -171,7 +171,7 @@ nice -n 19 lake build 2>&1 | tail -20
 If sorry found: extract theorem names and continue.
 
 ```bash
-grep -E "@\[progress\]|theorem " "$SPEC_PATH"
+grep -E "@\[step\]|theorem " "$SPEC_PATH"
 ```
 
 ## Step 6: Dispatch Research Subagent (proof-port mode)
@@ -356,7 +356,7 @@ END FOR
 
 **CRITICAL LOCKED DECISIONS:**
 - One sorry at a time (not batch)
-- Small tactic blocks (have, calc, unfold + progress, grind, omega)
+- Small tactic blocks (have, calc, unfold + step, agrind, grind)
 - User checks Lean compiles between each step
 - Feels like pair programming
 - All writes via VS Code diffs

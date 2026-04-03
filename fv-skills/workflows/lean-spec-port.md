@@ -10,7 +10,7 @@ mathematical content.
 The source spec is treated as a SEMANTIC BLUEPRINT -- the mathematical meaning
 guides the Lean spec, not the source syntax.
 
-Output: Specs/{path}/{FunctionName}.lean with @[progress] theorem and sorry placeholder,
+Output: Specs/{path}/{FunctionName}.lean with @[step] theorem and sorry placeholder,
 ported from the source language spec.
 </purpose>
 
@@ -143,7 +143,7 @@ Inline into executor prompt:
 - Target output path
 
 **Spec generation requirements (idiomatic Lean, NOT source syntax):**
-- Use `@[progress]` theorem pattern (NOT source language's theorem form)
+- Use `@[step]` theorem pattern (NOT source language's theorem form)
 - Use Aeneas types: `(Array U64 5#usize)` notation
 - Use target project's interpretation functions (e.g., `Field51_as_Nat`)
 - Inline hypotheses where the target project does so (NOT named predicates from source)
@@ -169,7 +169,7 @@ Validate the generated spec meets structural requirements.
 **Checklist:**
 - [ ] File exists at expected path
 - [ ] Has correct Lean imports (project Types, Funs, Defs modules)
-- [ ] Has `@[progress]` attribute on main theorem
+- [ ] Has `@[step]` attribute on main theorem
 - [ ] Theorem uses existential form with `sorry`
 - [ ] Module path matches project namespace
 - [ ] Natural language description block present
@@ -207,7 +207,7 @@ Next: /fvs:lean-verify Specs/{path}/{FunctionName}.lean
 - Source language, project path, and function name collected via interactive prompts
 - Config read and models resolved for fvs-researcher and fvs-executor
 - Research subagent gathered cross-project context: Rust source comparison, source spec semantic analysis, target project conventions, mathematical bridges
-- Executor subagent wrote idiomatic Lean spec using @[progress] pattern and target conventions
+- Executor subagent wrote idiomatic Lean spec using @[step] pattern and target conventions
 - Spec file written to Specs/ directory via VS Code diff
 - --scan mode shows comparison table with [OK]/[??]/[--] status symbols
 - Source spec treated as semantic blueprint (not syntactic template)

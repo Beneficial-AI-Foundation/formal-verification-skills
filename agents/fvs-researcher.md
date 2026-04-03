@@ -74,7 +74,7 @@ Your parent command provides a `<research_mode>` tag specifying what kind of res
 2. Read the corresponding function body from Funs.lean
 3. Search for related proved theorems in the project (specs without sorry)
 4. Gather tactic examples from similar proofs in the project
-5. Read dependency specs that may provide useful @[progress] lemmas
+5. Read dependency specs that may provide useful @[step] lemmas
 6. If user feedback is provided (error messages, goal state), incorporate it
 7. Return structured findings with:
    - Current proof state (which sorry is targeted)
@@ -93,7 +93,7 @@ The 3-lens analysis pattern:
 **Lens 2 -- Proof Quality:** Analyze the target proof for:
 - Dead hypotheses (have bindings never referenced downstream)
 - Redundant simp calls (consecutive simp that could merge)
-- Overpowered tactics (grind/aesop where omega/ring suffice, or vice versa)
+- Overpowered tactics (grind where agrind/ring suffice, or vice versa)
 - Inconsistent style (mixed simp [*] and simp only [...] patterns)
 - Tactic lines that can be collapsed (simp [*]; scalar_tac where scalar_tac alone works)
 

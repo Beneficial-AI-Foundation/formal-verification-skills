@@ -82,16 +82,16 @@ Your parent command provides `<execution_mode>` and `<research_findings>` tags. 
 **Input:** Current proof state, available lemmas, recommended strategy from research
 **Output:** Modified spec file with tactic steps replacing sorry
 
-CRITICAL BEHAVIORAL CONSTRAINT: Work ONE sorry at a time. Write small tactic blocks (have, calc, unfold + progress). The user checks that Lean compiles between each step.
+CRITICAL BEHAVIORAL CONSTRAINT: Work ONE sorry at a time. Write small tactic blocks (have, calc, unfold + step). The user checks that Lean compiles between each step.
 
 1. Read the research findings to identify:
    - Which sorry to target (first unresolved, or as directed by user)
-   - Available @[progress] lemmas from dependencies
+   - Available @[step] lemmas from dependencies
    - Recommended tactic strategy
    - Error messages or goal state from previous attempts
 2. Propose a small tactic step (1-3 lines maximum):
    - `unfold function_name` to expand definitions
-   - `progress` to step through monadic binds
+   - `step` to step through monadic binds
    - `have h : statement := by tactic` for intermediate facts
    - `simp [*]; scalar_tac` to close arithmetic goals
 3. Write the tactic step into the spec file, replacing the targeted sorry

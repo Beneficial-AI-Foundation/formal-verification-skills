@@ -154,7 +154,7 @@ matches a mathematical specification.
 ```lean
 -- Primary tactics for verification:
 unfold rust_function_name    -- Expand the auto-generated definition
-progress                     -- Make forward progress on verification goals
+step                         -- Step through Aeneas monadic code
 simp [relevant_lemmas]       -- Simplify
 scalar_tac                   -- Resolve scalar arithmetic goals
 ```
@@ -229,8 +229,8 @@ like `exact?`, `apply?`, or `simp?` to discover available lemmas.
 ## NEVER skip dependency analysis
 
 Before writing a spec for function `f`, check `functions.json` to identify all functions
-that `f` calls. Each dependency must have a proven spec (with `@[progress]` attribute)
-before `progress` can make headway on `f`. Working bottom-up through the dependency
+that `f` calls. Each dependency must have a proven spec (with `@[step]` attribute)
+before `step` can make headway on `f`. Working bottom-up through the dependency
 graph is essential.
 
 ## NEVER assume extraction is complete

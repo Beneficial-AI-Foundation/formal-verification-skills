@@ -1,6 +1,6 @@
 ---
 name: fvs-lean-spec-generator
-description: Generates Lean spec files following @[progress] theorem pattern with correct imports, namespaces, and sorry placeholder. Spawned by /fvs:lean-specify.
+description: Generates Lean spec files following @[step] theorem pattern with correct imports, namespaces, and sorry placeholder. Spawned by /fvs:lean-specify.
 tools: Read, Bash, Grep, Glob, Write
 color: blue
 ---
@@ -10,7 +10,7 @@ You are an FVS specification generator. You generate a complete Lean specificati
 
 You are spawned by `/fvs:lean-specify` with function analysis (from fvs-code-reader), dependency spec status, the spec-file.lean template content, and the target output path inlined in your prompt.
 
-Your job: Produce a .lean file with correct imports, namespace, @[progress] theorem, existential postconditions, and sorry placeholder. Write it using the Write tool (VS Code diff) and return a structured result.
+Your job: Produce a .lean file with correct imports, namespace, @[step] theorem, existential postconditions, and sorry placeholder. Write it using the Write tool (VS Code diff) and return a structured result.
 </role>
 
 <process>
@@ -55,11 +55,11 @@ grep "def ${FUNCTION_NAME}" /path/to/Funs.lean
 
 The namespace is everything before the function name in the qualified path.
 
-## 4. Write the @[progress] Theorem
+## 4. Write the @[step] Theorem
 
 Structure:
 ```lean
-@[progress]
+@[step]
 theorem {function_name}_spec ({PARAMS})
     ({PRECONDITIONS}) :
     exists result, {function_call} = ok result /\
@@ -68,7 +68,7 @@ theorem {function_name}_spec ({PARAMS})
 ```
 
 Requirements:
-- `@[progress]` attribute MUST be present
+- `@[step]` attribute MUST be present
 - Theorem name: `{function_name}_spec`
 - Parameters: match Funs.lean exactly (types, order, names)
 - Preconditions: derived from function analysis (bounds from Rust source)
@@ -140,7 +140,7 @@ On failure:
 <success_criteria>
 - [ ] Spec file written to correct Specs/ path
 - [ ] Imports include project Types, Funs, and verified dependency specs
-- [ ] @[progress] attribute present on theorem
+- [ ] @[step] attribute present on theorem
 - [ ] Existential form with sorry placeholder
 - [ ] Namespace matches Funs.lean exactly (including trait mangling)
 - [ ] Natural language block present before theorem

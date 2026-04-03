@@ -89,8 +89,8 @@ If build fails: report error and STOP.
 
 ```bash
 TOTAL_LINES=$(wc -l < "$SPEC_PATH")
-THEOREM_COUNT=$(grep -c "@\[progress\]\|theorem " "$SPEC_PATH")
-TACTIC_LINES=$(grep -cE "^\s+(unfold|progress|simp|omega|scalar_tac|ring|field_simp|have|obtain|rw|by_cases|interval_cases|grind|aesop|bvify|bv_decide)" "$SPEC_PATH")
+THEOREM_COUNT=$(grep -c "@\[step\]\|theorem " "$SPEC_PATH")
+TACTIC_LINES=$(grep -cE "^\s+(unfold|step|simp|agrind|scalar_tac|ring|field_simp|have|obtain|rw|by_cases|interval_cases|grind|bvify|bv_tac)" "$SPEC_PATH")
 echo "Baseline: $TOTAL_LINES lines, $THEOREM_COUNT theorems, $TACTIC_LINES tactic lines"
 ```
 
