@@ -334,6 +334,296 @@ Hard-won lessons from real proof cleanup work:
   elaborate faster than a 2-line proof using `simp`. The simp set size dominates elaboration
   time, not proof length. Prefer `simp only` even when `simp` alone works.
 
+---
+
+## Refactoring Principles
+
+Principles extracted from real-world refactoring of large verified proofs. These
+complement the tier-based heuristics above with strategic guidance on *what* to
+extract and *how* to structure the result.
+
+### Extract by semantic unit, not by local syntax
+
+Good helper lemmas package one real unit of reasoning:
+- an invariant package (e.g., `SomeStructure.IsValid`)
+- a case split and its consequences
+- a bridge from implementation state to pure definitions (e.g., `sub_preserves_bound`)
+- a generic arithmetic fact reused in multiple places
+
+Bad helper lemmas merely rename:
+- one `toField` rewrite
+- one cast
+- one constant
+- one one-off `have`
+
+If the helper does not remove a genuine repeated block, it is probably noise. The test
+is: does this helper correspond to a meaningful mathematical concept?
+
+### Fix helper first, then use it
+
+When extracting a helper lemma:
+1. Make the helper compile on its own first
+2. Fix binder types, casts, and return types before replacing any call site
+3. Only then use the helper to shrink the main theorem
+
+This avoids turning one local proof into two broken proofs. Never leave both the
+helper and the main theorem sorry-d at the same time.
+
+### Short theorem body + reusable helper layer
+
+The ideal refactored proof has a 5-10 line main body that calls well-named helpers.
+The real target is:
+- **Short theorem body** -- reads like a proof plan, not a transcript of every step
+- **Reusable helper layer** -- heavy reasoning lives in private lemmas
+- **Same proof strength** -- theorem statement unchanged
+
+Total file LOC may or may not drop. The meaningful metric is whether the theorem body
+became clearer. If the main theorem body drops more than 50% of its LOC, that is
+already a good refactoring.
+
+### Prefer aggregated results over fragmented lemmas
+
+If the proof repeatedly re-establishes related facts, prefer returning a structured
+result once and projecting fields later. One lemma returning `SomeStructure.IsValid`
+with 5 conjuncts beats 5 separate lemmas when the facts are always used together.
+This usually gives the biggest theorem-body reduction.
+
+### Do not hoist local proof state across sibling goals
+
+In FV proofs with `progress*`, `rename_i`, or generated postconditions, two visually
+nearby proof blocks may live in different local contexts. Consequences:
+- A `have` in one bullet often cannot be reused in another
+- Literal hoisting above the bullet structure often fails
+- Reuse must happen through private lemmas abstracted over the generated locals
+
+This is a structural constraint of Lean's elaborator, not a style preference.
+
+### Refactor in layers
+
+A productive extraction order:
+1. Arithmetic and lift boilerplate
+2. Invariant package
+3. Repeated case-analysis package
+4. Pure semantic bridge
+5. Theorem-body rewrite
+
+Later extractions often become obvious only after the invariant layer is packaged.
+
+---
+
+## Reduction Types
+
+Three different kinds of "proof reduction" exist. A refactoring agent should not
+confuse these goals.
+
+### 1. Theorem-body reduction (golf)
+
+The main theorem becomes shorter and reads like orchestration. This is the
+highest-value maintainability win. Focus on semantic duplication first, then
+setup duplication.
+
+### 2. File-level reduction (extract common)
+
+The theorem file becomes smaller by moving stable support lemmas into a companion
+helpers file. This is a readability and maintainability move -- it usually does not
+reduce total repo LOC.
+
+**When to split:** A theorem file is support-heavy when the actual top-level theorem
+body is a minority of the file (under ~35% of file LOC), most remaining lines are
+private structures or bridge lemmas, and helper extraction is no longer removing
+duplicated semantic reasoning -- only setup noise.
+
+### 3. Repo-wide reduction (shared lemma library)
+
+Total proof mass drops. This only happens when repeated support logic disappears or
+upstream specs expose stronger semantic facts. This is the biggest long-term
+opportunity but requires changing the abstraction boundary.
+
+### When in-file golf stops paying off
+
+Further local golfing is low-yield when most remaining bulk is:
+- Bundle or witness construction repeated across sibling `progress*` goals
+- `unfold toField` plus `lift_mod_eq` plus `push_cast` boilerplate
+- Local bridge lemmas that only exist because upstream specs are too weak
+
+At that point, another wave of micro-lemmas often moves lines instead of deleting
+them, increases API surface, and makes the file less readable.
+
+**Diminishing returns threshold:** If the next expected reduction is below ~20% of
+current theorem-body LOC, escalate to a file-split or upstream-spec recommendation
+rather than continuing local golf.
+
+### Detecting support-heavy files
+
+Heuristic thresholds:
+- Theorem body under 35% of file LOC -- file is probably support-heavy
+- Most duplication is in witness packaging rather than semantic reasoning -- local
+  golf is nearing exhaustion
+- A new helper shortens one block but grows the file overall and does not create
+  reuse across files -- warning sign to stop
+
+### Decision policy
+
+The refactorer should classify each action into one of three modes:
+1. **local_golf** -- Use when duplicated reasoning still exists inside the file
+2. **file_split_recommendation** -- Use when the file is dominated by stable support
+3. **upstream_spec_recommendation** -- Use when support lemmas mainly reconstruct
+   facts that should be exported by dependencies
+
+---
+
+## Performance-Aware Decomposition
+
+Lessons from decomposing monolithic proofs into extracted helpers while tracking
+build performance. Decomposition improves readability but adds elaboration overhead.
+
+### `abbrev` vs `def` for postcondition predicates
+
+When extracting a bundled postcondition into a named predicate, use `abbrev` not `def`.
+
+- **`def`**: Lean treats the predicate as opaque. At `exact` call sites, the elaborator
+  must explicitly unfold it. Expensive.
+- **`abbrev`**: The predicate is reducible -- unification is transparent. Measured saving:
+  ~1.4s across 5 call sites in sqrt_ratio_i_spec'.
+
+**Exception**: Never use `abbrev` for term-level constants with large numeric content
+(e.g., `SQRT_M1_val := constants.SQRT_M1_raw` with 5 limbs of 64-bit values). Lean
+eagerly unfolds `abbrev` during `whnf`, triggering expensive big-number computation.
+Use `def` for numeric constants.
+
+### `exact` at dispatch sites, never `simpa`
+
+When the main theorem dispatches to a helper, use `exact helper args...` rather than
+`simpa [pred, and_imp] using helper args...`.
+
+`simpa` applies `simp` to **both** the goal **and** the helper's return type, then checks
+if they match. This is O(simp-set-size). `exact` only needs definitional unification --
+O(1) relative to the simp set.
+
+Measured saving: ~1.3s across 5 call sites (from `simpa` to `exact`).
+
+**Precondition**: The goal must already definitionally match the helper's return type.
+Remove postcondition-shaping lemmas (`and_imp`, `Nat.mul_mod_mod`, etc.) from branch
+simp sets.
+
+### Measured overhead data
+
+From curve25519-dalek sqrt_ratio_i_spec' decomposition:
+
+| Component | Typical Cost | Notes |
+|-----------|-------------|-------|
+| `abbrev` postcondition predicate | 1.0-1.5s | One-time; shared across helpers |
+| Each helper signature | 200-400ms | Proportional to parameter count |
+| Each `exact` dispatch | 50-100ms | Cheap with `abbrev` predicate |
+| Each `simpa` dispatch | 200-400ms | Avoid; use `exact` instead |
+| Each `let*` (progress) step | 50-100ms | Fixed cost per monadic step |
+
+**Rule of thumb**: Extracting N helpers adds roughly `1.5 + N * 0.3` seconds of
+elaboration overhead (with `abbrev` + `exact`). Without these optimizations, the
+overhead is `1.5 + N * 0.6` seconds.
+
+### Minimize `simp only` lemma sets
+
+Every lemma in a `simp only` set causes `simp` to traverse the goal looking for
+matches. For large goals (after 17+ `let*` steps with 30+ hypotheses), this is
+expensive. Discovery method: remove lemmas one at a time, check if proof still compiles.
+
+### `if_pos`/`if_neg` over `reduceIte`
+
+When resolving `if` expressions after `by_cases`, use targeted `if_pos h` or
+`if_neg h` in `simp only` instead of `reduceIte`. The latter scans the entire goal.
+
+---
+
+## Advanced Techniques
+
+### `let*` WP transform technique
+
+The Aeneas WP (weakest precondition) transformer provides `let*` syntax as an
+alternative to `step as` for stepping through monadic binds. Both produce equivalent
+proofs, but `let*` with explicit spec names eliminates the typeclass/simp search that
+`step` performs.
+
+**Before:**
+```lean
+unfold my_function
+step as <<x, h_x_eq, x_bounds>>
+step as <<y, h_y_eq, y_bounds>>
+```
+
+**After:**
+```lean
+unfold my_function
+simp only [progress_simps]
+let* << x, x_post1, x_post2 >> <-
+  Namespace.Of.The.Spec.add_spec
+let* << y, y_post1, y_post2 >> <-
+  Namespace.Of.The.Spec.mul_spec
+```
+
+**Key rules:**
+1. `simp only [progress_simps]` after `unfold` normalizes the goal to WP form (required
+   once, before the first `let*`)
+2. Explicit spec name (`<- SpecName`) tells the tactic exactly which spec to apply -- no
+   typeclass search, no simp scan of the `@[step]` lemma set
+3. Postcondition naming: `let*` names postconditions `_post1, _post2` positionally
+4. Use `step*?` in the info view after `simp only [progress_simps]` to discover `let*`
+   statements
+
+**Measured improvement (AffineNielsPoint/Add.lean):**
+
+| Metric | `step as` | `let*` | Delta |
+|--------|-----------|--------|-------|
+| simp | 0.87s | 0.36s | **-58%** |
+| typeclass | 0.47s | 0.31s | **-34%** |
+
+### `obtain` for non-`@[step]` specs
+
+When a spec is NOT tagged `@[step]`, `let*` rejects it. Use `obtain` + `simp only`:
+
+```lean
+obtain <<fe2, h_fe2_ok, fe2_post1, fe2_post2>> :=
+  CompletedPoint.add_spec' Z2_post2 Txy2d_post2
+simp only [h_fe2_ok, bind_tc_ok]
+```
+
+### `[local irreducible]` for opaque postcondition predicates
+
+Heavy algebra in `ZMod p` (`field_simp`, `linear_combination`, `ring`) triggers
+reduction of `p = 2^255 - 19`, a 78-digit prime. This is extremely expensive.
+
+**Pattern:**
+1. Extract `lift_mod_eq` steps into a helper lemma (needs `p` reducible)
+2. Mark `p` irreducible for the main theorem:
+
+```lean
+attribute [local irreducible] p in
+theorem my_spec ... := by
+  ...
+  obtain <<hX_F, hY_F, hZ_F, hT_F>> := my_lift_to_field_eqs ...
+  -- All subsequent algebra runs with p opaque -- no big-number reduction
+```
+
+**Measured improvement:** maxHeartbeats 1000000 -> 200000 (default) -- 5x reduction.
+
+**What works with p irreducible:** `linear_combination`, `field_simp`, `ring`,
+`ring_nf`, `simp only [Ed25519]`, `pow_ne_zero`, `norm_num` on small numbers.
+
+**What breaks:** `lift_mod_eq`, `push_cast` after `lift_mod_eq`, `unfold
+FieldElement51.toField`, `decide` for `(2 : ZMod p) != 0`.
+
+### Applicability checklist
+
+Use `let*` refactoring when:
+- The proof uses `step as` (not `step*` which is already fast)
+- Profile shows >0.3s in simp or >0.3s in typeclass for the file
+- The spec is `@[step]`-tagged (otherwise use `obtain`)
+
+Use `[local irreducible] p` when:
+- maxHeartbeats is elevated (>200000)
+- The proof does heavy algebra in `ZMod p`
+- `lift_mod_eq` calls can be isolated into a helper
+
 </patterns>
 
 <anti_patterns>
