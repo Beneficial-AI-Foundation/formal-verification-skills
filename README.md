@@ -170,9 +170,20 @@ Removes all FVS commands, agents, hooks, and settings entries. Does not affect o
 
 ---
 
-## Acknowledgments
+## Acknowledgements
 
-The architecture and plugin infrastructure of this project is heavily inspired by — and in parts directly adapted from — [Get Shit Done (GSD)](https://github.com/glittercowboy/get-shit-done). Thanks to the GSD maintainers for building such a solid foundation.
+FVS builds on the work of several open-source projects:
+
+- **[Aeneas](https://github.com/AeneasVerif/aeneas)** -- FVS incorporates and adapts
+  documentation and proof skills from the Aeneas verification framework (Apache 2.0).
+  The upstream Aeneas documentation is stored in `fv-skills/upstream/aeneas/` and can
+  be synced with `/fvs:sync-aeneas`.
+
+- **[GSD (Get Shit Done)](https://github.com/gsd-build/get-shit-done)** -- FVS follows
+  the GSD plugin architecture for Claude Code skill distribution (MIT).
+
+- **[lean-lsp-mcp](https://github.com/oOo0oOo/lean-lsp-mcp)** -- MCP server for Lean
+  LSP integration, referenced in proof workflows (MIT).
 
 ---
 

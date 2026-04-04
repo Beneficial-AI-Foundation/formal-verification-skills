@@ -1850,6 +1850,9 @@ function install(isGlobal, runtime = 'claude') {
   }
 
   // Copy fv-skills content with path replacement
+  // This recursively copies all subdirectories including:
+  //   - references/, templates/, workflows/ (core FVS content)
+  //   - upstream/aeneas/ (pinned upstream documentation snapshot + _sync-meta.json)
   const skillSrc = path.join(src, 'fv-skills');
   const skillDest = path.join(targetDir, 'fv-skills');
   copyWithPathReplacement(skillSrc, skillDest, pathPrefix, runtime);
