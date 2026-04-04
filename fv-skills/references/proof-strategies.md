@@ -12,16 +12,21 @@ strategy.
 
 ## Strategy Quick Reference
 
-| Strategy                | When to Use                                      | Difficulty |
-|-------------------------|--------------------------------------------------|------------|
-| Case splitting          | Bounded index, enum, boolean conditions          | Low        |
-| Bounds propagation      | Overflow/underflow guards, limb bounds           | Low-Medium |
-| Modular arithmetic      | Field element equivalence mod p                  | Medium     |
-| Carry chain reasoning   | Multi-limb reduce/propagate operations           | Medium     |
-| Multi-coordinate specs  | Point operations with 4-5 field element outputs  | Medium     |
-| Sum decomposition       | Proving properties of sum-of-limbs encodings     | Medium     |
-| Bias-then-subtract      | Subtraction that adds multiples of p to avoid underflow | High  |
-| Algebraic bridging      | Connecting implementation to mathematical spec   | High       |
+| Strategy                         | When to Use                                      | Difficulty |
+|----------------------------------|--------------------------------------------------|------------|
+| Case splitting                   | Bounded index, enum, boolean conditions          | Low        |
+| Bounds propagation               | Overflow/underflow guards, limb bounds           | Low-Medium |
+| The step*? workflow              | Generating and refining expanded proof scripts   | Low-Medium |
+| Modular arithmetic               | Field element equivalence mod p                  | Medium     |
+| Carry chain reasoning            | Multi-limb reduce/propagate operations           | Medium     |
+| WP.spec_mono                     | Strengthening postconditions from spec_gen       | Medium     |
+| Canonical loop proof             | Any loop: spec_gen/spec/top-level pattern        | Medium     |
+| Multi-coordinate specs           | Point operations with 4-5 field element outputs  | Medium     |
+| Sum decomposition                | Proving properties of sum-of-limbs encodings     | Medium     |
+| Termination pitfall workaround   | Recursive functions, loop induction              | Medium     |
+| Bias-then-subtract               | Subtraction that adds multiples of p             | High       |
+| Function fold decomposition      | Functions with 10+ monadic steps                 | High       |
+| Algebraic bridging               | Connecting implementation to mathematical spec   | High       |
 
 </quick_reference>
 
@@ -200,6 +205,28 @@ shift operations) lets `step*` automatically chain through the carry pipeline.
 The attribute `[scalar_tac_simps] LOW_51_BIT_MASK_val_eq` teaches `scalar_tac`
 about the mask constant.
 
+**Alternative with `loop.spec_decr_nat`:** For loops using the fixed-point
+combinator (instead of recursive functions), apply `loop.spec_decr_nat` with:
+- A `Nat` termination measure (e.g., remaining iterations)
+- A loop invariant threading carried values through each iteration
+- The postcondition established when the loop terminates
+
+```lean
+@[step]
+theorem carry_loop.spec (x : MyState) (h : x.inv) :
+  carry_loop_body.loop x ⦃ r => r.post ⦄ := by
+  apply loop.spec_decr_nat (measure := fun s => s.remaining) (inv := fun s => s.inv)
+  · intro s hs
+    unfold carry_loop_body
+    step*
+    · agrind -- carry bound
+    · agrind -- invariant preservation
+    split_conjs
+    · agrind -- conjunct 1
+    · agrind -- conjunct 2
+  · exact h
+```
+
 ---
 
 ## Pattern 5: Multi-Coordinate Specs
@@ -254,6 +281,258 @@ T' % p = (X * Y) % p
 ```
 The bound `2^54` is typical for reduced field elements (each limb < 2^51 plus
 small carry margin).
+
+---
+
+## Pattern 6: Canonical Loop Proof Strategy
+
+The strategy for proving loop correctness follows a three-theorem structure:
+`spec_gen` (generalized loop body), `spec` (entry-point wrapper), and
+top-level function spec.
+
+### How to prove loops
+
+**Step 1: Identify the loop invariant.**
+What holds at the start of each iteration? Typically two parts:
+- "entries before the current index are processed" (done region)
+- "entries at or after the current index are untouched" (rest region)
+
+**Step 2: Write `spec_gen` with the invariant as both precondition and postcondition.**
+
+```lean
+private theorem my_loop.spec_gen
+  (iter : core.ops.range.Range Std.Usize)
+  (state : State)
+  (hlo : iter.start.val ≤ iter.«end».val)
+  (hdone : ∀ j, j < iter.start.val → processed j state)
+  (hrest : ∀ j, iter.start.val ≤ j → j < N → untouched j state) :
+  my_loop iter state ⦃ fun result =>
+    ∀ j, j < N → processed j result ⦄ := by
+  unfold my_loop
+  step*
+  · -- Invariant rebuild for done region
+    intro j hj
+    by_cases hji : j = iter.start.val
+    · subst hji; simp [*]   -- current iteration
+    · apply hdone; agrind    -- previously done
+  · -- Invariant rebuild for rest region
+    intro j hlo hhi; apply hrest <;> agrind
+  · -- Base case: loop complete
+    split_conjs <;> agrind
+termination_by iter.«end».val - iter.start.val
+decreasing_by agrind
+```
+
+**Step 3: Write `spec` that instantiates `spec_gen` at start=0.**
+
+```lean
+@[step]
+theorem my_loop.spec (state : State) :
+  my_loop { start := 0#usize, «end» := N } state ⦃ fun result =>
+    ∀ j, j < N → processed j result ⦄ := by
+  apply WP.spec_mono
+  · apply my_loop.spec_gen <;> agrind
+  · intro res h; split_conjs <;> agrind
+```
+
+**Step 4: Write top-level function spec that delegates to `spec`.**
+
+```lean
+@[step]
+theorem my_function.spec (input : InputType) :
+  my_function input ⦃ fun result => ... ⦄ := by
+  unfold my_function
+  step*   -- step* will use my_loop.spec via @[step]
+```
+
+### Key rules
+
+- Every function spec requires loop specs -- a function spec without its
+  loop specs (`_loop`, `_loop0`, `_loop1`) is unprovable
+- Never use `partial_fixpoint_induct`
+- `step*` on the recursive call automatically uses the `@[step]`-tagged
+  theorem being proved (self-reference works in Lean)
+- For nested loops: outer `spec_gen` calls inner loop's `@[step]` spec
+
+---
+
+## Pattern 7: The step*? Workflow
+
+One of the most effective proof strategies for complex functions:
+
+**1. Generate a complete proof script** using `step*?`. This applies `step`
+repeatedly with case splits and outputs the full expanded proof script.
+
+**2. Review the generated script.** It will be verbose but complete. Use
+`lean_code_actions` to retrieve the generated script.
+
+**3. Immediately scaffold `· agrind` for every remaining sub-goal.**
+This is mandatory before doing anything else. Most goals will close
+automatically.
+
+**4. Automate proof obligations.** Register lemmas locally for `agrind`:
+```lean
+attribute [local agrind] my_lemma1 my_lemma2
+```
+Re-run `step*` -- it now handles more goals automatically.
+
+**5. Refold the proof.** Progressively replace the expanded script with
+`step*`, which now handles more goals. The final proof might be a single
+`step*` call followed by a small finishing script.
+
+**Example from upstream (list mutation spec):**
+```lean
+theorem list_nth_mut1_spec {T: Type} [Inhabited T] (l : CList T) (i : U32)
+  (h : i.val < l.toList.length) :
+  list_nth_mut1 l i ⦃ x back =>
+    x = l.toList[i.val]! ∧
+    ∀ x', (back x').toList = l.toList.set i.val x' ⦄ := by
+  unfold list_nth_mut1 list_nth_mut1_loop
+  step*
+  simp_all
+```
+
+### The `step*?` to `let*` migration
+
+When you need named access to intermediate variables (e.g., for a complex
+functional correctness goal), `step*?` generates a `let*`-based script:
+
+```lean
+let* ⟨ x2, x2_post ⟩ ← U32.add_spec
+let* ⟨ x3, h_len, h_val ⟩ ← foo_spec
+```
+
+You can rename binders to match algorithm variables (e.g., `seedA`, `ct_11`).
+Precondition subgoals appear as `· sorry` blocks inline -- move proofs from
+cdot blocks into these positions.
+
+---
+
+## Pattern 8: Recursive Function Termination Pitfall
+
+**The pitfall:** If you write `unfold my_recursive_fn; step` and the proof
+appears finished but Lean reports a termination error, `step` found your own
+theorem and applied it recursively. This typically happens when the function
+starts with a `match` or `if-then-else`.
+
+**The fix:** Case-split first before calling `step`:
+
+```lean
+-- BAD: termination error
+theorem my_recursive_fn_spec ... := by
+  unfold my_recursive_fn
+  step    -- applies my_recursive_fn_spec recursively!
+
+-- GOOD: split first
+theorem my_recursive_fn_spec ... := by
+  unfold my_recursive_fn
+  split           -- or: cases ..., or: simp_ifs
+  · step          -- first branch (non-recursive shape)
+  · step          -- second branch
+```
+
+By splitting first, `step` sees a non-recursive goal shape and applies the
+correct inner specs rather than the theorem being proved.
+
+### Proper recursive loop proof pattern
+
+For recursive `_loop` functions generated by Aeneas, use the full recursive
+pattern with explicit termination:
+
+```lean
+@[step]
+theorem my_loop.spec (x : State) (h : invariant x) :
+  my_loop x ⦃ r => postcondition r ⦄ := by
+  unfold my_loop
+  split
+  · step ...        -- recursive case
+    split_conjs <;> (try scalar_tac) <;> agrind
+  · ...             -- base case
+termination_by decreasing_measure x
+decreasing_by scalar_decr_tac
+```
+
+---
+
+## Pattern 9: Function Fold Decomposition Strategy
+
+When a function proof exceeds ~200 lines or ~10 `step` calls, decompose using
+fold theorems. This breaks a monolithic proof into manageable pieces.
+
+### When to decompose
+
+- `step*` produces more than 15 remaining goals
+- The function has natural phases (setup, processing, finalize)
+- Heartbeats are tight (aim for < 8M even for large proofs)
+- "Too many monadic steps" is NEVER a reason to axiomatize -- it IS a reason
+  to decompose
+
+### The decomposition workflow
+
+**1. Identify logical phases** in the function body (e.g., initialization,
+hash computation, finalization).
+
+**2. Define helper functions** that capture each phase:
+```lean
+private def setup_phase (params : Params) : Result IntermediateState := do
+  let a ← compute_a params
+  let b ← compute_b a
+  ok (a, b)
+```
+
+**3. Prove fold theorems** showing inline code equals helper calls:
+```lean
+private theorem fold_setup (params : Params) (f : A → B → Result α) :
+  (do let a ← compute_a params; let b ← compute_b a; f a b) =
+  (do let r ← setup_phase params; f r.1 r.2) := by
+  simp only [setup_phase, bind_assoc_eq, bind_tc_ok, pure]
+```
+
+**4. Write `@[local step]` specs** for each helper (even if sorry'd initially).
+
+**5. Use in the main proof:**
+```lean
+theorem main_fn.spec ... := by
+  unfold main_fn
+  simp only [fold_setup, fold_process, fold_finalize]  -- fold phases
+  step*   -- now steps through phase calls instead of 50+ operations
+```
+
+### Critical invariants
+
+- Fold theorem LHS must differ from RHS (not provable by `rfl`)
+- Continuations use curried arguments, not tuples
+- Every helper needs a `@[local step]` spec
+- Always test: `simp only [fold_setup]` must make progress in the parent
+
+---
+
+## Pattern 10: WP.spec_mono Pattern
+
+When `spec_gen` gives a low-level postcondition and you want something cleaner
+for the public `@[step]` theorem, use `WP.spec_mono` to strengthen the
+postcondition:
+
+```lean
+@[step]
+theorem my_loop.spec (out a : Slice U16) (hlen : out.length = a.length) :
+  my_loop { start := 0#usize, «end» := out.len } out a ⦃ fun res =>
+    res.length = out.length ∧
+    ∀ j, j < res.length → res[j] = f (a[j]) (out[j]) ⦄ := by
+  apply WP.spec_mono
+  · apply my_loop.spec_gen <;> agrind   -- gives raw postcondition
+  · intro res ⟨h1, h2, ...⟩            -- derive nice postcondition
+    split_conjs <;> agrind
+```
+
+**How it works:** `WP.spec_mono` takes a proof of a weaker postcondition
+(from `spec_gen`) and a proof that the weaker postcondition implies the
+stronger one. This separates the inductive proof (in `spec_gen`) from the
+postcondition simplification (in `spec`).
+
+**Common use:** In the canonical loop pattern, `spec_gen` has raw invariant
+components as postconditions. The public `spec` uses `WP.spec_mono` to derive
+cleaner, caller-friendly postconditions.
 
 </patterns>
 
@@ -349,14 +628,14 @@ have : n < n + 1 := by agrind
 What does the function do?
 |
 +-- Single scalar/byte operation (clamp, mask, shift)
-|   --> Case splitting (Pattern 1) + Bitwise (bvify/bv_decide)
+|   --> Case splitting (Pattern 1) + Bitwise (bvify/bv_tac)
 |
 +-- Limb-by-limb arithmetic (add bias, subtract)
 |   --> Bounds propagation (Pattern 2)
 |   --> Per-limb reasoning with explicit obtain chains
 |
 +-- Carry/reduce normalization
-|   --> Carry chain (Pattern 4)
+|   --> Carry chain (Pattern 4) / loop.spec_decr_nat
 |   --> unfold + step* for monadic chain
 |   --> simp [*]; scalar_tac for each carry bound
 |
@@ -368,11 +647,33 @@ What does the function do?
 |   --> Multi-coordinate (Pattern 5)
 |   --> Per-coordinate modular equality
 |   --> Relies on @[step] attributed sub-specs
+|
++-- Loop (iterator-based or recursive)
+|   --> Canonical loop template (Pattern 6): spec_gen / spec / top-level
+|   --> WP.spec_mono to strengthen postconditions (Pattern 10)
+|
++-- Large function (10+ monadic steps)
+|   --> Fold decomposition (Pattern 9)
+|   --> Define helpers, fold theorems, @[local step] specs
+|   --> Never axiomatize transparent functions
+|
++-- Recursive function with termination error
+|   --> Termination pitfall workaround (Pattern 8): split before step
+
+Proof development workflow:
+  1. Start with unfold foo
+  2. If function starts with match/if: split first
+  3. Try step* -- if it works, scaffold · agrind per sub-goal
+  4. If not, use step*? to generate full script (Pattern 7)
+  5. For loops: canonical template (Pattern 6)
+  6. For large functions: fold decomposition (Pattern 9)
+  7. Refold the proof to be as short as possible
 
 Proof complexity hierarchy:
   Simple:  unfold + step* + simp [*]; scalar_tac
   Medium:  + explicit obtain chains + interval_cases
   Complex: + Nat.ModEq chains + Finset.sum expansion + have blocks
+  Large:   + fold decomposition + auxiliary specs
 ```
 
 </summary>

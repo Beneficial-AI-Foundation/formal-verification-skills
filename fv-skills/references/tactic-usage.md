@@ -53,6 +53,162 @@ production proofs.
 8. `interval_cases` for bounded case splits
 9. `grind` as heavier automation (when agrind is insufficient)
 
+## Decision Tree: Which Tactic?
+
+The default tactic is `agrind` -- always try it first. It is fast, handles
+arithmetic, equalities, and most structural goals. If `agrind` fails, try
+`grind` (slower but more powerful). Do NOT reach for `simp_all` -- it is very
+slow in large contexts and silently drops hypotheses.
+
+```
+What does the goal look like?
+
+├─ Monadic function call (let x ← f args; ...)
+│  → step / step* / step with <thm>
+│
+├─ Loop fixed-point (loop body x)
+│  → apply loop.spec_decr_nat (Nat measure) or loop.spec (general)
+│
+├─ Recursive _loop function
+│  → unfold + by_cases + step (invariant = pre + post)
+│  → termination_by + scalar_decr_tac
+│  → NEVER partial_fixpoint_induct
+│
+├─ Arithmetic
+│  ├─ General → agrind (preferred), then grind, then scalar_tac
+│  ├─ Nonlinear → agrind, then grind, then simp_scalar, then scalar_tac +nonLin
+│  └─ Scalar simplification (min, max, %) → simp_scalar
+│
+├─ Bit-vector / Bitwise (&&&, |||, ^^^, ~~~, >>>, <<<, %)
+│  ├─ Pure BitVec goal → bv_tac N
+│  ├─ Nat goal about bitwise result → bvify N; bv_tac N
+│  ├─ bvify fails → have h : bv_prop := by bv_tac N; natify at h; simp_scalar
+│  └─ bv_tac error (non-decomposed expr) → missing @[bvify_simps] lemma
+│
+├─ Modular arithmetic
+│  ├─ Equivalence (a ≡ b [MOD n]) → zmodify; ring / simp
+│  └─ Bounds (a < n) → stay Nat/Int; agrind / grind / scalar_tac
+│
+├─ List/Array/Slice structural (setSlice!, replicate, append, take, drop, length)
+│  → simp_lists
+│
+├─ List/Array (get/set by index)
+│  ├─ Automatic → agrind first; if fails, try grind (slower, more lemmas)
+│  └─ Slow → cases idx <;> simp_lists
+│
+├─ Equality with shared terms (3*x + 2*y = x + 3*y)
+│  → ring_eq_nf / ring_eq_nf at h
+│
+├─ If-then-else → simp_ifs / split
+├─ Conjunction (∧) → split_conjs, then scaffold `· agrind` per sub-goal
+├─ Boolean/Propositional → simp_bool_prop / tauto
+├─ Concrete computation → decide / native_decide
+├─ Congruence → fcongr (NEVER congr -- heartbeat timeout)
+│
+├─ Writing `simp [CONST]; solver` in a cdot block after step*?
+│  → STOP. Register CONST with @[grind =, agrind =] first.
+│    Re-run step* -- the goal may disappear entirely.
+│
+└─ General / stuck
+   ├─ Try → agrind
+   └─ If fails → simp [*]; agrind
+```
+
+## Scaffolding Workflow
+
+After every `step*` (or `split_conjs`, `split`, `cases`), immediately scaffold
+one `· agrind` per remaining sub-goal. This is the very first thing you do --
+before inspecting goals, before trying tactics, before anything else.
+
+```lean
+-- After step*:
+step*
+· agrind -- goal 1
+· agrind -- goal 2
+· agrind -- goal 3
+
+-- After split_conjs:
+split_conjs
+· agrind -- conjunct 1
+· agrind -- conjunct 2
+```
+
+Benefits:
+- `agrind` closes most sub-goals immediately (bounds, equalities)
+- Each goal becomes independently inspectable with `lean_goal`
+- Edits are incremental -- changing one block does not re-elaborate others
+- No temptation to use banned `all_goals` or `<;>` patterns
+
+After scaffolding, check which `· agrind` goals still have errors. For those,
+inspect with `lean_goal`, pick the right tactic, and replace.
+
+**Before writing cdot blocks:** Check for missing solver attributes. If 3+
+goals need the same constant unfolded, register it with `@[grind =, agrind =]`
+first, then re-run `step*` -- the goals may vanish.
+
+## Inaccessible Hypotheses
+
+Many tactics (`step*`, `cases`, `intro`, pattern matching) produce hypotheses
+with inaccessible names (`_✝⁵⁵`, `h✝`) that cannot be referenced directly.
+
+### Solution 1: Type matching with `‹_›` and `rename_i` (up to ~10 hypotheses)
+
+`‹expr›` searches the context for a hypothesis whose type matches `expr`.
+Wildcards (`_`) match any subexpression including inaccessible variables:
+
+```lean
+-- Context has: _✝⁴² : P x✝⁸ someKnownTerm
+have h1 := ‹P _ someKnownTerm›     -- _ matches x✝⁸
+```
+
+`rename_i` renames inaccessible hypotheses starting from the most recent:
+
+```lean
+step*
+rename_i h    -- grabs the last inaccessible hypothesis
+exact h
+```
+
+### Solution 2: `step*?` to generate named `let*` script (many hypotheses)
+
+When Solution 1 is impractical, use `step*?` to generate a full `let*`-based
+proof script with named bindings:
+
+```lean
+let* ⟨ x2, x2_post ⟩ ← U32.add_spec
+let* ⟨ x3, h_len, h_val ⟩ ← foo_spec
+```
+
+You can rename binders to match algorithm variables. The `let*` script is
+~10x slower than `step*` for 50+ bindings, so prefer Solution 1 when feasible.
+
+## Common Pitfalls
+
+### Termination pitfall with `partial_fixpoint_induct`
+
+`partial_fixpoint_induct` requires an explicit motive repeating the entire
+postcondition, plus a sorry'd `admissible` proof. Instead use:
+`unfold` + `by_cases` + `step` + `termination_by`
+
+### Nat subtraction underflow
+
+In Lean, `Nat` subtraction floors at 0: `3 - 5 = 0`. Solutions:
+- Use `Int` when subtraction is involved
+- Add preconditions: `(h : a >= b)` before using `a - b`
+- Rewrite subtractions as additions: `z + y = x` instead of `z = x - y`
+
+### `simp_all` caution
+
+`simp_all` can simplify and remove hypotheses it considers redundant. Prefer:
+- `simp [h1, h2]` with an explicit lemma list
+- `simp [*]` to use all hypotheses without removing them
+- `agrind` as the general-purpose default
+
+### `agrind` + `simp` interaction
+
+Due to a current grind issue, `simp [*]; agrind` can solve goals that `agrind`
+alone cannot. When `agrind` fails, try prepending `simp [*]`.
+
 </quick_reference>
 
 <banned>
@@ -70,14 +226,21 @@ proofs that are incorrect, fragile, or unmaintainable.
 | `congr N`           | Default transparency causes heartbeat timeout               | `fcongr N` (reducible transparency, same subgoals) |
 | `step* <;> ...`     | Replays full `step*` on every edit                          | `step*` then cdot tactic per goal               |
 | `all_goals tactic`  | Same re-elaboration problem                                 | cdot tactic per goal                            |
+| `partial_fixpoint_induct` | Needs explicit motive + sorry'd `admissible` proof   | `unfold` + `by_cases` + `step` + `termination_by` |
 
 **The first three tactics are NEVER acceptable in Aeneas proofs** -- not in `step`
 theorems, not in helper lemmas, not in `have` steps, not in `decreasing_by` (even
 for pure Nat). They cannot reason about U8, U32, Usize, Slice.length, etc.
+There are **no exceptions**.
 
 **`step* <;>` and `all_goals` are NEVER acceptable either** -- they destroy
-incrementality by forcing full re-elaboration on every edit. Always use focused
-cdot blocks -- one per goal.
+incrementality by forcing full re-elaboration on every edit. `all_goals` is
+banned **everywhere**, not just after `step*`. Always use focused cdot blocks --
+one per goal.
+
+**`partial_fixpoint_induct`** requires an explicit motive repeating the entire
+postcondition, an `admissible` proof (typically sorry'd), and manual IH
+threading. The `unfold` + `by_cases` + `step` pattern avoids all of this.
 
 </banned>
 
@@ -271,6 +434,105 @@ simp [Field51_as_Nat, Finset.sum_range_succ, p, Nat.ModEq, *]; agrind
 **Key insight:** After expanding, use `simp only` with distribution lemmas, then
 reason about individual limb terms. For modular arithmetic, reduce to
 `Nat.ModEq` and use `agrind` on the expanded form.
+
+---
+
+## Pattern 6: Common Tactic Combinations
+
+Frequently used tactic sequences for recurring goal shapes:
+
+| Pattern | Use When |
+|---|---|
+| `split_conjs` then `· agrind` per goal | Goal is a conjunction -- scaffold then fix failures |
+| `simp [*]; agrind` | `agrind` alone fails (grind issue workaround) |
+| `bvify N; bv_tac N` | Nat goal about bitwise operation |
+| `have h := ...; natify at h; simp_scalar at h` | Reverse BV lifting (goal -> bv -> back to Nat) |
+| `zify at h; zify; simp [h, Int.mul_emod]` | Modular equivalence via Int |
+| `unfold fn; split; step` | Recursive function (avoid termination issue) |
+| chain of `have` + `simp_scalar` | Non-linear arithmetic (modulo, division) |
+| `calc _ = _ := by simp_scalar` | Equational chains for arithmetic |
+
+---
+
+## Pattern 7: Detailed Tactic Usage Notes
+
+### step / step* / step*?
+
+- `step` -- apply matching `@[step]` theorem to the next monadic bind
+- `step as ⟨x, h1, h2⟩` -- name the result and hypotheses
+- `step with my_theorem` -- use a specific theorem
+- `step*` -- repeatedly apply step (can take 60-120s on big functions)
+- `step* n` -- run step for exactly n steps (surgical stepping)
+- `step*?` -- generate expanded `let*` proof script via `lean_code_actions`
+
+**Naming with `step as`:** Each name binds one component of the postcondition's
+top-level structure. If you provide too many names, Lean warns "Too many ids
+provided" -- remove the excess.
+
+**Termination pitfall:** If `unfold foo; step` appears finished but Lean reports
+a termination error, `step` applied the spec recursively. Fix: use `split`
+before `step` to case-split on match/if first.
+
+### scalar_tac
+
+- `scalar_tac` -- basic integer arithmetic/bounds over Aeneas scalar types
+- `scalar_tac +nonLin` -- enable nonlinear arithmetic reasoning
+- Understands U8, U16, U32, U64, U128, Usize and their bounds
+- Known limitation: struggles with Int <-> Nat conversions; try `zify`/`natify` first
+- Register constants: `@[scalar_tac_simps]` attribute
+
+### simp_scalar / simp_lists
+
+- `simp_scalar [lemmas]` -- simplify scalar expressions (min, max, %)
+- `simp_lists [lemmas]` -- simplify list/array/slice structural ops
+  (setSlice!, replicate, append, take, drop, length, get/set)
+- Both are simp-based: safe to locally activate many ad-hoc lemmas without
+  complexity explosion
+- Register: `@[simp_scalar_simps]` and `@[simp_lists_simps]`
+
+### bvify / bv_tac
+
+- `bvify N` -- lift goal to BitVec N by applying `@[bvify_simps]` lemmas
+- `bv_tac N` -- decide the resulting BitVec goal via SAT solving
+- Always specify bit width: `bv_tac 8` for U8, `bv_tac 32` for U32
+- If `bv_tac` fails with non-decomposed expressions, a `@[bvify_simps]`
+  lemma is missing
+- Common identity lemmas: `U8.and_allOnes`, `U8.val_and_max`, `U8.bv_mod_size`
+
+### natify / zmodify
+
+- `natify` -- convert propositions to Nat (register: `@[natify_simps]`)
+- `zmodify` -- convert to ZMod (register: `@[zmodify_simps]`)
+- `zmodify [to N]` -- specify modulus explicitly
+- Use `zmodify` for modular arithmetic; `ring` works directly in ZMod
+
+### fcongr / split_conjs / ring_eq_nf
+
+- `fcongr N` -- congruence at reducible transparency (avoids heartbeat timeout
+  from `congr`'s default transparency). Use when goal is `f(impl) = f(spec)`.
+- `split_conjs` -- fully recursively split nested conjunctions into atomic goals.
+  Follow with `· agrind` per sub-goal.
+- `ring_eq_nf` -- cancel common terms in equalities: useful for goals like
+  `3*x + 2*y = x + 3*y`
+
+### Attribute Management
+
+```lean
+-- Register constants for all solvers
+@[simp, scalar_tac_simps, agrind =, grind =, bvify]
+theorem MY_CONST_val : MY_CONST.val = 42 := by decide
+
+-- Swap to simpler cast spec
+attribute [-step] UScalar.cast.step_spec
+attribute [local step] UScalar.cast_inBounds_spec
+
+-- Setup for crypto/array proofs
+#setup_aeneas_simps
+```
+
+Detecting missing attributes: If 3+ cdot sub-goals after `step*` need the same
+constant unfolded (`simp [CONST]; solver`), register that constant with solver
+attributes. The sub-goals will then be discharged automatically.
 
 </patterns>
 
