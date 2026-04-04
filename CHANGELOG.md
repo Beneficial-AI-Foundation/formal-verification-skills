@@ -44,9 +44,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ## [1.1.0] - 2026-03-09
 
 ### Added
-- `/fvs:lean-simplify` command for post-verification proof cleanup (#17) -- three modes (safe/balanced/aggressive), tiered heuristics, one change per invocation with build verification
-- `fvs-lean-simplifier` agent for iterative proof simplification
-- `lean-simplification.md` reference with proof-fuel rule, simplification ordering, layering strategy, target selection heuristics, and repo-specific lessons
+- `/fvs:lean-refactor` command for post-verification proof cleanup (#17) -- three modes (safe/balanced/aggressive), tiered heuristics, one change per invocation with build verification
+- `fvs-lean-refactorer` agent for iterative proof refactoring
+- `lean-refactoring.md` reference with proof-fuel rule, refactoring ordering, layering strategy, target selection heuristics, and repo-specific lessons
 - Codex runtime support in installer (#18) -- `npx fv-skills-baif --codex`
 - `/fvs:pause-work` command for session context handoff (#10)
 - `/fvs:resume-work` command for session context restoration (#10)

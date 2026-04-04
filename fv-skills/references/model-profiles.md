@@ -22,7 +22,7 @@ subagent before calling Task(). The profile table below defines the mapping.
 |--------------------------|---------|----------|--------|
 | fvs-researcher           | inherit | sonnet   | haiku  |
 | fvs-executor             | inherit | sonnet   | sonnet |
-| fvs-lean-simplifier      | inherit | sonnet   | sonnet |
+| fvs-lean-refactorer      | inherit | sonnet   | sonnet |
 | fvs-explainer            | inherit | sonnet   | haiku  |
 | fvs-dependency-analyzer  | sonnet  | haiku    | haiku  |
 | fvs-code-reader          | sonnet  | sonnet   | haiku  |
@@ -145,9 +145,9 @@ Each main command dispatches two subagents in sequence:
   -> Task(fvs-researcher, model=resolve("fvs-researcher"), research_mode="proof-attempt")
   -> Task(fvs-executor,   model=resolve("fvs-executor"),   execution_mode="proof-attempt")
 
-/fvs:lean-simplify
-  -> Task(fvs-researcher,       model=resolve("fvs-researcher"),       research_mode="lean-simplify")
-  -> Task(fvs-lean-simplifier,  model=resolve("fvs-lean-simplifier"),  simplify_mode="iterative")
+/fvs:lean-refactor
+  -> Task(fvs-researcher,       model=resolve("fvs-researcher"),       research_mode="lean-refactor")
+  -> Task(fvs-lean-refactorer,  model=resolve("fvs-lean-refactorer"),  refactor_mode="iterative")
 ```
 
 The researcher gathers context (read-only), the executor writes files based on findings.

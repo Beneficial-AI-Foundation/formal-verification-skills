@@ -58,7 +58,7 @@ describe('Commands (commands/fvs/)', () => {
   const files = mdFiles(dir);
 
   const expected = [
-    'checkpoint.md', 'help.md', 'lean-proof-port.md', 'lean-simplify.md',
+    'checkpoint.md', 'help.md', 'lean-proof-port.md', 'lean-refactor.md',
     'lean-spec-port.md', 'lean-specify.md', 'lean-verify.md', 'map-code.md',
     'natural-language.md', 'pause-work.md', 'plan.md', 'reapply-patches.md',
     'resume-work.md', 'update.md',
@@ -110,7 +110,7 @@ describe('Agents (agents/)', () => {
 
   const expected = [
     'fvs-code-reader.md', 'fvs-dependency-analyzer.md', 'fvs-executor.md',
-    'fvs-explainer.md', 'fvs-lean-prover.md', 'fvs-lean-simplifier.md',
+    'fvs-explainer.md', 'fvs-lean-prover.md', 'fvs-lean-refactorer.md',
     'fvs-lean-spec-generator.md', 'fvs-researcher.md',
   ];
 
@@ -147,7 +147,7 @@ describe('Workflows (fv-skills/workflows/)', () => {
   const files = mdFiles(dir);
 
   const expected = [
-    'lean-proof-port.md', 'lean-simplify.md', 'lean-spec-port.md',
+    'lean-proof-port.md', 'lean-refactor.md', 'lean-spec-port.md',
     'lean-specify.md', 'lean-verify.md', 'map-code.md',
     'natural-language.md', 'plan.md', 'update.md',
   ];
@@ -184,7 +184,7 @@ describe('References (fv-skills/references/)', () => {
   const files = mdFiles(dir);
 
   const expected = [
-    'aeneas-patterns.md', 'lean-simplification.md', 'lean-spec-conventions.md',
+    'aeneas-patterns.md', 'lean-refactoring.md', 'lean-spec-conventions.md',
     'model-profiles.md', 'proof-strategies.md', 'tactic-usage.md', 'ui-brand.md',
   ];
 

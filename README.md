@@ -117,7 +117,7 @@ Use `--claude`, `--codex`, `--opencode`, `--gemini`, or `--all` to skip the runt
 |---------|-------------|
 | `/fvs:lean-specify` | Generate Lean spec skeleton with `@[progress]` theorem pattern |
 | `/fvs:lean-verify` | Attempt proof using domain tactics (progress, simp, ring, omega) |
-| `/fvs:lean-simplify` | Simplify and golf verified proofs (dead code removal, simp sharpening, tactic golf) |
+| `/fvs:lean-refactor` | Refactor, simplify, and decompose verified proofs (dead code removal, simp sharpening, tactic golf) |
 
 ### Cross-language Porting
 
@@ -150,7 +150,7 @@ FVS follows a five-stage workflow. Each stage builds on the previous.
 
 ### 5. Simplify
 
-`/fvs:lean-simplify <spec_path>` — Simplify and golf verified proofs. Applies tiered heuristics (dead code removal, simp sharpening, tactic golf, smart automation) while verifying compilation after every change. Three modes: safe, balanced (default), and aggressive.
+`/fvs:lean-refactor <spec_path>` — Refactor, simplify, and decompose verified proofs. Applies tiered heuristics (dead code removal, simp sharpening, tactic golf, smart automation) while verifying compilation after every change. Three modes: safe, balanced (default), and aggressive.
 
 ---
 

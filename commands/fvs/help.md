@@ -25,15 +25,15 @@ Output ONLY the reference content below. Do NOT add:
 2. `/fvs:plan` - Select verification targets
 3. `/fvs:lean-specify <function>` - Generate spec with sorry
 4. `/fvs:lean-verify <spec_path>` - Attempt proof interactively
-5. `/fvs:lean-simplify <spec_path>` - Golf and clean up verified proofs
+5. `/fvs:lean-refactor <spec_path>` - Golf and clean up verified proofs
 6. `/fvs:lean-spec-port` - Port specs from other FV languages
 7. `/fvs:lean-proof-port` - Port proofs from other FV languages
 
 ## Core Workflow
 
 ```
-/fvs:map-code → /fvs:plan → /fvs:lean-specify → /fvs:lean-verify → /fvs:lean-simplify → repeat
-Cross-language: /fvs:lean-spec-port → /fvs:lean-proof-port → /fvs:lean-simplify
+/fvs:map-code → /fvs:plan → /fvs:lean-specify → /fvs:lean-verify → /fvs:lean-refactor → repeat
+Cross-language: /fvs:lean-spec-port → /fvs:lean-proof-port → /fvs:lean-refactor
 ```
 
 ### Analysis
@@ -90,10 +90,10 @@ Attempt proof using domain tactics with interactive feedback.
 Usage: `/fvs:lean-verify Specs/Backend/Field/Sub.lean`
 Usage: `/fvs:lean-verify Specs/Backend/Field/Sub.lean --max-attempts 15`
 
-### Simplification
+### Refactoring
 
-**`/fvs:lean-simplify <spec_file_path>`**
-Simplify and golf verified Lean proofs while preserving compilation.
+**`/fvs:lean-refactor <spec_file_path>`**
+Refactor, simplify, and decompose verified Lean proofs while preserving compilation.
 
 - Requires fully verified spec (zero sorry) -- run `/fvs:lean-verify` first
 - Three modes: safe (zero-risk cleanup), balanced (default), aggressive (smart automation)
@@ -101,9 +101,9 @@ Simplify and golf verified Lean proofs while preserving compilation.
 - Verifies compilation after every change
 - Optional --report-only flag for analysis without modification
 
-Usage: `/fvs:lean-simplify Specs/Backend/Field/Sub.lean`
-Usage: `/fvs:lean-simplify Specs/Backend/Field/Sub.lean --mode aggressive --max-passes 10`
-Usage: `/fvs:lean-simplify Specs/Backend/Field/Sub.lean --theorem sub_spec --report-only`
+Usage: `/fvs:lean-refactor Specs/Backend/Field/Sub.lean`
+Usage: `/fvs:lean-refactor Specs/Backend/Field/Sub.lean --mode aggressive --max-passes 10`
+Usage: `/fvs:lean-refactor Specs/Backend/Field/Sub.lean --theorem sub_spec --report-only`
 
 ### Porting
 
@@ -179,13 +179,13 @@ Show this command reference.
 │   ├── fvs-code-reader.md
 │   ├── fvs-lean-spec-generator.md
 │   ├── fvs-lean-prover.md
-│   └── fvs-lean-simplifier.md
+│   └── fvs-lean-refactorer.md
 ├── commands/fvs/
 │   ├── map-code.md
 │   ├── plan.md
 │   ├── lean-specify.md
 │   ├── lean-verify.md
-│   ├── lean-simplify.md
+│   ├── lean-refactor.md
 │   ├── lean-spec-port.md
 │   ├── lean-proof-port.md
 │   ├── reapply-patches.md

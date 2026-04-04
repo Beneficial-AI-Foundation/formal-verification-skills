@@ -1,22 +1,22 @@
 <overview>
 
-Tiered proof simplification for Aeneas-generated Lean 4 specifications. Purpose is cleanup
+Tiered proof refactoring for Aeneas-generated Lean 4 specifications. Purpose is cleanup
 AFTER verification -- the input proof must compile with zero sorry. Three modes control
-how aggressively simplifications are applied:
+how aggressively refactorings are applied:
 
 - **safe** -- Tier 1 only. Zero-risk cleanup. No behavioral change possible.
 - **balanced** -- Tiers 1-3. Default mode. Conservative improvements with low-medium risk.
 - **aggressive** -- All tiers (1-4). Includes smart automation replacement. Higher risk of
   introducing fragility.
 
-Every simplification is verified with `nice -n 19 lake build` before proceeding. If a
+Every refactoring is verified with `nice -n 19 lake build` before proceeding. If a
 change breaks the build, it is reverted immediately.
 
 </overview>
 
 <quick_reference>
 
-## Simplification Tier Reference
+## Refactoring Tier Reference
 
 | Tier | Name | Risk | Examples |
 |------|------|------|----------|
@@ -50,9 +50,9 @@ Test removal with a build check -- do NOT assume it is dead based on textual abs
 
 ---
 
-## Preferred Simplification Order
+## Preferred Refactoring Order
 
-When multiple simplifications are possible, prefer this order (most impactful first):
+When multiple refactorings are possible, prefer this order (most impactful first):
 
 1. **Lemma reuse** -- Extract shared proof steps into a local lemma used by multiple goals
 2. **Proof tail compression** -- Collapse redundant tactic chains at the end of proof branches
@@ -259,12 +259,12 @@ ambient lemma set may have changed.
 
 ## Aeneas-Specific Policy
 
-**NEVER simplify:**
+**NEVER refactor:**
 - `unfold + progress` sequences -- these are the structural backbone of Aeneas proofs
 - `progress` steps that correspond to distinct monadic bind points -- merging them loses
   the 1:1 correspondence between Rust operations and proof steps
 
-**SAFE to simplify:**
+**SAFE to refactor:**
 - Bounds obligations (`simp [*]; scalar_tac` patterns)
 - Case split tails (`interval_cases i <;> omega`)
 - Modular arithmetic closers (`simp [Field51_as_Nat, ...]; omega`)
@@ -278,7 +278,7 @@ all steps are independent (no intermediate `have` bindings between them). If the
 
 ## Target Selection Heuristics
 
-### Good Targets (simplify these first)
+### Good Targets (refactor these first)
 - Theorems with 3+ consecutive `simp`/`omega`/`scalar_tac` calls on the same goal
 - Proofs where `simp?` reports a shorter lemma list than current `simp [*]`
 - Proofs with obvious dead bindings confirmed by build test
@@ -290,26 +290,26 @@ all steps are independent (no intermediate `have` bindings between them). If the
 - Recently modified proofs that are not yet stable
 - Proofs that are already minimal (2-3 tactic lines)
 
-**Rule:** Simplify stable plateaus first, not cliff edges. A "plateau" is a theorem that has
+**Rule:** Refactor stable plateaus first, not cliff edges. A "plateau" is a theorem that has
 compiled successfully through multiple project changes. A "cliff edge" is a theorem that was
 recently proved or modified and may still be fragile.
 
 ---
 
-## Simplification Layering Strategy
+## Refactoring Layering Strategy
 
-When simplifying a multi-file project, work through these layers in order:
+When refactoring a multi-file project, work through these layers in order:
 
 1. **Pure math layer** -- Theorems about mathematical properties (commutativity, associativity,
-   bounds). These have the fewest dependencies and are safest to simplify.
+   bounds). These have the fewest dependencies and are safest to refactor.
 2. **Representation layer** -- Theorems connecting Rust types to mathematical objects
    (Field51_as_Nat, Scalar52_as_Nat). More sensitive but still relatively contained.
 3. **Bridge layer** -- Theorems that connect representation to specification (interpretation
    functions applied to computation results). Cross-cutting; changes may affect multiple files.
 4. **Top-level specs** -- The main correctness theorems. Most dependencies, highest risk.
-   Simplify last, after lower layers are stable.
+   Refactor last, after lower layers are stable.
 
-This ordering ensures that simplifications in lower layers do not cascade into breakage
+This ordering ensures that refactorings in lower layers do not cascade into breakage
 in higher layers.
 
 ---
@@ -320,7 +320,7 @@ Hard-won lessons from real proof cleanup work:
 
 - **Parity/omega fragility** -- `omega` proofs involving parity (even/odd, % 2) are extremely
   fragile. Small changes to hypothesis ordering or available lemmas can break them. Avoid
-  simplifying near parity-related omega calls.
+  refactoring near parity-related omega calls.
 - **`simpa only` is safer than broad `simpa`** -- Always use the `only` variant with an
   explicit lemma list. Bare `simpa` pulls in the full simp set which changes across Mathlib
   versions.
@@ -348,7 +348,7 @@ silently breaks downstream theorems that depend on them.
 ### 2. Never change theorem signatures
 
 Preconditions and postconditions are the specification contract. Changing them changes
-what is being proved. Simplification operates ONLY on the proof body (the `by ...` block).
+what is being proved. Refactoring operates ONLY on the proof body (the `by ...` block).
 
 ### 3. Never replace scalar_tac with omega blindly
 
@@ -366,9 +366,9 @@ constants (2^255, field primes) they will time out or exhaust memory.
 Readability matters. If a `have` block exists to document a proof step (even if the binding
 could be inlined), leave it alone unless you are certain the proof remains clear without it.
 
-### 6. Never batch-simplify multiple theorems in one pass
+### 6. Never batch-refactor multiple theorems in one pass
 
-One theorem at a time. Verify after each. If a simplification breaks a build, you need to
+One theorem at a time. Verify after each. If a refactoring breaks a build, you need to
 know exactly which theorem was affected.
 
 ### 7. Never use broad simpa/simp mid-proof
@@ -379,7 +379,7 @@ the proof non-reproducible. Always use `simpa only [...]` or `simp only [...]`.
 
 ### 8. Never mix refactoring with theorem changes
 
-Simplification changes the proof body only. Never combine simplification with changes to
+Refactoring changes the proof body only. Never combine refactoring with changes to
 theorem statements, imports, or module structure in the same pass. Mixing refactoring with
 proof changes makes it impossible to isolate what broke the build.
 
@@ -391,16 +391,16 @@ proof-fuel rule above.
 
 ### 10. Never batch proof-golf multiple theorems
 
-Simplify one theorem at a time, verify the build, then move to the next. Batch changes
-across theorems make it impossible to identify which simplification broke the build.
-This strengthens anti-pattern 6 (never batch-simplify) with the specific failure mode:
+Refactor one theorem at a time, verify the build, then move to the next. Batch changes
+across theorems make it impossible to identify which refactoring broke the build.
+This strengthens anti-pattern 6 (never batch-refactor) with the specific failure mode:
 when a batch edit breaks, you must revert ALL changes and retry one at a time.
 
 </anti_patterns>
 
 <summary>
 
-## Simplification Selection Flowchart
+## Refactoring Selection Flowchart
 
 ```
 What mode?
@@ -437,10 +437,10 @@ NEVER: Touch @[progress] attributes, theorem signatures, unfold+progress backbon
 
 <output_format>
 
-The simplifier agent reports per-theorem results in this format:
+The refactorer agent reports per-theorem results in this format:
 
 ```
-FVS >> SIMPLIFICATION {STATUS}
+FVS >> REFACTORING {STATUS}
 
 File:      {spec_file}
 Theorem:   {theorem_name}
@@ -448,14 +448,14 @@ Mode:      {safe|balanced|aggressive}
 Passes:    {N} completed
 Changes:   {list of changes made}
 Lines:     {before} -> {after} ({delta})
-Status:    SIMPLIFIED | NO_CHANGE | ERROR
+Status:    REFACTORED | NO_CHANGE | ERROR
 
 Verify: nice -n 19 lake build
 ```
 
 Status values:
-- **SIMPLIFIED** -- at least one change was applied and the build passes
-- **NO_CHANGE** -- no further simplifications possible at the current tier ceiling
-- **ERROR** -- a simplification attempt broke the build and was reverted
+- **REFACTORED** -- at least one change was applied and the build passes
+- **NO_CHANGE** -- no further refactorings possible at the current tier ceiling
+- **ERROR** -- a refactoring attempt broke the build and was reverted
 
 </output_format>

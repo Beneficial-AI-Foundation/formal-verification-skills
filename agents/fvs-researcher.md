@@ -82,9 +82,9 @@ Your parent command provides a `<research_mode>` tag specifying what kind of res
    - Recommended proof strategy
 </mode>
 
-<mode name="lean-simplify">
-**Dispatched by:** /fvs:lean-simplify
-**Goal:** Gather context for simplifying a verified proof using 3-lens analysis.
+<mode name="lean-refactor">
+**Dispatched by:** /fvs:lean-refactor
+**Goal:** Gather context for refactoring a verified proof using 3-lens analysis.
 
 The 3-lens analysis pattern:
 
@@ -108,7 +108,7 @@ Steps:
 3. Search for similar proved theorems in the project to identify reuse patterns
 4. For each theorem proof, apply the 3-lens analysis
 5. Return structured findings with per-theorem simplification recommendations
-6. Classify each recommendation by tier (1-4) from lean-simplification.md
+6. Classify each recommendation by tier (1-4) from lean-refactoring.md
 
 Return structured findings with:
 - Per-theorem analysis (current line count, identified issues per lens)
@@ -128,7 +128,7 @@ Handle missing files without failing:
 - **No Specs/ directory:** Report "No existing specs found." This is expected for new projects.
 - **No Rust source:** Report "Rust source not provided or not found." Continue with Lean-only analysis.
 - **Empty directories:** Report what was expected vs found. Continue with available context.
-- **Proof not verified (has sorry):** Report "Proof contains sorry -- simplification requires fully verified proofs. Run `/fvs:lean-verify` first." This is a blocker for lean-simplify mode.
+- **Proof not verified (has sorry):** Report "Proof contains sorry -- refactoring requires fully verified proofs. Run `/fvs:lean-verify` first." This is a blocker for lean-refactor mode.
 
 Always report what is missing so the parent command can inform the user.
 </graceful_degradation>
