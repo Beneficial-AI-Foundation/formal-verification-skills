@@ -163,6 +163,18 @@ Reapply local modifications after an FVS update.
 
 Usage: `/fvs:reapply-patches`
 
+**`/fvs:sync-aeneas`**
+Sync Aeneas upstream documentation and update FVS references.
+
+- Reads `_sync-meta.json` mapping table for upstream-to-FVS section mapping
+- Fetches latest Aeneas docs from GitHub, diffs against stored snapshot
+- Maps changes to affected FVS reference files
+- Interactive: user approves each proposed change
+- Detects tactic renames and propagates across FVS content
+- Updates snapshot files and metadata
+
+Usage: `/fvs:sync-aeneas`
+
 **`/fvs:help`**
 Show this command reference.
 
@@ -189,13 +201,17 @@ Show this command reference.
 │   ├── lean-spec-port.md
 │   ├── lean-proof-port.md
 │   ├── reapply-patches.md
+│   ├── sync-aeneas.md
 │   └── help.md
 └── fv-skills/
     ├── references/          # Domain knowledge
     ├── templates/           # Spec, config, stub templates
+    ├── upstream/aeneas/     # Pinned upstream documentation snapshot
+    │   └── _sync-meta.json  # Mapping table for sync-aeneas
     └── workflows/           # Command orchestration logic
         ├── lean-spec-port.md
-        └── lean-proof-port.md
+        ├── lean-proof-port.md
+        └── sync-aeneas.md
 ```
 
 ## Status Symbols

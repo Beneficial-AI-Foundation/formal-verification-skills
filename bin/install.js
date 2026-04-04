@@ -1615,9 +1615,11 @@ function generateManifest(dir, baseDir) {
  * Write file manifest after installation for future modification detection
  */
 function writeManifest(configDir, runtime = 'claude') {
+  const isOpencode = runtime === 'opencode';
   const isCodex = runtime === 'codex';
   const fvSkillsDir = path.join(configDir, 'fv-skills');
   const commandsDir = path.join(configDir, 'commands', 'fvs');
+  const opencodeCommandDir = path.join(configDir, 'command');
   const codexSkillsDir = path.join(configDir, 'skills');
   const agentsDir = path.join(configDir, 'agents');
   const manifest = { version: pkg.version, timestamp: new Date().toISOString(), files: {} };
@@ -1626,10 +1628,17 @@ function writeManifest(configDir, runtime = 'claude') {
   for (const [rel, hash] of Object.entries(fvHashes)) {
     manifest.files['fv-skills/' + rel] = hash;
   }
-  if (!isCodex && fs.existsSync(commandsDir)) {
+  if (!isOpencode && !isCodex && fs.existsSync(commandsDir)) {
     const cmdHashes = generateManifest(commandsDir);
     for (const [rel, hash] of Object.entries(cmdHashes)) {
       manifest.files['commands/fvs/' + rel] = hash;
+    }
+  }
+  if (isOpencode && fs.existsSync(opencodeCommandDir)) {
+    for (const file of fs.readdirSync(opencodeCommandDir)) {
+      if (file.startsWith('fvs-') && file.endsWith('.md')) {
+        manifest.files['command/' + file] = fileHash(path.join(opencodeCommandDir, file));
+      }
     }
   }
   if (isCodex && fs.existsSync(codexSkillsDir)) {
@@ -1645,6 +1654,18 @@ function writeManifest(configDir, runtime = 'claude') {
     for (const file of fs.readdirSync(agentsDir)) {
       if (file.startsWith('fvs-') && file.endsWith('.md')) {
         manifest.files['agents/' + file] = fileHash(path.join(agentsDir, file));
+      }
+    }
+  }
+  // Track hook files so saveLocalPatches() can detect user modifications
+  // Hooks are only installed for runtimes that use settings.json (not Codex)
+  if (!isCodex) {
+    const hooksDir = path.join(configDir, 'hooks');
+    if (fs.existsSync(hooksDir)) {
+      for (const file of fs.readdirSync(hooksDir)) {
+        if (file.startsWith('fvs-') && file.endsWith('.js')) {
+          manifest.files['hooks/' + file] = fileHash(path.join(hooksDir, file));
+        }
       }
     }
   }

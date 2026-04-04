@@ -183,12 +183,15 @@ function renderStandalone(data) {
     } catch (e) {}
   }
 
-  // FVS update available?
+  // FVS update available? Aeneas docs outdated?
   let fvsUpdate = '';
   try {
     const cache = JSON.parse(fs.readFileSync(path.join(claudeDir, 'cache', 'fvs-update-check.json'), 'utf8'));
     if (cache.update_available) {
       fvsUpdate = '\x1b[33m\u2b06 /fvs:update\x1b[0m \u2502 ';
+    }
+    if (cache.aeneas_stale) {
+      fvsUpdate += '\x1b[33mAeneas docs outdated \u2192 /fvs:sync-aeneas\x1b[0m \u2502 ';
     }
   } catch (e) {}
 

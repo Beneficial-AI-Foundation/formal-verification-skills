@@ -110,6 +110,7 @@ Use `--claude`, `--codex`, `--opencode`, `--gemini`, or `--all` to skip the runt
 | `/fvs:help` | Show available FVS commands and usage guide |
 | `/fvs:update` | Self-update to latest version via npx |
 | `/fvs:reapply-patches` | Reapply local modifications after an FVS update |
+| `/fvs:sync-aeneas` | Sync Aeneas upstream documentation and update FVS references |
 
 ### Lean 4 (via Aeneas)
 

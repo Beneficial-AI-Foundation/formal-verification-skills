@@ -61,11 +61,11 @@ describe('Commands (commands/fvs/)', () => {
     'checkpoint.md', 'help.md', 'lean-proof-port.md', 'lean-refactor.md',
     'lean-spec-port.md', 'lean-specify.md', 'lean-verify.md', 'map-code.md',
     'natural-language.md', 'pause-work.md', 'plan.md', 'reapply-patches.md',
-    'resume-work.md', 'update.md',
+    'resume-work.md', 'sync-aeneas.md', 'update.md',
   ];
 
-  it('has exactly 14 command files', () => {
-    assert.equal(files.length, 14, `Expected 14 commands, got ${files.length}: ${files.join(', ')}`);
+  it('has exactly 15 command files', () => {
+    assert.equal(files.length, 15, `Expected 15 commands, got ${files.length}: ${files.join(', ')}`);
   });
 
   it('has the expected set of command files', () => {
@@ -149,11 +149,11 @@ describe('Workflows (fv-skills/workflows/)', () => {
   const expected = [
     'lean-proof-port.md', 'lean-refactor.md', 'lean-spec-port.md',
     'lean-specify.md', 'lean-verify.md', 'map-code.md',
-    'natural-language.md', 'plan.md', 'update.md',
+    'natural-language.md', 'plan.md', 'sync-aeneas.md', 'update.md',
   ];
 
-  it('has exactly 9 workflow files', () => {
-    assert.equal(files.length, 9, `Expected 9 workflows, got ${files.length}: ${files.join(', ')}`);
+  it('has exactly 10 workflow files', () => {
+    assert.equal(files.length, 10, `Expected 10 workflows, got ${files.length}: ${files.join(', ')}`);
   });
 
   it('has the expected set of workflow files', () => {
