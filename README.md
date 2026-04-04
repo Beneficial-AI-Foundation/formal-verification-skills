@@ -117,7 +117,7 @@ Use `--claude`, `--codex`, `--opencode`, `--gemini`, or `--all` to skip the runt
 |---------|-------------|
 | `/fvs:lean-specify` | Generate Lean spec skeleton with `@[step]` theorem pattern |
 | `/fvs:lean-verify` | Attempt proof using domain tactics (step, simp, ring, agrind, scalar_tac) |
-| `/fvs:lean-simplify` | Simplify and golf verified proofs (dead code removal, simp sharpening, tactic golf) |
+| `/fvs:lean-refactor` | Refactor, simplify, and decompose verified proofs (dead code removal, simp sharpening, tactic golf) |
 
 ### Cross-language Porting
 
@@ -142,15 +142,15 @@ FVS follows a five-stage workflow. Each stage builds on the previous.
 
 ### 3. Specify
 
-`/fvs:lean-specify <function>` — Generate a specification skeleton for the target function. For Lean 4: uses the `@[step]` theorem pattern with preconditions from Rust source analysis and postconditions matching function behavior.
+`/fvs:lean-specify <function>` — Generate a specification skeleton for the target function. For Lean 4: uses the `@[step] theorem fn_spec` pattern with preconditions from Rust source analysis and postconditions matching function behavior.
 
 ### 4. Verify
 
-`/fvs:lean-verify <function>` — Attempt to prove the specification. For Lean 4: uses domain-specific tactics (`step`, `simp`, `ring`, `field_simp`, `agrind`, `scalar_tac`). Reports proof status and remaining goals if incomplete.
+`/fvs:lean-verify <function>` — Attempt to prove the specification. For Lean 4: uses domain-specific tactics (`step`, `simp`, `ring`, `field_simp`, `omega`). Reports proof status and remaining goals if incomplete.
 
 ### 5. Simplify
 
-`/fvs:lean-simplify <spec_path>` — Simplify and golf verified proofs. Applies tiered heuristics (dead code removal, simp sharpening, tactic golf, smart automation) while verifying compilation after every change. Three modes: safe, balanced (default), and aggressive.
+`/fvs:lean-refactor <spec_path>` — Refactor, simplify, and decompose verified proofs. Applies tiered heuristics (dead code removal, simp sharpening, tactic golf, smart automation) while verifying compilation after every change. Three modes: safe, balanced (default), and aggressive.
 
 ---
 

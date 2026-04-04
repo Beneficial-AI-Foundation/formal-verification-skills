@@ -224,7 +224,7 @@ Port-aware next steps based on outcome.
 ```
 >> Next Up
 
-/fvs:lean-simplify {spec_path} to optimize the proof
+/fvs:lean-refactor {spec_path} to optimize the proof
 /fvs:plan to select next verification target
 ```
 

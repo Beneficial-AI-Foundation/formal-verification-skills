@@ -20,9 +20,9 @@ const CODEX_AGENT_SANDBOX = {
   'fvs-code-reader': 'read-only',
   'fvs-dependency-analyzer': 'read-only',
   'fvs-explainer': 'read-only',
-  'fvs-lean-spec-generator': 'full-auto',
-  'fvs-lean-prover': 'full-auto',
-  'fvs-lean-simplifier': 'full-auto',
+  'fvs-lean-spec-generator': 'workspace-write',
+  'fvs-lean-prover': 'workspace-write',
+  'fvs-lean-refactorer': 'workspace-write',
 };
 
 // Get version from package.json
