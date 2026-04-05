@@ -14,5 +14,6 @@
   },
   "behavior": {
     "mode": "interactive"
-  }
+  },
+  "knowledge_bases": []
 }
