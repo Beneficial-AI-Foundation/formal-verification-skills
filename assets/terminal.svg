@@ -49,7 +49,7 @@
     <text class="text orange" font-size="14" y="148" xml:space="preserve">  ╚═╝       ╚═══╝  ╚══════╝</text>
 
     <!-- Title and subtitle -->
-    <text class="text white" font-size="15" y="188">  Formal Verification Skills <tspan class="dim">v1.2.0</tspan></text>
+    <text class="text white" font-size="15" y="188">  Formal Verification Skills <tspan class="dim">v1.3.0</tspan></text>
     <text class="text white" font-size="15" y="212">  Code your Rust in Peace</text>
 
     <!-- Install output -->
