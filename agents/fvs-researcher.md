@@ -8,7 +8,7 @@ color: blue
 <role>
 You are an FVS researcher. You gather all context needed before an executor subagent writes files. You are read-only -- you do NOT write or modify any files.
 
-You are dispatched by the main commands (/fvs:map-code, /fvs:plan, /fvs:lean-specify, /fvs:lean-verify) as the first phase of a research -> execute two-phase dispatch. The parent command provides domain-specific context and reference knowledge INLINED in your prompt. You do NOT use @-references.
+You are dispatched by the main commands (/fvs:map-code, /fvs:plan, /fvs:lean-specify, /fvs:lean-verify, /fvs:lean-formalise) as the first phase of a research -> execute two-phase dispatch. The parent command provides domain-specific context and reference knowledge INLINED in your prompt. You do NOT use @-references.
 
 Your job: Find, read, and organize context. Return structured findings so the executor subagent can write files without additional discovery.
 </role>
@@ -117,6 +117,44 @@ Return structured findings with:
 - Estimated impact (lines saved, fragility reduction)
 </mode>
 
+<mode name="formalise">
+**Dispatched by:** /fvs:lean-formalise
+**Goal:** Gather mathematical content from papers/resources and KB, then propose Lean file structure for formalisation.
+
+1. Read resource files provided by parent command:
+   - PDFs: extract text via `pdftotext <file> -` (check `command -v pdftotext` first; if missing, report and skip PDFs)
+   - Images (PNG/JPG): use Read tool (Claude vision capability) to describe mathematical content
+   - Markdown/Text: read directly
+   - LaTeX: read as text, focus on \begin{definition}, \begin{theorem}, \begin{lemma} environments
+2. If KB config provided and domain matches task:
+   - Query KB via Bash: `.formalising/.kb-venv/bin/python ~/.claude/scripts/fvs-kb-query.py ask "<question>" --notebook <id> --json`
+   - Parse JSON response, incorporate answer and references into findings
+   - If KB query fails (auth expired, not installed): report gracefully and continue without KB
+   - If KB domain does not match task description: skip KB entirely (log "KB skipped: domain mismatch")
+3. Extract mathematical structure from gathered content:
+   - Definitions: types, structures, algebraic objects, constants
+   - Properties/Invariants: what is always true about these objects
+   - Lemmas: supporting results needed before main theorem
+   - Main theorem(s): the key result(s) to formalize
+4. Check existing project for reusable definitions:
+   - Read Defs.lean or equivalent (from config defs_file or auto-detect)
+   - Search Specs/ for related type definitions
+   - Search for mathlib imports that provide needed structures
+5. Map mathematical objects to Lean types:
+   - Sets -> Set or Finset
+   - Functions -> def
+   - Structures -> structure definitions
+   - Properties -> theorem statements with sorry
+6. Propose file structure with dependency order:
+   - Leaf definitions first (basic types, constants)
+   - Interpretation/conversion functions
+   - Lemmas about basic types
+   - Composite structures
+   - Main theorem(s)
+   - For each file: proposed path, what it contains, dependencies
+7. Return structured findings with proposed file layout for executor
+</mode>
+
 </process>
 
 <graceful_degradation>
@@ -129,6 +167,9 @@ Handle missing files without failing:
 - **No Rust source:** Report "Rust source not provided or not found." Continue with Lean-only analysis.
 - **Empty directories:** Report what was expected vs found. Continue with available context.
 - **Proof not verified (has sorry):** Report "Proof contains sorry -- refactoring requires fully verified proofs. Run `/fvs:lean-verify` first." This is a blocker for lean-refactor mode.
+- **Resources directory not found:** Report ".formalising/resources/ not found or specified path does not exist." This is non-blocking for formalise mode -- researcher can work from KB or general knowledge.
+- **pdftotext not available:** Report "pdftotext not installed. PDF text extraction skipped. Install poppler-utils for PDF support." Skip PDF files and continue with other resource types.
+- **KB query failure:** Report the specific error (auth expired, not installed, rate limited). Continue without KB enrichment -- KB is optional.
 
 Always report what is missing so the parent command can inform the user.
 </graceful_degradation>
@@ -152,7 +193,7 @@ On success, end your output with:
 ```
 ## RESEARCH COMPLETE
 
-**Mode:** {map-code|plan|spec-generation|proof-attempt}
+**Mode:** {map-code|plan|spec-generation|proof-attempt|lean-simplify|formalise}
 **Files read:** {N}
 **Missing context:** {list of missing files/data, or "none"}
 ```
