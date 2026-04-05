@@ -127,6 +127,13 @@ Use `--claude`, `--codex`, `--opencode`, `--gemini`, or `--all` to skip the runt
 | `/fvs:lean-spec-port` | Port specs from other FV languages (Verus, F*, Coq, Dafny) to Lean |
 | `/fvs:lean-proof-port` | Port proofs from other FV languages to Lean |
 
+### Formalisation (Paper Track)
+
+| Command | Description |
+|---------|-------------|
+| `/fvs:lean-formalise` | Formalise paper/math content into Lean 4 specs and definitions |
+| `/fvs:kb-setup` | Set up NotebookLM knowledge base integration (venv, auth, config) |
+
 ---
 
 ## How It Works

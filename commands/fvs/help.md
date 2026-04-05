@@ -26,13 +26,15 @@ Output ONLY the reference content below. Do NOT add:
 3. `/fvs:lean-specify <function>` - Generate spec with sorry
 4. `/fvs:lean-verify <spec_path>` - Attempt proof interactively
 5. `/fvs:lean-refactor <spec_path>` - Golf and clean up verified proofs
-6. `/fvs:lean-spec-port` - Port specs from other FV languages
-7. `/fvs:lean-proof-port` - Port proofs from other FV languages
+6. `/fvs:lean-formalise` - Formalise paper/math content into Lean specs
+7. `/fvs:lean-spec-port` - Port specs from other FV languages
+8. `/fvs:lean-proof-port` - Port proofs from other FV languages
 
 ## Core Workflow
 
 ```
 /fvs:map-code → /fvs:plan → /fvs:lean-specify → /fvs:lean-verify → /fvs:lean-refactor → repeat
+Paper track:    /fvs:lean-formalise → /fvs:lean-verify → /fvs:lean-refactor
 Cross-language: /fvs:lean-spec-port → /fvs:lean-proof-port → /fvs:lean-refactor
 ```
 
@@ -105,6 +107,21 @@ Usage: `/fvs:lean-refactor Specs/Backend/Field/Sub.lean`
 Usage: `/fvs:lean-refactor Specs/Backend/Field/Sub.lean --mode aggressive --max-passes 10`
 Usage: `/fvs:lean-refactor Specs/Backend/Field/Sub.lean --theorem sub_spec --report-only`
 
+### Formalisation
+
+**`/fvs:lean-formalise`**
+Formalise mathematical paper content into Lean 4 specifications (paper track).
+
+- Interactive prompts: describe task, point to resources, select KB, set module path
+- Reads PDFs (via pdftotext), images (vision), markdown, LaTeX from .formalising/resources/
+- Optional NotebookLM knowledge base integration (set up with /fvs:kb-setup)
+- Creates both definition files and spec files (unlike lean-specify which only creates specs)
+- Two-phase dispatch: researcher extracts math structure, executor writes Lean files
+- Shared with code track: use /fvs:lean-verify for proof attempts
+
+Usage: `/fvs:lean-formalise`
+Result: Lean definition and spec files with sorry placeholders
+
 ### Porting
 
 **`/fvs:lean-spec-port`**
@@ -175,6 +192,18 @@ Sync Aeneas upstream documentation and update FVS references.
 
 Usage: `/fvs:sync-aeneas`
 
+**`/fvs:kb-setup`**
+Set up NotebookLM knowledge base integration.
+
+- Creates Python venv in .formalising/.kb-venv/
+- Installs notebooklm-py library and browser auth
+- Interactive login to NotebookLM
+- Registers knowledge base with domain tags in fvs-config.json
+- Use --add to register additional KBs without recreating venv
+
+Usage: `/fvs:kb-setup`
+Usage: `/fvs:kb-setup --add`
+
 **`/fvs:help`**
 Show this command reference.
 
@@ -198,17 +227,22 @@ Show this command reference.
 │   ├── lean-specify.md
 │   ├── lean-verify.md
 │   ├── lean-refactor.md
+│   ├── lean-formalise.md
+│   ├── kb-setup.md
 │   ├── lean-spec-port.md
 │   ├── lean-proof-port.md
 │   ├── reapply-patches.md
 │   ├── sync-aeneas.md
 │   └── help.md
+├── scripts/
+│   └── fvs-kb-query.py           # NotebookLM query tool (Python)
 └── fv-skills/
     ├── references/          # Domain knowledge
     ├── templates/           # Spec, config, stub templates
     ├── upstream/aeneas/     # Pinned upstream documentation snapshot
     │   └── _sync-meta.json  # Mapping table for sync-aeneas
     └── workflows/           # Command orchestration logic
+        ├── lean-formalise.md
         ├── lean-spec-port.md
         ├── lean-proof-port.md
         └── sync-aeneas.md

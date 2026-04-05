@@ -58,14 +58,15 @@ describe('Commands (commands/fvs/)', () => {
   const files = mdFiles(dir);
 
   const expected = [
-    'checkpoint.md', 'help.md', 'lean-proof-port.md', 'lean-refactor.md',
+    'checkpoint.md', 'help.md', 'kb-setup.md', 'lean-formalise.md',
+    'lean-proof-port.md', 'lean-refactor.md',
     'lean-spec-port.md', 'lean-specify.md', 'lean-verify.md', 'map-code.md',
     'natural-language.md', 'pause-work.md', 'plan.md', 'reapply-patches.md',
     'resume-work.md', 'sync-aeneas.md', 'update.md',
   ];
 
-  it('has exactly 15 command files', () => {
-    assert.equal(files.length, 15, `Expected 15 commands, got ${files.length}: ${files.join(', ')}`);
+  it('has exactly 17 command files', () => {
+    assert.equal(files.length, 17, `Expected 17 commands, got ${files.length}: ${files.join(', ')}`);
   });
 
   it('has the expected set of command files', () => {
@@ -147,13 +148,13 @@ describe('Workflows (fv-skills/workflows/)', () => {
   const files = mdFiles(dir);
 
   const expected = [
-    'lean-proof-port.md', 'lean-refactor.md', 'lean-spec-port.md',
+    'lean-formalise.md', 'lean-proof-port.md', 'lean-refactor.md', 'lean-spec-port.md',
     'lean-specify.md', 'lean-verify.md', 'map-code.md',
     'natural-language.md', 'plan.md', 'sync-aeneas.md', 'update.md',
   ];
 
-  it('has exactly 10 workflow files', () => {
-    assert.equal(files.length, 10, `Expected 10 workflows, got ${files.length}: ${files.join(', ')}`);
+  it('has exactly 11 workflow files', () => {
+    assert.equal(files.length, 11, `Expected 11 workflows, got ${files.length}: ${files.join(', ')}`);
   });
 
   it('has the expected set of workflow files', () => {
@@ -288,6 +289,29 @@ describe('Cross-references', () => {
       }
     }
     assert.deepStrictEqual(missing, [], `Broken agent dispatches: ${missing.join(', ')}`);
+  });
+});
+
+// ============================= SCRIPTS ======================================
+describe('Scripts (scripts/)', () => {
+  const scriptPath = path.join(ROOT, 'scripts', 'fvs-kb-query.py');
+
+  it('fvs-kb-query.py exists', () => {
+    assert.ok(fs.existsSync(scriptPath), 'scripts/fvs-kb-query.py missing');
+  });
+
+  it('fvs-kb-query.py has Python shebang', () => {
+    const content = fs.readFileSync(scriptPath, 'utf8');
+    assert.ok(content.startsWith('#!/usr/bin/env python3'),
+      'fvs-kb-query.py missing #!/usr/bin/env python3 shebang');
+  });
+
+  it('fvs-kb-query.py contains expected subcommands (ask, list, health)', () => {
+    const content = fs.readFileSync(scriptPath, 'utf8');
+    for (const cmd of ['ask', 'list', 'health']) {
+      assert.ok(content.includes(cmd),
+        `fvs-kb-query.py missing expected subcommand: ${cmd}`);
+    }
   });
 });
 
