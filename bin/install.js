@@ -1292,7 +1292,28 @@ function uninstall(isGlobal, runtime = 'claude') {
     }
   }
 
-  // 5. Remove FVS package.json (CommonJS mode marker)
+  // 5. Remove FVS scripts (fvs-* files in scripts/)
+  const scriptsUninstallDir = path.join(targetDir, 'scripts');
+  if (fs.existsSync(scriptsUninstallDir)) {
+    const scriptFiles = fs.readdirSync(scriptsUninstallDir);
+    let scriptCount = 0;
+    for (const file of scriptFiles) {
+      if (file.startsWith('fvs-')) {
+        fs.unlinkSync(path.join(scriptsUninstallDir, file));
+        scriptCount++;
+      }
+    }
+    // Remove dir if empty
+    if (fs.readdirSync(scriptsUninstallDir).length === 0) {
+      fs.rmdirSync(scriptsUninstallDir);
+    }
+    if (scriptCount > 0) {
+      removedCount++;
+      console.log(`  ${green}✓${reset} Removed ${scriptCount} FVS scripts`);
+    }
+  }
+
+  // 6. Remove FVS package.json (CommonJS mode marker) -- skip for Codex
   if (!isCodex) {
     const pkgJsonPath = path.join(targetDir, 'package.json');
     if (fs.existsSync(pkgJsonPath)) {
@@ -1310,7 +1331,7 @@ function uninstall(isGlobal, runtime = 'claude') {
     }
   }
 
-  // 6. Clean up settings.json (remove FVS hooks and statusline) -- skip for Codex
+  // 7. Clean up settings.json (remove FVS hooks and statusline) -- skip for Codex
   if (!isCodex) {
     const settingsPath = path.join(targetDir, 'settings.json');
     if (fs.existsSync(settingsPath)) {
@@ -1359,7 +1380,7 @@ function uninstall(isGlobal, runtime = 'claude') {
     }
   }
 
-  // 6. For OpenCode, clean up permissions from opencode.json
+  // 8. For OpenCode, clean up permissions from opencode.json
   if (isOpencode) {
     const opencodeConfigDir = getOpencodeGlobalDir();
     const configPath = path.join(opencodeConfigDir, 'opencode.json');
@@ -1669,6 +1690,15 @@ function writeManifest(configDir, runtime = 'claude') {
       }
     }
   }
+  // Track script files for local-patches detection
+  const scriptsDir = path.join(configDir, 'scripts');
+  if (fs.existsSync(scriptsDir)) {
+    for (const file of fs.readdirSync(scriptsDir)) {
+      if (file.startsWith('fvs-')) {
+        manifest.files['scripts/' + file] = fileHash(path.join(scriptsDir, file));
+      }
+    }
+  }
 
   fs.writeFileSync(path.join(configDir, MANIFEST_NAME), JSON.stringify(manifest, null, 2));
   return manifest;
@@ -1853,6 +1883,7 @@ function install(isGlobal, runtime = 'claude') {
   // This recursively copies all subdirectories including:
   //   - references/, templates/, workflows/ (core FVS content)
   //   - upstream/aeneas/ (pinned upstream documentation snapshot + _sync-meta.json)
+  // Scripts (scripts/) are copied separately (no path replacement needed)
   const skillSrc = path.join(src, 'fv-skills');
   const skillDest = path.join(targetDir, 'fv-skills');
   copyWithPathReplacement(skillSrc, skillDest, pathPrefix, runtime);
@@ -1898,6 +1929,25 @@ function install(isGlobal, runtime = 'claude') {
       console.log(`  ${green}✓${reset} Installed agents`);
     } else {
       failures.push('agents');
+    }
+  }
+
+  // Copy scripts (Python tools like fvs-kb-query.py)
+  const scriptsSrc = path.join(src, 'scripts');
+  if (fs.existsSync(scriptsSrc)) {
+    const scriptsDest = path.join(targetDir, 'scripts');
+    fs.mkdirSync(scriptsDest, { recursive: true });
+
+    const scriptEntries = fs.readdirSync(scriptsSrc, { withFileTypes: true });
+    for (const entry of scriptEntries) {
+      if (entry.isFile() && entry.name.startsWith('fvs-')) {
+        fs.copyFileSync(path.join(scriptsSrc, entry.name), path.join(scriptsDest, entry.name));
+      }
+    }
+    if (verifyInstalled(scriptsDest, 'scripts')) {
+      console.log(`  ${green}✓${reset} Installed scripts`);
+    } else {
+      failures.push('scripts');
     }
   }
 
