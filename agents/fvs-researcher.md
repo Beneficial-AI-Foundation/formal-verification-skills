@@ -193,7 +193,7 @@ On success, end your output with:
 ```
 ## RESEARCH COMPLETE
 
-**Mode:** {map-code|plan|spec-generation|proof-attempt|lean-simplify|formalise}
+**Mode:** {map-code|plan|spec-generation|proof-attempt|lean-refactor|formalise}
 **Files read:** {N}
 **Missing context:** {list of missing files/data, or "none"}
 ```

@@ -139,6 +139,20 @@ Researcher tasks:
 6. Check existing project definitions for reusable types
 7. Propose output file structure with dependency order
 
+**Domain pattern — Protocol Verification:**
+When the task involves formalising a security protocol, the researcher should structure
+output around the protocol verification triad:
+
+- **Spec_pro**: Lean specifications of protocol descriptions (message flows, state
+  transitions, cryptographic operations) → definition files
+- **Spec_sec**: Lean specifications of expected security properties (confidentiality,
+  authentication, forward secrecy) → spec files with theorem statements and sorry
+- **Spec_pro |= Spec_sec**: Lean proofs that the protocol specifications satisfy the
+  expected properties → deferred to /fvs:lean-verify
+
+The researcher proposes Spec_pro definitions and Spec_sec theorem statements; the
+executor writes them. Proofs are always deferred (sorry placeholders).
+
 **KB domain gating logic:**
 ```
 1. Read knowledge_bases from fvs-config.json

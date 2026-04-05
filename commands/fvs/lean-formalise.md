@@ -47,7 +47,8 @@ Use AskUserQuestion for all four prompts. This command is fully interactive -- n
 FVS >> FORMALISE
 
 What are you formalising?
-(e.g., "CKA key agreement construction from Section 3 of the paper")
+(e.g., "CKA key agreement construction from Section 3 of the paper",
+ "double ratchet protocol security properties")
 ```
 
 Store as TASK_DESCRIPTION.
@@ -186,6 +187,12 @@ $SPEC_CONVENTIONS_CONTENT
 <aeneas_patterns>
 $AENEAS_PATTERNS_CONTENT
 </aeneas_patterns>
+
+Domain pattern -- Protocol Verification:
+When the task involves formalising a security protocol, structure output around:
+- Spec_pro: Lean specs of protocol descriptions (message flows, state transitions, crypto ops) -> definition files
+- Spec_sec: Lean specs of expected security properties (confidentiality, authentication, forward secrecy) -> spec files with sorry
+- Spec_pro |= Spec_sec: proofs that protocol satisfies properties -> deferred to /fvs:lean-verify
 
 Tasks:
 1. Read all resources (PDFs via pdftotext, images via Read, text directly)
