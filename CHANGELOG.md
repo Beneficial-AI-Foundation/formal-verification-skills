@@ -4,6 +4,35 @@ All notable changes to FVS (Formal Verification Skills) will be documented in th
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.3.1] - 2026-04-07
+
+### Fixed
+- Statusline not showing FVS state in GSD delegation mode -- now detects `.formalising/` as FVS project indicator
+- Update/staleness indicators never shown when GSD statusline active -- `readFvsCache()` shared across both modes
+- Local install skipping FVS statusline when GSD globally present -- now wraps GSD locally via project-level settings
+
+## [1.3.0] - 2026-04-05
+
+### Added
+- `/fvs:lean-formalise` command -- paper track for formalising mathematical papers into Lean 4 specs, 4 interactive prompts, two-phase researcher→executor dispatch, KB integration
+- `/fvs:kb-setup` command -- interactive NotebookLM knowledge base setup (venv, auth, KB registration)
+- `fvs-kb-query.py` composable CLI tool -- ask/list/health subcommands for querying NotebookLM KBs with structured JSON output
+- `fvs-researcher` formalise mode (6th mode) -- reads resources (PDF, images, LaTeX, text), queries KB with domain gating, extracts mathematical structure, proposes Lean file layout
+- `/fvs:sync-aeneas` command and workflow for continuous Aeneas upstream integration
+- Aeneas upstream documentation snapshot (`fv-skills/upstream/aeneas/`) with sync mapping (`_sync-meta.json`)
+- Aeneas staleness detection in session start hook -- queries GitHub API, shows warning in statusline
+- Protocol verification domain pattern (Spec_pro/Spec_sec/Spec_pro|=Spec_sec) in lean-formalise
+- `knowledge_bases` array in config template for domain-gated KB entries
+- Installer copies `scripts/` directory to target with manifest tracking and uninstall cleanup
+- Acknowledgements section in README
+
+### Changed
+- `/fvs:lean-simplify` renamed to `/fvs:lean-refactor` with expanded refactoring corpus
+- `fvs-lean-simplifier` agent renamed to `fvs-lean-refactorer`
+- All tactic names migrated to current Aeneas conventions: `progress`→`step`, `@[progress]`→`@[step]`, `omega` BANNED, `agrind` as default
+- References enriched from upstream: aeneas-patterns (+400 lines), tactic-usage (+260 lines), proof-strategies (+300 lines), lean-refactoring (+400 lines)
+- Test suite expanded from 154 to 167 tests (scripts, new commands, updated counts)
+
 ## [1.2.0] - 2026-03-16
 
 ### Added

@@ -2111,7 +2111,7 @@ function finishInstall(settingsPath, settings, statuslineCommand, shouldInstallS
 /**
  * Handle statusline configuration with optional prompt
  */
-function handleStatusline(settings, isInteractive, callback) {
+function handleStatusline(settings, isGlobal, isInteractive, callback) {
   const hasExisting = settings.statusLine != null;
 
   if (!hasExisting) {
@@ -2119,12 +2119,19 @@ function handleStatusline(settings, isInteractive, callback) {
     return;
   }
 
-  // Detect GSD statusline and coexist silently
+  // Detect GSD statusline
   const isGsdStatusline = settings.statusLine.command &&
     settings.statusLine.command.includes('gsd-statusline');
   if (isGsdStatusline) {
-    console.log(`  ${green}✓${reset} GSD statusline detected, keeping it.`);
-    callback(false);
+    if (isGlobal) {
+      // Global: keep GSD's statusline to avoid overhead in non-FVS repos
+      console.log(`  ${green}✓${reset} GSD statusline detected, keeping it.`);
+      callback(false);
+    } else {
+      // Local: install FVS statusline (it delegates to GSD internally, appends FVS state)
+      console.log(`  ${green}✓${reset} GSD statusline detected, FVS will wrap it locally.`);
+      callback(true);
+    }
     return;
   }
 
@@ -2276,7 +2283,7 @@ function installAllRuntimes(runtimes, isGlobal, isInteractive) {
     // Use whichever settings exist to check for existing statusline
     const primaryResult = claudeResult || geminiResult;
 
-    handleStatusline(primaryResult.settings, isInteractive, (shouldInstallStatusline) => {
+    handleStatusline(primaryResult.settings, isGlobal, isInteractive, (shouldInstallStatusline) => {
       if (claudeResult) {
         finishInstall(claudeResult.settingsPath, claudeResult.settings, claudeResult.statuslineCommand, shouldInstallStatusline, 'claude', isGlobal);
       }

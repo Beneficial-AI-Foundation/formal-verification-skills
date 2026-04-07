@@ -84,7 +84,30 @@ function detectFvsState() {
     return 'formalising';
   } catch (e) {}
 
+  // Detect FVS project by .formalising/ directory (basic indicator)
+  try {
+    fs.accessSync(path.join(cwd, '.formalising'));
+    return 'ready';
+  } catch (e) {}
+
   return '';
+}
+
+/**
+ * Read FVS update/staleness cache. Returns prefix string for statusline.
+ */
+function readFvsCache() {
+  let prefix = '';
+  try {
+    const cache = JSON.parse(fs.readFileSync(path.join(claudeDir, 'cache', 'fvs-update-check.json'), 'utf8'));
+    if (cache.update_available) {
+      prefix += '\x1b[33m\u2b06 /fvs:update\x1b[0m \u2502 ';
+    }
+    if (cache.aeneas_stale) {
+      prefix += '\x1b[33mAeneas docs outdated \u2192 /fvs:sync-aeneas\x1b[0m \u2502 ';
+    }
+  } catch (e) {}
+  return prefix;
 }
 
 /**
@@ -99,10 +122,12 @@ function delegateToGsd(gsdPath, data) {
       stdio: ['pipe', 'pipe', 'pipe'],
     }).trimEnd();
 
-    // Append FVS verification context if active
+    // Prepend FVS update/staleness indicators, append FVS state
+    const fvsCache = readFvsCache();
     const fvsState = detectFvsState();
-    if (fvsState) {
-      process.stdout.write(`${gsdOutput} \x1b[36m| FVS: ${fvsState}\x1b[0m`);
+    if (fvsCache || fvsState) {
+      const suffix = fvsState ? ` \x1b[36m| FVS: ${fvsState}\x1b[0m` : '';
+      process.stdout.write(`${fvsCache}${gsdOutput}${suffix}`);
     } else {
       process.stdout.write(gsdOutput);
     }
@@ -184,16 +209,7 @@ function renderStandalone(data) {
   }
 
   // FVS update available? Aeneas docs outdated?
-  let fvsUpdate = '';
-  try {
-    const cache = JSON.parse(fs.readFileSync(path.join(claudeDir, 'cache', 'fvs-update-check.json'), 'utf8'));
-    if (cache.update_available) {
-      fvsUpdate = '\x1b[33m\u2b06 /fvs:update\x1b[0m \u2502 ';
-    }
-    if (cache.aeneas_stale) {
-      fvsUpdate += '\x1b[33mAeneas docs outdated \u2192 /fvs:sync-aeneas\x1b[0m \u2502 ';
-    }
-  } catch (e) {}
+  const fvsUpdate = readFvsCache();
 
   // FVS verification state
   const fvsState = detectFvsState();
