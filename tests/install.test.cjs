@@ -45,11 +45,11 @@ describe('Installer (install + uninstall round-trip)', () => {
     assert.ok(mdFiles.length >= 5, `Expected >= 5 command files, got ${mdFiles.length}`);
   });
 
-  it('creates agents/ with at least 5 fvs-*.md files', () => {
+  it('creates agents/ with at least 4 fvs-*.md files', () => {
     const agentDir = path.join(tmpDir, 'agents');
     assert.ok(fs.existsSync(agentDir), 'agents/ missing');
     const fvsAgents = fs.readdirSync(agentDir).filter(f => f.startsWith('fvs-') && f.endsWith('.md'));
-    assert.ok(fvsAgents.length >= 5, `Expected >= 5 agent files, got ${fvsAgents.length}`);
+    assert.ok(fvsAgents.length >= 4, `Expected >= 4 agent files, got ${fvsAgents.length}`);
   });
 
   it('creates fv-skills/workflows/ with at least 3 .md files', () => {

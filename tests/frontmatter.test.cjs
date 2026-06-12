@@ -59,14 +59,14 @@ describe('Commands (commands/fvs/)', () => {
 
   const expected = [
     'checkpoint.md', 'help.md', 'kb-setup.md', 'lean-formalise.md',
-    'lean-proof-port.md', 'lean-refactor.md',
-    'lean-spec-port.md', 'lean-specify.md', 'lean-verify.md', 'map-code.md',
+    'lean-refactor.md',
+    'lean-specify.md', 'lean-verify.md', 'map-code.md',
     'natural-language.md', 'pause-work.md', 'plan.md', 'reapply-patches.md',
     'resume-work.md', 'sync-aeneas.md', 'update.md',
   ];
 
-  it('has exactly 17 command files', () => {
-    assert.equal(files.length, 17, `Expected 17 commands, got ${files.length}: ${files.join(', ')}`);
+  it('has exactly 15 command files', () => {
+    assert.equal(files.length, 15, `Expected 15 commands, got ${files.length}: ${files.join(', ')}`);
   });
 
   it('has the expected set of command files', () => {
@@ -110,13 +110,12 @@ describe('Agents (agents/)', () => {
   const files = mdFiles(dir);
 
   const expected = [
-    'fvs-code-reader.md', 'fvs-dependency-analyzer.md', 'fvs-executor.md',
-    'fvs-explainer.md', 'fvs-lean-prover.md', 'fvs-lean-refactorer.md',
-    'fvs-lean-spec-generator.md', 'fvs-researcher.md',
+    'fvs-executor.md', 'fvs-explainer.md', 'fvs-lean-refactorer.md',
+    'fvs-researcher.md',
   ];
 
-  it('has exactly 8 agent files', () => {
-    assert.equal(files.length, 8, `Expected 8 agents, got ${files.length}: ${files.join(', ')}`);
+  it('has exactly 4 agent files', () => {
+    assert.equal(files.length, 4, `Expected 4 agents, got ${files.length}: ${files.join(', ')}`);
   });
 
   it('has the expected set of agent files', () => {
@@ -148,13 +147,13 @@ describe('Workflows (fv-skills/workflows/)', () => {
   const files = mdFiles(dir);
 
   const expected = [
-    'lean-formalise.md', 'lean-proof-port.md', 'lean-refactor.md', 'lean-spec-port.md',
+    'lean-formalise.md', 'lean-refactor.md',
     'lean-specify.md', 'lean-verify.md', 'map-code.md',
     'natural-language.md', 'plan.md', 'sync-aeneas.md', 'update.md',
   ];
 
-  it('has exactly 11 workflow files', () => {
-    assert.equal(files.length, 11, `Expected 11 workflows, got ${files.length}: ${files.join(', ')}`);
+  it('has exactly 9 workflow files', () => {
+    assert.equal(files.length, 9, `Expected 9 workflows, got ${files.length}: ${files.join(', ')}`);
   });
 
   it('has the expected set of workflow files', () => {
