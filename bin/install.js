@@ -1773,6 +1773,52 @@ function reportLocalPatches(configDir, runtime = 'claude') {
 }
 
 /**
+ * Read the version field from the prior install manifest (if any).
+ * Guarded the same way saveLocalPatches reads the manifest: existsSync gate
+ * plus a try/return around JSON.parse, so a missing, old, or malformed/foreign
+ * manifest can never throw and abort the install (T-09-13). Returns the prior
+ * version string, or null when there is no prior install or the manifest is
+ * unreadable.
+ */
+function readPriorManifestVersion(configDir) {
+  const manifestPath = path.join(configDir, MANIFEST_NAME);
+  if (!fs.existsSync(manifestPath)) return null;
+  try {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    return manifest.version || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One-time v1.3.x -> v2.0 migration notice (D-12). Fires ONLY when a prior
+ * install manifest existed AND its version started with "1.3" — never on a
+ * fresh install (no prior manifest) and never on a v2.x reinstall (version
+ * does not start with "1.3"). Must be called with the version captured BEFORE
+ * writeManifest() overwrites the manifest with the current version.
+ *
+ * Names the /fvs:plan -> /fvs:fc-plan rename, the removed lean-spec-port /
+ * lean-proof-port commands, and the 4 removed legacy v1.0 agents. Deleted and
+ * renamed commands/agents self-heal via the existing wipe-recopy and the
+ * fvs-*.md pre-copy unlink — this helper adds no deletion surface (T-09-14).
+ */
+function reportV2Migration(priorVersion) {
+  if (!priorVersion || !priorVersion.startsWith('1.3')) return false;
+  console.log('');
+  console.log('  ' + yellow + 'Upgrading FVS v' + priorVersion + ' -> v2.0' + reset + ' — what changed:');
+  console.log('     ' + orange + '/fvs:plan' + reset + ' renamed to ' + orange + '/fvs:fc-plan' + reset + ' (clean break, no alias)');
+  console.log('     Removed the cross-language port commands ' + dim + 'lean-spec-port' + reset + ' and ' + dim + 'lean-proof-port' + reset);
+  console.log('     Removed 4 legacy v1.0 agents ' + dim + '(fvs-dependency-analyzer, fvs-code-reader,' + reset);
+  console.log('     ' + dim + 'fvs-lean-spec-generator, fvs-lean-prover)' + reset);
+  console.log('     New bundle routers: ' + dim + '/fvs:aeneas /fvs:fc /fvs:formalise /fvs:context /fvs:manage' + reset);
+  console.log('     ' + dim + 'If you locally edited plan.md, it is backed up under its old name in' + reset);
+  console.log('     ' + dim + PATCHES_DIR_NAME + '/ — merge it into fc-plan.md manually (no automatic rename).' + reset);
+  console.log('');
+  return true;
+}
+
+/**
  * Install to the specified directory for a specific runtime
  * @param {boolean} isGlobal - Whether to install globally or locally
  * @param {string} runtime - Target runtime ('claude', 'opencode', 'gemini')
@@ -1827,6 +1873,10 @@ function install(isGlobal, runtime = 'claude') {
 
   // Track installation failures
   const failures = [];
+
+  // Capture the prior install's manifest version BEFORE any wipe/recopy or
+  // writeManifest() overwrites it — used for the one-time v1.3 -> v2.0 notice.
+  const priorManifestVersion = readPriorManifestVersion(targetDir);
 
   // Save any locally modified FVS files before they get wiped
   saveLocalPatches(targetDir);
@@ -2005,6 +2055,9 @@ function install(isGlobal, runtime = 'claude') {
 
   // Report any backed-up local patches
   reportLocalPatches(targetDir, runtime);
+
+  // One-time v1.3.x -> v2.0 migration notice (fires only on that transition)
+  reportV2Migration(priorManifestVersion);
 
   // Codex: generate config.toml and per-agent .toml files, then return early
   if (isCodex) {

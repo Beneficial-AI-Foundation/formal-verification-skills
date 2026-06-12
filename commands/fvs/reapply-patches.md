@@ -72,6 +72,7 @@ For each file in `backup-meta.json`:
 
    - If the new file is identical to the backed-up file: skip (modification was incorporated upstream)
    - If the new file differs: identify the user's modifications and apply them to the new version
+   - If there is no newly installed file at the backed-up path (e.g. a renamed command such as `commands/fvs/plan.md` -> `commands/fvs/fc-plan.md`, or a removed command): do not write to the dead path. Report it for manual placement, naming the likely new target so the user can merge it by hand.
 
    **Merge strategy:**
    - Read both versions fully
