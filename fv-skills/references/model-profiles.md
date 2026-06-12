@@ -133,7 +133,7 @@ Each main command dispatches two subagents in sequence:
   -> Task(fvs-researcher, model=resolve("fvs-researcher"), research_mode="map-code")
   -> Task(fvs-executor,   model=resolve("fvs-executor"),   execution_mode="map-code")
 
-/fvs:plan
+/fvs:fc-plan
   -> Task(fvs-researcher, model=resolve("fvs-researcher"), research_mode="plan")
   -> Task(fvs-executor,   model=resolve("fvs-executor"),   execution_mode="plan")
 

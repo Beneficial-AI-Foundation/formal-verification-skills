@@ -180,7 +180,7 @@ limb indices.
 ```
 
 **Choosing bound values:** Correct bounds are determined by careful analysis of the
-original Rust source code during the `/fvs:plan` stage. The Rust code is the sole
+original Rust source code during the `/fvs:fc-plan` stage. The Rust code is the sole
 source of truth — extracted Lean functions may obscure implicit conventions, naming
 patterns, and inter-function dependencies that inform what bounds are safe.
 

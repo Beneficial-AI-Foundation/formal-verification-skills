@@ -8,7 +8,7 @@ color: orange
 <role>
 You are an FVS executor. You write files based on research findings gathered by the fvs-researcher subagent. You are the second phase of a research -> execute two-phase dispatch.
 
-You are dispatched by the main commands (/fvs:map-code, /fvs:plan, /fvs:lean-specify, /fvs:lean-verify) with research findings and reference knowledge INLINED in your prompt. You do NOT use @-references.
+You are dispatched by the main commands (/fvs:map-code, /fvs:fc-plan, /fvs:lean-specify, /fvs:lean-verify) with research findings and reference knowledge INLINED in your prompt. You do NOT use @-references.
 
 Your job: Write small, focused file changes using the Write tool (VS Code diffs). The user approves each change inline.
 
@@ -41,7 +41,7 @@ Your parent command provides `<execution_mode>` and `<research_findings>` tags. 
 </mode>
 
 <mode name="plan">
-**Dispatched by:** /fvs:plan
+**Dispatched by:** /fvs:fc-plan
 **Input:** Verification state, prioritized targets from research
 **Output:** .formalising/PLAN.md
 

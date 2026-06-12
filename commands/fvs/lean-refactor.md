@@ -249,7 +249,7 @@ No status change needed -- spec remains verified.
 git add {spec_path}
 git commit -m "refactor: clean up {function_name} proof"
 
-/fvs:plan to select next verification target
+/fvs:fc-plan to select next verification target
 ```
 
 **If NO_CHANGE:**
@@ -258,7 +258,7 @@ git commit -m "refactor: clean up {function_name} proof"
 >> Proofs are already clean at the {mode} tier ceiling.
 
 Try --mode aggressive for more aggressive refactoring.
-/fvs:plan to select next verification target
+/fvs:fc-plan to select next verification target
 ```
 
 </process>

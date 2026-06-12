@@ -154,7 +154,7 @@ Suggest next command:
 ```
 >> Next Up
 
-/fvs:plan to select verification targets
+/fvs:fc-plan to select verification targets
 ```
 </step>
 

@@ -282,7 +282,7 @@ Update via Write tool (VS Code diff):
 ```
 >> Next Up
 
-/fvs:plan to select next verification target
+/fvs:fc-plan to select next verification target
 ```
 
 **If PARTIAL or STUCK:**
@@ -291,7 +291,7 @@ Update via Write tool (VS Code diff):
 >> Options
 
 - Provide a hint and run /fvs:lean-verify {spec_path} again
-- /fvs:plan to try a different target
+- /fvs:fc-plan to try a different target
 - /fvs:lean-specify {function_name} to regenerate the spec with different postconditions
 ```
 

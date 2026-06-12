@@ -1,5 +1,5 @@
 ---
-name: fvs:plan
+name: fvs:fc-plan
 description: Pick next verification targets via dependency graph analysis
 argument-hint: "[optional: function name to plan for specifically]"
 allowed-tools:
@@ -22,7 +22,7 @@ user-selected target ready for /fvs:lean-specify.
 </objective>
 
 <execution_context>
-@~/.claude/fv-skills/workflows/plan.md
+@~/.claude/fv-skills/workflows/fc-plan.md
 @~/.claude/fv-skills/references/ui-brand.md
 </execution_context>
 

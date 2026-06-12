@@ -21,7 +21,7 @@ Restore verification context from `.formalising/fv-plans/.continue-here.md` and 
 [ -f .formalising/fv-plans/.continue-here.md ] && echo "Handoff found" || echo "No handoff found"
 ```
 
-If not found: inform user and suggest `/fvs:plan` to pick a new target.
+If not found: inform user and suggest `/fvs:fc-plan` to pick a new target.
 
 Read the handoff file fully.
 
