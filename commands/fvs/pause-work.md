@@ -1,7 +1,7 @@
 ---
 name: fvs:pause-work
 description: Save verification context for session handoff
-argument-hint: "[optional: brief note about current state]"
+argument-hint: "[path] [note]"
 allowed-tools:
   - Read
   - Write
@@ -21,10 +21,32 @@ This is NOT about git commits — it's about capturing the mental model and proo
 </execution_context>
 
 <context>
-User note: $ARGUMENTS
+Arguments: $ARGUMENTS
 
-The handoff file goes to `.formalising/fv-plans/.continue-here.md`.
-Only one active handoff at a time — overwrite any existing one.
+**Default handoff file:** `.formalising/fv-plans/.continue-here.md`.
+
+**Optional first positional token = a destination.** The first token in `$ARGUMENTS` is treated as a destination ONLY if it contains `/` or ends in `.md`. Otherwise the entire `$ARGUMENTS` string is the user note (so a one-word note like `stuck` is never misread as a directory).
+
+Resolution rule:
+
+- **No path-like first token:** write the legacy default `.formalising/fv-plans/.continue-here.md`. The whole argument string is the user note.
+- **First token ends in `.md`:** that exact path is the handoff file.
+- **First token is otherwise path-like (contains `/`):** treat it as a directory and write `<token>/.continue-here.md` inside it.
+
+When a path-like first token is present, the remaining text after it is the user note. Overwrite ONLY the selected handoff file (parallel handoffs to distinct destinations do not clobber each other).
+
+Examples:
+
+```text
+/fvs:pause-work
+  -> .formalising/fv-plans/.continue-here.md
+
+/fvs:pause-work .formalising/fv-plans/CKA-from-KEM
+  -> .formalising/fv-plans/CKA-from-KEM/.continue-here.md
+
+/fvs:pause-work .formalising/fv-plans/CKA-from-KEM/security-handoff.md
+  -> .formalising/fv-plans/CKA-from-KEM/security-handoff.md
+```
 
 This command has access to the FULL current conversation context. Extract everything relevant from prior messages, tool results, and discoveries made during this session.
 </context>
@@ -58,14 +80,21 @@ Read the proof gap locations and surrounding proof context from the target file(
 
 ## Step 4: Write Handoff
 
+Resolve `HANDOFF_FILE` from `$ARGUMENTS` per the rule in `<context>`:
+
+- no path-like first token (no `/` and not ending in `.md`): `.formalising/fv-plans/.continue-here.md`;
+- first token ends in `.md`: that exact path;
+- first token is otherwise path-like (contains `/`): `<token>/.continue-here.md`.
+
 ```bash
-mkdir -p .formalising/fv-plans
+mkdir -p "$(dirname "$HANDOFF_FILE")"
 ```
 
-Write to `.formalising/fv-plans/.continue-here.md` using the Write tool:
+Write to `HANDOFF_FILE` (overwrite only that file) using the Write tool:
 
 ```markdown
 ---
+fvs_handoff: true
 target: <spec file path>
 branch: <git branch>
 last_updated: <UTC timestamp>
@@ -105,12 +134,12 @@ proof_gaps: <number of unfinished proofs>
 ```
 FVS >> PAUSED
 
-Handoff: .formalising/fv-plans/.continue-here.md
+Handoff: [HANDOFF_FILE]
 Target:  [file]
 Branch:  [branch]
 Status:  [status]
 
-To resume: /fvs:resume-work
+To resume: /fvs:resume-work [same path or directory]
 ```
 
 </process>
@@ -120,5 +149,5 @@ To resume: /fvs:resume-work
 - [ ] Technical details are precise (line numbers, hypothesis names, exact errors)
 - [ ] Discoveries/gotchas that took time to find are preserved
 - [ ] Next action is specific and actionable
-- [ ] File written to `.formalising/fv-plans/.continue-here.md`
+- [ ] File written to the resolved handoff file (default `.formalising/fv-plans/.continue-here.md`, or the destination from `$ARGUMENTS`)
 </success_criteria>
