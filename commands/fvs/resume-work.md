@@ -1,7 +1,7 @@
 ---
 name: fvs:resume-work
 description: Resume verification from saved handoff context
-argument-hint: ""
+argument-hint: "[path]"
 allowed-tools:
   - Read
   - Bash
@@ -15,15 +15,27 @@ Restore verification context from `.formalising/fv-plans/.continue-here.md` and 
 
 <process>
 
-## Step 1: Load Handoff
+## Step 1: Discover Handoff
+
+**If an explicit path argument is given** (`$ARGUMENTS`), resolve it with the same rule as `/fvs:pause-work`: a token ending in `.md` is the exact handoff file; an otherwise path-like token (contains `/`) means `<token>/.continue-here.md`. Load that file directly.
+
+**If bare** (no argument), run the union discovery scan:
 
 ```bash
-[ -f .formalising/fv-plans/.continue-here.md ] && echo "Handoff found" || echo "No handoff found"
+# 1. Glob the legacy + per-topic default handoff locations
+find .formalising/fv-plans -name '.continue-here.md' 2>/dev/null
+
+# 2. Grep for the discovery marker to catch custom-named handoffs (e.g. security-handoff.md)
+grep -rl '^fvs_handoff: true' .formalising/fv-plans 2>/dev/null
 ```
 
-If not found: inform user and suggest `/fvs:fc-plan` to pick a new target.
+Union the two result sets and dedupe (a `.continue-here.md` that also carries the marker is one handoff, not two). Then:
 
-Read the handoff file fully.
+- **No handoffs found:** inform the user and suggest `/fvs:fc-plan` to pick a new target.
+- **Exactly one handoff:** load it directly.
+- **Multiple handoffs:** sort by `last_updated` frontmatter (most recent first; fall back to file mtime when absent) and present a recency-sorted plain-text NUMBERED list for the user to pick from. Do NOT use AskUserQuestion — a plain numbered list keeps the picker runtime-neutral.
+
+Read the selected handoff file fully.
 
 ## Step 2: Verify Branch
 
