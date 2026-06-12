@@ -117,3 +117,114 @@ describe('Installer (install + uninstall round-trip)', () => {
     assert.ok(!fs.existsSync(fvDir), 'fv-skills/ still exists after uninstall');
   });
 });
+
+describe('Update over existing old-shape install', () => {
+  const MANIFEST_NAME = 'fvs-file-manifest.json';
+  const PATCHES_DIR_NAME = 'fvs-local-patches';
+  const LEGACY_AGENTS = [
+    'fvs-dependency-analyzer',
+    'fvs-code-reader',
+    'fvs-lean-spec-generator',
+    'fvs-lean-prover',
+  ];
+  let tmpDir;
+
+  function seedOldShapeInstall(dir) {
+    // Seed a v1.3.x install: the renamed command, a legacy agent, and a prior
+    // manifest naming both with arbitrary hashes and a 1.3.1 version field.
+    const cmdDir = path.join(dir, 'commands', 'fvs');
+    const agentDir = path.join(dir, 'agents');
+    fs.mkdirSync(cmdDir, { recursive: true });
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(path.join(cmdDir, 'plan.md'), '# old plan command stub\n');
+    fs.writeFileSync(path.join(agentDir, 'fvs-code-reader.md'), '# legacy agent stub\n');
+    const manifest = {
+      version: '1.3.1',
+      timestamp: new Date().toISOString(),
+      files: {
+        'commands/fvs/plan.md': 'deadbeef'.repeat(8),
+        'agents/fvs-code-reader.md': 'cafebabe'.repeat(8),
+      },
+    };
+    fs.writeFileSync(path.join(dir, MANIFEST_NAME), JSON.stringify(manifest, null, 2));
+  }
+
+  it('runs the installer over a seeded old-shape install', () => {
+    tmpDir = makeTmpDir('fvs-update-test-');
+    seedOldShapeInstall(tmpDir);
+    execFileSync(process.execPath, [
+      INSTALLER, '--claude', '--global', '--config-dir', tmpDir,
+    ], {
+      cwd: ROOT,
+      env: { ...process.env, HOME: tmpDir },
+      stdio: 'pipe',
+    });
+  });
+
+  it('removes the renamed command and the legacy agent (self-heal)', () => {
+    assert.ok(
+      !fs.existsSync(path.join(tmpDir, 'commands', 'fvs', 'plan.md')),
+      'orphaned commands/fvs/plan.md should be gone after update'
+    );
+    assert.ok(
+      !fs.existsSync(path.join(tmpDir, 'agents', 'fvs-code-reader.md')),
+      'orphaned legacy agent agents/fvs-code-reader.md should be gone after update'
+    );
+  });
+
+  it('installs the renamed command and the bundle router', () => {
+    assert.ok(
+      fs.existsSync(path.join(tmpDir, 'commands', 'fvs', 'fc-plan.md')),
+      'renamed commands/fvs/fc-plan.md should be present after update'
+    );
+    assert.ok(
+      fs.existsSync(path.join(tmpDir, 'commands', 'fvs', 'fc.md')),
+      'bundle router commands/fvs/fc.md should be present after update'
+    );
+  });
+
+  it('regenerates a manifest with no orphaned keys', () => {
+    const manifestPath = path.join(tmpDir, MANIFEST_NAME);
+    assert.ok(fs.existsSync(manifestPath), 'manifest should be regenerated');
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    const keys = Object.keys(manifest.files || {});
+    assert.ok(
+      !keys.includes('commands/fvs/plan.md'),
+      'regenerated manifest must not key the renamed commands/fvs/plan.md'
+    );
+    for (const agent of LEGACY_AGENTS) {
+      const rel = `agents/${agent}.md`;
+      assert.ok(
+        !keys.includes(rel),
+        `regenerated manifest must not key the removed legacy agent ${rel}`
+      );
+    }
+  });
+
+  it('does not back up any path that resolves to a currently-installed file', () => {
+    // A locally-edited plan.md MAY be backed up under its old name — that is the
+    // documented rename orphan edge, not a bug. The correct invariant is the
+    // weaker one: backups never duplicate a live installed file.
+    const patchesDir = path.join(tmpDir, PATCHES_DIR_NAME);
+    if (!fs.existsSync(patchesDir)) return; // no backups at all — fine
+    const offenders = [];
+    const walk = (absDir, relDir) => {
+      for (const entry of fs.readdirSync(absDir, { withFileTypes: true })) {
+        const abs = path.join(absDir, entry.name);
+        const rel = relDir ? `${relDir}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) {
+          walk(abs, rel);
+        } else if (entry.isFile() && rel.endsWith('.md')) {
+          // rel is relative to patchesDir and mirrors the install relpath.
+          if (fs.existsSync(path.join(tmpDir, rel))) offenders.push(rel);
+        }
+      }
+    };
+    walk(patchesDir, '');
+    assert.equal(
+      offenders.length,
+      0,
+      `fvs-local-patches/ must not back up live installed files: ${offenders.join(', ')}`
+    );
+  });
+});
