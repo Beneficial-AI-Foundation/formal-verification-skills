@@ -100,31 +100,44 @@ Use `--claude`, `--codex`, `--opencode`, `--gemini`, or `--all` to skip the runt
 
 ## Commands
 
-### General (framework-agnostic)
+Commands are grouped into five bundles. Each bundle has a **router** command that lists its members and forwards to the matched skill (invoke it bare to print the routing table). All member commands are also directly typeable.
+
+### Aeneas — `/fvs:aeneas`
+
+| Command | Description |
+|---------|-------------|
+| `/fvs:sync-aeneas` | Sync Aeneas upstream documentation and update FVS references |
+
+### Context — `/fvs:context`
 
 | Command | Description |
 |---------|-------------|
 | `/fvs:map-code` | Build function dependency graph from extracted code and Rust source |
-| `/fvs:plan` | Pick next verification targets via greedy dependency graph traversal |
-| `/fvs:natural-language` | Generate natural language explanation of module or function with pre/post conditions |
-| `/fvs:help` | Show available FVS commands and usage guide |
-| `/fvs:update` | Self-update to latest version via npx |
-| `/fvs:reapply-patches` | Reapply local modifications after an FVS update |
-| `/fvs:sync-aeneas` | Sync Aeneas upstream documentation and update FVS references |
 
-### Lean 4 (via Aeneas)
+### Formal-Core — `/fvs:fc`
 
 | Command | Description |
 |---------|-------------|
+| `/fvs:fc-plan` | Pick next verification targets via greedy dependency graph traversal |
 | `/fvs:lean-specify` | Generate Lean spec skeleton with `@[step]` theorem pattern |
 | `/fvs:lean-verify` | Attempt proof using domain tactics (step, simp, ring, agrind, scalar_tac) |
-| `/fvs:lean-refactor` | Refactor, simplify, and decompose verified proofs (dead code removal, simp sharpening, tactic golf) |
+| `/fvs:natural-language` | Generate natural language explanation of module or function with pre/post conditions |
+| `/fvs:lean-refactor` | Refactor, simplify, and decompose verified proofs (dead code removal, simp sharpening, tactic golf) — *also in Formalise* |
 
-### Formalisation (Paper Track)
+### Formalise (Paper Track) — `/fvs:formalise`
 
 | Command | Description |
 |---------|-------------|
 | `/fvs:lean-formalise` | Formalise paper/math content into Lean 4 specs and definitions |
+| `/fvs:lean-refactor` | Refactor, simplify, and decompose verified proofs — *also in Formal-Core* |
+
+### Manage — `/fvs:manage`
+
+| Command | Description |
+|---------|-------------|
+| `/fvs:help` | Show available FVS commands and usage guide |
+| `/fvs:update` | Self-update to latest version via npx |
+| `/fvs:reapply-patches` | Reapply local modifications after an FVS update |
 | `/fvs:kb-setup` | Set up NotebookLM knowledge base integration (venv, auth, config) |
 
 ---
@@ -139,7 +152,7 @@ FVS follows a five-stage workflow. Each stage builds on the previous.
 
 ### 2. Plan
 
-`/fvs:plan` — Walk the dependency graph bottom-up to find optimal verification targets. Prioritizes leaf functions (no unverified dependencies) using greedy traversal. Performs deep Rust source analysis to reason about pre/post conditions and bounds.
+`/fvs:fc-plan` — Walk the dependency graph bottom-up to find optimal verification targets. Prioritizes leaf functions (no unverified dependencies) using greedy traversal. Performs deep Rust source analysis to reason about pre/post conditions and bounds.
 
 ### 3. Specify
 
