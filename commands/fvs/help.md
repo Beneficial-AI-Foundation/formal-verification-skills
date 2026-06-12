@@ -27,15 +27,12 @@ Output ONLY the reference content below. Do NOT add:
 4. `/fvs:lean-verify <spec_path>` - Attempt proof interactively
 5. `/fvs:lean-refactor <spec_path>` - Golf and clean up verified proofs
 6. `/fvs:lean-formalise` - Formalise paper/math content into Lean specs
-7. `/fvs:lean-spec-port` - Port specs from other FV languages
-8. `/fvs:lean-proof-port` - Port proofs from other FV languages
 
 ## Core Workflow
 
 ```
 /fvs:map-code → /fvs:plan → /fvs:lean-specify → /fvs:lean-verify → /fvs:lean-refactor → repeat
 Paper track:    /fvs:lean-formalise → /fvs:lean-verify → /fvs:lean-refactor
-Cross-language: /fvs:lean-spec-port → /fvs:lean-proof-port → /fvs:lean-refactor
 ```
 
 ### Analysis
@@ -122,34 +119,6 @@ Formalise mathematical paper content into Lean 4 specifications (paper track).
 Usage: `/fvs:lean-formalise`
 Result: Lean definition and spec files with sorry placeholders
 
-### Porting
-
-**`/fvs:lean-spec-port`**
-Port formal verification spec from another language to Lean.
-
-- Interactive prompts: source language, project path, function name
-- Language-agnostic: supports Verus, F*, Coq, Dafny
-- Compares Rust source between both projects to prevent spec mismatch
-- Generates idiomatic Lean spec using source as semantic blueprint
-- Reads existing verified specs in target project for style matching
-- Optional `--scan` flag: compare verified functions across both projects
-
-Usage: `/fvs:lean-spec-port`
-Usage: `/fvs:lean-spec-port --scan`
-
-**`/fvs:lean-proof-port`**
-Port formal verification proof from another language to Lean.
-
-- Same interactive prompts as lean-spec-port
-- Requires existing Lean spec file (run `/fvs:lean-spec-port` first)
-- Uses source proof as strategy blueprint (not structural mirror)
-- Maps source tactics to Lean equivalents (e.g., Verus SMT -> `grind`)
-- Iterative proof loop: one sorry at a time, user verifies each step
-- Configurable max attempts (default 10, hard cap 25)
-
-Usage: `/fvs:lean-proof-port`
-Usage: `/fvs:lean-proof-port --scan --max-attempts 15`
-
 ### Support
 
 **`/fvs:natural-language <function_name>`**
@@ -216,10 +185,9 @@ Show this command reference.
 
 ~/.claude/                   # Installed FVS content (global)
 ├── agents/
-│   ├── fvs-dependency-analyzer.md
-│   ├── fvs-code-reader.md
-│   ├── fvs-lean-spec-generator.md
-│   ├── fvs-lean-prover.md
+│   ├── fvs-researcher.md
+│   ├── fvs-executor.md
+│   ├── fvs-explainer.md
 │   └── fvs-lean-refactorer.md
 ├── commands/fvs/
 │   ├── map-code.md
@@ -229,8 +197,6 @@ Show this command reference.
 │   ├── lean-refactor.md
 │   ├── lean-formalise.md
 │   ├── kb-setup.md
-│   ├── lean-spec-port.md
-│   ├── lean-proof-port.md
 │   ├── reapply-patches.md
 │   ├── sync-aeneas.md
 │   └── help.md
@@ -243,8 +209,6 @@ Show this command reference.
     │   └── _sync-meta.json  # Mapping table for sync-aeneas
     └── workflows/           # Command orchestration logic
         ├── lean-formalise.md
-        ├── lean-spec-port.md
-        ├── lean-proof-port.md
         └── sync-aeneas.md
 ```
 

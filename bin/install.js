@@ -17,11 +17,7 @@ const reset = '\x1b[0m';
 const FVS_CODEX_MARKER = '# FVS Agent Configuration \u2014 managed by fv-skills-baif installer';
 
 const CODEX_AGENT_SANDBOX = {
-  'fvs-code-reader': 'read-only',
-  'fvs-dependency-analyzer': 'read-only',
   'fvs-explainer': 'read-only',
-  'fvs-lean-spec-generator': 'workspace-write',
-  'fvs-lean-prover': 'workspace-write',
   'fvs-lean-refactorer': 'workspace-write',
 };
 

@@ -29,7 +29,7 @@ npx fv-skills-baif
 
 FVS encodes the expert formal verification workflow into skills for AI coding assistants. It takes Rust code through a structured pipeline — dependency analysis, deep code understanding, specification generation, and proof — using the AI to handle the tedious parts while you stay in control of the verification strategy.
 
-**v1 focuses on Lean 4 via Aeneas** (Rust → Charon → LLBC → Aeneas → Lean 4). Cross-language porting from Verus, F*, Coq, and Dafny is supported via `/fvs:lean-spec-port` and `/fvs:lean-proof-port`.
+**FVS targets Lean 4** across two tracks. The **functional-correctness track** verifies Rust code via Aeneas (Rust → Charon → LLBC → Aeneas → Lean 4). The **paper track** formalises mathematics and crypto papers directly into Lean — no Rust source or Aeneas extraction required.
 
 Some capabilities are framework-agnostic and work regardless of your verification target:
 - **Dependency mapping** builds function call graphs from any extracted code
@@ -119,13 +119,6 @@ Use `--claude`, `--codex`, `--opencode`, `--gemini`, or `--all` to skip the runt
 | `/fvs:lean-specify` | Generate Lean spec skeleton with `@[step]` theorem pattern |
 | `/fvs:lean-verify` | Attempt proof using domain tactics (step, simp, ring, agrind, scalar_tac) |
 | `/fvs:lean-refactor` | Refactor, simplify, and decompose verified proofs (dead code removal, simp sharpening, tactic golf) |
-
-### Cross-language Porting
-
-| Command | Description |
-|---------|-------------|
-| `/fvs:lean-spec-port` | Port specs from other FV languages (Verus, F*, Coq, Dafny) to Lean |
-| `/fvs:lean-proof-port` | Port proofs from other FV languages to Lean |
 
 ### Formalisation (Paper Track)
 
