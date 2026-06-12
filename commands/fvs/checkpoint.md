@@ -38,10 +38,6 @@ if [ -f "lakefile.toml" ] || [ -f "lakefile.lean" ] || [ -f "lean-toolchain" ]; 
   FRAMEWORK="lean"
   PROOF_EXTENSIONS="*.lean"
   GAP_PATTERN="sorry"
-elif [ -f "Cargo.toml" ] && grep -rq "verus!" --include="*.rs" . 2>/dev/null; then
-  FRAMEWORK="verus"
-  PROOF_EXTENSIONS="*.rs"
-  GAP_PATTERN="assume(false)\|todo!()"
 elif [ -f "dune-project" ] || [ -f "_CoqProject" ]; then
   FRAMEWORK="coq"
   PROOF_EXTENSIONS="*.v"
