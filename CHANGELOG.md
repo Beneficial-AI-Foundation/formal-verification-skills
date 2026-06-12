@@ -4,6 +4,30 @@ All notable changes to FVS (Formal Verification Skills) will be documented in th
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased] - v2.0
+
+Structural cleanup and bundle architecture. Updating from v1.3 applies all renames, moves, and removals automatically (deleted and renamed commands/agents self-heal on install); the installer prints a one-time summary of the changes below.
+
+### Added
+- Five bundle router commands grouping the command surface by track: `/fvs:aeneas`, `/fvs:fc`, `/fvs:formalise`, `/fvs:context`, `/fvs:manage` -- each carries a `requires:` frontmatter list and a "User wants -> Invoke" routing table; invoked bare they print the table, invoked with a prompt they route to the matched member skill
+- `/fvs:pause-work [path] [note]` destination argument -- write a handoff to a chosen file (path ending `.md`) or directory (`<path>/.continue-here.md`), enabling per-topic handoffs without clobbering the default; every handoff carries an `fvs_handoff: true` frontmatter marker
+- `/fvs:resume-work` discovers custom-named handoffs via the `fvs_handoff` marker scan in addition to the `.continue-here.md` glob, and presents a recency-sorted picker
+
+### Changed
+- Renamed `/fvs:plan` to `/fvs:fc-plan` (clean break, no alias stub); all cross-references, the underlying workflow, and tests updated in lockstep
+- `help.md` and README regrouped by bundle (`lean-refactor` is dual-listed in both `fc` and `formalise`; `map-code` in `context`; `sync-aeneas` in `aeneas`); Quick Start and Core Workflow narrative kept up top
+
+### Removed
+- Cross-language port commands `lean-spec-port` and `lean-proof-port` and their workflows (Verus / F* / Coq / Dafny porting); v2.0 is Lean-focused
+- The Verus framework-detection branch in `checkpoint` (no more `checkpoint(verus):` commit prefix)
+- The four legacy v1.0 agents `fvs-dependency-analyzer`, `fvs-code-reader`, `fvs-lean-spec-generator`, `fvs-lean-prover`
+- "Extensible to Verus" positioning from README and help
+
+### Migration
+- Updating from v1.3 applies all renames and removals automatically -- no orphaned commands, agents, or manifest entries
+- If you locally edited `plan.md`, it is backed up under its old name in `fvs-local-patches/` and must be merged into `fc-plan.md` manually (there is no automatic rename-alias map)
+- The Codex per-agent `.toml` cleanup for removed agents lands in the next release (Phase 10 / CODEX-03)
+
 ## [1.3.1] - 2026-04-07
 
 ### Fixed
