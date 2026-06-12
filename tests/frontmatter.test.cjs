@@ -58,15 +58,15 @@ describe('Commands (commands/fvs/)', () => {
   const files = mdFiles(dir);
 
   const expected = [
-    'checkpoint.md', 'help.md', 'kb-setup.md', 'lean-formalise.md',
-    'lean-refactor.md',
-    'lean-specify.md', 'lean-verify.md', 'map-code.md',
-    'natural-language.md', 'pause-work.md', 'plan.md', 'reapply-patches.md',
-    'resume-work.md', 'sync-aeneas.md', 'update.md',
+    'aeneas.md', 'checkpoint.md', 'context.md', 'fc-plan.md', 'fc.md',
+    'formalise.md', 'help.md', 'kb-setup.md', 'lean-formalise.md',
+    'lean-refactor.md', 'lean-specify.md', 'lean-verify.md', 'manage.md',
+    'map-code.md', 'natural-language.md', 'pause-work.md',
+    'reapply-patches.md', 'resume-work.md', 'sync-aeneas.md', 'update.md',
   ];
 
-  it('has exactly 15 command files', () => {
-    assert.equal(files.length, 15, `Expected 15 commands, got ${files.length}: ${files.join(', ')}`);
+  it('has exactly 20 command files', () => {
+    assert.equal(files.length, 20, `Expected 20 commands, got ${files.length}: ${files.join(', ')}`);
   });
 
   it('has the expected set of command files', () => {
@@ -100,6 +100,42 @@ describe('Commands (commands/fvs/)', () => {
       const filePath = path.join(ROOT, dir, file);
       const { meta } = parseFrontmatter(filePath);
       assert.ok('allowed-tools' in meta, `${file} missing allowed-tools:`);
+    });
+  }
+});
+
+// ====================== ROUTER REQUIRES CLOSURE =============================
+describe('Router requires closure', () => {
+  const dir = 'commands/fvs';
+  const routers = ['aeneas', 'fc', 'formalise', 'context', 'manage'];
+
+  for (const router of routers) {
+    const routerFile = `${router}.md`;
+    const routerPath = path.join(ROOT, dir, routerFile);
+
+    it(`${routerFile} has a non-empty requires: list`, () => {
+      const { meta } = parseFrontmatter(routerPath);
+      assert.ok('requires' in meta, `${routerFile} missing requires:`);
+      const members = meta.requires
+        .replace(/^\[/, '').replace(/\]$/, '')
+        .split(',')
+        .map(m => m.trim())
+        .filter(Boolean);
+      assert.ok(members.length > 0, `${routerFile} requires: is empty`);
+    });
+
+    it(`${routerFile} requires: members all resolve to existing command files`, () => {
+      const { meta } = parseFrontmatter(routerPath);
+      const members = meta.requires
+        .replace(/^\[/, '').replace(/\]$/, '')
+        .split(',')
+        .map(m => m.trim())
+        .filter(Boolean);
+      const unresolved = members.filter(
+        m => !fs.existsSync(path.join(ROOT, dir, `${m}.md`))
+      );
+      assert.deepStrictEqual(unresolved, [],
+        `${routerFile} requires unresolved members: ${unresolved.join(', ')}`);
     });
   }
 });
@@ -147,9 +183,9 @@ describe('Workflows (fv-skills/workflows/)', () => {
   const files = mdFiles(dir);
 
   const expected = [
-    'lean-formalise.md', 'lean-refactor.md',
+    'fc-plan.md', 'lean-formalise.md', 'lean-refactor.md',
     'lean-specify.md', 'lean-verify.md', 'map-code.md',
-    'natural-language.md', 'plan.md', 'sync-aeneas.md', 'update.md',
+    'natural-language.md', 'sync-aeneas.md', 'update.md',
   ];
 
   it('has exactly 9 workflow files', () => {
