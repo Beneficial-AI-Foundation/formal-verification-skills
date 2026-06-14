@@ -9,17 +9,17 @@ const ROOT = path.resolve(__dirname, '..');
 
 // The forbidden token is built at runtime from fragments so this test file's
 // own source does not contain the literal word — otherwise the sweep over
-// tests/ would flag this file and fail itself (T-09-02).
+// tests/ would flag this file and fail itself.
 const FORBIDDEN = new RegExp('ver' + 'us', 'i');
 
-// Shipped content boundary (CLEAN-01 / D-13). Directories are walked
+// Shipped content boundary. Directories are walked
 // recursively; README.md is the only loose top-level file in scope.
 const SCAN_DIRS = [
   'commands', 'fv-skills', 'agents', 'hooks', 'tests', 'bin', 'scripts',
 ];
 const SCAN_FILES = ['README.md'];
 
-// Path segments excluded from the sweep entirely (D-13 exempts CHANGELOG;
+// Path segments excluded from the sweep entirely (CHANGELOG is exempt;
 // node_modules/.planning are out-of-scope and must not widen the walk).
 const EXCLUDED_SEGMENTS = new Set(['node_modules', '.planning']);
 const SCAN_EXTENSIONS = new Set(['.md', '.cjs', '.js']);

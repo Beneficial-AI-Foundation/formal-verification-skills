@@ -1776,7 +1776,7 @@ function reportLocalPatches(configDir, runtime = 'claude') {
  * Read the version field from the prior install manifest (if any).
  * Guarded the same way saveLocalPatches reads the manifest: existsSync gate
  * plus a try/return around JSON.parse, so a missing, old, or malformed/foreign
- * manifest can never throw and abort the install (T-09-13). Returns the prior
+ * manifest can never throw and abort the install. Returns the prior
  * version string, or null when there is no prior install or the manifest is
  * unreadable.
  */
@@ -1792,7 +1792,7 @@ function readPriorManifestVersion(configDir) {
 }
 
 /**
- * One-time v1.3.x -> v2.0 migration notice (D-12). Fires ONLY when a prior
+ * One-time v1.3.x -> v2.0 migration notice. Fires ONLY when a prior
  * install manifest existed AND its version started with "1.3" — never on a
  * fresh install (no prior manifest) and never on a v2.x reinstall (version
  * does not start with "1.3"). Must be called with the version captured BEFORE
@@ -1801,7 +1801,7 @@ function readPriorManifestVersion(configDir) {
  * Names the /fvs:plan -> /fvs:fc-plan rename, the removed lean-spec-port /
  * lean-proof-port commands, and the 4 removed legacy v1.0 agents. Deleted and
  * renamed commands/agents self-heal via the existing wipe-recopy and the
- * fvs-*.md pre-copy unlink — this helper adds no deletion surface (T-09-14).
+ * fvs-*.md pre-copy unlink — this helper adds no deletion surface.
  */
 function reportV2Migration(priorVersion) {
   if (!priorVersion || !priorVersion.startsWith('1.3')) return false;

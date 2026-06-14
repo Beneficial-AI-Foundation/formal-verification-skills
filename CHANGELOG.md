@@ -26,7 +26,7 @@ Structural cleanup and bundle architecture. Updating from v1.3 applies all renam
 ### Migration
 - Updating from v1.3 applies all renames and removals automatically -- no orphaned commands, agents, or manifest entries
 - If you locally edited `plan.md`, it is backed up under its old name in `fvs-local-patches/` and must be merged into `fc-plan.md` manually (there is no automatic rename-alias map)
-- The Codex per-agent `.toml` cleanup for removed agents lands in the next release (Phase 10 / CODEX-03)
+- The Codex per-agent `.toml` cleanup for removed agents lands in a future release
 
 ## [1.3.1] - 2026-04-07
 

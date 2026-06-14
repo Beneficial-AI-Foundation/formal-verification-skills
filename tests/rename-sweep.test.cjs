@@ -1,6 +1,6 @@
 'use strict';
 
-// Rename-sweep gate (BUND-02 / T-09-06): asserts the plan -> fc-plan clean
+// Rename-sweep gate: asserts the plan -> fc-plan clean
 // break is complete. No shipped file may reference the old command name or the
 // old workflow path. The forbidden tokens are assembled at runtime via string
 // concatenation so this test file does not itself trip the sweep.
