@@ -860,40 +860,206 @@ function generateCodexConfigBlock(agents, targetDir) {
   return lines.join('\n');
 }
 
-/**
- * Strip FVS sections from Codex config.toml content.
- * Returns cleaned content, or null if file would be empty.
- */
-function stripFvsFromCodexConfig(content) {
-  const markerIndex = content.indexOf(FVS_CODEX_MARKER);
+// ── TOML section parsing ─────────────────────────────────────────────────────
+//
+// A small, multiline-string-aware TOML scanner used to identify table sections
+// so the Codex config strip removes only FVS-owned tables and never absorbs an
+// adjacent user-authored or GSD-authored table. Quoted keys and `'''`/`"""`
+// multiline string bodies are skipped so a `[bracket]`-looking line inside a
+// string is not mistaken for a table header.
 
-  if (markerIndex !== -1) {
-    // Has FVS marker -- remove everything from marker to EOF
-    let before = content.substring(0, markerIndex).trimEnd();
-    // Also strip FVS-injected feature keys above the marker
-    before = before.replace(/^multi_agent\s*=\s*true\s*\n?/m, '');
-    before = before.replace(/^default_mode_request_user_input\s*=\s*true\s*\n?/m, '');
-    before = before.replace(/^\[features\]\s*\n(?=\[|$)/m, '');
-    before = before.replace(/\n{3,}/g, '\n\n').trim();
-    if (!before) return null;
-    return before + '\n';
+function splitTomlLines(content) {
+  const lines = [];
+  let start = 0;
+  while (start < content.length) {
+    const newlineIndex = content.indexOf('\n', start);
+    if (newlineIndex === -1) {
+      lines.push({ start, end: content.length, text: content.slice(start), eol: '' });
+      break;
+    }
+    const hasCr = newlineIndex > start && content[newlineIndex - 1] === '\r';
+    const end = hasCr ? newlineIndex - 1 : newlineIndex;
+    lines.push({ start, end, text: content.slice(start, end), eol: hasCr ? '\r\n' : '\n' });
+    start = newlineIndex + 1;
+  }
+  return lines;
+}
+
+function parseTomlBracketHeader(line, array) {
+  let i = 0;
+  while (i < line.length && /\s/.test(line[i])) i += 1;
+
+  const open = array ? '[[' : '[';
+  const close = array ? ']]' : ']';
+  if (!line.startsWith(open, i)) return null;
+
+  i += open.length;
+  const start = i;
+
+  while (i < line.length) {
+    if (line[i] === '\'' || line[i] === '"') {
+      const quote = line[i];
+      i += 1;
+      while (i < line.length) {
+        if (quote === '"' && line[i] === '\\') { i += 2; continue; }
+        if (line[i] === quote) { i += 1; break; }
+        i += 1;
+      }
+      continue;
+    }
+    if (line.startsWith(close, i)) {
+      const rawPath = line.slice(start, i).trim();
+      if (!rawPath) return null;
+      return { path: rawPath, array };
+    }
+    if (line[i] === '#' || line[i] === '\r' || line[i] === '\n') return null;
+    i += 1;
+  }
+  return null;
+}
+
+function parseTomlTableHeader(line) {
+  return parseTomlBracketHeader(line, true) || parseTomlBracketHeader(line, false);
+}
+
+// Track whether a line opens or closes a `'''` / `"""` multiline string so that
+// a bracketed line inside such a string is never treated as a table header.
+function advanceTomlMultilineStringState(line, state) {
+  let i = 0;
+  while (i < line.length) {
+    if (state === 'literal') {
+      const close = line.indexOf('\'\'\'', i);
+      if (close === -1) return state;
+      i = close + 3;
+      state = null;
+      continue;
+    }
+    if (state === 'basic') {
+      const close = line.indexOf('"""', i);
+      if (close === -1) return state;
+      i = close + 3;
+      state = null;
+      continue;
+    }
+    const ch = line[i];
+    if (ch === '#') return state;
+    if (ch === '\'') {
+      if (line.startsWith('\'\'\'', i)) { state = 'literal'; i += 3; continue; }
+      const close = line.indexOf('\'', i + 1);
+      if (close === -1) return state;
+      i = close + 1;
+      continue;
+    }
+    if (ch === '"') {
+      if (line.startsWith('"""', i)) { state = 'basic'; i += 3; continue; }
+      i += 1;
+      while (i < line.length) {
+        if (line[i] === '\\') { i += 2; continue; }
+        if (line[i] === '"') { i += 1; break; }
+        i += 1;
+      }
+      continue;
+    }
+    i += 1;
+  }
+  return state;
+}
+
+/**
+ * Split TOML content into ordered table sections.
+ *
+ * Each section runs from its `[header]` / `[[header]]` line to the next header
+ * or EOF, with `array` distinguishing array-of-tables (`[[x]]`) from struct
+ * tables (`[x]`). Headers that appear inside a multiline string are ignored.
+ */
+function getTomlTableSections(content) {
+  const lines = splitTomlLines(content);
+  const headers = [];
+  let multilineState = null;
+
+  for (const line of lines) {
+    if (multilineState === null) {
+      const header = parseTomlTableHeader(line.text);
+      if (header) {
+        headers.push({
+          path: header.path,
+          array: header.array,
+          start: line.start,
+          headerEnd: line.end + line.eol.length,
+        });
+      }
+    }
+    multilineState = advanceTomlMultilineStringState(line.text, multilineState);
   }
 
-  // No marker but may have FVS-injected feature keys
-  let cleaned = content;
-  cleaned = cleaned.replace(/^multi_agent\s*=\s*true\s*\n?/m, '');
-  cleaned = cleaned.replace(/^default_mode_request_user_input\s*=\s*true\s*\n?/m, '');
+  return headers.map((header, index) => ({
+    ...header,
+    end: index + 1 < headers.length ? headers[index + 1].start : content.length,
+  }));
+}
 
-  // Remove [agents.fvs-*] sections (from header to next section or EOF)
-  cleaned = cleaned.replace(/^\[agents\.fvs-[^\]]+\]\n(?:(?!\[)[^\n]*\n?)*/gm, '');
+function removeContentRanges(content, ranges) {
+  const sorted = ranges
+    .filter((r) => r && r.start < r.end)
+    .sort((a, b) => a.start - b.start);
+  if (sorted.length === 0) return content;
 
-  // Remove [features] section if now empty (only header, no keys before next section)
-  cleaned = cleaned.replace(/^\[features\]\s*\n(?=\[|$)/m, '');
+  let cleaned = '';
+  let cursor = 0;
+  for (const range of sorted) {
+    if (range.start < cursor) continue;
+    cleaned += content.slice(cursor, range.start);
+    cursor = range.end;
+  }
+  cleaned += content.slice(cursor);
+  return cleaned;
+}
 
-  // Remove [agents] section if now empty
-  cleaned = cleaned.replace(/^\[agents\]\s*\n(?=\[|$)/m, '');
+/**
+ * Strip FVS sections from Codex config.toml content.
+ *
+ * Removes only what FVS owns so a reinstall/uninstall returns the file to its
+ * pre-FVS shape: the FVS marker block, current `[agents.fvs-*]` struct tables,
+ * and legacy `[[agents]]` array entries whose `name = "fvs-*"`. User-authored
+ * tables and GSD-authored `[agents.gsd-*]` tables are preserved verbatim via a
+ * TOML-section parse rather than a regex that could absorb adjacent tables.
+ *
+ * Returns cleaned content, or null if the file would be empty.
+ */
+function stripFvsFromCodexConfig(content) {
+  const sections = getTomlTableSections(content);
 
-  // Clean up excessive blank lines
+  const removalRanges = sections
+    .filter((section) => {
+      // Current struct-form tables, e.g. [agents.fvs-executor].
+      if (!section.array && /^agents\.fvs-/.test(section.path)) {
+        return true;
+      }
+      // Legacy [[agents]] array-of-tables whose name = "fvs-...". Preserve any
+      // user-authored or gsd- entries.
+      if (section.array && section.path === 'agents') {
+        const body = content.slice(section.headerEnd, section.end);
+        const nameMatch = body.match(/^[ \t]*name[ \t]*=[ \t]*["']([^"']+)["']/m);
+        return Boolean(nameMatch && /^fvs-/.test(nameMatch[1]));
+      }
+      return false;
+    })
+    .map(({ start, end }) => ({ start, end }));
+
+  let cleaned = removeContentRanges(content, removalRanges);
+
+  // Remove the FVS marker line itself plus the blank line that followed it in
+  // the FVS-emitted block.
+  const markerIndex = cleaned.indexOf(FVS_CODEX_MARKER);
+  if (markerIndex !== -1) {
+    const before = cleaned.slice(0, markerIndex);
+    const after = cleaned
+      .slice(markerIndex + FVS_CODEX_MARKER.length)
+      .replace(/^[^\n]*\r?\n/, '');
+    cleaned = before + after;
+  }
+
+  // Collapse runs of blank lines the removals may have left behind.
   cleaned = cleaned.replace(/\n{3,}/g, '\n\n').trim();
 
   if (!cleaned) return null;
@@ -902,68 +1068,32 @@ function stripFvsFromCodexConfig(content) {
 
 /**
  * Merge FVS config block into an existing or new config.toml.
- * Three cases: new file, existing with FVS marker, existing without marker.
+ *
+ * On reinstall this first strips any previously-emitted FVS tables via the
+ * TOML-aware strip (so foreign user/GSD tables survive verbatim and stale FVS
+ * tables are removed), then appends the freshly-generated FVS block. The
+ * FVS-emitted block carries no `[features]`/`multi_agent` keys, so none are
+ * injected into the user's config.
  */
 function mergeCodexConfig(configPath, fvsBlock) {
-  // Case 1: No config.toml -- create fresh
+  // Case 1: No config.toml -- create fresh.
   if (!fs.existsSync(configPath)) {
     fs.writeFileSync(configPath, fvsBlock + '\n');
     return;
   }
 
   const existing = fs.readFileSync(configPath, 'utf8');
-  const markerIndex = existing.indexOf(FVS_CODEX_MARKER);
 
-  // Case 2: Has FVS marker -- truncate and re-append
-  if (markerIndex !== -1) {
-    let before = existing.substring(0, markerIndex).trimEnd();
-    if (before) {
-      // Strip any FVS-managed sections that leaked above the marker
-      before = before.replace(/^\[agents\.fvs-[^\]]+\]\n(?:(?!\[)[^\n]*\n?)*/gm, '');
-      before = before.replace(/^\[agents\]\n(?:(?!\[)[^\n]*\n?)*/m, '');
-      before = before.replace(/\n{3,}/g, '\n\n').trimEnd();
+  // Strip any prior FVS-owned tables (struct + legacy array) and marker, leaving
+  // foreign tables untouched. A null result means the file was FVS-only.
+  const stripped = stripFvsFromCodexConfig(existing);
+  const preserved = stripped === null ? '' : stripped.trimEnd();
 
-      // Re-inject feature keys if user has [features] above the marker
-      const hasFeatures = /^\[features\]\s*$/m.test(before);
-      if (hasFeatures) {
-        if (!before.includes('multi_agent')) {
-          before = before.replace(/^\[features\]\s*$/m, '[features]\nmulti_agent = true');
-        }
-        if (!before.includes('default_mode_request_user_input')) {
-          before = before.replace(/^\[features\].*$/m, '$&\ndefault_mode_request_user_input = true');
-        }
-      }
-      // Skip [features] from fvsBlock if user already has it
-      const block = hasFeatures
-        ? FVS_CODEX_MARKER + '\n' + fvsBlock.substring(fvsBlock.indexOf('[agents]'))
-        : fvsBlock;
-      fs.writeFileSync(configPath, before + '\n\n' + block + '\n');
-    } else {
-      fs.writeFileSync(configPath, fvsBlock + '\n');
-    }
-    return;
-  }
+  const merged = preserved
+    ? preserved + '\n\n' + fvsBlock + '\n'
+    : fvsBlock + '\n';
 
-  // Case 3: No marker -- inject features if needed, append agents
-  let content = existing;
-  const featuresRegex = /^\[features\]\s*$/m;
-  const hasFeatures = featuresRegex.test(content);
-
-  if (hasFeatures) {
-    if (!content.includes('multi_agent')) {
-      content = content.replace(featuresRegex, '[features]\nmulti_agent = true');
-    }
-    if (!content.includes('default_mode_request_user_input')) {
-      content = content.replace(/^\[features\].*$/m, '$&\ndefault_mode_request_user_input = true');
-    }
-    // Append agents block (skip the [features] section from fvsBlock)
-    const agentsBlock = fvsBlock.substring(fvsBlock.indexOf('[agents]'));
-    content = content.trimEnd() + '\n\n' + FVS_CODEX_MARKER + '\n' + agentsBlock + '\n';
-  } else {
-    content = content.trimEnd() + '\n\n' + fvsBlock + '\n';
-  }
-
-  fs.writeFileSync(configPath, content);
+  fs.writeFileSync(configPath, merged);
 }
 
 /**
@@ -981,6 +1111,10 @@ function installCodexConfig(targetDir, agentsSrc) {
   // Compute the Codex pathPrefix for replacing .claude paths
   const codexPathPrefix = `${targetDir.replace(/\\/g, '/')}/`;
 
+  // Track the .toml files this install owns so stale per-agent configs for
+  // agents no longer shipped can be pruned afterward.
+  const currentTomlFiles = new Set();
+
   for (const file of agentEntries) {
     let content = fs.readFileSync(path.join(agentsSrc, file), 'utf8');
     // Replace .claude paths before generating TOML (source files use ~/.claude and $HOME/.claude)
@@ -993,7 +1127,18 @@ function installCodexConfig(targetDir, agentsSrc) {
     agents.push({ name, description: toSingleLine(description) });
 
     const tomlContent = generateCodexAgentToml(name, content);
-    fs.writeFileSync(path.join(agentsTomlDir, `${name}.toml`), tomlContent);
+    const tomlFile = `${name}.toml`;
+    currentTomlFiles.add(tomlFile);
+    fs.writeFileSync(path.join(agentsTomlDir, tomlFile), tomlContent);
+  }
+
+  // Prune orphan per-agent configs: any fvs-*.toml left from a prior install
+  // whose agent is no longer shipped is removed so reinstall regenerates
+  // exactly the current set.
+  for (const existing of fs.readdirSync(agentsTomlDir)) {
+    if (existing.startsWith('fvs-') && existing.endsWith('.toml') && !currentTomlFiles.has(existing)) {
+      fs.unlinkSync(path.join(agentsTomlDir, existing));
+    }
   }
 
   const fvsBlock = generateCodexConfigBlock(agents, targetDir);

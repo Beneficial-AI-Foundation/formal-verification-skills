@@ -228,3 +228,74 @@ describe('Update over existing old-shape install', () => {
     );
   });
 });
+
+describe('Codex reinstall round-trip (TOML-aware strip + orphan prune)', () => {
+  let tmpDir;
+
+  function installCodex(dir) {
+    execFileSync(process.execPath, [
+      INSTALLER, '--codex', '--global', '--config-dir', dir,
+    ], {
+      cwd: ROOT,
+      env: { ...process.env, HOME: dir, CODEX_HOME: dir },
+      stdio: 'pipe',
+    });
+  }
+
+  it('installs --codex once, then seeds foreign config and a stale orphan .toml', () => {
+    tmpDir = makeTmpDir('fvs-codex-reinstall-');
+    installCodex(tmpDir);
+
+    const configPath = path.join(tmpDir, 'config.toml');
+    assert.ok(fs.existsSync(configPath), 'config.toml created on first install');
+
+    // Pre-seed foreign content that must survive a reinstall: a user [model]
+    // table and a GSD-owned [agents.gsd-foo] table, prepended above the FVS
+    // block.
+    const existing = fs.readFileSync(configPath, 'utf8');
+    const foreign = [
+      '[model]',
+      'name = "gpt-5"',
+      '',
+      '[agents.gsd-foo]',
+      'description = "a gsd agent"',
+      'config_file = "' + tmpDir.replace(/\\/g, '/') + '/agents/gsd-foo.toml"',
+      '',
+    ].join('\n');
+    fs.writeFileSync(configPath, foreign + '\n' + existing);
+
+    // Plant a stale per-agent .toml for an agent FVS no longer ships.
+    const agentsDir = path.join(tmpDir, 'agents');
+    fs.writeFileSync(path.join(agentsDir, 'fvs-removed.toml'), 'name = "fvs-removed"\n');
+    assert.ok(fs.existsSync(path.join(agentsDir, 'fvs-removed.toml')), 'stale orphan planted');
+  });
+
+  it('reinstalls --codex over the seeded config without error', () => {
+    installCodex(tmpDir);
+  });
+
+  it('preserves the foreign [model] and [agents.gsd-foo] tables', () => {
+    const content = fs.readFileSync(path.join(tmpDir, 'config.toml'), 'utf8');
+    assert.ok(content.includes('[model]'), 'user [model] table survives reinstall');
+    assert.ok(content.includes('name = "gpt-5"'), 'user table body survives reinstall');
+    assert.ok(content.includes('[agents.gsd-foo]'), 'GSD [agents.gsd-foo] table survives reinstall');
+  });
+
+  it('re-emits exactly one FVS marker and the current FVS agent tables', () => {
+    const content = fs.readFileSync(path.join(tmpDir, 'config.toml'), 'utf8');
+    const markerCount = content.split('managed by fv-skills-baif installer').length - 1;
+    assert.equal(markerCount, 1, 'exactly one FVS marker after reinstall (no duplication)');
+    assert.ok(content.includes('[agents.fvs-executor]'), 'current FVS agent table present');
+  });
+
+  it('prunes the stale orphan .toml while keeping the 4 current FVS agent configs', () => {
+    const agentsDir = path.join(tmpDir, 'agents');
+    assert.ok(
+      !fs.existsSync(path.join(agentsDir, 'fvs-removed.toml')),
+      'stale orphan agents/fvs-removed.toml must be pruned on reinstall'
+    );
+    const current = fs.readdirSync(agentsDir).filter(f => f.startsWith('fvs-') && f.endsWith('.toml'));
+    assert.ok(current.length >= 4, `expected the current FVS agent .toml set, got ${current.join(', ')}`);
+    assert.ok(current.includes('fvs-executor.toml'), 'fvs-executor.toml present');
+  });
+});

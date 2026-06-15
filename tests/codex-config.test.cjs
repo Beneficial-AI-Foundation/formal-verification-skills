@@ -171,3 +171,65 @@ describe('Codex markdown conversion (convertClaudeToCodexMarkdown)', () => {
     assert.ok(converted.includes('$fvs-lean-verify'), 'slash mention becomes skill mention');
   });
 });
+
+describe('TOML-aware config strip (stripFvsFromCodexConfig)', () => {
+  it('strips FVS struct tables but retains foreign user and GSD tables', () => {
+    const content = [
+      '[model]',
+      'name = "gpt-5"',
+      '',
+      '[agents.gsd-foo]',
+      'description = "a gsd agent"',
+      'config_file = "/home/user/.codex/agents/gsd-foo.toml"',
+      '',
+      FVS_CODEX_MARKER,
+      '',
+      '[agents.fvs-executor]',
+      'description = "the fvs executor"',
+      'config_file = "/home/user/.codex/agents/fvs-executor.toml"',
+      '',
+    ].join('\n');
+
+    const cleaned = stripFvsFromCodexConfig(content);
+    assert.ok(cleaned !== null, 'file is not empty after strip');
+    assert.ok(!cleaned.includes('agents.fvs-executor'), 'FVS struct table removed');
+    assert.ok(!cleaned.includes(FVS_CODEX_MARKER), 'FVS marker removed');
+    assert.ok(cleaned.includes('[agents.gsd-foo]'), 'GSD table preserved');
+    assert.ok(cleaned.includes('[model]'), 'user table preserved');
+    assert.ok(cleaned.includes('name = "gpt-5"'), 'user table body preserved');
+  });
+
+  it('strips a legacy [[agents]] block whose name is fvs-*', () => {
+    const content = [
+      '[model]',
+      'name = "gpt-5"',
+      '',
+      '[[agents]]',
+      'name = "fvs-legacy"',
+      'config_file = "/home/user/.codex/agents/fvs-legacy.toml"',
+      '',
+      '[[agents]]',
+      'name = "user-custom"',
+      'config_file = "/home/user/.codex/agents/user-custom.toml"',
+      '',
+    ].join('\n');
+
+    const cleaned = stripFvsFromCodexConfig(content);
+    assert.ok(cleaned !== null, 'file is not empty after strip');
+    assert.ok(!cleaned.includes('fvs-legacy'), 'legacy fvs- array entry removed');
+    assert.ok(cleaned.includes('name = "user-custom"'), 'foreign [[agents]] entry preserved');
+    assert.ok(cleaned.includes('[model]'), 'user table preserved');
+  });
+
+  it('returns null when the file is FVS-only', () => {
+    const content = [
+      FVS_CODEX_MARKER,
+      '',
+      '[agents.fvs-executor]',
+      'description = "x"',
+      'config_file = "/home/user/.codex/agents/fvs-executor.toml"',
+      '',
+    ].join('\n');
+    assert.equal(stripFvsFromCodexConfig(content), null);
+  });
+});
