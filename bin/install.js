@@ -17,8 +17,24 @@ const reset = '\x1b[0m';
 const FVS_CODEX_MARKER = '# FVS Agent Configuration \u2014 managed by fv-skills-baif installer';
 
 const CODEX_AGENT_SANDBOX = {
-  'fvs-explainer': 'read-only',
+  'fvs-executor': 'workspace-write',
   'fvs-lean-refactorer': 'workspace-write',
+  'fvs-explainer': 'read-only',
+  'fvs-researcher': 'read-only',
+};
+
+// Codex agents inherit the user's selected Codex model — the converter never
+// pins a `model`, it sets only the reasoning-effort budget. The user owns the
+// model choice and may change it mid-session; FVS controls only how hard each
+// agent thinks. Precision-critical roles (spec authoring, proof attempt and
+// refactor, explanation) run at the highest effort; the research/mapping
+// support role runs one tier lower. Codex accepts minimal|low|medium|high|xhigh;
+// any unmapped agent defaults to high at the lookup site.
+const FVS_CODEX_AGENT_EFFORT = {
+  'fvs-executor': 'xhigh',
+  'fvs-lean-refactorer': 'xhigh',
+  'fvs-explainer': 'xhigh',
+  'fvs-researcher': 'high',
 };
 
 // Get version from package.json
@@ -201,10 +217,12 @@ const explicitConfigDir = parseConfigDirArg();
 const hasHelp = args.includes('--help') || args.includes('-h');
 const forceStatusline = args.includes('--force-statusline');
 
-console.log(banner);
+if (require.main === module) {
+  console.log(banner);
+}
 
 // Show help if requested
-if (hasHelp) {
+if (require.main === module && hasHelp) {
   console.log(`  ${yellow}Usage:${reset} npx fv-skills-baif [options]\n\n  ${yellow}Options:${reset}\n    ${orange}-g, --global${reset}              Install globally (to config directory)\n    ${orange}-l, --local${reset}               Install locally (to current directory)\n    ${orange}--claude${reset}                  Install for Claude Code only\n    ${orange}--opencode${reset}                Install for OpenCode only\n    ${orange}--gemini${reset}                  Install for Gemini only\n    ${orange}--codex${reset}                   Install for Codex only\n    ${orange}--all${reset}                     Install for all runtimes\n    ${orange}-u, --uninstall${reset}           Uninstall FVS (remove all FVS files)\n    ${orange}-c, --config-dir <path>${reset}   Specify custom config directory\n    ${orange}-h, --help${reset}                Show this help message\n    ${orange}--force-statusline${reset}        Replace existing statusline config\n\n  ${yellow}Examples:${reset}\n    ${dim}# Interactive install (prompts for runtime and location)${reset}\n    npx fv-skills-baif\n\n    ${dim}# Install for Claude Code globally${reset}\n    npx fv-skills-baif --claude --global\n\n    ${dim}# Install for Codex globally${reset}\n    npx fv-skills-baif --codex --global\n\n    ${dim}# Install for Gemini globally${reset}\n    npx fv-skills-baif --gemini --global\n\n    ${dim}# Install for all runtimes globally${reset}\n    npx fv-skills-baif --all --global\n\n    ${dim}# Install to custom config directory${reset}\n    npx fv-skills-baif --claude --global --config-dir ~/.claude-bc\n\n    ${dim}# Install to current project only${reset}\n    npx fv-skills-baif --claude --local\n\n    ${dim}# Uninstall FVS from Claude Code globally${reset}\n    npx fv-skills-baif --claude --global --uninstall\n\n  ${yellow}Notes:${reset}\n    The --config-dir option is useful when you have multiple configurations.\n    It takes priority over CLAUDE_CONFIG_DIR / GEMINI_CONFIG_DIR / CODEX_HOME environment variables.\n`);
   process.exit(0);
 }
@@ -2365,6 +2383,7 @@ function installAllRuntimes(runtimes, isGlobal, isInteractive) {
 }
 
 // Main logic
+if (require.main === module) {
 if (hasGlobal && hasLocal) {
   console.error(`  ${yellow}Cannot specify both --global and --local${reset}`);
   process.exit(1);
@@ -2407,3 +2426,23 @@ if (hasGlobal && hasLocal) {
     });
   }
 }
+}
+
+module.exports = {
+  generateCodexConfigBlock,
+  generateCodexAgentToml,
+  getCodexSkillAdapterHeader,
+  convertClaudeToCodexMarkdown,
+  convertClaudeCommandToCodexSkill,
+  convertClaudeAgentToCodexAgent,
+  convertSlashCommandsToCodexSkillMentions,
+  stripFvsFromCodexConfig,
+  mergeCodexConfig,
+  installCodexConfig,
+  extractFrontmatterAndBody,
+  extractFrontmatterField,
+  toSingleLine,
+  FVS_CODEX_MARKER,
+  CODEX_AGENT_SANDBOX,
+  FVS_CODEX_AGENT_EFFORT,
+};
