@@ -658,20 +658,31 @@ function convertSlashCommandsToCodexSkillMentions(content) {
 }
 
 /**
- * Convert Claude Code markdown to Codex-compatible markdown
- * Replaces $ARGUMENTS, slash commands, and tool names
+ * Convert Claude Code markdown to Codex-compatible markdown.
+ *
+ * Rewrites the invocation surface only: slash-command mentions become skill
+ * mentions and $ARGUMENTS becomes the {{FVS_ARGS}} token. The body's tool calls
+ * (AskUserQuestion, Task(...)) are deliberately left intact — the skill adapter
+ * header is the contract that instructs the runtime how to translate them, so a
+ * blanket word-replace would corrupt prose that mentions those names and strip
+ * the surrounding semantics the adapter relies on.
  */
 function convertClaudeToCodexMarkdown(content) {
   let converted = convertSlashCommandsToCodexSkillMentions(content);
   converted = converted.replace(/\$ARGUMENTS\b/g, '{{FVS_ARGS}}');
-  converted = converted.replace(/\bAskUserQuestion\b/g, 'request_user_input');
-  converted = converted.replace(/\bTask\(/g, 'spawn_agent(');
   return converted;
 }
 
 /**
- * Generate the Codex skill adapter header for a command-turned-skill
- * Provides invocation syntax, AskUserQuestion mapping, and Task() mapping
+ * Generate the Codex skill adapter header for a command-turned-skill.
+ *
+ * The header is the translation contract the Codex runtime follows when it runs
+ * a converted FVS skill: how the skill is invoked, how Claude's AskUserQuestion
+ * maps to request_user_input (including multi-select and a fail-closed execute
+ * mode), and how Task() maps to spawn_agent. Execute mode is fail-closed by
+ * design: when interactive prompting is unavailable, the runtime surfaces the
+ * questions and waits rather than silently picking a default and writing
+ * artifacts.
  */
 function getCodexSkillAdapterHeader(skillName) {
   const invocation = `$${skillName}`;
@@ -694,18 +705,36 @@ Batched calls:
 - \`AskUserQuestion([q1, q2])\` -> single \`request_user_input\` with multiple entries in \`questions[]\`
 
 Multi-select workaround:
-- Codex has no \`multiSelect\`. Use sequential single-selects, or present a numbered freeform list asking the user to enter comma-separated numbers.
+- Codex has no \`multiSelect\`. When a question allows multiple selections, do NOT collapse it to a single choice. Use sequential single-selects, or present a numbered freeform list asking the user to enter comma-separated numbers, then collect every selection before proceeding.
 
 Execute mode fallback:
-- When \`request_user_input\` is rejected (Execute mode), present a plain-text numbered list and pick a reasonable default.
+- When \`request_user_input\` is rejected or unavailable (Execute mode), present every \`AskUserQuestion\` call as a plain-text numbered list, then stop and wait for the user's reply. Do NOT pick a default and continue.
+- You may proceed without a user answer only when one of these is true:
+  (a) the invocation included an explicit non-interactive flag (\`--auto\` or \`--all\`),
+  (b) the user has explicitly approved a specific default for this question, or
+  (c) the workflow's documented contract says defaults are safe (e.g. autonomous lifecycle paths).
+- Do NOT write workflow artifacts (handoff files, spec files, plan files, checkpoint files) until the user has answered the plain-text questions or one of (a)-(c) above applies. Surfacing the questions and waiting is the correct response — silently defaulting and writing artifacts is the failure mode this header exists to prevent.
 
 ## C. Task() -> spawn_agent Mapping
 FVS workflows use \`Task(...)\` (Claude Code syntax). Translate to Codex collaboration tools:
 
-Direct mapping:
+**Schema detection (required first step):** Codex exposes two \`spawn_agent\` schemas:
+- **agent_type-capable schema:** \`spawn_agent\` accepts \`agent_type\`, \`message\`, \`reasoning_effort\`, \`fork_context\`, etc. — typed FVS agent dispatch is available.
+- **Generic schema:** \`spawn_agent\` accepts only \`message\`, \`items\`, \`fork_context\` — there is **no \`agent_type\` field**. Typed FVS agent dispatch is unavailable in this session.
+
+Before spawning, inspect the \`spawn_agent\` tool's visible parameter schema to determine which form is active.
+
+Typed mapping (agent_type-capable schema only):
 - \`Task(subagent_type="X", prompt="Y")\` -> \`spawn_agent(agent_type="X", message="Y")\`
-- \`Task(model="...")\` -> omit (Codex uses per-role config, not inline model selection)
-- \`fork_context: false\` by default -- FVS agents load their own context via \`<files_to_read>\` blocks
+- \`Task(model="...")\` -> omit. \`spawn_agent\` has no inline \`model\` parameter; FVS bakes each agent's reasoning effort into its \`.toml\` at install time and the model is inherited from the user's Codex configuration.
+- \`fork_context: false\` by default -- FVS agents load their own context via \`<files_to_read>\` blocks.
+
+Generic-agent workaround (schema with NO agent_type field):
+When only the generic schema is available, typed FVS agent dispatch (\`fvs-researcher\`, \`fvs-executor\`, etc.) is NOT possible. This workaround is NOT equivalent to typed execution — FVS agents carry verification-aware prompts and sandbox settings a generic subagent lacks. Fallback:
+1. Resolve your active Codex config root (the directory containing your \`config.toml\`), then read \`agents/<agent-name>.toml\` relative to that root to extract the agent's instructions.
+2. Inject those instructions as a role-preamble into a generic \`spawn_agent(message=...)\` call.
+3. Label results clearly as "generic-agent workaround" so the user knows typed guarantees are not in effect.
+4. Where typed dispatch is mandatory for correctness, fail closed and report the schema limitation rather than silently degrading.
 
 Parallel fan-out:
 - Spawn multiple agents -> collect agent IDs -> \`wait(ids)\` for all to complete

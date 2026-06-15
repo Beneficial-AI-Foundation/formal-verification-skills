@@ -14,6 +14,9 @@ const assert = require('node:assert/strict');
 const {
   generateCodexConfigBlock,
   generateCodexAgentToml,
+  getCodexSkillAdapterHeader,
+  convertClaudeToCodexMarkdown,
+  stripFvsFromCodexConfig,
   FVS_CODEX_MARKER,
   CODEX_AGENT_SANDBOX,
   FVS_CODEX_AGENT_EFFORT,
@@ -98,5 +101,73 @@ describe('Codex per-agent .toml (generateCodexAgentToml)', () => {
     const toml = generateCodexAgentToml('fvs-unknown', agentMarkdown('fvs-unknown', 'Unknown agent'));
     assert.ok(toml.includes('sandbox_mode = "read-only"'), 'unmapped name -> read-only');
     assert.ok(toml.includes('model_reasoning_effort = "high"'), 'unmapped name -> high effort');
+  });
+});
+
+describe('Codex skill adapter header (getCodexSkillAdapterHeader)', () => {
+  it('wraps the header in the codex_skill_adapter tag and has A/B/C sections', () => {
+    const header = getCodexSkillAdapterHeader('fvs-fc-plan');
+    assert.ok(header.includes('<codex_skill_adapter>'), 'has opening tag');
+    assert.ok(header.includes('</codex_skill_adapter>'), 'has closing tag');
+    assert.ok(header.includes('## A.'), 'has section A');
+    assert.ok(header.includes('## B.'), 'has section B');
+    assert.ok(header.includes('## C.'), 'has section C');
+  });
+
+  it('documents invocation, the FVS_ARGS token, and the skill name', () => {
+    const header = getCodexSkillAdapterHeader('fvs-fc-plan');
+    assert.ok(header.includes('`$fvs-fc-plan`'), 'documents the $skillName invocation');
+    assert.ok(header.includes('{{FVS_ARGS}}'), 'emits the {{FVS_ARGS}} token');
+  });
+
+  it('maps AskUserQuestion to request_user_input with multi-select handling', () => {
+    const header = getCodexSkillAdapterHeader('fvs-lean-verify');
+    assert.ok(header.includes('request_user_input'), 'maps to request_user_input');
+    assert.ok(header.includes('multiSelect'), 'documents the multiSelect workaround');
+    assert.ok(header.includes('Execute mode'), 'documents the Execute mode fallback');
+  });
+
+  it('is fail-closed in execute mode (no silent default, no artifact writes)', () => {
+    const header = getCodexSkillAdapterHeader('fvs-lean-verify');
+    assert.ok(
+      /Do NOT pick a default/.test(header),
+      'instructs the runtime not to pick a default in execute mode',
+    );
+    assert.ok(
+      /Do NOT write workflow artifacts/.test(header),
+      'instructs the runtime not to write artifacts before the user answers',
+    );
+    assert.ok(
+      !header.includes('pick a reasonable default'),
+      'must not retain the old "pick a reasonable default" wording',
+    );
+  });
+
+  it('maps Task() to spawn_agent', () => {
+    const header = getCodexSkillAdapterHeader('fvs-fc-plan');
+    assert.ok(header.includes('spawn_agent'), 'maps Task() to spawn_agent');
+    assert.ok(header.includes('agent_type'), 'maps subagent_type to agent_type');
+  });
+});
+
+describe('Codex markdown conversion (convertClaudeToCodexMarkdown)', () => {
+  it('does not blanket-replace AskUserQuestion or Task( in skill bodies', () => {
+    const body = 'Call AskUserQuestion then Task(subagent_type="x")';
+    const converted = convertClaudeToCodexMarkdown(body);
+    assert.ok(converted.includes('AskUserQuestion'), 'AskUserQuestion survives in the body');
+    assert.ok(converted.includes('Task('), 'Task( survives in the body');
+    assert.ok(!converted.includes('request_user_input'), 'no blanket request_user_input rewrite');
+    assert.ok(!converted.includes('spawn_agent'), 'no blanket spawn_agent rewrite');
+  });
+
+  it('still rewrites $ARGUMENTS to the {{FVS_ARGS}} token', () => {
+    const converted = convertClaudeToCodexMarkdown('uses $ARGUMENTS');
+    assert.ok(converted.includes('{{FVS_ARGS}}'), '$ARGUMENTS becomes {{FVS_ARGS}}');
+    assert.ok(!converted.includes('$ARGUMENTS'), 'no raw $ARGUMENTS remains');
+  });
+
+  it('still converts /fvs: slash mentions to skill mentions', () => {
+    const converted = convertClaudeToCodexMarkdown('see /fvs:lean-verify for details');
+    assert.ok(converted.includes('$fvs-lean-verify'), 'slash mention becomes skill mention');
   });
 });
