@@ -765,43 +765,66 @@ purpose: ${toSingleLine(description)}
 
 /**
  * Generate a per-agent .toml config file for Codex.
- * Sets sandbox_mode and developer_instructions from the agent markdown body.
+ *
+ * Emits the agent name, description, sandbox_mode, and reasoning effort, then
+ * the agent body as developer_instructions. The sandbox is fail-closed
+ * (read-only for any unmapped name) and the effort defaults to high. No `model`
+ * line is emitted: Codex agents inherit the user's selected model, so FVS sets
+ * only the reasoning-effort budget.
  */
 function generateCodexAgentToml(agentName, agentContent) {
-  const sandboxMode = CODEX_AGENT_SANDBOX[agentName] || 'read-only';
-  const { body } = extractFrontmatterAndBody(agentContent);
+  const { frontmatter, body } = extractFrontmatterAndBody(agentContent);
+  const frontmatterText = frontmatter || '';
+  const name = extractFrontmatterField(frontmatterText, 'name') || agentName;
+  const description = toSingleLine(
+    extractFrontmatterField(frontmatterText, 'description') || `FVS agent ${name}`
+  );
+  const sandboxMode = CODEX_AGENT_SANDBOX[name] || CODEX_AGENT_SANDBOX[agentName] || 'read-only';
+  let effort = FVS_CODEX_AGENT_EFFORT[name] || FVS_CODEX_AGENT_EFFORT[agentName] || 'high';
+  // Codex accepts minimal|low|medium|high|xhigh; defensively clamp a 'max'
+  // value to xhigh should it ever appear (no shipped agent uses 'max').
+  if (effort === 'max') effort = 'xhigh';
   const instructions = body.trim();
 
   const lines = [
-    `sandbox_mode = "${sandboxMode}"`,
-    `developer_instructions = """`,
+    `name = ${JSON.stringify(name)}`,
+    `description = ${JSON.stringify(description)}`,
+    `sandbox_mode = ${JSON.stringify(sandboxMode)}`,
+    `model_reasoning_effort = ${JSON.stringify(effort)}`,
+    // Agent prompts contain raw backslashes in regexes and shell snippets.
+    // TOML literal multiline strings preserve them without escape parsing.
+    `developer_instructions = '''`,
     instructions,
-    `"""`,
+    `'''`,
   ];
   return lines.join('\n') + '\n';
 }
 
 /**
  * Generate the FVS config block for Codex config.toml.
+ *
+ * Emits a struct-form [agents.<name>] table per agent. Current Codex CLI
+ * (>=0.116) requires an absolute config_file path and rejects the relative
+ * "agents/<name>.toml" form, so the path is resolved under targetDir when one
+ * is supplied. No [features]/multi_agent/[agents] globals are emitted — those
+ * keys are rejected by current Codex.
+ *
  * @param {Array<{name: string, description: string}>} agents
+ * @param {string} [targetDir] absolute Codex config directory (e.g. ~/.codex)
  */
-function generateCodexConfigBlock(agents) {
+function generateCodexConfigBlock(agents, targetDir) {
+  const agentsPrefix = targetDir
+    ? path.join(targetDir, 'agents').replace(/\\/g, '/')
+    : 'agents';
   const lines = [
     FVS_CODEX_MARKER,
-    '[features]',
-    'multi_agent = true',
-    'default_mode_request_user_input = true',
-    '',
-    '[agents]',
-    'max_threads = 4',
-    'max_depth = 2',
     '',
   ];
 
   for (const { name, description } of agents) {
     lines.push(`[agents.${name}]`);
     lines.push(`description = ${JSON.stringify(description)}`);
-    lines.push(`config_file = "agents/${name}.toml"`);
+    lines.push(`config_file = "${agentsPrefix}/${name}.toml"`);
     lines.push('');
   }
 
@@ -944,7 +967,7 @@ function installCodexConfig(targetDir, agentsSrc) {
     fs.writeFileSync(path.join(agentsTomlDir, `${name}.toml`), tomlContent);
   }
 
-  const fvsBlock = generateCodexConfigBlock(agents);
+  const fvsBlock = generateCodexConfigBlock(agents, targetDir);
   mergeCodexConfig(configPath, fvsBlock);
 
   return agents.length;
