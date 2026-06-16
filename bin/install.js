@@ -1063,6 +1063,7 @@ function removeContentRanges(content, ranges) {
  * Returns cleaned content, or null if the file would be empty.
  */
 function stripFvsFromCodexConfig(content) {
+  const eol = detectLineEnding(content);
   const sections = getTomlTableSections(content);
 
   const removalRanges = sections
@@ -1087,7 +1088,8 @@ function stripFvsFromCodexConfig(content) {
   // Remove the FVS marker line itself plus the blank line that followed it in
   // the FVS-emitted block.
   const markerIndex = cleaned.indexOf(FVS_CODEX_MARKER);
-  if (markerIndex !== -1) {
+  const hadFvsMarker = markerIndex !== -1;
+  if (hadFvsMarker) {
     const before = cleaned.slice(0, markerIndex);
     const after = cleaned
       .slice(markerIndex + FVS_CODEX_MARKER.length)
@@ -1095,11 +1097,35 @@ function stripFvsFromCodexConfig(content) {
     cleaned = before + after;
   }
 
-  // Collapse runs of blank lines the removals may have left behind.
-  cleaned = cleaned.replace(/\n{3,}/g, '\n\n').trim();
+  // Remove the FVS-owned root-level hooks feature flag (canonical + legacy).
+  // The flag is inserted by ensureCodexHooksFeature between the FVS marker and
+  // the first FVS table, so once the marker and tables are gone it is left
+  // orphaned. Only strip it when the FVS marker was present — a flag in a
+  // config that FVS never marked is the user's and must be preserved.
+  if (hadFvsMarker) {
+    const flagLines = cleaned.split(/\r?\n/);
+    const firstHeaderIdx = flagLines.findIndex((l) => /^\s*\[/.test(l));
+    cleaned = flagLines
+      .filter((line, i) => {
+        if (firstHeaderIdx !== -1 && i >= firstHeaderIdx) return true;
+        const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*true\s*$/);
+        return !(m && CODEX_HOOKS_FEATURE_ALL_KEYS.includes(m[1]));
+      })
+      .join('\n');
+  }
+
+  // Collapse runs of blank lines the removals may have left behind, then
+  // re-apply the original file's line ending so a CRLF config is not rewritten
+  // with mixed endings. Normalize to LF first, collapse, then map back to the
+  // detected EOL for both the blank-line target and the trailing terminator.
+  cleaned = cleaned
+    .replace(/\r\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 
   if (!cleaned) return null;
-  return cleaned + '\n';
+  if (eol === '\r\n') cleaned = cleaned.replace(/\n/g, '\r\n');
+  return cleaned + eol;
 }
 
 /**
