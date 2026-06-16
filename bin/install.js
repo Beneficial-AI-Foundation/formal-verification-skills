@@ -1315,7 +1315,7 @@ function migrateCodexHooksMapFormat(content) {
   const sections = getTomlTableSections(content);
   const segLen = (p) => {
     // Count parsed key segments, ignoring dots inside quoted names.
-    let depth = 0; let inStr = false; let quote = '';
+    let inStr = false; let quote = '';
     let count = p.length ? 1 : 0;
     for (let i = 0; i < p.length; i += 1) {
       const ch = p[i];
@@ -1323,7 +1323,7 @@ function migrateCodexHooksMapFormat(content) {
       if (ch === '"' || ch === '\'') { inStr = true; quote = ch; continue; }
       if (ch === '.') count += 1;
     }
-    return count + depth;
+    return count;
   };
 
   const legacyMapSections = sections.filter(
