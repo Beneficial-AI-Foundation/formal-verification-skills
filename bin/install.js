@@ -1279,6 +1279,19 @@ function reconcileCodexHooksJsonEvent(targetDir, eventName, opts = {}) {
   }
   if (usesNestedHooksObject) parsed.hooks = hookTable;
 
+  // When the reconcile empties the object (no foreign keys remain) and a file
+  // existed on disk, delete it rather than leaving an orphaned `{}` the user
+  // never authored. Foreign content keeps at least one key, so this only fires
+  // for an FVS-only file. A non-existent file with nothing to write is a no-op.
+  if (Object.keys(parsed).length === 0) {
+    if (currentContent !== null) {
+      const removed = removedManaged || currentContent.trim() !== '{}';
+      fs.unlinkSync(hooksJsonPath);
+      return { changed: true, wrote: removed, path: hooksJsonPath, deleted: true };
+    }
+    return { changed: changed || removedManaged, wrote: false, path: hooksJsonPath };
+  }
+
   const nextContent = `${JSON.stringify(parsed, null, 2)}\n`;
   const changed = currentContent !== nextContent;
   const shouldWrite = changed && (currentContent !== null || Object.keys(parsed).length > 0);
