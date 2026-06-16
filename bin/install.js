@@ -838,12 +838,23 @@ function generateCodexAgentToml(agentName, agentContent) {
     `description = ${JSON.stringify(description)}`,
     `sandbox_mode = ${JSON.stringify(sandboxMode)}`,
     `model_reasoning_effort = ${JSON.stringify(effort)}`,
+  ];
+
+  if (instructions.includes("'''")) {
+    // TOML literal multiline strings have no escape mechanism, so a body that
+    // itself contains ''' would terminate the literal early and corrupt the
+    // file. Fall back to a basic ("""...""") multiline string with backslash
+    // and triple-double-quote escaping. This path loses the raw-backslash
+    // benefit, but it keeps the emitted TOML valid and parseable.
+    const escaped = instructions
+      .replace(/\\/g, '\\\\')
+      .replace(/"""/g, '\\"\\"\\"');
+    lines.push('developer_instructions = """', escaped, '"""');
+  } else {
     // Agent prompts contain raw backslashes in regexes and shell snippets.
     // TOML literal multiline strings preserve them without escape parsing.
-    `developer_instructions = '''`,
-    instructions,
-    `'''`,
-  ];
+    lines.push("developer_instructions = '''", instructions, "'''");
+  }
   return lines.join('\n') + '\n';
 }
 
@@ -869,9 +880,16 @@ function generateCodexConfigBlock(agents, targetDir) {
   ];
 
   for (const { name, description } of agents) {
+    // A bare TOML key only accepts [A-Za-z0-9_-]; a name carrying ']', '"',
+    // '.', or whitespace would corrupt the table header or the quoted path.
+    // Fail closed rather than emit a config Codex will reject.
+    if (!/^[A-Za-z0-9_-]+$/.test(name)) {
+      throw new Error(`Refusing to emit Codex agent table for unsafe name: ${JSON.stringify(name)}`);
+    }
+    const configFilePath = `${agentsPrefix}/${name}.toml`;
     lines.push(`[agents.${name}]`);
     lines.push(`description = ${JSON.stringify(description)}`);
-    lines.push(`config_file = "${agentsPrefix}/${name}.toml"`);
+    lines.push(`config_file = ${JSON.stringify(configFilePath)}`);
     lines.push('');
   }
 
