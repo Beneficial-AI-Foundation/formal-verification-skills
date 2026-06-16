@@ -1205,6 +1205,10 @@ function resolveCodexNodeRunner() {
 function isFvsManagedCodexHookCommand(commandText, configDir) {
   if (typeof commandText !== 'string') return false;
   const normalized = commandText.replace(/\\/g, '/');
+  // A mutating caller MUST supply configDir so the directory-containment guard
+  // applies; basename-only matching would let a foreign command whose path
+  // merely ends in fvs-check-update.js be treated as FVS-managed. Read-only
+  // callers may omit it.
   if (typeof configDir === 'string' && configDir.length > 0) {
     const hooksDir = `${path.join(configDir, 'hooks').replace(/\\/g, '/')}/`;
     if (!normalized.includes(hooksDir)) return false;
@@ -1333,8 +1337,10 @@ function buildCodexHookWindowsShimIR(scriptAbsPath, absoluteRunnerToken) {
 // Rewrite a legacy bare-`node <script>` hook command in a config.toml `[hooks]`
 // block to an absolute-node command, so a hook authored under a full-PATH shell
 // still launches under Codex's minimal-PATH GUI launch. Only touches commands
-// whose script basename is FVS-managed.
-function rewriteLegacyCodexHookBlock(content, absoluteRunnerToken) {
+// whose script path is FVS-managed and resolves under the config dir's hooks/
+// directory; configDir is required so the containment guard applies and no
+// foreign command is rewritten by basename alone.
+function rewriteLegacyCodexHookBlock(content, absoluteRunnerToken, configDir) {
   if (!content || !absoluteRunnerToken) return { content, changed: false };
   let interpreter;
   try {
@@ -1348,7 +1354,7 @@ function rewriteLegacyCodexHookBlock(content, absoluteRunnerToken) {
     (full, prefix, scriptToken, suffix) => {
       const quoted = scriptToken.match(/^\\"([\s\S]+)\\"$/);
       const scriptPath = quoted ? quoted[1] : scriptToken;
-      if (!isFvsManagedCodexHookCommand(scriptPath)) return full;
+      if (!isFvsManagedCodexHookCommand(scriptPath, configDir)) return full;
       const desired = tomlEscapeDoubleQuoted(`${interpreter} ${JSON.stringify(scriptPath)}`);
       const current = `${scriptToken}`;
       const next = `${prefix}${desired}${suffix}`;
@@ -1613,9 +1619,20 @@ function installCodexConfig(targetDir, agentsSrc) {
   if (fs.existsSync(configPath)) {
     let configContent = fs.readFileSync(configPath, 'utf8');
     const migrated = migrateCodexHooksMapFormat(configContent);
-    if (migrated !== configContent) configContent = migrated;
+    const migratedChanged = migrated !== configContent;
+    if (migratedChanged) configContent = migrated;
+
+    // Rewrite any legacy bare-`node <script>` FVS hook command in a config.toml
+    // [hooks] block to the absolute-node form so it still launches under
+    // Codex's minimal-PATH GUI launch. Scoped to FVS-managed commands under
+    // this config dir's hooks/ directory.
+    const runnerToken = resolveCodexNodeRunner();
+    const rewritten = rewriteLegacyCodexHookBlock(configContent, runnerToken, targetDir);
+    const rewriteChanged = rewritten.changed;
+    if (rewriteChanged) configContent = rewritten.content;
+
     const feature = ensureCodexHooksFeature(configContent);
-    if (feature.changed || migrated !== fs.readFileSync(configPath, 'utf8')) {
+    if (feature.changed || migratedChanged || rewriteChanged) {
       fs.writeFileSync(configPath, feature.content);
     }
   }
