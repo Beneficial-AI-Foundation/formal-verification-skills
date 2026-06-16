@@ -151,6 +151,38 @@ describe('Codex hooks.json SessionStart coexistence (nested shape)', () => {
     assert.ok(commands.some((c) => c.includes('gsd-check-update')), 'GSD SessionStart entry removed by FVS uninstall');
     assert.ok(!commands.some((c) => c.includes('fvs-check-update')), 'FVS SessionStart entry not removed');
   });
+
+  it('preserves the foreign GSD entry as a non-empty hooks.json after uninstall', () => {
+    assert.ok(fs.existsSync(path.join(tmpDir, 'hooks.json')), 'foreign hooks.json must survive');
+    const raw = fs.readFileSync(path.join(tmpDir, 'hooks.json'), 'utf8');
+    assert.notEqual(raw.trim(), '{}', 'foreign hooks.json must not collapse to an empty object');
+  });
+});
+
+describe('Codex FVS-only install then uninstall (clean removal)', () => {
+  let tmpDir;
+
+  it('installs FVS into an empty config dir', () => {
+    tmpDir = makeTmpDir('fvs-codex-only-');
+    installCodex(tmpDir);
+    assert.ok(fs.existsSync(path.join(tmpDir, 'config.toml')), 'config.toml written');
+    assert.ok(fs.existsSync(path.join(tmpDir, 'hooks.json')), 'hooks.json written');
+  });
+
+  it('deletes the FVS-only config.toml on uninstall (no orphaned feature flag)', () => {
+    uninstallCodex(tmpDir);
+    assert.ok(
+      !fs.existsSync(path.join(tmpDir, 'config.toml')),
+      'an FVS-only config.toml must be deleted, not left with hooks = true',
+    );
+  });
+
+  it('deletes the FVS-only hooks.json on uninstall (no leftover empty object)', () => {
+    assert.ok(
+      !fs.existsSync(path.join(tmpDir, 'hooks.json')),
+      'an FVS-only hooks.json must be deleted, not left as {}',
+    );
+  });
 });
 
 describe('Codex hooks.json SessionStart coexistence (flat shape)', () => {

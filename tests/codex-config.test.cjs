@@ -17,6 +17,9 @@ const {
   getCodexSkillAdapterHeader,
   convertClaudeToCodexMarkdown,
   stripFvsFromCodexConfig,
+  ensureCodexHooksFeature,
+  rewriteLegacyCodexHookBlock,
+  resolveCodexNodeRunner,
   FVS_CODEX_MARKER,
   CODEX_AGENT_SANDBOX,
   FVS_CODEX_AGENT_EFFORT,
@@ -231,5 +234,133 @@ describe('TOML-aware config strip (stripFvsFromCodexConfig)', () => {
       '',
     ].join('\n');
     assert.equal(stripFvsFromCodexConfig(content), null);
+  });
+
+  it('strips the FVS-owned root feature flag so an FVS-only config returns null', () => {
+    // Reproduces the real install shape: the feature flag sits between the FVS
+    // marker comment and the first FVS table. Stripping the marker and tables
+    // must also drop the orphaned flag so the file is recognized as empty.
+    const block = generateCodexConfigBlock(
+      [{ name: 'fvs-executor', description: 'x' }, { name: 'fvs-researcher', description: 'y' }],
+      '/home/user/.codex',
+    );
+    const installed = ensureCodexHooksFeature(block).content;
+    assert.ok(/^hooks = true$/m.test(installed), 'precondition: flag was inserted');
+    assert.equal(stripFvsFromCodexConfig(installed), null, 'FVS-only config must strip to null');
+  });
+
+  it('removes the orphaned feature flag while preserving foreign content', () => {
+    const block = generateCodexConfigBlock(
+      [{ name: 'fvs-executor', description: 'x' }],
+      '/home/user/.codex',
+    );
+    const withFlag = ensureCodexHooksFeature(block).content;
+    // A foreign [model] table sits below the FVS block.
+    const content = `${withFlag}\n[model]\nname = "gpt-5"\n`;
+    const cleaned = stripFvsFromCodexConfig(content);
+    assert.ok(cleaned !== null, 'foreign content must survive');
+    assert.ok(cleaned.includes('[model]'), 'foreign [model] table preserved');
+    assert.ok(cleaned.includes('name = "gpt-5"'), 'foreign table body preserved');
+    assert.ok(!/^\s*hooks\s*=\s*true\s*$/m.test(cleaned), 'orphaned hooks flag removed');
+    assert.ok(!/^\s*codex_hooks\s*=\s*true\s*$/m.test(cleaned), 'orphaned legacy flag removed');
+  });
+
+  it('preserves a user-owned root flag when no FVS marker is present', () => {
+    // The flag is FVS-owned only when FVS marked the config. A flag in a config
+    // FVS never touched belongs to the user and must survive a (no-op) strip.
+    const content = ['hooks = true', '', '[model]', 'name = "gpt-5"', ''].join('\n');
+    const cleaned = stripFvsFromCodexConfig(content);
+    assert.ok(cleaned !== null, 'foreign-only config is not empty');
+    assert.ok(/^hooks = true$/m.test(cleaned), 'user-owned flag preserved (no FVS marker)');
+  });
+
+  it('keeps CRLF line endings consistent after a strip', () => {
+    const content = [
+      '[model]',
+      'name = "gpt-5"',
+      '',
+      FVS_CODEX_MARKER,
+      '',
+      '[agents.fvs-executor]',
+      'description = "x"',
+      'config_file = "/home/user/.codex/agents/fvs-executor.toml"',
+      '',
+    ].join('\r\n');
+    const cleaned = stripFvsFromCodexConfig(content);
+    assert.ok(cleaned !== null, 'foreign content survives');
+    assert.ok(!/\n{3,}/.test(cleaned.replace(/\r/g, '')), 'no uncollapsed blank-line runs');
+    assert.ok(!/[^\r]\n/.test(cleaned), 'no bare LF (mixed endings) in CRLF output');
+    assert.ok(cleaned.endsWith('\r\n'), 'CRLF terminator');
+  });
+});
+
+describe('Codex per-agent .toml triple-quote safety (generateCodexAgentToml)', () => {
+  function agentWithBody(name, body) {
+    return `---\nname: ${name}\ndescription: An agent\n---\n\n${body}\n`;
+  }
+
+  it('emits valid TOML when the body contains a literal triple-quote', () => {
+    // A body containing ''' would terminate a TOML literal string early. The
+    // emit must fall back to an escaped basic string so the result parses.
+    const body = "Run a fenced block:\n'''lean\nexample : 1 = 1 := rfl\n'''\nmore text";
+    const toml = generateCodexAgentToml('fvs-explainer', agentWithBody('fvs-explainer', body));
+
+    // The literal delimiter must not be used, and the lone trailing ''' that
+    // would corrupt the file must not appear as a delimiter.
+    assert.ok(!toml.includes("developer_instructions = '''"), 'must not use a literal string for a body with ' + "'''");
+    assert.ok(toml.includes('developer_instructions = """'), 'falls back to basic multiline string');
+
+    // No unescaped """ inside the basic string would terminate it early. The
+    // only """ delimiters are the opening and closing ones.
+    const tripleDoubleCount = (toml.match(/"""/g) || []).length;
+    assert.equal(tripleDoubleCount, 2, 'exactly one opening and one closing basic delimiter');
+
+    // The triple-single-quotes from the body survive as content (escaped basic
+    // strings have no quoting issue with single quotes).
+    assert.ok(toml.includes("'''lean"), 'body triple-single-quotes retained as content');
+  });
+
+  it('rejects an unsafe agent name in the config block (fail closed)', () => {
+    assert.throws(
+      () => generateCodexConfigBlock([{ name: 'evil]\nmalicious = true', description: 'x' }], '/home/user/.codex'),
+      /unsafe name/,
+    );
+  });
+
+  it('builds config_file via JSON.stringify so paths are always quoted', () => {
+    const block = generateCodexConfigBlock([{ name: 'fvs-executor', description: 'x' }], '/home/user/.codex');
+    assert.ok(
+      block.includes('config_file = "/home/user/.codex/agents/fvs-executor.toml"'),
+      'config_file is a JSON-quoted absolute path',
+    );
+  });
+});
+
+describe('Legacy Codex hook rewrite (rewriteLegacyCodexHookBlock)', () => {
+  it('rewrites a bare-node FVS hook command to the absolute-node form', () => {
+    const runner = resolveCodexNodeRunner();
+    assert.ok(runner, 'a node runner token is available in the test env');
+    const configDir = '/home/user/.codex';
+    const scriptPath = '/home/user/.codex/hooks/fvs-check-update.js';
+    const content = [
+      '[hooks]',
+      `command = "node ${scriptPath}"`,
+      '',
+    ].join('\n');
+    const { content: rewritten, changed } = rewriteLegacyCodexHookBlock(content, runner, configDir);
+    assert.ok(changed, 'a legacy FVS command should be rewritten');
+    const interpreter = JSON.parse(runner);
+    assert.ok(rewritten.includes(interpreter), 'absolute node interpreter present');
+    assert.ok(!/command\s*=\s*"node\s/.test(rewritten), 'no bare-node command remains');
+  });
+
+  it('does not rewrite a foreign command outside the config hooks dir', () => {
+    const runner = resolveCodexNodeRunner();
+    const configDir = '/home/user/.codex';
+    // A path that ends in fvs-check-update.js but lives elsewhere must be left
+    // alone — the directory-containment guard protects foreign content.
+    const content = 'command = "node /opt/other/fvs-check-update.js"\n';
+    const { changed } = rewriteLegacyCodexHookBlock(content, runner, configDir);
+    assert.equal(changed, false, 'foreign command outside the config hooks dir is untouched');
   });
 });
