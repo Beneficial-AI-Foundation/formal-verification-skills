@@ -16,6 +16,24 @@ const reset = '\x1b[0m';
 // Codex config.toml constants
 const FVS_CODEX_MARKER = '# FVS Agent Configuration \u2014 managed by fv-skills-baif installer';
 
+// Codex hooks feature flag. Current Codex CLI reads a boolean `hooks` flag in
+// config.toml to enable its hook dispatcher; an older naming used `codex_hooks`.
+// Emit the canonical key and treat the legacy alias as equivalent so a reinstall
+// over an older config migrates the flag forward instead of leaving a duplicate.
+const CODEX_HOOKS_FEATURE_KEY = 'hooks';
+const CODEX_HOOKS_FEATURE_LEGACY_KEYS = ['codex_hooks'];
+const CODEX_HOOKS_FEATURE_ALL_KEYS = [CODEX_HOOKS_FEATURE_KEY, ...CODEX_HOOKS_FEATURE_LEGACY_KEYS];
+
+// The only FVS hook script with a Codex event target is the update checker,
+// wired as a SessionStart hook. The statusline has no Codex renderer surface and
+// stays Claude-only. Both the .js and its Windows .cmd shim are treated as
+// FVS-managed so a reinstall can replace a stale node-runner command with the
+// shim (and vice-versa across platforms) without clobbering foreign entries.
+const FVS_CODEX_MANAGED_HOOK_BASENAMES = new Set([
+  'fvs-check-update.js',
+  'fvs-check-update.cmd',
+]);
+
 const CODEX_AGENT_SANDBOX = {
   'fvs-executor': 'workspace-write',
   'fvs-lean-refactorer': 'workspace-write',
@@ -1096,6 +1114,394 @@ function mergeCodexConfig(configPath, fvsBlock) {
   fs.writeFileSync(configPath, merged);
 }
 
+// ── Codex hooks subsystem ────────────────────────────────────────────────────
+//
+// Current Codex CLI dispatches lifecycle events (e.g. SessionStart) from a
+// `hooks.json` file in the config dir, gated by a boolean feature flag in
+// config.toml. FVS registers a single SessionStart hook that runs the update
+// checker. The reconcile preserves any foreign (user- or GSD-authored) entries:
+// it removes only FVS-managed entries (matched by hook-script basename) before
+// appending exactly one fresh FVS entry, and it writes back into whichever
+// hooks.json shape the file already uses.
+
+function detectLineEnding(content) {
+  return /\r\n/.test(content) ? '\r\n' : '\n';
+}
+
+// Write through a sibling temp file then rename, so a mid-write failure cannot
+// truncate an existing config the user depends on to launch their session.
+function atomicWriteFileSync(targetPath, data, encoding = 'utf8') {
+  const dir = path.dirname(targetPath);
+  fs.mkdirSync(dir, { recursive: true });
+  const tmp = path.join(dir, `.${path.basename(targetPath)}.tmp-${process.pid}-${Date.now()}`);
+  fs.writeFileSync(tmp, data, encoding);
+  fs.renameSync(tmp, targetPath);
+}
+
+function tomlEscapeDoubleQuoted(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+// Resolve a stable absolute path to the Node executable, normalizing the
+// Homebrew Cellar symlink form to its stable bin/ alias so a node upgrade does
+// not orphan the hook command. Returns a JSON-quoted, forward-slashed token, or
+// null when process.execPath is unavailable.
+function resolveCodexNodeRunner() {
+  const execPath = typeof process.execPath === 'string' ? process.execPath : '';
+  if (!execPath) return null;
+  let stable = execPath;
+  if (/^\/usr\/local\/Cellar\/node(@\d+)?\/[^/]+\/bin\/node(\.exe)?$/.test(execPath)) {
+    stable = '/usr/local/bin/node';
+  } else if (/^\/opt\/homebrew\/Cellar\/node(@\d+)?\/[^/]+\/bin\/node(\.exe)?$/.test(execPath)) {
+    stable = '/opt/homebrew/bin/node';
+  }
+  return JSON.stringify(stable.replace(/\\/g, '/'));
+}
+
+function isFvsManagedCodexHookCommand(commandText, configDir) {
+  if (typeof commandText !== 'string') return false;
+  const normalized = commandText.replace(/\\/g, '/');
+  if (typeof configDir === 'string' && configDir.length > 0) {
+    const hooksDir = `${path.join(configDir, 'hooks').replace(/\\/g, '/')}/`;
+    if (!normalized.includes(hooksDir)) return false;
+  }
+  for (const basename of FVS_CODEX_MANAGED_HOOK_BASENAMES) {
+    const escaped = basename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp('(^|[\\\\/\\s"\'`])' + escaped + '(?=$|[\\s"\'`])');
+    if (pattern.test(normalized)) return true;
+  }
+  return false;
+}
+
+// Read hooks.json, drop any prior FVS-managed entries for `eventName`, then
+// append exactly one fresh managed entry (unless managedCommand is null, which
+// means remove-only). Foreign entries are preserved and the file is written back
+// in the SAME shape it used: nested `{ hooks: { <Event>: [...] } }` or flat
+// `{ <Event>: [...] }`. Returns { changed, wrote, path }.
+function reconcileCodexHooksJsonEvent(targetDir, eventName, opts = {}) {
+  const hooksJsonPath = path.join(targetDir, 'hooks.json');
+  const managedCommand = typeof opts.managedCommand === 'string' ? opts.managedCommand : null;
+  const commandWindows = typeof opts.commandWindows === 'string' ? opts.commandWindows : null;
+
+  let parsed = {};
+  let currentContent = null;
+  if (fs.existsSync(hooksJsonPath)) {
+    const raw = fs.readFileSync(hooksJsonPath, 'utf8');
+    currentContent = raw;
+    if (raw.trim()) {
+      try {
+        parsed = JSON.parse(raw);
+      } catch (err) {
+        throw new Error(`hooks.json parse failed: ${err && err.message ? err.message : String(err)}`);
+      }
+    }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) parsed = {};
+
+  const usesNestedHooksObject =
+    parsed.hooks && typeof parsed.hooks === 'object' && !Array.isArray(parsed.hooks);
+  const hookTable = usesNestedHooksObject ? parsed.hooks : parsed;
+  const eventEntries = Array.isArray(hookTable[eventName]) ? hookTable[eventName] : [];
+
+  let removedManaged = false;
+  const sanitizedEntries = [];
+  for (const entry of eventEntries) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const originalHooks = Array.isArray(entry.hooks) ? entry.hooks : [];
+    if (originalHooks.length === 0) {
+      sanitizedEntries.push(entry);
+      continue;
+    }
+    const keptHooks = originalHooks.filter((hook) => {
+      const cmd = hook && typeof hook === 'object' ? hook.command : null;
+      const managed = isFvsManagedCodexHookCommand(cmd, targetDir);
+      if (managed) removedManaged = true;
+      return !managed;
+    });
+    if (keptHooks.length === 0) continue;
+    sanitizedEntries.push({ ...entry, hooks: keptHooks });
+  }
+
+  if (managedCommand) {
+    const hookEntry = { type: 'command', command: managedCommand };
+    if (commandWindows) hookEntry.commandWindows = commandWindows;
+    sanitizedEntries.push({ hooks: [hookEntry] });
+  }
+
+  if (sanitizedEntries.length > 0) {
+    hookTable[eventName] = sanitizedEntries;
+  } else {
+    delete hookTable[eventName];
+  }
+  if (usesNestedHooksObject) parsed.hooks = hookTable;
+
+  const nextContent = `${JSON.stringify(parsed, null, 2)}\n`;
+  const changed = currentContent !== nextContent;
+  const shouldWrite = changed && (currentContent !== null || Object.keys(parsed).length > 0);
+  if (shouldWrite) {
+    atomicWriteFileSync(hooksJsonPath, nextContent, 'utf8');
+  }
+  return { changed: changed || removedManaged, wrote: shouldWrite, path: hooksJsonPath };
+}
+
+function reconcileCodexHooksJsonSessionStart(targetDir, opts = {}) {
+  return reconcileCodexHooksJsonEvent(targetDir, 'SessionStart', opts);
+}
+
+// Build the Windows `.cmd` shim that wraps the Node invocation. A bare
+// `node.exe <script>` command fails when Codex dispatches hooks through
+// Git-Bash's POSIX exec; a `.cmd` shim launched with passthrough args avoids
+// that. Returns the shim file path, its rendered body, and the hooks.json
+// command token, or null when no runner is available.
+function buildCodexHookWindowsShimIR(scriptAbsPath, absoluteRunnerToken) {
+  if (!absoluteRunnerToken) return null;
+  let interpreter;
+  try {
+    interpreter = JSON.parse(absoluteRunnerToken);
+  } catch {
+    interpreter = absoluteRunnerToken;
+  }
+  const targetAbs = scriptAbsPath.replace(/\\/g, '/');
+  const scriptQuoted = JSON.stringify(targetAbs);
+  const cmdPath = scriptAbsPath.replace(/\.js$/, '.cmd');
+  const hookCommand = JSON.stringify(cmdPath.replace(/\\/g, '/'));
+  const runnerQuoted = JSON.stringify(interpreter);
+  return {
+    cmdPath,
+    hookCommand,
+    render: () => `@ECHO OFF\r\n@SETLOCAL\r\n@${runnerQuoted} ${scriptQuoted} %*\r\n`,
+  };
+}
+
+// Rewrite a legacy bare-`node <script>` hook command in a config.toml `[hooks]`
+// block to an absolute-node command, so a hook authored under a full-PATH shell
+// still launches under Codex's minimal-PATH GUI launch. Only touches commands
+// whose script basename is FVS-managed.
+function rewriteLegacyCodexHookBlock(content, absoluteRunnerToken) {
+  if (!content || !absoluteRunnerToken) return { content, changed: false };
+  let interpreter;
+  try {
+    interpreter = JSON.parse(absoluteRunnerToken);
+  } catch {
+    interpreter = absoluteRunnerToken;
+  }
+  let changed = false;
+  const updated = content.replace(
+    /^(command\s*=\s*")node\s+((?:\\"[^"]+\\"|\S+))("\s*)$/gm,
+    (full, prefix, scriptToken, suffix) => {
+      const quoted = scriptToken.match(/^\\"([\s\S]+)\\"$/);
+      const scriptPath = quoted ? quoted[1] : scriptToken;
+      if (!isFvsManagedCodexHookCommand(scriptPath)) return full;
+      const desired = tomlEscapeDoubleQuoted(`${interpreter} ${JSON.stringify(scriptPath)}`);
+      const current = `${scriptToken}`;
+      const next = `${prefix}${desired}${suffix}`;
+      if (`${prefix}node ${current}${suffix}` === next) return full;
+      changed = true;
+      return next;
+    },
+  );
+  return { content: updated, changed: changed || updated !== content };
+}
+
+// Migrate older Codex `[hooks]` representations to the two-level nested
+// array-of-tables form (`[[hooks.<Event>]]` + `[[hooks.<Event>.hooks]]`) that
+// current Codex CLI requires. Handles: a bare `[hooks]` map / single-level
+// `[hooks.<Event>]` table, flat `[[hooks]]` array entries (event taken from an
+// `event` key), and a single-block `[[hooks.<Event>]]` carrying handler fields
+// directly with no `[[hooks.<Event>.hooks]]` sub-table. Returns content
+// unchanged when nothing matches.
+function migrateCodexHooksMapFormat(content) {
+  if (!content) return content;
+  const sections = getTomlTableSections(content);
+  const segLen = (p) => {
+    // Count parsed key segments, ignoring dots inside quoted names.
+    let depth = 0; let inStr = false; let quote = '';
+    let count = p.length ? 1 : 0;
+    for (let i = 0; i < p.length; i += 1) {
+      const ch = p[i];
+      if (inStr) { if (ch === quote) inStr = false; continue; }
+      if (ch === '"' || ch === '\'') { inStr = true; quote = ch; continue; }
+      if (ch === '.') count += 1;
+    }
+    return count + depth;
+  };
+
+  const legacyMapSections = sections.filter(
+    (s) => !s.array && (
+      s.path === 'hooks' ||
+      (s.path.startsWith('hooks.') && segLen(s.path) === 2 &&
+        s.path !== 'hooks.state' && !s.path.startsWith('hooks.state.'))
+    ),
+  );
+  const flatAotSections = sections.filter((s) => s.array && s.path === 'hooks');
+  const STALE_HANDLER = /^\s*(?:command|type|timeout|statusMessage)\s*=/m;
+  const staleNamespaced = sections.filter((s) => {
+    if (!s.array || !s.path.startsWith('hooks.') || segLen(s.path) !== 2) return false;
+    const body = content.slice(s.headerEnd, s.end);
+    if (!STALE_HANDLER.test(body)) return false;
+    const subPath = `${s.path}.hooks`;
+    return !sections.some((x) => x.array && x.path === subPath);
+  });
+
+  if (legacyMapSections.length === 0 && flatAotSections.length === 0 && staleNamespaced.length === 0) {
+    return content;
+  }
+
+  const eol = detectLineEnding(content);
+  const quoteEvent = (name) => (/^[A-Za-z0-9_-]+$/.test(name) ? name : JSON.stringify(name));
+  const readKeyValueLines = (body, skip = new Set()) => {
+    const out = { event: [], handler: [], type: null };
+    for (const rawLine of body.split(/\r?\n/)) {
+      const trimmed = rawLine.trim();
+      if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('[')) continue;
+      const m = trimmed.match(/^("(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+)\s*=/);
+      if (!m) continue;
+      let key = m[1];
+      if (/^["']/.test(key)) { try { key = JSON.parse(key.replace(/^'/, '"').replace(/'$/, '"')); } catch { key = key.slice(1, -1); } }
+      if (skip.has(key)) continue;
+      if (key === 'event') { out.type = trimmed.replace(/^[^=]*=\s*/, '').replace(/^["']|["']$/g, ''); continue; }
+      if (key === 'matcher') out.event.push(trimmed);
+      else out.handler.push(trimmed);
+    }
+    return out;
+  };
+
+  const renderEvent = (eventName, eventLines, handlerLines) => {
+    let block = `${eol}[[hooks.${quoteEvent(eventName)}]]${eol}`;
+    for (const line of eventLines) block += `${line}${eol}`;
+    block += `${eol}[[hooks.${quoteEvent(eventName)}.hooks]]${eol}`;
+    const hasType = handlerLines.some((l) => /^type\s*=/.test(l));
+    if (!hasType) block += `type = "command"${eol}`;
+    for (const line of handlerLines) block += `${line}${eol}`;
+    return block;
+  };
+
+  const ranges = [];
+  let rebuilt = '';
+
+  for (const s of legacyMapSections) {
+    ranges.push({ start: s.start, end: s.end });
+    const eventName = s.path === 'hooks' ? null : s.path.slice('hooks.'.length);
+    const { event, handler } = readKeyValueLines(content.slice(s.headerEnd, s.end));
+    if (eventName && (event.length || handler.length)) {
+      rebuilt += renderEvent(eventName, event, handler);
+    }
+  }
+  for (const s of flatAotSections) {
+    ranges.push({ start: s.start, end: s.end });
+    const { event, handler, type } = readKeyValueLines(content.slice(s.headerEnd, s.end), new Set(['event']));
+    if (type) rebuilt += renderEvent(type, event, handler);
+  }
+  for (const s of staleNamespaced) {
+    ranges.push({ start: s.start, end: s.end });
+    const eventName = s.path.slice('hooks.'.length);
+    const { event, handler } = readKeyValueLines(content.slice(s.headerEnd, s.end));
+    rebuilt += renderEvent(eventName, event, handler);
+  }
+
+  const stripped = removeContentRanges(content, ranges).trimEnd();
+  return `${stripped}${rebuilt}${eol}`;
+}
+
+// Ensure the FVS SessionStart hook is registered in hooks.json, resolving the
+// managed command from the absolute Node runner plus the resolved script path.
+// On win32 a `.cmd` shim is written and emitted as commandWindows. Returns the
+// reconcile result, or a no-op result when no runner is available.
+function ensureCodexHooksJsonSessionStart(targetDir, opts = {}) {
+  const platform = opts.platform || process.platform;
+  const absoluteRunner = opts.absoluteRunner || null;
+  const hooksJsonPath = path.join(targetDir, 'hooks.json');
+  if (!absoluteRunner) return { changed: false, wrote: false, path: hooksJsonPath };
+
+  const scriptPath = path.resolve(targetDir, 'hooks', 'fvs-check-update.js').replace(/\\/g, '/');
+
+  let managedCommand;
+  let commandWindows;
+  if (platform === 'win32') {
+    const shimIR = buildCodexHookWindowsShimIR(scriptPath, absoluteRunner);
+    if (!shimIR) return { changed: false, wrote: false, path: hooksJsonPath };
+    try {
+      atomicWriteFileSync(shimIR.cmdPath, shimIR.render(), 'utf8');
+    } catch (shimErr) {
+      const reason = shimErr && shimErr.message ? shimErr.message : String(shimErr);
+      console.warn(
+        `  ${yellow}⚠${reset}  Codex Windows hook NOT installed — .cmd shim write failed: ${reason}. ` +
+        `Fix the write error and re-run the installer.`,
+      );
+      return { changed: false, wrote: false, path: hooksJsonPath };
+    }
+    managedCommand = shimIR.hookCommand;
+    commandWindows = shimIR.hookCommand;
+  } else {
+    managedCommand = `${absoluteRunner} ${JSON.stringify(scriptPath)}`;
+  }
+
+  if (!managedCommand) return { changed: false, wrote: false, path: hooksJsonPath };
+  return reconcileCodexHooksJsonSessionStart(targetDir, { managedCommand, commandWindows });
+}
+
+function removeCodexHooksJsonSessionStart(targetDir) {
+  return reconcileCodexHooksJsonSessionStart(targetDir, { managedCommand: null });
+}
+
+// Ensure the Codex hooks feature flag is present and set true under the
+// canonical key. If the file already enables the flag under the legacy key,
+// rewrite that line to the canonical key (migrate forward) rather than adding a
+// duplicate. Returns { content, changed }.
+function ensureCodexHooksFeature(configContent) {
+  const content = typeof configContent === 'string' ? configContent : '';
+  const eol = content ? detectLineEnding(content) : '\n';
+  const lines = content.length ? content.split(/\r?\n/) : [];
+
+  let canonicalIdx = -1;
+  let legacyIdx = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    const m = lines[i].match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.+?)\s*$/);
+    if (!m) continue;
+    const key = m[1];
+    if (key === CODEX_HOOKS_FEATURE_KEY && canonicalIdx === -1) canonicalIdx = i;
+    else if (CODEX_HOOKS_FEATURE_LEGACY_KEYS.includes(key) && legacyIdx === -1) legacyIdx = i;
+  }
+
+  // Only operate on root-level flag lines (not inside a [table]); a flag line
+  // appearing after the first [section] header is treated as section-scoped and
+  // left alone — FVS emits the flag at the document root before any table.
+  const firstHeaderIdx = lines.findIndex((l) => /^\s*\[/.test(l));
+  const isRootLevel = (idx) => idx !== -1 && (firstHeaderIdx === -1 || idx < firstHeaderIdx);
+
+  if (isRootLevel(canonicalIdx)) {
+    if (/=\s*true\s*$/.test(lines[canonicalIdx])) return { content, changed: false };
+    lines[canonicalIdx] = `${CODEX_HOOKS_FEATURE_KEY} = true`;
+    return { content: lines.join(eol), changed: true };
+  }
+  if (isRootLevel(legacyIdx)) {
+    lines[legacyIdx] = `${CODEX_HOOKS_FEATURE_KEY} = true`;
+    return { content: lines.join(eol), changed: true };
+  }
+
+  // Insert a fresh canonical flag line at the document root, above any table.
+  const insertLine = `${CODEX_HOOKS_FEATURE_KEY} = true`;
+  if (firstHeaderIdx === -1) {
+    const base = content.trimEnd();
+    const next = base ? `${insertLine}${eol}${base}${eol}` : `${insertLine}${eol}`;
+    return { content: next, changed: true };
+  }
+  lines.splice(firstHeaderIdx, 0, insertLine, '');
+  return { content: lines.join(eol), changed: true };
+}
+
+function hasEnabledCodexHooksFeature(configContent) {
+  if (typeof configContent !== 'string') return false;
+  const firstHeaderIdx = configContent.split(/\r?\n/).findIndex((l) => /^\s*\[/.test(l));
+  const lines = configContent.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    if (firstHeaderIdx !== -1 && i >= firstHeaderIdx) break;
+    const m = lines[i].match(/^\s*([A-Za-z0-9_]+)\s*=\s*true\s*$/);
+    if (m && CODEX_HOOKS_FEATURE_ALL_KEYS.includes(m[1])) return true;
+  }
+  return false;
+}
+
 /**
  * Generate config.toml and per-agent .toml files for Codex.
  * Reads agent .md files from source, extracts metadata, writes .toml configs.
@@ -1143,6 +1549,19 @@ function installCodexConfig(targetDir, agentsSrc) {
 
   const fvsBlock = generateCodexConfigBlock(agents, targetDir);
   mergeCodexConfig(configPath, fvsBlock);
+
+  // Enable the Codex hooks feature flag (canonical key, legacy alias migrated
+  // forward) so the SessionStart hook in hooks.json is dispatched. Migrate any
+  // legacy `[hooks]` representation to the nested AoT shape first.
+  if (fs.existsSync(configPath)) {
+    let configContent = fs.readFileSync(configPath, 'utf8');
+    const migrated = migrateCodexHooksMapFormat(configContent);
+    if (migrated !== configContent) configContent = migrated;
+    const feature = ensureCodexHooksFeature(configContent);
+    if (feature.changed || migrated !== fs.readFileSync(configPath, 'utf8')) {
+      fs.writeFileSync(configPath, feature.content);
+    }
+  }
 
   return agents.length;
 }
@@ -1483,8 +1902,42 @@ function uninstall(isGlobal, runtime = 'claude') {
     }
   }
 
-  // 4. Remove FVS hooks (skip for Codex -- no hook system)
-  if (!isCodex) {
+  // 4. Remove FVS hooks. Codex carries only the update-check hook (wired as
+  // SessionStart in hooks.json), plus its Windows .cmd shim; the statusline is
+  // Claude-only. Other runtimes carry both hook scripts in settings.json.
+  if (isCodex) {
+    // Remove the FVS SessionStart entry from hooks.json, preserving any
+    // foreign (user/GSD) entries.
+    const hooksJsonPath = path.join(targetDir, 'hooks.json');
+    if (fs.existsSync(hooksJsonPath)) {
+      try {
+        const result = removeCodexHooksJsonSessionStart(targetDir);
+        if (result.wrote) {
+          removedCount++;
+          console.log(`  ${green}✓${reset} Removed FVS SessionStart hook from hooks.json`);
+        }
+      } catch (e) {
+        // A malformed hooks.json is the user's to fix; do not abort uninstall.
+      }
+    }
+
+    const hooksDir = path.join(targetDir, 'hooks');
+    if (fs.existsSync(hooksDir)) {
+      const codexHookFiles = ['fvs-check-update.js', 'fvs-check-update.cmd'];
+      let hookCount = 0;
+      for (const hook of codexHookFiles) {
+        const hookPath = path.join(hooksDir, hook);
+        if (fs.existsSync(hookPath)) {
+          fs.unlinkSync(hookPath);
+          hookCount++;
+        }
+      }
+      if (hookCount > 0) {
+        removedCount++;
+        console.log(`  ${green}✓${reset} Removed ${hookCount} FVS Codex hook file(s)`);
+      }
+    }
+  } else {
     const hooksDir = path.join(targetDir, 'hooks');
     if (fs.existsSync(hooksDir)) {
       const fvsHooks = ['fvs-statusline.js', 'fvs-check-update.js'];
@@ -1542,7 +1995,8 @@ function uninstall(isGlobal, runtime = 'claude') {
     }
   }
 
-  // 7. Clean up settings.json (remove FVS hooks and statusline) -- skip for Codex
+  // 7. Clean up settings.json (remove FVS hooks and statusline). Codex has no
+  // settings.json surface — its hook removal runs via the hooks.json path above.
   if (!isCodex) {
     const settingsPath = path.join(targetDir, 'settings.json');
     if (fs.existsSync(settingsPath)) {
@@ -1889,9 +2343,10 @@ function writeManifest(configDir, runtime = 'claude') {
       }
     }
   }
-  // Track hook files so saveLocalPatches() can detect user modifications
-  // Hooks are only installed for runtimes that use settings.json (not Codex)
-  if (!isCodex) {
+  // Track hook files so saveLocalPatches() can detect user modifications.
+  // Every runtime that lands a hook script participates: Claude/Gemini carry
+  // both fvs-*.js hooks, Codex carries the single update-check hook.
+  {
     const hooksDir = path.join(configDir, 'hooks');
     if (fs.existsSync(hooksDir)) {
       for (const file of fs.readdirSync(hooksDir)) {
@@ -2274,11 +2729,42 @@ function install(isGlobal, runtime = 'claude') {
   // One-time v1.3.x -> v2.0 migration notice (fires only on that transition)
   reportV2Migration(priorManifestVersion);
 
-  // Codex: generate config.toml and per-agent .toml files, then return early
+  // Codex: generate config.toml and per-agent .toml files, register the
+  // SessionStart hook in hooks.json, then return early.
   if (isCodex) {
     const agentCount = installCodexConfig(targetDir, agentsSrc);
     console.log(`  ${green}✓${reset} Generated config.toml with ${agentCount} agent roles`);
     console.log(`  ${green}✓${reset} Generated ${agentCount} agent .toml config files`);
+
+    // Copy the update-check hook script (the only FVS hook with a Codex event
+    // target) and register it as a SessionStart hook in hooks.json. The
+    // statusline has no Codex surface and is not installed here.
+    const codexHooksSrc = path.join(src, 'hooks', 'dist');
+    const checkUpdateSrc = path.join(codexHooksSrc, 'fvs-check-update.js');
+    if (fs.existsSync(checkUpdateSrc)) {
+      const hooksDest = path.join(targetDir, 'hooks');
+      fs.mkdirSync(hooksDest, { recursive: true });
+      const configDirReplacement = getConfigDirFromHome(runtime, isGlobal);
+      let hookContent = fs.readFileSync(checkUpdateSrc, 'utf8');
+      hookContent = hookContent.replace(/'\.claude'/g, configDirReplacement);
+      fs.writeFileSync(path.join(hooksDest, 'fvs-check-update.js'), hookContent);
+
+      const codexNodeRunner = resolveCodexNodeRunner();
+      if (!codexNodeRunner) {
+        console.warn(`  ${yellow}⚠${reset}  Skipped Codex SessionStart hook — Node executable path unavailable.`);
+      } else {
+        const hookWrite = ensureCodexHooksJsonSessionStart(targetDir, {
+          absoluteRunner: codexNodeRunner,
+          platform: process.platform,
+        });
+        if (hookWrite.wrote) {
+          console.log(`  ${green}✓${reset} Configured Codex SessionStart hook (hooks.json)`);
+        } else {
+          console.log(`  ${green}✓${reset} Verified Codex SessionStart hook (hooks.json)`);
+        }
+      }
+    }
+
     return { settingsPath: null, settings: null, statuslineCommand: null, runtime };
   }
 
@@ -2639,7 +3125,19 @@ module.exports = {
   extractFrontmatterAndBody,
   extractFrontmatterField,
   toSingleLine,
+  reconcileCodexHooksJsonEvent,
+  reconcileCodexHooksJsonSessionStart,
+  ensureCodexHooksJsonSessionStart,
+  removeCodexHooksJsonSessionStart,
+  buildCodexHookWindowsShimIR,
+  rewriteLegacyCodexHookBlock,
+  migrateCodexHooksMapFormat,
+  ensureCodexHooksFeature,
+  hasEnabledCodexHooksFeature,
+  resolveCodexNodeRunner,
   FVS_CODEX_MARKER,
   CODEX_AGENT_SANDBOX,
   FVS_CODEX_AGENT_EFFORT,
+  CODEX_HOOKS_FEATURE_KEY,
+  CODEX_HOOKS_FEATURE_LEGACY_KEYS,
 };
