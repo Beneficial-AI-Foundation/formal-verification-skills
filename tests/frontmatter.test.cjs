@@ -220,12 +220,13 @@ describe('References (fv-skills/references/)', () => {
   const files = mdFiles(dir);
 
   const expected = [
-    'aeneas-patterns.md', 'lean-refactoring.md', 'lean-spec-conventions.md',
-    'model-profiles.md', 'proof-strategies.md', 'tactic-usage.md', 'ui-brand.md',
+    'aeneas-patterns.md', 'blocker-catalog.md', 'extraction-safety-model.md',
+    'lean-refactoring.md', 'lean-spec-conventions.md', 'model-profiles.md',
+    'proof-strategies.md', 'tactic-usage.md', 'ui-brand.md',
   ];
 
-  it('has exactly 7 reference files', () => {
-    assert.equal(files.length, 7, `Expected 7 references, got ${files.length}: ${files.join(', ')}`);
+  it('has exactly 9 reference files', () => {
+    assert.equal(files.length, 9, `Expected 9 references, got ${files.length}: ${files.join(', ')}`);
   });
 
   it('has the expected set of reference files', () => {
