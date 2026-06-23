@@ -7,7 +7,10 @@
     "defs_file": null,
     "lakefile_path": null,
     "lean_toolchain_path": null,
-    "status_tracking_file": null
+    "status_tracking_file": null,
+    "charon_clone_path": null,
+    "aeneas_clone_path": null,
+    "extract_workspace": ".formalising/extract"
   },
   "model": {
     "model_profile": "balanced"

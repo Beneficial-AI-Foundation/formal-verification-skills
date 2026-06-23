@@ -26,6 +26,12 @@ subagent before calling Task(). The profile table below defines the mapping.
 | fvs-explainer            | inherit | sonnet   | haiku  |
 | fvs-dependency-analyzer  | sonnet  | haiku    | haiku  |
 | fvs-code-reader          | sonnet  | sonnet   | haiku  |
+| fvs-extract-classifier   | inherit | sonnet   | haiku  |
+| fvs-extract-applier      | inherit | sonnet   | sonnet |
+| fvs-extract-bisector     | inherit | sonnet   | sonnet |
+| fvs-equivalence-assessor | inherit | sonnet   | sonnet |
+| fvs-draft-investigator   | inherit | sonnet   | sonnet |
+| fvs-doc-syncer           | inherit | sonnet   | sonnet |
 
 Quality uses `inherit` (= parent model, typically Opus) for the agents that matter most:
 researcher, executor, and explainer. These handle spec generation, proof attempts, and

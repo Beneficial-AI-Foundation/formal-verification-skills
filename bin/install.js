@@ -39,6 +39,16 @@ const CODEX_AGENT_SANDBOX = {
   'fvs-lean-refactorer': 'workspace-write',
   'fvs-explainer': 'read-only',
   'fvs-researcher': 'read-only',
+  // Extraction loop + doc-sync workers. Read-only roles (the classifier reduces a
+  // failed run to a signature; the equivalence assessor judges a change without
+  // authoring it) get read-only; the workers that edit source, the workspace, or
+  // references get workspace-write.
+  'fvs-extract-classifier': 'read-only',
+  'fvs-equivalence-assessor': 'read-only',
+  'fvs-extract-applier': 'workspace-write',
+  'fvs-extract-bisector': 'workspace-write',
+  'fvs-draft-investigator': 'workspace-write',
+  'fvs-doc-syncer': 'workspace-write',
 };
 
 // Codex agents inherit the user's selected Codex model — the converter never
@@ -53,6 +63,17 @@ const FVS_CODEX_AGENT_EFFORT = {
   'fvs-lean-refactorer': 'xhigh',
   'fvs-explainer': 'xhigh',
   'fvs-researcher': 'high',
+  // Extraction loop + doc-sync workers. The two roles whose output is the most
+  // reasoning-sensitive — the independent equivalence assessor (judging whether a
+  // meaning-bearing change preserves behaviour) and the bisector (minimizing a
+  // novel blocker to a faithful failing example) — run at xhigh; the remaining
+  // workers run at high.
+  'fvs-equivalence-assessor': 'xhigh',
+  'fvs-extract-bisector': 'xhigh',
+  'fvs-extract-classifier': 'high',
+  'fvs-extract-applier': 'high',
+  'fvs-draft-investigator': 'high',
+  'fvs-doc-syncer': 'high',
 };
 
 // Get version from package.json
