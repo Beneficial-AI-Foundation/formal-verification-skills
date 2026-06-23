@@ -41,7 +41,7 @@ Paper track:    /fvs:lean-formalise → /fvs:lean-verify → /fvs:lean-refactor
 
 Five router commands group the skills. Invoke a router bare to print its routing table, or with a request to forward to the matched skill.
 
-- `/fvs:aeneas` — Aeneas/Charon extraction maintenance (sync-aeneas)
+- `/fvs:aeneas` — Aeneas/Charon extraction maintenance (aeneas-extract, sync-aeneas)
 - `/fvs:context` — Codebase context (map-code)
 - `/fvs:fc` — Formal-correctness core (fc-plan, lean-specify, lean-verify, natural-language, lean-refactor)
 - `/fvs:formalise` — Paper formalisation (lean-formalise, lean-refactor)
@@ -50,6 +50,19 @@ Five router commands group the skills. Invoke a router bare to print its routing
 ### Aeneas (`/fvs:aeneas`)
 
 Aeneas/Charon extraction maintenance.
+
+**`/fvs:aeneas-extract <path>`**
+Drive a Rust crate/folder/file through the bounded Aeneas extraction repair loop.
+
+- Auto-detects target shape (crate via `Cargo.toml`, folder, or single file)
+- Pre-flight pin audit: warn-and-confirm on Charon/Aeneas pin drift, records `pin_context`
+- Loop: extract → classify → dispatch (auto-apply / bisect / gate / escalate) → document → re-extract
+- Fires a synchronous Category-B equivalence gate with an independent assessor; refuses completion without the human ratification token
+- Reversible source records at the crate root; generated Lean is never written
+- Bounded (attempt-cap 3, no-progress rule); escalation is a human decision point and a valid outcome
+
+Usage: `/fvs:aeneas-extract path/to/crate`
+Usage: `/fvs:aeneas-extract src/field.rs`
 
 **`/fvs:sync-aeneas`**
 Sync Aeneas upstream documentation and update FVS references.
@@ -238,12 +251,13 @@ Show this command reference.
 │   ├── fvs-executor.md
 │   ├── fvs-explainer.md
 │   └── fvs-lean-refactorer.md
-├── commands/fvs/          # flat siblings: 5 routers + 15 commands
+├── commands/fvs/          # flat siblings: 5 routers + 16 commands
 │   ├── aeneas.md          # router
 │   ├── context.md         # router
 │   ├── fc.md              # router
 │   ├── formalise.md       # router
 │   ├── manage.md          # router
+│   ├── aeneas-extract.md
 │   ├── map-code.md
 │   ├── fc-plan.md
 │   ├── lean-specify.md
@@ -267,6 +281,7 @@ Show this command reference.
     ├── upstream/aeneas/     # Pinned upstream documentation snapshot
     │   └── _sync-meta.json  # Mapping table for sync-aeneas
     └── workflows/           # Command orchestration logic
+        ├── aeneas-extract.md
         ├── lean-formalise.md
         └── sync-aeneas.md
 ```

@@ -106,6 +106,7 @@ Commands are grouped into five bundles. Each bundle has a **router** command tha
 
 | Command | Description |
 |---------|-------------|
+| `/fvs:aeneas-extract` | Drive a Rust crate/folder/file through the bounded Aeneas extraction repair loop (pin audit, classify, auto-apply/bisect/gate/escalate, reversible records) |
 | `/fvs:sync-aeneas` | Sync Aeneas upstream documentation and update FVS references |
 
 ### Context — `/fvs:context`
