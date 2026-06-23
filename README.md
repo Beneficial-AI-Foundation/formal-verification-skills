@@ -107,7 +107,7 @@ Commands are grouped into five bundles. Each bundle has a **router** command tha
 | Command | Description |
 |---------|-------------|
 | `/fvs:aeneas-extract` | Drive a Rust crate/folder/file through the bounded Aeneas extraction repair loop (pin audit, classify, auto-apply/bisect/gate/escalate, reversible records) |
-| `/fvs:sync-aeneas` | Sync Aeneas upstream documentation and update FVS references |
+| `/fvs:sync-aeneas-verif` | Sync Aeneas/Charon upstream docs and reconcile the extraction blocker catalog via two specialised agents |
 
 ### Context — `/fvs:context`
 
@@ -191,7 +191,7 @@ FVS builds on the work of several open-source projects:
 - **[Aeneas](https://github.com/AeneasVerif/aeneas)** -- FVS incorporates and adapts
   documentation and proof skills from the Aeneas verification framework (Apache 2.0).
   The upstream Aeneas documentation is stored in `fv-skills/upstream/aeneas/` and can
-  be synced with `/fvs:sync-aeneas`.
+  be synced with `/fvs:sync-aeneas-verif`.
 
 - **[GSD (Get Shit Done)](https://github.com/gsd-build/get-shit-done)** -- FVS follows
   the GSD plugin architecture for Claude Code skill distribution (MIT).

@@ -41,7 +41,7 @@ Paper track:    /fvs:lean-formalise → /fvs:lean-verify → /fvs:lean-refactor
 
 Five router commands group the skills. Invoke a router bare to print its routing table, or with a request to forward to the matched skill.
 
-- `/fvs:aeneas` — Aeneas/Charon extraction maintenance (aeneas-extract, sync-aeneas)
+- `/fvs:aeneas` — Aeneas/Charon extraction maintenance (aeneas-extract, sync-aeneas-verif)
 - `/fvs:context` — Codebase context (map-code)
 - `/fvs:fc` — Formal-correctness core (fc-plan, lean-specify, lean-verify, natural-language, lean-refactor)
 - `/fvs:formalise` — Paper formalisation (lean-formalise, lean-refactor)
@@ -64,17 +64,17 @@ Drive a Rust crate/folder/file through the bounded Aeneas extraction repair loop
 Usage: `/fvs:aeneas-extract path/to/crate`
 Usage: `/fvs:aeneas-extract src/field.rs`
 
-**`/fvs:sync-aeneas`**
-Sync Aeneas upstream documentation and update FVS references.
+**`/fvs:sync-aeneas-verif`**
+Sync Aeneas/Charon upstream docs and reconcile the extraction blocker catalog via two specialised agents.
 
-- Reads `_sync-meta.json` mapping table for upstream-to-FVS section mapping
-- Fetches latest Aeneas docs from GitHub, diffs against stored snapshot
-- Maps changes to affected FVS reference files
+- Mines the config-driven local Charon + Aeneas clones (no hardcoded paths); reports clone staleness gracefully
+- Mode (a) tactics/Lean-syntax: reads `_sync-meta.json` mapping, diffs upstream docs section-by-section, detects and propagates tactic renames
+- Mode (b) extraction-docs: syncs Charon/Aeneas extraction documentation and reconciles the blocker catalog in place (retire / update-signature / still-open)
+- Reconcile-not-append: existing entries/sections updated in place, never blind-appended or silently overwritten
 - Interactive: user approves each proposed change
-- Detects tactic renames and propagates across FVS content
-- Updates snapshot files and metadata
+- Read-only on-demand GitHub fetch as a fallback; never opens or creates an upstream artifact
 
-Usage: `/fvs:sync-aeneas`
+Usage: `/fvs:sync-aeneas-verif`
 
 ### Context (`/fvs:context`)
 
@@ -271,7 +271,7 @@ Show this command reference.
 │   ├── resume-work.md
 │   ├── update.md
 │   ├── reapply-patches.md
-│   ├── sync-aeneas.md
+│   ├── sync-aeneas-verif.md
 │   └── help.md
 ├── scripts/
 │   └── fvs-kb-query.py           # NotebookLM query tool (Python)
@@ -279,11 +279,11 @@ Show this command reference.
     ├── references/          # Domain knowledge
     ├── templates/           # Spec, config, stub templates
     ├── upstream/aeneas/     # Pinned upstream documentation snapshot
-    │   └── _sync-meta.json  # Mapping table for sync-aeneas
+    │   └── _sync-meta.json  # Mapping table for sync-aeneas-verif
     └── workflows/           # Command orchestration logic
         ├── aeneas-extract.md
         ├── lean-formalise.md
-        └── sync-aeneas.md
+        └── sync-aeneas-verif.md
 ```
 
 ## Status Symbols

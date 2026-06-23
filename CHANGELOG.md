@@ -15,6 +15,7 @@ Structural cleanup and bundle architecture. Updating from v1.3 applies all renam
 
 ### Changed
 - Renamed `/fvs:plan` to `/fvs:fc-plan` (clean break, no alias stub); all cross-references, the underlying workflow, and tests updated in lockstep
+- Superseded `/fvs:sync-aeneas` with `/fvs:sync-aeneas-verif` (clean break, no alias stub) -- the doc sync now fans out to two specialised agents: tactics/Lean-syntax sync (the existing `_sync-meta.json` mapping + tactic-rename machinery) and extraction-docs sync, which also reconciles the Aeneas extraction blocker catalog against live upstream (retire / update-signature / still-open, reconcile-not-append); mines the config-driven local Charon + Aeneas clones and reports clone staleness gracefully
 - `help.md` and README regrouped by bundle (`lean-refactor` is dual-listed in both `fc` and `formalise`; `map-code` in `context`; `sync-aeneas` in `aeneas`); Quick Start and Core Workflow narrative kept up top
 
 ### Removed

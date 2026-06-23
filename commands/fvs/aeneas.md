@@ -5,7 +5,7 @@ argument-hint: ""
 allowed-tools:
   - Read
   - Skill
-requires: [sync-aeneas]
+requires: [aeneas-extract, sync-aeneas-verif]
 ---
 
 Route to the appropriate aeneas-extraction skill based on the user's intent.
@@ -14,6 +14,7 @@ When invoked WITH a request, match it against the table below and invoke the mat
 
 | User wants | Invoke |
 |---|---|
-| Sync the local Aeneas/Charon clones and check pins | fvs:sync-aeneas |
+| Drive a Rust crate/folder/file through the extraction repair loop | fvs:aeneas-extract |
+| Sync the local Aeneas/Charon clones, docs, and reconcile the blocker catalog | fvs:sync-aeneas-verif |
 
 Invoke the matched skill directly using the Skill tool.
