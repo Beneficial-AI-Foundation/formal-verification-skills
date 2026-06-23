@@ -96,7 +96,7 @@ Then rebuild to confirm the recipe cleared the blocker, ALWAYS with `nice -n 19 
 - NEVER apply a Category-B change -- route it to the gate.
 - A `tweaks-substitution` that matches 0 times is a HARD failure, never a silent no-op.
 - All writes use the Write tool, never Bash redirection.
-- No Verus paths -- this is a Lean-via-Aeneas pipeline only.
+- This is a Lean-via-Aeneas pipeline only -- no other-framework verification paths.
 </fvs_hard_rules>
 
 <return_format>
@@ -140,7 +140,7 @@ On failure:
 - [ ] Reversible records written (src-modifications + src-assumptions where an assumption arises)
 - [ ] `tweaks-substitution` guards honored (>= 1 match; 0-match is a HARD failure)
 - [ ] Rebuild run with `nice -n 19 lake build`, never bare
-- [ ] All writes via the Write tool; no `gh` auto-open; no Verus paths
+- [ ] All writes via the Write tool; no `gh` auto-open; Lean-via-Aeneas pipeline only
 - [ ] Result returned with the appropriate header
 - [ ] No @-references used (all reference content is inlined by the parent)
 </success_criteria>

@@ -81,7 +81,7 @@ the local-clone commit, the existing-issue numbers you dedup'd against, the cata
 - NEVER run a bare `lake build` (use `nice -n 19 lake build` if you must reproduce anything).
 - NEVER edit generated Lean (`Types.lean` / `Funs.lean`).
 - Write only to the workspace; all writes use the Write/Edit tool.
-- No Verus paths -- this is a Lean-via-Aeneas pipeline only.
+- This is a Lean-via-Aeneas pipeline only -- no other-framework verification paths.
 </fvs_hard_rules>
 
 <return_format>
@@ -125,7 +125,7 @@ On failure:
 - [ ] Every claim cited (MFE path, clone commit, issue numbers, catalog id)
 - [ ] NO `gh` call in any draft step -- drafts on disk only, opening is a human action
 - [ ] Clone paths validated as directories before `git -C`; never `eval`'d
-- [ ] Writes confined to the workspace via Write/Edit; no Verus paths
+- [ ] Writes confined to the workspace via Write/Edit; Lean-via-Aeneas pipeline only
 - [ ] Result returned with the appropriate header
 - [ ] No @-references used (all reference content is inlined by the parent)
 </success_criteria>

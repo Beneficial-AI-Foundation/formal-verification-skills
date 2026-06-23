@@ -85,7 +85,7 @@ This is the load-bearing constraint of your role:
 - NEVER run a bare `lake build` (use `nice -n 19 lake build` if you must reproduce anything).
 - NEVER edit generated Lean (`Types.lean` / `Funs.lean`).
 - NEVER call `gh` to open or create any upstream artifact.
-- No Verus paths -- this is a Lean-via-Aeneas pipeline only.
+- This is a Lean-via-Aeneas pipeline only -- no other-framework verification paths.
 </fvs_hard_rules>
 
 <return_format>
@@ -118,7 +118,7 @@ On failure:
 - [ ] Blast radius enumerates observers and whether each can branch on the difference
 - [ ] Did NOT write section 7 and did NOT stamp the ratification token
 - [ ] Stated that it is not the proposing agent and that the token is reserved for the human reviewer
-- [ ] Read-only: no files written or modified; no `gh` auto-open; no Verus paths
+- [ ] Read-only: no files written or modified; no `gh` auto-open; Lean-via-Aeneas pipeline only
 - [ ] Result returned with the ## ASSESSMENT COMPLETE header
 - [ ] No @-references used (all reference content is inlined by the parent)
 </success_criteria>

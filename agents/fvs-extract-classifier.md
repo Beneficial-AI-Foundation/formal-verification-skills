@@ -92,7 +92,7 @@ These FVS invariants bind you even though you do not write files:
 - NEVER run a bare `lake build`. Always `nice -n 19 lake build`.
 - NEVER edit generated Lean (`Types.lean` / `Funs.lean`) -- you are read-only regardless.
 - NEVER call `gh` to open or create any upstream artifact.
-- No Verus paths -- this is a Lean-via-Aeneas pipeline only.
+- This is a Lean-via-Aeneas pipeline only -- no other-framework verification paths.
 - Read the tool's own exit status with `set -o pipefail` / `${PIPESTATUS[0]}`, never the tail of
   a piped log.
 </fvs_hard_rules>

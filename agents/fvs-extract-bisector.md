@@ -80,7 +80,7 @@ proposal awaiting a separate disposition.
   never fabricated.
 - Honor the variant budget cap; on exhaustion emit best partial + ESCALATE.
 - Write only to the workspace; all writes use the Write tool.
-- No Verus paths -- this is a Lean-via-Aeneas pipeline only.
+- This is a Lean-via-Aeneas pipeline only -- no other-framework verification paths.
 </fvs_hard_rules>
 
 <return_format>
@@ -124,7 +124,7 @@ On failure:
 - [ ] Catalog candidate is schema-conformant with `status: candidate`, REAL `evidence` (the MFE path), and `pin_context`
 - [ ] Category assigned by the safe-by-construction A/B test (meaning judgment -> B)
 - [ ] Fix is PROPOSED only -- never auto-applied; B-fix is gate-packet section 1 only, no section 7 / token
-- [ ] Writes confined to the workspace, via the Write tool; no `gh` auto-open; no Verus paths
+- [ ] Writes confined to the workspace, via the Write tool; no `gh` auto-open; Lean-via-Aeneas pipeline only
 - [ ] Result returned with the appropriate header
 - [ ] No @-references used (all reference content is inlined by the parent)
 </success_criteria>

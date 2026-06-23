@@ -78,7 +78,7 @@ The parent provides a `<sync_mode>` tag. Execute the matching mode.
 - NEVER edit generated Lean (`Types.lean` / `Funs.lean`).
 - NEVER call `gh` to OPEN/create an upstream artifact (gh api READ for fetching docs/issues is allowed).
 - Propose each change for approval; all writes use the Write/Edit tool.
-- No Verus paths -- this is a Lean-via-Aeneas pipeline only.
+- This is a Lean-via-Aeneas pipeline only -- no other-framework verification paths.
 </fvs_hard_rules>
 
 <return_format>
@@ -123,7 +123,7 @@ On failure:
 - [ ] Reconcile-not-append honored: existing entries/sections updated in place, no duplicates
 - [ ] tactics-lean-syntax: tactic renames detected and propagated on approval; metadata updated
 - [ ] extraction-docs: catalog reconciled in place; no auto-retire before the pin carries the fix
-- [ ] No `gh` auto-open; no bare `lake build`; generated Lean untouched; no Verus paths
+- [ ] No `gh` auto-open; no bare `lake build`; generated Lean untouched; Lean-via-Aeneas pipeline only
 - [ ] All writes via the Write/Edit tool
 - [ ] Result returned with the appropriate header
 - [ ] No @-references used (all reference content is inlined by the parent)
