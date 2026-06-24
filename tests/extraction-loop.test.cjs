@@ -48,8 +48,8 @@ function rel(absPath) {
 // 1. No upstream-artifact open/create invocation in the draft path.
 //
 // EXTR-07 bans AUTO-OPENING/CREATING an upstream artifact. Read-only `gh api`
-// listing is the shipped precedent (sync-aeneas, the draft agent's precedent
-// mining) and is NOT banned. The forbidden verbs are the create/open forms;
+// listing is the shipped precedent (the sync-aeneas-verif command and the draft
+// agent's precedent mining) and is NOT banned. The forbidden verbs are the create/open forms;
 // they are built at runtime from fragments so the literal token does not appear
 // in this test file's own source.
 // ---------------------------------------------------------------------------
@@ -64,7 +64,18 @@ describe('Extraction loop: no upstream-artifact open/create in the draft path (E
     new RegExp(`\\b${GH}\\s+release\\s+create\\b`),
   ];
 
-  for (const target of [COMMAND, DRAFT_AGENT]) {
+  const AGENTS_DIR = path.join(ROOT, 'agents');
+  const EXTR07_TARGETS = [
+    COMMAND,
+    WORKFLOW,
+    DRAFT_AGENT,
+    path.join(AGENTS_DIR, 'fvs-doc-syncer.md'),
+    path.join(AGENTS_DIR, 'fvs-equivalence-assessor.md'),
+    path.join(AGENTS_DIR, 'fvs-extract-applier.md'),
+    path.join(AGENTS_DIR, 'fvs-extract-bisector.md'),
+    path.join(AGENTS_DIR, 'fvs-extract-classifier.md'),
+  ];
+  for (const target of EXTR07_TARGETS) {
     it(`${rel(target)} contains no open/create upstream-artifact invocation`, () => {
       const offenders = [];
       readLines(target).forEach((line, i) => {
