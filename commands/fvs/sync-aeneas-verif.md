@@ -200,5 +200,3 @@ model-profiles runtime handling).
 - [ ] User approved / skipped / edited each proposed change individually.
 - [ ] No `gh` auto-open/create anywhere; read-only fetch is the only GH path, and only as a fallback.
 </success_criteria>
-</content>
-</invoke>

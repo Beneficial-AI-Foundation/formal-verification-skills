@@ -155,4 +155,3 @@ Run `npm test` to verify no frontmatter or structural issues.
 - No `gh` auto-open/create; read-only fetch is the only GH path and only a fallback to local mining.
 - No silent failures -- all errors reported to the user.
 </success_criteria>
-</content>
