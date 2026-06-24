@@ -65,7 +65,7 @@ model-profiles dispatch sequence (config `model_overrides` first, then the profi
 
 ```bash
 CONFIG=$(cat .formalising/fvs-config.json 2>/dev/null)
-# profile = config.model_profile || "quality"
+# profile = config.model_profile || "balanced"
 # SYNCER_MODEL = model_overrides["fvs-doc-syncer"] ?? PROFILE_TABLE["fvs-doc-syncer"][profile]
 ```
 
@@ -79,9 +79,11 @@ an absolute clone path. Quote every path expansion, reject a path with shell met
 never `eval` a path.
 
 ```bash
-# 1. config value
-CHARON_CLONE=$(echo "$CONFIG" | grep_json project.charon_clone_path)   # may be null
-AENEAS_CLONE=$(echo "$CONFIG" | grep_json project.aeneas_clone_path)   # may be null
+# 1. config value -- parse project.charon_clone_path / project.aeneas_clone_path from $CONFIG.
+#    Use jq if available; `// empty` + 2>/dev/null degrade to an empty string when the key is
+#    null/absent or jq is missing, so resolution falls through to auto-detect. Both may be empty.
+CHARON_CLONE=$(printf '%s' "$CONFIG" | jq -r '.project.charon_clone_path // empty' 2>/dev/null)
+AENEAS_CLONE=$(printf '%s' "$CONFIG" | jq -r '.project.aeneas_clone_path // empty' 2>/dev/null)
 # 2. auto-detect: probe common sibling layouts (e.g. a BAIF_GH/{charon,aeneas} shape)
 # 3. prompt the user for the path if still unresolved
 # 4. error only if a clone cannot be resolved at all -- and even then, degrade:

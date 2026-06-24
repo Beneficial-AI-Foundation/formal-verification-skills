@@ -55,7 +55,7 @@ then `inherit` for unknown agents):
 
 ```bash
 CONFIG=$(cat .formalising/fvs-config.json 2>/dev/null)
-# profile = config.model_profile || "quality"
+# profile = config.model_profile || "balanced"
 # for each agent: model = model_overrides[agent] ?? PROFILE_TABLE[agent][profile]
 ```
 
