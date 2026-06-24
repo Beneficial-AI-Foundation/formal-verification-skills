@@ -26,7 +26,7 @@ content.
 The parent provides a `<sync_mode>` tag. Execute the matching mode.
 
 <mode name="tactics-lean-syntax">
-**Scope:** today's `/fvs:sync-aeneas` scope -- the `_sync-meta.json` mapping plus the
+**Scope:** the tactic/Lean-syntax doc sync -- the `_sync-meta.json` mapping plus the
 `tactic_renames` table.
 
 1. Read the inlined mapping table and the current snapshot SHA.

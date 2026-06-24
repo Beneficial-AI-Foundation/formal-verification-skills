@@ -62,8 +62,8 @@ describe('Commands (commands/fvs/)', () => {
     'fc-plan.md', 'fc.md', 'formalise.md', 'help.md', 'kb-setup.md',
     'lean-formalise.md', 'lean-refactor.md', 'lean-specify.md',
     'lean-verify.md', 'manage.md', 'map-code.md', 'natural-language.md',
-    'pause-work.md', 'reapply-patches.md', 'resume-work.md', 'sync-aeneas.md',
-    'update.md',
+    'pause-work.md', 'reapply-patches.md', 'resume-work.md',
+    'sync-aeneas-verif.md', 'update.md',
   ];
 
   it('has exactly 21 command files', () => {
@@ -189,7 +189,7 @@ describe('Workflows (fv-skills/workflows/)', () => {
   const expected = [
     'aeneas-extract.md', 'fc-plan.md', 'lean-formalise.md', 'lean-refactor.md',
     'lean-specify.md', 'lean-verify.md', 'map-code.md',
-    'natural-language.md', 'sync-aeneas.md', 'update.md',
+    'natural-language.md', 'sync-aeneas-verif.md', 'update.md',
   ];
 
   it('has exactly 10 workflow files', () => {
