@@ -49,6 +49,8 @@ A pipe masks the real exit code: a build piped into a filter reports the FILTER'
 tool's own exit status:
 
 ```bash
+# Illustrative only: this is what the ORCHESTRATOR ran. You (the classifier) are
+# read-only -- you read the resulting build.log to interpret it, you do NOT re-run the build.
 set -o pipefail
 nice -n 19 lake build 2>&1 | tee build.log
 status=${PIPESTATUS[0]}   # the build's exit status, not tee's

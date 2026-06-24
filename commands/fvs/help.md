@@ -250,7 +250,13 @@ Show this command reference.
 │   ├── fvs-researcher.md
 │   ├── fvs-executor.md
 │   ├── fvs-explainer.md
-│   └── fvs-lean-refactorer.md
+│   ├── fvs-lean-refactorer.md
+│   ├── fvs-extract-classifier.md
+│   ├── fvs-extract-applier.md
+│   ├── fvs-extract-bisector.md
+│   ├── fvs-equivalence-assessor.md
+│   ├── fvs-draft-investigator.md
+│   └── fvs-doc-syncer.md
 ├── commands/fvs/          # flat siblings: 5 routers + 16 commands
 │   ├── aeneas.md          # router
 │   ├── context.md         # router
