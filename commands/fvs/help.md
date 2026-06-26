@@ -176,6 +176,28 @@ Refactor, simplify, and decompose verified Lean proofs while preserving compilat
 
 Usage: `/fvs:lean-refactor Specs/Backend/Field/Sub.lean`
 
+The crypto formalisation loop (plan -> execute -> eval -> follow-up) is a topic-based, multi-iteration alternative to the one-shot `lean-formalise`. Its four stages share the artifact tree under `fv-plans/<topic>/` and the loop is restartable from those records. The loop is runtime-neutral (it runs as a same-runtime pair by default).
+
+**`/fvs:crypto-plan <topic>`**
+Author the next bounded, runtime-neutral executor plan for a topic, grounded in the paper via the NotebookLM knowledge base (answers cached under `sources/`).
+
+Usage: `/fvs:crypto-plan "CKA from KEM"`
+
+**`/fvs:crypto-execute <topic> nN`**
+Run the current iteration's bounded plan under the green-build guard; a failed proof triggers a short interactive redirect early.
+
+Usage: `/fvs:crypto-execute "CKA from KEM" n1`
+
+**`/fvs:crypto-eval <topic> nN`**
+Adversarially evaluate the iteration; ends in exactly one decision (ACCEPT / FOLLOWUP / HUMAN_RULING / BLOCKED).
+
+Usage: `/fvs:crypto-eval "CKA from KEM" n1`
+
+**`/fvs:crypto-followup <topic> nN`**
+Convert eval findings into the next bounded follow-up plan; HALTs for a human ruling on a modeling decision.
+
+Usage: `/fvs:crypto-followup "CKA from KEM" n1`
+
 ### Manage (`/fvs:manage`)
 
 Session, maintenance, and setup commands.

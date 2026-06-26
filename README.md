@@ -129,8 +129,12 @@ Commands are grouped into five bundles. Each bundle has a **router** command tha
 
 | Command | Description |
 |---------|-------------|
-| `/fvs:lean-formalise` | Formalise paper/math content into Lean 4 specs and definitions |
+| `/fvs:lean-formalise` | Formalise paper/math content into Lean 4 specs and definitions (one-shot) |
 | `/fvs:lean-refactor` | Refactor, simplify, and decompose verified proofs — *also in Formal-Core* |
+| `/fvs:crypto-plan` | Author the next bounded, runtime-neutral plan for a topic-based crypto formalisation iteration (KB-grounded, cached under `sources/`) |
+| `/fvs:crypto-execute` | Run the current iteration's bounded plan under the green-build guard |
+| `/fvs:crypto-eval` | Adversarially evaluate the iteration; ends in one of ACCEPT / FOLLOWUP / HUMAN_RULING / BLOCKED |
+| `/fvs:crypto-followup` | Convert eval findings into the next follow-up plan; HALTs on HUMAN_RULING |
 
 ### Manage — `/fvs:manage`
 
