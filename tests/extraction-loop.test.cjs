@@ -65,6 +65,8 @@ describe('Extraction loop: no upstream-artifact open/create in the draft path (E
   ];
 
   const AGENTS_DIR = path.join(ROOT, 'agents');
+  const CMD_DIR = path.join(ROOT, 'commands', 'fvs');
+  const SCRIPTS_DIR = path.join(ROOT, 'scripts');
   const EXTR07_TARGETS = [
     COMMAND,
     WORKFLOW,
@@ -74,9 +76,27 @@ describe('Extraction loop: no upstream-artifact open/create in the draft path (E
     path.join(AGENTS_DIR, 'fvs-extract-applier.md'),
     path.join(AGENTS_DIR, 'fvs-extract-bisector.md'),
     path.join(AGENTS_DIR, 'fvs-extract-classifier.md'),
+    // Phase-13 crypto loop + trust audit surface. The two new agents exist now;
+    // the stage command files arrive in later waves and the Codex-think helper
+    // scripts arrive later still -- each is guarded by an existence check below
+    // so the no-gh-open invariant covers them the moment they land.
+    path.join(AGENTS_DIR, 'fvs-crypto-thinker.md'),
+    path.join(AGENTS_DIR, 'fvs-axiom-auditor.md'),
+    path.join(CMD_DIR, 'crypto-plan.md'),
+    path.join(CMD_DIR, 'crypto-execute.md'),
+    path.join(CMD_DIR, 'crypto-eval.md'),
+    path.join(CMD_DIR, 'crypto-followup.md'),
+    path.join(CMD_DIR, 'trust-audit.md'),
+    path.join(SCRIPTS_DIR, 'fvs-codex-think.mjs'),
+    path.join(SCRIPTS_DIR, 'fvs-codex-think.sh'),
   ];
   for (const target of EXTR07_TARGETS) {
     it(`${rel(target)} contains no open/create upstream-artifact invocation`, () => {
+      if (!fs.existsSync(target)) {
+        // Not yet created (arrives in a later wave) -- the invariant attaches
+        // the moment the file exists; nothing to scan before then.
+        return;
+      }
       const offenders = [];
       readLines(target).forEach((line, i) => {
         if (FORBIDDEN.some(re => re.test(line))) {
