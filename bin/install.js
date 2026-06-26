@@ -49,6 +49,11 @@ const CODEX_AGENT_SANDBOX = {
   'fvs-extract-bisector': 'workspace-write',
   'fvs-draft-investigator': 'workspace-write',
   'fvs-doc-syncer': 'workspace-write',
+  // Crypto loop + trust audit. The thinker authors plans/evals/followups by
+  // return (the command body persists the artifacts) and the auditor only
+  // introspects and returns a table -- both are read-only.
+  'fvs-crypto-thinker': 'read-only',
+  'fvs-axiom-auditor': 'read-only',
 };
 
 // Codex agents inherit the user's selected Codex model — the converter never
@@ -74,6 +79,12 @@ const FVS_CODEX_AGENT_EFFORT = {
   'fvs-extract-applier': 'high',
   'fvs-draft-investigator': 'high',
   'fvs-doc-syncer': 'high',
+  // Crypto loop + trust audit. The thinker authors bounded plans and runs the
+  // always-adversarial eval -- the most reasoning-sensitive role in the loop --
+  // so it runs at xhigh (the dual-runtime Codex thinker must think at least this
+  // hard); the read-only auditor introspects axioms at high.
+  'fvs-crypto-thinker': 'xhigh',
+  'fvs-axiom-auditor': 'high',
 };
 
 // Get version from package.json

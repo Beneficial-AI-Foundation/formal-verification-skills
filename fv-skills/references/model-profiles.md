@@ -32,6 +32,8 @@ subagent before calling Task(). The profile table below defines the mapping.
 | fvs-equivalence-assessor | inherit | sonnet   | sonnet |
 | fvs-draft-investigator   | inherit | sonnet   | sonnet |
 | fvs-doc-syncer           | inherit | sonnet   | sonnet |
+| fvs-crypto-thinker       | inherit | sonnet   | sonnet |
+| fvs-axiom-auditor        | inherit | sonnet   | haiku  |
 
 Quality uses `inherit` (= parent model, typically Opus) for the agents that matter most:
 researcher, executor, and explainer. These handle spec generation, proof attempts, and
