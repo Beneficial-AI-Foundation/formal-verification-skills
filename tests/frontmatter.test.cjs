@@ -74,7 +74,10 @@ describe('Commands (commands/fvs/)', () => {
     assert.deepStrictEqual(files, expected);
   });
 
-  for (const file of expected) {
+  // Per-file field checks iterate the ON-DISK list, never `expected`, so a
+  // missing-but-expected file fails cleanly at the count/list assertions above
+  // rather than throwing ENOENT inside a per-file read.
+  for (const file of files) {
     const filePath = path.join(ROOT, dir, file);
 
     it(`${file} has name: in frontmatter`, () => {
@@ -95,7 +98,7 @@ describe('Commands (commands/fvs/)', () => {
 
   // 9 of 11 must have allowed-tools (exceptions: help.md, update.md)
   const displayOnly = new Set(['help.md', 'update.md']);
-  for (const file of expected) {
+  for (const file of files) {
     if (displayOnly.has(file)) continue;
     it(`${file} has allowed-tools: in frontmatter`, () => {
       const filePath = path.join(ROOT, dir, file);
@@ -147,15 +150,15 @@ describe('Agents (agents/)', () => {
   const files = mdFiles(dir);
 
   const expected = [
-    'fvs-doc-syncer.md', 'fvs-draft-investigator.md',
-    'fvs-equivalence-assessor.md', 'fvs-executor.md', 'fvs-explainer.md',
-    'fvs-extract-applier.md', 'fvs-extract-bisector.md',
-    'fvs-extract-classifier.md', 'fvs-lean-refactorer.md',
-    'fvs-researcher.md',
+    'fvs-axiom-auditor.md', 'fvs-crypto-thinker.md', 'fvs-doc-syncer.md',
+    'fvs-draft-investigator.md', 'fvs-equivalence-assessor.md',
+    'fvs-executor.md', 'fvs-explainer.md', 'fvs-extract-applier.md',
+    'fvs-extract-bisector.md', 'fvs-extract-classifier.md',
+    'fvs-lean-refactorer.md', 'fvs-researcher.md',
   ];
 
-  it('has exactly 10 agent files', () => {
-    assert.equal(files.length, 10, `Expected 10 agents, got ${files.length}: ${files.join(', ')}`);
+  it('has exactly 12 agent files', () => {
+    assert.equal(files.length, 12, `Expected 12 agents, got ${files.length}: ${files.join(', ')}`);
   });
 
   it('has the expected set of agent files', () => {
@@ -164,7 +167,9 @@ describe('Agents (agents/)', () => {
 
   const requiredFields = ['name', 'description', 'tools', 'color'];
 
-  for (const file of expected) {
+  // Iterate the on-disk list (see Commands note) so a missing-but-expected file
+  // fails cleanly at the count/list assertions, never via an ENOENT read.
+  for (const file of files) {
     const filePath = path.join(ROOT, dir, file);
 
     for (const field of requiredFields) {
@@ -200,7 +205,9 @@ describe('Workflows (fv-skills/workflows/)', () => {
     assert.deepStrictEqual(files, expected);
   });
 
-  for (const file of expected) {
+  // Iterate the on-disk list (see Commands note) so a missing-but-expected file
+  // fails cleanly at the count/list assertions, never via an ENOENT read.
+  for (const file of files) {
     const filePath = path.join(ROOT, dir, file);
 
     it(`${file} contains <purpose> or <objective> tag`, () => {
