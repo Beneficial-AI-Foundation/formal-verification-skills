@@ -64,11 +64,11 @@ describe('Commands (commands/fvs/)', () => {
     'kb-setup.md', 'lean-formalise.md', 'lean-refactor.md', 'lean-specify.md',
     'lean-verify.md', 'manage.md', 'map-code.md', 'natural-language.md',
     'pause-work.md', 'reapply-patches.md', 'resume-work.md',
-    'sync-aeneas-verif.md', 'update.md',
+    'sync-aeneas-verif.md', 'trust-audit.md', 'update.md',
   ];
 
-  it('has exactly 25 command files', () => {
-    assert.equal(files.length, 25, `Expected 25 commands, got ${files.length}: ${files.join(', ')}`);
+  it('has exactly 26 command files', () => {
+    assert.equal(files.length, 26, `Expected 26 commands, got ${files.length}: ${files.join(', ')}`);
   });
 
   it('has the expected set of command files', () => {
@@ -196,11 +196,11 @@ describe('Workflows (fv-skills/workflows/)', () => {
     'aeneas-extract.md', 'crypto-eval.md', 'crypto-execute.md',
     'crypto-followup.md', 'crypto-plan.md', 'fc-plan.md', 'lean-formalise.md',
     'lean-refactor.md', 'lean-specify.md', 'lean-verify.md', 'map-code.md',
-    'natural-language.md', 'sync-aeneas-verif.md', 'update.md',
+    'natural-language.md', 'sync-aeneas-verif.md', 'trust-audit.md', 'update.md',
   ];
 
-  it('has exactly 14 workflow files', () => {
-    assert.equal(files.length, 14, `Expected 14 workflows, got ${files.length}: ${files.join(', ')}`);
+  it('has exactly 15 workflow files', () => {
+    assert.equal(files.length, 15, `Expected 15 workflows, got ${files.length}: ${files.join(', ')}`);
   });
 
   it('has the expected set of workflow files', () => {
