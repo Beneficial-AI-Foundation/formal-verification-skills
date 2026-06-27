@@ -124,6 +124,7 @@ Commands are grouped into five bundles. Each bundle has a **router** command tha
 | `/fvs:lean-verify` | Attempt proof using domain tactics (step, simp, ring, agrind, scalar_tac) |
 | `/fvs:natural-language` | Generate natural language explanation of module or function with pre/post conditions |
 | `/fvs:lean-refactor` | Refactor, simplify, and decompose verified proofs (dead code removal, simp sharpening, tactic golf) — *also in Formalise* |
+| `/fvs:trust-audit` | Build-backed audit of every sorry/axiom affecting a target layer; `#print axioms` classification, fail-if-unjustified gate, dependency-ordered table |
 
 ### Formalise (Paper Track) — `/fvs:formalise`
 

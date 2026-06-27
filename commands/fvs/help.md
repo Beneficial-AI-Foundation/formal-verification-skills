@@ -43,7 +43,7 @@ Five router commands group the skills. Invoke a router bare to print its routing
 
 - `/fvs:aeneas` — Aeneas/Charon extraction maintenance (aeneas-extract, sync-aeneas-verif)
 - `/fvs:context` — Codebase context (map-code)
-- `/fvs:fc` — Formal-correctness core (fc-plan, lean-specify, lean-verify, natural-language, lean-refactor)
+- `/fvs:fc` — Formal-correctness core (fc-plan, lean-specify, lean-verify, natural-language, lean-refactor, trust-audit)
 - `/fvs:formalise` — Paper formalisation (lean-formalise, lean-refactor)
 - `/fvs:manage` — Management (help, update, checkpoint, pause-work, resume-work, reapply-patches, kb-setup)
 
@@ -153,6 +153,18 @@ Refactor, simplify, and decompose verified Lean proofs while preserving compilat
 Usage: `/fvs:lean-refactor Specs/Backend/Field/Sub.lean`
 Usage: `/fvs:lean-refactor Specs/Backend/Field/Sub.lean --mode aggressive --max-passes 10`
 Usage: `/fvs:lean-refactor Specs/Backend/Field/Sub.lean --theorem sub_spec --report-only`
+
+**`/fvs:trust-audit <target spec file | module subtree>`**
+Build-backed trust audit of an Aeneas-extracted Lean target.
+
+- Runs `nice -n 19 lake build` as a green-build-guarded precondition; HALTs if the target layer does not compile
+- Dispatches the read-only `fvs-axiom-auditor` to introspect every in-scope declaration via `#print axioms`
+- Classifies each: `sorryAx` ⇒ sorry, classical trio (propext / Classical.choice / Quot.sound) auto-noted, project-custom axioms require justification
+- Strictly-scoped inventory (Rust path convention); cone members surfaced as prerequisites, never inventory rows
+- Fail-if-unjustified gate (NOT-CLEAN while any project-custom in-scope axiom lacks a justification)
+- Writes a re-runnable, strictly dependency-ordered table to `.formalising/audits/<target>.md`
+
+Usage: `/fvs:trust-audit Specs/Backend/Field/Sub.lean`
 
 ### Formalise (`/fvs:formalise`)
 
