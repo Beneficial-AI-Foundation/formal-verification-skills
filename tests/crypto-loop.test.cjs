@@ -243,3 +243,41 @@ for (const key of ['cmdExecute', 'wfExecute']) {
     });
   });
 }
+
+// ---------------------------------------------------------------------------
+// 8. fvs-codex-think.mjs path confinement (security): a --topic that resolves
+//    outside .formalising/fv-plans/ must be refused BEFORE any codex spawn, so a
+//    `..` escape cannot hand the thinker workspace-write access to an arbitrary
+//    directory. Runs the real script; topic validation precedes the codex probe,
+//    so this holds whether or not codex is installed.
+// ---------------------------------------------------------------------------
+const CODEX_THINK = path.join(ROOT, 'scripts', 'fvs-codex-think.mjs');
+whenExists(CODEX_THINK, 'Crypto loop: fvs-codex-think.mjs confines --topic to the loop tree', () => {
+  const { spawnSync } = require('node:child_process');
+  for (const escape of ['/tmp', '../../../tmp', '.formalising/fv-plans/../../escape']) {
+    it(`refuses --topic "${escape}" (resolves outside the loop tree)`, () => {
+      const r = spawnSync(process.execPath, [CODEX_THINK, 'plan', '--topic', escape, '--effort', 'xhigh'], {
+        cwd: ROOT, encoding: 'utf8',
+      });
+      assert.notStrictEqual(r.status, 0,
+        `expected non-zero exit refusing escaping --topic "${escape}"`);
+      assert.match(`${r.stderr || ''}${r.stdout || ''}`, /outside \.formalising\/fv-plans|path traversal|refusing/i,
+        `expected a confinement refusal for "${escape}"`);
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 9. Command-layer path-traversal guard (security): the slug guard must reject
+//    `..` and `/` so a topic cannot escape .formalising/fv-plans/ on the
+//    single-runtime (non --codex) path, which never goes through
+//    fvs-codex-think.mjs.
+// ---------------------------------------------------------------------------
+for (const key of ['cmdPlan', 'cmdExecute', 'cmdEval', 'cmdFollowup']) {
+  whenExists(STAGE_FILES[key], `Crypto loop: path-traversal guard in ${rel(STAGE_FILES[key])}`, (content, absPath) => {
+    it('rejects a topic containing ".." or "/" (path traversal)', () => {
+      assert.match(content, /\*\.\.\*\|\*\/\*|path traversal/,
+        `${rel(absPath)} missing a path-traversal (.. or /) rejection in the slug guard`);
+    });
+  });
+}

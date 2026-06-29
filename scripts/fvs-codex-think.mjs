@@ -188,6 +188,14 @@ function main() {
     fail('--topic contains shell metacharacters; refusing', 2);
   }
   const topicDir = path.resolve(args.topic);
+  // Confine the topic dir to the loop's artifact tree. path.resolve can climb out
+  // of the project via `..`; a topic resolving outside .formalising/fv-plans/ would
+  // hand the spawned Codex thinker workspace-write access to an arbitrary directory,
+  // violating the confinement claimed in this file's header. Reject any escape.
+  const allowedBase = path.resolve('.formalising', 'fv-plans');
+  if (topicDir !== allowedBase && !topicDir.startsWith(allowedBase + path.sep)) {
+    fail(`--topic "${args.topic}" resolves outside .formalising/fv-plans/ (${topicDir}); refusing`, 2);
+  }
   let st;
   try {
     st = fs.statSync(topicDir);
@@ -229,8 +237,9 @@ function main() {
 
   // codex exec: non-interactive one-shot. Effort via the config override
   // model_reasoning_effort (effort-only: NO -m/--model). Working root via -C.
-  // read-only sandbox + skip-git-repo-check so it runs cleanly inside the topic
-  // folder. The prompt is a discrete argv element (NOT interpolated into a shell).
+  // workspace-write sandbox (the thinker must write its stage artifact) +
+  // skip-git-repo-check so it runs cleanly inside the topic folder. The prompt is
+  // a discrete argv element (NOT interpolated into a shell).
   const codexArgs = [
     'exec',
     '-C',
@@ -258,7 +267,13 @@ function main() {
     }
     fail(`codex invocation failed: ${run.error.message}`);
   }
-  process.exit(run.status ?? 0);
+  if (run.signal) {
+    // A signal kill (SIGTERM/SIGKILL/...) leaves status === null; do NOT let a
+    // null-coalesce map that to exit 0. The stage artifact may be truncated, so a
+    // signal termination is a hard failure, never reported as success.
+    fail(`codex was terminated by signal ${run.signal}; the stage artifact may be incomplete -- treating as failure`);
+  }
+  process.exit(run.status ?? 1);
 }
 
 main();

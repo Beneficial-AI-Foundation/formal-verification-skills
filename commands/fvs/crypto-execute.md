@@ -49,6 +49,7 @@ shell metacharacters, QUOTE every path expansion, NEVER `eval` a path.
 TOPIC_RAW="$1"; ITER="$2"
 case "$TOPIC_RAW" in
   *[';|&$`()<>'*]* ) echo "FVS >> ERROR: topic contains shell metacharacters" >&2; exit 1 ;;
+  *..*|*/* ) echo "FVS >> ERROR: topic contains '..' or '/' (path traversal); refusing" >&2; exit 1 ;;
 esac
 case "$ITER" in
   n[0-9]* ) : ;;

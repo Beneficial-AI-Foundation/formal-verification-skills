@@ -51,6 +51,7 @@ NEVER `eval` a path.
 TOPIC_RAW="$1"
 case "$TOPIC_RAW" in
   *[';|&$`()<>'*]* ) echo "FVS >> ERROR: topic contains shell metacharacters" >&2; exit 1 ;;
+  *..*|*/* ) echo "FVS >> ERROR: topic contains '..' or '/' (path traversal); refusing" >&2; exit 1 ;;
 esac
 SLUG=$(printf '%s' "$TOPIC_RAW" | tr -s '[:space:]' '-')
 ROOT=".formalising/fv-plans/$SLUG"
