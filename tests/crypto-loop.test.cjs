@@ -187,6 +187,48 @@ for (const key of ['cmdPlan', 'cmdExecute', 'cmdEval', 'cmdFollowup']) {
 }
 
 // ---------------------------------------------------------------------------
+// 7. --codex thinker mode on the three thinker stages (FORM-05 / D-06 / D-08).
+//
+//    The --codex mode swaps the in-runtime thinker dispatch for the FVS-owned
+//    helper scripts/fvs-codex-think.mjs at the plan / eval / followup stages. It
+//    must be EFFORT-ONLY (passes --effort xhigh, NEVER --model) and carry the
+//    artifact-mediated / no-live-bridge language (the swappable thinker is not a
+//    second loop, not a streaming IPC). The execute stage has no thinker, so it
+//    is intentionally excluded here.
+//
+//    We strip leading-'#' prose lines (readContent), but a Codex flag could still
+//    appear in explanatory prose; the regexes target the concrete invocation
+//    token (fvs-codex-think) so a mere mention cannot satisfy the gate.
+// ---------------------------------------------------------------------------
+for (const key of ['cmdPlan', 'cmdEval', 'cmdFollowup']) {
+  whenExists(STAGE_FILES[key], `Crypto loop: --codex thinker mode in ${rel(STAGE_FILES[key])} (FORM-05)`, (content, absPath) => {
+    it('carries the --codex mode flag', () => {
+      assert.ok(/--codex/.test(content), `${rel(absPath)} missing the --codex mode flag`);
+    });
+    it('invokes the FVS-owned Codex helper (fvs-codex-think)', () => {
+      assert.ok(/fvs-codex-think/.test(content),
+        `${rel(absPath)} missing the fvs-codex-think helper invocation`);
+    });
+    it('is effort-only at >= xhigh (passes --effort xhigh)', () => {
+      assert.ok(/--effort\s+xhigh/.test(content),
+        `${rel(absPath)} missing the --effort xhigh thinker floor`);
+    });
+    it('passes NO --model (effort-only policy)', () => {
+      // The effort-only policy forbids a --model flag on the Codex helper line.
+      const offenders = content
+        .split('\n')
+        .filter(line => /fvs-codex-think/.test(line) && /--model\b/.test(line));
+      assert.deepStrictEqual(offenders, [],
+        `${rel(absPath)} passes --model on a fvs-codex-think line (must be effort-only)`);
+    });
+    it('declares artifact-mediated coordination / no live bridge', () => {
+      assert.ok(/artifact[- ]mediated/i.test(content) && /no\b[^\n]*live[- ]?(cross[- ]process )?bridge/i.test(content),
+        `${rel(absPath)} missing the artifact-mediated / no-live-bridge language`);
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
 // 6. crypto-execute green-build guard: set -o pipefail + ${PIPESTATUS.
 // ---------------------------------------------------------------------------
 for (const key of ['cmdExecute', 'wfExecute']) {

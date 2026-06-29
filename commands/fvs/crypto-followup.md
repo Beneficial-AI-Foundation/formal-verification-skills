@@ -33,7 +33,8 @@ Output: `FOLLOWUP_PLAN_nN.md` under `plans/` (on `FOLLOWUP`), or a HALT-and-ask 
 
 <context>
 Topic: $ARGUMENTS (required). The optional `nN` selects the eval iteration to follow up on; the
-optional `--codex` flag is RESERVED here (the thinker swap lands in a later wave).
+optional `--codex` flag swaps the thinker for a Codex thinker at this followup stage (a swappable
+thinker, not a second loop).
 
 The loop is restartable from its own on-disk records: re-running reads the latest `EVAL_nN.md`
 from `reviews/` and authors the matching follow-up.
@@ -100,8 +101,9 @@ ruling (returning to Step 4). Never invent a follow-up on `HUMAN_RULING` without
 
 ## Step 4: Resolve the thinker + dispatch (followup mode)
 
-Resolve `$THINKER_MODEL` for `fvs-crypto-thinker` via the model-profiles dispatch sequence. `cat` the
-eval findings (and the user's ruling, if any) and INLINE them into the prompt:
+Default (no `--codex`) -- dispatch the in-runtime thinker. Resolve `$THINKER_MODEL` for
+`fvs-crypto-thinker` via the model-profiles dispatch sequence. `cat` the eval findings (and the
+user's ruling, if any) and INLINE them into the prompt:
 
 ```
 Task(
@@ -118,7 +120,27 @@ Author the next bounded follow-up plan (full bounded-plan contract). Return with
 )
 ```
 
-The thinker authors by return; THIS command body writes `plans/FOLLOWUP_PLAN_nN.md` carrying
+When `--codex` is passed -- SWAP this `Task(subagent_type="fvs-crypto-thinker", …)` dispatch for the
+FVS-owned Codex thinker helper. The Codex thinker takes ONLY this followup stage; everything
+downstream is UNCHANGED (the executor stays `fvs-executor`, the artifacts stay under
+`fv-plans/<topic>/`, the bounded-plan contract is identical). The `HUMAN_RULING` HALT in Step 3 still
+runs IN THIS COMMAND BEFORE any Codex dispatch -- the helper is only reached on a `FOLLOWUP` decision
+after any ruling is in hand, so a Codex thinker never silently picks a side of a modeling ruling.
+Coordination is ARTIFACT-MEDIATED: the Codex thinker reads the topic folder, writes
+`FOLLOWUP_PLAN_nN.md` under `plans/`, and EXITS -- there is NO live cross-process bridge. The helper is
+EFFORT-ONLY: it passes `--effort xhigh` (>= xhigh enforced) and NO `--model`.
+
+```bash
+# --codex mode: swap the in-runtime thinker for the FVS-owned Codex thinker (followup stage).
+node scripts/fvs-codex-think.mjs followup --topic "$ROOT" --effort xhigh
+```
+
+If `--codex` is passed but `codex` is unavailable, the helper surfaces its graceful install message
+and exits non-zero; offer to fall back to single-runtime (re-run without `--codex`). Never silently
+fall back -- the user always knows which runtime authored the follow-up.
+
+The thinker (in-runtime or Codex) authors the follow-up plan; THIS command body writes
+`plans/FOLLOWUP_PLAN_nN.md` carrying
 the full bounded-plan contract (branch/state, exact target files + theorems, immutable public
 statements that must not change, allowed-`sorry` policy, stop conditions, the verification command
 `nice -n 19 lake build` under the `set -o pipefail` / `${PIPESTATUS` guard, expected artifact
@@ -140,11 +162,19 @@ Plan:      plans/FOLLOWUP_PLAN_n{N}.md
 </process>
 
 <codex_skill_adapter>
-The `--codex` flag is RESERVED here -- the Codex thinker swap is wired in a later wave; this command
-runs the `fvs-crypto-thinker` dispatch unchanged. On Codex, the `HUMAN_RULING` HALT (Step 3) degrades
-to a plain-text question and WAITS for the user; it is fail-closed (never auto-picks a default, never
-self-rules, never writes an upstream artifact). The `Task(...)` dispatch survives intact (the
-`model=` parameter is silently ignored on Codex).
+The `--codex` flag swaps the thinker for a Codex thinker at THIS followup stage via the FVS-owned
+helper `scripts/fvs-codex-think.mjs`
+(`node scripts/fvs-codex-think.mjs followup --topic "$ROOT" --effort xhigh`). The helper is FVS-owned
+and self-contained: it does NOT import or depend on the openai-codex plugin; it spawns `codex` via an
+argv array (never a shell string), is EFFORT-ONLY (passes `--effort xhigh`, NO `--model`), and points
+Codex at the topic folder as its working root. Coordination is ARTIFACT-MEDIATED: the Codex thinker
+writes `FOLLOWUP_PLAN_nN.md` under `plans/` and exits -- there is NO live cross-process bridge. The
+`HUMAN_RULING` HALT (Step 3) runs IN THIS COMMAND BEFORE any Codex dispatch, so a Codex thinker never
+self-rules on a modeling decision; on Codex the HALT degrades to a plain-text question and WAITS for
+the user (fail-closed -- never auto-picks a default, never writes an upstream artifact). If `codex` is
+absent, the helper fails gracefully with install guidance and this command offers to fall back to
+single-runtime (re-run without `--codex`). Without `--codex`, the `fvs-crypto-thinker` dispatch runs
+unchanged.
 </codex_skill_adapter>
 
 <success_criteria>

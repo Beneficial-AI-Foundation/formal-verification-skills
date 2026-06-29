@@ -90,9 +90,21 @@ describe('Extraction loop: no upstream-artifact open/create in the draft path (E
     path.join(SCRIPTS_DIR, 'fvs-codex-think.mjs'),
     path.join(SCRIPTS_DIR, 'fvs-codex-think.sh'),
   ];
+  // The Codex-think helper now ships, so its no-gh-open invariant is asserted
+  // UNCONDITIONALLY: this gate fails if the script is deleted/renamed as well as
+  // if it ever grows an open/create verb. The remaining existence-guarded targets
+  // (the trust-audit command, the future .sh shim) attach the moment they land.
+  const UNCONDITIONAL = new Set([
+    path.join(SCRIPTS_DIR, 'fvs-codex-think.mjs'),
+  ]);
+
   for (const target of EXTR07_TARGETS) {
+    const unconditional = UNCONDITIONAL.has(target);
     it(`${rel(target)} contains no open/create upstream-artifact invocation`, () => {
       if (!fs.existsSync(target)) {
+        if (unconditional) {
+          assert.fail(`${rel(target)} must exist (no-gh-open invariant is unconditional for it)`);
+        }
         // Not yet created (arrives in a later wave) -- the invariant attaches
         // the moment the file exists; nothing to scan before then.
         return;

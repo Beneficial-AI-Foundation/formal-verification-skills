@@ -33,8 +33,8 @@ Output: `PLAN_nN.md` (the high-level plan) + `EXEC_PLAN_nN.md` (the bounded exec
 
 <context>
 Topic: $ARGUMENTS (required -- a free-form topic, e.g. "CKA from KEM"). The optional `nN` iteration
-arg selects an explicit iteration; the optional `--codex` flag is RESERVED here (its thinker-swap
-behavior lands in a later wave) and is accepted but not yet wired.
+arg selects an explicit iteration; the optional `--codex` flag swaps the thinker for a Codex thinker
+at this stage (see the `<codex_skill_adapter>` block) -- a swappable thinker, not a second loop.
 
 The loop is restartable from its own on-disk records. Re-running on the same topic reads the latest
 `nN` under `.formalising/fv-plans/<topic>/plans/` and authors the next iteration, mirroring the
@@ -118,8 +118,8 @@ every question (loud-fail ONCE, then degrade or stop on the user's choice).
 
 ## Step 5: Dispatch the thinker (author the bounded plan)
 
-`cat` the topic artifacts and the cached KB sources and INLINE them into the prompt -- references do
-NOT cross the Task boundary:
+Default (no `--codex`) -- dispatch the in-runtime thinker. `cat` the topic artifacts and the cached
+KB sources and INLINE them into the prompt -- references do NOT cross the Task boundary:
 
 ```
 Task(
@@ -137,7 +137,25 @@ Author ONE bounded, runtime-neutral executor plan. Return with ## PLAN COMPLETE"
 )
 ```
 
-The thinker authors by return; THIS command body writes:
+When `--codex` is passed -- SWAP this `Task(subagent_type="fvs-crypto-thinker", …)` dispatch for the
+FVS-owned Codex thinker helper. The Codex thinker takes ONLY this thinker stage; everything downstream
+is UNCHANGED (the executor stays `fvs-executor`, the artifacts stay under `fv-plans/<topic>/`, the
+bounded-plan contract and runtime-neutral naming are identical). Coordination is ARTIFACT-MEDIATED:
+the Codex thinker reads the topic folder, writes `PLAN_nN.md` / `EXEC_PLAN_nN.md` under `plans/`, and
+EXITS -- there is NO live cross-process bridge and no kept-alive process across stages. The helper is
+EFFORT-ONLY: it passes `--effort xhigh` (>= xhigh enforced) and NO `--model`.
+
+```bash
+# --codex mode: swap the in-runtime thinker for the FVS-owned Codex thinker (plan stage).
+node scripts/fvs-codex-think.mjs plan --topic "$ROOT" --effort xhigh
+```
+
+If `--codex` is passed but the `codex` CLI is unavailable, the helper surfaces its graceful
+install-instruction message and exits non-zero; offer to fall back to single-runtime mode (re-run
+without `--codex`, which dispatches `fvs-crypto-thinker` unchanged). Never silently fall back -- the
+user always knows which runtime authored the plan.
+
+The thinker (in-runtime or Codex) authors the plan; THIS command body writes:
 - `plans/PLAN_nN.md` -- the high-level plan.
 - `plans/EXEC_PLAN_nN.md` -- the bounded executor plan.
 
@@ -172,11 +190,17 @@ Sources:   {K} cached under sources/
 </process>
 
 <codex_skill_adapter>
-The `--codex` flag is RESERVED here -- the Codex thinker swap is wired in a later wave; this command
-runs the `fvs-crypto-thinker` dispatch unchanged. On Codex, any interactive prompt (the KB
-loud-fail-once degrade choice) degrades to a plain-text question and WAITS for the user; it is
-fail-closed (never auto-picks a default, never writes an upstream artifact). The `Task(...)` dispatch
-survives intact (the `model=` parameter is silently ignored on Codex).
+The `--codex` flag swaps the thinker for a Codex thinker at THIS stage via the FVS-owned helper
+`scripts/fvs-codex-think.mjs` (`node scripts/fvs-codex-think.mjs plan --topic "$ROOT" --effort xhigh`).
+The helper is FVS-owned and self-contained: it does NOT import or depend on the openai-codex plugin;
+it spawns `codex` via an argv array (never a shell string), is EFFORT-ONLY (passes `--effort xhigh`,
+NO `--model`), and points Codex at the topic folder as its working root. Coordination is
+ARTIFACT-MEDIATED: the Codex thinker writes its plan artifact under `plans/` and exits -- there is NO
+live cross-process bridge. If `codex` is absent, the helper fails gracefully with install guidance and
+this command offers to fall back to single-runtime (re-run without `--codex`). Without `--codex`, the
+`fvs-crypto-thinker` dispatch runs unchanged; on Codex any interactive prompt (the KB loud-fail-once
+degrade choice) degrades to a plain-text question and WAITS for the user (fail-closed -- never
+auto-picks a default, never writes an upstream artifact).
 </codex_skill_adapter>
 
 <success_criteria>
