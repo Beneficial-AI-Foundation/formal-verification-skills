@@ -4,7 +4,7 @@ All notable changes to FVS (Formal Verification Skills) will be documented in th
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased] - v2.0
+## [2.0.0] - 2026-06-30
 
 Structural cleanup and bundle architecture. Updating from v1.3 applies all renames, moves, and removals automatically (deleted and renamed commands/agents self-heal on install); the installer prints a one-time summary of the changes below.
 
