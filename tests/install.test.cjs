@@ -299,3 +299,48 @@ describe('Codex reinstall round-trip (TOML-aware strip + orphan prune)', () => {
     assert.ok(current.includes('fvs-executor.toml'), 'fvs-executor.toml present');
   });
 });
+
+describe('installed tree matches final bundle shape', () => {
+  // Upgrades the round-trip from the >= N directory-shape granularity to exact
+  // bundle granularity: a fresh install must carry all 5 bundle routers and all
+  // 8 new-bundle agents. This catches an installer copy-list omission that the
+  // source-only frontmatter gate cannot see (a file present in the source tree
+  // but missing from bin/install.js's copy list).
+  let tmpDir;
+
+  const ROUTERS = ['aeneas.md', 'fc.md', 'formalise.md', 'context.md', 'manage.md'];
+  const NEW_AGENTS = [
+    'fvs-extract-classifier.md', 'fvs-extract-applier.md', 'fvs-extract-bisector.md',
+    'fvs-equivalence-assessor.md', 'fvs-draft-investigator.md', 'fvs-doc-syncer.md',
+    'fvs-crypto-thinker.md', 'fvs-axiom-auditor.md',
+  ];
+
+  it('installs to a temp directory without error', () => {
+    tmpDir = makeTmpDir('fvs-final-shape-');
+    execFileSync(process.execPath, [
+      INSTALLER, '--claude', '--global', '--config-dir', tmpDir,
+    ], {
+      cwd: ROOT,
+      env: { ...process.env, HOME: tmpDir },
+      stdio: 'pipe',
+    });
+  });
+
+  it('installs all 5 bundle routers under commands/fvs', () => {
+    for (const r of ROUTERS) {
+      assert.ok(
+        fs.existsSync(path.join(tmpDir, 'commands', 'fvs', r)),
+        `router missing after install: ${r}`
+      );
+    }
+  });
+
+  it('installs all 8 new-bundle agents under agents/', () => {
+    for (const a of NEW_AGENTS) {
+      assert.ok(
+        fs.existsSync(path.join(tmpDir, 'agents', a)),
+        `new-bundle agent missing after install: ${a}`
+      );
+    }
+  });
+});
