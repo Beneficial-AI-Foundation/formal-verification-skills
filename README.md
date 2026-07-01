@@ -2,7 +2,7 @@
 
 # FORMAL VERIFICATION SKILLS
 
-**Formal verification of Rust code with AI-assisted specification and proof. Multi-framework, multi-runtime.**
+**Formal verification in Lean 4 with AI-assisted specification and proof — for Rust code (via Aeneas) and for maths/crypto papers. Multi-runtime.**
 
 [![npm version](https://img.shields.io/npm/v/fv-skills-baif?style=for-the-badge&logo=npm&logoColor=white&color=CB3837)](https://www.npmjs.com/package/fv-skills-baif)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)](LICENSE)
@@ -54,9 +54,10 @@ Verify with `/fvs:help` inside your chosen runtime.
 
 ### Prerequisites (Lean 4 / Aeneas)
 
-- A Lean 4 project with `lakefile.toml` and `lean-toolchain`
-- Aeneas-generated output (`Types.lean`, `Funs.lean`) from your Rust source
-- Lean 4 toolchain installed and working
+- A working Lean 4 toolchain, and a Lean project with `lakefile.toml` and `lean-toolchain`
+- **Functional-correctness track:** Aeneas-generated Lean (`Types.lean`, `Funs.lean`). Produce it from a Rust crate with `/fvs:aeneas-extract`, or supply the output of an existing Aeneas run.
+- **Paper track:** no Rust or Aeneas needed — bring your paper/source material (PDF, LaTeX, images).
+- **Optional:** the Codex CLI, to run the crypto loop's thinking stages dual-runtime (`--codex`).
 
 ### Recommended: Lean LSP MCP Server
 
@@ -150,7 +151,9 @@ Commands are grouped into five bundles. Each bundle has a **router** command tha
 
 ## How It Works
 
-FVS follows a five-stage workflow. Each stage builds on the previous.
+### Functional-correctness track (Rust → Lean 4)
+
+This track verifies Rust that Aeneas has lowered to Lean 4. Starting from a Rust crate, `/fvs:aeneas-extract <path>` drives it through the bounded **extraction repair loop** — pin audit → classify → auto-apply / bisect / gate / escalate → reversible records — until you reach a clean build or a documented escalation. It writes reversible source records (`src-modifications.diff` plus a derived `.json`/`.md` and `src-assumptions.md`) at the crate root and never edits generated Lean. Once you have `Types.lean` / `Funs.lean`, the five-stage verification workflow begins:
 
 ### 1. Map
 
@@ -171,6 +174,23 @@ FVS follows a five-stage workflow. Each stage builds on the previous.
 ### 5. Simplify
 
 `/fvs:lean-refactor <spec_path>` — Refactor, simplify, and decompose verified proofs. Applies tiered heuristics (dead code removal, simp sharpening, tactic golf, smart automation) while verifying compilation after every change. Three modes: safe, balanced (default), and aggressive.
+
+### 6. Audit
+
+`/fvs:trust-audit <target>` — Build-backed audit of the trust surface. Runs a green-build precondition, then uses `#print axioms` to classify every in-scope declaration as verified / `sorry` / axiom. The classical trio (`propext`, `Classical.choice`, `Quot.sound`) is auto-noted as Lean/Mathlib-standard; any project-custom axiom must be justified or the gate reports NOT-CLEAN. Produces a re-runnable, dependency-ordered table under `.formalising/audits/`.
+
+### The paper track (maths / crypto)
+
+The paper track formalises papers directly into Lean 4 — no Rust, no Aeneas. Two entry points:
+
+- **One-shot:** `/fvs:lean-formalise` reads your PDFs / images / LaTeX (optionally grounded in a NotebookLM knowledge base via `/fvs:kb-setup`) and produces Lean definition and spec files in a single pass.
+- **Iterative crypto loop:** for larger crypto formalisations, a topic-based, restartable loop of four stages:
+
+  `/fvs:crypto-plan` → `/fvs:crypto-execute` → `/fvs:crypto-eval` → `/fvs:crypto-followup` → repeat
+
+  A high-effort thinker authors each bounded plan; the executor runs it under a green-build guard; an adversarial eval tries to refute the spec, proof, and assumptions and ends in exactly one of ACCEPT / FOLLOWUP / HUMAN_RULING / BLOCKED; follow-up turns findings into the next plan (halting for a human ruling on modeling decisions).
+
+  **Single- vs dual-runtime (`--codex`).** By default the loop is single-runtime — the thinking stages (`crypto-plan`, `crypto-eval`, `crypto-followup`) run the in-runtime `fvs-crypto-thinker`. Pass `--codex` to hand a stage's thinking to an independent **Codex CLI** thinker instead, so the adversarial planner/evaluator runs on a *different engine* than the executor and blind spots don't correlate. `crypto-execute` is the runtime-neutral executor and takes no `--codex`. Without the Codex CLI installed, a `--codex` stage stops with an install hint rather than silently falling back.
 
 ---
 
