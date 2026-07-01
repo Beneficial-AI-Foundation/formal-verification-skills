@@ -23,18 +23,25 @@ Commands are grouped into five bundles. Each bundle has a router command (e.g. `
 
 ## Quick Start
 
-1. `/fvs:map-code` - Analyze project, build dependency graph
-2. `/fvs:fc-plan` - Select verification targets
-3. `/fvs:lean-specify <function>` - Generate spec with sorry
-4. `/fvs:lean-verify <spec_path>` - Attempt proof interactively
-5. `/fvs:lean-refactor <spec_path>` - Golf and clean up verified proofs
-6. `/fvs:lean-formalise` - Formalise paper/math content into Lean specs
+**From a Rust crate — functional-correctness track:**
+1. `/fvs:aeneas-extract <path>` - Extract Rust → Lean 4 via the bounded Aeneas repair loop
+2. `/fvs:map-code` - Analyze project, build dependency graph
+3. `/fvs:fc-plan` - Select verification targets
+4. `/fvs:lean-specify <function>` - Generate spec with sorry
+5. `/fvs:lean-verify <spec_path>` - Attempt proof interactively
+6. `/fvs:lean-refactor <spec_path>` - Golf and clean up verified proofs
+7. `/fvs:trust-audit <target>` - Audit the sorry/axiom trust surface
+
+**From a paper — paper track:**
+- `/fvs:lean-formalise` - One-shot formalisation of paper/math content, or
+- `/fvs:crypto-plan <topic>` - Start the multi-iteration crypto loop (see Formalise below)
 
 ## Core Workflow
 
 ```
-/fvs:map-code → /fvs:fc-plan → /fvs:lean-specify → /fvs:lean-verify → /fvs:lean-refactor → repeat
-Paper track:    /fvs:lean-formalise → /fvs:lean-verify → /fvs:lean-refactor
+Code track:  /fvs:aeneas-extract → /fvs:map-code → /fvs:fc-plan → /fvs:lean-specify → /fvs:lean-verify → /fvs:lean-refactor → /fvs:trust-audit
+Paper track: /fvs:lean-formalise → /fvs:lean-verify → /fvs:lean-refactor
+Crypto loop: /fvs:crypto-plan → /fvs:crypto-execute → /fvs:crypto-eval → /fvs:crypto-followup → repeat
 ```
 
 ## Bundles
@@ -188,24 +195,28 @@ Refactor, simplify, and decompose verified Lean proofs while preserving compilat
 
 Usage: `/fvs:lean-refactor Specs/Backend/Field/Sub.lean`
 
-The crypto formalisation loop (plan -> execute -> eval -> follow-up) is a topic-based, multi-iteration alternative to the one-shot `lean-formalise`. Its four stages share the artifact tree under `fv-plans/<topic>/` and the loop is restartable from those records. The loop is runtime-neutral (it runs as a same-runtime pair by default).
+The crypto formalisation loop (plan -> execute -> eval -> follow-up) is a topic-based, multi-iteration alternative to the one-shot `lean-formalise`. Its four stages share the artifact tree under `fv-plans/<topic>/` and the loop is restartable from those records.
 
-**`/fvs:crypto-plan <topic>`**
+**Single- vs dual-runtime (`--codex`).** By default the loop is *single-runtime*: the high-effort thinking (planning, adversarial eval, follow-up) is done by the in-runtime `fvs-crypto-thinker`. The three *thinking* stages — `crypto-plan`, `crypto-eval`, `crypto-followup` — also accept `--codex`, which hands that stage's thinking to an independent **Codex CLI** thinker instead. That makes the loop *dual-runtime*: the adversarial planner/evaluator runs on a different engine than the executor, reducing correlated blind spots. `crypto-execute` is the runtime-neutral executor and takes no `--codex`. Pass `--codex` without the Codex CLI installed and the stage stops with an install hint (never a silent fallback) — re-run without it to stay single-runtime.
+
+**`/fvs:crypto-plan <topic> [nN] [--codex]`**
 Author the next bounded, runtime-neutral executor plan for a topic, grounded in the paper via the NotebookLM knowledge base (answers cached under `sources/`).
 
 Usage: `/fvs:crypto-plan "CKA from KEM"`
+Usage: `/fvs:crypto-plan "CKA from KEM" --codex`   # hand the planning think-step to Codex
 
 **`/fvs:crypto-execute <topic> nN`**
-Run the current iteration's bounded plan under the green-build guard; a failed proof triggers a short interactive redirect early.
+Run the current iteration's bounded plan under the green-build guard; a failed proof triggers a short interactive redirect early. (Executor stage — takes no `--codex`.)
 
 Usage: `/fvs:crypto-execute "CKA from KEM" n1`
 
-**`/fvs:crypto-eval <topic> nN`**
+**`/fvs:crypto-eval <topic> nN [--codex]`**
 Adversarially evaluate the iteration; ends in exactly one decision (ACCEPT / FOLLOWUP / HUMAN_RULING / BLOCKED).
 
 Usage: `/fvs:crypto-eval "CKA from KEM" n1`
+Usage: `/fvs:crypto-eval "CKA from KEM" n1 --codex`
 
-**`/fvs:crypto-followup <topic> nN`**
+**`/fvs:crypto-followup <topic> nN [--codex]`**
 Convert eval findings into the next bounded follow-up plan; HALTs for a human ruling on a modeling decision.
 
 Usage: `/fvs:crypto-followup "CKA from KEM" n1`
