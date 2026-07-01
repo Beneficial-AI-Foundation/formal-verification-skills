@@ -4,6 +4,15 @@ All notable changes to FVS (Formal Verification Skills) will be documented in th
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.0.1] - 2026-07-01
+
+Documentation polish. No code or behavior changes.
+
+### Changed
+- README "How It Works" now documents the Aeneas extraction repair loop, the trust audit, and the paper track's crypto loop -- previously only the v1.x five-stage functional-correctness flow was described; the tagline and Prerequisites now cover both the code and paper tracks
+- `/fvs:help` documents the crypto loop's `--codex` single- vs dual-runtime flag (which stages accept it, what it swaps, and the no-silent-fallback behavior), and Quick Start / Core Workflow now surface the extraction and crypto-loop entry points
+- Install screenshot (`assets/terminal.svg`) version label updated to the v2.0 line
+
 ## [2.0.0] - 2026-06-30
 
 Structural cleanup and bundle architecture. Updating from v1.3 applies all renames, moves, and removals automatically (deleted and renamed commands/agents self-heal on install); the installer prints a one-time summary of the changes below.
