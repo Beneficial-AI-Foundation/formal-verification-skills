@@ -4,6 +4,11 @@ All notable changes to FVS (Formal Verification Skills) will be documented in th
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.0.2] - 2026-07-02
+
+### Fixed
+- Codex installs now enable hooks with `[features].hooks = true` instead of an invalid root-level `hooks = true`, which current Codex parses as the hooks config table and rejects at startup.
+
 ## [2.0.1] - 2026-07-01
 
 Documentation polish. No code or behavior changes.
