@@ -104,8 +104,11 @@ describe('Codex config.toml coexistence (GSD + FVS + user tables)', () => {
     const content = readToml(tmpDir);
     const markerCount = content.split('FVS Agent Configuration').length - 1;
     assert.equal(markerCount, 1, `expected exactly one FVS marker, got ${markerCount}`);
+    const featuresCount = content.split(/\n/).filter((l) => /^\[features\]\s*$/.test(l)).length;
+    assert.equal(featuresCount, 1, `expected exactly one [features] table, got ${featuresCount}`);
     const flagCount = content.split(/\n/).filter((l) => /^hooks\s*=\s*true\s*$/.test(l)).length;
-    assert.equal(flagCount, 1, `expected exactly one hooks feature flag, got ${flagCount}`);
+    assert.equal(flagCount, 1, `expected exactly one [features].hooks flag, got ${flagCount}`);
+    assert.ok(content.indexOf('[features]') < content.indexOf('hooks = true'), 'hooks flag is inside [features]');
   });
 
   it('removes only the FVS tables on uninstall; GSD and user tables survive', () => {
@@ -173,7 +176,7 @@ describe('Codex FVS-only install then uninstall (clean removal)', () => {
     uninstallCodex(tmpDir);
     assert.ok(
       !fs.existsSync(path.join(tmpDir, 'config.toml')),
-      'an FVS-only config.toml must be deleted, not left with hooks = true',
+      'an FVS-only config.toml must be deleted, not left with an orphaned hooks feature flag',
     );
   });
 

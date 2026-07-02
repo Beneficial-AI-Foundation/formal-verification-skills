@@ -16,13 +16,20 @@ const reset = '\x1b[0m';
 // Codex config.toml constants
 const FVS_CODEX_MARKER = '# FVS Agent Configuration \u2014 managed by fv-skills-baif installer';
 
-// Codex hooks feature flag. Current Codex CLI reads a boolean `hooks` flag in
-// config.toml to enable its hook dispatcher; an older naming used `codex_hooks`.
-// Emit the canonical key and treat the legacy alias as equivalent so a reinstall
-// over an older config migrates the flag forward instead of leaving a duplicate.
+// Codex hooks feature flag. Current Codex CLI reads feature flags under the
+// `[features]` table; a root-level `hooks = true` is parsed as the hooks config
+// object itself and is rejected. Emit `[features].hooks`, and treat the legacy
+// alias as equivalent so a reinstall over an older config migrates forward
+// instead of leaving a duplicate.
 const CODEX_HOOKS_FEATURE_KEY = 'hooks';
 const CODEX_HOOKS_FEATURE_LEGACY_KEYS = ['codex_hooks'];
 const CODEX_HOOKS_FEATURE_ALL_KEYS = [CODEX_HOOKS_FEATURE_KEY, ...CODEX_HOOKS_FEATURE_LEGACY_KEYS];
+const CODEX_FEATURES_TABLE = 'features';
+const FVS_CODEX_HOOKS_FEATURE_COMMENT = '# FVS-owned Codex hooks feature flag';
+
+function isCodexHooksFeatureKey(key) {
+  return CODEX_HOOKS_FEATURE_ALL_KEYS.includes(key);
+}
 
 // The only FVS hook script with a Codex event target is the update checker,
 // wired as a SessionStart hook. The statusline has no Codex renderer surface and
@@ -1083,6 +1090,123 @@ function removeContentRanges(content, ranges) {
   return cleaned;
 }
 
+function joinTomlLines(lines) {
+  return lines.map((line) => line.text + line.eol).join('');
+}
+
+function parseCodexHooksFeatureAssignment(lineText) {
+  const m = lineText.match(/^\s*(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_]+))\s*=\s*(true|false)(\s*(?:#.*)?)?$/);
+  if (!m) return null;
+  const key = m[1] || m[2] || m[3];
+  if (!isCodexHooksFeatureKey(key)) return null;
+  return { key, value: m[4], suffix: m[5] || '' };
+}
+
+function parseRootDottedCodexHooksFeatureAssignment(lineText) {
+  const m = lineText.match(/^\s*features\.(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_]+))\s*=\s*(true|false)(\s*(?:#.*)?)?$/);
+  if (!m) return null;
+  const key = m[1] || m[2] || m[3];
+  if (!isCodexHooksFeatureKey(key)) return null;
+  return { key, value: m[4], suffix: m[5] || '' };
+}
+
+function renderCodexHooksFeatureAssignment(lineText) {
+  const indent = (lineText.match(/^\s*/) || [''])[0];
+  const parsed = parseCodexHooksFeatureAssignment(lineText);
+  return `${indent}${CODEX_HOOKS_FEATURE_KEY} = true${parsed ? parsed.suffix : ''}`;
+}
+
+function renderRootDottedCodexHooksFeatureAssignment(lineText) {
+  const indent = (lineText.match(/^\s*/) || [''])[0];
+  const parsed = parseRootDottedCodexHooksFeatureAssignment(lineText);
+  return `${indent}features.${CODEX_HOOKS_FEATURE_KEY} = true${parsed ? parsed.suffix : ''}`;
+}
+
+function removeRootCodexHooksFeatureFlags(content) {
+  const lines = splitTomlLines(content);
+  const firstHeaderIdx = lines.findIndex((line) => parseTomlTableHeader(line.text));
+  let changed = false;
+  const kept = lines.filter((line, index) => {
+    if (firstHeaderIdx !== -1 && index >= firstHeaderIdx) return true;
+    if (!parseCodexHooksFeatureAssignment(line.text)) return true;
+    changed = true;
+    return false;
+  });
+  return { content: changed ? joinTomlLines(kept) : content, changed };
+}
+
+function getCodexFeaturesSection(content) {
+  return getTomlTableSections(content)
+    .find((section) => !section.array && section.path === CODEX_FEATURES_TABLE);
+}
+
+function rewriteRootDottedCodexHooksFeature(content) {
+  const lines = splitTomlLines(content);
+  const firstHeaderIdx = lines.findIndex((line) => parseTomlTableHeader(line.text));
+  let found = false;
+  let changed = false;
+  const kept = [];
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (firstHeaderIdx !== -1 && i >= firstHeaderIdx) {
+      kept.push(line);
+      continue;
+    }
+
+    if (!parseRootDottedCodexHooksFeatureAssignment(line.text)) {
+      kept.push(line);
+      continue;
+    }
+
+    if (!found) {
+      found = true;
+      const rendered = renderRootDottedCodexHooksFeatureAssignment(line.text);
+      if (rendered !== line.text) changed = true;
+      kept.push({ ...line, text: rendered });
+    } else {
+      changed = true;
+    }
+  }
+
+  return { content: changed ? joinTomlLines(kept) : content, found, changed };
+}
+
+function stripFvsManagedCodexHooksFeature(content) {
+  // Self-heal v2.0.1 installs, which wrote the now-invalid root `hooks = true`.
+  let cleaned = removeRootCodexHooksFeatureFlags(content).content;
+  const featuresSection = getCodexFeaturesSection(cleaned);
+  if (!featuresSection) return cleaned;
+
+  const body = cleaned.slice(featuresSection.headerEnd, featuresSection.end);
+  const lines = splitTomlLines(body);
+  const kept = [];
+  let removed = false;
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (line.text.trim() === FVS_CODEX_HOOKS_FEATURE_COMMENT) {
+      removed = true;
+      const next = lines[i + 1];
+      if (next && parseCodexHooksFeatureAssignment(next.text)) {
+        i += 1;
+      }
+      continue;
+    }
+    kept.push(line);
+  }
+
+  if (!removed) return cleaned;
+
+  const nextBody = joinTomlLines(kept);
+  const hasRemainingContent = nextBody.split(/\r?\n/).some((line) => line.trim() !== '');
+  if (!hasRemainingContent) {
+    return cleaned.slice(0, featuresSection.start) + cleaned.slice(featuresSection.end);
+  }
+
+  return cleaned.slice(0, featuresSection.headerEnd) + nextBody + cleaned.slice(featuresSection.end);
+}
+
 /**
  * Strip FVS sections from Codex config.toml content.
  *
@@ -1129,21 +1253,11 @@ function stripFvsFromCodexConfig(content) {
     cleaned = before + after;
   }
 
-  // Remove the FVS-owned root-level hooks feature flag (canonical + legacy).
-  // The flag is inserted by ensureCodexHooksFeature between the FVS marker and
-  // the first FVS table, so once the marker and tables are gone it is left
-  // orphaned. Only strip it when the FVS marker was present — a flag in a
-  // config that FVS never marked is the user's and must be preserved.
+  // Remove the FVS-owned hooks feature gate. v2.0.1 emitted an invalid root
+  // `hooks = true`; current installs mark their `[features].hooks` insertion so
+  // uninstall can remove only the FVS-owned line and preserve user/GSD flags.
   if (hadFvsMarker) {
-    const flagLines = cleaned.split(/\r?\n/);
-    const firstHeaderIdx = flagLines.findIndex((l) => /^\s*\[/.test(l));
-    cleaned = flagLines
-      .filter((line, i) => {
-        if (firstHeaderIdx !== -1 && i >= firstHeaderIdx) return true;
-        const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*true\s*$/);
-        return !(m && CODEX_HOOKS_FEATURE_ALL_KEYS.includes(m[1]));
-      })
-      .join('\n');
+    cleaned = stripFvsManagedCodexHooksFeature(cleaned);
   }
 
   // Collapse runs of blank lines the removals may have left behind, then
@@ -1165,9 +1279,9 @@ function stripFvsFromCodexConfig(content) {
  *
  * On reinstall this first strips any previously-emitted FVS tables via the
  * TOML-aware strip (so foreign user/GSD tables survive verbatim and stale FVS
- * tables are removed), then appends the freshly-generated FVS block. The
- * FVS-emitted block carries no `[features]`/`multi_agent` keys, so none are
- * injected into the user's config.
+ * tables are removed), then appends the freshly-generated FVS agent block. The
+ * hook feature gate is handled separately by ensureCodexHooksFeature so it can
+ * coexist with user/GSD `[features]` settings.
  */
 function mergeCodexConfig(configPath, fvsBlock) {
   // Case 1: No config.toml -- create fresh.
@@ -1539,62 +1653,103 @@ function removeCodexHooksJsonSessionStart(targetDir) {
   return reconcileCodexHooksJsonSessionStart(targetDir, { managedCommand: null });
 }
 
-// Ensure the Codex hooks feature flag is present and set true under the
-// canonical key. If the file already enables the flag under the legacy key,
-// rewrite that line to the canonical key (migrate forward) rather than adding a
-// duplicate. Returns { content, changed }.
+// Ensure the Codex hooks feature flag is present as `[features].hooks = true`.
+// Older FVS versions wrote root-level `hooks = true`, which current Codex parses
+// as the hooks config table and rejects; remove that stale shape while inserting
+// the valid feature flag.
 function ensureCodexHooksFeature(configContent) {
-  const content = typeof configContent === 'string' ? configContent : '';
+  const original = typeof configContent === 'string' ? configContent : '';
+  const rootStripped = removeRootCodexHooksFeatureFlags(original);
+  let content = rootStripped.content;
   const eol = content ? detectLineEnding(content) : '\n';
-  const lines = content.length ? content.split(/\r?\n/) : [];
 
-  let canonicalIdx = -1;
-  let legacyIdx = -1;
-  for (let i = 0; i < lines.length; i += 1) {
-    const m = lines[i].match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.+?)\s*$/);
-    if (!m) continue;
-    const key = m[1];
-    if (key === CODEX_HOOKS_FEATURE_KEY && canonicalIdx === -1) canonicalIdx = i;
-    else if (CODEX_HOOKS_FEATURE_LEGACY_KEYS.includes(key) && legacyIdx === -1) legacyIdx = i;
-  }
+  const featuresSection = getCodexFeaturesSection(content);
+  if (featuresSection) {
+    const body = content.slice(featuresSection.headerEnd, featuresSection.end);
+    const lines = splitTomlLines(body);
+    let found = false;
+    let changed = rootStripped.changed;
+    const kept = [];
 
-  // Only operate on root-level flag lines (not inside a [table]); a flag line
-  // appearing after the first [section] header is treated as section-scoped and
-  // left alone — FVS emits the flag at the document root before any table.
-  const firstHeaderIdx = lines.findIndex((l) => /^\s*\[/.test(l));
-  const isRootLevel = (idx) => idx !== -1 && (firstHeaderIdx === -1 || idx < firstHeaderIdx);
+    for (const line of lines) {
+      const parsed = parseCodexHooksFeatureAssignment(line.text);
+      if (!parsed) {
+        kept.push(line);
+        continue;
+      }
 
-  if (isRootLevel(canonicalIdx)) {
-    if (/=\s*true\s*$/.test(lines[canonicalIdx])) return { content, changed: false };
-    lines[canonicalIdx] = `${CODEX_HOOKS_FEATURE_KEY} = true`;
-    return { content: lines.join(eol), changed: true };
-  }
-  if (isRootLevel(legacyIdx)) {
-    lines[legacyIdx] = `${CODEX_HOOKS_FEATURE_KEY} = true`;
-    return { content: lines.join(eol), changed: true };
-  }
+      if (!found) {
+        found = true;
+        const rendered = renderCodexHooksFeatureAssignment(line.text);
+        if (rendered !== line.text) changed = true;
+        kept.push({ ...line, text: rendered });
+      } else {
+        changed = true;
+      }
+    }
 
-  // Insert a fresh canonical flag line at the document root, above any table.
-  const insertLine = `${CODEX_HOOKS_FEATURE_KEY} = true`;
-  if (firstHeaderIdx === -1) {
-    const base = content.trimEnd();
-    const next = base ? `${insertLine}${eol}${base}${eol}` : `${insertLine}${eol}`;
+    if (found) {
+      const next = content.slice(0, featuresSection.headerEnd) +
+        joinTomlLines(kept) +
+        content.slice(featuresSection.end);
+      return { content: next, changed: changed || next !== original };
+    }
+
+    const needsLineBreak = featuresSection.end > 0 &&
+      !content.slice(0, featuresSection.end).endsWith('\n') &&
+      !content.slice(0, featuresSection.end).endsWith('\r\n');
+    const insertText = `${needsLineBreak ? eol : ''}${FVS_CODEX_HOOKS_FEATURE_COMMENT}${eol}${CODEX_HOOKS_FEATURE_KEY} = true${eol}`;
+    const next = content.slice(0, featuresSection.end) + insertText + content.slice(featuresSection.end);
     return { content: next, changed: true };
   }
-  lines.splice(firstHeaderIdx, 0, insertLine, '');
-  return { content: lines.join(eol), changed: true };
+
+  const dotted = rewriteRootDottedCodexHooksFeature(content);
+  if (dotted.found) {
+    return { content: dotted.content, changed: rootStripped.changed || dotted.changed || dotted.content !== original };
+  }
+
+  const featuresBlock = [
+    `[${CODEX_FEATURES_TABLE}]`,
+    FVS_CODEX_HOOKS_FEATURE_COMMENT,
+    `${CODEX_HOOKS_FEATURE_KEY} = true`,
+    '',
+  ].join(eol);
+
+  if (!content) return { content: featuresBlock, changed: true };
+
+  const firstTable = getTomlTableSections(content)[0];
+  if (firstTable) {
+    const before = content.slice(0, firstTable.start);
+    const after = content.slice(firstTable.start);
+    const needsGap = before.length > 0 && !before.endsWith(eol + eol);
+    const next = before + (needsGap ? eol : '') + featuresBlock + eol + after;
+    return { content: next, changed: true };
+  }
+
+  const base = content.trimEnd();
+  const needsGap = base.length > 0;
+  const next = `${base}${needsGap ? eol + eol : ''}${featuresBlock}`;
+  return { content: next, changed: true };
 }
 
 function hasEnabledCodexHooksFeature(configContent) {
   if (typeof configContent !== 'string') return false;
-  const firstHeaderIdx = configContent.split(/\r?\n/).findIndex((l) => /^\s*\[/.test(l));
-  const lines = configContent.split(/\r?\n/);
-  for (let i = 0; i < lines.length; i += 1) {
-    if (firstHeaderIdx !== -1 && i >= firstHeaderIdx) break;
-    const m = lines[i].match(/^\s*([A-Za-z0-9_]+)\s*=\s*true\s*$/);
-    if (m && CODEX_HOOKS_FEATURE_ALL_KEYS.includes(m[1])) return true;
+  const featuresSection = getCodexFeaturesSection(configContent);
+  if (featuresSection) {
+    const body = configContent.slice(featuresSection.headerEnd, featuresSection.end);
+    for (const line of splitTomlLines(body)) {
+      const parsed = parseCodexHooksFeatureAssignment(line.text);
+      if (parsed && parsed.value === 'true') return true;
+    }
   }
-  return false;
+
+  const lines = splitTomlLines(configContent);
+  const firstHeaderIdx = lines.findIndex((line) => parseTomlTableHeader(line.text));
+  return lines.some((line, index) => {
+    if (firstHeaderIdx !== -1 && index >= firstHeaderIdx) return false;
+    const parsed = parseRootDottedCodexHooksFeatureAssignment(line.text);
+    return Boolean(parsed && parsed.value === 'true');
+  });
 }
 
 /**

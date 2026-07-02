@@ -236,20 +236,22 @@ describe('TOML-aware config strip (stripFvsFromCodexConfig)', () => {
     assert.equal(stripFvsFromCodexConfig(content), null);
   });
 
-  it('strips the FVS-owned root feature flag so an FVS-only config returns null', () => {
-    // Reproduces the real install shape: the feature flag sits between the FVS
-    // marker comment and the first FVS table. Stripping the marker and tables
-    // must also drop the orphaned flag so the file is recognized as empty.
+  it('strips the FVS-owned hooks feature gate so an FVS-only config returns null', () => {
+    // Reproduces the real install shape: the feature flag sits under [features]
+    // before the first FVS table. Stripping the marker and tables must also drop
+    // the orphaned managed feature gate so the file is recognized as empty.
     const block = generateCodexConfigBlock(
       [{ name: 'fvs-executor', description: 'x' }, { name: 'fvs-researcher', description: 'y' }],
       '/home/user/.codex',
     );
     const installed = ensureCodexHooksFeature(block).content;
-    assert.ok(/^hooks = true$/m.test(installed), 'precondition: flag was inserted');
+    assert.ok(/^\[features\]$/m.test(installed), 'precondition: [features] table was inserted');
+    assert.ok(/^hooks = true$/m.test(installed), 'precondition: hooks feature flag was inserted');
+    assert.ok(!installed.startsWith('hooks = true'), 'precondition: no root-level hooks flag');
     assert.equal(stripFvsFromCodexConfig(installed), null, 'FVS-only config must strip to null');
   });
 
-  it('removes the orphaned feature flag while preserving foreign content', () => {
+  it('removes the orphaned managed feature flag while preserving foreign content', () => {
     const block = generateCodexConfigBlock(
       [{ name: 'fvs-executor', description: 'x' }],
       '/home/user/.codex',
@@ -263,15 +265,17 @@ describe('TOML-aware config strip (stripFvsFromCodexConfig)', () => {
     assert.ok(cleaned.includes('name = "gpt-5"'), 'foreign table body preserved');
     assert.ok(!/^\s*hooks\s*=\s*true\s*$/m.test(cleaned), 'orphaned hooks flag removed');
     assert.ok(!/^\s*codex_hooks\s*=\s*true\s*$/m.test(cleaned), 'orphaned legacy flag removed');
+    assert.ok(!cleaned.includes('[features]'), 'empty FVS-created [features] table removed');
   });
 
-  it('preserves a user-owned root flag when no FVS marker is present', () => {
-    // The flag is FVS-owned only when FVS marked the config. A flag in a config
-    // FVS never touched belongs to the user and must survive a (no-op) strip.
-    const content = ['hooks = true', '', '[model]', 'name = "gpt-5"', ''].join('\n');
+  it('preserves a user-owned [features].hooks flag when no FVS marker is present', () => {
+    // The flag is FVS-owned only when FVS inserted its ownership comment. A
+    // [features] flag in a config FVS never touched belongs to the user.
+    const content = ['[features]', 'hooks = true', '', '[model]', 'name = "gpt-5"', ''].join('\n');
     const cleaned = stripFvsFromCodexConfig(content);
     assert.ok(cleaned !== null, 'foreign-only config is not empty');
-    assert.ok(/^hooks = true$/m.test(cleaned), 'user-owned flag preserved (no FVS marker)');
+    assert.ok(/^\[features\]$/m.test(cleaned), 'user-owned [features] table preserved');
+    assert.ok(/^hooks = true$/m.test(cleaned), 'user-owned flag preserved');
   });
 
   it('keeps CRLF line endings consistent after a strip', () => {
@@ -333,6 +337,36 @@ describe('Codex per-agent .toml triple-quote safety (generateCodexAgentToml)', (
       block.includes('config_file = "/home/user/.codex/agents/fvs-executor.toml"'),
       'config_file is a JSON-quoted absolute path',
     );
+  });
+});
+
+describe('Codex hooks feature gate (ensureCodexHooksFeature)', () => {
+  it('repairs the v2.0.1 root hooks boolean into [features].hooks', () => {
+    const broken = [
+      FVS_CODEX_MARKER,
+      '',
+      'hooks = true',
+      '',
+      '[agents.fvs-executor]',
+      'description = "x"',
+      'config_file = "/home/user/.codex/agents/fvs-executor.toml"',
+      '',
+    ].join('\n');
+
+    const result = ensureCodexHooksFeature(broken).content;
+    const featuresIndex = result.indexOf('[features]');
+    const agentsIndex = result.indexOf('[agents.fvs-executor]');
+    assert.ok(featuresIndex !== -1, 'creates [features]');
+    assert.ok(featuresIndex < agentsIndex, 'features gate appears before FVS agent tables');
+    assert.ok(/^hooks = true$/m.test(result), 'enables hooks under [features]');
+    assert.ok(!/^hooks = true$/m.test(result.slice(0, featuresIndex)), 'does not leave a root-level hooks flag');
+  });
+
+  it('preserves valid root dotted features.hooks without adding a [features] table', () => {
+    const result = ensureCodexHooksFeature('features.codex_hooks = true\n[model]\nname = "gpt-5"\n').content;
+    assert.ok(/^features\.hooks = true$/m.test(result), 'legacy dotted key is normalized');
+    assert.ok(!/^\[features\]$/m.test(result), 'does not add a duplicate [features] table');
+    assert.ok(result.includes('[model]'), 'preserves following tables');
   });
 });
 
