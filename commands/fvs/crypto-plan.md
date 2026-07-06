@@ -99,7 +99,7 @@ QHASH=$(printf '%s' "$QUESTION" | shasum -a 256 | cut -c1-16)
 if [ -f "$ROOT/sources/$QHASH.json" ]; then
   cat "$ROOT/sources/$QHASH.json"            # cache hit -- re-read, do NOT re-query
 else
-  python3 scripts/fvs-kb-query.py ask "$QUESTION" --notebook "$NOTEBOOK_ID" --json \
+  .formalising/.kb-venv/bin/python ~/.claude/scripts/fvs-kb-query.py ask "$QUESTION" --notebook "$NOTEBOOK_ID" --json \
     | tee "$ROOT/sources/$QHASH.json"        # cache the answer for the next iteration
 fi
 ```
