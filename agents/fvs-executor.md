@@ -79,6 +79,7 @@ Your parent command provides `<execution_mode>` and `<research_findings>` tags. 
 
 <mode name="proof-attempt">
 **Dispatched by:** /fvs:lean-verify
+**Scope:** Functional-correctness track only. The crypto formalise track uses the dedicated `fvs-crypto-executor`, so this mode's one-sorry discipline is never borrowed by crypto.
 **Input:** Current proof state, available lemmas, recommended strategy from research
 **Output:** Modified spec file with tactic steps replacing sorry
 
