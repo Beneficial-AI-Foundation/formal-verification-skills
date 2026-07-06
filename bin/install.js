@@ -1376,9 +1376,15 @@ function isFvsManagedCodexHookCommand(commandText, configDir) {
 
 // Read hooks.json, drop any prior FVS-managed entries for `eventName`, then
 // append exactly one fresh managed entry (unless managedCommand is null, which
-// means remove-only). Foreign entries are preserved and the file is written back
-// in the SAME shape it used: nested `{ hooks: { <Event>: [...] } }` or flat
-// `{ <Event>: [...] }`. Returns { changed, wrote, path }.
+// means remove-only). Foreign entries are preserved and the file is ALWAYS
+// written back in the nested `{ "hooks": { "<Event>": [...] } }` shape that
+// current Codex (0.142.x) requires — the older flat `{ "<Event>": [...] }` shape
+// is silently ignored by Codex. A flat top-level table is treated as a legacy
+// read source and migrated to nested: the sanitized event table plus any foreign
+// top-level event keys (e.g. Stop, PostToolUse, SubagentStart) are rehomed under
+// `hooks`, so the written object is exactly `{ hooks: { ...all events... } }`
+// (foreign non-event top-level content is preserved at the top level).
+// Returns { changed, wrote, path }.
 function reconcileCodexHooksJsonEvent(targetDir, eventName, opts = {}) {
   const hooksJsonPath = path.join(targetDir, 'hooks.json');
   const managedCommand = typeof opts.managedCommand === 'string' ? opts.managedCommand : null;
@@ -1401,8 +1407,21 @@ function reconcileCodexHooksJsonEvent(targetDir, eventName, opts = {}) {
 
   const usesNestedHooksObject =
     parsed.hooks && typeof parsed.hooks === 'object' && !Array.isArray(parsed.hooks);
-  const hookTable = usesNestedHooksObject ? parsed.hooks : parsed;
-  const eventEntries = Array.isArray(hookTable[eventName]) ? hookTable[eventName] : [];
+
+  // Build the normalized nested event table. Seed it from any existing nested
+  // `parsed.hooks` events, then rehome any foreign top-level event keys — a
+  // legacy flat table stores events directly at the top level, so migrate them
+  // (an already-nested key wins over a same-named flat one).
+  const nestedTable = {};
+  if (usesNestedHooksObject) {
+    for (const [key, value] of Object.entries(parsed.hooks)) nestedTable[key] = value;
+  }
+  for (const [key, value] of Object.entries(parsed)) {
+    if (key === 'hooks') continue;
+    if (Array.isArray(value) && !(key in nestedTable)) nestedTable[key] = value;
+  }
+
+  const eventEntries = Array.isArray(nestedTable[eventName]) ? nestedTable[eventName] : [];
 
   let removedManaged = false;
   const sanitizedEntries = [];
@@ -1430,28 +1449,41 @@ function reconcileCodexHooksJsonEvent(targetDir, eventName, opts = {}) {
   }
 
   if (sanitizedEntries.length > 0) {
-    hookTable[eventName] = sanitizedEntries;
+    nestedTable[eventName] = sanitizedEntries;
   } else {
-    delete hookTable[eventName];
+    delete nestedTable[eventName];
   }
-  if (usesNestedHooksObject) parsed.hooks = hookTable;
 
-  // When the reconcile empties the object (no foreign keys remain) and a file
-  // existed on disk, delete it rather than leaving an orphaned `{}` the user
-  // never authored. Foreign content keeps at least one key, so this only fires
-  // for an FVS-only file. A non-existent file with nothing to write is a no-op.
-  if (Object.keys(parsed).length === 0) {
+  // Assemble the always-nested output. Preserve foreign non-event top-level keys
+  // (anything other than `hooks` whose value is not an array) so unrelated
+  // user-authored content survives; the event keys themselves live under `hooks`.
+  const output = {};
+  for (const [key, value] of Object.entries(parsed)) {
+    if (key === 'hooks') continue;
+    if (Array.isArray(value)) continue;
+    output[key] = value;
+  }
+  if (Object.keys(nestedTable).length > 0) {
+    output.hooks = nestedTable;
+  }
+
+  // When the reconcile empties the whole normalized object (no events, no foreign
+  // top-level content) and a file existed on disk, delete it rather than leaving
+  // an orphaned `{}` the user never authored. Foreign content keeps at least one
+  // key, so this only fires for an FVS-only file. A non-existent file with
+  // nothing to write is a no-op.
+  if (Object.keys(output).length === 0) {
     if (currentContent !== null) {
       const removed = removedManaged || currentContent.trim() !== '{}';
       fs.unlinkSync(hooksJsonPath);
       return { changed: true, wrote: removed, path: hooksJsonPath, deleted: true };
     }
-    return { changed: changed || removedManaged, wrote: false, path: hooksJsonPath };
+    return { changed: removedManaged, wrote: false, path: hooksJsonPath };
   }
 
-  const nextContent = `${JSON.stringify(parsed, null, 2)}\n`;
+  const nextContent = `${JSON.stringify(output, null, 2)}\n`;
   const changed = currentContent !== nextContent;
-  const shouldWrite = changed && (currentContent !== null || Object.keys(parsed).length > 0);
+  const shouldWrite = changed && (currentContent !== null || Object.keys(output).length > 0);
   if (shouldWrite) {
     atomicWriteFileSync(hooksJsonPath, nextContent, 'utf8');
   }
