@@ -4,6 +4,19 @@ All notable changes to FVS (Formal Verification Skills) will be documented in th
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.0.3] - 2026-07-04
+
+### Changed
+- The crypto formalisation loop now drives a dedicated crypto executor with an `implement -> check -> complete -> escalate -> BLOCKED` discipline, replacing the borrowed functional-correctness one-sorry-at-a-time proof-attempt grind that did not fit crypto work.
+- `/fvs:crypto-execute` gained a runtime-agnostic executor model/effort knob resolved at dispatch time (explicit flag, then a config `model_overrides` entry, then an interactive ask, then inherit the default) so the executor is never hard-pinned to one model.
+- The crypto thinker's plan mode is fenced to producing statements rather than proofs, with an added escalate-to-user tier when a step exceeds its remit.
+- Guidance now treats `lake build` as the style authority for crypto work, and isolation checks skip the package's own style linters to avoid contradictory signals.
+- `/fvs:lean-verify` received a minimal refresh keeping proof-attempt behavior functional-correctness-scoped, decoupling it from the crypto executor without a rewrite.
+
+### Fixed
+- Codex `hooks.json` is now written in the nested `{ hooks: { ... } }` shape that current Codex expects; pre-existing flat hook files are migrated on reinstall while foreign entries are preserved.
+- Corrected the crypto-plan knowledge-base invocation path so KB querying resolves the intended interpreter and script location.
+
 ## [2.0.2] - 2026-07-02
 
 ### Fixed
