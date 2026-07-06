@@ -2,6 +2,10 @@
 Orchestrate interactive proof development for a Lean specification using two-phase
 subagent dispatch (research -> iterative execute).
 
+This is a functional-correctness (FC) track workflow. The fvs-executor proof-attempt
+mode it drives is FC-only -- the crypto formalise track uses its own dedicated executor,
+so this one-sorry loop is exclusive to lean-verify and is not shared with any other track.
+
 Dispatches fvs-researcher to analyze sorry locations and recommend proof strategies,
 then iteratively dispatches fvs-executor to replace each sorry ONE AT A TIME with
 small tactic blocks. The user checks Lean compiles between each step.

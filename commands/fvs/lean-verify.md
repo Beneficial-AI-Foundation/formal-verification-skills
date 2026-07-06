@@ -14,6 +14,8 @@ allowed-tools:
 <objective>
 Orchestrate interactive proof development for a Lean specification using two-phase subagent dispatch (research -> iterative execute). Dispatches fvs-researcher to analyze sorry locations and recommend proof strategies, then iteratively dispatches fvs-executor to replace each sorry ONE AT A TIME with small tactic blocks.
 
+This is a functional-correctness (FC) track command. Its `fvs-executor` `proof-attempt` mode is FC-only: the crypto formalise track drives its own dedicated executor, so the one-sorry pair-programming loop below is exclusive to this command and is not shared with or borrowed by any other track.
+
 This is the most interactive command -- it feels like pair programming. The executor proposes a small tactic step, the user checks Lean compiles, and the cycle repeats. This is a locked user decision and must not be overridden.
 
 Output: Spec file with sorry replaced by complete proof (VERIFIED) or clear report of where proof got stuck (STUCK).
