@@ -33,6 +33,7 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const CMD_DIR = path.join(ROOT, 'commands', 'fvs');
 const WF_DIR = path.join(ROOT, 'fv-skills', 'workflows');
+const AGENTS_DIR = path.join(ROOT, 'agents');
 
 function rel(absPath) {
   return path.relative(ROOT, absPath);
@@ -243,6 +244,45 @@ for (const key of ['cmdExecute', 'wfExecute']) {
     });
   });
 }
+
+// ---------------------------------------------------------------------------
+// 10. Crypto executor discipline (D-01/D-04).
+//     The dedicated crypto executor must carry the whole-unit
+//     implement -> check -> complete -> escalate -> BLOCKED discipline, drive
+//     proofs via the runtime getDiagnostics tool, report to IMPLEMENTATION_nN.md,
+//     and EXPECT style warnings that surface only at lake build. It must NOT
+//     carry the FC proof-attempt one-sorry framing (that grind stays FC-only).
+//     Dormant until the agent file lands (created this wave); the crypto-execute
+//     dispatch-shape token retarget is owned by a later wave and is intentionally
+//     NOT asserted here.
+// ---------------------------------------------------------------------------
+const CRYPTO_EXECUTOR = path.join(AGENTS_DIR, 'fvs-crypto-executor.md');
+whenExists(CRYPTO_EXECUTOR, `Crypto loop: executor discipline in ${rel(CRYPTO_EXECUTOR)} (D-01/D-04)`, (content, absPath) => {
+  it('completes proofs via the runtime getDiagnostics tool', () => {
+    assert.ok(/mcp__ide__getDiagnostics/.test(content),
+      `${rel(absPath)} missing the mcp__ide__getDiagnostics runtime tool reference`);
+  });
+  it('reports to an IMPLEMENTATION_ report file', () => {
+    assert.ok(/IMPLEMENTATION_/.test(content),
+      `${rel(absPath)} missing the IMPLEMENTATION_ report contract`);
+  });
+  it('carries the escalate + BLOCKED discipline', () => {
+    assert.ok(/escalate/i.test(content) && /\bBLOCKED\b/.test(content),
+      `${rel(absPath)} missing the escalate / BLOCKED handback discipline`);
+  });
+  it('expects style warnings that surface only at lake build (D-04)', () => {
+    assert.ok(/nice -n 19 lake build/.test(content) && /style/i.test(content),
+      `${rel(absPath)} missing the lake-build style-authority expectation`);
+  });
+  it('explicitly rejects the one-sorry / <=3-line / compile-between-steps grind', () => {
+    assert.ok(/reject/i.test(content) && /pair-programm/i.test(content),
+      `${rel(absPath)} missing the explicit rejection of the proof-attempt grind`);
+  });
+  it('does NOT carry the affirmative proof-attempt one-sorry framing', () => {
+    assert.ok(!/Work ONE sorry at a time/.test(content),
+      `${rel(absPath)} must not carry the FC proof-attempt "Work ONE sorry at a time" framing`);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // 8. fvs-codex-think.mjs path confinement (security): a --topic that resolves

@@ -60,6 +60,10 @@ const CODEX_AGENT_SANDBOX = {
   // return (the command body persists the artifacts) and the auditor only
   // introspects and returns a table -- both are read-only.
   'fvs-crypto-thinker': 'read-only',
+  // The crypto executor owns the deliverable file -- it writes the new spec and
+  // completes proofs, so it needs workspace-write; the unmapped default is
+  // read-only, which would silently fail every write on Codex.
+  'fvs-crypto-executor': 'workspace-write',
   'fvs-axiom-auditor': 'read-only',
 };
 
@@ -91,6 +95,9 @@ const FVS_CODEX_AGENT_EFFORT = {
   // so it runs at xhigh (the dual-runtime Codex thinker must think at least this
   // hard); the read-only auditor introspects axioms at high.
   'fvs-crypto-thinker': 'xhigh',
+  // The crypto executor is the dial-down implementation stage (vs the thinker's
+  // xhigh authoring) -- it executes a fully-specified plan, so it runs at high.
+  'fvs-crypto-executor': 'high',
   'fvs-axiom-auditor': 'high',
 };
 

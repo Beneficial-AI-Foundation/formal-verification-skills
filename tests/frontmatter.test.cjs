@@ -151,15 +151,15 @@ describe('Agents (agents/)', () => {
   const files = mdFiles(dir);
 
   const expected = [
-    'fvs-axiom-auditor.md', 'fvs-crypto-thinker.md', 'fvs-doc-syncer.md',
-    'fvs-draft-investigator.md', 'fvs-equivalence-assessor.md',
-    'fvs-executor.md', 'fvs-explainer.md', 'fvs-extract-applier.md',
-    'fvs-extract-bisector.md', 'fvs-extract-classifier.md',
-    'fvs-lean-refactorer.md', 'fvs-researcher.md',
+    'fvs-axiom-auditor.md', 'fvs-crypto-executor.md', 'fvs-crypto-thinker.md',
+    'fvs-doc-syncer.md', 'fvs-draft-investigator.md',
+    'fvs-equivalence-assessor.md', 'fvs-executor.md', 'fvs-explainer.md',
+    'fvs-extract-applier.md', 'fvs-extract-bisector.md',
+    'fvs-extract-classifier.md', 'fvs-lean-refactorer.md', 'fvs-researcher.md',
   ];
 
-  it('has exactly 12 agent files', () => {
-    assert.equal(files.length, 12, `Expected 12 agents, got ${files.length}: ${files.join(', ')}`);
+  it('has exactly 13 agent files', () => {
+    assert.equal(files.length, 13, `Expected 13 agents, got ${files.length}: ${files.join(', ')}`);
   });
 
   it('has the expected set of agent files', () => {

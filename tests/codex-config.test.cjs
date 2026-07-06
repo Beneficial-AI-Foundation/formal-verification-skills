@@ -25,12 +25,15 @@ const {
   FVS_CODEX_AGENT_EFFORT,
 } = require('../bin/install.js');
 
-// The four currently-shipped FVS agents and their expected sandbox/effort tiers.
+// Representative FVS agents and their expected sandbox/effort tiers, including
+// the write-capable crypto executor (workspace-write so its file writes are not
+// silently dropped on Codex; high effort as the dial-down implementation stage).
 const AGENTS = [
   { name: 'fvs-executor', sandbox: 'workspace-write', effort: 'xhigh' },
   { name: 'fvs-lean-refactorer', sandbox: 'workspace-write', effort: 'xhigh' },
   { name: 'fvs-explainer', sandbox: 'read-only', effort: 'xhigh' },
   { name: 'fvs-researcher', sandbox: 'read-only', effort: 'high' },
+  { name: 'fvs-crypto-executor', sandbox: 'workspace-write', effort: 'high' },
 ];
 
 function agentMarkdown(name, description) {
