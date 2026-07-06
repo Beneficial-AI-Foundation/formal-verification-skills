@@ -172,6 +172,16 @@ describe('Codex FVS-only install then uninstall (clean removal)', () => {
     assert.ok(fs.existsSync(path.join(tmpDir, 'hooks.json')), 'hooks.json written');
   });
 
+  it('writes hooks.json in the nested { hooks: { SessionStart } } shape on a fresh install', () => {
+    const parsed = JSON.parse(fs.readFileSync(path.join(tmpDir, 'hooks.json'), 'utf8'));
+    assert.ok(
+      parsed.hooks && typeof parsed.hooks === 'object' && !Array.isArray(parsed.hooks),
+      'a fresh install must write the nested { hooks: { ... } } shape, not flat',
+    );
+    assert.ok(Array.isArray(parsed.hooks.SessionStart), 'SessionStart must be nested under parsed.hooks');
+    assert.ok(!Array.isArray(parsed.SessionStart), 'a fresh install must not leave a flat top-level SessionStart');
+  });
+
   it('deletes the FVS-only config.toml on uninstall (no orphaned feature flag)', () => {
     uninstallCodex(tmpDir);
     assert.ok(
@@ -209,10 +219,16 @@ describe('Codex hooks.json SessionStart coexistence (flat shape)', () => {
     assert.ok(commands.some((c) => c.includes('fvs-check-update')), 'FVS SessionStart entry missing');
   });
 
-  it('preserves the flat { SessionStart } shape (no nested hooks object)', () => {
+  it('migrates the flat { SessionStart } seed to the nested { hooks: { SessionStart } } shape', () => {
     const parsed = JSON.parse(fs.readFileSync(path.join(tmpDir, 'hooks.json'), 'utf8'));
-    assert.ok(Array.isArray(parsed.SessionStart), 'flat shape not preserved');
-    assert.ok(!parsed.hooks, 'flat seed must not gain a nested hooks object');
+    assert.ok(
+      parsed.hooks && typeof parsed.hooks === 'object' && !Array.isArray(parsed.hooks),
+      'a flat seed MUST gain a nested hooks object (Codex 0.142.x rejects the flat shape)',
+    );
+    assert.ok(Array.isArray(parsed.hooks.SessionStart), 'SessionStart must be rehomed under parsed.hooks after migration');
+    assert.ok(!Array.isArray(parsed.SessionStart), 'the flat top-level SessionStart key must be removed after migration');
+    const commands = readSessionStartCommands(tmpDir);
+    assert.ok(commands.some((c) => c.includes('gsd-check-update')), 'foreign GSD command must survive the flat->nested migration');
   });
 
   it('removes only the fvs-check-update entry on uninstall', () => {
@@ -220,5 +236,35 @@ describe('Codex hooks.json SessionStart coexistence (flat shape)', () => {
     const commands = readSessionStartCommands(tmpDir);
     assert.ok(commands.some((c) => c.includes('gsd-check-update')), 'GSD SessionStart entry removed by FVS uninstall');
     assert.ok(!commands.some((c) => c.includes('fvs-check-update')), 'FVS SessionStart entry not removed');
+  });
+});
+
+describe('Codex hooks.json flat foreign non-SessionStart event migration', () => {
+  let tmpDir;
+
+  it('seeds a flat foreign Stop event alongside SessionStart then installs FVS', () => {
+    tmpDir = makeTmpDir('fvs-codex-coexist-hooks-flat-foreign-');
+    fs.mkdirSync(path.join(tmpDir, 'hooks'), { recursive: true });
+    const seed = {
+      SessionStart: [
+        { hooks: [{ type: 'command', command: 'node /elsewhere/gsd-check-update.js' }] },
+      ],
+      Stop: [
+        { hooks: [{ type: 'command', command: 'node /elsewhere/gsd-stop.js' }] },
+      ],
+    };
+    fs.writeFileSync(path.join(tmpDir, 'hooks.json'), `${JSON.stringify(seed, null, 2)}\n`);
+    installCodex(tmpDir);
+  });
+
+  it('rehomes the foreign Stop event under parsed.hooks and preserves its command', () => {
+    const parsed = JSON.parse(fs.readFileSync(path.join(tmpDir, 'hooks.json'), 'utf8'));
+    assert.ok(parsed.hooks && Array.isArray(parsed.hooks.Stop), 'foreign Stop event must be rehomed under parsed.hooks');
+    assert.ok(!parsed.Stop, 'foreign Stop must not remain a flat top-level key after migration');
+    const stopCommands = parsed.hooks.Stop.flatMap((e) => (e.hooks || []).map((h) => h.command));
+    assert.ok(stopCommands.some((c) => c.includes('gsd-stop')), 'foreign Stop command must survive the migration');
+    const commands = readSessionStartCommands(tmpDir);
+    assert.ok(commands.some((c) => c.includes('fvs-check-update')), 'FVS SessionStart entry must be added under hooks');
+    assert.ok(commands.some((c) => c.includes('gsd-check-update')), 'foreign GSD SessionStart command must survive');
   });
 });
