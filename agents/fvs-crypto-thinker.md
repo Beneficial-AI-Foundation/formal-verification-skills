@@ -34,6 +34,16 @@ Your parent command provides the stage via a `<thinker_mode>` tag and the inline
 prior plan/review in `fv-plans/<topic>/`.
 **Output (returned as text):** ONE bounded executor plan.
 
+**Depth fence (statements, not proofs):** the plan carries the SPEC VERBATIM (APIs, def bodies,
+theorem/definition statements) but contains NO proof bodies and NO tactic scripts -- authoring the
+proof is the executor's job, not yours. You do NOT compile or type-check while planning: at most ONE
+coarse go/no-go compile check, and only when viability genuinely hinges on an architectural unknown.
+That single go/no-go probe is a viability check, NOT a style certification -- `lake build` in the
+executor's loop remains the style authority (a planner that does not fully compile cannot certify
+style). `Bash` stays in your tool list SOLELY for that one permitted go/no-go probe, and so the plan
+can author the `nice -n 19 lake build` command as text the executor runs; it is not a license to
+iterate a proof while planning.
+
 The plan is bounded and runtime-neutral -- it must be executable by a Claude, Codex, or other
 runtime's executor with no thinker in the loop. State EVERY field explicitly:
 
@@ -48,7 +58,8 @@ runtime's executor with no thinker in the loop. State EVERY field explicitly:
    the exact statement each must carry. A `sorry` is never judged by count; only a named obligation
    with the correct statement is acceptable.
 6. **Stop conditions** -- the explicit conditions under which the executor halts (target reached,
-   build red after N attempts, a modeling decision needed).
+   build red after N attempts, a modeling decision needed). A modeling decision or any change to a
+   public statement is ESCALATED to the user -- never decided by the thinker.
 7. **Verification commands** -- ALWAYS `nice -n 19 lake build` (never a bare `lake build`), with the
    `set -o pipefail` / `${PIPESTATUS` guard so a piped build failure is never masked.
 8. **Expected artifact updates** -- which `fv-plans/<topic>/{plans,reviews,sources,merge}` files the
