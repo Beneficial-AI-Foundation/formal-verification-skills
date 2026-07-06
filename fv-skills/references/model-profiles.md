@@ -132,6 +132,24 @@ Task(
 - **Invalid profile name:** Fall back to `quality` with a warning.
 - **Empty overrides:** Ignored. Equivalent to no overrides.
 
+## crypto-execute Model + Effort Knob
+
+`/fvs:crypto-execute` resolves the model + effort for `fvs-crypto-executor` ABOVE the profile table,
+at its own dispatch site (command Step 3) -- not from a `PROFILE_TABLE` row. The crypto executor is
+intentionally NOT pinned, so there is deliberately **no `fvs-crypto-executor` row and no `opus`
+value** in the table above. The resolution ladder is:
+
+1. A per-run `--model` / `--effort` flag on the command.
+2. Else a top-level override `model_overrides["fvs-crypto-executor"]` in `.formalising/fvs-config.json`
+   (read at the top-level `model_overrides` key this resolver consults, not the template's nested
+   `model.model_profile`).
+3. Else an interactive `AskUserQuestion` offering "inherit / default".
+4. Else the default `inherit`.
+
+The resolved value is an opaque, runtime-valid string passed straight to `Task(model=...)`; FVS keeps
+no cross-provider taxonomy. On Codex `model=` is ignored and per-agent effort is fixed at install
+time, so the per-run `--effort` flag is a Claude / OpenCode / Gemini nicety.
+
 ## Two-Phase Dispatch
 
 Each main command dispatches two subagents in sequence:

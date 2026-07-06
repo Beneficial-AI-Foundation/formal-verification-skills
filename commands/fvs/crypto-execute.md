@@ -1,7 +1,7 @@
 ---
 name: fvs:crypto-execute
 description: Run the current iteration's bounded executor plan under a green-build guard and a bounded loop
-argument-hint: "<topic> nN"
+argument-hint: "<topic> nN [--model <value>] [--effort <value>]"
 allowed-tools:
   - Read
   - Write
@@ -44,11 +44,20 @@ iteration from `plans/` and runs it. The loop is restartable from its on-disk re
 ## Step 1: Resolve the topic slug + paths (path safety)
 
 Resolve the topic into a slug (whitespace -> `-`, capitalization preserved, e.g.
-`CKA from KEM` -> `CKA-from-KEM`). Treat the topic + iteration arg as UNTRUSTED: REJECT a slug with
-shell metacharacters, QUOTE every path expansion, NEVER `eval` a path.
+`CKA from KEM` -> `CKA-from-KEM`). Treat the topic + iteration arg AND the new `--model` / `--effort`
+flag values as UNTRUSTED: REJECT a slug with shell metacharacters, QUOTE every path expansion, NEVER
+`eval` a path. The `--model` / `--effort` values are opaque, runtime-valid strings -- do NOT validate
+them against any model taxonomy; reject only shell metacharacters (the same path-safety check).
 
 ```bash
-TOPIC_RAW="$1"; ITER="$2"
+TOPIC_RAW=""; ITER=""; EXEC_MODEL=""; EXEC_EFFORT=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --model )  EXEC_MODEL="$2";  shift 2 ;;
+    --effort ) EXEC_EFFORT="$2"; shift 2 ;;
+    * ) if [ -z "$TOPIC_RAW" ]; then TOPIC_RAW="$1"; elif [ -z "$ITER" ]; then ITER="$1"; fi; shift ;;
+  esac
+done
 case "$TOPIC_RAW" in
   *[';|&$`()<>'*]* ) echo "FVS >> ERROR: topic contains shell metacharacters" >&2; exit 1 ;;
   *..*|*/* ) echo "FVS >> ERROR: topic contains '..' or '/' (path traversal); refusing" >&2; exit 1 ;;
@@ -57,6 +66,11 @@ case "$ITER" in
   n[0-9]* ) : ;;
   * ) echo "FVS >> ERROR: iteration must be of the form nN" >&2; exit 1 ;;
 esac
+for FLAGVAL in "$EXEC_MODEL" "$EXEC_EFFORT"; do
+  case "$FLAGVAL" in
+    *[';|&$`()<>'*]* ) echo "FVS >> ERROR: --model/--effort contains shell metacharacters" >&2; exit 1 ;;
+  esac
+done
 SLUG=$(printf '%s' "$TOPIC_RAW" | tr -s '[:space:]' '-')
 ROOT=".formalising/fv-plans/$SLUG"
 ```
@@ -70,10 +84,36 @@ Read the bounded executor plan for this iteration -- `plans/EXEC_PLAN_nN.md`, or
 the executor needs (it is runtime-neutral and bounded -- branch/state, exact targets, immutable public
 statements, allowed-`sorry` policy, stop conditions, verification command).
 
-## Step 3: Resolve the executor model + dispatch
+## Step 3: Resolve the executor model + effort + dispatch
 
-Resolve `$EXECUTOR_MODEL` for `fvs-crypto-executor` via the model-profiles dispatch sequence. `cat`
-the bounded plan and INLINE it into the prompt (references do not cross the Task boundary):
+Resolve `$EXECUTOR_MODEL` and `$EXECUTOR_EFFORT` for `fvs-crypto-executor` AT DISPATCH TIME -- never
+pinned in the agent frontmatter. The resolved values are opaque, runtime-valid strings passed
+STRAIGHT THROUGH to `Task(model=...)`; FVS keeps NO cross-provider model/effort taxonomy (an invalid
+value is rejected by the runtime itself). Resolve with this ladder:
+
+1. The per-run `--model` / `--effort` flags from Step 1, if present.
+2. Else a top-level override in `.formalising/fvs-config.json`:
+   `model_overrides["fvs-crypto-executor"]`. Read it at the TOP-LEVEL `model_overrides` key the
+   model-profiles resolver actually consults -- NOT the template's nested `model.model_profile` (a
+   pre-existing shape mismatch, out of scope here; do not depend on the nested key).
+3. Else, in an interactive run, ASK via `AskUserQuestion` which model + effort to use for the
+   execution subagent, offering "inherit / default" as a choice.
+4. Else default `inherit` (works zero-config on every runtime).
+
+```bash
+CONFIG=$(cat .formalising/fvs-config.json 2>/dev/null || echo '{}')
+# 1. flag  ->  2. top-level model_overrides["fvs-crypto-executor"]  ->  4. inherit
+#    (3. AskUserQuestion runs between 2 and 4 in an interactive run)
+EXECUTOR_MODEL="${EXEC_MODEL:-$(printf '%s' "$CONFIG" | OVERRIDE_KEY='model_overrides["fvs-crypto-executor"]' read_top_level_override)}"
+EXECUTOR_MODEL="${EXECUTOR_MODEL:-inherit}"
+EXECUTOR_EFFORT="${EXEC_EFFORT:-inherit}"
+```
+
+On Codex the `model=` parameter is silently ignored and per-agent effort is FIXED at install time
+(from `FVS_CODEX_AGENT_EFFORT`), so the per-run `--effort` flag is a Claude / OpenCode / Gemini
+nicety; Codex users tune the crypto executor's effort via the agent `.toml` / reinstall.
+
+`cat` the bounded plan and INLINE it into the prompt (references do not cross the Task boundary):
 
 ```
 Task(
@@ -131,9 +171,11 @@ Plan:      plans/{EXEC_PLAN | FOLLOWUP_PLAN}_{ITER}.md
 </process>
 
 <codex_skill_adapter>
-On a secondary runtime, the ESCALATE/BLOCKED redirect (Step 5) degrades to a plain-text question and
-WAITS for the user; it is fail-closed (never auto-picks a default, never writes an upstream artifact).
-The `Task(...)` dispatch survives intact (the `model=` parameter is silently ignored on Codex).
+On a secondary runtime, both the Step 3 model/effort ask and the Step 5 ESCALATE/BLOCKED redirect
+degrade to a plain-text question and WAIT for the user; each is fail-closed (never auto-picks a
+default beyond the ladder's `inherit`, never writes an upstream artifact). The `Task(...)` dispatch
+survives intact (the `model=` parameter is silently ignored on Codex, where per-agent effort is fixed
+at install time, so the per-run `--effort` flag is a no-op there).
 </codex_skill_adapter>
 
 <success_criteria>
