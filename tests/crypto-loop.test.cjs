@@ -174,9 +174,9 @@ for (const key of ['cmdPlan', 'cmdExecute', 'cmdEval', 'cmdFollowup']) {
   whenExists(STAGE_FILES[key], `Crypto loop: dispatch shape in ${rel(STAGE_FILES[key])} (FORM-04)`, (content, absPath) => {
     const isExecuteStage = /crypto-execute/.test(absPath);
     if (isExecuteStage) {
-      it('dispatches the executor (fvs-executor)', () => {
-        assert.ok(/subagent_type="fvs-executor"/.test(content),
-          `${rel(absPath)} missing the fvs-executor dispatch`);
+      it('dispatches the crypto executor (fvs-crypto-executor)', () => {
+        assert.ok(/subagent_type="fvs-crypto-executor"/.test(content),
+          `${rel(absPath)} missing the fvs-crypto-executor dispatch`);
       });
     } else {
       it('dispatches the high-effort thinker (fvs-crypto-thinker)', () => {

@@ -4,10 +4,10 @@ plan under a green-build guard and a bounded loop, so a failed proof triggers a 
 redirect early rather than a long unattended grind.
 
 This workflow is the state machine for `/fvs:crypto-execute`. The command body resolves the topic +
-iteration, reads the bounded plan from `plans/`, dispatches the existing `fvs-executor` in
-proof-attempt mode, and owns the build-status check + loop termination. The plan is RUNTIME-NEUTRAL:
-the loop runs as a `(R1; R1)` same-runtime pair by default, with an optional secondary runtime for
-the planning/eval stages in a later wave.
+iteration, reads the bounded plan from `plans/`, dispatches the dedicated `fvs-crypto-executor`, and
+owns the build-status check + routing the executor's ESCALATE/BLOCKED return to the user. The plan is
+RUNTIME-NEUTRAL: the loop runs as a `(R1; R1)` same-runtime pair by default, with an optional
+secondary runtime for the planning/eval stages in a later wave.
 
 Hard invariants this workflow preserves:
 - The build's exit status is read from the TOOL (`set -o pipefail` / `${PIPESTATUS`), never from the
@@ -38,19 +38,19 @@ allowed-`sorry` policy, stop conditions, verification command).
 </step>
 
 <step name="dispatch_executor">
-## Step 3: Dispatch the executor (proof-attempt mode)
+## Step 3: Dispatch the crypto executor
 
-Resolve `$EXECUTOR_MODEL` via the model-profiles sequence, then dispatch the existing executor,
-INLINING the bounded plan:
+Resolve `$EXECUTOR_MODEL` via the model-profiles sequence, then dispatch the dedicated crypto
+executor, INLINING the bounded plan:
 
 ```
-Task(subagent_type="fvs-executor", model="$EXECUTOR_MODEL",
+Task(subagent_type="fvs-crypto-executor", model="$EXECUTOR_MODEL",
      description="Run bounded plan",
-     prompt="Execute mode: proof-attempt ...inlined bounded plan... Return with ## EXECUTION COMPLETE")
+     prompt="Execute the bounded crypto plan. ...inlined bounded plan... Return with ## IMPLEMENTATION COMPLETE")
 ```
 
-Proof-attempt discipline (reused from the existing executor): target one sorry at a time with small
-tactic blocks; after 3 failed attempts on a goal, return NEEDS INPUT.
+The `fvs-crypto-executor` owns its own implement -> check -> complete -> escalate -> BLOCKED
+discipline; this workflow does not re-drive a per-goal grind.
 </step>
 
 <step name="green_build_guard">
@@ -64,23 +64,21 @@ set -o pipefail
 nice -n 19 lake build 2>&1 | tee "$ROOT/build.log"
 test ${PIPESTATUS[0]} -eq 0 || echo "build red -- a proof did not close"
 ```
+
+`lake build` is the STYLE authority: `lake env lean` / `--stdin` isolation does NOT run the package
+style linters (`linter.style.show`, `linter.style.longLine` from `weak.linter.mathlibStandardSet`),
+so a style warning surfaces only here. Reproduce it cheaply and early with `lake env lean
+-Dlinter.style.show=true -Dlinter.style.longLine=true <file>`. House style uses `change` (not a
+goal-altering `show`) and wraps lines to <=100 columns.
 </step>
 
-<step name="loop_bounds">
-## Step 5: Bounded loop -- caps + the no-progress rule
+<step name="route_escalation">
+## Step 5: Route the executor's ESCALATE/BLOCKED return
 
-| Bound | Default | Rationale |
-|-------|---------|-----------|
-| Per-step attempt-cap | `3` | Matches the FVS `lean-verify` per-sorry limit. |
-| Cycle hard-cap | `~25` | On exhaustion, HALT with the full transcript. |
-| No-progress key | `sha256(target || goal-state)` | A same-key recurrence after a fix is known-stuck. |
-
-```bash
-PROGRESS_KEY=$(printf '%s' "$TARGET$GOAL" | sha256sum | cut -c1-16)
-```
-
-On the attempt-cap, the cycle hard-cap, or a no-progress recurrence: HALT and redirect (a short
-interactive redirect early beats a long unattended grind). On a secondary runtime that lacks an
+The `fvs-crypto-executor` owns escalation (implement -> check -> complete -> escalate -> BLOCKED);
+this workflow does not enforce a per-goal attempt grind. When the executor returns ESCALATE (a
+public-statement change is needed) or BLOCKED (it cannot proceed), HALT and redirect to the user (a
+short interactive redirect beats a long unattended grind). On a secondary runtime that lacks an
 interactive prompt, degrade to plain-text and WAIT (fail-closed).
 </step>
 
@@ -88,8 +86,8 @@ interactive prompt, degrade to plain-text and WAIT (fail-closed).
 
 <success_criteria>
 - [ ] Topic + iteration resolved; shell metacharacters rejected; paths quoted; no `eval`.
-- [ ] The bounded plan read and inlined; `fvs-executor` dispatched (`subagent_type="fvs-executor"`) in proof-attempt mode.
+- [ ] The bounded plan read and inlined; `fvs-crypto-executor` dispatched (`subagent_type="fvs-crypto-executor"`).
 - [ ] The build runs under `set -o pipefail` + `${PIPESTATUS` reading the tool's real status; always `nice -n 19 lake build` (never a bare `lake build`).
-- [ ] Bounded loop enforced (attempt-cap, cycle hard-cap, `sha256` no-progress key); a failed proof triggers a SHORT interactive redirect early.
+- [ ] The executor's ESCALATE/BLOCKED return is routed to the user (short interactive redirect early, never a long unattended grind).
 - [ ] No generated-Lean write; no `gh` open/create.
 </success_criteria>
