@@ -6,9 +6,10 @@ This is a functional-correctness (FC) track workflow. The fvs-executor proof-att
 mode it drives is FC-only -- the crypto formalise track uses its own dedicated executor,
 so this one-sorry loop is exclusive to lean-verify and is not shared with any other track.
 
-Dispatches fvs-researcher to analyze sorry locations and recommend proof strategies,
-then iteratively dispatches fvs-executor to replace each sorry ONE AT A TIME with
-small tactic blocks. The user checks Lean compiles between each step.
+Loads the target repository style guide, dispatches fvs-researcher to analyze sorry
+locations and recommend proof strategies, then iteratively dispatches fvs-executor to
+replace each sorry ONE AT A TIME with small, mechanically style-checked tactic blocks.
+The user checks Lean compiles between each step.
 
 This is the most interactive workflow -- it feels like pair programming. Small changes,
 user approval, Lean compile check, repeat.
@@ -61,6 +62,33 @@ Resolution sequence:
 Reference: fv-skills/references/model-profiles.md (profile table and dispatch pattern)
 </step>
 
+<step name="load_target_style_and_baseline">
+Discover and read the complete target style guide:
+
+```bash
+node ~/.claude/scripts/fvs-lean-style-check.mjs discover \
+  --root . --config .formalising/fvs-config.json
+```
+
+`project.style_guide_path` wins; otherwise search standard locations such as
+`doc/STYLE_GUIDE`. Multiple candidates are an error. If no guide exists, use the FVS
+fallback: at most 100 columns and at most two namespace dots in ordinary identifiers.
+Inline the complete guide/fallback and limits into BOTH subagent prompts.
+
+Before the first write, copy the spec to an OS temporary baseline. Existing violations
+are legacy debt; after every normal proof edit run:
+
+```bash
+node ~/.claude/scripts/fvs-lean-style-check.mjs check "$SPEC_PATH" \
+  --root . --config .formalising/fvs-config.json --baseline "$STYLE_BASELINE"
+```
+
+Clean up the baseline on exit. Normal proof-attempt mode may replace only the targeted
+`sorry`; theorem names and statements are immutable. If the user explicitly authorizes
+a statement edit, run the full checker without `--baseline` and require the entire file
+to pass the target guide.
+</step>
+
 <step name="research_phase">
 Dispatch **fvs-researcher** subagent in proof-attempt mode to analyze all sorry locations.
 
@@ -68,6 +96,7 @@ Read and inline reference files before dispatch:
 - fv-skills/references/tactic-usage.md (core tactics: step, simp, agrind, etc.)
 - fv-skills/references/proof-strategies.md (patterns for common proof shapes)
 - fv-skills/references/lean-spec-conventions.md (spec structure expectations)
+- complete target repository style guide (hard constraint)
 
 Researcher tasks:
 1. Read the spec file and identify all sorry locations
@@ -76,6 +105,7 @@ Researcher tasks:
 4. Check .formalising/stubs/ for NL explanation of the function
 5. Identify which tactics are most likely to work for each sorry
 6. Recommend an order to tackle sorry (easiest first, or dependency order)
+7. Identify guide-compliant local proof/namespace idioms
 
 Expected output: Structured findings with sorry analysis, tactic recommendations,
 related proof examples, and recommended order. Ends with `## RESEARCH COMPLETE`.
@@ -98,11 +128,15 @@ This is the core proof loop. For each sorry (in order recommended by research):
    - Target sorry number and goal state
    - User feedback from previous attempt (if any)
    - Attempt counter
+   - Complete target style guide and mechanical limits
 
 4. **Route on executor return:**
 
    **## EXECUTION COMPLETE:**
-   - Remind user: "Check compilation: `nice -n 19 lake build`"
+   - Run the applicable mechanical style gate before compilation.
+   - On a new violation, feed the exact diagnostic back and count a failed attempt.
+   - Reject an unrequested theorem-name or theorem-statement change and restore it.
+   - Only after style passes, remind user: "Check compilation: `nice -n 19 lake build`"
    - Wait for user feedback on whether Lean compiles
    - If compiles: mark sorry as resolved, move to next sorry
    - If does not compile: store error as feedback, retry (up to 3 attempts per sorry)
@@ -121,6 +155,8 @@ This is the core proof loop. For each sorry (in order recommended by research):
 **LOCKED BEHAVIORAL CONSTRAINTS:**
 - One sorry at a time (never batch multiple sorry in one executor dispatch)
 - Small tactic blocks: have, calc, unfold + step, simp, agrind (1-3 lines max)
+- Theorem name/statement immutable unless explicitly authorized
+- No new long line or identifier with three or more namespace dots
 - User checks Lean compiles between each step
 - Feels like pair programming: propose, check, adjust
 - All writes via VS Code diffs (Write tool)
@@ -136,6 +172,7 @@ FVS >> VERIFIED
 Function: {function_name}
 Spec:     {spec_path}
 Resolved: {N}/{TOTAL} sorry
+Style:    [OK] No new target-guide violations
 Status:   [OK] No sorry remaining
 
 Verify: nice -n 19 lake build
@@ -180,8 +217,11 @@ Consider:
 <success_criteria>
 - Spec file located and sorry confirmed present
 - Config read and models resolved for fvs-researcher and fvs-executor
+- Target style guide discovered unambiguously, read completely, and baseline captured
 - Research subagent gathered sorry analysis, tactic recommendations, related proofs
 - Executor dispatched iteratively per sorry (one at a time, small tactic blocks)
+- Every edit passes the baseline-aware style gate before the compile check
+- Authorized theorem-statement edits pass the full-file style gate
 - User checks Lean compiles between each step (pair programming feel)
 - NEEDS INPUT handling for stuck proofs with user hint collection
 - Build checks use nice -n 19 lake build (never plain lake build)

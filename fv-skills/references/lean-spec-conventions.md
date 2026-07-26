@@ -8,6 +8,43 @@ a caller of `f`. These conventions are derived from the curve25519-dalek-lean-ve
 (161 functions, 92 verified) and generalize to any Aeneas-based verification effort.
 </overview>
 
+<target_repository_style>
+
+## Target Repository Style Is a Hard Constraint
+
+Before researching or writing a Lean specification, discover the target repository's style guide.
+Use `project.style_guide_path` from `.formalising/fvs-config.json` when configured; otherwise check
+standard locations such as `doc/STYLE_GUIDE`, `docs/STYLE_GUIDE`, and `STYLE_GUIDE.md`. If more than
+one plausible guide exists, stop and ask the user to configure the intended path rather than
+silently choosing one.
+
+Read the complete guide and inline it into both researcher and executor prompts. Its naming,
+layout, namespace, comment, and formatting rules override the generic presentation examples in
+this reference and the spec template. It never authorizes weakening a theorem, inventing a bound,
+or changing frozen mathematical meaning; escalate a genuine semantic conflict to the user.
+
+Two output rules apply even when the repository has no guide:
+
+- Use the explicit repository line limit; otherwise keep every line at or below 100 columns.
+- In theorem names, theorem statements, and ordinary proof code, do not leave identifiers with
+  three or more namespace dots. Prefer a scoped `namespace`, `open`, local `abbrev`, or a local
+  hypothesis rename so the final use has at most two dots. Imports and namespace/open declarations
+  may themselves name the full path.
+
+After every generated spec and after a verification edit, run:
+
+```bash
+node ~/.claude/scripts/fvs-lean-style-check.mjs check "$SPEC_PATH" \
+  --root . --config .formalising/fvs-config.json
+```
+
+`/fvs:lean-verify` may use the checker's `--baseline` mode for a legacy file: existing violations
+are reported as debt, but the proof edit may introduce none. If the user explicitly authorizes a
+theorem-name or theorem-statement edit, run the full check without a baseline exemption. A clean
+style check is required before reporting a newly generated spec or an edited statement as ready.
+
+</target_repository_style>
+
 <quick_reference>
 
 ### Path Mapping Rules (Rust to Lean)

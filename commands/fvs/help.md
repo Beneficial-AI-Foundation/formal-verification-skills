@@ -121,7 +121,9 @@ Generate Lean spec skeleton following @[step] theorem pattern.
 - Resolves function in CODEMAP.md or Funs.lean directly
 - Deep analysis of function body, types, and control flow
 - Checks dependency spec status
+- Loads the target repo style guide (`project.style_guide_path` or `doc/STYLE_GUIDE` discovery)
 - Generates spec with correct imports, namespace, @[step] theorem, sorry
+- Mechanically rejects over-limit lines and ordinary identifiers with 3+ namespace dots
 - Validates spec structure and optional build check
 
 Usage: `/fvs:lean-specify scalar_mul_inner`
@@ -131,6 +133,8 @@ Result: `Specs/{path}/{FunctionName}.lean` with sorry placeholder
 Attempt proof using domain tactics with interactive feedback.
 
 - Interactive proof loop: agent proposes ONE tactic step at a time
+- Inlines the target style guide and mechanically blocks new style violations before compile checks
+- Keeps theorem names/statements immutable unless the user explicitly authorizes an edit
 - User provides feedback (goal state, errors, hints) between iterations
 - Configurable max attempts (default 10, hard cap 25)
 - Routes on proof status: TACTIC PROPOSED, VERIFIED, STUCK

@@ -58,7 +58,9 @@ Your parent command provides a `<research_mode>` tag specifying what kind of res
 4. Check for existing stubs in .formalising/stubs/ for the target function
 5. Search for similar verified specs in the Specs/ directory to use as pattern examples
 6. Read dependency specs -- any functions called by the target that already have specs
-7. Analyze the function for:
+7. Read the inlined target repository style guide and identify its naming, namespace, line-length,
+   comment, and layout rules. Prefer repository examples that comply with that guide.
+8. Analyze the function for:
    - Control flow (branches, loops, error paths)
    - Arithmetic operations and overflow potential
    - Type dependencies
@@ -76,7 +78,9 @@ Your parent command provides a `<research_mode>` tag specifying what kind of res
 4. Gather tactic examples from similar proofs in the project
 5. Read dependency specs that may provide useful @[step] lemmas
 6. If user feedback is provided (error messages, goal state), incorporate it
-7. Return structured findings with:
+7. Apply the inlined target repository style guide when recommending tactic shapes or any
+   explicitly requested theorem-statement edit.
+8. Return structured findings with:
    - Current proof state (which sorry is targeted)
    - Available lemmas and tactics
    - Recommended proof strategy

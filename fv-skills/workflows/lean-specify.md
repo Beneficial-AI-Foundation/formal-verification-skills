@@ -2,9 +2,10 @@
 Orchestrate specification generation for a single Lean function using two-phase
 subagent dispatch (research -> execute).
 
-Takes a verification target (function name), dispatches fvs-researcher to gather
-context (Funs.lean, Types.lean, Rust source, existing stubs, similar specs), then
-dispatches fvs-executor to write the spec file.
+Takes a verification target (function name), loads the target repository style guide,
+dispatches fvs-researcher to gather context (Funs.lean, Types.lean, Rust source,
+existing stubs, similar specs), then dispatches fvs-executor to write and
+mechanically style-check the spec file.
 
 Output: Specs/{path}/{FunctionName}.lean with @[step] theorem and sorry placeholder.
 </purpose>
@@ -59,12 +60,32 @@ Resolution sequence:
 Reference: fv-skills/references/model-profiles.md (profile table and dispatch pattern)
 </step>
 
+<step name="load_target_style">
+Discover the target repository's style guide before either subagent runs:
+
+```bash
+node ~/.claude/scripts/fvs-lean-style-check.mjs discover \
+  --root . --config .formalising/fvs-config.json
+```
+
+`project.style_guide_path` wins when configured. Otherwise the helper searches bounded,
+standard locations including `doc/STYLE_GUIDE`, `docs/STYLE_GUIDE`, and
+`STYLE_GUIDE.md`. Multiple candidates are an error: ask the user to configure the path.
+
+Read the complete discovered guide. If none exists, record the FVS fallback: at most
+100 columns and at most two namespace dots in ordinary identifiers. Inline the complete
+guide/fallback, its source path, and its mechanical limits into BOTH subagent prompts.
+It is a hard output constraint and overrides generic template presentation, but it may
+not weaken or otherwise change the mathematical meaning.
+</step>
+
 <step name="research_phase">
 Dispatch **fvs-researcher** subagent in spec-generation mode to gather all context.
 
 Read and inline reference files before dispatch:
 - fv-skills/references/aeneas-patterns.md (type translation patterns)
 - fv-skills/references/lean-spec-conventions.md (postcondition patterns)
+- the complete target repository style guide (hard constraint)
 
 Researcher tasks:
 1. Read target function body from Funs.lean
@@ -73,6 +94,7 @@ Researcher tasks:
 4. Check .formalising/stubs/ for existing NL explanation (if exists, use it!)
 5. Find similar verified specs in Specs/ directory for patterns to follow
 6. Determine the correct output path: Specs/{module_path}/{FunctionName}.lean
+7. Extract compliant local namespace/naming idioms and all applicable guide rules
 
 Expected output: Structured findings with function analysis, type context, postcondition
 candidates, similar specs, and dependency status. Ends with `## RESEARCH COMPLETE`.
@@ -87,6 +109,7 @@ Inline into executor prompt:
 - Research findings from previous step
 - Spec file template (fv-skills/templates/spec-file.lean)
 - Target output path
+- Complete target style guide, source path, line limit, and qualification limit
 
 **Spec structure requirements:**
 - Correct module path and imports (Types, Funs, dependencies)
@@ -97,6 +120,9 @@ Inline into executor prompt:
 - Interpretation functions where applicable
 - `sorry` as proof placeholder
 - Comments explaining postcondition intent
+- Every line respects the guide limit (100 columns when unspecified)
+- Ordinary identifiers have at most two namespace dots; prefer scoped namespace/open
+  declarations and local names/abbreviations
 
 Executor writes the spec file using the Write tool (VS Code diff).
 User approves the diff inline.
@@ -109,6 +135,17 @@ Expected output: Ends with `## EXECUTION COMPLETE`.
 <step name="validate_and_report">
 Validate the generated spec meets structural requirements.
 
+First run the mandatory mechanical gate:
+
+```bash
+node ~/.claude/scripts/fvs-lean-style-check.mjs check "$SPEC_OUTPUT_PATH" \
+  --root . --config .formalising/fvs-config.json
+```
+
+On failure, give the exact diagnostics and complete guide to the executor for at most
+two style-only repair passes. Preserve theorem meaning, preconditions, postconditions,
+and `sorry`. If the gate still fails, stop without reporting the spec ready.
+
 **Checklist:**
 - [ ] File exists at expected path
 - [ ] Has correct Lean imports (project Types, Funs modules)
@@ -116,6 +153,7 @@ Validate the generated spec meets structural requirements.
 - [ ] Theorem uses existential form with `sorry`
 - [ ] Module path matches project namespace
 - [ ] No references to non-existent spec files
+- [ ] Style checker passes with no long line or 3+-dot ordinary identifier
 
 **Optional build check:**
 ```bash
@@ -134,6 +172,7 @@ Function: {lean_qualified_name}
 Spec file: Specs/{path}/{FunctionName}.lean
 Postconditions: [summary of what the spec asserts]
 Dependencies: [N] specs found, [M] missing
+Style: [OK] {target guide path | FVS fallback}
 Status: [??] Ready for verification (contains sorry)
 
 ---
@@ -147,8 +186,10 @@ Next: /fvs:lean-verify Specs/{path}/{FunctionName}.lean
 <success_criteria>
 - Target function resolved to Lean name and Funs.lean location
 - Config read and models resolved for fvs-researcher and fvs-executor
+- Target style guide discovered unambiguously, read completely, and inlined into both prompts
 - Research subagent gathered context: function body, types, stubs, similar specs
 - Executor subagent wrote spec file with correct structure and sorry placeholder
+- Mechanical style gate passes before the spec is reported ready
 - Spec file written to Specs/ directory via VS Code diff
 - Optional build check confirms spec compiles (with sorry warning expected)
 - Clear next step offered to user

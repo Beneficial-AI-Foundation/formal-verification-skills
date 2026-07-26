@@ -121,11 +121,17 @@ Commands are grouped into five bundles. Each bundle has a **router** command tha
 | Command | Description |
 |---------|-------------|
 | `/fvs:fc-plan` | Pick next verification targets via greedy dependency graph traversal |
-| `/fvs:lean-specify` | Generate Lean spec skeleton with `@[step]` theorem pattern |
-| `/fvs:lean-verify` | Attempt proof using domain tactics (step, simp, ring, agrind, scalar_tac) |
+| `/fvs:lean-specify` | Generate a style-checked Lean spec skeleton with `@[step]` theorem pattern |
+| `/fvs:lean-verify` | Attempt proof with domain tactics while blocking new target-style violations |
 | `/fvs:natural-language` | Generate natural language explanation of module or function with pre/post conditions |
 | `/fvs:lean-refactor` | Refactor, simplify, and decompose verified proofs (dead code removal, simp sharpening, tactic golf) — *also in Formalise* |
 | `/fvs:trust-audit` | Build-backed audit of every sorry/axiom affecting a target layer; `#print axioms` classification, fail-if-unjustified gate, dependency-ordered table |
+
+`lean-specify` and `lean-verify` load a target style guide from
+`.formalising/fvs-config.json` (`project.style_guide_path`) or discover standard files such as
+`doc/STYLE_GUIDE`. With no guide they enforce a 100-column fallback. Their post-write gate also
+rejects ordinary Lean identifiers with three or more namespace dots, steering generated code
+toward scoped namespaces, `open`, and local names.
 
 ### Formalise (Paper Track) — `/fvs:formalise`
 

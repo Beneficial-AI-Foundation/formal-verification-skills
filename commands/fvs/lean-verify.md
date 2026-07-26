@@ -12,7 +12,11 @@ allowed-tools:
 ---
 
 <objective>
-Orchestrate interactive proof development for a Lean specification using two-phase subagent dispatch (research -> iterative execute). Dispatches fvs-researcher to analyze sorry locations and recommend proof strategies, then iteratively dispatches fvs-executor to replace each sorry ONE AT A TIME with small tactic blocks.
+Orchestrate interactive proof development for a Lean specification using two-phase subagent
+dispatch (research -> iterative execute). Load the target repository's style guide, dispatch
+fvs-researcher to analyze sorry locations and recommend proof strategies, then iteratively
+dispatch fvs-executor to replace each sorry ONE AT A TIME with small, mechanically style-checked
+tactic blocks.
 
 This is a functional-correctness (FC) track command. Its `fvs-executor` `proof-attempt` mode is FC-only: the crypto formalise track drives its own dedicated executor, so the one-sorry pair-programming loop below is exclusive to this command and is not shared with or borrowed by any other track.
 
@@ -81,7 +85,45 @@ Resolve models using the profile table from `fv-skills/references/model-profiles
    - budget: fvs-researcher=haiku, fvs-executor=sonnet
 4. Store resolved models as `RESEARCH_MODEL` and `EXECUTOR_MODEL`
 
-## Step 3: Read Reference Files for Inlining
+## Step 3: Discover the Target Style Guide and Capture a Baseline
+
+Run the installed discovery helper from the target repository root:
+
+```bash
+STYLE_INFO=$(node ~/.claude/scripts/fvs-lean-style-check.mjs discover \
+  --root . --config .formalising/fvs-config.json)
+```
+
+Use `project.style_guide_path` when configured; otherwise auto-discover standard locations such as
+`doc/STYLE_GUIDE`, `docs/STYLE_GUIDE`, and `STYLE_GUIDE.md`. Read the complete discovered guide.
+If none exists, record the FVS fallback: at most 100 columns and at most two namespace dots in an
+ordinary identifier. Multiple candidates are an error; STOP and ask the user to configure the
+intended path rather than guessing.
+
+Inline the complete guide/fallback, its path, and mechanical limits into BOTH subagent prompts.
+The guide is a hard constraint for every inserted line.
+
+Before any executor write, preserve the starting file in an OS temporary file and record its style
+diagnostics:
+
+```bash
+STYLE_BASELINE=$(mktemp /tmp/fvs-lean-style-baseline-XXXXXX.lean)
+cp "$SPEC_PATH" "$STYLE_BASELINE"
+trap 'rm -f "$STYLE_BASELINE"' EXIT
+
+BASELINE_STYLE_DIAGNOSTICS=$(node ~/.claude/scripts/fvs-lean-style-check.mjs \
+  check "$SPEC_PATH" --root . --config .formalising/fvs-config.json 2>&1)
+BASELINE_STYLE_STATUS=$?
+```
+
+Existing legacy violations are baseline debt, not permission to add more. Show a concise baseline
+warning when `BASELINE_STYLE_STATUS` is nonzero.
+
+Ordinary proof-attempt mode MUST NOT edit theorem names or theorem statements. If the user
+explicitly requests such an edit, apply the full target guide to that declaration and require a
+full-file style check without the baseline exemption.
+
+## Step 4: Read Reference Files for Inlining
 
 Read the reference files that MUST be inlined into Task() prompts because @-references do not cross Task boundaries:
 
@@ -91,9 +133,10 @@ PROOF_STRATEGIES=$(cat ~/.claude/fv-skills/references/proof-strategies.md)
 SPEC_CONVENTIONS=$(cat ~/.claude/fv-skills/references/lean-spec-conventions.md)
 ```
 
-All three must be captured as content strings for inlining into subagent prompts.
+All three must be captured as content strings for inlining into subagent prompts. Inline the target
+style guide separately into both prompts; do not rely on the research summary to preserve it.
 
-## Step 4: Count Sorry in Spec File
+## Step 5: Count Sorry in Spec File
 
 ```bash
 SORRY_COUNT=$(grep -c "sorry" "$SPEC_PATH")
@@ -115,7 +158,7 @@ If sorry found: extract theorem name and current proof state. Continue to resear
 grep -E "@\[step\]|theorem " "$SPEC_PATH"
 ```
 
-## Step 5: Dispatch Research Subagent
+## Step 6: Dispatch Research Subagent
 
 ```
 Task(
@@ -141,6 +184,12 @@ $PROOF_STRATEGIES_CONTENT
 $SPEC_CONVENTIONS_CONTENT
 </spec_conventions>
 
+<target_style_guide path="$STYLE_GUIDE_PATH"
+    max_line_length="$STYLE_MAX_LINE_LENGTH"
+    max_qualified_dots="$STYLE_MAX_QUALIFIED_DOTS">
+$TARGET_STYLE_GUIDE_CONTENT
+</target_style_guide>
+
 Tasks:
 1. Read the spec file and identify all sorry locations
 2. For each sorry, analyze the goal state (what needs to be proved)
@@ -148,6 +197,7 @@ Tasks:
 4. Check .formalising/stubs/ for NL explanation of the function
 5. Identify which tactics are most likely to work for each sorry
 6. Recommend an order to tackle sorry (easiest first, or dependency order)
+7. Identify target-guide-compliant local tactic and namespace idioms
 
 Return with ## RESEARCH COMPLETE"
 )
@@ -159,7 +209,7 @@ Parse the returned research findings to get:
 - Tactic suggestions per sorry
 - Related proof examples
 
-## Step 6: Iterative Executor Dispatch (One Sorry at a Time -- LOCKED DECISION)
+## Step 7: Iterative Executor Dispatch (One Sorry at a Time -- LOCKED DECISION)
 
 ```
 SORRY_RESOLVED=0
@@ -189,6 +239,12 @@ FOR EACH SORRY (in recommended order from research):
 $RESEARCH_SUBAGENT_OUTPUT
 </research_findings>
 
+<target_style_guide path="$STYLE_GUIDE_PATH"
+    max_line_length="$STYLE_MAX_LINE_LENGTH"
+    max_qualified_dots="$STYLE_MAX_QUALIFIED_DOTS">
+$TARGET_STYLE_GUIDE_CONTENT
+</target_style_guide>
+
 <current_spec>
 $CURRENT_SPEC_FILE_CONTENT (re-read each iteration -- it changes!)
 </current_spec>
@@ -205,6 +261,8 @@ $PREVIOUS_FEEDBACK (empty on first attempt, contains Lean error or user hint aft
 Write a SMALL tactic block to replace this ONE sorry.
 Use tactics: have, calc, step, unfold, simp, ring, field_simp, agrind, scalar_tac.
 Explain your reasoning before writing.
+Do not edit the theorem name or statement. Follow the target style guide as a hard constraint:
+no new over-limit line and no ordinary identifier with three or more namespace dots.
 
 IMPORTANT: Write the change using VS Code diff (Write tool). User will approve inline.
 After the write, the user will check if Lean compiles. Wait for feedback.
@@ -216,7 +274,20 @@ If successful, return ## EXECUTION COMPLETE"
     AFTER EACH EXECUTOR RETURN:
 
     If ## EXECUTION COMPLETE:
-      - Remind user: "Check compilation: nice -n 19 lake build"
+      - FIRST run the baseline-aware mechanical style gate:
+
+        node ~/.claude/scripts/fvs-lean-style-check.mjs check "$SPEC_PATH" \
+          --root . --config .formalising/fvs-config.json --baseline "$STYLE_BASELINE"
+
+      - If the style gate fails: store its exact diagnostics as PREVIOUS_FEEDBACK, increment
+        ATTEMPT_FOR_THIS_SORRY, and re-dispatch. Do not ask for compilation and do not accept the
+        edit yet.
+      - Inspect the diff. If the theorem name or statement changed without the user's explicit
+        request, treat that as a failed attempt and require the executor to restore it.
+      - For a user-authorized statement edit, run the same check WITHOUT `--baseline`; the complete
+        file must pass because statement edits cannot inherit legacy style exemptions.
+      - Only after the applicable style gate passes, remind the user:
+        "Check compilation: nice -n 19 lake build"
       - Wait for user feedback on whether Lean compiles
       - If compiles: SORRY_RESOLVED += 1, break inner loop, move to next sorry
       - If does not compile: store error as PREVIOUS_FEEDBACK, ATTEMPT_FOR_THIS_SORRY += 1
@@ -245,10 +316,12 @@ END FOR
 - One sorry at a time (not batch)
 - Small tactic blocks (have, calc, unfold + step)
 - User checks Lean compiles between each step
+- Mechanical style gate passes before each compile check
+- Theorem names/statements stay immutable unless the user explicitly authorized an edit
 - Feels like pair programming
 - All writes via VS Code diffs
 
-## Step 7: Display Summary
+## Step 8: Display Summary
 
 ```
 FVS >> VERIFICATION {STATUS}
@@ -256,6 +329,7 @@ FVS >> VERIFICATION {STATUS}
 File:     {spec_file}
 Resolved: {SORRY_RESOLVED}/{SORRY_COUNT} sorry
 Stuck:    {SORRY_STUCK}
+Style:    {no new violations | full guide clean after an authorized statement edit}
 Status:   {VERIFIED if 0 sorry remain, PARTIAL if some remain, STUCK if none resolved}
 ```
 
@@ -264,7 +338,7 @@ Status:   {VERIFIED if 0 sorry remain, PARTIAL if some remain, STUCK if none res
 - **PARTIAL:** Some sorry resolved, some remain
 - **STUCK:** No sorry resolved
 
-## Step 8: Update CODEMAP.md Verification Status
+## Step 9: Update CODEMAP.md Verification Status
 
 If .formalising/CODEMAP.md exists, update the function's status:
 
@@ -277,7 +351,7 @@ Update via Write tool (VS Code diff):
 - Still has sorry: change status to `[??]`
 - Build error: change status to `[XX]`
 
-## Step 9: Suggest Next Steps
+## Step 10: Suggest Next Steps
 
 **If VERIFIED:**
 
@@ -302,10 +376,14 @@ Update via Write tool (VS Code diff):
 <success_criteria>
 - [ ] Spec file located and sorry confirmed present
 - [ ] Config read and models resolved for fvs-researcher and fvs-executor
-- [ ] Research subagent dispatched with inlined tactic-usage, proof-strategies, spec-conventions
+- [ ] Target style guide discovered unambiguously, read completely, and baseline captured
+- [ ] Research subagent dispatched with inlined tactics, strategies, conventions, and target guide
 - [ ] Research identified all sorry locations with goals and tactic recommendations
 - [ ] Executor dispatched iteratively per sorry (one at a time, not batch)
 - [ ] Each executor writes small tactic blocks via VS Code diff
+- [ ] Every edit passes the baseline-aware style gate before compilation; authorized statement
+      edits pass the full-file gate
+- [ ] Theorem names/statements remain unchanged unless explicitly authorized by the user
 - [ ] User checks Lean compiles between each step (pair programming feel)
 - [ ] NEEDS INPUT handling for stuck proofs with user hint collection
 - [ ] Max-attempts guardrail enforced per sorry (3) and total (25 hard cap)

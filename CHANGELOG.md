@@ -13,6 +13,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   records its evidence-backed response. Codex-authored/unknown-provenance plans and non-APPROVE
   verdicts fail closed before execution.
 
+### Changed
+- `/fvs:lean-specify` and `/fvs:lean-verify` now discover and fully load the target repository's
+  style guide (configurable with `project.style_guide_path`) into both research and execution
+  prompts. A shipped post-write checker enforces the repository line limit (100-column fallback)
+  and rejects new ordinary identifiers with three or more namespace dots; verification preserves
+  legacy debt only through an explicit baseline and requires full compliance for statement edits.
+
 ### Fixed
 - FVS installs now verify the shipped Aeneas `_sync-meta.json` mapping and the sync command reports
   real update/reinstall recovery instead of a nonexistent Aeneas installer option.

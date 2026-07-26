@@ -5,6 +5,7 @@
     "rust_source_dir": null,
     "stubs_dir": "stubs",
     "defs_file": null,
+    "style_guide_path": null,
     "lakefile_path": null,
     "lean_toolchain_path": null,
     "status_tracking_file": null,

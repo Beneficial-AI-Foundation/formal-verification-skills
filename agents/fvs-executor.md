@@ -68,6 +68,7 @@ Your parent command provides `<execution_mode>` and `<research_findings>` tags. 
    - Postcondition candidates
    - Similar spec examples as patterns
    - Dependency specs
+   - The complete target repository style guide and its mechanical limits
 2. Generate a Lean specification file containing:
    - Import statements
    - Spec theorem with appropriate postconditions
@@ -75,6 +76,9 @@ Your parent command provides `<execution_mode>` and `<research_findings>` tags. 
    - Comments linking to the source function
 3. Write the spec file to the project-conventional Specs/ directory
 4. Use established naming convention: `{FunctionName}_spec`
+5. Treat the target style guide as a hard output contract. Wrap at its line limit (100 columns
+   when unspecified), and replace identifiers with three or more namespace dots by a scoped
+   namespace/open or a local name/abbreviation.
 </mode>
 
 <mode name="proof-attempt">
@@ -84,6 +88,12 @@ Your parent command provides `<execution_mode>` and `<research_findings>` tags. 
 **Output:** Modified spec file with tactic steps replacing sorry
 
 CRITICAL BEHAVIORAL CONSTRAINT: Work ONE sorry at a time. Write small tactic blocks (have, calc, unfold + step). The user checks that Lean compiles between each step.
+
+The theorem name and statement are immutable in ordinary proof-attempt mode: replace only the
+targeted proof `sorry`. If the user explicitly authorizes a statement edit, preserve its
+mathematical meaning and apply the complete target style guide to the edited declaration. Never
+introduce a line over the configured limit or an ordinary identifier with three or more namespace
+dots.
 
 1. Read the research findings to identify:
    - Which sorry to target (first unresolved, or as directed by user)
@@ -119,6 +129,17 @@ For spec-generation mode:
 - Express bounds from Rust source analysis, not guesses
 - Include `sorry` placeholder -- do not attempt proof
 - Follow lean-spec-conventions from the inlined reference
+- Follow the inlined target repository style guide as a hard constraint. It takes precedence over
+  generic template presentation, but never over mathematical/source fidelity.
+- Default to at most 100 columns when the guide has no explicit limit.
+- Prefer `namespace`, `open`, and local names/abbreviations over identifiers with three or more
+  namespace dots.
+
+For proof-attempt mode:
+- Follow the inlined target repository style guide for every inserted line.
+- Do not edit a theorem name or statement unless the user explicitly requested that semantic
+  surface. An authorized statement edit must pass the full style gate, not a legacy baseline
+  exemption.
 
 For map-code and plan modes:
 - Overwrite existing CODEMAP.md or PLAN.md (these are regenerated, not appended)
@@ -164,6 +185,7 @@ On failure:
 - [ ] Mode-specific output produced matching expected format
 - [ ] For proof-attempt: one sorry targeted at a time, small tactic blocks
 - [ ] For spec-generation: sorry placeholder included, correct Lean types
+- [ ] Target repository style guide followed; no new long-line or deep-qualification violation
 - [ ] For map-code/plan: complete structured document generated
 - [ ] Result returned with ## EXECUTION COMPLETE or ## NEEDS INPUT header
 - [ ] No @-references used (all context is inlined by parent)
