@@ -69,9 +69,13 @@ describe('Installer (install + uninstall round-trip)', () => {
   it('creates specific spot-check files', () => {
     const checks = [
       'commands/fvs/help.md',
+      'commands/fvs/crypto-review.md',
       'agents/fvs-researcher.md',
+      'fv-skills/references/crypto-plan-review.md',
+      'fv-skills/workflows/crypto-review.md',
       'fv-skills/workflows/lean-verify.md',
       'fv-skills/upstream/aeneas/_sync-meta.json',
+      'scripts/fvs-codex-think.mjs',
     ];
     for (const rel of checks) {
       assert.ok(fs.existsSync(path.join(tmpDir, rel)), `Missing: ${rel}`);

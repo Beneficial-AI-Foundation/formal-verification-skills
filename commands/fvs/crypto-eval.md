@@ -50,8 +50,8 @@ NEVER `eval` a path.
 ```bash
 TOPIC_RAW="$1"
 case "$TOPIC_RAW" in
-  *[';|&$`()<>'*]* ) echo "FVS >> ERROR: topic contains shell metacharacters" >&2; exit 1 ;;
   *..*|*/* ) echo "FVS >> ERROR: topic contains '..' or '/' (path traversal); refusing" >&2; exit 1 ;;
+  *[![:alnum:]_[:space:]-]* ) echo "FVS >> ERROR: topic contains unsupported characters" >&2; exit 1 ;;
 esac
 SLUG=$(printf '%s' "$TOPIC_RAW" | tr -s '[:space:]' '-')
 ROOT=".formalising/fv-plans/$SLUG"
@@ -93,7 +93,7 @@ EXITS -- there is NO live cross-process bridge. The helper is EFFORT-ONLY: it pa
 
 ```bash
 # --codex mode: swap the in-runtime thinker for the FVS-owned Codex thinker (eval stage).
-node scripts/fvs-codex-think.mjs eval --topic "$ROOT" --effort xhigh
+node ~/.claude/scripts/fvs-codex-think.mjs eval --topic "$ROOT" --effort xhigh
 ```
 
 If `--codex` is passed but `codex` is unavailable, the helper surfaces its graceful install message
@@ -133,7 +133,8 @@ Review:    reviews/EVAL_{ITER}.md
 
 <codex_skill_adapter>
 The `--codex` flag swaps the thinker for a Codex thinker at THIS eval stage via the FVS-owned helper
-`scripts/fvs-codex-think.mjs` (`node scripts/fvs-codex-think.mjs eval --topic "$ROOT" --effort xhigh`).
+`~/.claude/scripts/fvs-codex-think.mjs`
+(`node ~/.claude/scripts/fvs-codex-think.mjs eval --topic "$ROOT" --effort xhigh`).
 The helper is FVS-owned and self-contained: it does NOT import or depend on the openai-codex plugin;
 it spawns `codex` via an argv array (never a shell string), is EFFORT-ONLY (passes `--effort xhigh`,
 NO `--model`), and points Codex at the topic folder as its working root. Coordination is

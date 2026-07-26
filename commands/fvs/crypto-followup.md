@@ -17,7 +17,8 @@ Convert the latest adversarial eval's findings into the next bounded follow-up p
 high-effort `fvs-crypto-thinker` (followup mode) re-derives the follow-up from the eval; this
 command body persists the returned plan under `plans/`.
 
-This command is the FOLLOWUP stage of the single-runtime loop (plan -> execute -> eval -> followup).
+This command is the FOLLOWUP stage of the loop. Every follow-up is independently reviewed before it
+is handed back to the executor.
 When the prior eval decided `HUMAN_RULING`, this command MUST HALT and ask the user for the modeling
 decision -- it NEVER fabricates a follow-up that silently picks one side of a modeling ruling.
 
@@ -51,8 +52,8 @@ shell metacharacters, QUOTE every path expansion, NEVER `eval` a path.
 ```bash
 TOPIC_RAW="$1"
 case "$TOPIC_RAW" in
-  *[';|&$`()<>'*]* ) echo "FVS >> ERROR: topic contains shell metacharacters" >&2; exit 1 ;;
   *..*|*/* ) echo "FVS >> ERROR: topic contains '..' or '/' (path traversal); refusing" >&2; exit 1 ;;
+  *[![:alnum:]_[:space:]-]* ) echo "FVS >> ERROR: topic contains unsupported characters" >&2; exit 1 ;;
 esac
 SLUG=$(printf '%s' "$TOPIC_RAW" | tr -s '[:space:]' '-')
 ROOT=".formalising/fv-plans/$SLUG"
@@ -133,7 +134,7 @@ EFFORT-ONLY: it passes `--effort xhigh` (>= xhigh enforced) and NO `--model`.
 
 ```bash
 # --codex mode: swap the in-runtime thinker for the FVS-owned Codex thinker (followup stage).
-node scripts/fvs-codex-think.mjs followup --topic "$ROOT" --effort xhigh
+node ~/.claude/scripts/fvs-codex-think.mjs followup --topic "$ROOT" --effort xhigh
 ```
 
 If `--codex` is passed but `codex` is unavailable, the helper surfaces its graceful install message
@@ -147,6 +148,15 @@ statements that must not change, allowed-`sorry` policy, stop conditions, the ve
 `nice -n 19 lake build` under the `set -o pipefail` / `${PIPESTATUS` guard, expected artifact
 updates).
 
+The artifact MUST also record:
+
+```
+Authoring runtime: {Claude Code | OpenCode | Gemini | Codex | Codex CLI}
+```
+
+Use `Codex CLI` for `--codex`; otherwise name the actual host runtime. This provenance is mandatory
+for `/fvs:crypto-review` to prove the reviewer is independent.
+
 ## Step 5: Run-end banner + next command
 
 ```
@@ -157,15 +167,15 @@ Decision:  {FOLLOWUP | HUMAN_RULING -> ruled}
 Plan:      plans/FOLLOWUP_PLAN_n{N}.md
 
 >> Next Up
-/fvs:crypto-execute <topic> n{N}
+/fvs:crypto-review <topic> n{N} --target followup
 ```
 
 </process>
 
 <codex_skill_adapter>
 The `--codex` flag swaps the thinker for a Codex thinker at THIS followup stage via the FVS-owned
-helper `scripts/fvs-codex-think.mjs`
-(`node scripts/fvs-codex-think.mjs followup --topic "$ROOT" --effort xhigh`). The helper is FVS-owned
+helper `~/.claude/scripts/fvs-codex-think.mjs`
+(`node ~/.claude/scripts/fvs-codex-think.mjs followup --topic "$ROOT" --effort xhigh`). The helper is FVS-owned
 and self-contained: it does NOT import or depend on the openai-codex plugin; it spawns `codex` via an
 argv array (never a shell string), is EFFORT-ONLY (passes `--effort xhigh`, NO `--model`), and points
 Codex at the topic folder as its working root. Coordination is ARTIFACT-MEDIATED: the Codex thinker
@@ -183,5 +193,7 @@ unchanged.
 - [ ] Latest `EVAL_nN.md` read; decision routed (`ACCEPT` stop / `BLOCKED` pause / `FOLLOWUP` author / `HUMAN_RULING` HALT).
 - [ ] On `HUMAN_RULING` the command HALTs and asks the user -- it NEVER fabricates a follow-up plan.
 - [ ] On `FOLLOWUP` the thinker is dispatched (`subagent_type="fvs-crypto-thinker"`) and the bounded follow-up plan written to `plans/`.
+- [ ] The follow-up records truthful `Authoring runtime:` provenance and routes next to
+      `/fvs:crypto-review --target followup`.
 - [ ] No bare `lake build`, no `gh` open/create, no generated-Lean write.
 </success_criteria>

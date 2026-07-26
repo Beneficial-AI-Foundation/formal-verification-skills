@@ -84,6 +84,10 @@ Task(subagent_type="fvs-crypto-thinker", model="$THINKER_MODEL",
 
 The thinker authors BY RETURN; the command body persists `plans/PLAN_nN.md` (high-level) and
 `plans/EXEC_PLAN_nN.md` (the bounded executor plan).
+
+Both artifacts record `Authoring runtime: <actual runtime>`; `--codex` records `Codex CLI`.
+This provenance is mandatory input to the independent `/fvs:crypto-review` stage and must never be
+guessed or omitted.
 </step>
 
 <step name="bounded_plan_contract">
@@ -113,5 +117,7 @@ it with no thinker in the loop:
 - [ ] KB grounded intensively when configured; cached under `sources/` and re-read before re-querying; loud-fail-once + labeled-degrade + `/fvs:kb-setup` when unconfigured.
 - [ ] The high-effort thinker (`fvs-crypto-thinker`) dispatched with inlined context; the plan authored by return.
 - [ ] The bounded-plan contract (stop conditions, verification commands `nice -n 19 lake build`, immutable public statements) written into `EXEC_PLAN_nN.md`.
+- [ ] Plan artifacts record truthful `Authoring runtime:` and route next to
+      `/fvs:crypto-review --target plan`.
 - [ ] No bare `lake build`, no `gh` open/create, no generated-Lean write.
 </success_criteria>

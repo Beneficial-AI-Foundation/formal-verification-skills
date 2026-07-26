@@ -134,6 +134,7 @@ Commands are grouped into five bundles. Each bundle has a **router** command tha
 | `/fvs:lean-formalise` | Formalise paper/math content into Lean 4 specs and definitions (one-shot) |
 | `/fvs:lean-refactor` | Refactor, simplify, and decompose verified proofs — *also in Formal-Core* |
 | `/fvs:crypto-plan` | Author the next bounded, runtime-neutral plan for a topic-based crypto formalisation iteration (KB-grounded, cached under `sources/`) |
+| `/fvs:crypto-review` | Send an initial or follow-up crypto plan to authenticated Codex for independent, read-only adversarial review before execution |
 | `/fvs:crypto-execute` | Run the current iteration's bounded plan under the green-build guard |
 | `/fvs:crypto-eval` | Adversarially evaluate the iteration; ends in one of ACCEPT / FOLLOWUP / HUMAN_RULING / BLOCKED |
 | `/fvs:crypto-followup` | Convert eval findings into the next follow-up plan; HALTs on HUMAN_RULING |
@@ -184,11 +185,18 @@ This track verifies Rust that Aeneas has lowered to Lean 4. Starting from a Rust
 The paper track formalises papers directly into Lean 4 — no Rust, no Aeneas. Two entry points:
 
 - **One-shot:** `/fvs:lean-formalise` reads your PDFs / images / LaTeX (optionally grounded in a NotebookLM knowledge base via `/fvs:kb-setup`) and produces Lean definition and spec files in a single pass.
-- **Iterative crypto loop:** for larger crypto formalisations, a topic-based, restartable loop of four stages:
+- **Iterative crypto loop:** for larger crypto formalisations, a topic-based, restartable loop with
+  an independent pre-execution review gate:
 
-  `/fvs:crypto-plan` → `/fvs:crypto-execute` → `/fvs:crypto-eval` → `/fvs:crypto-followup` → repeat
+  `/fvs:crypto-plan` → `/fvs:crypto-review` → `/fvs:crypto-execute` → `/fvs:crypto-eval` → `/fvs:crypto-followup` → `/fvs:crypto-review` → repeat
 
-  A high-effort thinker authors each bounded plan; the executor runs it under a green-build guard; an adversarial eval tries to refute the spec, proof, and assumptions and ends in exactly one of ACCEPT / FOLLOWUP / HUMAN_RULING / BLOCKED; follow-up turns findings into the next plan (halting for a human ruling on modeling decisions).
+  A high-effort thinker authors each bounded plan. Before execution, authenticated Codex
+  independently attacks the plan or follow-up under a read-only sandbox and returns an
+  evidence-backed APPROVE / APPROVE-WITH-EDITS / REJECT verdict. The executor runs an approved plan
+  under a green-build guard; the post-execution adversarial eval tries to refute the spec, proof,
+  and assumptions and ends in exactly one of ACCEPT / FOLLOWUP / HUMAN_RULING / BLOCKED. Follow-up
+  turns findings into the next plan (halting for a human modeling ruling) and is reviewed again
+  before execution.
 
   **Single- vs dual-runtime (`--codex`).** By default the loop is single-runtime — the thinking stages (`crypto-plan`, `crypto-eval`, `crypto-followup`) run the in-runtime `fvs-crypto-thinker`. Pass `--codex` to hand a stage's thinking to an independent **Codex CLI** thinker instead, so the adversarial planner/evaluator runs on a *different engine* than the executor and blind spots don't correlate. `crypto-execute` is the runtime-neutral executor and takes no `--codex`. Without the Codex CLI installed, a `--codex` stage stops with an install hint rather than silently falling back.
 

@@ -4,6 +4,21 @@ All notable changes to FVS (Formal Verification Skills) will be documented in th
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+- `/fvs:crypto-review` sends an initial or follow-up crypto plan to authenticated Codex for an
+  independent pre-execution adversarial review. Codex runs xhigh, effort-only, ephemeral, and
+  read-only; the FVS wrapper persists one validated review artifact and the primary planning seat
+  records its evidence-backed response. Codex-authored/unknown-provenance plans and non-APPROVE
+  verdicts fail closed before execution.
+
+### Fixed
+- FVS installs now verify the shipped Aeneas `_sync-meta.json` mapping and the sync command reports
+  real update/reinstall recovery instead of a nonexistent Aeneas installer option.
+- The config template now uses the top-level model schema consumed by commands and defaults
+  `fvs-crypto-thinker` to `inherit`.
+
 ## [2.0.3] - 2026-07-04
 
 ### Changed

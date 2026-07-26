@@ -73,10 +73,12 @@ const STAGE_FILES = {
   cmdExecute: path.join(CMD_DIR, 'crypto-execute.md'),
   cmdEval: path.join(CMD_DIR, 'crypto-eval.md'),
   cmdFollowup: path.join(CMD_DIR, 'crypto-followup.md'),
+  cmdReview: path.join(CMD_DIR, 'crypto-review.md'),
   wfPlan: path.join(WF_DIR, 'crypto-plan.md'),
   wfExecute: path.join(WF_DIR, 'crypto-execute.md'),
   wfEval: path.join(WF_DIR, 'crypto-eval.md'),
   wfFollowup: path.join(WF_DIR, 'crypto-followup.md'),
+  wfReview: path.join(WF_DIR, 'crypto-review.md'),
 };
 
 // ---------------------------------------------------------------------------
@@ -285,6 +287,82 @@ whenExists(CRYPTO_EXECUTOR, `Crypto loop: executor discipline in ${rel(CRYPTO_EX
 });
 
 // ---------------------------------------------------------------------------
+// 11. Independent pre-execution plan review (#35).
+// ---------------------------------------------------------------------------
+for (const key of ['cmdReview', 'wfReview']) {
+  whenExists(STAGE_FILES[key], `Crypto loop: independent plan review in ${rel(STAGE_FILES[key])} (#35)`, (content, absPath) => {
+    it('preflights Codex authentication and never silently falls back', () => {
+      assert.ok(/codex login status/.test(content),
+        `${rel(absPath)} missing Codex authentication preflight`);
+      assert.ok(/no silent|never silently|no same-runtime fallback/i.test(content),
+        `${rel(absPath)} missing no-fallback independence rule`);
+    });
+    it('supports both initial and follow-up plan review artifacts', () => {
+      for (const token of ['PLAN_REVIEW_', 'FOLLOWUP_REVIEW_']) {
+        assert.ok(content.includes(token), `${rel(absPath)} missing ${token} artifact contract`);
+      }
+    });
+    it('requires read-only, xhigh, effort-only Codex review', () => {
+      assert.ok(/read-only/i.test(content) && /xhigh/i.test(content) && /no `--model`|no model override|effort-only/i.test(content),
+        `${rel(absPath)} missing read-only/xhigh/effort-only review contract`);
+    });
+    it('fails closed on self-review or unknown provenance', () => {
+      assert.ok(/Authoring runtime:/.test(content) && /self-review|independ/i.test(content) &&
+        /missing provenance|provenance is unverified|unknown provenance/i.test(content),
+      `${rel(absPath)} missing provenance-based self-review refusal`);
+    });
+    it('routes only APPROVE to execution', () => {
+      for (const verdict of ['APPROVE', 'APPROVE-WITH-EDITS', 'REJECT']) {
+        assert.ok(content.includes(verdict), `${rel(absPath)} missing ${verdict} verdict`);
+      }
+      assert.ok(/Only APPROVE|`APPROVE`.*proceed|APPROVE.*routes/i.test(content),
+        `${rel(absPath)} does not gate execution on APPROVE`);
+    });
+  });
+}
+
+const REVIEW_CONTRACT = path.join(ROOT, 'fv-skills', 'references', 'crypto-plan-review.md');
+whenExists(REVIEW_CONTRACT, 'Crypto loop: adversarial review contract covers formal-verification failure modes', (content, absPath) => {
+  for (const surface of [
+    'Source fidelity',
+    'Statement-level soundness',
+    'Semantic closure',
+    'Precedent and interface realism',
+    'Gates',
+    'Boundedness and safety',
+    'Roadmap coherence',
+  ]) {
+    it(`covers ${surface}`, () => {
+      assert.ok(content.includes(surface), `${rel(absPath)} missing ${surface}`);
+    });
+  }
+  it('forbids proof attempts and requires cited evidence', () => {
+    assert.ok(/MUST NOT[\s\S]*Attempt proofs/i.test(content) && /path:line/.test(content),
+      `${rel(absPath)} missing proof-attempt fence or evidence standard`);
+  });
+  it('requires exactly one pre-execution verdict', () => {
+    for (const verdict of ['APPROVE', 'APPROVE-WITH-EDITS', 'REJECT']) {
+      assert.ok(content.includes(verdict), `${rel(absPath)} missing ${verdict}`);
+    }
+    assert.ok(/VERDICT:.*exactly once|exactly one verdict/is.test(content),
+      `${rel(absPath)} missing exactly-one-verdict requirement`);
+  });
+});
+
+for (const key of ['cmdPlan', 'cmdFollowup']) {
+  whenExists(STAGE_FILES[key], `Crypto loop: ${rel(STAGE_FILES[key])} routes through review`, (content, absPath) => {
+    it('records truthful authoring-runtime provenance', () => {
+      assert.ok(/Authoring runtime:/.test(content),
+        `${rel(absPath)} missing Authoring runtime marker contract`);
+    });
+    it('routes Next Up through /fvs:crypto-review', () => {
+      assert.ok(/\/fvs:crypto-review/.test(content),
+        `${rel(absPath)} bypasses the independent review stage`);
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
 // 8. fvs-codex-think.mjs path confinement (security): a --topic that resolves
 //    outside .formalising/fv-plans/ must be refused BEFORE any codex spawn, so a
 //    `..` escape cannot hand the thinker workspace-write access to an arbitrary
@@ -307,13 +385,178 @@ whenExists(CODEX_THINK, 'Crypto loop: fvs-codex-think.mjs confines --topic to th
   }
 });
 
+whenExists(CODEX_THINK, 'Crypto loop: Codex review helper is authenticated, read-only, and wrapper-persisted', (content, absPath) => {
+  it('checks codex login status in addition to binary availability', () => {
+    assert.ok(/\['login', 'status'\]/.test(content),
+      `${rel(absPath)} missing codex login status defense-in-depth preflight`);
+  });
+  it('uses read-only + ephemeral review invocation and output-last-message capture', () => {
+    for (const token of ["'read-only'", "'--ephemeral'", "'--output-last-message'"]) {
+      assert.ok(content.includes(token), `${rel(absPath)} missing ${token}`);
+    }
+    assert.ok(/fs\.writeFileSync\(review\.outputPath/.test(content),
+      `${rel(absPath)} does not make the wrapper own the review artifact write`);
+  });
+  it('loads the shipped crypto-plan-review contract', () => {
+    assert.ok(/crypto-plan-review\.md/.test(content),
+      `${rel(absPath)} missing the specialised review contract`);
+  });
+  it('marks Codex-authored plans so later review cannot masquerade as independent', () => {
+    assert.ok(/Authoring runtime: Codex CLI/.test(content),
+      `${rel(absPath)} does not stamp Codex authoring provenance`);
+  });
+});
+
+describe('Crypto loop: fvs-codex-think review stage with a fake Codex CLI', () => {
+  const os = require('node:os');
+  const { spawnSync } = require('node:child_process');
+
+  it('captures one validated review while giving Codex read-only repository access', {
+    skip: process.platform === 'win32',
+  }, () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-review-test-'));
+    try {
+      const fakeBin = path.join(tmpRoot, 'bin');
+      const project = path.join(tmpRoot, 'project');
+      const topic = path.join(project, '.formalising', 'fv-plans', 'demo');
+      const plans = path.join(topic, 'plans');
+      const reviews = path.join(topic, 'reviews');
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.mkdirSync(plans, { recursive: true });
+      fs.mkdirSync(reviews, { recursive: true });
+      fs.writeFileSync(
+        path.join(plans, 'PLAN_n1.md'),
+        '# Plan\n\nAuthoring runtime: Claude Code\n'
+      );
+      fs.writeFileSync(
+        path.join(plans, 'EXEC_PLAN_n1.md'),
+        '# Executor Plan\n\nAuthoring runtime: Claude Code\n'
+      );
+
+      const fakeCodex = path.join(fakeBin, 'codex');
+      fs.writeFileSync(fakeCodex, [
+        '#!/usr/bin/env node',
+        "'use strict';",
+        "const fs = require('node:fs');",
+        'const args = process.argv.slice(2);',
+        "if (args[0] === '--version') { console.log('codex-cli fake'); process.exit(0); }",
+        "if (args[0] === 'login' && args[1] === 'status') { console.log('Logged in'); process.exit(0); }",
+        "if (args[0] !== 'exec') process.exit(9);",
+        "const outAt = args.indexOf('--output-last-message');",
+        'if (outAt < 0 || !args[outAt + 1]) process.exit(8);',
+        "fs.writeFileSync(args[outAt + 1], '# FVS Crypto Plan Review\\n\\n- VERDICT: APPROVE\\n\\n## Findings\\n\\nNone.\\n\\n## Cleared surfaces\\n\\nChecked.\\n\\n## Probe log\\n\\nNone.\\n\\n## Resolution map\\n\\n| Finding | Suggested edit | Destination plan/section |\\n|---|---|---|\\n');",
+        "fs.writeFileSync(process.env.FVS_FAKE_CODEX_LOG, JSON.stringify(args));",
+      ].join('\n'));
+      fs.chmodSync(fakeCodex, 0o755);
+
+      const logPath = path.join(tmpRoot, 'codex-args.json');
+      const run = spawnSync(process.execPath, [
+        CODEX_THINK,
+        'review',
+        '--topic', '.formalising/fv-plans/demo',
+        '--iteration', 'n1',
+        '--target', 'plan',
+        '--effort', 'xhigh',
+      ], {
+        cwd: project,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ''}`,
+          FVS_FAKE_CODEX_LOG: logPath,
+        },
+      });
+      assert.equal(run.status, 0, `${run.stderr || ''}\n${run.stdout || ''}`);
+
+      const artifact = path.join(reviews, 'PLAN_REVIEW_n1.md');
+      assert.ok(fs.existsSync(artifact), 'wrapper did not persist PLAN_REVIEW_n1.md');
+      assert.match(fs.readFileSync(artifact, 'utf8'), /VERDICT: APPROVE/);
+
+      const args = JSON.parse(fs.readFileSync(logPath, 'utf8'));
+      const sandboxAt = args.indexOf('--sandbox');
+      assert.ok(sandboxAt >= 0, 'codex exec missing --sandbox');
+      assert.equal(args[sandboxAt + 1], 'read-only', 'reviewer sandbox must be read-only');
+      assert.ok(args.includes('--ephemeral'), 'reviewer must be ephemeral');
+      assert.ok(args.includes('--output-last-message'), 'review output must be captured');
+      assert.ok(!args.includes('--model') && !args.includes('-m'),
+        'review helper must not pass a model override');
+      const prompt = args[args.length - 1];
+      assert.ok(prompt.includes('Source fidelity') &&
+        prompt.includes('Statement-level soundness'),
+      'specialised adversarial review contract was not included in the prompt');
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('fails before invocation or artifact creation when any target lacks provenance', {
+    skip: process.platform === 'win32',
+  }, () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-review-provenance-test-'));
+    try {
+      const fakeBin = path.join(tmpRoot, 'bin');
+      const project = path.join(tmpRoot, 'project');
+      const topic = path.join(project, '.formalising', 'fv-plans', 'demo');
+      const plans = path.join(topic, 'plans');
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.mkdirSync(plans, { recursive: true });
+      fs.writeFileSync(
+        path.join(plans, 'PLAN_n1.md'),
+        '# Plan\n\nAuthoring runtime: Claude Code\n'
+      );
+      fs.writeFileSync(
+        path.join(plans, 'EXEC_PLAN_n1.md'),
+        '# Executor Plan\n\nNo provenance marker here.\n'
+      );
+
+      const fakeCodex = path.join(fakeBin, 'codex');
+      fs.writeFileSync(fakeCodex, [
+        '#!/usr/bin/env node',
+        "'use strict';",
+        "const fs = require('node:fs');",
+        'const args = process.argv.slice(2);',
+        "if (args[0] === '--version') process.exit(0);",
+        "if (args[0] === 'login' && args[1] === 'status') process.exit(0);",
+        "fs.writeFileSync(process.env.FVS_FAKE_CODEX_LOG, 'invoked');",
+      ].join('\n'));
+      fs.chmodSync(fakeCodex, 0o755);
+
+      const logPath = path.join(tmpRoot, 'codex-invoked');
+      const run = spawnSync(process.execPath, [
+        CODEX_THINK,
+        'review',
+        '--topic', '.formalising/fv-plans/demo',
+        '--iteration', 'n1',
+        '--target', 'plan',
+        '--effort', 'xhigh',
+      ], {
+        cwd: project,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ''}`,
+          FVS_FAKE_CODEX_LOG: logPath,
+        },
+      });
+
+      assert.notEqual(run.status, 0, 'review unexpectedly accepted incomplete provenance');
+      assert.match(run.stderr, /every review target.*Authoring runtime|independence.*unverified/i);
+      assert.ok(!fs.existsSync(logPath), 'Codex was invoked despite incomplete provenance');
+      assert.ok(!fs.existsSync(path.join(topic, 'reviews')),
+        'review directory was created before provenance validation');
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+});
+
 // ---------------------------------------------------------------------------
 // 9. Command-layer path-traversal guard (security): the slug guard must reject
 //    `..` and `/` so a topic cannot escape .formalising/fv-plans/ on the
 //    single-runtime (non --codex) path, which never goes through
 //    fvs-codex-think.mjs.
 // ---------------------------------------------------------------------------
-for (const key of ['cmdPlan', 'cmdExecute', 'cmdEval', 'cmdFollowup']) {
+for (const key of ['cmdPlan', 'cmdReview', 'cmdExecute', 'cmdEval', 'cmdFollowup']) {
   whenExists(STAGE_FILES[key], `Crypto loop: path-traversal guard in ${rel(STAGE_FILES[key])}`, (content, absPath) => {
     it('rejects a topic containing ".." or "/" (path traversal)', () => {
       assert.match(content, /\*\.\.\*\|\*\/\*|path traversal/,

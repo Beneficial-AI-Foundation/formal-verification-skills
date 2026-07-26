@@ -41,7 +41,7 @@ Commands are grouped into five bundles. Each bundle has a router command (e.g. `
 ```
 Code track:  /fvs:aeneas-extract → /fvs:map-code → /fvs:fc-plan → /fvs:lean-specify → /fvs:lean-verify → /fvs:lean-refactor → /fvs:trust-audit
 Paper track: /fvs:lean-formalise → /fvs:lean-verify → /fvs:lean-refactor
-Crypto loop: /fvs:crypto-plan → /fvs:crypto-execute → /fvs:crypto-eval → /fvs:crypto-followup → repeat
+Crypto loop: /fvs:crypto-plan → /fvs:crypto-review → /fvs:crypto-execute → /fvs:crypto-eval → /fvs:crypto-followup → /fvs:crypto-review → repeat
 ```
 
 ## Bundles
@@ -195,7 +195,10 @@ Refactor, simplify, and decompose verified Lean proofs while preserving compilat
 
 Usage: `/fvs:lean-refactor Specs/Backend/Field/Sub.lean`
 
-The crypto formalisation loop (plan -> execute -> eval -> follow-up) is a topic-based, multi-iteration alternative to the one-shot `lean-formalise`. Its four stages share the artifact tree under `fv-plans/<topic>/` and the loop is restartable from those records.
+The crypto formalisation loop
+(plan -> independent review -> execute -> eval -> follow-up -> independent review) is a
+topic-based, multi-iteration alternative to the one-shot `lean-formalise`. Its stages share the
+artifact tree under `fv-plans/<topic>/` and the loop is restartable from those records.
 
 **Single- vs dual-runtime (`--codex`).** By default the loop is *single-runtime*: the high-effort thinking (planning, adversarial eval, follow-up) is done by the in-runtime `fvs-crypto-thinker`. The three *thinking* stages — `crypto-plan`, `crypto-eval`, `crypto-followup` — also accept `--codex`, which hands that stage's thinking to an independent **Codex CLI** thinker instead. That makes the loop *dual-runtime*: the adversarial planner/evaluator runs on a different engine than the executor, reducing correlated blind spots. `crypto-execute` is the runtime-neutral executor and takes no `--codex`. Pass `--codex` without the Codex CLI installed and the stage stops with an install hint (never a silent fallback) — re-run without it to stay single-runtime.
 
@@ -204,6 +207,22 @@ Author the next bounded, runtime-neutral executor plan for a topic, grounded in 
 
 Usage: `/fvs:crypto-plan "CKA from KEM"`
 Usage: `/fvs:crypto-plan "CKA from KEM" --codex`   # hand the planning think-step to Codex
+
+**`/fvs:crypto-review <topic> [nN] [--target plan|followup]`**
+Send an initial or follow-up plan to authenticated Codex for an independent, pre-execution
+adversarial review.
+
+- Preflights both Codex installation and `codex login status`; never silently falls back
+- Rejects Codex-authored or unknown-provenance plans instead of claiming self-review is independent
+- Runs xhigh, effort-only, ephemeral Codex with a read-only repository sandbox
+- Attacks source fidelity, statement soundness, semantic closure, interfaces, gates, boundedness,
+  security/data-loss risks, and roadmap coherence
+- Wrapper persists exactly one `PLAN_REVIEW_nN.md` or `FOLLOWUP_REVIEW_nN.md`; the planning seat
+  verifies and triages every finding
+- Only APPROVE proceeds; APPROVE-WITH-EDITS and REJECT stop before execution
+
+Usage: `/fvs:crypto-review "CKA from KEM" n1 --target plan`
+Usage: `/fvs:crypto-review "CKA from KEM" n1 --target followup`
 
 **`/fvs:crypto-execute <topic> nN`**
 Run the current iteration's bounded plan under the green-build guard; a failed proof triggers a short interactive redirect early. (Executor stage — takes no `--codex`.)

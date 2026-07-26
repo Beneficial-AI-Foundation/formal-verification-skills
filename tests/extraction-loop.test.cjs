@@ -86,6 +86,7 @@ describe('Extraction loop: no upstream-artifact open/create in the draft path (E
     path.join(CMD_DIR, 'crypto-execute.md'),
     path.join(CMD_DIR, 'crypto-eval.md'),
     path.join(CMD_DIR, 'crypto-followup.md'),
+    path.join(CMD_DIR, 'crypto-review.md'),
     path.join(CMD_DIR, 'trust-audit.md'),
     path.join(SCRIPTS_DIR, 'fvs-codex-think.mjs'),
     path.join(SCRIPTS_DIR, 'fvs-codex-think.sh'),

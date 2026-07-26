@@ -17,7 +17,8 @@ executor plan. The high-effort `fvs-crypto-thinker` re-derives the plan from the
 the paper-grounded KB sources; this command body persists the returned plan under
 `.formalising/fv-plans/<topic>/{plans,reviews,sources,merge}`.
 
-This command is the PLAN stage of the single-runtime loop (plan -> execute -> eval -> followup).
+This command is the PLAN stage of the loop
+(plan -> independent review -> execute -> eval -> followup -> independent review).
 The plan it produces is RUNTIME-NEUTRAL: it must be executable by any runtime's executor with no
 thinker in the loop. The loop is restartable from its own on-disk records.
 
@@ -54,8 +55,8 @@ and friends), QUOTE every path expansion, and NEVER `eval` a path.
 TOPIC_RAW="$1"
 # reject shell metacharacters before the slug ever touches a path
 case "$TOPIC_RAW" in
-  *[';|&$`()<>'*]* ) echo "FVS >> ERROR: topic contains shell metacharacters" >&2; exit 1 ;;
   *..*|*/* ) echo "FVS >> ERROR: topic contains '..' or '/' (path traversal); refusing" >&2; exit 1 ;;
+  *[![:alnum:]_[:space:]-]* ) echo "FVS >> ERROR: topic contains unsupported characters" >&2; exit 1 ;;
 esac
 SLUG=$(printf '%s' "$TOPIC_RAW" | tr -s '[:space:]' '-')
 ROOT=".formalising/fv-plans/$SLUG"
@@ -64,7 +65,8 @@ mkdir -p "$ROOT/plans" "$ROOT/reviews" "$ROOT/sources" "$ROOT/merge"
 
 The four subfolders split the loop's records by role (artifact contract):
 - `plans/` -- `PLAN_nN.md` (high-level) + `EXEC_PLAN_nN.md` (bounded executor plan) + `FOLLOWUP_PLAN_nN.md`.
-- `reviews/` -- `EVAL_nN.md` (adversarial; leads with findings; decides ACCEPT / FOLLOWUP / HUMAN_RULING / BLOCKED).
+- `reviews/` -- pre-execution `PLAN_REVIEW_nN.md` / `FOLLOWUP_REVIEW_nN.md`, plus
+  post-execution `EVAL_nN.md` (decides ACCEPT / FOLLOWUP / HUMAN_RULING / BLOCKED).
 - `sources/` -- paper excerpts, theorem maps, advantage/probability normalization choices, and CACHED KB answers.
 - `merge/` -- branch integration state: the conflict files, the conflict themes, and the next safe action when an accepted iteration lands back on the project branch.
 
@@ -148,7 +150,7 @@ EFFORT-ONLY: it passes `--effort xhigh` (>= xhigh enforced) and NO `--model`.
 
 ```bash
 # --codex mode: swap the in-runtime thinker for the FVS-owned Codex thinker (plan stage).
-node scripts/fvs-codex-think.mjs plan --topic "$ROOT" --effort xhigh
+node ~/.claude/scripts/fvs-codex-think.mjs plan --topic "$ROOT" --effort xhigh
 ```
 
 If `--codex` is passed but the `codex` CLI is unavailable, the helper surfaces its graceful
@@ -159,6 +161,16 @@ user always knows which runtime authored the plan.
 The thinker (in-runtime or Codex) authors the plan; THIS command body writes:
 - `plans/PLAN_nN.md` -- the high-level plan.
 - `plans/EXEC_PLAN_nN.md` -- the bounded executor plan.
+
+Both artifacts MUST record a top-level metadata line:
+
+```
+Authoring runtime: {Claude Code | OpenCode | Gemini | Codex | Codex CLI}
+```
+
+Use `Codex CLI` when `--codex` authored the plan; otherwise name the actual host runtime. Never
+write a generic or guessed marker. `/fvs:crypto-review` uses it to prevent Codex self-review and
+fails closed when provenance is missing.
 
 Carry the BOUNDED-PLAN CONTRACT verbatim into `EXEC_PLAN_nN.md`:
 1. **Branch and current state** -- the branch name and what already compiles / is proven.
@@ -185,14 +197,15 @@ Plans:     plans/PLAN_n{NEXT}.md, plans/EXEC_PLAN_n{NEXT}.md
 Sources:   {K} cached under sources/
 
 >> Next Up
-/fvs:crypto-execute <topic> n{NEXT}
+/fvs:crypto-review <topic> n{NEXT} --target plan
 ```
 
 </process>
 
 <codex_skill_adapter>
 The `--codex` flag swaps the thinker for a Codex thinker at THIS stage via the FVS-owned helper
-`scripts/fvs-codex-think.mjs` (`node scripts/fvs-codex-think.mjs plan --topic "$ROOT" --effort xhigh`).
+`~/.claude/scripts/fvs-codex-think.mjs`
+(`node ~/.claude/scripts/fvs-codex-think.mjs plan --topic "$ROOT" --effort xhigh`).
 The helper is FVS-owned and self-contained: it does NOT import or depend on the openai-codex plugin;
 it spawns `codex` via an argv array (never a shell string), is EFFORT-ONLY (passes `--effort xhigh`,
 NO `--model`), and points Codex at the topic folder as its working root. Coordination is
@@ -210,5 +223,7 @@ auto-picks a default, never writes an upstream artifact).
 - [ ] `$THINKER_MODEL` resolved via the model-profiles sequence; the thinker dispatched (`subagent_type="fvs-crypto-thinker"`) with inlined context.
 - [ ] KB grounded intensively when configured; cached under `sources/` and re-read before re-querying; loud-fail-once + labeled-degrade + `/fvs:kb-setup` when unconfigured.
 - [ ] The bounded-plan contract (stop conditions, verification commands `nice -n 19 lake build`, immutable public statements, allowed-`sorry`) is written into `EXEC_PLAN_nN.md`.
+- [ ] Both plan artifacts record truthful `Authoring runtime:` provenance; the next action is
+      independent `/fvs:crypto-review`, not direct execution.
 - [ ] No bare `lake build`, no `gh` open/create, no generated-Lean write.
 </success_criteria>

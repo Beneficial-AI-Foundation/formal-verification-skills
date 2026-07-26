@@ -59,8 +59,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 case "$TOPIC_RAW" in
-  *[';|&$`()<>'*]* ) echo "FVS >> ERROR: topic contains shell metacharacters" >&2; exit 1 ;;
   *..*|*/* ) echo "FVS >> ERROR: topic contains '..' or '/' (path traversal); refusing" >&2; exit 1 ;;
+  *[![:alnum:]_[:space:]-]* ) echo "FVS >> ERROR: topic contains unsupported characters" >&2; exit 1 ;;
 esac
 case "$ITER" in
   n[0-9]* ) : ;;
@@ -68,7 +68,7 @@ case "$ITER" in
 esac
 for FLAGVAL in "$EXEC_MODEL" "$EXEC_EFFORT"; do
   case "$FLAGVAL" in
-    *[';|&$`()<>'*]* ) echo "FVS >> ERROR: --model/--effort contains shell metacharacters" >&2; exit 1 ;;
+    *[![:alnum:]_.:/+-]* ) echo "FVS >> ERROR: --model/--effort contains unsupported characters" >&2; exit 1 ;;
   esac
 done
 SLUG=$(printf '%s' "$TOPIC_RAW" | tr -s '[:space:]' '-')

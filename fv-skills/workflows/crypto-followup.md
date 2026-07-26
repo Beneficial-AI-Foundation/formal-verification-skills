@@ -63,6 +63,10 @@ The thinker authors BY RETURN; the command body persists `plans/FOLLOWUP_PLAN_nN
 full bounded-plan contract (branch/state, exact target files + theorems, immutable public statements,
 allowed-`sorry` policy, stop conditions, the verification command `nice -n 19 lake build` under the
 `set -o pipefail` / `${PIPESTATUS` guard, expected artifact updates).
+
+The follow-up also records `Authoring runtime: <actual runtime>` (`Codex CLI` for `--codex`) so the
+independent `/fvs:crypto-review --target followup` stage can reject self-review or unknown
+provenance before execution.
 </step>
 
 </process>
@@ -72,5 +76,6 @@ allowed-`sorry` policy, stop conditions, the verification command `nice -n 19 la
 - [ ] Latest `EVAL_nN.md` read; decision routed (`ACCEPT` stop / `BLOCKED` pause / `FOLLOWUP` author / `HUMAN_RULING` HALT).
 - [ ] On `HUMAN_RULING` the loop HALTs and asks the human -- it NEVER fabricates a follow-up plan.
 - [ ] On `FOLLOWUP` the high-effort thinker (`fvs-crypto-thinker`) dispatched; the bounded follow-up plan written to `plans/`.
+- [ ] The follow-up records truthful authoring provenance and routes next to independent review.
 - [ ] No bare `lake build`, no `gh` open/create, no generated-Lean write.
 </success_criteria>

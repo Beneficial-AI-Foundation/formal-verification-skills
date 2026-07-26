@@ -60,15 +60,15 @@ describe('Commands (commands/fvs/)', () => {
   const expected = [
     'aeneas-extract.md', 'aeneas.md', 'checkpoint.md', 'context.md',
     'crypto-eval.md', 'crypto-execute.md', 'crypto-followup.md',
-    'crypto-plan.md', 'fc-plan.md', 'fc.md', 'formalise.md', 'help.md',
+    'crypto-plan.md', 'crypto-review.md', 'fc-plan.md', 'fc.md', 'formalise.md', 'help.md',
     'kb-setup.md', 'lean-formalise.md', 'lean-refactor.md', 'lean-specify.md',
     'lean-verify.md', 'manage.md', 'map-code.md', 'natural-language.md',
     'pause-work.md', 'reapply-patches.md', 'resume-work.md',
     'sync-aeneas-verif.md', 'trust-audit.md', 'update.md',
   ];
 
-  it('has exactly 26 command files', () => {
-    assert.equal(files.length, 26, `Expected 26 commands, got ${files.length}: ${files.join(', ')}`);
+  it('has exactly 27 command files', () => {
+    assert.equal(files.length, 27, `Expected 27 commands, got ${files.length}: ${files.join(', ')}`);
   });
 
   it('has the expected set of command files', () => {
@@ -194,13 +194,13 @@ describe('Workflows (fv-skills/workflows/)', () => {
 
   const expected = [
     'aeneas-extract.md', 'crypto-eval.md', 'crypto-execute.md',
-    'crypto-followup.md', 'crypto-plan.md', 'fc-plan.md', 'lean-formalise.md',
+    'crypto-followup.md', 'crypto-plan.md', 'crypto-review.md', 'fc-plan.md', 'lean-formalise.md',
     'lean-refactor.md', 'lean-specify.md', 'lean-verify.md', 'map-code.md',
     'natural-language.md', 'sync-aeneas-verif.md', 'trust-audit.md', 'update.md',
   ];
 
-  it('has exactly 15 workflow files', () => {
-    assert.equal(files.length, 15, `Expected 15 workflows, got ${files.length}: ${files.join(', ')}`);
+  it('has exactly 16 workflow files', () => {
+    assert.equal(files.length, 16, `Expected 16 workflows, got ${files.length}: ${files.join(', ')}`);
   });
 
   it('has the expected set of workflow files', () => {
@@ -233,13 +233,14 @@ describe('References (fv-skills/references/)', () => {
   const files = mdFiles(dir);
 
   const expected = [
-    'aeneas-patterns.md', 'blocker-catalog.md', 'extraction-safety-model.md',
+    'aeneas-patterns.md', 'blocker-catalog.md', 'crypto-plan-review.md',
+    'extraction-safety-model.md',
     'lean-refactoring.md', 'lean-spec-conventions.md', 'model-profiles.md',
     'proof-strategies.md', 'tactic-usage.md', 'ui-brand.md',
   ];
 
-  it('has exactly 9 reference files', () => {
-    assert.equal(files.length, 9, `Expected 9 references, got ${files.length}: ${files.join(', ')}`);
+  it('has exactly 10 reference files', () => {
+    assert.equal(files.length, 10, `Expected 10 references, got ${files.length}: ${files.join(', ')}`);
   });
 
   it('has the expected set of reference files', () => {
