@@ -2909,6 +2909,32 @@ function install(isGlobal, runtime = 'claude') {
     failures.push('fv-skills');
   }
 
+  // The Aeneas sync command cannot operate without its mapping metadata. A
+  // recursive directory copy can otherwise look successful even when a
+  // packaging omission drops this single non-Markdown file, so verify both
+  // presence and the minimum schema explicitly (#29).
+  const syncMetaDest = path.join(skillDest, 'upstream', 'aeneas', '_sync-meta.json');
+  if (!verifyFileInstalled(syncMetaDest, 'Aeneas sync metadata')) {
+    failures.push('fv-skills/upstream/aeneas/_sync-meta.json');
+  } else {
+    try {
+      const syncMeta = JSON.parse(fs.readFileSync(syncMetaDest, 'utf8'));
+      if (
+        typeof syncMeta.upstream_source !== 'string' ||
+        !Array.isArray(syncMeta.mapping) ||
+        syncMeta.mapping.length === 0 ||
+        !syncMeta.tactic_renames ||
+        typeof syncMeta.tactic_renames !== 'object'
+      ) {
+        throw new Error('missing upstream_source, mapping entries, or tactic_renames');
+      }
+      console.log(`  ${green}✓${reset} Verified Aeneas sync metadata`);
+    } catch (e) {
+      console.error(`  ${yellow}✗${reset} Invalid Aeneas sync metadata: ${e.message}`);
+      failures.push('fv-skills/upstream/aeneas/_sync-meta.json (invalid)');
+    }
+  }
+
   // Copy agents to agents directory
   const agentsSrc = path.join(src, 'agents');
   if (fs.existsSync(agentsSrc)) {

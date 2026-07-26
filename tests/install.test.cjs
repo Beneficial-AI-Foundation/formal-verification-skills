@@ -71,6 +71,7 @@ describe('Installer (install + uninstall round-trip)', () => {
       'commands/fvs/help.md',
       'agents/fvs-researcher.md',
       'fv-skills/workflows/lean-verify.md',
+      'fv-skills/upstream/aeneas/_sync-meta.json',
     ];
     for (const rel of checks) {
       assert.ok(fs.existsSync(path.join(tmpDir, rel)), `Missing: ${rel}`);
@@ -342,5 +343,29 @@ describe('installed tree matches final bundle shape', () => {
         `new-bundle agent missing after install: ${a}`
       );
     }
+  });
+
+  it('installs valid Aeneas sync metadata (issue #29)', () => {
+    const metaPath = path.join(
+      tmpDir, 'fv-skills', 'upstream', 'aeneas', '_sync-meta.json'
+    );
+    assert.ok(fs.existsSync(metaPath), '_sync-meta.json missing after install');
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    assert.equal(meta.upstream_source, 'AeneasVerif/aeneas');
+    assert.ok(Array.isArray(meta.mapping) && meta.mapping.length > 0,
+      'sync metadata must contain at least one mapping');
+    assert.ok(meta.tactic_renames && typeof meta.tactic_renames === 'object',
+      'sync metadata must contain tactic_renames');
+  });
+
+  it('installs the top-level crypto-thinker inherit override (issue #34)', () => {
+    const configPath = path.join(tmpDir, 'fv-skills', 'templates', 'config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    assert.equal(config.model_profile, 'balanced',
+      'model_profile must use the top-level schema consumed by commands');
+    assert.equal(config.model_overrides?.['fvs-crypto-thinker'], 'inherit',
+      'fvs-crypto-thinker must inherit by default');
+    assert.ok(!Object.hasOwn(config, 'model'),
+      'obsolete nested model config would be ignored by command resolvers');
   });
 });

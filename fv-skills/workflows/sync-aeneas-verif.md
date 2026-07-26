@@ -18,6 +18,29 @@ and updated `_sync-meta.json`.
 
 <process>
 
+<step name="preflight_sync_metadata">
+## Step 0: Preflight Installed Sync Metadata
+
+Before config resolution, clone prompts, fetches, or dispatches, resolve
+`$HOME/.claude/fv-skills/upstream/aeneas/_sync-meta.json` (the installer rewrites the runtime path)
+and require a non-empty, parseable JSON object with `upstream_source`, a non-empty `mapping` array,
+and an object-valued `tactic_renames` table.
+
+If it is missing or invalid, STOP and report:
+
+```
+FVS >> AENEAS SYNC METADATA MISSING
+
+Run /fvs:update, or run `npx fv-skills-baif@latest` and choose the current runtime in the normal
+installer flow. There is no separate Aeneas install option.
+```
+
+**Inputs:** installed FVS tree
+**Outputs:** validated `$SYNC_META`
+**Error handling:** fail before every network call and worker dispatch; never continue with an empty
+mapping and never direct the user to a nonexistent installer option.
+</step>
+
 <step name="resolve_models">
 ## Step 1: Resolve Subagent Model
 
@@ -145,6 +168,7 @@ Run `npm test` to verify no frontmatter or structural issues.
 </process>
 
 <success_criteria>
+- Installed `_sync-meta.json` exists and passes its minimum schema preflight before any other work.
 - Clone paths resolved via config -> auto-detect -> prompt -> error; no hardcoded absolute path.
 - Clone staleness computed and reported gracefully (never a hard failure of mining).
 - `fvs-doc-syncer` dispatched in BOTH `tactics-lean-syntax` and `extraction-docs` modes.

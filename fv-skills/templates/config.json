@@ -12,8 +12,9 @@
     "aeneas_clone_path": null,
     "extract_workspace": ".formalising/extract"
   },
-  "model": {
-    "model_profile": "balanced"
+  "model_profile": "balanced",
+  "model_overrides": {
+    "fvs-crypto-thinker": "inherit"
   },
   "behavior": {
     "mode": "interactive"

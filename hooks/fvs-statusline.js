@@ -104,7 +104,7 @@ function readFvsCache() {
       prefix += '\x1b[33m\u2b06 /fvs:update\x1b[0m \u2502 ';
     }
     if (cache.aeneas_stale) {
-      prefix += '\x1b[33mAeneas docs outdated \u2192 /fvs:sync-aeneas\x1b[0m \u2502 ';
+      prefix += '\x1b[33mAeneas docs outdated \u2192 /fvs:sync-aeneas-verif\x1b[0m \u2502 ';
     }
   } catch (e) {}
   return prefix;

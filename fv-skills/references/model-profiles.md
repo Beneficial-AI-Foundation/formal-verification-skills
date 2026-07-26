@@ -55,13 +55,19 @@ parameter.
 
 ```json
 {
-  "model_profile": "quality",
-  "model_overrides": {}
+  "model_profile": "balanced",
+  "model_overrides": {
+    "fvs-crypto-thinker": "inherit"
+  }
 }
 ```
 
 The config file is optional. If it does not exist, commands default to the `quality`
-profile.
+profile. The shipped template uses `balanced` for routine work but pins
+`fvs-crypto-thinker` to `inherit`: crypto planning, adversarial evaluation, and
+follow-up design must not silently fall to the balanced/budget profile's lower model.
+Both keys are top-level because that is the schema every command's dispatch resolver
+reads.
 
 ### Overriding Specific Agents
 
@@ -131,6 +137,9 @@ Task(
 - **Unknown agent name:** Use `inherit`. New agents default to parent model.
 - **Invalid profile name:** Fall back to `quality` with a warning.
 - **Empty overrides:** Ignored. Equivalent to no overrides.
+- **Shipped crypto-thinker override:** Keep
+  `model_overrides["fvs-crypto-thinker"] = "inherit"` unless the user explicitly
+  chooses a different model. This takes precedence over all three profile rows.
 
 ## crypto-execute Model + Effort Knob
 

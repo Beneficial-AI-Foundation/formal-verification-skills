@@ -57,6 +57,37 @@ silently overwritten.
 
 <process>
 
+## Step 0: Preflight the installed sync metadata
+
+Resolve `_sync-meta.json` from the installed FVS tree before reading config, prompting for clone
+paths, fetching upstream content, or dispatching a worker. The installer rewrites this
+runtime-neutral source path for Claude, Codex, OpenCode, and Gemini:
+
+```bash
+SYNC_META="$HOME/.claude/fv-skills/upstream/aeneas/_sync-meta.json"
+
+if [ ! -s "$SYNC_META" ]; then
+  echo "FVS >> AENEAS SYNC METADATA MISSING"
+  echo "The installed fv-skills/upstream/aeneas/_sync-meta.json mapping is absent."
+  echo "Run /fvs:update, or run: npx fv-skills-baif@latest"
+  echo "Choose your current runtime in the normal installer flow; there is no separate Aeneas option."
+  exit 1
+fi
+
+node -e '
+  const fs = require("fs");
+  const m = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  if (!m.upstream_source || !Array.isArray(m.mapping) || !m.mapping.length ||
+      !m.tactic_renames || typeof m.tactic_renames !== "object") process.exit(2);
+' "$SYNC_META" || {
+  echo "FVS >> Aeneas sync metadata is invalid. Run /fvs:update or npx fv-skills-baif@latest."
+  exit 1
+}
+```
+
+Do not offer or reference an "Aeneas install option": FVS installs the snapshot and mapping as part
+of every normal runtime install. If the preflight fails, STOP before all later steps.
+
 ## Step 1: Read config and resolve subagent model
 
 Read the project config and resolve the model for the `fvs-doc-syncer` dispatch using the
@@ -194,6 +225,8 @@ model-profiles runtime handling).
 
 <success_criteria>
 - [ ] Clone paths resolved via config -> auto-detect -> prompt -> error; no hardcoded absolute path.
+- [ ] Installed `_sync-meta.json` preflight passed; missing/invalid metadata stopped with real
+      update/reinstall instructions (no nonexistent "Aeneas option").
 - [ ] Clone staleness reported gracefully (never a hard failure of mining).
 - [ ] `fvs-doc-syncer` dispatched in BOTH `tactics-lean-syntax` and `extraction-docs` modes.
 - [ ] tactics-lean-syntax: `_sync-meta.json` mapping + tactic-rename machinery, propose-each.
