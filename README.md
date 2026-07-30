@@ -238,6 +238,12 @@ FVS builds on the work of several open-source projects:
 - **[lean-lsp-mcp](https://github.com/oOo0oOo/lean-lsp-mcp)** -- MCP server for Lean
   LSP integration, referenced in proof workflows (MIT).
 
+Individual contributions:
+
+- **[Jin Xing Lim](https://github.com/jinxinglim)** -- proposed gating a crypto formalisation
+  plan on an independent second-runtime adversarial review before execution, and wrote the
+  reviewer prompt that `/fvs:crypto-review` (v2.1.0) is modelled on.
+
 ---
 
 ## License

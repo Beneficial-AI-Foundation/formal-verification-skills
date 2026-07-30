@@ -29,6 +29,9 @@
     "openai"
   ],
   "author": "BAIF",
+  "contributors": [
+    "Jin Xing Lim (https://github.com/jinxinglim)"
+  ],
   "license": "MIT",
   "engines": {
     "node": ">=16.7.0"
