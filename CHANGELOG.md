@@ -4,6 +4,13 @@ All notable changes to FVS (Formal Verification Skills) will be documented in th
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.1.1] - 2026-08-10
+
+### Fixed
+- `/fvs:lean-specify` now generates specification module docstrings in the requested style-guide
+  form: a standalone opener, a lower-case theorem title, a concise description, and a plain quoted
+  Rust source path. This resolves [GitHub issue #42](https://github.com/Beneficial-AI-Foundation/formal-verification-skills/issues/42).
+
 ## [2.1.0] - 2026-07-26
 
 ### Added
