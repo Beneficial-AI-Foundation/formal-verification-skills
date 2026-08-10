@@ -239,3 +239,58 @@ describe('Lean style workflow contracts (#40)', () => {
     assert.equal(config.project.style_guide_path, null);
   });
 });
+
+describe('lean-specify module docstring contract (#42)', () => {
+  const templatePath = path.join(ROOT, 'fv-skills', 'templates', 'spec-file.lean');
+
+  function taggedSection(content, tag) {
+    const match = content.match(new RegExp(`<${tag}>\\n([\\s\\S]*?)\\n</${tag}>`));
+    assert.ok(match, `missing <${tag}> section`);
+    return match[1];
+  }
+
+  function moduleDocstring(content) {
+    const match = content.match(/\/-!\n([\s\S]*?)\n-\//);
+    assert.ok(match, 'missing module docstring');
+    return match[1];
+  }
+
+  function assertStyleGuideModuleDocstring(docstring, title, source) {
+    const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    assert.match(
+      docstring,
+      new RegExp('^# Spec theorem for `' + escapedTitle + '`\\n\\n'),
+    );
+    assert.match(docstring, /^# Spec theorem for [^\n]+\n\n[^\n]+\n\nSource: "[^"\n]+"$/);
+    assert.match(docstring, new RegExp(`Source: "${source}"`));
+  }
+
+  it('keeps template and worked-example module comments in the requested SPQR form', () => {
+    const content = fs.readFileSync(templatePath, 'utf8');
+    const template = taggedSection(content, 'template');
+    const example = taggedSection(content, 'example');
+
+    assertStyleGuideModuleDocstring(
+      moduleDocstring(template),
+      '{RUST_FUNCTION}',
+      '{RUST_CRATE}/src/{RUST_MODULE_PATH}',
+    );
+    assertStyleGuideModuleDocstring(
+      moduleDocstring(example),
+      'FieldElement51::sub',
+      'curve25519-dalek/src/backend/serial/u64/field.rs',
+    );
+  });
+
+  it('loads and inlines the canonical template into the lean-specify executor prompt', () => {
+    const command = fs.readFileSync(
+      path.join(ROOT, 'commands', 'fvs', 'lean-specify.md'),
+      'utf8',
+    );
+    assert.match(
+      command,
+      /SPEC_FILE_TEMPLATE_CONTENT=\$\(cat ~\/\.claude\/fv-skills\/templates\/spec-file\.lean\)/,
+    );
+    assert.match(command, /<spec_template>\n\$SPEC_FILE_TEMPLATE_CONTENT\n<\/spec_template>/);
+  });
+});
