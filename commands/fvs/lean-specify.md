@@ -119,7 +119,7 @@ Read the reference files that MUST be inlined into Task() prompts because @-refe
 ```bash
 AENEAS_PATTERNS=$(cat ~/.claude/fv-skills/references/aeneas-patterns.md)
 SPEC_CONVENTIONS=$(cat ~/.claude/fv-skills/references/lean-spec-conventions.md)
-SPEC_TEMPLATE=$(cat ~/.claude/fv-skills/templates/spec-file.lean)
+SPEC_FILE_TEMPLATE_CONTENT=$(cat ~/.claude/fv-skills/templates/spec-file.lean)
 ```
 
 All three must be captured as content strings for inlining into subagent prompts. The complete

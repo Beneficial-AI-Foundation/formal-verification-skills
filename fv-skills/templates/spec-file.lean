@@ -12,14 +12,12 @@ import {PROJECT}.Funs
 import {PROJECT}.Defs
 {ADDITIONAL_IMPORTS}
 
-/-! # Spec Theorem for `{RUST_TYPE}::{RUST_FUNCTION}`
-
-Specification and proof for `{RUST_TYPE}::{RUST_FUNCTION}`.
+/-!
+# Spec theorem for `{RUST_FUNCTION}`
 
 {DESCRIPTION}
 
-**Source**: {RUST_CRATE}/src/{RUST_MODULE_PATH}:{LINE_RANGE}
-
+Source: "{RUST_CRATE}/src/{RUST_MODULE_PATH}"
 -/
 
 open Aeneas.Std Result
@@ -147,15 +145,12 @@ import Curve25519Dalek.Defs
 import Curve25519Dalek.Specs.Backend.Serial.U64.Field.FieldElement51.Reduce
 import Mathlib.Data.Nat.ModEq
 
-/-! # Spec Theorem for `FieldElement51::sub`
+/-!
+# Spec theorem for `FieldElement51::sub`
 
-Specification and proof for `FieldElement51::sub`.
+Subtracts two field elements with a bias that prevents underflow.
 
-This function performs field element subtraction. To avoid underflow, a multiple
-of p is added.
-
-Source: curve25519-dalek/src/backend/serial/u64/field.rs
-
+Source: "curve25519-dalek/src/backend/serial/u64/field.rs"
 -/
 
 open Aeneas.Std Result
