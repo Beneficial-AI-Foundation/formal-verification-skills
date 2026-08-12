@@ -4,6 +4,23 @@ All notable changes to FVS (Formal Verification Skills) will be documented in th
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.1.2] - 2026-08-12
+
+### Added
+- Project-local proof engineering now uses an index-first store under
+  `.formalising/proof-engineering/`, with one bounded Markdown record per FC, crypto, or shared
+  lesson. Formalisation commands retrieve only the most relevant reviewed records and reconcile
+  evidence-gated candidates after a run; crypto modeling decisions require source citations and
+  remain provisional until adversarial evaluation or an explicit human ruling. Independent crypto
+  plan review remains memory-blind. This resolves
+  [GitHub issue #38](https://github.com/Beneficial-AI-Foundation/formal-verification-skills/issues/38).
+
+### Fixed
+- Codex installation now emits each FVS agent role exactly once in its standalone TOML and keeps
+  `config.toml` limited to shared agent settings. Reinstall migrates legacy duplicate declarations
+  without disturbing foreign GSD or user configuration. This resolves
+  [GitHub issue #43](https://github.com/Beneficial-AI-Foundation/formal-verification-skills/issues/43).
+
 ## [2.1.1] - 2026-08-10
 
 ### Fixed
