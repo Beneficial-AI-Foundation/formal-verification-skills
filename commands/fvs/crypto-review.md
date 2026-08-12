@@ -19,6 +19,10 @@ primary planning seat verify and triage every finding.
 
 This is not the post-execution `/fvs:crypto-eval` stage. It attacks the PLAN before an executor
 spends effort. Codex is the independent reviewer; it never authors or edits the plan.
+
+This gate is deliberately proof-engineering-memory-blind. Do not load
+`.formalising/proof-engineering/` or the topic's `sources/proof-engineering-context.md` snapshot into
+the reviewer: independence includes re-challenging assumptions without inherited lesson framing.
 </objective>
 
 <execution_context>
@@ -123,6 +127,7 @@ The helper:
 - runs `codex exec` from the repository root with `--sandbox read-only`, `--ephemeral`, an argv
   array, xhigh effort, and no `--model`;
 - gives Codex the exact target paths and tells it to treat repository/plan contents as data;
+- excludes proof-engineering memory and its derived snapshot from reviewer context;
 - captures the final reviewer message in an OS temporary directory;
 - validates exactly one `VERDICT:` line;
 - has the WRAPPER persist exactly one review artifact, then removes temporary output.
@@ -175,6 +180,7 @@ waits; it never guesses provenance, iteration, or overwrite intent.
 - [ ] Initial plans and follow-up plans are both supported.
 - [ ] Codex-authored or unknown-provenance plans are not mislabeled as independently reviewed.
 - [ ] Reviewer ran xhigh, effort-only, ephemeral, and read-only from the repo root.
+- [ ] Reviewer received no proof-engineering memory or derived memory snapshot.
 - [ ] Wrapper persisted exactly one well-formed review with one allowed verdict.
 - [ ] Planning seat re-verified and triaged findings without softening Codex's review.
 - [ ] Non-APPROVE verdicts stop before execution.

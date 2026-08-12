@@ -236,11 +236,11 @@ describe('References (fv-skills/references/)', () => {
     'aeneas-patterns.md', 'blocker-catalog.md', 'crypto-plan-review.md',
     'extraction-safety-model.md',
     'lean-refactoring.md', 'lean-spec-conventions.md', 'model-profiles.md',
-    'proof-strategies.md', 'tactic-usage.md', 'ui-brand.md',
+    'proof-engineering-loop.md', 'proof-strategies.md', 'tactic-usage.md', 'ui-brand.md',
   ];
 
-  it('has exactly 10 reference files', () => {
-    assert.equal(files.length, 10, `Expected 10 references, got ${files.length}: ${files.join(', ')}`);
+  it('has exactly 11 reference files', () => {
+    assert.equal(files.length, 11, `Expected 11 references, got ${files.length}: ${files.join(', ')}`);
   });
 
   it('has the expected set of reference files', () => {

@@ -125,6 +125,8 @@ Generate Lean spec skeleton following @[step] theorem pattern.
 - Generates spec with correct imports, namespace, @[step] theorem, sorry
 - Mechanically rejects over-limit lines and ordinary identifiers with 3+ namespace dots
 - Validates spec structure and optional build check
+- Reads `.formalising/proof-engineering/index.md` first, loads at most eight relevant lessons, and
+  reviewably reconciles at most three evidence-backed specification insights as separate files
 
 Usage: `/fvs:lean-specify scalar_mul_inner`
 Result: `Specs/{path}/{FunctionName}.lean` with sorry placeholder
@@ -139,6 +141,8 @@ Attempt proof using domain tactics with interactive feedback.
 - Configurable max attempts (default 10, hard cap 25)
 - Routes on proof status: TACTIC PROPOSED, VERIFIED, STUCK
 - Updates CODEMAP.md verification status on completion
+- Loads a bounded selection from `.formalising/proof-engineering/` before research and reviewably
+  captures only green-build proof patterns or observed-diagnostic lessons for future sessions
 
 Usage: `/fvs:lean-verify Specs/Backend/Field/Sub.lean`
 Usage: `/fvs:lean-verify Specs/Backend/Field/Sub.lean --max-attempts 15`
@@ -190,6 +194,7 @@ Formalise mathematical paper content into Lean 4 specifications (paper track).
 - Creates both definition files and spec files (unlike lean-specify which only creates specs)
 - Two-phase dispatch: researcher extracts math structure, executor writes Lean files
 - Shared with code track: use /fvs:lean-verify for proof attempts
+- Uses the indexed proof-engineering store and records source-backed paper/modeling lessons
 
 Usage: `/fvs:lean-formalise`
 Result: Lean definition and spec files with sorry placeholders
@@ -203,6 +208,13 @@ The crypto formalisation loop
 (plan -> independent review -> execute -> eval -> follow-up -> independent review) is a
 topic-based, multi-iteration alternative to the one-shot `lean-formalise`. Its stages share the
 artifact tree under `fv-plans/<topic>/` and the loop is restartable from those records.
+
+The loop also has a lightweight proof-engineering overlay. Plan, execute, eval, and follow-up read
+the index first, load at most eight relevant `crypto`/`shared` lessons, and reconcile at most three
+evidence-gated candidates as separate files capped at 800 words each. Crypto modeling choices
+require paper or standard
+citations and remain provisional until adversarial acceptance or a human ruling. `crypto-review`
+is deliberately memory-blind, preserving an independent critique.
 
 **Single- vs dual-runtime (`--codex`).** By default the loop is *single-runtime*: the high-effort thinking (planning, adversarial eval, follow-up) is done by the in-runtime `fvs-crypto-thinker`. The three *thinking* stages — `crypto-plan`, `crypto-eval`, `crypto-followup` — also accept `--codex`, which hands that stage's thinking to an independent **Codex CLI** thinker instead. That makes the loop *dual-runtime*: the adversarial planner/evaluator runs on a different engine than the executor, reducing correlated blind spots. `crypto-execute` is the runtime-neutral executor and takes no `--codex`. Pass `--codex` without the Codex CLI installed and the stage stops with an install hint (never a silent fallback) — re-run without it to stay single-runtime.
 
@@ -223,6 +235,7 @@ adversarial review.
   security/data-loss risks, and roadmap coherence
 - Wrapper persists exactly one `PLAN_REVIEW_nN.md` or `FOLLOWUP_REVIEW_nN.md`; the planning seat
   verifies and triages every finding
+- Deliberately excludes canonical and snapshotted proof-engineering memory from reviewer context
 - Only APPROVE proceeds; APPROVE-WITH-EDITS and REJECT stop before execution
 
 Usage: `/fvs:crypto-review "CKA from KEM" n1 --target plan`
@@ -311,7 +324,13 @@ Show this command reference.
 ```
 .formalising/                # FVS state directory (per-project)
 ├── CODEMAP.md               # Function inventory, deps, verification status
-└── fv-plans/                # Per-function planning docs
+├── proof-engineering/       # Indexed proof and modeling memory
+│   ├── index.md             # Links + metadata; always read first
+│   └── lessons/
+│       ├── fc/              # Functional-correctness lessons
+│       ├── crypto/          # Crypto lessons and modeling decisions
+│       └── shared/          # Independently reused across tracks
+└── fv-plans/                # Per-function/topic planning docs
 
 ~/.claude/                   # Installed FVS content (global)
 ├── agents/

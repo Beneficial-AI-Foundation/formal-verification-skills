@@ -133,6 +133,27 @@ Commands are grouped into five bundles. Each bundle has a **router** command tha
 rejects ordinary Lean identifiers with three or more namespace dots, steering generated code
 toward scoped namespaces, `open`, and local names.
 
+`lean-specify`, `lean-verify`, and `lean-formalise` share an indexed proof-engineering store at
+`.formalising/proof-engineering/`. Commands read `index.md` first, load at most eight relevant
+lessons as delimited untrusted reference data, and reconcile at most three evidence-backed
+candidates after the run. Every lesson has its own Markdown file under `fc/`, `crypto/`, or
+`shared/`, capped at 800 words, so the memory stays searchable and reviewable instead of growing
+into one long note.
+Legacy `.formalising/PROOF-NOTES.md` content is retained as migration input. The store never keeps
+secrets, raw transcripts, ephemeral error dumps, unsupported guesses, or inferred preferences.
+
+```text
+.formalising/                # Per-project FVS state
+├── CODEMAP.md               # Function inventory and verification status
+├── proof-engineering/       # Indexed, durable proof/modeling knowledge
+│   ├── index.md             # Read first; links and metadata only
+│   └── lessons/
+│       ├── fc/              # Functional-correctness lessons
+│       ├── crypto/          # Crypto proof and modeling lessons
+│       └── shared/          # Lessons validated across tracks
+└── fv-plans/                # Formalisation plans and reviews
+```
+
 ### Formalise (Paper Track) — `/fvs:formalise`
 
 | Command | Description |
@@ -174,9 +195,15 @@ This track verifies Rust that Aeneas has lowered to Lean 4. Starting from a Rust
 
 `/fvs:lean-specify <function>` — Generate a specification skeleton for the target function. For Lean 4: uses the `@[step] theorem fn_spec` pattern with preconditions from Rust source analysis and postconditions matching function behavior.
 
+The command reads the bounded proof-engineering index and may reviewably add one-file-per-lesson
+functional-correctness insights for later sessions.
+
 ### 4. Verify
 
 `/fvs:lean-verify <function>` — Attempt to prove the specification. For Lean 4: uses domain-specific tactics (`step`, `simp`, `ring`, `field_simp`, `omega`). Reports proof status and remaining goals if incomplete.
+
+The proof loop loads a bounded selection from `.formalising/proof-engineering/` before research and
+can reviewably retain green-build patterns or lessons evidenced by actual Lean diagnostics.
 
 ### 5. Simplify
 
@@ -203,6 +230,12 @@ The paper track formalises papers directly into Lean 4 — no Rust, no Aeneas. T
   and assumptions and ends in exactly one of ACCEPT / FOLLOWUP / HUMAN_RULING / BLOCKED. Follow-up
   turns findings into the next plan (halting for a human modeling ruling) and is reviewed again
   before execution.
+
+  The authoring, execution, eval, and follow-up stages use the lightweight proof-engineering overlay:
+  they load at most eight relevant `crypto`/`shared` lessons and propose at most three reviewed
+  updates. Modeling lessons require paper or standard citations and remain provisional until an
+  accepted adversarial eval or explicit human ruling. The independent `crypto-review` gate is
+  deliberately memory-blind, so inherited lessons cannot frame the second-runtime critique.
 
   **Single- vs dual-runtime (`--codex`).** By default the loop is single-runtime — the thinking stages (`crypto-plan`, `crypto-eval`, `crypto-followup`) run the in-runtime `fvs-crypto-thinker`. Pass `--codex` to hand a stage's thinking to an independent **Codex CLI** thinker instead, so the adversarial planner/evaluator runs on a *different engine* than the executor and blind spots don't correlate. `crypto-execute` is the runtime-neutral executor and takes no `--codex`. Without the Codex CLI installed, a `--codex` stage stops with an install hint rather than silently falling back.
 

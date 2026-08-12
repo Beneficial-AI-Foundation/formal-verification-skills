@@ -10,6 +10,9 @@ requires: [fc-plan, lean-specify, lean-verify, natural-language, lean-refactor, 
 
 Route to the appropriate formal-verification-core skill based on the user's intent.
 
+`lean-specify` and `lean-verify` share the bounded, indexed learning loop under
+`.formalising/proof-engineering/`; it is project memory, not a separate command.
+
 When invoked WITH a request, match it against the table below and invoke the matched skill immediately, forwarding the request. When invoked BARE (no request), print this table as plain text and let the user reply free-form.
 
 | User wants | Invoke |

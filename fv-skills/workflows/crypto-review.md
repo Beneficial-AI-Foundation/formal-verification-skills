@@ -5,6 +5,10 @@ authenticated Codex CLI running as an independent, read-only second runtime.
 The reviewer returns evidence-backed findings and exactly one verdict. The FVS wrapper persists one
 review artifact under `reviews/`; the primary planning seat then verifies and triages the claims.
 This pre-execution review is distinct from the post-execution `crypto-eval` stage.
+
+The gate is deliberately proof-engineering-memory-blind: do not load the canonical store or the
+topic's derived memory snapshot. Independent review must re-challenge assumptions without inherited
+lesson framing.
 </purpose>
 
 <process>
@@ -52,6 +56,8 @@ node ~/.claude/scripts/fvs-codex-think.mjs review \
 The helper loads `fv-skills/references/crypto-plan-review.md`, runs authenticated Codex with an argv
 array, no model override, xhigh effort, `--sandbox read-only`, and `--ephemeral`. Codex returns
 Markdown only; the wrapper validates its single `VERDICT:` and writes exactly one review artifact.
+Do not include `.formalising/proof-engineering/` or
+`sources/proof-engineering-context.md` in the reviewer prompt.
 </step>
 
 <step name="triage">
@@ -75,6 +81,7 @@ fresh independent review.
 - Initial and follow-up plans resolve safely and preserve review history.
 - Self-review and unknown provenance fail closed.
 - Reviewer has read-only repository access and writes no repository file.
+- Reviewer receives no proof-engineering memory or derived memory snapshot.
 - Wrapper writes exactly one review artifact with one allowed verdict.
 - Planning-seat triage is evidence-backed and non-APPROVE verdicts stop execution.
 </success_criteria>

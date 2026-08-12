@@ -27,4 +27,7 @@ plan -> independent review -> execute -> eval -> follow-up -> independent review
 restartable from records under `fv-plans/<topic>/`. `lean-formalise` stays the one-shot paper-track
 command; the loop sits beside it for topic-based, multi-iteration crypto work.
 
+The one-shot and iterative authoring stages share the bounded, indexed learning loop under
+`.formalising/proof-engineering/`. Independent `crypto-review` remains memory-blind.
+
 Invoke the matched skill directly using the Skill tool.
