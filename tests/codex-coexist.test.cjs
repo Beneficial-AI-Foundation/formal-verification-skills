@@ -50,6 +50,18 @@ function readToml(dir) {
   return fs.readFileSync(path.join(dir, 'config.toml'), 'utf8');
 }
 
+function fvsRoleNames(dir, configContent = readToml(dir)) {
+  const standalone = fs.readdirSync(path.join(dir, 'agents'))
+    .filter((file) => /^fvs-.*\.toml$/.test(file))
+    .map((file) => {
+      const body = fs.readFileSync(path.join(dir, 'agents', file), 'utf8');
+      return body.match(/^name = "([^"]+)"$/m)?.[1];
+    })
+    .filter(Boolean);
+  const declared = [...configContent.matchAll(/^\[agents\.(fvs-[^\]]+)\]$/gm)].map((match) => match[1]);
+  return [...standalone, ...declared];
+}
+
 // Collect every SessionStart hook command string from hooks.json, tolerating
 // both the nested { hooks: { SessionStart: [...] } } and flat { SessionStart }
 // shapes.
@@ -92,11 +104,16 @@ describe('Codex config.toml coexistence (GSD + FVS + user tables)', () => {
     installCodex(tmpDir);
   });
 
-  it('keeps all three of [agents.gsd-, [agents.fvs-, and [model] after install', () => {
+  it('keeps foreign tables while FVS roles occur exactly once in standalone TOMLs', () => {
     const content = readToml(tmpDir);
     assert.ok(content.includes('[agents.gsd-'), 'GSD agent table clobbered');
-    assert.ok(content.includes('[agents.fvs-'), 'FVS agent table missing');
     assert.ok(content.includes('[model]'), 'user [model] table clobbered');
+    assert.match(content, /^\[agents\]$/m, 'canonical global agents table present');
+    assert.match(content, /^max_concurrent_threads_per_session = 4$/m, 'FVS default is reconciled');
+    assert.ok(!content.includes('[agents.fvs-'), 'FVS role declarations belong only in agents/*.toml');
+    const names = fvsRoleNames(tmpDir, content);
+    assert.ok(names.length > 0, 'standalone FVS agent TOMLs installed');
+    assert.equal(new Set(names).size, names.length, 'every FVS role identity occurs exactly once');
   });
 
   it('does not duplicate the FVS block on reinstall', () => {
@@ -111,7 +128,7 @@ describe('Codex config.toml coexistence (GSD + FVS + user tables)', () => {
     assert.ok(content.indexOf('[features]') < content.indexOf('hooks = true'), 'hooks flag is inside [features]');
   });
 
-  it('removes only the FVS tables on uninstall; GSD and user tables survive', () => {
+  it('removes only FVS settings on uninstall; GSD and user tables survive', () => {
     uninstallCodex(tmpDir);
     const content = readToml(tmpDir);
     assert.ok(content.includes('[agents.gsd-'), 'GSD agent table removed by FVS uninstall');

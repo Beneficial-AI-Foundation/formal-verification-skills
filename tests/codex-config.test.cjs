@@ -2,9 +2,9 @@
 
 // Emit-shape regression gate for the Codex converter.
 //
-// Asserts the two emit functions produce TOML that current Codex CLI (>=0.124)
-// accepts: struct-form [agents.<name>] tables with absolute config_file paths,
-// no deprecated [features]/multi_agent/[agents] globals, per-agent sandbox
+// Asserts the two emit functions produce TOML that current Codex CLI (>=0.147)
+// accepts: standalone agent files are the only role declarations and config.toml
+// carries only global agent settings, per-agent sandbox
 // settings, and an effort-only model policy (model_reasoning_effort present,
 // model absent — Codex owns the model, FVS owns the thinking budget).
 
@@ -48,31 +48,23 @@ describe('Codex config block (generateCodexConfigBlock)', () => {
     assert.ok(result.startsWith(FVS_CODEX_MARKER), 'block must open with FVS_CODEX_MARKER');
   });
 
-  it('emits no deprecated [features]/multi_agent/global [agents] keys', () => {
+  it('emits one canonical [agents] global-settings section', () => {
     const result = generateCodexConfigBlock(blockAgents, '/home/user/.codex');
-    assert.ok(!result.includes('[features]'), 'no [features] block');
-    assert.ok(!result.includes('multi_agent'), 'no multi_agent key');
-    assert.ok(!result.includes('default_mode_request_user_input'), 'no default_mode_request_user_input key');
-    assert.ok(!result.includes('max_threads'), 'no max_threads key');
-    assert.ok(!result.includes('max_depth'), 'no max_depth key');
-    assert.ok(!/^\[agents\]\s*$/m.test(result), 'no bare [agents] line');
-    assert.ok(!result.includes('[[agents]]'), 'no [[agents]] array-of-tables');
+    assert.equal((result.match(/^\[agents\]\s*$/gm) || []).length, 1, 'one bare [agents] table');
+    assert.match(result, /^max_concurrent_threads_per_session = 4$/m, 'canonical concurrency default');
+    assert.ok(!result.includes('[features]'), 'hooks are reconciled independently');
+    assert.ok(!result.includes('multi_agent'), 'no deprecated multi_agent key');
+    assert.ok(!result.includes('[[agents]]'), 'no legacy array-of-tables');
   });
 
-  it('emits a struct-form [agents.<name>] header per agent', () => {
+  it('does not repeat standalone FVS roles in config.toml', () => {
     const result = generateCodexConfigBlock(blockAgents, '/home/user/.codex');
     for (const { name } of blockAgents) {
-      assert.ok(result.includes(`[agents.${name}]`), `missing [agents.${name}] table`);
+      assert.ok(!result.includes(`[agents.${name}]`), `no duplicate [agents.${name}] table`);
+      assert.ok(!result.includes(name), `no standalone role identity in config.toml: ${name}`);
     }
-  });
-
-  it('emits absolute forward-slash config_file paths under targetDir', () => {
-    const result = generateCodexConfigBlock(blockAgents, '/home/user/.codex');
-    assert.ok(
-      result.includes('config_file = "/home/user/.codex/agents/fvs-executor.toml"'),
-      'config_file must be an absolute path under targetDir',
-    );
-    assert.ok(!result.includes('config_file = "agents/'), 'config_file must never be relative');
+    assert.ok(!result.includes('config_file'), 'standalone discovery must not need config_file paths');
+    assert.ok(!result.includes('/home/user/.codex'), 'config is portable after relocation');
   });
 });
 
@@ -334,12 +326,10 @@ describe('Codex per-agent .toml triple-quote safety (generateCodexAgentToml)', (
     );
   });
 
-  it('builds config_file via JSON.stringify so paths are always quoted', () => {
+  it('does not emit clone-specific config_file paths', () => {
     const block = generateCodexConfigBlock([{ name: 'fvs-executor', description: 'x' }], '/home/user/.codex');
-    assert.ok(
-      block.includes('config_file = "/home/user/.codex/agents/fvs-executor.toml"'),
-      'config_file is a JSON-quoted absolute path',
-    );
+    assert.ok(!block.includes('config_file'), 'standalone agent TOML owns discovery');
+    assert.ok(!block.includes('/home/user/.codex'), 'config block is location-independent');
   });
 });
 

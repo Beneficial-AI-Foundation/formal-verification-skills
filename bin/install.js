@@ -15,6 +15,9 @@ const reset = '\x1b[0m';
 
 // Codex config.toml constants
 const FVS_CODEX_MARKER = '# FVS Agent Configuration \u2014 managed by fv-skills-baif installer';
+const FVS_CODEX_CONCURRENCY_COMMENT = '# FVS-owned Codex concurrency default';
+const CODEX_AGENT_CONCURRENCY_KEY = 'max_concurrent_threads_per_session';
+const CODEX_AGENT_CONCURRENCY_DEFAULT = 4;
 
 // Codex hooks feature flag. Current Codex CLI reads feature flags under the
 // `[features]` table; a root-level `hooks = true` is parsed as the hooks config
@@ -907,39 +910,28 @@ function generateCodexAgentToml(agentName, agentContent) {
 /**
  * Generate the FVS config block for Codex config.toml.
  *
- * Emits a struct-form [agents.<name>] table per agent. Current Codex CLI
- * (>=0.116) requires an absolute config_file path and rejects the relative
- * "agents/<name>.toml" form, so the path is resolved under targetDir when one
- * is supplied. No [features]/multi_agent/[agents] globals are emitted — those
- * keys are rejected by current Codex.
+ * Emits only FVS-owned global agent settings. Codex auto-discovers standalone
+ * `agents/fvs-*.toml` files, so config.toml must never repeat role declarations
+ * or include clone-specific config_file paths.
  *
  * @param {Array<{name: string, description: string}>} agents
  * @param {string} [targetDir] absolute Codex config directory (e.g. ~/.codex)
  */
 function generateCodexConfigBlock(agents, targetDir) {
-  const agentsPrefix = targetDir
-    ? path.join(targetDir, 'agents').replace(/\\/g, '/')
-    : 'agents';
-  const lines = [
-    FVS_CODEX_MARKER,
-    '',
-  ];
-
-  for (const { name, description } of agents) {
+  for (const { name } of agents) {
     // A bare TOML key only accepts [A-Za-z0-9_-]; a name carrying ']', '"',
     // '.', or whitespace would corrupt the table header or the quoted path.
     // Fail closed rather than emit a config Codex will reject.
     if (!/^[A-Za-z0-9_-]+$/.test(name)) {
-      throw new Error(`Refusing to emit Codex agent table for unsafe name: ${JSON.stringify(name)}`);
+      throw new Error(`Refusing to emit Codex agent config for unsafe name: ${JSON.stringify(name)}`);
     }
-    const configFilePath = `${agentsPrefix}/${name}.toml`;
-    lines.push(`[agents.${name}]`);
-    lines.push(`description = ${JSON.stringify(description)}`);
-    lines.push(`config_file = ${JSON.stringify(configFilePath)}`);
-    lines.push('');
   }
-
-  return lines.join('\n');
+  return [
+    FVS_CODEX_MARKER,
+    '[agents]',
+    FVS_CODEX_CONCURRENCY_COMMENT,
+    `${CODEX_AGENT_CONCURRENCY_KEY} = ${CODEX_AGENT_CONCURRENCY_DEFAULT}`,
+  ].join('\n');
 }
 
 // ── TOML section parsing ─────────────────────────────────────────────────────
@@ -1097,6 +1089,63 @@ function removeContentRanges(content, ranges) {
   return cleaned;
 }
 
+function isCodexAgentConcurrencyAssignment(lineText) {
+  return new RegExp(`^\\s*${CODEX_AGENT_CONCURRENCY_KEY}\\s*=\\s*\\d+\\s*(?:#.*)?$`).test(lineText);
+}
+
+function stripFvsManagedCodexAgentSettings(content) {
+  const agentsSection = getTomlTableSections(content)
+    .find((section) => !section.array && section.path === 'agents');
+  if (!agentsSection) return content;
+
+  const lines = splitTomlLines(content.slice(agentsSection.headerEnd, agentsSection.end));
+  const kept = [];
+  let removed = false;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lines[i].text.trim() === FVS_CODEX_CONCURRENCY_COMMENT) {
+      const next = lines[i + 1];
+      if (next && isCodexAgentConcurrencyAssignment(next.text)) {
+        removed = true;
+        i += 1;
+        continue;
+      }
+    }
+    kept.push(lines[i]);
+  }
+  if (!removed) return content;
+
+  const remaining = joinTomlLines(kept);
+  if (!remaining.split(/\r?\n/).some((line) => line.trim() !== '')) {
+    return content.slice(0, agentsSection.start) + content.slice(agentsSection.end);
+  }
+  return content.slice(0, agentsSection.headerEnd) + remaining + content.slice(agentsSection.end);
+}
+
+function reconcileFvsCodexAgentSettings(content) {
+  const eol = detectLineEnding(content);
+  const agentsSection = getTomlTableSections(content)
+    .find((section) => !section.array && section.path === 'agents');
+  const marker = `${FVS_CODEX_MARKER}${eol}`;
+
+  if (!agentsSection) {
+    const base = content.trimEnd();
+    const gap = base ? eol + eol : '';
+    return `${base}${gap}${marker}[agents]${eol}${FVS_CODEX_CONCURRENCY_COMMENT}${eol}${CODEX_AGENT_CONCURRENCY_KEY} = ${CODEX_AGENT_CONCURRENCY_DEFAULT}${eol}`;
+  }
+
+  const body = content.slice(agentsSection.headerEnd, agentsSection.end);
+  const hasConcurrency = splitTomlLines(body)
+    .some((line) => isCodexAgentConcurrencyAssignment(line.text));
+  const before = content.slice(0, agentsSection.start);
+  const markerGap = before && !before.endsWith(eol + eol) ? eol : '';
+  const withMarker = before + markerGap + marker + content.slice(agentsSection.start);
+  if (hasConcurrency) return withMarker;
+
+  const shiftedHeaderEnd = agentsSection.headerEnd + markerGap.length + marker.length;
+  const ownedSetting = `${FVS_CODEX_CONCURRENCY_COMMENT}${eol}${CODEX_AGENT_CONCURRENCY_KEY} = ${CODEX_AGENT_CONCURRENCY_DEFAULT}${eol}`;
+  return withMarker.slice(0, shiftedHeaderEnd) + ownedSetting + withMarker.slice(shiftedHeaderEnd);
+}
+
 function joinTomlLines(lines) {
   return lines.map((line) => line.text + line.eol).join('');
 }
@@ -1218,14 +1267,15 @@ function stripFvsManagedCodexHooksFeature(content) {
  * Strip FVS sections from Codex config.toml content.
  *
  * Removes only what FVS owns so a reinstall/uninstall returns the file to its
- * pre-FVS shape: the FVS marker block, current `[agents.fvs-*]` struct tables,
- * and legacy `[[agents]]` array entries whose `name = "fvs-*"`. User-authored
- * tables and GSD-authored `[agents.gsd-*]` tables are preserved verbatim via a
- * TOML-section parse rather than a regex that could absorb adjacent tables.
+ * pre-FVS shape: the FVS marker block, FVS-owned global concurrency default,
+ * current `[agents.fvs-*]` struct tables, and legacy `[[agents]]` array entries
+ * whose `name = "fvs-*"`. User-authored tables and GSD-authored
+ * `[agents.gsd-*]` tables are preserved verbatim via a TOML-section parse rather
+ * than a regex that could absorb adjacent tables.
  *
  * Returns cleaned content, or null if the file would be empty.
  */
-function stripFvsFromCodexConfig(content) {
+function stripFvsFromCodexConfig(content, { preserveHooksFeature = false } = {}) {
   const eol = detectLineEnding(content);
   const sections = getTomlTableSections(content);
 
@@ -1250,9 +1300,10 @@ function stripFvsFromCodexConfig(content) {
 
   // Remove the FVS marker line itself plus the blank line that followed it in
   // the FVS-emitted block.
-  const markerIndex = cleaned.indexOf(FVS_CODEX_MARKER);
-  const hadFvsMarker = markerIndex !== -1;
+  const hadFvsMarker = cleaned.includes(FVS_CODEX_MARKER);
   if (hadFvsMarker) {
+    cleaned = stripFvsManagedCodexAgentSettings(cleaned);
+    const markerIndex = cleaned.indexOf(FVS_CODEX_MARKER);
     const before = cleaned.slice(0, markerIndex);
     const after = cleaned
       .slice(markerIndex + FVS_CODEX_MARKER.length)
@@ -1263,7 +1314,7 @@ function stripFvsFromCodexConfig(content) {
   // Remove the FVS-owned hooks feature gate. v2.0.1 emitted an invalid root
   // `hooks = true`; current installs mark their `[features].hooks` insertion so
   // uninstall can remove only the FVS-owned line and preserve user/GSD flags.
-  if (hadFvsMarker) {
+  if (hadFvsMarker && !preserveHooksFeature) {
     cleaned = stripFvsManagedCodexHooksFeature(cleaned);
   }
 
@@ -1284,11 +1335,11 @@ function stripFvsFromCodexConfig(content) {
 /**
  * Merge FVS config block into an existing or new config.toml.
  *
- * On reinstall this first strips any previously-emitted FVS tables via the
- * TOML-aware strip (so foreign user/GSD tables survive verbatim and stale FVS
- * tables are removed), then appends the freshly-generated FVS agent block. The
- * hook feature gate is handled separately by ensureCodexHooksFeature so it can
- * coexist with user/GSD `[features]` settings.
+ * On reinstall this first strips any previously-emitted FVS role declarations
+ * and owned defaults via the TOML-aware strip, then reconciles the global
+ * `[agents]` setting without overwriting a user-supplied value. The hook feature
+ * gate is handled separately by ensureCodexHooksFeature so it can coexist with
+ * user/GSD `[features]` settings.
  */
 function mergeCodexConfig(configPath, fvsBlock) {
   // Case 1: No config.toml -- create fresh.
@@ -1301,14 +1352,16 @@ function mergeCodexConfig(configPath, fvsBlock) {
 
   // Strip any prior FVS-owned tables (struct + legacy array) and marker, leaving
   // foreign tables untouched. A null result means the file was FVS-only.
-  const stripped = stripFvsFromCodexConfig(existing);
+  // Keep the separately-managed hooks feature in place during a reinstall so
+  // repeated runs do not churn a user/GSD config's table ordering. Uninstall
+  // uses the default stripping mode and removes it when FVS owns the flag.
+  const stripped = stripFvsFromCodexConfig(existing, { preserveHooksFeature: true });
   const preserved = stripped === null ? '' : stripped.trimEnd();
 
-  const merged = preserved
-    ? preserved + '\n\n' + fvsBlock + '\n'
-    : fvsBlock + '\n';
+  const merged = reconcileFvsCodexAgentSettings(preserved) || fvsBlock + '\n';
+  const eol = detectLineEnding(existing);
 
-  fs.writeFileSync(configPath, merged);
+  fs.writeFileSync(configPath, merged.endsWith(eol) ? merged : merged + eol);
 }
 
 // ── Codex hooks subsystem ────────────────────────────────────────────────────

@@ -237,6 +237,7 @@ describe('Update over existing old-shape install', () => {
 
 describe('Codex reinstall round-trip (TOML-aware strip + orphan prune)', () => {
   let tmpDir;
+  let reconciledConfig;
 
   function installCodex(dir) {
     execFileSync(process.execPath, [
@@ -246,6 +247,16 @@ describe('Codex reinstall round-trip (TOML-aware strip + orphan prune)', () => {
       env: { ...process.env, HOME: dir, CODEX_HOME: dir },
       stdio: 'pipe',
     });
+  }
+
+  function installedRoleNames(dir, configContent) {
+    const agentsDir = path.join(dir, 'agents');
+    const standalone = fs.readdirSync(agentsDir)
+      .filter((file) => /^fvs-.*\.toml$/.test(file))
+      .map((file) => fs.readFileSync(path.join(agentsDir, file), 'utf8').match(/^name = "([^"]+)"$/m)?.[1])
+      .filter(Boolean);
+    const declared = [...configContent.matchAll(/^\[agents\.(fvs-[^\]]+)\]$/gm)].map((match) => match[1]);
+    return [...standalone, ...declared];
   }
 
   it('installs --codex once, then seeds foreign config and a stale orphan .toml', () => {
@@ -268,7 +279,17 @@ describe('Codex reinstall round-trip (TOML-aware strip + orphan prune)', () => {
       'config_file = "' + tmpDir.replace(/\\/g, '/') + '/agents/gsd-foo.toml"',
       '',
     ].join('\n');
-    fs.writeFileSync(configPath, foreign + '\n' + existing);
+    const legacy = [
+      '[agents.fvs-legacy]',
+      'description = "legacy FVS role"',
+      'config_file = "' + tmpDir.replace(/\\/g, '/') + '/agents/fvs-legacy.toml"',
+      '',
+      '[[agents]]',
+      'name = "fvs-array-legacy"',
+      'config_file = "' + tmpDir.replace(/\\/g, '/') + '/agents/fvs-array-legacy.toml"',
+      '',
+    ].join('\n');
+    fs.writeFileSync(configPath, foreign + '\n' + legacy + existing);
 
     // Plant a stale per-agent .toml for an agent FVS no longer ships.
     const agentsDir = path.join(tmpDir, 'agents');
@@ -278,6 +299,16 @@ describe('Codex reinstall round-trip (TOML-aware strip + orphan prune)', () => {
 
   it('reinstalls --codex over the seeded config without error', () => {
     installCodex(tmpDir);
+    reconciledConfig = fs.readFileSync(path.join(tmpDir, 'config.toml'), 'utf8');
+  });
+
+  it('is byte-stable on a second reinstall', () => {
+    installCodex(tmpDir);
+    assert.equal(
+      fs.readFileSync(path.join(tmpDir, 'config.toml'), 'utf8'),
+      reconciledConfig,
+      'reinstall should converge to one stable config shape',
+    );
   });
 
   it('preserves the foreign [model] and [agents.gsd-foo] tables', () => {
@@ -287,11 +318,18 @@ describe('Codex reinstall round-trip (TOML-aware strip + orphan prune)', () => {
     assert.ok(content.includes('[agents.gsd-foo]'), 'GSD [agents.gsd-foo] table survives reinstall');
   });
 
-  it('re-emits exactly one FVS marker and the current FVS agent tables', () => {
+  it('re-emits one marker, migrates legacy roles, and keeps role identities unique', () => {
     const content = fs.readFileSync(path.join(tmpDir, 'config.toml'), 'utf8');
     const markerCount = content.split('managed by fv-skills-baif installer').length - 1;
     assert.equal(markerCount, 1, 'exactly one FVS marker after reinstall (no duplication)');
-    assert.ok(content.includes('[agents.fvs-executor]'), 'current FVS agent table present');
+    assert.match(content, /^\[agents\]$/m, 'global [agents] settings table present');
+    assert.match(content, /^max_concurrent_threads_per_session = 4$/m, 'canonical concurrency default present');
+    assert.ok(!content.includes('[agents.fvs-'), 'current FVS roles are not repeated in config.toml');
+    assert.ok(!content.includes('fvs-legacy'), 'legacy struct role removed');
+    assert.ok(!content.includes('fvs-array-legacy'), 'legacy array role removed');
+    const names = installedRoleNames(tmpDir, content);
+    assert.ok(names.length > 0, 'current standalone FVS TOMLs present');
+    assert.equal(new Set(names).size, names.length, 'every installed FVS role occurs once');
   });
 
   it('prunes the stale orphan .toml while keeping the 4 current FVS agent configs', () => {
@@ -303,6 +341,50 @@ describe('Codex reinstall round-trip (TOML-aware strip + orphan prune)', () => {
     const current = fs.readdirSync(agentsDir).filter(f => f.startsWith('fvs-') && f.endsWith('.toml'));
     assert.ok(current.length >= 4, `expected the current FVS agent .toml set, got ${current.join(', ')}`);
     assert.ok(current.includes('fvs-executor.toml'), 'fvs-executor.toml present');
+  });
+
+  it('uninstalls FVS settings without deleting foreign model, GSD, or user agent settings', () => {
+    const configPath = path.join(tmpDir, 'config.toml');
+    const content = fs.readFileSync(configPath, 'utf8');
+    fs.writeFileSync(configPath, content.replace(
+      '[agents]',
+      '[agents]\ncustom_user_agent_setting = true',
+    ));
+    execFileSync(process.execPath, [INSTALLER, '--codex', '--global', '--config-dir', tmpDir, '--uninstall'], {
+      cwd: ROOT,
+      env: { ...process.env, HOME: tmpDir, CODEX_HOME: tmpDir },
+      stdio: 'pipe',
+    });
+    const cleaned = fs.readFileSync(configPath, 'utf8');
+    assert.ok(cleaned.includes('[model]'), 'foreign model table preserved on uninstall');
+    assert.ok(cleaned.includes('[agents.gsd-foo]'), 'foreign GSD agent table preserved on uninstall');
+    assert.ok(cleaned.includes('custom_user_agent_setting = true'), 'user [agents] setting preserved');
+    assert.ok(!cleaned.includes('max_concurrent_threads_per_session = 4'), 'only FVS-owned default removed');
+    assert.ok(!cleaned.includes('managed by fv-skills-baif installer'), 'FVS marker removed');
+  });
+});
+
+describe('Codex portable standalone discovery', () => {
+  let originalDir;
+  let relocatedDir;
+
+  it('installs once, relocates the config directory, and leaves no original path in config.toml', () => {
+    originalDir = makeTmpDir('fvs-codex-original-');
+    relocatedDir = makeTmpDir('fvs-codex-relocated-');
+    execFileSync(process.execPath, [INSTALLER, '--codex', '--global', '--config-dir', originalDir], {
+      cwd: ROOT,
+      env: { ...process.env, HOME: originalDir, CODEX_HOME: originalDir },
+      stdio: 'pipe',
+    });
+    fs.cpSync(originalDir, relocatedDir, { recursive: true });
+    const config = fs.readFileSync(path.join(relocatedDir, 'config.toml'), 'utf8');
+    assert.ok(!config.includes(originalDir.replace(/\\/g, '/')), 'config.toml contains no original absolute path');
+    assert.ok(!config.includes('config_file'), 'standalone discovery needs no config_file reference');
+    const names = fs.readdirSync(path.join(relocatedDir, 'agents'))
+      .filter((file) => /^fvs-.*\.toml$/.test(file))
+      .map((file) => fs.readFileSync(path.join(relocatedDir, 'agents', file), 'utf8').match(/^name = "([^"]+)"$/m)?.[1]);
+    assert.ok(names.every(Boolean), 'every installed standalone TOML declares its name');
+    assert.equal(new Set(names).size, names.length, 'relocated roles remain unique');
   });
 });
 
