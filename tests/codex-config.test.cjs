@@ -146,6 +146,14 @@ describe('Codex skill adapter header (getCodexSkillAdapterHeader)', () => {
     assert.ok(header.includes('spawn_agent'), 'maps Task() to spawn_agent');
     assert.ok(header.includes('agent_type'), 'maps subagent_type to agent_type');
   });
+
+  it('adapts shared marketplace skills without assuming plugin agents are typed', () => {
+    const header = getCodexSkillAdapterHeader('lean-verify', { pluginName: 'fvs' });
+    assert.ok(header.includes('`$fvs:lean-verify`'), 'uses the namespaced plugin invocation');
+    assert.ok(header.includes('exact requested FVS type'), 'qualifies typed agent dispatch');
+    assert.ok(header.includes('${CLAUDE_PLUGIN_ROOT}/agents/<agent-name>.md'), 'uses bundled agent fallback');
+    assert.ok(header.includes('wait_agent(timeout_ms=...)'), 'uses the current collaboration wait contract');
+  });
 });
 
 describe('Codex markdown conversion (convertClaudeToCodexMarkdown)', () => {

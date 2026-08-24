@@ -751,9 +751,25 @@ function convertClaudeToCodexMarkdown(content) {
  * questions and waits rather than silently picking a default and writing
  * artifacts.
  */
-function getCodexSkillAdapterHeader(skillName) {
-  const invocation = `$${skillName}`;
+function getCodexSkillAdapterHeader(skillName, options = {}) {
+  const pluginName = options.pluginName || null;
+  const invocation = pluginName ? `$${pluginName}:${skillName}` : `$${skillName}`;
+  const pluginCompatibility = pluginName
+    ? `\n## D. Shared Plugin Syntax\n- This file is shared with Claude Code. On Codex, interpret \`/${pluginName}:<name>\` references as \`$${pluginName}:<name>\`.\n- Treat \`$ARGUMENTS\` in the shared body as \`{{FVS_ARGS}}\`.\n- \`\${CLAUDE_PLUGIN_ROOT}\` is the installed plugin root. If a host leaves that token unexpanded, resolve the plugin root as two directories above this SKILL.md.\n`
+    : '';
+  const typedDispatchQualification = pluginName
+    ? `\nEven when \`agent_type\` is present, typed dispatch is available only if the exact requested FVS type is advertised by the tool schema or a confirmed runtime registry. Codex marketplace plugins do not register the bundled Claude agent Markdown as typed Codex agents, so otherwise use the bundled-agent workaround below.\n`
+    : '';
+  const typedModelNote = pluginName
+    ? 'The marketplace plugin does not install Codex agent TOML. Use this mapping only when the exact FVS agent type is registered independently; otherwise use the bundled-agent workaround.'
+    : 'FVS bakes each agent\'s reasoning effort into its `.toml` at install time and the model is inherited from the user\'s Codex configuration.';
+  const fallbackSteps = pluginName
+    ? `1. Read \`\${CLAUDE_PLUGIN_ROOT}/agents/<agent-name>.md\` and extract its instructions. If the token is still literal, resolve the path from this SKILL.md as described above.\n2. Spawn a generic/default agent and inject those instructions as a role preamble before the task prompt.\n3. Label results clearly as \"generic-agent workaround\" so the user knows typed guarantees are not in effect.\n4. Where typed dispatch is mandatory for correctness, fail closed and report the schema limitation rather than silently degrading.`
+    : `1. Resolve your active Codex config root (the directory containing your \`config.toml\`), then read \`agents/<agent-name>.toml\` relative to that root to extract the agent's instructions.\n2. Inject those instructions as a role-preamble into a generic \`spawn_agent(message=...)\` call.\n3. Label results clearly as \"generic-agent workaround\" so the user knows typed guarantees are not in effect.\n4. Where typed dispatch is mandatory for correctness, fail closed and report the schema limitation rather than silently degrading.`;
   return `<codex_skill_adapter>
+This block applies only when this shared skill runs in Codex. Claude Code must ignore it and use the
+shared workflow body with its native slash-command, question, and subagent semantics.
+
 ## A. Skill Invocation
 - This skill is invoked by mentioning \`${invocation}\`.
 - Treat all user text after \`${invocation}\` as \`{{FVS_ARGS}}\`.
@@ -789,26 +805,24 @@ FVS workflows use \`Task(...)\` (Claude Code syntax). Translate to Codex collabo
 - **agent_type-capable schema:** \`spawn_agent\` accepts \`agent_type\`, \`message\`, \`reasoning_effort\`, \`fork_context\`, etc. — typed FVS agent dispatch is available.
 - **Generic schema:** \`spawn_agent\` accepts only \`message\`, \`items\`, \`fork_context\` — there is **no \`agent_type\` field**. Typed FVS agent dispatch is unavailable in this session.
 
-Before spawning, inspect the \`spawn_agent\` tool's visible parameter schema to determine which form is active.
+Before spawning, inspect the \`spawn_agent\` tool's visible parameter schema to determine which form is active.${typedDispatchQualification}
 
 Typed mapping (agent_type-capable schema only):
 - \`Task(subagent_type="X", prompt="Y")\` -> \`spawn_agent(agent_type="X", message="Y")\`
-- \`Task(model="...")\` -> omit. \`spawn_agent\` has no inline \`model\` parameter; FVS bakes each agent's reasoning effort into its \`.toml\` at install time and the model is inherited from the user's Codex configuration.
+- \`Task(model="...")\` -> omit. \`spawn_agent\` has no inline \`model\` parameter. ${typedModelNote}
 - \`fork_context: false\` by default -- FVS agents load their own context via \`<files_to_read>\` blocks.
 
 Generic-agent workaround (schema with NO agent_type field):
 When only the generic schema is available, typed FVS agent dispatch (\`fvs-researcher\`, \`fvs-executor\`, etc.) is NOT possible. This workaround is NOT equivalent to typed execution — FVS agents carry verification-aware prompts and sandbox settings a generic subagent lacks. Fallback:
-1. Resolve your active Codex config root (the directory containing your \`config.toml\`), then read \`agents/<agent-name>.toml\` relative to that root to extract the agent's instructions.
-2. Inject those instructions as a role-preamble into a generic \`spawn_agent(message=...)\` call.
-3. Label results clearly as "generic-agent workaround" so the user knows typed guarantees are not in effect.
-4. Where typed dispatch is mandatory for correctness, fail closed and report the schema limitation rather than silently degrading.
+${fallbackSteps}
 
 Parallel fan-out:
-- Spawn multiple agents -> collect agent IDs -> \`wait(ids)\` for all to complete
+- Spawn multiple agents -> collect agent IDs -> call \`wait_agent(timeout_ms=...)\` (or the runtime's visible wait equivalent) until each completes
 
 Result parsing:
 - Look for structured markers in agent output: \`CHECKPOINT\`, \`PLAN COMPLETE\`, \`SUMMARY\`, etc.
-- \`close_agent(id)\` after collecting results from each agent
+- If the runtime exposes an agent cleanup or close tool, use it after collecting each result
+${pluginCompatibility}
 </codex_skill_adapter>`;
 }
 

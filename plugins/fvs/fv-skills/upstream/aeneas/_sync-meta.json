@@ -1,0 +1,102 @@
+{
+  "upstream_source": "AeneasVerif/aeneas",
+  "upstream_paths": ["documentation/", "documentation/skills/"],
+  "snapshot_date": "2026-04-03T00:00:00Z",
+  "snapshot_commit": "90d65254411d4f607cdf96aecace8c9e355c2b85",
+  "mapping": [
+    {
+      "upstream": "aeneas-lean-core.instructions.md",
+      "upstream_sections": ["Reading Aeneas-Generated Code", "Writing models of Rust code", "Recursive loop proofs", "The specification pattern", "Postcondition quality", "Axiom organization", "Key Patterns"],
+      "fvs_target": "fv-skills/references/aeneas-patterns.md",
+      "fvs_sections": ["<patterns>", "<quick_reference>"],
+      "merge_strategy": "enrich"
+    },
+    {
+      "upstream": "aeneas-lean-core.instructions.md",
+      "upstream_sections": ["Key Patterns", "Splitting Large Functions"],
+      "fvs_target": "fv-skills/references/proof-strategies.md",
+      "fvs_sections": ["<patterns>"],
+      "merge_strategy": "enrich"
+    },
+    {
+      "upstream": "aeneas-tactics-quickref.instructions.md",
+      "upstream_sections": ["Decision Tree", "Tactic Reference Table", "BANNED TACTICS", "Scaffolding workflow", "Inaccessible hypotheses"],
+      "fvs_target": "fv-skills/references/tactic-usage.md",
+      "fvs_sections": ["<quick_reference>", "<patterns>"],
+      "merge_strategy": "replace_section"
+    },
+    {
+      "upstream": "tactics-reference.md",
+      "upstream_sections": ["step", "scalar_tac", "simp_scalar", "simp_lists", "bvify", "bv_tac", "natify", "zmodify", "simp_bool_prop", "simp_ifs", "fcongr", "split_conjs"],
+      "fvs_target": "fv-skills/references/tactic-usage.md",
+      "fvs_sections": ["<patterns>"],
+      "merge_strategy": "enrich"
+    },
+    {
+      "upstream": "proof-patterns.instructions.md",
+      "upstream_sections": ["Loop -- Canonical Template", "Common Sub-Patterns"],
+      "fvs_target": "fv-skills/references/proof-strategies.md",
+      "fvs_sections": ["<patterns>"],
+      "merge_strategy": "enrich"
+    },
+    {
+      "upstream": "proof-strategies.md",
+      "upstream_sections": ["The step*? Workflow", "Recursive Functions and the Termination Pitfall", "Loop Reasoning", "Splitting Large Functions"],
+      "fvs_target": "fv-skills/references/proof-strategies.md",
+      "fvs_sections": ["<patterns>", "<quick_reference>"],
+      "merge_strategy": "enrich"
+    },
+    {
+      "upstream": "tips-and-tricks.md",
+      "upstream_sections": ["Loop Translation: Prefer -loops-to-rec", "Standard Library: Don't Unfold, Find Lemmas"],
+      "fvs_target": "fv-skills/references/aeneas-patterns.md",
+      "fvs_sections": ["<patterns>", "<anti_patterns>"],
+      "merge_strategy": "enrich"
+    },
+    {
+      "upstream": "tips-and-tricks.md",
+      "upstream_sections": ["Tactic Selection Quick Guide", "Common Pitfalls"],
+      "fvs_target": "fv-skills/references/tactic-usage.md",
+      "fvs_sections": ["<quick_reference>", "<anti_patterns>"],
+      "merge_strategy": "enrich"
+    },
+    {
+      "upstream": "lean-lsp-mcp.instructions.md",
+      "upstream_sections": ["MCP Tools", "Sorry-driven workflow"],
+      "fvs_target": "fv-skills/references/aeneas-patterns.md",
+      "fvs_sections": ["<patterns>"],
+      "merge_strategy": "enrich"
+    },
+    {
+      "upstream": "agent-fleet-management.instructions.md",
+      "upstream_sections": [],
+      "fvs_target": null,
+      "fvs_sections": [],
+      "merge_strategy": "defer"
+    },
+    {
+      "upstream": "launching-proof-agents.instructions.md",
+      "upstream_sections": [],
+      "fvs_target": null,
+      "fvs_sections": [],
+      "merge_strategy": "defer"
+    }
+  ],
+  "tactic_renames": {
+    "progress": "step",
+    "progress*": "step*",
+    "progress?": "step*?",
+    "@[progress]": "@[step]",
+    "progress_simps": "step_simps"
+  },
+  "excluded_files": [
+    "aeneas-compiler-dev.instructions.md",
+    "skill-file-authoring.instructions.md",
+    "aeneas-crypto-verification.instructions.md",
+    "formalizing-crypto-specs.instructions.md",
+    "crypto-verification.md",
+    "aeneas-overview.md",
+    "getting-started.md",
+    "glossary.md"
+  ]
+}

@@ -4,6 +4,21 @@ All notable changes to FVS (Formal Verification Skills) will be documented in th
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.2.0] - 2026-08-24
+
+### Added
+- FVS is now packaged as a deterministic dual-runtime plugin payload for Claude Code and Codex,
+  with 27 shared skills, 13 Claude agents, portable plugin-root paths, and runtime-specific update
+  guidance.
+
+### Changed
+- Marketplace distribution now uses the organization-level
+  `Beneficial-AI-Foundation/plugins` catalog and the `beneficial-ai-foundation` marketplace ID.
+  The catalog pins the independently released FVS payload by immutable tag and full commit SHA;
+  the FVS repository no longer publishes its own repository-level marketplace catalogs.
+- Plugin installation documentation now distinguishes the BAIF Git catalog from OpenAI's separate
+  universal public Plugins Directory.
+
 ## [2.1.2] - 2026-08-12
 
 ### Added

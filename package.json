@@ -1,6 +1,6 @@
 {
   "name": "fv-skills-baif",
-  "version": "2.1.2",
+  "version": "2.2.0",
   "description": "Formal verification skills for Claude Code, Codex, OpenCode, and Gemini. Rust -> Lean 4 via Aeneas.",
   "bin": {
     "fv-skills-baif": "bin/install.js"
@@ -43,6 +43,8 @@
   "scripts": {
     "test": "node scripts/run-tests.cjs",
     "build:hooks": "node scripts/build-hooks.js",
-    "prepublishOnly": "npm run build:hooks"
+    "build:plugin": "node scripts/build-plugin.cjs",
+    "check:plugin": "node scripts/build-plugin.cjs --check",
+    "prepublishOnly": "npm run build:hooks && npm run check:plugin"
   }
 }

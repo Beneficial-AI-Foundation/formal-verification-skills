@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "fvs",
+  "version": "2.2.0",
+  "description": "Formal verification workflows for Lean 4, including Rust extraction through Aeneas and paper or cryptography formalisation.",
+  "author": {
+    "name": "Beneficial AI Foundation"
+  },
+  "homepage": "https://github.com/Beneficial-AI-Foundation/formal-verification-skills",
+  "repository": "https://github.com/Beneficial-AI-Foundation/formal-verification-skills",
+  "license": "MIT",
+  "keywords": [
+    "formal-verification",
+    "lean4",
+    "aeneas",
+    "rust",
+    "cryptography"
+  ],
+  "skills": "./skills/"
+}

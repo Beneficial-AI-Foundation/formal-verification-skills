@@ -42,6 +42,40 @@ Framework-specific commands (currently Lean) handle the actual specification and
 
 ## Getting Started
 
+### Plugin marketplace (Claude Code and Codex)
+
+The Beneficial AI Foundation maintains one catalog for FVS and future BAIF plugins. Add the catalog
+once, then install FVS from its `beneficial-ai-foundation` marketplace identity:
+
+```bash
+# Claude Code
+claude plugin marketplace add Beneficial-AI-Foundation/plugins
+claude plugin install fvs@beneficial-ai-foundation
+
+# Codex
+codex plugin marketplace add Beneficial-AI-Foundation/plugins
+codex plugin add fvs@beneficial-ai-foundation
+```
+
+Start a new session after installation. Run `/fvs:help` in Claude Code or mention `$fvs:help` in
+Codex. To refresh an existing install, update the catalog and then update or reinstall FVS:
+
+```bash
+# Claude Code
+claude plugin marketplace update beneficial-ai-foundation
+claude plugin update fvs@beneficial-ai-foundation
+
+# Codex
+codex plugin marketplace upgrade beneficial-ai-foundation
+codex plugin add fvs@beneficial-ai-foundation
+```
+
+The BAIF Git catalog is a versioned distribution source that can list multiple independently
+released plugins. It is separate from OpenAI's universal public Plugins Directory, which has its
+own per-plugin submission process.
+
+### npm installer (all runtimes)
+
 ```bash
 npx fv-skills-baif
 ```
@@ -50,7 +84,8 @@ The installer prompts you to choose:
 1. **Runtime** — Claude Code, OpenCode, Gemini, or all
 2. **Location** — Global (all projects) or local (current project only)
 
-Verify with `/fvs:help` inside your chosen runtime.
+Verify with `/fvs:help` inside your chosen runtime. The npm installer remains the distribution path
+for OpenCode and Gemini CLI, and is also available for Claude Code and Codex.
 
 ### Prerequisites (Lean 4 / Aeneas)
 
@@ -66,6 +101,9 @@ For enhanced Lean 4 proof development with LLMs, install the [lean-lsp-mcp](http
 **Note:** Avoid using the `lean_multi_attempt` tool for formal verification tasks - FV proof states often explode in size, making multi-attempt testing prohibitively slow.
 
 ### Staying Updated
+
+For a marketplace install, invoke `/fvs:update` in Claude Code or `$fvs:update` in Codex. For an npm
+install, run:
 
 ```bash
 npx fv-skills-baif@latest
@@ -171,8 +209,8 @@ secrets, raw transcripts, ephemeral error dumps, unsupported guesses, or inferre
 | Command | Description |
 |---------|-------------|
 | `/fvs:help` | Show available FVS commands and usage guide |
-| `/fvs:update` | Self-update to latest version via npx |
-| `/fvs:reapply-patches` | Reapply local modifications after an FVS update |
+| `/fvs:update` | Update FVS through the current installation channel |
+| `/fvs:reapply-patches` | Preserve customizations across FVS updates (patches for npm installs; fork guidance for plugin installs) |
 | `/fvs:kb-setup` | Set up NotebookLM knowledge base integration (venv, auth, config) |
 
 ---

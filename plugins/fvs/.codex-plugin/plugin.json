@@ -1,0 +1,40 @@
+{
+  "name": "fvs",
+  "version": "2.2.0",
+  "description": "Formal verification workflows for Lean 4, including Rust extraction through Aeneas and paper or cryptography formalisation.",
+  "author": {
+    "name": "Beneficial AI Foundation",
+    "url": "https://github.com/Beneficial-AI-Foundation/formal-verification-skills"
+  },
+  "homepage": "https://github.com/Beneficial-AI-Foundation/formal-verification-skills",
+  "repository": "https://github.com/Beneficial-AI-Foundation/formal-verification-skills",
+  "license": "MIT",
+  "keywords": [
+    "formal-verification",
+    "lean4",
+    "aeneas",
+    "rust",
+    "cryptography"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Formal Verification Skills",
+    "shortDescription": "Lean 4 specification, proof, and audit workflows",
+    "longDescription": "Formal verification workflows for Lean 4, including Rust extraction through Aeneas and paper or cryptography formalisation.",
+    "developerName": "Beneficial AI Foundation",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/Beneficial-AI-Foundation/formal-verification-skills",
+    "defaultPrompt": [
+      "Map this Lean project and plan the next verification target.",
+      "Generate and prove a Lean specification for this function.",
+      "Audit the sorry and axiom trust surface of this Lean target."
+    ],
+    "brandColor": "#F97316",
+    "logo": "./assets/fvs.png"
+  }
+}
