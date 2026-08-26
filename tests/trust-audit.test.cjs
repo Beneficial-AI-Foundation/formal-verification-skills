@@ -34,6 +34,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 const COMMAND = path.join(ROOT, 'commands', 'fvs', 'trust-audit.md');
 const WORKFLOW = path.join(ROOT, 'fv-skills', 'workflows', 'trust-audit.md');
+const AUDITOR = path.join(ROOT, 'agents', 'fvs-axiom-auditor.md');
 
 function rel(absPath) {
   return path.relative(ROOT, absPath);
@@ -111,3 +112,37 @@ for (const target of [COMMAND, WORKFLOW]) {
     });
   });
 }
+
+describe('Trust audit: deterministic probe-aeneas inventory (issue #39)', () => {
+  for (const target of [COMMAND, WORKFLOW]) {
+    const content = readContent(target);
+
+    it(`${rel(target)} extracts and filters the target before auditor dispatch`, () => {
+      assert.match(content, /probe-aeneas extract/);
+      assert.match(content, /fvs-probe-inventory\.mjs/);
+      assert.match(content, /--target/);
+      assert.match(content, /canonical_inventory/i);
+    });
+
+    it(`${rel(target)} takes the banner count from the canonical projection`, () => {
+      assert.match(content, /CANONICAL_COUNT/);
+      assert.match(content, /In-scope:\s+\$CANONICAL_COUNT/);
+      assert.match(content, /never (?:discover|add|remove|recount)/i);
+    });
+
+    it(`${rel(target)} fails closed and keeps uninspectable functions visible`, () => {
+      assert.match(content, /HALT/);
+      assert.match(content, /uninspectable/);
+      assert.match(content, /NOT-CLEAN/);
+    });
+  }
+
+  it('makes the auditor a canonical-inventory consumer keyed by atom ID', () => {
+    const content = readContent(AUDITOR);
+    assert.match(content, /parent-supplied canonical inventory/i);
+    assert.match(content, /canonical atom ID/i);
+    assert.match(content, /never (?:discover|add|remove|recount)/i);
+    assert.match(content, /uninspectable/);
+    assert.match(content, /supplied canonical count/i);
+  });
+});
