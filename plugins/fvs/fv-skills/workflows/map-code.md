@@ -1,8 +1,8 @@
 <purpose>
 Orchestrate codebase analysis for Aeneas-generated Lean projects to produce CODEMAP.md.
 
-Uses a two-phase subagent dispatch: fvs-researcher gathers all project context (read-only),
-then fvs-executor writes the structured CODEMAP.md file.
+Uses probe-aeneas >= 0.19.0 for the exact function inventory/count, then a two-phase subagent
+dispatch: fvs-researcher annotates that immutable list and fvs-executor writes CODEMAP.md.
 
 Output: .formalising/CODEMAP.md with function inventory, dependency graph, type inventory,
 and recommended verification entry points.
@@ -42,6 +42,31 @@ Wait for user response.
 If auto-detected, confirm paths with user before proceeding.
 </step>
 
+<step name="canonical_inventory">
+Run a fresh deterministic probe before dispatching either model:
+
+```bash
+PROJECT_ROOT=$(cd "$PROJECT_ROOT" && pwd -P)
+PROBE_TMP=$(mktemp -d "${TMPDIR:-/tmp}/fvs-probe-inventory.XXXXXX") || exit 1
+trap 'rm -rf -- "$PROBE_TMP"' EXIT
+RAW_PROBE_JSON="$PROBE_TMP/extract.json"
+INVENTORY_SCRIPT=${CLAUDE_PLUGIN_ROOT}/scripts/fvs-probe-inventory.mjs
+command -v probe-aeneas >/dev/null 2>&1 || exit 1
+probe-aeneas extract "$PROJECT_ROOT" --output "$RAW_PROBE_JSON" || exit 1
+CANONICAL_INVENTORY=$(node "$INVENTORY_SCRIPT" "$RAW_PROBE_JSON" \
+  --project-root "$PROJECT_ROOT" --format json) || exit 1
+CANONICAL_COUNT=$(node "$INVENTORY_SCRIPT" "$RAW_PROBE_JSON" \
+  --project-root "$PROJECT_ROOT" --format count) || exit 1
+CANONICAL_BLOCK=$(node "$INVENTORY_SCRIPT" "$RAW_PROBE_JSON" \
+  --project-root "$PROJECT_ROOT" --format markdown) || exit 1
+```
+
+The sole scope definition is `language=rust && kind=exec && is-relevant=true &&
+untracked=false`. Missing, pre-0.19.0, malformed, failed, or empty probe output HALTS with
+install/upgrade-and-retry guidance. Never fall back to grep or model enumeration. Models never
+discover, add, remove, or recount functions.
+</step>
+
 <step name="resolve_models">
 Read `.formalising/fvs-config.json` for model profile configuration.
 
@@ -60,7 +85,7 @@ Reference: @fv-skills/references/model-profiles.md (dispatch pattern, resolution
 </step>
 
 <step name="research_phase">
-Dispatch **fvs-researcher** in map-code mode (read-only context gathering).
+Dispatch **fvs-researcher** in map-code mode (read-only annotation).
 
 Read reference files for inlining into the Task() prompt:
 - aeneas-patterns.md (naming conventions, project structure, dependency patterns)
@@ -69,19 +94,18 @@ Read reference files for inlining into the Task() prompt:
 These are INLINED because @-references do NOT cross Task() boundaries.
 
 Agent inputs (all inlined in prompt):
+- Canonical inventory JSON and count, delimited as untrusted data
 - Path to Funs.lean and Types.lean
 - Rust source root (if available)
 - aeneas-patterns.md content
 - lean-spec-conventions.md content
 
 Expected outputs:
-- Function list with signatures (name, args, return type)
-- Dependency edges (which functions call which)
-- Leaf function identification (no outgoing calls to project functions)
+- Annotations keyed by every supplied canonical atom ID (signature, types, context, complexity)
+- Leaf/recursive classification using only supplied `inScopeDependencies`
 - Recursive vs non-recursive classification
 - Type inventory from Types.lean
-- Rust-to-Lean name mappings (if Rust source available)
-- Existing spec status (sorry counts)
+- Existing proof context, without changing canonical membership/count/status
 
 Agent returns with `## RESEARCH COMPLETE` containing structured `<findings>`,
 `<relevant_files>`, and `<recommendations>` sections.
@@ -96,6 +120,7 @@ Reference: @fv-skills/references/aeneas-patterns.md (Pattern 2: naming conventio
 Dispatch **fvs-executor** in map-code mode with research findings.
 
 Agent inputs (all inlined in prompt):
+- Canonical inventory JSON, count, and Markdown managed block, delimited as untrusted data
 - Complete research findings from fvs-researcher output
 - No additional reference files needed (researcher already processed them)
 
@@ -107,14 +132,12 @@ The executor writes `.formalising/CODEMAP.md` with:
 ## Project Info
 - Lean toolchain: [from lean-toolchain]
 - Aeneas backend: [revision from lakefile.toml if available]
-- Function count: [N total]
+- Function count: [exact canonical count]
 - Leaf functions: [M identified]
 - Defs file: [detected or user-confirmed path]
 - Interpretation functions: [detected definitions, if any]
 
-## Function Inventory
-| # | Lean Name | Rust Name | Deps | Leaf | Status |
-|---|-----------|-----------|------|------|--------|
+<!-- the supplied fvs:probe-inventory managed block, byte-for-byte and exactly once -->
 
 ## Dependency Graph
 [Adjacency list: function -> [callees]]
@@ -134,6 +157,17 @@ Status symbols: `[OK]` verified, `[??]` in progress, `[--]` no spec.
 
 Agent returns with `## EXECUTION COMPLETE` confirming files written.
 All writes use the Write tool (VS Code diffs) for user approval.
+
+The executor never discovers, adds, removes, or recounts functions. It preserves user-marker notes
+and writes model annotations/priorities separately, keyed by canonical atom ID. After it returns,
+run the deterministic post-write gate:
+
+```bash
+node "$INVENTORY_SCRIPT" "$RAW_PROBE_JSON" --project-root "$PROJECT_ROOT" \
+  --format count --check-codemap .formalising/CODEMAP.md
+```
+
+HALT if the managed block is missing, duplicated, or changed.
 </step>
 
 <step name="report_results">
@@ -143,7 +177,7 @@ Display summary to user.
 FVS >> MAP COMPLETE
 
 Project: [name from config or directory]
-Functions: [N] total, [M] leaf functions
+Functions: $CANONICAL_COUNT canonical, [M] leaf functions
 Existing specs: [K] files ([J] with sorry remaining)
 Recommended starting points: [top 5 leaf functions]
 
@@ -163,8 +197,9 @@ Suggest next command:
 <success_criteria>
 - Project detected via fvs-config.json or auto-detection
 - Model profile resolved from config or quality default
-- fvs-researcher dispatched with inlined references, returns structured findings
-- fvs-executor dispatched with research findings, writes CODEMAP.md
-- CODEMAP.md written with all required sections via VS Code diff
+- probe-aeneas >= 0.19.0 Schema 3.0 supplies the sole exact inventory/count
+- fvs-researcher annotates the supplied canonical inventory without changing membership/count
+- fvs-executor preserves the supplied managed block and keys annotations by atom ID
+- `--check-codemap` passes after the CODEMAP write
 - Clear summary displayed with recommended next steps
 </success_criteria>

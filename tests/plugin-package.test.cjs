@@ -85,8 +85,21 @@ describe('published FVS plugin package', () => {
     assert.deepEqual(filesUnder(path.join(PLUGIN_ROOT, 'fv-skills')), canonicalSupport);
     assert.deepEqual(
       filesUnder(path.join(PLUGIN_ROOT, 'scripts')),
-      ['fvs-codex-think.mjs', 'fvs-kb-query.py', 'fvs-lean-style-check.mjs'],
+      [
+        'fvs-codex-think.mjs',
+        'fvs-kb-query.py',
+        'fvs-lean-style-check.mjs',
+        'fvs-probe-inventory.mjs',
+      ].sort(),
     );
+  });
+
+  it('uses the portable plugin-root inventory helper in map-code and trust-audit', () => {
+    for (const skillName of ['map-code', 'trust-audit']) {
+      const raw = fs.readFileSync(path.join(PLUGIN_ROOT, 'skills', skillName, 'SKILL.md'), 'utf8');
+      assert.ok(raw.includes('${CLAUDE_PLUGIN_ROOT}/scripts/fvs-probe-inventory.mjs'));
+      assert.ok(!raw.includes('~/.claude/scripts/fvs-probe-inventory.mjs'));
+    }
   });
 
   it('contains only plugin-root paths and no mutable npm-install updater', () => {

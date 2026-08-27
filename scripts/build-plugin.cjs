@@ -24,6 +24,7 @@ const SCRIPT_FILES = [
   'fvs-codex-think.mjs',
   'fvs-kb-query.py',
   'fvs-lean-style-check.mjs',
+  'fvs-probe-inventory.mjs',
 ];
 
 function assertSafePluginRoot(pluginRoot) {

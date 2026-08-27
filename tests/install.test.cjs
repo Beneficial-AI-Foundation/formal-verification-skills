@@ -80,6 +80,7 @@ describe('Installer (install + uninstall round-trip)', () => {
       'fv-skills/upstream/aeneas/_sync-meta.json',
       'scripts/fvs-codex-think.mjs',
       'scripts/fvs-lean-style-check.mjs',
+      'scripts/fvs-probe-inventory.mjs',
     ];
     for (const rel of checks) {
       assert.ok(fs.existsSync(path.join(tmpDir, rel)), `Missing: ${rel}`);
