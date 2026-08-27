@@ -222,6 +222,7 @@ describe('probe-aeneas canonical function inventory', () => {
     const command = fs.readFileSync(path.join(ROOT, 'commands', 'fvs', 'map-code.md'), 'utf8');
     const workflow = fs.readFileSync(path.join(ROOT, 'fv-skills', 'workflows', 'map-code.md'), 'utf8');
     const researcher = fs.readFileSync(path.join(ROOT, 'agents', 'fvs-researcher.md'), 'utf8');
+    const executor = fs.readFileSync(path.join(ROOT, 'agents', 'fvs-executor.md'), 'utf8');
 
     for (const content of [command, workflow]) {
       assert.match(content, /probe-aeneas extract/);
@@ -229,8 +230,13 @@ describe('probe-aeneas canonical function inventory', () => {
       assert.match(content, /--check-codemap/);
       assert.match(content, /canonical_inventory/i);
       assert.match(content, /never (?:discover|add|remove|recount)/i);
+      assert.ok(!content.includes("trap 'rm -rf"), 'extract must survive until the post-write check');
+      assert.ok(content.lastIndexOf('rm -rf -- "$PROBE_TMP"') > content.indexOf('--check-codemap'));
     }
     assert.match(researcher, /parent-supplied canonical inventory/i);
     assert.match(researcher, /never (?:discover|add|remove|recount)/i);
+    assert.match(executor, /parent-supplied canonical inventory/i);
+    assert.match(executor, /never (?:discover|add|remove|recount)/i);
+    assert.match(executor, /byte-for-byte and exactly once/i);
   });
 });

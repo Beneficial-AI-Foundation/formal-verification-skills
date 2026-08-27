@@ -223,7 +223,7 @@ This track verifies Rust that Aeneas has lowered to Lean 4. Starting from a Rust
 
 ### 1. Map
 
-`/fvs:map-code` — Analyze extracted code and Rust source to build a function dependency graph. Produces `CODEMAP.md` with every function, its dependencies, and verification status. Works with any extraction pipeline.
+`/fvs:map-code` — Run probe-aeneas >= 0.19.0 to build an exact, reproducible function inventory and dependency graph. Models annotate and prioritize the canonical list but never determine its membership or count. Produces `CODEMAP.md` with every in-scope Rust function, its dependencies, and verification status.
 
 ### 2. Plan
 
@@ -249,7 +249,7 @@ can reviewably retain green-build patterns or lessons evidenced by actual Lean d
 
 ### 6. Audit
 
-`/fvs:trust-audit <target>` — Build-backed audit of the trust surface. Runs a green-build precondition, then uses `#print axioms` to classify every in-scope declaration as verified / `sorry` / axiom. The classical trio (`propext`, `Classical.choice`, `Quot.sound`) is auto-noted as Lean/Mathlib-standard; any project-custom axiom must be justified or the gate reports NOT-CLEAN. Produces a re-runnable, dependency-ordered table under `.formalising/audits/`.
+`/fvs:trust-audit <target>` — Build-backed audit of the trust surface. It target-filters the same canonical probe-aeneas inventory, then uses `#print axioms` to classify every supplied function as verified / `sorry` / axiom / uninspectable. The classical trio (`propext`, `Classical.choice`, `Quot.sound`) is auto-noted as Lean/Mathlib-standard; any project-custom axiom, sorry, or uninspectable entry keeps the gate NOT-CLEAN. Produces a re-runnable, dependency-ordered table under `.formalising/audits/`.
 
 ### The paper track (maths / crypto)
 

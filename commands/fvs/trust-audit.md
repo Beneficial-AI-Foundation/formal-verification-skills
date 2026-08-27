@@ -91,7 +91,6 @@ FVS helper:
 
 ```bash
 PROBE_TMP=$(mktemp -d "${TMPDIR:-/tmp}/fvs-trust-audit.XXXXXX") || exit 1
-trap 'rm -rf -- "$PROBE_TMP"' EXIT
 RAW_PROBE_JSON="$PROBE_TMP/extract.json"
 INVENTORY_SCRIPT=~/.claude/scripts/fvs-probe-inventory.mjs
 
@@ -107,6 +106,7 @@ CANONICAL_INVENTORY=$(node "$INVENTORY_SCRIPT" "$RAW_PROBE_JSON" \
   --project-root "$PROJECT_ROOT" --target "$TARGET" --format json) || exit 1
 CANONICAL_COUNT=$(node "$INVENTORY_SCRIPT" "$RAW_PROBE_JSON" \
   --project-root "$PROJECT_ROOT" --target "$TARGET" --format count) || exit 1
+rm -rf -- "$PROBE_TMP"
 ```
 
 This is the sole authority for membership and count. It accepts only probe-aeneas >= 0.19.0

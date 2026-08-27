@@ -124,7 +124,6 @@ create a private temporary directory, and run a fresh extract:
 ```bash
 PROJECT_ROOT=$(cd "$PROJECT_ROOT" && pwd -P)
 PROBE_TMP=$(mktemp -d "${TMPDIR:-/tmp}/fvs-probe-inventory.XXXXXX") || exit 1
-trap 'rm -rf -- "$PROBE_TMP"' EXIT
 RAW_PROBE_JSON="$PROBE_TMP/extract.json"
 INVENTORY_SCRIPT=~/.claude/scripts/fvs-probe-inventory.mjs
 
@@ -291,7 +290,11 @@ Before reporting success, verify that the executor preserved the exact managed b
 
 ```bash
 node "$INVENTORY_SCRIPT" "$RAW_PROBE_JSON" --project-root "$PROJECT_ROOT" \
-  --format count --check-codemap .formalising/CODEMAP.md
+  --format count --check-codemap .formalising/CODEMAP.md || {
+  rm -rf -- "$PROBE_TMP"
+  exit 1
+}
+rm -rf -- "$PROBE_TMP"
 ```
 
 If this fails, HALT: CODEMAP is not current and must not be used for planning.

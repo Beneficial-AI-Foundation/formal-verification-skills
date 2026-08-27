@@ -168,7 +168,8 @@ Build function dependency graph from extracted Lean code and Rust source.
 
 - Detects Aeneas project via `lakefile.toml` + `lean-toolchain`
 - Creates `.formalising/` state directory
-- Parses Funs.lean for function inventory and dependency edges
+- Uses probe-aeneas >= 0.19.0 for an exact, reproducible function inventory and count
+- Reads Funs.lean only to annotate the probe-supplied functions
 - Maps Lean names back to Rust source (if available)
 - Auto-detects project definitions (Defs.lean or equivalent)
 - Scans existing specs for sorry status

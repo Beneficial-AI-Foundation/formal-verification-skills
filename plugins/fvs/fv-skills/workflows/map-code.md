@@ -48,7 +48,6 @@ Run a fresh deterministic probe before dispatching either model:
 ```bash
 PROJECT_ROOT=$(cd "$PROJECT_ROOT" && pwd -P)
 PROBE_TMP=$(mktemp -d "${TMPDIR:-/tmp}/fvs-probe-inventory.XXXXXX") || exit 1
-trap 'rm -rf -- "$PROBE_TMP"' EXIT
 RAW_PROBE_JSON="$PROBE_TMP/extract.json"
 INVENTORY_SCRIPT=${CLAUDE_PLUGIN_ROOT}/scripts/fvs-probe-inventory.mjs
 command -v probe-aeneas >/dev/null 2>&1 || exit 1
@@ -164,7 +163,11 @@ run the deterministic post-write gate:
 
 ```bash
 node "$INVENTORY_SCRIPT" "$RAW_PROBE_JSON" --project-root "$PROJECT_ROOT" \
-  --format count --check-codemap .formalising/CODEMAP.md
+  --format count --check-codemap .formalising/CODEMAP.md || {
+  rm -rf -- "$PROBE_TMP"
+  exit 1
+}
+rm -rf -- "$PROBE_TMP"
 ```
 
 HALT if the managed block is missing, duplicated, or changed.

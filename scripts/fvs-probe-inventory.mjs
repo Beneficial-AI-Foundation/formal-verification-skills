@@ -142,7 +142,7 @@ function project(envelope) {
   const entries = Object.entries(envelope.data)
     .filter(([, atom]) => atom.language === 'rust' && atom.kind === 'exec' &&
       atom['is-relevant'] === true && atom.untracked === false)
-    .sort(([left], [right]) => left.localeCompare(right));
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
   if (entries.length === 0) fatal('canonical inventory is empty');
   const ids = new Set(entries.map(([id]) => id));
   const functions = entries.map(([id, atom]) => {
