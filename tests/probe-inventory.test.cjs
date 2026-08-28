@@ -110,6 +110,61 @@ function fixtureData() {
   };
 }
 
+function graphData({ withPublicApi = false } = {}) {
+  const publicApi = (value) => withPublicApi ? { 'is-public-api': value } : {};
+  return {
+    'probe:rust/top()': rustAtom({
+      'display-name': 'crate::top',
+      'rust-qualified-name': 'crate::top',
+      'code-path': 'crate/src/top.rs',
+      dependencies: ['probe:rust/middle()'],
+      'translation-name': 'probe:Crate.top',
+      'verification-status': 'verified',
+      ...publicApi(true),
+    }),
+    'probe:rust/middle()': rustAtom({
+      'display-name': 'crate::middle',
+      'rust-qualified-name': 'crate::middle',
+      'code-path': 'crate/src/middle.rs',
+      dependencies: ['probe:rust/entry()'],
+      'translation-name': 'probe:Crate.middle',
+      'verification-status': 'failed',
+      ...publicApi(true),
+    }),
+    'probe:rust/entry()': rustAtom({
+      'display-name': 'crate::entry',
+      'rust-qualified-name': 'crate::entry',
+      'code-path': 'crate/src/entry.rs',
+      ...publicApi(true),
+    }),
+    'probe:rust/isolated()': rustAtom({
+      'display-name': 'crate::isolated',
+      'rust-qualified-name': 'crate::isolated',
+      'code-path': 'crate/src/isolated.rs',
+      'translation-name': 'probe:Crate.isolated',
+      'verification-status': 'trusted',
+      ...publicApi(false),
+    }),
+    'probe:rust/transitive()': rustAtom({
+      'display-name': 'crate::transitive',
+      'rust-qualified-name': 'crate::transitive',
+      'code-path': 'crate/src/transitive.rs',
+      dependencies: ['probe:rust/entry()'],
+      'translation-name': 'probe:Crate.transitive',
+      'verification-status': 'transitively-verified',
+      ...publicApi(true),
+    }),
+    'probe:Crate.top': leanAtom({ 'primary-spec': 'probe:Crate.top_spec' }),
+    'probe:Crate.middle': leanAtom({ 'primary-spec': 'probe:Crate.middle_spec' }),
+    'probe:Crate.isolated': leanAtom({ 'primary-spec': 'probe:Crate.isolated_spec' }),
+    'probe:Crate.transitive': leanAtom({ 'primary-spec': 'probe:Crate.transitive_spec' }),
+    'probe:Crate.top_spec': leanAtom({ kind: 'theorem' }),
+    'probe:Crate.middle_spec': leanAtom({ kind: 'theorem' }),
+    'probe:Crate.isolated_spec': leanAtom({ kind: 'theorem' }),
+    'probe:Crate.transitive_spec': leanAtom({ kind: 'theorem' }),
+  };
+}
+
 describe('probe-aeneas canonical function inventory', () => {
   it('filters by the v0.19 scope predicate and emits stable, sorted metadata', () => {
     const directory = temporaryDirectory();
@@ -130,6 +185,21 @@ describe('probe-aeneas canonical function inventory', () => {
     assert.deepEqual(result.functions.map((item) => item.id), ['probe:rust/a()', 'probe:rust/z()']);
     assert.equal(result.scopePredicate,
       'language=rust && kind=exec && is-relevant=true && untracked=false');
+    assert.deepEqual(result.topLevelFunctions, ['probe:rust/z()']);
+    assert.deepEqual(result.entryPointFunctions, ['probe:rust/a()']);
+    assert.equal(result.publicTopLevelFunctions, null);
+    assert.deepEqual(result.progress, {
+      total: 2,
+      specification: { specified: 1, unspecified: 1 },
+      verification: {
+        unverified: 1,
+        failed: 0,
+        verified: 1,
+        'transitively-verified': 0,
+        trusted: 0,
+        proved: 1,
+      },
+    });
     assert.deepEqual(result.functions[1], {
       id: 'probe:rust/z()',
       displayName: 'crate::z|line\nbreak',
@@ -146,8 +216,72 @@ describe('probe-aeneas canonical function inventory', () => {
       primarySpecSpan: { linesStart: 7, linesEnd: 14 },
       dependencies: ['probe:external/helper', 'probe:rust/a()'],
       inScopeDependencies: ['probe:rust/a()'],
+      outsideTargetDependencies: [],
+      dependents: [],
       verificationStatus: 'verified',
     });
+  });
+
+  it('derives project-wide endpoints and exact progress partitions', () => {
+    const directory = temporaryDirectory();
+    const unavailable = run(writeEnvelope(directory, envelope(graphData()), 'unavailable.json'));
+    assert.equal(unavailable.status, 0, unavailable.stderr);
+
+    const result = JSON.parse(unavailable.stdout);
+    assert.deepEqual(result.topLevelFunctions, [
+      'probe:rust/isolated()',
+      'probe:rust/top()',
+      'probe:rust/transitive()',
+    ]);
+    assert.deepEqual(result.entryPointFunctions, [
+      'probe:rust/entry()',
+      'probe:rust/isolated()',
+    ]);
+    assert.equal(result.publicTopLevelFunctions, null);
+    assert.deepEqual(result.progress, {
+      total: 5,
+      specification: { specified: 4, unspecified: 1 },
+      verification: {
+        unverified: 1,
+        failed: 1,
+        verified: 1,
+        'transitively-verified': 1,
+        trusted: 1,
+        proved: 2,
+      },
+    });
+
+    const byId = Object.fromEntries(result.functions.map((item) => [item.id, item]));
+    assert.deepEqual(byId['probe:rust/entry()'].dependents, [
+      'probe:rust/middle()',
+      'probe:rust/transitive()',
+    ]);
+    assert.deepEqual(byId['probe:rust/middle()'].dependents, ['probe:rust/top()']);
+    assert.deepEqual(byId['probe:rust/isolated()'].dependents, []);
+
+    const availableFile = writeEnvelope(
+      directory, envelope(graphData({ withPublicApi: true })), 'available.json',
+    );
+    const unconfirmed = run(availableFile);
+    assert.equal(unconfirmed.status, 0, unconfirmed.stderr);
+    assert.equal(JSON.parse(unconfirmed.stdout).publicTopLevelFunctions, null);
+
+    const available = run(availableFile, ['--public-api-exact']);
+    assert.equal(available.status, 0, available.stderr);
+    assert.deepEqual(JSON.parse(available.stdout).publicTopLevelFunctions, [
+      'probe:rust/top()',
+      'probe:rust/transitive()',
+    ]);
+
+    const markdown = run(
+      writeEnvelope(directory, envelope(graphData()), 'progress.json'),
+      ['--format', 'markdown'],
+    );
+    assert.equal(markdown.status, 0, markdown.stderr);
+    assert.match(markdown.stdout, /Specified \| 4\/5 \(80\.0%\)/);
+    assert.match(markdown.stdout, /Unspecified \| 1\/5 \(20\.0%\)/);
+    assert.match(markdown.stdout, /Proved \(verified \+ transitively-verified\) \| 2\/5 \(40\.0%\)/);
+    assert.match(markdown.stdout, /Public top-level functions: unavailable/);
   });
 
   it('renders and byte-checks one managed CODEMAP block', () => {
@@ -160,7 +294,8 @@ describe('probe-aeneas canonical function inventory', () => {
     assert.match(markdown.stdout, /crate::z\\\|line break/);
 
     const codemap = path.join(directory, 'CODEMAP.md');
-    fs.writeFileSync(codemap, `# CODEMAP\n\n${markdown.stdout}\n## Notes\n`);
+    const suffix = '\n## Notes\n\n<!-- user -->keep this exactly\n';
+    fs.writeFileSync(codemap, `# CODEMAP\n\n${markdown.stdout.trimEnd()}${suffix}`);
     const checked = run(file, ['--format', 'count', '--check-codemap', codemap]);
     assert.equal(checked.status, 0, checked.stderr);
     assert.equal(checked.stdout.trim(), '2');
@@ -171,6 +306,18 @@ describe('probe-aeneas canonical function inventory', () => {
     const changed = run(file, ['--check-codemap', codemap]);
     assert.notEqual(changed.status, 0);
     assert.match(changed.stderr, /canonical inventory block differs/);
+
+    const refreshedFile = writeEnvelope(directory, envelope(graphData()), 'refresh.json');
+    const refreshed = run(refreshedFile, [
+      '--format', 'count', '--update-codemap', codemap, '--check-codemap', codemap,
+    ]);
+    assert.equal(refreshed.status, 0, refreshed.stderr);
+    assert.equal(refreshed.stdout.trim(), '5');
+    const refreshedContent = fs.readFileSync(codemap, 'utf8');
+    assert.ok(refreshedContent.startsWith('# CODEMAP\n\n'));
+    assert.ok(refreshedContent.endsWith(suffix));
+    assert.match(refreshedContent, /Function count: \*\*5\*\*/);
+    assert.equal(refreshedContent.split('<!-- fvs:probe-inventory:start -->').length - 1, 1);
   });
 
   it('selects targets by project-relative paths and qualified-name boundaries', () => {
@@ -197,6 +344,27 @@ describe('probe-aeneas canonical function inventory', () => {
     const escape = run(file, ['--project-root', project, '--target', '../outside/Z.lean']);
     assert.notEqual(escape.status, 0);
     assert.match(escape.stderr, /outside the project root/);
+
+    const graphFile = writeEnvelope(directory, envelope(graphData()), 'target.json');
+    const selected = run(graphFile, ['--project-root', project, '--target', 'crate::top']);
+    assert.equal(selected.status, 0, selected.stderr);
+    const target = JSON.parse(selected.stdout);
+    assert.deepEqual(target.topLevelFunctions, ['probe:rust/top()']);
+    assert.deepEqual(target.entryPointFunctions, []);
+    assert.deepEqual(target.functions[0].inScopeDependencies, []);
+    assert.deepEqual(target.functions[0].outsideTargetDependencies, ['probe:rust/middle()']);
+    assert.deepEqual(target.progress, {
+      total: 1,
+      specification: { specified: 1, unspecified: 0 },
+      verification: {
+        unverified: 0,
+        failed: 0,
+        verified: 1,
+        'transitively-verified': 0,
+        trusted: 0,
+        proved: 1,
+      },
+    });
   });
 
   it('fails closed on stale or malformed probe envelopes', () => {
@@ -208,6 +376,8 @@ describe('probe-aeneas canonical function inventory', () => {
       [{ ...valid, data: [] }, /data/],
       [envelope({ bad: rustAtom({ 'is-relevant': undefined }) }), /is-relevant/],
       [envelope({ bad: rustAtom({ untracked: 'false' }) }), /untracked/],
+      [envelope({ bad: rustAtom({ 'verification-status': 'unknown' }) }), /verification-status/],
+      [envelope({ bad: rustAtom({ 'is-public-api': 'true' }) }), /is-public-api/],
     ];
 
     for (const [payload, diagnostic] of cases) {
