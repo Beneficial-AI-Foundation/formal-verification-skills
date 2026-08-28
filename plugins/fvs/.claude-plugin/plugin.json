@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "fvs",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "Formal verification workflows for Lean 4, including Rust extraction through Aeneas and paper or cryptography formalisation.",
   "author": {
     "name": "Beneficial AI Foundation"

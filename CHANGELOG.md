@@ -4,6 +4,15 @@ All notable changes to FVS (Formal Verification Skills) will be documented in th
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.2.1] - 2026-08-28
+
+### Fixed
+- `/fvs:map-code`, `/fvs:fc-plan`, and `/fvs:trust-audit` now derive function membership,
+  dependency endpoints, specification state, verification state, and progress totals from
+  probe-aeneas output instead of model inference. Targeted runs retain project-wide endpoint truth,
+  and public top-level functions are reported only when exact public-API extraction succeeds. This
+  resolves [GitHub issue #39](https://github.com/Beneficial-AI-Foundation/formal-verification-skills/issues/39).
+
 ## [2.2.0] - 2026-08-24
 
 ### Added

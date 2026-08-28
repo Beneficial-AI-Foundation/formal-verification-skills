@@ -37,9 +37,9 @@ describe('published FVS plugin package', () => {
     });
   });
 
-  it('keeps the 2.2.0 package, payload, and both plugin manifests on one version', () => {
+  it('keeps the 2.2.1 package, payload, and both plugin manifests on one version', () => {
     const version = readJson('package.json').version;
-    assert.equal(version, '2.2.0');
+    assert.equal(version, '2.2.1');
     assert.equal(fs.readFileSync(path.join(ROOT, 'fv-skills', 'VERSION'), 'utf8'), version);
     assert.equal(readJson('plugins/fvs/.claude-plugin/plugin.json').version, version);
     assert.equal(readJson('plugins/fvs/.codex-plugin/plugin.json').version, version);
