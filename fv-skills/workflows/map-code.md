@@ -1,11 +1,11 @@
 <purpose>
 Orchestrate codebase analysis for Aeneas-generated Lean projects to produce CODEMAP.md.
 
-Uses probe-aeneas >= 0.19.0 for the exact function inventory/count, then a two-phase subagent
-dispatch: fvs-researcher annotates that immutable list and fvs-executor writes CODEMAP.md.
+Uses probe-aeneas >= 0.19.0 for the exact function inventory, graph endpoints, and progress, then a
+two-phase subagent dispatch adds qualitative annotations without changing those facts.
 
-Output: .formalising/CODEMAP.md with function inventory, dependency graph, type inventory,
-and recommended verification entry points.
+Output: .formalising/CODEMAP.md with a generated graph/progress block, type inventory, and separate
+complexity, risk, and recommendation notes.
 </purpose>
 
 <process>
@@ -50,20 +50,43 @@ PROJECT_ROOT=$(cd "$PROJECT_ROOT" && pwd -P)
 PROBE_TMP=$(mktemp -d "${TMPDIR:-/tmp}/fvs-probe-inventory.XXXXXX") || exit 1
 RAW_PROBE_JSON="$PROBE_TMP/extract.json"
 INVENTORY_SCRIPT=~/.claude/scripts/fvs-probe-inventory.mjs
+PUBLIC_API_ARGS=()
 command -v probe-aeneas >/dev/null 2>&1 || exit 1
-probe-aeneas extract "$PROJECT_ROOT" --output "$RAW_PROBE_JSON" || exit 1
+if command -v cargo-public-api >/dev/null 2>&1; then
+  PROBE_LOG="$PROBE_TMP/public-api.log"
+  if probe-aeneas extract "$PROJECT_ROOT" --with-public-api \
+      --output "$RAW_PROBE_JSON" >"$PROBE_LOG" 2>&1; then
+    cat "$PROBE_LOG"
+    if grep -Fq 'cargo-public-api found' "$PROBE_LOG"; then
+      PUBLIC_API_ARGS=(--public-api-exact)
+    else
+      echo "Exact public API data unavailable; publicTopLevelFunctions will be null."
+    fi
+  else
+    cat "$PROBE_LOG"
+    echo "Public API extraction unavailable; retrying the core inventory without it."
+    probe-aeneas extract "$PROJECT_ROOT" --output "$RAW_PROBE_JSON" || exit 1
+  fi
+else
+  probe-aeneas extract "$PROJECT_ROOT" --output "$RAW_PROBE_JSON" || exit 1
+fi
 CANONICAL_INVENTORY=$(node "$INVENTORY_SCRIPT" "$RAW_PROBE_JSON" \
-  --project-root "$PROJECT_ROOT" --format json) || exit 1
+  --project-root "$PROJECT_ROOT" "${PUBLIC_API_ARGS[@]}" --format json) || exit 1
 CANONICAL_COUNT=$(node "$INVENTORY_SCRIPT" "$RAW_PROBE_JSON" \
-  --project-root "$PROJECT_ROOT" --format count) || exit 1
+  --project-root "$PROJECT_ROOT" "${PUBLIC_API_ARGS[@]}" --format count) || exit 1
 CANONICAL_BLOCK=$(node "$INVENTORY_SCRIPT" "$RAW_PROBE_JSON" \
-  --project-root "$PROJECT_ROOT" --format markdown) || exit 1
+  --project-root "$PROJECT_ROOT" "${PUBLIC_API_ARGS[@]}" --format markdown) || exit 1
 ```
 
 The sole scope definition is `language=rust && kind=exec && is-relevant=true &&
 untracked=false`. Missing, pre-0.19.0, malformed, failed, or empty probe output HALTS with
 install/upgrade-and-retry guidance. Never fall back to grep or model enumeration. Models never
 discover, add, remove, or recount functions.
+
+The helper also supplies direct `dependents`, `topLevelFunctions`, `entryPointFunctions`, and exact
+specification/verification progress. `publicTopLevelFunctions` is exact only when the extraction
+log confirms the cargo-public-api override and every canonical atom has `is-public-api`; otherwise
+it is null. Never infer it from `is-public`.
 </step>
 
 <step name="resolve_models">
@@ -100,11 +123,11 @@ Agent inputs (all inlined in prompt):
 - lean-spec-conventions.md content
 
 Expected outputs:
-- Annotations keyed by every supplied canonical atom ID (signature, types, context, complexity)
-- Leaf/recursive classification using only supplied `inScopeDependencies`
-- Recursive vs non-recursive classification
+- Annotations keyed by every supplied canonical atom ID (signature, types, complexity, risk,
+  recommendation)
+- Generated endpoint and progress facts repeated unchanged when context requires them
 - Type inventory from Types.lean
-- Existing proof context, without changing canonical membership/count/status
+- Qualitative proof context, without changing canonical membership, graph, or progress
 
 Agent returns with `## RESEARCH COMPLETE` containing structured `<findings>`,
 `<relevant_files>`, and `<recommendations>` sections.
@@ -131,35 +154,25 @@ The executor writes `.formalising/CODEMAP.md` with:
 ## Project Info
 - Lean toolchain: [from lean-toolchain]
 - Aeneas backend: [revision from lakefile.toml if available]
-- Function count: [exact canonical count]
-- Leaf functions: [M identified]
 - Defs file: [detected or user-confirmed path]
 - Interpretation functions: [detected definitions, if any]
 
 <!-- the supplied fvs:probe-inventory managed block, byte-for-byte and exactly once -->
 
-## Dependency Graph
-[Adjacency list: function -> [callees]]
-
-## Verification Entry Points
-[Leaf functions sorted by estimated complexity]
+## Qualitative Recommendations
+[Complexity, risk, and recommendations keyed by supplied canonical atom ID]
 
 ## Type Inventory
 [Types from Types.lean]
-
-## Existing Specs
-| File | Status | Sorry Count |
-|------|--------|-------------|
 ```
-
-Status symbols: `[OK]` verified, `[??]` in progress, `[--]` no spec.
 
 Agent returns with `## EXECUTION COMPLETE` confirming files written.
 All writes use the Write tool (VS Code diffs) for user approval.
 
-The executor never discovers, adds, removes, or recounts functions. It preserves user-marker notes
-and writes model annotations/priorities separately, keyed by canonical atom ID. After it returns,
-run the deterministic post-write gate:
+The executor never discovers, adds, removes, or recounts functions, and never calculates or alters
+generated edges, endpoint sets, statuses, totals, or percentages. It preserves user-marker notes
+and writes qualitative annotations separately, keyed by canonical atom ID. After it returns, run
+the deterministic post-write gate:
 
 ```bash
 node "$INVENTORY_SCRIPT" "$RAW_PROBE_JSON" --project-root "$PROJECT_ROOT" \
@@ -180,9 +193,9 @@ Display summary to user.
 FVS >> MAP COMPLETE
 
 Project: [name from config or directory]
-Functions: $CANONICAL_COUNT canonical, [M] leaf functions
-Existing specs: [K] files ([J] with sorry remaining)
-Recommended starting points: [top 5 leaf functions]
+Functions: $CANONICAL_COUNT canonical
+Endpoints and progress: generated in CODEMAP.md
+Recommendations: qualitative, keyed by canonical atom ID
 
 Written: .formalising/CODEMAP.md
 ```
@@ -201,8 +214,10 @@ Suggest next command:
 - Project detected via fvs-config.json or auto-detection
 - Model profile resolved from config or quality default
 - probe-aeneas >= 0.19.0 Schema 3.0 supplies the sole exact inventory/count
-- fvs-researcher annotates the supplied canonical inventory without changing membership/count
-- fvs-executor preserves the supplied managed block and keys annotations by atom ID
+- The helper supplies direct dependents, endpoint sets, and exact progress partitions
+- Public top-level functions are exact when available and null rather than guessed otherwise
+- fvs-researcher annotates the supplied canonical inventory without changing generated facts
+- fvs-executor preserves the supplied managed block and keys qualitative annotations by atom ID
 - `--check-codemap` passes after the CODEMAP write
 - Clear summary displayed with recommended next steps
 </success_criteria>

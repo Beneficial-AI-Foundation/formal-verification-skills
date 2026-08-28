@@ -393,6 +393,8 @@ describe('probe-aeneas canonical function inventory', () => {
     const workflow = fs.readFileSync(path.join(ROOT, 'fv-skills', 'workflows', 'map-code.md'), 'utf8');
     const researcher = fs.readFileSync(path.join(ROOT, 'agents', 'fvs-researcher.md'), 'utf8');
     const executor = fs.readFileSync(path.join(ROOT, 'agents', 'fvs-executor.md'), 'utf8');
+    const planCommand = fs.readFileSync(path.join(ROOT, 'commands', 'fvs', 'fc-plan.md'), 'utf8');
+    const planWorkflow = fs.readFileSync(path.join(ROOT, 'fv-skills', 'workflows', 'fc-plan.md'), 'utf8');
 
     for (const content of [command, workflow]) {
       assert.match(content, /probe-aeneas extract/);
@@ -400,13 +402,39 @@ describe('probe-aeneas canonical function inventory', () => {
       assert.match(content, /--check-codemap/);
       assert.match(content, /canonical_inventory/i);
       assert.match(content, /never (?:discover|add|remove|recount)/i);
+      assert.match(content, /cargo-public-api/);
+      assert.match(content, /--with-public-api/);
+      assert.match(content, /cargo-public-api found/);
+      assert.match(content, /--public-api-exact/);
+      assert.match(content, /topLevelFunctions/);
+      assert.match(content, /entryPointFunctions/);
       assert.ok(!content.includes("trap 'rm -rf"), 'extract must survive until the post-write check');
       assert.ok(content.lastIndexOf('rm -rf -- "$PROBE_TMP"') > content.indexOf('--check-codemap'));
+      assert.ok(!content.includes('leaf functions sorted'));
     }
     assert.match(researcher, /parent-supplied canonical inventory/i);
     assert.match(researcher, /never (?:discover|add|remove|recount)/i);
+    assert.ok(!researcher.includes('Use only supplied `inScopeDependencies` to identify leaves'));
+    assert.ok(!researcher.includes('No spec file = unspecified'));
     assert.match(executor, /parent-supplied canonical inventory/i);
     assert.match(executor, /never (?:discover|add|remove|recount)/i);
     assert.match(executor, /byte-for-byte and exactly once/i);
+    assert.ok(!executor.includes('Adjacency and leaf lists derived'));
+    assert.ok(!executor.includes('Verification state per function'));
+
+    for (const content of [planCommand, planWorkflow]) {
+      assert.match(content, /probe-aeneas extract/);
+      assert.match(content, /fvs-probe-inventory\.mjs/);
+      assert.match(content, /--update-codemap/);
+      assert.match(content, /--public-api-exact/);
+      assert.match(content, /outsideTargetDependencies/);
+      assert.match(content, /canonical_inventory/i);
+      assert.match(content, /complexity.*risk.*recommendation/is);
+      assert.ok(content.lastIndexOf('rm -rf -- "$PROBE_TMP"') > content.lastIndexOf('--check-codemap'));
+      assert.ok(!content.includes('"Ready now" set'));
+      assert.ok(!content.includes('## Blocked Functions'));
+      assert.ok(!content.includes('bottom-up by dependency depth'));
+      assert.ok(!content.includes('Topological sort of unverified functions'));
+    }
   });
 });
