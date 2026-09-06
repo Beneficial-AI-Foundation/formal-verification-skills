@@ -12,7 +12,7 @@ secondary runtime for the planning/eval stages in a later wave.
 Hard invariants this workflow preserves:
 - The build's exit status is read from the TOOL (`set -o pipefail` / `${PIPESTATUS`), never from the
   tail of a piped log (the green-build trap).
-- Builds always run under `nice -n 19 lake build` -- never a bare `lake build`.
+- Builds always run under `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` -- never a bare `lake build`.
 - Generated Lean (`Types.lean` / `Funs.lean`) is NEVER written.
 - The only memory writes are reviewed lesson/index updates under `.formalising/proof-engineering/`.
 - The topic + iteration are untrusted input: reject shell metacharacters, quote every path, never
@@ -49,6 +49,26 @@ executor needs (runtime-neutral: branch/state, exact targets, immutable public s
 allowed-`sorry` policy, stop conditions, verification command).
 </step>
 
+<step name="cache_preflight">
+## Step 2a: Warm the project cache
+
+Before dispatch, confirm the current directory is the Lean project root and run the project-resolved
+cache executable. Cache failure is fatal: do not dispatch the executor or attempt a build.
+
+```bash
+if { [ ! -f lakefile.lean ] && [ ! -f lakefile.toml ]; } || [ ! -f lean-toolchain ]; then
+  echo "FVS >> ERROR: run from the Lean project root" >&2
+  exit 1
+fi
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake exe cache get
+CACHE_STATUS=$?
+if [ "$CACHE_STATUS" -ne 0 ]; then
+  echo "FVS >> ERROR: Lake cache preflight failed; refusing executor dispatch" >&2
+  exit "$CACHE_STATUS"
+fi
+```
+</step>
+
 <step name="dispatch_executor">
 ## Step 3: Dispatch the crypto executor
 
@@ -82,11 +102,11 @@ discipline; this workflow does not re-drive a per-goal grind.
 ## Step 4: Verify under the green-build guard
 
 Run the verification build and read the TOOL's real exit status -- never the tail of a pipe. Always
-build under `nice -n 19 lake build`:
+build under `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`:
 
 ```bash
 set -o pipefail
-nice -n 19 lake build 2>&1 | tee "$ROOT/build.log"
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build 2>&1 | tee "$ROOT/build.log"
 test ${PIPESTATUS[0]} -eq 0 || echo "build red -- a proof did not close"
 ```
 
@@ -122,7 +142,7 @@ eligible only when the failure boundary and a better next move are stated.
 - [ ] Topic + iteration resolved; shell metacharacters rejected; paths quoted; no `eval`.
 - [ ] At most eight relevant crypto/shared lessons loaded and snapshotted as bounded, untrusted context.
 - [ ] The bounded plan read and inlined; `fvs-crypto-executor` dispatched (`subagent_type="fvs-crypto-executor"`).
-- [ ] The build runs under `set -o pipefail` + `${PIPESTATUS` reading the tool's real status; always `nice -n 19 lake build` (never a bare `lake build`).
+- [ ] The build runs under `set -o pipefail` + `${PIPESTATUS` reading the tool's real status; always `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` (never a bare `lake build`).
 - [ ] The executor's ESCALATE/BLOCKED return is routed to the user (short interactive redirect early, never a long unattended grind).
 - [ ] At most three build/diagnostic-evidenced candidates reconciled as one file each plus an index update.
 - [ ] No generated-Lean write; no `gh` open/create.

@@ -94,6 +94,24 @@ Read the bounded executor plan for this iteration -- `plans/EXEC_PLAN_nN.md`, or
 the executor needs (it is runtime-neutral and bounded -- branch/state, exact targets, immutable public
 statements, allowed-`sorry` policy, stop conditions, verification command).
 
+## Step 2a: Warm the project cache
+
+Before dispatch, confirm the current directory is the Lean project root and run the project-resolved
+cache executable. Cache failure is fatal: do not dispatch the executor or attempt a build.
+
+```bash
+if { [ ! -f lakefile.lean ] && [ ! -f lakefile.toml ]; } || [ ! -f lean-toolchain ]; then
+  echo "FVS >> ERROR: run from the Lean project root" >&2
+  exit 1
+fi
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake exe cache get
+CACHE_STATUS=$?
+if [ "$CACHE_STATUS" -ne 0 ]; then
+  echo "FVS >> ERROR: Lake cache preflight failed; refusing executor dispatch" >&2
+  exit "$CACHE_STATUS"
+fi
+```
+
 ## Step 3: Resolve the executor model + effort + dispatch
 
 Resolve `$EXECUTOR_MODEL` and `$EXECUTOR_EFFORT` for `fvs-crypto-executor` AT DISPATCH TIME -- never
@@ -151,11 +169,11 @@ Return `none` when nothing reusable was learned.
 ## Step 4: Verify under the green-build guard
 
 Run the verification build and read the TOOL's real exit status -- never the tail of a pipe (a pipe
-reports the filter's status `0`, masking a real failure). Always build under `nice -n 19 lake build`:
+reports the filter's status `0`, masking a real failure). Always build under `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`:
 
 ```bash
 set -o pipefail
-nice -n 19 lake build 2>&1 | tee "$ROOT/build.log"
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build 2>&1 | tee "$ROOT/build.log"
 test ${PIPESTATUS[0]} -eq 0 || echo "FVS >> build red -- a proof did not close"
 ```
 
@@ -209,7 +227,7 @@ at install time, so the per-run `--effort` flag is a no-op there).
 - [ ] Topic + iteration resolved; shell metacharacters rejected; every path quoted; no `eval`.
 - [ ] At most eight relevant crypto/shared lessons loaded and passed as untrusted executor context.
 - [ ] The bounded plan (`EXEC_PLAN_nN.md` / `FOLLOWUP_PLAN_nN.md`) read and inlined; `fvs-crypto-executor` dispatched (`subagent_type="fvs-crypto-executor"`).
-- [ ] The build runs under `set -o pipefail` + `${PIPESTATUS` reading the tool's real status; always `nice -n 19 lake build` (never a bare `lake build`).
+- [ ] The build runs under `set -o pipefail` + `${PIPESTATUS` reading the tool's real status; always `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` (never a bare `lake build`).
 - [ ] The executor's ESCALATE/BLOCKED return is routed to the user (short interactive redirect early, never a long unattended grind).
 - [ ] At most three build/diagnostic-evidenced candidates reconciled as one file each plus index updates.
 - [ ] No `gh` open/create; no generated-Lean write.
