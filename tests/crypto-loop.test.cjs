@@ -248,6 +248,67 @@ for (const key of ['cmdExecute', 'wfExecute']) {
 }
 
 // ---------------------------------------------------------------------------
+// 6a. Crypto execution runtime + Lake safety policy (#49/#50).
+// ---------------------------------------------------------------------------
+describe('Crypto loop: executor declares its IDE diagnostics capability (#49)', () => {
+  const source = fs.readFileSync(path.join(AGENTS_DIR, 'fvs-crypto-executor.md'), 'utf8');
+  const frontmatter = source.match(/^---\n([\s\S]*?)\n---/);
+  assert.ok(frontmatter, 'agents/fvs-crypto-executor.md missing YAML frontmatter');
+  const toolsValue = frontmatter[1].match(/^tools:\s*(.+)$/m);
+  assert.ok(toolsValue, 'agents/fvs-crypto-executor.md missing tools frontmatter value');
+  const tools = toolsValue[1].split(',').map(tool => tool.trim());
+
+  it('lists mcp__ide__getDiagnostics in frontmatter, not only body prose', () => {
+    assert.ok(tools.includes('mcp__ide__getDiagnostics'),
+      'agents/fvs-crypto-executor.md tools must declare mcp__ide__getDiagnostics');
+  });
+
+  it('keeps an explicit Bash diagnostics fallback for headless runtimes', () => {
+    assert.match(source, /headless[\s\S]*IDE MCP[\s\S]*lake env lean/i,
+      'agents/fvs-crypto-executor.md missing headless Bash/lake env lean fallback');
+  });
+});
+
+for (const key of ['cmdExecute', 'wfExecute']) {
+  whenExists(STAGE_FILES[key], `Crypto loop: cache-first dispatch in ${rel(STAGE_FILES[key])} (#50)`, (_content, absPath) => {
+    const source = fs.readFileSync(absPath, 'utf8');
+    const cacheAt = source.indexOf('LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake exe cache get');
+    const dispatchAt = source.indexOf('subagent_type="fvs-crypto-executor"');
+
+    it('warms the project cache before dispatching the build-performing executor', () => {
+      assert.ok(cacheAt >= 0, `${rel(absPath)} missing mandatory lake exe cache get preflight`);
+      assert.ok(dispatchAt >= 0 && cacheAt < dispatchAt,
+        `${rel(absPath)} cache preflight must precede fvs-crypto-executor dispatch`);
+    });
+
+    it('halts on a failed cache preflight', () => {
+      const failureGuard = source.slice(cacheAt, cacheAt + 500);
+      assert.match(failureGuard, /CACHE_STATUS=\$\?/,
+        `${rel(absPath)} does not capture the cache command's real exit status`);
+      assert.match(failureGuard, /exit "\$CACHE_STATUS"/,
+        `${rel(absPath)} does not halt on cache failure`);
+    });
+  });
+}
+
+for (const absPath of [STAGE_FILES.cmdExecute, STAGE_FILES.wfExecute,
+  path.join(AGENTS_DIR, 'fvs-crypto-executor.md')]) {
+  describe(`Crypto loop: bounded builds in ${rel(absPath)} (#50)`, () => {
+    const buildLines = fs.readFileSync(absPath, 'utf8')
+      .split('\n')
+      .filter(line => line.includes('nice -n 19 lake build'));
+
+    it('uses the configurable four-thread default for every positive build instruction', () => {
+      assert.ok(buildLines.length > 0, `${rel(absPath)} has no build instruction to check`);
+      for (const line of buildLines) {
+        assert.ok(line.includes('LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build'),
+          `${rel(absPath)} has an unbounded build instruction: ${line.trim()}`);
+      }
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
 // 10. Crypto executor discipline (D-01/D-04).
 //     The dedicated crypto executor must carry the whole-unit
 //     implement -> check -> complete -> escalate -> BLOCKED discipline, drive
