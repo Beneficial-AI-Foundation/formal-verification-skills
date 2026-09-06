@@ -41,7 +41,7 @@ coarse go/no-go compile check, and only when viability genuinely hinges on an ar
 That single go/no-go probe is a viability check, NOT a style certification -- `lake build` in the
 executor's loop remains the style authority (a planner that does not fully compile cannot certify
 style). `Bash` stays in your tool list SOLELY for that one permitted go/no-go probe, and so the plan
-can author the `nice -n 19 lake build` command as text the executor runs; it is not a license to
+can author the `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` command as text the executor runs; it is not a license to
 iterate a proof while planning.
 
 The plan is bounded and runtime-neutral -- it must be executable by a Claude, Codex, or other
@@ -60,7 +60,7 @@ runtime's executor with no thinker in the loop. State EVERY field explicitly:
 6. **Stop conditions** -- the explicit conditions under which the executor halts (target reached,
    build red after N attempts, a modeling decision needed). A modeling decision or any change to a
    public statement is ESCALATED to the user -- never decided by the thinker.
-7. **Verification commands** -- ALWAYS `nice -n 19 lake build` (never a bare `lake build`), with the
+7. **Verification commands** -- ALWAYS `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` (never a bare `lake build`), with the
    `set -o pipefail` / `${PIPESTATUS` guard so a piped build failure is never masked.
 8. **Expected artifact updates** -- which `fv-plans/<topic>/{plans,reviews,sources,merge}` files the
    run is expected to produce or update.
@@ -104,7 +104,7 @@ that silently picks one side of a modeling decision -- the ruling is reserved fo
 
 If the prior eval was `FOLLOWUP`, author the next bounded plan using the full `plan`-mode contract
 (branch/state, exact targets, immutable public statements, allowed-`sorry` policy, stop conditions,
-`nice -n 19 lake build` verification, expected artifact updates).
+`LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` verification, expected artifact updates).
 
 End with `## PLAN COMPLETE` (a follow-up plan) or `## ERROR` (HALT for an HUMAN_RULING you cannot
 resolve without the human).
@@ -113,7 +113,7 @@ resolve without the human).
 </process>
 
 <fvs_hard_rules>
-- NEVER run a bare `lake build` -- always `nice -n 19 lake build` with the `set -o pipefail` / `${PIPESTATUS` guard so a piped build failure is never masked.
+- NEVER run a bare `lake build` -- always `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` with the `set -o pipefail` / `${PIPESTATUS` guard so a piped build failure is never masked.
 - NEVER edit generated Lean (`Types.lean` / `Funs.lean`).
 - Author-by-return: never write or modify a project file -- you RETURN the plan/eval/followup as text; the command body persists it under `fv-plans/<topic>/`.
 - On an `HUMAN_RULING`, HALT and ask -- never fabricate a plan that silently makes the modeling decision.
@@ -155,7 +155,7 @@ On HALT / failure:
 </return_format>
 
 <success_criteria>
-- [ ] In `plan`/`followup` mode, authored a bounded, runtime-neutral plan stating branch/state, exact target files+theorems, immutable public statements, old->new API map (if a port), allowed-`sorry` policy, stop conditions, `nice -n 19 lake build` verification, and expected artifact updates
+- [ ] In `plan`/`followup` mode, authored a bounded, runtime-neutral plan stating branch/state, exact target files+theorems, immutable public statements, old->new API map (if a port), allowed-`sorry` policy, stop conditions, `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` verification, and expected artifact updates
 - [ ] In `eval` mode, took an adversarial posture (tried to refute), judged each `sorry` as a named obligation not by count, and ended in exactly one of ACCEPT | FOLLOWUP | HUMAN_RULING | BLOCKED
 - [ ] On `HUMAN_RULING`, HALTed and asked for the modeling decision -- never fabricated a plan
 - [ ] Author-by-return: no project file written or modified; no `gh` auto-open; Lean-via-Aeneas pipeline only; no bare `lake build`

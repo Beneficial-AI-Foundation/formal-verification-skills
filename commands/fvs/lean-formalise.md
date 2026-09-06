@@ -124,6 +124,24 @@ For images (PNG/JPG): note they will be read via Claude's vision capability (Rea
 
 If no resources and no KB: warn that the researcher will have limited context, but continue -- the user may be working from general mathematical knowledge.
 
+### Mandatory Lake cache preflight
+
+Run this from the validated Lean project root before either subagent dispatch. A failure stops the
+workflow before delegation or build:
+
+```bash
+if { [ ! -f lakefile.lean ] && [ ! -f lakefile.toml ]; } || [ ! -f lean-toolchain ]; then
+  echo "FVS >> ERROR: run from the Lean project root" >&2
+  exit 1
+fi
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake exe cache get
+CACHE_STATUS=$?
+if [ "$CACHE_STATUS" -ne 0 ]; then
+  echo "FVS >> ERROR: Lake cache preflight failed; stopping workflow" >&2
+  exit "$CACHE_STATUS"
+fi
+```
+
 ## Step 2a: Load Bounded Proof-Engineering Memory
 
 Follow `proof-engineering-loop.md` and initialize `.formalising/proof-engineering/`. Classify this
@@ -331,12 +349,12 @@ Check:
 ## Step 9: Optional Build Check
 
 ```bash
-nice -n 19 lake build 2>&1 | tail -20
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build 2>&1 | tail -20
 ```
 
 - sorry warnings are expected and correct at this stage
 - Import errors or type errors noted for user
-- NEVER run plain `lake build`. Always use `nice -n 19 lake build`.
+- NEVER run plain `lake build`. Always use `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`.
 
 ## Step 9a: Reconcile Proof-Engineering Lessons
 
@@ -377,7 +395,7 @@ Status:    [??] Ready for verification (contains sorry)
 - [ ] Researcher's proposed structure reviewed by user before execution
 - [ ] Executor subagent created both definition files AND spec files
 - [ ] Generated files validated (sorry present, imports consistent)
-- [ ] Build check uses nice -n 19 lake build (never plain lake build)
+- [ ] Build check uses LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build (never plain lake build)
 - [ ] At most three evidence-gated candidates reconciled as one lesson per file plus index updates
 - [ ] Summary uses FVS >> FORMALISE banner with file list
 - [ ] Clear next step offered: /fvs:lean-verify

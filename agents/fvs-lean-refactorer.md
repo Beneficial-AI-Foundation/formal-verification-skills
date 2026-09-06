@@ -80,7 +80,7 @@ After applying a refactoring:
 **Tier:** {1|2|3|4}
 **Lines:** {before} -> {after}
 
-Verify: nice -n 19 lake build
+Verify: LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build
 ```
 
 When no further refactoring is possible:
@@ -108,7 +108,7 @@ When something goes wrong:
 - NEVER touch `unfold + step` structural backbone
 - NEVER write changes without explaining the specific heuristic being applied
 - If a change breaks the build, REVERT and return ERROR with the build output
-- Use `nice -n 19 lake build` for all build checks, NEVER plain `lake build`
+- Use `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` for all build checks, NEVER plain `lake build`
 - After a failed refactoring attempt, do not retry the same heuristic
 - Prefer conservative changes -- when in doubt, leave it alone
 - Do NOT use @-references. All reference knowledge is inlined by the parent command.

@@ -89,6 +89,24 @@ command -v pdftotext >/dev/null 2>&1 && echo "pdftotext available" || \
 - PDF without pdftotext: warn and skip PDF files. Non-blocking.
 </step>
 
+<step name="cache_preflight">
+Run the mandatory cache preflight from the validated Lean project root before either subagent
+dispatch. A failure stops the workflow before delegation or build:
+
+```bash
+if { [ ! -f lakefile.lean ] && [ ! -f lakefile.toml ]; } || [ ! -f lean-toolchain ]; then
+  echo "FVS >> ERROR: run from the Lean project root" >&2
+  exit 1
+fi
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake exe cache get
+CACHE_STATUS=$?
+if [ "$CACHE_STATUS" -ne 0 ]; then
+  echo "FVS >> ERROR: Lake cache preflight failed; stopping workflow" >&2
+  exit "$CACHE_STATUS"
+fi
+```
+</step>
+
 <step name="proof_engineering_memory">
 Follow `fv-skills/references/proof-engineering-loop.md`. Initialize the indexed store, classify the
 task as `crypto` when it concerns cryptography/protocols/primitives and `shared` otherwise, then
@@ -255,7 +273,7 @@ Validate generated files meet structural requirements.
 
 **Optional build check:**
 ```bash
-nice -n 19 lake build 2>&1 | tail -20
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build 2>&1 | tail -20
 ```
 
 sorry warnings expected. Import/type errors noted for user.
@@ -298,7 +316,7 @@ Status:    [??] Ready for verification (contains sorry)
 - Researcher's proposed structure reviewed by user before execution
 - Executor created both definition files AND spec files
 - Generated files validated (sorry present, imports consistent)
-- Build check uses nice -n 19 lake build (never plain lake build)
+- Build check uses LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build (never plain lake build)
 - At most three evidence-gated candidates reconciled as one lesson per file plus index updates
 - Summary uses FVS >> FORMALISE banner with file list
 - KB is optional -- command works without any KB configured

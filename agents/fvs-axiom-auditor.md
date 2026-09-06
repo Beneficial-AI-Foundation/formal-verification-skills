@@ -31,7 +31,7 @@ Iterate exactly the parent-supplied canonical atom IDs. For each entry, introspe
 
 ## 2. Introspect each declaration with `#print axioms`
 For each usable FQN, run `#print axioms <FQN>` via `lake env lean` (introspection only -- if you
-must rebuild anything use `nice -n 19 lake build`, NEVER a bare `lake build`). `#print axioms` is the
+must rebuild anything use `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`, NEVER a bare `lake build`). `#print axioms` is the
 authoritative oracle; static grep never determines inventory membership or classification.
 
 ## 3. Classify from the `#print axioms` output
@@ -64,7 +64,7 @@ count; unresolved entries are explicit, never omitted.
 </process>
 
 <fvs_hard_rules>
-- NEVER run a bare `lake build` -- use `nice -n 19 lake build` if you must rebuild; introspection uses `lake env lean` + `#print axioms`.
+- NEVER run a bare `lake build` -- use `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` if you must rebuild; introspection uses `lake env lean` + `#print axioms`.
 - NEVER edit generated Lean (`Types.lean` / `Funs.lean`) -- you introspect them, you never write them.
 - Read-only: never write or modify any file -- you RETURN the classified, ordered table as text; the command body persists it and fires the gate.
 - Never widen the inventory beyond the strictly-scoped target; surface cone prerequisites separately, never fold them in.

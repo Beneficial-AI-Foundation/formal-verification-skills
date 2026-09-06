@@ -53,6 +53,7 @@ describe('Lean build entrypoints are cache-first and fail closed', () => {
       const actions = [
         source.search(/^\s*LEAN_NUM_THREADS="\$\{LEAN_NUM_THREADS:-4\}" nice -n 19 lake build\b/m),
         source.search(/subagent_type="[^"\n]+"/),
+        source.search(/<step name="(?:dispatch|research_phase|execute_phase|iterative_execute)/),
       ].filter(at => at >= 0);
       assert.ok(actions.length > 0, `${relative(file)} has no build or delegate action to order`);
       assert.ok(cacheAt < Math.min(...actions),

@@ -78,7 +78,7 @@ the local-clone commit, the existing-issue numbers you dedup'd against, the cata
 - ESCAPE all interpolated MFE/error/tool output when writing `*.html` (error strings can contain markup).
 - Quote and validate every clone path as a directory before `git -C`; never `eval` a path.
 - Dedup first: cite an existing issue rather than drafting a duplicate.
-- NEVER run a bare `lake build` (use `nice -n 19 lake build` if you must reproduce anything).
+- NEVER run a bare `lake build` (use `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` if you must reproduce anything).
 - NEVER edit generated Lean (`Types.lean` / `Funs.lean`).
 - Write only to the workspace; all writes use the Write/Edit tool.
 - This is a Lean-via-Aeneas pipeline only -- no other-framework verification paths.

@@ -63,6 +63,24 @@ records, followed by relevant provisional records labeled as uncertain if capaci
 `.formalising/PROOF-NOTES.md`; never append to or delete it automatically.
 </step>
 
+<step name="cache_preflight">
+Run the mandatory cache preflight from the validated Lean project root before either subagent
+dispatch. A failure stops the workflow before delegation or build:
+
+```bash
+if { [ ! -f lakefile.lean ] && [ ! -f lakefile.toml ]; } || [ ! -f lean-toolchain ]; then
+  echo "FVS >> ERROR: run from the Lean project root" >&2
+  exit 1
+fi
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake exe cache get
+CACHE_STATUS=$?
+if [ "$CACHE_STATUS" -ne 0 ]; then
+  echo "FVS >> ERROR: Lake cache preflight failed; stopping workflow" >&2
+  exit "$CACHE_STATUS"
+fi
+```
+</step>
+
 <step name="resolve_models">
 Read config and resolve models for subagent dispatch.
 
@@ -207,7 +225,7 @@ and `sorry`. If the gate still fails, stop without reporting the spec ready.
 
 **Optional build check:**
 ```bash
-nice -n 19 lake build 2>&1 | tail -20
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build 2>&1 | tail -20
 ```
 
 If build fails on import errors: fix imports and re-validate.

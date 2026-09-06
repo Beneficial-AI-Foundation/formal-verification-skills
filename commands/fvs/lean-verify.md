@@ -97,6 +97,24 @@ Return `none` when nothing reusable was learned.
 </lesson_candidates>
 ```
 
+## Step 1b: Warm the project cache
+
+Run the mandatory cache preflight from the validated Lean project root before any build or
+subagent dispatch. A failure stops the workflow:
+
+```bash
+if { [ ! -f lakefile.lean ] && [ ! -f lakefile.toml ]; } || [ ! -f lean-toolchain ]; then
+  echo "FVS >> ERROR: run from the Lean project root" >&2
+  exit 1
+fi
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake exe cache get
+CACHE_STATUS=$?
+if [ "$CACHE_STATUS" -ne 0 ]; then
+  echo "FVS >> ERROR: Lake cache preflight failed; stopping workflow" >&2
+  exit "$CACHE_STATUS"
+fi
+```
+
 ## Step 2: Read Config and Resolve Models
 
 Read the project config to determine which models to use for subagent dispatch:
@@ -176,7 +194,7 @@ echo "Found $SORRY_COUNT sorry to resolve"
 If zero sorry: spec may already be proved. Run build check to confirm:
 
 ```bash
-nice -n 19 lake build 2>&1 | tail -20
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build 2>&1 | tail -20
 ```
 
 - If build clean: report VERIFIED status and exit.
@@ -329,7 +347,7 @@ If successful, return ## EXECUTION COMPLETE. In either case return a separate
       - For a user-authorized statement edit, run the same check WITHOUT `--baseline`; the complete
         file must pass because statement edits cannot inherit legacy style exemptions.
       - Only after the applicable style gate passes, remind the user:
-        "Check compilation: nice -n 19 lake build"
+        'Check compilation: LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build'
       - Wait for user feedback on whether Lean compiles
       - If compiles: SORRY_RESOLVED += 1, break inner loop, move to next sorry
       - If does not compile: store error as PREVIOUS_FEEDBACK, ATTEMPT_FOR_THIS_SORRY += 1
@@ -440,7 +458,7 @@ guesses, or inferred preferences. If nothing survives, leave the store unchanged
 - [ ] User checks Lean compiles between each step (pair programming feel)
 - [ ] NEEDS INPUT handling for stuck proofs with user hint collection
 - [ ] Max-attempts guardrail enforced per sorry (3) and total (25 hard cap)
-- [ ] Build checks use nice -n 19 lake build (never plain lake build)
+- [ ] Build checks use LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build (never plain lake build)
 - [ ] Result correctly classified as VERIFIED, PARTIAL, or STUCK
 - [ ] CODEMAP.md updated with verification status if available
 - [ ] At most three evidence-backed candidates reconciled as one lesson per file plus index updates

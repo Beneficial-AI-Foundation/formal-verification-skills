@@ -110,6 +110,22 @@ This command will NOT author a follow-up that silently picks a side.
 Only AFTER the user supplies the ruling does the command author a follow-up plan that encodes the
 ruling (returning to Step 4). Never invent a follow-up on `HUMAN_RULING` without the human's ruling.
 
+Run the mandatory cache preflight from the validated Lean project root before either thinker path.
+A failure stops the workflow before delegation or any authored build plan:
+
+```bash
+if { [ ! -f lakefile.lean ] && [ ! -f lakefile.toml ]; } || [ ! -f lean-toolchain ]; then
+  echo "FVS >> ERROR: run from the Lean project root" >&2
+  exit 1
+fi
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake exe cache get
+CACHE_STATUS=$?
+if [ "$CACHE_STATUS" -ne 0 ]; then
+  echo "FVS >> ERROR: Lake cache preflight failed; stopping workflow" >&2
+  exit "$CACHE_STATUS"
+fi
+```
+
 ## Step 4: Resolve the thinker + dispatch (followup mode)
 
 Default (no `--codex`) -- dispatch the in-runtime thinker. Resolve `$THINKER_MODEL` for
@@ -160,7 +176,7 @@ The thinker (in-runtime or Codex) authors the follow-up plan; THIS command body 
 `plans/FOLLOWUP_PLAN_nN.md` carrying
 the full bounded-plan contract (branch/state, exact target files + theorems, immutable public
 statements that must not change, allowed-`sorry` policy, stop conditions, the verification command
-`nice -n 19 lake build` under the `set -o pipefail` / `${PIPESTATUS` guard, expected artifact
+`LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` under the `set -o pipefail` / `${PIPESTATUS` guard, expected artifact
 updates).
 
 The artifact MUST also record:

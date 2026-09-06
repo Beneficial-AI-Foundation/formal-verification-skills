@@ -19,7 +19,7 @@ supplied function via `#print axioms`, and write a re-runnable, strictly depende
 `.formalising/audits/<target>.md` behind a fail-if-unjustified gate.
 
 This command is the ORCHESTRATOR. It resolves the target + the generated-Lean paths, runs
-`nice -n 19 lake build` as a hard, green-build-guarded precondition, dispatches the read-only
+`LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` as a hard, green-build-guarded precondition, dispatches the read-only
 `fvs-axiom-auditor` to introspect-classify-order the canonical list, then OWNS the persisted
 justification store and the fail-if-unjustified gate. The auditor introspects and returns by
 text; it never writes a file. This command persists the table and fires the gate.
@@ -67,6 +67,24 @@ Record the target project's `lean-toolchain` in the output (never pin a Lean ver
 note that a pre-fix toolchain may under-report an axiom-of-an-axiom (the `collectAxioms`
 under-reporting risk); the reference post-fix toolchain is the safe posture.
 
+## Step 1a: Warm the project cache
+
+Run the mandatory cache preflight from the validated Lean project root before the build
+precondition. A failure stops the audit:
+
+```bash
+if { [ ! -f lakefile.lean ] && [ ! -f lakefile.toml ]; } || [ ! -f lean-toolchain ]; then
+  echo "FVS >> ERROR: run from the Lean project root" >&2
+  exit 1
+fi
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake exe cache get
+CACHE_STATUS=$?
+if [ "$CACHE_STATUS" -ne 0 ]; then
+  echo "FVS >> ERROR: Lake cache preflight failed; stopping workflow" >&2
+  exit "$CACHE_STATUS"
+fi
+```
+
 ## Step 2: PRECONDITION -- build-backed, green-build guarded
 
 Introspection is only meaningful over a target layer that compiles. Run the build FIRST and read
@@ -74,7 +92,7 @@ the REAL exit status -- never the tail of a pipe:
 
 ```bash
 set -o pipefail
-nice -n 19 lake build 2>&1 | tee build.log
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build 2>&1 | tee build.log
 BUILD_STATUS=${PIPESTATUS[0]}
 ```
 
@@ -202,7 +220,7 @@ and never produces a CLEAN verdict without a green build. The `Task(...)` dispat
 
 <success_criteria>
 - [ ] Target + generated-Lean paths resolved via config -> auto-detect -> prompt -> error; every expansion quoted; shell-metacharacter target rejected; no `eval`.
-- [ ] Build precondition runs `nice -n 19 lake build` under `set -o pipefail` and reads `${PIPESTATUS[0]}`; HALT if the target layer does not compile.
+- [ ] Build precondition runs `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` under `set -o pipefail` and reads `${PIPESTATUS[0]}`; HALT if the target layer does not compile.
 - [ ] Fresh probe-aeneas >= 0.19.0 output supplies the exact target inventory/count before dispatch.
 - [ ] The read-only auditor consumes exactly the supplied atom IDs and introspects via `#print axioms`.
 - [ ] Uninspectable or omitted canonical entries remain visible and force NOT-CLEAN.

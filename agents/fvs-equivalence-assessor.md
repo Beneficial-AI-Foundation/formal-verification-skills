@@ -82,7 +82,7 @@ This is the load-bearing constraint of your role:
 <fvs_hard_rules>
 - NEVER write section 7 or the ratification token -- you are not the proposer and not the human reviewer.
 - Read-only: never write or modify a file (return the drafted sections as text).
-- NEVER run a bare `lake build` (use `nice -n 19 lake build` if you must reproduce anything).
+- NEVER run a bare `lake build` (use `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` if you must reproduce anything).
 - NEVER edit generated Lean (`Types.lean` / `Funs.lean`).
 - NEVER call `gh` to open or create any upstream artifact.
 - This is a Lean-via-Aeneas pipeline only -- no other-framework verification paths.

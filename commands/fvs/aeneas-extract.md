@@ -91,6 +91,22 @@ Follow the PRE-FLIGHT step of the workflow:
 Initialise the workspace tree `<extract_workspace>/<target>/` with subdirs `equivalence-gate/`,
 `mwe/`, `drafts/`, `catalog-candidates/`, `escalations/`.
 
+Run the mandatory cache preflight from the validated Lean project root. A failure stops the
+workflow before extraction, delegation, or build:
+
+```bash
+if { [ ! -f lakefile.lean ] && [ ! -f lakefile.toml ]; } || [ ! -f lean-toolchain ]; then
+  echo "FVS >> ERROR: run from the Lean project root" >&2
+  exit 1
+fi
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake exe cache get
+CACHE_STATUS=$?
+if [ "$CACHE_STATUS" -ne 0 ]; then
+  echo "FVS >> ERROR: Lake cache preflight failed; stopping workflow" >&2
+  exit "$CACHE_STATUS"
+fi
+```
+
 ## Step 3: Run the bounded loop
 
 Repeat EXTRACT -> CLASSIFY -> DISPATCH -> DOCUMENT until clean or escalated, enforcing the
@@ -98,7 +114,7 @@ loop bounds (per-blocker attempt-cap 3, per-run cycle hard-cap ~25, bisection va
 ~12, no-progress key `sha256(layer || signature)` -- a same-key recurrence after an applied
 fix escalates immediately).
 
-- **EXTRACT:** run extraction and build under `set -o pipefail` + `nice -n 19 lake build`;
+- **EXTRACT:** run extraction and build under `set -o pipefail` + `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`;
   read the tool's real exit status via `${PIPESTATUS[0]}`, never the tail of a piped log.
   Clean -> success oracle (Step 5). Failure -> classify.
 - **CLASSIFY:** `Task(subagent_type="fvs-extract-classifier", model="$CLASSIFIER_MODEL", ...)`
@@ -204,7 +220,7 @@ per model-profiles runtime handling).
 <success_criteria>
 - [ ] `<path>` auto-detected into crate/folder/file; the loop scoped accordingly.
 - [ ] Pin-audit warn-and-confirm on drift records `pin_context`; clone staleness reported gracefully.
-- [ ] EXTRACT reads the tool's real exit status (`set -o pipefail` / `${PIPESTATUS[0]}`); always `nice -n 19 lake build`.
+- [ ] EXTRACT reads the tool's real exit status (`set -o pipefail` / `${PIPESTATUS[0]}`); always `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`.
 - [ ] The orchestrator fires the gate itself, dispatching `fvs-equivalence-assessor` distinctly from `fvs-extract-bisector`; the success oracle greps `equivalence-ratified:` and refuses completion without it.
 - [ ] Reversible records at the crate root; generated Lean never written; annotations preferred.
 - [ ] Attempt-cap 3 + no-progress rule enforced; escalation is a human decision point and a valid outcome.

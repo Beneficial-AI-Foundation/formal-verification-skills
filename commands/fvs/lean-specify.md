@@ -91,6 +91,24 @@ reject path escapes and report index drift. Store the selected record bodies in
 `PROOF_ENGINEERING_CONTEXT`. If legacy `.formalising/PROOF-NOTES.md` exists, offer a reviewed split
 into individual records; never append to or delete it automatically.
 
+## Step 2b: Warm the project cache
+
+Run the mandatory cache preflight from the validated Lean project root before either subagent
+dispatch. A failure stops the workflow before delegation or build:
+
+```bash
+if { [ ! -f lakefile.lean ] && [ ! -f lakefile.toml ]; } || [ ! -f lean-toolchain ]; then
+  echo "FVS >> ERROR: run from the Lean project root" >&2
+  exit 1
+fi
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake exe cache get
+CACHE_STATUS=$?
+if [ "$CACHE_STATUS" -ne 0 ]; then
+  echo "FVS >> ERROR: Lake cache preflight failed; stopping workflow" >&2
+  exit "$CACHE_STATUS"
+fi
+```
+
 ## Step 3: Read Config and Resolve Models
 
 Read the project config to determine which models to use for subagent dispatch:
@@ -305,14 +323,14 @@ Check:
 ## Step 10: Optional Build Check
 
 ```bash
-nice -n 19 lake build 2>&1 | tail -20
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build 2>&1 | tail -20
 ```
 
 - If build fails on import errors: note for user.
 - If build fails on type errors: note for user.
 - Sorry warnings are expected and correct at this stage.
 
-NEVER run plain `lake build`. Always use `nice -n 19 lake build`.
+NEVER run plain `lake build`. Always use `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`.
 
 ## Step 10a: Reconcile Proof-Engineering Lessons
 

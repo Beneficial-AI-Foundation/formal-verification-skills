@@ -9,7 +9,7 @@ how aggressively refactorings are applied:
 - **aggressive** -- All tiers (1-4). Includes smart automation replacement. Higher risk of
   introducing fragility.
 
-Every refactoring is verified with `nice -n 19 lake build` before proceeding. If a
+Every refactoring is verified with `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` before proceeding. If a
 change breaks the build, it is reverted immediately.
 
 </overview>
@@ -110,7 +110,7 @@ theorem my_spec ... := by
   simp [*]; scalar_tac
 ```
 
-**Verify:** `nice -n 19 lake build` must still pass after removal.
+**Verify:** `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` must still pass after removal.
 
 **Tier:** 2 (low risk -- tactics like omega, linarith, simp_all consume hypotheses semantically without textual reference; see proof-fuel rule)
 
@@ -126,7 +126,7 @@ intent about which lemmas the proof actually depends on.
 1. Temporarily replace `simp [*]` with `simp?` in the proof
 2. Run Lean -- the infoview reports: `Try this: simp only [lemma1, lemma2, ...]`
 3. Replace `simp?` with the discovered `simp only [...]` call
-4. Verify with `nice -n 19 lake build`
+4. Verify with `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`
 
 **Example:**
 ```lean
@@ -170,7 +170,7 @@ When a simpler tactic alone closes a goal, remove the preceding setup tactic.
 . omega
 ```
 
-**Verification:** Always test the simpler version with `nice -n 19 lake build` before
+**Verification:** Always test the simpler version with `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` before
 committing. The simpler tactic may not always suffice -- only apply when confirmed.
 
 **Tier:** 1 (when removing redundant prefix) or 2 (when replacing with equivalent)
@@ -719,7 +719,7 @@ What mode?
     +-- Consecutive independent step calls? --> Try step*
     +-- Nothing else to do --> NO_CHANGE
 
-ALWAYS: Verify with nice -n 19 lake build after every change.
+ALWAYS: Verify with LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build after every change.
 NEVER: Touch @[step] attributes, theorem signatures, unfold+step backbone.
 ```
 
@@ -740,7 +740,7 @@ Changes:   {list of changes made}
 Lines:     {before} -> {after} ({delta})
 Status:    REFACTORED | NO_CHANGE | ERROR
 
-Verify: nice -n 19 lake build
+Verify: LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build
 ```
 
 Status values:

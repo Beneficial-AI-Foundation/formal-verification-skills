@@ -12,6 +12,24 @@ Output: Refactored spec file with before/after metrics, or NO_CHANGE if already 
 
 <process>
 
+<step name="cache_preflight">
+Run the mandatory cache preflight from the validated Lean project root before the baseline build.
+A failure stops the workflow:
+
+```bash
+if { [ ! -f lakefile.lean ] && [ ! -f lakefile.toml ]; } || [ ! -f lean-toolchain ]; then
+  echo "FVS >> ERROR: run from the Lean project root" >&2
+  exit 1
+fi
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake exe cache get
+CACHE_STATUS=$?
+if [ "$CACHE_STATUS" -ne 0 ]; then
+  echo "FVS >> ERROR: Lake cache preflight failed; stopping workflow" >&2
+  exit "$CACHE_STATUS"
+fi
+```
+</step>
+
 <step name="baseline_check">
 Validate the spec file exists AND compiles with zero sorry.
 
@@ -38,7 +56,7 @@ If sorry found: STOP. Report "Proof contains sorry -- refactoring requires fully
 
 **Build check:**
 ```bash
-nice -n 19 lake build 2>&1 | tail -20
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build 2>&1 | tail -20
 ```
 
 If build fails: STOP. Report build errors.
@@ -157,7 +175,7 @@ WHILE PASS < MAX_PASSES:
 
   ROUTE ON RETURN:
     ## REFACTORED:
-      Run: nice -n 19 lake build
+      Run: LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build
       If build passes: record change, PASS += 1, continue
       If build fails: REVERT the change (re-write previous content), store error as feedback, PASS += 1
     ## NO_CHANGE:
@@ -189,7 +207,7 @@ Per-theorem breakdown:
   {theorem_2}: {changes} changes, {lines_before} -> {lines_after}
   ...
 
-Verify: nice -n 19 lake build
+Verify: LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build
 ```
 
 **NO_CHANGE (nothing to refactor):**
@@ -222,7 +240,7 @@ Suggest next steps based on outcome.
 - Research subagent dispatched with inlined lean-refactoring, tactic-usage, proof-strategies
 - 3-lens analysis returned with per-theorem recommendations and tier classifications
 - Refactorer dispatched iteratively per theorem (one change at a time)
-- Build check after every refactoring change with nice -n 19 lake build
+- Build check after every refactoring change with LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build
 - Failed changes reverted immediately
 - Report-only mode stops after research phase
 - Result correctly classified as REFACTORED, NO_CHANGE, or ERROR

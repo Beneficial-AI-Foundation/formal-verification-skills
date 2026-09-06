@@ -74,7 +74,7 @@ The parent provides a `<sync_mode>` tag. Execute the matching mode.
 <fvs_hard_rules>
 - Reconcile-not-append: never duplicate an existing catalog entry or reference section; update in place.
 - "Fixed in upstream main" is NOT "fixed for us" -- never auto-retire a catalog entry until the resolved pin carries the fix.
-- NEVER run a bare `lake build` (use `nice -n 19 lake build` if a build is ever needed).
+- NEVER run a bare `lake build` (use `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` if a build is ever needed).
 - NEVER edit generated Lean (`Types.lean` / `Funs.lean`).
 - NEVER call `gh` to OPEN/create an upstream artifact (gh api READ for fetching docs/issues is allowed).
 - Propose each change for approval; all writes use the Write/Edit tool.
