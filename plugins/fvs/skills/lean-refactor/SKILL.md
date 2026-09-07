@@ -142,6 +142,24 @@ find Specs/ -name "*.lean" 2>/dev/null
 
 Wait for valid path.
 
+## Step 1a: Warm the project cache
+
+Run the mandatory cache preflight from the validated Lean project root before the baseline build.
+A failure stops the workflow:
+
+```bash
+if { [ ! -f lakefile.lean ] && [ ! -f lakefile.toml ]; } || [ ! -f lean-toolchain ]; then
+  echo "FVS >> ERROR: run from the Lean project root" >&2
+  exit 1
+fi
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake exe cache get
+CACHE_STATUS=$?
+if [ "$CACHE_STATUS" -ne 0 ]; then
+  echo "FVS >> ERROR: Lake cache preflight failed; stopping workflow" >&2
+  exit "$CACHE_STATUS"
+fi
+```
+
 ## Step 2: Baseline Build Check
 
 Confirm file exists, run build, confirm zero sorry.
@@ -156,7 +174,7 @@ If sorry found: direct to `/fvs:lean-verify $SPEC_PATH`. STOP.
 
 ```bash
 # Build check
-nice -n 19 lake build 2>&1 | tail -20
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build 2>&1 | tail -20
 ```
 
 If build fails: report error and STOP.
@@ -274,7 +292,7 @@ WHILE PASS < MAX_PASSES:
 
   ROUTE ON RETURN:
     ## REFACTORED:
-      Run: nice -n 19 lake build
+      Run: LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build
       If build passes: record change, PASS += 1, continue
       If build fails: REVERT the change (re-write previous content), store error as feedback, PASS += 1
     ## NO_CHANGE:
@@ -341,13 +359,13 @@ Try --mode aggressive for more aggressive refactoring.
 
 <success_criteria>
 - [ ] Spec file located and zero sorry confirmed
-- [ ] Baseline build check passes with nice -n 19 lake build
+- [ ] Baseline build check passes with LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build
 - [ ] Config read and models resolved for fvs-researcher and fvs-lean-refactorer
 - [ ] Research subagent dispatched with inlined lean-refactoring, tactic-usage, proof-strategies
 - [ ] 3-lens analysis returned with per-theorem recommendations
 - [ ] Report-only mode stops after research phase when flag is set
 - [ ] Refactorer dispatched iteratively per theorem (one change at a time)
-- [ ] Build check after every change with nice -n 19 lake build (never plain lake build)
+- [ ] Build check after every change with LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build (never plain lake build)
 - [ ] Failed changes reverted and error stored as feedback
 - [ ] Max-passes cap enforced (default 5, hard cap 20)
 - [ ] Result correctly classified as REFACTORED, NO_CHANGE, or ERROR

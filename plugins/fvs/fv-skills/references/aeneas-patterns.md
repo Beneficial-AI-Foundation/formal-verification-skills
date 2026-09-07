@@ -607,7 +607,7 @@ silently absent.
 ## NEVER run `lake build` without resource limits
 
 Full project compilation is computationally expensive (30+ minutes). Always use
-`nice -n 19 lake build` to avoid monopolizing system resources. For iterative
+`LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` to avoid monopolizing system resources. For iterative
 development, build individual files when possible.
 
 ## NEVER use `partial` or `private` for hand-written models

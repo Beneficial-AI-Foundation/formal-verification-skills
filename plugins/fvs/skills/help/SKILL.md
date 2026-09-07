@@ -249,7 +249,7 @@ Usage: `/fvs:lean-refactor Specs/Backend/Field/Sub.lean --theorem sub_spec --rep
 **`/fvs:trust-audit <target spec file | module subtree>`**
 Build-backed trust audit of an Aeneas-extracted Lean target.
 
-- Runs `nice -n 19 lake build` as a green-build-guarded precondition; HALTs if the target layer does not compile
+- Runs `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` as a green-build-guarded precondition; HALTs if the target layer does not compile
 - Dispatches the read-only `fvs-axiom-auditor` to introspect every in-scope declaration via `#print axioms`
 - Classifies each: `sorryAx` ⇒ sorry, classical trio (propext / Classical.choice / Quot.sound) auto-noted, project-custom axioms require justification
 - Strictly-scoped inventory (Rust path convention); cone members surfaced as prerequisites, never inventory rows

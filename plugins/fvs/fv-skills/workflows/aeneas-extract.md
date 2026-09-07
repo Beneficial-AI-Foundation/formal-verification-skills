@@ -23,7 +23,7 @@ Hard invariants this workflow preserves:
 - Escalation is a human decision point and a valid outcome, not a failure.
 - The build's exit status is read from the tool itself (`set -o pipefail` / `${PIPESTATUS[0]}`),
   never from the tail of a piped log (the green-build trap).
-- Builds always run under `nice -n 19 lake build`.
+- Builds always run under `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`.
 </purpose>
 
 <process>
@@ -116,17 +116,37 @@ policy. Initialise the workspace tree `<extract_workspace>/<target>/` with subdi
 `equivalence-gate/`, `mwe/`, `drafts/`, `catalog-candidates/`, `escalations/`.
 </step>
 
+<step name="cache_preflight">
+## Step 1f: Warm the project cache
+
+Run the mandatory cache preflight from the validated Lean project root. A failure stops the
+workflow before extraction, delegation, or build:
+
+```bash
+if { [ ! -f lakefile.lean ] && [ ! -f lakefile.toml ]; } || [ ! -f lean-toolchain ]; then
+  echo "FVS >> ERROR: run from the Lean project root" >&2
+  exit 1
+fi
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake exe cache get
+CACHE_STATUS=$?
+if [ "$CACHE_STATUS" -ne 0 ]; then
+  echo "FVS >> ERROR: Lake cache preflight failed; stopping workflow" >&2
+  exit "$CACHE_STATUS"
+fi
+```
+</step>
+
 <step name="extract">
 ## Step 2: EXTRACT -- run extraction, read the tool's real exit status
 
 Run the extraction (Charon -> Aeneas -> split -> tweaks) and then build. NEVER read the tail
 of a piped log to decide success -- a pipe reports the *filter's* exit status (`0`), masking a
 real failure. Read the tool's own status with `set -o pipefail` / `${PIPESTATUS[0]}`, or test
-for the build artifact directly. Always build under `nice -n 19 lake build`.
+for the build artifact directly. Always build under `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`.
 
 ```bash
 set -o pipefail
-nice -n 19 lake build 2>&1 | tee build.log
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build 2>&1 | tee build.log
 test ${PIPESTATUS[0]} -eq 0 || echo "lean-layer failure"   # read the TOOL's status, not the pipe's
 ```
 
@@ -320,7 +340,7 @@ Records:       src-modifications.diff / .json / .md, src-assumptions.md (crate r
 
 <success_criteria>
 - [ ] PRE-FLIGHT detects crate/folder/file, resolves clones via config -> auto-detect -> prompt -> error, runs the pin audit, and warn-and-confirms on drift recording `pin_context`.
-- [ ] EXTRACT reads the tool's real exit status (`set -o pipefail` / `${PIPESTATUS[0]}`), never the pipe; always `nice -n 19 lake build`.
+- [ ] EXTRACT reads the tool's real exit status (`set -o pipefail` / `${PIPESTATUS[0]}`), never the pipe; always `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`.
 - [ ] CLASSIFY reduces the log to `{layer, symbol, signature, match}`; NOVEL on a miss.
 - [ ] DISPATCH routes A -> applier, NOVEL -> bisector, forced-B -> gate, escalate-conditions -> escalate; the coverage-escalation guard turns A-opacity on a coverage target into B.
 - [ ] GATE is fired by the orchestrator; the assessor (`fvs-equivalence-assessor`) is a distinct dispatch from the proposer (`fvs-extract-bisector`) and never writes the token; the human stamps `equivalence-ratified:`.

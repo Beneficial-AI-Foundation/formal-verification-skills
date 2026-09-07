@@ -34,7 +34,7 @@ You MAY perform read-only evidence gathering:
 - Run `#check` / `#print axioms` probes against the existing tree.
 - Create statement-only elaboration probes in an OS temporary directory: reproduce declaration
   signatures with proof bodies replaced by `axiom` stubs, then elaborate them.
-- Build the unmodified tree when necessary, using `nice -n 19 lake build`.
+- Build the unmodified tree when necessary, using `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`.
 
 You MUST NOT:
 

@@ -83,12 +83,12 @@ crate root using the Write tool:
 - append the trusted assumption to `src-assumptions.md` when the recipe axiomatizes, excludes, or
   gates an item (every A-opacity and every gated build-script edit leaves an assumption).
 
-Then rebuild to confirm the recipe cleared the blocker, ALWAYS with `nice -n 19 lake build`.
+Then rebuild to confirm the recipe cleared the blocker, ALWAYS with `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`.
 
 </process>
 
 <fvs_hard_rules>
-- NEVER run a bare `lake build`. Always `nice -n 19 lake build`.
+- NEVER run a bare `lake build`. Always `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`.
 - NEVER edit generated Lean (`Types.lean` / `Funs.lean`). A-opacity edits the RUST source or the
   hand-authored external files; `tweaks-substitution` repairs generated text only via the guarded
   substitution mechanism, never a hand edit of a generated file.
@@ -139,7 +139,7 @@ On failure:
 - [ ] Generated Lean (`Types.lean` / `Funs.lean`) never edited by hand
 - [ ] Reversible records written (src-modifications + src-assumptions where an assumption arises)
 - [ ] `tweaks-substitution` guards honored (>= 1 match; 0-match is a HARD failure)
-- [ ] Rebuild run with `nice -n 19 lake build`, never bare
+- [ ] Rebuild run with `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`, never bare
 - [ ] All writes via the Write tool; no `gh` auto-open; Lean-via-Aeneas pipeline only
 - [ ] Result returned with the appropriate header
 - [ ] No @-references used (all reference content is inlined by the parent)

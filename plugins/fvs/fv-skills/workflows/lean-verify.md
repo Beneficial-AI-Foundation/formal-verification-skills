@@ -65,6 +65,24 @@ capacity remains, into `PROOF_ENGINEERING_CONTEXT`. Reject unsafe/missing links.
 split of legacy `.formalising/PROOF-NOTES.md`.
 </step>
 
+<step name="cache_preflight">
+Run the mandatory cache preflight from the validated Lean project root before any build or
+subagent dispatch. A failure stops the workflow:
+
+```bash
+if { [ ! -f lakefile.lean ] && [ ! -f lakefile.toml ]; } || [ ! -f lean-toolchain ]; then
+  echo "FVS >> ERROR: run from the Lean project root" >&2
+  exit 1
+fi
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake exe cache get
+CACHE_STATUS=$?
+if [ "$CACHE_STATUS" -ne 0 ]; then
+  echo "FVS >> ERROR: Lake cache preflight failed; stopping workflow" >&2
+  exit "$CACHE_STATUS"
+fi
+```
+</step>
+
 <step name="resolve_models">
 Read config and resolve models for subagent dispatch.
 
@@ -182,7 +200,7 @@ This is the core proof loop. For each sorry (in order recommended by research):
    - Run the applicable mechanical style gate before compilation.
    - On a new violation, feed the exact diagnostic back and count a failed attempt.
    - Reject an unrequested theorem-name or theorem-statement change and restore it.
-   - Only after style passes, remind user: "Check compilation: `nice -n 19 lake build`"
+   - Only after style passes, remind user: "Check compilation: `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`"
    - Wait for user feedback on whether Lean compiles
    - If compiles: mark sorry as resolved, move to next sorry
    - If does not compile: store error as feedback, retry (up to 3 attempts per sorry)
@@ -221,7 +239,7 @@ Resolved: {N}/{TOTAL} sorry
 Style:    [OK] No new target-guide violations
 Status:   [OK] No sorry remaining
 
-Verify: nice -n 19 lake build
+Verify: LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build
 ```
 
 **PARTIAL (some sorry resolved, some remain):**
@@ -279,7 +297,7 @@ If nothing survives, leave the store unchanged.
 - Authorized theorem-statement edits pass the full-file style gate
 - User checks Lean compiles between each step (pair programming feel)
 - NEEDS INPUT handling for stuck proofs with user hint collection
-- Build checks use nice -n 19 lake build (never plain lake build)
+- Build checks use LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build (never plain lake build)
 - Result correctly classified as VERIFIED, PARTIAL, or STUCK
 - Interactive iteration loop handles hints, retries, and escalation
 - CODEMAP.md updated with verification status if available

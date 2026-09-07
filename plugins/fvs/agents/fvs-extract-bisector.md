@@ -28,7 +28,7 @@ tool.
 1. **Shrink.** Starting from the failing input, remove code until the failure disappears, then
    restore the smallest unit that brings it back. Drive every step by an oracle run -- the actual
    extraction step that the classifier said failed (read its exit status with `set -o pipefail` /
-   `${PIPESTATUS[0]}`, never the tail of a piped log; rebuild with `nice -n 19 lake build` when the
+   `${PIPESTATUS[0]}`, never the tail of a piped log; rebuild with `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` when the
    failing layer is `lean`).
 2. **Grow.** From that minimal core, add back only what is needed to make the example
    self-contained and reproducible. The result is the MFE: the smallest standalone reproduction of
@@ -73,7 +73,7 @@ proposal awaiting a separate disposition.
 
 <fvs_hard_rules>
 - NEVER auto-apply a fix and NEVER stamp a ratification token -- you propose, never dispose.
-- NEVER run a bare `lake build`. Always `nice -n 19 lake build`.
+- NEVER run a bare `lake build`. Always `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`.
 - NEVER edit generated Lean (`Types.lean` / `Funs.lean`).
 - NEVER call `gh` to open or create any upstream artifact.
 - A catalog candidate with an empty `evidence` field is malformed -- evidence is the real MFE path,
@@ -119,7 +119,7 @@ On failure:
 
 <success_criteria>
 - [ ] Two-phase shrink-then-grow minimization driven by the actual failing-layer oracle
-- [ ] Exit status read via `set -o pipefail` / `${PIPESTATUS[0]}`; rebuilds use `nice -n 19 lake build`
+- [ ] Exit status read via `set -o pipefail` / `${PIPESTATUS[0]}`; rebuilds use `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`
 - [ ] Variant budget enforced as a hard cap; exhaustion emits best partial + ESCALATE
 - [ ] Catalog candidate is schema-conformant with `status: candidate`, REAL `evidence` (the MFE path), and `pin_context`
 - [ ] Category assigned by the safe-by-construction A/B test (meaning judgment -> B)

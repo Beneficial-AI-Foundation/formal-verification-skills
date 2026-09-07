@@ -58,6 +58,26 @@ Only AFTER the human supplies the ruling does the command author a follow-up pla
 ruling. On `HUMAN_RULING`, never invent a follow-up without the human's ruling.
 </step>
 
+<step name="cache_preflight">
+## Step 3a: Warm the project cache
+
+Run the mandatory cache preflight from the validated Lean project root before either thinker path.
+A failure stops the workflow before delegation or any authored build plan:
+
+```bash
+if { [ ! -f lakefile.lean ] && [ ! -f lakefile.toml ]; } || [ ! -f lean-toolchain ]; then
+  echo "FVS >> ERROR: run from the Lean project root" >&2
+  exit 1
+fi
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake exe cache get
+CACHE_STATUS=$?
+if [ "$CACHE_STATUS" -ne 0 ]; then
+  echo "FVS >> ERROR: Lake cache preflight failed; stopping workflow" >&2
+  exit "$CACHE_STATUS"
+fi
+```
+</step>
+
 <step name="dispatch_thinker">
 ## Step 4: Dispatch the thinker (followup mode)
 
@@ -85,7 +105,7 @@ contract, or `none`."
 
 The thinker authors BY RETURN; the command body persists `plans/FOLLOWUP_PLAN_nN.md` carrying the
 full bounded-plan contract (branch/state, exact target files + theorems, immutable public statements,
-allowed-`sorry` policy, stop conditions, the verification command `nice -n 19 lake build` under the
+allowed-`sorry` policy, stop conditions, the verification command `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` under the
 `set -o pipefail` / `${PIPESTATUS` guard, expected artifact updates).
 
 The follow-up also records `Authoring runtime: <actual runtime>` (`Codex CLI` for `--codex`) so the

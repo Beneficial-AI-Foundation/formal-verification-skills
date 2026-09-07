@@ -206,6 +206,22 @@ Then PROCEED only at the user's explicit choice in a LABELED DEGRADED mode -- re
 formalisation was not paper-grounded. Do NOT silently continue; do NOT repeat the loud-fail on
 every question (loud-fail ONCE, then degrade or stop on the user's choice).
 
+Run the mandatory cache preflight from the validated Lean project root before either thinker path.
+A failure stops the workflow before delegation or any authored build plan:
+
+```bash
+if { [ ! -f lakefile.lean ] && [ ! -f lakefile.toml ]; } || [ ! -f lean-toolchain ]; then
+  echo "FVS >> ERROR: run from the Lean project root" >&2
+  exit 1
+fi
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake exe cache get
+CACHE_STATUS=$?
+if [ "$CACHE_STATUS" -ne 0 ]; then
+  echo "FVS >> ERROR: Lake cache preflight failed; stopping workflow" >&2
+  exit "$CACHE_STATUS"
+fi
+```
+
 ## Step 5: Dispatch the thinker (author the bounded plan)
 
 Default (no `--codex`) -- dispatch the in-runtime thinker. `cat` the topic artifacts and the cached
@@ -276,7 +292,7 @@ Carry the BOUNDED-PLAN CONTRACT verbatim into `EXEC_PLAN_nN.md`:
 5. **Allowed-`sorry` policy** -- which `sorry`s are permitted as NAMED obligations with the exact
    statement each must carry (never judged by count).
 6. **Stop conditions** -- the explicit conditions under which the executor HALTS.
-7. **Verification commands** -- ALWAYS `nice -n 19 lake build` (never a bare `lake build`), under
+7. **Verification commands** -- ALWAYS `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` (never a bare `lake build`), under
    the `set -o pipefail` / `${PIPESTATUS` guard so a piped build failure is never masked.
 8. **Expected artifact updates** -- which `fv-plans/<topic>/{plans,reviews,sources,merge}` files the
    run is expected to produce or update.
@@ -327,7 +343,7 @@ auto-picks a default, never writes an upstream artifact).
 - [ ] At most eight relevant crypto/shared lessons loaded and snapshotted for either thinker runtime.
 - [ ] `$THINKER_MODEL` resolved via the model-profiles sequence; the thinker dispatched (`subagent_type="fvs-crypto-thinker"`) with inlined context.
 - [ ] KB grounded intensively when configured; cached under `sources/` and re-read before re-querying; loud-fail-once + labeled-degrade + `/fvs:kb-setup` when unconfigured.
-- [ ] The bounded-plan contract (stop conditions, verification commands `nice -n 19 lake build`, immutable public statements, allowed-`sorry`) is written into `EXEC_PLAN_nN.md`.
+- [ ] The bounded-plan contract (stop conditions, verification commands `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`, immutable public statements, allowed-`sorry`) is written into `EXEC_PLAN_nN.md`.
 - [ ] Both plan artifacts record truthful `Authoring runtime:` provenance; the next action is
       independent `/fvs:crypto-review`, not direct execution.
 - [ ] At most three evidence-gated lesson candidates reconciled as one file each plus index updates.

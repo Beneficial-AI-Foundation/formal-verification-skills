@@ -14,7 +14,7 @@ Hard invariants this workflow preserves:
 - The audit is BUILD-BACKED: introspection only runs against a target layer that compiles. The
   build precondition reads the tool's REAL exit status (`set -o pipefail` / `${PIPESTATUS[0]}`),
   never the tail of a piped log (the green-build trap). Builds always run under
-  `nice -n 19 lake build` -- never a bare `lake build`.
+  `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` -- never a bare `lake build`.
 - The audit is READ-ONLY over generated Lean: `Types.lean` / `Funs.lean` and any
   Charon/Aeneas-generated output are introspected, NEVER written. All writes are confined to
   `.formalising/audits/`.
@@ -44,6 +44,24 @@ Record the target project's `lean-toolchain` in the output (never pin a Lean ver
 that a pre-fix toolchain may under-report an axiom-of-an-axiom (the `collectAxioms`
 under-reporting risk); the reference target post-fix is the safe posture.
 
+## Step 1a: Warm the project cache
+
+Run the mandatory cache preflight from the validated Lean project root before the build
+precondition. A failure stops the audit:
+
+```bash
+if { [ ! -f lakefile.lean ] && [ ! -f lakefile.toml ]; } || [ ! -f lean-toolchain ]; then
+  echo "FVS >> ERROR: run from the Lean project root" >&2
+  exit 1
+fi
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake exe cache get
+CACHE_STATUS=$?
+if [ "$CACHE_STATUS" -ne 0 ]; then
+  echo "FVS >> ERROR: Lake cache preflight failed; stopping workflow" >&2
+  exit "$CACHE_STATUS"
+fi
+```
+
 ## Step 2: BUILD PRECONDITION -- build-backed, green-build guarded
 
 Introspection is only meaningful against a target layer that compiles. Run the build first and
@@ -51,7 +69,7 @@ read the REAL exit status:
 
 ```bash
 set -o pipefail
-nice -n 19 lake build 2>&1 | tee build.log
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build 2>&1 | tee build.log
 BUILD_STATUS=${PIPESTATUS[0]}
 ```
 
@@ -147,7 +165,7 @@ WAIT for the user (fail-closed -- never auto-justify an axiom, never self-clear 
 
 <success_criteria>
 - [ ] Target + Lean paths resolved via config -> auto-detect -> prompt -> error; every expansion quoted; shell-metacharacter target rejected; no `eval`.
-- [ ] Build precondition runs `nice -n 19 lake build` under `set -o pipefail` and reads `${PIPESTATUS[0]}`; HALT if the target layer does not compile.
+- [ ] Build precondition runs `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` under `set -o pipefail` and reads `${PIPESTATUS[0]}`; HALT if the target layer does not compile.
 - [ ] Probe-aeneas >= 0.19.0 supplies the sole exact target inventory/count before dispatch.
 - [ ] Auditor classifications are keyed by canonical atom ID; missing/uninspectable entries remain and force NOT-CLEAN.
 - [ ] `#print axioms` classification: `sorryAx` => sorry, classical-trio auto-noted, project-custom axioms require justification; fail-if-unjustified => NOT-CLEAN.

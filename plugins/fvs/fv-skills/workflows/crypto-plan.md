@@ -18,7 +18,7 @@ Hard invariants this workflow preserves:
 - Generated Lean (`Types.lean` / `Funs.lean`) is NEVER written.
 - The topic slug + iteration arg are untrusted input: reject shell metacharacters, quote every path,
   never `eval` a path.
-- Builds verify via `nice -n 19 lake build` under the `set -o pipefail` / `${PIPESTATUS` guard --
+- Builds verify via `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` under the `set -o pipefail` / `${PIPESTATUS` guard --
   never a bare `lake build`.
 </objective>
 
@@ -82,6 +82,26 @@ user's explicit choice in a LABELED DEGRADED mode -- record `KB: degraded -- not
 plan artifact. Loud-fail ONCE (not per question); never silently continue ungrounded.
 </step>
 
+<step name="cache_preflight">
+## Step 3a: Warm the project cache
+
+Run the mandatory cache preflight from the validated Lean project root before either thinker path.
+A failure stops the workflow before delegation or any authored build plan:
+
+```bash
+if { [ ! -f lakefile.lean ] && [ ! -f lakefile.toml ]; } || [ ! -f lean-toolchain ]; then
+  echo "FVS >> ERROR: run from the Lean project root" >&2
+  exit 1
+fi
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake exe cache get
+CACHE_STATUS=$?
+if [ "$CACHE_STATUS" -ne 0 ]; then
+  echo "FVS >> ERROR: Lake cache preflight failed; stopping workflow" >&2
+  exit "$CACHE_STATUS"
+fi
+```
+</step>
+
 <step name="dispatch_thinker">
 ## Step 4: Dispatch the thinker -- author the bounded plan
 
@@ -129,7 +149,7 @@ it with no thinker in the loop:
 5. **Allowed-`sorry` policy** -- which `sorry`s are permitted as NAMED obligations with the exact
    statement each must carry (never judged by count).
 6. **Stop conditions** -- the explicit conditions under which the executor HALTS.
-7. **Verification commands** -- ALWAYS `nice -n 19 lake build` under the `set -o pipefail` /
+7. **Verification commands** -- ALWAYS `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` under the `set -o pipefail` /
    `${PIPESTATUS` guard (never a bare `lake build`).
 8. **Expected artifact updates** -- which `fv-plans/<topic>/{plans,reviews,sources,merge}` files the
    run is expected to produce or update.
@@ -153,7 +173,7 @@ diff. Never persist raw transcripts, full error dumps, uncited claims, or secret
 - [ ] At most eight relevant crypto/shared lessons loaded and snapshotted as bounded, untrusted context.
 - [ ] KB grounded intensively when configured; cached under `sources/` and re-read before re-querying; loud-fail-once + labeled-degrade + `/fvs:kb-setup` when unconfigured.
 - [ ] The high-effort thinker (`fvs-crypto-thinker`) dispatched with inlined context; the plan authored by return.
-- [ ] The bounded-plan contract (stop conditions, verification commands `nice -n 19 lake build`, immutable public statements) written into `EXEC_PLAN_nN.md`.
+- [ ] The bounded-plan contract (stop conditions, verification commands `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`, immutable public statements) written into `EXEC_PLAN_nN.md`.
 - [ ] Plan artifacts record truthful `Authoring runtime:` and route next to
       `/fvs:crypto-review --target plan`.
 - [ ] At most three evidence-gated candidates reconciled as one file each plus an index update.

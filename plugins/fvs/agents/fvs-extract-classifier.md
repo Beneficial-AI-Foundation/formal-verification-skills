@@ -52,7 +52,7 @@ tool's own exit status:
 # Illustrative only: this is what the ORCHESTRATOR ran. You (the classifier) are
 # read-only -- you read the resulting build.log to interpret it, you do NOT re-run the build.
 set -o pipefail
-nice -n 19 lake build 2>&1 | tee build.log
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build 2>&1 | tee build.log
 status=${PIPESTATUS[0]}   # the build's exit status, not tee's
 ```
 
@@ -91,7 +91,7 @@ bisection by the parent, not to a recipe.
 <fvs_hard_rules>
 These FVS invariants bind you even though you do not write files:
 
-- NEVER run a bare `lake build`. Always `nice -n 19 lake build`.
+- NEVER run a bare `lake build`. Always `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`.
 - NEVER edit generated Lean (`Types.lean` / `Funs.lean`) -- you are read-only regardless.
 - NEVER call `gh` to open or create any upstream artifact.
 - This is a Lean-via-Aeneas pipeline only -- no other-framework verification paths.
