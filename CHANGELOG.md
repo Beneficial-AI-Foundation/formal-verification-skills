@@ -4,6 +4,30 @@ All notable changes to FVS (Formal Verification Skills) will be documented in th
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.3.0] - 2026-09-07
+
+### Added
+- `/fvs:lean-spec-review` adversarially reviews a functional-correctness specification against
+  its Rust implementation, extracted Lean definitions, and interpretation layer before proof work.
+  Users choose the reviewer runtime, model, and effort: Codex offers GPT Sol and Astra, Claude
+  offers Fable, cheaper or custom models remain available, and effort defaults to `max`.
+- `/fvs:lean-specify` now offers the same review flow automatically after successful generation
+  checks. Existing projects need no migration: a missing `spec_review.automatic` setting enables
+  the menu, while `{"spec_review":{"automatic":false}}` disables only the automatic handoff.
+- Review records preserve runtime/model provenance, source hashes, immutable history, validated
+  `PASS | REVISE | BLOCKED` verdicts, and orchestrator triage. Other providers use an exported
+  review packet and imported response rather than arbitrary command execution. This resolves
+  [GitHub issue #46](https://github.com/Beneficial-AI-Foundation/formal-verification-skills/issues/46)
+  and delivers the functional-correctness slice of
+  [GitHub issue #32](https://github.com/Beneficial-AI-Foundation/formal-verification-skills/issues/32).
+
+### Fixed
+- Lean workflows now retrieve the project cache before build-capable work and cap Lake concurrency
+  at four threads unless the caller overrides it. Crypto execution accepts IDE diagnostics when
+  available and keeps a documented headless fallback. This resolves
+  [GitHub issue #49](https://github.com/Beneficial-AI-Foundation/formal-verification-skills/issues/49)
+  and [GitHub issue #50](https://github.com/Beneficial-AI-Foundation/formal-verification-skills/issues/50).
+
 ## [2.2.1] - 2026-08-28
 
 ### Fixed
