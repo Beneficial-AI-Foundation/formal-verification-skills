@@ -61,7 +61,7 @@ describe('published FVS plugin package', () => {
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
       .sort();
-    assert.equal(commandNames.length, 27);
+    assert.equal(commandNames.length, 28);
     assert.deepEqual(skillNames, commandNames);
 
     for (const skillName of skillNames) {
@@ -90,6 +90,7 @@ describe('published FVS plugin package', () => {
         'fvs-kb-query.py',
         'fvs-lean-style-check.mjs',
         'fvs-probe-inventory.mjs',
+        'fvs-spec-review.mjs',
       ].sort(),
     );
   });

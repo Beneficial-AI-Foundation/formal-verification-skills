@@ -103,7 +103,7 @@ Commands are grouped into five bundles. Each bundle has a router command (e.g. `
 1. `/fvs:aeneas-extract <path>` - Extract Rust → Lean 4 via the bounded Aeneas repair loop
 2. `/fvs:map-code` - Analyze project, build dependency graph
 3. `/fvs:fc-plan` - Select verification targets
-4. `/fvs:lean-specify <function>` - Generate spec with sorry
+4. `/fvs:lean-specify <function>` - Generate spec with sorry, then choose an adversarial reviewer
 5. `/fvs:lean-verify <spec_path>` - Attempt proof interactively
 6. `/fvs:lean-refactor <spec_path>` - Golf and clean up verified proofs
 7. `/fvs:trust-audit <target>` - Audit the sorry/axiom trust surface
@@ -115,7 +115,7 @@ Commands are grouped into five bundles. Each bundle has a router command (e.g. `
 ## Core Workflow
 
 ```
-Code track:  /fvs:aeneas-extract → /fvs:map-code → /fvs:fc-plan → /fvs:lean-specify → /fvs:lean-verify → /fvs:lean-refactor → /fvs:trust-audit
+Code track:  /fvs:aeneas-extract → /fvs:map-code → /fvs:fc-plan → /fvs:lean-specify → /fvs:lean-spec-review → /fvs:lean-verify → /fvs:lean-refactor → /fvs:trust-audit
 Paper track: /fvs:lean-formalise → /fvs:lean-verify → /fvs:lean-refactor
 Crypto loop: /fvs:crypto-plan → /fvs:crypto-review → /fvs:crypto-execute → /fvs:crypto-eval → /fvs:crypto-followup → /fvs:crypto-review → repeat
 ```
@@ -126,7 +126,7 @@ Five router commands group the skills. Invoke a router bare to print its routing
 
 - `/fvs:aeneas` — Aeneas/Charon extraction maintenance (aeneas-extract, sync-aeneas-verif)
 - `/fvs:context` — Codebase context (map-code)
-- `/fvs:fc` — Formal-correctness core (fc-plan, lean-specify, lean-verify, natural-language, lean-refactor, trust-audit)
+- `/fvs:fc` — Formal-correctness core (fc-plan, lean-specify, lean-spec-review, lean-verify, natural-language, lean-refactor, trust-audit)
 - `/fvs:formalise` — Paper formalisation (lean-formalise, lean-refactor)
 - `/fvs:manage` — Management (help, update, checkpoint, pause-work, resume-work, reapply-patches, kb-setup)
 
@@ -207,6 +207,23 @@ Generate Lean spec skeleton following @[step] theorem pattern.
 
 Usage: `/fvs:lean-specify scalar_mul_inner`
 Result: `Specs/{path}/{FunctionName}.lean` with sorry placeholder
+
+**`/fvs:lean-spec-review <spec.lean> [--reviewer codex|claude|other] [--model ID] [--effort LEVEL]`**
+Adversarially review an FC specification against Rust, extracted Lean, and interpretation definitions.
+
+- Offers reviewer -> model -> effort menus; the other runtime appears first
+- Codex suggestions: GPT Sol and Astra; Claude suggestion: Fable; cheaper/custom models allowed
+- Effort defaults to `max`; lower settings and `runtime-default` remain selectable
+- Uses fresh reviewers and labels cross-runtime versus same-runtime review
+- Other providers use an exported packet and imported response; missing CLIs offer setup/fallback
+- Preserves the spec and records findings, input hashes, and triage in `.formalising/spec-reviews/`
+- PASS readies the statement for proof; REVISE/BLOCKED need corrections or evidence
+
+Runs automatically after `lean-specify` by default, even on projects without config. To disable
+only automation, merge `"spec_review": {"automatic": false}` into `.formalising/fvs-config.json`,
+or create the file with `{"spec_review": {"automatic": false}}`. Manual invocation still works.
+
+Usage: `/fvs:lean-spec-review Specs/Scalar/Mul.lean --reviewer codex --model gpt-6-astra --effort max`
 
 **`/fvs:lean-verify <spec_file_path>`**
 Attempt proof using domain tactics with interactive feedback.

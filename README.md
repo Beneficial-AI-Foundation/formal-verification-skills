@@ -160,6 +160,7 @@ Commands are grouped into five bundles. Each bundle has a **router** command tha
 |---------|-------------|
 | `/fvs:fc-plan` | Pick next verification targets via greedy dependency graph traversal |
 | `/fvs:lean-specify` | Generate a style-checked Lean spec skeleton with `@[step]` theorem pattern |
+| `/fvs:lean-spec-review` | Adversarially review an FC specification with a chosen runtime, model, and effort |
 | `/fvs:lean-verify` | Attempt proof with domain tactics while blocking new target-style violations |
 | `/fvs:natural-language` | Generate natural language explanation of module or function with pre/post conditions |
 | `/fvs:lean-refactor` | Refactor, simplify, and decompose verified proofs (dead code removal, simp sharpening, tactic golf) — *also in Formalise* |
@@ -170,6 +171,22 @@ Commands are grouped into five bundles. Each bundle has a **router** command tha
 `doc/STYLE_GUIDE`. With no guide they enforce a 100-column fallback. Their post-write gate also
 rejects ordinary Lean identifiers with three or more namespace dots, steering generated code
 toward scoped namespaces, `open`, and local names.
+
+After `lean-specify`, a review menu offers the other runtime first, a fresh reviewer in the current
+runtime, or another provider. Choose GPT Sol or Astra for Codex, Fable for Claude, or a cheaper/custom
+model; effort defaults to `max` and can be lowered. Other providers use an exported source packet
+and imported response. Reviews and source hashes live under `.formalising/spec-reviews/`.
+
+Automatic review works even without a config file. To disable the automatic menu, merge this
+setting into `.formalising/fvs-config.json` (or create that file with just this object):
+
+```json
+{"spec_review": {"automatic": false}}
+```
+
+`/fvs:lean-spec-review <spec.lean>` remains available when automation is disabled. No migration or
+health command is needed. Missing/authentication failures offer setup and an explicit fallback;
+reviewer changes are never silent. A PASS approves the statement for proof work, not the proof.
 
 `lean-specify`, `lean-verify`, and `lean-formalise` share an indexed proof-engineering store at
 `.formalising/proof-engineering/`. Commands read `index.md` first, load at most eight relevant

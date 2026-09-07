@@ -9,6 +9,7 @@ allowed-tools:
   - Grep
   - Write
   - Task
+  - AskUserQuestion
 ---
 
 <plugin_runtime>
@@ -92,6 +93,8 @@ Generate a Lean specification file for a single function using two-phase subagen
 verification target (function name), loads the target repository's style guide, dispatches a
 researcher to gather context (Funs.lean, Types.lean, Rust source, existing stubs, similar specs),
 then dispatches an executor to write and mechanically style-check the spec file.
+After generation checks, offers adversarial review with runtime, model, and effort selection
+unless the project explicitly disables automatic review.
 
 Output: Specs/{path}/{FunctionName}.lean with @[step] theorem, existential postconditions, and sorry placeholder.
 </objective>
@@ -417,6 +420,26 @@ in place, or create exactly one file per new lesson under `lessons/fc/` from
 preferences only from explicit user statements. Never persist secrets, raw transcripts, full error
 dumps, unsupported guesses, or inferred preferences. If nothing survives, leave the store unchanged.
 
+## Step 10b: Adversarial Specification Review
+
+After structural/style checks and any performed build check succeed, read the automatic-review
+setting. The helper defaults to true when the config file or key is missing; it never creates or
+migrates config. A malformed setting is an error, not an implicit opt-out:
+
+```bash
+AUTOMATIC_REVIEW=$(node ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-spec-review.mjs automatic) || exit 1
+```
+
+If `true`, read and follow `${CLAUDE_PLUGIN_ROOT}/fv-skills/workflows/lean-spec-review.md` with the generated
+spec, resolved Rust/Funs/Types/interpretation paths, and the actual executor's author runtime.
+This is the same flow as `/fvs:lean-spec-review`: offer reviewer, model, and effort menus and wait
+for selections. Pass source evidence, not author conclusions or proof-engineering memory.
+
+If `false`, report `Unreviewed (automatic review disabled)`. Users disable automation by merging
+`"spec_review": {"automatic": false}` into `.formalising/fvs-config.json`; the standalone command
+still works. A one-run skip, failed reviewer, or exported packet without a response also leaves
+the spec unreviewed. Preserve the generated spec and retain the reason in the summary.
+
 ## Step 11: Display Summary
 
 ```
@@ -427,16 +450,24 @@ Spec file: Specs/{path}/{FunctionName}.lean
 Postconditions: {summary of what spec asserts}
 Dependencies: [N] specs found, [M] missing
 Style:     [OK] {target guide path | FVS 100-column fallback}
-Status: [??] Ready for verification (contains sorry)
+Review: {PASS | REVISE | BLOCKED | Unreviewed, with reason and review path}
+Status: {statement ready for proof only after supported PASS; otherwise review/revision pending}
+Proof: Contains sorry
 ```
 
 ## Step 12: Suggest Next Command
+
+After a PASS supported by finding triage, suggest:
 
 ```
 >> Next Up
 
 /fvs:lean-verify Specs/{path}/{FunctionName}.lean
 ```
+
+Otherwise suggest resolving the findings/missing evidence or running
+`/fvs:lean-spec-review Specs/{path}/{FunctionName}.lean`. Users may explicitly proceed to proof
+without review; keep the unreviewed status visible and never start proof work automatically.
 
 </process>
 
@@ -451,5 +482,7 @@ Status: [??] Ready for verification (contains sorry)
 - [ ] Mechanical style gate passes: line limit respected and no 3+-dot ordinary identifiers
 - [ ] Spec file written to Specs/ directory via VS Code diff
 - [ ] At most three evidence-backed candidates reconciled as one lesson per file plus index updates
+- [ ] Automatic review setting resolved without migration; review menus run unless disabled/skipped
+- [ ] Review outcome and provenance reported honestly before suggesting proof work
 - [ ] Clear next step offered to user
 </success_criteria>

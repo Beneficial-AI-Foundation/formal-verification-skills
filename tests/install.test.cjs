@@ -70,17 +70,21 @@ describe('Installer (install + uninstall round-trip)', () => {
     const checks = [
       'commands/fvs/help.md',
       'commands/fvs/crypto-review.md',
+      'commands/fvs/lean-spec-review.md',
       'agents/fvs-researcher.md',
       'fv-skills/references/crypto-plan-review.md',
+      'fv-skills/references/fc-spec-review.md',
       'fv-skills/references/proof-engineering-loop.md',
       'fv-skills/templates/proof-engineering-index.md',
       'fv-skills/templates/proof-engineering-lesson.md',
       'fv-skills/workflows/crypto-review.md',
       'fv-skills/workflows/lean-verify.md',
+      'fv-skills/workflows/lean-spec-review.md',
       'fv-skills/upstream/aeneas/_sync-meta.json',
       'scripts/fvs-codex-think.mjs',
       'scripts/fvs-lean-style-check.mjs',
       'scripts/fvs-probe-inventory.mjs',
+      'scripts/fvs-spec-review.mjs',
     ];
     for (const rel of checks) {
       assert.ok(fs.existsSync(path.join(tmpDir, rel)), `Missing: ${rel}`);

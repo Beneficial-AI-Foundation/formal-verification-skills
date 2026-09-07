@@ -17,6 +17,9 @@
   "model_overrides": {
     "fvs-crypto-thinker": "inherit"
   },
+  "spec_review": {
+    "automatic": true
+  },
   "behavior": {
     "mode": "interactive"
   },

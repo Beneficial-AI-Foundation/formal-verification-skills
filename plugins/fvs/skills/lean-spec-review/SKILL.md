@@ -1,10 +1,15 @@
 ---
-name: fc
-description: "formal-verification core | plan specify review verify explain refactor"
-argument-hint: ""
+name: lean-spec-review
+description: Adversarially review an FC Lean specification with a chosen runtime, model, and effort
+argument-hint: "<spec.lean> [--reviewer codex|claude|other] [--model ID] [--effort LEVEL]"
 allowed-tools:
   - Read
-  - Skill
+  - Bash
+  - Glob
+  - Grep
+  - Write
+  - AskUserQuestion
+  - Task
 ---
 
 <plugin_runtime>
@@ -19,8 +24,8 @@ This block applies only when this shared skill runs in Codex. Claude Code must i
 shared workflow body with its native slash-command, question, and subagent semantics.
 
 ## A. Skill Invocation
-- This skill is invoked by mentioning `$fvs:fc`.
-- Treat all user text after `$fvs:fc` as `{{FVS_ARGS}}`.
+- This skill is invoked by mentioning `$fvs:lean-spec-review`.
+- Treat all user text after `$fvs:lean-spec-review` as `{{FVS_ARGS}}`.
 - If no arguments are present, treat `{{FVS_ARGS}}` as empty.
 
 ## B. AskUserQuestion -> request_user_input Mapping
@@ -83,21 +88,18 @@ Result parsing:
 
 </codex_skill_adapter>
 
-Route to the appropriate formal-verification-core skill based on the user's intent.
+<objective>
+Review one FC specification against Rust and extracted Lean sources before proof work. Offer a
+runtime, model, and effort menu; preserve the spec and record the review and finding triage.
+</objective>
 
-`lean-specify` and `lean-verify` share the bounded, indexed learning loop under
-`.formalising/proof-engineering/`; it is project memory, not a separate command.
+<execution_context>
+@${CLAUDE_PLUGIN_ROOT}/fv-skills/workflows/lean-spec-review.md
+@${CLAUDE_PLUGIN_ROOT}/fv-skills/references/fc-spec-review.md
+</execution_context>
 
-When invoked WITH a request, match it against the table below and invoke the matched skill immediately, forwarding the request. When invoked BARE (no request), print this table as plain text and let the user reply free-form.
-
-| User wants | Invoke |
-|---|---|
-| Pick next verification targets | fvs:fc-plan |
-| Generate a Lean spec skeleton | fvs:lean-specify |
-| Adversarially review a specification against source | fvs:lean-spec-review |
-| Attempt a proof | fvs:lean-verify |
-| Explain a module/function in natural language | fvs:natural-language |
-| Refactor / simplify / decompose a proof | fvs:lean-refactor |
-| Audit every sorry/axiom affecting a target layer (build-backed) | fvs:trust-audit |
-
-Invoke the matched skill directly using the Skill tool.
+<process>
+Follow the review workflow with `$ARGUMENTS`. Explicit invocation always runs the selection flow,
+even when `spec_review.automatic` is false. Automatic invocation from `lean-specify` enters the
+same workflow after generation checks, with the resolved spec/source paths and author runtime.
+</process>

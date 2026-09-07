@@ -1,11 +1,11 @@
 ---
 name: fvs:fc
-description: "formal-verification core | plan specify verify explain refactor"
+description: "formal-verification core | plan specify review verify explain refactor"
 argument-hint: ""
 allowed-tools:
   - Read
   - Skill
-requires: [fc-plan, lean-specify, lean-verify, natural-language, lean-refactor, trust-audit]
+requires: [fc-plan, lean-specify, lean-spec-review, lean-verify, natural-language, lean-refactor, trust-audit]
 ---
 
 Route to the appropriate formal-verification-core skill based on the user's intent.
@@ -19,6 +19,7 @@ When invoked WITH a request, match it against the table below and invoke the mat
 |---|---|
 | Pick next verification targets | fvs:fc-plan |
 | Generate a Lean spec skeleton | fvs:lean-specify |
+| Adversarially review a specification against source | fvs:lean-spec-review |
 | Attempt a proof | fvs:lean-verify |
 | Explain a module/function in natural language | fvs:natural-language |
 | Refactor / simplify / decompose a proof | fvs:lean-refactor |
