@@ -225,7 +225,7 @@ describe('indexed proof-engineering memory', () => {
     }
 
     const script = read('scripts/fvs-codex-think.mjs');
-    const review = between(script, 'const reviewPrompt = [', 'const tempDir =', 'review prompt');
+    const review = between(script, 'const reviewPrompt = [', 'const packet = {', 'review prompt');
     requires(review, 'proof-engineering-memory-blind', 'review prompt');
     requires(review, 'Do not read or use', 'review prompt');
     forbids(review, '<proof_engineering_context>', 'review prompt');

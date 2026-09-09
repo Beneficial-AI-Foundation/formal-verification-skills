@@ -216,8 +216,11 @@ Adversarially review an FC specification against Rust, extracted Lean, and inter
 - Effort defaults to `max`; lower settings and `runtime-default` remain selectable
 - Uses fresh reviewers and labels cross-runtime versus same-runtime review
 - Other providers use an exported packet and imported response; missing CLIs offer setup/fallback
-- Preserves the spec and records findings, input hashes, and triage in `.formalising/spec-reviews/`
-- PASS readies the statement for proof; REVISE/BLOCKED need corrections or evidence
+- Preserves immutable `review.md` plus separate author-owned `triage.md` and input hashes
+- Never auto-selects a menu item; supplying all flags is the non-interactive path
+- One-run `Skip review` records `Unreviewed (user skipped)` and never starts proof work
+- PASS proceeds; APPROVE-WITH-EDITS proceeds after author edits and gates, without another review
+- REVISE/BLOCKED create a fresh review with prior history; each invocation stops after three rounds
 
 Runs automatically after `lean-specify` by default, even on projects without config. To disable
 only automation, merge `"spec_review": {"automatic": false}` into `.formalising/fvs-config.json`,
@@ -318,22 +321,28 @@ Author the next bounded, runtime-neutral executor plan for a topic, grounded in 
 Usage: `/fvs:crypto-plan "CKA from KEM"`
 Usage: `/fvs:crypto-plan "CKA from KEM" --codex`   # hand the planning think-step to Codex
 
-**`/fvs:crypto-review <topic> [nN] [--target plan|followup]`**
-Send an initial or follow-up plan to authenticated Codex for an independent, pre-execution
-adversarial review.
+**`/fvs:crypto-review <topic> [nN] [--target plan|followup] [--reviewer codex|claude|other] [--model ID] [--effort LEVEL]`**
+Send a plan to a selected fresh adversarial reviewer.
 
-- Preflights both Codex installation and `codex login status`; never silently falls back
-- Rejects Codex-authored or unknown-provenance plans instead of claiming self-review is independent
-- Runs xhigh, effort-only, ephemeral Codex with a read-only repository sandbox
+- Recommends the non-author runtime, then model (Sol/Astra or Fable/Sonnet), then max-first effort
+- Labels cross-runtime, same-runtime fresh reviewer, and unverified provenance honestly
+- Runs Codex or Claude with read-only ephemeral controls and no repository write tools
 - Attacks source fidelity, statement soundness, semantic closure, interfaces, gates, boundedness,
   security/data-loss risks, and roadmap coherence
-- Wrapper persists exactly one `PLAN_REVIEW_nN.md` or `FOLLOWUP_REVIEW_nN.md`; the planning seat
-  verifies and triages every finding
+- Wrapper preserves immutable review evidence; the authoring seat writes separate hash-bound triage
 - Deliberately excludes canonical and snapshotted proof-engineering memory from reviewer context
-- Only APPROVE proceeds; APPROVE-WITH-EDITS and REJECT stop before execution
+- APPROVE-WITH-EDITS proceeds after accepted author edits and gates, with no second review
+- REJECT creates a fresh reviewed revision; each invocation stops after three reviewer rounds
+- Automatic handoff asks reviewer -> model -> effort and never auto-selects a choice
+- One-run `Skip review` records `Unreviewed (user skipped)` and never starts execution
 
 Usage: `/fvs:crypto-review "CKA from KEM" n1 --target plan`
-Usage: `/fvs:crypto-review "CKA from KEM" n1 --target followup`
+Usage: `/fvs:crypto-review "CKA from KEM" n1 --target followup --reviewer claude --model sonnet --effort max`
+
+Crypto plan and follow-up enter the interactive review handoff by default. To disable only that
+automatic handoff, merge `"crypto_review": {"automatic": false}` into
+`.formalising/fvs-config.json`. Standalone review remains available, and a trusted user may
+explicitly invoke crypto execution from an unreviewed plan.
 
 **`/fvs:crypto-execute <topic> nN`**
 Run the current iteration's bounded plan under the green-build guard; a failed proof triggers a short interactive redirect early. (Executor stage — takes no `--codex`.)

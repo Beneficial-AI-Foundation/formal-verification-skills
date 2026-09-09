@@ -45,7 +45,7 @@ Return this Markdown structure with exactly one verdict line:
 ```markdown
 # FC Specification Review
 
-VERDICT: PASS | REVISE | BLOCKED
+VERDICT: PASS | APPROVE-WITH-EDITS | REVISE | BLOCKED
 
 ## Findings
 
@@ -65,8 +65,17 @@ List the exact source files/lines and boundary traces used; list missing sources
 ```
 
 Choose **PASS** only when the statement has adequate source/intent coverage and no required
-semantic corrections remain. Use **REVISE** for evidence-backed defects needing correction.
-Use **BLOCKED** when missing or ambiguous evidence prevents a responsible verdict. Findings may
-be empty, but Coverage and Evidence must remain substantive. PASS approves the statement for proof
-work; it does not prove the theorem or certify extraction correctness.
+semantic corrections remain. Choose **APPROVE-WITH-EDITS** only when every necessary change can be
+named exhaustively as a bounded edit and no missing authority remains. Use **REVISE** for
+substantive statement correction and **BLOCKED** for missing or ambiguous evidence. Findings may be
+empty, but Coverage and Evidence remain substantive.
+
+The reviewer response is immutable and the reviewer never edits the specification. The separate
+authoring seat (`lean-specify`) re-checks findings and writes `triage.md`. For
+APPROVE-WITH-EDITS it records finding IDs and old/new hashes, applies accepted bounded edits,
+reruns the structure, style, and optional build gates, then records `approved after edits`; this is
+terminal with no second review. REVISE or BLOCKED requires a fresh revision/evidence packet and
+another review carrying prior review/triage only as delimited untrusted history. Run at most three reviewer
+rounds per invocation and stop at the cap. PASS approves the statement for proof work; it
+does not prove the theorem or certify extraction correctness.
 </review_contract>

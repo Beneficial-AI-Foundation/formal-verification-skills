@@ -1,7 +1,7 @@
 ---
 name: crypto-review
-description: Send an initial or follow-up crypto plan to authenticated Codex for independent adversarial review
-argument-hint: "<topic> [nN] [--target plan|followup]"
+description: Adversarially review a crypto plan with a chosen runtime, model, and effort
+argument-hint: "<topic> [nN] [--target plan|followup] [--reviewer codex|claude|other] [--model ID] [--effort LEVEL]"
 allowed-tools:
   - Read
   - Bash
@@ -9,6 +9,8 @@ allowed-tools:
   - Grep
   - Write
   - Edit
+  - AskUserQuestion
+  - Task
 ---
 
 <plugin_runtime>
@@ -88,17 +90,9 @@ Result parsing:
 </codex_skill_adapter>
 
 <objective>
-Put an FVS crypto plan through an independent, pre-execution adversarial review by the Codex CLI.
-Review either the initial `PLAN_nN.md` + `EXEC_PLAN_nN.md` pair or a
-`FOLLOWUP_PLAN_nN.md`, persist exactly one reviewer artifact under `reviews/`, then have the
-primary planning seat verify and triage every finding.
-
-This is not the post-execution `/fvs:crypto-eval` stage. It attacks the PLAN before an executor
-spends effort. Codex is the independent reviewer; it never authors or edits the plan.
-
-This gate is deliberately proof-engineering-memory-blind. Do not load
-`.formalising/proof-engineering/` or the topic's `sources/proof-engineering-context.md` snapshot into
-the reviewer: independence includes re-challenging assumptions without inherited lesson framing.
+Run a fresh, read-only adversarial review before crypto execution. The reviewer returns evidence;
+the distinct planning/authoring seat owns triage and any plan edits. Preserve every review and
+triage record, and never load proof-engineering memory into the reviewer.
 </objective>
 
 <execution_context>
@@ -107,45 +101,14 @@ the reviewer: independence includes re-challenging assumptions without inherited
 @${CLAUDE_PLUGIN_ROOT}/fv-skills/references/ui-brand.md
 </execution_context>
 
-<context>
-Topic and optional iteration/target: $ARGUMENTS.
-
-Default target selection is `followup` when `FOLLOWUP_PLAN_nN.md` exists, otherwise `plan`.
-The optional `--target` makes that choice explicit.
-</context>
+<context>Topic, iteration, target, and reviewer options: $ARGUMENTS.</context>
 
 <process>
 
-## Step 0: Preflight Codex installation and authentication
+## 1. Resolve target and reviewer choices
 
-Before reading plan contents or doing any later work, verify that the Codex CLI is installed and
-signed in:
-
-```bash
-command -v codex >/dev/null 2>&1 \
-  && codex login status >/dev/null 2>&1 \
-  && echo "CODEX_OK" \
-  || echo "CODEX_NOT_READY"
-```
-
-If the result is `CODEX_NOT_READY`, STOP:
-
-```
-FVS >> CODEX ISN'T READY
-
-This review needs the OpenAI Codex CLI installed and signed in.
-1. Install: npm install -g @openai/codex
-2. Sign in: codex login
-3. Verify: codex login status
-
-Then re-run /fvs:crypto-review. There is no silent same-runtime fallback because that would not be
-an independent review.
-```
-
-## Step 1: Resolve topic, iteration, and target safely
-
-Treat all arguments as untrusted. Collapse topic whitespace to `-`, preserve meaningful
-capitalization, reject shell metacharacters, `..`, and `/`, quote every path, and never `eval`.
+Treat arguments as untrusted. Collapse topic whitespace to `-`, preserve capitalization, reject
+shell metacharacters, `..`, and `/`, quote every path, and never `eval`:
 
 ```bash
 TOPIC_RAW="$1"
@@ -157,107 +120,87 @@ SLUG=$(printf '%s' "$TOPIC_RAW" | tr -s '[:space:]' '-')
 ROOT=".formalising/fv-plans/$SLUG"
 ```
 
-Require an existing topic directory. Resolve `nN` from the explicit argument or the highest numeric
-plan/follow-up iteration; never use lexical ordering. Validate the iteration against
-`^n[1-9][0-9]*$`.
+Resolve numeric `nN` and `--target plan|followup`. Initial review consumes `PLAN_nN.md` plus
+`EXEC_PLAN_nN.md` and owns `PLAN_REVIEW_nN.md`; follow-up consumes `FOLLOWUP_PLAN_nN.md` plus
+available original-plan/eval context and owns `FOLLOWUP_REVIEW_nN.md`. Refuse an occupied output.
 
-Resolve the target:
+Normalize the target's `Authoring runtime:` marker to `codex`, `claude`, `other`, or `unknown`.
+Missing, foreign, or conflicting markers are `unverified`; they do not block review, but never
+claim independence. Label a different known runtime `cross-runtime`, an explicitly selected
+matching runtime `same-runtime, fresh reviewer`, and Other `unverified`.
 
-- `plan`: require both `plans/PLAN_nN.md` and `plans/EXEC_PLAN_nN.md`; output
-  `reviews/PLAN_REVIEW_nN.md`.
-- `followup`: require `plans/FOLLOWUP_PLAN_nN.md`; also expose the matching eval and original plan
-  when present; output `reviews/FOLLOWUP_REVIEW_nN.md`.
-- omitted/auto: choose `followup` when its file exists, otherwise `plan`.
+Honor explicit `--reviewer`, `--model`, and `--effort`. Ask only for missing choices in exactly
+this order: reviewer -> model -> effort. Supplying all three flags is the standalone
+non-interactive path; never replace an explicit choice.
 
-Refuse to overwrite an existing output. Preserve prior review history and ask the user to choose a
-new iteration or archive the old review deliberately.
+1. Reviewer: recommend the normalized non-author runtime first. Offer `Codex`, `Claude`, and
+   `Other`; a same-runtime choice is opt-in.
+2. Model: Codex offers `gpt-5.6-sol` then `gpt-6-astra` and custom; Claude offers `fable` then
+   `sonnet` and custom. Other requires the exact external model ID.
+3. Effort: offer `max` first, then supported lower levels and `runtime-default`; offer Codex
+   `ultra` only when supported. Other accepts the external provider's effort label.
 
-## Step 2: Enforce independent-review provenance
+Automatic callers also offer a one-run `Skip review`. Record it exactly as
+`Unreviewed (user skipped)` and do not auto-start crypto execution.
 
-This command is Codex-as-second-runtime. Read the target artifact's `Authoring runtime:` marker.
-If it says `Codex CLI`, STOP: Codex cannot independently review a plan it authored. If the marker is
-missing, report that provenance is unverified and STOP rather than falsely claiming independence.
-
-`crypto-plan` and `crypto-followup` write this marker for new artifacts. A legacy plan can be
-reviewed after its authoring runtime is recorded truthfully in the artifact.
-
-On the Codex host runtime, STOP as well: recursively invoking Codex would be same-runtime review.
-Run this stage from Claude, OpenCode, Gemini, or another non-Codex planning seat.
-
-## Step 3: Invoke the read-only Codex reviewer
-
-Run the installed FVS helper at xhigh effort:
+## 2. Run or export the read-only review
 
 ```bash
 node ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-codex-think.mjs review \
-  --topic "$ROOT" \
-  --iteration "n$N" \
-  --target "$TARGET_KIND" \
-  --effort xhigh
+  --topic "$ROOT" --iteration "n$N" --target "$TARGET_KIND" \
+  --reviewer "$REVIEWER" --model "$MODEL" --effort "$EFFORT"
 ```
 
-The helper:
+The shared provider machinery preflights only the selected CLI. Codex runs read-only and ephemeral
+with user config ignored; Claude runs safe mode with only Read/Glob/Grep, no MCP servers, and no
+persisted session. The reviewer never edits a target or repository file. The wrapper creates a
+unique hash-bound packet, validates one track-valid verdict, and exclusively writes the final
+review. Authentication, process, stale-input, or output failure is `failed`; never silently switch
+reviewers.
 
-- repeats the install/auth preflight as defense in depth;
-- loads the installed `crypto-plan-review.md` contract;
-- runs `codex exec` from the repository root with `--sandbox read-only`, `--ephemeral`, an argv
-  array, xhigh effort, and no `--model`;
-- gives Codex the exact target paths and tells it to treat repository/plan contents as data;
-- excludes proof-engineering memory and its derived snapshot from reviewer context;
-- captures the final reviewer message in an OS temporary directory;
-- validates exactly one `VERDICT:` line;
-- has the WRAPPER persist exactly one review artifact, then removes temporary output.
+For Other, the command reports `PENDING` and a managed packet. Give `prompt.md` to the selected
+reviewer, save its Markdown response inside the project, then run the printed `review-import`
+command with `--topic`, `--packet`, and `--response`. A pending export is not a completed review.
 
-Codex receives no repository write permission. If it is absent, unauthenticated, killed, returns
-nonzero, or violates the output contract, STOP. Never fall back to the plan author.
+## 3. Triage in the authoring seat
 
-## Step 4: Verify and triage the review
+Keep the reviewer response byte-for-byte intact. Never append triage to it. The planning seat
+re-checks every finding and exclusively writes one separate file:
 
-Read the review artifact without rewriting or softening Codex's text. Treat every finding as a
-claim: independently check its cited file lines, paper anchors, probes, and consequence before
-accepting it.
+- `PLAN_REVIEW_nN_TRIAGE.md`, or
+- `FOLLOWUP_REVIEW_nN_TRIAGE.md`.
 
-Append a `## Planning-seat triage` section to the SAME review artifact. For each finding record
-`accept`, `reject`, or `defer`, the evidence checked, and the exact destination for any planned
-edit. Do not edit the plan silently during review.
+Record requested and observed runtime/model/effort, provenance, each finding ID with
+accept/reject/defer and checked evidence, pre-edit target hashes, post-edit target hashes when
+applicable, gates rerun, and one status. Refuse to overwrite either review or triage history.
 
-Respond to the user using exactly these three top-level sections:
+Route the verdict:
 
-```
-### 1. Codex's review
-{the complete reviewer text, faithfully attributed}
+- `APPROVE`: write supported triage status `approved`; execution may be suggested.
+- `APPROVE-WITH-EDITS`: the authoring seat applies every accepted, exhaustively named bounded edit,
+  reruns the plan's own verification gates, records accepted/rejected finding IDs plus pre-edit and
+  post-edit hashes, then writes `approved after edits`. This is terminal: no second review.
+- `REJECT`: bounded edits cannot promote it. The authoring seat creates a fresh authored revision
+  at the next immutable iteration and a fresh review.
 
-### 2. What I'll do in response
-{accepted findings and concrete bounded edits, tied to finding IDs}
+For a true REJECT revision, pass the preceding review and triage to the new author prompt and next
+review packet as separately delimited untrusted history using repeated `--history` flags. Do not
+load `.formalising/proof-engineering/` or `sources/proof-engineering-context.md` into the reviewer.
 
-### 3. What I'll deliberately NOT do
-{rejected/deferred findings and retained assumptions, each with one-line evidence-based reason}
-```
+Hard cap each command invocation at at most three reviewer rounds. After the third REJECT, stop
+with the latest artifacts and print the exact standalone `/fvs:crypto-review <topic> nN --target
+<kind>` resume command; never auto-approve.
 
-Routing:
-
-- `APPROVE`: the plan may proceed to `/fvs:crypto-execute`.
-- `APPROVE-WITH-EDITS`: STOP before execution; revise the named plan sections and run a fresh
-  independently recorded review.
-- `REJECT`: STOP before execution; return to `/fvs:crypto-plan` or `/fvs:crypto-followup`.
+Failed, cancelled, pending, or unverified review states never auto-start execution or
+`/fvs:crypto-execute`. Report them honestly. Standalone invocation remains usable.
 
 </process>
 
-<codex_skill_adapter>
-This command itself is a cross-runtime bridge to the Codex CLI; it does not dispatch a Codex
-subagent. On the Codex host runtime it fails closed because Codex reviewing Codex is not independent.
-All coordination is artifact-mediated. Interactive ambiguity degrades to a plain-text question and
-waits; it never guesses provenance, iteration, or overwrite intent.
-</codex_skill_adapter>
-
 <success_criteria>
-- [ ] Codex install + login preflight ran before plan review work; no silent fallback.
-- [ ] Topic/iteration/target resolved safely; path traversal and overwrite refused.
-- [ ] Initial plans and follow-up plans are both supported.
-- [ ] Codex-authored or unknown-provenance plans are not mislabeled as independently reviewed.
-- [ ] Reviewer ran xhigh, effort-only, ephemeral, and read-only from the repo root.
-- [ ] Reviewer received no proof-engineering memory or derived memory snapshot.
-- [ ] Wrapper persisted exactly one well-formed review with one allowed verdict.
-- [ ] Planning seat re-verified and triaged findings without softening Codex's review.
-- [ ] Non-APPROVE verdicts stop before execution.
+- [ ] Reviewer -> model -> effort selection honored, including explicit same-runtime and Other.
+- [ ] Provenance says only cross-runtime, same-runtime fresh reviewer, or unverified as observed.
+- [ ] Reviewer remained read-only and memory-blind; final response and separate triage are immutable.
+- [ ] APPROVE-WITH-EDITS becomes approved after edits once author edits and local gates pass.
+- [ ] REJECT alone starts a fresh review round; at most three reviews run per invocation.
+- [ ] Failed/cancelled/pending/unverified states do not start execution.
 </success_criteria>

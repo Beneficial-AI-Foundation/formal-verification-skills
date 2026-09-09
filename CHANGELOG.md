@@ -4,6 +4,23 @@ All notable changes to FVS (Formal Verification Skills) will be documented in th
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.3.1] - 2026-09-09
+
+### Added
+- Crypto plan and follow-up review now support selected Codex, Claude, or external reviewers with
+  explicit model/effort choices, read-only execution, honest provenance, immutable hash-bound
+  packets, and a three-round author/reviewer loop. Automatic handoff stays interactive, while
+  one-run Skip and `crypto_review.automatic: false` retain an explicit unreviewed trusted path.
+  This resolves
+  [GitHub issue #51](https://github.com/Beneficial-AI-Foundation/formal-verification-skills/issues/51).
+
+### Changed
+- Crypto and functional-correctness review now treat `APPROVE-WITH-EDITS` as terminal once the
+  authoring seat applies the exhaustively named bounded edits and reruns its gates. Reviewer output
+  remains immutable; only true `REJECT`, `REVISE`, or `BLOCKED` verdicts start a fresh review.
+  This resolves
+  [GitHub issue #52](https://github.com/Beneficial-AI-Foundation/formal-verification-skills/issues/52).
+
 ## [2.3.0] - 2026-09-07
 
 ### Added

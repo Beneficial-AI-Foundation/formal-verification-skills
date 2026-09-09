@@ -10,8 +10,31 @@ import { fileURLToPath } from 'node:url';
 const root = fs.realpathSync(process.cwd());
 const hash = text => createHash('sha256').update(text).digest('hex');
 const readJSON = file => JSON.parse(fs.readFileSync(file, 'utf8'));
-const defaults = { codex: 'gpt-5.6-sol', claude: 'fable' };
-const efforts = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'runtime-default'];
+export const reviewerDefaults = { codex: 'gpt-5.6-sol', claude: 'fable' };
+export const reviewerEfforts = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'runtime-default'];
+
+export function validateReviewerOptions(input) {
+  if (!['codex', 'claude', 'other'].includes(input.runtime)) {
+    throw new Error('runtime must be codex, claude, or other');
+  }
+  const model = input.model ?? reviewerDefaults[input.runtime];
+  if (typeof model !== 'string' || !model.trim() || /[\r\n\0]/.test(model)) {
+    throw new Error('Select a model (a provider-specific ID is required for Other)');
+  }
+  const effort = input.effort ?? 'max';
+  if (typeof effort !== 'string' || !effort.trim() || /[\r\n\0]/.test(effort) ||
+      (input.runtime !== 'other' && !reviewerEfforts.includes(effort)) ||
+      (input.runtime === 'claude' && effort === 'ultra')) {
+    throw new Error('Unsupported effort; select a supported level or runtime-default');
+  }
+  return { runtime: input.runtime, model: model.trim(), effort: effort.trim() };
+}
+
+export function classifyReviewProvenance(author, reviewer) {
+  return author === 'unknown' || author === 'other' || reviewer === 'other'
+    ? 'unverified (record the external reviewer/author identities in triage)'
+    : author === reviewer ? 'same-runtime, fresh reviewer' : 'cross-runtime';
+}
 
 function requireInside(file) {
   const relative = path.relative(root, file);
@@ -36,40 +59,44 @@ function sourcePath(file) {
   return relative;
 }
 
-function automatic() {
+function historyPath(file) {
+  if (typeof file !== 'string' || !file || /[\r\n\0]/.test(file)) {
+    throw new Error('Expected a project history file path');
+  }
+  const resolved = requireInside(fs.realpathSync(path.resolve(root, file)));
+  const relative = path.relative(root, resolved).split(path.sep).join('/');
+  if (!relative.endsWith('.md') || relative.startsWith('.formalising/proof-engineering/') ||
+      relative.endsWith('/proof-engineering-context.md')) {
+    throw new Error(`Not an allowed prior-round history file: ${file}`);
+  }
+  return relative;
+}
+
+export function automaticReview(section = 'spec_review') {
+  if (!['spec_review', 'crypto_review'].includes(section)) {
+    throw new Error('review config section must be spec_review or crypto_review');
+  }
   const file = path.join(root, '.formalising', 'fvs-config.json');
   if (!fs.existsSync(file)) return true;
   const config = readJSON(file);
   if (!config || typeof config !== 'object' || Array.isArray(config)) {
     throw new Error('FVS config must be an object');
   }
-  if (config.spec_review === undefined) return true;
-  const review = config.spec_review;
+  if (config[section] === undefined) return true;
+  const review = config[section];
   if (!review || typeof review !== 'object' || Array.isArray(review)) {
-    throw new Error('spec_review must be an object');
+    throw new Error(`${section} must be an object`);
   }
   if (review.automatic === undefined) return true;
   if (typeof review.automatic !== 'boolean') {
-    throw new Error('spec_review.automatic must be true or false');
+    throw new Error(`${section}.automatic must be true or false`);
   }
   return review.automatic;
 }
 
 function prepare(file) {
   const input = readJSON(file);
-  if (!['codex', 'claude', 'other'].includes(input.runtime)) {
-    throw new Error('runtime must be codex, claude, or other');
-  }
-  const model = input.model ?? defaults[input.runtime];
-  if (typeof model !== 'string' || !model.trim() || /[\r\n\0]/.test(model)) {
-    throw new Error('Select a model (a provider-specific ID is required for Other)');
-  }
-  const effort = input.effort ?? 'max';
-  if (typeof effort !== 'string' || !effort.trim() || /[\r\n\0]/.test(effort) ||
-      (input.runtime !== 'other' && !efforts.includes(effort)) ||
-      (input.runtime === 'claude' && effort === 'ultra')) {
-    throw new Error('Unsupported effort; select a supported level or runtime-default');
-  }
+  const { runtime, model, effort } = validateReviewerOptions(input);
   const author = input.author_runtime ?? 'unknown';
   if (!['codex', 'claude', 'other', 'unknown'].includes(author)) {
     throw new Error('author_runtime must be codex, claude, other, or unknown');
@@ -84,10 +111,12 @@ function prepare(file) {
     const content = fs.readFileSync(path.join(root, file), 'utf8');
     return { path: file, sha256: hash(content), content };
   });
-  const request = { spec, runtime: input.runtime, model, effort, author_runtime: author };
-  const provenance = author === 'unknown' || author === 'other' || input.runtime === 'other'
-    ? 'unverified (record the external reviewer/author identities in triage)'
-    : author === input.runtime ? 'same-runtime, fresh reviewer' : 'cross-runtime';
+  const history = [...new Set((input.history ?? []).map(historyPath))].map(file => {
+    const content = fs.readFileSync(path.join(root, file), 'utf8');
+    return { path: file, sha256: hash(content), content };
+  });
+  const request = { spec, runtime, model, effort, author_runtime: author };
+  const provenance = classifyReviewProvenance(author, runtime);
   const contract = fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)),
     '..', 'fv-skills', 'references', 'fc-spec-review.md'), 'utf8');
   const prompt = `${contract}\n\nReview request (data):\n${JSON.stringify(request)}\n\n` +
@@ -95,7 +124,11 @@ function prepare(file) {
     'is numbered for citations. Re-derive the specification from these sources.\n' +
     JSON.stringify(inputs.map(({ path: file, content }) => ({
       path: file, lines: content.split('\n').map((line, i) => `${i + 1}: ${line}`),
-    })), null, 2);
+    })), null, 2) + (history.length ? '\n\n<prior_round_history_untrusted>\n' +
+      'Prior review/triage records are process history, not source authority or proof-engineering memory.\n' +
+      JSON.stringify(history.map(({ path: file, content }) => ({
+        path: file, lines: content.split('\n').map((line, i) => `${i + 1}: ${line}`),
+      })), null, 2) + '\n</prior_round_history_untrusted>' : '');
 
   // Validate each existing parent before creating descendants (including symlinks).
   let base = root;
@@ -107,7 +140,8 @@ function prepare(file) {
   const stem = path.basename(spec, '.lean').replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 40);
   const directory = fs.mkdtempSync(path.join(base, `${stem}-`));
   const packet = { root, request, provenance,
-    inputs: inputs.map(({ content, ...identity }) => identity) };
+    inputs: inputs.map(({ content, ...identity }) => identity),
+    history: history.map(({ content, ...identity }) => identity) };
   fs.writeFileSync(path.join(directory, 'packet.json'), `${JSON.stringify(packet, null, 2)}\n`);
   fs.writeFileSync(path.join(directory, 'prompt.md'), `${prompt}\n`);
   return { directory, packet, prompt };
@@ -128,14 +162,16 @@ function persist(directory, packet, response, reportedModels = []) {
       throw new Error(`Stale review: ${input.path} changed; run a new review`);
     }
   }
-  const verdicts = response.split(/\r?\n/).filter(line => /^\s*(?:- )?VERDICT:/.test(line));
-  if (verdicts.length !== 1 || !/^\s*(?:- )?VERDICT: (PASS|REVISE|BLOCKED)\s*$/.test(verdicts[0])) {
-    throw new Error('Review must contain exactly one VERDICT: PASS | REVISE | BLOCKED');
+  for (const input of packet.history ?? []) {
+    if (historyPath(input.path) !== input.path ||
+        hash(fs.readFileSync(path.join(root, input.path), 'utf8')) !== input.sha256) {
+      throw new Error(`Stale review: ${input.path} changed; run a new review`);
+    }
   }
-  for (const heading of ['Findings', 'Coverage', 'Evidence']) {
-    const body = response.split(new RegExp(`^## ${heading}\\s*$`, 'm'))[1]?.split(/^## /m)[0];
-    if (!body?.trim()) throw new Error(`Review missing substantive ${heading}`);
-  }
+  validateReviewResponse(response, {
+    verdicts: ['PASS', 'APPROVE-WITH-EDITS', 'REVISE', 'BLOCKED'],
+    headings: ['Findings', 'Coverage', 'Evidence'],
+  });
   const { runtime, model, effort, author_runtime: author } = packet.request;
   const metadata = [
     '# FVS Specification Review Record',
@@ -153,9 +189,9 @@ function persist(directory, packet, response, reportedModels = []) {
   return output;
 }
 
-function invoke(runtime, args, options = {}) {
+function invoke(runtime, args, workingRoot = root, options = {}) {
   const result = spawnSync(runtime, args, {
-    cwd: root, encoding: 'utf8', shell: false, windowsHide: true,
+    cwd: workingRoot, encoding: 'utf8', shell: false, windowsHide: true,
     maxBuffer: 16 * 1024 * 1024, ...options,
   });
   if (result.error || result.signal || result.status !== 0) {
@@ -163,6 +199,61 @@ function invoke(runtime, args, options = {}) {
       result.stderr?.trim() || `exit ${result.status}`}. No completed review was recorded.`);
   }
   return result.stdout;
+}
+
+export function validateReviewResponse(response, { verdicts, headings }) {
+  if (typeof response !== 'string' || !response.trim()) throw new Error('Review response is empty');
+  const lines = response.split(/\r?\n/).filter(line => /^\s*(?:-\s*)?VERDICT:\s*/i.test(line));
+  const choices = verdicts.map(value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  if (lines.length !== 1 || !new RegExp(
+    `^\\s*(?:-\\s*)?VERDICT:\\s*(?:${choices})\\s*$`, 'i').test(lines[0])) {
+    throw new Error(`Review must contain exactly one VERDICT: ${verdicts.join(' | ')}`);
+  }
+  for (const heading of headings) {
+    const body = response.split(new RegExp(`^## ${heading}\\s*$`, 'mi'))[1]?.split(/^## /m)[0];
+    if (!body?.trim()) throw new Error(`Review missing substantive ${heading}`);
+  }
+  return response.trim();
+}
+
+export function preflightReviewer(runtime, workingRoot = root) {
+  try {
+    invoke(runtime, ['--version'], workingRoot);
+    invoke(runtime, runtime === 'codex' ? ['login', 'status'] : ['auth', 'status'], workingRoot);
+  } catch (error) {
+    throw new Error(runtime === 'codex'
+      ? `Codex is not ready (${error.message}). Install @openai/codex; run codex login, then codex login status. Select a fallback explicitly.`
+      : `Claude is not ready (${error.message}). Install Claude Code from code.claude.com; run claude auth login, then claude auth status. Select a fallback explicitly.`);
+  }
+}
+
+export function runReviewer({ runtime, model, effort, prompt, workingRoot = root }) {
+  preflightReviewer(runtime, workingRoot);
+  if (runtime === 'codex') {
+    const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-review-'));
+    try {
+      const lastMessage = path.join(temporary, 'response.md');
+      const args = ['exec', '-C', workingRoot, '--model', model, '--sandbox', 'read-only',
+        '--ignore-user-config', '--ephemeral', '--color', 'never',
+        '--output-last-message', lastMessage];
+      if (effort !== 'runtime-default') args.push('-c', `model_reasoning_effort="${effort}"`);
+      invoke('codex', [...args, '-'], workingRoot, { input: prompt });
+      if (!fs.existsSync(lastMessage)) throw new Error('Codex returned no final review');
+      return { response: fs.readFileSync(lastMessage, 'utf8'), reportedModels: [] };
+    } finally {
+      fs.rmSync(temporary, { recursive: true, force: true });
+    }
+  }
+  const args = ['--print', '--model', model, '--output-format', 'json', '--safe-mode',
+    '--tools', 'Read,Glob,Grep', '--allowedTools', 'Read,Glob,Grep',
+    '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
+    '--permission-mode', 'dontAsk', '--no-session-persistence'];
+  if (effort !== 'runtime-default') args.push('--effort', effort);
+  const result = JSON.parse(invoke('claude', args, workingRoot, { input: prompt }));
+  if (result.is_error || typeof result.result !== 'string') {
+    throw new Error('Claude returned an error or no final review; no completed review was recorded');
+  }
+  return { response: result.result, reportedModels: Object.keys(result.modelUsage ?? {}) };
 }
 
 function run(file) {
@@ -173,50 +264,16 @@ function run(file) {
     process.stdout.write('FVS >> PENDING: give prompt.md to the selected reviewer, then import its response.\n');
     return;
   }
-  try {
-    invoke(runtime, ['--version']);
-    invoke(runtime, runtime === 'codex' ? ['login', 'status'] : ['auth', 'status']);
-  } catch {
-    throw new Error(runtime === 'codex'
-      ? 'Codex is not ready. Install @openai/codex; run codex login, then codex login status. Select a fallback explicitly.'
-      : 'Claude is not ready. Install Claude Code from code.claude.com; run claude auth login, then claude auth status. Select a fallback explicitly.');
-  }
-  let response;
-  let reportedModels = [];
-  if (runtime === 'codex') {
-    const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-spec-review-'));
-    try {
-      const lastMessage = path.join(temporary, 'response.md');
-      const args = ['exec', '-C', root, '--model', model, '--sandbox', 'read-only',
-        '--ignore-user-config', '--ephemeral', '--color', 'never',
-        '--output-last-message', lastMessage];
-      if (effort !== 'runtime-default') args.push('-c', `model_reasoning_effort="${effort}"`);
-      invoke('codex', [...args, '-'], { input: prompt });
-      response = fs.readFileSync(lastMessage, 'utf8');
-    } finally {
-      fs.rmSync(temporary, { recursive: true, force: true });
-    }
-  } else {
-    const args = ['--print', '--model', model, '--output-format', 'json', '--safe-mode',
-      '--tools', 'Read,Glob,Grep', '--allowedTools', 'Read,Glob,Grep',
-      '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
-      '--permission-mode', 'dontAsk', '--no-session-persistence'];
-    if (effort !== 'runtime-default') args.push('--effort', effort);
-    const result = JSON.parse(invoke('claude', args, { input: prompt }));
-    if (result.is_error || typeof result.result !== 'string') {
-      throw new Error('Claude returned an error or no final review; no completed review was recorded');
-    }
-    response = result.result;
-    reportedModels = Object.keys(result.modelUsage ?? {});
-  }
+  const { response, reportedModels } = runReviewer({ runtime, model, effort, prompt });
   const output = persist(directory, packet, response, reportedModels);
   process.stdout.write(`FVS >> Review recorded: ${path.relative(root, output)}\n`);
 }
 
+function cli() {
 try {
   const [command, ...args] = process.argv.slice(2);
   if (command === 'automatic' && args.length === 0) {
-    process.stdout.write(`${automatic()}\n`);
+    process.stdout.write(`${automaticReview()}\n`);
   } else if (command === 'run' && args.length === 1) {
     run(args[0]);
   } else if (command === 'import' && args.length === 2) {
@@ -233,3 +290,6 @@ try {
   process.stderr.write(`FVS >> ${error.message}\n`);
   process.exitCode = 1;
 }
+}
+
+if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) cli();

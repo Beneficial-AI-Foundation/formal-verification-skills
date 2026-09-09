@@ -248,14 +248,27 @@ AUTOMATIC_REVIEW=$(node ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-spec-review.mjs automa
 
 Missing config or `spec_review.automatic` means true; malformed config stops with an error.
 If true, read and follow `${CLAUDE_PLUGIN_ROOT}/fv-skills/workflows/lean-spec-review.md` with the generated
-spec, resolved Rust/Funs/Types/interpretation paths, and actual executor author runtime. Run its
-reviewer/model/effort menus and wait for selections. Supply source evidence, not inherited
-proof-engineering lessons or author summaries.
+spec, resolved Rust/Funs/Types/interpretation paths, and actual executor author runtime. Honor
+reviewer/model/effort choices explicitly supplied earlier in this invocation, then ask only for
+missing choices in order: reviewer -> model -> effort. Recommend the normalized non-author runtime.
+Never auto-select or treat a default/preselected menu item as consent. Supply source evidence, not
+inherited proof-engineering lessons or author summaries. Offer a one-run `Skip review` and record it
+exactly as `Unreviewed (user skipped)`.
 
 If false, retain `Unreviewed (automatic review disabled)` and offer the standalone command.
 Users opt out by merging `"spec_review": {"automatic": false}` into the existing optional
 `.formalising/fvs-config.json`. Do not create or migrate configuration. Failed/cancelled reviews
-and exported packets awaiting a response also remain unreviewed; preserve the spec.
+and exported packets awaiting a response also remain unreviewed; preserve the spec. Disabled or
+skipped review does not auto-start proof work; a trusted user may explicitly invoke
+`/fvs:lean-verify`.
+
+When enabled, the `lean-specify` authoring seat runs at most three reviewer rounds. Preserve each
+`review.md`; write separate `triage.md` with finding IDs and pre-edit/post-edit (old/new) hashes.
+PASS is terminal. APPROVE-WITH-EDITS becomes terminal `approved after edits` after accepted bounded
+edits pass the structure, style, and optional build gates, with no second review. REVISE and BLOCKED
+require a fresh revision/evidence packet and another review carrying prior review/triage history as
+delimited untrusted process data. At the cap stop with the latest paths and exact standalone resume
+command; never begin proof work automatically.
 
 **Report result:**
 ```
@@ -266,8 +279,8 @@ Spec file: Specs/{path}/{FunctionName}.lean
 Postconditions: [summary of what the spec asserts]
 Dependencies: [N] specs found, [M] missing
 Style: [OK] {target guide path | FVS fallback}
-Review: {PASS | REVISE | BLOCKED | Unreviewed, with reason and review path}
-Status: {statement ready for proof only after supported PASS; otherwise review/revision pending}
+Review: {PASS | APPROVE-WITH-EDITS | REVISE | BLOCKED | Unreviewed, with reason and paths}
+Status: {ready after PASS/approved after edits; otherwise review/revision pending}
 Proof: Contains sorry
 
 ---
@@ -275,7 +288,8 @@ Proof: Contains sorry
 Next: {lean-verify after supported PASS; otherwise findings/evidence or lean-spec-review}
 ```
 
-Only a PASS supported by finding triage leads to suggesting `/fvs:lean-verify`. Otherwise suggest
+Only a PASS or `approved after edits` supported by finding triage leads to suggesting
+`/fvs:lean-verify`. Otherwise suggest
 resolving findings or `/fvs:lean-spec-review Specs/{path}/{FunctionName}.lean`. A user may explicitly
 proceed without review; keep that status visible and never start proof work automatically.
 </step>

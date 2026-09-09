@@ -42,6 +42,7 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
       "if (mode === 'blank') review = 'VERDICT: PASS\\n## Findings\\nNone\\n## Coverage\\n\\n## Evidence\\nfile:1';",
       "if (mode === 'duplicate') review += '\\nVERDICT: REVISE';",
       "if (mode === 'revise') review = review.replace('VERDICT: PASS', 'VERDICT: REVISE');",
+      "if (mode === 'edits') review = review.replace('VERDICT: PASS', 'VERDICT: APPROVE-WITH-EDITS');",
       "if (args[0] === 'exec') {",
       "  fs.writeFileSync(args[args.indexOf('--output-last-message') + 1], review);",
       '} else {',
@@ -130,6 +131,10 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
     const revised = run({}, 'revise');
     assert.equal(revised.status, 0, revised.stderr);
     assert.match(fs.readFileSync(path.join(directory(revised), 'review.md'), 'utf8'), /VERDICT: REVISE/);
+    const edited = run({}, 'edits');
+    assert.equal(edited.status, 0, edited.stderr);
+    assert.match(fs.readFileSync(path.join(directory(edited), 'review.md'), 'utf8'),
+      /VERDICT: APPROVE-WITH-EDITS/);
     const external = run({ runtime: 'other', model: 'my-provider/model', effort: '8192-token-budget' });
     assert.equal(external.status, 0, external.stderr);
     assert.match(external.stdout, /PENDING/);

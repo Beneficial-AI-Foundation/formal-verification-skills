@@ -20,6 +20,9 @@
   "spec_review": {
     "automatic": true
   },
+  "crypto_review": {
+    "automatic": true
+  },
   "behavior": {
     "mode": "interactive"
   },

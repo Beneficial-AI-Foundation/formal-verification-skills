@@ -172,10 +172,17 @@ Commands are grouped into five bundles. Each bundle has a **router** command tha
 rejects ordinary Lean identifiers with three or more namespace dots, steering generated code
 toward scoped namespaces, `open`, and local names.
 
-After `lean-specify`, a review menu offers the other runtime first, a fresh reviewer in the current
-runtime, or another provider. Choose GPT Sol or Astra for Codex, Fable for Claude, or a cheaper/custom
-model; effort defaults to `max` and can be lowered. Other providers use an exported source packet
-and imported response. Reviews and source hashes live under `.formalising/spec-reviews/`.
+After `lean-specify`, an interactive review menu asks reviewer, then model, then effort; it never
+auto-selects a choice. It offers the other runtime first, a fresh reviewer in the current runtime,
+or another provider. Choose GPT Sol or Astra for Codex, Fable for Claude, or a cheaper/custom model;
+effort defaults to `max` and can be lowered. Other providers use an exported source packet and
+imported response. One-run `Skip review` records `Unreviewed (user skipped)` and does not begin
+proof work. Reviews and source hashes live under `.formalising/spec-reviews/`.
+
+The reviewer stays read-only and `review.md` stays immutable. The `lean-specify` authoring seat
+writes separate `triage.md`. PASS proceeds; APPROVE-WITH-EDITS also proceeds after accepted bounded
+edits pass the structure/style/build gates, with no redundant second review. Only REVISE/BLOCKED
+starts another fresh review, carrying prior records as untrusted history, with a three-round cap.
 
 Automatic review works even without a config file. To disable the automatic menu, merge this
 setting into `.formalising/fvs-config.json` (or create that file with just this object):
@@ -216,7 +223,7 @@ secrets, raw transcripts, ephemeral error dumps, unsupported guesses, or inferre
 | `/fvs:lean-formalise` | Formalise paper/math content into Lean 4 specs and definitions (one-shot) |
 | `/fvs:lean-refactor` | Refactor, simplify, and decompose verified proofs — *also in Formal-Core* |
 | `/fvs:crypto-plan` | Author the next bounded, runtime-neutral plan for a topic-based crypto formalisation iteration (KB-grounded, cached under `sources/`) |
-| `/fvs:crypto-review` | Send an initial or follow-up crypto plan to authenticated Codex for independent, read-only adversarial review before execution |
+| `/fvs:crypto-review` | Review a crypto plan with selected Codex, Claude, or Other runtime/model/effort |
 | `/fvs:crypto-execute` | Run the current iteration's bounded plan under the green-build guard |
 | `/fvs:crypto-eval` | Adversarially evaluate the iteration; ends in one of ACCEPT / FOLLOWUP / HUMAN_RULING / BLOCKED |
 | `/fvs:crypto-followup` | Convert eval findings into the next follow-up plan; HALTs on HUMAN_RULING |
@@ -274,12 +281,12 @@ The paper track formalises papers directly into Lean 4 — no Rust, no Aeneas. T
 
 - **One-shot:** `/fvs:lean-formalise` reads your PDFs / images / LaTeX (optionally grounded in a NotebookLM knowledge base via `/fvs:kb-setup`) and produces Lean definition and spec files in a single pass.
 - **Iterative crypto loop:** for larger crypto formalisations, a topic-based, restartable loop with
-  an independent pre-execution review gate:
+  a fresh pre-execution review gate:
 
   `/fvs:crypto-plan` → `/fvs:crypto-review` → `/fvs:crypto-execute` → `/fvs:crypto-eval` → `/fvs:crypto-followup` → `/fvs:crypto-review` → repeat
 
-  A high-effort thinker authors each bounded plan. Before execution, authenticated Codex
-  independently attacks the plan or follow-up under a read-only sandbox and returns an
+  A high-effort thinker authors each bounded plan. Before execution, a selected Codex, Claude, or
+  Other fresh reviewer attacks the plan or follow-up under read-only controls and returns an
   evidence-backed APPROVE / APPROVE-WITH-EDITS / REJECT verdict. The executor runs an approved plan
   under a green-build guard; the post-execution adversarial eval tries to refute the spec, proof,
   and assumptions and ends in exactly one of ACCEPT / FOLLOWUP / HUMAN_RULING / BLOCKED. Follow-up
@@ -289,8 +296,15 @@ The paper track formalises papers directly into Lean 4 — no Rust, no Aeneas. T
   The authoring, execution, eval, and follow-up stages use the lightweight proof-engineering overlay:
   they load at most eight relevant `crypto`/`shared` lessons and propose at most three reviewed
   updates. Modeling lessons require paper or standard citations and remain provisional until an
-  accepted adversarial eval or explicit human ruling. The independent `crypto-review` gate is
-  deliberately memory-blind, so inherited lessons cannot frame the second-runtime critique.
+  accepted adversarial eval or explicit human ruling. The `crypto-review` gate is deliberately
+  memory-blind. It labels cross-runtime, same-runtime fresh reviewer, and unverified provenance;
+  Other uses packet export/import. APPROVE-WITH-EDITS becomes terminal after the authoring seat
+  applies accepted edits and reruns gates, with no second review. REJECT starts a fresh reviewed
+  revision with prior history, capped at three reviewer rounds per invocation. Automatic plan and
+  follow-up handoff asks reviewer -> model -> effort and never auto-selects. One-run `Skip review`
+  records `Unreviewed (user skipped)` and never starts execution. To opt out persistently, merge
+  `"crypto_review": {"automatic": false}` into `.formalising/fvs-config.json`; standalone review
+  and explicit trusted-path execution remain available without fabricating approval.
 
   **Single- vs dual-runtime (`--codex`).** By default the loop is single-runtime — the thinking stages (`crypto-plan`, `crypto-eval`, `crypto-followup`) run the in-runtime `fvs-crypto-thinker`. Pass `--codex` to hand a stage's thinking to an independent **Codex CLI** thinker instead, so the adversarial planner/evaluator runs on a *different engine* than the executor and blind spots don't correlate. `crypto-execute` is the runtime-neutral executor and takes no `--codex`. Without the Codex CLI installed, a `--codex` stage stops with an install hint rather than silently falling back.
 

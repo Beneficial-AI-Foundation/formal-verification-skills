@@ -79,6 +79,8 @@ const STAGE_FILES = {
   wfEval: path.join(WF_DIR, 'crypto-eval.md'),
   wfFollowup: path.join(WF_DIR, 'crypto-followup.md'),
   wfReview: path.join(WF_DIR, 'crypto-review.md'),
+  cmdSpecify: path.join(CMD_DIR, 'lean-specify.md'),
+  wfSpecify: path.join(WF_DIR, 'lean-specify.md'),
 };
 
 // ---------------------------------------------------------------------------
@@ -348,38 +350,84 @@ whenExists(CRYPTO_EXECUTOR, `Crypto loop: executor discipline in ${rel(CRYPTO_EX
 });
 
 // ---------------------------------------------------------------------------
-// 11. Independent pre-execution plan review (#35).
+// 11. Runtime-parametric, bounded author/reviewer loops.
 // ---------------------------------------------------------------------------
 for (const key of ['cmdReview', 'wfReview']) {
-  whenExists(STAGE_FILES[key], `Crypto loop: independent plan review in ${rel(STAGE_FILES[key])} (#35)`, (content, absPath) => {
-    it('preflights Codex authentication and never silently falls back', () => {
-      assert.ok(/codex login status/.test(content),
-        `${rel(absPath)} missing Codex authentication preflight`);
-      assert.ok(/no silent|never silently|no same-runtime fallback/i.test(content),
-        `${rel(absPath)} missing no-fallback independence rule`);
+  whenExists(STAGE_FILES[key], `Crypto loop: rival review in ${rel(STAGE_FILES[key])}`, (content, absPath) => {
+    it('selects reviewer, model, and effort with an Other packet route', () => {
+      for (const token of ['--reviewer', '--model', '--effort', 'gpt-5.6-sol', 'gpt-6-astra',
+        'fable', 'sonnet', 'Other']) {
+        assert.ok(content.includes(token), `${rel(absPath)} missing ${token}`);
+      }
+      assert.match(content, /reviewer[\s\S]*model[\s\S]*effort/i,
+        `${rel(absPath)} does not ask reviewer -> model -> effort`);
     });
     it('supports both initial and follow-up plan review artifacts', () => {
       for (const token of ['PLAN_REVIEW_', 'FOLLOWUP_REVIEW_']) {
         assert.ok(content.includes(token), `${rel(absPath)} missing ${token} artifact contract`);
       }
     });
-    it('requires read-only, xhigh, effort-only Codex review', () => {
-      assert.ok(/read-only/i.test(content) && /xhigh/i.test(content) && /no `--model`|no model override|effort-only/i.test(content),
-        `${rel(absPath)} missing read-only/xhigh/effort-only review contract`);
-    });
-    it('fails closed on self-review or unknown provenance', () => {
-      assert.ok(/Authoring runtime:/.test(content) && /self-review|independ/i.test(content) &&
-        /missing provenance|provenance is unverified|unknown provenance/i.test(content),
-      `${rel(absPath)} missing provenance-based self-review refusal`);
-    });
-    it('routes only APPROVE to execution', () => {
-      for (const verdict of ['APPROVE', 'APPROVE-WITH-EDITS', 'REJECT']) {
-        assert.ok(content.includes(verdict), `${rel(absPath)} missing ${verdict} verdict`);
+    it('keeps reviewer read-only and records honest provenance', () => {
+      assert.match(content, /read-only/i);
+      for (const label of ['cross-runtime', 'same-runtime, fresh reviewer', 'unverified']) {
+        assert.ok(content.includes(label), `${rel(absPath)} missing ${label}`);
       }
-      assert.ok(/Only APPROVE|`APPROVE`.*proceed|APPROVE.*routes/i.test(content),
-        `${rel(absPath)} does not gate execution on APPROVE`);
+    });
+    it('preserves reviewer text and writes separate immutable triage', () => {
+      for (const token of ['PLAN_REVIEW_nN_TRIAGE.md', 'FOLLOWUP_REVIEW_nN_TRIAGE.md',
+        'finding IDs', 'pre-edit', 'post-edit']) {
+        assert.ok(content.includes(token), `${rel(absPath)} missing ${token}`);
+      }
+      assert.match(content, /reviewer.*(?:never edits|read-only)/i);
+      assert.match(content, /refus(?:e|ing).*overwrite|exclusive/i);
+    });
+    it('makes bounded edits terminal but true rejection require a fresh review', () => {
+      assert.match(content, /APPROVE-WITH-EDITS[\s\S]{0,900}approved after edits/i);
+      assert.match(content, /no second review|without another review/i);
+      assert.match(content, /REJECT[\s\S]{0,500}fresh (?:authored )?(?:revision|plan|review)/i);
+    });
+    it('keeps failed, cancelled, pending, and unverified outcomes from execution', () => {
+      for (const state of ['failed', 'cancelled', 'pending', 'unverified']) {
+        assert.ok(content.toLowerCase().includes(state), `${rel(absPath)} missing ${state} state`);
+      }
+      assert.match(content, /never auto-start|do not.*(?:execution|crypto-execute)/i);
     });
   });
+}
+
+for (const key of ['cmdPlan', 'wfPlan', 'cmdFollowup', 'wfFollowup']) {
+  whenExists(STAGE_FILES[key], `Crypto loop: optional interactive handoff in ${rel(STAGE_FILES[key])}`,
+    (content, absPath) => {
+      it('checks the persistent automatic-review setting without selecting choices', () => {
+        assert.ok(content.includes('review-automatic'), `${rel(absPath)} missing config helper`);
+        assert.ok(content.includes('crypto_review.automatic'), `${rel(absPath)} missing config key`);
+        assert.match(content, /missing choices[\s\S]{0,250}reviewer[\s\S]*model[\s\S]*effort/i);
+        assert.match(content, /recommend[\s\S]{0,200}non-author runtime/i);
+        assert.match(content, /honor[\s\S]{0,200}explicit/i);
+        assert.match(content, /never (?:auto-select|choose)/i);
+      });
+      it('keeps disabled and one-run skip outcomes explicitly unreviewed', () => {
+        assert.ok(content.includes('Unreviewed (automatic review disabled)'));
+        assert.ok(content.includes('Unreviewed (user skipped)'));
+        assert.match(content, /do not auto-start|never auto-start/i);
+      });
+    });
+}
+
+for (const key of ['cmdSpecify', 'wfSpecify']) {
+  whenExists(STAGE_FILES[key], `FC specification: interactive automatic handoff in ${rel(STAGE_FILES[key])}`,
+    (content, absPath) => {
+      it('waits for missing reviewer choices and preserves explicit choices', () => {
+        assert.match(content, /missing choices[\s\S]{0,250}reviewer[\s\S]*model[\s\S]*effort/i);
+        assert.match(content, /recommend[\s\S]{0,200}non-author runtime/i);
+        assert.match(content, /honor[\s\S]{0,200}explicit/i);
+        assert.match(content, /never (?:auto-select|choose)/i);
+      });
+      it('records one-run skip without starting proof', () => {
+        assert.ok(content.includes('Unreviewed (user skipped)'));
+        assert.match(content, /do not auto-start|never (?:begin|auto-start).*proof/i);
+      });
+    });
 }
 
 const REVIEW_CONTRACT = path.join(ROOT, 'fv-skills', 'references', 'crypto-plan-review.md');
@@ -408,6 +456,11 @@ whenExists(REVIEW_CONTRACT, 'Crypto loop: adversarial review contract covers for
     assert.ok(/VERDICT:.*exactly once|exactly one verdict/is.test(content),
       `${rel(absPath)} missing exactly-one-verdict requirement`);
   });
+  it('assigns edits to the authoring seat and preserves the reviewer artifact', () => {
+    assert.match(content, /authoring seat[\s\S]*APPROVE-WITH-EDITS/i);
+    assert.match(content, /reviewer (?:response|artifact)[\s\S]*(?:unchanged|byte-for-byte|immutable)/i);
+    assert.match(content, /REJECT[\s\S]*(?:fresh|another) review/i);
+  });
 });
 
 for (const key of ['cmdPlan', 'cmdFollowup']) {
@@ -419,6 +472,40 @@ for (const key of ['cmdPlan', 'cmdFollowup']) {
     it('routes Next Up through /fvs:crypto-review', () => {
       assert.ok(/\/fvs:crypto-review/.test(content),
         `${rel(absPath)} bypasses the independent review stage`);
+    });
+    it('runs at most three reviewer rounds with prior review/triage history', () => {
+      assert.match(content, /(?:at most|maximum|hard cap)[^\n]*three review/i);
+      assert.ok(content.includes('--history'), `${rel(absPath)} missing history handoff`);
+      assert.match(content, /REJECT[\s\S]*(?:fresh|new).*review/i);
+    });
+  });
+}
+
+for (const file of [
+  path.join(CMD_DIR, 'lean-spec-review.md'),
+  path.join(WF_DIR, 'lean-spec-review.md'),
+  path.join(ROOT, 'fv-skills', 'references', 'fc-spec-review.md'),
+  path.join(CMD_DIR, 'lean-specify.md'),
+  path.join(WF_DIR, 'lean-specify.md'),
+]) {
+  whenExists(file, `FC specification rival review in ${rel(file)}`, (content, absPath) => {
+    it('distinguishes terminal edits from true revision verdicts', () => {
+      for (const verdict of ['PASS', 'APPROVE-WITH-EDITS', 'REVISE', 'BLOCKED']) {
+        assert.ok(content.includes(verdict), `${rel(absPath)} missing ${verdict}`);
+      }
+      assert.match(content, /APPROVE-WITH-EDITS[\s\S]{0,1000}approved after edits/i);
+      assert.match(content, /REVISE|BLOCKED/);
+      assert.match(content, /fresh|another review/i);
+    });
+    it('keeps author edits separate, hash-recorded, and locally gated', () => {
+      assert.match(content, /authoring seat|lean-specify/i);
+      assert.ok(content.includes('triage.md'), `${rel(absPath)} missing separate triage`);
+      assert.match(content, /old\/new hashes|pre-edit.*post-edit|before\/after hashes/i);
+      assert.match(content, /structure[\s\S]*style[\s\S]*(?:optional )?build/i);
+    });
+    it('caps true-revision review cycles at three with prior history', () => {
+      assert.match(content, /(?:at most|maximum|hard cap)[^\n]*three review/i);
+      assert.match(content, /prior (?:review|round)|history/i);
     });
   });
 }
@@ -446,17 +533,17 @@ whenExists(CODEX_THINK, 'Crypto loop: fvs-codex-think.mjs confines --topic to th
   }
 });
 
-whenExists(CODEX_THINK, 'Crypto loop: Codex review helper is authenticated, read-only, and wrapper-persisted', (content, absPath) => {
-  it('checks codex login status in addition to binary availability', () => {
-    assert.ok(/\['login', 'status'\]/.test(content),
-      `${rel(absPath)} missing codex login status defense-in-depth preflight`);
-  });
-  it('uses read-only + ephemeral review invocation and output-last-message capture', () => {
-    for (const token of ["'read-only'", "'--ephemeral'", "'--output-last-message'"]) {
-      assert.ok(content.includes(token), `${rel(absPath)} missing ${token}`);
+whenExists(CODEX_THINK, 'Crypto loop: review helper reuses safe provider machinery', (content, absPath) => {
+  it('imports provider launch, validation, and provenance from the FC helper', () => {
+    assert.ok(content.includes("from './fvs-spec-review.mjs'"), `${rel(absPath)} duplicates provider code`);
+    for (const token of ['runReviewer', 'validateReviewerOptions', 'classifyReviewProvenance']) {
+      assert.ok(content.includes(token), `${rel(absPath)} missing shared ${token}`);
     }
-    assert.ok(/fs\.writeFileSync\(review\.outputPath/.test(content),
-      `${rel(absPath)} does not make the wrapper own the review artifact write`);
+  });
+  it('owns exclusive final writes and managed review packets', () => {
+    assert.match(content, /PACKET-/);
+    assert.match(content, /writeFileSync\(outputPath[\s\S]*flag: 'wx'/);
+    assert.ok(content.includes('review-import'), `${rel(absPath)} missing import route`);
   });
   it('loads the shipped crypto-plan-review contract', () => {
     assert.ok(/crypto-plan-review\.md/.test(content),
@@ -465,149 +552,6 @@ whenExists(CODEX_THINK, 'Crypto loop: Codex review helper is authenticated, read
   it('marks Codex-authored plans so later review cannot masquerade as independent', () => {
     assert.ok(/Authoring runtime: Codex CLI/.test(content),
       `${rel(absPath)} does not stamp Codex authoring provenance`);
-  });
-});
-
-describe('Crypto loop: fvs-codex-think review stage with a fake Codex CLI', () => {
-  const os = require('node:os');
-  const { spawnSync } = require('node:child_process');
-
-  it('captures one validated review while giving Codex read-only repository access', {
-    skip: process.platform === 'win32',
-  }, () => {
-    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-review-test-'));
-    try {
-      const fakeBin = path.join(tmpRoot, 'bin');
-      const project = path.join(tmpRoot, 'project');
-      const topic = path.join(project, '.formalising', 'fv-plans', 'demo');
-      const plans = path.join(topic, 'plans');
-      const reviews = path.join(topic, 'reviews');
-      fs.mkdirSync(fakeBin, { recursive: true });
-      fs.mkdirSync(plans, { recursive: true });
-      fs.mkdirSync(reviews, { recursive: true });
-      fs.writeFileSync(
-        path.join(plans, 'PLAN_n1.md'),
-        '# Plan\n\nAuthoring runtime: Claude Code\n'
-      );
-      fs.writeFileSync(
-        path.join(plans, 'EXEC_PLAN_n1.md'),
-        '# Executor Plan\n\nAuthoring runtime: Claude Code\n'
-      );
-
-      const fakeCodex = path.join(fakeBin, 'codex');
-      fs.writeFileSync(fakeCodex, [
-        '#!/usr/bin/env node',
-        "'use strict';",
-        "const fs = require('node:fs');",
-        'const args = process.argv.slice(2);',
-        "if (args[0] === '--version') { console.log('codex-cli fake'); process.exit(0); }",
-        "if (args[0] === 'login' && args[1] === 'status') { console.log('Logged in'); process.exit(0); }",
-        "if (args[0] !== 'exec') process.exit(9);",
-        "const outAt = args.indexOf('--output-last-message');",
-        'if (outAt < 0 || !args[outAt + 1]) process.exit(8);',
-        "fs.writeFileSync(args[outAt + 1], '# FVS Crypto Plan Review\\n\\n- VERDICT: APPROVE\\n\\n## Findings\\n\\nNone.\\n\\n## Cleared surfaces\\n\\nChecked.\\n\\n## Probe log\\n\\nNone.\\n\\n## Resolution map\\n\\n| Finding | Suggested edit | Destination plan/section |\\n|---|---|---|\\n');",
-        "fs.writeFileSync(process.env.FVS_FAKE_CODEX_LOG, JSON.stringify(args));",
-      ].join('\n'));
-      fs.chmodSync(fakeCodex, 0o755);
-
-      const logPath = path.join(tmpRoot, 'codex-args.json');
-      const run = spawnSync(process.execPath, [
-        CODEX_THINK,
-        'review',
-        '--topic', '.formalising/fv-plans/demo',
-        '--iteration', 'n1',
-        '--target', 'plan',
-        '--effort', 'xhigh',
-      ], {
-        cwd: project,
-        encoding: 'utf8',
-        env: {
-          ...process.env,
-          PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ''}`,
-          FVS_FAKE_CODEX_LOG: logPath,
-        },
-      });
-      assert.equal(run.status, 0, `${run.stderr || ''}\n${run.stdout || ''}`);
-
-      const artifact = path.join(reviews, 'PLAN_REVIEW_n1.md');
-      assert.ok(fs.existsSync(artifact), 'wrapper did not persist PLAN_REVIEW_n1.md');
-      assert.match(fs.readFileSync(artifact, 'utf8'), /VERDICT: APPROVE/);
-
-      const args = JSON.parse(fs.readFileSync(logPath, 'utf8'));
-      const sandboxAt = args.indexOf('--sandbox');
-      assert.ok(sandboxAt >= 0, 'codex exec missing --sandbox');
-      assert.equal(args[sandboxAt + 1], 'read-only', 'reviewer sandbox must be read-only');
-      assert.ok(args.includes('--ephemeral'), 'reviewer must be ephemeral');
-      assert.ok(args.includes('--output-last-message'), 'review output must be captured');
-      assert.ok(!args.includes('--model') && !args.includes('-m'),
-        'review helper must not pass a model override');
-      const prompt = args[args.length - 1];
-      assert.ok(prompt.includes('Source fidelity') &&
-        prompt.includes('Statement-level soundness'),
-      'specialised adversarial review contract was not included in the prompt');
-    } finally {
-      fs.rmSync(tmpRoot, { recursive: true, force: true });
-    }
-  });
-
-  it('fails before invocation or artifact creation when any target lacks provenance', {
-    skip: process.platform === 'win32',
-  }, () => {
-    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-review-provenance-test-'));
-    try {
-      const fakeBin = path.join(tmpRoot, 'bin');
-      const project = path.join(tmpRoot, 'project');
-      const topic = path.join(project, '.formalising', 'fv-plans', 'demo');
-      const plans = path.join(topic, 'plans');
-      fs.mkdirSync(fakeBin, { recursive: true });
-      fs.mkdirSync(plans, { recursive: true });
-      fs.writeFileSync(
-        path.join(plans, 'PLAN_n1.md'),
-        '# Plan\n\nAuthoring runtime: Claude Code\n'
-      );
-      fs.writeFileSync(
-        path.join(plans, 'EXEC_PLAN_n1.md'),
-        '# Executor Plan\n\nNo provenance marker here.\n'
-      );
-
-      const fakeCodex = path.join(fakeBin, 'codex');
-      fs.writeFileSync(fakeCodex, [
-        '#!/usr/bin/env node',
-        "'use strict';",
-        "const fs = require('node:fs');",
-        'const args = process.argv.slice(2);',
-        "if (args[0] === '--version') process.exit(0);",
-        "if (args[0] === 'login' && args[1] === 'status') process.exit(0);",
-        "fs.writeFileSync(process.env.FVS_FAKE_CODEX_LOG, 'invoked');",
-      ].join('\n'));
-      fs.chmodSync(fakeCodex, 0o755);
-
-      const logPath = path.join(tmpRoot, 'codex-invoked');
-      const run = spawnSync(process.execPath, [
-        CODEX_THINK,
-        'review',
-        '--topic', '.formalising/fv-plans/demo',
-        '--iteration', 'n1',
-        '--target', 'plan',
-        '--effort', 'xhigh',
-      ], {
-        cwd: project,
-        encoding: 'utf8',
-        env: {
-          ...process.env,
-          PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ''}`,
-          FVS_FAKE_CODEX_LOG: logPath,
-        },
-      });
-
-      assert.notEqual(run.status, 0, 'review unexpectedly accepted incomplete provenance');
-      assert.match(run.stderr, /every review target.*Authoring runtime|independence.*unverified/i);
-      assert.ok(!fs.existsSync(logPath), 'Codex was invoked despite incomplete provenance');
-      assert.ok(!fs.existsSync(path.join(topic, 'reviews')),
-        'review directory was created before provenance validation');
-    } finally {
-      fs.rmSync(tmpRoot, { recursive: true, force: true });
-    }
   });
 });
 

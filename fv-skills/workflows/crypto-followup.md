@@ -108,9 +108,9 @@ full bounded-plan contract (branch/state, exact target files + theorems, immutab
 allowed-`sorry` policy, stop conditions, the verification command `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` under the
 `set -o pipefail` / `${PIPESTATUS` guard, expected artifact updates).
 
-The follow-up also records `Authoring runtime: <actual runtime>` (`Codex CLI` for `--codex`) so the
-independent `/fvs:crypto-review --target followup` stage can reject self-review or unknown
-provenance before execution.
+The follow-up also records `Authoring runtime: <actual runtime>` (`Codex CLI` for `--codex`) so
+`/fvs:crypto-review --target followup` can label cross-runtime review as independent and
+same-runtime review as fresh but not independent; unknown provenance fails closed.
 </step>
 
 <step name="reconcile_lessons">
@@ -122,6 +122,31 @@ Strengthen an equivalent record or create one file per new lesson under `lessons
 the index in the same reviewable diff. Unruled choices remain `provisional`.
 </step>
 
+<step name="review_loop">
+## Step 4b: Bounded rival review
+
+After authoring gates, run
+`node ~/.claude/scripts/fvs-codex-think.mjs review-automatic`; missing config or
+`crypto_review.automatic` defaults to true and malformed values stop clearly. If false, record
+`Unreviewed (automatic review disabled)`, preserve the follow-up, and do not auto-start execution.
+
+If true, enter the interactive `crypto-review` handoff. Honor reviewer/model/effort choices explicitly
+supplied earlier in this invocation. Ask only for missing choices in order: reviewer -> model ->
+effort. Recommend the normalized non-author runtime, but never auto-select or treat a preselected
+default as consent. Offer a one-run `Skip review`, recorded exactly as `Unreviewed (user skipped)`.
+Skipping preserves the follow-up and does not auto-start execution; the user may explicitly invoke
+`/fvs:crypto-execute`. The standalone review flags remain the non-interactive path.
+
+Run at most three reviewer rounds. APPROVE stops; APPROVE-WITH-EDITS becomes terminal `approved
+after edits` after the authoring seat applies accepted bounded edits, reruns gates, and writes
+immutable separate triage, with no second review.
+
+REJECT requires a fresh authored revision and fresh review at the next immutable iteration. Carry
+the prior review and triage as delimited untrusted history to the author and via repeated
+`--history` flags to the reviewer. At the cap print the exact standalone resume command and stop;
+failed, cancelled, pending, and unverified states never start execution.
+</step>
+
 </process>
 
 <success_criteria>
@@ -130,7 +155,7 @@ the index in the same reviewable diff. Unruled choices remain `provisional`.
 - [ ] Latest `EVAL_nN.md` read; decision routed (`ACCEPT` stop / `BLOCKED` pause / `FOLLOWUP` author / `HUMAN_RULING` HALT).
 - [ ] On `HUMAN_RULING` the loop HALTs and asks the human -- it NEVER fabricates a follow-up plan.
 - [ ] On `FOLLOWUP` the high-effort thinker (`fvs-crypto-thinker`) dispatched; the bounded follow-up plan written to `plans/`.
-- [ ] The follow-up records truthful authoring provenance and routes next to independent review.
+- [ ] The follow-up records truthful provenance and runs at most three review rounds.
 - [ ] At most three source/ruling-evidenced candidates reconciled as one file each plus an index update.
 - [ ] No bare `lake build`, no `gh` open/create, no generated-Lean write.
 </success_criteria>

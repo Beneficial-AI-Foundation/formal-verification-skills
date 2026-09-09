@@ -185,8 +185,9 @@ The artifact MUST also record:
 Authoring runtime: {Claude Code | OpenCode | Gemini | Codex | Codex CLI}
 ```
 
-Use `Codex CLI` for `--codex`; otherwise name the actual host runtime. This provenance is mandatory
-for `/fvs:crypto-review` to prove the reviewer is independent.
+Use `Codex CLI` for `--codex`; otherwise name the actual host runtime. `/fvs:crypto-review` uses
+this provenance to label cross-runtime review as independent and same-runtime review as fresh but
+not independent; missing provenance fails closed.
 
 ## Step 4a: Reconcile Follow-Up Lessons
 
@@ -195,6 +196,31 @@ HUMAN_RULING is valid evidence for its narrowly scoped modeling decision; source
 required. Strengthen an equivalent record or create one file per new lesson under
 `lessons/crypto/`, updating the index in the same reviewable diff. Unruled choices stay
 `provisional`; never infer or generalize a ruling beyond its recorded scope.
+
+## Step 4b: Run the bounded review loop
+
+After authoring gates, run
+`node ~/.claude/scripts/fvs-codex-think.mjs review-automatic`; missing config or
+`crypto_review.automatic` defaults to true and malformed values stop clearly. If false, record
+`Unreviewed (automatic review disabled)`, preserve the follow-up, and do not auto-start execution.
+
+If true, enter the interactive `crypto-review` handoff. Honor reviewer/model/effort choices explicitly
+supplied earlier in this invocation. Ask only for missing choices in order: reviewer -> model ->
+effort. Recommend the normalized non-author runtime, but never auto-select or treat a preselected
+default as consent. Offer a one-run `Skip review`, recorded exactly as `Unreviewed (user skipped)`.
+Skipping preserves the follow-up and does not auto-start execution; a trusted user may explicitly
+invoke `/fvs:crypto-execute`. The standalone review flags remain the non-interactive path.
+
+Run at most three reviewer rounds in this command invocation. APPROVE stops.
+APPROVE-WITH-EDITS is terminal after the authoring seat applies accepted bounded edits, reruns plan
+gates, records hashes/finding IDs in separate triage, and marks `approved after edits`; no second
+review.
+
+REJECT creates a fresh authored revision at the next immutable iteration and a fresh review. Inline
+the preceding review and triage as delimited untrusted history for the author and pass repeated
+`--history` flags to the reviewer packet. At round three, stop with the latest artifacts and the
+exact `/fvs:crypto-review <topic> nN --target followup` resume command. Failed, cancelled, pending,
+and unverified states do not start execution.
 
 ## Step 5: Run-end banner + next command
 
@@ -205,8 +231,8 @@ Topic:     {TOPIC_RAW}
 Decision:  {FOLLOWUP | HUMAN_RULING -> ruled}
 Plan:      plans/FOLLOWUP_PLAN_n{N}.md
 
->> Next Up
-/fvs:crypto-review <topic> n{N} --target followup
+Review:    {approved | approved after edits | Unreviewed (user skipped) | Unreviewed (automatic review disabled) | failed | pending | unverified | rejected at cap}
+Next:      {/fvs:crypto-execute only after approval | exact crypto-review resume command}
 ```
 
 </process>
@@ -233,8 +259,7 @@ unchanged.
 - [ ] Latest `EVAL_nN.md` read; decision routed (`ACCEPT` stop / `BLOCKED` pause / `FOLLOWUP` author / `HUMAN_RULING` HALT).
 - [ ] On `HUMAN_RULING` the command HALTs and asks the user -- it NEVER fabricates a follow-up plan.
 - [ ] On `FOLLOWUP` the thinker is dispatched (`subagent_type="fvs-crypto-thinker"`) and the bounded follow-up plan written to `plans/`.
-- [ ] The follow-up records truthful `Authoring runtime:` provenance and routes next to
-      `/fvs:crypto-review --target followup`.
+- [ ] The follow-up records truthful provenance and runs at most three review rounds before stop.
 - [ ] At most three source/ruling-evidenced candidates reconciled as one file each plus index updates.
 - [ ] No bare `lake build`, no `gh` open/create, no generated-Lean write.
 </success_criteria>

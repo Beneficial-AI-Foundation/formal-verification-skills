@@ -281,8 +281,8 @@ Authoring runtime: {Claude Code | OpenCode | Gemini | Codex | Codex CLI}
 ```
 
 Use `Codex CLI` when `--codex` authored the plan; otherwise name the actual host runtime. Never
-write a generic or guessed marker. `/fvs:crypto-review` uses it to prevent Codex self-review and
-fails closed when provenance is missing.
+write a generic or guessed marker. `/fvs:crypto-review` uses it to label cross-runtime review as
+independent and same-runtime review as fresh but not independent; missing provenance fails closed.
 
 Carry the BOUNDED-PLAN CONTRACT verbatim into `EXEC_PLAN_nN.md`:
 1. **Branch and current state** -- the branch name and what already compiles / is proven.
@@ -305,6 +305,38 @@ accepted adversarial eval or explicit human ruling validates them. Strengthen an
 or create one `lessons/crypto/<date>-<slug>.md` file per new lesson and update the index in the same
 reviewable diff. Never persist uncited claims, raw transcripts, full error dumps, or secrets.
 
+## Step 5b: Run the bounded review loop
+
+Read the automatic-review setting after the plan gates pass; missing config or
+`crypto_review.automatic` defaults to true, while malformed values stop clearly:
+
+```bash
+AUTOMATIC_REVIEW=$(node ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-codex-think.mjs review-automatic) || exit 1
+```
+
+If true, automatically enter the interactive `crypto-review` handoff. Honor reviewer/model/effort
+choices explicitly supplied earlier in this invocation, then ask only for missing choices in order:
+reviewer -> model -> effort. Recommend the normalized non-author runtime. Never auto-select or treat
+a default/preselected menu item as consent. Also offer `Skip review` for this run. Record that choice
+exactly as `Unreviewed (user skipped)`; an Other export without an imported response is pending.
+
+If false, record `Unreviewed (automatic review disabled)`. Users set this persistently by merging
+`"crypto_review": {"automatic": false}` into `.formalising/fvs-config.json`. Either unreviewed
+route preserves the plans; do not auto-start crypto execution. A trusted user may explicitly
+invoke `/fvs:crypto-execute <topic> nN` afterward. The standalone `/fvs:crypto-review` flags remain
+the non-interactive review path.
+
+When review runs, allow at most three reviewer rounds in this command invocation. APPROVE ends the
+loop. APPROVE-WITH-EDITS is also terminal after the authoring seat applies accepted bounded edits,
+reruns the plan gates, and records `approved after edits` in a separate triage; do not request a
+redundant second review.
+
+REJECT requires a fresh authored revision at the next immutable iteration and a fresh review.
+Inline the previous review and triage into the author prompt as delimited untrusted history and pass
+both to the next reviewer packet with repeated `--history` flags. At round three, stop with the
+latest artifacts and the exact `/fvs:crypto-review <topic> nN --target plan` resume command; never
+auto-approve or start execution. Failed, cancelled, pending, and unverified states also stop.
+
 ## Step 6: Run-end banner + next command
 
 ```
@@ -316,8 +348,8 @@ KB:        {grounded | degraded -- not configured}
 Plans:     plans/PLAN_n{NEXT}.md, plans/EXEC_PLAN_n{NEXT}.md
 Sources:   {K} cached under sources/
 
->> Next Up
-/fvs:crypto-review <topic> n{NEXT} --target plan
+Review:    {approved | approved after edits | Unreviewed (user skipped) | Unreviewed (automatic review disabled) | failed | pending | unverified | rejected at cap}
+Next:      {/fvs:crypto-execute only after approval | exact crypto-review resume command}
 ```
 
 </process>
@@ -344,8 +376,8 @@ auto-picks a default, never writes an upstream artifact).
 - [ ] `$THINKER_MODEL` resolved via the model-profiles sequence; the thinker dispatched (`subagent_type="fvs-crypto-thinker"`) with inlined context.
 - [ ] KB grounded intensively when configured; cached under `sources/` and re-read before re-querying; loud-fail-once + labeled-degrade + `/fvs:kb-setup` when unconfigured.
 - [ ] The bounded-plan contract (stop conditions, verification commands `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`, immutable public statements, allowed-`sorry`) is written into `EXEC_PLAN_nN.md`.
-- [ ] Both plan artifacts record truthful `Authoring runtime:` provenance; the next action is
-      independent `/fvs:crypto-review`, not direct execution.
+- [ ] Both plan artifacts record truthful `Authoring runtime:` provenance; automatic review runs
+      for at most three rounds and only an approved result can suggest execution.
 - [ ] At most three evidence-gated lesson candidates reconciled as one file each plus index updates.
 - [ ] No bare `lake build`, no `gh` open/create, no generated-Lean write.
 </success_criteria>

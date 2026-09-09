@@ -165,6 +165,31 @@ one `lessons/crypto/<date>-<slug>.md` file per new lesson, and update the index 
 diff. Never persist raw transcripts, full error dumps, uncited claims, or secrets.
 </step>
 
+<step name="review_loop">
+## Step 5b: Bounded rival review
+
+After authoring gates, run
+`node ~/.claude/scripts/fvs-codex-think.mjs review-automatic`; missing config or
+`crypto_review.automatic` defaults to true and malformed values stop clearly. If false, record
+`Unreviewed (automatic review disabled)`, preserve the plan, and do not auto-start execution.
+
+If true, enter the interactive `crypto-review` handoff. Honor reviewer/model/effort choices explicitly
+supplied earlier in this invocation. Ask only for missing choices in order: reviewer -> model ->
+effort. Recommend the normalized non-author runtime, but never auto-select or treat a preselected
+default as consent. Offer a one-run `Skip review`, recorded exactly as `Unreviewed (user skipped)`.
+Skipping preserves the plan and does not auto-start execution; the user may explicitly invoke
+`/fvs:crypto-execute`. The standalone review flags remain the non-interactive path.
+
+Run at most three reviewer rounds per invocation. APPROVE stops; APPROVE-WITH-EDITS stops as
+`approved after edits` after the authoring seat applies accepted bounded edits, reruns gates, and
+writes separate triage, with no second review.
+
+REJECT creates a fresh authored revision at the next immutable iteration and a fresh review. Carry
+the previous review and triage as delimited untrusted history to both the author and the reviewer
+using repeated `--history` flags. At the cap, print the exact standalone review resume command and
+stop; never auto-approve or execute. Failed, cancelled, pending, and unverified states stop too.
+</step>
+
 </process>
 
 <success_criteria>
@@ -174,8 +199,7 @@ diff. Never persist raw transcripts, full error dumps, uncited claims, or secret
 - [ ] KB grounded intensively when configured; cached under `sources/` and re-read before re-querying; loud-fail-once + labeled-degrade + `/fvs:kb-setup` when unconfigured.
 - [ ] The high-effort thinker (`fvs-crypto-thinker`) dispatched with inlined context; the plan authored by return.
 - [ ] The bounded-plan contract (stop conditions, verification commands `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`, immutable public statements) written into `EXEC_PLAN_nN.md`.
-- [ ] Plan artifacts record truthful `Authoring runtime:` and route next to
-      `/fvs:crypto-review --target plan`.
+- [ ] Plan artifacts record truthful `Authoring runtime:` and enter at most three review rounds.
 - [ ] At most three evidence-gated candidates reconciled as one file each plus an index update.
 - [ ] No bare `lake build`, no `gh` open/create, no generated-Lean write.
 </success_criteria>

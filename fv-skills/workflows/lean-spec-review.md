@@ -16,7 +16,8 @@ For legacy specs, record author runtime as `unknown` unless the user or generati
 it. The current host is not evidence of who authored an existing spec.
 
 Honor explicit `--reviewer`, `--model`, and `--effort` values and choices already made for this
-review. Ask only for missing choices, in this order:
+review. Supplying all three flags is the standalone non-interactive path; never replace an explicit
+choice. Ask only for missing choices, in this order:
 
 1. **Reviewer:** on Claude show `Codex (recommended)`, `Claude — fresh reviewer`, `Other`;
    on Codex show `Claude (recommended)`, `Codex — fresh reviewer`, `Other`. On another host show
@@ -34,7 +35,8 @@ review. Ask only for missing choices, in this order:
 Use the host's question UI. Where it provides a built-in free-text Other field, use that field
 instead of duplicating an Other option. Where no question tool works, print the choices and wait
 for a text answer. A preselected option or unanswered prompt is not a selection. Offer a one-run
-skip/cancel when entered automatically; record the spec as unreviewed if chosen.
+`Skip review` when entered automatically; record it exactly as `Unreviewed (user skipped)` and do
+not auto-start proof work.
 
 For **Other**, ask for provider/runtime identity, model ID, and effort. Export the review packet
 in Step 2 for that reviewer and import its returned response in Step 3. This route supports manual
@@ -100,17 +102,16 @@ node ~/.claude/scripts/fvs-spec-review.mjs import "$REVIEW_DIRECTORY" "$RESPONSE
 ```
 
 The importer verifies input hashes, the response structure, and exactly one
-`VERDICT: PASS | REVISE | BLOCKED`. It refuses overwrites and changed inputs. Imported responses
+`VERDICT: PASS | APPROVE-WITH-EDITS | REVISE | BLOCKED`. It refuses overwrites and changed inputs. Imported responses
 are labeled externally supplied; verify and record reviewer identity and actual model/effort
 instead of treating the requested settings as proof of what ran. CLI-reported models, when
 available, are recorded separately from the requested model; surface any runtime/model fallback.
 
-Keep the reviewer text intact. Re-check every finding against the cited source evidence and
-append `## Orchestrator triage` with finding ID, accept/reject/defer, checked evidence, and proposed
-next action. Record claimed versus observed reviewer/model/effort and source coverage. A material
-model substitution or unresolved provenance is an explicit limitation, never hidden independence.
-Do not edit the specification during review. Semantic corrections are a follow-up with a fresh
-review after the changes. An old PASS never applies to a changed specification or source packet.
+Keep the reviewer text byte-for-byte intact. The reviewer never edits the specification. The
+authoring seat (`lean-specify`) re-checks every finding and exclusively writes `triage.md` beside
+`review.md`, recording finding IDs, accept/reject/defer evidence, requested versus observed
+reviewer/model/effort, source coverage, and pre-edit/post-edit (old/new) hashes. Refuse to overwrite
+either artifact.
 
 Report the review path, provenance, selected model/effort, prioritized findings, accepted next
 actions, and rejected/deferred findings with reasons. Keep the full reviewer response accessible
@@ -118,9 +119,18 @@ in the artifact. Distinguish the reviewer verdict from the orchestrator's dispos
 
 - **PASS**, supported by triage with no unresolved semantic issue: statement ready for
   `/fvs:lean-verify`; the theorem still has its original proof obligations.
-- **REVISE:** report the required statement corrections; keep the spec pending revision/review.
-- **BLOCKED:** report missing evidence or unresolved intent; keep the spec pending review.
+- **APPROVE-WITH-EDITS:** the authoring seat applies every accepted, exhaustively named bounded
+  edit, reruns the structure, style, and optional build gates, records finding IDs and old/new
+  hashes, then sets `approved after edits`. This is terminal with no second review.
+- **REVISE:** make a fresh substantive revision, then run another fresh review.
+- **BLOCKED:** add the missing authority/evidence, then run another fresh review.
 - **Failed, cancelled, disabled, or exported without a response:** report `Unreviewed`, including
   the reason. Do not claim successful adversarial verification or automatically begin proof work.
+
+REVISE/BLOCKED cycles preserve each unique packet, `review.md`, and `triage.md`. Pass the prior
+review and triage in the next request's `history` array as separately delimited untrusted process
+history, never as source authority or proof-engineering memory. Run at most three reviewer rounds
+per command invocation. At the cap stop with the latest artifact paths and the exact standalone
+`/fvs:lean-spec-review <spec.lean>` resume command; never auto-approve.
 
 </process>
