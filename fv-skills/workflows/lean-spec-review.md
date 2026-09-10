@@ -44,6 +44,11 @@ handoff without executing arbitrary user-supplied shell commands.
 
 ## 2. Run or hand off the review
 
+Read `~/.claude/fv-skills/references/review-grounding.md` and perform its FC scout.
+Ground behavior in implementation source; inventory proposed helper lemmas and
+existing project/mathlib analogs. Save the companion inventory under a fresh
+`.formalising/spec-reviews/_grounding/` directory. No extra prose is required in the Lean file.
+
 The helper uses a JSON request so paths and source contents never become shell commands. Create an
 OS temporary request file with the Write tool (preserve JSON escaping):
 
@@ -54,7 +59,8 @@ OS temporary request file with the Write tool (preserve JSON escaping):
   "runtime": "codex",
   "model": "gpt-5.6-sol",
   "effort": "max",
-  "author_runtime": "claude"
+  "author_runtime": "claude",
+  "grounding": ".formalising/spec-reviews/_grounding/<unique>/inventory.json"
 }
 ```
 
@@ -95,6 +101,11 @@ Record this limitation and import the returned text through Step 3. If fresh sub
 unavailable, use the Other handoff or leave the review pending; do not relabel self-review.
 
 ## 3. Record and triage
+
+Read `~/.claude/fv-skills/references/review-policy.md` and use FIX, DESCOPE,
+DEFER-WITH-RULING, REJECT-FINDING, ASK-HUMAN. Apply the stronger accepted-major-reuse
+rule. The helper's single mechanical format pass cannot fill substantive omissions;
+raw output and normalization remain separate inspectable records under `validation-*/`.
 
 For CLI reviewers, successful execution records `review.md` beside the packet. For Other or a
 fresh fallback subagent, save the complete returned text to an OS temporary file and import it:

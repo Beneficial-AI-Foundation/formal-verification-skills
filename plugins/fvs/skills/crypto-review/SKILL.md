@@ -145,15 +145,22 @@ Automatic callers also offer a one-run `Skip review`. Record it exactly as
 
 ## 2. Run or export the read-only review
 
+First read `${CLAUDE_PLUGIN_ROOT}/fv-skills/references/review-grounding.md` and complete its bounded
+scout. Save a fresh inventory under this topic's `reviews/_grounding/` and set
+`GROUNDING_FILE` to its project-relative path. Check the plan's `## Reuse audit`;
+missing analysis belongs in reviewer findings, not a fabricated scout result.
+
 ```bash
 node ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-codex-think.mjs review \
   --topic "$ROOT" --iteration "n$N" --target "$TARGET_KIND" \
-  --reviewer "$REVIEWER" --model "$MODEL" --effort "$EFFORT"
+  --reviewer "$REVIEWER" --model "$MODEL" --effort "$EFFORT" --grounding "$GROUNDING_FILE"
 ```
 
 The shared provider machinery preflights only the selected CLI. Codex runs read-only and ephemeral
-with user config ignored; Claude runs safe mode with only Read/Glob/Grep, no MCP servers, and no
-persisted session. The reviewer never edits a target or repository file. The wrapper creates a
+with user config ignored; Claude runs safe mode with Read/Glob/Grep and native-sandboxed Bash,
+no MCP servers, and no persisted session. Read the appended diagnostic policy: the reviewer
+never edits targets; scratch probes and explicitly listed generated Lake outputs are permitted.
+The wrapper saves raw attempt evidence before validation and creates a
 unique hash-bound packet, validates one track-valid verdict, and exclusively writes the final
 review. Authentication, process, stale-input, or output failure is `failed`; never silently switch
 reviewers.
@@ -164,7 +171,13 @@ command with `--topic`, `--packet`, and `--response`. A pending export is not a 
 
 ## 3. Triage in the authoring seat
 
-Keep the reviewer response byte-for-byte intact. Never append triage to it. The planning seat
+Read `${CLAUDE_PLUGIN_ROOT}/fv-skills/references/review-policy.md` and use its closed dispositions:
+FIX, DESCOPE, DEFER-WITH-RULING, REJECT-FINDING, ASK-HUMAN. Apply its stronger rule
+for accepted major reuse findings without starting another review for completed bounded edits.
+
+Keep the raw response and recorded review byte-for-byte intact. Any wrapper-only formatting
+normalization is separately inspectable under `validation-*/`; substantive omissions remain
+failed reviews. Never append triage to the review. The planning seat
 re-checks every finding and exclusively writes one separate file:
 
 - `PLAN_REVIEW_nN_TRIAGE.md`, or

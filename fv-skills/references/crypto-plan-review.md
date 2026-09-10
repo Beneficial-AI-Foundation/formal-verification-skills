@@ -101,6 +101,10 @@ Work through every applicable item and record both findings and cleared surfaces
      plan fully realizes the high-level plan without adding or dropping meaning.
    - Follow-up plan: verify every accepted eval finding or human ruling is consumed, no cleared
      surface regresses, and the follow-up stays bounded to the named defects.
+10. **Reuse audit and scope economy.** Judge the explicit `## Reuse audit` against
+    the supplied grounding inventory. Missing reuse analysis is a MAJOR CONTENT
+    finding. Check new abstractions against existing project and pinned-upstream
+    signatures, and apply the appended shared reuse/scope policy.
 
 </attack_surface>
 
@@ -151,13 +155,22 @@ Return Markdown with this exact top-level structure:
 - Date: YYYY-MM-DD
 - Branch/base verified: ...
 
+## Authority hierarchy
+
+State the actual sources of truth and any conflicts or missing authority.
+
 ## Findings
 
 ### F-1 — BLOCKER | MAJOR | MINOR | OBSERVATION
+Class: CONTENT | PROCESS
 **Claim:** one sentence
 **Evidence:** re-verifiable citations/probes/traces
 **Minimal suggested edit:** bounded edit, or "none"
 **Non-binding alternative:** optional; label it as non-binding
+
+## Content coverage statement
+
+Identify the mathematical and source-fidelity claims examined, their evidence, and uncertainties.
 
 ## Cleared surfaces
 
@@ -182,8 +195,8 @@ Requirements:
 - `VERDICT:` appears exactly once and uses exactly one allowed verdict.
 - Findings are ordered by severity, most critical first.
 - Preserve an empty `## Findings` section when there are no findings.
-- Do not add planning-seat acceptance/rejection decisions; the primary runtime appends those after
-  independently checking your claims.
+- Do not add planning-seat acceptance/rejection decisions; the primary runtime records those
+  separately after independently checking your claims.
 - Do not emit text outside this Markdown review.
 
 </output_contract>

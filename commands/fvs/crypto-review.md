@@ -69,10 +69,15 @@ Automatic callers also offer a one-run `Skip review`. Record it exactly as
 
 ## 2. Run or export the read-only review
 
+First read `~/.claude/fv-skills/references/review-grounding.md` and complete its bounded
+scout. Save a fresh inventory under this topic's `reviews/_grounding/` and set
+`GROUNDING_FILE` to its project-relative path. Check the plan's `## Reuse audit`;
+missing analysis belongs in reviewer findings, not a fabricated scout result.
+
 ```bash
 node ~/.claude/scripts/fvs-codex-think.mjs review \
   --topic "$ROOT" --iteration "n$N" --target "$TARGET_KIND" \
-  --reviewer "$REVIEWER" --model "$MODEL" --effort "$EFFORT"
+  --reviewer "$REVIEWER" --model "$MODEL" --effort "$EFFORT" --grounding "$GROUNDING_FILE"
 ```
 
 The shared provider machinery preflights only the selected CLI. Codex runs read-only and ephemeral
@@ -90,7 +95,13 @@ command with `--topic`, `--packet`, and `--response`. A pending export is not a 
 
 ## 3. Triage in the authoring seat
 
-Keep the reviewer response byte-for-byte intact. Never append triage to it. The planning seat
+Read `~/.claude/fv-skills/references/review-policy.md` and use its closed dispositions:
+FIX, DESCOPE, DEFER-WITH-RULING, REJECT-FINDING, ASK-HUMAN. Apply its stronger rule
+for accepted major reuse findings without starting another review for completed bounded edits.
+
+Keep the raw response and recorded review byte-for-byte intact. Any wrapper-only formatting
+normalization is separately inspectable under `validation-*/`; substantive omissions remain
+failed reviews. Never append triage to the review. The planning seat
 re-checks every finding and exclusively writes one separate file:
 
 - `PLAN_REVIEW_nN_TRIAGE.md`, or

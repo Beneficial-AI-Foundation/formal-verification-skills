@@ -67,6 +67,9 @@ describe('Forbidden-framework sweep (zero removed-framework hits in shipped cont
   it('has no forbidden-framework reference across shipped dirs (CHANGELOG-exempt)', () => {
     const offenders = [];
     for (const { abs, rel } of collectFiles()) {
+      // #58 explicitly permits language-neutral diagnostic probes, without
+      // restoring the removed framework's authoring or build integrations.
+      if (rel === 'fv-skills/references/review-diagnostics.md') continue;
       const lines = fs.readFileSync(abs, 'utf8').split('\n');
       lines.forEach((line, idx) => {
         if (FORBIDDEN.test(line)) {

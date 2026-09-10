@@ -66,6 +66,10 @@ runtime's executor with no thinker in the loop. State EVERY field explicitly:
    run is expected to produce or update.
 
 End with `## PLAN COMPLETE`.
+Include `## Reuse audit`: map proposed declarations to existing project and pinned dependency
+APIs with exact signatures/citations, or documented searches finding no analog. Justify forks;
+name each helper's consumer and remove unused parameters, trivial wrappers, and deferred work
+from this iteration. Apply the same audit to follow-up plans.
 </mode>
 
 <mode name="eval">

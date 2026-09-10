@@ -20,12 +20,14 @@ execution.
 </step>
 
 <step name="review">
+Read `~/.claude/fv-skills/references/review-grounding.md`, perform the bounded source/API
+scout, and save `GROUNDING_FILE` under a fresh topic `reviews/_grounding/` directory.
 Invoke the helper with all choices:
 
 ```bash
 node ~/.claude/scripts/fvs-codex-think.mjs review \
   --topic "$ROOT" --iteration "n$N" --target "$TARGET_KIND" \
-  --reviewer "$REVIEWER" --model "$MODEL" --effort "$EFFORT"
+  --reviewer "$REVIEWER" --model "$MODEL" --effort "$EFFORT" --grounding "$GROUNDING_FILE"
 ```
 
 Codex is ephemeral/read-only with user config ignored. Claude uses safe mode with Read/Glob/Grep
@@ -41,6 +43,8 @@ review prompt. Prior review/triage history is separately delimited process data,
 </step>
 
 <step name="triage">
+Read `~/.claude/fv-skills/references/review-policy.md` for FIX, DESCOPE,
+DEFER-WITH-RULING, REJECT-FINDING, ASK-HUMAN and the accepted-major-reuse rule.
 Preserve reviewer text byte-for-byte. The authoring seat exclusively writes separate immutable
 `PLAN_REVIEW_nN_TRIAGE.md` or `FOLLOWUP_REVIEW_nN_TRIAGE.md`, recording finding IDs,
 accept/reject/defer evidence, requested/observed provenance, pre-edit and post-edit hashes, gates,

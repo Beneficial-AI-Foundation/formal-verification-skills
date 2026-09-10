@@ -9,8 +9,9 @@ const { spawnSync } = require('node:child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const SCRIPT = path.join(ROOT, 'scripts', 'fvs-spec-review.mjs');
-const REVIEW = '# FC Specification Review\n\nVERDICT: PASS\n\n## Findings\nNone.\n' +
-  '\n## Coverage\nChecked source arithmetic.\n\n## Evidence\nlib.rs:1 and Funs.lean:1.\n';
+const REVIEW = '# FC Specification Review\n\n## Findings\nNone.\n' +
+  '\n## Content coverage statement\nChecked arithmetic against the implementation.\n' +
+  '\n## Coverage\nChecked source arithmetic.\n\n## Evidence\nlib.rs:1 and Funs.lean:1.\n\nVERDICT: PASS\n';
 
 it('runs FC reviews with explicit choices, honest failures, and immutable input history', {
   skip: process.platform === 'win32',
@@ -26,6 +27,8 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
     fs.writeFileSync(path.join(project, spec), specText);
     fs.writeFileSync(path.join(project, 'lib.rs'), 'fn example() -> u64 { 1 }\n');
     fs.writeFileSync(path.join(project, 'Funs.lean'), 'def example := 1\n');
+    fs.writeFileSync(path.join(project, 'inventory.json'), JSON.stringify({ version: 1,
+      declarations: [], cited_apis: [{ path: 'Funs.lean', start: 1, end: 1 }] }));
     const log = path.join(tmp, 'invocation.json');
     const fake = [
       '#!/usr/bin/env node',
@@ -76,7 +79,7 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
     fs.writeFileSync(config, '{"spec_review":{"automatic":false}}');
 
     const requestFile = path.join(tmp, 'request.json');
-    const request = { spec, context: ['lib.rs', 'Funs.lean'], runtime: 'codex', author_runtime: 'claude' };
+    const request = { spec, context: ['lib.rs', 'Funs.lean'], runtime: 'codex', author_runtime: 'claude', grounding: 'inventory.json' };
     const run = (changes = {}, mode) => {
       fs.writeFileSync(requestFile, JSON.stringify({ ...request, ...changes }));
       return invoke(['run', requestFile], mode);
@@ -96,6 +99,8 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
     assert.ok(call.args.includes('model_reasoning_effort="max"'));
     assert.equal(call.args.at(-1), '-');
     assert.ok(call.input.includes('Source fidelity') && call.input.includes('fn example()'));
+    assert.match(call.input, /grounding_data_untrusted/);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(first, 'grounding.json'))).cited_apis[0].signature, 'def example := 1');
     assert.ok(!fs.existsSync(path.join(project, 'INJECTED')));
 
     const same = run({ author_runtime: 'codex', model: 'gpt-6-astra', effort: 'low' });
@@ -148,6 +153,9 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
     assert.match(fs.readFileSync(path.join(directory(external), 'review.md'), 'utf8'), /externally supplied response/);
     assert.notEqual(invoke(['import', directory(external), response]).status, 0, 'must not overwrite');
     assert.notEqual(invoke(['import', first, response]).status, 0, 'must reject stale inputs');
+    const staleGrounding = run({ runtime: 'other', model: 'external', effort: 'runtime-default' });
+    fs.appendFileSync(path.join(project, 'inventory.json'), '\n');
+    assert.notEqual(invoke(['import', directory(staleGrounding), response]).status, 0, 'must reject stale grounding inventory');
     fs.copyFileSync(path.join(directory(external), 'packet.json'), path.join(project, 'packet.json'));
     assert.notEqual(invoke(['import', project, response]).status, 0, 'must confine imported results');
     assert.ok(!fs.existsSync(path.join(project, 'review.md')));

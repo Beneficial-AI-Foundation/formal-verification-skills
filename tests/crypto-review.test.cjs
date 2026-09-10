@@ -9,10 +9,11 @@ const { spawnSync } = require('node:child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const SCRIPT = path.join(ROOT, 'scripts', 'fvs-codex-think.mjs');
-const REVIEW = '# FVS Crypto Plan Review\n\n- VERDICT: APPROVE\n\n' +
-  '## Findings\n\nNone.\n\n## Cleared surfaces\n\nChecked source fidelity and gates.\n\n' +
+const REVIEW = '# FVS Crypto Plan Review\n\n## Authority hierarchy\nPaper, then implementation.\n\n' +
+  '## Findings\n\nNone.\n\n## Content coverage statement\nChecked source fidelity against cited definitions.\n\n' +
+  '## Cleared surfaces\n\nChecked source fidelity and gates.\n\n' +
   '## Probe log\n\nRepository reads were sufficient.\n\n## Resolution map\n\n' +
-  '| Finding | Suggested edit | Destination plan/section |\n|---|---|---|\n';
+  '| Finding | Suggested edit | Destination plan/section |\n|---|---|---|\n\nVERDICT: APPROVE\n';
 
 it('runs crypto review through selected read-only runtimes and immutable packets', {
   skip: process.platform === 'win32',
@@ -25,6 +26,9 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     const log = path.join(tmp, 'invocation.json');
     fs.mkdirSync(topicRoot, { recursive: true });
     fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(project, 'helper.lean'), 'theorem helper : True := by trivial\n');
+    fs.writeFileSync(path.join(project, 'inventory.json'), JSON.stringify({ version: 1,
+      declarations: [], cited_apis: [{ path: 'helper.lean', start: 1, end: 1 }] }));
 
     const fake = [
       '#!/usr/bin/env node',
@@ -95,7 +99,7 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     };
 
     const codex = run('codex-cross', 'codex', ['Claude Code', 'Claude Code'],
-      ['--model', 'gpt-6-astra', '--effort', 'max']);
+      ['--model', 'gpt-6-astra', '--effort', 'max', '--grounding', 'inventory.json']);
     assert.equal(codex.result.status, 0, codex.result.stderr);
     let record = fs.readFileSync(path.join(codex.topic, 'reviews', 'PLAN_REVIEW_n1.md'), 'utf8');
     assert.match(record, /Provenance: cross-runtime/);
@@ -106,6 +110,7 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     assert.ok(call.args.includes('--ignore-user-config') && call.args.includes('--ephemeral'));
     assert.ok(call.args.includes('gpt-6-astra') && call.args.includes('model_reasoning_effort="max"'));
     assert.ok(call.input.includes('Source fidelity') && call.input.includes('PLAN_n1.md'));
+    assert.ok(call.input.includes('theorem helper : True := by trivial'));
 
     const claude = run('claude-cross', 'claude', ['Codex CLI', 'Codex CLI'],
       ['--model', 'sonnet', '--effort', 'high']);
@@ -166,6 +171,21 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     fs.appendFileSync(path.join(stalePacket.topic, 'plans', 'PLAN_n1.md'), '\nchanged');
     assert.notEqual(invoke(['review-import', '--topic', '.formalising/fv-plans/stale-import',
       '--packet', path.relative(project, staleDir), '--response', 'external-response.md']).status, 0);
+    const grounded = run('grounded-import', 'other', ['Claude Code', 'Claude Code'],
+      ['--model', 'external', '--grounding', 'inventory.json']);
+    const groundedDir = path.join(project, grounded.result.stdout.match(/Review packet: (.+)/)[1]);
+    fs.appendFileSync(path.join(project, 'helper.lean'), '-- changed upstream\n');
+    assert.notEqual(invoke(['review-import', '--topic', '.formalising/fv-plans/grounded-import',
+      '--packet', path.relative(project, groundedDir), '--response', 'external-response.md']).status, 0);
+    assert.ok(!fs.existsSync(path.join(grounded.topic, 'reviews/PLAN_REVIEW_n1.md')));
+    const tampered = JSON.parse(fs.readFileSync(path.join(groundedDir, 'packet.json')));
+    tampered.output = '../escaped.md';
+    fs.writeFileSync(path.join(groundedDir, 'packet.json'), JSON.stringify(tampered));
+    fs.writeFileSync(response, 'invalid external response');
+    assert.notEqual(invoke(['review-import', '--topic', '.formalising/fv-plans/grounded-import',
+      '--packet', path.relative(project, groundedDir), '--response', 'external-response.md']).status, 0);
+    assert.ok(!fs.existsSync(path.join(tmp, 'escaped.md')));
+    assert.ok(fs.readdirSync(groundedDir).some(name => name.startsWith('validation-')));
     assert.notEqual(invoke(['review-import', '--topic', '.formalising/fv-plans/external',
       '--packet', path.relative(project, packetDir), '--response', '../response.md']).status, 0);
   } finally {

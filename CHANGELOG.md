@@ -4,6 +4,25 @@ All notable changes to FVS (Formal Verification Skills) will be documented in th
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+
+- Updates preserve added and modified local FVS files in complete, versioned patch bundles,
+  recover legacy unlisted backups, and track generated Codex agent/hook files. Failed backup
+  validation stops installation before replacement (#55).
+- Claude crypto and FC reviewers can run bounded diagnostic probes in native-sandboxed scratch
+  space with explicit generated Lake output paths. Failed launches and invalid responses retain
+  local evidence. Sources/plans remain protected; model/effort selection is unchanged (#58).
+
+### Added
+
+- Crypto and FC reviews receive bounded source/reuse inventories with verbatim signature spans
+  and freshness checks. FC grounds behavior in implementation source and checks project/mathlib
+  helper reuse. Review contracts cover scope economy, CONTENT/PROCESS findings, mathematical
+  coverage, and explicit author dispositions. Complete finding validation and mechanical-only
+  formatting repair preserve review substance; APPROVE-WITH-EDITS remains terminal (#56).
+
 ## [2.3.1] - 2026-09-09
 
 ### Added

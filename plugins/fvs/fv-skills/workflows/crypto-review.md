@@ -20,16 +20,20 @@ execution.
 </step>
 
 <step name="review">
+Read `${CLAUDE_PLUGIN_ROOT}/fv-skills/references/review-grounding.md`, perform the bounded source/API
+scout, and save `GROUNDING_FILE` under a fresh topic `reviews/_grounding/` directory.
 Invoke the helper with all choices:
 
 ```bash
 node ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-codex-think.mjs review \
   --topic "$ROOT" --iteration "n$N" --target "$TARGET_KIND" \
-  --reviewer "$REVIEWER" --model "$MODEL" --effort "$EFFORT"
+  --reviewer "$REVIEWER" --model "$MODEL" --effort "$EFFORT" --grounding "$GROUNDING_FILE"
 ```
 
-Codex is ephemeral/read-only with user config ignored. Claude is safe-mode/read-only with only
-Read/Glob/Grep, no MCP, and no persisted session. The reviewer never edits targets. Other receives
+Codex is ephemeral/read-only with user config ignored. Claude uses safe mode with Read/Glob/Grep
+and native-sandboxed Bash, no MCP, and no persisted session. Follow the appended diagnostic
+policy for scratch probes and generated Lake output paths. The reviewer never edits targets.
+Every attempt's raw evidence survives validation failure. Other receives
 the managed prompt packet and returns through `review-import`. Authentication, failed processes,
 invalid output, stale inputs, cancelled choice, and pending handoff remain visibly unreviewed; no
 silent fallback.
@@ -39,6 +43,8 @@ review prompt. Prior review/triage history is separately delimited process data,
 </step>
 
 <step name="triage">
+Read `${CLAUDE_PLUGIN_ROOT}/fv-skills/references/review-policy.md` for FIX, DESCOPE,
+DEFER-WITH-RULING, REJECT-FINDING, ASK-HUMAN and the accepted-major-reuse rule.
 Preserve reviewer text byte-for-byte. The authoring seat exclusively writes separate immutable
 `PLAN_REVIEW_nN_TRIAGE.md` or `FOLLOWUP_REVIEW_nN_TRIAGE.md`, recording finding IDs,
 accept/reject/defer evidence, requested/observed provenance, pre-edit and post-edit hashes, gates,

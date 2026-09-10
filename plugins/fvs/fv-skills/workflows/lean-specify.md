@@ -161,6 +161,9 @@ separate `<lesson_candidates>` block containing the shared candidate fields or
 Dispatch **fvs-executor** subagent in spec-generation mode to write the spec file.
 
 Inline into executor prompt:
+
+Include the researcher's helper-reuse findings: existing project/mathlib signatures,
+proposed helper consumers, and search limitations. Implementation source governs behavior.
 - Research findings from previous step
 - Spec file template (fv-skills/templates/spec-file.lean)
 - Target output path

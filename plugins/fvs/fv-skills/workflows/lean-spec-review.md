@@ -44,6 +44,11 @@ handoff without executing arbitrary user-supplied shell commands.
 
 ## 2. Run or hand off the review
 
+Read `${CLAUDE_PLUGIN_ROOT}/fv-skills/references/review-grounding.md` and perform its FC scout.
+Ground behavior in implementation source; inventory proposed helper lemmas and
+existing project/mathlib analogs. Save the companion inventory under a fresh
+`.formalising/spec-reviews/_grounding/` directory. No extra prose is required in the Lean file.
+
 The helper uses a JSON request so paths and source contents never become shell commands. Create an
 OS temporary request file with the Write tool (preserve JSON escaping):
 
@@ -54,7 +59,8 @@ OS temporary request file with the Write tool (preserve JSON escaping):
   "runtime": "codex",
   "model": "gpt-5.6-sol",
   "effort": "max",
-  "author_runtime": "claude"
+  "author_runtime": "claude",
+  "grounding": ".formalising/spec-reviews/_grounding/<unique>/inventory.json"
 }
 ```
 
@@ -75,8 +81,10 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-spec-review.mjs run "$REQUEST_FILE"
 The helper records input hashes and a complete `prompt.md` under a new
 `.formalising/spec-reviews/<spec>-<unique>/` directory. It checks CLI installation/authentication,
 then launches a fresh process with the selected model/effort. Codex uses a read-only, ephemeral
-session with user config disabled; Claude uses safe mode with only Read/Glob/Grep and no MCP
-servers. Neither receives write or proof-execution instructions. These flags are per process;
+session with user config disabled; Claude uses safe mode with Read/Glob/Grep and native-sandboxed
+Bash, no MCP servers, and a scratch cwd. The appended diagnostic policy permits small probes
+and necessary existing-source builds with explicit generated output paths. Reviewed sources
+remain read-only. Each attempt's raw evidence is saved before validation. These flags are per process;
 they do not change the user's runtime configuration. Use an up-to-date CLI if a flag is unsupported.
 
 On unavailable authentication, CLI failure, unsupported model/effort, or invalid output: show the
@@ -93,6 +101,11 @@ Record this limitation and import the returned text through Step 3. If fresh sub
 unavailable, use the Other handoff or leave the review pending; do not relabel self-review.
 
 ## 3. Record and triage
+
+Read `${CLAUDE_PLUGIN_ROOT}/fv-skills/references/review-policy.md` and use FIX, DESCOPE,
+DEFER-WITH-RULING, REJECT-FINDING, ASK-HUMAN. Apply the stronger accepted-major-reuse
+rule. The helper's single mechanical format pass cannot fill substantive omissions;
+raw output and normalization remain separate inspectable records under `validation-*/`.
 
 For CLI reviewers, successful execution records `review.md` beside the packet. For Other or a
 fresh fallback subagent, save the complete returned text to an OS temporary file and import it:

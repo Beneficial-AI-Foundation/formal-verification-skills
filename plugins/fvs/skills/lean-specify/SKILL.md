@@ -276,6 +276,9 @@ $TARGET_STYLE_GUIDE_CONTENT
 </target_style_guide>
 
 Tasks:
+Audit proposed helper lemmas and abstractions against existing project and mathlib APIs.
+Ground behavior in the implementation source; return signature citations and search limits
+for the companion review inventory rather than adding mandatory prose to the Lean source.
 1. Read target function body from Funs.lean
 2. Read Types.lean for type dependencies used in the function
 3. Find Rust source for bounds analysis and pre/post conditions

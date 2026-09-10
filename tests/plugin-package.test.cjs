@@ -90,6 +90,7 @@ describe('published FVS plugin package', () => {
         'fvs-kb-query.py',
         'fvs-lean-style-check.mjs',
         'fvs-probe-inventory.mjs',
+        'fvs-review-grounding.mjs',
         'fvs-spec-review.mjs',
       ].sort(),
     );

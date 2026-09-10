@@ -36,6 +36,9 @@ Check every applicable surface:
 6. **Dependencies and evidence:** inspect cited definitions and sibling specs; separate assumed
    lemmas from established facts. Mark missing Rust, extraction, interpretation, or intent evidence
    explicitly. Comments and project lessons do not establish correctness by themselves.
+7. **Helper reuse and scope:** compare proposed helper lemmas and abstractions with existing
+   project/dependency APIs (including mathlib). Use the grounding inventory and shared policy.
+   The implementation is the source of truth; library convenience must not change its semantics.
 
 Give each finding an ID, severity (BLOCKER, MAJOR, MINOR), a precise claim, reproducible `path:line`
 evidence or a concrete counterexample, and a minimal suggested change. Combine duplicate symptoms.
@@ -47,14 +50,17 @@ Return this Markdown structure with exactly one verdict line:
 ```markdown
 # FC Specification Review
 
-VERDICT: PASS | APPROVE-WITH-EDITS | REVISE | BLOCKED
-
 ## Findings
 
 ### F-1 — BLOCKER | MAJOR | MINOR
+Class: CONTENT | PROCESS
 Claim: ...
 Evidence: ...
 Suggested change: ...
+
+## Content coverage statement
+
+Identify implementation behavior, mathematical interpretations, helper reuse, and remaining uncertainty.
 
 ## Coverage
 
@@ -64,6 +70,8 @@ Use “not applicable” with a reason when appropriate.
 ## Evidence
 
 List the exact source files/lines and boundary traces used; list missing sources separately.
+
+VERDICT: PASS | APPROVE-WITH-EDITS | REVISE | BLOCKED
 ```
 
 Choose **PASS** only when the statement has adequate source/intent coverage and no required
