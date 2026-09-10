@@ -12,6 +12,10 @@ After an FVS update wipes and reinstalls files, this command merges user's previ
 
 ## Step 1: Detect backed-up patches
 
+Use the active installation's runtime and scope, including `.codex` for Codex.
+Prefer that exact config directory; if multiple installations have patches, ask which
+one to restore instead of taking the first global match.
+
 Check for local patches directory:
 
 ```bash
@@ -36,7 +40,16 @@ if [ ! -d "$PATCHES_DIR" ]; then
 fi
 ```
 
-Read `backup-meta.json` from the patches directory.
+Read `backup-meta.json` from the patches directory. For version 2, resolve its `bundle`
+relative to that directory (strictly `bundles/bundle-<id>`). This immutable bundle is
+the source for the file copies below. Legacy metadata refers to the flat directory.
+Check canonical paths remain inside the selected installation and reject symlinks.
+
+Before merging, enumerate every file in the bundle, excluding its `backup-meta.json`.
+Compare the enumeration with `files` and verify `hashes` when present. Report every
+unlisted file and every missing or changed entry; never silently omit them. Stop for
+user inspection on missing/changed entries. Offer unlisted legacy files for recovery.
+Older immutable bundles and legacy flat copies remain available for inspection.
 
 **If no patches found:**
 ```
@@ -72,13 +85,21 @@ For each file in `backup-meta.json`:
 
    - If the new file is identical to the backed-up file: skip (modification was incorporated upstream)
    - If the new file differs: identify the user's modifications and apply them to the new version
-   - If there is no newly installed file at the backed-up path (e.g. a renamed command such as `commands/fvs/plan.md` -> `commands/fvs/fc-plan.md`, or a removed command): do not write to the dead path. Report it for manual placement, naming the likely new target so the user can merge it by hand.
+   - If `kinds[path]` is `added` and no upstream file exists, restore the local addition
+     at that path, including its companion files. For modified/legacy missing paths
+     (such as renamed or removed commands), report manual placement instead of
+     resurrecting an obsolete upstream command.
 
    **Merge strategy:**
    - Read both versions fully
    - Identify sections the user added or modified (look for additions, not just differences from path replacement)
    - Apply user's additions/modifications to the new version
    - If a section the user modified was also changed upstream: flag as conflict, show both versions, ask user which to keep
+   - Legacy backups have no original upstream contents; two different versions alone
+     cannot identify which edits were local. Surface ambiguity instead of guessing.
+   - Codex `.toml` agent mirrors are backed up separately. Reconcile both the `.md`
+     instructions and `.toml` mirror; do not discard custom TOML settings or leave
+     the runtime pointing at stale instructions.
 
 4. **Write merged result** to the installed location
 5. **Report status:**
@@ -99,7 +120,8 @@ After reapplying, note that the manifest will be regenerated on the next `/fvs:u
 
 Ask user:
 - "Keep patch backups for reference?" -- preserve `fvs-local-patches/`
-- "Clean up patch backups?" -- remove `fvs-local-patches/` directory
+- "Clean up selected patch bundle?" -- name the exact bundle; delete it only after
+  explicit approval, without deleting older bundles or dangling the active pointer.
 
 ## Step 6: Report
 

@@ -2654,127 +2654,146 @@ function generateManifest(dir, baseDir) {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
+    if (entry.isSymbolicLink()) throw new Error(`Cannot safely preserve symlink: ${fullPath}`);
     const relPath = path.relative(baseDir, fullPath).replace(/\\/g, '/');
     if (entry.isDirectory()) {
       Object.assign(manifest, generateManifest(fullPath, baseDir));
-    } else {
+    } else if (entry.isFile()) {
       manifest[relPath] = fileHash(fullPath);
-    }
+    } else throw new Error(`Unsupported local patch file: ${fullPath}`);
   }
   return manifest;
+}
+
+// Inventory the same namespaces that installation removes or replaces, including
+// added skill directories without SKILL.md and generated Codex agent mirrors.
+function ownedFileHashes(configDir, runtime) {
+  const files = {};
+  const collect = rel => {
+    const file = path.join(configDir, rel);
+    let parent = file;
+    while (parent !== configDir) {
+      if (fs.lstatSync(parent, { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error(`Cannot safely preserve symlink: ${parent}`);
+      parent = path.dirname(parent);
+    }
+    if (!fs.existsSync(file)) return;
+    if (fs.statSync(file).isDirectory()) {
+      for (const [name, digest] of Object.entries(generateManifest(file))) files[`${rel}/${name}`] = digest;
+    } else files[rel] = fileHash(file);
+  };
+  collect('fv-skills');
+  if (runtime === 'claude' || runtime === 'gemini') collect('commands/fvs');
+  for (const [dir, match] of [
+    ['skills', name => runtime === 'codex' && name.startsWith('fvs-')],
+    ['command', name => runtime === 'opencode' && /^fvs-.*\.md$/.test(name)],
+    ['agents', name => /^fvs-.*\.(md|toml)$/.test(name)],
+    ['hooks', name => /^fvs-.*\.js$/.test(name)],
+    ['scripts', name => name.startsWith('fvs-')],
+  ]) {
+    const directory = path.join(configDir, dir);
+    if (fs.existsSync(directory)) {
+      if (fs.lstatSync(directory).isSymbolicLink()) throw new Error(`Cannot safely preserve symlink: ${directory}`);
+      for (const name of fs.readdirSync(directory)) if (match(name)) collect(`${dir}/${name}`);
+    }
+  }
+  if (runtime !== 'codex') collect('package.json');
+  return files;
 }
 
 /**
  * Write file manifest after installation for future modification detection
  */
 function writeManifest(configDir, runtime = 'claude') {
-  const isOpencode = runtime === 'opencode';
-  const isCodex = runtime === 'codex';
-  const fvSkillsDir = path.join(configDir, 'fv-skills');
-  const commandsDir = path.join(configDir, 'commands', 'fvs');
-  const opencodeCommandDir = path.join(configDir, 'command');
-  const codexSkillsDir = path.join(configDir, 'skills');
-  const agentsDir = path.join(configDir, 'agents');
-  const manifest = { version: pkg.version, timestamp: new Date().toISOString(), files: {} };
-
-  const fvHashes = generateManifest(fvSkillsDir);
-  for (const [rel, hash] of Object.entries(fvHashes)) {
-    manifest.files['fv-skills/' + rel] = hash;
-  }
-  if (!isOpencode && !isCodex && fs.existsSync(commandsDir)) {
-    const cmdHashes = generateManifest(commandsDir);
-    for (const [rel, hash] of Object.entries(cmdHashes)) {
-      manifest.files['commands/fvs/' + rel] = hash;
-    }
-  }
-  if (isOpencode && fs.existsSync(opencodeCommandDir)) {
-    for (const file of fs.readdirSync(opencodeCommandDir)) {
-      if (file.startsWith('fvs-') && file.endsWith('.md')) {
-        manifest.files['command/' + file] = fileHash(path.join(opencodeCommandDir, file));
-      }
-    }
-  }
-  if (isCodex && fs.existsSync(codexSkillsDir)) {
-    for (const skillName of listCodexSkillNames(codexSkillsDir)) {
-      const skillRoot = path.join(codexSkillsDir, skillName);
-      const skillHashes = generateManifest(skillRoot);
-      for (const [rel, hash] of Object.entries(skillHashes)) {
-        manifest.files[`skills/${skillName}/${rel}`] = hash;
-      }
-    }
-  }
-  if (fs.existsSync(agentsDir)) {
-    for (const file of fs.readdirSync(agentsDir)) {
-      if (file.startsWith('fvs-') && file.endsWith('.md')) {
-        manifest.files['agents/' + file] = fileHash(path.join(agentsDir, file));
-      }
-    }
-  }
-  // Track hook files so saveLocalPatches() can detect user modifications.
-  // Every runtime that lands a hook script participates: Claude/Gemini carry
-  // both fvs-*.js hooks, Codex carries the single update-check hook.
-  {
-    const hooksDir = path.join(configDir, 'hooks');
-    if (fs.existsSync(hooksDir)) {
-      for (const file of fs.readdirSync(hooksDir)) {
-        if (file.startsWith('fvs-') && file.endsWith('.js')) {
-          manifest.files['hooks/' + file] = fileHash(path.join(hooksDir, file));
-        }
-      }
-    }
-  }
-  // Track script files for local-patches detection
-  const scriptsDir = path.join(configDir, 'scripts');
-  if (fs.existsSync(scriptsDir)) {
-    for (const file of fs.readdirSync(scriptsDir)) {
-      if (file.startsWith('fvs-')) {
-        manifest.files['scripts/' + file] = fileHash(path.join(scriptsDir, file));
-      }
-    }
-  }
-
+  const manifest = { version: pkg.version, runtime, timestamp: new Date().toISOString(),
+    files: ownedFileHashes(configDir, runtime) };
   fs.writeFileSync(path.join(configDir, MANIFEST_NAME), JSON.stringify(manifest, null, 2));
   return manifest;
 }
+
 
 /**
  * Detect user-modified FVS files by comparing against install manifest.
  * Backs up modified files to fvs-local-patches/ for reapply after update.
  */
-function saveLocalPatches(configDir) {
+function saveLocalPatches(configDir, runtime = 'claude') {
+  configDir = fs.realpathSync(configDir);
   const manifestPath = path.join(configDir, MANIFEST_NAME);
-  if (!fs.existsSync(manifestPath)) return [];
-
-  let manifest;
-  try { manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); } catch { return []; }
-
+  // An unreadable baseline must stop the update before any destructive copy.
+  const manifest = fs.existsSync(manifestPath)
+    ? JSON.parse(fs.readFileSync(manifestPath, 'utf8')) : { version: 'unknown', files: {} };
+  if (!manifest.files || typeof manifest.files !== 'object' || Array.isArray(manifest.files)) {
+    throw new Error('Invalid FVS manifest; repair it before updating. Existing files were preserved.');
+  }
+  const current = ownedFileHashes(configDir, runtime);
+  const modified = Object.keys(current).filter(rel => current[rel] !== manifest.files[rel]);
   const patchesDir = path.join(configDir, PATCHES_DIR_NAME);
-  const modified = [];
-
-  for (const [relPath, originalHash] of Object.entries(manifest.files || {})) {
-    const fullPath = path.join(configDir, relPath);
-    if (!fs.existsSync(fullPath)) continue;
-    const currentHash = fileHash(fullPath);
-    if (currentHash !== originalHash) {
-      const backupPath = path.join(patchesDir, relPath);
-      fs.mkdirSync(path.dirname(backupPath), { recursive: true });
-      fs.copyFileSync(fullPath, backupPath);
-      modified.push(relPath);
+  if (fs.lstatSync(patchesDir, { throwIfNoEntry: false })?.isSymbolicLink()) {
+    throw new Error('Local patch directory is a symlink; refusing to update');
+  }
+  const metaPath = path.join(patchesDir, 'backup-meta.json');
+  const prior = fs.existsSync(metaPath) ? JSON.parse(fs.readFileSync(metaPath, 'utf8')) : null;
+  const sources = new Map();
+  const addBundle = (directory, meta) => {
+    const hashes = generateManifest(directory);
+    delete hashes['backup-meta.json'];
+    for (const rel of meta?.files ?? []) {
+      if (!Object.prototype.hasOwnProperty.call(hashes, rel)) throw new Error(`Missing backed-up patch: ${rel}; refusing to update`);
+      if (meta.hashes?.[rel] && meta.hashes[rel] !== hashes[rel]) {
+        throw new Error(`Backed-up patch changed: ${rel}; inspect it before updating`);
+      }
+    }
+    for (const rel of Object.keys(hashes)) {
+      if (meta && !meta.files?.includes(rel)) console.warn(`  Unlisted local patch recovered: ${rel}`);
+      sources.set(rel, { file: path.join(directory, rel), kind: meta?.kinds?.[rel] ?? 'legacy' });
+    }
+  };
+  if (prior?.bundle) {
+    if (!/^bundles\/bundle-[a-zA-Z0-9-]+$/.test(prior.bundle)) throw new Error('Invalid local patch bundle path');
+    const directory = path.join(patchesDir, prior.bundle);
+    if (fs.realpathSync(directory) !== directory) throw new Error('Local patch bundle is redirected');
+    addBundle(directory, prior);
+  } else if (fs.existsSync(patchesDir)) {
+    // Old flat bundles may have files omitted by overwritten backup-meta.json.
+    for (const entry of fs.readdirSync(patchesDir, { withFileTypes: true })) {
+      if (['backup-meta.json', 'bundles'].includes(entry.name)) continue;
+      const source = path.join(patchesDir, entry.name);
+      if (entry.isSymbolicLink()) throw new Error(`Cannot safely preserve symlink: ${source}`);
+      const hashes = entry.isDirectory() ? generateManifest(source) : { '': fileHash(source) };
+      for (const name of Object.keys(hashes)) {
+        const rel = name ? `${entry.name}/${name}` : entry.name;
+        if (!prior?.files?.includes(rel)) console.warn(`  Unlisted local patch recovered: ${rel}`);
+        sources.set(rel, { file: path.join(patchesDir, rel), kind: 'legacy' });
+      }
+    }
+    for (const rel of prior?.files ?? []) {
+      if (!sources.has(rel)) throw new Error(`Missing backed-up patch: ${rel}; refusing to update`);
     }
   }
-
-  if (modified.length > 0) {
-    const meta = {
-      backed_up_at: new Date().toISOString(),
-      from_version: manifest.version,
-      files: modified
-    };
-    fs.writeFileSync(path.join(patchesDir, 'backup-meta.json'), JSON.stringify(meta, null, 2));
-    console.log('  ' + yellow + 'i' + reset + '  Found ' + modified.length + ' locally modified FVS file(s) — backed up to ' + PATCHES_DIR_NAME + '/');
-    for (const f of modified) {
-      console.log('     ' + dim + f + reset);
-    }
+  for (const rel of modified) sources.set(rel, { file: path.join(configDir, rel),
+    kind: Object.prototype.hasOwnProperty.call(manifest.files, rel) ? 'modified' : 'added' });
+  if (!sources.size) return [];
+  const bundles = path.join(patchesDir, 'bundles');
+  if (fs.lstatSync(bundles, { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error('Patch bundles directory is redirected');
+  fs.mkdirSync(bundles, { recursive: true });
+  const staging = fs.mkdtempSync(path.join(bundles, '.pending-'));
+  const bundle = `bundles/bundle-${path.basename(staging).slice(9)}`;
+  const meta = { version: 2, bundle, backed_up_at: new Date().toISOString(),
+    from_version: manifest.version, files: [...sources.keys()].sort(), hashes: {}, kinds: {} };
+  for (const rel of meta.files) {
+    const dest = path.join(staging, rel);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.copyFileSync(sources.get(rel).file, dest);
+    meta.hashes[rel] = fileHash(sources.get(rel).file);
+    meta.kinds[rel] = sources.get(rel).kind;
+    if (fileHash(dest) !== meta.hashes[rel]) throw new Error(`Patch copy verification failed: ${rel}`);
   }
+  const json = JSON.stringify(meta, null, 2);
+  fs.writeFileSync(path.join(staging, 'backup-meta.json'), json, { flag: 'wx' });
+  fs.renameSync(staging, path.join(patchesDir, bundle));
+  const pointer = path.join(patchesDir, `.backup-meta-${crypto.randomUUID()}.json`);
+  fs.writeFileSync(pointer, json, { flag: 'wx' });
+  fs.renameSync(pointer, metaPath);
+  console.log(`  Preserved ${meta.files.length} local FVS patches in ${PATCHES_DIR_NAME}/${bundle}`);
   return modified;
 }
 
@@ -2916,7 +2935,7 @@ function install(isGlobal, runtime = 'claude') {
   const priorManifestVersion = readPriorManifestVersion(targetDir);
 
   // Save any locally modified FVS files before they get wiped
-  saveLocalPatches(targetDir);
+  saveLocalPatches(targetDir, runtime);
 
   // OpenCode uses 'command/' (singular) with flat structure
   // Codex uses 'skills/' with skill directories
@@ -3112,10 +3131,6 @@ function install(isGlobal, runtime = 'claude') {
     process.exit(1);
   }
 
-  // Write file manifest for future modification detection
-  writeManifest(targetDir, runtime);
-  console.log(`  ${green}✓${reset} Wrote file manifest (${MANIFEST_NAME})`);
-
   // Report any backed-up local patches
   reportLocalPatches(targetDir, runtime);
 
@@ -3158,6 +3173,7 @@ function install(isGlobal, runtime = 'claude') {
       }
     }
 
+    writeManifest(targetDir, runtime);
     return { settingsPath: null, settings: null, statuslineCommand: null, runtime };
   }
 
@@ -3209,6 +3225,7 @@ function install(isGlobal, runtime = 'claude') {
     }
   }
 
+  writeManifest(targetDir, runtime);
   return { settingsPath, settings, statuslineCommand, runtime };
 }
 
@@ -3505,6 +3522,8 @@ if (hasGlobal && hasLocal) {
 }
 
 module.exports = {
+  saveLocalPatches,
+  writeManifest,
   generateCodexConfigBlock,
   generateCodexAgentToml,
   getCodexSkillAdapterHeader,
