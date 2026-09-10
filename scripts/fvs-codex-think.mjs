@@ -47,6 +47,7 @@ import { fileURLToPath } from 'node:url';
 import {
   automaticReview,
   classifyReviewProvenance,
+  loadReviewContract,
   runReviewer,
   validateReviewerOptions,
   validateReviewResponse,
@@ -344,7 +345,7 @@ function prepareReview({ args, topicDir, projectRoot }) {
       2,
     );
   }
-  const contract = fs.readFileSync(contractPath, 'utf8');
+  const contract = loadReviewContract('crypto-plan-review.md');
   const rel = file => path.relative(projectRoot, file).replace(/\\/g, '/');
   const branch = gitValue(projectRoot, ['branch', '--show-current']);
   const base = gitValue(projectRoot, ['rev-parse', 'HEAD']);
@@ -370,7 +371,7 @@ function prepareReview({ args, topicDir, projectRoot }) {
     `Current branch: ${branch}`,
     `Current base commit: ${base}`,
     `Wrapper output path: ${rel(review.outputPath)}`,
-    'Return the review as your final Markdown response. Do not write any file.',
+    'Return the review as your final Markdown response. Write only permitted diagnostic scratch files.',
     '</review_context>',
     '',
     '<review_contract>',
@@ -482,7 +483,7 @@ function runReview({ args, topicDir, projectRoot }) {
     return;
   }
   const result = runReviewer({ ...prepared.reviewer, prompt: prepared.prompt,
-    workingRoot: projectRoot });
+    workingRoot: projectRoot, artifactDirectory: prepared.packetDirectory });
   persistReview({ ...prepared, ...result, projectRoot, topicDir });
 }
 

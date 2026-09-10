@@ -31,7 +31,7 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
       '#!/usr/bin/env node',
       "const fs = require('node:fs');",
       'const args = process.argv.slice(2);',
-      "if (args[0] === '--version') process.exit(0);",
+      "if (args[0] === '--version') { console.log('2.1.267'); process.exit(0); }",
       "const mode = process.env.FVS_REVIEW_TEST_MODE;",
       "if (['login', 'auth'].includes(args[0])) process.exit(mode === 'auth' ? 1 : 0);",
       "const input = fs.readFileSync(0, 'utf8');",
@@ -115,7 +115,7 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
     for (const flag of ['--safe-mode', '--strict-mcp-config', '--no-session-persistence']) {
       assert.ok(call.args.includes(flag));
     }
-    assert.equal(call.args[call.args.indexOf('--tools') + 1], 'Read,Glob,Grep');
+    assert.equal(call.args[call.args.indexOf('--tools') + 1], 'Read,Glob,Grep,Bash');
     assert.equal(call.args[call.args.indexOf('--model') + 1], 'fable');
     assert.equal(call.args[call.args.indexOf('--effort') + 1], 'max');
     assert.match(fs.readFileSync(path.join(directory(claude), 'review.md'), 'utf8'), /claude-fable-test/);
@@ -124,6 +124,10 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
       const result = run({}, mode);
       assert.notEqual(result.status, 0, mode);
       assert.ok(!fs.existsSync(path.join(directory(result), 'review.md')), mode);
+      if (mode === 'invalid') {
+        const attempt = fs.readdirSync(directory(result)).find(name => name.startsWith('attempt-'));
+        assert.equal(fs.readFileSync(path.join(directory(result), attempt, 'response.md'), 'utf8'), 'empty review');
+      }
     }
     const errored = run({ runtime: 'claude' }, 'error');
     assert.notEqual(errored.status, 0);

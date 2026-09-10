@@ -33,13 +33,13 @@ You MAY perform read-only evidence gathering:
 - Run read-only searches and `git status`, `git log`, `git diff`, `git show`, and `git rev-parse`.
 - Hand-execute short concrete traces and include explicit state/value tables.
 - Run `#check` / `#print axioms` probes against the existing tree.
-- Create statement-only elaboration probes in an OS temporary directory: reproduce declaration
-  signatures with proof bodies replaced by `axiom` stubs, then elaborate them.
-- Build the unmodified tree when necessary, using `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`.
+- Run bounded disposable probes and necessary existing-source builds under the shared
+  `<diagnostic_policy>` appended by the wrapper.
 
 You MUST NOT:
 
-- Modify, create, delete, stage, commit, or format any repository file. Your sandbox is read-only.
+- Modify reviewed sources/plans, stage, commit, or format them. Only diagnostic scratch
+  files and explicitly permitted generated build outputs are writable.
 - Attempt proofs, run tactics to see whether a goal closes, or grade a plan by guessed provability.
   Provability belongs to the executor; your boundary is statements, types, hand-traceable
   semantics, and whether the plan's stop conditions route a failed proof honestly.
@@ -150,7 +150,6 @@ Return Markdown with this exact top-level structure:
 - Target: initial-plan | followup-plan
 - Date: YYYY-MM-DD
 - Branch/base verified: ...
-- VERDICT: APPROVE | APPROVE-WITH-EDITS | REJECT
 
 ## Findings
 
@@ -174,6 +173,8 @@ were sufficient.
 
 | Finding | Suggested edit | Destination plan/section |
 |---|---|---|
+
+VERDICT: APPROVE | APPROVE-WITH-EDITS | REJECT
 ```
 
 Requirements:

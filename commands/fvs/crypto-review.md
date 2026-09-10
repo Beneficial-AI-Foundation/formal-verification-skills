@@ -76,8 +76,10 @@ node ~/.claude/scripts/fvs-codex-think.mjs review \
 ```
 
 The shared provider machinery preflights only the selected CLI. Codex runs read-only and ephemeral
-with user config ignored; Claude runs safe mode with only Read/Glob/Grep, no MCP servers, and no
-persisted session. The reviewer never edits a target or repository file. The wrapper creates a
+with user config ignored; Claude runs safe mode with Read/Glob/Grep and native-sandboxed Bash,
+no MCP servers, and no persisted session. Read the appended diagnostic policy: the reviewer
+never edits targets; scratch probes and explicitly listed generated Lake outputs are permitted.
+The wrapper saves raw attempt evidence before validation and creates a
 unique hash-bound packet, validates one track-valid verdict, and exclusively writes the final
 review. Authentication, process, stale-input, or output failure is `failed`; never silently switch
 reviewers.

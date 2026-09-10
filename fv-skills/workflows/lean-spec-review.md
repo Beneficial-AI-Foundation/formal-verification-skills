@@ -75,8 +75,10 @@ node ~/.claude/scripts/fvs-spec-review.mjs run "$REQUEST_FILE"
 The helper records input hashes and a complete `prompt.md` under a new
 `.formalising/spec-reviews/<spec>-<unique>/` directory. It checks CLI installation/authentication,
 then launches a fresh process with the selected model/effort. Codex uses a read-only, ephemeral
-session with user config disabled; Claude uses safe mode with only Read/Glob/Grep and no MCP
-servers. Neither receives write or proof-execution instructions. These flags are per process;
+session with user config disabled; Claude uses safe mode with Read/Glob/Grep and native-sandboxed
+Bash, no MCP servers, and a scratch cwd. The appended diagnostic policy permits small probes
+and necessary existing-source builds with explicit generated output paths. Reviewed sources
+remain read-only. Each attempt's raw evidence is saved before validation. These flags are per process;
 they do not change the user's runtime configuration. Use an up-to-date CLI if a flag is unsupported.
 
 On unavailable authentication, CLI failure, unsupported model/effort, or invalid output: show the

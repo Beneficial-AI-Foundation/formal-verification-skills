@@ -28,8 +28,10 @@ node ~/.claude/scripts/fvs-codex-think.mjs review \
   --reviewer "$REVIEWER" --model "$MODEL" --effort "$EFFORT"
 ```
 
-Codex is ephemeral/read-only with user config ignored. Claude is safe-mode/read-only with only
-Read/Glob/Grep, no MCP, and no persisted session. The reviewer never edits targets. Other receives
+Codex is ephemeral/read-only with user config ignored. Claude uses safe mode with Read/Glob/Grep
+and native-sandboxed Bash, no MCP, and no persisted session. Follow the appended diagnostic
+policy for scratch probes and generated Lake output paths. The reviewer never edits targets.
+Every attempt's raw evidence survives validation failure. Other receives
 the managed prompt packet and returns through `review-import`. Authentication, failed processes,
 invalid output, stale inputs, cancelled choice, and pending handoff remain visibly unreviewed; no
 silent fallback.

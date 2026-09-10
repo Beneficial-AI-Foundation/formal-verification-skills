@@ -30,7 +30,7 @@ it('runs crypto review through selected read-only runtimes and immutable packets
       '#!/usr/bin/env node',
       "const fs = require('node:fs');",
       'const args = process.argv.slice(2);',
-      "if (args[0] === '--version') process.exit(0);",
+      "if (args[0] === '--version') { console.log('2.1.267'); process.exit(0); }",
       "const mode = process.env.FVS_REVIEW_TEST_MODE || '';",
       "if (['login', 'auth'].includes(args[0])) process.exit(mode === 'auth' ? 1 : 0);",
       "const input = fs.readFileSync(0, 'utf8');",
@@ -117,7 +117,7 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     for (const flag of ['--safe-mode', '--strict-mcp-config', '--no-session-persistence']) {
       assert.ok(call.args.includes(flag));
     }
-    assert.equal(call.args[call.args.indexOf('--tools') + 1], 'Read,Glob,Grep');
+    assert.equal(call.args[call.args.indexOf('--tools') + 1], 'Read,Glob,Grep,Bash');
 
     const same = run('same-runtime', 'codex', ['Codex CLI', 'Codex CLI'],
       ['--effort', 'low']);
