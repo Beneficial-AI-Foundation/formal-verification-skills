@@ -28,6 +28,14 @@ test('updates preserve additions, tracked edits, legacy orphans and earlier comp
     assert.equal(first.files.length, 4);
     assert.equal(first.kinds['skills/fvs-extra/companion.md'], 'added');
     assert.equal(contents(first, 'scripts/fvs-orphan.mjs'), 'older orphan');
+    put('agents/fvs-test.toml', 'second local edit');
+    const copy = fs.copyFileSync;
+    fs.copyFileSync = () => { throw new Error('simulated disk failure'); };
+    try { assert.throws(() => saveLocalPatches(dir, 'codex'), /simulated disk failure/); }
+    finally { fs.copyFileSync = copy; }
+    assert.equal(meta().bundle, first.bundle, 'failed replacement must leave active bundle intact');
+    assert.equal(contents(first, 'agents/fvs-test.toml'), 'local toml');
+    put('agents/fvs-test.toml', 'local toml');
     const install = () => execFileSync(process.execPath, [path.resolve(__dirname, '../bin/install.js'),
       '--codex', '--global', '--config-dir', dir], { stdio: 'pipe' });
     install();

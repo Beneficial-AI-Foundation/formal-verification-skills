@@ -16,29 +16,10 @@ Use the active installation's runtime and scope, including `.codex` for Codex.
 Prefer that exact config directory; if multiple installations have patches, ask which
 one to restore instead of taking the first global match.
 
-Check for local patches directory:
-
-```bash
-# Global install -- detect runtime config directory
-if [ -d "$HOME/.config/opencode/fvs-local-patches" ]; then
-  PATCHES_DIR="$HOME/.config/opencode/fvs-local-patches"
-elif [ -d "$HOME/.opencode/fvs-local-patches" ]; then
-  PATCHES_DIR="$HOME/.opencode/fvs-local-patches"
-elif [ -d "$HOME/.gemini/fvs-local-patches" ]; then
-  PATCHES_DIR="$HOME/.gemini/fvs-local-patches"
-else
-  PATCHES_DIR="$HOME/.claude/fvs-local-patches"
-fi
-# Local install fallback -- check all runtime directories
-if [ ! -d "$PATCHES_DIR" ]; then
-  for dir in .config/opencode .opencode .gemini .claude; do
-    if [ -d "./$dir/fvs-local-patches" ]; then
-      PATCHES_DIR="./$dir/fvs-local-patches"
-      break
-    fi
-  done
-fi
-```
+Resolve `PATCHES_DIR` as `fvs-local-patches/` beside the active installation
+manifest. For local installs this is under the project runtime directory; for
+global installs use that runtime’s configured root (including custom config roots).
+Do not search unrelated runtimes or prefer a global backup over the active local one.
 
 Read `backup-meta.json` from the patches directory. For version 2, resolve its `bundle`
 relative to that directory (strictly `bundles/bundle-<id>`). This immutable bundle is
