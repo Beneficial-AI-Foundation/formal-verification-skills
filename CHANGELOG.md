@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.3.4] - 2026-09-20
+
+### Fixed
+
+- Crypto evaluation now trusts Lean's kernel for checked proof terms and concentrates adversarial
+  review on statement/source conformance and trust-boundary evidence. It reuses a current executor
+  build log or runs one bounded fallback without retry, rather than repeating proof derivations,
+  executor gates, or external numeric computations.
+
 ## [2.3.3] - 2026-09-20
 
 ### Added

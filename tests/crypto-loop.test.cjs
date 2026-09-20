@@ -575,3 +575,24 @@ for (const key of ['cmdPlan', 'cmdReview', 'cmdExecute', 'cmdEval', 'cmdFollowup
     });
   });
 }
+
+// ---------------------------------------------------------------------------
+// 12. Kernel-trusting crypto eval: challenge statements and trust boundaries,
+//     reuse current executor build evidence, and permit one bounded fallback.
+// ---------------------------------------------------------------------------
+for (const absPath of [STAGE_FILES.cmdEval, STAGE_FILES.wfEval,
+  path.join(AGENTS_DIR, 'fvs-crypto-thinker.md')]) {
+  whenExists(absPath, `Crypto loop: kernel-trusting eval in ${rel(absPath)}`, (content) => {
+    it('encodes the bounded statement-conformance contract', () => {
+      assert.match(content, /TRUSTS THE LEAN KERNEL/i);
+      assert.match(content, /definitions[\s\S]{0,240}theorem signatures[\s\S]{0,240}constants[\s\S]{0,240}API shape/i);
+      assert.match(content, /reserved names[\s\S]{0,240}forbidden imports[\s\S]{0,240}sorry[\s\S]{0,240}axiom[\s\S]{0,240}native_decide[\s\S]{0,240}set_option/i);
+      assert.match(content, /reuse[\s\S]{0,240}build\.log/i);
+      assert.match(content, /at most one[\s\S]{0,240}LEAN_NUM_THREADS="\$\{LEAN_NUM_THREADS:-4\}" nice -n 19 lake build/i);
+      assert.match(content, /(?:no|never|do not) retry/i);
+      assert.match(content, /classif[\s\S]{0,240}(?:unexplained|disallowed)[\s\S]{0,240}ACCEPT/i);
+      assert.match(content, /(?:outside|external)[\s-]script[\s\S]{0,240}recomput/i);
+      assert.doesNotMatch(content, /re-derive independently|REFUTE the spec, the proof|lake env lean/i);
+    });
+  });
+}
