@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { createHash } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -38,9 +39,9 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
       "const mode = process.env.FVS_REVIEW_TEST_MODE;",
       "if (['login', 'auth'].includes(args[0])) process.exit(mode === 'auth' ? 1 : 0);",
       "const input = fs.readFileSync(0, 'utf8');",
-      'fs.writeFileSync(process.env.FVS_REVIEW_TEST_LOG, JSON.stringify({ args, input }));',
+      'fs.writeFileSync(process.env.FVS_REVIEW_TEST_LOG, JSON.stringify({ args, input, cwd: process.cwd() }));',
       "if (mode === 'fail') process.exit(9);",
-      "if (mode === 'changed') fs.appendFileSync('lib.rs', '// changed');",
+      "if (mode === 'changed') fs.appendFileSync(process.env.FVS_REVIEW_PROJECT_SOURCE, '// changed');",
       `let review = mode === 'invalid' ? 'empty review' : ${JSON.stringify(REVIEW)};`,
       "if (mode === 'blank') review = 'VERDICT: PASS\\n## Findings\\nNone\\n## Coverage\\n\\n## Evidence\\nfile:1';",
       "if (mode === 'duplicate') review += '\\nVERDICT: REVISE';",
@@ -49,19 +50,24 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
       "if (args[0] === 'exec') {",
       "  fs.writeFileSync(args[args.indexOf('--output-last-message') + 1], review);",
       '} else {',
-      "  console.log(JSON.stringify({ result: review, is_error: mode === 'error', modelUsage: { 'claude-fable-test': {} } }));",
+      "  console.log(JSON.stringify({ result: review, is_error: mode === 'error', modelUsage: { 'claude-reported-test-model': {} } }));",
       '}',
     ].join('\n');
     for (const runtime of ['codex', 'claude']) {
       fs.writeFileSync(path.join(bin, runtime), fake);
       fs.chmodSync(path.join(bin, runtime), 0o755);
     }
-    const invoke = (args, mode = '') => spawnSync(process.execPath, [SCRIPT, ...args], {
+    const invoke = (args, mode = '', env = {}) => spawnSync(process.execPath, [SCRIPT, ...args], {
       cwd: project, encoding: 'utf8', env: { ...process.env,
         PATH: `${bin}${path.delimiter}${process.env.PATH || ''}`,
         FVS_REVIEW_TEST_LOG: log, FVS_REVIEW_TEST_MODE: mode,
+        FVS_REVIEW_PROJECT_SOURCE: path.join(project, 'lib.rs'),
+        ...env,
       },
     });
+    const piEnv = { PI_CODING_AGENT: 'true', AI_AGENT: 'pi' };
+    const nonPiEnv = { PI_CODING_AGENT: '', AI_AGENT: '' };
+    const sha256 = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
     const config = path.join(project, '.formalising', 'fvs-config.json');
     assert.equal(invoke(['automatic']).stdout.trim(), 'true');
     assert.ok(!fs.existsSync(path.dirname(config)), 'missing config must not create state');
@@ -79,12 +85,16 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
     fs.writeFileSync(config, '{"spec_review":{"automatic":false}}');
 
     const requestFile = path.join(tmp, 'request.json');
-    const request = { spec, context: ['lib.rs', 'Funs.lean'], runtime: 'codex', author_runtime: 'claude', grounding: 'inventory.json' };
-    const run = (changes = {}, mode) => {
+    const request = { spec, context: ['lib.rs', 'Funs.lean'], runtime: 'codex',
+      model: 'catalog-codex-model', effort: 'max', author_runtime: 'claude',
+      grounding: 'inventory.json' };
+    const run = (changes = {}, mode, env = {}) => {
       fs.writeFileSync(requestFile, JSON.stringify({ ...request, ...changes }));
-      return invoke(['run', requestFile], mode);
+      return invoke(['run', requestFile], mode, env);
     };
     const directory = result => path.join(project, result.stdout.match(/Review packet: (.+)/)[1]);
+    assert.notEqual(run({ model: undefined }).status, 0, 'review model must be explicit');
+    assert.notEqual(run({ effort: undefined }).status, 0, 'review effort must be explicit');
     const successful = run();
     assert.equal(successful.status, 0, successful.stderr);
     const first = directory(successful);
@@ -93,8 +103,10 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
     assert.match(firstReview, /Requested effort: max/);
     assert.ok(firstReview.endsWith(REVIEW));
     let call = JSON.parse(fs.readFileSync(log));
-    assert.equal(call.args[call.args.indexOf('--model') + 1], 'gpt-5.6-sol');
-    assert.equal(call.args[call.args.indexOf('--sandbox') + 1], 'read-only');
+    assert.equal(call.args[call.args.indexOf('--model') + 1], 'catalog-codex-model');
+    assert.equal(call.args[call.args.indexOf('--sandbox') + 1], 'workspace-write');
+    assert.equal(call.args[call.args.indexOf('-C') + 1], call.cwd);
+    assert.ok(call.cwd.endsWith(`${path.sep}scratch`));
     assert.ok(call.args.includes('--ephemeral') && call.args.includes('--ignore-user-config'));
     assert.ok(call.args.includes('model_reasoning_effort="max"'));
     assert.equal(call.args.at(-1), '-');
@@ -103,29 +115,90 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
     assert.equal(JSON.parse(fs.readFileSync(path.join(first, 'grounding.json'))).cited_apis[0].signature, 'def example := 1');
     assert.ok(!fs.existsSync(path.join(project, 'INJECTED')));
 
-    const same = run({ author_runtime: 'codex', model: 'gpt-6-astra', effort: 'low' });
+    const same = run({ author_runtime: 'codex', model: 'catalog-codex-authority', effort: 'medium' });
     assert.equal(same.status, 0, same.stderr);
     assert.notEqual(directory(same), first);
     assert.match(fs.readFileSync(path.join(directory(same), 'review.md'), 'utf8'), /same-runtime, fresh reviewer/);
     call = JSON.parse(fs.readFileSync(log));
-    assert.ok(call.args.includes('gpt-6-astra') && call.args.includes('model_reasoning_effort="low"'));
-    assert.equal(run({ model: 'custom-cheaper-model', effort: 'runtime-default' }).status, 0);
+    assert.ok(call.args.includes('catalog-codex-authority') &&
+      call.args.includes('model_reasoning_effort="medium"'));
+    assert.equal(run({ model: 'custom-catalog-model', effort: 'provider-native-effort' }).status, 0);
     call = JSON.parse(fs.readFileSync(log));
-    assert.ok(call.args.includes('custom-cheaper-model'));
-    assert.ok(!call.args.some(arg => arg.startsWith('model_reasoning_effort=')));
+    assert.ok(call.args.includes('custom-catalog-model'));
+    assert.ok(call.args.includes('model_reasoning_effort="provider-native-effort"'));
+    assert.notEqual(run({ effort: 'runtime-default' }).status, 0);
 
-    const claude = run({ runtime: 'claude', author_runtime: 'codex' });
+    const claude = run({ runtime: 'claude', model: 'catalog-claude-model', effort: 'high',
+      author_runtime: 'codex' });
     assert.equal(claude.status, 0, claude.stderr);
     call = JSON.parse(fs.readFileSync(log));
     for (const flag of ['--safe-mode', '--strict-mcp-config', '--no-session-persistence']) {
       assert.ok(call.args.includes(flag));
     }
     assert.equal(call.args[call.args.indexOf('--tools') + 1], 'Read,Glob,Grep,Bash');
-    assert.equal(call.args[call.args.indexOf('--model') + 1], 'fable');
-    assert.equal(call.args[call.args.indexOf('--effort') + 1], 'max');
-    assert.match(fs.readFileSync(path.join(directory(claude), 'review.md'), 'utf8'), /claude-fable-test/);
+    assert.equal(call.args[call.args.indexOf('--model') + 1], 'catalog-claude-model');
+    assert.equal(call.args[call.args.indexOf('--effort') + 1], 'high');
+    assert.match(fs.readFileSync(path.join(directory(claude), 'review.md'), 'utf8'),
+      /claude-reported-test-model/);
 
-    for (const mode of ['fail', 'auth', 'invalid', 'blank', 'duplicate', 'changed']) {
+    const piOutsideHost = run({ runtime: 'pi', model: 'openai/catalog-pi-authority', effort: 'max',
+      author_runtime: 'claude' }, 'pi-outside', nonPiEnv);
+    assert.notEqual(piOutsideHost.status, 0, 'Pi reviewer must require an active Pi host');
+    const piBareModel = run({ runtime: 'pi', model: 'catalog-pi-authority', effort: 'max',
+      author_runtime: 'claude' }, 'pi-bare', piEnv);
+    assert.notEqual(piBareModel.status, 0, 'Pi reviewer model must be provider-qualified');
+
+    const pi = run({ runtime: 'pi', model: 'openai/catalog-pi-authority', effort: 'max',
+      author_runtime: 'claude' }, 'pi-valid', piEnv);
+    assert.equal(pi.status, 0, pi.stderr);
+    assert.match(pi.stdout, /PI_READY/);
+    const piDirectory = directory(pi);
+    const piResponse = path.join(tmp, 'pi-response.md');
+    const piReceipt = path.join(tmp, 'pi-receipt.json');
+    fs.writeFileSync(piResponse, REVIEW);
+    assert.notEqual(invoke(['import', piDirectory, piResponse]).status, 0,
+      'Other importer must reject Pi packets');
+    assert.notEqual(invoke(['import-pi', piDirectory, piResponse], '', piEnv).status, 0,
+      'Pi import must require dispatch evidence');
+    const receipt = {
+      version: 1,
+      run_id: 'pi-child-test-run',
+      status: 'complete',
+      fresh_context: true,
+      read_only: true,
+      model: 'openai/catalog-pi-authority',
+      effort: 'low',
+      packet_sha256: sha256(path.join(piDirectory, 'packet.json')),
+      response_sha256: sha256(piResponse),
+    };
+    receipt.run_id = '   ';
+    receipt.effort = 'max';
+    fs.writeFileSync(piReceipt, JSON.stringify(receipt));
+    assert.notEqual(invoke(['import-pi', piDirectory, piResponse, piReceipt], '', piEnv).status, 0,
+      'Pi import must reject a blank child run ID');
+    receipt.run_id = 'pi-child-test-run';
+    receipt.effort = 'low';
+    fs.writeFileSync(piReceipt, JSON.stringify(receipt));
+    assert.notEqual(invoke(['import-pi', piDirectory, piResponse, piReceipt], '', piEnv).status, 0,
+      'Pi import must reject a child effort mismatch');
+    receipt.effort = 'max';
+    fs.writeFileSync(piReceipt, JSON.stringify(receipt));
+    fs.appendFileSync(piResponse, '\ntampered after child completion\n');
+    assert.notEqual(invoke(['import-pi', piDirectory, piResponse, piReceipt], '', piEnv).status, 0,
+      'Pi import must reject a response changed after child completion');
+    fs.writeFileSync(piResponse, REVIEW);
+    assert.notEqual(invoke(['import-pi', piDirectory, piResponse, piReceipt], '', nonPiEnv).status, 0,
+      'Pi import must require an active Pi host');
+    assert.equal(invoke(['import-pi', piDirectory, piResponse, piReceipt], '', piEnv).status, 0);
+    const piRecord = fs.readFileSync(path.join(piDirectory, 'review.md'), 'utf8');
+    assert.match(piRecord, /Requested reviewer: pi/);
+    assert.match(piRecord, /Requested model: openai\/catalog-pi-authority/);
+    assert.match(piRecord, /Provenance: cross-runtime/);
+    assert.match(piRecord, /Runtime-reported models: openai\/catalog-pi-authority/);
+    assert.match(piRecord, /Runtime-reported effort: max/);
+    assert.match(piRecord, /Pi dispatch evidence: run pi-child-test-run/);
+
+    for (const mode of ['fail', 'auth', 'invalid', 'blank', 'duplicate', 'changed', 'revise', 'edits']) {
       const result = run({}, mode);
       assert.notEqual(result.status, 0, mode);
       assert.ok(!fs.existsSync(path.join(directory(result), 'review.md')), mode);
@@ -134,16 +207,9 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
         assert.equal(fs.readFileSync(path.join(directory(result), attempt, 'response.md'), 'utf8'), 'empty review');
       }
     }
-    const errored = run({ runtime: 'claude' }, 'error');
+    const errored = run({ runtime: 'claude', model: 'catalog-claude-model', effort: 'high' }, 'error');
     assert.notEqual(errored.status, 0);
     assert.ok(!fs.existsSync(path.join(directory(errored), 'review.md')));
-    const revised = run({}, 'revise');
-    assert.equal(revised.status, 0, revised.stderr);
-    assert.match(fs.readFileSync(path.join(directory(revised), 'review.md'), 'utf8'), /VERDICT: REVISE/);
-    const edited = run({}, 'edits');
-    assert.equal(edited.status, 0, edited.stderr);
-    assert.match(fs.readFileSync(path.join(directory(edited), 'review.md'), 'utf8'),
-      /VERDICT: APPROVE-WITH-EDITS/);
     const external = run({ runtime: 'other', model: 'my-provider/model', effort: '8192-token-budget' });
     assert.equal(external.status, 0, external.stderr);
     assert.match(external.stdout, /PENDING/);
@@ -153,7 +219,19 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
     assert.match(fs.readFileSync(path.join(directory(external), 'review.md'), 'utf8'), /externally supplied response/);
     assert.notEqual(invoke(['import', directory(external), response]).status, 0, 'must not overwrite');
     assert.notEqual(invoke(['import', first, response]).status, 0, 'must reject stale inputs');
-    const staleGrounding = run({ runtime: 'other', model: 'external', effort: 'runtime-default' });
+    for (const field of ['model', 'effort']) {
+      const tampered = run({ runtime: 'other', model: 'external-catalog-model', effort: 'low' });
+      const tamperedDir = directory(tampered);
+      const packetPath = path.join(tamperedDir, 'packet.json');
+      const packet = JSON.parse(fs.readFileSync(packetPath, 'utf8'));
+      delete packet.request[field];
+      fs.writeFileSync(packetPath, JSON.stringify(packet));
+      assert.notEqual(invoke(['import', tamperedDir, response]).status, 0,
+        `import must reject missing request.${field}`);
+      assert.ok(!fs.existsSync(path.join(tamperedDir, 'review.md')),
+        `tampered request.${field} must not produce a review`);
+    }
+    const staleGrounding = run({ runtime: 'other', model: 'external', effort: 'low' });
     fs.appendFileSync(path.join(project, 'inventory.json'), '\n');
     assert.notEqual(invoke(['import', directory(staleGrounding), response]).status, 0, 'must reject stale grounding inventory');
     fs.copyFileSync(path.join(directory(external), 'packet.json'), path.join(project, 'packet.json'));

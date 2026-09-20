@@ -128,14 +128,20 @@ fi
 
 ## Step 4: Resolve the thinker + dispatch (followup mode)
 
-Default (no `--codex`) -- dispatch the in-runtime thinker. Resolve `$THINKER_MODEL` for
-`fvs-crypto-thinker` via the model-profiles dispatch sequence. `cat` the eval findings (and the
-user's ruling, if any) and INLINE them into the prompt:
+Resolve stage `crypto_followup` for the runtime that will actually run it: the active runtime by
+default, or Codex CLI when `--codex` is present. Resolve `$THINKER_MODEL` and `$THINKER_EFFORT`
+through `model-profiles.md` and that runtime's current catalog. Before dispatch, show and confirm
+the command-level selection manifest, including the actual runner; notes rebuild it and require
+reconfirmation. A one-run adjustment is not persisted, while Save override writes the exact
+runtime+stage entry. Missing preferred models or unsupported efforts prompt interactively and fail
+with exact remediation in noninteractive mode. `cat` the eval findings (and the user's ruling, if
+any) and INLINE them into the prompt. Without `--codex`, dispatch the in-runtime thinker:
 
 ```
 Task(
   subagent_type="fvs-crypto-thinker",
   model="$THINKER_MODEL",
+  reasoning_effort="$THINKER_EFFORT", // when supported; otherwise apply the capability gate
   description="Author follow-up plan",
   prompt="Mode: followup
 
@@ -160,12 +166,15 @@ downstream is UNCHANGED (the executor stays `fvs-executor`, the artifacts stay u
 runs IN THIS COMMAND BEFORE any Codex dispatch -- the helper is only reached on a `FOLLOWUP` decision
 after any ruling is in hand, so a Codex thinker never silently picks a side of a modeling ruling.
 Coordination is ARTIFACT-MEDIATED: the Codex thinker reads the topic folder, writes
-`FOLLOWUP_PLAN_nN.md` under `plans/`, and EXITS -- there is NO live cross-process bridge. The helper is
-EFFORT-ONLY: it passes `--effort xhigh` (>= xhigh enforced) and NO `--model`.
+`FOLLOWUP_PLAN_nN.md` under `plans/`, and EXITS -- there is NO live cross-process bridge. Pass the
+resolved Codex model and effort. Omit `--model` only when the confirmed value is `inherit`.
 
 ```bash
-# --codex mode: swap the in-runtime thinker for the FVS-owned Codex thinker (followup stage).
-node ~/.claude/scripts/fvs-codex-think.mjs followup --topic "$ROOT" --effort xhigh
+# --codex mode: use the confirmed crypto_followup selection for Codex CLI.
+CODEX_MODEL_ARGS=()
+[ "$THINKER_MODEL" = "inherit" ] || CODEX_MODEL_ARGS=(--model "$THINKER_MODEL")
+node ~/.claude/scripts/fvs-codex-think.mjs followup --topic "$ROOT" \
+  "${CODEX_MODEL_ARGS[@]}" --effort "$THINKER_EFFORT"
 ```
 
 If `--codex` is passed but `codex` is unavailable, the helper surfaces its graceful install message
@@ -239,11 +248,10 @@ Next:      {/fvs:crypto-execute only after approval | exact crypto-review resume
 
 <codex_skill_adapter>
 The `--codex` flag swaps the thinker for a Codex thinker at THIS followup stage via the FVS-owned
-helper `~/.claude/scripts/fvs-codex-think.mjs`
-(`node ~/.claude/scripts/fvs-codex-think.mjs followup --topic "$ROOT" --effort xhigh`). The helper is FVS-owned
-and self-contained: it does NOT import or depend on the openai-codex plugin; it spawns `codex` via an
-argv array (never a shell string), is EFFORT-ONLY (passes `--effort xhigh`, NO `--model`), and points
-Codex at the topic folder as its working root. Coordination is ARTIFACT-MEDIATED: the Codex thinker
+helper `~/.claude/scripts/fvs-codex-think.mjs`, passing the confirmed `crypto_followup` Codex model
+(unless `inherit`) and effort. The helper is FVS-owned and self-contained: it does NOT import or
+depend on the openai-codex plugin; it spawns `codex` via an argv array (never a shell string),
+applies the resolved model/effort, and points Codex at the topic folder as its working root. Coordination is ARTIFACT-MEDIATED: the Codex thinker
 writes `FOLLOWUP_PLAN_nN.md` under `plans/` and exits -- there is NO live cross-process bridge. The
 `HUMAN_RULING` HALT (Step 3) runs IN THIS COMMAND BEFORE any Codex dispatch, so a Codex thinker never
 self-rules on a modeling decision; on Codex the HALT degrades to a plain-text question and WAITS for
@@ -258,7 +266,7 @@ unchanged.
 - [ ] At most eight relevant crypto/shared lessons loaded and snapshotted for either thinker runtime.
 - [ ] Latest `EVAL_nN.md` read; decision routed (`ACCEPT` stop / `BLOCKED` pause / `FOLLOWUP` author / `HUMAN_RULING` HALT).
 - [ ] On `HUMAN_RULING` the command HALTs and asks the user -- it NEVER fabricates a follow-up plan.
-- [ ] On `FOLLOWUP` the thinker is dispatched (`subagent_type="fvs-crypto-thinker"`) and the bounded follow-up plan written to `plans/`.
+- [ ] On `FOLLOWUP`, model/effort are resolved for the actual runner; the in-runtime Task or Codex helper receives both confirmed settings and writes the bounded follow-up plan to `plans/`.
 - [ ] The follow-up records truthful provenance and runs at most three review rounds before stop.
 - [ ] At most three source/ruling-evidenced candidates reconciled as one file each plus index updates.
 - [ ] No bare `lake build`, no `gh` open/create, no generated-Lean write.

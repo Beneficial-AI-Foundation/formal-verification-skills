@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.3.3] - 2026-09-20
+
+### Added
+
+- FVS is now a native Pi package with 29 generated skills, provider-qualified model handling,
+  `/skill:fvs-*` invocation guidance, and direct `pi install npm:fv-skills-baif` support (#62).
+- `/fvs:configure` and every delegated workflow now use stage-scoped, runtime-aware model profiles.
+  Quality selects authority, execution, and scout tiers from the live runtime catalog; commands show
+  one confirmable model/effort manifest and fail closed when a provider or dispatch cannot honor it
+  (#64).
+
+### Fixed
+
+- Fresh local Codex installs create their configuration directory before patch discovery. Local
+  patch metadata now separates immutable history from active pending patches, preserves real edits
+  without treating unchanged generated TOML as custom, and retires resolved patches atomically
+  (#60).
+- FC and crypto reviews require explicit catalog-resolved model/effort selections, preserve raw and
+  normalized responses separately, retain writable diagnostic scratch without exposing source
+  writes, and enforce consistent verdict, severity, authority, and thread-count contracts (#60).
+
 ## [2.3.2] - 2026-09-10
 
 ### Fixed

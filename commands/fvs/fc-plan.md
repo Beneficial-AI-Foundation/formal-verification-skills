@@ -116,13 +116,16 @@ For a target, `inScopeDependencies` contains selected dependencies and
 `outsideTargetDependencies` retains project dependencies outside the selection. This prevents a
 false entry point.
 
-## Step 3: Resolve models and inline references
+## Step 3: Resolve models + effort and inline references
 
-Read `.formalising/fvs-config.json`. Default to the `quality` model profile when absent, and honor
-per-agent overrides before profile defaults.
+Read the complete config and the canonical contract in `model-profiles.md`. Declare `research` for
+`fvs-researcher` and `fc_plan` for the plan-authoring `fvs-executor`; shared agent names never choose
+a tier. Resolve model and effort independently with exact runtime/provider catalog validation.
 
-- `fvs-researcher`: quality=inherit, balanced=sonnet, budget=haiku
-- `fvs-executor`: quality=inherit, balanced=sonnet, budget=sonnet
+Before either dispatch, show one command-level selection manifest containing both stages and obtain
+confirmation. Offer `Adjust once`, exact-stage `Save override`, notes that rebuild and reconfirm the
+manifest, and Cancel. Missing preferred models or unsupported efforts prompt interactively;
+noninteractive unresolved choices fail before dispatch with exact remediation.
 
 Read and inline these references because @-references do not cross Task() boundaries:
 
@@ -142,6 +145,7 @@ PROOF_STRATEGIES=$(cat ~/.claude/fv-skills/references/proof-strategies.md)
 Task(
   subagent_type="fvs-researcher",
   model="$RESEARCH_MODEL",
+  reasoning_effort="$RESEARCH_EFFORT", // when supported; otherwise apply the capability gate
   description="Assess verification targets",
   prompt="Research mode: plan
 
@@ -201,6 +205,7 @@ On success:
 Task(
   subagent_type="fvs-executor",
   model="$EXECUTOR_MODEL",
+  reasoning_effort="$EXECUTOR_EFFORT", // when supported; otherwise apply the capability gate
   description="Write verification recommendations",
   prompt="Execute mode: plan
 

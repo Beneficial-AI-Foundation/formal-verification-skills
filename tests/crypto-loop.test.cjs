@@ -196,10 +196,10 @@ for (const key of ['cmdPlan', 'cmdExecute', 'cmdEval', 'cmdFollowup']) {
 //
 //    The --codex mode swaps the in-runtime thinker dispatch for the FVS-owned
 //    helper scripts/fvs-codex-think.mjs at the plan / eval / followup stages. It
-//    must be EFFORT-ONLY (passes --effort xhigh, NEVER --model) and carry the
-//    artifact-mediated / no-live-bridge language (the swappable thinker is not a
-//    second loop, not a streaming IPC). The execute stage has no thinker, so it
-//    is intentionally excluded here.
+//    must pass the stage-resolved Codex model/effort rather than bypassing the
+//    quality matrix, and carry the artifact-mediated / no-live-bridge language
+//    (the swappable thinker is not a second loop, not a streaming IPC). The
+//    execute stage has no thinker, so it is intentionally excluded here.
 //
 //    We strip leading-'#' prose lines (readContent), but a Codex flag could still
 //    appear in explanatory prose; the regexes target the concrete invocation
@@ -214,17 +214,15 @@ for (const key of ['cmdPlan', 'cmdEval', 'cmdFollowup']) {
       assert.ok(/fvs-codex-think/.test(content),
         `${rel(absPath)} missing the fvs-codex-think helper invocation`);
     });
-    it('is effort-only at >= xhigh (passes --effort xhigh)', () => {
-      assert.ok(/--effort\s+xhigh/.test(content),
-        `${rel(absPath)} missing the --effort xhigh thinker floor`);
+    it('passes the stage-resolved effort instead of a fixed helper default', () => {
+      assert.match(content, /--effort\s+"\$THINKER_EFFORT"/,
+        `${rel(absPath)} does not pass the resolved thinker effort`);
+      assert.doesNotMatch(content, /--effort\s+xhigh/,
+        `${rel(absPath)} hardcodes xhigh instead of the stage selection`);
     });
-    it('passes NO --model (effort-only policy)', () => {
-      // The effort-only policy forbids a --model flag on the Codex helper line.
-      const offenders = content
-        .split('\n')
-        .filter(line => /fvs-codex-think/.test(line) && /--model\b/.test(line));
-      assert.deepStrictEqual(offenders, [],
-        `${rel(absPath)} passes --model on a fvs-codex-think line (must be effort-only)`);
+    it('passes the resolved model and omits it only for inherit', () => {
+      assert.match(content, /THINKER_MODEL[\s\S]{0,180}inherit[\s\S]{0,180}--model\s+"\$THINKER_MODEL"/,
+        `${rel(absPath)} does not conditionally pass the resolved thinker model`);
     });
     it('declares artifact-mediated coordination / no live bridge', () => {
       assert.ok(/artifact[- ]mediated/i.test(content) && /no\b[^\n]*live[- ]?(cross[- ]process )?bridge/i.test(content),
@@ -354,13 +352,13 @@ whenExists(CRYPTO_EXECUTOR, `Crypto loop: executor discipline in ${rel(CRYPTO_EX
 // ---------------------------------------------------------------------------
 for (const key of ['cmdReview', 'wfReview']) {
   whenExists(STAGE_FILES[key], `Crypto loop: rival review in ${rel(STAGE_FILES[key])}`, (content, absPath) => {
-    it('selects reviewer, model, and effort with an Other packet route', () => {
-      for (const token of ['--reviewer', '--model', '--effort', 'gpt-5.6-sol', 'gpt-6-astra',
-        'fable', 'sonnet', 'Other']) {
+    it('selects reviewer, model, and effort with profile routing and an Other packet route', () => {
+      for (const token of ['--reviewer', '--model', '--effort', 'crypto_review',
+        'selection manifest', 'opposite', 'Other']) {
         assert.ok(content.includes(token), `${rel(absPath)} missing ${token}`);
       }
       assert.match(content, /reviewer[\s\S]*model[\s\S]*effort/i,
-        `${rel(absPath)} does not ask reviewer -> model -> effort`);
+        `${rel(absPath)} does not bind reviewer, model, and effort`);
     });
     it('supports both initial and follow-up plan review artifacts', () => {
       for (const token of ['PLAN_REVIEW_', 'FOLLOWUP_REVIEW_']) {
@@ -548,6 +546,14 @@ whenExists(CODEX_THINK, 'Crypto loop: review helper reuses safe provider machine
   it('loads the shipped crypto-plan-review contract', () => {
     assert.ok(/crypto-plan-review\.md/.test(content),
       `${rel(absPath)} missing the specialised review contract`);
+  });
+  it('applies confirmed authoring model and effort selections', () => {
+    assert.match(content, /codexArgs\.push\('-m', args\.model\)/,
+      `${rel(absPath)} does not pass the selected authoring model to Codex`);
+    assert.match(content, /model_reasoning_effort="\$\{args\.effort\}"/,
+      `${rel(absPath)} does not pass the selected authoring effort to Codex`);
+    assert.match(content, /VALID_EFFORTS[^\n]*max/,
+      `${rel(absPath)} does not accept authority-tier max effort`);
   });
   it('marks Codex-authored plans so later review cannot masquerade as independent', () => {
     assert.ok(/Authoring runtime: Codex CLI/.test(content),

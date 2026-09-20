@@ -95,26 +95,15 @@ If .formalising/ already exists, ask user whether to refresh CODEMAP.md or abort
 
 ## Step 3: Read config and resolve models
 
-Read the project config to determine which models to use for subagent dispatch:
+Read the complete config and apply `model-profiles.md`. Both the read-only researcher and the
+map-writing executor use stage key `map_code`: the output is a code map, not authority or proof
+execution. Resolve one stage selection and reuse it for both agents unless an explicit one-run
+adjustment says otherwise.
 
-```bash
-CONFIG=$(cat .formalising/fvs-config.json 2>/dev/null)
-```
-
-If config exists, extract `model_profile` and `model_overrides`.
-If config is missing, use defaults: `model_profile = "quality"`, no overrides.
-
-**Resolve models from profile table** (see fv-skills/references/model-profiles.md):
-
-For `fvs-researcher`:
-- Check `model_overrides["fvs-researcher"]` first
-- Otherwise use profile table: quality=inherit, balanced=sonnet, budget=haiku
-
-For `fvs-executor`:
-- Check `model_overrides["fvs-executor"]` first
-- Otherwise use profile table: quality=inherit, balanced=sonnet, budget=sonnet
-
-Store resolved models as `$RESEARCH_MODEL` and `$EXECUTOR_MODEL`.
+Before dispatch, show and confirm the command-level selection manifest. Offer one-run adjustment,
+exact-stage Save override, notes that rebuild and reconfirm the manifest, and Cancel. Missing
+preferred models or unsupported efforts prompt interactively; noninteractive unresolved choices
+fail before dispatch with exact remediation.
 
 ## Step 4: Generate the canonical function inventory
 
@@ -200,6 +189,7 @@ Spawn the research subagent to annotate the canonical functions:
 Task(
   subagent_type="fvs-researcher",
   model="$RESEARCH_MODEL",
+  reasoning_effort="$RESEARCH_EFFORT", // when supported; otherwise apply the capability gate
   description="Map codebase dependencies",
   prompt="Research mode: map-code
 
@@ -264,6 +254,7 @@ Spawn the executor subagent with research findings:
 Task(
   subagent_type="fvs-executor",
   model="$EXECUTOR_MODEL",
+  reasoning_effort="$EXECUTOR_EFFORT", // when supported; otherwise apply the capability gate
   description="Write CODEMAP.md",
   prompt="Execute mode: map-code
 

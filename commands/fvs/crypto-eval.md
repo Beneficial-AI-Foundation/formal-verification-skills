@@ -71,15 +71,21 @@ links and refresh `$ROOT/sources/proof-engineering-context.md` for either thinke
 
 ## Step 2: Resolve the thinker model + dispatch (eval mode)
 
-Default (no `--codex`) -- dispatch the in-runtime thinker. Resolve `$THINKER_MODEL` for
-`fvs-crypto-thinker` via the model-profiles dispatch sequence. `cat` the iteration's bounded plan +
-the executed artifacts (touched files, `build.log`) + the cached KB sources, and INLINE them into the
-prompt:
+Resolve stage `crypto_eval` for the runtime that will actually run it: the active runtime by
+default, or Codex CLI when `--codex` is present. Resolve `$THINKER_MODEL` and `$THINKER_EFFORT`
+through `model-profiles.md` and that runtime's current catalog. Before dispatch, show and confirm
+the command-level selection manifest, including the actual runner; notes rebuild it and require
+reconfirmation. A one-run adjustment is not persisted, while Save override writes the exact
+runtime+stage entry. Missing preferred models or unsupported efforts prompt interactively and fail
+with exact remediation in noninteractive mode. `cat` the iteration's bounded plan + executed
+artifacts (touched files, `build.log`) + cached KB sources, and INLINE them into the prompt. Without
+`--codex`, dispatch the in-runtime thinker:
 
 ```
 Task(
   subagent_type="fvs-crypto-thinker",
   model="$THINKER_MODEL",
+  reasoning_effort="$THINKER_EFFORT", // when supported; otherwise apply the capability gate
   description="Adversarial eval",
   prompt="Mode: eval
 
@@ -103,12 +109,15 @@ FVS-owned Codex thinker helper. The Codex thinker takes ONLY this eval stage; ev
 UNCHANGED (the artifacts stay under `fv-plans/<topic>/`, the always-adversarial posture and the
 HUMAN_RULING-HALT discipline are identical). Coordination is ARTIFACT-MEDIATED: the Codex thinker
 reads the topic folder, writes `EVAL_nN.md` under `reviews/` carrying exactly one decision verb, and
-EXITS -- there is NO live cross-process bridge. The helper is EFFORT-ONLY: it passes `--effort xhigh`
-(>= xhigh enforced) and NO `--model`.
+EXITS -- there is NO live cross-process bridge. Pass the resolved Codex model and effort. Omit
+`--model` only when the confirmed value is `inherit`.
 
 ```bash
-# --codex mode: swap the in-runtime thinker for the FVS-owned Codex thinker (eval stage).
-node ~/.claude/scripts/fvs-codex-think.mjs eval --topic "$ROOT" --effort xhigh
+# --codex mode: use the confirmed crypto_eval selection for Codex CLI.
+CODEX_MODEL_ARGS=()
+[ "$THINKER_MODEL" = "inherit" ] || CODEX_MODEL_ARGS=(--model "$THINKER_MODEL")
+node ~/.claude/scripts/fvs-codex-think.mjs eval --topic "$ROOT" \
+  "${CODEX_MODEL_ARGS[@]}" --effort "$THINKER_EFFORT"
 ```
 
 If `--codex` is passed but `codex` is unavailable, the helper surfaces its graceful install message
@@ -156,11 +165,10 @@ Review:    reviews/EVAL_{ITER}.md
 
 <codex_skill_adapter>
 The `--codex` flag swaps the thinker for a Codex thinker at THIS eval stage via the FVS-owned helper
-`~/.claude/scripts/fvs-codex-think.mjs`
-(`node ~/.claude/scripts/fvs-codex-think.mjs eval --topic "$ROOT" --effort xhigh`).
-The helper is FVS-owned and self-contained: it does NOT import or depend on the openai-codex plugin;
-it spawns `codex` via an argv array (never a shell string), is EFFORT-ONLY (passes `--effort xhigh`,
-NO `--model`), and points Codex at the topic folder as its working root. Coordination is
+`~/.claude/scripts/fvs-codex-think.mjs`, passing the confirmed `crypto_eval` Codex model (unless
+`inherit`) and effort. The helper is FVS-owned and self-contained: it does NOT import or depend on
+the openai-codex plugin; it spawns `codex` via an argv array (never a shell string), applies the
+resolved model/effort, and points Codex at the topic folder as its working root. Coordination is
 ARTIFACT-MEDIATED: the Codex thinker writes `EVAL_nN.md` under `reviews/` and exits -- there is NO
 live cross-process bridge. If `codex` is absent, the helper fails gracefully with install guidance and
 this command offers to fall back to single-runtime (re-run without `--codex`). Without `--codex`, the
@@ -172,7 +180,7 @@ an upstream artifact).
 <success_criteria>
 - [ ] Topic + iteration resolved; shell metacharacters rejected; every path quoted; no `eval`.
 - [ ] At most eight relevant crypto/shared lessons loaded and snapshotted for either thinker runtime.
-- [ ] `$THINKER_MODEL` resolved; `fvs-crypto-thinker` dispatched (`subagent_type="fvs-crypto-thinker"`) in eval mode with inlined plan + executed artifacts.
+- [ ] `$THINKER_MODEL` / `$THINKER_EFFORT` resolved for the actual runner; the in-runtime Task or Codex helper receives both confirmed settings and the plan/executed context.
 - [ ] The eval is ALWAYS adversarial and ends in EXACTLY ONE of `ACCEPT | FOLLOWUP | HUMAN_RULING | BLOCKED`, written to `reviews/EVAL_nN.md`.
 - [ ] `HUMAN_RULING` routes to a HALT; `BLOCKED` is recorded as a valid outcome (suggest `/fvs:pause-work`).
 - [ ] A `sorry` is judged as a named obligation, never by count.

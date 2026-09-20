@@ -112,23 +112,16 @@ if [ "$CACHE_STATUS" -ne 0 ]; then
 fi
 ```
 
-## Step 3: Read Config and Resolve Models
+## Step 3: Read Config and Resolve Models + Effort
 
-Read the project config to determine which models to use for subagent dispatch:
+Read the complete config and apply `model-profiles.md`. Declare `research` for the implementation
+analysis `fvs-researcher` and `fc_spec` for the specification-authoring `fvs-executor`. Resolve both
+stages independently rather than deriving tiers from shared agent names.
 
-```bash
-CONFIG=$(cat .formalising/fvs-config.json 2>/dev/null || echo '{"model_profile":"quality","model_overrides":{}}')
-```
-
-Resolve models using the profile table from `fv-skills/references/model-profiles.md`:
-
-1. Parse `model_profile` from config (default: `"quality"`)
-2. Check `model_overrides` for `"fvs-researcher"` and `"fvs-executor"`
-3. If no override, look up profile table:
-   - quality: fvs-researcher=inherit, fvs-executor=inherit
-   - balanced: fvs-researcher=sonnet, fvs-executor=sonnet
-   - budget: fvs-researcher=haiku, fvs-executor=sonnet
-4. Store resolved models as `RESEARCH_MODEL` and `EXECUTOR_MODEL`
+Before dispatch, show one command-level selection manifest with both stages and obtain confirmation.
+Offer one-run adjustment, exact-stage Save override, notes that rebuild and reconfirm the manifest,
+and Cancel. Missing preferred models or unsupported efforts prompt interactively; noninteractive
+unresolved choices fail before dispatch with exact remediation.
 
 ## Step 4: Discover and Load the Target Style Guide
 
@@ -174,6 +167,7 @@ target style guide from Step 4 must be inlined separately into BOTH prompts.
 Task(
   subagent_type="fvs-researcher",
   model="$RESEARCH_MODEL",
+  reasoning_effort="$RESEARCH_EFFORT", // when supported; otherwise apply the capability gate
   description="Research context for spec generation of $FUNCTION_NAME",
   prompt="Research mode: spec-generation
 
@@ -230,6 +224,7 @@ Parse the returned research findings for use by the executor.
 Task(
   subagent_type="fvs-executor",
   model="$EXECUTOR_MODEL",
+  reasoning_effort="$EXECUTOR_EFFORT", // when supported; otherwise apply the capability gate
   description="Generate spec for $FUNCTION_NAME",
   prompt="Execute mode: spec-generation
 

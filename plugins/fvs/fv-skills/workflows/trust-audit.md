@@ -32,6 +32,12 @@ Hard invariants this workflow preserves:
 
 <process>
 
+## Step 0: Use the confirmed audit selection
+
+Use scout stage `trust_audit` and the command-level selection manifest confirmed under
+`model-profiles.md`. If the stage is absent, rebuild and reconfirm the manifest before dispatch.
+Never derive a stronger tier from the auditor name or silently fall back.
+
 ## Step 1: Resolve the target + Lean paths (config -> auto-detect -> prompt -> error)
 
 Resolve the audit target (a spec file or a module subtree) and the generated-Lean paths
@@ -101,8 +107,10 @@ remove, or recount functions.
 
 ## Step 4: Introspect + classify (dispatched to the read-only auditor)
 
-The command body dispatches `fvs-axiom-auditor` (read-only) with the canonical inventory JSON and
-`$CANONICAL_COUNT`, delimited as untrusted data. The auditor:
+The command body dispatches `Task(subagent_type="fvs-axiom-auditor", model="$AUDITOR_MODEL",
+reasoning_effort="$AUDITOR_EFFORT", ...)` (read-only) with the canonical inventory JSON and
+`$CANONICAL_COUNT`, delimited as untrusted data. If either field is unsupported, apply the
+capability gate before dispatch rather than dropping it. The auditor:
 
 1. Consumes exactly the supplied canonical atom IDs and never changes their membership/count.
 2. Introspects each `primarySpecFqn`, falling back to `leanFqn`, via `#print axioms <FQN>` (the
@@ -158,8 +166,9 @@ Table:         .formalising/audits/<target>.md
 ```
 
 On Codex, the build-precondition HALT and any justification prompt degrade to plain text and
-WAIT for the user (fail-closed -- never auto-justify an axiom, never self-clear the gate). The
-`Task(...)` dispatch survives intact (the `model=` parameter is silently ignored on Codex).
+WAIT for the user (fail-closed -- never auto-justify an axiom, never self-clear the gate). Before
+`Task(...)`, confirm only the actual active/inherited model and applicable effort, choose a capable
+runner, or fail before dispatch; never silently ignore a confirmed field.
 
 </process>
 

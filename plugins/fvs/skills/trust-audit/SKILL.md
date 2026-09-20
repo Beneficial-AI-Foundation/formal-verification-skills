@@ -62,9 +62,15 @@ Before spawning, inspect the `spawn_agent` tool's visible parameter schema to de
 Even when `agent_type` is present, typed dispatch is available only if the exact requested FVS type is advertised by the tool schema or a confirmed runtime registry. Codex marketplace plugins do not register the bundled Claude agent Markdown as typed Codex agents, so otherwise use the bundled-agent workaround below.
 
 
+Selection-capability gate (before manifest confirmation):
+- Compare the requested model with the exact active/inherited Codex model. Because `spawn_agent` has no inline model field, any different requested model is unresolved. Rebuild the manifest around the actual active model and ask explicitly, choose a capable external runner, or fail before dispatch in noninteractive mode.
+- When `reasoning_effort` is absent from the schema, compare the requested effort with the installed/runtime default. A mismatch is unresolved and follows the same rebuild/ask-or-fail rule.
+- Never confirm a requested model or effort and then omit it with a warning. The marketplace plugin does not install Codex agent TOML. Use this mapping only when the exact FVS agent type is registered independently; otherwise use the bundled-agent workaround.
+
 Typed mapping (agent_type-capable schema only):
 - `Task(subagent_type="X", prompt="Y")` -> `spawn_agent(agent_type="X", message="Y")`
-- `Task(model="...")` -> omit. `spawn_agent` has no inline `model` parameter. The marketplace plugin does not install Codex agent TOML. Use this mapping only when the exact FVS agent type is registered independently; otherwise use the bundled-agent workaround.
+- `Task(model="...")` -> omit only after the selection-capability gate proves it equals the active/inherited model.
+- `Task(reasoning_effort="...")` -> `spawn_agent(reasoning_effort="...")` when that field is present. If absent, dispatch only after the gate proves the installed/runtime default equals the confirmed effort.
 - `fork_context: false` by default -- FVS agents load their own context via `<files_to_read>` blocks.
 
 Generic-agent workaround (schema with NO agent_type field):
@@ -131,8 +137,7 @@ project-defs paths with the precedence config -> auto-detect -> prompt -> error,
 
 ```bash
 CONFIG=$(cat .formalising/fvs-config.json 2>/dev/null)
-# profile = config.model_profile || "balanced"
-# model = model_overrides["fvs-axiom-auditor"] ?? PROFILE_TABLE["fvs-axiom-auditor"][profile]
+# Resolve stage `trust_audit` for fvs-axiom-auditor through model-profiles.md.
 ```
 
 The target is UNTRUSTED input flowing into path expansion and a `lake` / `lake env lean`
@@ -210,11 +215,16 @@ Never fall back to grep/model enumeration; models never discover, add, remove, o
 
 ## Step 4: Resolve the auditor model + dispatch the read-only auditor
 
-Resolve `$AUDITOR_MODEL` for `fvs-axiom-auditor` from the profile table (auditor:
-quality=inherit, balanced=sonnet, budget=haiku), then dispatch:
+Resolve `$AUDITOR_MODEL` and `$AUDITOR_EFFORT` for `fvs-axiom-auditor` with stage key
+`trust_audit` through `model-profiles.md`. Before dispatch, show and confirm the command-level
+selection manifest. Offer one-run adjustment, exact-stage Save override, notes that rebuild and
+reconfirm the manifest, and Cancel. Missing preferred models or unsupported efforts prompt
+interactively; noninteractive unresolved choices fail before dispatch with exact remediation.
+Pass validated native fields, then dispatch:
 
 ```
 Task(subagent_type="fvs-axiom-auditor", model="$AUDITOR_MODEL",
+     reasoning_effort="$AUDITOR_EFFORT", // when supported; otherwise apply the capability gate
      description="Introspect #print axioms over canonical functions",
      prompt="Target: $TARGET
 
@@ -290,8 +300,9 @@ Table:         .formalising/audits/<target>.md
 On Codex, every interactive HALT in this command -- the build-precondition HALT (Step 2) and any
 justification prompt at the gate (Step 5) -- degrades to a plain-text question and WAITS for the
 user. It is fail-closed: it never auto-justifies an axiom, never self-clears the NOT-CLEAN gate,
-and never produces a CLEAN verdict without a green build. The `Task(...)` dispatch survives intact
-(the `model=` parameter is silently ignored on Codex, per model-profiles runtime handling).
+and never produces a CLEAN verdict without a green build. Before dispatch on Codex, apply the
+model-profile capability gate: confirm only the actual active/inherited model and applicable
+effort, or fail before dispatch. Never silently ignore a confirmed field.
 </codex_skill_adapter>
 
 <success_criteria>

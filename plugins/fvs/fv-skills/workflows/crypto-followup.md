@@ -81,13 +81,15 @@ fi
 <step name="dispatch_thinker">
 ## Step 4: Dispatch the thinker (followup mode)
 
-Resolve the thinker model via the model-profiles sequence, then dispatch the high-effort thinker,
-INLINING the eval findings (and the human's ruling, if any):
+Resolve authority stage `crypto_followup` through `model-profiles.md`. Use the command's confirmed
+selection manifest; if this stage was not in that manifest, rebuild and reconfirm it before
+dispatch. Then INLINE the eval findings (and the human's ruling, if any):
 
 ```
 Task(
   subagent_type="fvs-crypto-thinker",
   model="$THINKER_MODEL",
+  reasoning_effort="$THINKER_EFFORT", // when supported; otherwise apply the capability gate
   description="Author follow-up plan",
   prompt="Mode: followup
 

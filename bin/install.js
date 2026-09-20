@@ -70,37 +70,30 @@ const CODEX_AGENT_SANDBOX = {
   'fvs-axiom-auditor': 'read-only',
 };
 
-// Codex agents inherit the user's selected Codex model — the converter never
-// pins a `model`, it sets only the reasoning-effort budget. The user owns the
-// model choice and may change it mid-session; FVS controls only how hard each
-// agent thinks. Precision-critical roles (spec authoring, proof attempt and
-// refactor, explanation) run at the highest effort; the research/mapping
-// support role runs one tier lower. Codex accepts minimal|low|medium|high|xhigh;
-// any unmapped agent defaults to high at the lookup site.
+// Codex agent TOMLs cannot express FVS's stage-aware quality matrix: shared
+// agents serve authority, work, and scout stages. These are safe installation
+// fallbacks only. The command-level selection manifest is authoritative and
+// passes a stage effort dynamically when spawn_agent supports it; otherwise it
+// must surface the limitation instead of claiming the requested stage setting.
+// Codex accepts minimal|low|medium|high|xhigh in agent TOML; any unmapped agent
+// defaults to high at the lookup site.
 const FVS_CODEX_AGENT_EFFORT = {
   'fvs-executor': 'xhigh',
   'fvs-lean-refactorer': 'xhigh',
-  'fvs-explainer': 'xhigh',
+  'fvs-explainer': 'high',
   'fvs-researcher': 'high',
-  // Extraction loop + doc-sync workers. The two roles whose output is the most
-  // reasoning-sensitive — the independent equivalence assessor (judging whether a
-  // meaning-bearing change preserves behaviour) and the bisector (minimizing a
-  // novel blocker to a faithful failing example) — run at xhigh; the remaining
-  // workers run at high.
-  'fvs-equivalence-assessor': 'xhigh',
+  // Extraction fallbacks follow the confirmed work/scout split.
+  'fvs-equivalence-assessor': 'high',
   'fvs-extract-bisector': 'xhigh',
   'fvs-extract-classifier': 'high',
-  'fvs-extract-applier': 'high',
+  'fvs-extract-applier': 'xhigh',
   'fvs-draft-investigator': 'high',
   'fvs-doc-syncer': 'high',
-  // Crypto loop + trust audit. The thinker authors bounded plans and runs the
-  // always-adversarial eval -- the most reasoning-sensitive role in the loop --
-  // so it runs at xhigh (the dual-runtime Codex thinker must think at least this
-  // hard); the read-only auditor introspects axioms at high.
+  // The thinker spans authority plan/follow-up and scout eval stages, so xhigh
+  // is the strongest safe static fallback; the manifest supplies max/high when
+  // dynamic effort is available. The executor is a work stage.
   'fvs-crypto-thinker': 'xhigh',
-  // The crypto executor is the dial-down implementation stage (vs the thinker's
-  // xhigh authoring) -- it executes a fully-specified plan, so it runs at high.
-  'fvs-crypto-executor': 'high',
+  'fvs-crypto-executor': 'xhigh',
   'fvs-axiom-auditor': 'high',
 };
 
@@ -762,7 +755,7 @@ function getCodexSkillAdapterHeader(skillName, options = {}) {
     : '';
   const typedModelNote = pluginName
     ? 'The marketplace plugin does not install Codex agent TOML. Use this mapping only when the exact FVS agent type is registered independently; otherwise use the bundled-agent workaround.'
-    : 'FVS bakes each agent\'s reasoning effort into its `.toml` at install time and the model is inherited from the user\'s Codex configuration.';
+    : 'Installed agent TOML supplies only a fallback effort; it does not prove that the command-level stage selection was applied.';
   const fallbackSteps = pluginName
     ? `1. Read \`\${CLAUDE_PLUGIN_ROOT}/agents/<agent-name>.md\` and extract its instructions. If the token is still literal, resolve the path from this SKILL.md as described above.\n2. Spawn a generic/default agent and inject those instructions as a role preamble before the task prompt.\n3. Label results clearly as \"generic-agent workaround\" so the user knows typed guarantees are not in effect.\n4. Where typed dispatch is mandatory for correctness, fail closed and report the schema limitation rather than silently degrading.`
     : `1. Resolve your active Codex config root (the directory containing your \`config.toml\`), then read \`agents/<agent-name>.toml\` relative to that root to extract the agent's instructions.\n2. Inject those instructions as a role-preamble into a generic \`spawn_agent(message=...)\` call.\n3. Label results clearly as \"generic-agent workaround\" so the user knows typed guarantees are not in effect.\n4. Where typed dispatch is mandatory for correctness, fail closed and report the schema limitation rather than silently degrading.`;
@@ -807,9 +800,15 @@ FVS workflows use \`Task(...)\` (Claude Code syntax). Translate to Codex collabo
 
 Before spawning, inspect the \`spawn_agent\` tool's visible parameter schema to determine which form is active.${typedDispatchQualification}
 
+Selection-capability gate (before manifest confirmation):
+- Compare the requested model with the exact active/inherited Codex model. Because \`spawn_agent\` has no inline model field, any different requested model is unresolved. Rebuild the manifest around the actual active model and ask explicitly, choose a capable external runner, or fail before dispatch in noninteractive mode.
+- When \`reasoning_effort\` is absent from the schema, compare the requested effort with the installed/runtime default. A mismatch is unresolved and follows the same rebuild/ask-or-fail rule.
+- Never confirm a requested model or effort and then omit it with a warning. ${typedModelNote}
+
 Typed mapping (agent_type-capable schema only):
 - \`Task(subagent_type="X", prompt="Y")\` -> \`spawn_agent(agent_type="X", message="Y")\`
-- \`Task(model="...")\` -> omit. \`spawn_agent\` has no inline \`model\` parameter. ${typedModelNote}
+- \`Task(model="...")\` -> omit only after the selection-capability gate proves it equals the active/inherited model.
+- \`Task(reasoning_effort="...")\` -> \`spawn_agent(reasoning_effort="...")\` when that field is present. If absent, dispatch only after the gate proves the installed/runtime default equals the confirmed effort.
 - \`fork_context: false\` by default -- FVS agents load their own context via \`<files_to_read>\` blocks.
 
 Generic-agent workaround (schema with NO agent_type field):
@@ -2639,9 +2638,12 @@ const MANIFEST_NAME = 'fvs-file-manifest.json';
 /**
  * Compute SHA256 hash of file contents
  */
-function fileHash(filePath) {
-  const content = fs.readFileSync(filePath);
+function contentHash(content) {
   return crypto.createHash('sha256').update(content).digest('hex');
+}
+
+function fileHash(filePath) {
+  return contentHash(fs.readFileSync(filePath));
 }
 
 /**
@@ -2710,12 +2712,25 @@ function writeManifest(configDir, runtime = 'claude') {
   return manifest;
 }
 
+function matchesGeneratedCodexAgentToml(configDir, rel, digest) {
+  if (!/^agents\/fvs-.*\.toml$/.test(rel)) return false;
+  const markdownPath = path.join(configDir, rel.replace(/\.toml$/, '.md'));
+  if (!fs.existsSync(markdownPath)) return false;
+  const converted = fs.readFileSync(markdownPath, 'utf8');
+  const { frontmatter, body } = extractFrontmatterAndBody(converted);
+  if (!frontmatter || !/<codex_agent_role>/.test(body)) return false;
+  const originalBody = body.replace(/^\s*<codex_agent_role>[\s\S]*?<\/codex_agent_role>\s*/, '');
+  const reconstructed = `---\n${frontmatter}\n---\n\n${originalBody}`;
+  const agentName = path.basename(rel, '.toml');
+  return contentHash(generateCodexAgentToml(agentName, reconstructed)) === digest;
+}
 
 /**
  * Detect user-modified FVS files by comparing against install manifest.
  * Backs up modified files to fvs-local-patches/ for reapply after update.
  */
 function saveLocalPatches(configDir, runtime = 'claude') {
+  fs.mkdirSync(configDir, { recursive: true });
   configDir = fs.realpathSync(configDir);
   const manifestPath = path.join(configDir, MANIFEST_NAME);
   // An unreadable baseline must stop the update before any destructive copy.
@@ -2725,7 +2740,12 @@ function saveLocalPatches(configDir, runtime = 'claude') {
     throw new Error('Invalid FVS manifest; repair it before updating. Existing files were preserved.');
   }
   const current = ownedFileHashes(configDir, runtime);
-  const modified = Object.keys(current).filter(rel => current[rel] !== manifest.files[rel]);
+  const modified = Object.keys(current).filter(rel => {
+    if (current[rel] === manifest.files[rel]) return false;
+    if (!Object.prototype.hasOwnProperty.call(manifest.files, rel) && runtime === 'codex' &&
+        matchesGeneratedCodexAgentToml(configDir, rel, current[rel])) return false;
+    return true;
+  });
   const patchesDir = path.join(configDir, PATCHES_DIR_NAME);
   if (fs.lstatSync(patchesDir, { throwIfNoEntry: false })?.isSymbolicLink()) {
     throw new Error('Local patch directory is a symlink; refusing to update');
@@ -2736,15 +2756,22 @@ function saveLocalPatches(configDir, runtime = 'claude') {
   const addBundle = (directory, meta) => {
     const hashes = generateManifest(directory);
     delete hashes['backup-meta.json'];
-    for (const rel of meta?.files ?? []) {
+    const listed = new Set(meta?.files ?? []);
+    const pending = new Set(meta?.pending ?? meta?.files ?? Object.keys(hashes));
+    for (const rel of listed) {
       if (!Object.prototype.hasOwnProperty.call(hashes, rel)) throw new Error(`Missing backed-up patch: ${rel}; refusing to update`);
       if (meta.hashes?.[rel] && meta.hashes[rel] !== hashes[rel]) {
         throw new Error(`Backed-up patch changed: ${rel}; inspect it before updating`);
       }
     }
     for (const rel of Object.keys(hashes)) {
-      if (meta && !meta.files?.includes(rel)) console.warn(`  Unlisted local patch recovered: ${rel}`);
-      sources.set(rel, { file: path.join(directory, rel), kind: meta?.kinds?.[rel] ?? 'legacy' });
+      if (meta && !listed.has(rel)) {
+        console.warn(`  Unlisted local patch recovered: ${rel}`);
+        pending.add(rel);
+      }
+      if (pending.has(rel)) {
+        sources.set(rel, { file: path.join(directory, rel), kind: meta?.kinds?.[rel] ?? 'legacy' });
+      }
     }
   };
   if (prior?.bundle) {
@@ -2777,8 +2804,9 @@ function saveLocalPatches(configDir, runtime = 'claude') {
   fs.mkdirSync(bundles, { recursive: true });
   const staging = fs.mkdtempSync(path.join(bundles, '.pending-'));
   const bundle = `bundles/bundle-${path.basename(staging).slice(9)}`;
-  const meta = { version: 2, bundle, backed_up_at: new Date().toISOString(),
-    from_version: manifest.version, files: [...sources.keys()].sort(), hashes: {}, kinds: {} };
+  const meta = { version: 3, bundle, backed_up_at: new Date().toISOString(),
+    from_version: manifest.version, files: [...sources.keys()].sort(), pending: [], hashes: {}, kinds: {} };
+  meta.pending = [...meta.files];
   for (const rel of meta.files) {
     const dest = path.join(staging, rel);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
@@ -2808,7 +2836,8 @@ function reportLocalPatches(configDir, runtime = 'claude') {
   let meta;
   try { meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')); } catch { return []; }
 
-  if (meta.files && meta.files.length > 0) {
+  const pending = meta.pending ?? meta.files ?? [];
+  if (pending.length > 0) {
     const reapplyCommand = runtime === 'opencode'
       ? '/fvs-reapply-patches'
       : runtime === 'codex'
@@ -2816,7 +2845,7 @@ function reportLocalPatches(configDir, runtime = 'claude') {
         : '/fvs:reapply-patches';
     console.log('');
     console.log('  ' + yellow + 'Local patches detected' + reset + ' (from v' + meta.from_version + '):');
-    for (const f of meta.files) {
+    for (const f of pending) {
       console.log('     ' + orange + f + reset);
     }
     console.log('');
@@ -2825,7 +2854,7 @@ function reportLocalPatches(configDir, runtime = 'claude') {
     console.log('  Or manually compare and merge the files.');
     console.log('');
   }
-  return meta.files || [];
+  return pending;
 }
 
 /**

@@ -21,16 +21,19 @@ manifest. For local installs this is under the project runtime directory; for
 global installs use that runtime’s configured root (including custom config roots).
 Do not search unrelated runtimes or prefer a global backup over the active local one.
 
-Read `backup-meta.json` from the patches directory. For version 2, resolve its `bundle`
-relative to that directory (strictly `bundles/bundle-<id>`). This immutable bundle is
-the source for the file copies below. Legacy metadata refers to the flat directory.
+Read `backup-meta.json` from the patches directory. For version 2 or 3, resolve its `bundle`
+relative to that directory (strictly `bundles/bundle-<id>`). This immutable bundle is the source
+for file copies below. Version 3 uses `pending` as the active reapply set and keeps `files` as the
+historical bundle inventory; version 2 treats every `files` entry as pending. Legacy metadata refers
+to the flat directory.
 Check canonical paths remain inside the selected installation and reject symlinks.
 
-Before merging, enumerate every file in the bundle, excluding its `backup-meta.json`.
-Compare the enumeration with `files` and verify `hashes` when present. Report every
-unlisted file and every missing or changed entry; never silently omit them. Stop for
-user inspection on missing/changed entries. Offer unlisted legacy files for recovery.
-Older immutable bundles and legacy flat copies remain available for inspection.
+Before merging, enumerate every file in the bundle, excluding its `backup-meta.json`. Compare the
+enumeration with historical `files` and verify `hashes` when present. Report every unlisted file and
+every missing or changed entry; never silently omit them. Stop for user inspection on
+missing/changed entries. Offer unlisted legacy files for recovery. Process only `pending` (or
+version-2 `files`) as active patches. Older immutable bundles and resolved entries remain available
+for inspection without being copied into the next active set.
 
 **If no patches found:**
 ```
@@ -58,7 +61,7 @@ Exit.
 
 ## Step 3: Merge each file
 
-For each file in `backup-meta.json`:
+For each active file in `pending` (or version-2 `files`):
 
 1. **Read the backed-up version** (user's modified copy from `fvs-local-patches/`)
 2. **Read the newly installed version** (current file after update)
@@ -88,21 +91,24 @@ For each file in `backup-meta.json`:
    - `Skipped` -- modification already in upstream
    - `Conflict` -- user chose resolution
 
-## Step 4: Update manifest
+## Step 4: Retire processed active entries
 
-After reapplying, note that the manifest will be regenerated on the next `/fvs:update`:
+After each file reaches a final outcome (`Merged`, `Skipped (already upstream)`, or an explicit
+choice to keep the new upstream file), atomically rewrite the top-level `backup-meta.json` as
+version 3 with that path removed from `pending`. Preserve `bundle`, historical `files`, `hashes`,
+`kinds`, and the immutable bundle contents. A conflict the user defers remains pending.
 
-```bash
-# The manifest will be regenerated on next /fvs:update
-# For now, just note which files were modified
-```
+When `pending` becomes empty, keep the pointer with `pending: []` so the selected bundle remains
+historical evidence. The next update must not reactivate or copy those resolved entries. A newly
+modified installed file will still be detected independently against `fvs-file-manifest.json`.
 
 ## Step 5: Cleanup option
 
 Ask user:
-- "Keep patch backups for reference?" -- preserve `fvs-local-patches/`
-- "Clean up selected patch bundle?" -- name the exact bundle; delete it only after
-  explicit approval, without deleting older bundles or dangling the active pointer.
+- "Keep patch backups for reference?" -- preserve `fvs-local-patches/`; this never keeps resolved
+  entries active.
+- "Clean up selected patch bundle?" -- only when its `pending` set is empty; name the exact bundle
+  and delete it after explicit approval without deleting older bundles or dangling the pointer.
 
 ## Step 6: Report
 
@@ -121,8 +127,9 @@ Ask user:
 </process>
 
 <success_criteria>
-- [ ] All backed-up patches processed
-- [ ] User modifications merged into new version
-- [ ] Conflicts resolved with user input
+- [ ] Every active pending patch processed or explicitly left pending
+- [ ] User modifications merged into the new version
+- [ ] Resolved/upstream-chosen entries removed from `pending` without deleting historical bundles
+- [ ] Conflicts resolved with user input or kept pending
 - [ ] Status reported for each file
 </success_criteria>

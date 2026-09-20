@@ -65,7 +65,64 @@ test('review schema rejects malformed findings and format repair preserves subst
   assert.throws(() => validateReviewResponse(normalizeReviewResponse(missing, options.verdicts), options));
   const empty = review.replace(finding, '').replace('APPROVE-WITH-EDITS', 'PASS');
   validateReviewResponse(empty, options);
+  validateReviewResponse(empty.replace('VERDICT: PASS', 'VERDICT: BLOCKED'), options);
+  for (const verdict of ['REVISE', 'APPROVE-WITH-EDITS']) {
+    assert.throws(() => validateReviewResponse(
+      empty.replace('VERDICT: PASS', `VERDICT: ${verdict}`), options), /requires at least one finding/);
+  }
+  const observation = review.replace('— MAJOR', '— OBSERVATION');
+  assert.throws(() => validateReviewResponse(observation, options), /OBSERVATION/);
   const code = review.replace('Evidence: Mathlib/Example.lean:1',
     'Evidence: Mathlib/Example.lean:1\n```text\n## Trace\nClass: a literal in diagnostic output\nVERDICT: PASS\n```');
   assert.equal(validateReviewResponse(code, options), code);
+});
+
+test('crypto review allows observations but rejects adverse empty verdicts', async () => {
+  const { validateReviewResponse } = await import('../scripts/fvs-spec-review.mjs');
+  const options = { verdicts: ['APPROVE', 'APPROVE-WITH-EDITS', 'REJECT'],
+    headings: ['Authority hierarchy', 'Findings', 'Content coverage statement',
+      'Cleared surfaces', 'Probe log', 'Resolution map'] };
+  const base = '# FVS Crypto Plan Review\n\n## Authority hierarchy\nPaper first.\n\n' +
+    '## Findings\nNone.\n\n## Content coverage statement\nChecked semantics.\n\n' +
+    '## Cleared surfaces\nChecked reuse.\n\n## Probe log\nNo probes.\n\n' +
+    '## Resolution map\nNo findings.\n\nVERDICT: APPROVE';
+  validateReviewResponse(base, options);
+  for (const verdict of ['REJECT', 'APPROVE-WITH-EDITS']) {
+    assert.throws(() => validateReviewResponse(
+      base.replace('VERDICT: APPROVE', `VERDICT: ${verdict}`), options), /requires at least one finding/);
+  }
+  const observed = base.replace('None.', '### F-1 — OBSERVATION\nClass: PROCESS\n' +
+    'Claim: A useful note.\nEvidence: plan.md:1\nMinimal suggested edit: Record the note.');
+  validateReviewResponse(observed, options);
+});
+
+test('review selections stay explicit and thread values follow policy', async () => {
+  const { validateReviewerOptions, reviewThreadCount } = await import('../scripts/fvs-spec-review.mjs');
+  assert.throws(() => validateReviewerOptions({ runtime: 'codex', effort: 'max' }),
+    /explicit model/);
+  assert.throws(() => validateReviewerOptions({ runtime: 'codex', model: 'catalog-model' }),
+    /explicit effort/);
+  assert.throws(() => validateReviewerOptions({ runtime: 'codex', model: 'catalog-model',
+    effort: 'runtime-default' }), /explicit effort/);
+  for (const effort of ['low', 'max', 'provider-native-effort']) {
+    assert.equal(validateReviewerOptions({ runtime: 'codex', model: 'catalog/model', effort }).effort,
+      effort);
+  }
+  assert.equal(validateReviewerOptions({ runtime: 'pi', model: 'openai/catalog-model',
+    effort: 'max' }).runtime, 'pi');
+  for (const model of ['catalog-model', '/catalog-model', 'openai/']) {
+    assert.throws(() => validateReviewerOptions({ runtime: 'pi', model, effort: 'max' }),
+      /provider-qualified|explicit model/);
+  }
+  assert.throws(() => validateReviewerOptions({ runtime: 'codex', model: 'catalog/model',
+    effort: 'bad"value' }), /explicit effort/);
+  assert.equal(reviewThreadCount(undefined), 4);
+  assert.equal(reviewThreadCount('1'), 1);
+  assert.equal(reviewThreadCount('4096'), 4096);
+  for (const value of ['0', '-1', '1.5', 'eight']) {
+    assert.throws(() => reviewThreadCount(value), /positive safe integer/);
+  }
+  for (const value of ['9007199254740992', '9'.repeat(400)]) {
+    assert.throws(() => reviewThreadCount(value), /positive safe integer/);
+  }
 });

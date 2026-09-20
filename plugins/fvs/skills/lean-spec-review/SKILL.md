@@ -1,7 +1,7 @@
 ---
 name: lean-spec-review
 description: Adversarially review an FC Lean specification with a chosen runtime, model, and effort
-argument-hint: "<spec.lean> [--reviewer codex|claude|other] [--model ID] [--effort LEVEL]"
+argument-hint: "<spec.lean> [--reviewer codex|claude|pi|other] [--model ID] [--effort LEVEL]"
 allowed-tools:
   - Read
   - Bash
@@ -62,9 +62,15 @@ Before spawning, inspect the `spawn_agent` tool's visible parameter schema to de
 Even when `agent_type` is present, typed dispatch is available only if the exact requested FVS type is advertised by the tool schema or a confirmed runtime registry. Codex marketplace plugins do not register the bundled Claude agent Markdown as typed Codex agents, so otherwise use the bundled-agent workaround below.
 
 
+Selection-capability gate (before manifest confirmation):
+- Compare the requested model with the exact active/inherited Codex model. Because `spawn_agent` has no inline model field, any different requested model is unresolved. Rebuild the manifest around the actual active model and ask explicitly, choose a capable external runner, or fail before dispatch in noninteractive mode.
+- When `reasoning_effort` is absent from the schema, compare the requested effort with the installed/runtime default. A mismatch is unresolved and follows the same rebuild/ask-or-fail rule.
+- Never confirm a requested model or effort and then omit it with a warning. The marketplace plugin does not install Codex agent TOML. Use this mapping only when the exact FVS agent type is registered independently; otherwise use the bundled-agent workaround.
+
 Typed mapping (agent_type-capable schema only):
 - `Task(subagent_type="X", prompt="Y")` -> `spawn_agent(agent_type="X", message="Y")`
-- `Task(model="...")` -> omit. `spawn_agent` has no inline `model` parameter. The marketplace plugin does not install Codex agent TOML. Use this mapping only when the exact FVS agent type is registered independently; otherwise use the bundled-agent workaround.
+- `Task(model="...")` -> omit only after the selection-capability gate proves it equals the active/inherited model.
+- `Task(reasoning_effort="...")` -> `spawn_agent(reasoning_effort="...")` when that field is present. If absent, dispatch only after the gate proves the installed/runtime default equals the confirmed effort.
 - `fork_context: false` by default -- FVS agents load their own context via `<files_to_read>` blocks.
 
 Generic-agent workaround (schema with NO agent_type field):
@@ -96,6 +102,7 @@ runtime, model, and effort menu; preserve the spec and record the review and fin
 <execution_context>
 @${CLAUDE_PLUGIN_ROOT}/fv-skills/workflows/lean-spec-review.md
 @${CLAUDE_PLUGIN_ROOT}/fv-skills/references/fc-spec-review.md
+@${CLAUDE_PLUGIN_ROOT}/fv-skills/references/model-profiles.md
 </execution_context>
 
 <process>
@@ -103,10 +110,30 @@ Follow the review workflow with `$ARGUMENTS`. Explicit invocation always runs th
 even when `spec_review.automatic` is false. Automatic invocation from `lean-specify` enters the
 same workflow after generation checks, with the resolved spec/source paths and author runtime.
 
-Honor explicit reviewer/model/effort choices. Supplying all three standalone flags is the
-non-interactive path; otherwise ask only for missing choices in order: reviewer -> model -> effort.
-Automatic callers record `Skip review` exactly as `Unreviewed (user skipped)` and do not auto-start
-proof work.
+Declare authority stage `spec_review` and apply `model-profiles.md`. Precedence is explicit one-run
+flags, non-null `spec_review.reviewer` / `spec_review.model` / `spec_review.effort`, then the quality
+opposite-runtime recommendation. Null saved values keep profile routing active.
+
+Detect the specification authoring runtime. Recommend an authenticated opposite provider/runtime:
+OpenAI/Codex-authored specs use Claude Code CLI; Claude-authored specs use a fresh
+provider-qualified OpenAI Pi seat when running in Pi, then Codex CLI. Unknown authors receive an
+explicit reviewer menu without an independence claim. Never route a Claude Code subscription
+through Pi. The `pi` reviewer is available only inside Pi with a provider-qualified model from its
+live authenticated catalog and a fresh-child facility that can honor and report the exact per-child
+model/effort. It launches a fresh read-only child, never a manual Other packet. Persistence requires
+the workflow's completed-child receipt with actual run ID/model/effort and packet/response hashes;
+missing capability or evidence leaves the review pending.
+
+Build one review selection manifest containing reviewer runner, provenance, exact catalog model,
+and effort. Confirm it before launch with Continue once, Adjust once, Save override, or Cancel;
+retain notes. Notes rebuild the manifest and require reconfirmation. Save writes only the
+`spec_review` object. Offer every effort value the selected model/provider reports as supported.
+Missing models or unsupported efforts ask for one-run/save/cancel; unresolved noninteractive
+choices fail before launch with exact remediation.
+
+If no opposite runner is authenticated, ask among setup/retry, fresh same-runtime review, Other
+handoff, one-run skip, or cancel; never switch silently. A one-run skip records exactly
+`Unreviewed (user skipped)`, stops at the review boundary, and does not auto-start proof work.
 
 The reviewer is read-only; the `lean-specify` authoring seat keeps `review.md` unchanged and writes
 separate `triage.md` with finding IDs, old/new hashes (pre-edit/post-edit), and rerun structure,

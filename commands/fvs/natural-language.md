@@ -71,9 +71,17 @@ Or run /fvs:map-code to build the function index.
 
 Wait for user clarification.
 
-## Step 2: Read Reference Files for Agent Dispatch
+## Step 2: Resolve Runtime Settings and Read References
 
-Read the three reference files. These MUST be inlined into the Task() prompt because @-references do NOT cross Task boundaries.
+Read `fv-skills/references/model-profiles.md` and declare stage key `explain` for
+`fvs-explainer`. Resolve the exact runtime/provider model and effort through the canonical
+precedence. Before dispatch, show and confirm the command-level selection manifest. Offer one-run
+adjustment, exact-stage Save override, notes that rebuild and reconfirm the manifest, and Cancel.
+Missing preferred models or unsupported efforts prompt interactively; noninteractive unresolved
+choices fail before dispatch with exact remediation.
+
+Read the three domain reference files. These MUST be inlined into the Task() prompt because
+@-references do NOT cross Task boundaries.
 
 ```bash
 AENEAS_PATTERNS=$(cat ~/.claude/fv-skills/references/aeneas-patterns.md)
@@ -101,6 +109,8 @@ Display dispatch indicator:
 
 ```
 Task(
+  model="$EXPLAINER_MODEL",
+  reasoning_effort="$EXPLAINER_EFFORT", // when supported; otherwise apply the capability gate
   prompt="Analyze function for natural-language explanation.
 
 <rust_module>

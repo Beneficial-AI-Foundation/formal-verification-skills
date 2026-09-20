@@ -24,6 +24,19 @@ after(() => {
   }
 });
 
+describe('Fresh local Codex install', () => {
+  it('creates .codex before inspecting local patches', () => {
+    const project = makeTmpDir('fvs-fresh-local-codex-');
+    assert.ok(!fs.existsSync(path.join(project, '.codex')));
+    execFileSync(process.execPath, [INSTALLER, '--codex', '--local'], {
+      cwd: project,
+      env: { ...process.env, HOME: project },
+      stdio: 'pipe',
+    });
+    assert.ok(fs.existsSync(path.join(project, '.codex', 'fvs-file-manifest.json')));
+  });
+});
+
 describe('Installer (install + uninstall round-trip)', () => {
   let tmpDir;
 
@@ -280,7 +293,7 @@ describe('Codex reinstall round-trip (TOML-aware strip + orphan prune)', () => {
     const existing = fs.readFileSync(configPath, 'utf8');
     const foreign = [
       '[model]',
-      'name = "gpt-5"',
+      'name = "catalog-user-model"',
       '',
       '[agents.gsd-foo]',
       'description = "a gsd agent"',
@@ -322,7 +335,7 @@ describe('Codex reinstall round-trip (TOML-aware strip + orphan prune)', () => {
   it('preserves the foreign [model] and [agents.gsd-foo] tables', () => {
     const content = fs.readFileSync(path.join(tmpDir, 'config.toml'), 'utf8');
     assert.ok(content.includes('[model]'), 'user [model] table survives reinstall');
-    assert.ok(content.includes('name = "gpt-5"'), 'user table body survives reinstall');
+    assert.ok(content.includes('name = "catalog-user-model"'), 'user table body survives reinstall');
     assert.ok(content.includes('[agents.gsd-foo]'), 'GSD [agents.gsd-foo] table survives reinstall');
   });
 
@@ -453,13 +466,15 @@ describe('installed tree matches final bundle shape', () => {
       'sync metadata must contain tactic_renames');
   });
 
-  it('installs the top-level crypto-thinker inherit override (issue #34)', () => {
+  it('installs runtime-scoped model and effort overrides', () => {
     const configPath = path.join(tmpDir, 'fv-skills', 'templates', 'config.json');
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    assert.equal(config.model_profile, 'balanced',
+    assert.equal(config.model_profile, 'quality',
       'model_profile must use the top-level schema consumed by commands');
-    assert.equal(config.model_overrides?.['fvs-crypto-thinker'], 'inherit',
-      'fvs-crypto-thinker must inherit by default');
+    for (const runtime of ['claude', 'codex', 'pi', 'opencode', 'gemini']) {
+      assert.deepEqual(config.model_overrides?.[runtime], {}, `${runtime} model overrides`);
+      assert.deepEqual(config.effort_overrides?.[runtime], {}, `${runtime} effort overrides`);
+    }
     assert.ok(!Object.hasOwn(config, 'model'),
       'obsolete nested model config would be ignored by command resolvers');
   });

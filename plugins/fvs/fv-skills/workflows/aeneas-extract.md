@@ -28,6 +28,14 @@ Hard invariants this workflow preserves:
 
 <process>
 
+<step name="resolve_models">
+Use the command's confirmed selection manifest from `model-profiles.md` with exact stage keys:
+`extract_classify` for the classifier, `extract_apply` for the applier, `extract_bisect` for the
+bisector, `extract_assess` for the independent assessor, and `extract_investigate` for the draft
+investigator. If any stage needed by the chosen path is absent, rebuild and reconfirm the manifest
+before dispatch. Never derive tiers from agent names or silently fall back.
+</step>
+
 <step name="pre_flight">
 ## Step 1: PRE-FLIGHT -- target detection, clone resolution, pin audit
 
@@ -165,7 +173,7 @@ Dispatch the read-only classifier to reduce the raw failure log to a stable sign
 earliest failing layer (`charon -> aeneas -> split -> tweaks -> lean`):
 
 ```
-Task(subagent_type="fvs-extract-classifier", model=$CLASSIFIER_MODEL, ...)
+Task(subagent_type="fvs-extract-classifier", model=$CLASSIFIER_MODEL, reasoning_effort=$CLASSIFIER_EFFORT, ...)
 ```
 
 It returns `{ layer, symbol, signature, match }` where `signature` is the stripped,
@@ -184,7 +192,7 @@ Route the classified blocker:
   records:
 
   ```
-  Task(subagent_type="fvs-extract-applier", model=$APPLIER_MODEL, ...)
+  Task(subagent_type="fvs-extract-applier", model=$APPLIER_MODEL, reasoning_effort=$APPLIER_EFFORT, ...)
   ```
 
   The coverage-escalation guard fires here: **A-opacity applied to a function inside required
@@ -197,7 +205,7 @@ Route the classified blocker:
   never disposes:
 
   ```
-  Task(subagent_type="fvs-extract-bisector", model=$BISECTOR_MODEL, ...)
+  Task(subagent_type="fvs-extract-bisector", model=$BISECTOR_MODEL, reasoning_effort=$BISECTOR_EFFORT, ...)
   ```
 
   A NOVEL B-fix routes to the GATE.
@@ -224,7 +232,7 @@ command body), never by a fixing agent.** The independence is structural:
    rationale). The assessor is NOT the proposer and never writes section 7 / the token:
 
    ```
-   Task(subagent_type="fvs-equivalence-assessor", model=$ASSESSOR_MODEL, ...)
+   Task(subagent_type="fvs-equivalence-assessor", model=$ASSESSOR_MODEL, reasoning_effort=$ASSESSOR_EFFORT, ...)
    ```
 
    (The bisector dispatch `subagent_type="fvs-extract-bisector"` and this assessor dispatch
@@ -292,7 +300,7 @@ escalate condition:
    draft-investigator (dedup-first precedent mining + an evidence-cited HTML+MD draft to disk):
 
    ```
-   Task(subagent_type="fvs-draft-investigator", model=$DRAFT_MODEL, ...)
+   Task(subagent_type="fvs-draft-investigator", model=$DRAFT_MODEL, reasoning_effort=$DRAFT_EFFORT, ...)
    ```
 
    The draft is HTML+MD to the workspace `drafts/` directory ONLY. No upstream artifact is

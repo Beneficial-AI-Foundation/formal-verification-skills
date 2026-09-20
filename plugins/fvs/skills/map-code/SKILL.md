@@ -61,9 +61,15 @@ Before spawning, inspect the `spawn_agent` tool's visible parameter schema to de
 Even when `agent_type` is present, typed dispatch is available only if the exact requested FVS type is advertised by the tool schema or a confirmed runtime registry. Codex marketplace plugins do not register the bundled Claude agent Markdown as typed Codex agents, so otherwise use the bundled-agent workaround below.
 
 
+Selection-capability gate (before manifest confirmation):
+- Compare the requested model with the exact active/inherited Codex model. Because `spawn_agent` has no inline model field, any different requested model is unresolved. Rebuild the manifest around the actual active model and ask explicitly, choose a capable external runner, or fail before dispatch in noninteractive mode.
+- When `reasoning_effort` is absent from the schema, compare the requested effort with the installed/runtime default. A mismatch is unresolved and follows the same rebuild/ask-or-fail rule.
+- Never confirm a requested model or effort and then omit it with a warning. The marketplace plugin does not install Codex agent TOML. Use this mapping only when the exact FVS agent type is registered independently; otherwise use the bundled-agent workaround.
+
 Typed mapping (agent_type-capable schema only):
 - `Task(subagent_type="X", prompt="Y")` -> `spawn_agent(agent_type="X", message="Y")`
-- `Task(model="...")` -> omit. `spawn_agent` has no inline `model` parameter. The marketplace plugin does not install Codex agent TOML. Use this mapping only when the exact FVS agent type is registered independently; otherwise use the bundled-agent workaround.
+- `Task(model="...")` -> omit only after the selection-capability gate proves it equals the active/inherited model.
+- `Task(reasoning_effort="...")` -> `spawn_agent(reasoning_effort="...")` when that field is present. If absent, dispatch only after the gate proves the installed/runtime default equals the confirmed effort.
 - `fork_context: false` by default -- FVS agents load their own context via `<files_to_read>` blocks.
 
 Generic-agent workaround (schema with NO agent_type field):
@@ -171,26 +177,15 @@ If .formalising/ already exists, ask user whether to refresh CODEMAP.md or abort
 
 ## Step 3: Read config and resolve models
 
-Read the project config to determine which models to use for subagent dispatch:
+Read the complete config and apply `model-profiles.md`. Both the read-only researcher and the
+map-writing executor use stage key `map_code`: the output is a code map, not authority or proof
+execution. Resolve one stage selection and reuse it for both agents unless an explicit one-run
+adjustment says otherwise.
 
-```bash
-CONFIG=$(cat .formalising/fvs-config.json 2>/dev/null)
-```
-
-If config exists, extract `model_profile` and `model_overrides`.
-If config is missing, use defaults: `model_profile = "quality"`, no overrides.
-
-**Resolve models from profile table** (see fv-skills/references/model-profiles.md):
-
-For `fvs-researcher`:
-- Check `model_overrides["fvs-researcher"]` first
-- Otherwise use profile table: quality=inherit, balanced=sonnet, budget=haiku
-
-For `fvs-executor`:
-- Check `model_overrides["fvs-executor"]` first
-- Otherwise use profile table: quality=inherit, balanced=sonnet, budget=sonnet
-
-Store resolved models as `$RESEARCH_MODEL` and `$EXECUTOR_MODEL`.
+Before dispatch, show and confirm the command-level selection manifest. Offer one-run adjustment,
+exact-stage Save override, notes that rebuild and reconfirm the manifest, and Cancel. Missing
+preferred models or unsupported efforts prompt interactively; noninteractive unresolved choices
+fail before dispatch with exact remediation.
 
 ## Step 4: Generate the canonical function inventory
 
@@ -276,6 +271,7 @@ Spawn the research subagent to annotate the canonical functions:
 Task(
   subagent_type="fvs-researcher",
   model="$RESEARCH_MODEL",
+  reasoning_effort="$RESEARCH_EFFORT", // when supported; otherwise apply the capability gate
   description="Map codebase dependencies",
   prompt="Research mode: map-code
 
@@ -340,6 +336,7 @@ Spawn the executor subagent with research findings:
 Task(
   subagent_type="fvs-executor",
   model="$EXECUTOR_MODEL",
+  reasoning_effort="$EXECUTOR_EFFORT", // when supported; otherwise apply the capability gate
   description="Write CODEMAP.md",
   prompt="Execute mode: map-code
 

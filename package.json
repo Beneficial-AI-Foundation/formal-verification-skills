@@ -1,13 +1,14 @@
 {
   "name": "fv-skills-baif",
-  "version": "2.3.2",
-  "description": "Formal verification skills for Claude Code, Codex, OpenCode, and Gemini. Rust -> Lean 4 via Aeneas.",
+  "version": "2.3.3",
+  "description": "Formal verification skills for Pi, Claude Code, Codex, OpenCode, and Gemini. Rust -> Lean 4 via Aeneas.",
   "bin": {
     "fv-skills-baif": "bin/install.js"
   },
   "files": [
     "bin",
     "commands",
+    "pi",
     "fv-skills",
     "agents",
     "hooks/dist",
@@ -26,7 +27,9 @@
     "gemini",
     "gemini-cli",
     "codex",
-    "openai"
+    "openai",
+    "pi",
+    "pi-package"
   ],
   "author": "BAIF",
   "contributors": [
@@ -35,6 +38,11 @@
   "license": "MIT",
   "engines": {
     "node": ">=16.7.0"
+  },
+  "pi": {
+    "skills": [
+      "./pi/skills"
+    ]
   },
   "dependencies": {},
   "devDependencies": {

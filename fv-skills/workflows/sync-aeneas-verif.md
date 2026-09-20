@@ -42,14 +42,15 @@ mapping and never direct the user to a nonexistent installer option.
 </step>
 
 <step name="resolve_models">
-## Step 1: Resolve Subagent Model
+## Step 1: Resolve Subagent Model + Effort
 
-Read `.formalising/fvs-config.json` and resolve the `fvs-doc-syncer` model via the model-profiles
-dispatch sequence (config `model_overrides` -> profile table -> `inherit`). On Codex the `model=`
-parameter is silently ignored.
+Use stage `doc_sync` and the confirmed command-level selection manifest from
+`model-profiles.md` for every `fvs-doc-syncer` mode. Validate exact runtime/provider model and effort
+support. If the stage is absent, rebuild and reconfirm the manifest before dispatch; never silently
+fall back.
 
 **Inputs:** config file
-**Outputs:** `$SYNCER_MODEL`
+**Outputs:** `$SYNCER_MODEL`, `$SYNCER_EFFORT`
 </step>
 
 <step name="resolve_clones">
@@ -94,6 +95,7 @@ Dispatch the worker for the tactic/Lean-syntax scope, inlining the `_sync-meta.j
 
 ```
 Task(subagent_type="fvs-doc-syncer", model="$SYNCER_MODEL",
+     reasoning_effort="$SYNCER_EFFORT", // when supported; otherwise apply the capability gate
      description="Sync tactics + Lean-syntax (mode a)",
      prompt="<sync_mode>tactics-lean-syntax</sync_mode> ...inlined mapping + tactic_renames + ...")
 ```
@@ -119,6 +121,7 @@ and Aeneas extraction doc targets and the current `blocker-catalog.md` seed:
 
 ```
 Task(subagent_type="fvs-doc-syncer", model="$SYNCER_MODEL",
+     reasoning_effort="$SYNCER_EFFORT", // when supported; otherwise apply the capability gate
      description="Sync extraction docs + reconcile catalog (mode b)",
      prompt="<sync_mode>extraction-docs</sync_mode> ...Charon docs/{what_charon_translates,
              transformations,limitations}.md + README.md + CONTRIBUTING.md +

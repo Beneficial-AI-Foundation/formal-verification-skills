@@ -13,7 +13,7 @@
 npx fv-skills-baif
 ```
 
-**Works on Mac, Windows, and Linux. Supports Claude Code, Codex, OpenCode, and Gemini CLI.**
+**Works on Mac, Windows, and Linux. Supports Pi, Claude Code, Codex, OpenCode, and Gemini CLI.**
 
 <br>
 
@@ -41,6 +41,18 @@ Framework-specific commands (currently Lean) handle the actual specification and
 ---
 
 ## Getting Started
+
+### Pi package
+
+Install FVS directly from npm as a Pi package:
+
+```bash
+pi install npm:fv-skills-baif
+```
+
+Start a new session, then run `/skill:fvs-help`. Bundle routers such as `/skill:fvs-fc` and
+`/skill:fvs-formalise`, plus member skills such as `/skill:fvs-crypto-plan`, are available directly.
+Update an unpinned install with `pi update npm:fv-skills-baif`.
 
 ### Plugin marketplace (Claude Code and Codex)
 
@@ -74,7 +86,7 @@ The BAIF Git catalog is a versioned distribution source that can list multiple i
 released plugins. It is separate from OpenAI's universal public Plugins Directory, which has its
 own per-plugin submission process.
 
-### npm installer (all runtimes)
+### npm installer (Claude Code, Codex, OpenCode, and Gemini)
 
 ```bash
 npx fv-skills-baif
@@ -172,11 +184,10 @@ Commands are grouped into five bundles. Each bundle has a **router** command tha
 rejects ordinary Lean identifiers with three or more namespace dots, steering generated code
 toward scoped namespaces, `open`, and local names.
 
-After `lean-specify`, an interactive review menu asks reviewer, then model, then effort; it never
-auto-selects a choice. It offers the other runtime first, a fresh reviewer in the current runtime,
-or another provider. Choose GPT Sol or Astra for Codex, Fable for Claude, or a cheaper/custom model;
-effort defaults to `max` and can be lowered. Other providers use an exported source packet and
-imported response. One-run `Skip review` records `Unreviewed (user skipped)` and does not begin
+After `lean-specify`, an interactive review menu resolves reviewer, exact catalog model, and
+model-supported effort; it never auto-selects a choice. It offers the other runtime first, a fresh
+reviewer in the current runtime, or another provider. Other providers use an exported source packet
+and imported response. One-run `Skip review` records `Unreviewed (user skipped)` and does not begin
 proof work. Reviews and source hashes live under `.formalising/spec-reviews/`.
 
 The reviewer stays read-only and `review.md` stays immutable. The `lean-specify` authoring seat
@@ -233,9 +244,18 @@ secrets, raw transcripts, ephemeral error dumps, unsupported guesses, or inferre
 | Command | Description |
 |---------|-------------|
 | `/fvs:help` | Show available FVS commands and usage guide |
+| `/fvs:configure` | Configure runtime-aware subagent models, effort levels, and review defaults |
 | `/fvs:update` | Update FVS through the current installation channel |
 | `/fvs:reapply-patches` | Preserve customizations across FVS updates (patches for npm installs; fork guidance for plugin installs) |
 | `/fvs:kb-setup` | Set up NotebookLM knowledge base integration (venv, auth, config) |
+
+`/fvs:configure` stores concrete model IDs under the runtime and exact stage that reported them.
+The quality profile is role-aware: authority artifacts use the strongest detected model with max
+reasoning, execution/proof filling uses the executor model with xhigh, and research/eval/audit work
+uses a smaller model with high. Claude and Codex family preferences never cross runtimes; Pi uses
+provider-qualified IDs and keeps its active provider for ordinary work. Each interactive command
+shows one model/effort selection manifest with one-run, save, notes, and cancel paths. Missing models
+or unsupported efforts require a user choice; unresolved noninteractive runs fail before dispatch.
 
 ---
 

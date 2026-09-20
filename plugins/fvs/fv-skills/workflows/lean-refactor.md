@@ -76,19 +76,11 @@ TACTIC_LINES=$(grep -cE "^\s+(unfold|step|simp|agrind|scalar_tac|ring|field_simp
 </step>
 
 <step name="resolve_models">
-Read config and resolve models for subagent dispatch.
-
-```bash
-CONFIG=$(cat .formalising/fvs-config.json 2>/dev/null || echo '{"model_profile":"quality","model_overrides":{}}')
-```
-
-Resolution sequence:
-1. Parse `model_profile` from config (default: `"quality"`)
-2. Check `model_overrides` for `"fvs-researcher"` and `"fvs-lean-refactorer"`
-3. If no override, look up profile table for the agent and profile
-4. Store resolved models as `RESEARCH_MODEL` and `REFACTORER_MODEL`
-
-Reference: fv-skills/references/model-profiles.md (profile table and dispatch pattern)
+Use the confirmed command-level selection manifest from `model-profiles.md`: stage `research` for
+`fvs-researcher` and stage `lean_refactor` for `fvs-lean-refactorer`. Resolve stage overrides before
+compatibility agent overrides, validate exact runtime/provider IDs and effort support, and never
+infer tiers from agent names. If either stage is missing from the manifest, rebuild and reconfirm it
+before dispatch.
 </step>
 
 <step name="research_phase">
@@ -103,6 +95,7 @@ Read and inline reference files before dispatch:
 Task(
   subagent_type="fvs-researcher",
   model="$RESEARCH_MODEL",
+  reasoning_effort="$RESEARCH_EFFORT", // when supported; otherwise apply the capability gate
   description="Research refactoring context for $SPEC_FILE",
   prompt="Research mode: lean-refactor
 
@@ -160,6 +153,7 @@ WHILE PASS < MAX_PASSES:
   Task(
     subagent_type="fvs-lean-refactorer",
     model="$REFACTORER_MODEL",
+    reasoning_effort="$REFACTORER_EFFORT", // when supported; otherwise apply the capability gate
     description="Refactor {theorem_name} pass {PASS+1}",
     prompt="<refactoring_reference>$LEAN_REFACTORING_CONTENT</refactoring_reference>
     <research_findings>$RESEARCH_OUTPUT</research_findings>

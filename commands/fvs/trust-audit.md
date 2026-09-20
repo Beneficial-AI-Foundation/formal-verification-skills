@@ -55,8 +55,7 @@ project-defs paths with the precedence config -> auto-detect -> prompt -> error,
 
 ```bash
 CONFIG=$(cat .formalising/fvs-config.json 2>/dev/null)
-# profile = config.model_profile || "balanced"
-# model = model_overrides["fvs-axiom-auditor"] ?? PROFILE_TABLE["fvs-axiom-auditor"][profile]
+# Resolve stage `trust_audit` for fvs-axiom-auditor through model-profiles.md.
 ```
 
 The target is UNTRUSTED input flowing into path expansion and a `lake` / `lake env lean`
@@ -134,11 +133,16 @@ Never fall back to grep/model enumeration; models never discover, add, remove, o
 
 ## Step 4: Resolve the auditor model + dispatch the read-only auditor
 
-Resolve `$AUDITOR_MODEL` for `fvs-axiom-auditor` from the profile table (auditor:
-quality=inherit, balanced=sonnet, budget=haiku), then dispatch:
+Resolve `$AUDITOR_MODEL` and `$AUDITOR_EFFORT` for `fvs-axiom-auditor` with stage key
+`trust_audit` through `model-profiles.md`. Before dispatch, show and confirm the command-level
+selection manifest. Offer one-run adjustment, exact-stage Save override, notes that rebuild and
+reconfirm the manifest, and Cancel. Missing preferred models or unsupported efforts prompt
+interactively; noninteractive unresolved choices fail before dispatch with exact remediation.
+Pass validated native fields, then dispatch:
 
 ```
 Task(subagent_type="fvs-axiom-auditor", model="$AUDITOR_MODEL",
+     reasoning_effort="$AUDITOR_EFFORT", // when supported; otherwise apply the capability gate
      description="Introspect #print axioms over canonical functions",
      prompt="Target: $TARGET
 
@@ -214,8 +218,9 @@ Table:         .formalising/audits/<target>.md
 On Codex, every interactive HALT in this command -- the build-precondition HALT (Step 2) and any
 justification prompt at the gate (Step 5) -- degrades to a plain-text question and WAITS for the
 user. It is fail-closed: it never auto-justifies an axiom, never self-clears the NOT-CLEAN gate,
-and never produces a CLEAN verdict without a green build. The `Task(...)` dispatch survives intact
-(the `model=` parameter is silently ignored on Codex, per model-profiles runtime handling).
+and never produces a CLEAN verdict without a green build. Before dispatch on Codex, apply the
+model-profile capability gate: confirm only the actual active/inherited model and applicable
+effort, or fail before dispatch. Never silently ignore a confirmed field.
 </codex_skill_adapter>
 
 <success_criteria>

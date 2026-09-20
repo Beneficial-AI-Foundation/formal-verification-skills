@@ -25,15 +25,15 @@ const {
   FVS_CODEX_AGENT_EFFORT,
 } = require('../bin/install.js');
 
-// Representative FVS agents and their expected sandbox/effort tiers, including
-// the write-capable crypto executor (workspace-write so its file writes are not
-// silently dropped on Codex; high effort as the dial-down implementation stage).
+// Representative FVS agents and their safe installation fallback efforts. The
+// command-level stage manifest supplies the role-aware quality effort when
+// dynamic Codex dispatch supports it.
 const AGENTS = [
   { name: 'fvs-executor', sandbox: 'workspace-write', effort: 'xhigh' },
   { name: 'fvs-lean-refactorer', sandbox: 'workspace-write', effort: 'xhigh' },
-  { name: 'fvs-explainer', sandbox: 'read-only', effort: 'xhigh' },
+  { name: 'fvs-explainer', sandbox: 'read-only', effort: 'high' },
   { name: 'fvs-researcher', sandbox: 'read-only', effort: 'high' },
-  { name: 'fvs-crypto-executor', sandbox: 'workspace-write', effort: 'high' },
+  { name: 'fvs-crypto-executor', sandbox: 'workspace-write', effort: 'xhigh' },
 ];
 
 function agentMarkdown(name, description) {
@@ -147,6 +147,14 @@ describe('Codex skill adapter header (getCodexSkillAdapterHeader)', () => {
     assert.ok(header.includes('agent_type'), 'maps subagent_type to agent_type');
   });
 
+  it('fails closed when per-child model or effort cannot be honored', () => {
+    const header = getCodexSkillAdapterHeader('fvs-fc-plan');
+    assert.match(header, /Selection-capability gate \(before manifest confirmation\)/);
+    assert.match(header, /requested model[\s\S]*active\/inherited Codex model/);
+    assert.match(header, /requested effort[\s\S]*installed\/runtime default/);
+    assert.match(header, /Never confirm a requested model or effort and then omit it/);
+  });
+
   it('adapts shared marketplace skills without assuming plugin agents are typed', () => {
     const header = getCodexSkillAdapterHeader('lean-verify', { pluginName: 'fvs' });
     assert.ok(header.includes('`$fvs:lean-verify`'), 'uses the namespaced plugin invocation');
@@ -182,7 +190,7 @@ describe('TOML-aware config strip (stripFvsFromCodexConfig)', () => {
   it('strips FVS struct tables but retains foreign user and GSD tables', () => {
     const content = [
       '[model]',
-      'name = "gpt-5"',
+      'name = "catalog-user-model"',
       '',
       '[agents.gsd-foo]',
       'description = "a gsd agent"',
@@ -202,13 +210,13 @@ describe('TOML-aware config strip (stripFvsFromCodexConfig)', () => {
     assert.ok(!cleaned.includes(FVS_CODEX_MARKER), 'FVS marker removed');
     assert.ok(cleaned.includes('[agents.gsd-foo]'), 'GSD table preserved');
     assert.ok(cleaned.includes('[model]'), 'user table preserved');
-    assert.ok(cleaned.includes('name = "gpt-5"'), 'user table body preserved');
+    assert.ok(cleaned.includes('name = "catalog-user-model"'), 'user table body preserved');
   });
 
   it('strips a legacy [[agents]] block whose name is fvs-*', () => {
     const content = [
       '[model]',
-      'name = "gpt-5"',
+      'name = "catalog-user-model"',
       '',
       '[[agents]]',
       'name = "fvs-legacy"',
@@ -261,11 +269,11 @@ describe('TOML-aware config strip (stripFvsFromCodexConfig)', () => {
     );
     const withFlag = ensureCodexHooksFeature(block).content;
     // A foreign [model] table sits below the FVS block.
-    const content = `${withFlag}\n[model]\nname = "gpt-5"\n`;
+    const content = `${withFlag}\n[model]\nname = "catalog-user-model"\n`;
     const cleaned = stripFvsFromCodexConfig(content);
     assert.ok(cleaned !== null, 'foreign content must survive');
     assert.ok(cleaned.includes('[model]'), 'foreign [model] table preserved');
-    assert.ok(cleaned.includes('name = "gpt-5"'), 'foreign table body preserved');
+    assert.ok(cleaned.includes('name = "catalog-user-model"'), 'foreign table body preserved');
     assert.ok(!/^\s*hooks\s*=\s*true\s*$/m.test(cleaned), 'orphaned hooks flag removed');
     assert.ok(!/^\s*codex_hooks\s*=\s*true\s*$/m.test(cleaned), 'orphaned legacy flag removed');
     assert.ok(!cleaned.includes('[features]'), 'empty FVS-created [features] table removed');
@@ -274,7 +282,7 @@ describe('TOML-aware config strip (stripFvsFromCodexConfig)', () => {
   it('preserves a user-owned [features].hooks flag when no FVS marker is present', () => {
     // The flag is FVS-owned only when FVS inserted its ownership comment. A
     // [features] flag in a config FVS never touched belongs to the user.
-    const content = ['[features]', 'hooks = true', '', '[model]', 'name = "gpt-5"', ''].join('\n');
+    const content = ['[features]', 'hooks = true', '', '[model]', 'name = "catalog-user-model"', ''].join('\n');
     const cleaned = stripFvsFromCodexConfig(content);
     assert.ok(cleaned !== null, 'foreign-only config is not empty');
     assert.ok(/^\[features\]$/m.test(cleaned), 'user-owned [features] table preserved');
@@ -284,7 +292,7 @@ describe('TOML-aware config strip (stripFvsFromCodexConfig)', () => {
   it('keeps CRLF line endings consistent after a strip', () => {
     const content = [
       '[model]',
-      'name = "gpt-5"',
+      'name = "catalog-user-model"',
       '',
       FVS_CODEX_MARKER,
       '',
@@ -364,7 +372,7 @@ describe('Codex hooks feature gate (ensureCodexHooksFeature)', () => {
   });
 
   it('preserves valid root dotted features.hooks without adding a [features] table', () => {
-    const result = ensureCodexHooksFeature('features.codex_hooks = true\n[model]\nname = "gpt-5"\n').content;
+    const result = ensureCodexHooksFeature('features.codex_hooks = true\n[model]\nname = "catalog-user-model"\n').content;
     assert.ok(/^features\.hooks = true$/m.test(result), 'legacy dotted key is normalized');
     assert.ok(!/^\[features\]$/m.test(result), 'does not add a duplicate [features] table');
     assert.ok(result.includes('[model]'), 'preserves following tables');

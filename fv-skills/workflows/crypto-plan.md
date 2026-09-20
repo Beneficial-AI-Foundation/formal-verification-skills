@@ -105,14 +105,16 @@ fi
 <step name="dispatch_thinker">
 ## Step 4: Dispatch the thinker -- author the bounded plan
 
-Resolve the thinker model via the model-profiles dispatch sequence, then dispatch the high-effort
-thinker, INLINING the topic context + the cached KB sources (references do not cross the Task
+Resolve authority stage `crypto_plan` through `model-profiles.md`. Use the command's confirmed
+selection manifest; if this stage was not in that manifest, rebuild and reconfirm it before
+dispatch. Then INLINE the topic context + cached KB sources (references do not cross the Task
 boundary):
 
 ```
 Task(
   subagent_type="fvs-crypto-thinker",
   model="$THINKER_MODEL",
+  reasoning_effort="$THINKER_EFFORT", // when supported; otherwise apply the capability gate
   description="Author bounded plan",
   prompt="Mode: plan
 

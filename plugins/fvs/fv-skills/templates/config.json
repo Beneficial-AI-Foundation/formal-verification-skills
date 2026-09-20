@@ -13,15 +13,39 @@
     "aeneas_clone_path": null,
     "extract_workspace": ".formalising/extract"
   },
-  "model_profile": "balanced",
+  "model_profile": "quality",
+  "stage_overrides": {
+    "claude": {},
+    "codex": {},
+    "pi": {},
+    "opencode": {},
+    "gemini": {}
+  },
   "model_overrides": {
-    "fvs-crypto-thinker": "inherit"
+    "claude": {},
+    "codex": {},
+    "pi": {},
+    "opencode": {},
+    "gemini": {}
+  },
+  "effort_overrides": {
+    "claude": {},
+    "codex": {},
+    "pi": {},
+    "opencode": {},
+    "gemini": {}
   },
   "spec_review": {
-    "automatic": true
+    "automatic": true,
+    "reviewer": null,
+    "model": null,
+    "effort": null
   },
   "crypto_review": {
-    "automatic": true
+    "automatic": true,
+    "reviewer": null,
+    "model": null,
+    "effort": null
   },
   "behavior": {
     "mode": "interactive"

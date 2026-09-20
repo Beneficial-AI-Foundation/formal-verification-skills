@@ -1,244 +1,327 @@
 <overview>
 
-Model profile system for FVS subagent dispatch. Controls which models are used for
-research vs execution subagents across the four main commands. Configuration is stored
-in `.formalising/fvs-config.json` per project.
+FVS resolves subagent models and reasoning effort at dispatch time from
+`.formalising/fvs-config.json`. Model IDs are runtime- and provider-owned. A model valid in Claude
+Code may be nonsense in Codex, and a short name in Pi may be ambiguous across providers.
 
-Three profiles:
-- **quality** -- best results, highest cost. Default. Recommended for formal verification where correctness matters more than speed.
-- **balanced** -- good results, moderate cost. Suitable for iterative development cycles.
-- **budget** -- fastest, lowest cost. Suitable for exploration and mapping tasks.
+`inherit` remains the only universal model fallback, but the `quality` profile is role-aware: it
+selects a preferred model only after that runtime/provider reports a matching model in its current
+catalog. FVS never sends a foreign, guessed, or unavailable model slug.
 
-Commands read the active profile at dispatch time and resolve the model for each
-subagent before calling Task(). The profile table below defines the mapping.
+Use `/fvs:configure` (Pi: `/skill:fvs-configure`) for menu-driven editing, or edit the JSON directly.
 
 </overview>
 
-<quick_reference>
+<profiles>
 
-## Profile Table
+## Built-in profiles
 
-| Agent                    | quality | balanced | budget |
-|--------------------------|---------|----------|--------|
-| fvs-researcher           | inherit | sonnet   | haiku  |
-| fvs-executor             | inherit | sonnet   | sonnet |
-| fvs-lean-refactorer      | inherit | sonnet   | sonnet |
-| fvs-explainer            | inherit | sonnet   | haiku  |
-| fvs-dependency-analyzer  | sonnet  | haiku    | haiku  |
-| fvs-code-reader          | sonnet  | sonnet   | haiku  |
-| fvs-extract-classifier   | inherit | sonnet   | haiku  |
-| fvs-extract-applier      | inherit | sonnet   | sonnet |
-| fvs-extract-bisector     | inherit | sonnet   | sonnet |
-| fvs-equivalence-assessor | inherit | sonnet   | sonnet |
-| fvs-draft-investigator   | inherit | sonnet   | sonnet |
-| fvs-doc-syncer           | inherit | sonnet   | sonnet |
-| fvs-crypto-thinker       | inherit | sonnet   | sonnet |
-| fvs-axiom-auditor        | inherit | sonnet   | haiku  |
+| Profile | Model policy | Effort policy |
+|---------|--------------|---------------|
+| quality | detected runtime-native model by stage tier | authority `max`; work `xhigh`; scout `high` |
+| balanced | `inherit` | `high` |
+| budget | `inherit` | `medium` |
 
-Quality uses `inherit` (= parent model, typically Opus) for the agents that matter most:
-researcher, executor, and explainer. These handle spec generation, proof attempts, and
-NL explanation — tasks where reasoning quality directly impacts correctness.
+Balanced and budget stay runtime-neutral. Only quality automatically selects a concrete model.
 
-## Resolution
+## Canonical quality stage map
 
-`inherit` means the subagent uses the same model as the parent command. This avoids
-organization policy conflicts that can occur with explicit model name references. When
-a command dispatches with `model="inherit"`, the Task() system uses whatever model is
-currently running the parent.
+Each dispatch declares one exact stage key. Shared agents do not determine the tier.
 
-For non-inherit values, the model name is passed directly to Task() as the `model`
-parameter.
+| Tier | Stage keys | Intent |
+|------|------------|--------|
+| authority | `fc_plan`, `fc_spec`, `fc_proof_plan`, `crypto_plan`, `crypto_followup`, `spec_review`, `crypto_review` | Author or adversarially review specifications and plans |
+| work | `fc_proof_execution`, `lean_refactor`, `crypto_execute`, `extract_apply`, `extract_bisect` | Execute plans, fill proofs, verify, refactor, or apply extraction changes |
+| scout | `research`, `map_code`, `crypto_eval`, `trust_audit`, `extract_classify`, `extract_assess`, `extract_investigate`, `doc_sync`, `explain` | Retrieve, summarize, classify, evaluate, audit, or explain |
 
-## Config File
+This table is the sole stage/tier authority. Commands reference stage keys instead of copying the
+table.
+
+## Canonical quality runtime preferences
+
+These family names are matching preferences, not dispatch slugs. Resolve them to an exact ID or
+stable alias present in the selected runtime/provider catalog.
+
+| Runtime/provider | Authority | Work | Scout |
+|------------------|-----------|------|-------|
+| Claude Code | detected Fable + `max` | detected Opus + `xhigh` | detected Sonnet + `high` |
+| Codex / OpenAI | detected Astra + `max` | detected Sol + `xhigh` | detected Terra + `high` |
+
+Pi uses the row belonging to its active provider with exact provider-qualified IDs. Ordinary Pi
+work never switches providers automatically. An Anthropic-backed Pi provider uses the Claude-family
+row only when Pi reports a valid authenticated Anthropic model; an OpenAI/Codex-backed provider uses
+the OpenAI row. OpenCode and Gemini receive no guessed family mapping: ask interactively or require
+an exact stage override.
+
+If the preferred quality model is absent, do not choose a lower family silently. Interactive runs
+ask the user to select a detected model for this run, save an exact runtime+stage override, or
+cancel. Noninteractive runs stop before dispatch and print the exact override key required.
+
+Valid effort values are the exact values the selected runtime/model reports; common normalized
+values are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. If the selected model does
+not support the requested effort, interactive runs show its supported values and offer one-run or
+saved stage-scoped choices. Noninteractive runs stop with exact remediation. Never silently claim
+the profile effort was applied.
+
+</profiles>
+
+<config>
+
+## Config file
 
 **Location:** `.formalising/fvs-config.json`
 
 ```json
 {
-  "model_profile": "balanced",
+  "model_profile": "quality",
+  "stage_overrides": {
+    "claude": {},
+    "codex": {},
+    "pi": {},
+    "opencode": {},
+    "gemini": {}
+  },
   "model_overrides": {
-    "fvs-crypto-thinker": "inherit"
+    "claude": {},
+    "codex": {},
+    "pi": {},
+    "opencode": {},
+    "gemini": {}
+  },
+  "effort_overrides": {
+    "claude": {},
+    "codex": {},
+    "pi": {},
+    "opencode": {},
+    "gemini": {}
+  },
+  "spec_review": {
+    "automatic": true,
+    "reviewer": null,
+    "model": null,
+    "effort": null
+  },
+  "crypto_review": {
+    "automatic": true,
+    "reviewer": null,
+    "model": null,
+    "effort": null
   }
 }
 ```
 
-The config file is optional. If it does not exist, commands default to the `quality`
-profile. The shipped template uses `balanced` for routine work but pins
-`fvs-crypto-thinker` to `inherit`: crypto planning, adversarial evaluation, and
-follow-up design must not silently fall to the balanced/budget profile's lower model.
-Both keys are top-level because that is the schema every command's dispatch resolver
-reads.
-
-### Overriding Specific Agents
-
-Use `model_overrides` to change the model for a single agent without switching the
-entire profile:
+A stage override is an object containing either or both fields:
 
 ```json
 {
-  "model_profile": "balanced",
-  "model_overrides": {
-    "fvs-lean-prover": "inherit"
+  "stage_overrides": {
+    "codex": {
+      "crypto_review": {
+        "model": "<exact reviewer catalog ID>",
+        "effort": "<supported effort>"
+      },
+      "crypto_plan": {
+        "model": "<exact Codex catalog ID>",
+        "effort": "<supported effort>"
+      }
+    },
+    "pi": {
+      "fc_proof_execution": {
+        "model": "<active-provider>/<exact-model-id>",
+        "effort": "<supported effort>"
+      }
+    }
   }
 }
 ```
 
-This runs most agents at balanced tier but keeps the prover at inherit (parent model)
-for maximum proof quality.
+Concrete IDs must belong to the containing runtime; Pi IDs are provider-qualified. Existing
+`model_overrides[runtime][agent]` and `effort_overrides[runtime][agent]` remain supported as broader
+compatibility overrides. Review values are scoped by their adjacent `reviewer` runtime. Explicit
+one-run selections always win.
 
-### Valid Override Values
+Legacy flat overrides are safe only when their value is `inherit`. Ignore any other flat model value
+with a migration warning; never guess which runtime it targeted.
 
-- `"inherit"` -- use parent model
-- `"sonnet"` -- Claude Sonnet
-- `"haiku"` -- Claude Haiku
+</config>
 
-</quick_reference>
+<resolution>
 
-<patterns>
+## Dispatch resolution
 
-## Dispatch Pattern
+For every distinct stage used by a command:
 
-Commands resolve the model for each subagent dispatch using this sequence:
+1. Identify the active runtime and provider from host/adapter identity. If unknown, ask.
+2. Read the complete config; malformed JSON is an error.
+3. Resolve `model_profile`, defaulting to `quality`; unknown profiles warn and use `quality`.
+4. Apply an explicit one-run flag or confirmed manifest adjustment.
+5. For `spec_review` or `crypto_review`, apply non-null saved review values.
+6. Apply `stage_overrides[runtime][stage]`.
+7. Apply compatibility `model_overrides[runtime][agent]` and
+   `effort_overrides[runtime][agent]` for still-unset fields.
+8. Apply the profile: quality resolves the stage tier and an exact detected model from the runtime
+   matrix; balanced/budget use `inherit`. Apply the tier/profile effort.
+9. Validate model and effort against the selected runtime/model. For ordinary Pi stages, also
+   validate that the candidate model's catalog provider equals Pi's active provider.
+10. Inspect the actual dispatch schema/capabilities. A requested model or effort is unresolved when
+    the runtime cannot apply it, even if the catalog advertises it.
+11. Build the command-level selection manifest from settings the dispatch can actually honor and
+    obtain the required confirmation before the first dispatch.
 
-1. Read `.formalising/fvs-config.json` (or use defaults if file is missing)
-2. Determine the active profile: `config.model_profile` or `"quality"` if unset
-3. Check `config.model_overrides` for the target agent name
-4. If no override, look up the profile table for the agent and profile
-5. Pass the resolved model to the Task() call
+Pseudo-code:
 
 ```
-// In command workflow:
+runtime, provider = detect_runtime_provider_or_ask()
+profile = valid_profile(config.model_profile) ? config.model_profile : "quality"
+stage = required_stage_key(dispatch)
 
-// 1. Read config (graceful default)
-config = read .formalising/fvs-config.json
-if config missing:
-  config = { model_profile: "quality", model_overrides: {} }
+model, effort = explicit_one_run_selection(stage)
+model, effort ??= saved_review_values(stage)
+model, effort ??= config.stage_overrides[runtime][stage]
+model ??= config.model_overrides[runtime][agent]
+effort ??= config.effort_overrides[runtime][agent]
 
-profile = config.model_profile || "quality"
-
-// 2. Resolve model for target agent
-if agent_name in config.model_overrides:
-  model = config.model_overrides[agent_name]
+if profile == "quality":
+  tier = QUALITY_STAGE_TIER[stage]
+  model ??= exact_detected_match(runtime, provider, QUALITY_MODEL[runtime][tier])
+  effort ??= QUALITY_EFFORT[tier]
 else:
-  model = PROFILE_TABLE[agent_name][profile]
+  model ??= "inherit"
+  effort ??= PROFILE_EFFORT[profile]
 
-// 3. Dispatch subagent
-Task(
-  subagent_type = agent_name,
-  model = model,
-  description = "...",
-  prompt = "..."
-)
+validate_runtime_model_effort_and_pi_provider(model, effort, stage)
+validate_dispatch_capability_or_request_decision(model, effort, stage)
 ```
 
-## Graceful Defaults
+Missing fields are resolved independently. A model override does not erase the tier effort, and an
+effort override does not erase the tier model.
 
-- **Config file missing:** Use `quality` profile. Do not create the file automatically.
-- **Unknown agent name:** Use `inherit`. New agents default to parent model.
-- **Invalid profile name:** Fall back to `quality` with a warning.
-- **Empty overrides:** Ignored. Equivalent to no overrides.
-- **Shipped crypto-thinker override:** Keep
-  `model_overrides["fvs-crypto-thinker"] = "inherit"` unless the user explicitly
-  chooses a different model. This takes precedence over all three profile rows.
+For ordinary Pi work (all stages except `spec_review` and `crypto_review`), compare the candidate's
+provider metadata from Pi's live catalog with the active Pi provider. A persisted stage or agent
+override from another provider is a capability exception, not permission to switch: ask for an
+active-provider one-run/save choice interactively, and fail before dispatch noninteractively.
+Provider-qualified string prefixes may be used only when the catalog exposes no separate provider
+field. Reviews follow the explicit opposite-provider routing policy instead.
 
-## crypto-execute Model + Effort Knob
+After catalog validation, inspect the real child-dispatch schema. Pass every resolved effort through
+the runtime's supported effort field. If a runtime cannot set a per-child model (for example, a
+Codex `spawn_agent` schema with no model field), the only directly runnable model selection is its
+reported active/inherited model. Rebuild the manifest around that actual setting and ask explicitly,
+or choose a capable external runner; fail before dispatch in noninteractive mode. Apply the same
+rule when the dispatch cannot set the selected effort and its installed/runtime default differs.
+Never confirm a requested value and then omit it or replace it with a warning.
 
-`/fvs:crypto-execute` resolves the model + effort for `fvs-crypto-executor` ABOVE the profile table,
-at its own dispatch site (command Step 3) -- not from a `PROFILE_TABLE` row. The crypto executor is
-intentionally NOT pinned, so there is deliberately **no `fvs-crypto-executor` row and no `opus`
-value** in the table above. The resolution ladder is:
+## Command-level confirmation manifest
 
-1. A per-run `--model` / `--effort` flag on the command.
-2. Else a top-level override `model_overrides["fvs-crypto-executor"]` in `.formalising/fvs-config.json`
-   (read at the top-level `model_overrides` key this resolver consults, not the template's nested
-   `model.model_profile`).
-3. Else an interactive `AskUserQuestion` offering "inherit / default".
-4. Else the default `inherit`.
+Interactive commands show one manifest before their first dispatch, grouping repeated uses of the
+same stage. Each row records:
 
-The resolved value is an opaque, runtime-valid string passed straight to `Task(model=...)`; FVS keeps
-no cross-provider taxonomy. On Codex `model=` is ignored and per-agent effort is fixed at install
-time, so the per-run `--effort` flag is a Claude / OpenCode / Gemini nicety.
+- stage key and tier;
+- agent/reviewer and runtime/provider;
+- exact model or `inherit`, plus whether it came from one-run input, review settings, stage override,
+  agent override, or profile/catalog matching;
+- effort and its source;
+- review runner/provenance when applicable.
 
-## Two-Phase Dispatch
+Offer `Continue once`, `Adjust once`, `Save override`, and `Cancel`, while retaining the question
+UI's notes/custom-answer path. `Save override` defaults to
+`stage_overrides[runtime][stage]`; review stages save into their matching review object. Notes are
+interpreted as requested selection/stage adjustments, then the manifest is rebuilt and must be
+confirmed again. Notes never become unchecked model IDs or silently alter unrelated stages.
 
-Each main command dispatches two subagents in sequence:
+One confirmation covers the command, not every child. If later evidence introduces a new stage,
+provider, model, or unsupported effort, rebuild and reconfirm the manifest.
 
-```
-/fvs:map-code
-  -> Task(fvs-researcher, model=resolve("fvs-researcher"), research_mode="map-code")
-  -> Task(fvs-executor,   model=resolve("fvs-executor"),   execution_mode="map-code")
+In noninteractive/autonomous mode, a complete valid explicit selection or persisted override may
+run without a prompt and must be logged only when dispatch capability can honor it. Any unresolved
+confirmation, absent preferred model, provider mismatch, unsupported effort, or unavailable
+per-child control fails before dispatch with exact flags/config keys. Do not fall back silently.
 
-/fvs:fc-plan
-  -> Task(fvs-researcher, model=resolve("fvs-researcher"), research_mode="plan")
-  -> Task(fvs-executor,   model=resolve("fvs-executor"),   execution_mode="plan")
+</resolution>
 
-/fvs:lean-specify
-  -> Task(fvs-researcher, model=resolve("fvs-researcher"), research_mode="spec-generation")
-  -> Task(fvs-executor,   model=resolve("fvs-executor"),   execution_mode="spec-generation")
+<review_routing>
 
-/fvs:lean-verify
-  -> Task(fvs-researcher, model=resolve("fvs-researcher"), research_mode="proof-attempt")
-  -> Task(fvs-executor,   model=resolve("fvs-executor"),   execution_mode="proof-attempt")
+## Adversarial review routing
 
-/fvs:lean-refactor
-  -> Task(fvs-researcher,       model=resolve("fvs-researcher"),       research_mode="lean-refactor")
-  -> Task(fvs-lean-refactorer,  model=resolve("fvs-lean-refactorer"),  refactor_mode="iterative")
-```
+Quality treats `spec_review` and `crypto_review` as authority stages. Detect the authoring runtime
+and recommend an authenticated opposite provider/runtime, then confirm reviewer, model, effort, and
+one-run skip:
 
-The researcher gathers context (read-only), the executor writes files based on findings.
+- OpenAI/Codex-authored artifact: prefer Claude Code CLI with detected Fable + `max`.
+- Claude-authored artifact: from Pi prefer a fresh provider-qualified OpenAI Pi seat with detected
+  Astra + `max`, then Codex CLI; outside Pi prefer Codex CLI.
+- Unknown/Other author: show the explicit reviewer menu without claiming independence.
 
-</patterns>
+Do not route a Claude Code subscription through Pi. Use Claude Code's own authenticated CLI unless
+Pi independently reports a valid Anthropic provider credential. OpenAI review may use a fresh Pi
+OpenAI seat or Codex CLI as described above.
 
-<runtime_models>
+Preflight the selected runner and authentication. A Pi reviewer additionally requires a fresh-child
+facility that accepts the selected provider-qualified model and per-child effort and reports the
+completed child's run ID, actual model, and actual effort for its hash-bound dispatch receipt. If
+that capability is absent, Pi is unavailable; never infer receipt values from the request. If no
+opposite runner is ready, ask among setup/retry, fresh same-runtime review, Other packet handoff,
+one-run skip, or cancel. Never switch silently. Label same-runtime and unverified provenance
+honestly.
 
-## Runtime-Specific Model Handling
+A one-run skip records exactly `Unreviewed (user skipped)` and stops at the review boundary. It never
+auto-starts proof or crypto execution; the user may invoke execution explicitly afterward.
 
-Model selection works differently across runtimes. Commands should only use `Task(model=...)`
-on runtimes that support it.
+Saved `spec_review` / `crypto_review` values and explicit flags override profile recommendations.
+Null values keep profile routing and the confirmation menu active.
 
-### Claude Code
+</review_routing>
 
-Supports inline model selection via `Task(model="...")`. The profile system works natively:
-- `"inherit"` — subagent uses the parent session's model (typically Opus)
-- `"sonnet"` — Claude Sonnet
-- `"haiku"` — Claude Haiku
+<stable_rules>
 
-### Codex
+## Stable fallback rules
 
-Does NOT support dynamic model selection. Models are pre-configured per agent in `.toml`
-files at install time. The `Task(model="...")` parameter is omitted when converting commands
-to Codex skills. Model choice is determined by the Codex configuration, not by FVS.
+- Missing config: profile `quality`; resolve detected stage defaults and require the interactive
+  command manifest confirmation. Do not create a file.
+- Unknown stage: stop and fix the command; do not guess a tier.
+- Empty/null override: ignore it.
+- Foreign-runtime override: ignore it completely.
+- Pi ordinary-stage override from a non-active provider: ask one-run/save/cancel interactively; fail
+  with remediation noninteractively. Never activate that provider implicitly.
+- Unavailable model: ask one-run/save/cancel interactively; fail with remediation noninteractively.
+- Unsupported effort: ask one-run/save/cancel interactively; fail with remediation noninteractively.
+- Never guess a replacement slug, switch providers silently, or mutate config during a one-run
+  choice.
 
-### OpenCode / Gemini CLI
+</stable_rules>
 
-Similar to Claude Code — support inline model parameters with runtime-specific model name
-mappings. The same `Task(model="...")` pattern applies.
+<runtime_notes>
 
-### Implication for Commands
+## Runtime detection and adapters
 
-Commands should resolve the model from the profile table and pass it to `Task()`. On runtimes
-that don't support dynamic model selection (Codex), the parameter is silently ignored. This
-means the same command files work across all runtimes without conditional logic.
+Prefer identity supplied by the host or adapter. Pi exposes `PI_CODING_AGENT=true` and
+`AI_AGENT=pi`. Other adapters may expose `AI_AGENT`. If identity is unknown, ask instead of
+inferring it from `.claude`, `.codex`, or `.pi` directories.
 
-</runtime_models>
+Claude Code accepts only confirmed Claude aliases/IDs. Never send Astra, Sol, Terra, or Luna to it.
+Codex accepts only exact IDs reported by its catalog. Never send Fable, Opus, Sonnet, or Haiku to
+it. Codex agent TOMLs provide installation-time fallbacks, not proof that a stage selection was
+applied. When `spawn_agent` lacks a per-child model or effort field, compare the selection with the
+reported active model and installed/runtime effort; rebuild and reconfirm a truthful manifest or
+fail before dispatch. Never omit a requested value and continue with only a warning.
+
+Pi uses exact provider/model IDs. When its subagent facility supports a thinking suffix, use
+`provider/model:<effort>`; otherwise use its separate effort field. `inherit` omits model override.
+OpenCode and Gemini use only exact IDs returned by their own catalogs.
+
+</runtime_notes>
 
 <anti_patterns>
 
-## Anti-Patterns
-
-- **Hardcoding "opus" in profile table:** Use `inherit` instead. Organization policies may restrict model access. `inherit` defers to whatever the parent is running.
-- **Creating fvs-config.json automatically:** The file is user-created. Commands use defaults when it is missing.
-- **Ignoring overrides:** Always check `model_overrides` before the profile table. User overrides take precedence.
-- **Dispatching without resolution:** Never pass a profile name ("quality") as the model. Always resolve to a concrete model name or "inherit" first.
+- A dispatch without an exact stage key.
+- Choosing a tier from an agent name when that agent serves several stages.
+- Sending a Claude alias to Codex or a Codex family name to Claude.
+- Using a bare Pi nickname without its provider/model identity.
+- Automatically dropping from Astra to Sol, Fable to Opus, or another family when the preferred
+  model is absent.
+- Switching Pi providers without confirmation.
+- Claiming unsupported effort was honored.
+- Rewriting persisted config for a one-run adjustment.
+- Launching before notes have produced a rebuilt, reconfirmed manifest.
 
 </anti_patterns>
-
-<summary>
-
-The model profile system gives users control over cost/quality tradeoffs across all FVS
-subagent dispatches. The quality profile (default) uses inherit for top-tier agents and
-sonnet for utility agents. The balanced and budget profiles progressively reduce model
-capability for cost savings. Per-agent overrides allow fine-grained control without
-switching the entire profile.
-
-</summary>

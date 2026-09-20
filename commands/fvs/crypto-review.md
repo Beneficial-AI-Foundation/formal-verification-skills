@@ -1,7 +1,7 @@
 ---
 name: fvs:crypto-review
 description: Adversarially review a crypto plan with a chosen runtime, model, and effort
-argument-hint: "<topic> [nN] [--target plan|followup] [--reviewer codex|claude|other] [--model ID] [--effort LEVEL]"
+argument-hint: "<topic> [nN] [--target plan|followup] [--reviewer codex|claude|pi|other] [--model ID] [--effort LEVEL]"
 allowed-tools:
   - Read
   - Bash
@@ -22,6 +22,7 @@ triage record, and never load proof-engineering memory into the reviewer.
 <execution_context>
 @~/.claude/fv-skills/workflows/crypto-review.md
 @~/.claude/fv-skills/references/crypto-plan-review.md
+@~/.claude/fv-skills/references/model-profiles.md
 @~/.claude/fv-skills/references/ui-brand.md
 </execution_context>
 
@@ -53,19 +54,29 @@ Missing, foreign, or conflicting markers are `unverified`; they do not block rev
 claim independence. Label a different known runtime `cross-runtime`, an explicitly selected
 matching runtime `same-runtime, fresh reviewer`, and Other `unverified`.
 
-Honor explicit `--reviewer`, `--model`, and `--effort`. Ask only for missing choices in exactly
-this order: reviewer -> model -> effort. Supplying all three flags is the standalone
-non-interactive path; never replace an explicit choice.
+Declare authority stage `crypto_review` and apply `model-profiles.md`. Precedence is explicit
+one-run flags, non-null `crypto_review.reviewer` / `crypto_review.model` /
+`crypto_review.effort`, then the quality opposite-runtime recommendation. Null saved values keep
+profile routing active.
 
-1. Reviewer: recommend the normalized non-author runtime first. Offer `Codex`, `Claude`, and
-   `Other`; a same-runtime choice is opt-in.
-2. Model: Codex offers `gpt-5.6-sol` then `gpt-6-astra` and custom; Claude offers `fable` then
-   `sonnet` and custom. Other requires the exact external model ID.
-3. Effort: offer `max` first, then supported lower levels and `runtime-default`; offer Codex
-   `ultra` only when supported. Other accepts the external provider's effort label.
+Recommend an authenticated opposite provider/runtime from the normalized author marker:
+OpenAI/Codex-authored plans use Claude Code CLI; Claude-authored plans use a fresh
+provider-qualified OpenAI Pi seat when running in Pi, then Codex CLI. The Pi route launches a fresh
+read-only Pi child with the exact selected provider/model; it is not an Other/manual handoff.
+Unknown authors receive an explicit reviewer menu without an independence claim. Never route a
+Claude Code subscription through Pi.
 
-Automatic callers also offer a one-run `Skip review`. Record it exactly as
-`Unreviewed (user skipped)` and do not auto-start crypto execution.
+Build one review selection manifest containing reviewer runner, provenance, exact catalog model,
+and effort. Confirm it before launch with Continue once, Adjust once, Save override, or Cancel;
+retain notes. Notes rebuild the manifest and require reconfirmation. Save writes only the
+`crypto_review` object. Offer every effort value the selected model/provider reports as supported;
+never advertise a guessed value such as `ultra`. Missing models or unsupported efforts ask for
+one-run/save/cancel; unresolved noninteractive choices fail before launch with exact remediation.
+
+If no opposite runner is authenticated, ask among setup/retry, fresh same-runtime review, Other
+handoff, one-run skip, or cancel; never switch silently. A one-run skip records exactly
+`Unreviewed (user skipped)`, stops at the review boundary, and does not auto-start crypto
+execution.
 
 ## 2. Run or export the read-only review
 
@@ -80,14 +91,23 @@ node ~/.claude/scripts/fvs-codex-think.mjs review \
   --reviewer "$REVIEWER" --model "$MODEL" --effort "$EFFORT" --grounding "$GROUNDING_FILE"
 ```
 
-The shared provider machinery preflights only the selected CLI. Codex runs read-only and ephemeral
-with user config ignored; Claude runs safe mode with Read/Glob/Grep and native-sandboxed Bash,
-no MCP servers, and no persisted session. Read the appended diagnostic policy: the reviewer
-never edits targets; scratch probes and explicitly listed generated Lake outputs are permitted.
-The wrapper saves raw attempt evidence before validation and creates a
+The shared provider machinery preflights only the selected CLI. Codex runs ephemeral with user
+config ignored: its saved scratch directory is writable while the repository remains read-only.
+Claude runs safe mode with Read/Glob/Grep and native-sandboxed Bash, no MCP servers, and no
+persisted session. Read the appended diagnostic policy: the reviewer never edits targets; saved
+scratch probes and explicitly listed generated Lake outputs are permitted. `LEAN_NUM_THREADS`
+defaults to 4, must be a positive safe integer, and is validated before launch. The wrapper saves raw
+attempt evidence before validation and creates a
 unique hash-bound packet, validates one track-valid verdict, and exclusively writes the final
 review. Authentication, process, stale-input, or output failure is `failed`; never silently switch
 reviewers.
+
+For Pi, require an active Pi host and preflight a fresh-child facility that accepts the exact
+provider-qualified model/per-child effort and reports run ID plus actual model/effort. `PI_READY`
+means to dispatch that read-only child from the complete managed `prompt.md`, save its exact
+response, and create the workflow's hash-bound host dispatch receipt from actual result fields.
+`review-import-pi` requires that receipt and refuses missing/mismatched child evidence; never fill it
+from requested values. If capability or result evidence is missing, leave the review pending.
 
 For Other, the command reports `PENDING` and a managed packet. Give `prompt.md` to the selected
 reviewer, save its Markdown response inside the project, then run the printed `review-import`
@@ -99,9 +119,10 @@ Read `~/.claude/fv-skills/references/review-policy.md` and use its closed dispos
 FIX, DESCOPE, DEFER-WITH-RULING, REJECT-FINDING, ASK-HUMAN. Apply its stronger rule
 for accepted major reuse findings without starting another review for completed bounded edits.
 
-Keep the raw response and recorded review byte-for-byte intact. Any wrapper-only formatting
-normalization is separately inspectable under `validation-*/`; substantive omissions remain
-failed reviews. Never append triage to the review. The planning seat
+Keep `validation-*/raw-response.md` byte-for-byte unchanged. When harmless wrapper-only formatting
+is needed, `validation-*/normalized-response.md` is the separate cleaned copy used for validation;
+its sibling README identifies both files. Substantive omissions remain failed reviews. Never append
+triage to the review. The planning seat
 re-checks every finding and exclusively writes one separate file:
 
 - `PLAN_REVIEW_nN_TRIAGE.md`, or
@@ -134,7 +155,7 @@ Failed, cancelled, pending, or unverified review states never auto-start executi
 </process>
 
 <success_criteria>
-- [ ] Reviewer -> model -> effort selection honored, including explicit same-runtime and Other.
+- [ ] Explicit flags, saved crypto review defaults, then reviewer -> model -> effort selection honored, including explicit same-runtime and Other.
 - [ ] Provenance says only cross-runtime, same-runtime fresh reviewer, or unverified as observed.
 - [ ] Reviewer remained read-only and memory-blind; final response and separate triage are immutable.
 - [ ] APPROVE-WITH-EDITS becomes approved after edits once author edits and local gates pass.

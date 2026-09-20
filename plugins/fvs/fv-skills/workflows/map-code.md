@@ -90,20 +90,10 @@ it is null. Never infer it from `is-public`.
 </step>
 
 <step name="resolve_models">
-Read `.formalising/fvs-config.json` for model profile configuration.
-
-If config exists: extract `model_profile` and `model_overrides`.
-If config missing: default to `quality` profile with no overrides.
-
-Resolve models for both subagents using the profile table
-(see fv-skills/references/model-profiles.md):
-
-- `fvs-researcher`: quality=inherit, balanced=sonnet, budget=haiku
-- `fvs-executor`: quality=inherit, balanced=sonnet, budget=sonnet
-
-Check `model_overrides` for per-agent overrides before using profile defaults.
-
-Reference: @fv-skills/references/model-profiles.md (dispatch pattern, resolution sequence)
+Use stage `map_code` for both subagents and the confirmed command-level selection manifest from
+`fv-skills/references/model-profiles.md`. Stage overrides precede compatibility agent overrides;
+concrete models must be exact current runtime/provider catalog entries. If `map_code` is absent from
+the manifest, rebuild and reconfirm it before dispatch.
 </step>
 
 <step name="research_phase">

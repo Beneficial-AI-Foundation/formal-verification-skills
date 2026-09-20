@@ -14,6 +14,7 @@ const {
 
 const ROOT = path.resolve(__dirname, '..');
 const COMMITTED_PLUGIN_ROOT = path.join(ROOT, 'plugins', 'fvs');
+const COMMITTED_PI_SKILLS_ROOT = path.join(ROOT, 'pi', 'skills');
 const PACKAGE_JSON = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 const VERSION = PACKAGE_JSON.version;
 const REPOSITORY_URL = 'https://github.com/Beneficial-AI-Foundation/formal-verification-skills';
@@ -69,6 +70,16 @@ function portablePluginPaths(content) {
     .replace(/[ \t]+$/gm, '');
 }
 
+function portablePiPaths(content) {
+  return content
+    .replace(/@\$HOME\/\.claude\//g, '@../../../')
+    .replace(/@~\/\.claude\//g, '@../../../')
+    .replace(/\$HOME\/\.claude\//g, '../../../')
+    .replace(/~\/\.claude\//g, '../../../')
+    .replace(/\.\/\.claude\//g, '../../../')
+    .replace(/[ \t]+$/gm, '');
+}
+
 function copyTextTree(sourceRoot, destinationRoot, options = {}, relativeRoot = '') {
   for (const entry of fs.readdirSync(sourceRoot, { withFileTypes: true })) {
     const source = path.join(sourceRoot, entry.name);
@@ -106,6 +117,10 @@ function pluginRuntimeHeader() {
   return `<plugin_runtime>\n- FVS is installed at \`\${CLAUDE_PLUGIN_ROOT}\`; hosts expand this placeholder in plugin skill content.\n- Resolve every bundled workflow, reference, template, script, and agent beneath that root.\n- When executing a shell snippet, quote the resolved plugin-root path even if an inherited example omits quotes.\n- Never write state into the plugin cache. Project state belongs under the user's current project (normally \`.formalising/\`).\n</plugin_runtime>`;
 }
 
+function piRuntimeHeader() {
+  return `<pi_package_runtime>\n- This skill lives under \`pi/skills/<name>/SKILL.md\`; the FVS package root is \`../../..\` relative to its directory.\n- Resolve every bundled relative path against the skill directory and pass absolute paths to tool calls and shell commands.\n- Agent role instructions live under \`../../../agents/\`. When a workflow requests Task/subagent dispatch, use an available Pi subagent facility with the matching role instructions. If none is installed, perform the role inline and state that fresh-context separation was unavailable. Exception: a review workflow that requires a fresh reviewer must remain pending or offer its documented fallback; never perform that review inline.\n- Use Pi's structured question tool when available; otherwise ask the same question in plain text.\n- Never write state into the managed package. Project state belongs under the user's current project (normally \`.formalising/\`).\n</pi_package_runtime>`;
+}
+
 function renderPluginUpdateSkill() {
   return `---
 name: update
@@ -140,6 +155,80 @@ the user to start a new session afterward.
 6. Ask the user to start a new Claude Code or Codex session so the refreshed skills are loaded.
 </process>
 `;
+}
+
+function renderPiUpdateSkill() {
+  return `---
+name: fvs-update
+description: Update the installed FVS Pi package to its latest npm release
+---
+
+${piRuntimeHeader()}
+
+<objective>
+Update the managed FVS Pi package without modifying its installed files directly.
+</objective>
+
+<process>
+1. Read the installed version from \`../../../fv-skills/VERSION\`, resolving it against this skill directory.
+2. Run \`npm view fv-skills-baif version\` and report whether an update is available.
+3. If an update is available, summarize its changelog entry and ask for confirmation.
+4. On confirmation, run \`pi update npm:fv-skills-baif\`.
+5. Report the result and ask the user to run \`/reload\` or start a new Pi session.
+</process>
+`;
+}
+
+function renderPiReapplySkill() {
+  return `---
+name: fvs-reapply-patches
+description: Explain how to preserve FVS customizations when using the managed Pi package
+---
+
+${piRuntimeHeader()}
+
+<objective>
+Keep the managed Pi package immutable and direct custom FVS changes into a maintained fork or a project-local skill override.
+</objective>
+
+<process>
+The npm installer's \`fvs-local-patches\` workflow does not apply to a managed Pi package. Never edit files in Pi's package cache.
+
+If the user needs a persistent customization:
+
+1. Fork \`Beneficial-AI-Foundation/formal-verification-skills\`.
+2. Make and test the change in the canonical source files.
+3. Install the fork with \`pi install git:github.com/<owner>/formal-verification-skills@<ref>\`, or keep a narrowly scoped project-local skill override.
+4. Run \`/reload\` or start a new Pi session.
+</process>
+`;
+}
+
+function renderPiSkill(sourcePath, skillName) {
+  if (skillName === 'update') return renderPiUpdateSkill();
+  if (skillName === 'reapply-patches') return renderPiReapplySkill();
+
+  const raw = fs.readFileSync(sourcePath, 'utf8');
+  const { frontmatter, body } = extractFrontmatterAndBody(raw);
+  if (!frontmatter) throw new Error(`Missing frontmatter: ${sourcePath}`);
+  const description = extractFrontmatterField(frontmatter, 'description');
+  if (!description) throw new Error(`Missing description: ${sourcePath}`);
+
+  let portableBody = body;
+  if (skillName === 'help') {
+    portableBody = portableBody
+      .replace(/\/fvs:([a-z0-9-]+)/g, '/skill:fvs-$1')
+      .replace('- Runs `npx fv-skills-baif` to update', '- Runs `pi update npm:fv-skills-baif` to update')
+      .replace('- Detects backed-up patches from `fvs-local-patches/` directory', '- Explains fork or project-local overrides for managed Pi packages')
+      .replace('- Merges user modifications into newly installed version', '- Keeps package-managed files immutable')
+      .replace('- Handles conflicts with user input', '- Avoids update-time merge conflicts')
+      .replace('- Run after `/skill:fvs-update` if local patches were detected', '- Use before creating a persistent customization')
+      .replace('~/.claude/                   # Installed FVS content (global)', 'Pi package root              # Managed FVS content')
+      .replace('Inspect `~/.claude/fv-skills/references/`', 'Inspect the package\'s `fv-skills/references/`');
+  }
+  portableBody = portablePiPaths(portableBody);
+
+  return `---\nname: fvs-${skillName}\ndescription: ${description}\n---\n\n${piRuntimeHeader()}\n\n${portableBody.trimStart()}`;
 }
 
 function renderPluginReapplySkill() {
@@ -240,6 +329,30 @@ function renderCodexManifest() {
   };
 }
 
+function assertSafePiSkillsRoot(piSkillsRoot) {
+  const resolved = path.resolve(piSkillsRoot);
+  if (resolved === ROOT || resolved === path.parse(resolved).root) {
+    throw new Error(`Refusing to rebuild unsafe Pi skills path: ${resolved}`);
+  }
+  if (resolved !== COMMITTED_PI_SKILLS_ROOT && !resolved.endsWith(`${path.sep}pi${path.sep}skills`)) {
+    throw new Error(`Pi skills output must end in ${path.join('pi', 'skills')}`);
+  }
+}
+
+function buildPiSkills(piSkillsRoot) {
+  assertSafePiSkillsRoot(piSkillsRoot);
+  fs.rmSync(piSkillsRoot, { recursive: true, force: true });
+  fs.mkdirSync(piSkillsRoot, { recursive: true });
+
+  const commandsRoot = path.join(ROOT, 'commands', 'fvs');
+  for (const entry of fs.readdirSync(commandsRoot, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+    const skillName = entry.name.slice(0, -3);
+    const skillPath = path.join(piSkillsRoot, `fvs-${skillName}`, 'SKILL.md');
+    writeText(skillPath, renderPiSkill(path.join(commandsRoot, entry.name), skillName));
+  }
+}
+
 function buildPlugin(pluginRoot) {
   assertSafePluginRoot(pluginRoot);
   fs.rmSync(pluginRoot, { recursive: true, force: true });
@@ -298,23 +411,29 @@ function main() {
   const checkOnly = process.argv.includes('--check');
   if (!checkOnly) {
     buildPlugin(COMMITTED_PLUGIN_ROOT);
-    console.log(`Built plugins/fvs for v${VERSION}`);
+    buildPiSkills(COMMITTED_PI_SKILLS_ROOT);
+    console.log(`Built plugins/fvs and pi/skills for v${VERSION}`);
     return;
   }
 
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-plugin-check-'));
-  const generatedRoot = path.join(temporaryRoot, 'fvs');
+  const generatedPluginRoot = path.join(temporaryRoot, 'fvs');
+  const generatedPiSkillsRoot = path.join(temporaryRoot, 'pi', 'skills');
   try {
-    buildPlugin(generatedRoot);
-    const differences = compareTrees(COMMITTED_PLUGIN_ROOT, generatedRoot);
+    buildPlugin(generatedPluginRoot);
+    buildPiSkills(generatedPiSkillsRoot);
+    const differences = [
+      ...compareTrees(COMMITTED_PLUGIN_ROOT, generatedPluginRoot).map((relative) => `plugins/fvs/${relative}`),
+      ...compareTrees(COMMITTED_PI_SKILLS_ROOT, generatedPiSkillsRoot).map((relative) => `pi/skills/${relative}`),
+    ];
     if (differences.length > 0) {
-      console.error('Generated plugin is stale. Run: npm run build:plugin');
+      console.error('Generated packages are stale. Run: npm run build:plugin');
       for (const relative of differences.slice(0, 50)) console.error(`- ${relative}`);
       if (differences.length > 50) console.error(`- ...and ${differences.length - 50} more`);
       process.exitCode = 1;
       return;
     }
-    console.log(`Plugin package is synchronized for v${VERSION}`);
+    console.log(`Plugin and Pi packages are synchronized for v${VERSION}`);
   } finally {
     fs.rmSync(temporaryRoot, { recursive: true, force: true });
   }
@@ -323,7 +442,10 @@ function main() {
 if (require.main === module) main();
 
 module.exports = {
+  buildPiSkills,
   buildPlugin,
+  portablePiPaths,
   portablePluginPaths,
+  renderPiSkill,
   renderPluginSkill,
 };

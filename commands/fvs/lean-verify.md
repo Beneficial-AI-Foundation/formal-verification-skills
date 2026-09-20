@@ -115,23 +115,16 @@ if [ "$CACHE_STATUS" -ne 0 ]; then
 fi
 ```
 
-## Step 2: Read Config and Resolve Models
+## Step 2: Read Config and Resolve Models + Effort
 
-Read the project config to determine which models to use for subagent dispatch:
+Read the complete config and apply `model-profiles.md`. Declare `fc_proof_plan` for the proof
+strategy `fvs-researcher` and `fc_proof_execution` for the proving `fvs-executor`. Resolve both
+stages independently rather than deriving tiers from shared agent names.
 
-```bash
-CONFIG=$(cat .formalising/fvs-config.json 2>/dev/null || echo '{"model_profile":"quality","model_overrides":{}}')
-```
-
-Resolve models using the profile table from `fv-skills/references/model-profiles.md`:
-
-1. Parse `model_profile` from config (default: `"quality"`)
-2. Check `model_overrides` for `"fvs-researcher"` and `"fvs-executor"`
-3. If no override, look up profile table:
-   - quality: fvs-researcher=inherit, fvs-executor=inherit
-   - balanced: fvs-researcher=sonnet, fvs-executor=sonnet
-   - budget: fvs-researcher=haiku, fvs-executor=sonnet
-4. Store resolved models as `RESEARCH_MODEL` and `EXECUTOR_MODEL`
+Before dispatch, show one command-level selection manifest with both stages and obtain confirmation.
+Offer one-run adjustment, exact-stage Save override, notes that rebuild and reconfirm the manifest,
+and Cancel. Missing preferred models or unsupported efforts prompt interactively; noninteractive
+unresolved choices fail before dispatch with exact remediation.
 
 ## Step 3: Discover the Target Style Guide and Capture a Baseline
 
@@ -212,6 +205,7 @@ grep -E "@\[step\]|theorem " "$SPEC_PATH"
 Task(
   subagent_type="fvs-researcher",
   model="$RESEARCH_MODEL",
+  reasoning_effort="$RESEARCH_EFFORT", // when supported; otherwise apply the capability gate
   description="Research proof context for $SPEC_FILE",
   prompt="Research mode: proof-attempt
 
@@ -286,6 +280,7 @@ FOR EACH SORRY (in recommended order from research):
     Task(
       subagent_type="fvs-executor",
       model="$EXECUTOR_MODEL",
+      reasoning_effort="$EXECUTOR_EFFORT", // when supported; otherwise apply the capability gate
       description="Prove sorry {N} in $SPEC_FILE",
       prompt="Execute mode: proof-attempt
 

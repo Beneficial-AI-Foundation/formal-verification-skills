@@ -15,8 +15,8 @@
 // Coordination is ARTIFACT-MEDIATED ONLY. The Codex thinker is pointed at a topic
 // folder (.formalising/fv-plans/<topic>/), reads the loop's on-disk records, writes
 // its authoring-stage artifact under plans/ or reviews/, and the process EXITS. In
-// review mode the selected reviewer gets read-only tools and returns text; this wrapper
-// persists the single review artifact. There is no
+// review mode the selected reviewer gets read-only source access plus saved diagnostic scratch
+// and returns text; this wrapper persists the single review artifact. There is no
 // live cross-process bridge, no kept-alive daemon across stages, and no passed file
 // descriptors -- the next stage simply reads the artifact this one wrote.
 //
@@ -25,10 +25,9 @@
 //     never eval. The topic path and the free-form prompt are discrete argv elements
 //     (or stdin), so a topic name or prompt can never be interpreted as a shell
 //     command. This is the primary argument/shell-injection mitigation.
-//   * Authoring effort is EFFORT-ONLY and gated: it is validated against the Codex effort
-//     allowlist AND additionally required to be `xhigh` or higher. Anything below
-//     xhigh is rejected, never silently downgraded. No --model / -m is ever passed
-//     (the FVS effort-only policy: the runtime's configured model is used as-is).
+//   * Authoring model and effort are explicit argv values selected by the command's
+//     confirmed stage manifest. Effort is validated against the Codex allowlist;
+//     model is optional only for a confirmed `inherit` selection.
 //   * The child cwd is the resolved topic folder ONLY, and only after it is
 //     confirmed to be an existing directory whose name carries no shell
 //     metacharacters.
@@ -51,18 +50,18 @@ import {
   runReviewer,
   validateReviewerOptions,
   recordValidatedResponse,
+  requirePiHost,
+  validatePiDispatchReceipt,
 } from './fvs-spec-review.mjs';
 import { prepareGrounding, validateGrounding } from './fvs-review-grounding.mjs';
 
-// Effort allowlist mirrored from the inspiration source's set of Codex reasoning
-// efforts. FVS additionally REQUIRES the thinker to run at >= xhigh.
-const VALID_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'];
-// Ordered weakest -> strongest so we can enforce a floor without hardcoding "only xhigh".
-const EFFORT_RANK = Object.fromEntries(VALID_EFFORTS.map((e, i) => [e, i]));
-const MIN_EFFORT = 'xhigh';
+// Effort allowlist accepted by current FVS Codex routing. The calling command
+// validates model-specific support from the live catalog before this wrapper runs.
+const VALID_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
 const AUTHORING_STAGES = ['plan', 'eval', 'followup'];
-const STAGES = [...AUTHORING_STAGES, 'review-automatic', 'review', 'review-import'];
+const STAGES = [...AUTHORING_STAGES, 'review-automatic', 'review', 'review-import',
+  'review-import-pi'];
 const hash = text => createHash('sha256').update(text).digest('hex');
 
 // Shell metacharacters we refuse to see in a resolved topic path. The spawn is an
@@ -79,32 +78,38 @@ function printUsage() {
       'bounded authoring stage, or independently reviews a plan read-only, then exits.',
       '',
       'Usage:',
-      '  node scripts/fvs-codex-think.mjs <plan|eval|followup> --topic <dir> [--effort xhigh] [--prompt <text>]',
+      '  node scripts/fvs-codex-think.mjs <plan|eval|followup> --topic <dir>',
+      '       [--model <exact-id>] --effort <supported-level> [--prompt <text>]',
       '  node scripts/fvs-codex-think.mjs review-automatic',
       '  node scripts/fvs-codex-think.mjs review --topic <dir> --iteration nN',
-      '       [--target plan|followup] [--reviewer codex|claude|other]',
-      '       [--model <id>] [--effort <level>] [--history <review-or-triage.md>]',
-      '  node scripts/fvs-codex-think.mjs review-import --topic <dir>',
+      '       [--target plan|followup] [--reviewer codex|claude|pi|other]',
+      '       --model <exact-id-or-inherit> --effort <supported-level>',
+      '       [--history <review-or-triage.md>]',
+      '  node scripts/fvs-codex-think.mjs <review-import|review-import-pi> --topic <dir>',
       '       --packet <review-packet-dir> --response <response.md>',
+      '       [--dispatch-receipt <receipt.json>  # required for review-import-pi]',
       '',
       'Arguments:',
-      '  <stage>                plan | eval | followup | review-automatic | review | review-import.',
+      '  <stage>                plan | eval | followup | review-automatic | review |',
+      '                         review-import | review-import-pi.',
       '  --topic <dir>          The topic folder (.formalising/fv-plans/<topic>/). Becomes the',
       '                         artifact root; must already exist.',
       '  --iteration <nN>       Required for review (for example n1).',
       '  --target <kind>        Review target: plan | followup (default: auto).',
-      '  --reviewer <runtime>   codex | claude | other (default: codex).',
-      '  --model <id>           Review model; never accepted for authoring stages.',
-      '  --effort <level>       Review effort, or authoring effort (authoring requires xhigh).',
+      '  --reviewer <runtime>   codex | claude | pi | other (default: codex).',
+      '  --model <id>           Exact selected review/authoring model; review requires this flag.',
+      '                         Authoring omits it only for a confirmed inherit selection.',
+      '  --effort <level>       Explicit selected review or authoring effort (required for review).',
       '  --history <path>       Prior review/triage process record; repeatable, review only.',
       '  --grounding <path>     Bounded scout inventory JSON with source signature spans.',
-      '  --packet <dir>         Managed packet directory for review-import.',
-      '  --response <file>      Reviewer Markdown response for review-import.',
+      '  --packet <dir>         Managed packet directory for a review import.',
+      '  --response <file>      Reviewer Markdown response for a review import.',
+      '  --dispatch-receipt <file>  Pi child result receipt for review-import-pi.',
       '  --prompt <text>        Optional extra instructions, passed to Codex as argv/stdin.',
       '  --help                 Print this usage and exit.',
       '',
-      'Policy: authoring is effort-only (no --model) with an xhigh floor; argv-array spawn',
-      '(never a shell string); artifact-mediated. Review is selected, ephemeral + read-only;',
+      'Policy: authoring applies the confirmed model/effort via argv-array spawn (never a',
+      'shell string) and remains artifact-mediated. Review is selected, ephemeral + read-only;',
       'the wrapper persists exactly one validated review artifact.',
     ].join('\n'),
   );
@@ -149,6 +154,7 @@ function parseArgs(argv) {
     grounding: null,
     packet: null,
     response: null,
+    dispatchReceipt: null,
     prompt: null,
     help: false,
   };
@@ -177,6 +183,8 @@ function parseArgs(argv) {
       out.packet = rest.shift() ?? null;
     } else if (tok === '--response') {
       out.response = rest.shift() ?? null;
+    } else if (tok === '--dispatch-receipt') {
+      out.dispatchReceipt = rest.shift() ?? null;
     } else if (tok === '--prompt') {
       out.prompt = rest.shift() ?? null;
     } else if (tok.startsWith('--')) {
@@ -433,9 +441,41 @@ function validatePacket(packet, projectRoot, topicDir, reviewsDir) {
     throw new Error('Review packet belongs to a different project/topic');
   }
   const reviewer = validateReviewerOptions(packet.request ?? {});
+  const author = packet.request.author_runtime;
+  if (!['codex', 'claude', 'other', 'unknown'].includes(author) ||
+      typeof packet.request.observed_author_runtime !== 'string' ||
+      /[\r\n\0]/.test(packet.request.observed_author_runtime) ||
+      !/^n[1-9][0-9]*$/.test(packet.request.iteration ?? '') ||
+      !['plan', 'followup'].includes(packet.request.target)) {
+    throw new Error('Review packet has invalid author or target metadata');
+  }
   const expectedName = packet.request.target === 'followup'
     ? `FOLLOWUP_REVIEW_${packet.request.iteration}.md`
     : `PLAN_REVIEW_${packet.request.iteration}.md`;
+  const plansDir = path.join(topicDir, 'plans');
+  const expectedTargets = packet.request.target === 'followup'
+    ? [path.join(plansDir, `FOLLOWUP_PLAN_${packet.request.iteration}.md`)]
+    : [path.join(plansDir, `PLAN_${packet.request.iteration}.md`),
+      path.join(plansDir, `EXEC_PLAN_${packet.request.iteration}.md`)];
+  if (!Array.isArray(packet.inputs) || packet.inputs.length < expectedTargets.length) {
+    throw new Error('Review packet has invalid target input records');
+  }
+  const expectedTargetPaths = expectedTargets.map(file =>
+    path.relative(projectRoot, file).replace(/\\/g, '/'));
+  const recordedTargetPaths = packet.inputs.slice(0, expectedTargets.length).map(input => input?.path);
+  if (JSON.stringify(recordedTargetPaths) !== JSON.stringify(expectedTargetPaths)) {
+    throw new Error('Review packet target metadata does not match its primary inputs');
+  }
+  const recomputedAuthor = readAuthoringRuntime(expectedTargets.map(file =>
+    realFile(file, topicDir, 'review target')));
+  if (author !== recomputedAuthor.normalized ||
+      packet.request.observed_author_runtime !== recomputedAuthor.observed) {
+    throw new Error('Review packet author metadata does not match the target files');
+  }
+  const provenance = classifyReviewProvenance(recomputedAuthor.normalized, reviewer.runtime);
+  if (packet.provenance !== provenance) {
+    throw new Error('Review packet provenance does not match its recomputed author/reviewer selection');
+  }
   const outputPath = path.resolve(projectRoot, packet.output ?? '');
   if (outputPath !== path.join(reviewsDir, expectedName) || fs.existsSync(outputPath)) {
     throw new Error('Review output is invalid or already exists; refusing to overwrite history');
@@ -452,11 +492,11 @@ function validatePacket(packet, projectRoot, topicDir, reviewsDir) {
       }
     }
   }
-  return { reviewer, outputPath };
+  return { reviewer, outputPath, provenance };
 }
 
 function persistReview({ packet, packetDirectory, response, reportedModels = [], projectRoot,
-  topicDir, external = false }) {
+  topicDir, external = false, reportedEffort = null, piEvidence = null }) {
   const reviewsDir = fs.realpathSync(path.join(topicDir, 'reviews'));
   packetDirectory = fs.realpathSync(packetDirectory);
   if (!isInside(reviewsDir, packetDirectory) || packetDirectory === reviewsDir) {
@@ -466,7 +506,7 @@ function persistReview({ packet, packetDirectory, response, reportedModels = [],
     verdicts: ['APPROVE', 'APPROVE-WITH-EDITS', 'REJECT'],
     headings: ['Authority hierarchy', 'Findings', 'Content coverage statement', 'Cleared surfaces', 'Probe log', 'Resolution map'],
   });
-  const { reviewer, outputPath } = validatePacket(packet, projectRoot, topicDir, reviewsDir);
+  const { reviewer, outputPath, provenance } = validatePacket(packet, projectRoot, topicDir, reviewsDir);
   validateGrounding(projectRoot, packet.grounding, packetDirectory);
   const rel = file => path.relative(projectRoot, file).replace(/\\/g, '/');
   const metadata = [
@@ -478,8 +518,12 @@ function persistReview({ packet, packetDirectory, response, reportedModels = [],
     `- Requested reviewer: ${reviewer.runtime}`,
     `- Requested model: ${reviewer.model}`,
     `- Requested effort: ${reviewer.effort}`,
-    `- Provenance: ${packet.provenance}${external ? '; externally supplied response (verify reviewer/model/effort in triage)' : ''}`,
+    `- Provenance: ${provenance}${external ? '; externally supplied response (verify reviewer/model/effort in triage)' : ''}`,
     `- Runtime-reported models: ${reportedModels.join(', ') || 'not reported; verify in triage'}`,
+    `- Runtime-reported effort: ${reportedEffort ?? 'not reported; verify in triage'}`,
+    `- Pi dispatch evidence: ${piEvidence
+      ? `run ${piEvidence.runId}; host-attested fresh/read-only; packet and response hashes verified`
+      : 'not applicable'}`,
     `- Review packet: ${rel(packetDirectory)}`,
     '- Input hashes: packet.json',
   ].join('\n');
@@ -489,6 +533,7 @@ function persistReview({ packet, packetDirectory, response, reportedModels = [],
 }
 
 function runReview({ args, topicDir, projectRoot }) {
+  if (args.reviewer === 'pi') requirePiHost();
   const prepared = prepareReview({ args, topicDir, projectRoot });
   const rel = path.relative(projectRoot, prepared.packetDirectory).replace(/\\/g, '/');
   process.stdout.write(`FVS >> Review packet: ${rel}\n`);
@@ -496,14 +541,24 @@ function runReview({ args, topicDir, projectRoot }) {
     process.stdout.write('FVS >> PENDING: give prompt.md to the selected reviewer, then use review-import.\n');
     return;
   }
+  if (prepared.reviewer.runtime === 'pi') {
+    process.stdout.write('FVS >> PI_READY: launch a fresh Pi reviewer from prompt.md, then use review-import-pi.\n');
+    return;
+  }
   const result = runReviewer({ ...prepared.reviewer, prompt: prepared.prompt,
     workingRoot: projectRoot, artifactDirectory: prepared.packetDirectory });
   persistReview({ ...prepared, ...result, projectRoot, topicDir });
 }
 
-function importReview({ args, topicDir, projectRoot }) {
-  if (!args.packet || !args.response) {
-    fail('review-import requires --packet <review-packet-dir> --response <response.md>', 2);
+function importReview({ args, topicDir, projectRoot, nativePi = false }) {
+  const stage = nativePi ? 'review-import-pi' : 'review-import';
+  if (!args.packet || !args.response || (nativePi && !args.dispatchReceipt)) {
+    fail(`${stage} requires --packet <review-packet-dir> --response <response.md>` +
+      (nativePi ? ' --dispatch-receipt <receipt.json>' : ''), 2);
+  }
+  if (nativePi) requirePiHost();
+  if (!nativePi && args.dispatchReceipt) {
+    fail('review-import does not accept --dispatch-receipt', 2);
   }
   const reviewsDir = fs.realpathSync(path.join(topicDir, 'reviews'));
   const packetDirectory = fs.realpathSync(path.resolve(projectRoot, args.packet));
@@ -513,9 +568,22 @@ function importReview({ args, topicDir, projectRoot }) {
   const responsePath = realFile(path.resolve(projectRoot, args.response), projectRoot,
     'review response');
   const packet = JSON.parse(fs.readFileSync(path.join(packetDirectory, 'packet.json'), 'utf8'));
-  if (packet.request?.runtime !== 'other') fail('review-import accepts Other packets only', 2);
+  const expectedRuntime = nativePi ? 'pi' : 'other';
+  if (packet.request?.runtime !== expectedRuntime) {
+    fail(`${stage} accepts ${expectedRuntime} packets only`, 2);
+  }
+  let evidence = null;
+  if (nativePi) {
+    const receiptPath = realFile(path.resolve(projectRoot, args.dispatchReceipt), projectRoot,
+      'Pi dispatch receipt');
+    evidence = validatePiDispatchReceipt(receiptPath, {
+      packetFile: path.join(packetDirectory, 'packet.json'), responseFile: responsePath,
+      model: packet.request.model, effort: packet.request.effort,
+    });
+  }
   persistReview({ packet, packetDirectory, response: fs.readFileSync(responsePath, 'utf8'),
-    projectRoot, topicDir, external: true });
+    reportedModels: evidence ? [evidence.model] : [], reportedEffort: evidence?.effort ?? null,
+    piEvidence: evidence, projectRoot, topicDir, external: !nativePi });
 }
 
 function main() {
@@ -534,28 +602,33 @@ function main() {
   if (args.stage === 'review-automatic') {
     if (args.topic !== null || args.iteration !== null || args.target !== 'auto' ||
         args.model !== null || args.effort !== null || args.history.length ||
-        args.packet !== null || args.response !== null || args.prompt !== null) {
+        args.packet !== null || args.response !== null || args.dispatchReceipt !== null ||
+        args.prompt !== null) {
       fail('review-automatic accepts no flags', 2);
     }
     process.stdout.write(`${automaticReview('crypto_review')}\n`);
     return;
   }
   if (AUTHORING_STAGES.includes(args.stage)) {
-    if (args.iteration !== null || args.target !== 'auto' || args.model !== null ||
-        args.history.length || args.packet !== null || args.response !== null) {
-      fail('review/model/history/packet flags are valid only for review stages', 2);
+    if (args.iteration !== null || args.target !== 'auto' ||
+        args.history.length || args.packet !== null || args.response !== null ||
+        args.dispatchReceipt !== null) {
+      fail('review/history/packet/receipt flags are valid only for review stages', 2);
     }
-    args.effort ??= MIN_EFFORT;
+    if (args.effort === null) {
+      fail('authoring stages require the effort from the confirmed stage manifest', 2);
+    }
     if (!VALID_EFFORTS.includes(args.effort)) {
       fail(`invalid --effort "${args.effort}" -- allowlist is ${VALID_EFFORTS.join('|')}`, 2);
     }
-    if (EFFORT_RANK[args.effort] < EFFORT_RANK[MIN_EFFORT]) {
-      fail(`--effort "${args.effort}" is below the required thinker floor "${MIN_EFFORT}". ` +
-        `The Codex thinker must run at >= ${MIN_EFFORT}; rerun with --effort ${MIN_EFFORT}.`, 2);
+    if (args.model !== null &&
+        (!args.model.trim() || args.model.startsWith('-') || /[\0\r\n]/.test(args.model))) {
+      fail('invalid --model value for authoring stage', 2);
     }
-  } else if (args.stage === 'review' && (args.packet !== null || args.response !== null)) {
-    fail('--packet and --response are valid only for review-import', 2);
-  } else if (args.stage === 'review-import' &&
+  } else if (args.stage === 'review' &&
+      (args.packet !== null || args.response !== null || args.dispatchReceipt !== null)) {
+    fail('--packet, --response, and --dispatch-receipt are valid only for review imports', 2);
+  } else if (['review-import', 'review-import-pi'].includes(args.stage) &&
       (args.iteration !== null || args.target !== 'auto' || args.model !== null ||
        args.effort !== null || args.history.length)) {
     fail('iteration/target/model/effort/history flags are valid only for review', 2);
@@ -597,12 +670,12 @@ function main() {
     runReview({ args, topicDir, projectRoot });
     return;
   }
-  if (args.stage === 'review-import') {
-    importReview({ args, topicDir, projectRoot });
+  if (['review-import', 'review-import-pi'].includes(args.stage)) {
+    importReview({ args, topicDir, projectRoot, nativePi: args.stage === 'review-import-pi' });
     return;
   }
 
-  // Authoring stages remain Codex-only, model-free, and xhigh-or-higher.
+  // Authoring stages remain Codex-only and apply the confirmed stage selection.
   const avail = codexReady();
   if (!avail.available) failCodexNotReady(avail.detail);
 
@@ -642,13 +715,14 @@ function main() {
     .filter(Boolean)
     .join('\n');
 
-  // codex exec: non-interactive one-shot. Effort via the config override
-  // model_reasoning_effort (effort-only: NO -m/--model). Working root via -C.
+  // codex exec: non-interactive one-shot. Model uses -m when the confirmed
+  // selection is concrete; effort uses the config override. Working root via -C.
   // workspace-write sandbox (the thinker must write its stage artifact) +
-  // skip-git-repo-check so it runs cleanly inside the topic folder. The prompt is
+  // skip-git-repo-check so it runs cleanly inside the topic folder. Every value is
   // a discrete argv element (NOT interpolated into a shell).
-  const codexArgs = [
-    'exec',
+  const codexArgs = ['exec'];
+  if (args.model && args.model !== 'inherit') codexArgs.push('-m', args.model);
+  codexArgs.push(
     '-C',
     topicDir,
     '-c',
@@ -657,7 +731,7 @@ function main() {
     'workspace-write',
     '--skip-git-repo-check',
     basePrompt,
-  ];
+  );
 
   const run = spawnSync('codex', codexArgs, {
     cwd: topicDir,

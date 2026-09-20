@@ -62,9 +62,15 @@ Before spawning, inspect the `spawn_agent` tool's visible parameter schema to de
 Even when `agent_type` is present, typed dispatch is available only if the exact requested FVS type is advertised by the tool schema or a confirmed runtime registry. Codex marketplace plugins do not register the bundled Claude agent Markdown as typed Codex agents, so otherwise use the bundled-agent workaround below.
 
 
+Selection-capability gate (before manifest confirmation):
+- Compare the requested model with the exact active/inherited Codex model. Because `spawn_agent` has no inline model field, any different requested model is unresolved. Rebuild the manifest around the actual active model and ask explicitly, choose a capable external runner, or fail before dispatch in noninteractive mode.
+- When `reasoning_effort` is absent from the schema, compare the requested effort with the installed/runtime default. A mismatch is unresolved and follows the same rebuild/ask-or-fail rule.
+- Never confirm a requested model or effort and then omit it with a warning. The marketplace plugin does not install Codex agent TOML. Use this mapping only when the exact FVS agent type is registered independently; otherwise use the bundled-agent workaround.
+
 Typed mapping (agent_type-capable schema only):
 - `Task(subagent_type="X", prompt="Y")` -> `spawn_agent(agent_type="X", message="Y")`
-- `Task(model="...")` -> omit. `spawn_agent` has no inline `model` parameter. The marketplace plugin does not install Codex agent TOML. Use this mapping only when the exact FVS agent type is registered independently; otherwise use the bundled-agent workaround.
+- `Task(model="...")` -> omit only after the selection-capability gate proves it equals the active/inherited model.
+- `Task(reasoning_effort="...")` -> `spawn_agent(reasoning_effort="...")` when that field is present. If absent, dispatch only after the gate proves the installed/runtime default equals the confirmed effort.
 - `fork_context: false` by default -- FVS agents load their own context via `<files_to_read>` blocks.
 
 Generic-agent workaround (schema with NO agent_type field):
@@ -166,18 +172,14 @@ of every normal runtime install. If the preflight fails, STOP before all later s
 
 ## Step 1: Read config and resolve subagent model
 
-Read the project config and resolve the model for the `fvs-doc-syncer` dispatch using the
-model-profiles dispatch sequence (config `model_overrides` first, then the profile table, then
-`inherit` for unknown agents):
+Read the complete config and apply `model-profiles.md`. Declare stage key `doc_sync` for every
+`fvs-doc-syncer` mode and resolve one exact runtime/provider model+effort selection.
 
-```bash
-CONFIG=$(cat .formalising/fvs-config.json 2>/dev/null)
-# profile = config.model_profile || "balanced"
-# SYNCER_MODEL = model_overrides["fvs-doc-syncer"] ?? PROFILE_TABLE["fvs-doc-syncer"][profile]
-```
-
-On Codex (which does not support dynamic model selection) the `model=` parameter is silently
-ignored; the dispatches work unchanged.
+Before the first dispatch, show and confirm the command-level selection manifest. Offer one-run
+adjustment, exact-stage Save override, notes that rebuild and reconfirm the manifest, and Cancel.
+Missing preferred models or unsupported efforts prompt interactively; noninteractive unresolved
+choices fail before dispatch with exact remediation. Pass only native fields the selected runtime
+actually supports.
 
 ## Step 2: Resolve the local clones (config -> auto-detect -> prompt -> error)
 
@@ -235,6 +237,7 @@ the `tactic_renames` table (the parent inlines all reference content; the worker
 
 ```
 Task(subagent_type="fvs-doc-syncer", model="$SYNCER_MODEL",
+     reasoning_effort="$SYNCER_EFFORT", // when supported; otherwise apply the capability gate
      description="Sync tactics + Lean-syntax docs (mode a)",
      prompt="<sync_mode>tactics-lean-syntax</sync_mode>
              ...inlined _sync-meta.json mapping + tactic_renames + snapshot SHA + the
@@ -254,6 +257,7 @@ extraction doc targets and the current `blocker-catalog.md` seed:
 
 ```
 Task(subagent_type="fvs-doc-syncer", model="$SYNCER_MODEL",
+     reasoning_effort="$SYNCER_EFFORT", // when supported; otherwise apply the capability gate
      description="Sync extraction docs + reconcile blocker catalog (mode b)",
      prompt="<sync_mode>extraction-docs</sync_mode>
              ...Charon docs/{what_charon_translates,transformations,limitations}.md + README.md +
@@ -295,8 +299,9 @@ On Codex, every interactive HALT in this command -- the clone-path prompt (Step 
 propose-each approval the workers surface -- degrades to a plain-text question and WAITS for the
 user. It is fail-closed: it never auto-picks a default, never auto-applies a change, and never
 fetches or opens an upstream artifact without the read-only fetch being explicitly part of the sync.
-The `Task(...)` dispatches survive intact (the `model=` parameter is silently ignored on Codex, per
-model-profiles runtime handling).
+Before dispatch on Codex, apply the model-profile capability gate: confirm only the actual
+active/inherited model and applicable effort, or fail before dispatch. Never silently ignore a
+confirmed field.
 </codex_skill_adapter>
 
 <success_criteria>

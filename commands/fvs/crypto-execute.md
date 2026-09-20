@@ -114,32 +114,16 @@ fi
 
 ## Step 3: Resolve the executor model + effort + dispatch
 
-Resolve `$EXECUTOR_MODEL` and `$EXECUTOR_EFFORT` for `fvs-crypto-executor` AT DISPATCH TIME -- never
-pinned in the agent frontmatter. The resolved values are opaque, runtime-valid strings passed
-STRAIGHT THROUGH to `Task(model=...)`; FVS keeps NO cross-provider model/effort taxonomy (an invalid
-value is rejected by the runtime itself). Resolve with this ladder:
+Declare stage key `crypto_execute` for `fvs-crypto-executor`. Resolve `$EXECUTOR_MODEL` and
+`$EXECUTOR_EFFORT` through the canonical precedence in `model-profiles.md`: per-run flags, exact
+runtime+stage override, compatibility agent override, then profile/catalog resolution.
 
-1. The per-run `--model` / `--effort` flags from Step 1, if present.
-2. Else a top-level override in `.formalising/fvs-config.json`:
-   `model_overrides["fvs-crypto-executor"]`. Read it at the TOP-LEVEL `model_overrides` key the
-   model-profiles resolver actually consults -- NOT the template's nested `model.model_profile` (a
-   pre-existing shape mismatch, out of scope here; do not depend on the nested key).
-3. Else, in an interactive run, ASK via `AskUserQuestion` which model + effort to use for the
-   execution subagent, offering "inherit / default" as a choice.
-4. Else default `inherit` (works zero-config on every runtime).
-
-```bash
-CONFIG=$(cat .formalising/fvs-config.json 2>/dev/null || echo '{}')
-# 1. flag  ->  2. top-level model_overrides["fvs-crypto-executor"]  ->  4. inherit
-#    (3. AskUserQuestion runs between 2 and 4 in an interactive run)
-EXECUTOR_MODEL="${EXEC_MODEL:-$(printf '%s' "$CONFIG" | OVERRIDE_KEY='model_overrides["fvs-crypto-executor"]' read_top_level_override)}"
-EXECUTOR_MODEL="${EXECUTOR_MODEL:-inherit}"
-EXECUTOR_EFFORT="${EXEC_EFFORT:-inherit}"
-```
-
-On Codex the `model=` parameter is silently ignored and per-agent effort is FIXED at install time
-(from `FVS_CODEX_AGENT_EFFORT`), so the per-run `--effort` flag is a Claude / OpenCode / Gemini
-nicety; Codex users tune the crypto executor's effort via the agent `.toml` / reinstall.
+Before dispatch, show one command-level selection manifest and obtain confirmation. Offer
+`Continue once`, `Adjust once`, `Save override`, and `Cancel`, retaining notes. Notes rebuild the
+manifest and require reconfirmation. Save override writes only the `crypto_execute` entry. Missing
+preferred models and unsupported efforts require an interactive one-run or saved choice; in
+noninteractive mode stop before dispatch and print the exact flags/config key. Never substitute a
+foreign/similarly named model or claim an unsupported effort was applied.
 
 `cat` the bounded plan and INLINE it into the prompt (references do not cross the Task boundary):
 
@@ -147,6 +131,7 @@ nicety; Codex users tune the crypto executor's effort via the agent `.toml` / re
 Task(
   subagent_type="fvs-crypto-executor",
   model="$EXECUTOR_MODEL",
+  reasoning_effort="$EXECUTOR_EFFORT", // when supported; otherwise apply the capability gate
   description="Run bounded plan",
   prompt="Execute the bounded crypto plan.
 
@@ -218,9 +203,10 @@ Plan:      plans/{EXEC_PLAN | FOLLOWUP_PLAN}_{ITER}.md
 <codex_skill_adapter>
 On a secondary runtime, both the Step 3 model/effort ask and the Step 5 ESCALATE/BLOCKED redirect
 degrade to a plain-text question and WAIT for the user; each is fail-closed (never auto-picks a
-default beyond the ladder's `inherit`, never writes an upstream artifact). The `Task(...)` dispatch
-survives intact (the `model=` parameter is silently ignored on Codex, where per-agent effort is fixed
-at install time, so the per-run `--effort` flag is a no-op there).
+default beyond the ladder's `inherit`, never writes an upstream artifact). Before Codex dispatch,
+apply the model-profile capability gate: confirm only the actual active/inherited model and an
+effort the visible schema can apply. Otherwise rebuild and reconfirm the manifest, or fail before
+dispatch noninteractively; never turn a confirmed field into a no-op.
 </codex_skill_adapter>
 
 <success_criteria>

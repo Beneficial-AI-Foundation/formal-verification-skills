@@ -58,7 +58,7 @@ describe('Commands (commands/fvs/)', () => {
   const files = mdFiles(dir);
 
   const expected = [
-    'aeneas-extract.md', 'aeneas.md', 'checkpoint.md', 'context.md',
+    'aeneas-extract.md', 'aeneas.md', 'checkpoint.md', 'configure.md', 'context.md',
     'crypto-eval.md', 'crypto-execute.md', 'crypto-followup.md',
     'crypto-plan.md', 'crypto-review.md', 'fc-plan.md', 'fc.md', 'formalise.md', 'help.md',
     'kb-setup.md', 'lean-formalise.md', 'lean-refactor.md', 'lean-spec-review.md', 'lean-specify.md',
@@ -67,8 +67,8 @@ describe('Commands (commands/fvs/)', () => {
     'sync-aeneas-verif.md', 'trust-audit.md', 'update.md',
   ];
 
-  it('has exactly 28 command files', () => {
-    assert.equal(files.length, 28, `Expected 28 commands, got ${files.length}: ${files.join(', ')}`);
+  it('has exactly 29 command files', () => {
+    assert.equal(files.length, 29, `Expected 29 commands, got ${files.length}: ${files.join(', ')}`);
   });
 
   it('has the expected set of command files', () => {

@@ -1,0 +1,235 @@
+---
+name: fvs-sync-aeneas-verif
+description: Sync Aeneas/Charon upstream docs and reconcile the extraction blocker catalog via two specialised doc-sync agents
+---
+
+<pi_package_runtime>
+- This skill lives under `pi/skills/<name>/SKILL.md`; the FVS package root is `../../..` relative to its directory.
+- Resolve every bundled relative path against the skill directory and pass absolute paths to tool calls and shell commands.
+- Agent role instructions live under `../../../agents/`. When a workflow requests Task/subagent dispatch, use an available Pi subagent facility with the matching role instructions. If none is installed, perform the role inline and state that fresh-context separation was unavailable. Exception: a review workflow that requires a fresh reviewer must remain pending or offer its documented fallback; never perform that review inline.
+- Use Pi's structured question tool when available; otherwise ask the same question in plain text.
+- Never write state into the managed package. Project state belongs under the user's current project (normally `.formalising/`).
+</pi_package_runtime>
+
+<purpose>
+Keep FVS aligned with upstream Charon/Aeneas evolution along two axes, fanning out to the
+`fvs-doc-syncer` worker in two modes:
+
+- **tactics-lean-syntax** — today's tactic/Lean-syntax sync: the `_sync-meta.json` mapping plus
+  the `tactic_renames` table, propose-each, reconcile-not-append.
+- **extraction-docs** — the Charon/Aeneas EXTRACTION documentation plus a reconcile pass over the
+  shipped blocker catalog: re-check each seed blocker against live upstream and flag
+  retire / update-signature / still-open. Never blind-append, never silently overwrite the seed.
+
+The command mines the config-driven LOCAL Charon + Aeneas clones (no hardcoded absolute paths),
+resolving each clone path via config -> auto-detect -> prompt -> error, and reports clone staleness
+gracefully (a stale clone is still mineable; staleness is reported, never a hard failure). On-demand
+GitHub fetch is the fallback when in-repo docs are thin -- read-only fetch only; this command never
+calls `gh` to OPEN or create an upstream artifact.
+
+The user reviews and approves each proposed change individually. This is the clean-break successor
+to the single-agent doc sync: it generalises the section-level-diff + propose-each machinery to two
+specialised modes.
+</purpose>
+
+<execution_context>
+@../../../fv-skills/workflows/sync-aeneas-verif.md
+@../../../fv-skills/references/blocker-catalog.md
+@../../../fv-skills/references/model-profiles.md
+@../../../fv-skills/references/ui-brand.md
+</execution_context>
+
+<context>
+Upstream sources (both AeneasVerif):
+- Charon docs: `docs/{what_charon_translates,transformations,limitations}.md` + `README.md` +
+  `CONTRIBUTING.md` + `.github/ISSUE_TEMPLATE/{bug_report,unsupported-language-feature}.md`.
+- Aeneas docs: `documentation/*.md` + `documentation/skills/*.instructions.md` (the source-of-truth
+  files, NOT the symlinks) + `README.md` + `tests/README.md`.
+- Tactic/Lean-syntax mapping: `fv-skills/upstream/aeneas/_sync-meta.json`
+  (the `mapping` array + the `tactic_renames` table).
+
+Reconcile target: `fv-skills/references/blocker-catalog.md` -- the extraction-docs mode re-checks
+seed blockers against live upstream and PROPOSES status changes in place. The seed stays
+schema-conformant (evidence + pin_context present, no `tier`, `outcome_kinds` a list) and is never
+silently overwritten.
+</context>
+
+<process>
+
+## Step 0: Preflight the installed sync metadata
+
+Resolve `_sync-meta.json` from the installed FVS tree before reading config, prompting for clone
+paths, fetching upstream content, or dispatching a worker. The installer rewrites this
+runtime-neutral source path for Claude, Codex, OpenCode, and Gemini:
+
+```bash
+SYNC_META="../../../fv-skills/upstream/aeneas/_sync-meta.json"
+
+if [ ! -s "$SYNC_META" ]; then
+  echo "FVS >> AENEAS SYNC METADATA MISSING"
+  echo "The installed fv-skills/upstream/aeneas/_sync-meta.json mapping is absent."
+  echo "Run /fvs:update, or run: npx fv-skills-baif@latest"
+  echo "Choose your current runtime in the normal installer flow; there is no separate Aeneas option."
+  exit 1
+fi
+
+node -e '
+  const fs = require("fs");
+  const m = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  if (!m.upstream_source || !Array.isArray(m.mapping) || !m.mapping.length ||
+      !m.tactic_renames || typeof m.tactic_renames !== "object") process.exit(2);
+' "$SYNC_META" || {
+  echo "FVS >> Aeneas sync metadata is invalid. Run /fvs:update or npx fv-skills-baif@latest."
+  exit 1
+}
+```
+
+Do not offer or reference an "Aeneas install option": FVS installs the snapshot and mapping as part
+of every normal runtime install. If the preflight fails, STOP before all later steps.
+
+## Step 1: Read config and resolve subagent model
+
+Read the complete config and apply `model-profiles.md`. Declare stage key `doc_sync` for every
+`fvs-doc-syncer` mode and resolve one exact runtime/provider model+effort selection.
+
+Before the first dispatch, show and confirm the command-level selection manifest. Offer one-run
+adjustment, exact-stage Save override, notes that rebuild and reconfirm the manifest, and Cancel.
+Missing preferred models or unsupported efforts prompt interactively; noninteractive unresolved
+choices fail before dispatch with exact remediation. Pass only native fields the selected runtime
+actually supports.
+
+## Step 2: Resolve the local clones (config -> auto-detect -> prompt -> error)
+
+Resolve `charon_clone_path` and `aeneas_clone_path` with the locked FVS precedence. Never hardcode
+an absolute clone path. Quote every path expansion, reject a path with shell metacharacters, and
+never `eval` a path.
+
+```bash
+# 1. config value -- parse project.charon_clone_path / project.aeneas_clone_path from $CONFIG.
+#    Use jq if available; `// empty` + 2>/dev/null degrade to an empty string when the key is
+#    null/absent or jq is missing, so resolution falls through to auto-detect. Both may be empty.
+CHARON_CLONE=$(printf '%s' "$CONFIG" | jq -r '.project.charon_clone_path // empty' 2>/dev/null)
+AENEAS_CLONE=$(printf '%s' "$CONFIG" | jq -r '.project.aeneas_clone_path // empty' 2>/dev/null)
+# 2. auto-detect: probe common sibling layouts (e.g. a BAIF_GH/{charon,aeneas} shape)
+# 3. prompt the user for the path if still unresolved
+# 4. error only if a clone cannot be resolved at all -- and even then, degrade:
+#    report the missing source and continue the OTHER mode rather than aborting the run
+```
+
+Before any `git -C "<clone>"`, validate the resolved path is a directory:
+
+```bash
+[ -d "$CHARON_CLONE" ] || echo "FVS >> Charon clone path is not a directory: $CHARON_CLONE"
+[ -d "$AENEAS_CLONE" ] || echo "FVS >> Aeneas clone path is not a directory: $AENEAS_CLONE"
+```
+
+## Step 3: Report clone staleness (graceful, never a hard fail)
+
+For each resolved clone, compare its `git rev-parse HEAD` against the pin the project expects:
+Charon against the rev in Aeneas's `charon-pin`; Aeneas against the lakefile-pinned rev. Report
+`up-to-date` / `behind N` / `ahead N` / `diverged` -- a stale clone is still mineable.
+
+```bash
+CHARON_HEAD=$(git -C "$CHARON_CLONE" rev-parse HEAD 2>/dev/null)
+AENEAS_PIN=$(grep -v '^#' "$AENEAS_CLONE/charon-pin" 2>/dev/null | tr -d '[:space:]')
+# behind/ahead via git -C "$CHARON_CLONE" rev-list --count; "pin not in history" => diverged
+```
+
+```
+FVS >> Clone Staleness
+
+| Clone  | HEAD            | Expected pin     | Status     |
+|--------|-----------------|------------------|------------|
+| charon | {head:0:12}     | {pin:0:12}       | behind 3   |
+| aeneas | {head:0:12}     | {lakefile rev}   | up-to-date |
+
+Staleness is reported, not blocking -- mining proceeds against the clone as-is.
+```
+
+## Step 4: Fan out to fvs-doc-syncer in mode (a) tactics-lean-syntax
+
+Dispatch the worker for today's tactic/Lean-syntax scope, inlining the `_sync-meta.json` mapping and
+the `tactic_renames` table (the parent inlines all reference content; the worker uses no
+@-references):
+
+```
+Task(subagent_type="fvs-doc-syncer", model="$SYNCER_MODEL",
+     reasoning_effort="$SYNCER_EFFORT", // when supported; otherwise apply the capability gate
+     description="Sync tactics + Lean-syntax docs (mode a)",
+     prompt="<sync_mode>tactics-lean-syntax</sync_mode>
+             ...inlined _sync-meta.json mapping + tactic_renames + snapshot SHA + the
+                resolved Aeneas clone path for local mining...")
+```
+
+The worker fetches mapped upstream files (local clone first, read-only `gh api` / `curl` fallback
+when thin), computes a SECTION-LEVEL diff, maps changed sections via `merge_strategy`
+(`enrich` / `replace_section` / `defer`), checks the `tactic_renames` table, and PROPOSES each
+change for the user to approve / skip / edit. It updates the snapshot and `_sync-meta.json` at the
+end.
+
+## Step 5: Fan out to fvs-doc-syncer in mode (b) extraction-docs
+
+Dispatch the worker for the extraction-docs scope + the blocker-catalog reconcile, inlining the
+extraction doc targets and the current `blocker-catalog.md` seed:
+
+```
+Task(subagent_type="fvs-doc-syncer", model="$SYNCER_MODEL",
+     reasoning_effort="$SYNCER_EFFORT", // when supported; otherwise apply the capability gate
+     description="Sync extraction docs + reconcile blocker catalog (mode b)",
+     prompt="<sync_mode>extraction-docs</sync_mode>
+             ...Charon docs/{what_charon_translates,transformations,limitations}.md + README.md +
+                CONTRIBUTING.md + .github/ISSUE_TEMPLATE/*; Aeneas documentation/*.md +
+                documentation/skills/*.instructions.md (source-of-truth, NOT symlinks) + README.md +
+                tests/README.md; the resolved clone paths for local mining; the current
+                blocker-catalog seed for the reconcile pass...")
+```
+
+The worker fetches the extraction docs (local clone first; on-demand read-only GH fetch only when
+in-repo docs are thin, under evidence discipline), section-level-diffs them, then RECONCILES the
+blocker catalog: re-check each seed blocker against live upstream and PROPOSE flagging it
+retire / update-signature / still-open. "Fixed in upstream main" is NOT "fixed for us" -- an entry
+stays `needs-manual-check` until the resolved pin is diffed against the fix; never auto-`retire`.
+Never duplicate an entry whose `signature` already exists; update it in place. The user approves /
+skips / edits each proposed change.
+
+## Step 6: Report
+
+Merge the two workers' return summaries:
+
+```
+FVS >> Sync Complete
+
+| Mode                | Applied | Skipped | Notes                              |
+|---------------------|---------|---------|------------------------------------|
+| tactics-lean-syntax | {N}     | {M}     | {K} tactic renames propagated      |
+| extraction-docs     | {N}     | {M}     | {R} catalog entries reconciled     |
+
+Snapshot updated: {old_commit} -> {new_commit}
+
+Run `npm test` to verify no frontmatter or structural issues.
+```
+
+</process>
+
+<codex_skill_adapter>
+On Codex, every interactive HALT in this command -- the clone-path prompt (Step 2) and each
+propose-each approval the workers surface -- degrades to a plain-text question and WAITS for the
+user. It is fail-closed: it never auto-picks a default, never auto-applies a change, and never
+fetches or opens an upstream artifact without the read-only fetch being explicitly part of the sync.
+Before dispatch on Codex, apply the model-profile capability gate: confirm only the actual
+active/inherited model and applicable effort, or fail before dispatch. Never silently ignore a
+confirmed field.
+</codex_skill_adapter>
+
+<success_criteria>
+- [ ] Clone paths resolved via config -> auto-detect -> prompt -> error; no hardcoded absolute path.
+- [ ] Installed `_sync-meta.json` preflight passed; missing/invalid metadata stopped with real
+      update/reinstall instructions (no nonexistent "Aeneas option").
+- [ ] Clone staleness reported gracefully (never a hard failure of mining).
+- [ ] `fvs-doc-syncer` dispatched in BOTH `tactics-lean-syntax` and `extraction-docs` modes.
+- [ ] tactics-lean-syntax: `_sync-meta.json` mapping + tactic-rename machinery, propose-each.
+- [ ] extraction-docs: Charon/Aeneas extraction docs synced; blocker catalog RECONCILED in place
+      (no blind append, no auto-retire before the pin carries the fix).
+- [ ] User approved / skipped / edited each proposed change individually.
+- [ ] No `gh` auto-open/create anywhere; read-only fetch is the only GH path, and only as a fallback.
+</success_criteria>

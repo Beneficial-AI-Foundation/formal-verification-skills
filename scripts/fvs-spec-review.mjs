@@ -16,24 +16,60 @@ export function loadReviewContract(name) {
     fs.readFileSync(path.join(directory, 'review-diagnostics.md'), 'utf8') + '\n' +
     fs.readFileSync(path.join(directory, 'review-policy.md'), 'utf8');
 }
-export const reviewerDefaults = { codex: 'gpt-5.6-sol', claude: 'fable' };
-export const reviewerEfforts = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'runtime-default'];
-
 export function validateReviewerOptions(input) {
-  if (!['codex', 'claude', 'other'].includes(input.runtime)) {
-    throw new Error('runtime must be codex, claude, or other');
+  if (!['codex', 'claude', 'pi', 'other'].includes(input.runtime)) {
+    throw new Error('runtime must be codex, claude, pi, or other');
   }
-  const model = input.model ?? reviewerDefaults[input.runtime];
-  if (typeof model !== 'string' || !model.trim() || /[\r\n\0]/.test(model)) {
-    throw new Error('Select a model (a provider-specific ID is required for Other)');
+  const model = input.model;
+  if (typeof model !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:/+-]*$/.test(model.trim())) {
+    throw new Error('Select an explicit model from the reviewer runtime catalog (or inherit)');
   }
-  const effort = input.effort ?? 'max';
-  if (typeof effort !== 'string' || !effort.trim() || /[\r\n\0]/.test(effort) ||
-      (input.runtime !== 'other' && !reviewerEfforts.includes(effort)) ||
-      (input.runtime === 'claude' && effort === 'ultra')) {
-    throw new Error('Unsupported effort; select a supported level or runtime-default');
+  if (input.runtime === 'pi' &&
+      !/^[A-Za-z0-9][A-Za-z0-9._+-]*\/[A-Za-z0-9][A-Za-z0-9._:/+-]*$/.test(model.trim())) {
+    throw new Error('Pi reviewer models must be provider-qualified as provider/model');
+  }
+  const effort = input.effort;
+  if (typeof effort !== 'string' || effort.trim() === 'runtime-default' ||
+      !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(effort.trim())) {
+    throw new Error('Select an explicit effort reported for the selected reviewer model');
   }
   return { runtime: input.runtime, model: model.trim(), effort: effort.trim() };
+}
+
+export function reviewThreadCount(value = process.env.LEAN_NUM_THREADS) {
+  if (value === undefined || value === '') return 4;
+  if (!/^[1-9][0-9]*$/.test(value)) {
+    throw new Error('LEAN_NUM_THREADS must be a positive safe integer');
+  }
+  const threads = Number(value);
+  if (!Number.isSafeInteger(threads) || threads < 1) {
+    throw new Error('LEAN_NUM_THREADS must be a positive safe integer');
+  }
+  return threads;
+}
+
+export function requirePiHost() {
+  if (process.env.PI_CODING_AGENT !== 'true' && process.env.AI_AGENT !== 'pi') {
+    throw new Error('The pi reviewer requires an active Pi host');
+  }
+}
+
+export function validatePiDispatchReceipt(file, { packetFile, responseFile, model, effort }) {
+  const receipt = readJSON(file);
+  const safeRunId = typeof receipt.run_id === 'string' && receipt.run_id.length <= 256 &&
+    /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(receipt.run_id);
+  if (receipt.version !== 1 || receipt.status !== 'complete' ||
+      receipt.fresh_context !== true || receipt.read_only !== true || !safeRunId) {
+    throw new Error('Pi dispatch receipt must attest a completed fresh read-only child run');
+  }
+  if (receipt.model !== model || receipt.effort !== effort) {
+    throw new Error('Pi child model/effort does not match the confirmed review selection');
+  }
+  if (receipt.packet_sha256 !== hash(fs.readFileSync(packetFile)) ||
+      receipt.response_sha256 !== hash(fs.readFileSync(responseFile))) {
+    throw new Error('Pi dispatch receipt does not match the review packet/response');
+  }
+  return { runId: receipt.run_id, model: receipt.model, effort: receipt.effort };
 }
 
 export function classifyReviewProvenance(author, reviewer) {
@@ -103,6 +139,7 @@ export function automaticReview(section = 'spec_review') {
 function prepare(file) {
   const input = readJSON(file);
   const { runtime, model, effort } = validateReviewerOptions(input);
+  if (runtime === 'pi') requirePiHost();
   const author = input.author_runtime ?? 'unknown';
   if (!['codex', 'claude', 'other', 'unknown'].includes(author)) {
     throw new Error('author_runtime must be codex, claude, other, or unknown');
@@ -155,11 +192,28 @@ function prepare(file) {
   return { directory, packet, prompt };
 }
 
-function persist(directory, packet, response, reportedModels = []) {
+function persist(directory, packet, response, reportedModels = [], external = false,
+  reportedEffort = null, piEvidence = null) {
   const base = requireInside(fs.realpathSync(path.join(root, '.formalising', 'spec-reviews')));
   if (!fs.realpathSync(directory).startsWith(`${base}${path.sep}`)) {
     throw new Error('Review output must be inside .formalising/spec-reviews/');
   }
+  if (!packet || typeof packet !== 'object' || !packet.request ||
+      typeof packet.request !== 'object' || Array.isArray(packet.request)) {
+    throw new Error('Review packet must contain an explicit request');
+  }
+  const reviewer = validateReviewerOptions(packet.request);
+  const author = packet.request.author_runtime ?? 'unknown';
+  if (!['codex', 'claude', 'other', 'unknown'].includes(author)) {
+    throw new Error('author_runtime must be codex, claude, other, or unknown');
+  }
+  const expectedProvenance = classifyReviewProvenance(author, reviewer.runtime);
+  if (packet.provenance !== expectedProvenance) {
+    throw new Error('Review packet provenance does not match its explicit author/reviewer selection');
+  }
+  const provenance = expectedProvenance + (external
+    ? '; externally supplied response (verify reviewer/model/effort in triage)'
+    : '');
   response = recordValidatedResponse(directory, response, {
     verdicts: ['PASS', 'APPROVE-WITH-EDITS', 'REVISE', 'BLOCKED'],
     headings: ['Findings', 'Content coverage statement', 'Coverage', 'Evidence'],
@@ -182,7 +236,7 @@ function persist(directory, packet, response, reportedModels = []) {
       throw new Error(`Stale review: ${input.path} changed; run a new review`);
     }
   }
-  const { runtime, model, effort, author_runtime: author } = packet.request;
+  const { runtime, model, effort } = reviewer;
   const metadata = [
     '# FVS Specification Review Record',
     `- Spec: ${packet.request.spec}`,
@@ -190,8 +244,12 @@ function persist(directory, packet, response, reportedModels = []) {
     `- Requested reviewer: ${runtime}`,
     `- Requested model: ${model}`,
     `- Requested effort: ${effort}`,
-    `- Provenance: ${packet.provenance}`,
+    `- Provenance: ${provenance}`,
     `- Runtime-reported models: ${reportedModels.join(', ') || 'not reported; verify in triage'}`,
+    `- Runtime-reported effort: ${reportedEffort ?? 'not reported; verify in triage'}`,
+    `- Pi dispatch evidence: ${piEvidence
+      ? `run ${piEvidence.runId}; host-attested fresh/read-only; packet and response hashes verified`
+      : 'not applicable'}`,
     '- Input hashes: packet.json',
   ].join('\n');
   const output = path.join(directory, 'review.md');
@@ -272,6 +330,7 @@ export function validateReviewResponse(response, { verdicts, headings }) {
   const blocks = starts.slice(0, -1).map((start, i) => findings.slice(start, starts[i + 1]));
   const ids = new Set();
   const severities = ['BLOCKER', 'MAJOR', 'MINOR', 'OBSERVATION'];
+  const observationsAllowed = !verdicts.includes('PASS');
   let rank = -1;
   const verdict = lines[0].trim().replace(/^-\s*/, '').slice('VERDICT:'.length).trim().toUpperCase();
   for (const block of blocks) {
@@ -279,6 +338,9 @@ export function validateReviewResponse(response, { verdicts, headings }) {
     const first = block.split('\n')[0];
     const match = first.match(/^### (F-[0-9]+) — (BLOCKER|MAJOR|MINOR|OBSERVATION)\s*$/);
     if (!match || ids.has(match[1])) throw new Error(`Invalid or duplicate finding heading: ${first}`);
+    if (match[2] === 'OBSERVATION' && !observationsAllowed) {
+      throw new Error('FC reviews do not support OBSERVATION severity');
+    }
     ids.add(match[1]);
     if ((['APPROVE', 'PASS'].includes(verdict) && ['BLOCKER', 'MAJOR'].includes(match[2])) ||
         (verdict === 'APPROVE-WITH-EDITS' && match[2] === 'BLOCKER')) {
@@ -304,6 +366,9 @@ export function validateReviewResponse(response, { verdicts, headings }) {
     rank = nextRank;
   }
   if ([...structure.matchAll(/^### F-/gm)].length !== ids.size) throw new Error('Findings must occur only in the Findings section');
+  if (ids.size === 0 && ['REJECT', 'REVISE', 'APPROVE-WITH-EDITS'].includes(verdict)) {
+    throw new Error(`Verdict ${verdict} requires at least one finding`);
+  }
   return response.trim();
 }
 
@@ -339,10 +404,12 @@ export function recordValidatedResponse(directory, response, options) {
   const record = fs.mkdtempSync(path.join(directory, 'validation-'));
   const save = (name, text) => fs.writeFileSync(path.join(record, name), text, { flag: 'wx', mode: 0o600 });
   save('raw-response.md', response);
+  save('README.md', 'raw-response.md is the reviewer original, preserved unchanged.\n' +
+    'normalized-response.md, when present, is the deterministic formatting-only copy used for validation.\n');
   try {
     try { return validateReviewResponse(response, options); } catch {
       const normalized = normalizeReviewResponse(response, options.verdicts);
-      if (normalized !== response.trim()) save('format-only.md', normalized + '\n');
+      if (normalized !== response.trim()) save('normalized-response.md', normalized + '\n');
       return validateReviewResponse(normalized, options);
     }
   } catch (error) {
@@ -410,7 +477,11 @@ export function runReviewer({ runtime, model, effort, prompt, workingRoot = root
   if (!artifactDirectory) throw new Error('Review requires a persistent artifact directory');
   artifactDirectory = fs.realpathSync(artifactDirectory);
   if (!artifactDirectory.startsWith(workingRoot + path.sep)) throw new Error('Review artifacts must remain inside the project');
+  const threads = reviewThreadCount();
   const attempt = fs.mkdtempSync(path.join(artifactDirectory, 'attempt-'));
+  const scratch = path.join(attempt, 'scratch');
+  fs.mkdirSync(scratch);
+  const childEnv = { ...process.env, LEAN_NUM_THREADS: String(threads) };
   const save = (name, value) => fs.writeFileSync(path.join(attempt, name), value,
     { flag: 'wx', mode: 0o600 });
   const finish = (response, reportedModels) => {
@@ -422,23 +493,29 @@ export function runReviewer({ runtime, model, effort, prompt, workingRoot = root
   try {
     save('request.json', JSON.stringify({ runtime, model, effort, workingRoot, prompt }, null, 2));
     preflightReviewer(runtime, workingRoot);
+    const scopedPrompt = 'Review tool boundary (wrapper-owned):\n' +
+      `Repository root (read-only): ${workingRoot}\nSaved scratch directory (session cwd): ${scratch}\n` +
+      'Use absolute repository paths for reading; write only inside the saved scratch directory.\n' +
+      'Never edit source or plan files. Do not implement the plan or attempt full proofs.\n' +
+      `LEAN_NUM_THREADS is validated and set to ${threads}; use ` +
+      'LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 for Lean checks.\n\n' + prompt;
     if (runtime === 'codex') {
       const lastMessage = path.join(attempt, 'codex-last-message.md');
-      const args = ['exec', '-C', workingRoot, '--model', model, '--sandbox', 'read-only',
-        '--ignore-user-config', '--ephemeral', '--color', 'never',
-        '--output-last-message', lastMessage];
-      if (effort !== 'runtime-default') args.push('-c', `model_reasoning_effort="${effort}"`);
-      save('launch.json', JSON.stringify({ runtime, args: [...args, '-'], cwd: workingRoot }, null, 2) + '\n');
-      save('prompt.md', prompt);
-      invoke('codex', [...args, '-'], workingRoot, { input: prompt, captureDirectory: attempt });
+      const args = ['exec', '-C', scratch];
+      if (model !== 'inherit') args.push('--model', model);
+      args.push('--sandbox', 'workspace-write', '--ignore-user-config', '--ephemeral',
+        '--color', 'never', '--output-last-message', lastMessage,
+        '-c', `model_reasoning_effort="${effort}"`);
+      save('launch.json', JSON.stringify({ runtime, args: [...args, '-'], cwd: scratch }, null, 2) + '\n');
+      save('prompt.md', scopedPrompt);
+      invoke('codex', [...args, '-'], scratch,
+        { input: scopedPrompt, captureDirectory: attempt, env: childEnv });
       if (!fs.existsSync(lastMessage)) throw new Error('Codex returned no final review');
       return finish(fs.readFileSync(lastMessage, 'utf8'), []);
     }
     if (!['darwin', 'linux'].includes(process.platform)) {
       throw new Error('Claude review probes require macOS/Linux native sandboxing; no unsafe fallback');
     }
-    const scratch = path.join(attempt, 'scratch');
-    fs.mkdirSync(scratch);
     const memoryPaths = [path.join(workingRoot, '.formalising/proof-engineering'),
       path.join(workingRoot, '.formalising/fv-plans/*/sources/proof-engineering-context.md')];
     const settings = {
@@ -448,16 +525,14 @@ export function runReviewer({ runtime, model, effort, prompt, workingRoot = root
         filesystem: { disabled: false, allowWrite: lakeWriteDirectories(workingRoot), denyRead: memoryPaths },
         network: { allowedDomains: [], strictAllowlist: true } },
     };
-    const args = ['--print', '--model', model, '--output-format', 'json', '--safe-mode',
+    const args = ['--print'];
+    if (model !== 'inherit') args.push('--model', model);
+    args.push('--output-format', 'json', '--safe-mode',
       '--tools', 'Read,Glob,Grep,Bash', '--allowedTools', 'Read,Glob,Grep,Bash',
       '--settings', JSON.stringify(settings), '--setting-sources', '',
       '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
-      '--permission-mode', 'dontAsk', '--no-session-persistence'];
-    if (effort !== 'runtime-default') args.push('--effort', effort);
-    const scopedPrompt = 'Review tool boundary (wrapper-owned):\n' +
-      `Repository root: ${workingRoot}\nScratch directory (session cwd): ${scratch}\n` +
-      'Use absolute repository paths for reading; use installed tools only.\n' +
-      'Bash is OS-sandboxed: source/plan writes and unsandboxed retries are forbidden.\n' +
+      '--permission-mode', 'dontAsk', '--no-session-persistence', '--effort', effort);
+    const claudePrompt = scopedPrompt + '\nBash is OS-sandboxed: source/plan writes and unsandboxed retries are forbidden.\n' +
       'You may write tiny diagnostic prototypes in scratch, in the target language\n' +
       '(Lean, Verus, Rocq, Isabelle, or another installed toolchain): signature/type checks,\n' +
       'API checks, minimal counterexamples, or short executable traces. Each must answer\n' +
@@ -470,11 +545,11 @@ export function runReviewer({ runtime, model, effort, prompt, workingRoot = root
       'LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build <target>, or the same\n' +
       'prefix for lake env lean <absolute-scratch-probe>. Only generated Lake build/config\n' +
       'paths are additionally writable in the repository. Other toolchains must keep outputs\n' +
-      'in scratch; report a blocked check if they require more write access.\n\n' + prompt;
+      'in scratch; report a blocked check if they require more write access.\n';
     save('launch.json', JSON.stringify({ runtime, args, cwd: scratch }, null, 2) + '\n');
-    save('prompt.md', scopedPrompt);
+    save('prompt.md', claudePrompt);
     const result = JSON.parse(invoke('claude', args, scratch,
-      { input: scopedPrompt, captureDirectory: attempt }));
+      { input: claudePrompt, captureDirectory: attempt, env: childEnv }));
     if (result.is_error || typeof result.result !== 'string') {
       throw new Error('Claude returned an error or no final review; no completed review was recorded');
     }
@@ -493,6 +568,10 @@ function run(file) {
     process.stdout.write('FVS >> PENDING: give prompt.md to the selected reviewer, then import its response.\n');
     return;
   }
+  if (runtime === 'pi') {
+    process.stdout.write('FVS >> PI_READY: launch a fresh Pi reviewer from prompt.md, then use import-pi.\n');
+    return;
+  }
   const { response, reportedModels } = runReviewer({ runtime, model, effort, prompt,
     artifactDirectory: directory });
   const output = persist(directory, packet, response, reportedModels);
@@ -509,11 +588,28 @@ try {
   } else if (command === 'import' && args.length === 2) {
     const directory = requireInside(fs.realpathSync(args[0]));
     const packet = readJSON(path.join(directory, 'packet.json'));
-    packet.provenance += '; externally supplied response (verify reviewer/model/effort in triage)';
-    const output = persist(directory, packet, fs.readFileSync(args[1], 'utf8'));
+    if (packet.request?.runtime !== 'other') {
+      throw new Error('import accepts other review packets only');
+    }
+    const output = persist(directory, packet, fs.readFileSync(args[1], 'utf8'), [], true);
+    process.stdout.write(`FVS >> Review recorded: ${path.relative(root, output)}\n`);
+  } else if (command === 'import-pi' && args.length === 3) {
+    requirePiHost();
+    const directory = requireInside(fs.realpathSync(args[0]));
+    const packetFile = path.join(directory, 'packet.json');
+    const packet = readJSON(packetFile);
+    if (packet.request?.runtime !== 'pi') {
+      throw new Error('import-pi accepts pi review packets only');
+    }
+    const responseFile = fs.realpathSync(args[1]);
+    const evidence = validatePiDispatchReceipt(fs.realpathSync(args[2]), {
+      packetFile, responseFile, model: packet.request.model, effort: packet.request.effort,
+    });
+    const output = persist(directory, packet, fs.readFileSync(responseFile, 'utf8'),
+      [evidence.model], false, evidence.effort, evidence);
     process.stdout.write(`FVS >> Review recorded: ${path.relative(root, output)}\n`);
   } else {
-    process.stdout.write('Usage: fvs-spec-review.mjs automatic | run <request.json> | import <review-directory> <response.md>\n');
+    process.stdout.write('Usage: fvs-spec-review.mjs automatic | run <request.json> | import <review-directory> <response.md> | import-pi <review-directory> <response.md> <dispatch-receipt.json>\n');
     process.exitCode = command === '--help' ? 0 : 2;
   }
 } catch (error) {

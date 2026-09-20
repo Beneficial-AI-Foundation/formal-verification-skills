@@ -62,9 +62,15 @@ Before spawning, inspect the `spawn_agent` tool's visible parameter schema to de
 Even when `agent_type` is present, typed dispatch is available only if the exact requested FVS type is advertised by the tool schema or a confirmed runtime registry. Codex marketplace plugins do not register the bundled Claude agent Markdown as typed Codex agents, so otherwise use the bundled-agent workaround below.
 
 
+Selection-capability gate (before manifest confirmation):
+- Compare the requested model with the exact active/inherited Codex model. Because `spawn_agent` has no inline model field, any different requested model is unresolved. Rebuild the manifest around the actual active model and ask explicitly, choose a capable external runner, or fail before dispatch in noninteractive mode.
+- When `reasoning_effort` is absent from the schema, compare the requested effort with the installed/runtime default. A mismatch is unresolved and follows the same rebuild/ask-or-fail rule.
+- Never confirm a requested model or effort and then omit it with a warning. The marketplace plugin does not install Codex agent TOML. Use this mapping only when the exact FVS agent type is registered independently; otherwise use the bundled-agent workaround.
+
 Typed mapping (agent_type-capable schema only):
 - `Task(subagent_type="X", prompt="Y")` -> `spawn_agent(agent_type="X", message="Y")`
-- `Task(model="...")` -> omit. `spawn_agent` has no inline `model` parameter. The marketplace plugin does not install Codex agent TOML. Use this mapping only when the exact FVS agent type is registered independently; otherwise use the bundled-agent workaround.
+- `Task(model="...")` -> omit only after the selection-capability gate proves it equals the active/inherited model.
+- `Task(reasoning_effort="...")` -> `spawn_agent(reasoning_effort="...")` when that field is present. If absent, dispatch only after the gate proves the installed/runtime default equals the confirmed effort.
 - `fork_context: false` by default -- FVS agents load their own context via `<files_to_read>` blocks.
 
 Generic-agent workaround (schema with NO agent_type field):
@@ -147,15 +153,21 @@ links and refresh `$ROOT/sources/proof-engineering-context.md` for either thinke
 
 ## Step 2: Resolve the thinker model + dispatch (eval mode)
 
-Default (no `--codex`) -- dispatch the in-runtime thinker. Resolve `$THINKER_MODEL` for
-`fvs-crypto-thinker` via the model-profiles dispatch sequence. `cat` the iteration's bounded plan +
-the executed artifacts (touched files, `build.log`) + the cached KB sources, and INLINE them into the
-prompt:
+Resolve stage `crypto_eval` for the runtime that will actually run it: the active runtime by
+default, or Codex CLI when `--codex` is present. Resolve `$THINKER_MODEL` and `$THINKER_EFFORT`
+through `model-profiles.md` and that runtime's current catalog. Before dispatch, show and confirm
+the command-level selection manifest, including the actual runner; notes rebuild it and require
+reconfirmation. A one-run adjustment is not persisted, while Save override writes the exact
+runtime+stage entry. Missing preferred models or unsupported efforts prompt interactively and fail
+with exact remediation in noninteractive mode. `cat` the iteration's bounded plan + executed
+artifacts (touched files, `build.log`) + cached KB sources, and INLINE them into the prompt. Without
+`--codex`, dispatch the in-runtime thinker:
 
 ```
 Task(
   subagent_type="fvs-crypto-thinker",
   model="$THINKER_MODEL",
+  reasoning_effort="$THINKER_EFFORT", // when supported; otherwise apply the capability gate
   description="Adversarial eval",
   prompt="Mode: eval
 
@@ -179,12 +191,15 @@ FVS-owned Codex thinker helper. The Codex thinker takes ONLY this eval stage; ev
 UNCHANGED (the artifacts stay under `fv-plans/<topic>/`, the always-adversarial posture and the
 HUMAN_RULING-HALT discipline are identical). Coordination is ARTIFACT-MEDIATED: the Codex thinker
 reads the topic folder, writes `EVAL_nN.md` under `reviews/` carrying exactly one decision verb, and
-EXITS -- there is NO live cross-process bridge. The helper is EFFORT-ONLY: it passes `--effort xhigh`
-(>= xhigh enforced) and NO `--model`.
+EXITS -- there is NO live cross-process bridge. Pass the resolved Codex model and effort. Omit
+`--model` only when the confirmed value is `inherit`.
 
 ```bash
-# --codex mode: swap the in-runtime thinker for the FVS-owned Codex thinker (eval stage).
-node ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-codex-think.mjs eval --topic "$ROOT" --effort xhigh
+# --codex mode: use the confirmed crypto_eval selection for Codex CLI.
+CODEX_MODEL_ARGS=()
+[ "$THINKER_MODEL" = "inherit" ] || CODEX_MODEL_ARGS=(--model "$THINKER_MODEL")
+node ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-codex-think.mjs eval --topic "$ROOT" \
+  "${CODEX_MODEL_ARGS[@]}" --effort "$THINKER_EFFORT"
 ```
 
 If `--codex` is passed but `codex` is unavailable, the helper surfaces its graceful install message
@@ -232,11 +247,10 @@ Review:    reviews/EVAL_{ITER}.md
 
 <codex_skill_adapter>
 The `--codex` flag swaps the thinker for a Codex thinker at THIS eval stage via the FVS-owned helper
-`${CLAUDE_PLUGIN_ROOT}/scripts/fvs-codex-think.mjs`
-(`node ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-codex-think.mjs eval --topic "$ROOT" --effort xhigh`).
-The helper is FVS-owned and self-contained: it does NOT import or depend on the openai-codex plugin;
-it spawns `codex` via an argv array (never a shell string), is EFFORT-ONLY (passes `--effort xhigh`,
-NO `--model`), and points Codex at the topic folder as its working root. Coordination is
+`${CLAUDE_PLUGIN_ROOT}/scripts/fvs-codex-think.mjs`, passing the confirmed `crypto_eval` Codex model (unless
+`inherit`) and effort. The helper is FVS-owned and self-contained: it does NOT import or depend on
+the openai-codex plugin; it spawns `codex` via an argv array (never a shell string), applies the
+resolved model/effort, and points Codex at the topic folder as its working root. Coordination is
 ARTIFACT-MEDIATED: the Codex thinker writes `EVAL_nN.md` under `reviews/` and exits -- there is NO
 live cross-process bridge. If `codex` is absent, the helper fails gracefully with install guidance and
 this command offers to fall back to single-runtime (re-run without `--codex`). Without `--codex`, the
@@ -248,7 +262,7 @@ an upstream artifact).
 <success_criteria>
 - [ ] Topic + iteration resolved; shell metacharacters rejected; every path quoted; no `eval`.
 - [ ] At most eight relevant crypto/shared lessons loaded and snapshotted for either thinker runtime.
-- [ ] `$THINKER_MODEL` resolved; `fvs-crypto-thinker` dispatched (`subagent_type="fvs-crypto-thinker"`) in eval mode with inlined plan + executed artifacts.
+- [ ] `$THINKER_MODEL` / `$THINKER_EFFORT` resolved for the actual runner; the in-runtime Task or Codex helper receives both confirmed settings and the plan/executed context.
 - [ ] The eval is ALWAYS adversarial and ends in EXACTLY ONE of `ACCEPT | FOLLOWUP | HUMAN_RULING | BLOCKED`, written to `reviews/EVAL_nN.md`.
 - [ ] `HUMAN_RULING` routes to a HALT; `BLOCKED` is recorded as a valid outcome (suggest `/fvs:pause-work`).
 - [ ] A `sorry` is judged as a named obligation, never by count.

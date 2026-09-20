@@ -90,18 +90,14 @@ of every normal runtime install. If the preflight fails, STOP before all later s
 
 ## Step 1: Read config and resolve subagent model
 
-Read the project config and resolve the model for the `fvs-doc-syncer` dispatch using the
-model-profiles dispatch sequence (config `model_overrides` first, then the profile table, then
-`inherit` for unknown agents):
+Read the complete config and apply `model-profiles.md`. Declare stage key `doc_sync` for every
+`fvs-doc-syncer` mode and resolve one exact runtime/provider model+effort selection.
 
-```bash
-CONFIG=$(cat .formalising/fvs-config.json 2>/dev/null)
-# profile = config.model_profile || "balanced"
-# SYNCER_MODEL = model_overrides["fvs-doc-syncer"] ?? PROFILE_TABLE["fvs-doc-syncer"][profile]
-```
-
-On Codex (which does not support dynamic model selection) the `model=` parameter is silently
-ignored; the dispatches work unchanged.
+Before the first dispatch, show and confirm the command-level selection manifest. Offer one-run
+adjustment, exact-stage Save override, notes that rebuild and reconfirm the manifest, and Cancel.
+Missing preferred models or unsupported efforts prompt interactively; noninteractive unresolved
+choices fail before dispatch with exact remediation. Pass only native fields the selected runtime
+actually supports.
 
 ## Step 2: Resolve the local clones (config -> auto-detect -> prompt -> error)
 
@@ -159,6 +155,7 @@ the `tactic_renames` table (the parent inlines all reference content; the worker
 
 ```
 Task(subagent_type="fvs-doc-syncer", model="$SYNCER_MODEL",
+     reasoning_effort="$SYNCER_EFFORT", // when supported; otherwise apply the capability gate
      description="Sync tactics + Lean-syntax docs (mode a)",
      prompt="<sync_mode>tactics-lean-syntax</sync_mode>
              ...inlined _sync-meta.json mapping + tactic_renames + snapshot SHA + the
@@ -178,6 +175,7 @@ extraction doc targets and the current `blocker-catalog.md` seed:
 
 ```
 Task(subagent_type="fvs-doc-syncer", model="$SYNCER_MODEL",
+     reasoning_effort="$SYNCER_EFFORT", // when supported; otherwise apply the capability gate
      description="Sync extraction docs + reconcile blocker catalog (mode b)",
      prompt="<sync_mode>extraction-docs</sync_mode>
              ...Charon docs/{what_charon_translates,transformations,limitations}.md + README.md +
@@ -219,8 +217,9 @@ On Codex, every interactive HALT in this command -- the clone-path prompt (Step 
 propose-each approval the workers surface -- degrades to a plain-text question and WAITS for the
 user. It is fail-closed: it never auto-picks a default, never auto-applies a change, and never
 fetches or opens an upstream artifact without the read-only fetch being explicitly part of the sync.
-The `Task(...)` dispatches survive intact (the `model=` parameter is silently ignored on Codex, per
-model-profiles runtime handling).
+Before dispatch on Codex, apply the model-profile capability gate: confirm only the actual
+active/inherited model and applicable effort, or fail before dispatch. Never silently ignore a
+confirmed field.
 </codex_skill_adapter>
 
 <success_criteria>

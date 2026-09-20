@@ -47,27 +47,22 @@ idempotent and skips already-clean blockers. There is no separate status/resume 
 
 <process>
 
-## Step 1: Read config and resolve subagent models
+## Step 1: Read config and resolve subagent models + effort
 
-Read the project config and resolve the model for each subagent dispatch using the
-model-profiles dispatch sequence (config `model_overrides` first, then the profile table,
-then `inherit` for unknown agents):
+Read the complete project config and apply the canonical resolution contract in
+`model-profiles.md`. Declare these stage keys rather than deriving tiers from agent names:
 
-```bash
-CONFIG=$(cat .formalising/fvs-config.json 2>/dev/null)
-# profile = config.model_profile || "balanced"
-# for each agent: model = model_overrides[agent] ?? PROFILE_TABLE[agent][profile]
-```
+- `fvs-extract-classifier` -> `extract_classify`
+- `fvs-extract-applier` -> `extract_apply`
+- `fvs-extract-bisector` -> `extract_bisect`
+- `fvs-equivalence-assessor` -> `extract_assess`
+- `fvs-draft-investigator` -> `extract_investigate`
 
-Resolve and store:
-- `$CLASSIFIER_MODEL` for `fvs-extract-classifier`
-- `$APPLIER_MODEL` for `fvs-extract-applier`
-- `$BISECTOR_MODEL` for `fvs-extract-bisector`
-- `$ASSESSOR_MODEL` for `fvs-equivalence-assessor`
-- `$DRAFT_MODEL` for `fvs-draft-investigator`
-
-On Codex (which does not support dynamic model selection) the `model=` parameter is silently
-ignored; the same dispatches work unchanged.
+Resolve model and effort independently for every distinct stage. Before the first dispatch, show
+one command-level selection manifest and obtain confirmation. `Adjust once` changes only this run;
+`Save override` writes the exact runtime+stage entry. Notes rebuild the manifest and require
+reconfirmation. Missing preferred models or unsupported efforts prompt interactively and fail with
+exact remediation in noninteractive mode. Pass only validated native model/effort fields.
 
 ## Step 2: PRE-FLIGHT (pin audit + clone resolution)
 
@@ -117,13 +112,13 @@ fix escalates immediately).
 - **EXTRACT:** run extraction and build under `set -o pipefail` + `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`;
   read the tool's real exit status via `${PIPESTATUS[0]}`, never the tail of a piped log.
   Clean -> success oracle (Step 5). Failure -> classify.
-- **CLASSIFY:** `Task(subagent_type="fvs-extract-classifier", model="$CLASSIFIER_MODEL", ...)`
+- **CLASSIFY:** `Task(subagent_type="fvs-extract-classifier", model="$CLASSIFIER_MODEL", reasoning_effort="$CLASSIFIER_EFFORT", ...)`
   -> `{ layer, symbol, signature, match }`.
 - **DISPATCH by category + coverage_impact:**
-  - Category-A -> `Task(subagent_type="fvs-extract-applier", model="$APPLIER_MODEL", ...)`.
+  - Category-A -> `Task(subagent_type="fvs-extract-applier", model="$APPLIER_MODEL", reasoning_effort="$APPLIER_EFFORT", ...)`.
     The coverage-escalation guard: A-opacity on a function inside required coverage is NOT
     auto-applied -- it becomes Category-B and routes to the gate.
-  - NOVEL -> `Task(subagent_type="fvs-extract-bisector", model="$BISECTOR_MODEL", ...)` to
+  - NOVEL -> `Task(subagent_type="fvs-extract-bisector", model="$BISECTOR_MODEL", reasoning_effort="$BISECTOR_EFFORT", ...)` to
     minimize to an MFE, write a schema-conformant candidate, and PROPOSE a fix.
   - Forced Category-B -> the GATE (Step 4).
   - Escalate conditions (attempt-cap hit, same-signature recurrence, forced
@@ -146,6 +141,7 @@ a fixing subagent:
 
    ```
    Task(subagent_type="fvs-equivalence-assessor", model="$ASSESSOR_MODEL",
+        reasoning_effort="$ASSESSOR_EFFORT", // when supported; otherwise apply the capability gate
         description="Draft equivalence-gate packet sections 2-6",
         prompt="...minimized diff (section 1) + the blocker context...")
    ```
@@ -182,6 +178,7 @@ ONLY on the user's acceptance -- on acceptance dispatch the draft-investigator:
 
 ```
 Task(subagent_type="fvs-draft-investigator", model="$DRAFT_MODEL",
+     reasoning_effort="$DRAFT_EFFORT", // when supported; otherwise apply the capability gate
      description="Mine precedent + draft an evidence-cited HTML+MD report",
      prompt="...the MFE + the escalation context...")
 ```
@@ -213,8 +210,9 @@ On Codex, every interactive HALT in this command -- the pin-audit warn-and-confi
 the Category-B gate presentation (Step 4), and the escalation draft offer (Step 6) -- degrades
 to a plain-text question and WAITS for the user. It is fail-closed: it never auto-picks a
 default, never self-ratifies a gate packet, and never writes an upstream artifact. The
-`Task(...)` dispatches survive intact (the `model=` parameter is silently ignored on Codex,
-per model-profiles runtime handling).
+Before any Codex dispatch, apply the model-profile capability gate: confirm only the actual
+active/inherited model and applicable effort, or fail before dispatch. Never silently ignore a
+confirmed field.
 </codex_skill_adapter>
 
 <success_criteria>

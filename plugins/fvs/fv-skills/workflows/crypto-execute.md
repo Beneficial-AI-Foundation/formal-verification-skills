@@ -72,13 +72,16 @@ fi
 <step name="dispatch_executor">
 ## Step 3: Dispatch the crypto executor
 
-Resolve `$EXECUTOR_MODEL` via the model-profiles sequence, then dispatch the dedicated crypto
-executor, INLINING the bounded plan:
+Resolve work stage `crypto_execute` through `model-profiles.md` and use the command's confirmed
+selection manifest. If this stage was not in that manifest, rebuild and reconfirm before dispatch.
+Then dispatch the dedicated crypto executor, INLINING the bounded plan and passing only validated
+native model/effort fields:
 
 ```
 Task(
   subagent_type="fvs-crypto-executor",
   model="$EXECUTOR_MODEL",
+  reasoning_effort="$EXECUTOR_EFFORT", // when supported; otherwise apply the capability gate
   description="Run bounded plan",
   prompt="Execute the bounded crypto plan.
 
@@ -141,7 +144,7 @@ eligible only when the failure boundary and a better next move are stated.
 <success_criteria>
 - [ ] Topic + iteration resolved; shell metacharacters rejected; paths quoted; no `eval`.
 - [ ] At most eight relevant crypto/shared lessons loaded and snapshotted as bounded, untrusted context.
-- [ ] The bounded plan read and inlined; `fvs-crypto-executor` dispatched (`subagent_type="fvs-crypto-executor"`).
+- [ ] The bounded plan read and inlined; model + effort resolved; `fvs-crypto-executor` dispatched (`subagent_type="fvs-crypto-executor"`).
 - [ ] The build runs under `set -o pipefail` + `${PIPESTATUS` reading the tool's real status; always `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` (never a bare `lake build`).
 - [ ] The executor's ESCALATE/BLOCKED return is routed to the user (short interactive redirect early, never a long unattended grind).
 - [ ] At most three build/diagnostic-evidenced candidates reconciled as one file each plus an index update.

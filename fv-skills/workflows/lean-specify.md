@@ -83,19 +83,10 @@ fi
 </step>
 
 <step name="resolve_models">
-Read config and resolve models for subagent dispatch.
-
-```bash
-CONFIG=$(cat .formalising/fvs-config.json 2>/dev/null || echo '{"model_profile":"quality","model_overrides":{}}')
-```
-
-Resolution sequence:
-1. Parse `model_profile` from config (default: `"quality"`)
-2. Check `model_overrides` for `"fvs-researcher"` and `"fvs-executor"`
-3. If no override, look up profile table for the agent and profile
-4. Store resolved models as `RESEARCH_MODEL` and `EXECUTOR_MODEL`
-
-Reference: fv-skills/references/model-profiles.md (profile table and dispatch pattern)
+Use the command's confirmed selection manifest from `model-profiles.md`: scout stage `research`
+for the implementation-analysis `fvs-researcher` and authority stage `fc_spec` for the
+specification-authoring `fvs-executor`. If either stage is absent, rebuild and reconfirm the
+manifest before dispatch. Never infer tiers from agent names.
 </step>
 
 <step name="load_target_style">

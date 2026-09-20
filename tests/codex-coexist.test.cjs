@@ -92,7 +92,7 @@ describe('Codex config.toml coexistence (GSD + FVS + user tables)', () => {
     tmpDir = makeTmpDir('fvs-codex-coexist-toml-');
     const seed = [
       '[model]',
-      'name = "gpt-5-codex"',
+      'name = "catalog-user-model"',
       '',
       '# GSD Agent Configuration',
       '[agents.gsd-foo]',

@@ -41,7 +41,8 @@ Check every applicable surface:
    The implementation is the source of truth; library convenience must not change its semantics.
 
 Give each finding an ID, severity (BLOCKER, MAJOR, MINOR), a precise claim, reproducible `path:line`
-evidence or a concrete counterexample, and a minimal suggested change. Combine duplicate symptoms.
+evidence or a concrete counterexample, and a minimal suggested change. `OBSERVATION` is not a
+supported FC severity. Combine duplicate symptoms.
 Do not invent findings to satisfy a quota. Explain which surfaces were checked and which remain
 unverified; a blanket approval is insufficient.
 
@@ -78,7 +79,8 @@ Choose **PASS** only when the statement has adequate source/intent coverage and 
 semantic corrections remain. Choose **APPROVE-WITH-EDITS** only when every necessary change can be
 named exhaustively as a bounded edit and no missing authority remains. Use **REVISE** for
 substantive statement correction and **BLOCKED** for missing or ambiguous evidence. Findings may be
-empty, but Coverage and Evidence remain substantive.
+empty only for PASS or BLOCKED; APPROVE-WITH-EDITS and REVISE require at least one finding.
+Coverage and Evidence remain substantive.
 
 The reviewer response is immutable and the reviewer never edits the specification. The separate
 authoring seat (`lean-specify`) re-checks findings and writes `triage.md`. For

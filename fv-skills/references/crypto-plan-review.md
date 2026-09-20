@@ -65,7 +65,9 @@ specify a stricter order, use:
 4. The plan documents under review.
 
 On conflict, the earlier item wins. Missing or ambiguous authority is itself a finding when the
-plan makes a normative mathematical choice.
+plan makes a normative mathematical choice. When the project names a practical reference
+implementation, use it to settle details the mathematics leaves open (for example field names or
+return order); it never overrides definitions, equations, or other mathematical authority.
 
 </authority>
 
@@ -103,8 +105,10 @@ Work through every applicable item and record both findings and cleared surfaces
      surface regresses, and the follow-up stays bounded to the named defects.
 10. **Reuse audit and scope economy.** Judge the explicit `## Reuse audit` against
     the supplied grounding inventory. Missing reuse analysis is a MAJOR CONTENT
-    finding. Check new abstractions against existing project and pinned-upstream
-    signatures, and apply the appended shared reuse/scope policy.
+    finding. Check whether the same concept already exists in the project; following an external
+    specification is not itself a reason to duplicate it. Apply the appended shared reuse/scope
+    policy. Detailed tables have one canonical copy; other locations reference it rather than
+    reproducing rows that can drift.
 
 </attack_surface>
 
@@ -139,6 +143,9 @@ End with exactly one verdict:
 - **APPROVE** — no BLOCKER/MAJOR; at most MINOR findings.
 - **APPROVE-WITH-EDITS** — no BLOCKER; the named bounded edits are sufficient before dispatch.
 - **REJECT** — any BLOCKER, or MAJOR findings that require re-planning rather than bounded edits.
+
+`REJECT` and `APPROVE-WITH-EDITS` require at least one finding. An empty Findings section is valid
+only with `APPROVE`.
 
 </severities_and_verdict>
 

@@ -1,11 +1,11 @@
 ---
 name: fvs:manage
-description: "management | help update checkpoint pause resume patches kb"
+description: "management | help configure update checkpoint pause resume patches kb"
 argument-hint: ""
 allowed-tools:
   - Read
   - Skill
-requires: [help, update, checkpoint, pause-work, resume-work, reapply-patches, kb-setup]
+requires: [help, configure, update, checkpoint, pause-work, resume-work, reapply-patches, kb-setup]
 ---
 
 Route to the appropriate management skill based on the user's intent.
@@ -15,6 +15,7 @@ When invoked WITH a request, match it against the table below and invoke the mat
 | User wants | Invoke |
 |---|---|
 | Show the FVS command reference | fvs:help |
+| Configure subagent models, effort, and review defaults | fvs:configure |
 | Update FVS to the latest version | fvs:update |
 | Checkpoint current verification progress | fvs:checkpoint |
 | Pause work and write a handoff doc | fvs:pause-work |

@@ -61,9 +61,15 @@ Before spawning, inspect the `spawn_agent` tool's visible parameter schema to de
 Even when `agent_type` is present, typed dispatch is available only if the exact requested FVS type is advertised by the tool schema or a confirmed runtime registry. Codex marketplace plugins do not register the bundled Claude agent Markdown as typed Codex agents, so otherwise use the bundled-agent workaround below.
 
 
+Selection-capability gate (before manifest confirmation):
+- Compare the requested model with the exact active/inherited Codex model. Because `spawn_agent` has no inline model field, any different requested model is unresolved. Rebuild the manifest around the actual active model and ask explicitly, choose a capable external runner, or fail before dispatch in noninteractive mode.
+- When `reasoning_effort` is absent from the schema, compare the requested effort with the installed/runtime default. A mismatch is unresolved and follows the same rebuild/ask-or-fail rule.
+- Never confirm a requested model or effort and then omit it with a warning. The marketplace plugin does not install Codex agent TOML. Use this mapping only when the exact FVS agent type is registered independently; otherwise use the bundled-agent workaround.
+
 Typed mapping (agent_type-capable schema only):
 - `Task(subagent_type="X", prompt="Y")` -> `spawn_agent(agent_type="X", message="Y")`
-- `Task(model="...")` -> omit. `spawn_agent` has no inline `model` parameter. The marketplace plugin does not install Codex agent TOML. Use this mapping only when the exact FVS agent type is registered independently; otherwise use the bundled-agent workaround.
+- `Task(model="...")` -> omit only after the selection-capability gate proves it equals the active/inherited model.
+- `Task(reasoning_effort="...")` -> `spawn_agent(reasoning_effort="...")` when that field is present. If absent, dispatch only after the gate proves the installed/runtime default equals the confirmed effort.
 - `fork_context: false` by default -- FVS agents load their own context via `<files_to_read>` blocks.
 
 Generic-agent workaround (schema with NO agent_type field):
@@ -236,23 +242,16 @@ mkdir -p "$PROOF_ENG_ROOT/lessons/fc" "$PROOF_ENG_ROOT/lessons/crypto" \
   cp ${CLAUDE_PLUGIN_ROOT}/fv-skills/templates/proof-engineering-index.md "$PROOF_ENG_INDEX"
 ```
 
-## Step 3: Read Config and Resolve Models
+## Step 3: Read Config and Resolve Models + Effort
 
-Read the project config to determine which models to use for subagent dispatch:
+Read the complete config and apply `model-profiles.md`. This command declares `fc_proof_plan` for
+the structure/planning `fvs-researcher` and `fc_spec` for the Lean-definition/spec-authoring
+`fvs-executor`. Resolve each stage independently; do not choose tiers from the shared agent names.
 
-```bash
-CONFIG=$(cat .formalising/fvs-config.json 2>/dev/null || echo '{"model_profile":"quality","model_overrides":{}}')
-```
-
-Resolve models using the profile table from `fv-skills/references/model-profiles.md`:
-
-1. Parse `model_profile` from config (default: `"quality"`)
-2. Check `model_overrides` for `"fvs-researcher"` and `"fvs-executor"`
-3. If no override, look up profile table:
-   - quality: fvs-researcher=inherit, fvs-executor=inherit
-   - balanced: fvs-researcher=sonnet, fvs-executor=sonnet
-   - budget: fvs-researcher=haiku, fvs-executor=sonnet
-4. Store resolved models as `RESEARCH_MODEL` and `EXECUTOR_MODEL`
+Before dispatch, show one command-level selection manifest containing both authority stages and
+obtain confirmation. Offer one-run adjustment, exact-stage Save override, notes that rebuild and
+reconfirm the manifest, and Cancel. Missing preferred models or unsupported efforts prompt
+interactively; noninteractive unresolved choices fail before dispatch with exact remediation.
 
 ## Step 4: Read Reference Files for Inlining
 
@@ -284,6 +283,7 @@ If no Aeneas markers: skip aeneas-patterns (paper track may be pure math, not Ae
 Task(
   subagent_type="fvs-researcher",
   model="$RESEARCH_MODEL",
+  reasoning_effort="$RESEARCH_EFFORT", // when supported; otherwise apply the capability gate
   description="Research context for formalisation: $TASK_DESCRIPTION",
   prompt="Research mode: formalise
 
@@ -360,6 +360,7 @@ Use AskUserQuestion. If user adjusts: incorporate feedback before dispatching ex
 Task(
   subagent_type="fvs-executor",
   model="$EXECUTOR_MODEL",
+  reasoning_effort="$EXECUTOR_EFFORT", // when supported; otherwise apply the capability gate
   description="Create Lean files for formalisation: $TASK_DESCRIPTION",
   prompt="Execute mode: formalise
 

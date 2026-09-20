@@ -160,23 +160,16 @@ mkdir -p "$PROOF_ENG_ROOT/lessons/fc" "$PROOF_ENG_ROOT/lessons/crypto" \
   cp ~/.claude/fv-skills/templates/proof-engineering-index.md "$PROOF_ENG_INDEX"
 ```
 
-## Step 3: Read Config and Resolve Models
+## Step 3: Read Config and Resolve Models + Effort
 
-Read the project config to determine which models to use for subagent dispatch:
+Read the complete config and apply `model-profiles.md`. This command declares `fc_proof_plan` for
+the structure/planning `fvs-researcher` and `fc_spec` for the Lean-definition/spec-authoring
+`fvs-executor`. Resolve each stage independently; do not choose tiers from the shared agent names.
 
-```bash
-CONFIG=$(cat .formalising/fvs-config.json 2>/dev/null || echo '{"model_profile":"quality","model_overrides":{}}')
-```
-
-Resolve models using the profile table from `fv-skills/references/model-profiles.md`:
-
-1. Parse `model_profile` from config (default: `"quality"`)
-2. Check `model_overrides` for `"fvs-researcher"` and `"fvs-executor"`
-3. If no override, look up profile table:
-   - quality: fvs-researcher=inherit, fvs-executor=inherit
-   - balanced: fvs-researcher=sonnet, fvs-executor=sonnet
-   - budget: fvs-researcher=haiku, fvs-executor=sonnet
-4. Store resolved models as `RESEARCH_MODEL` and `EXECUTOR_MODEL`
+Before dispatch, show one command-level selection manifest containing both authority stages and
+obtain confirmation. Offer one-run adjustment, exact-stage Save override, notes that rebuild and
+reconfirm the manifest, and Cancel. Missing preferred models or unsupported efforts prompt
+interactively; noninteractive unresolved choices fail before dispatch with exact remediation.
 
 ## Step 4: Read Reference Files for Inlining
 
@@ -208,6 +201,7 @@ If no Aeneas markers: skip aeneas-patterns (paper track may be pure math, not Ae
 Task(
   subagent_type="fvs-researcher",
   model="$RESEARCH_MODEL",
+  reasoning_effort="$RESEARCH_EFFORT", // when supported; otherwise apply the capability gate
   description="Research context for formalisation: $TASK_DESCRIPTION",
   prompt="Research mode: formalise
 
@@ -284,6 +278,7 @@ Use AskUserQuestion. If user adjusts: incorporate feedback before dispatching ex
 Task(
   subagent_type="fvs-executor",
   model="$EXECUTOR_MODEL",
+  reasoning_effort="$EXECUTOR_EFFORT", // when supported; otherwise apply the capability gate
   description="Create Lean files for formalisation: $TASK_DESCRIPTION",
   prompt="Execute mode: formalise
 

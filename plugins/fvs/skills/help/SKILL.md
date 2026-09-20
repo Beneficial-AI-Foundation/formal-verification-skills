@@ -53,9 +53,15 @@ Before spawning, inspect the `spawn_agent` tool's visible parameter schema to de
 Even when `agent_type` is present, typed dispatch is available only if the exact requested FVS type is advertised by the tool schema or a confirmed runtime registry. Codex marketplace plugins do not register the bundled Claude agent Markdown as typed Codex agents, so otherwise use the bundled-agent workaround below.
 
 
+Selection-capability gate (before manifest confirmation):
+- Compare the requested model with the exact active/inherited Codex model. Because `spawn_agent` has no inline model field, any different requested model is unresolved. Rebuild the manifest around the actual active model and ask explicitly, choose a capable external runner, or fail before dispatch in noninteractive mode.
+- When `reasoning_effort` is absent from the schema, compare the requested effort with the installed/runtime default. A mismatch is unresolved and follows the same rebuild/ask-or-fail rule.
+- Never confirm a requested model or effort and then omit it with a warning. The marketplace plugin does not install Codex agent TOML. Use this mapping only when the exact FVS agent type is registered independently; otherwise use the bundled-agent workaround.
+
 Typed mapping (agent_type-capable schema only):
 - `Task(subagent_type="X", prompt="Y")` -> `spawn_agent(agent_type="X", message="Y")`
-- `Task(model="...")` -> omit. `spawn_agent` has no inline `model` parameter. The marketplace plugin does not install Codex agent TOML. Use this mapping only when the exact FVS agent type is registered independently; otherwise use the bundled-agent workaround.
+- `Task(model="...")` -> omit only after the selection-capability gate proves it equals the active/inherited model.
+- `Task(reasoning_effort="...")` -> `spawn_agent(reasoning_effort="...")` when that field is present. If absent, dispatch only after the gate proves the installed/runtime default equals the confirmed effort.
 - `fork_context: false` by default -- FVS agents load their own context via `<files_to_read>` blocks.
 
 Generic-agent workaround (schema with NO agent_type field):
@@ -208,17 +214,17 @@ Generate Lean spec skeleton following @[step] theorem pattern.
 Usage: `/fvs:lean-specify scalar_mul_inner`
 Result: `Specs/{path}/{FunctionName}.lean` with sorry placeholder
 
-**`/fvs:lean-spec-review <spec.lean> [--reviewer codex|claude|other] [--model ID] [--effort LEVEL]`**
+**`/fvs:lean-spec-review <spec.lean> [--reviewer codex|claude|pi|other] [--model ID] [--effort LEVEL]`**
 Adversarially review an FC specification against Rust, extracted Lean, and interpretation definitions.
 
-- Offers reviewer -> model -> effort menus; the other runtime appears first
-- Codex suggestions: GPT Sol and Astra; Claude suggestion: Fable; cheaper/custom models allowed
-- Effort defaults to `max`; lower settings and `runtime-default` remain selectable
+- Quality recommends the authenticated opposite provider/runtime at authority-tier effort
+- Shows one reviewer/model/effort selection manifest before launch; notes rebuild and reconfirm it
+- Supports one-run adjustments or saved `spec_review` overrides without changing sibling stages
 - Uses fresh reviewers and labels cross-runtime versus same-runtime review
-- Other providers use an exported packet and imported response; missing CLIs offer setup/fallback
+- Missing opposite CLIs ask among setup, same-runtime, Other packet, one-run skip, or cancel
 - Preserves immutable `review.md` plus separate author-owned `triage.md` and input hashes
-- Never auto-selects a menu item; supplying all flags is the non-interactive path
-- One-run `Skip review` records `Unreviewed (user skipped)` and never starts proof work
+- Unresolved noninteractive selections fail before launch with exact remediation
+- One-run `Skip review` records `Unreviewed (user skipped)`, stops, and never starts proof work
 - PASS proceeds; APPROVE-WITH-EDITS proceeds after author edits and gates, without another review
 - REVISE/BLOCKED create a fresh review with prior history; each invocation stops after three rounds
 
@@ -226,7 +232,7 @@ Runs automatically after `lean-specify` by default, even on projects without con
 only automation, merge `"spec_review": {"automatic": false}` into `.formalising/fvs-config.json`,
 or create the file with `{"spec_review": {"automatic": false}}`. Manual invocation still works.
 
-Usage: `/fvs:lean-spec-review Specs/Scalar/Mul.lean --reviewer codex --model gpt-6-astra --effort max`
+Usage: `/fvs:lean-spec-review Specs/Scalar/Mul.lean --reviewer codex --model <exact-catalog-id> --effort <supported-effort>`
 
 **`/fvs:lean-verify <spec_file_path>`**
 Attempt proof using domain tactics with interactive feedback.
@@ -321,12 +327,13 @@ Author the next bounded, runtime-neutral executor plan for a topic, grounded in 
 Usage: `/fvs:crypto-plan "CKA from KEM"`
 Usage: `/fvs:crypto-plan "CKA from KEM" --codex`   # hand the planning think-step to Codex
 
-**`/fvs:crypto-review <topic> [nN] [--target plan|followup] [--reviewer codex|claude|other] [--model ID] [--effort LEVEL]`**
+**`/fvs:crypto-review <topic> [nN] [--target plan|followup] [--reviewer codex|claude|pi|other] [--model ID] [--effort LEVEL]`**
 Send a plan to a selected fresh adversarial reviewer.
 
-- Recommends the non-author runtime, then model (Sol/Astra or Fable/Sonnet), then max-first effort
+- Quality recommends an authenticated opposite provider/runtime with its authority-tier model + max effort
+- Shows one confirmed selection manifest; notes rebuild it, one-run edits stay ephemeral, and saves affect only `crypto_review`
 - Labels cross-runtime, same-runtime fresh reviewer, and unverified provenance honestly
-- Runs Codex or Claude with read-only ephemeral controls and no repository write tools
+- Runs provider-qualified Pi, Codex CLI, or Claude Code CLI with bounded read-only source controls
 - Attacks source fidelity, statement soundness, semantic closure, interfaces, gates, boundedness,
   security/data-loss risks, and roadmap coherence
 - Wrapper preserves immutable review evidence; the authoring seat writes separate hash-bound triage
@@ -337,7 +344,7 @@ Send a plan to a selected fresh adversarial reviewer.
 - One-run `Skip review` records `Unreviewed (user skipped)` and never starts execution
 
 Usage: `/fvs:crypto-review "CKA from KEM" n1 --target plan`
-Usage: `/fvs:crypto-review "CKA from KEM" n1 --target followup --reviewer claude --model sonnet --effort max`
+Usage: `/fvs:crypto-review "CKA from KEM" n1 --target followup --reviewer claude --model <exact-catalog-id> --effort <supported-effort>`
 
 Crypto plan and follow-up enter the interactive review handoff by default. To disable only that
 automatic handoff, merge `"crypto_review": {"automatic": false}` into
@@ -363,6 +370,15 @@ Usage: `/fvs:crypto-followup "CKA from KEM" n1`
 ### Manage (`/fvs:manage`)
 
 Session, maintenance, and setup commands.
+
+**`/fvs:configure`**
+Configure the role-aware quality profile, exact runtime+stage overrides, compatibility agent
+overrides, and FC/crypto review defaults through choice menus. Quality uses strongest+max for
+authority artifacts, executor+xhigh for plan execution/proof filling, and smaller+high for scout
+work, but only after matching an exact current runtime/provider catalog entry. Every command shows
+one confirmable selection manifest; notes rebuild it before launch.
+
+Usage: `/fvs:configure`
 
 **`/fvs:update`**
 Update FVS to latest version.
@@ -465,6 +481,7 @@ ${CLAUDE_PLUGIN_ROOT}/                   # Installed FVS content (global)
 │   ├── checkpoint.md
 │   ├── pause-work.md
 │   ├── resume-work.md
+│   ├── configure.md
 │   ├── update.md
 │   ├── reapply-patches.md
 │   ├── sync-aeneas-verif.md

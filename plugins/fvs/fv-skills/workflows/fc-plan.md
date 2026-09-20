@@ -71,11 +71,10 @@ but endpoint truth remains project-wide.
 </step>
 
 <step name="resolve_models">
-Read `.formalising/fvs-config.json`, defaulting to the `quality` profile. Honor per-agent overrides
-before the profile defaults:
-
-- `fvs-researcher`: quality=inherit, balanced=sonnet, budget=haiku
-- `fvs-executor`: quality=inherit, balanced=sonnet, budget=sonnet
+Use the command's confirmed selection manifest from `model-profiles.md`: stage `research` for
+`fvs-researcher` and authority stage `fc_plan` for the plan-authoring `fvs-executor`. Stage
+overrides precede compatibility agent overrides. If either stage is absent, rebuild and reconfirm
+the manifest before dispatch.
 </step>
 
 <step name="research_phase">

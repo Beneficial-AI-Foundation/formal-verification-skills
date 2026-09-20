@@ -96,11 +96,16 @@ NEXT=$(( ${LATEST:-0} + 1 ))   # if an explicit nN arg was given, honor it inste
 The iteration naming is `PLAN_nN.md`, `EXEC_PLAN_nN.md`, `EVAL_nN.md`,
 `FOLLOWUP_PLAN_nN.md`. A new topic begins at `n1`; a re-run resumes at `latest + 1`.
 
-## Step 3: Resolve the thinker model
+## Step 3: Resolve the thinker model + effort
 
-Resolve `$THINKER_MODEL` for `fvs-crypto-thinker` via the model-profiles dispatch sequence
-(config `model_overrides` first, then the profile table, then `inherit` for unknown agents). On
-Codex the `model=` parameter is silently ignored; the dispatch is unchanged.
+Declare stage key `crypto_plan` for `fvs-crypto-thinker`. Resolve `$THINKER_MODEL` and
+`$THINKER_EFFORT` through the canonical precedence in `model-profiles.md` for the runtime that will
+actually run it: the active runtime by default, or Codex CLI when `--codex` is present. Query that
+runtime's current catalog and include the actual runner in the manifest. Before dispatch, show and
+confirm the command-level selection manifest. Offer one-run adjustment, exact-stage Save override,
+notes that rebuild and reconfirm the manifest, and Cancel. Missing preferred models or unsupported
+efforts prompt interactively; noninteractive unresolved choices fail before dispatch with exact
+remediation.
 
 ## Step 4: KB grounding -- intensive when configured, cache-before-requery
 
@@ -148,13 +153,15 @@ fi
 
 ## Step 5: Dispatch the thinker (author the bounded plan)
 
-Default (no `--codex`) -- dispatch the in-runtime thinker. `cat` the topic artifacts and the cached
-KB sources and INLINE them into the prompt -- references do NOT cross the Task boundary:
+Use the confirmed `crypto_plan` selection. `cat` the topic artifacts and cached KB sources and
+INLINE them into the prompt -- references do NOT cross the Task boundary. Without `--codex`,
+dispatch the in-runtime thinker:
 
 ```
 Task(
   subagent_type="fvs-crypto-thinker",
   model="$THINKER_MODEL",
+  reasoning_effort="$THINKER_EFFORT", // when supported; otherwise apply the capability gate
   description="Author bounded plan",
   prompt="Mode: plan
 
@@ -184,12 +191,16 @@ FVS-owned Codex thinker helper. The Codex thinker takes ONLY this thinker stage;
 is UNCHANGED (the executor stays `fvs-executor`, the artifacts stay under `fv-plans/<topic>/`, the
 bounded-plan contract and runtime-neutral naming are identical). Coordination is ARTIFACT-MEDIATED:
 the Codex thinker reads the topic folder, writes `PLAN_nN.md` / `EXEC_PLAN_nN.md` under `plans/`, and
-EXITS -- there is NO live cross-process bridge and no kept-alive process across stages. The helper is
-EFFORT-ONLY: it passes `--effort xhigh` (>= xhigh enforced) and NO `--model`.
+EXITS -- there is NO live cross-process bridge and no kept-alive process across stages. Pass the
+resolved Codex model and effort instead of a fixed helper default. Omit `--model` only when the
+confirmed value is `inherit`.
 
 ```bash
-# --codex mode: swap the in-runtime thinker for the FVS-owned Codex thinker (plan stage).
-node ~/.claude/scripts/fvs-codex-think.mjs plan --topic "$ROOT" --effort xhigh
+# --codex mode: use the confirmed crypto_plan selection for Codex CLI.
+CODEX_MODEL_ARGS=()
+[ "$THINKER_MODEL" = "inherit" ] || CODEX_MODEL_ARGS=(--model "$THINKER_MODEL")
+node ~/.claude/scripts/fvs-codex-think.mjs plan --topic "$ROOT" \
+  "${CODEX_MODEL_ARGS[@]}" --effort "$THINKER_EFFORT"
 ```
 
 If `--codex` is passed but the `codex` CLI is unavailable, the helper surfaces its graceful
@@ -285,11 +296,10 @@ Next:      {/fvs:crypto-execute only after approval | exact crypto-review resume
 
 <codex_skill_adapter>
 The `--codex` flag swaps the thinker for a Codex thinker at THIS stage via the FVS-owned helper
-`~/.claude/scripts/fvs-codex-think.mjs`
-(`node ~/.claude/scripts/fvs-codex-think.mjs plan --topic "$ROOT" --effort xhigh`).
-The helper is FVS-owned and self-contained: it does NOT import or depend on the openai-codex plugin;
-it spawns `codex` via an argv array (never a shell string), is EFFORT-ONLY (passes `--effort xhigh`,
-NO `--model`), and points Codex at the topic folder as its working root. Coordination is
+`~/.claude/scripts/fvs-codex-think.mjs`, passing the confirmed `crypto_plan` Codex model (unless
+`inherit`) and effort. The helper is FVS-owned and self-contained: it does NOT import or depend on
+the openai-codex plugin; it spawns `codex` via an argv array (never a shell string), applies the
+resolved model/effort, and points Codex at the topic folder as its working root. Coordination is
 ARTIFACT-MEDIATED: the Codex thinker writes its plan artifact under `plans/` and exits -- there is NO
 live cross-process bridge. If `codex` is absent, the helper fails gracefully with install guidance and
 this command offers to fall back to single-runtime (re-run without `--codex`). Without `--codex`, the
@@ -302,7 +312,7 @@ auto-picks a default, never writes an upstream artifact).
 - [ ] Topic resolved into a slug (whitespace -> `-`, capitalization preserved); shell metacharacters rejected; every path quoted; no `eval`.
 - [ ] Artifact tree `fv-plans/<topic>/{plans,reviews,sources,merge}` resolved/created; restart-from-records reads the latest `nN`.
 - [ ] At most eight relevant crypto/shared lessons loaded and snapshotted for either thinker runtime.
-- [ ] `$THINKER_MODEL` resolved via the model-profiles sequence; the thinker dispatched (`subagent_type="fvs-crypto-thinker"`) with inlined context.
+- [ ] `$THINKER_MODEL` / `$THINKER_EFFORT` resolved for the actual runner; the in-runtime Task or Codex helper receives both confirmed settings and inlined/artifact context.
 - [ ] KB grounded intensively when configured; cached under `sources/` and re-read before re-querying; loud-fail-once + labeled-degrade + `/fvs:kb-setup` when unconfigured.
 - [ ] The bounded-plan contract (stop conditions, verification commands `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`, immutable public statements, allowed-`sorry`) is written into `EXEC_PLAN_nN.md`.
 - [ ] Both plan artifacts record truthful `Authoring runtime:` provenance; automatic review runs

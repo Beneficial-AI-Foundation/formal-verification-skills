@@ -4,7 +4,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
-const { saveLocalPatches, writeManifest } = require('../bin/install.js');
+const {
+  convertClaudeAgentToCodexAgent,
+  generateCodexAgentToml,
+  saveLocalPatches,
+  writeManifest,
+} = require('../bin/install.js');
 
 test('updates preserve additions, tracked edits, legacy orphans and earlier complete bundles', () => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-patches-')));
@@ -57,6 +62,69 @@ test('updates preserve additions, tracked edits, legacy orphans and earlier comp
     assert.throws(install);
     assert.equal(fs.readFileSync(path.join(dir, 'skills/fvs-help/SKILL.md'), 'utf8'), before);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a fresh Codex install creates its missing config directory', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-fresh-codex-'));
+  const configDir = path.join(root, '.codex');
+  try {
+    assert.deepEqual(saveLocalPatches(configDir, 'codex'), []);
+    assert.ok(fs.statSync(configDir).isDirectory());
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('unchanged generated Codex agent TOMLs are not local patches', () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-generated-toml-')));
+  const source = '---\nname: fvs-researcher\ndescription: Test researcher\ntools: Read\n---\n\nDo research.\n';
+  const put = (rel, text) => {
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), text);
+  };
+  try {
+    put('agents/fvs-researcher.md', convertClaudeAgentToCodexAgent(source));
+    put('agents/fvs-researcher.toml', generateCodexAgentToml('fvs-researcher', source));
+    const manifest = writeManifest(dir, 'codex');
+    delete manifest.files['agents/fvs-researcher.toml']; // 2.3.1 did not track generated mirrors
+    fs.writeFileSync(path.join(dir, 'fvs-file-manifest.json'), JSON.stringify(manifest, null, 2));
+
+    assert.deepEqual(saveLocalPatches(dir, 'codex'), []);
+    assert.ok(!fs.existsSync(path.join(dir, 'fvs-local-patches/backup-meta.json')));
+
+    fs.appendFileSync(path.join(dir, 'agents/fvs-researcher.toml'), '# user setting\n');
+    assert.deepEqual(saveLocalPatches(dir, 'codex'), ['agents/fvs-researcher.toml']);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('resolved patches stay historical instead of becoming active again', () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-resolved-patch-')));
+  const file = path.join(dir, 'fv-skills', 'references', 'contract.md');
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, 'upstream');
+    writeManifest(dir, 'codex');
+    fs.writeFileSync(file, 'local');
+    saveLocalPatches(dir, 'codex');
+
+    const metaPath = path.join(dir, 'fvs-local-patches/backup-meta.json');
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    assert.deepEqual(meta.pending, meta.files);
+    fs.writeFileSync(file, 'upstream');
+    meta.pending = []; // reapply chose the new upstream file
+    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+    const bundles = fs.readdirSync(path.join(dir, 'fvs-local-patches/bundles'));
+
+    assert.deepEqual(saveLocalPatches(dir, 'codex'), []);
+    assert.equal(JSON.parse(fs.readFileSync(metaPath, 'utf8')).bundle, meta.bundle);
+    assert.deepEqual(fs.readdirSync(path.join(dir, 'fvs-local-patches/bundles')), bundles);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('reapply workflow retires resolved entries without deleting history', () => {
+  const workflow = fs.readFileSync(path.join(__dirname, '../commands/fvs/reapply-patches.md'), 'utf8');
+  assert.match(workflow, /process only `pending`/i);
+  assert.match(workflow, /removed from `pending`/i);
+  assert.match(workflow, /Preserve `bundle`, historical `files`, `hashes`,/);
+  assert.match(workflow, /must not reactivate/i);
 });
 
 test('a redirected patch destination fails before replacing installed files', () => {
