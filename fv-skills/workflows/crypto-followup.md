@@ -21,7 +21,11 @@ NEVER fabricates a follow-up that silently picks one side of a modeling ruling.
 Resolve the topic into a slug (whitespace -> `-`, capitalization preserved). REJECT a slug with shell
 metacharacters, QUOTE every path expansion, NEVER `eval` a path. Confine all writes to
 `.formalising/fv-plans/<topic>/{plans,reviews,sources,merge}` except for reviewed canonical
-lesson/index updates under `.formalising/proof-engineering/`; never write generated Lean.
+lesson/index updates under `.formalising/proof-engineering/`. Bridge boundary -- only when the plan
+explicitly declares implementation/model bridging: generated `Funs.lean`, `Types.lean`, and templates
+remain immutable inputs; write authority is limited to exact, plan-named, hand-written model,
+representation-map, contract/specification, bridge, correctness, `_toModel`, or `FunsExternal.lean`
+paths. Project markers never grant write authority.
 </step>
 
 <step name="proof_engineering_memory">
@@ -159,5 +163,5 @@ failed, cancelled, pending, and unverified states never start execution.
 - [ ] On `FOLLOWUP` the high-effort thinker (`fvs-crypto-thinker`) dispatched; the bounded follow-up plan written to `plans/`.
 - [ ] The follow-up records truthful provenance and runs at most three review rounds.
 - [ ] At most three source/ruling-evidenced candidates reconciled as one file each plus an index update.
-- [ ] No bare `lake build`, no `gh` open/create, no generated-Lean write.
+- [ ] No bare `lake build`, no `gh` open/create; bridge boundary preserved when explicitly planned.
 </success_criteria>

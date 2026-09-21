@@ -20,7 +20,7 @@
 //   3. The always-adversarial decision verbs ACCEPT|FOLLOWUP|HUMAN_RULING|BLOCKED.
 //   4. The KB grounding language: loud-fail-once + labeled-degrade +
 //      /fvs:kb-setup + fvs-kb-query.py + the sources/ cache-before-requery rule.
-//   5. The single-runtime dispatch shape (fvs-crypto-thinker + fvs-executor).
+//   5. The single-runtime dispatch shape (fvs-crypto-thinker + fvs-crypto-executor).
 //   6. The set -o pipefail + ${PIPESTATUS green-build guard in crypto-execute.
 //
 // Pure node:test + node:assert/strict, zero npm dependencies.
@@ -313,11 +313,8 @@ for (const absPath of [STAGE_FILES.cmdExecute, STAGE_FILES.wfExecute,
 //     The dedicated crypto executor must carry the whole-unit
 //     implement -> check -> complete -> escalate -> BLOCKED discipline, drive
 //     proofs via the runtime getDiagnostics tool, report to IMPLEMENTATION_nN.md,
-//     and EXPECT style warnings that surface only at lake build. It must NOT
-//     carry the FC proof-attempt one-sorry framing (that grind stays FC-only).
-//     Dormant until the agent file lands (created this wave); the crypto-execute
-//     dispatch-shape token retarget is owned by a later wave and is intentionally
-//     NOT asserted here.
+//     and EXPECT style warnings that surface only at lake build. It works the
+//     whole bounded unit with diagnostics between meaningful edits.
 // ---------------------------------------------------------------------------
 const CRYPTO_EXECUTOR = path.join(AGENTS_DIR, 'fvs-crypto-executor.md');
 whenExists(CRYPTO_EXECUTOR, `Crypto loop: executor discipline in ${rel(CRYPTO_EXECUTOR)} (D-01/D-04)`, (content, absPath) => {
@@ -337,14 +334,45 @@ whenExists(CRYPTO_EXECUTOR, `Crypto loop: executor discipline in ${rel(CRYPTO_EX
     assert.ok(/nice -n 19 lake build/.test(content) && /style/i.test(content),
       `${rel(absPath)} missing the lake-build style-authority expectation`);
   });
-  it('explicitly rejects the one-sorry / <=3-line / compile-between-steps grind', () => {
-    assert.ok(/reject/i.test(content) && /pair-programm/i.test(content),
-      `${rel(absPath)} missing the explicit rejection of the proof-attempt grind`);
+  it('works the whole unit with diagnostics between meaningful edits', () => {
+    assert.match(content, /whole specified unit/i);
+    assert.match(content, /diagnostics between meaningful edits/i);
   });
-  it('does NOT carry the affirmative proof-attempt one-sorry framing', () => {
-    assert.ok(!/Work ONE sorry at a time/.test(content),
-      `${rel(absPath)} must not carry the FC proof-attempt "Work ONE sorry at a time" framing`);
-  });
+});
+
+// ---------------------------------------------------------------------------
+// 10a. Standalone paper crypto stays independent from FC/Aeneas while an
+//      explicitly planned implementation/model bridge remains fail-closed.
+// ---------------------------------------------------------------------------
+const CRYPTO_BOUNDARY_SURFACES = [
+  path.join(AGENTS_DIR, 'fvs-crypto-thinker.md'),
+  CRYPTO_EXECUTOR,
+  ...['plan', 'execute', 'eval', 'followup'].flatMap(stage => [
+    path.join(CMD_DIR, `crypto-${stage}.md`),
+    path.join(WF_DIR, `crypto-${stage}.md`),
+  ]),
+];
+
+describe('Crypto loop: standalone paper boundary (#65)', () => {
+  for (const absPath of CRYPTO_BOUNDARY_SURFACES) {
+    const content = readContent(absPath);
+
+    it(`${rel(absPath)} has no FC/Aeneas-only identity or handoff`, () => {
+      assert.doesNotMatch(content,
+        /Lean-via-Aeneas|\/fvs:aeneas-extract|(?:^|[^-])fvs-executor|\bFC\b|proof-attempt|sorry-grind/im);
+      assert.doesNotMatch(content,
+        /NEVER (?:edit|write) generated|never write (?:a )?generated|no generated-Lean (?:write|edits)/im);
+    });
+
+    it(`${rel(absPath)} permits bridge writes only through an explicit plan allowlist`, () => {
+      assert.match(content, /plan\s+explicitly declares\s+implementation\/model bridg/i);
+      assert.match(content, /generated[\s\S]*Funs\.lean[\s\S]*Types\.lean[\s\S]*templates?[\s\S]*immutable/i);
+      assert.equal(content.match(/`Funs\.lean`/g)?.length, 1);
+      assert.equal(content.match(/`Types\.lean`/g)?.length, 1);
+      assert.match(content, /exact[\s\S]*plan-named[\s\S]*hand-written/i);
+      assert.match(content, /project\s+markers?[\s\S]*(?:no|never)[\s\S]*write\s+authority/i);
+    });
+  }
 });
 
 // ---------------------------------------------------------------------------

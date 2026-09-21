@@ -75,7 +75,7 @@ Typed mapping (agent_type-capable schema only):
 - `fork_context: false` by default -- FVS agents load their own context via `<files_to_read>` blocks.
 
 Generic-agent workaround (schema with NO agent_type field):
-When only the generic schema is available, typed FVS agent dispatch (`fvs-researcher`, `fvs-executor`, etc.) is NOT possible. This workaround is NOT equivalent to typed execution — FVS agents carry verification-aware prompts and sandbox settings a generic subagent lacks. Fallback:
+When only the generic schema is available, typed FVS agent dispatch (`fvs-crypto-thinker`, `fvs-crypto-executor`, etc.) is NOT possible. This workaround is NOT equivalent to typed execution — FVS agents carry verification-aware prompts and sandbox settings a generic subagent lacks. Fallback:
 1. Read `${CLAUDE_PLUGIN_ROOT}/agents/<agent-name>.md` and extract its instructions. If the token is still literal, resolve the path from this SKILL.md as described above.
 2. Spawn a generic/default agent and inject those instructions as a role preamble before the task prompt.
 3. Label results clearly as "generic-agent workaround" so the user knows typed guarantees are not in effect.

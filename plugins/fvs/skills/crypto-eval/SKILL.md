@@ -74,7 +74,7 @@ Typed mapping (agent_type-capable schema only):
 - `fork_context: false` by default -- FVS agents load their own context via `<files_to_read>` blocks.
 
 Generic-agent workaround (schema with NO agent_type field):
-When only the generic schema is available, typed FVS agent dispatch (`fvs-researcher`, `fvs-executor`, etc.) is NOT possible. This workaround is NOT equivalent to typed execution — FVS agents carry verification-aware prompts and sandbox settings a generic subagent lacks. Fallback:
+When only the generic schema is available, typed FVS agent dispatch (`fvs-crypto-thinker`, `fvs-crypto-executor`, etc.) is NOT possible. This workaround is NOT equivalent to typed execution — FVS agents carry verification-aware prompts and sandbox settings a generic subagent lacks. Fallback:
 1. Read `${CLAUDE_PLUGIN_ROOT}/agents/<agent-name>.md` and extract its instructions. If the token is still literal, resolve the path from this SKILL.md as described above.
 2. Spawn a generic/default agent and inject those instructions as a role preamble before the task prompt.
 3. Label results clearly as "generic-agent workaround" so the user knows typed guarantees are not in effect.
@@ -142,7 +142,11 @@ ROOT=".formalising/fv-plans/$SLUG"
 
 Confine eval writes to `.formalising/fv-plans/<topic>/{plans,reviews,sources,merge}`. The only
 additional writes allowed are reviewed canonical updates under `.formalising/proof-engineering/`.
-Never write a generated Lean file.
+Bridge boundary -- only when the plan explicitly declares implementation/model bridging: generated
+`Funs.lean`, `Types.lean`, and templates remain immutable inputs; any implementation write authority
+is limited to exact, plan-named, hand-written model, representation-map, contract/specification,
+bridge, correctness, `_toModel`, or `FunsExternal.lean` paths. Project markers never grant write
+authority.
 
 ## Step 1a: Load the Crypto Proof-Engineering Overlay
 
@@ -283,5 +287,5 @@ an upstream artifact).
 - [ ] `HUMAN_RULING` routes to a HALT; `BLOCKED` is recorded as a valid outcome (suggest `/fvs:pause-work`).
 - [ ] A `sorry` is judged as a named unmet obligation, never by count or as a kernel-complete proof.
 - [ ] At most three eval-evidenced candidates reconciled as one lesson per file plus index updates.
-- [ ] No bare `lake build`, repeated gate build, external numeric recomputation, `gh` open/create, or generated-Lean write.
+- [ ] No bare `lake build`, repeated gate build, external numeric recomputation, or `gh` open/create; bridge boundary preserved when explicitly planned.
 </success_criteria>

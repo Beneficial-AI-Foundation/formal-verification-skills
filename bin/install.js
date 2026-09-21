@@ -747,6 +747,9 @@ function convertClaudeToCodexMarkdown(content) {
 function getCodexSkillAdapterHeader(skillName, options = {}) {
   const pluginName = options.pluginName || null;
   const invocation = pluginName ? `$${pluginName}:${skillName}` : `$${skillName}`;
+  const dispatchExamples = /(?:^|-)crypto-/.test(skillName)
+    ? '`fvs-crypto-thinker`, `fvs-crypto-executor`'
+    : '`fvs-researcher`, `fvs-executor`';
   const pluginCompatibility = pluginName
     ? `\n## D. Shared Plugin Syntax\n- This file is shared with Claude Code. On Codex, interpret \`/${pluginName}:<name>\` references as \`$${pluginName}:<name>\`.\n- Treat \`$ARGUMENTS\` in the shared body as \`{{FVS_ARGS}}\`.\n- \`\${CLAUDE_PLUGIN_ROOT}\` is the installed plugin root. If a host leaves that token unexpanded, resolve the plugin root as two directories above this SKILL.md.\n`
     : '';
@@ -812,7 +815,7 @@ Typed mapping (agent_type-capable schema only):
 - \`fork_context: false\` by default -- FVS agents load their own context via \`<files_to_read>\` blocks.
 
 Generic-agent workaround (schema with NO agent_type field):
-When only the generic schema is available, typed FVS agent dispatch (\`fvs-researcher\`, \`fvs-executor\`, etc.) is NOT possible. This workaround is NOT equivalent to typed execution — FVS agents carry verification-aware prompts and sandbox settings a generic subagent lacks. Fallback:
+When only the generic schema is available, typed FVS agent dispatch (${dispatchExamples}, etc.) is NOT possible. This workaround is NOT equivalent to typed execution — FVS agents carry verification-aware prompts and sandbox settings a generic subagent lacks. Fallback:
 ${fallbackSteps}
 
 Parallel fan-out:

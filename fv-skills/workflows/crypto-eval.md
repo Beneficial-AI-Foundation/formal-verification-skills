@@ -25,7 +25,11 @@ remains memory-blind so it can independently challenge authoring assumptions.
 Resolve the topic into a runtime-neutral slug (whitespace -> `-`, capitalization preserved). REJECT
 shell metacharacters, QUOTE every path, NEVER `eval` a path. Confine writes to
 `.formalising/fv-plans/<topic>/{plans,reviews,sources,merge}` except for reviewed canonical
-lesson/index updates under `.formalising/proof-engineering/`; never write a generated Lean file.
+lesson/index updates under `.formalising/proof-engineering/`. Bridge boundary -- only when the plan
+explicitly declares implementation/model bridging: generated `Funs.lean`, `Types.lean`, and templates
+remain immutable inputs; any implementation write authority is limited to exact, plan-named,
+hand-written model, representation-map, contract/specification, bridge, correctness, `_toModel`, or
+`FunsExternal.lean` paths. Project markers never grant write authority.
 </step>
 
 <step name="proof_engineering_memory">
@@ -123,5 +127,5 @@ the matching index update in the same reviewable diff.
 - [ ] `HUMAN_RULING` routes to a HALT; `BLOCKED` is recorded as a valid outcome.
 - [ ] A `sorry` is judged as a named unmet obligation, never by count or as a kernel-complete proof.
 - [ ] At most three eval-evidenced candidates reconciled as one file each plus an index update.
-- [ ] No bare `lake build`, repeated gate build, external numeric recomputation, `gh` open/create, or generated-Lean write.
+- [ ] No bare `lake build`, repeated gate build, external numeric recomputation, or `gh` open/create; bridge boundary preserved when explicitly planned.
 </success_criteria>

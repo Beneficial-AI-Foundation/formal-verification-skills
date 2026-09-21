@@ -39,8 +39,7 @@ arg selects an explicit iteration; the optional `--codex` flag swaps the thinker
 at this stage (see the `<codex_skill_adapter>` block) -- a swappable thinker, not a second loop.
 
 The loop is restartable from its own on-disk records. Re-running on the same topic reads the latest
-`nN` under `.formalising/fv-plans/<topic>/plans/` and authors the next iteration, mirroring the
-restart-from-records discipline of `/fvs:aeneas-extract`.
+`nN` under `.formalising/fv-plans/<topic>/plans/` and authors the next iteration.
 </context>
 
 <process>
@@ -73,7 +72,11 @@ The four subfolders split the loop's records by role (artifact contract):
 
 Confine loop writes to `.formalising/fv-plans/<topic>/{plans,reviews,sources,merge}`. The only
 additional writes allowed are reviewed canonical lesson/index updates under
-`.formalising/proof-engineering/`. Never write generated Lean (`Types.lean` / `Funs.lean`).
+`.formalising/proof-engineering/`. Bridge boundary -- only when the plan explicitly declares
+implementation/model bridging: generated `Funs.lean`, `Types.lean`, and templates remain immutable
+inputs; write authority is limited to exact, plan-named, hand-written model, representation-map,
+contract/specification, bridge, correctness, `_toModel`, or `FunsExternal.lean` paths. Project
+markers never grant write authority.
 
 ## Step 1a: Load the Crypto Proof-Engineering Overlay
 
@@ -188,7 +191,7 @@ Return `none` when nothing reusable was learned.
 
 When `--codex` is passed -- SWAP this `Task(subagent_type="fvs-crypto-thinker", …)` dispatch for the
 FVS-owned Codex thinker helper. The Codex thinker takes ONLY this thinker stage; everything downstream
-is UNCHANGED (the executor stays `fvs-executor`, the artifacts stay under `fv-plans/<topic>/`, the
+is UNCHANGED (the executor stays `fvs-crypto-executor`, the artifacts stay under `fv-plans/<topic>/`, the
 bounded-plan contract and runtime-neutral naming are identical). Coordination is ARTIFACT-MEDIATED:
 the Codex thinker reads the topic folder, writes `PLAN_nN.md` / `EXEC_PLAN_nN.md` under `plans/`, and
 EXITS -- there is NO live cross-process bridge and no kept-alive process across stages. Pass the
@@ -318,5 +321,5 @@ auto-picks a default, never writes an upstream artifact).
 - [ ] Both plan artifacts record truthful `Authoring runtime:` provenance; automatic review runs
       for at most three rounds and only an approved result can suggest execution.
 - [ ] At most three evidence-gated lesson candidates reconciled as one file each plus index updates.
-- [ ] No bare `lake build`, no `gh` open/create, no generated-Lean write.
+- [ ] No bare `lake build`, no `gh` open/create; bridge boundary preserved when explicitly planned.
 </success_criteria>

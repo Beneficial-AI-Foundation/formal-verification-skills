@@ -13,7 +13,10 @@ Hard invariants this workflow preserves:
 - The build's exit status is read from the TOOL (`set -o pipefail` / `${PIPESTATUS`), never from the
   tail of a piped log (the green-build trap).
 - Builds always run under `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` -- never a bare `lake build`.
-- Generated Lean (`Types.lean` / `Funs.lean`) is NEVER written.
+- Bridge boundary -- only when the plan explicitly declares implementation/model bridging: generated
+  `Funs.lean`, `Types.lean`, and templates remain immutable inputs; write authority is limited to
+  exact, plan-named, hand-written model, representation-map, contract/specification, bridge,
+  correctness, `_toModel`, or `FunsExternal.lean` paths. Project markers never grant write authority.
 - The only memory writes are reviewed lesson/index updates under `.formalising/proof-engineering/`.
 - The topic + iteration are untrusted input: reject shell metacharacters, quote every path, never
   `eval`.
@@ -148,5 +151,5 @@ eligible only when the failure boundary and a better next move are stated.
 - [ ] The build runs under `set -o pipefail` + `${PIPESTATUS` reading the tool's real status; always `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` (never a bare `lake build`).
 - [ ] The executor's ESCALATE/BLOCKED return is routed to the user (short interactive redirect early, never a long unattended grind).
 - [ ] At most three build/diagnostic-evidenced candidates reconciled as one file each plus an index update.
-- [ ] No generated-Lean write; no `gh` open/create.
+- [ ] Bridge boundary preserved when explicitly planned; no `gh` open/create.
 </success_criteria>

@@ -15,7 +15,10 @@ Hard invariants this workflow preserves:
 - All loop writes confined to `.formalising/fv-plans/<topic>/{plans,reviews,sources,merge}`.
 - The only additional writes are reviewed lesson/index updates under
   `.formalising/proof-engineering/`.
-- Generated Lean (`Types.lean` / `Funs.lean`) is NEVER written.
+- Bridge boundary -- only when the plan explicitly declares implementation/model bridging: generated
+  `Funs.lean`, `Types.lean`, and templates remain immutable inputs; write authority is limited to
+  exact, plan-named, hand-written model, representation-map, contract/specification, bridge,
+  correctness, `_toModel`, or `FunsExternal.lean` paths. Project markers never grant write authority.
 - The topic slug + iteration arg are untrusted input: reject shell metacharacters, quote every path,
   never `eval` a path.
 - Builds verify via `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` under the `set -o pipefail` / `${PIPESTATUS` guard --
@@ -206,5 +209,5 @@ stop; never auto-approve or execute. Failed, cancelled, pending, and unverified 
 - [ ] The bounded-plan contract (stop conditions, verification commands `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`, immutable public statements) written into `EXEC_PLAN_nN.md`.
 - [ ] Plan artifacts record truthful `Authoring runtime:` and enter at most three review rounds.
 - [ ] At most three evidence-gated candidates reconciled as one file each plus an index update.
-- [ ] No bare `lake build`, no `gh` open/create, no generated-Lean write.
+- [ ] No bare `lake build`, no `gh` open/create; bridge boundary preserved when explicitly planned.
 </success_criteria>

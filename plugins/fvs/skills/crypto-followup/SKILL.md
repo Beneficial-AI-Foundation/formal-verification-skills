@@ -74,7 +74,7 @@ Typed mapping (agent_type-capable schema only):
 - `fork_context: false` by default -- FVS agents load their own context via `<files_to_read>` blocks.
 
 Generic-agent workaround (schema with NO agent_type field):
-When only the generic schema is available, typed FVS agent dispatch (`fvs-researcher`, `fvs-executor`, etc.) is NOT possible. This workaround is NOT equivalent to typed execution — FVS agents carry verification-aware prompts and sandbox settings a generic subagent lacks. Fallback:
+When only the generic schema is available, typed FVS agent dispatch (`fvs-crypto-thinker`, `fvs-crypto-executor`, etc.) is NOT possible. This workaround is NOT equivalent to typed execution — FVS agents carry verification-aware prompts and sandbox settings a generic subagent lacks. Fallback:
 1. Read `${CLAUDE_PLUGIN_ROOT}/agents/<agent-name>.md` and extract its instructions. If the token is still literal, resolve the path from this SKILL.md as described above.
 2. Spawn a generic/default agent and inject those instructions as a role preamble before the task prompt.
 3. Label results clearly as "generic-agent workaround" so the user knows typed guarantees are not in effect.
@@ -144,7 +144,10 @@ ROOT=".formalising/fv-plans/$SLUG"
 
 Confine loop writes to `.formalising/fv-plans/<topic>/{plans,reviews,sources,merge}`. The only
 additional writes allowed are reviewed canonical updates under `.formalising/proof-engineering/`.
-Never write a generated Lean file.
+Bridge boundary -- only when the plan explicitly declares implementation/model bridging: generated
+`Funs.lean`, `Types.lean`, and templates remain immutable inputs; write authority is limited to exact,
+plan-named, hand-written model, representation-map, contract/specification, bridge, correctness,
+`_toModel`, or `FunsExternal.lean` paths. Project markers never grant write authority.
 
 ## Step 1a: Load the Crypto Proof-Engineering Overlay
 
@@ -243,7 +246,7 @@ and a separate <lesson_candidates> block using the shared candidate contract, or
 
 When `--codex` is passed -- SWAP this `Task(subagent_type="fvs-crypto-thinker", …)` dispatch for the
 FVS-owned Codex thinker helper. The Codex thinker takes ONLY this followup stage; everything
-downstream is UNCHANGED (the executor stays `fvs-executor`, the artifacts stay under
+downstream is UNCHANGED (the executor stays `fvs-crypto-executor`, the artifacts stay under
 `fv-plans/<topic>/`, the bounded-plan contract is identical). The `HUMAN_RULING` HALT in Step 3 still
 runs IN THIS COMMAND BEFORE any Codex dispatch -- the helper is only reached on a `FOLLOWUP` decision
 after any ruling is in hand, so a Codex thinker never silently picks a side of a modeling ruling.
@@ -351,5 +354,5 @@ unchanged.
 - [ ] On `FOLLOWUP`, model/effort are resolved for the actual runner; the in-runtime Task or Codex helper receives both confirmed settings and writes the bounded follow-up plan to `plans/`.
 - [ ] The follow-up records truthful provenance and runs at most three review rounds before stop.
 - [ ] At most three source/ruling-evidenced candidates reconciled as one file each plus index updates.
-- [ ] No bare `lake build`, no `gh` open/create, no generated-Lean write.
+- [ ] No bare `lake build`, no `gh` open/create; bridge boundary preserved when explicitly planned.
 </success_criteria>

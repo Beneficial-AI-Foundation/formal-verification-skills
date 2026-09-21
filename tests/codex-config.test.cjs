@@ -155,6 +155,14 @@ describe('Codex skill adapter header (getCodexSkillAdapterHeader)', () => {
     assert.match(header, /Never confirm a requested model or effort and then omit it/);
   });
 
+  it('uses crypto roles rather than FC examples in crypto skill adapters', () => {
+    for (const skillName of ['fvs-crypto-plan', 'crypto-execute']) {
+      const header = getCodexSkillAdapterHeader(skillName, { pluginName: 'fvs' });
+      assert.ok(header.includes('`fvs-crypto-thinker`, `fvs-crypto-executor`'));
+      assert.ok(!header.includes('`fvs-researcher`, `fvs-executor`'));
+    }
+  });
+
   it('adapts shared marketplace skills without assuming plugin agents are typed', () => {
     const header = getCodexSkillAdapterHeader('lean-verify', { pluginName: 'fvs' });
     assert.ok(header.includes('`$fvs:lean-verify`'), 'uses the namespaced plugin invocation');

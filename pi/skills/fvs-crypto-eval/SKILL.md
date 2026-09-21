@@ -59,7 +59,11 @@ ROOT=".formalising/fv-plans/$SLUG"
 
 Confine eval writes to `.formalising/fv-plans/<topic>/{plans,reviews,sources,merge}`. The only
 additional writes allowed are reviewed canonical updates under `.formalising/proof-engineering/`.
-Never write a generated Lean file.
+Bridge boundary -- only when the plan explicitly declares implementation/model bridging: generated
+`Funs.lean`, `Types.lean`, and templates remain immutable inputs; any implementation write authority
+is limited to exact, plan-named, hand-written model, representation-map, contract/specification,
+bridge, correctness, `_toModel`, or `FunsExternal.lean` paths. Project markers never grant write
+authority.
 
 ## Step 1a: Load the Crypto Proof-Engineering Overlay
 
@@ -200,5 +204,5 @@ an upstream artifact).
 - [ ] `HUMAN_RULING` routes to a HALT; `BLOCKED` is recorded as a valid outcome (suggest `/fvs:pause-work`).
 - [ ] A `sorry` is judged as a named unmet obligation, never by count or as a kernel-complete proof.
 - [ ] At most three eval-evidenced candidates reconciled as one lesson per file plus index updates.
-- [ ] No bare `lake build`, repeated gate build, external numeric recomputation, `gh` open/create, or generated-Lean write.
+- [ ] No bare `lake build`, repeated gate build, external numeric recomputation, or `gh` open/create; bridge boundary preserved when explicitly planned.
 </success_criteria>

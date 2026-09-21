@@ -78,7 +78,10 @@ ROOT=".formalising/fv-plans/$SLUG"
 
 Confine implementation writes per the plan. The only additional writes allowed are the topic's
 derived memory snapshot and reviewed canonical updates under `.formalising/proof-engineering/`.
-Never write a generated Lean file (`Types.lean` / `Funs.lean`).
+Bridge boundary -- only when the plan explicitly declares implementation/model bridging: generated
+`Funs.lean`, `Types.lean`, and templates remain immutable inputs; write authority is limited to exact,
+plan-named, hand-written model, representation-map, contract/specification, bridge, correctness,
+`_toModel`, or `FunsExternal.lean` paths. Project markers never grant write authority.
 
 ## Step 1a: Load the Crypto Proof-Engineering Overlay
 
@@ -216,5 +219,5 @@ dispatch noninteractively; never turn a confirmed field into a no-op.
 - [ ] The build runs under `set -o pipefail` + `${PIPESTATUS` reading the tool's real status; always `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` (never a bare `lake build`).
 - [ ] The executor's ESCALATE/BLOCKED return is routed to the user (short interactive redirect early, never a long unattended grind).
 - [ ] At most three build/diagnostic-evidenced candidates reconciled as one file each plus index updates.
-- [ ] No `gh` open/create; no generated-Lean write.
+- [ ] No `gh` open/create; bridge boundary preserved when explicitly planned.
 </success_criteria>
