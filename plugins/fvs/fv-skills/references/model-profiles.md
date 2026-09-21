@@ -143,6 +143,21 @@ one-run selections always win.
 Legacy flat overrides are safe only when their value is `inherit`. Ignore any other flat model value
 with a migration warning; never guess which runtime it targeted.
 
+### Project `native_decide` policy
+
+Read top-level `native_decide` from `.formalising/fvs-config.json`. Valid values are `avoid`, `ask`,
+and `allow`; missing values default to `ask`, and unknown values fail before dispatch.
+
+- `avoid`: fail before any proposed `native_decide` use and offer a proved alternative or an
+  explicitly confirmed one-run policy override.
+- `ask`: pause at the first proposed use and ask whether to permit it for this run.
+- `allow`: permit use, while still recording the trust/resource choice.
+
+A confirmed one-run override may select any valid value but does not persist and never rewrites the
+project config. Pass the effective value to every child that may edit or assess Lean. If a child
+proposes `native_decide` contrary to the effective policy, stop at the parent boundary rather than
+silently accepting the edit.
+
 </config>
 
 <resolution>
@@ -165,7 +180,9 @@ For every distinct stage used by a command:
    validate that the candidate model's catalog provider equals Pi's active provider.
 10. Inspect the actual dispatch schema/capabilities. A requested model or effort is unresolved when
     the runtime cannot apply it, even if the catalog advertises it.
-11. Build the command-level selection manifest from settings the dispatch can actually honor and
+11. Resolve the stored and effective `native_decide` policy, applying only an explicitly confirmed
+    one-run override.
+12. Build the command-level selection manifest from settings the dispatch can actually honor and
     obtain the required confirmation before the first dispatch.
 
 Pseudo-code:
@@ -221,7 +238,9 @@ same stage. Each row records:
 - exact model or `inherit`, plus whether it came from one-run input, review settings, stage override,
   agent override, or profile/catalog matching;
 - effort and its source;
-- review runner/provenance when applicable.
+- review runner/provenance when applicable;
+- stored and effective `native_decide` policy, its source (`config`, default, or one-run), and whether
+  this run has approved native execution.
 
 Offer `Continue once`, `Adjust once`, `Save override`, and `Cancel`, while retaining the question
 UI's notes/custom-answer path. `Save override` defaults to
@@ -230,7 +249,8 @@ interpreted as requested selection/stage adjustments, then the manifest is rebui
 confirmed again. Notes never become unchecked model IDs or silently alter unrelated stages.
 
 One confirmation covers the command, not every child. If later evidence introduces a new stage,
-provider, model, or unsupported effort, rebuild and reconfirm the manifest.
+provider, model, unsupported effort, or a previously unapproved `native_decide` use, rebuild and
+reconfirm the manifest. A one-run native policy change does not persist.
 
 In noninteractive/autonomous mode, a complete valid explicit selection or persisted override may
 run without a prompt and must be logged only when dispatch capability can honor it. Any unresolved
@@ -287,6 +307,8 @@ Null values keep profile routing and the confirmation menu active.
 - Unsupported effort: ask one-run/save/cancel interactively; fail with remediation noninteractively.
 - Never guess a replacement slug, switch providers silently, or mutate config during a one-run
   choice.
+- Missing `native_decide` policy means `ask`; unknown values fail. `avoid` and an unapproved `ask`
+  stop before use; `allow` remains visible in the manifest and trust evidence.
 
 </stable_rules>
 

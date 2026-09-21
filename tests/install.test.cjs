@@ -2,6 +2,7 @@
 
 const { describe, it, after } = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -464,6 +465,20 @@ describe('installed tree matches final bundle shape', () => {
       'sync metadata must contain at least one mapping');
     assert.ok(meta.tactic_renames && typeof meta.tactic_renames === 'object',
       'sync metadata must contain tactic_renames');
+    assert.match(meta.snapshot_commit, /^[a-f0-9]{40}$/,
+      'sync metadata must contain an exact snapshot commit');
+    assert.ok(!Number.isNaN(Date.parse(meta.snapshot_date)),
+      'sync metadata must contain a parseable snapshot commit date');
+    assert.match(meta.charon_pin, /^[a-f0-9]{40}$/,
+      'sync metadata must contain the Aeneas Charon pin');
+    assert.ok(Array.isArray(meta.extraction_inputs) && meta.extraction_inputs.length > 0,
+      'sync metadata must contain exact extraction inputs');
+    for (const input of meta.extraction_inputs.filter(x => x.disposition === 'sync')) {
+      const target = path.join(tmpDir, input.snapshot_target);
+      assert.ok(fs.existsSync(target), `installed snapshot missing: ${input.snapshot_target}`);
+      const hash = crypto.createHash('sha256').update(fs.readFileSync(target)).digest('hex');
+      assert.equal(hash, input.sha256, `installed snapshot hash mismatch: ${input.snapshot_target}`);
+    }
   });
 
   it('installs runtime-scoped model and effort overrides', () => {

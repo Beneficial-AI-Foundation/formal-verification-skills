@@ -65,16 +65,16 @@ above is anchored on this snapshot: an entry's `pin_context` is read relative to
 it.
 
 ```yaml
-charon_main:      e9b10cc3
-aeneas_main:      8dd8bfb3
-aeneas_charon_pin: 6f058254   # what Aeneas's charon-pin resolves to (the extractor's pin)
+charon_main_checked: eb5814f1185f1b274e34d89417e5f30909aa20cd
+aeneas_main:         227f4e7ac70d687a6b1a4871b3304f5a1c6994bf
+aeneas_charon_pin:   a5591f6b94c8575a6ba2ae71090614a722f2b011
 ```
 
-The resolved `charon-pin` (`6f058254`) is **older** than the Charon vtable /
-lifetime-struct fixes that landed on `charon_main`. So for a project on this pin,
-the DYN-TRAIT and LIFETIME-STRUCT entries are NOT known-fixed -- they ship
-`needs-manual-check`, with `toolchain-remediation` (a pin bump) as the alternative
-to the local workaround. Re-resolve the pin and reconcile before retiring either.
+The resolved pin is 47 commits behind the checked Charon main. It contains the earlier dyn-trait
+representation work from `e9b10cc3`, but that does not close the monomorphized dyn-trait gap:
+Charon #856 remains open and the pinned documentation still records missing associated-type
+information for `dyn Trait`. Entries not explicitly reconciled below retain their older exact
+`pin_context`; never infer that a newer catalog-level snapshot proves them fixed.
 </provenance>
 
 <seed>
@@ -89,14 +89,14 @@ entries; their signatures are stated Aeneas-facing so they match across both.
 
 - id: DYN-TRAIT
   layer: charon
-  signature: "Dynamic trait types are not supported yet"
-  trigger: "a &dyn Trait / Box<dyn Trait> param, field, or return; vtable dispatch"
+  signature: "dyn Trait remains unsupported when monomorphization or associated-type transformation needs a partial vtable"
+  trigger: "a &dyn Trait / Box<dyn Trait> param, field, or return reaching --monomorphize or associated-type removal"
   category: A
   recipe: "exclude the trait + its blanket impl at the source level, then monomorphize dispatch sites to a match-on-enum tag (the concrete impls stay verified)"
   coverage_impact: none
   outcome_kinds: [auto, toolchain-remediation]
-  evidence: "libsignal kem.rs (M05 exclude + M07 match-on-enum + M08 cfg-gate variant); charon#856 (open: support dyn Trait with --monomorphize) carries the use case"
-  pin_context: "observed unfixed at charon-pin 6f058254; addressed on charon main e9b10cc3 (TyKind::DynTrait + vtables); narrow limits remain (multi-method-predicate dyn; assoc-type-bearing traits skip vtable)"
+  evidence: "libsignal kem.rs (M05 exclude + M07 match-on-enum + M08 cfg-gate variant); charon#856 remains open for dyn Trait with --monomorphize; pinned docs/transformations.md says associated-type information for dyn Trait is still missing"
+  pin_context: "rechecked at Aeneas 227f4e7ac70d687a6b1a4871b3304f5a1c6994bf / charon-pin a5591f6b94c8575a6ba2ae71090614a722f2b011; pin includes e9b10cc3 vtable work but not the open #856 case; Charon main eb5814f1185f1b274e34d89417e5f30909aa20cd documents the same gap"
   status: needs-manual-check
   provenance: "libsignal-lite-verify PQXDH extraction (KEM parameter vtable)"
 
@@ -114,15 +114,15 @@ entries; their signatures are stated Aeneas-facing so they match across both.
   provenance: "libsignal-lite-verify PQXDH extraction (recipient parameters)"
 
 - id: GAT
-  layer: charon
-  signature: "cannot extract trait associated types with parameters -- fails under --preset=aeneas (implies --lift-associated-types)"
-  trigger: "a trait associated type that takes generic or lifetime parameters (a GAT); extracts fine plain, hard-errors once associated types are lifted"
+  layer: aeneas
+  signature: "Can not extract trait associated types with parameters"
+  trigger: "a trait associated type that takes generic or lifetime parameters survives Charon's associated-type removal and reaches Aeneas"
   category: A
   recipe: "exclude the trait at the source level if it is thin glue over the free functions that are the real targets; else verify the trait via the coverage ladder"
   coverage_impact: none
   outcome_kinds: [auto]
-  evidence: "libsignal handshake trait (M02 charon::exclude); charon#477 (closed: Charon-side GAT support landed) -- the residual gap is Aeneas-side under --lift-associated-types; aeneas#396 (open) is the related docs gap"
-  pin_context: "observed under --preset=aeneas at charon-pin 6f058254; signature is the Aeneas-facing condition, not the raw Rust GAT"
+  evidence: "libsignal handshake trait (M02 charon::exclude); Charon #477 is closed, but frozen Aeneas src/symbolic/SymbolicToPure.ml still raises this exact failure and SymbolicToPureTypes.ml notes that GATs survive --remove-associated-types"
+  pin_context: "rechecked at Aeneas 227f4e7ac70d687a6b1a4871b3304f5a1c6994bf / charon-pin a5591f6b94c8575a6ba2ae71090614a722f2b011; residual blocker is Aeneas-facing, not lack of base Charon GAT syntax support"
   status: workaround
   provenance: "libsignal-lite-verify PQXDH extraction (handshake trait)"
 
@@ -179,15 +179,15 @@ entries; their signatures are stated Aeneas-facing so they match across both.
   provenance: "libsignal-lite-verify PQXDH extraction (NonZero parent clauses)"
 
 - id: ITER-ADAPTER
-  layer: charon
-  signature: "cannot extract the Iterator trait machinery for a chained adapter (rev / zip / skip / iter_mut)"
-  trigger: "a loop or expression built from iterator adapters (rev, zip, skip, iter_mut) whose trait machinery Charon/Aeneas cannot extract"
+  layer: aeneas
+  signature: "specific iterator-adapter combinations produce erased borrows, invalid generated trait fields, back-function mismatches, unsolved allocator parameters, or internal errors"
+  trigger: "zip/iter_mut/try_for_each/map/collect chains whose generated iterator machinery matches an evidenced open Aeneas failure; simple iterator use alone is not a match"
   category: B
-  recipe: "diagnose+gate -- inline the adapter chain as an explicit while loop; the equivalence to argue is iterator-form === while-form on observable behaviour"
+  recipe: "diagnose+gate -- reproduce the exact adapter failure, then inline only the failing chain as an explicit while loop; argue iterator-form === while-form on observable behaviour"
   coverage_impact: none
   outcome_kinds: [gate]
-  evidence: "curve25519-dalek src-modifications.diff: montgomery.rs Mul (rev/skip inlined to while, with an in-source comment naming the cause), scalar.rs batch_invert, read_le_u64_into; the diff annotates the rewrites as Charon/Aeneas iterator-trait limitations"
-  pin_context: "dalek diff carries no Aeneas/Charon pin header (dalek upstream tag only); pin-stability unconfirmed -- reconcile before relying on it"
+  evidence: "frozen Aeneas includes simple iter/zip/iter_mut tests, so the old blanket signature is false; open issues #1053, #1043, #1152, #1153, and #1222 track zip RErased, invalid map/collect fields, extra back-functions, allocator inference, and try_for_each internal errors"
+  pin_context: "rechecked at Aeneas 227f4e7ac70d687a6b1a4871b3304f5a1c6994bf / charon-pin a5591f6b94c8575a6ba2ae71090614a722f2b011; retain needs-manual-check and match only an exact open signature"
   status: needs-manual-check
   provenance: "curve25519-dalek-lean-verify extraction"
 

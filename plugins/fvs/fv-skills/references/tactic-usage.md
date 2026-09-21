@@ -102,7 +102,7 @@ What does the goal look like?
 ├─ If-then-else → simp_ifs / split
 ├─ Conjunction (∧) → split_conjs, then scaffold `· agrind` per sub-goal
 ├─ Boolean/Propositional → simp_bool_prop / tauto
-├─ Concrete computation → decide / native_decide
+├─ Concrete computation → decide; native_decide only under the effective FVS policy
 ├─ Congruence → fcongr (NEVER congr -- heartbeat timeout)
 │
 ├─ Writing `simp [CONST]; solver` in a cdot block after step*?
@@ -113,6 +113,33 @@ What does the goal look like?
    ├─ Try → agrind
    └─ If fails → simp [*]; agrind
 ```
+
+### Constant-array obligations with `step_array_spec`
+
+For repeated indexing into a compile-time constant array, register one local or scoped step theorem
+instead of reproving each lookup:
+
+```lean
+step_array_spec (name := round_constants_spec) round_constants[i]!
+```
+
+Use the generated `@[step]` theorem at call sites. The proof obligation still follows the effective
+FVS `native_decide` policy; generation is not permission to bypass trust or resource review.
+
+### Incremental case branches
+
+Prefer unnamed incremental branches so Lean elaborates each branch independently:
+
+```lean
+cases h : x.kind with
+· -- first constructor
+  ...
+· -- second constructor
+  ...
+```
+
+Avoid `cases x with | Foo => ... | Bar => ...` for large proofs: named arms form one elaboration
+unit, so one edit can re-elaborate every branch.
 
 ## Scaffolding Workflow
 
@@ -561,22 +588,19 @@ simp [*]     -- simplification with hypotheses
 step*        -- iterated step
 ```
 
-### 2. Never use native_decide on large computations
+### 2. Never bypass the native_decide policy or use it on unbounded work
 
-`native_decide` compiles to native code and runs at elaboration time. On large
-constants (2^255, field primes) it will time out or exhaust memory.
+`native_decide` compiles and executes native code during elaboration. The project policy in
+`.formalising/fvs-config.json` is `avoid | ask | allow` and defaults to `ask`:
 
-**Wrong:**
-```lean
--- Will hang or OOM
-theorem large_const : 2^255 - 19 > 0 := by native_decide
-```
+- `avoid`: do not use it; choose kernel reduction or a proved tactic path.
+- `ask`: obtain explicit approval before the run.
+- `allow`: use is permitted but still recorded in the dispatch manifest and trust report.
 
-**Right:**
-```lean
--- Use agrind or norm_num for large numeric goals
-theorem large_const : 2^255 - 19 > 0 := by agrind
-```
+A confirmed one-run override changes only the current manifest, never the stored project policy.
+Even under `allow`, do not use `native_decide` for unbounded or poorly sized work; large constants
+can time out or exhaust memory. Prefer `agrind`, `norm_num`, a bounded `decide`, or a dedicated
+lemma when they fit the goal.
 
 ### 3. Never skip unfold before step
 

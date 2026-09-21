@@ -1,54 +1,60 @@
 {
   "upstream_source": "AeneasVerif/aeneas",
   "upstream_paths": ["documentation/", "documentation/skills/"],
-  "snapshot_date": "2026-04-03T00:00:00Z",
-  "snapshot_commit": "90d65254411d4f607cdf96aecace8c9e355c2b85",
+  "snapshot_date": "2026-09-17T17:20:51Z",
+  "snapshot_commit": "227f4e7ac70d687a6b1a4871b3304f5a1c6994bf",
+  "snapshot_synced_at": "2026-09-21T13:14:07.350Z",
+  "charon_pin": "a5591f6b94c8575a6ba2ae71090614a722f2b011",
+  "charon_main_checked": {
+    "commit": "eb5814f1185f1b274e34d89417e5f30909aa20cd",
+    "date": "2026-09-21T07:32:51Z"
+  },
   "mapping": [
     {
       "upstream": "aeneas-lean-core.instructions.md",
-      "upstream_sections": ["Reading Aeneas-Generated Code", "Writing models of Rust code", "Recursive loop proofs", "The specification pattern", "Postcondition quality", "Axiom organization", "Key Patterns"],
+      "upstream_sections": ["Reading Aeneas-Generated Code", "Writing models of Rust code", "The Specification Pattern", "Sorry'd definitions vs sorry'd theorems", "Recursive loop proofs: `unfold` + `step`, never `partial_fixpoint_induct`", "Proof Development Workflow", "Proof Style and Maintainability", "Critical Pitfalls", "`step_array_spec`: Step Theorems for Constant Arrays"],
       "fvs_target": "fv-skills/references/aeneas-patterns.md",
       "fvs_sections": ["<patterns>", "<quick_reference>"],
       "merge_strategy": "enrich"
     },
     {
       "upstream": "aeneas-lean-core.instructions.md",
-      "upstream_sections": ["Key Patterns", "Splitting Large Functions"],
+      "upstream_sections": ["Proof Development Workflow", "Pattern: Recursive loop (most common loop pattern)", "Pattern: Loop with `loop.spec_decr_nat` (fixed-point combinator)"],
       "fvs_target": "fv-skills/references/proof-strategies.md",
       "fvs_sections": ["<patterns>"],
       "merge_strategy": "enrich"
     },
     {
       "upstream": "aeneas-tactics-quickref.instructions.md",
-      "upstream_sections": ["Decision Tree", "Tactic Reference Table", "BANNED TACTICS", "Scaffolding workflow", "Inaccessible hypotheses"],
+      "upstream_sections": ["Decision Tree: Which Tactic?", "Tactic Reference Table", "⛔ BANNED TACTICS", "⛔ BANNED PATTERN: `cases` with named constructors (`| Foo =>`)", "Scaffolding workflow: `· agrind` first, then fix failures", "Critical Pitfalls", "Debugging and Profiling Commands"],
       "fvs_target": "fv-skills/references/tactic-usage.md",
       "fvs_sections": ["<quick_reference>", "<patterns>"],
       "merge_strategy": "replace_section"
     },
     {
       "upstream": "tactics-reference.md",
-      "upstream_sections": ["step", "scalar_tac", "simp_scalar", "simp_lists", "bvify", "bv_tac", "natify", "zmodify", "simp_bool_prop", "simp_ifs", "fcongr", "split_conjs"],
+      "upstream_sections": ["`step`", "`scalar_tac`", "`simp_scalar`", "`simp_lists`", "`bvify`", "`bv_tac`", "`natify`", "`zmodify`", "`simp_bool_prop`", "`simp_ifs`", "`fcongr`", "`split_conjs`"],
       "fvs_target": "fv-skills/references/tactic-usage.md",
       "fvs_sections": ["<patterns>"],
       "merge_strategy": "enrich"
     },
     {
       "upstream": "proof-patterns.instructions.md",
-      "upstream_sections": ["Loop -- Canonical Template", "Common Sub-Patterns"],
+      "upstream_sections": ["Loop — Canonical Template", "Common Sub-Patterns"],
       "fvs_target": "fv-skills/references/proof-strategies.md",
       "fvs_sections": ["<patterns>"],
       "merge_strategy": "enrich"
     },
     {
       "upstream": "proof-strategies.md",
-      "upstream_sections": ["The step*? Workflow", "Recursive Functions and the Termination Pitfall", "Loop Reasoning", "Splitting Large Functions"],
+      "upstream_sections": ["The `step*?` Workflow", "Recursive Functions and the Termination Pitfall", "Loop Reasoning", "Splitting Large Functions (Function Decomposition)"],
       "fvs_target": "fv-skills/references/proof-strategies.md",
       "fvs_sections": ["<patterns>", "<quick_reference>"],
       "merge_strategy": "enrich"
     },
     {
       "upstream": "tips-and-tricks.md",
-      "upstream_sections": ["Loop Translation: Prefer -loops-to-rec", "Standard Library: Don't Unfold, Find Lemmas"],
+      "upstream_sections": ["Loop Translation: Prefer `-loops-to-rec`", "Standard Library: Don't Unfold, Find Lemmas"],
       "fvs_target": "fv-skills/references/aeneas-patterns.md",
       "fvs_sections": ["<patterns>", "<anti_patterns>"],
       "merge_strategy": "enrich"
@@ -62,8 +68,22 @@
     },
     {
       "upstream": "lean-lsp-mcp.instructions.md",
-      "upstream_sections": ["MCP Tools", "Sorry-driven workflow"],
+      "upstream_sections": ["Tool Reference", "2. The sorry-driven workflow", "The step*? Workflow for Complex Function Bodies"],
       "fvs_target": "fv-skills/references/aeneas-patterns.md",
+      "fvs_sections": ["<patterns>"],
+      "merge_strategy": "enrich"
+    },
+    {
+      "upstream": "emit-json.md",
+      "upstream_sections": ["Purpose", "Location", "Schema", "Function entries", "Type and global entries", "Trait entries"],
+      "fvs_target": "fv-skills/references/aeneas-patterns.md",
+      "fvs_sections": ["<quick_reference>", "<patterns>"],
+      "merge_strategy": "enrich"
+    },
+    {
+      "upstream": "verification-campaigns.instructions.md",
+      "upstream_sections": ["Trigger Conditions", "Phase 1: Plan the Structure"],
+      "fvs_target": "fv-skills/references/proof-strategies.md",
       "fvs_sections": ["<patterns>"],
       "merge_strategy": "enrich"
     },
@@ -80,6 +100,222 @@
       "fvs_target": null,
       "fvs_sections": [],
       "merge_strategy": "defer"
+    }
+  ],
+  "extraction_inputs": [
+    {
+      "repository": "AeneasVerif/aeneas",
+      "revision": "aeneas_snapshot",
+      "upstream_path": "README.md",
+      "snapshot_target": "fv-skills/upstream/aeneas/extraction/README.md",
+      "disposition": "evidence"
+    },
+    {
+      "repository": "AeneasVerif/aeneas",
+      "revision": "aeneas_snapshot",
+      "upstream_path": "documentation/README.md",
+      "snapshot_target": "fv-skills/upstream/aeneas/extraction/documentation/README.md",
+      "disposition": "evidence"
+    },
+    {
+      "repository": "AeneasVerif/aeneas",
+      "revision": "aeneas_snapshot",
+      "upstream_path": "documentation/aeneas-overview.md",
+      "snapshot_target": "fv-skills/upstream/aeneas/extraction/documentation/aeneas-overview.md",
+      "disposition": "defer"
+    },
+    {
+      "repository": "AeneasVerif/aeneas",
+      "revision": "aeneas_snapshot",
+      "upstream_path": "documentation/crypto-verification.md",
+      "snapshot_target": "fv-skills/upstream/aeneas/extraction/documentation/crypto-verification.md",
+      "disposition": "defer"
+    },
+    {
+      "repository": "AeneasVerif/aeneas",
+      "revision": "aeneas_snapshot",
+      "upstream_path": "documentation/emit-json.md",
+      "snapshot_target": "fv-skills/upstream/aeneas/extraction/documentation/emit-json.md",
+      "sha256": "f25c2864d933f45e37f5cdcbc0fff7f16d46ddcbe870b5da863da83c54ac2a00",
+      "disposition": "sync"
+    },
+    {
+      "repository": "AeneasVerif/aeneas",
+      "revision": "aeneas_snapshot",
+      "upstream_path": "documentation/getting-started.md",
+      "snapshot_target": "fv-skills/upstream/aeneas/extraction/documentation/getting-started.md",
+      "disposition": "defer"
+    },
+    {
+      "repository": "AeneasVerif/aeneas",
+      "revision": "aeneas_snapshot",
+      "upstream_path": "documentation/glossary.md",
+      "snapshot_target": "fv-skills/upstream/aeneas/extraction/documentation/glossary.md",
+      "disposition": "defer"
+    },
+    {
+      "repository": "AeneasVerif/aeneas",
+      "revision": "aeneas_snapshot",
+      "upstream_path": "documentation/proof-strategies.md",
+      "snapshot_target": "fv-skills/upstream/aeneas/proof-strategies.md",
+      "sha256": "3821e31bc6683cf1a23f49f1c7e2232a53ce12d14c0bec9b935dfa88056e27f7",
+      "disposition": "sync"
+    },
+    {
+      "repository": "AeneasVerif/aeneas",
+      "revision": "aeneas_snapshot",
+      "upstream_path": "documentation/skills/aeneas-compiler-dev.instructions.md",
+      "snapshot_target": "fv-skills/upstream/aeneas/extraction/documentation/skills/aeneas-compiler-dev.instructions.md",
+      "disposition": "defer"
+    },
+    {
+      "repository": "AeneasVerif/aeneas",
+      "revision": "aeneas_snapshot",
+      "upstream_path": "documentation/skills/aeneas-crypto-verification.instructions.md",
+      "snapshot_target": "fv-skills/upstream/aeneas/extraction/documentation/skills/aeneas-crypto-verification.instructions.md",
+      "disposition": "defer"
+    },
+    {
+      "repository": "AeneasVerif/aeneas",
+      "revision": "aeneas_snapshot",
+      "upstream_path": "documentation/skills/aeneas-lean-core.instructions.md",
+      "snapshot_target": "fv-skills/upstream/aeneas/aeneas-lean-core.instructions.md",
+      "sha256": "887a29fadc03646761e9e81cfff1bc47524ace54747cd00e36a879ad82257c78",
+      "disposition": "sync"
+    },
+    {
+      "repository": "AeneasVerif/aeneas",
+      "revision": "aeneas_snapshot",
+      "upstream_path": "documentation/skills/aeneas-tactics-quickref.instructions.md",
+      "snapshot_target": "fv-skills/upstream/aeneas/aeneas-tactics-quickref.instructions.md",
+      "sha256": "0055d5c8351c868b01815d9f5cf9a16a211739eae6194f638e67a4d4b5e37f11",
+      "disposition": "sync"
+    },
+    {
+      "repository": "AeneasVerif/aeneas",
+      "revision": "aeneas_snapshot",
+      "upstream_path": "documentation/skills/agent-fleet-management.instructions.md",
+      "snapshot_target": "fv-skills/upstream/aeneas/agent-fleet-management.instructions.md",
+      "sha256": "e9f04b5696782f6386260ebede609b70d0f50a65f1a10d0dc98fa19920e46b70",
+      "disposition": "sync"
+    },
+    {
+      "repository": "AeneasVerif/aeneas",
+      "revision": "aeneas_snapshot",
+      "upstream_path": "documentation/skills/formalizing-crypto-specs.instructions.md",
+      "snapshot_target": "fv-skills/upstream/aeneas/extraction/documentation/skills/formalizing-crypto-specs.instructions.md",
+      "disposition": "defer"
+    },
+    {
+      "repository": "AeneasVerif/aeneas",
+      "revision": "aeneas_snapshot",
+      "upstream_path": "documentation/skills/launching-proof-agents.instructions.md",
+      "snapshot_target": "fv-skills/upstream/aeneas/launching-proof-agents.instructions.md",
+      "sha256": "66ce280236edebbc66275f794b659fbea6b3d6002508bcc8686d2e11d50f7685",
+      "disposition": "sync"
+    },
+    {
+      "repository": "AeneasVerif/aeneas",
+      "revision": "aeneas_snapshot",
+      "upstream_path": "documentation/skills/lean-lsp-mcp.instructions.md",
+      "snapshot_target": "fv-skills/upstream/aeneas/lean-lsp-mcp.instructions.md",
+      "sha256": "09188f3ca13d6c99aacc357dddccc90e9d23ae3b1aa3e70b09a12eb8128dac88",
+      "disposition": "sync"
+    },
+    {
+      "repository": "AeneasVerif/aeneas",
+      "revision": "aeneas_snapshot",
+      "upstream_path": "documentation/skills/proof-patterns.instructions.md",
+      "snapshot_target": "fv-skills/upstream/aeneas/proof-patterns.instructions.md",
+      "sha256": "3e38c3cf082bf1ab274568d94fcbb23d409216bf1cb8b14a5091f1b2d834e4cc",
+      "disposition": "sync"
+    },
+    {
+      "repository": "AeneasVerif/aeneas",
+      "revision": "aeneas_snapshot",
+      "upstream_path": "documentation/skills/skill-file-authoring.instructions.md",
+      "snapshot_target": "fv-skills/upstream/aeneas/extraction/documentation/skills/skill-file-authoring.instructions.md",
+      "disposition": "defer"
+    },
+    {
+      "repository": "AeneasVerif/aeneas",
+      "revision": "aeneas_snapshot",
+      "upstream_path": "documentation/skills/verification-campaigns.instructions.md",
+      "snapshot_target": "fv-skills/upstream/aeneas/extraction/documentation/skills/verification-campaigns.instructions.md",
+      "sha256": "170901fadcd7b0ed38d3f964d869390b3c0baa91b863c70dc903fbd26278c8b4",
+      "disposition": "sync"
+    },
+    {
+      "repository": "AeneasVerif/aeneas",
+      "revision": "aeneas_snapshot",
+      "upstream_path": "documentation/tactics-reference.md",
+      "snapshot_target": "fv-skills/upstream/aeneas/tactics-reference.md",
+      "sha256": "92cbe9d0d60b349e797b883e1d59d6b73f4ea389723c63a681697b1f00bcac93",
+      "disposition": "sync"
+    },
+    {
+      "repository": "AeneasVerif/aeneas",
+      "revision": "aeneas_snapshot",
+      "upstream_path": "documentation/tips-and-tricks.md",
+      "snapshot_target": "fv-skills/upstream/aeneas/tips-and-tricks.md",
+      "sha256": "a8f75ce7d62f4b08df965d162ccf9021ef1c3e588bb2556eb4a44600f7f5dff1",
+      "disposition": "sync"
+    },
+    {
+      "repository": "AeneasVerif/aeneas",
+      "revision": "aeneas_snapshot",
+      "upstream_path": "tests/README.md",
+      "snapshot_target": "fv-skills/upstream/aeneas/extraction/tests/README.md",
+      "disposition": "evidence"
+    },
+    {
+      "repository": "AeneasVerif/charon",
+      "revision": "charon_pin",
+      "upstream_path": ".github/ISSUE_TEMPLATE/bug_report.md",
+      "snapshot_target": "fv-skills/upstream/charon/pinned/.github/ISSUE_TEMPLATE/bug_report.md",
+      "disposition": "evidence"
+    },
+    {
+      "repository": "AeneasVerif/charon",
+      "revision": "charon_pin",
+      "upstream_path": ".github/ISSUE_TEMPLATE/unsupported-language-feature.md",
+      "snapshot_target": "fv-skills/upstream/charon/pinned/.github/ISSUE_TEMPLATE/unsupported-language-feature.md",
+      "disposition": "evidence"
+    },
+    {
+      "repository": "AeneasVerif/charon",
+      "revision": "charon_pin",
+      "upstream_path": "CONTRIBUTING.md",
+      "snapshot_target": "fv-skills/upstream/charon/pinned/CONTRIBUTING.md",
+      "disposition": "evidence"
+    },
+    {
+      "repository": "AeneasVerif/charon",
+      "revision": "charon_pin",
+      "upstream_path": "README.md",
+      "snapshot_target": "fv-skills/upstream/charon/pinned/README.md",
+      "disposition": "evidence"
+    },
+    {
+      "repository": "AeneasVerif/charon",
+      "revision": "charon_pin",
+      "upstream_path": "docs/limitations.md",
+      "snapshot_target": "fv-skills/upstream/charon/pinned/docs/limitations.md",
+      "disposition": "evidence"
+    },
+    {
+      "repository": "AeneasVerif/charon",
+      "revision": "charon_pin",
+      "upstream_path": "docs/transformations.md",
+      "snapshot_target": "fv-skills/upstream/charon/pinned/docs/transformations.md",
+      "disposition": "evidence"
+    },
+    {
+      "repository": "AeneasVerif/charon",
+      "revision": "charon_pin",
+      "upstream_path": "docs/what_charon_translates.md",
+      "snapshot_target": "fv-skills/upstream/charon/pinned/docs/what_charon_translates.md",
+      "disposition": "evidence"
     }
   ],
   "tactic_renames": {

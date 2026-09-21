@@ -13,6 +13,7 @@
     "aeneas_clone_path": null,
     "extract_workspace": ".formalising/extract"
   },
+  "native_decide": "ask",
   "model_profile": "quality",
   "stage_overrides": {
     "claude": {},

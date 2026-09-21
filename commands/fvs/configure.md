@@ -12,8 +12,8 @@ allowed-tools:
 
 <objective>
 Edit `.formalising/fvs-config.json` through bounded choice menus. Store exact runtime model IDs only
-when the runtime reports them, keep quality role-aware by stage, preserve one-run user control, and
-preserve unrelated project configuration.
+when the runtime reports them, keep quality role-aware by stage, configure the project
+`native_decide` policy, preserve one-run user control, and preserve unrelated project configuration.
 </objective>
 
 <execution_context>
@@ -30,7 +30,8 @@ malformed JSON and stop before writing. Preserve unknown keys and every unrelate
 Never replace the whole file with a partial settings object.
 
 Add missing current-schema containers without deleting old settings: `stage_overrides`,
-`model_overrides`, `effort_overrides`, `spec_review`, and `crypto_review`.
+`model_overrides`, `effort_overrides`, `spec_review`, and `crypto_review`. A missing top-level
+`native_decide` value defaults to `ask`; reject values outside `avoid | ask | allow`.
 
 ## 2. Detect runtime, provider, and catalog
 
@@ -92,7 +93,8 @@ stage.
 
 ## 5. Configure advanced defaults
 
-Use a submenu with at most three choices: **Agent compatibility**, **Review defaults**, **Back**.
+Use a submenu with at most four choices: **Agent compatibility**, **Review defaults**,
+**Proof policy**, **Back**.
 
 ### Agent compatibility
 
@@ -108,6 +110,17 @@ Shipped groups:
 - Extraction: `fvs-extract-classifier`, `fvs-extract-applier`, `fvs-extract-bisector`,
   `fvs-equivalence-assessor`, `fvs-draft-investigator`, `fvs-doc-syncer`.
 - Audit: `fvs-axiom-auditor`.
+
+### Proof policy
+
+Choose the project-scoped top-level `native_decide` value:
+
+- `avoid` — fail before use;
+- `ask` — require explicit approval when a run proposes use;
+- `allow` — permit use while recording it in manifests and trust evidence.
+
+Default to `ask`. Explain that a command may confirm a one-run override, but a one-run choice never
+persists; only this configuration menu changes the stored policy.
 
 ### Review defaults
 
@@ -134,7 +147,8 @@ Create `.formalising/` if needed, serialize with two-space indentation and a tra
 validate the complete JSON in a temporary file, then atomically replace
 `.formalising/fvs-config.json`. On validation or write failure, leave the old file untouched.
 
-Report runtime/provider, profile, changed stage/agent/review settings, and precedence:
+Report runtime/provider, profile, stored `native_decide` policy, changed stage/agent/review
+settings, and precedence:
 
 1. explicit one-run selection;
 2. saved review value for review stages;
@@ -155,5 +169,6 @@ fail before dispatch with exact remediation.
 - [ ] Stage overrides are stored under the exact runtime+stage key and win over agent overrides.
 - [ ] Choice menus expose notes and reconfirm after notes change the preview.
 - [ ] Review defaults may remain null so opposite-runtime profile routing stays active.
+- [ ] `native_decide` is one of `avoid | ask | allow`, defaults to `ask`, and one-run overrides never persist.
 - [ ] Unknown config keys were preserved and malformed JSON was never overwritten.
 </success_criteria>

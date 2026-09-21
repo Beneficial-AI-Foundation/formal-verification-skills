@@ -20,7 +20,8 @@ working modes is essential before writing any specification or proof.
 | `Defs/` | Hand-written extended definitions (e.g., curve representations) | Yes |
 | `lakefile.toml` | Build configuration; pins Aeneas backend revision | Carefully |
 | `lean-toolchain` | Lean version pinning (e.g., `leanprover/lean4:v4.24.0`) | Carefully |
-| `functions.json` | Metadata index of all extracted functions | Generated |
+| `translation.json` | Aeneas-generated Rust↔Lean declaration/source manifest (`-emit-json`) | NEVER |
+| `functions.json` | FVS verification-progress and dependency index | Generated |
 | `Axioms.lean` or `Axioms/` | All intentional axioms (FFI, SIMD, external) grouped for audit | Yes (carefully) |
 | `FunsExternal_Template.lean` | Aeneas-generated template with `sorry` bodies for external functions | Reference only |
 | `TypesExternal_Template.lean` | Aeneas-generated template with `sorry` bodies for external types | Reference only |
@@ -208,9 +209,20 @@ simp [group_laws]            -- Abstract algebraic simplification
 Identify repeated proof patterns, extract common lemmas, improve organization.
 Focus on maintainability and proof reuse.
 
-## Pattern 4: functions.json Metadata Format
+## Pattern 4: Translation and Verification Metadata
 
-The `functions.json` file indexes every extracted function with verification status:
+Aeneas `-emit-json` writes `translation.json` beside generated Lean. Treat it as generated source
+provenance, not a progress database. It records functions, types, globals, trait declarations, and
+trait implementations with their Rust/Lean names, generated Lean file, source range, locality, and
+`def_id`. Function entries also record `is_opaque`, `can_fail`, `can_diverge`, `is_rec`, and loop
+metadata. Join `translation.json` with `.llbc` using `def_id` when deeper declaration data is needed.
+Never infer these facts from names or edit the manifest.
+
+FVS `functions.json` is a separate derived index for dependencies and verification status. Link its
+entries to `translation.json` by exact Rust/Lean identity and source location; do not copy progress
+flags into the upstream manifest or treat `translation.json` as proof evidence.
+
+The `functions.json` format is:
 
 ```json
 {
@@ -531,29 +543,24 @@ assumptions, and reviewers need to inspect every one.
 
 ---
 
-## Pattern 10: Sorry'd Definitions vs Sorry'd Theorems
+## Pattern 10: Definitions Must Be Concrete; Theorem Holes Stay Explicit
 
-A sorry'd **definition** (`def foo := sorry`) needs a **value** -- a Lean term
-of the correct type. A sorry'd **theorem** (`theorem foo := by sorry`) needs a
-**proof** -- a tactic sequence.
+A definition with a `sorry` body (`def foo := sorry`) is never acceptable, including during
+scaffolding. It invents computational data and makes every theorem using that definition vacuous.
+Read the Rust source, specification, type, and docstring; implement the concrete value or stop with
+`HUMAN_RULING` when source fidelity cannot be established.
 
-Confusing these is a common mistake:
-- A sorry'd def produces a valid term of the right type (potentially unsound
-  if the term is used in other computations)
-- A sorry'd theorem is a hole in the proof (always unsound but localized)
-
-**For `def` (sorry'd definition):** provide a concrete Lean expression.
-Common patterns:
+Common concrete definition patterns include:
 - Byte assembly: `arrayToSpecBytes field1 ++ arrayToSpecBytes field2`
 - Extraction: `(arrayToSpecBytes field).extract start len`
 - Casting: `expr.cast (by scalar_tac)` or `expr.cast (by simp [...])`
 
-**For `theorem` (sorry'd theorem):** provide a tactic proof
-(`by unfold ...; step*; ...`)
-
-**Key question for sorry'd definitions:** "What concrete data should this be?"
-Read the docstring and expected type carefully. The answer is almost always a
-composition of conversion functions applied to relevant fields.
+A theorem `sorry` (`theorem foo := by sorry`) is different: it records an explicit proof gap rather
+than fabricating computation. It may be used only where the active workflow permits temporary
+proof scaffolding, must remain discoverable by trust audit, and must be eliminated before a
+successful no-sorry gate. Generated `FunsExternal_Template.lean` and
+`TypesExternal_Template.lean` are reference inputs only; copy no `sorry` body into hand-written
+models.
 
 ---
 

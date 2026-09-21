@@ -77,6 +77,8 @@ node -e '
   const fs = require("fs");
   const m = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
   if (!m.upstream_source || !Array.isArray(m.mapping) || !m.mapping.length ||
+      !Array.isArray(m.extraction_inputs) || !m.extraction_inputs.length ||
+      m.extraction_inputs.some(x => !x.repository || !x.upstream_path || !x.snapshot_target) ||
       !m.tactic_renames || typeof m.tactic_renames !== "object") process.exit(2);
 ' "$SYNC_META" || {
   echo "FVS >> Aeneas sync metadata is invalid. Run /fvs:update or npx fv-skills-baif@latest."
@@ -123,30 +125,52 @@ Before any `git -C "<clone>"`, validate the resolved path is a directory:
 [ -d "$AENEAS_CLONE" ] || echo "FVS >> Aeneas clone path is not a directory: $AENEAS_CLONE"
 ```
 
-## Step 3: Report clone staleness (graceful, never a hard fail)
+## Step 3: Freeze upstream revisions before fetching content
 
-For each resolved clone, compare its `git rev-parse HEAD` against the pin the project expects:
-Charon against the rev in Aeneas's `charon-pin`; Aeneas against the lakefile-pinned rev. Report
-`up-to-date` / `behind N` / `ahead N` / `diverged` -- a stale clone is still mineable.
+Resolve current upstream refs once, before any content fetch or worker dispatch. Record these exact
+values in the run manifest:
+
+- `FROZEN_AENEAS_SHA`: `AeneasVerif/aeneas` `main` at run start.
+- `FROZEN_AENEAS_DATE`: the commit date of `FROZEN_AENEAS_SHA`.
+- `FROZEN_CHARON_PIN`: the uncommented commit in `charon-pin` fetched from
+  `FROZEN_AENEAS_SHA`, not from a moving local checkout.
+- `FROZEN_CHARON_MAIN_SHA`: `AeneasVerif/charon` `main` at run start, used only to check whether an
+  active pinned-toolchain blocker is fixed upstream.
+- `FROZEN_CHARON_MAIN_DATE`: the commit date of `FROZEN_CHARON_MAIN_SHA`.
+
+Use read-only `git ls-remote`, `gh api`, or `curl` requests. Validate every revision as 40 lowercase
+hex characters and every date as an ISO-8601 timestamp. If any value cannot be resolved, STOP before
+workers or writes; never substitute a clone `HEAD`, guess a ref, or mix revisions from separate
+resolution attempts. All later Aeneas fetches use `FROZEN_AENEAS_SHA`; pinned Charon evidence uses
+`FROZEN_CHARON_PIN`; upstream-fixed comparison evidence uses `FROZEN_CHARON_MAIN_SHA`.
+
+Do not write `_sync-meta.json` yet. The frozen values are proposed metadata until approved snapshot
+content has been written and verified.
+
+## Step 4: Report clone staleness against the frozen revisions
+
+For each resolved clone, compare `git rev-parse HEAD` against its actual expected revision: Aeneas
+against `FROZEN_AENEAS_SHA`, Charon against `FROZEN_CHARON_PIN`. Report `up-to-date` / `behind N` /
+`ahead N` / `diverged`. Staleness is diagnostic only: use a clone only when it contains the frozen
+commit; otherwise fetch the exact frozen revision read-only.
 
 ```bash
+AENEAS_HEAD=$(git -C "$AENEAS_CLONE" rev-parse HEAD 2>/dev/null)
 CHARON_HEAD=$(git -C "$CHARON_CLONE" rev-parse HEAD 2>/dev/null)
-AENEAS_PIN=$(grep -v '^#' "$AENEAS_CLONE/charon-pin" 2>/dev/null | tr -d '[:space:]')
-# behind/ahead via git -C "$CHARON_CLONE" rev-list --count; "pin not in history" => diverged
+# Compare AENEAS_HEAD with FROZEN_AENEAS_SHA and CHARON_HEAD with FROZEN_CHARON_PIN.
+# Use rev-list --count when both commits exist locally; otherwise report "diverged / fetch needed".
 ```
 
 ```
 FVS >> Clone Staleness
 
-| Clone  | HEAD            | Expected pin     | Status     |
-|--------|-----------------|------------------|------------|
-| charon | {head:0:12}     | {pin:0:12}       | behind 3   |
-| aeneas | {head:0:12}     | {lakefile rev}   | up-to-date |
-
-Staleness is reported, not blocking -- mining proceeds against the clone as-is.
+| Clone  | HEAD            | Expected revision | Status     |
+|--------|-----------------|-------------------|------------|
+| charon | {head:0:12}     | {pin:0:12}        | behind 3   |
+| aeneas | {head:0:12}     | {frozen:0:12}     | up-to-date |
 ```
 
-## Step 4: Fan out to fvs-doc-syncer in mode (a) tactics-lean-syntax
+## Step 5: Fan out to fvs-doc-syncer in mode (a) tactics-lean-syntax
 
 Dispatch the worker for today's tactic/Lean-syntax scope, inlining the `_sync-meta.json` mapping and
 the `tactic_renames` table (the parent inlines all reference content; the worker uses no
@@ -157,17 +181,17 @@ Task(subagent_type="fvs-doc-syncer", model="$SYNCER_MODEL",
      reasoning_effort="$SYNCER_EFFORT", // when supported; otherwise apply the capability gate
      description="Sync tactics + Lean-syntax docs (mode a)",
      prompt="<sync_mode>tactics-lean-syntax</sync_mode>
-             ...inlined _sync-meta.json mapping + tactic_renames + snapshot SHA + the
-                resolved Aeneas clone path for local mining...")
+             ...inlined mapping + tactic_renames + extraction_inputs + frozen revision manifest +
+                resolved Aeneas clone path for exact-revision local mining...")
 ```
 
-The worker fetches mapped upstream files (local clone first, read-only `gh api` / `curl` fallback
-when thin), computes a SECTION-LEVEL diff, maps changed sections via `merge_strategy`
-(`enrich` / `replace_section` / `defer`), checks the `tactic_renames` table, and PROPOSES each
-change for the user to approve / skip / edit. It updates the snapshot and `_sync-meta.json` at the
-end.
+The worker fetches mapped upstream files at `FROZEN_AENEAS_SHA` (local clone first only when that
+commit exists, otherwise read-only `gh api` / `curl`), computes a SECTION-LEVEL diff, maps changed
+sections via `merge_strategy` (`enrich` / `replace_section` / `defer`), checks the
+`tactic_renames` table, and PROPOSES each change for the user to approve / skip / edit. Snapshot and
+derived-reference writes remain separate from the final metadata write.
 
-## Step 5: Fan out to fvs-doc-syncer in mode (b) extraction-docs
+## Step 6: Fan out to fvs-doc-syncer in mode (b) extraction-docs
 
 Dispatch the worker for the extraction-docs scope + the blocker-catalog reconcile, inlining the
 extraction doc targets and the current `blocker-catalog.md` seed:
@@ -177,22 +201,23 @@ Task(subagent_type="fvs-doc-syncer", model="$SYNCER_MODEL",
      reasoning_effort="$SYNCER_EFFORT", // when supported; otherwise apply the capability gate
      description="Sync extraction docs + reconcile blocker catalog (mode b)",
      prompt="<sync_mode>extraction-docs</sync_mode>
-             ...Charon docs/{what_charon_translates,transformations,limitations}.md + README.md +
-                CONTRIBUTING.md + .github/ISSUE_TEMPLATE/*; Aeneas documentation/*.md +
-                documentation/skills/*.instructions.md (source-of-truth, NOT symlinks) + README.md +
-                tests/README.md; the resolved clone paths for local mining; the current
-                blocker-catalog seed for the reconcile pass...")
+             ...the exact extraction_inputs rows and snapshot_target values from _sync-meta.json;
+                the frozen revision manifest; resolved clone paths for exact-revision local mining;
+                the current blocker-catalog seed for the reconcile pass...")
 ```
 
-The worker fetches the extraction docs (local clone first; on-demand read-only GH fetch only when
-in-repo docs are thin, under evidence discipline), section-level-diffs them, then RECONCILES the
-blocker catalog: re-check each seed blocker against live upstream and PROPOSE flagging it
-retire / update-signature / still-open. "Fixed in upstream main" is NOT "fixed for us" -- an entry
-stays `needs-manual-check` until the resolved pin is diffed against the fix; never auto-`retire`.
-Never duplicate an entry whose `signature` already exists; update it in place. The user approves /
-skips / edits each proposed change.
+The worker fetches each exact `extraction_inputs` row at its declared frozen revision and writes
+only its declared `snapshot_target`. It section-level-diffs snapshots, then RECONCILES the blocker
+catalog: re-check each seed blocker against `FROZEN_CHARON_PIN`, and separately check
+`FROZEN_CHARON_MAIN_SHA` for an `upstream-fixed` annotation. "Fixed in upstream main" is NOT "fixed
+for us": the entry stays active until the pin carries the fix and is never auto-`retire`. Never
+duplicate a signature. The user approves / skips / edits each proposed change.
 
-## Step 6: Report
+After all approved snapshot and derived-reference writes, verify every synchronized target and its
+hash, then write `_sync-meta.json` last with the frozen SHA/date/pin evidence. A failed verification
+leaves metadata unchanged and reports the rejected candidate.
+
+## Step 7: Report
 
 Merge the two workers' return summaries:
 

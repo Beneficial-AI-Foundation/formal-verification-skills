@@ -534,6 +534,32 @@ postcondition simplification (in `spec`).
 components as postconditions. The public `spec` uses `WP.spec_mono` to derive
 cleaner, caller-friendly postconditions.
 
+---
+
+## Pattern 11: Verification Campaign and Recovery Mode
+
+Use campaign planning when verification is broader than one local proof: a new primitive, a
+significant generated-model change, widespread proof breakage, or new/changed Rust functions that
+require new statements. Routine single-proof maintenance stays in the normal proof loop.
+
+1. Freeze and record the Rust, Aeneas, Charon, and specification sources.
+2. Read the Rust, immutable generated Lean, existing specification, and dependency map before
+   proposing files or ownership.
+3. Plan bounded proof units and shared bridge definitions. Generated `Funs.lean`, `Types.lean`, and
+   generated external templates remain immutable; recovery means regenerate and reconcile, never
+   patch generated output.
+4. Write final theorem statements and proof sketches before mechanized proofs. Each statement must
+   express full functional correctness, identify invariants, and typecheck with an explicit temporary
+   theorem hole only when the active workflow permits it.
+5. Run the FVS specification-review gate before proof execution. Statement edits after approval
+   invalidate that approval.
+6. Execute proofs through the lane-specific FVS executor, then require green build and trust audit.
+
+Upstream campaign advice is planning input, not orchestration authority. FVS command routers,
+executor ownership, independent review receipts, generated-file rules, external-model workflow, and
+no-new-axiom release gate take precedence. Unsupported external behavior stops for `HUMAN_RULING`;
+it is never converted into an axiom merely to keep a campaign moving.
+
 </patterns>
 
 <anti_patterns>

@@ -23,8 +23,9 @@ and updated `_sync-meta.json`.
 
 Before config resolution, clone prompts, fetches, or dispatches, resolve
 `${CLAUDE_PLUGIN_ROOT}/fv-skills/upstream/aeneas/_sync-meta.json` (the installer rewrites the runtime path)
-and require a non-empty, parseable JSON object with `upstream_source`, a non-empty `mapping` array,
-and an object-valued `tactic_renames` table.
+and require a non-empty, parseable JSON object with `upstream_source`, non-empty `mapping` and
+`extraction_inputs` arrays, an explicit `snapshot_target` for every extraction input, and an
+object-valued `tactic_renames` table.
 
 If it is missing or invalid, STOP and report:
 
@@ -71,24 +72,40 @@ degradation)
   mode rather than aborting the run -- mining is config-gated, not run-gating.
 </step>
 
+<step name="freeze_upstream">
+## Step 3: Freeze Upstream Revisions
+
+Resolve upstream refs once before any content fetch or worker dispatch. Record
+`FROZEN_AENEAS_SHA`, `FROZEN_AENEAS_DATE`, `FROZEN_CHARON_PIN`,
+`FROZEN_CHARON_MAIN_SHA`, and `FROZEN_CHARON_MAIN_DATE` in the run manifest.
+`FROZEN_CHARON_PIN` comes from `charon-pin` fetched at `FROZEN_AENEAS_SHA`; never read it from a
+moving checkout. Validate revisions as 40 lowercase hex characters and dates as ISO-8601. All
+Aeneas fetches use `FROZEN_AENEAS_SHA`, pinned-toolchain Charon evidence uses
+`FROZEN_CHARON_PIN`, and upstream-fixed comparison evidence uses `FROZEN_CHARON_MAIN_SHA`.
+
+**Inputs:** read-only upstream refs and `charon-pin` at the frozen Aeneas commit
+**Outputs:** immutable run manifest; proposed metadata values only
+**Error handling:** unresolved or malformed provenance stops before dispatch or writes. Do not
+update `_sync-meta.json` in this step.
+</step>
+
 <step name="report_staleness">
-## Step 3: Report Clone Staleness
+## Step 4: Report Clone Staleness
 
-For each resolved clone compare `git -C "<clone>" rev-parse HEAD` against the pin the project
-expects (Charon vs the rev in Aeneas's `charon-pin`; Aeneas vs the lakefile-pinned rev). Report
-`up-to-date` / `behind N` / `ahead N` / `diverged`. Use `rev-list --count` for the N; a pin commit
-absent from the clone's history means `diverged / fetch needed`.
+Compare each resolved clone `HEAD` against its real expected revision: Aeneas against
+`FROZEN_AENEAS_SHA`, Charon against `FROZEN_CHARON_PIN`. Report `up-to-date` / `behind N` /
+`ahead N` / `diverged`. Use a clone only if it contains the required frozen commit; otherwise fetch
+the exact revision read-only.
 
-**Inputs:** resolved clones, `charon-pin`, lakefile rev
+**Inputs:** resolved clones and frozen run manifest
 **Outputs:** staleness report
 
-**Error handling:**
-- Staleness is REPORTED, never a hard failure -- a stale clone is still mineable; flag the caveat
-  and proceed.
+**Error handling:** staleness does not invalidate a remotely available frozen source; source
+ambiguity or inability to fetch the exact revision does.
 </step>
 
 <step name="sync_tactics_lean_syntax">
-## Step 4: Fan Out — Mode (a) tactics-lean-syntax
+## Step 5: Fan Out — Mode (a) tactics-lean-syntax
 
 Dispatch the worker for the tactic/Lean-syntax scope, inlining the `_sync-meta.json` mapping, the
 `tactic_renames` table, the current snapshot SHA, and the resolved Aeneas clone path:
@@ -100,10 +117,11 @@ Task(subagent_type="fvs-doc-syncer", model="$SYNCER_MODEL",
      prompt="<sync_mode>tactics-lean-syntax</sync_mode> ...inlined mapping + tactic_renames + ...")
 ```
 
-The worker fetches mapped upstream files (local clone first, read-only `gh api` / `curl` fallback
-when thin), computes a SECTION-LEVEL diff (split by `## `, hash, classify added/removed/modified),
-maps changes via `merge_strategy`, checks `tactic_renames`, and PROPOSES each change (yes / skip /
-edit). It updates the snapshot files and `_sync-meta.json` at the end.
+The worker fetches mapped upstream files at `FROZEN_AENEAS_SHA` (local clone first only when it
+contains that commit, read-only `gh api` / `curl` otherwise), computes a SECTION-LEVEL diff (split
+by `## `, hash, classify added/removed/modified), maps changes via `merge_strategy`, checks
+`tactic_renames`, and PROPOSES each change (yes / skip / edit). Snapshot and derived-reference
+writes are completed and verified before any metadata update.
 
 **Inputs:** mapping, tactic_renames, snapshot SHA, Aeneas clone
 **Outputs:** worker return summary (applied / skipped / renames propagated)
@@ -114,7 +132,7 @@ edit). It updates the snapshot files and `_sync-meta.json` at the end.
 </step>
 
 <step name="sync_extraction_docs">
-## Step 5: Fan Out — Mode (b) extraction-docs
+## Step 6: Fan Out — Mode (b) extraction-docs
 
 Dispatch the worker for the extraction-docs scope + blocker-catalog reconcile, inlining the Charon
 and Aeneas extraction doc targets and the current `blocker-catalog.md` seed:
@@ -123,20 +141,21 @@ and Aeneas extraction doc targets and the current `blocker-catalog.md` seed:
 Task(subagent_type="fvs-doc-syncer", model="$SYNCER_MODEL",
      reasoning_effort="$SYNCER_EFFORT", // when supported; otherwise apply the capability gate
      description="Sync extraction docs + reconcile catalog (mode b)",
-     prompt="<sync_mode>extraction-docs</sync_mode> ...Charon docs/{what_charon_translates,
-             transformations,limitations}.md + README.md + CONTRIBUTING.md +
-             .github/ISSUE_TEMPLATE/*; Aeneas documentation/*.md +
-             documentation/skills/*.instructions.md (source-of-truth, NOT symlinks) + README.md +
-             tests/README.md; resolved clone paths; the current catalog seed...")
+     prompt="<sync_mode>extraction-docs</sync_mode> ...exact extraction_inputs rows and
+             snapshot_target values; frozen run manifest; resolved clone paths; current catalog
+             seed...")
 ```
 
-The worker fetches the extraction docs (local clone first; on-demand read-only GH fetch only when
-in-repo docs are thin, under evidence discipline), section-level-diffs them, then RECONCILES the
-blocker catalog: re-check each seed blocker against live upstream and PROPOSE retire /
-update-signature / still-open. "Fixed in upstream main" is NOT "fixed for us" -- an entry stays
-`needs-manual-check` until the resolved pin is diffed against the fix; never auto-`retire`. Never
-duplicate an entry whose `signature` already exists; update it in place. Propose each change
-(yes / skip / edit).
+The worker fetches each exact extraction input at its declared frozen revision and writes only its
+declared `snapshot_target`. It section-level-diffs snapshots, then RECONCILES the blocker catalog:
+re-check each seed blocker against `FROZEN_CHARON_PIN`; check `FROZEN_CHARON_MAIN_SHA` separately
+for an `upstream-fixed` annotation. "Fixed in upstream main" is NOT "fixed for us": an entry stays
+active until the pin carries the fix and is never auto-`retire`. Never duplicate a signature.
+Propose each change (yes / skip / edit).
+
+After approved snapshot and derived-reference writes, verify synchronized targets and hashes, then
+write `_sync-meta.json` last. Failed verification leaves metadata unchanged and reports the
+candidate.
 
 **Inputs:** extraction doc targets, resolved clones, catalog seed
 **Outputs:** worker return summary (applied / skipped / catalog entries reconciled)
@@ -147,7 +166,7 @@ duplicate an entry whose `signature` already exists; update it in place. Propose
 </step>
 
 <step name="report">
-## Step 6: Report
+## Step 7: Report
 
 Merge the two workers' return summaries into one banner:
 
@@ -173,12 +192,15 @@ Run `npm test` to verify no frontmatter or structural issues.
 <success_criteria>
 - Installed `_sync-meta.json` exists and passes its minimum schema preflight before any other work.
 - Clone paths resolved via config -> auto-detect -> prompt -> error; no hardcoded absolute path.
-- Clone staleness computed and reported gracefully (never a hard failure of mining).
+- Aeneas main, its commit date, its exact Charon pin, and current Charon main are frozen once.
+- Clone staleness compares Aeneas with the frozen main SHA and Charon with the frozen pin; no
+  nonexistent Aeneas self-pin assumption.
 - `fvs-doc-syncer` dispatched in BOTH `tactics-lean-syntax` and `extraction-docs` modes.
 - Section-level diff (not byte-level) in each mode; each change proposed individually for approval.
 - tactics-lean-syntax: mapping + tactic-rename machinery; metadata updated.
-- extraction-docs: extraction docs synced; blocker catalog reconciled in place; no blind append; no
-  auto-retire before the resolved pin carries the fix.
+- extraction-docs: every input has an explicit snapshot target; blocker catalog reconciled in
+  place; no blind append; no auto-retire before the resolved pin carries the fix.
+- Approved content is written and verified before `_sync-meta.json` is updated.
 - No `gh` auto-open/create; read-only fetch is the only GH path and only a fallback to local mining.
 - No silent failures -- all errors reported to the user.
 </success_criteria>
