@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.3.5] - 2026-09-21
+
+### Added
+
+- `/fvs:model-external` resolves one external Rust stub and its bounded dependency closure from
+  locked registry, git, vendor, or rustc sysroot source. Candidate changes are reversible and must
+  pass separate model-fidelity and specification reviews, completed proofs, a guarded build, and a
+  clean trust audit (#33).
+- The unified npm installer now installs and removes FVS through Pi's native package manager. It
+  supports updateable or exact versions, user and project scopes, explicit conflict handling,
+  Pi-first mixed-runtime preflight and installation, and matching Pi installation guidance (#67,
+  #68).
+
+### Fixed
+
+- Aeneas guidance synchronization now uses frozen upstream revisions, hash-verified snapshots,
+  proposal-before-write review, blocker reconciliation, and project-scoped `native_decide` policy
+  without weakening generated-file boundaries (#57).
+- Crypto workflows no longer depend on functional-correctness executor names, Aeneas analogies, or
+  obsolete sorry-grind assumptions. The dedicated crypto executor and fail-closed bridge boundary
+  remain explicit (#65).
+
 ## [2.3.4] - 2026-09-20
 
 ### Fixed
