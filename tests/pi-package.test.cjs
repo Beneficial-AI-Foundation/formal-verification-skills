@@ -23,6 +23,29 @@ describe('Pi package', () => {
     assert.ok(pkg.files.includes('pi'));
   });
 
+  it('loads 30 generated skills with zero structural diagnostics', () => {
+    const commands = fs.readdirSync(path.join(ROOT, 'commands', 'fvs'))
+      .filter((name) => name.endsWith('.md'))
+      .map((name) => `fvs-${name.slice(0, -3)}`)
+      .sort();
+    const diagnostics = [];
+
+    assert.equal(commands.length, 30);
+    assert.deepEqual(skillNames(), commands);
+    for (const name of commands) {
+      const raw = fs.readFileSync(path.join(PI_SKILLS_ROOT, name, 'SKILL.md'), 'utf8');
+      const frontmatter = raw.match(/^---\n([\s\S]*?)\n---\n/);
+      if (!frontmatter) diagnostics.push(`${name}: missing frontmatter`);
+      if (!new RegExp(`^name: ${name}$`, 'm').test(frontmatter?.[1] ?? '')) {
+        diagnostics.push(`${name}: invalid name`);
+      }
+      if (!/^description: .+/m.test(frontmatter?.[1] ?? '')) {
+        diagnostics.push(`${name}: missing description`);
+      }
+    }
+    assert.deepEqual(diagnostics, []);
+  });
+
   it('exposes every FVS command as a valid namespaced Pi skill', () => {
     const commands = fs.readdirSync(path.join(ROOT, 'commands', 'fvs'))
       .filter((name) => name.endsWith('.md'))

@@ -5,6 +5,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const readline = require('readline');
+const { spawnSync } = require('child_process');
 
 // Colors
 const orange = '\x1b[38;5;208m';
@@ -104,6 +105,115 @@ const FVS_CODEX_AGENT_EFFORT = {
 // Get version from package.json
 const pkg = require('../package.json');
 
+const PI_PACKAGE_NAME = 'fv-skills-baif';
+const ALL_RUNTIMES = ['pi', 'claude', 'opencode', 'gemini', 'codex'];
+
+function buildPiPackageSource(version = 'latest') {
+  if (version === 'latest') return `npm:${PI_PACKAGE_NAME}`;
+  if (!/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(version ?? '')) {
+    throw new Error('--pi-version must be latest or X.Y.Z');
+  }
+  return `npm:${PI_PACKAGE_NAME}@${version}`;
+}
+
+function buildPiCommand(action, version = 'latest', isGlobal = true) {
+  if (!['install', 'remove'].includes(action)) throw new Error('Pi action must be install or remove');
+  const source = action === 'install' ? buildPiPackageSource(version) : `npm:${PI_PACKAGE_NAME}`;
+  return [action, source, ...(isGlobal ? [] : ['--local'])];
+}
+
+function piPackageSource(entry) {
+  if (typeof entry === 'string') return entry;
+  if (!entry || typeof entry !== 'object') return null;
+  return entry.source ?? entry.package ?? entry.spec ?? null;
+}
+
+function isFvsPiSource(source) {
+  return typeof source === 'string' &&
+    new RegExp(`^npm:${PI_PACKAGE_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:@[^\\s]+)?$`).test(source);
+}
+
+function readPiPackageSources(file) {
+  if (!fs.existsSync(file)) return [];
+  let settings;
+  try {
+    settings = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (error) {
+    throw new Error(`Cannot inspect Pi settings ${file}: ${error.message}`);
+  }
+  if (settings.packages !== undefined && !Array.isArray(settings.packages)) {
+    throw new Error(`Cannot inspect Pi settings ${file}: packages must be an array`);
+  }
+  return (settings.packages ?? []).map(piPackageSource).filter(isFvsPiSource);
+}
+
+function detectPiPackageScopes({ home = os.homedir(), cwd = process.cwd() } = {}) {
+  return {
+    user: readPiPackageSources(path.join(home, '.pi', 'agent', 'settings.json')),
+    project: readPiPackageSources(path.join(cwd, '.pi', 'settings.json')),
+  };
+}
+
+function createPiAdapter({ runner = spawnSync, home = os.homedir(), cwd = process.cwd(),
+  env = process.env } = {}) {
+  const invoke = (argv, options = {}) => {
+    const result = runner('pi', argv, { cwd, env, encoding: 'utf8', ...options });
+    if (result.error?.code === 'ENOENT') {
+      throw new Error('Pi executable is unavailable. Install or upgrade Pi, then retry.');
+    }
+    if (result.error || result.status !== 0) {
+      const detail = result.error?.message || result.stderr?.trim() ||
+        `exit ${result.status ?? 'unknown'}${result.signal ? ` (${result.signal})` : ''}`;
+      throw new Error(`Pi ${argv.join(' ')} failed: ${detail}`);
+    }
+    return result;
+  };
+  return {
+    preflight({ isGlobal = true } = {}) {
+      invoke(['--version']);
+      for (const action of ['install', 'remove']) {
+        const result = invoke([action, '--help']);
+        if (!isGlobal && !/--local\b/.test(`${result.stdout ?? ''}\n${result.stderr ?? ''}`)) {
+          throw new Error(`Pi ${action} does not support --local. Upgrade Pi, then retry.`);
+        }
+      }
+    },
+    scopes() {
+      return detectPiPackageScopes({ home, cwd });
+    },
+    run(argv) {
+      return invoke(argv, { stdio: 'inherit', encoding: undefined });
+    },
+  };
+}
+
+function optionValue(inputArgs, name) {
+  const matches = [];
+  for (let i = 0; i < inputArgs.length; i += 1) {
+    if (inputArgs[i] === name) {
+      if (!inputArgs[i + 1] || inputArgs[i + 1].startsWith('-')) {
+        throw new Error(`${name} requires a value`);
+      }
+      matches.push(inputArgs[i + 1]);
+      i += 1;
+    } else if (inputArgs[i].startsWith(`${name}=`)) {
+      matches.push(inputArgs[i].slice(name.length + 1));
+    }
+  }
+  if (matches.length > 1) throw new Error(`${name} may be specified only once`);
+  return matches[0] ?? null;
+}
+
+function parsePiOptions(inputArgs) {
+  const version = optionValue(inputArgs, '--pi-version');
+  if (version !== null) buildPiPackageSource(version);
+  const conflict = optionValue(inputArgs, '--pi-conflict');
+  if (conflict !== null && !['keep', 'move'].includes(conflict)) {
+    throw new Error('--pi-conflict must be keep or move');
+  }
+  return { version, conflict };
+}
+
 // Parse args
 const args = process.argv.slice(2);
 const hasGlobal = args.includes('--global') || args.includes('-g');
@@ -112,14 +222,16 @@ const hasOpencode = args.includes('--opencode');
 const hasClaude = args.includes('--claude');
 const hasGemini = args.includes('--gemini');
 const hasCodex = args.includes('--codex');
+const hasPi = args.includes('--pi');
 const hasAll = args.includes('--all');
 const hasUninstall = args.includes('--uninstall') || args.includes('-u');
 
 // Runtime selection - can be set by flags or interactive prompt
 let selectedRuntimes = [];
 if (hasAll) {
-  selectedRuntimes = ['claude', 'opencode', 'gemini', 'codex'];
+  selectedRuntimes = [...ALL_RUNTIMES];
 } else {
+  if (hasPi) selectedRuntimes.push('pi');
   if (hasOpencode) selectedRuntimes.push('opencode');
   if (hasClaude) selectedRuntimes.push('claude');
   if (hasGemini) selectedRuntimes.push('gemini');
@@ -128,6 +240,7 @@ if (hasAll) {
 
 // Helper to get directory name for a runtime (used for local/project installs)
 function getDirName(runtime) {
+  if (runtime === 'pi') return '.pi';
   if (runtime === 'opencode') return '.opencode';
   if (runtime === 'gemini') return '.gemini';
   if (runtime === 'codex') return '.codex';
@@ -202,6 +315,11 @@ function getOpencodeGlobalDir() {
  * @param {string|null} explicitDir - Explicit directory from --config-dir flag
  */
 function getGlobalDir(runtime, explicitDir = null) {
+  if (runtime === 'pi') {
+    // Pi owns this path; --config-dir never redirects its package settings.
+    return path.join(os.homedir(), '.pi', 'agent');
+  }
+
   if (runtime === 'codex') {
     // Codex: --config-dir > CODEX_HOME > ~/.codex
     if (explicitDir) {
@@ -287,7 +405,7 @@ if (require.main === module) {
 
 // Show help if requested
 if (require.main === module && hasHelp) {
-  console.log(`  ${yellow}Usage:${reset} npx fv-skills-baif [options]\n\n  ${yellow}Options:${reset}\n    ${orange}-g, --global${reset}              Install globally (to config directory)\n    ${orange}-l, --local${reset}               Install locally (to current directory)\n    ${orange}--claude${reset}                  Install for Claude Code only\n    ${orange}--opencode${reset}                Install for OpenCode only\n    ${orange}--gemini${reset}                  Install for Gemini only\n    ${orange}--codex${reset}                   Install for Codex only\n    ${orange}--all${reset}                     Install for all runtimes\n    ${orange}-u, --uninstall${reset}           Uninstall FVS (remove all FVS files)\n    ${orange}-c, --config-dir <path>${reset}   Specify custom config directory\n    ${orange}-h, --help${reset}                Show this help message\n    ${orange}--force-statusline${reset}        Replace existing statusline config\n\n  ${yellow}Examples:${reset}\n    ${dim}# Interactive install (prompts for runtime and location)${reset}\n    npx fv-skills-baif\n\n    ${dim}# Install for Claude Code globally${reset}\n    npx fv-skills-baif --claude --global\n\n    ${dim}# Install for Codex globally${reset}\n    npx fv-skills-baif --codex --global\n\n    ${dim}# Install for Gemini globally${reset}\n    npx fv-skills-baif --gemini --global\n\n    ${dim}# Install for all runtimes globally${reset}\n    npx fv-skills-baif --all --global\n\n    ${dim}# Install to custom config directory${reset}\n    npx fv-skills-baif --claude --global --config-dir ~/.claude-bc\n\n    ${dim}# Install to current project only${reset}\n    npx fv-skills-baif --claude --local\n\n    ${dim}# Uninstall FVS from Claude Code globally${reset}\n    npx fv-skills-baif --claude --global --uninstall\n\n  ${yellow}Notes:${reset}\n    The --config-dir option is useful when you have multiple configurations.\n    It takes priority over CLAUDE_CONFIG_DIR / GEMINI_CONFIG_DIR / CODEX_HOME environment variables.\n`);
+  console.log(`  ${yellow}Usage:${reset} npx fv-skills-baif [options]\n\n  ${yellow}Options:${reset}\n    ${orange}-g, --global${reset}              Install globally (to config directory)\n    ${orange}-l, --local${reset}               Install locally (to current directory)\n    ${orange}--claude${reset}                  Install for Claude Code only\n    ${orange}--opencode${reset}                Install for OpenCode only\n    ${orange}--gemini${reset}                  Install for Gemini only\n    ${orange}--codex${reset}                   Install for Codex only\n    ${orange}--pi${reset}                      Install as a native Pi package only\n    ${orange}--all${reset}                     Install for all runtimes, including Pi\n    ${orange}--pi-version <latest|X.Y.Z>${reset}  Select updateable or pinned Pi package\n    ${orange}--pi-conflict <keep|move>${reset} Resolve an opposite-scope Pi install noninteractively\n    ${orange}-u, --uninstall${reset}           Uninstall FVS (remove all FVS files)\n    ${orange}-c, --config-dir <path>${reset}   Specify custom config directory\n    ${orange}-h, --help${reset}                Show this help message\n    ${orange}--force-statusline${reset}        Replace existing statusline config\n\n  ${yellow}Examples:${reset}\n    ${dim}# Interactive install (prompts for runtime and location)${reset}\n    npx fv-skills-baif\n\n    ${dim}# Install for Claude Code globally${reset}\n    npx fv-skills-baif --claude --global\n\n    ${dim}# Install for Codex globally${reset}\n    npx fv-skills-baif --codex --global\n\n    ${dim}# Install the updateable Pi package globally${reset}\n    npx fv-skills-baif --pi --global\n\n    ${dim}# Pin an exact Pi package in this project${reset}\n    npx fv-skills-baif --pi --local --pi-version 2.3.4\n\n    ${dim}# Install for Gemini globally${reset}\n    npx fv-skills-baif --gemini --global\n\n    ${dim}# Install for all runtimes globally${reset}\n    npx fv-skills-baif --all --global\n\n    ${dim}# Install to custom config directory${reset}\n    npx fv-skills-baif --claude --global --config-dir ~/.claude-bc\n\n    ${dim}# Install to current project only${reset}\n    npx fv-skills-baif --claude --local\n\n    ${dim}# Uninstall FVS from Claude Code globally${reset}\n    npx fv-skills-baif --claude --global --uninstall\n\n  ${yellow}Notes:${reset}\n    The --config-dir option is useful when you have multiple configurations.\n    It takes priority over CLAUDE_CONFIG_DIR / GEMINI_CONFIG_DIR / CODEX_HOME environment variables.\n    Pi uses native fixed user/project settings, so --config-dir is reported and ignored for Pi.\n`);
   process.exit(0);
 }
 
@@ -3373,6 +3491,147 @@ function handleStatusline(settings, isGlobal, isInteractive, callback) {
   });
 }
 
+function existingAncestor(target) {
+  let current = path.resolve(target);
+  while (!fs.existsSync(current)) {
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return current;
+}
+
+function preflightNonPiRuntime(runtime, isGlobal) {
+  if (!['claude', 'opencode', 'gemini', 'codex'].includes(runtime)) {
+    throw new Error(`Unsupported runtime: ${runtime}`);
+  }
+  for (const source of ['commands/fvs', 'agents', 'fv-skills']) {
+    if (!fs.existsSync(path.join(__dirname, '..', source))) {
+      throw new Error(`Installer payload is missing ${source}`);
+    }
+  }
+  const target = isGlobal ? getGlobalDir(runtime, explicitConfigDir) : path.join(process.cwd(), getDirName(runtime));
+  if (fs.existsSync(target) && !fs.statSync(target).isDirectory()) {
+    throw new Error(`Installer target is not a directory: ${target}`);
+  }
+  const ancestor = existingAncestor(target);
+  if (!fs.statSync(ancestor).isDirectory()) {
+    throw new Error(`Installer target parent is not a directory: ${ancestor}`);
+  }
+  fs.accessSync(ancestor, fs.constants.W_OK);
+}
+
+function cliFailure(message) {
+  console.error(`  ${yellow}${message}${reset}`);
+  process.exitCode = 1;
+}
+
+function validatePiFlagUse(runtimes, options, isUninstall = false) {
+  if (!runtimes.includes('pi') && (options.version !== null || options.conflict !== null)) {
+    throw new Error('--pi-version and --pi-conflict require --pi or --all');
+  }
+  if (isUninstall && options.version !== null) {
+    throw new Error('--pi-version applies only to Pi installation');
+  }
+  if (isUninstall && options.conflict !== null) {
+    throw new Error('--pi-conflict applies only to Pi installation');
+  }
+}
+
+function validateConfigDirForRuntimes(runtimes, isGlobal) {
+  if (explicitConfigDir && !isGlobal && runtimes.some(runtime => runtime !== 'pi')) {
+    throw new Error('Cannot use --config-dir with --local for non-Pi runtimes');
+  }
+}
+
+function promptSkipUnavailablePi(error, callback) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  console.log(`  ${yellow}Pi preflight failed:${reset} ${error.message}\n\n` +
+    `  ${orange}1${reset}) Cancel ${dim}(default)${reset}\n` +
+    `  ${orange}2${reset}) Continue without Pi\n`);
+  rl.question(`  Choice ${dim}[1]${reset}: `, answer => {
+    rl.close();
+    callback(answer.trim() === '2');
+  });
+}
+
+function resolvePiVersionChoice(choice, exactVersion = '') {
+  if (choice.trim() !== '2') return 'latest';
+  buildPiPackageSource(exactVersion.trim());
+  return exactVersion.trim();
+}
+
+function resolvePiConflictChoice(choice) {
+  const selected = choice.trim() || '1';
+  return selected === '2' ? 'move' : selected === '3' ? 'cancel' : 'keep';
+}
+
+function resolveRuntimeChoice(choice) {
+  return choice === '6' ? [...ALL_RUNTIMES]
+    : choice === '5' ? ['pi']
+      : choice === '4' ? ['codex']
+        : choice === '3' ? ['gemini']
+          : choice === '2' ? ['opencode']
+            : ['claude'];
+}
+
+function promptPiVersion(callback) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  console.log(`  ${yellow}Which Pi package version should be installed?${reset}\n\n` +
+    `  ${orange}1${reset}) Latest ${dim}(updateable npm source)${reset}\n` +
+    `  ${orange}2${reset}) Exact version ${dim}(pinned; skipped by Pi package updates)${reset}\n`);
+  rl.question(`  Choice ${dim}[1]${reset}: `, answer => {
+    if (answer.trim() !== '2') {
+      rl.close();
+      callback(resolvePiVersionChoice(answer));
+      return;
+    }
+    rl.question('  Exact version (X.Y.Z): ', version => {
+      rl.close();
+      try {
+        callback(resolvePiVersionChoice(answer, version));
+      } catch (error) {
+        cliFailure(error.message);
+      }
+    });
+  });
+}
+
+function promptPiConflict(oppositeScope, callback) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  console.log(`  ${yellow}FVS is already installed in Pi's ${oppositeScope} scope.${reset}\n\n` +
+    `  ${orange}1${reset}) Keep both ${dim}(project scope wins when both remain)${reset}\n` +
+    `  ${orange}2${reset}) Move to the requested scope\n` +
+    `  ${orange}3${reset}) Cancel\n`);
+  rl.question(`  Choice ${dim}[1]${reset}: `, answer => {
+    rl.close();
+    callback(resolvePiConflictChoice(answer));
+  });
+}
+
+function printPiManifest({ action, isGlobal, version = 'latest', conflict = null }) {
+  const source = action === 'install' ? buildPiPackageSource(version) : `npm:${PI_PACKAGE_NAME}`;
+  console.log(`  ${yellow}Pi package plan${reset}\n` +
+    `    Action: ${action}\n` +
+    `    Scope: ${isGlobal ? 'user/global' : 'project/local'}\n` +
+    `    Source: ${source}\n` +
+    `    Opposite-scope policy: ${conflict ?? 'not needed'}\n` +
+    `    --config-dir: ${explicitConfigDir ? 'ignored for Pi' : 'not set'}\n`);
+}
+
+function installPi(adapter, plan) {
+  printPiManifest({ action: 'install', ...plan });
+  adapter.run(buildPiCommand('install', plan.version, plan.isGlobal));
+  if (plan.conflict === 'move') {
+    adapter.run(buildPiCommand('remove', 'latest', !plan.isGlobal));
+  }
+}
+
+function uninstallPi(adapter, isGlobal) {
+  printPiManifest({ action: 'remove', isGlobal });
+  adapter.run(buildPiCommand('remove', 'latest', isGlobal));
+}
+
 /**
  * Prompt for runtime selection
  */
@@ -3396,24 +3655,14 @@ function promptRuntime(callback) {
   ${orange}2${reset}) OpenCode    ${dim}(~/.config/opencode)${reset} - open source, free models
   ${orange}3${reset}) Gemini      ${dim}(~/.gemini)${reset}
   ${orange}4${reset}) Codex       ${dim}(~/.codex)${reset}
-  ${orange}5${reset}) All
+  ${orange}5${reset}) Pi          ${dim}(native package manager)${reset}
+  ${orange}6${reset}) All
 `);
 
   rl.question(`  Choice ${dim}[1]${reset}: `, (answer) => {
     answered = true;
     rl.close();
-    const choice = answer.trim() || '1';
-    if (choice === '5') {
-      callback(['claude', 'opencode', 'gemini', 'codex']);
-    } else if (choice === '4') {
-      callback(['codex']);
-    } else if (choice === '3') {
-      callback(['gemini']);
-    } else if (choice === '2') {
-      callback(['opencode']);
-    } else {
-      callback(['claude']);
-    }
+    callback(resolveRuntimeChoice(answer.trim() || '1'));
   });
 }
 
@@ -3423,7 +3672,7 @@ function promptRuntime(callback) {
 function promptLocation(runtimes) {
   if (!process.stdin.isTTY) {
     console.log(`  ${yellow}Non-interactive terminal detected, defaulting to global install${reset}\n`);
-    installAllRuntimes(runtimes, true, false);
+    startInstall(runtimes, true, false);
     return;
   }
 
@@ -3458,19 +3707,126 @@ function promptLocation(runtimes) {
     rl.close();
     const choice = answer.trim() || '1';
     const isGlobal = choice !== '2';
-    installAllRuntimes(runtimes, isGlobal, true);
+    startInstall(runtimes, isGlobal, true);
   });
+}
+
+function startInstall(runtimes, isGlobal, isInteractive) {
+  let options;
+  try {
+    options = parsePiOptions(args);
+    validatePiFlagUse(runtimes, options);
+    validateConfigDirForRuntimes(runtimes, isGlobal);
+  } catch (error) {
+    cliFailure(error.message);
+    return;
+  }
+
+  const nonPi = runtimes.filter(runtime => runtime !== 'pi');
+  const preflightNonPi = () => {
+    for (const runtime of nonPi) preflightNonPiRuntime(runtime, isGlobal);
+  };
+  if (!runtimes.includes('pi')) {
+    try {
+      preflightNonPi();
+      installAllRuntimes(runtimes, isGlobal, isInteractive, null);
+    } catch (error) {
+      cliFailure(error.message);
+    }
+    return;
+  }
+
+  const adapter = createPiAdapter();
+  try {
+    adapter.preflight({ isGlobal });
+  } catch (error) {
+    const isAllSelection = runtimes.length === ALL_RUNTIMES.length &&
+      ALL_RUNTIMES.every(runtime => runtimes.includes(runtime));
+    if (isAllSelection && process.stdin.isTTY) {
+      promptSkipUnavailablePi(error, shouldSkip => {
+        if (!shouldSkip) {
+          console.log(`\n  ${yellow}Installation cancelled${reset}\n`);
+          return;
+        }
+        try {
+          preflightNonPi();
+          installAllRuntimes(nonPi, isGlobal, isInteractive, null);
+        } catch (preflightError) {
+          cliFailure(preflightError.message);
+        }
+      });
+    } else {
+      cliFailure(error.message);
+    }
+    return;
+  }
+
+  try {
+    preflightNonPi();
+  } catch (error) {
+    cliFailure(error.message);
+    return;
+  }
+
+  const continueWithVersion = version => {
+    let scopes;
+    try {
+      scopes = adapter.scopes();
+    } catch (error) {
+      cliFailure(error.message);
+      return;
+    }
+    const oppositeScope = isGlobal ? 'project' : 'user';
+    const hasConflict = scopes[oppositeScope].length > 0;
+    const execute = conflict => {
+      if (conflict === 'cancel') {
+        console.log(`\n  ${yellow}Installation cancelled${reset}\n`);
+        return;
+      }
+      try {
+        installAllRuntimes(runtimes, isGlobal, isInteractive, {
+          adapter, isGlobal, version, conflict: hasConflict ? conflict : null,
+        });
+      } catch (error) {
+        cliFailure(error.message);
+      }
+    };
+    if (!hasConflict) {
+      execute(null);
+    } else if (options.conflict) {
+      execute(options.conflict);
+    } else if (process.stdin.isTTY) {
+      promptPiConflict(oppositeScope, execute);
+    } else {
+      cliFailure('Opposite-scope Pi install exists; pass --pi-conflict keep|move');
+    }
+  };
+
+  if (options.version) {
+    continueWithVersion(options.version);
+  } else if (process.stdin.isTTY) {
+    promptPiVersion(continueWithVersion);
+  } else {
+    continueWithVersion('latest');
+  }
 }
 
 /**
  * Install FVS for all selected runtimes
  */
-function installAllRuntimes(runtimes, isGlobal, isInteractive) {
+function installAllRuntimes(runtimes, isGlobal, isInteractive, piPlan = null) {
   const results = [];
 
-  for (const runtime of runtimes) {
+  if (piPlan) installPi(piPlan.adapter, piPlan);
+
+  for (const runtime of runtimes.filter(runtime => runtime !== 'pi')) {
     const result = install(isGlobal, runtime);
     results.push(result);
+  }
+
+  if (results.length === 0) {
+    console.log(`  ${green}Done!${reset} Start a new Pi session and run ${orange}/skill:fvs-help${reset}.\n`);
+    return;
   }
 
   // Handle statusline for Claude & Gemini (OpenCode uses themes)
@@ -3513,13 +3869,28 @@ function installAllRuntimes(runtimes, isGlobal, isInteractive) {
   }
 }
 
+function startUninstall(runtimes, isGlobal) {
+  let options;
+  try {
+    options = parsePiOptions(args);
+    validatePiFlagUse(runtimes, options, true);
+    validateConfigDirForRuntimes(runtimes, isGlobal);
+    const adapter = runtimes.includes('pi') ? createPiAdapter() : null;
+    if (adapter) adapter.preflight({ isGlobal });
+    for (const runtime of runtimes.filter(runtime => runtime !== 'pi')) {
+      preflightNonPiRuntime(runtime, isGlobal);
+    }
+    if (adapter) uninstallPi(adapter, isGlobal);
+    for (const runtime of runtimes.filter(runtime => runtime !== 'pi')) uninstall(isGlobal, runtime);
+  } catch (error) {
+    cliFailure(error.message);
+  }
+}
+
 // Main logic
 if (require.main === module) {
 if (hasGlobal && hasLocal) {
   console.error(`  ${yellow}Cannot specify both --global and --local${reset}`);
-  process.exit(1);
-} else if (explicitConfigDir && hasLocal) {
-  console.error(`  ${yellow}Cannot use --config-dir with --local${reset}`);
   process.exit(1);
 } else if (hasUninstall) {
   if (!hasGlobal && !hasLocal) {
@@ -3527,30 +3898,28 @@ if (hasGlobal && hasLocal) {
     process.exit(1);
   }
   const runtimes = selectedRuntimes.length > 0 ? selectedRuntimes : ['claude'];
-  for (const runtime of runtimes) {
-    uninstall(hasGlobal, runtime);
-  }
+  startUninstall(runtimes, hasGlobal);
 } else if (selectedRuntimes.length > 0) {
   if (!hasGlobal && !hasLocal) {
     promptLocation(selectedRuntimes);
   } else {
-    installAllRuntimes(selectedRuntimes, hasGlobal, false);
+    startInstall(selectedRuntimes, hasGlobal, false);
   }
 } else if (hasGlobal || hasLocal) {
   // No runtime specified but location is — prompt for runtime
   if (!process.stdin.isTTY) {
     console.log(`  ${yellow}Non-interactive terminal detected, defaulting to Claude Code${reset}\n`);
-    installAllRuntimes(['claude'], hasGlobal, false);
+    startInstall(['claude'], hasGlobal, false);
   } else {
     promptRuntime((runtimes) => {
-      installAllRuntimes(runtimes, hasGlobal, true);
+      startInstall(runtimes, hasGlobal, true);
     });
   }
 } else {
   // Interactive
   if (!process.stdin.isTTY) {
     console.log(`  ${yellow}Non-interactive terminal detected, defaulting to Claude Code global install${reset}\n`);
-    installAllRuntimes(['claude'], true, false);
+    startInstall(['claude'], true, false);
   } else {
     promptRuntime((runtimes) => {
       promptLocation(runtimes);
@@ -3588,6 +3957,16 @@ module.exports = {
   FVS_CODEX_MARKER,
   CODEX_AGENT_SANDBOX,
   FVS_CODEX_AGENT_EFFORT,
+  PI_PACKAGE_NAME,
+  ALL_RUNTIMES,
+  buildPiPackageSource,
+  buildPiCommand,
+  detectPiPackageScopes,
+  createPiAdapter,
+  parsePiOptions,
+  resolvePiVersionChoice,
+  resolvePiConflictChoice,
+  resolveRuntimeChoice,
   CODEX_HOOKS_FEATURE_KEY,
   CODEX_HOOKS_FEATURE_LEGACY_KEYS,
 };

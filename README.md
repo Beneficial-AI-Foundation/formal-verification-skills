@@ -44,15 +44,35 @@ Framework-specific commands (currently Lean) handle the actual specification and
 
 ### Pi package
 
-Install FVS directly from npm as a Pi package:
+Use the unified installer for an updateable user install or an exact project pin:
+
+```bash
+npx fv-skills-baif --pi --global
+npx fv-skills-baif --pi --local --pi-version 2.3.4
+```
+
+Pi's default scope is user/global. The default `latest` source stays unpinned and follows Pi
+package updates. An exact `--pi-version X.Y.Z` source is pinned and is skipped by `pi update`. If
+FVS exists in the opposite scope, interactive installs offer keep, move, or cancel; scripts must pass
+`--pi-conflict keep|move`. When both remain, Pi's project/local package takes precedence over the
+user/global package.
+
+Direct Pi commands remain available:
 
 ```bash
 pi install npm:fv-skills-baif
+pi install npm:fv-skills-baif@2.3.4 --local
+pi update npm:fv-skills-baif
+pi remove npm:fv-skills-baif
+pi remove npm:fv-skills-baif --local
 ```
+
+To roll back, reinstall the required exact version, for example
+`npx fv-skills-baif --pi --global --pi-version 2.3.4`. To remove FVS through the unified installer,
+run `npx fv-skills-baif --pi --global --uninstall` or replace `--global` with `--local`.
 
 Start a new session, then run `/skill:fvs-help`. Bundle routers such as `/skill:fvs-fc` and
 `/skill:fvs-formalise`, plus member skills such as `/skill:fvs-crypto-plan`, are available directly.
-Update an unpinned install with `pi update npm:fv-skills-baif`.
 
 ### Plugin marketplace (Claude Code and Codex)
 
@@ -86,18 +106,20 @@ The BAIF Git catalog is a versioned distribution source that can list multiple i
 released plugins. It is separate from OpenAI's universal public Plugins Directory, which has its
 own per-plugin submission process.
 
-### npm installer (Claude Code, Codex, OpenCode, and Gemini)
+### Unified npm installer
 
 ```bash
 npx fv-skills-baif
 ```
 
 The installer prompts you to choose:
-1. **Runtime** — Claude Code, OpenCode, Gemini, or all
+1. **Runtime** — Pi, Claude Code, Codex, OpenCode, Gemini, or all
 2. **Location** — Global (all projects) or local (current project only)
+3. **Pi version** — updateable latest or an exact pinned version
 
-Verify with `/fvs:help` inside your chosen runtime. The npm installer remains the distribution path
-for OpenCode and Gemini CLI, and is also available for Claude Code and Codex.
+Pi installation delegates to Pi's native package manager; it never copies files into Pi's managed
+cache. `--config-dir` continues to apply to supported non-Pi runtimes and is ignored for Pi.
+Verify with `/skill:fvs-help` in Pi or `/fvs:help` in the other runtimes.
 
 ### Prerequisites (Lean 4 / Aeneas)
 
@@ -138,12 +160,18 @@ npx fv-skills-baif --opencode --global # Install to ~/.config/opencode/
 # Gemini CLI
 npx fv-skills-baif --gemini --global   # Install to ~/.gemini/
 
-# All runtimes
-npx fv-skills-baif --all --global      # Install to all directories
+# Pi (latest is updateable; an exact version is pinned)
+npx fv-skills-baif --pi --global
+npx fv-skills-baif --pi --local --pi-version 2.3.4
+
+# All runtimes (noninteractive use fails before mutation if Pi is unavailable)
+npx fv-skills-baif --all --global
 ```
 
 Use `--global` (`-g`) or `--local` (`-l`) to skip the location prompt.
-Use `--claude`, `--codex`, `--opencode`, `--gemini`, or `--all` to skip the runtime prompt.
+Use `--pi`, `--claude`, `--codex`, `--opencode`, `--gemini`, or `--all` to skip the runtime prompt.
+For an opposite-scope Pi install, scripts must choose `--pi-conflict keep` or
+`--pi-conflict move`.
 
 </details>
 
