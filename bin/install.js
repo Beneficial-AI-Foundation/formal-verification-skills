@@ -67,6 +67,9 @@ const CODEX_AGENT_SANDBOX = {
   // completes proofs, so it needs workspace-write; the unmapped default is
   // read-only, which would silently fail every write on Codex.
   'fvs-crypto-executor': 'workspace-write',
+  // External modeling owns exact hand-written model/specification targets inside
+  // a parent-managed reversible transaction.
+  'fvs-external-modeler': 'workspace-write',
   'fvs-axiom-auditor': 'read-only',
 };
 
@@ -94,6 +97,7 @@ const FVS_CODEX_AGENT_EFFORT = {
   // dynamic effort is available. The executor is a work stage.
   'fvs-crypto-thinker': 'xhigh',
   'fvs-crypto-executor': 'xhigh',
+  'fvs-external-modeler': 'xhigh',
   'fvs-axiom-auditor': 'high',
 };
 
@@ -747,9 +751,11 @@ function convertClaudeToCodexMarkdown(content) {
 function getCodexSkillAdapterHeader(skillName, options = {}) {
   const pluginName = options.pluginName || null;
   const invocation = pluginName ? `$${pluginName}:${skillName}` : `$${skillName}`;
-  const dispatchExamples = /(?:^|-)crypto-/.test(skillName)
-    ? '`fvs-crypto-thinker`, `fvs-crypto-executor`'
-    : '`fvs-researcher`, `fvs-executor`';
+  const dispatchExamples = skillName === 'model-external'
+    ? '`fvs-external-modeler`'
+    : /(?:^|-)crypto-/.test(skillName)
+      ? '`fvs-crypto-thinker`, `fvs-crypto-executor`'
+      : '`fvs-researcher`, `fvs-executor`';
   const pluginCompatibility = pluginName
     ? `\n## D. Shared Plugin Syntax\n- This file is shared with Claude Code. On Codex, interpret \`/${pluginName}:<name>\` references as \`$${pluginName}:<name>\`.\n- Treat \`$ARGUMENTS\` in the shared body as \`{{FVS_ARGS}}\`.\n- \`\${CLAUDE_PLUGIN_ROOT}\` is the installed plugin root. If a host leaves that token unexpanded, resolve the plugin root as two directories above this SKILL.md.\n`
     : '';

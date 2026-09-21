@@ -25,12 +25,13 @@ Commands are grouped into five bundles. Each bundle has a router command (e.g. `
 
 **From a Rust crate — functional-correctness track:**
 1. `/fvs:aeneas-extract <path>` - Extract Rust → Lean 4 via the bounded Aeneas repair loop
-2. `/fvs:map-code` - Analyze project, build dependency graph
-3. `/fvs:fc-plan` - Select verification targets
-4. `/fvs:lean-specify <function>` - Generate spec with sorry, then choose an adversarial reviewer
-5. `/fvs:lean-verify <spec_path>` - Attempt proof interactively
-6. `/fvs:lean-refactor <spec_path>` - Golf and clean up verified proofs
-7. `/fvs:trust-audit <target>` - Audit the sorry/axiom trust surface
+2. `/fvs:model-external <stub>` - Model a locked external Rust function when the extracted unit depends on one
+3. `/fvs:map-code` - Analyze project, build dependency graph
+4. `/fvs:fc-plan` - Select verification targets
+5. `/fvs:lean-specify <function>` - Generate spec with sorry, then choose an adversarial reviewer
+6. `/fvs:lean-verify <spec_path>` - Attempt proof interactively
+7. `/fvs:lean-refactor <spec_path>` - Golf and clean up verified proofs
+8. `/fvs:trust-audit <target>` - Audit the sorry/axiom trust surface
 
 **From a paper — paper track:**
 - `/fvs:lean-formalise` - One-shot formalisation of paper/math content, or
@@ -39,7 +40,7 @@ Commands are grouped into five bundles. Each bundle has a router command (e.g. `
 ## Core Workflow
 
 ```
-Code track:  /fvs:aeneas-extract → /fvs:map-code → /fvs:fc-plan → /fvs:lean-specify → /fvs:lean-spec-review → /fvs:lean-verify → /fvs:lean-refactor → /fvs:trust-audit
+Code track:  /fvs:aeneas-extract → [/fvs:model-external when required] → /fvs:map-code → /fvs:fc-plan → /fvs:lean-specify → /fvs:lean-spec-review → /fvs:lean-verify → /fvs:lean-refactor → /fvs:trust-audit
 Paper track: /fvs:lean-formalise → /fvs:lean-verify → /fvs:lean-refactor
 Crypto loop: /fvs:crypto-plan → /fvs:crypto-review → /fvs:crypto-execute → /fvs:crypto-eval → /fvs:crypto-followup → /fvs:crypto-review → repeat
 ```
@@ -48,9 +49,9 @@ Crypto loop: /fvs:crypto-plan → /fvs:crypto-review → /fvs:crypto-execute →
 
 Five router commands group the skills. Invoke a router bare to print its routing table, or with a request to forward to the matched skill.
 
-- `/fvs:aeneas` — Aeneas/Charon extraction maintenance (aeneas-extract, sync-aeneas-verif)
+- `/fvs:aeneas` — Aeneas/Charon extraction maintenance (aeneas-extract, model-external, sync-aeneas-verif)
 - `/fvs:context` — Codebase context (map-code)
-- `/fvs:fc` — Formal-correctness core (fc-plan, lean-specify, lean-spec-review, lean-verify, natural-language, lean-refactor, trust-audit)
+- `/fvs:fc` — Formal-correctness core (fc-plan, model-external, lean-specify, lean-spec-review, lean-verify, natural-language, lean-refactor, trust-audit)
 - `/fvs:formalise` — Paper formalisation (lean-formalise, lean-refactor)
 - `/fvs:manage` — Management (help, update, checkpoint, pause-work, resume-work, reapply-patches, kb-setup)
 
@@ -70,6 +71,20 @@ Drive a Rust crate/folder/file through the bounded Aeneas extraction repair loop
 
 Usage: `/fvs:aeneas-extract path/to/crate`
 Usage: `/fvs:aeneas-extract src/field.rs`
+
+**`/fvs:model-external <external-stub> [--iteration nN] [--resume ARTIFACT_DIR]`**
+Model one external Rust stub and only its required external-stub dependency closure.
+
+- Resolves immutable source from Cargo.lock registry/git entries, configured vendor trees, or a pinned rustc sysroot
+- Records exact source file/range/version-or-commit and SHA-256 evidence
+- Stops on unsafe Rust; observable effects and nondeterministic/platform abstractions require `HUMAN_RULING`
+- Writes only exact hand-written external model/specification targets; generated Lean remains immutable
+- Keeps candidate writes reversible and restores canonical Lean on every non-success outcome
+- Runs separate model-fidelity and specification reviews, each capped at three rounds
+- Completes proofs, guarded build, and CLEAN trust audit before finalization
+- Preserves failed candidate patches and evidence under `.formalising/model-external/`
+
+Usage: `/fvs:model-external external_crate.function`
 
 **`/fvs:sync-aeneas-verif`**
 Sync Aeneas/Charon upstream docs and reconcile the extraction blocker catalog via two specialised agents.
@@ -367,7 +382,8 @@ Show this command reference.
 │       ├── fc/              # Functional-correctness lessons
 │       ├── crypto/          # Crypto lessons and modeling decisions
 │       └── shared/          # Independently reused across tracks
-└── fv-plans/                # Per-function/topic planning docs
+├── fv-plans/                # Per-function/topic planning docs
+└── model-external/          # Immutable source/review evidence and reversible candidates
 
 ~/.claude/                   # Installed FVS content (global)
 ├── agents/
@@ -380,14 +396,16 @@ Show this command reference.
 │   ├── fvs-extract-bisector.md
 │   ├── fvs-equivalence-assessor.md
 │   ├── fvs-draft-investigator.md
-│   └── fvs-doc-syncer.md
-├── commands/fvs/          # flat siblings: 5 routers + 16 commands
+│   ├── fvs-doc-syncer.md
+│   └── fvs-external-modeler.md
+├── commands/fvs/          # flat router and command siblings
 │   ├── aeneas.md          # router
 │   ├── context.md         # router
 │   ├── fc.md              # router
 │   ├── formalise.md       # router
 │   ├── manage.md          # router
 │   ├── aeneas-extract.md
+│   ├── model-external.md
 │   ├── map-code.md
 │   ├── fc-plan.md
 │   ├── lean-specify.md
@@ -405,7 +423,9 @@ Show this command reference.
 │   ├── sync-aeneas-verif.md
 │   └── help.md
 ├── scripts/
-│   └── fvs-kb-query.py           # NotebookLM query tool (Python)
+│   ├── fvs-kb-query.py           # NotebookLM query tool (Python)
+│   ├── fvs-model-external.mjs    # Locked source + candidate transaction helper
+│   └── fvs-model-review.mjs      # Two-mode immutable review adapter
 └── fv-skills/
     ├── references/          # Domain knowledge
     ├── templates/           # Spec, config, stub templates
@@ -413,6 +433,7 @@ Show this command reference.
     │   └── _sync-meta.json  # Mapping table for sync-aeneas-verif
     └── workflows/           # Command orchestration logic
         ├── aeneas-extract.md
+        ├── model-external.md
         ├── lean-formalise.md
         └── sync-aeneas-verif.md
 ```

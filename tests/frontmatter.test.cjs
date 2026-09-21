@@ -62,13 +62,13 @@ describe('Commands (commands/fvs/)', () => {
     'crypto-eval.md', 'crypto-execute.md', 'crypto-followup.md',
     'crypto-plan.md', 'crypto-review.md', 'fc-plan.md', 'fc.md', 'formalise.md', 'help.md',
     'kb-setup.md', 'lean-formalise.md', 'lean-refactor.md', 'lean-spec-review.md', 'lean-specify.md',
-    'lean-verify.md', 'manage.md', 'map-code.md', 'natural-language.md',
+    'lean-verify.md', 'manage.md', 'map-code.md', 'model-external.md', 'natural-language.md',
     'pause-work.md', 'reapply-patches.md', 'resume-work.md',
     'sync-aeneas-verif.md', 'trust-audit.md', 'update.md',
   ];
 
-  it('has exactly 29 command files', () => {
-    assert.equal(files.length, 29, `Expected 29 commands, got ${files.length}: ${files.join(', ')}`);
+  it('has exactly 30 command files', () => {
+    assert.equal(files.length, 30, `Expected 30 commands, got ${files.length}: ${files.join(', ')}`);
   });
 
   it('has the expected set of command files', () => {
@@ -154,12 +154,12 @@ describe('Agents (agents/)', () => {
     'fvs-axiom-auditor.md', 'fvs-crypto-executor.md', 'fvs-crypto-thinker.md',
     'fvs-doc-syncer.md', 'fvs-draft-investigator.md',
     'fvs-equivalence-assessor.md', 'fvs-executor.md', 'fvs-explainer.md',
-    'fvs-extract-applier.md', 'fvs-extract-bisector.md',
+    'fvs-external-modeler.md', 'fvs-extract-applier.md', 'fvs-extract-bisector.md',
     'fvs-extract-classifier.md', 'fvs-lean-refactorer.md', 'fvs-researcher.md',
   ];
 
-  it('has exactly 13 agent files', () => {
-    assert.equal(files.length, 13, `Expected 13 agents, got ${files.length}: ${files.join(', ')}`);
+  it('has exactly 14 agent files', () => {
+    assert.equal(files.length, 14, `Expected 14 agents, got ${files.length}: ${files.join(', ')}`);
   });
 
   it('has the expected set of agent files', () => {
@@ -196,11 +196,11 @@ describe('Workflows (fv-skills/workflows/)', () => {
     'aeneas-extract.md', 'crypto-eval.md', 'crypto-execute.md',
     'crypto-followup.md', 'crypto-plan.md', 'crypto-review.md', 'fc-plan.md', 'lean-formalise.md',
     'lean-refactor.md', 'lean-spec-review.md', 'lean-specify.md', 'lean-verify.md', 'map-code.md',
-    'natural-language.md', 'sync-aeneas-verif.md', 'trust-audit.md', 'update.md',
+    'model-external.md', 'natural-language.md', 'sync-aeneas-verif.md', 'trust-audit.md', 'update.md',
   ];
 
-  it('has exactly 17 workflow files', () => {
-    assert.equal(files.length, 17, `Expected 17 workflows, got ${files.length}: ${files.join(', ')}`);
+  it('has exactly 18 workflow files', () => {
+    assert.equal(files.length, 18, `Expected 18 workflows, got ${files.length}: ${files.join(', ')}`);
   });
 
   it('has the expected set of workflow files', () => {
@@ -234,7 +234,7 @@ describe('References (fv-skills/references/)', () => {
 
   const expected = [
     'aeneas-patterns.md', 'blocker-catalog.md', 'crypto-plan-review.md',
-    'extraction-safety-model.md', 'fc-spec-review.md',
+    'external-modeling.md', 'extraction-safety-model.md', 'fc-spec-review.md',
     'lean-refactoring.md', 'lean-spec-conventions.md', 'model-profiles.md',
     'proof-engineering-loop.md', 'proof-strategies.md',
     'review-diagnostics.md', 'review-grounding.md', 'review-policy.md', 'tactic-usage.md', 'ui-brand.md',

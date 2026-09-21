@@ -158,6 +158,7 @@ Commands are grouped into five bundles. Each bundle has a **router** command tha
 | Command | Description |
 |---------|-------------|
 | `/fvs:aeneas-extract` | Drive a Rust crate/folder/file through the bounded Aeneas extraction repair loop (pin audit, classify, auto-apply/bisect/gate/escalate, reversible records) |
+| `/fvs:model-external` | Model one lockfile/sysroot-grounded external Rust stub and its bounded dependency closure, with reversible writes and separate model/spec reviews |
 | `/fvs:sync-aeneas-verif` | Sync Aeneas/Charon upstream docs and reconcile the extraction blocker catalog via two specialised agents |
 
 ### Context — `/fvs:context`
@@ -171,6 +172,7 @@ Commands are grouped into five bundles. Each bundle has a **router** command tha
 | Command | Description |
 |---------|-------------|
 | `/fvs:fc-plan` | Pick next verification targets via greedy dependency graph traversal |
+| `/fvs:model-external` | Resolve, model, review, prove, build, and trust-audit one external Rust stub plus its bounded external-stub closure |
 | `/fvs:lean-specify` | Generate a style-checked Lean spec skeleton with `@[step]` theorem pattern |
 | `/fvs:lean-spec-review` | Adversarially review an FC specification with a chosen runtime, model, and effort |
 | `/fvs:lean-verify` | Attempt proof with domain tactics while blocking new target-style violations |
@@ -263,7 +265,7 @@ or unsupported efforts require a user choice; unresolved noninteractive runs fai
 
 ### Functional-correctness track (Rust → Lean 4)
 
-This track verifies Rust that Aeneas has lowered to Lean 4. Starting from a Rust crate, `/fvs:aeneas-extract <path>` drives it through the bounded **extraction repair loop** — pin audit → classify → auto-apply / bisect / gate / escalate → reversible records — until you reach a clean build or a documented escalation. It writes reversible source records (`src-modifications.diff` plus a derived `.json`/`.md` and `src-assumptions.md`) at the crate root and never edits generated Lean. Once you have `Types.lean` / `Funs.lean`, the five-stage verification workflow begins:
+This track verifies Rust that Aeneas has lowered to Lean 4. Starting from a Rust crate, `/fvs:aeneas-extract <path>` drives it through the bounded **extraction repair loop** — pin audit → classify → auto-apply / bisect / gate / escalate → reversible records — until you reach a clean build or a documented escalation. It writes reversible source records (`src-modifications.diff` plus a derived `.json`/`.md` and `src-assumptions.md`) at the crate root and never edits generated Lean. If extraction leaves a required external stub, `/fvs:model-external <stub>` resolves its exact Cargo/vendor/rustc source, journals a reversible hand-written Lean candidate, runs separate model-fidelity and specification reviews, completes proofs, builds, and requires a CLEAN trust audit. Unsafe Rust stops; observable effects require `HUMAN_RULING`. Once required external models are complete, the verification workflow begins:
 
 ### 1. Map
 

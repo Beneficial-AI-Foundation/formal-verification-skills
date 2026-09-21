@@ -295,7 +295,8 @@ function markdownStructure(text) {
   }).join('\n');
 }
 
-export function validateReviewResponse(response, { verdicts, headings }) {
+export function validateReviewResponse(response, options) {
+  const { verdicts, headings } = options;
   if (typeof response !== 'string' || !response.trim()) throw new Error('Review response is empty');
   const structure = markdownStructure(response);
   const lines = structure.split(/\r?\n/).filter(line => /^\s*(?:-\s*)?VERDICT:\s*/i.test(line));
@@ -307,7 +308,8 @@ export function validateReviewResponse(response, { verdicts, headings }) {
   if (response.trim().split(/\r?\n/).at(-1).trim() !== lines[0].trim()) {
     throw new Error('The single VERDICT must be the last line');
   }
-  const title = verdicts.includes('PASS') ? '# FC Specification Review' : '# FVS Crypto Plan Review';
+  const title = options.title ??
+    (verdicts.includes('PASS') ? '# FC Specification Review' : '# FVS Crypto Plan Review');
   if (response.trim().split(/\r?\n/)[0] !== title) throw new Error(`Review must start with ${title}`);
   const sections = new Map();
   let previous = -1;

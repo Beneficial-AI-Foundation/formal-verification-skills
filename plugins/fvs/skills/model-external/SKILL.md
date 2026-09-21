@@ -1,10 +1,15 @@
 ---
-name: fc
-description: "formal-verification core | plan specify review verify explain refactor"
-argument-hint: ""
+name: model-external
+description: Model one external Rust stub and its bounded closure in Lean, then review, prove, build, and trust-audit it
+argument-hint: "<external-stub> [--iteration nN] [--resume ARTIFACT_DIR]"
 allowed-tools:
   - Read
-  - Skill
+  - Bash
+  - Glob
+  - Grep
+  - Write
+  - AskUserQuestion
+  - Task
 ---
 
 <plugin_runtime>
@@ -19,8 +24,8 @@ This block applies only when this shared skill runs in Codex. Claude Code must i
 shared workflow body with its native slash-command, question, and subagent semantics.
 
 ## A. Skill Invocation
-- This skill is invoked by mentioning `$fvs:fc`.
-- Treat all user text after `$fvs:fc` as `{{FVS_ARGS}}`.
+- This skill is invoked by mentioning `$fvs:model-external`.
+- Treat all user text after `$fvs:model-external` as `{{FVS_ARGS}}`.
 - If no arguments are present, treat `{{FVS_ARGS}}` as empty.
 
 ## B. AskUserQuestion -> request_user_input Mapping
@@ -69,7 +74,7 @@ Typed mapping (agent_type-capable schema only):
 - `fork_context: false` by default -- FVS agents load their own context via `<files_to_read>` blocks.
 
 Generic-agent workaround (schema with NO agent_type field):
-When only the generic schema is available, typed FVS agent dispatch (`fvs-researcher`, `fvs-executor`, etc.) is NOT possible. This workaround is NOT equivalent to typed execution — FVS agents carry verification-aware prompts and sandbox settings a generic subagent lacks. Fallback:
+When only the generic schema is available, typed FVS agent dispatch (`fvs-external-modeler`, etc.) is NOT possible. This workaround is NOT equivalent to typed execution — FVS agents carry verification-aware prompts and sandbox settings a generic subagent lacks. Fallback:
 1. Read `${CLAUDE_PLUGIN_ROOT}/agents/<agent-name>.md` and extract its instructions. If the token is still literal, resolve the path from this SKILL.md as described above.
 2. Spawn a generic/default agent and inject those instructions as a role preamble before the task prompt.
 3. Label results clearly as "generic-agent workaround" so the user knows typed guarantees are not in effect.
@@ -89,22 +94,37 @@ Result parsing:
 
 </codex_skill_adapter>
 
-Route to the appropriate formal-verification-core skill based on the user's intent.
+<objective>
+Replace one external Rust stub and only its required external-stub dependency closure with faithful,
+reviewed, proved Lean models. Resolve immutable Rust source provenance first; keep candidate writes
+reversible; finish only after separate model-fidelity and specification reviews, proof completion, a
+green build, and a CLEAN trust audit.
+</objective>
 
-`lean-specify` and `lean-verify` share the bounded, indexed learning loop under
-`.formalising/proof-engineering/`; it is project memory, not a separate command.
+<execution_context>
+@${CLAUDE_PLUGIN_ROOT}/fv-skills/workflows/model-external.md
+@${CLAUDE_PLUGIN_ROOT}/fv-skills/references/external-modeling.md
+@${CLAUDE_PLUGIN_ROOT}/fv-skills/references/model-profiles.md
+@${CLAUDE_PLUGIN_ROOT}/fv-skills/references/review-policy.md
+</execution_context>
 
-When invoked WITH a request, match it against the table below and invoke the matched skill immediately, forwarding the request. When invoked BARE (no request), print this table as plain text and let the user reply free-form.
+<process>
+Follow the workflow with `$ARGUMENTS`.
 
-| User wants | Invoke |
-|---|---|
-| Pick next verification targets | fvs:fc-plan |
-| Model one external Rust stub and its bounded dependency closure in Lean | fvs:model-external |
-| Generate a Lean spec skeleton | fvs:lean-specify |
-| Adversarially review a specification against source | fvs:lean-spec-review |
-| Attempt a proof | fvs:lean-verify |
-| Explain a module/function in natural language | fvs:natural-language |
-| Refactor / simplify / decompose a proof | fvs:lean-refactor |
-| Audit every sorry/axiom affecting a target layer (build-backed) | fvs:trust-audit |
+The public interface is intentionally small: one target external stub, an optional iteration/resume
+selector, and confirmed runtime/model settings. The workflow hides locked-source resolution,
+candidate journaling, independent reviews, proof execution, guarded build, and trust accounting.
 
-Invoke the matched skill directly using the Skill tool.
+Dispatch only `fvs-external-modeler` for candidate model/specification/proof writes. Do not broaden
+`fvs-executor` and do not reuse `fvs-crypto-executor`. Reviewers are fresh and read-only.
+
+Before launch, show one manifest containing the requested root stub, computed bounded closure,
+authoritative Rust source identity/hash/range, exact hand-written target files, executor settings,
+model-review settings, specification-review settings, and stop conditions. Continue only after the
+user confirms the manifest. Unsupported settings prompt interactively or fail closed.
+
+Never edit generated `Funs.lean`, `Types.lean`, generated templates, or a legacy generated
+`FunsExternal.lean`. Unsafe Rust stops. Observable effects or nondeterministic/platform abstractions
+require `HUMAN_RULING`. A failed or interrupted run restores canonical Lean and preserves its source
+evidence, candidate patch, reviews, diagnostics, and result under `.formalising/model-external/`.
+</process>

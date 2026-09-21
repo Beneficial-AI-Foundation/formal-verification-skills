@@ -61,7 +61,7 @@ describe('published FVS plugin package', () => {
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
       .sort();
-    assert.equal(commandNames.length, 29);
+    assert.equal(commandNames.length, 30);
     assert.deepEqual(skillNames, commandNames);
 
     for (const skillName of skillNames) {
@@ -78,7 +78,7 @@ describe('published FVS plugin package', () => {
       basenames(path.join(PLUGIN_ROOT, 'agents'), '.md'),
       basenames(path.join(ROOT, 'agents'), '.md'),
     );
-    assert.equal(basenames(path.join(PLUGIN_ROOT, 'agents'), '.md').length, 13);
+    assert.equal(basenames(path.join(PLUGIN_ROOT, 'agents'), '.md').length, 14);
 
     const canonicalSupport = filesUnder(path.join(ROOT, 'fv-skills'))
       .filter((relative) => relative !== path.join('workflows', 'update.md'));
@@ -89,6 +89,8 @@ describe('published FVS plugin package', () => {
         'fvs-codex-think.mjs',
         'fvs-kb-query.py',
         'fvs-lean-style-check.mjs',
+        'fvs-model-external.mjs',
+        'fvs-model-review.mjs',
         'fvs-probe-inventory.mjs',
         'fvs-review-grounding.mjs',
         'fvs-spec-review.mjs',

@@ -25,6 +25,8 @@ const SCRIPT_FILES = [
   'fvs-codex-think.mjs',
   'fvs-kb-query.py',
   'fvs-lean-style-check.mjs',
+  'fvs-model-external.mjs',
+  'fvs-model-review.mjs',
   'fvs-probe-inventory.mjs',
   'fvs-review-grounding.mjs',
   'fvs-spec-review.mjs',
