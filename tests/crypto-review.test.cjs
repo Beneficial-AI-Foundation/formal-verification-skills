@@ -45,6 +45,8 @@ it('runs crypto review through selected read-only runtimes and immutable packets
       `let review = mode === 'invalid' ? 'VERDICT: APPROVE' : ${JSON.stringify(REVIEW)};`,
       "if (mode === 'duplicate') review += '\\nVERDICT: REJECT';",
       "if (mode === 'styled') review = '```markdown\\n' + review.trim().replace('VERDICT: APPROVE', '**VERDICT:** APPROVE') + '\\n```';",
+      "if (mode === 'wrapper') review = 'All evidence is gathered; writing the review.\\n\\n' + review;",
+      "if (mode === 'root-exited') { const child = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {stdio:['ignore','inherit','inherit']}); fs.writeFileSync(process.env.FVS_FAKE_PID_FILE, String(child.pid)); }",
       "if (args[0] === 'exec') fs.writeFileSync(args[args.indexOf('--output-last-message') + 1], review);",
       "else console.log(JSON.stringify({ result: review, is_error: mode === 'error', modelUsage: { 'claude-observed': {} } }));",
     ].join('\n');
@@ -266,9 +268,19 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     const validation = fs.readdirSync(styledPacket).find(name => name.startsWith('validation-'));
     const validationDir = path.join(styledPacket, validation);
     assert.match(fs.readFileSync(path.join(validationDir, 'raw-response.md'), 'utf8'), /^```markdown/);
-    assert.equal(fs.readFileSync(path.join(validationDir, 'normalized-response.md'), 'utf8'), REVIEW);
+    assert.equal(fs.readFileSync(path.join(validationDir, 'normalized-response.md'), 'utf8'), REVIEW.trimEnd());
     assert.match(fs.readFileSync(path.join(validationDir, 'README.md'), 'utf8'), /raw-response\.md.*unchanged/s);
 
+    const wrapped = run('wrapped-output', 'codex', ['Claude Code', 'Claude Code'], [], 'wrapper');
+    assert.equal(wrapped.result.status, 0, wrapped.result.stderr);
+    assert.match(fs.readFileSync(path.join(wrapped.topic, 'reviews', 'PLAN_REVIEW_n1.md'), 'utf8'), /VERDICT: APPROVE/);
+    const descendant = run('orphan-stdout', 'codex', ['Claude Code', 'Claude Code'], [], 'root-exited',
+      { FVS_REVIEW_TIMEOUT_MS: '1100', FVS_REVIEW_AUTH_TIMEOUT_MS: '2500',
+        FVS_FAKE_PID_FILE: path.join(tmp, 'orphan.pid') });
+    assert.notEqual(descendant.result.status, 0);
+    assert.throws(() => process.kill(Number(fs.readFileSync(path.join(tmp, 'orphan.pid'), 'utf8')), 0), /ESRCH/);
+    assert.match(descendant.result.stderr, /deadline.*Review attempt preserved/s);
+    assert.ok(!fs.existsSync(path.join(descendant.topic, 'reviews', 'PLAN_REVIEW_n1.md')));
     for (const [name, mode] of [['auth-failure', 'auth'], ['process-failure', 'fail'],
       ['invalid-output', 'invalid'], ['duplicate-verdict', 'duplicate'], ['changed', 'changed']]) {
       const failed = run(name, 'codex', ['Claude Code', 'Claude Code'], [], mode);

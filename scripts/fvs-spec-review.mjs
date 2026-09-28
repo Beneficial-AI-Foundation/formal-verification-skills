@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { prepareGrounding, validateGrounding } from './fvs-review-grounding.mjs';
 
@@ -257,25 +257,92 @@ function persist(directory, packet, response, reportedModels = [], external = fa
   return output;
 }
 
-function invoke(runtime, args, workingRoot = root, options = {}) {
-  const { captureDirectory, ...spawnOptions } = options;
-  const result = spawnSync(runtime, args, {
-    cwd: workingRoot, encoding: 'utf8', shell: false, windowsHide: true,
-    maxBuffer: 16 * 1024 * 1024, ...spawnOptions,
+const streamLimit = 16 * 1024 * 1024;
+// Bounded policy: 1 ms to 30 minutes. A longer limit needs a separate review of tree cleanup.
+function deadline(name, defaultValue) {
+  const value = process.env[name] ?? String(defaultValue);
+  if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) > 1800000) {
+    throw new Error(`${name} must be a positive safe integer between 1 and 1800000 ms`);
+  }
+  return Number(value);
+}
+
+function decode(bytes) { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+
+async function invoke(runtime, args, workingRoot = root, options = {}) {
+  const { captureDirectory, phase, timeoutMs, input, ...spawnOptions } = options;
+  // Cleanup relies on POSIX process groups; Windows has no verified descendant containment.
+  if (!['darwin', 'linux'].includes(process.platform)) throw new Error(
+    `Unsupported reviewer process cleanup on ${process.platform}: native descendant containment not verified`);
+  const file = phase === 'version' || phase === 'auth' ? `${phase}-` : '';
+  const save = (name, value) => fs.writeFileSync(path.join(captureDirectory, `${file}${name}`), value,
+    { flag: 'wx', mode: 0o600 });
+  const child = spawn(runtime, args, { cwd: workingRoot, shell: false, windowsHide: true,
+    detached: true, stdio: ['pipe', 'pipe', 'pipe'], ...spawnOptions });
+  let status = null, signal = null, error = null, timedOut = false, reason = null;
+  let cleanup = 'not-needed';
+  const streams = { stdout: [], stderr: [] };
+  const lengths = { stdout: 0, stderr: 0 };
+  let closed = false;
+  let finalTimer;
+  let killTimer;
+  const terminate = why => {
+    if (reason) return;
+    reason = why;
+    timedOut = why === 'deadline';
+    cleanup = 'group-terminated';
+    if (!child.pid) { cleanup = 'not-spawned'; return; }
+    try { process.kill(-child.pid, 'SIGTERM'); }
+    catch (e) { if (e.code !== 'ESRCH') cleanup = `group-error: ${e.message}`; }
+    killTimer = setTimeout(() => {
+      try { process.kill(-child.pid, 'SIGKILL'); }
+      catch (e) { if (e.code !== 'ESRCH') cleanup = `group-error: ${e.message}`; }
+    }, 150);
+    killTimer.unref();
+    finalTimer = setTimeout(() => {
+      child.stdout.destroy(); child.stderr.destroy(); child.stdin.destroy();
+    }, 450);
+    finalTimer.unref();
+  };
+  // The detached group no longer receives terminal signals, so forward them.
+  const forward = signal => terminate(`parent-${signal}`);
+  const parentSignals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+  for (const signal of parentSignals) process.once(signal, forward);
+  await new Promise(resolve => {
+    child.on('error', e => { error = e.message; terminate('spawn-error'); });
+    child.on('exit', (code, killed) => { status = code; signal = killed; });
+    for (const name of ['stdout', 'stderr']) child[name].on('data', data => {
+      const remaining = streamLimit - lengths[name];
+      if (remaining > 0) streams[name].push(data.subarray(0, remaining));
+      lengths[name] += data.length;
+      if (lengths[name] > streamLimit) terminate(`${name}-limit`);
+    });
+    const timer = setTimeout(() => terminate('deadline'), timeoutMs);
+    child.on('close', (code, killed) => {
+      closed = true;
+      clearTimeout(timer); clearTimeout(finalTimer);
+      status = code; signal = killed;
+      resolve();
+    });
+    child.stdin.on('error', () => {});
+    child.stdin.end(input ?? '');
   });
-  if (captureDirectory) {
-    const save = (name, value) => fs.writeFileSync(path.join(captureDirectory, name), value,
-      { flag: 'wx', mode: 0o600 });
-    save('provider-stdout.txt', result.stdout ?? '');
-    save('provider-stderr.txt', result.stderr ?? '');
-    save('process.json', JSON.stringify({ status: result.status, signal: result.signal ?? null,
-      error: result.error?.message ?? null }, null, 2) + '\n');
+  for (const signal of parentSignals) process.removeListener(signal, forward);
+  if (reason && child.pid) {
+    await new Promise(resolve => setTimeout(resolve, 200));
+    clearTimeout(killTimer);
+    try { process.kill(-child.pid, 0); cleanup = 'group-still-alive'; }
+    catch (e) { if (e.code !== 'ESRCH') cleanup = `group-check-error: ${e.message}`; }
   }
-  if (result.error || result.signal || result.status !== 0) {
-    throw new Error(`${runtime} failed: ${result.error?.message || result.signal ||
-      result.stderr?.trim() || `exit ${result.status}`}. No completed review was recorded.`);
-  }
-  return result.stdout;
+  const stdout = Buffer.concat(streams.stdout), stderr = Buffer.concat(streams.stderr);
+  save('provider-stdout.bin', stdout); save('provider-stderr.bin', stderr);
+  save('process.json', JSON.stringify({ phase: phase ?? 'review', runtime, args, cwd: workingRoot,
+    timeoutMs, status, signal, error, timedOut, reason, cleanup, closed,
+    stdoutSha256: hash(stdout), stderrSha256: hash(stderr),
+    stdoutBytes: stdout.length, stderrBytes: stderr.length }, null, 2) + '\n');
+  if (reason || error || signal || status !== 0) throw new Error(
+    `${runtime} ${phase ?? 'review'} failed: ${reason ?? error ?? signal ?? `exit ${status}`}. No completed review was recorded.`);
+  return decode(stdout);
 }
 
 // Preserve offsets while excluding diagnostic code from Markdown field parsing.
@@ -295,6 +362,23 @@ function markdownStructure(text) {
   }).join('\n');
 }
 
+function reviewTitle(options) {
+  return options.title ??
+    (options.verdicts.includes('PASS') ? '# FC Specification Review' : '# FVS Crypto Plan Review');
+}
+
+// One plain progress sentence: no markdown, code, digits, paths, finding IDs, severities or verdicts.
+// The word "verdict" alone is allowed; a VERDICT: line cannot pass the character class.
+function neutralPrefix(line, verdicts) {
+  const text = line.trim();
+  if (text.length > 240 || !/^[\p{L}][\p{L}\s,;'’()—-]*[.:…]$/u.test(text)) return false;
+  if (/[.!?]\s/.test(text.slice(0, -1))) return false;
+  // Word stems, so "rejecting" or "approved" is treated as a verdict rather than progress.
+  const words = [...verdicts, 'BLOCKER', 'MAJOR', 'MINOR', 'OBSERVATION']
+    .map(word => word.split('-')[0].replace(/E?D?$/, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  return !new RegExp(`(?:^|[^\\p{L}-])(?:${words})`, 'iu').test(text);
+}
+
 export function validateReviewResponse(response, options) {
   const { verdicts, headings } = options;
   if (typeof response !== 'string' || !response.trim()) throw new Error('Review response is empty');
@@ -308,8 +392,7 @@ export function validateReviewResponse(response, options) {
   if (response.trim().split(/\r?\n/).at(-1).trim() !== lines[0].trim()) {
     throw new Error('The single VERDICT must be the last line');
   }
-  const title = options.title ??
-    (verdicts.includes('PASS') ? '# FC Specification Review' : '# FVS Crypto Plan Review');
+  const title = reviewTitle(options);
   if (response.trim().split(/\r?\n/)[0] !== title) throw new Error(`Review must start with ${title}`);
   const sections = new Map();
   let previous = -1;
@@ -405,24 +488,67 @@ export function normalizeReviewResponse(response, verdicts) {
 export function recordValidatedResponse(directory, response, options) {
   const record = fs.mkdtempSync(path.join(directory, 'validation-'));
   const save = (name, text) => fs.writeFileSync(path.join(record, name), text, { flag: 'wx', mode: 0o600 });
+  if (Buffer.isBuffer(response)) {
+    save('imported-response.bin', response);
+    try { response = new TextDecoder('utf-8', { fatal: true }).decode(response); }
+    catch (error) {
+      save('error.txt', `Invalid UTF-8 imported response: ${error.message}\n`);
+      throw new Error(`Invalid UTF-8 imported response; invalid response preserved at ${record}`);
+    }
+  }
   save('raw-response.md', response);
   save('README.md', 'raw-response.md is the reviewer original, preserved unchanged.\n' +
-    'normalized-response.md, when present, is the deterministic formatting-only copy used for validation.\n');
+    'normalized-response.md, written only after validation, is the deterministic copy;\n' +
+    'transformation.json records each removal so it can be replayed.\n');
+  const transformations = [];
+  let normalized = response;
   try {
-    try { return validateReviewResponse(response, options); } catch {
-      const normalized = normalizeReviewResponse(response, options.verdicts);
-      if (normalized !== response.trim()) save('normalized-response.md', normalized + '\n');
-      return validateReviewResponse(normalized, options);
+    try { validateReviewResponse(response, options); }
+    catch {
+      const title = reviewTitle(options);
+      // Never combine wrapper repairs: a fence around an already prefixed review is ambiguous.
+      const prefix = normalized.match(/^([^\r\n]+)(\r?\n(?:[ \t]*\r?\n)*)(#[^\r\n]*)([\s\S]*)$/);
+      if (prefix && prefix[3] === title && neutralPrefix(prefix[1], options.verdicts)) {
+        transformations.push({ type: 'neutral-prefix', removed: prefix[1] + prefix[2] });
+        normalized = prefix[3] + prefix[4];
+      }
+      const fenced = normalized.match(/^(```(?:markdown|md)?\r?\n)([\s\S]*?)(\r?\n```[ \t\r\n]*)$/);
+      if (fenced && transformations.length === 0) {
+        transformations.push({ type: 'whole-review-fence', removed: [fenced[1], fenced[3]] });
+        normalized = fenced[2];
+      }
+      // Reject additional title candidates and conflicting verdicts before formatting repair.
+      if (normalized.split(title).length !== 2) throw new Error('Review must have exactly one title');
+      if ([...normalized.matchAll(/^\s*(?:\*\*)?VERDICT:/gm)].length > 1) {
+        throw new Error('Review has competing verdicts');
+      }
+      const formatted = normalizeReviewResponse(normalized, options.verdicts);
+      if (formatted !== normalized) transformations.push({ type: 'format', before: normalized, after: formatted });
+      validateReviewResponse(formatted, options);
+      normalized = formatted;
     }
+    save('normalized-response.md', normalized);
+    return normalized;
   } catch (error) {
     save('error.txt', `${error.message}\n`);
     throw new Error(`${error.message}; invalid response preserved at ${record}`);
+  } finally {
+    const validated = fs.existsSync(path.join(record, 'normalized-response.md'));
+    save('transformation.json', JSON.stringify({ validated, operations: transformations, hashes: {
+      'raw-response.md': hash(response), ...(validated && { 'normalized-response.md': hash(normalized) }),
+    }, replay_matches: transformations.reduce((text, operation) => {
+      if (operation.type === 'neutral-prefix') return text.slice(operation.removed.length);
+      if (operation.type === 'whole-review-fence') return text.slice(operation.removed[0].length,
+        text.length - operation.removed[1].length);
+      return operation.after;
+    }, response) === normalized }, null, 2) + '\n');
   }
 }
 
-export function preflightReviewer(runtime, workingRoot = root) {
+export async function preflightReviewer(runtime, workingRoot = root, attempt, timeoutMs) {
   try {
-    const version = invoke(runtime, ['--version'], workingRoot);
+    const version = await invoke(runtime, ['--version'], workingRoot,
+      { captureDirectory: attempt, phase: 'version', timeoutMs });
     if (runtime === 'claude') {
       const parts = version.match(/^(\d+)\.(\d+)\.(\d+)/)?.slice(1).map(Number);
       if (!parts || parts[0] < 2 || (parts[0] === 2 &&
@@ -430,7 +556,8 @@ export function preflightReviewer(runtime, workingRoot = root) {
         throw new Error('review probes require Claude Code >= 2.1.267 (tested sandbox policy)');
       }
     }
-    invoke(runtime, runtime === 'codex' ? ['login', 'status'] : ['auth', 'status'], workingRoot);
+    await invoke(runtime, runtime === 'codex' ? ['login', 'status'] : ['auth', 'status'], workingRoot,
+      { captureDirectory: attempt, phase: 'auth', timeoutMs });
   } catch (error) {
     throw new Error(runtime === 'codex'
       ? `Codex is not ready (${error.message}). Install @openai/codex; run codex login, then codex login status. Select a fallback explicitly.`
@@ -473,7 +600,7 @@ export function lakeWriteDirectories(projectRoot) {
   return result;
 }
 
-export function runReviewer({ runtime, model, effort, prompt, workingRoot = root,
+export async function runReviewer({ runtime, model, effort, prompt, workingRoot = root,
   artifactDirectory }) {
   workingRoot = fs.realpathSync(workingRoot);
   if (!artifactDirectory) throw new Error('Review requires a persistent artifact directory');
@@ -493,8 +620,11 @@ export function runReviewer({ runtime, model, effort, prompt, workingRoot = root
     return { response, reportedModels };
   };
   try {
-    save('request.json', JSON.stringify({ runtime, model, effort, workingRoot, prompt }, null, 2));
-    preflightReviewer(runtime, workingRoot);
+    const reviewTimeoutMs = deadline('FVS_REVIEW_TIMEOUT_MS', 1200000);
+    const authTimeoutMs = deadline('FVS_REVIEW_AUTH_TIMEOUT_MS', 30000);
+    save('request.json', JSON.stringify({ runtime, model, effort, workingRoot, prompt,
+      reviewTimeoutMs, authTimeoutMs }, null, 2));
+    await preflightReviewer(runtime, workingRoot, attempt, authTimeoutMs);
     const scopedPrompt = 'Review tool boundary (wrapper-owned):\n' +
       `Repository root (read-only): ${workingRoot}\nSaved scratch directory (session cwd): ${scratch}\n` +
       'Use absolute repository paths for reading; write only inside the saved scratch directory.\n' +
@@ -510,10 +640,10 @@ export function runReviewer({ runtime, model, effort, prompt, workingRoot = root
         '-c', `model_reasoning_effort="${effort}"`);
       save('launch.json', JSON.stringify({ runtime, args: [...args, '-'], cwd: scratch }, null, 2) + '\n');
       save('prompt.md', scopedPrompt);
-      invoke('codex', [...args, '-'], scratch,
-        { input: scopedPrompt, captureDirectory: attempt, env: childEnv });
+      await invoke('codex', [...args, '-'], scratch,
+        { input: scopedPrompt, captureDirectory: attempt, phase: 'review', timeoutMs: reviewTimeoutMs, env: childEnv });
       if (!fs.existsSync(lastMessage)) throw new Error('Codex returned no final review');
-      return finish(fs.readFileSync(lastMessage, 'utf8'), []);
+      return finish(decode(fs.readFileSync(lastMessage)), []);
     }
     if (!['darwin', 'linux'].includes(process.platform)) {
       throw new Error('Claude review probes require macOS/Linux native sandboxing; no unsafe fallback');
@@ -550,11 +680,12 @@ export function runReviewer({ runtime, model, effort, prompt, workingRoot = root
       'in scratch; report a blocked check if they require more write access.\n';
     save('launch.json', JSON.stringify({ runtime, args, cwd: scratch }, null, 2) + '\n');
     save('prompt.md', claudePrompt);
-    const result = JSON.parse(invoke('claude', args, scratch,
-      { input: claudePrompt, captureDirectory: attempt, env: childEnv }));
+    const result = JSON.parse(await invoke('claude', args, scratch,
+      { input: claudePrompt, captureDirectory: attempt, phase: 'review', timeoutMs: reviewTimeoutMs, env: childEnv }));
     if (result.is_error || typeof result.result !== 'string') {
       throw new Error('Claude returned an error or no final review; no completed review was recorded');
     }
+    save('provider-envelope.json', JSON.stringify(result, null, 2) + '\n');
     return finish(result.result, Object.keys(result.modelUsage ?? {}));
   } catch (error) {
     save('error.txt', `${error.message}\n`);
@@ -562,7 +693,7 @@ export function runReviewer({ runtime, model, effort, prompt, workingRoot = root
   }
 }
 
-function run(file) {
+async function run(file) {
   const { directory, packet, prompt } = prepare(file);
   process.stdout.write(`FVS >> Review packet: ${path.relative(root, directory)}\n`);
   const { runtime, model, effort } = packet.request;
@@ -574,26 +705,26 @@ function run(file) {
     process.stdout.write('FVS >> PI_READY: launch a fresh Pi reviewer from prompt.md, then use import-pi.\n');
     return;
   }
-  const { response, reportedModels } = runReviewer({ runtime, model, effort, prompt,
+  const { response, reportedModels } = await runReviewer({ runtime, model, effort, prompt,
     artifactDirectory: directory });
   const output = persist(directory, packet, response, reportedModels);
   process.stdout.write(`FVS >> Review recorded: ${path.relative(root, output)}\n`);
 }
 
-function cli() {
+async function cli() {
 try {
   const [command, ...args] = process.argv.slice(2);
   if (command === 'automatic' && args.length === 0) {
     process.stdout.write(`${automaticReview()}\n`);
   } else if (command === 'run' && args.length === 1) {
-    run(args[0]);
+    await run(args[0]);
   } else if (command === 'import' && args.length === 2) {
     const directory = requireInside(fs.realpathSync(args[0]));
     const packet = readJSON(path.join(directory, 'packet.json'));
     if (packet.request?.runtime !== 'other') {
       throw new Error('import accepts other review packets only');
     }
-    const output = persist(directory, packet, fs.readFileSync(args[1], 'utf8'), [], true);
+    const output = persist(directory, packet, fs.readFileSync(args[1]), [], true);
     process.stdout.write(`FVS >> Review recorded: ${path.relative(root, output)}\n`);
   } else if (command === 'import-pi' && args.length === 3) {
     requirePiHost();
@@ -607,11 +738,11 @@ try {
     const evidence = validatePiDispatchReceipt(fs.realpathSync(args[2]), {
       packetFile, responseFile, model: packet.request.model, effort: packet.request.effort,
     });
-    const output = persist(directory, packet, fs.readFileSync(responseFile, 'utf8'),
+    const output = persist(directory, packet, fs.readFileSync(responseFile),
       [evidence.model], false, evidence.effort, evidence);
     process.stdout.write(`FVS >> Review recorded: ${path.relative(root, output)}\n`);
   } else {
-    process.stdout.write('Usage: fvs-spec-review.mjs automatic | run <request.json> | import <review-directory> <response.md> | import-pi <review-directory> <response.md> <dispatch-receipt.json>\n');
+    process.stdout.write('Usage: fvs-spec-review.mjs automatic | run <request.json> | import <review-directory> <response.md> | import-pi <review-directory> <response.md> <dispatch-receipt.json>\nReviewer deadlines: FVS_REVIEW_TIMEOUT_MS=1200000; FVS_REVIEW_AUTH_TIMEOUT_MS=30000 (1..1800000 ms).\n');
     process.exitCode = command === '--help' ? 0 : 2;
   }
 } catch (error) {
@@ -620,4 +751,7 @@ try {
 }
 }
 
-if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) cli();
+if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) cli().catch(error => {
+  process.stderr.write(`FVS >> ${error.message}\n`);
+  process.exitCode = 1;
+});

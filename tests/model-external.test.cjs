@@ -388,6 +388,61 @@ describe('External Rust modeling command', () => {
       assert.match(fs.readFileSync(path.join(reviewDirectory, 'review.md'), 'utf8'), /VERDICT: PASS/);
     }
 
+    const bin = path.join(root, 'fake-bin');
+    fs.mkdirSync(bin);
+    const payload = '# FVS External Model Review\n\n## Findings\nNone.\n\n## Source coverage\nCompared all source and model inputs.\n\n## Evidence\nsource.rs:1\n\nVERDICT: PASS\n';
+    const fake = [
+      '#!/usr/bin/env node',
+      "const fs = require('node:fs');",
+      "const args = process.argv.slice(2);",
+      "if (args[0] === '--version') { console.log('1.0.0'); process.exit(0); }",
+      "if (args[0] === 'login') { if (process.env.FVS_FAKE_MODEL_MODE === 'auth') setInterval(() => {}, 1000); else process.exit(0); }",
+      `let response = ${JSON.stringify(payload)};`,
+      "if (process.env.FVS_FAKE_MODEL_MODE === 'wrapper') response = 'Review complete.\\n' + response;",
+      "if (process.env.FVS_FAKE_MODEL_MODE === 'competing') response += '\\nVERDICT: REVISE';",
+      "if (process.env.FVS_FAKE_MODEL_MODE === 'fail') { process.stderr.write('fake failed'); process.exit(9); }",
+      "fs.writeFileSync(args[args.indexOf('--output-last-message') + 1], response);",
+      "if (process.env.FVS_FAKE_MODEL_MODE === 'root-exited') { const child = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {stdio:['ignore','inherit','inherit']}); fs.writeFileSync(process.env.FVS_FAKE_PID_FILE, String(child.pid)); }",
+    ].join('\n');
+    fs.writeFileSync(path.join(bin, 'codex'), fake, { mode: 0o755 });
+    const nativeEnv = { PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+      FVS_REVIEW_TIMEOUT_MS: '1100', FVS_REVIEW_AUTH_TIMEOUT_MS: '2500',
+      FVS_FAKE_PID_FILE: path.join(root, 'review-child.pid') };
+    for (const mode of ['wrapper', 'competing', 'fail', 'auth', 'root-exited']) {
+      const modeRun = path.join(root, '.formalising', 'model-external', mode);
+      fs.mkdirSync(path.join(modeRun, 'source'), { recursive: true });
+      fs.copyFileSync(path.join(run, 'source/000-source.rs'), path.join(modeRun, 'source/000-source.rs'));
+      fs.writeFileSync(path.join(modeRun, 'journal.json'), JSON.stringify({
+        ...JSON.parse(fs.readFileSync(path.join(run, 'journal.json'))),
+        project_root: fs.realpathSync(root),
+        source_records: [{ evidence: 'source/000-source.rs' }],
+      }));
+      const request = path.join(root, `${mode}-run.json`);
+      fs.writeFileSync(request, JSON.stringify({ mode: 'model', round: 1, runtime: 'codex',
+        model: 'exact-test-model', effort: 'high', author_runtime: 'claude',
+        run_directory: `.formalising/model-external/${mode}`,
+        inputs: [`.formalising/model-external/${mode}/source/000-source.rs`, 'ExternalModel.lean'], history: [] }));
+      const result = runHelper(root, ['run', request], { ...nativeEnv, FVS_FAKE_MODEL_MODE: mode }, REVIEW_SCRIPT);
+      if (!['darwin', 'linux'].includes(process.platform)) {
+        assert.equal(result.status, 1);
+        assert.match(result.stderr, /Unsupported reviewer process cleanup/);
+        continue;
+      }
+      const latest = path.join(modeRun, 'reviews', 'model-round-1');
+      if (mode === 'wrapper') {
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(fs.readFileSync(path.join(latest, 'review.md'), 'utf8'), /VERDICT: PASS/);
+      } else {
+        assert.notEqual(result.status, 0, `${mode}: ${result.stderr}`);
+        assert.match(result.stderr, /Review attempt preserved|invalid response preserved/);
+        assert.ok(!fs.existsSync(path.join(latest, 'review.md')));
+        if (mode === 'root-exited') {
+          assert.match(result.stderr, /deadline/);
+          assert.throws(() => process.kill(Number(fs.readFileSync(nativeEnv.FVS_FAKE_PID_FILE, 'utf8')), 0), /ESRCH/);
+        }
+      }
+    }
+
     const overCap = path.join(root, 'over-cap.json');
     fs.writeFileSync(overCap, JSON.stringify({
       mode: 'model', round: 4, runtime: 'other', model: 'external-reviewer', effort: 'high',

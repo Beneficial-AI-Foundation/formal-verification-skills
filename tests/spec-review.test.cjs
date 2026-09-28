@@ -218,6 +218,21 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
     assert.equal(invoke(['import', directory(external), response]).status, 0);
     assert.match(fs.readFileSync(path.join(directory(external), 'review.md'), 'utf8'), /externally supplied response/);
     assert.notEqual(invoke(['import', directory(external), response]).status, 0, 'must not overwrite');
+    const neutral = run({ runtime: 'other', model: 'my-provider/model', effort: 'low' });
+    fs.writeFileSync(response, 'Review complete.\n' + REVIEW);
+    assert.equal(invoke(['import', directory(neutral), response]).status, 0);
+    assert.ok(fs.readFileSync(path.join(directory(neutral), 'review.md'), 'utf8').endsWith(REVIEW));
+    const validation = path.join(directory(neutral), fs.readdirSync(directory(neutral))
+      .find(name => name.startsWith('validation-')));
+    const transform = JSON.parse(fs.readFileSync(path.join(validation, 'transformation.json')));
+    assert.equal(transform.replay_matches, true);
+    assert.equal(transform.hashes['raw-response.md'], sha256(path.join(validation, 'raw-response.md')));
+    assert.equal(transform.hashes['normalized-response.md'], sha256(path.join(validation, 'normalized-response.md')));
+    fs.writeFileSync(response, Buffer.from([0xff, 0xfe]));
+    const undecodable = run({ runtime: 'other', model: 'my-provider/model', effort: 'low' });
+    assert.notEqual(invoke(['import', directory(undecodable), response]).status, 0);
+    assert.ok(!fs.existsSync(path.join(directory(undecodable), 'review.md')));
+    fs.writeFileSync(response, REVIEW);
     assert.notEqual(invoke(['import', first, response]).status, 0, 'must reject stale inputs');
     for (const field of ['model', 'effort']) {
       const tampered = run({ runtime: 'other', model: 'external-catalog-model', effort: 'low' });

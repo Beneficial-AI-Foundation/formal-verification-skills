@@ -77,6 +77,55 @@ test('review schema rejects malformed findings and format repair preserves subst
   assert.equal(validateReviewResponse(code, options), code);
 });
 
+test('review recovery records lossless originals and rejects ambiguous wrappers', async () => {
+  const { recordValidatedResponse } = await import('../scripts/fvs-spec-review.mjs');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-recovery-'));
+  const options = { verdicts: ['PASS', 'REVISE'], headings: ['Findings', 'Content coverage statement', 'Coverage', 'Evidence'] };
+  const review = '# FC Specification Review\n\n## Findings\nNone.\n\n## Content coverage statement\nChecked.\n\n## Coverage\nChecked.\n\n## Evidence\nsource:1\n\nVERDICT: PASS';
+  try {
+    const direct = review + '\n';
+    assert.equal(recordValidatedResponse(root, direct, options), direct);
+    const identity = path.join(root, fs.readdirSync(root)[0]);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(identity, 'transformation.json'))).operations, []);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(identity, 'transformation.json'))).replay_matches, true);
+    const wrapped = 'Review complete.\n' + review;
+    assert.equal(recordValidatedResponse(root, wrapped, options), review);
+    const record = path.join(root, fs.readdirSync(root).find(name => name !== path.basename(identity)));
+    assert.equal(fs.readFileSync(path.join(record, 'raw-response.md'), 'utf8'), wrapped);
+    assert.equal(fs.readFileSync(path.join(record, 'normalized-response.md'), 'utf8'), review);
+    const receipt = JSON.parse(fs.readFileSync(path.join(record, 'transformation.json')));
+    assert.equal(receipt.operations[0].removed, 'Review complete.\n');
+    for (const [file, text] of [['raw-response.md', wrapped], ['normalized-response.md', review]]) {
+      assert.equal(receipt.hashes[file], require('node:crypto').createHash('sha256').update(text).digest('hex'));
+    }
+    for (const allowed of ['Review complete.\n\n' + review,
+      'All evidence is gathered; writing the review.\n\n' + review,
+      "I have all the evidence I need; I'm now writing up the review with the hand traces, probe log, and verdict.\n\n" + review,
+      '```markdown\n' + review + '\n```\n']) {
+      const prior = new Set(fs.readdirSync(root));
+      assert.equal(recordValidatedResponse(root, allowed, options), review);
+      const item = path.join(root, fs.readdirSync(root).find(name => !prior.has(name)));
+      assert.equal(JSON.parse(fs.readFileSync(path.join(item, 'transformation.json'))).replay_matches, true);
+    }
+    for (const input of [review + '\n' + review, 'Review complete.\n' + review + '\nVERDICT: REVISE',
+      '## Findings\nNone.\n' + review, 'First.\nSecond.\n' + review,
+      'Review complete.\n```markdown\n' + review + '\n```',
+      'Done. Writing the review now.\n' + review, 'This passes.\n' + review,
+      'Revising is needed.\n' + review, 'A major gap remains.\n' + review,
+      'See F-1 first.\n' + review, 'Checked source line one:\n' + review.replace('# FC', '#FC'),
+      'Checked src/spec.lean carefully.\n' + review, 'Checked all lines.\n# Other Review\n' + review,
+      'Checked `spec` carefully.\n' + review]) {
+      const prior = new Set(fs.readdirSync(root));
+      assert.throws(() => recordValidatedResponse(root, input, options));
+      const last = path.join(root, fs.readdirSync(root).find(name => !prior.has(name)));
+      assert.ok(fs.existsSync(path.join(last, 'error.txt')));
+      assert.equal(fs.readFileSync(path.join(last, 'raw-response.md'), 'utf8'), input);
+      assert.ok(!fs.existsSync(path.join(last, 'normalized-response.md')), 'rejected review has no validated copy');
+      assert.equal(JSON.parse(fs.readFileSync(path.join(last, 'transformation.json'))).validated, false);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('crypto review allows observations but rejects adverse empty verdicts', async () => {
   const { validateReviewResponse } = await import('../scripts/fvs-spec-review.mjs');
   const options = { verdicts: ['APPROVE', 'APPROVE-WITH-EDITS', 'REJECT'],

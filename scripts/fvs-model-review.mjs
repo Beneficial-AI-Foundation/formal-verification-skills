@@ -170,13 +170,13 @@ function persist(directory, response, reportedModels = [], external = false, piR
   return { status: 'RECORDED', review: path.join(directory, 'review.md'), approval: packet.approval };
 }
 
-export function runReview(requestFile) {
+export async function runReview(requestFile) {
   const prepared = prepareReview(readJson(requestFile));
   const directory = prepared.review_directory;
   const packet = readJson(path.join(directory, 'packet.json'));
   if (packet.request.runtime === 'other' || packet.request.runtime === 'pi') return prepared;
   const prompt = fs.readFileSync(path.join(directory, 'prompt.md'), 'utf8');
-  const { response, reportedModels } = runReviewer({
+  const { response, reportedModels } = await runReviewer({
     runtime: packet.request.runtime,
     model: packet.request.model,
     effort: packet.request.effort,
@@ -186,21 +186,21 @@ export function runReview(requestFile) {
   return persist(directory, response, reportedModels);
 }
 
-function cli() {
+async function cli() {
   const [command, ...args] = process.argv.slice(2);
   if (command === 'prepare' && args.length === 1) {
     process.stdout.write(`${JSON.stringify(prepareReview(readJson(args[0])), null, 2)}\n`);
     return;
   }
   if (command === 'run' && args.length === 1) {
-    process.stdout.write(`${JSON.stringify(runReview(args[0]), null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify(await runReview(args[0]), null, 2)}\n`);
     return;
   }
   if (command === 'import' && args.length === 2) {
     const directory = insideProject(args[0]);
     const packet = readJson(path.join(directory, 'packet.json'));
     if (packet.request.runtime !== 'other') fail('import accepts only manually external review packets');
-    process.stdout.write(`${JSON.stringify(persist(directory, fs.readFileSync(args[1], 'utf8'), [], true), null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify(persist(directory, fs.readFileSync(args[1]), [], true), null, 2)}\n`);
     return;
   }
   if (command === 'import-pi' && args.length === 3) {
@@ -216,16 +216,14 @@ function cli() {
       model: packet.request.model,
       effort: packet.request.effort,
     });
-    process.stdout.write(`${JSON.stringify(persist(directory, fs.readFileSync(responseFile, 'utf8'), [], false, receipt), null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify(persist(directory, fs.readFileSync(responseFile), [], false, receipt), null, 2)}\n`);
     return;
   }
   process.stderr.write('Usage: fvs-model-review.mjs prepare|run <request.json> | import <review-directory> <response.md> | import-pi <review-directory> <response.md> <receipt.json>\n');
   process.exitCode = 2;
 }
 
-try {
-  if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) cli();
-} catch (error) {
+if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) cli().catch(error => {
   process.stderr.write(`FVS >> ${error.message}\n`);
   process.exitCode = 1;
-}
+});

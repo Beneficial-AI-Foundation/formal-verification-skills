@@ -532,7 +532,7 @@ function persistReview({ packet, packetDirectory, response, reportedModels = [],
   process.stdout.write(`FVS >> Review recorded: ${rel(outputPath)}\n`);
 }
 
-function runReview({ args, topicDir, projectRoot }) {
+async function runReview({ args, topicDir, projectRoot }) {
   if (args.reviewer === 'pi') requirePiHost();
   const prepared = prepareReview({ args, topicDir, projectRoot });
   const rel = path.relative(projectRoot, prepared.packetDirectory).replace(/\\/g, '/');
@@ -545,7 +545,7 @@ function runReview({ args, topicDir, projectRoot }) {
     process.stdout.write('FVS >> PI_READY: launch a fresh Pi reviewer from prompt.md, then use review-import-pi.\n');
     return;
   }
-  const result = runReviewer({ ...prepared.reviewer, prompt: prepared.prompt,
+  const result = await runReviewer({ ...prepared.reviewer, prompt: prepared.prompt,
     workingRoot: projectRoot, artifactDirectory: prepared.packetDirectory });
   persistReview({ ...prepared, ...result, projectRoot, topicDir });
 }
@@ -581,12 +581,12 @@ function importReview({ args, topicDir, projectRoot, nativePi = false }) {
       model: packet.request.model, effort: packet.request.effort,
     });
   }
-  persistReview({ packet, packetDirectory, response: fs.readFileSync(responsePath, 'utf8'),
+  persistReview({ packet, packetDirectory, response: fs.readFileSync(responsePath),
     reportedModels: evidence ? [evidence.model] : [], reportedEffort: evidence?.effort ?? null,
     piEvidence: evidence, projectRoot, topicDir, external: !nativePi });
 }
 
-function main() {
+async function main() {
   const args = parseArgs(process.argv.slice(2));
 
   if (args.help || args.stage === null) {
@@ -667,7 +667,7 @@ function main() {
 
   // Reviews use the selected provider in a read-only process; the wrapper owns writes.
   if (args.stage === 'review') {
-    runReview({ args, topicDir, projectRoot });
+    await runReview({ args, topicDir, projectRoot });
     return;
   }
   if (['review-import', 'review-import-pi'].includes(args.stage)) {
@@ -757,8 +757,4 @@ function main() {
   process.exit(run.status ?? 1);
 }
 
-try {
-  main();
-} catch (error) {
-  fail(error.message);
-}
+main().catch(error => fail(error.message));
