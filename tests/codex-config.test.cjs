@@ -147,12 +147,19 @@ describe('Codex skill adapter header (getCodexSkillAdapterHeader)', () => {
     assert.ok(header.includes('agent_type'), 'maps subagent_type to agent_type');
   });
 
-  it('fails closed when per-child model or effort cannot be honored', () => {
+  it('checks visible per-child controls and fails closed on unconfirmed settings', () => {
     const header = getCodexSkillAdapterHeader('fvs-fc-plan');
-    assert.match(header, /Selection-capability gate \(before manifest confirmation\)/);
+    assert.match(header, /Selection-capability gate \(before manifest confirmation, child dispatch, or artifact writes\)/);
+    assert.match(header, /If `model` is exposed for this child, pass the requested model/);
     assert.match(header, /requested model[\s\S]*active\/inherited Codex model/);
-    assert.match(header, /requested effort[\s\S]*installed\/runtime default/);
-    assert.match(header, /Never confirm a requested model or effort and then omit it/);
+    assert.match(header, /If `reasoning_effort` is exposed for this child, pass the requested effort/);
+    assert.match(header, /confirmed effective installed\/runtime default/);
+    assert.match(header, /unconfirmed effort is unresolved/);
+    assert.match(header, /Never confirm a requested specialist setting and then omit it/);
+    assert.match(header, /Model and effort are separate values: pass an exact catalog model id and an effort that model lists/);
+    assert.match(header, /pins `model` or `reasoning_effort`[\s\S]*overrides the per-call value, so the pinned value is the effective one/);
+    assert.match(header, /Installed agent TOML pins its own effort, which overrides a per-call value/);
+    assert.ok(!header.includes('supplies only a fallback effort'), 'TOML effort is not a fallback on Codex');
   });
 
   it('uses crypto roles rather than FC examples in crypto skill adapters', () => {
@@ -166,9 +173,31 @@ describe('Codex skill adapter header (getCodexSkillAdapterHeader)', () => {
   it('adapts shared marketplace skills without assuming plugin agents are typed', () => {
     const header = getCodexSkillAdapterHeader('lean-verify', { pluginName: 'fvs' });
     assert.ok(header.includes('`$fvs:lean-verify`'), 'uses the namespaced plugin invocation');
-    assert.ok(header.includes('exact requested FVS type'), 'qualifies typed agent dispatch');
+    assert.ok(header.includes('exact requested `agent_type`'), 'qualifies typed agent dispatch');
     assert.ok(header.includes('${CLAUDE_PLUGIN_ROOT}/agents/<agent-name>.md'), 'uses bundled agent fallback');
     assert.ok(header.includes('wait_agent(timeout_ms=...)'), 'uses the current collaboration wait contract');
+  });
+
+  it('gates marketplace role warnings on a requested exact specialist, not skill entry', () => {
+    const header = getCodexSkillAdapterHeader('map-code', { pluginName: 'fvs' });
+    const schema = header.indexOf('**Schema detection (required first step):**');
+    const requested = header.indexOf('**Requested specialist gate (at dispatch only):**');
+    const warning = header.indexOf('warn the user in plain language: Requested FVS specialist <agent-name>');
+    const selection = header.indexOf('Selection-capability gate (before manifest confirmation');
+    const typed = header.indexOf('Typed mapping (only when the exact requested FVS role is registered');
+    const fallback = header.indexOf('Generic-agent workaround (missing exact registered role OR no agent_type field)');
+    assert.ok(schema < requested && requested < warning && warning < selection && selection < typed && typed < fallback);
+    assert.match(header, /even if `agent_type` is present, warn/);
+    assert.match(header, /If the field is absent, typed dispatch is also unavailable/);
+    assert.match(header, /exact role is registered and `agent_type` is available[\s\S]*WITHOUT a missing-role warning/);
+    assert.match(header, /Do not warn merely for opening help, installing/);
+    assert.match(header, /bundled `agents\/\*\.md` are instructions, not registered Codex specialists/);
+    assert.match(header, /preamble does not assure typed identity, sandbox, model, or reasoning effort/);
+    assert.match(header, /mandatory typed identity or sandbox requirement; stop[\s\S]*before dispatch or artifact writes/);
+    assert.match(header, /Typed FVS roles currently require the direct Codex installation, a separate complete FVS install/);
+    assert.match(header, /never suggest keeping both channels/);
+    assert.ok(!header.includes('npx fv-skills-baif'), 'marketplace adapters carry no installer command');
+    assert.ok(!getCodexSkillAdapterHeader('map-code').includes('Requested specialist gate'), 'direct installer adapter stays separate');
   });
 });
 

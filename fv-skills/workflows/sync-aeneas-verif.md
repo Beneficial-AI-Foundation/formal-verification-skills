@@ -32,8 +32,7 @@ If it is missing or invalid, STOP and report:
 ```
 FVS >> AENEAS SYNC METADATA MISSING
 
-Run /fvs:update, or run `npx fv-skills-baif@latest` and choose the current runtime in the normal
-installer flow. There is no separate Aeneas install option.
+Run /fvs:update to refresh this installation. There is no separate Aeneas install option.
 ```
 
 **Inputs:** installed FVS tree

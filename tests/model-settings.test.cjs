@@ -136,8 +136,8 @@ describe('runtime-aware FVS model settings', () => {
     assert.match(profiles, /active\/inherited model[\s\S]*fail before dispatch/i);
 
     const adapter = read('bin/install.js');
-    assert.match(adapter, /Selection-capability gate \(before manifest confirmation\)/);
-    assert.match(adapter, /Never confirm a requested model or effort and then omit it/i);
+    assert.match(adapter, /Selection-capability gate \(before manifest confirmation, child dispatch, or artifact writes\)/);
+    assert.match(adapter, /Never confirm a requested specialist setting and then omit it/i);
 
     const reviewHelper = read('scripts/fvs-spec-review.mjs');
     assert.doesNotMatch(reviewHelper, /reviewerDefaults|defaultEffort/);

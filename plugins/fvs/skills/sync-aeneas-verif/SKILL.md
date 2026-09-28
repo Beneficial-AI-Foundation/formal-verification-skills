@@ -54,31 +54,31 @@ Execute mode fallback:
 ## C. Task() -> spawn_agent Mapping
 FVS workflows use `Task(...)` (Claude Code syntax). Translate to Codex collaboration tools:
 
-**Schema detection (required first step):** Codex exposes two `spawn_agent` schemas:
-- **agent_type-capable schema:** `spawn_agent` accepts `agent_type`, `message`, `reasoning_effort`, `fork_context`, etc. — typed FVS agent dispatch is available.
-- **Generic schema:** `spawn_agent` accepts only `message`, `items`, `fork_context` — there is **no `agent_type` field**. Typed FVS agent dispatch is unavailable in this session.
+**Schema detection (required first step):** Inspect the visible `spawn_agent` schema. It may have `agent_type` or be generic (no `agent_type`); inspect `model` and `reasoning_effort` fields independently rather than assuming either exists. An available `agent_type` field does not establish that a particular FVS role is registered.
 
 Before spawning, inspect the `spawn_agent` tool's visible parameter schema to determine which form is active.
-Even when `agent_type` is present, typed dispatch is available only if the exact requested FVS type is advertised by the tool schema or a confirmed runtime registry. Codex marketplace plugins do not register the bundled Claude agent Markdown as typed Codex agents, so otherwise use the bundled-agent workaround below.
+**Requested specialist gate (at dispatch only):** When a workflow requests a named FVS specialist, check BOTH the visible `spawn_agent` schema and whether the exact requested `agent_type` is advertised there or in a confirmed runtime registry. An `agent_type` field alone is not evidence that this role is registered; bundled `agents/*.md` are instructions, not registered Codex specialists. If the exact role is registered and `agent_type` is available, use typed mapping below WITHOUT a missing-role warning. Otherwise, even if `agent_type` is present, warn the user in plain language: Requested FVS specialist <agent-name> is not registered in this Codex session; the bundled Markdown cannot supply typed identity. Do not warn merely for opening help, installing, or mentioning a skill without requesting specialist dispatch. Apply the settings gate below before considering the generic-agent workaround. Never run an installer on the user's behalf.
 
 
-Selection-capability gate (before manifest confirmation):
-- Compare the requested model with the exact active/inherited Codex model. Because `spawn_agent` has no inline model field, any different requested model is unresolved. Rebuild the manifest around the actual active model and ask explicitly, choose a capable external runner, or fail before dispatch in noninteractive mode.
-- When `reasoning_effort` is absent from the schema, compare the requested effort with the installed/runtime default. A mismatch is unresolved and follows the same rebuild/ask-or-fail rule.
-- Never confirm a requested model or effort and then omit it with a warning. The marketplace plugin does not install Codex agent TOML. Use this mapping only when the exact FVS agent type is registered independently; otherwise use the bundled-agent workaround.
+Selection-capability gate (before manifest confirmation, child dispatch, or artifact writes):
+- Check required specialist identity and sandbox against the exact registered role and effective child settings. A generic role preamble cannot meet a mandatory typed identity or sandbox requirement; stop and explain the unavailable guarantee before dispatch or artifact writes.
+- If `model` is exposed for this child, pass the requested model. Otherwise compare it with the exact active/inherited Codex model; a different or unconfirmed model is unresolved. Rebuild the manifest around confirmed settings and ask explicitly, choose a capable external runner, or fail before dispatch in noninteractive mode.
+- If `reasoning_effort` is exposed for this child, pass the requested effort. Otherwise compare it with the confirmed effective installed/runtime default; a different or unconfirmed effort is unresolved and follows the same rebuild/ask-or-fail rule.
+- Model and effort are separate values: pass an exact catalog model id and an effort that model lists. A registered role that pins `model` or `reasoning_effort` (its role description says the setting is locked, or its TOML sets it) overrides the per-call value, so the pinned value is the effective one; if it differs from the confirmed selection it is unresolved.
+- Never confirm a requested specialist setting and then omit it with a warning. The marketplace plugin does not install Codex agent TOML; use typed mapping only for an independently registered exact role.
 
-Typed mapping (agent_type-capable schema only):
+Typed mapping (only when the exact requested FVS role is registered AND agent_type is exposed):
 - `Task(subagent_type="X", prompt="Y")` -> `spawn_agent(agent_type="X", message="Y")`
-- `Task(model="...")` -> omit only after the selection-capability gate proves it equals the active/inherited model.
-- `Task(reasoning_effort="...")` -> `spawn_agent(reasoning_effort="...")` when that field is present. If absent, dispatch only after the gate proves the installed/runtime default equals the confirmed effort.
+- `Task(model="...")` -> pass `model` if available for this child; otherwise omit only after the selection-capability gate proves it equals the active/inherited model.
+- `Task(reasoning_effort="...")` -> pass `reasoning_effort` if available for this child and the role does not pin it; otherwise omit only after the gate proves the effective (pinned or default) effort equals the confirmed effort.
 - `fork_context: false` by default -- FVS agents load their own context via `<files_to_read>` blocks.
 
-Generic-agent workaround (schema with NO agent_type field):
-When only the generic schema is available, typed FVS agent dispatch (`fvs-researcher`, `fvs-executor`, etc.) is NOT possible. This workaround is NOT equivalent to typed execution — FVS agents carry verification-aware prompts and sandbox settings a generic subagent lacks. Fallback:
+Generic-agent workaround (missing exact registered role OR no agent_type field):
+If the requested FVS type (`fvs-researcher`, `fvs-executor`, etc.) is not registered, typed dispatch is NOT possible even with an `agent_type` field. If the field is absent, typed dispatch is also unavailable. Fallback:
 1. Read `${CLAUDE_PLUGIN_ROOT}/agents/<agent-name>.md` and extract its instructions. If the token is still literal, resolve the path from this SKILL.md as described above.
-2. Spawn a generic/default agent and inject those instructions as a role preamble before the task prompt.
-3. Label results clearly as "generic-agent workaround" so the user knows typed guarantees are not in effect.
-4. Where typed dispatch is mandatory for correctness, fail closed and report the schema limitation rather than silently degrading.
+2. Only when the settings gate permits generic execution, spawn a generic/default child with those instructions as a role preamble before the task prompt. Do not pass an unregistered `agent_type`.
+3. Label output "generic-agent workaround". This is NOT equivalent to a registered specialist: the preamble does not assure typed identity, sandbox, model, or reasoning effort.
+4. If required guarantees cannot be honored, stop before dispatch or artifact writes; explain which guarantee is missing. Typed FVS roles currently require the direct Codex installation, a separate complete FVS install: point the user to "Codex specialist roles" in the FVS README and never suggest keeping both channels. Even after switching, confirm exact registration and settings in the runtime.
 
 Parallel fan-out:
 - Spawn multiple agents -> collect agent IDs -> call `wait_agent(timeout_ms=...)` (or the runtime's visible wait equivalent) until each completes
@@ -151,8 +151,8 @@ SYNC_META="${CLAUDE_PLUGIN_ROOT}/fv-skills/upstream/aeneas/_sync-meta.json"
 if [ ! -s "$SYNC_META" ]; then
   echo "FVS >> AENEAS SYNC METADATA MISSING"
   echo "The installed fv-skills/upstream/aeneas/_sync-meta.json mapping is absent."
-  echo "Run /fvs:update, or run: npx fv-skills-baif@latest"
-  echo "Choose your current runtime in the normal installer flow; there is no separate Aeneas option."
+  echo "Run /fvs:update to refresh this installation."
+  echo "There is no separate Aeneas install option."
   exit 1
 fi
 
@@ -164,7 +164,7 @@ node -e '
       m.extraction_inputs.some(x => !x.repository || !x.upstream_path || !x.snapshot_target) ||
       !m.tactic_renames || typeof m.tactic_renames !== "object") process.exit(2);
 ' "$SYNC_META" || {
-  echo "FVS >> Aeneas sync metadata is invalid. Run /fvs:update or npx fv-skills-baif@latest."
+  echo "FVS >> Aeneas sync metadata is invalid. Run /fvs:update to refresh this installation."
   exit 1
 }
 ```

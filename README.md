@@ -90,7 +90,31 @@ codex plugin add fvs@beneficial-ai-foundation
 ```
 
 Start a new session after installation. Run `/fvs:help` in Claude Code or mention `$fvs:help` in
-Codex. To refresh an existing install, update the catalog and then update or reinstall FVS:
+Codex.
+
+On Codex, the marketplace plugin ships the FVS agent prompts as Markdown but does not register them
+as Codex agent roles. When a workflow asks for an FVS specialist that Codex has not registered, FVS
+warns you. If the step does not depend on that specialist's settings, FVS runs a generic Codex agent
+with the specialist's prompt and labels its output, but Codex then does not guarantee the
+specialist's identity, sandbox, model, or reasoning effort. If the step does depend on them, FVS
+stops before starting the agent or writing files. A role registered some other way still has its
+settings checked at run time.
+
+#### Codex specialist roles
+
+Use one FVS installation per runtime. The npm installer installs a complete, separately managed FVS
+for Codex: skills as `$fvs-<name>`, scripts, hooks, a `config.toml` block, and the `fvs-*` agent
+roles. To get registered roles today, switch installations rather than adding a second copy:
+
+```bash
+codex plugin remove fvs@beneficial-ai-foundation
+npx fv-skills-baif --codex --global
+```
+
+Adding or updating the marketplace plugin, including with `$fvs:update`, never registers roles or
+runs the npm installer.
+
+To refresh an existing install, update the catalog and then update or reinstall FVS:
 
 ```bash
 # Claude Code

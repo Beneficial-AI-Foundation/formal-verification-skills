@@ -69,8 +69,8 @@ SYNC_META="$HOME/.claude/fv-skills/upstream/aeneas/_sync-meta.json"
 if [ ! -s "$SYNC_META" ]; then
   echo "FVS >> AENEAS SYNC METADATA MISSING"
   echo "The installed fv-skills/upstream/aeneas/_sync-meta.json mapping is absent."
-  echo "Run /fvs:update, or run: npx fv-skills-baif@latest"
-  echo "Choose your current runtime in the normal installer flow; there is no separate Aeneas option."
+  echo "Run /fvs:update to refresh this installation."
+  echo "There is no separate Aeneas install option."
   exit 1
 fi
 
@@ -82,7 +82,7 @@ node -e '
       m.extraction_inputs.some(x => !x.repository || !x.upstream_path || !x.snapshot_target) ||
       !m.tactic_renames || typeof m.tactic_renames !== "object") process.exit(2);
 ' "$SYNC_META" || {
-  echo "FVS >> Aeneas sync metadata is invalid. Run /fvs:update or npx fv-skills-baif@latest."
+  echo "FVS >> Aeneas sync metadata is invalid. Run /fvs:update to refresh this installation."
   exit 1
 }
 ```

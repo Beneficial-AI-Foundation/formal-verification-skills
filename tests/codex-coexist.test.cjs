@@ -101,6 +101,8 @@ describe('Codex config.toml coexistence (GSD + FVS + user tables)', () => {
       '',
     ].join('\n');
     fs.writeFileSync(path.join(tmpDir, 'config.toml'), seed);
+    fs.mkdirSync(path.join(tmpDir, 'agents'));
+    fs.writeFileSync(path.join(tmpDir, 'agents', 'gsd-foo.toml'), 'name = "gsd-foo"\n');
     installCodex(tmpDir);
   });
 
@@ -114,6 +116,10 @@ describe('Codex config.toml coexistence (GSD + FVS + user tables)', () => {
     const names = fvsRoleNames(tmpDir, content);
     assert.ok(names.length > 0, 'standalone FVS agent TOMLs installed');
     assert.equal(new Set(names).size, names.length, 'every FVS role identity occurs exactly once');
+    assert.deepEqual(names.sort(), fs.readdirSync(path.join(ROOT, 'agents'))
+      .filter((file) => /^fvs-.*\.md$/.test(file)).map((file) => file.slice(0, -3)).sort(),
+    'direct installer provides each standalone FVS role');
+    assert.equal(fs.readFileSync(path.join(tmpDir, 'agents', 'gsd-foo.toml'), 'utf8'), 'name = "gsd-foo"\n');
   });
 
   it('does not duplicate the FVS block on reinstall', () => {
@@ -126,6 +132,11 @@ describe('Codex config.toml coexistence (GSD + FVS + user tables)', () => {
     const flagCount = content.split(/\n/).filter((l) => /^hooks\s*=\s*true\s*$/.test(l)).length;
     assert.equal(flagCount, 1, `expected exactly one [features].hooks flag, got ${flagCount}`);
     assert.ok(content.indexOf('[features]') < content.indexOf('hooks = true'), 'hooks flag is inside [features]');
+    const names = fvsRoleNames(tmpDir, content);
+    assert.equal(new Set(names).size, names.length, 'reinstall must not duplicate standalone role identities');
+    assert.ok(names.length > 0, 'reinstall keeps FVS roles');
+    assert.ok(content.includes('[agents.gsd-foo]') && content.includes('[model]'), 'foreign config survives reinstall');
+    assert.equal(fs.readFileSync(path.join(tmpDir, 'agents', 'gsd-foo.toml'), 'utf8'), 'name = "gsd-foo"\n');
   });
 
   it('removes only FVS settings on uninstall; GSD and user tables survive', () => {
@@ -134,6 +145,8 @@ describe('Codex config.toml coexistence (GSD + FVS + user tables)', () => {
     assert.ok(content.includes('[agents.gsd-'), 'GSD agent table removed by FVS uninstall');
     assert.ok(content.includes('[model]'), 'user [model] table removed by FVS uninstall');
     assert.ok(!content.includes('[agents.fvs-'), 'FVS agent table not removed');
+    assert.deepEqual(fs.readdirSync(path.join(tmpDir, 'agents')).filter((file) => /^fvs-.*\.toml$/.test(file)), [], 'only FVS standalone roles are removed');
+    assert.equal(fs.readFileSync(path.join(tmpDir, 'agents', 'gsd-foo.toml'), 'utf8'), 'name = "gsd-foo"\n');
   });
 });
 
