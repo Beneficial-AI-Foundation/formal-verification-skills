@@ -29,7 +29,17 @@ and missing/foreign/Other identity as `unverified`; never switch silently. A ski
 <step name="review">
 Read `${CLAUDE_PLUGIN_ROOT}/fv-skills/references/review-grounding.md`, perform the bounded source/API
 scout, and save `GROUNDING_FILE` under a fresh topic `reviews/_grounding/` directory.
-Invoke the helper with all choices:
+Check its budget read-only before building the review:
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-codex-think.mjs review-preflight \
+  --topic "$ROOT" --iteration "n$N" --target "$TARGET_KIND" --grounding "$GROUNDING_FILE"
+```
+
+It reports charged lines out of 200 (analog and `cited_apis` subtotals, every occurrence charged,
+distinct spans informational) and, on overrun, the first span that crossed the limit. Narrow the scope per
+`review-grounding.md`, never compacting repeated spans, until it passes. Then invoke the helper
+with all choices; it rechecks the budget against current sources:
 
 ```bash
 node ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-codex-think.mjs review \

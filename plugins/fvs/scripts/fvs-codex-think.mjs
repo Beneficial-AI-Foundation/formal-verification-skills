@@ -53,15 +53,15 @@ import {
   requirePiHost,
   validatePiDispatchReceipt,
 } from './fvs-spec-review.mjs';
-import { prepareGrounding, validateGrounding } from './fvs-review-grounding.mjs';
+import { analyzeGrounding, prepareGrounding, validateGrounding } from './fvs-review-grounding.mjs';
 
 // Effort allowlist accepted by current FVS Codex routing. The calling command
 // validates model-specific support from the live catalog before this wrapper runs.
 const VALID_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
 const AUTHORING_STAGES = ['plan', 'eval', 'followup'];
-const STAGES = [...AUTHORING_STAGES, 'review-automatic', 'review', 'review-import',
-  'review-import-pi'];
+const STAGES = [...AUTHORING_STAGES, 'review-automatic', 'review-preflight', 'review',
+  'review-import', 'review-import-pi'];
 const hash = text => createHash('sha256').update(text).digest('hex');
 
 // Shell metacharacters we refuse to see in a resolved topic path. The spawn is an
@@ -81,6 +81,8 @@ function printUsage() {
       '  node scripts/fvs-codex-think.mjs <plan|eval|followup> --topic <dir>',
       '       [--model <exact-id>] --effort <supported-level> [--prompt <text>]',
       '  node scripts/fvs-codex-think.mjs review-automatic',
+      '  node scripts/fvs-codex-think.mjs review-preflight --topic <dir> --iteration nN',
+      '       [--target plan|followup] [--grounding <inventory.json>]',
       '  node scripts/fvs-codex-think.mjs review --topic <dir> --iteration nN',
       '       [--target plan|followup] [--reviewer codex|claude|pi|other]',
       '       --model <exact-id-or-inherit> --effort <supported-level>',
@@ -90,11 +92,11 @@ function printUsage() {
       '       [--dispatch-receipt <receipt.json>  # required for review-import-pi]',
       '',
       'Arguments:',
-      '  <stage>                plan | eval | followup | review-automatic | review |',
-      '                         review-import | review-import-pi.',
+      '  <stage>                plan | eval | followup | review-automatic | review-preflight |',
+      '                         review | review-import | review-import-pi.',
       '  --topic <dir>          The topic folder (.formalising/fv-plans/<topic>/). Becomes the',
       '                         artifact root; must already exist.',
-      '  --iteration <nN>       Required for review (for example n1).',
+      '  --iteration <nN>       Required for review and review-preflight (for example n1).',
       '  --target <kind>        Review target: plan | followup (default: auto).',
       '  --reviewer <runtime>   codex | claude | pi | other (default: codex).',
       '  --model <id>           Exact selected review/authoring model; review requires this flag.',
@@ -102,6 +104,7 @@ function printUsage() {
       '  --effort <level>       Explicit selected review or authoring effort (required for review).',
       '  --history <path>       Prior review/triage process record; repeatable, review only.',
       '  --grounding <path>     Bounded scout inventory JSON with source signature spans.',
+      '                         review-preflight reports its signature-line budget and writes nothing.',
       '  --packet <dir>         Managed packet directory for a review import.',
       '  --response <file>      Reviewer Markdown response for a review import.',
       '  --dispatch-receipt <file>  Pi child result receipt for review-import-pi.',
@@ -276,11 +279,24 @@ function readAuthoringRuntime(files) {
   };
 }
 
-function resolveReviewTarget(topicDir, projectRoot, args) {
+function reviewIteration(args) {
   const iteration = normalizeIteration(args.iteration);
   if (!['auto', 'plan', 'followup'].includes(args.target)) {
     fail(`invalid --target "${args.target}" -- expected plan | followup`, 2);
   }
+  return iteration;
+}
+
+// Budget analysis reads the inventory and cited sources only. It is repeated for a
+// real review so an edit made after preflight can never reuse an earlier result.
+function groundingBudget(projectRoot, args) {
+  const analysis = analyzeGrounding({ root: projectRoot, requestPath: args.grounding });
+  if (analysis.error) fail(analysis.error);
+  process.stdout.write(`FVS >> Grounding budget: ${analysis.report}\n`);
+}
+
+function resolveReviewTarget(topicDir, projectRoot, args) {
+  const iteration = reviewIteration(args);
 
   const plansDir = path.join(topicDir, 'plans');
   const requestedReviewsDir = path.join(topicDir, 'reviews');
@@ -347,6 +363,7 @@ function prepareReview({ args, topicDir, projectRoot }) {
   const reviewer = validateReviewerOptions({
     runtime: args.reviewer, model: args.model, effort: args.effort ?? undefined,
   });
+  groundingBudget(projectRoot, args);
   const review = resolveReviewTarget(topicDir, projectRoot, args);
   const scriptDir = path.dirname(fileURLToPath(import.meta.url));
   const contractPath = path.resolve(
@@ -625,7 +642,7 @@ async function main() {
         (!args.model.trim() || args.model.startsWith('-') || /[\0\r\n]/.test(args.model))) {
       fail('invalid --model value for authoring stage', 2);
     }
-  } else if (args.stage === 'review' &&
+  } else if (['review', 'review-preflight'].includes(args.stage) &&
       (args.packet !== null || args.response !== null || args.dispatchReceipt !== null)) {
     fail('--packet, --response, and --dispatch-receipt are valid only for review imports', 2);
   } else if (['review-import', 'review-import-pi'].includes(args.stage) &&
@@ -663,6 +680,13 @@ async function main() {
   const topicDir = fs.realpathSync(requestedTopic);
   if (!isInside(fs.realpathSync(allowedBase), topicDir)) {
     fail(`--topic "${args.topic}" resolves through a link outside .formalising/fv-plans/; refusing`, 2);
+  }
+
+  if (args.stage === 'review-preflight') {
+    reviewIteration(args);
+    groundingBudget(projectRoot, args);
+    process.stdout.write('FVS >> Grounding preflight passed; no review files were written and no reviewer was contacted.\n');
+    return;
   }
 
   // Reviews use the selected provider in a read-only process; the wrapper owns writes.

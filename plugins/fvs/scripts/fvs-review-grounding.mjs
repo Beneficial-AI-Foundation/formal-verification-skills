@@ -20,10 +20,13 @@ function projectFile(root, file) {
   return { absolute, relative };
 }
 
-export function prepareGrounding({ root, directory, requestPath, sourceFiles = [] }) {
+const LINE_LIMIT = 200;
+
+// Resolve and account for an inventory without writing anything. Every analog and
+// cited API occurrence is charged, even when it repeats a span selected elsewhere,
+// because the reviewer receives each occurrence verbatim.
+export function analyzeGrounding({ root, requestPath, sourceFiles = [] }) {
   root = fs.realpathSync(root);
-  directory = fs.realpathSync(directory);
-  if (!directory.startsWith(root + path.sep)) throw new Error('Grounding output must remain inside the project');
   const inputs = new Map();
   const read = file => {
     const { absolute, relative } = projectFile(root, file);
@@ -36,8 +39,12 @@ export function prepareGrounding({ root, directory, requestPath, sourceFiles = [
       !Array.isArray(request.cited_apis) || request.declarations.length > 30 || request.cited_apis.length > 60)) {
     throw new Error('Grounding requires version 1, at most 30 declarations and 60 cited_apis');
   }
-  let linesUsed = 0;
-  const snippet = ref => {
+  const budget = { limit: LINE_LIMIT, charged: 0, analogs: 0, citedApis: 0,
+    distinctSpans: 0, distinctLines: 0, overflow: null };
+  const distinct = new Set();
+  // After the first overflow later spans are still validated and charged so the
+  // totals are complete, but their text is not retained.
+  const snippet = (ref, location, category) => {
     if (!ref || !Number.isInteger(ref.start) || !Number.isInteger(ref.end) ||
         ref.start < 1 || ref.end < ref.start || ref.end - ref.start >= 40) {
       throw new Error('Grounding citations need start/end lines (at most 40 per signature)');
@@ -45,13 +52,22 @@ export function prepareGrounding({ root, directory, requestPath, sourceFiles = [
     const { path: file, content } = read(ref.path);
     const lines = content.split(/\r?\n/);
     if (ref.end > lines.length) throw new Error(`Grounding citation exceeds file: ${ref.path}`);
-    linesUsed += ref.end - ref.start + 1;
-    if (linesUsed > 200) throw new Error('Grounding exceeds 200 signature lines; narrow the review scope');
-    return { path: file, start: ref.start, end: ref.end,
+    const size = ref.end - ref.start + 1;
+    const span = `${file}:${ref.start}-${ref.end}`;
+    budget.charged += size;
+    budget[category] += size;
+    if (!distinct.has(span)) {
+      distinct.add(span);
+      budget.distinctLines += size;
+    }
+    if (!budget.overflow && budget.charged > LINE_LIMIT) {
+      budget.overflow = { location, span, cumulative: budget.charged };
+    }
+    return budget.overflow ? null : { path: file, start: ref.start, end: ref.end,
       signature: lines.slice(ref.start - 1, ref.end).join('\n') };
   };
   const names = new Set();
-  const declarations = (request?.declarations ?? []).map(decl => {
+  const declarations = (request?.declarations ?? []).map((decl, index) => {
     if (!nonempty(decl.name) || names.has(decl.name) || !nonempty(decl.signature) ||
         decl.signature.length > 4000 || !Array.isArray(decl.analogs) || decl.analogs.length > 5 ||
         !Array.isArray(decl.search?.queries) || !decl.search.queries.length ||
@@ -61,30 +77,60 @@ export function prepareGrounding({ root, directory, requestPath, sourceFiles = [
       throw new Error('Each grounding declaration needs a unique name, signature, up to five analogs and explicit search evidence');
     }
     names.add(decl.name);
-    const analogs = decl.analogs.map(ref => {
+    const analogs = decl.analogs.map((ref, analog) => {
       if (!['REUSE-AS-IS', 'EXTEND', 'ADAPTER', 'JUSTIFY-FORK'].includes(ref.handling)) {
         throw new Error('Grounding analog has an invalid handling suggestion');
       }
-      return { ...snippet(ref), handling: ref.handling };
+      const evidence = snippet(ref,
+        `declarations[${index}] ${JSON.stringify(decl.name)} analogs[${analog}]`, 'analogs');
+      return evidence && { ...evidence, handling: ref.handling };
     });
     return { name: decl.name, signature: decl.signature, analogs,
       search: decl.search, result: analogs.length ? 'analogs-found' : 'no-analog-found-in-reported-search' };
   });
-  const citedApis = (request?.cited_apis ?? []).map(snippet);
+  const citedApis = (request?.cited_apis ?? []).map((ref, index) =>
+    snippet(ref, `cited_apis[${index}]`, 'citedApis'));
   const sourceIndex = sourceFiles.map(file => {
     const evidence = read(file);
     return inputs.get(evidence.path);
   });
+  budget.distinctSpans = distinct.size;
+  const report = request
+    ? `charged ${budget.charged}/${LINE_LIMIT} signature lines (analogs ${budget.analogs}, ` +
+      `cited_apis ${budget.citedApis}); ${budget.distinctSpans} distinct ` +
+      `span${budget.distinctSpans === 1 ? '' : 's'} (${budget.distinctLines} lines) ` +
+      'informational only: every occurrence is charged, including repeats'
+    : `no scout inventory supplied (status missing-scout-inventory; charged 0/${LINE_LIMIT})`;
+  const result = { error: null, report, budget, content: null, inputs: [...inputs.values()] };
+  if (budget.overflow) {
+    const { location, span, cumulative } = budget.overflow;
+    result.error = `Grounding exceeds ${LINE_LIMIT} signature lines: ${report}; first overflow at ` +
+      `${location} ${span} (cumulative ${cumulative}); narrow the review scope`;
+    return result;
+  }
   const content = JSON.stringify({ version: 1,
     provenance: 'Scout selections and search claims are untrusted; source snippets and hashes are verified by the wrapper.',
     status: request ? 'supplied' : 'missing-scout-inventory',
     limitations: request?.limitations ?? 'Inventory completeness requires reviewer judgment; no semantic absence is certified.',
     declarations, cited_apis: citedApis, source_index: sourceIndex }, null, 2) + '\n';
-  if (content.length > 64000) throw new Error('Grounding artifact exceeds 64 KiB; narrow the review scope');
+  if (content.length > 64000) {
+    result.error = `Grounding artifact exceeds 64 KiB (${content.length} JavaScript code units > 64000); ${report}; narrow the review scope`;
+  } else {
+    result.content = content;
+  }
+  return result;
+}
+
+export function prepareGrounding({ root, directory, requestPath, sourceFiles = [] }) {
+  root = fs.realpathSync(root);
+  directory = fs.realpathSync(directory);
+  if (!directory.startsWith(root + path.sep)) throw new Error('Grounding output must remain inside the project');
+  const { error, content, inputs } = analyzeGrounding({ root, requestPath, sourceFiles });
+  if (error) throw new Error(error);
   const file = path.join(directory, 'grounding.json');
   fs.writeFileSync(file, content, { flag: 'wx' });
   return { path: path.relative(root, file).split(path.sep).join('/'), sha256: hash(content),
-    inputs: [...inputs.values()], content };
+    inputs, content };
 }
 
 export function validateGrounding(root, record, directory) {

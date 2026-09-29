@@ -39,6 +39,95 @@ test('grounding binds verbatim dependency signatures and negative search results
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test('grounding budget charges every span occurrence and names the first overflow', async () => {
+  const { analyzeGrounding, prepareGrounding } = await import('../scripts/fvs-review-grounding.mjs');
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-grounding-budget-')));
+  try {
+    fs.writeFileSync(path.join(root, 'Api.lean'),
+      Array.from({ length: 41 }, (_, i) => `-- line ${i + 1}`).join('\n') + '\n');
+    const span = (start = 1, end = 10) => ({ path: './Api.lean', start, end });
+    const decls = count => Array.from({ length: count }, (_, i) => ({
+      name: `D${i}`, signature: 'True', analogs: [{ ...span(), handling: 'REUSE-AS-IS' }],
+      search: { queries: ['Api.lean'], roots: ['.'], conclusion: 'fixture' } }));
+    const inventory = path.join(root, 'inventory.json');
+    const write = (declarations, cited_apis = []) => fs.writeFileSync(inventory,
+      JSON.stringify({ version: 1, declarations, cited_apis, limitations: 'fixture' }));
+    const tree = () => fs.readdirSync(root, { recursive: true }).sort();
+    const before = tree();
+
+    write(decls(21));
+    let analysis = analyzeGrounding({ root, requestPath: 'inventory.json' });
+    assert.deepEqual({ ...analysis.budget, overflow: undefined }, { limit: 200, charged: 210,
+      analogs: 210, citedApis: 0, distinctSpans: 1, distinctLines: 10, overflow: undefined });
+    assert.deepEqual(analysis.budget.overflow, { location: 'declarations[20] "D20" analogs[0]',
+      span: 'Api.lean:1-10', cumulative: 210 });
+    assert.equal(analysis.content, null);
+    assert.match(analysis.error, /charged 210\/200.*analogs 210, cited_apis 0.*declarations\[20\] "D20" analogs\[0\] Api\.lean:1-10 \(cumulative 210\)/);
+    assert.match(analysis.error, /1 distinct span \(10 lines\)/);
+    const directory = path.join(root, 'packet');
+    fs.mkdirSync(directory);
+    assert.throws(() => prepareGrounding({ root, directory, requestPath: 'inventory.json' }),
+      error => error.message === analysis.error);
+    assert.ok(!fs.existsSync(path.join(directory, 'grounding.json')));
+    fs.rmdirSync(directory);
+
+    write(decls(20), [span(), span(), span(1, 1)]);
+    analysis = analyzeGrounding({ root, requestPath: 'inventory.json' });
+    assert.equal(analysis.budget.charged, 221);
+    assert.equal(analysis.budget.analogs, 200);
+    assert.equal(analysis.budget.citedApis, 21);
+    assert.equal(analysis.budget.distinctSpans, 2);
+    assert.deepEqual(analysis.budget.overflow, { location: 'cited_apis[0]', span: 'Api.lean:1-10', cumulative: 210 });
+
+    write(decls(20));
+    analysis = analyzeGrounding({ root, requestPath: 'inventory.json' });
+    assert.equal(analysis.error, null);
+    assert.match(analysis.report, /^charged 200\/200 signature lines \(analogs 200, cited_apis 0\)/);
+    assert.equal(JSON.parse(analysis.content).declarations[19].analogs[0].path, 'Api.lean');
+    write(decls(20), [span(1, 1)]);
+    assert.deepEqual(analyzeGrounding({ root, requestPath: 'inventory.json' }).budget.overflow,
+      { location: 'cited_apis[0]', span: 'Api.lean:1-1', cumulative: 201 });
+
+    write([], [span(1, 40)]);
+    assert.equal(analyzeGrounding({ root, requestPath: 'inventory.json' }).budget.charged, 40);
+    write([], [span(1, 41)]);
+    assert.throws(() => analyzeGrounding({ root, requestPath: 'inventory.json' }), /at most 40/);
+    write(decls(21), [span(1, 41)]);
+    assert.throws(() => analyzeGrounding({ root, requestPath: 'inventory.json' }), /at most 40/,
+      'spans after the first overflow are still validated');
+
+    const missing = analyzeGrounding({ root });
+    assert.equal(missing.error, null);
+    assert.equal(JSON.parse(missing.content).status, 'missing-scout-inventory');
+    assert.match(missing.report, /missing-scout-inventory/);
+    assert.deepEqual(tree(), [...before, 'inventory.json'].sort(), 'analysis never writes');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('grounding artifact keeps the 64000 code-unit ceiling and reports the budget', async () => {
+  const { analyzeGrounding, prepareGrounding } = await import('../scripts/fvs-review-grounding.mjs');
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-grounding-size-')));
+  try {
+    const inventory = path.join(root, 'inventory.json');
+    fs.writeFileSync(inventory, JSON.stringify({ version: 1, declarations: [],
+      cited_apis: [{ path: 'Wide.lean', start: 1, end: 1 }] }));
+    const check = line => {
+      fs.writeFileSync(path.join(root, 'Wide.lean'), line + '\n');
+      return analyzeGrounding({ root, requestPath: 'inventory.json' });
+    };
+    assert.equal(check('a'.repeat(40000)).error, null);
+    assert.equal(check('∀'.repeat(40000)).error, null, 'Lean Unicode is measured in code units, not bytes');
+    const oversized = check('a'.repeat(64001));
+    assert.match(oversized.error, /exceeds 64 KiB \(\d+ JavaScript code units > 64000\); charged 1\/200/);
+    assert.ok(oversized.content === null);
+    const directory = path.join(root, 'packet');
+    fs.mkdirSync(directory);
+    assert.throws(() => prepareGrounding({ root, directory, requestPath: 'inventory.json' }),
+      /JavaScript code units > 64000/);
+    assert.deepEqual(fs.readdirSync(directory), []);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('review schema rejects malformed findings and format repair preserves substantive text', async () => {
   const { validateReviewResponse, normalizeReviewResponse } = await import('../scripts/fvs-spec-review.mjs');
   const options = { verdicts: ['PASS', 'APPROVE-WITH-EDITS', 'REVISE', 'BLOCKED'],

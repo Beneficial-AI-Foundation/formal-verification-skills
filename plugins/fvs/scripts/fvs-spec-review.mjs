@@ -5,7 +5,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { prepareGrounding, validateGrounding } from './fvs-review-grounding.mjs';
+import { analyzeGrounding, prepareGrounding, validateGrounding } from './fvs-review-grounding.mjs';
 
 const root = fs.realpathSync(process.cwd());
 const hash = text => createHash('sha256').update(text).digest('hex');
@@ -136,10 +136,10 @@ export function automaticReview(section = 'spec_review') {
   return review.automatic;
 }
 
-function prepare(file) {
+// Parse and confine a review request without side effects; preflight and run share it.
+function readRequest(file) {
   const input = readJSON(file);
-  const { runtime, model, effort } = validateReviewerOptions(input);
-  if (runtime === 'pi') requirePiHost();
+  const reviewer = validateReviewerOptions(input);
   const author = input.author_runtime ?? 'unknown';
   if (!['codex', 'claude', 'other', 'unknown'].includes(author)) {
     throw new Error('author_runtime must be codex, claude, other, or unknown');
@@ -150,6 +150,22 @@ function prepare(file) {
   const spec = sourcePath(input.spec);
   if (!spec.endsWith('.lean')) throw new Error('spec must be a Lean file');
   const files = [...new Set([spec, ...input.context.map(sourcePath)])];
+  return { input, reviewer, author, spec, files };
+}
+
+// Reads the inventory and indexed sources only; run repeats it against current bytes.
+function groundingBudget({ input, files }) {
+  const analysis = analyzeGrounding({ root, requestPath: input.grounding, sourceFiles: files });
+  if (analysis.error) throw new Error(analysis.error);
+  process.stdout.write(`FVS >> Grounding budget: ${analysis.report}\n`);
+}
+
+function prepare(file) {
+  const parsed = readRequest(file);
+  const { input, author, spec, files } = parsed;
+  const { runtime, model, effort } = parsed.reviewer;
+  if (runtime === 'pi') requirePiHost();
+  groundingBudget(parsed);
   const inputs = files.map(file => {
     const content = fs.readFileSync(path.join(root, file), 'utf8');
     return { path: file, sha256: hash(content), content };
@@ -716,6 +732,9 @@ try {
   const [command, ...args] = process.argv.slice(2);
   if (command === 'automatic' && args.length === 0) {
     process.stdout.write(`${automaticReview()}\n`);
+  } else if (command === 'preflight' && args.length === 1) {
+    groundingBudget(readRequest(args[0]));
+    process.stdout.write('FVS >> Grounding preflight passed; no review files were written and no reviewer was contacted.\n');
   } else if (command === 'run' && args.length === 1) {
     await run(args[0]);
   } else if (command === 'import' && args.length === 2) {
@@ -742,7 +761,7 @@ try {
       [evidence.model], false, evidence.effort, evidence);
     process.stdout.write(`FVS >> Review recorded: ${path.relative(root, output)}\n`);
   } else {
-    process.stdout.write('Usage: fvs-spec-review.mjs automatic | run <request.json> | import <review-directory> <response.md> | import-pi <review-directory> <response.md> <dispatch-receipt.json>\nReviewer deadlines: FVS_REVIEW_TIMEOUT_MS=1200000; FVS_REVIEW_AUTH_TIMEOUT_MS=30000 (1..1800000 ms).\n');
+    process.stdout.write('Usage: fvs-spec-review.mjs automatic | preflight <request.json> | run <request.json> | import <review-directory> <response.md> | import-pi <review-directory> <response.md> <dispatch-receipt.json>\nReviewer deadlines: FVS_REVIEW_TIMEOUT_MS=1200000; FVS_REVIEW_AUTH_TIMEOUT_MS=30000 (1..1800000 ms).\n');
     process.exitCode = command === '--help' ? 0 : 2;
   }
 } catch (error) {

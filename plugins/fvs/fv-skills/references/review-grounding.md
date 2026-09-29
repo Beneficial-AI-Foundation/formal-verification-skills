@@ -48,8 +48,32 @@ Use project-relative paths and this schema (replace the example with real eviden
 Use `analogs: []` plus queries, roots, and an explicit conclusion for a no-analog result.
 Select complete signature spans; the wrapper extracts their contents verbatim and hashes
 each underlying file. Bounds: 30 proposed declarations, 5 analogs each, 60 cited APIs,
-40 lines per signature, 200 total signature lines, 2 MiB per source file, 64 KiB expanded artifact. Narrow the
-review scope if it exceeds these bounds; do not silently drop declarations or citations.
+40 lines per signature, 200 charged signature lines, 2 MiB per source file, and an expanded
+`grounding.json` of at most 64000 JavaScript code units.
+
+The 200-line budget is charged per occurrence. Every analog span and every `cited_apis` span
+costs its inclusive line count, even when the same file and lines already appear for another
+declaration or as an analog. The distinct-span count is informational only.
+
+Check the budget before building a review. Crypto:
+`fvs-codex-think.mjs review-preflight --topic "$ROOT" --iteration "n$N" [--target plan|followup]
+--grounding "$GROUNDING_FILE"`. FC: `fvs-spec-review.mjs preflight "$REQUEST_FILE"` with the same
+request JSON you will pass to `run`; its spec and deduplicated context files are indexed as in the
+real packet. Preflight writes nothing, needs no reviewer selection or authentication, and never
+contacts a provider. On success it prints, for example:
+
+```text
+FVS >> Grounding budget: charged 192/200 signature lines (analogs 192, cited_apis 0); 12 distinct spans (111 lines) informational only: every occurrence is charged, including repeats
+```
+
+On overrun it exits nonzero with the complete totals (later spans are still counted) and the first
+span that crossed the limit, for example `first overflow at declarations[20] "D20" analogs[0]
+Api.lean:1-10 (cumulative 210)` or `first overflow at cited_apis[3] ...`. Narrow the review scope:
+review fewer declarations, or keep only the analogs and cited APIs the reviewer needs. Do not
+silently drop declarations or citations to fit, and do not compact or merge repeated spans. Rerun
+preflight until it passes. `review` and `run` repeat the same analysis against current sources
+before creating any review directory and again when writing `grounding.json`, so a passing preflight
+approves nothing on its own.
 
 Pass this path as crypto `--grounding "$GROUNDING_FILE"`, or FC request field
 `"grounding": "<project-relative inventory.json>"`. The wrapper creates `grounding.json`

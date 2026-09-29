@@ -67,6 +67,19 @@ cover only the hashed evidence packet; a reviewer's additional source reads are 
 the original hashes. Oversized packets fail at the selected runtime's context limit rather than
 being silently summarized or truncated.
 
+Check the grounding budget read-only with the same request before running it:
+
+```bash
+node ~/.claude/scripts/fvs-spec-review.mjs preflight "$REQUEST_FILE"
+```
+
+Preflight creates no `.formalising/spec-reviews/` state, needs no Pi host or authentication, and
+contacts no reviewer. It prints charged lines out of 200 with analog and `cited_apis` subtotals;
+every span occurrence is charged, including repeats, and the distinct-span count is informational.
+On overrun it exits nonzero and names the first span that crossed the limit. Narrow the scope per
+`review-grounding.md` (never compact repeated spans) and rerun it until it passes. `run` repeats the
+same check against current sources before creating the review directory:
+
 ```bash
 node ~/.claude/scripts/fvs-spec-review.mjs run "$REQUEST_FILE"
 ```

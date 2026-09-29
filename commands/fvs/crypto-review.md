@@ -85,6 +85,20 @@ scout. Save a fresh inventory under this topic's `reviews/_grounding/` and set
 `GROUNDING_FILE` to its project-relative path. Check the plan's `## Reuse audit`;
 missing analysis belongs in reviewer findings, not a fabricated scout result.
 
+Check the signature-line budget first. This is read-only: it creates no review files and
+contacts no reviewer.
+
+```bash
+node ~/.claude/scripts/fvs-codex-think.mjs review-preflight \
+  --topic "$ROOT" --iteration "n$N" --target "$TARGET_KIND" --grounding "$GROUNDING_FILE"
+```
+
+It prints charged lines out of 200, with analog and `cited_apis` subtotals. Every span occurrence
+is charged, including repeats; the distinct-span count is informational only. On overrun it
+names the first span that crossed the limit and exits nonzero. Narrow the inventory or review
+scope as `review-grounding.md` describes (never compact repeated spans) and rerun it until it
+passes. Then run the review, which repeats the same check against current sources:
+
 ```bash
 node ~/.claude/scripts/fvs-codex-think.mjs review \
   --topic "$ROOT" --iteration "n$N" --target "$TARGET_KIND" \

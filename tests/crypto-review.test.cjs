@@ -25,6 +25,7 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     const bin = path.join(tmp, 'bin');
     const topicRoot = path.join(project, '.formalising', 'fv-plans');
     const log = path.join(tmp, 'invocation.json');
+    const calls = path.join(tmp, 'calls.jsonl');
     fs.mkdirSync(topicRoot, { recursive: true });
     fs.mkdirSync(bin);
     fs.writeFileSync(path.join(project, 'helper.lean'), 'theorem helper : True := by trivial\n');
@@ -35,6 +36,7 @@ it('runs crypto review through selected read-only runtimes and immutable packets
       '#!/usr/bin/env node',
       "const fs = require('node:fs');",
       'const args = process.argv.slice(2);',
+      "fs.appendFileSync(process.env.FVS_REVIEW_TEST_CALLS, JSON.stringify(args) + '\\n');",
       "if (args[0] === '--version') { console.log('2.1.267'); process.exit(0); }",
       "const mode = process.env.FVS_REVIEW_TEST_MODE || '';",
       "if (['login', 'auth'].includes(args[0])) process.exit(mode === 'auth' ? 1 : 0);",
@@ -74,6 +76,7 @@ it('runs crypto review through selected read-only runtimes and immutable packets
         ...process.env,
         PATH: `${bin}${path.delimiter}${process.env.PATH || ''}`,
         FVS_REVIEW_TEST_LOG: log,
+        FVS_REVIEW_TEST_CALLS: calls,
         FVS_REVIEW_TEST_MODE: mode,
         ...env,
       },
@@ -95,6 +98,60 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     fs.writeFileSync(config, 'broken JSON');
     assert.notEqual(invoke(['review-automatic']).status, 0);
     fs.writeFileSync(config, '{"crypto_review":{"automatic":false}}');
+
+    // Budget preflight is inspection only: no review tree, packet, scratch, or provider call.
+    fs.writeFileSync(path.join(project, 'Api.lean'),
+      Array.from({ length: 10 }, (_, i) => `-- line ${i + 1}`).join('\n') + '\n');
+    const budgetInventory = (file, count) => fs.writeFileSync(path.join(project, file), JSON.stringify({
+      version: 1, cited_apis: [], declarations: Array.from({ length: count }, (_, i) => ({
+        name: `D${i}`, signature: 'True',
+        analogs: [{ path: 'Api.lean', start: 1, end: 10, handling: 'REUSE-AS-IS' }],
+        search: { queries: ['Api.lean'], roots: ['.'], conclusion: 'fixture' } })) }));
+    budgetInventory('budget-ok.json', 20);
+    budgetInventory('budget-over.json', 21);
+    const preflightTopic = path.join(topicRoot, 'preflight');
+    fs.mkdirSync(path.join(preflightTopic, 'plans'), { recursive: true });
+    for (const file of ['PLAN_n1.md', 'EXEC_PLAN_n1.md']) {
+      fs.writeFileSync(path.join(preflightTopic, 'plans', file), `# ${file}\n\nAuthoring runtime: Claude Code\n`);
+    }
+    const tree = () => fs.readdirSync(project, { recursive: true }).sort().map(name => {
+      const file = path.join(project, name);
+      return fs.statSync(file).isFile() ? `${name}:${sha256(file)}` : name;
+    });
+    const preflight = (...extra) => invoke(['review-preflight', '--topic', '.formalising/fv-plans/preflight',
+      '--iteration', 'n1', ...extra]);
+    const treeBefore = tree();
+    const accepted = preflight('--target', 'plan', '--grounding', 'budget-ok.json');
+    assert.equal(accepted.status, 0, accepted.stderr);
+    const acceptedBudget = accepted.stdout.match(/Grounding budget: (.+)/)[1];
+    assert.match(acceptedBudget, /^charged 200\/200 signature lines \(analogs 200, cited_apis 0\); 1 distinct span \(10 lines\)/);
+    const overflow = preflight('--grounding', 'budget-over.json');
+    assert.notEqual(overflow.status, 0);
+    assert.match(overflow.stderr, /charged 210\/200 .*analogs 210, cited_apis 0.*first overflow at declarations\[20\] "D20" analogs\[0\] Api\.lean:1-10 \(cumulative 210\)/);
+    assert.match(preflight().stdout, /missing-scout-inventory/);
+    assert.notEqual(preflight('--iteration', 'bad', '--grounding', 'budget-ok.json').status, 0);
+    assert.deepEqual(tree(), treeBefore, 'preflight must not change the project');
+    assert.ok(!fs.existsSync(path.join(preflightTopic, 'reviews')));
+    assert.ok(!fs.existsSync(calls) && !fs.existsSync(log), 'preflight must not invoke a provider or auth probe');
+
+    const buildArgs = ['review', '--topic', '.formalising/fv-plans/preflight', '--iteration', 'n1',
+      '--target', 'plan', '--reviewer', 'other', '--model', 'external', '--effort', 'low', '--grounding'];
+    const rejectedBuild = invoke([...buildArgs, 'budget-over.json']);
+    assert.notEqual(rejectedBuild.status, 0);
+    assert.equal(rejectedBuild.stderr, overflow.stderr, 'build and preflight must report the same budget outcome');
+    assert.ok(!fs.existsSync(path.join(preflightTopic, 'reviews')), 'over-budget build must not create reviews/');
+    fs.writeFileSync(path.join(project, 'Api.lean'), '-- edited after preflight\n' +
+      Array.from({ length: 9 }, (_, i) => `-- line ${i + 2}`).join('\n') + '\n');
+    const acceptedBuild = invoke([...buildArgs, 'budget-ok.json']);
+    assert.equal(acceptedBuild.status, 0, acceptedBuild.stderr);
+    assert.equal(acceptedBuild.stdout.match(/Grounding budget: (.+)/)[1], acceptedBudget);
+    const builtPacket = path.join(project, acceptedBuild.stdout.match(/Review packet: (.+)/)[1]);
+    const builtGrounding = JSON.parse(fs.readFileSync(path.join(builtPacket, 'grounding.json'), 'utf8'));
+    assert.match(builtGrounding.declarations[0].analogs[0].signature, /^-- edited after preflight/,
+      'build must re-read current source rather than reuse the preflight');
+    const builtRecord = JSON.parse(fs.readFileSync(path.join(builtPacket, 'packet.json'), 'utf8')).grounding;
+    assert.ok(builtRecord.inputs.some(input => input.path === 'Api.lean' &&
+      input.sha256 === sha256(path.join(project, 'Api.lean'))));
 
     const run = (name, reviewer, authorMarkers, extra = [], mode = '', env = {}) => {
       const topic = makeTopic(name, authorMarkers);

@@ -31,10 +31,12 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
     fs.writeFileSync(path.join(project, 'inventory.json'), JSON.stringify({ version: 1,
       declarations: [], cited_apis: [{ path: 'Funs.lean', start: 1, end: 1 }] }));
     const log = path.join(tmp, 'invocation.json');
+    const calls = path.join(tmp, 'calls.jsonl');
     const fake = [
       '#!/usr/bin/env node',
       "const fs = require('node:fs');",
       'const args = process.argv.slice(2);',
+      "fs.appendFileSync(process.env.FVS_REVIEW_TEST_CALLS, JSON.stringify(args) + '\\n');",
       "if (args[0] === '--version') { console.log('2.1.267'); process.exit(0); }",
       "const mode = process.env.FVS_REVIEW_TEST_MODE;",
       "if (['login', 'auth'].includes(args[0])) process.exit(mode === 'auth' ? 1 : 0);",
@@ -60,7 +62,7 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
     const invoke = (args, mode = '', env = {}) => spawnSync(process.execPath, [SCRIPT, ...args], {
       cwd: project, encoding: 'utf8', env: { ...process.env,
         PATH: `${bin}${path.delimiter}${process.env.PATH || ''}`,
-        FVS_REVIEW_TEST_LOG: log, FVS_REVIEW_TEST_MODE: mode,
+        FVS_REVIEW_TEST_LOG: log, FVS_REVIEW_TEST_CALLS: calls, FVS_REVIEW_TEST_MODE: mode,
         FVS_REVIEW_PROJECT_SOURCE: path.join(project, 'lib.rs'),
         ...env,
       },
@@ -93,6 +95,55 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
       return invoke(['run', requestFile], mode, env);
     };
     const directory = result => path.join(project, result.stdout.match(/Review packet: (.+)/)[1]);
+
+    // Budget preflight uses the run request's sources and never creates review state.
+    fs.writeFileSync(path.join(project, 'Api.lean'),
+      Array.from({ length: 10 }, (_, i) => `-- line ${i + 1}`).join('\n') + '\n');
+    const budgetInventory = (file, count, cited = []) => fs.writeFileSync(path.join(project, file),
+      JSON.stringify({ version: 1, cited_apis: cited, declarations: Array.from({ length: count }, (_, i) => ({
+        name: `D${i}`, signature: 'True',
+        analogs: [{ path: 'Api.lean', start: 1, end: 10, handling: 'REUSE-AS-IS' }],
+        search: { queries: ['Api.lean'], roots: ['.'], conclusion: 'fixture' } })) }));
+    budgetInventory('budget-ok.json', 20);
+    budgetInventory('budget-over.json', 20, [{ path: 'Api.lean', start: 1, end: 10 },
+      { path: 'Funs.lean', start: 1, end: 1 }]);
+    const tree = () => fs.readdirSync(project, { recursive: true }).sort().map(name => {
+      const file = path.join(project, name);
+      return fs.statSync(file).isFile() ? `${name}:${sha256(file)}` : name;
+    });
+    const preflight = (changes = {}, env = {}) => {
+      fs.writeFileSync(requestFile, JSON.stringify({ ...request, ...changes }));
+      return invoke(['preflight', requestFile], '', env);
+    };
+    const reviewsRoot = path.join(project, '.formalising', 'spec-reviews');
+    const treeBefore = tree();
+    const accepted = preflight({ grounding: 'budget-ok.json', context: ['lib.rs', 'Funs.lean', 'lib.rs'] });
+    assert.equal(accepted.status, 0, accepted.stderr);
+    const acceptedBudget = accepted.stdout.match(/Grounding budget: (.+)/)[1];
+    assert.match(acceptedBudget, /^charged 200\/200 signature lines \(analogs 200, cited_apis 0\); 1 distinct span \(10 lines\)/);
+    const overflow = preflight({ grounding: 'budget-over.json', runtime: 'pi',
+      model: 'openai/catalog-pi-authority' }, nonPiEnv);
+    assert.notEqual(overflow.status, 0);
+    assert.match(overflow.stderr, /charged 211\/200 .*analogs 200, cited_apis 11.*2 distinct spans \(11 lines\).*first overflow at cited_apis\[0\] Api\.lean:1-10 \(cumulative 210\)/);
+    assert.notEqual(preflight({ grounding: 'budget-ok.json', spec: '../outside.lean' }).status, 0);
+    assert.notEqual(preflight({ grounding: 'budget-ok.json', model: undefined }).status, 0);
+    assert.deepEqual(tree(), treeBefore, 'preflight must not change the project');
+    assert.ok(!fs.existsSync(reviewsRoot));
+    assert.ok(!fs.existsSync(calls) && !fs.existsSync(log), 'preflight must not invoke a provider or auth probe');
+    const rejectedBuild = run({ grounding: 'budget-over.json', runtime: 'other', model: 'external', effort: 'low' });
+    assert.notEqual(rejectedBuild.status, 0);
+    assert.equal(rejectedBuild.stderr, overflow.stderr, 'build and preflight must report the same budget outcome');
+    assert.ok(!fs.existsSync(reviewsRoot), 'over-budget run must not create spec-reviews/');
+    fs.writeFileSync(path.join(project, 'Api.lean'), '-- edited after preflight\n' +
+      Array.from({ length: 9 }, (_, i) => `-- line ${i + 2}`).join('\n') + '\n');
+    const acceptedBuild = run({ grounding: 'budget-ok.json', context: ['lib.rs', 'Funs.lean', 'lib.rs'],
+      runtime: 'other', model: 'external', effort: 'low' });
+    assert.equal(acceptedBuild.status, 0, acceptedBuild.stderr);
+    assert.equal(acceptedBuild.stdout.match(/Grounding budget: (.+)/)[1], acceptedBudget);
+    const builtGrounding = JSON.parse(fs.readFileSync(path.join(directory(acceptedBuild), 'grounding.json'), 'utf8'));
+    assert.match(builtGrounding.declarations[0].analogs[0].signature, /^-- edited after preflight/,
+      'run must re-read current source rather than reuse the preflight');
+    assert.deepEqual(builtGrounding.source_index.map(input => input.path), [spec, 'lib.rs', 'Funs.lean']);
     assert.notEqual(run({ model: undefined }).status, 0, 'review model must be explicit');
     assert.notEqual(run({ effort: undefined }).status, 0, 'review effort must be explicit');
     const successful = run();
