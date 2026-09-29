@@ -28,11 +28,88 @@ Hard invariants this workflow preserves:
 - Never pin a Lean version: use the target project's own `lean-toolchain`.
 - Never open or create an upstream artifact.
 - Lean-via-Aeneas pipeline only -- no other-framework verification paths.
+- The verified-or-exploratory choice comes first, before the cache preflight and the build; an
+  exploratory run writes no table and no verdict.
 </objective>
 
 <process>
 
-## Step 0: Use the confirmed audit selection
+## Step 0: Choose verified or exploratory mode (before any cache, build, or dispatch)
+
+`PROJECT_ROOT` is the current directory, the Lean project root that Step 1a validates. If the
+provenance cannot be read here, the resolver reports `unknown` and the choice is still offered
+before any work that could fail.
+
+This is the first operational decision. Run it before path prompts, model selection,
+`.formalising/` writes, cache or build work, and any agent dispatch. The resolver is read-only:
+it compares the project's generated `translation.json`, its Aeneas pin in `lake-manifest.json`
+and `aeneas-config.yml`, and `lean-toolchain` with the tested tuples shipped in
+`fvs-probe-inventory.mjs`, then checks the probe-aeneas executable and the preinstalled helpers
+(probe-rust, probe-lean, scip, rust-analyzer). It reports `verified`, `missing`, `incompatible`,
+`unknown` (missing or conflicting provenance) or `unsupported-platform`, and never installs
+anything.
+
+```bash
+# fvs:probe-mode
+PROJECT_ROOT=$(cd "${PROJECT_ROOT:-$PWD}" && pwd -P) || exit 1
+INVENTORY_SCRIPT=~/.claude/scripts/fvs-probe-inventory.mjs
+PROBE_STATUS=$(node "$INVENTORY_SCRIPT" resolve --project-root "$PROJECT_ROOT" --format status) || exit 1
+node "$INVENTORY_SCRIPT" resolve --project-root "$PROJECT_ROOT" --format text
+FVS_MODE=
+if [ "$PROBE_STATUS" = verified ]; then FVS_MODE=verified; fi
+```
+
+`verified` continues without a prompt. For any other status in an interactive session, ask
+(AskUserQuestion; on Codex or Pi a plain-text question, then wait) with exactly these choices
+before doing anything else:
+
+- **Set up the verified probe.** When `resolve --format json` reports `install.available`, show
+  `node "$INVENTORY_SCRIPT" install --project-root "$PROJECT_ROOT" --manifest` (official URL,
+  pinned SHA-256, FVS-owned versioned destination, no PATH or shell-profile change) and ask
+  Install / Show manual instructions / Cancel. Install runs
+  `node "$INVENTORY_SCRIPT" install --project-root "$PROJECT_ROOT" --consent interactive`; then
+  rerun this step and continue verified only if it now reports `verified`. Missing or
+  incompatible helpers get the printed manual steps only: FVS never installs a helper. After
+  showing manual steps, stop so the user can rerun.
+- **Continue without graph.** Set `FVS_MODE=exploratory`.
+- **Cancel.** Stop now. Nothing has been written.
+
+A noninteractive run never prompts and never infers consent. Installing needs
+`FVS_PROBE_INSTALL_POLICY=install`; continuing without a graph needs the separate opt-in
+`FVS_ALLOW_EXPLORATORY=1`:
+
+```bash
+# fvs:probe-mode-noninteractive
+if [ -z "$FVS_MODE" ] && [ "${FVS_PROBE_INSTALL_POLICY:-}" = install ]; then
+  if node "$INVENTORY_SCRIPT" install --project-root "$PROJECT_ROOT" --consent policy; then
+    PROBE_STATUS=$(node "$INVENTORY_SCRIPT" resolve --project-root "$PROJECT_ROOT" --format status)
+    if [ "$PROBE_STATUS" = verified ]; then FVS_MODE=verified; fi
+  fi
+fi
+if [ -z "$FVS_MODE" ]; then
+  if [ "${FVS_ALLOW_EXPLORATORY:-}" = 1 ]; then
+    FVS_MODE=exploratory
+  else
+    echo "FVS >> probe-aeneas is $PROBE_STATUS for this project; set FVS_ALLOW_EXPLORATORY=1 to continue without a graph" >&2
+    exit 1
+  fi
+fi
+```
+
+Exploratory mode never writes the managed CODEMAP block, canonical counts, graph, endpoint or
+progress facts, or an audit verdict. Only verified mode runs the probe, and only through
+`fvs-probe-inventory.mjs run`, which invokes the resolved probe-aeneas by absolute path under an
+FVS-generated sandbox (no network; writes limited to the project's build directories, the
+output directory and a private tmp; every tool home and bin directory denied).
+
+Exploratory mode skips Steps 1a through 6: no cache preflight, build, extraction, auditor
+dispatch, justification-store merge or table write. The command may read the target files and give
+clearly labeled qualitative notes in chat, but it writes nothing under `.formalising/audits/` and
+claims no inventory, count or CLEAN/NOT-CLEAN verdict. Close with the Step 7 banner showing
+`In-scope: not counted (no verified probe graph)` and `Verdict: none (exploratory; no verified
+probe graph)`.
+
+## Step 0b: Use the confirmed audit selection
 
 Use scout stage `trust_audit` and the command-level selection manifest confirmed under
 `model-profiles.md`. If the stage is absent, rebuild and reconfirm the manifest before dispatch.
@@ -86,14 +163,15 @@ CLEAN). Only once the build is green does introspection proceed.
 
 ## Step 3: Generate the exact target inventory
 
-After the green build, run a fresh probe and target projection:
+After the green build, run a fresh confined `probe-aeneas extract` and target projection:
 
 ```bash
 PROBE_TMP=$(mktemp -d "${TMPDIR:-/tmp}/fvs-trust-audit.XXXXXX") || exit 1
 RAW_PROBE_JSON="$PROBE_TMP/extract.json"
-INVENTORY_SCRIPT=~/.claude/scripts/fvs-probe-inventory.mjs
-command -v probe-aeneas >/dev/null 2>&1 || exit 1
-probe-aeneas extract "$PROJECT_ROOT" --output "$RAW_PROBE_JSON" || exit 1
+node "$INVENTORY_SCRIPT" run --project-root "$PROJECT_ROOT" --output "$RAW_PROBE_JSON" || {
+  rm -rf -- "$PROBE_TMP"
+  exit 1
+}
 CANONICAL_INVENTORY=$(node "$INVENTORY_SCRIPT" "$RAW_PROBE_JSON" \
   --project-root "$PROJECT_ROOT" --target "$TARGET" --format json) || exit 1
 CANONICAL_COUNT=$(node "$INVENTORY_SCRIPT" "$RAW_PROBE_JSON" \
@@ -101,8 +179,9 @@ CANONICAL_COUNT=$(node "$INVENTORY_SCRIPT" "$RAW_PROBE_JSON" \
 rm -rf -- "$PROBE_TMP"
 ```
 
-The helper rejects missing, pre-0.19.0, malformed, failed, or target-empty output. HALT with
-install/upgrade-and-retry guidance; never use a grep/model fallback. Models never discover, add,
+The confined run refuses an unverified probe and removes partial output; the helper rejects
+pre-0.19.0, malformed, or target-empty output. HALT and point back to the Step 0 setup choice;
+never use a grep/model fallback. Models never discover, add,
 remove, or recount functions.
 
 ## Step 4: Introspect + classify (dispatched to the read-only auditor)
@@ -165,6 +244,9 @@ Unjustified:   {list of project-custom in-scope axioms lacking a justification}
 Table:         .formalising/audits/<target>.md
 ```
 
+In exploratory mode the banner shows `In-scope: not counted (no verified probe graph)`,
+`Verdict: none (exploratory; no verified probe graph)` and no table path.
+
 On Codex, the build-precondition HALT and any justification prompt degrade to plain text and
 WAIT for the user (fail-closed -- never auto-justify an axiom, never self-clear the gate). Before
 `Task(...)`, confirm only the actual active/inherited model and applicable effort, choose a capable
@@ -173,6 +255,8 @@ runner, or fail before dispatch; never silently ignore a confirmed field.
 </process>
 
 <success_criteria>
+- [ ] The read-only resolver classifies the probe before Step 1a cache, Step 2 build, or dispatch; cancel exits before them.
+- [ ] Exploratory mode skips cache, build, extraction and the auditor, writes nothing under `.formalising/audits/`, and claims no verdict.
 - [ ] Target + Lean paths resolved via config -> auto-detect -> prompt -> error; every expansion quoted; shell-metacharacter target rejected; no `eval`.
 - [ ] Build precondition runs `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` under `set -o pipefail` and reads `${PIPESTATUS[0]}`; HALT if the target layer does not compile.
 - [ ] Probe-aeneas >= 0.19.0 supplies the sole exact target inventory/count before dispatch.

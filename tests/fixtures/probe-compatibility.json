@@ -1,0 +1,178 @@
+{
+  "schema": "fvs/probe-compatibility-evidence",
+  "schemaVersion": 1,
+  "note": "Independent evidence for the tested-tuple and release tables embedded in scripts/fvs-probe-inventory.mjs. `release` and `tuples` must equal the shipped tables exactly; `receipts` hold the observations behind each supported platform.",
+  "release": {
+    "tool": "probe-aeneas",
+    "tag": "v0.20.0",
+    "version": "0.20.0",
+    "tagCommit": "70cbb9b4675d1639721fa60d1e0f2cd2df80cb54",
+    "releaseId": 386091646,
+    "baseUrl": "https://github.com/Beneficial-AI-Foundation/probe-aeneas/releases/download/v0.20.0/",
+    "assets": {
+      "aarch64-apple-darwin": {
+        "asset": "probe-aeneas-aarch64-apple-darwin.tar.xz",
+        "assetId": 554534252,
+        "archiveSha256": "e5d3dc19335fe5739280c924b7cf10681a5d3a12d9381306dadd0d638f554f1a",
+        "archiveBytes": 819584,
+        "members": [
+          "probe-aeneas-aarch64-apple-darwin/",
+          "probe-aeneas-aarch64-apple-darwin/README.md",
+          "probe-aeneas-aarch64-apple-darwin/probe-aeneas",
+          "probe-aeneas-aarch64-apple-darwin/CHANGELOG.md"
+        ],
+        "executable": "probe-aeneas-aarch64-apple-darwin/probe-aeneas",
+        "executableSha256": "119873d191ea898274b664f2f45ea2e4b6f5e60bf6517f47fe689f38859968e9",
+        "supported": true
+      },
+      "x86_64-apple-darwin": {
+        "asset": "probe-aeneas-x86_64-apple-darwin.tar.xz",
+        "archiveSha256": "0dbb17060eb6fdde0c75c99fadd2aa41b09d5588362b850703e1ccfe84b9fa7e",
+        "supported": false,
+        "reason": "probe-lean publishes no Lean v4.31.0 asset for macOS x64"
+      },
+      "aarch64-unknown-linux-gnu": {
+        "asset": "probe-aeneas-aarch64-unknown-linux-gnu.tar.xz",
+        "archiveSha256": "9e6c67e567d740911f35fde6f406c481d80b618eb6e1f2303fe387e79ee2367a",
+        "supported": false,
+        "reason": "Linux support is tracked in Beneficial-AI-Foundation/formal-verification-skills#77"
+      },
+      "x86_64-unknown-linux-gnu": {
+        "asset": "probe-aeneas-x86_64-unknown-linux-gnu.tar.xz",
+        "archiveSha256": "988ce6e1d2596e31a2464c8e612dc03f9fff47c957e7c1975ab502212582bd0f",
+        "supported": false,
+        "reason": "Linux support is tracked in Beneficial-AI-Foundation/formal-verification-skills#77"
+      },
+      "x86_64-pc-windows-msvc": {
+        "asset": "probe-aeneas-x86_64-pc-windows-msvc.zip",
+        "archiveSha256": "91ebd551073d0f705fdf905185e8d82224c53909f22ef774c231aa411000a2dc",
+        "supported": false,
+        "reason": "scip and probe-lean publish no Windows binaries, and there is no confinement equivalent"
+      }
+    }
+  },
+  "tuples": [
+    {
+      "id": "aeneas-6e167c9b-charon-0.1.225-lean-v4.31.0",
+      "aeneasRev": "6e167c9b63a4dafd66d0e0edd9d94669f957ff7b",
+      "charonVersion": "0.1.225",
+      "leanToolchain": "leanprover/lean4:v4.31.0",
+      "probeAeneasVersion": "0.20.0",
+      "testedWith": "Beneficial-AI-Foundation/curve25519-dalek-lean-verify@0a22c281a9a14b6465a5473c200c7d3f1ac92df8",
+      "platforms": {
+        "aarch64-apple-darwin": {
+          "isolation": "sandbox-exec",
+          "helpers": {
+            "probe-rust": { "version": "probe-rust 0.11.0" },
+            "scip": { "version": "scip version v0.10.0" },
+            "probe-lean": { "version": "0.14.0" },
+            "rust-analyzer": {
+              "version": "rust-analyzer 1.98.1 (48a229ce 2026-09-01)",
+              "components": ["rust-analyzer", "rust-src"]
+            }
+          }
+        }
+      }
+    }
+  ],
+  "receipts": {
+    "aarch64-apple-darwin": {
+      "tuple": "aeneas-6e167c9b-charon-0.1.225-lean-v4.31.0",
+      "recorded": "2026-09-28",
+      "host": {
+        "os": "macOS 26.6.2 (25G83)",
+        "kernel": "Darwin 25.6.0 xnu-12377.161.14~5 RELEASE_ARM64_T6041",
+        "cpu": "Apple M4 Max",
+        "rustTarget": "aarch64-apple-darwin"
+      },
+      "consumer": {
+        "repo": "https://github.com/Beneficial-AI-Foundation/curve25519-dalek-lean-verify",
+        "commit": "0a22c281a9a14b6465a5473c200c7d3f1ac92df8",
+        "translationJson": "Curve25519Dalek/translation.json",
+        "translationJsonBlob": "6ff1a6b2b0e13711b5c6334539cd0bdf2d9ffd4d",
+        "translationJsonSha256": "968a0725b105de2a38a94ee606bd7da85e775267da04dea6a8c9067061372fbd",
+        "aeneasVersion": "6e167c9b",
+        "charonVersion": "0.1.225",
+        "aeneasLakeRev": "6e167c9b63a4dafd66d0e0edd9d94669f957ff7b",
+        "aeneasCharonPin": "527ea8e3b5dcb52edd6aef0f7bc34cc09c11dd59 (recommended source revision only; not evidence of the Charon binary, and Charon is not run on this route)",
+        "leanToolchain": "leanprover/lean4:v4.31.0",
+        "cargoLockTracked": false,
+        "cargoLockSha256": "aff96f98b76cfc49f555a9af9bc6292aaf0c753aa91d1e5a3302f12a10229d22"
+      },
+      "probeAeneas": {
+        "url": "https://github.com/Beneficial-AI-Foundation/probe-aeneas/releases/download/v0.20.0/probe-aeneas-aarch64-apple-darwin.tar.xz",
+        "archiveSha256": "e5d3dc19335fe5739280c924b7cf10681a5d3a12d9381306dadd0d638f554f1a",
+        "executableSha256": "119873d191ea898274b664f2f45ea2e4b6f5e60bf6517f47fe689f38859968e9",
+        "versionOutput": "probe-aeneas 0.20.0"
+      },
+      "helpers": {
+        "probe-rust": {
+          "version": "probe-rust 0.11.0",
+          "sourceCommit": "1d2a7c5d0e5a5dd95e55c8d6a51cddae0b3d7572",
+          "build": "cargo install --locked --path . (rustc 1.98.1), no patches",
+          "sha256": "61ef54d7d75b9c409b2734103ca8adcae26e287b289459cbf3177e7e51f1d2e6"
+        },
+        "scip": {
+          "version": "scip version v0.10.0",
+          "url": "https://github.com/scip-code/scip/releases/download/v0.10.0/scip-darwin-arm64.tar.gz",
+          "archiveSha256": "7ea200390e0790b3da8999b7b1cd4e3597700dcb3d354911872523bfe0090779",
+          "sha256": "dccbb02acf6ca860101cbedef3c12f88b33d6a3df2c6c256f5c1a14f3b61108e"
+        },
+        "probe-lean": {
+          "version": "0.14.0",
+          "tagCommit": "fa581edfcb3de7eb801580ea183430edaa50cc68",
+          "url": "https://github.com/Beneficial-AI-Foundation/probe-lean/releases/download/v0.14.0/probe-lean-v4.31.0-darwin-arm64.tar.gz",
+          "archiveSha256": "54af80f3c13261e6a193a691cda9bf02af6801438e797a087986173b88af19e5",
+          "sha256": "fd31d965a9d12cd5a95080c810d3441a8d38e380f25eee37c85b9444ceec283d"
+        },
+        "rust-analyzer": {
+          "version": "rust-analyzer 1.98.1 (48a229ce 2026-09-01)",
+          "source": "rustup 1.29.1 component of toolchain 1.98.1-aarch64-apple-darwin",
+          "components": ["rust-analyzer", "rust-src"],
+          "sha256": "78082ea1a96a008751767bd35f43738b5d4565cbef06ee5b31ad742a316133b5"
+        },
+        "notRequired": ["charon", "charon-driver", "cargo-public-api"]
+      },
+      "isolation": {
+        "mechanism": "sandbox-exec",
+        "policySha256": "52dcfed7ebc48e36e3654a0dd22bc084324e178fc9d2cd29604e63792484054f",
+        "rules": [
+          "(allow default)",
+          "(deny network*)",
+          "(deny file-write*)",
+          "allow writes: <project>/.lake, <project>/.verilib, <project>/target, <project>/target<6 alphanumerics>, <crate>/data, <crate>/index.scip, output dir, private tmp, /dev/null|zero|dtracehelper|tty*|fd/*"
+        ]
+      },
+      "observed": {
+        "positive": {
+          "exitCode": 0,
+          "schema": "probe-aeneas/extract",
+          "schemaVersion": "3.0",
+          "toolVersion": "0.20.0",
+          "inputCommits": ["0a22c281a9a14b6465a5473c200c7d3f1ac92df8"],
+          "canonicalCount": 279,
+          "canonicalWithCharonDefId": 189,
+          "defIdJoins": 189,
+          "defIdJoinMismatches": 0,
+          "totalEntries": 3027,
+          "crossLanguageEdges": 1962,
+          "toolHomesUnchanged": true,
+          "joinExample": {
+            "atom": "probe:curve25519-dalek/4.2.0/backend/get_selected_backend()",
+            "defId": 535,
+            "leanName": "curve25519_dalek.backend.get_selected_backend"
+          }
+        },
+        "denial": {
+          "hiddenHelper": "scip",
+          "exitCode": 1,
+          "stderr": "Error: SCIP generation error: scip not found. scip: I/O error",
+          "networkDenied": true,
+          "homeProbeRustCreated": false,
+          "mergedOutputWritten": false,
+          "toolHomesUnchanged": true
+        }
+      }
+    }
+  }
+}

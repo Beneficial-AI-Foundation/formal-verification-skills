@@ -8,6 +8,7 @@ allowed-tools:
   - Glob
   - Grep
   - Write
+  - AskUserQuestion
   - Task
 ---
 
@@ -100,7 +101,8 @@ Analyze an Aeneas-generated Lean project to produce `.formalising/CODEMAP.md`.
 A two-phase subagent pipeline adds qualitative annotations without changing those facts.
 
 Output: .formalising/CODEMAP.md with a generated function graph/progress block and separate
-complexity, risk, and recommendation notes.
+complexity, risk, and recommendation notes. Without a verified probe the user may continue without
+a graph; that exploratory run writes only `.formalising/CODEMAP-exploratory.md`.
 </objective>
 
 <execution_context>
@@ -119,6 +121,73 @@ This command can run anytime to refresh the codebase map.
 </context>
 
 <process>
+
+## Step 0: Choose verified or exploratory mode
+
+Set `PROJECT_ROOT` to `$ARGUMENTS` when supplied, otherwise leave it unset for the current
+directory.
+
+This is the first operational decision. Run it before path prompts, model selection,
+`.formalising/` writes, cache or build work, and any agent dispatch. The resolver is read-only:
+it compares the project's generated `translation.json`, its Aeneas pin in `lake-manifest.json`
+and `aeneas-config.yml`, and `lean-toolchain` with the tested tuples shipped in
+`fvs-probe-inventory.mjs`, then checks the probe-aeneas executable and the preinstalled helpers
+(probe-rust, probe-lean, scip, rust-analyzer). It reports `verified`, `missing`, `incompatible`,
+`unknown` (missing or conflicting provenance) or `unsupported-platform`, and never installs
+anything.
+
+```bash
+# fvs:probe-mode
+PROJECT_ROOT=$(cd "${PROJECT_ROOT:-$PWD}" && pwd -P) || exit 1
+INVENTORY_SCRIPT=${CLAUDE_PLUGIN_ROOT}/scripts/fvs-probe-inventory.mjs
+PROBE_STATUS=$(node "$INVENTORY_SCRIPT" resolve --project-root "$PROJECT_ROOT" --format status) || exit 1
+node "$INVENTORY_SCRIPT" resolve --project-root "$PROJECT_ROOT" --format text
+FVS_MODE=
+if [ "$PROBE_STATUS" = verified ]; then FVS_MODE=verified; fi
+```
+
+`verified` continues without a prompt. For any other status in an interactive session, ask
+(AskUserQuestion; on Codex or Pi a plain-text question, then wait) with exactly these choices
+before doing anything else:
+
+- **Set up the verified probe.** When `resolve --format json` reports `install.available`, show
+  `node "$INVENTORY_SCRIPT" install --project-root "$PROJECT_ROOT" --manifest` (official URL,
+  pinned SHA-256, FVS-owned versioned destination, no PATH or shell-profile change) and ask
+  Install / Show manual instructions / Cancel. Install runs
+  `node "$INVENTORY_SCRIPT" install --project-root "$PROJECT_ROOT" --consent interactive`; then
+  rerun this step and continue verified only if it now reports `verified`. Missing or
+  incompatible helpers get the printed manual steps only: FVS never installs a helper. After
+  showing manual steps, stop so the user can rerun.
+- **Continue without graph.** Set `FVS_MODE=exploratory`.
+- **Cancel.** Stop now. Nothing has been written.
+
+A noninteractive run never prompts and never infers consent. Installing needs
+`FVS_PROBE_INSTALL_POLICY=install`; continuing without a graph needs the separate opt-in
+`FVS_ALLOW_EXPLORATORY=1`:
+
+```bash
+# fvs:probe-mode-noninteractive
+if [ -z "$FVS_MODE" ] && [ "${FVS_PROBE_INSTALL_POLICY:-}" = install ]; then
+  if node "$INVENTORY_SCRIPT" install --project-root "$PROJECT_ROOT" --consent policy; then
+    PROBE_STATUS=$(node "$INVENTORY_SCRIPT" resolve --project-root "$PROJECT_ROOT" --format status)
+    if [ "$PROBE_STATUS" = verified ]; then FVS_MODE=verified; fi
+  fi
+fi
+if [ -z "$FVS_MODE" ]; then
+  if [ "${FVS_ALLOW_EXPLORATORY:-}" = 1 ]; then
+    FVS_MODE=exploratory
+  else
+    echo "FVS >> probe-aeneas is $PROBE_STATUS for this project; set FVS_ALLOW_EXPLORATORY=1 to continue without a graph" >&2
+    exit 1
+  fi
+fi
+```
+
+Exploratory mode never writes the managed CODEMAP block, canonical counts, graph, endpoint or
+progress facts, or an audit verdict. Only verified mode runs the probe, and only through
+`fvs-probe-inventory.mjs run`, which invokes the resolved probe-aeneas by absolute path under an
+FVS-generated sandbox (no network; writes limited to the project's build directories, the
+output directory and a private tmp; every tool home and bin directory denied).
 
 ## Step 1: Detect project
 
@@ -189,24 +258,20 @@ fail before dispatch with exact remediation.
 
 ## Step 4: Generate the canonical function inventory
 
-Resolve `$PROJECT_ROOT` to the confirmed absolute project root. Require `probe-aeneas` on PATH,
-create a private temporary directory, and run a fresh extract:
+Verified mode only; exploratory mode skips to the exploratory route below. `$PROJECT_ROOT` is the
+absolute root resolved in Step 0 (rerun Step 0 if the user pointed at a different root in Step 1).
+Run a fresh confined `probe-aeneas extract` into a private temporary directory:
 
 ```bash
-PROJECT_ROOT=$(cd "$PROJECT_ROOT" && pwd -P)
+# Verified mode only.
 PROBE_TMP=$(mktemp -d "${TMPDIR:-/tmp}/fvs-probe-inventory.XXXXXX") || exit 1
 RAW_PROBE_JSON="$PROBE_TMP/extract.json"
-INVENTORY_SCRIPT=${CLAUDE_PLUGIN_ROOT}/scripts/fvs-probe-inventory.mjs
 PUBLIC_API_ARGS=()
-
-command -v probe-aeneas >/dev/null 2>&1 || {
-  echo "probe-aeneas >= 0.19.0 is required. Install or upgrade it, then retry."
-  exit 1
-}
+PROBE_RUN=(node "$INVENTORY_SCRIPT" run --project-root "$PROJECT_ROOT" --output "$RAW_PROBE_JSON")
+PROBE_FAILED='confined probe-aeneas extract failed; fix the reported error and retry.'
 if command -v cargo-public-api >/dev/null 2>&1; then
   PROBE_LOG="$PROBE_TMP/public-api.log"
-  if probe-aeneas extract "$PROJECT_ROOT" --with-public-api \
-      --output "$RAW_PROBE_JSON" >"$PROBE_LOG" 2>&1; then
+  if "${PROBE_RUN[@]}" --with-public-api >"$PROBE_LOG" 2>&1; then
     cat "$PROBE_LOG"
     if grep -Fq 'cargo-public-api found' "$PROBE_LOG"; then
       PUBLIC_API_ARGS=(--public-api-exact)
@@ -216,16 +281,10 @@ if command -v cargo-public-api >/dev/null 2>&1; then
   else
     cat "$PROBE_LOG"
     echo "Public API extraction unavailable; retrying the core inventory without it."
-    probe-aeneas extract "$PROJECT_ROOT" --output "$RAW_PROBE_JSON" || {
-      echo "probe-aeneas extract failed; fix the reported extraction error and retry."
-      exit 1
-    }
+    "${PROBE_RUN[@]}" || { echo "$PROBE_FAILED"; rm -rf -- "$PROBE_TMP"; exit 1; }
   fi
 else
-  probe-aeneas extract "$PROJECT_ROOT" --output "$RAW_PROBE_JSON" || {
-    echo "probe-aeneas extract failed; fix the reported extraction error and retry."
-    exit 1
-  }
+  "${PROBE_RUN[@]}" || { echo "$PROBE_FAILED"; rm -rf -- "$PROBE_TMP"; exit 1; }
 fi
 CANONICAL_INVENTORY=$(node "$INVENTORY_SCRIPT" "$RAW_PROBE_JSON" \
   --project-root "$PROJECT_ROOT" "${PUBLIC_API_ARGS[@]}" --format json) || exit 1
@@ -240,7 +299,7 @@ definition of a function in scope is exactly:
 
 `language=rust && kind=exec && is-relevant=true && untracked=false`
 
-If the tool is missing, old, malformed, fails, or produces an empty inventory, HALT. Never fall
+If the confined run is refused, fails, or produces malformed or empty output, HALT. Never fall
 back to grep or model enumeration.
 
 The helper derives direct `dependents`, `topLevelFunctions`, `entryPointFunctions`, and both
@@ -393,7 +452,20 @@ rm -rf -- "$PROBE_TMP"
 
 If this fails, HALT: CODEMAP is not current and must not be used for planning.
 
+## Exploratory route (continue without graph)
+
+Skip Step 4 and the post-write check. Dispatch the same two agents with the same models, but give
+the researcher `Research mode: map-code (exploratory)` with the source paths and no canonical
+inventory, and tell both agents that no verified function list exists: they describe files,
+modules and types qualitatively, keyed by file path, and state no function count, membership,
+dependency edges, endpoint sets, progress or public-API facts. The executor writes only
+`.formalising/CODEMAP-exploratory.md`, headed `Exploratory map: no verified probe graph`. This
+route never creates or modifies `.formalising/CODEMAP.md` or its managed block.
+
 ## Step 8: Display summary with FVS >> banner
+
+In exploratory mode show `FVS >> MAP (EXPLORATORY)`, `Functions: not counted (no verified probe
+graph)` and `Written: .formalising/CODEMAP-exploratory.md` instead of the verified summary.
 
 ```
 FVS >> MAP COMPLETE
@@ -417,6 +489,9 @@ Written: .formalising/CODEMAP.md
 </process>
 
 <success_criteria>
+- [ ] The read-only resolver classifies the probe before any prompt, write, or dispatch
+- [ ] Non-verified status offers setup / continue without graph / cancel; noninteractive runs need explicit opt-ins
+- [ ] Verified extraction runs only through the confined `run` path, never a PATH lookup
 - [ ] Project detected via lakefile.toml + lean-toolchain (or fvs-config.json)
 - [ ] .formalising/ directory created
 - [ ] Model profile resolved from .formalising/fvs-config.json (or quality default)
