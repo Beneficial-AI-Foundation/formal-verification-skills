@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.3.6] - 2026-09-29
+
+### Added
+
+- `/fvs:map-code`, `/fvs:fc-plan`, and `/fvs:trust-audit` first check whether the project has a
+  verified probe-aeneas: its Aeneas, Charon, and Lean versions must match a tested combination and
+  every helper must report the tested version. On macOS arm64, FVS can install the pinned official
+  probe-aeneas v0.20.0 into its own versioned directory after you agree, and it runs extraction in
+  a sandbox with no network access and no writes outside the project's build directories, the
+  output, and a private temporary directory. Without a verified probe you can set it up, continue
+  without a graph (qualitative notes only, no counts or verdicts), or cancel. Linux support is
+  tracked in #77 (#69).
+- Crypto and Lean specification reviews report how many grounding signature lines they charge and
+  the first reference that exceeds the budget. A read-only `preflight` checks a request without
+  contacting a reviewer (#73).
+- In Codex marketplace installs, a workflow that requests an unregistered FVS specialist now warns.
+  It then runs a labeled generic agent, or stops before dispatch when the step depends on the
+  specialist's settings. The README explains how to switch to the direct Codex installation, which
+  registers the specialist roles (#71).
+
+### Fixed
+
+- Completed Claude and Codex reviews are no longer rejected when the reviewer writes one plain
+  progress sentence before the required title (#72).
+- Native reviewers run in their own process group with a 20-minute review deadline and a 30-second
+  version and authentication deadline (`FVS_REVIEW_TIMEOUT_MS`, `FVS_REVIEW_AUTH_TIMEOUT_MS`). On
+  timeout or interruption FVS stops the whole group, including descendants. Cleanup is tested on
+  macOS and Linux; Windows refuses to launch native reviewers (#75).
+- When its sync metadata is missing, `/fvs:sync-aeneas-verif` points only to `/fvs:update`, which
+  updates the installation you already have, and no longer suggests the npm installer.
+
 ## [2.3.5] - 2026-09-21
 
 ### Added
