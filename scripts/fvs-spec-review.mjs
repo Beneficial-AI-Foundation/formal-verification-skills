@@ -275,7 +275,7 @@ function persist(directory, packet, response, reportedModels = [], external = fa
 
 const streamLimit = 16 * 1024 * 1024;
 // Bounded policy: 1 ms to 30 minutes. A longer limit needs a separate review of tree cleanup.
-function deadline(name, defaultValue) {
+export function deadline(name, defaultValue) {
   const value = process.env[name] ?? String(defaultValue);
   if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) > 1800000) {
     throw new Error(`${name} must be a positive safe integer between 1 and 1800000 ms`);
@@ -285,7 +285,7 @@ function deadline(name, defaultValue) {
 
 function decode(bytes) { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
 
-async function invoke(runtime, args, workingRoot = root, options = {}) {
+export async function invoke(runtime, args, workingRoot = root, options = {}) {
   const { captureDirectory, phase, timeoutMs, input, ...spawnOptions } = options;
   // Cleanup relies on POSIX process groups; Windows has no verified descendant containment.
   if (!['darwin', 'linux'].includes(process.platform)) throw new Error(

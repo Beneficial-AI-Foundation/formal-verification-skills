@@ -220,9 +220,10 @@ for (const key of ['cmdPlan', 'cmdEval', 'cmdFollowup']) {
       assert.doesNotMatch(content, /--effort\s+xhigh/,
         `${rel(absPath)} hardcodes xhigh instead of the stage selection`);
     });
-    it('passes the resolved model and omits it only for inherit', () => {
-      assert.match(content, /THINKER_MODEL[\s\S]{0,180}inherit[\s\S]{0,180}--model\s+"\$THINKER_MODEL"/,
-        `${rel(absPath)} does not conditionally pass the resolved thinker model`);
+    it('passes the confirmed model including explicit inherit to the wrapper', () => {
+      assert.match(content, /--model\s+"\$THINKER_MODEL"/,
+        `${rel(absPath)} does not pass the resolved thinker model`);
+      assert.match(content, /inherit[\s\S]*confirmation/i);
     });
     it('declares artifact-mediated coordination / no live bridge', () => {
       assert.ok(/artifact[- ]mediated/i.test(content) && /no\b[^\n]*live[- ]?(cross[- ]process )?bridge/i.test(content),
@@ -576,7 +577,7 @@ whenExists(CODEX_THINK, 'Crypto loop: review helper reuses safe provider machine
       `${rel(absPath)} missing the specialised review contract`);
   });
   it('applies confirmed authoring model and effort selections', () => {
-    assert.match(content, /codexArgs\.push\('-m', args\.model\)/,
+    assert.match(content, /cli\.push\('-m', args\.model\)/,
       `${rel(absPath)} does not pass the selected authoring model to Codex`);
     assert.match(content, /model_reasoning_effort="\$\{args\.effort\}"/,
       `${rel(absPath)} does not pass the selected authoring effort to Codex`);
@@ -584,7 +585,7 @@ whenExists(CODEX_THINK, 'Crypto loop: review helper reuses safe provider machine
       `${rel(absPath)} does not accept authority-tier max effort`);
   });
   it('marks Codex-authored plans so later review cannot masquerade as independent', () => {
-    assert.ok(/Authoring runtime: Codex CLI/.test(content),
+    assert.ok(/authorRuntime: 'Codex CLI'/.test(content),
       `${rel(absPath)} does not stamp Codex authoring provenance`);
   });
 });

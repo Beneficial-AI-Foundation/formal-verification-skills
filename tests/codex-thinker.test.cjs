@@ -28,7 +28,7 @@ it('returns full-role Codex authoring to parent-owned plans with unknown observa
     "if (args[0] === 'login') process.exit(0);",
     "const prompt = fs.readFileSync(0, 'utf8');",
     'fs.writeFileSync(process.env.FVS_THINKER_LOG, JSON.stringify({args,prompt,cwd:process.cwd()}));',
-    "const stage = JSON.parse(prompt.match(/<stage_context_untrusted>\n([\\s\\S]*?)\n<\/stage_context_untrusted>/)[1]).stage;",
+    "const stage = prompt.split('>')[1].split('<')[0];",
     "const mode = process.env.FVS_THINKER_MODE;",
     "if (mode === 'fail') process.exit(9);",
     "if (mode === 'signal') process.kill(process.pid, 'SIGTERM');",
