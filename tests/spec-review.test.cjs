@@ -166,6 +166,17 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
     assert.equal(JSON.parse(fs.readFileSync(path.join(first, 'grounding.json'))).cited_apis[0].signature, 'def example := 1');
     assert.ok(!fs.existsSync(path.join(project, 'INJECTED')));
 
+    for (const runtime of ['opencode', 'gemini']) {
+      const limited = run({ runtime, model: 'provider/exact-model', effort: 'high', author_runtime: 'pi' });
+      assert.notEqual(limited.status, 0);
+      assert.match(limited.stderr, new RegExp(`CAPABILITY_UNAVAILABLE.*${runtime}`, 'i'));
+      assert.ok(!fs.existsSync(path.join(directory(limited), 'review.md')));
+    }
+    for (const author_runtime of ['pi', 'opencode', 'gemini']) {
+      const known = run({ author_runtime });
+      assert.equal(known.status, 0, known.stderr);
+      assert.equal(JSON.parse(fs.readFileSync(path.join(directory(known), 'packet.json'))).request.author_runtime, author_runtime);
+    }
     const same = run({ author_runtime: 'codex', model: 'catalog-codex-authority', effort: 'medium' });
     assert.equal(same.status, 0, same.stderr);
     assert.notEqual(directory(same), first);

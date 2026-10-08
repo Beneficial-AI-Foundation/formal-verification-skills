@@ -265,7 +265,25 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     assert.equal(same.result.status, 0, same.result.stderr);
     assert.match(fs.readFileSync(path.join(same.topic, 'reviews', 'PLAN_REVIEW_n1.md'), 'utf8'),
       /same-runtime, fresh reviewer/);
+    for (const reviewer of ['opencode', 'gemini']) {
+      const limited = run(`${reviewer}-limited`, reviewer, ['Pi', 'Pi'],
+        ['--model', 'provider/exact-model', '--effort', 'high']);
+      assert.notEqual(limited.result.status, 0);
+      assert.match(limited.result.stderr, new RegExp(`CAPABILITY_UNAVAILABLE.*${reviewer}`, 'i'));
+      assert.match(limited.result.stderr, /sandbox|memory/i);
+      assert.match(limited.result.stderr, /codex|claude/);
+      assert.ok(!fs.existsSync(path.join(limited.topic, 'reviews', 'PLAN_REVIEW_n1.md')));
+    }
+    for (const author of ['Pi', 'OpenCode', 'Gemini CLI']) {
+      const known = run(`known-${author.replace(/ /g, '-')}`, 'codex', [author, author]);
+      assert.equal(known.result.status, 0, known.result.stderr);
+      const packetDir = path.join(project, known.result.stdout.match(/Review packet: (.+)/)[1]);
+      const packet = JSON.parse(fs.readFileSync(path.join(packetDir, 'packet.json'), 'utf8'));
+      assert.notEqual(packet.request.author_runtime, 'unknown');
+      assert.equal(packet.request.observed_author_runtime, author);
+    }
     for (const [name, markers] of [
+      ['unrelated-codex', ['not Codex tooling', 'not Codex tooling']],
       ['unknown-author', [null, null]],
       ['foreign-author', ['Local Model', 'Local Model']],
       ['conflicting-author', ['Claude Code', 'Codex CLI']],
