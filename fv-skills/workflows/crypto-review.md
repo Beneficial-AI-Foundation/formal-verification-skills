@@ -49,10 +49,16 @@ distinct spans informational) and, on overrun, the first span that crossed the l
 with all choices; it rechecks the budget against current sources:
 
 ```bash
+MODEL_IDENTITY_ARGS=()
+[ "$MODEL_IS_ALIAS" != "true" ] || MODEL_IDENTITY_ARGS=(--model-is-alias)
 node ~/.claude/scripts/fvs-codex-think.mjs review \
   --topic "$ROOT" --iteration "n$N" --target "$TARGET_KIND" \
-  --reviewer "$REVIEWER" --model "$MODEL" --effort "$EFFORT" --grounding "$GROUNDING_FILE"
+  --reviewer "$REVIEWER" --model "$MODEL" --effort "$EFFORT" --grounding "$GROUNDING_FILE" \
+  "${MODEL_IDENTITY_ARGS[@]}"
 ```
+
+Set `$MODEL_IS_ALIAS` only from the confirmed catalog identity (false for exact IDs).
+Unknown alias-to-version equivalence is metadata, never guessed from spelling or called honored.
 
 Codex is ephemeral with user config ignored: its saved scratch directory is writable while the
 repository remains read-only. Claude uses safe mode with Read/Glob/Grep and native-sandboxed Bash,
@@ -86,6 +92,15 @@ README identifies both. The authoring seat exclusively writes separate immutable
 `PLAN_REVIEW_nN_TRIAGE.md` or `FOLLOWUP_REVIEW_nN_TRIAGE.md`, recording finding IDs,
 accept/reject/defer evidence, requested/observed provenance, pre-edit and post-edit hashes, gates,
 and status.
+
+Persist `Stage settings:` in the completed review and separate authoring-seat triage under `crypto_review`, using the single
+Stage settings evidence contract in `model-profiles.md`: requested and resolved
+runtime/provider/model/effort plus selection/launch source, field-wise independently
+observed values or explicit unknown with reason/source, and dispatch route. Retain
+relevant existing role/child/hash evidence only. Valid completion with unknown telemetry
+succeeds; never copy launch inputs into observations or invent effective settings.
+A real reported mismatch needs an actionable supported choice/reconfirmation, not silent
+substitution. Legacy missing metadata stays unknown; immutable history is not backfilled.
 
 - APPROVE -> `approved`.
 - APPROVE-WITH-EDITS -> authoring seat applies accepted bounded edits, reruns plan gates, and sets

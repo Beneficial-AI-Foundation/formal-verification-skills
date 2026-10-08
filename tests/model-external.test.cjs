@@ -433,6 +433,11 @@ describe('External Rust modeling command', () => {
       if (mode === 'wrapper') {
         assert.equal(result.status, 0, result.stderr);
         assert.match(fs.readFileSync(path.join(latest, 'review.md'), 'utf8'), /VERDICT: PASS/);
+        const settings = JSON.parse(fs.readFileSync(path.join(latest, 'metadata.json'))).settings;
+        assert.equal(settings.stage, 'external_model_review');
+        assert.equal(settings.requested.model, 'exact-test-model');
+        assert.equal(settings.observed.model.value, 'unknown');
+        assert.equal(settings.observed.effort.value, 'unknown');
       } else {
         assert.notEqual(result.status, 0, `${mode}: ${result.stderr}`);
         assert.match(result.stderr, /Review attempt preserved|invalid response preserved/);

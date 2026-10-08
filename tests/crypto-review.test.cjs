@@ -211,6 +211,23 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     assert.match(mismatch.result.stderr, /SETTINGS_MISMATCH.*model/);
     assert.match(mismatch.result.stderr, /reconfirm|choose/i);
     assert.ok(!fs.existsSync(path.join(mismatch.topic, 'reviews', 'PLAN_REVIEW_n1.md')));
+    const unknown = run('unknown-observations-valid', 'claude', ['Pi', 'Pi'], [], 'unknown');
+    assert.equal(unknown.result.status, 0, unknown.result.stderr);
+    const unknownRecord = fs.readFileSync(path.join(unknown.topic, 'reviews/PLAN_REVIEW_n1.md'), 'utf8');
+    const unknownSettings = JSON.parse(unknownRecord.match(/^- Stage settings: (.+)$/m)[1]);
+    assert.equal(unknownSettings.requested.effort, 'high');
+    for (const field of ['runtime', 'provider', 'model', 'effort']) {
+      assert.equal(unknownSettings.observed[field].value, 'unknown');
+      assert.ok(unknownSettings.observed[field].reason && unknownSettings.observed[field].source);
+    }
+    const alias = run('alias-observation-unresolved', 'claude', ['Pi', 'Pi'],
+      ['--model', 'catalogalias', '--model-is-alias'], 'mismatch');
+    assert.equal(alias.result.status, 0,
+      `a confirmed catalog alias without exact-ID equivalence is not a proven substitution: ${alias.result.stderr}`);
+    const bareExact = run('bare-exact-model-mismatch', 'claude', ['Pi', 'Pi'],
+      ['--model', 'exactmodel'], 'mismatch');
+    assert.notEqual(bareExact.result.status, 0, 'bare exact IDs must not be guessed to be aliases');
+    assert.match(bareExact.result.stderr, /SETTINGS_MISMATCH/);
     call = JSON.parse(fs.readFileSync(log));
     for (const flag of ['--safe-mode', '--strict-mcp-config', '--no-session-persistence']) {
       assert.ok(call.args.includes(flag));
@@ -297,6 +314,7 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     }
     for (const [name, markers] of [
       ['unrelated-codex', ['not Codex tooling', 'not Codex tooling']],
+      ['conflicting-one-file', ['Pi\nAuthoring runtime: Claude Code', 'Pi']],
       ['unknown-author', [null, null]],
       ['foreign-author', ['Local Model', 'Local Model']],
       ['conflicting-author', ['Claude Code', 'Codex CLI']],

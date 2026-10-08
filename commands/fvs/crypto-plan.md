@@ -196,7 +196,7 @@ bounded-plan contract and runtime-neutral naming are identical). Coordination is
 THIS command captures the envelope, checks it, and uses the same persistence and contract gates as
 in-runtime dispatch. No live cross-process bridge or kept-alive child. Construct a bounded UTF-8 JSON context file under
 `$ROOT/sources/` containing the SAME complete inputs inlined above, with no unresolved references.
-Include `stage`, `topic`, `proof_engineering_context` (untrusted lesson snapshot) and mode inputs:
+Include `stage`, `topic`, manifest `selection_source`, `proof_engineering_context` (untrusted lesson snapshot) and mode inputs:
 - plan: `branch_state`, `kb_sources`, `prior` (including prior review/triage history).
 - eval: `plan`, `executed` (touched files and current build evidence), `kb_sources`.
 - followup: `branch_state`, `eval_findings`, `human_ruling`, `plan`, `kb_sources`, `prior`.
@@ -238,8 +238,18 @@ Authoring runtime: {Claude Code | OpenCode | Gemini | Pi | Codex | Codex CLI}
 ```
 
 Use `Codex CLI` when `--codex` authored the plan; otherwise name the actual host runtime. Never
-write a generic or guessed marker. `/fvs:crypto-review` uses it to label cross-runtime review as
-independent and same-runtime review as fresh but not independent; missing provenance fails closed.
+write a generic or guessed marker. `/fvs:crypto-review` uses it to label known different runtimes as cross-runtime and same-runtime review as fresh.
+Provider independence additionally needs known provider/seat and fresh completion evidence;
+missing identity remains unverified without preventing an ordinary valid review.
+
+Persist `Stage settings:` in both PLAN and EXEC_PLAN under the authoring stage `crypto_plan`, using the single
+Stage settings evidence contract in `model-profiles.md`: requested and resolved
+runtime/provider/model/effort plus selection/launch source, field-wise independently
+observed values or explicit unknown with reason/source, and dispatch route. Retain
+relevant existing role/child/hash evidence only. Valid completion with unknown telemetry
+succeeds; never copy launch inputs into observations or invent effective settings.
+A real reported mismatch needs an actionable supported choice/reconfirmation, not silent
+substitution. Legacy missing metadata stays unknown; immutable history is not backfilled.
 
 Carry the BOUNDED-PLAN CONTRACT verbatim into `EXEC_PLAN_nN.md`:
 Require `## Reuse audit` in the high-level plan and consistent reuse choices in the executor

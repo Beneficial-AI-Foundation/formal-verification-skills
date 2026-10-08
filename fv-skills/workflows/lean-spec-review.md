@@ -68,7 +68,9 @@ used by the statement; do not pass only the theorem, an author summary, or proof
 lessons. The reviewer must report unresolved/missing evidence as BLOCKED. `runtime` is
 `codex|claude|pi|opencode|gemini|other`; `author_runtime` is `codex|claude|pi|opencode|gemini|other|unknown`. Use `pi` only inside Pi
 with an authenticated provider-qualified catalog model. Record the precise identity of Other
-separately in triage. Keep the selected model/effort explicit.
+separately in triage. Keep the selected model/effort explicit. Set optional `model_is_alias: true` only when the
+confirmed catalog identifies a stable alias; do not infer it from the string. Unknown alias-to-ID
+equivalence is recorded, not silently honored or refused as a proven substitution.
 If relevant dependencies were omitted, add them to the request and run a new review. PASS must
 cover only the hashed evidence packet; a reviewer's additional source reads are not captured by
 the original hashes. Oversized packets fail at the selected runtime's context limit rather than

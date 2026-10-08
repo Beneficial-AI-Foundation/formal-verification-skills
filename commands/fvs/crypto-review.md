@@ -107,10 +107,16 @@ scope as `review-grounding.md` describes (never compact repeated spans) and reru
 passes. Then run the review, which repeats the same check against current sources:
 
 ```bash
+MODEL_IDENTITY_ARGS=()
+[ "$MODEL_IS_ALIAS" != "true" ] || MODEL_IDENTITY_ARGS=(--model-is-alias)
 node ~/.claude/scripts/fvs-codex-think.mjs review \
   --topic "$ROOT" --iteration "n$N" --target "$TARGET_KIND" \
-  --reviewer "$REVIEWER" --model "$MODEL" --effort "$EFFORT" --grounding "$GROUNDING_FILE"
+  --reviewer "$REVIEWER" --model "$MODEL" --effort "$EFFORT" --grounding "$GROUNDING_FILE" \
+  "${MODEL_IDENTITY_ARGS[@]}"
 ```
+
+Set `$MODEL_IS_ALIAS` only from the confirmed catalog identity (false for exact IDs).
+Unknown alias-to-version equivalence is metadata, never guessed from spelling or called honored.
 
 The shared provider machinery preflights only the selected CLI. Codex runs ephemeral with user
 config ignored: its saved scratch directory is writable while the repository remains read-only.
@@ -133,6 +139,15 @@ from requested values. If capability or result evidence is missing, leave the re
 For Other, the command reports `PENDING` and a managed packet. Give `prompt.md` to the selected
 reviewer, save its Markdown response inside the project, then run the printed `review-import`
 command with `--topic`, `--packet`, and `--response`. A pending export is not a completed review.
+
+Persist `Stage settings:` in the completed review and separate authoring-seat triage under `crypto_review`, using the single
+Stage settings evidence contract in `model-profiles.md`: requested and resolved
+runtime/provider/model/effort plus selection/launch source, field-wise independently
+observed values or explicit unknown with reason/source, and dispatch route. Retain
+relevant existing role/child/hash evidence only. Valid completion with unknown telemetry
+succeeds; never copy launch inputs into observations or invent effective settings.
+A real reported mismatch needs an actionable supported choice/reconfirmation, not silent
+substitution. Legacy missing metadata stays unknown; immutable history is not backfilled.
 
 ## 3. Triage in the authoring seat
 

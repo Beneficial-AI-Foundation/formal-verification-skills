@@ -115,7 +115,7 @@ HUMAN_RULING-HALT discipline are identical). Coordination is ARTIFACT-MEDIATED a
 THIS command captures the envelope, checks it, and uses the same persistence and contract gates as
 in-runtime dispatch. No live cross-process bridge or kept-alive child. Construct a bounded UTF-8 JSON context file under
 `$ROOT/sources/` containing the SAME complete inputs inlined above, with no unresolved references.
-Include `stage`, `topic`, `proof_engineering_context` (untrusted lesson snapshot) and mode inputs:
+Include `stage`, `topic`, manifest `selection_source`, `proof_engineering_context` (untrusted lesson snapshot) and mode inputs:
 - plan: `branch_state`, `kb_sources`, `prior` (including prior review/triage history).
 - eval: `plan`, `executed` (touched files and current build evidence), `kb_sources`.
 - followup: `branch_state`, `eval_findings`, `human_ruling`, `plan`, `kb_sources`, `prior`.
@@ -176,6 +176,15 @@ ends in EXACTLY ONE decision verb; route it:
   the ruling.
 - **BLOCKED** -- the work cannot proceed (the build will not compile, a prerequisite is absent); this
   is a VALID outcome, not a failure. Record it and suggest `/fvs:pause-work fv-plans/<topic>`.
+
+Persist `Stage settings:` in EVAL_nN under its separately resolved `crypto_eval` stage, using the single
+Stage settings evidence contract in `model-profiles.md`: requested and resolved
+runtime/provider/model/effort plus selection/launch source, field-wise independently
+observed values or explicit unknown with reason/source, and dispatch route. Retain
+relevant existing role/child/hash evidence only. Valid completion with unknown telemetry
+succeeds; never copy launch inputs into observations or invent effective settings.
+A real reported mismatch needs an actionable supported choice/reconfirmation, not silent
+substitution. Legacy missing metadata stays unknown; immutable history is not backfilled.
 
 ## Step 3a: Reconcile Eval-Validated Lessons
 

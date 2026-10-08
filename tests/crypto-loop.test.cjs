@@ -609,6 +609,41 @@ for (const key of ['cmdPlan', 'cmdReview', 'cmdExecute', 'cmdEval', 'cmdFollowup
 // 12. Kernel-trusting crypto eval: challenge statements and trust boundaries,
 //     reuse current executor build evidence, and permit one bounded fallback.
 // ---------------------------------------------------------------------------
+it('persists execution settings without masking simulated build failures or rewriting the plan', () => {
+  const os = require('node:os');
+  const { spawnSync } = require('node:child_process');
+  const tmp = fs.mkdtempSync(path.join(process.env.FVS_TEST_EVIDENCE_ROOT || os.tmpdir(), 'execution-log-simulation-'));
+  const bin = path.join(tmp, 'bin'); fs.mkdirSync(bin);
+  // A private simulated nice executable stands in for the entire build invocation.
+  fs.writeFileSync(path.join(bin, 'nice'), '#!/bin/sh\nprintf "simulated build stdout\\n"\nprintf "simulated build stderr\\n" >&2\nexit "$FVS_SIMULATED_BUILD_STATUS"\n', { mode: 0o755 });
+  const approved = path.join(tmp, 'EXEC_PLAN_n1.md'); fs.writeFileSync(approved, 'immutable approved plan');
+  const settings = { stage: 'crypto_execute', route: 'simulated-child',
+    requested: { runtime: 'pi', model: 'provider/exact', effort: 'low', source: 'explicit run choice' },
+    resolved: { runtime: 'pi', model: 'provider/exact', effort: 'low', source: 'simulated launch' },
+    observed: { effort: { value: 'unknown', reason: 'no independent telemetry', source: 'simulated response' } } };
+  try {
+    for (const file of [STAGE_FILES.cmdExecute, STAGE_FILES.wfExecute]) {
+      const source = fs.readFileSync(file, 'utf8');
+      const section = source.slice(source.indexOf('## Step 4: Verify under the green-build guard'));
+      const command = section.match(/```bash\n([\s\S]*?)\n```/)[1];
+      for (const code of [0, 9]) {
+        const result = spawnSync('/bin/bash', ['-c', command], { cwd: tmp, encoding: 'utf8', env: {
+          ...process.env, ROOT: tmp, PATH: bin + path.delimiter + process.env.PATH,
+          STAGE_SETTINGS_JSON: JSON.stringify(settings), FVS_SIMULATED_BUILD_STATUS: String(code),
+        } });
+        assert.equal(result.status, code, result.stderr);
+        const log = fs.readFileSync(path.join(tmp, 'build.log'), 'utf8');
+        assert.match(log, /simulated build stdout\nsimulated build stderr/);
+        assert.equal(JSON.parse(log.match(/^Stage settings: (.+)$/m)[1]).observed.effort.value, 'unknown');
+        assert.ok(log.includes(`Build exit status: ${code}`));
+        assert.equal(fs.readFileSync(approved, 'utf8'), 'immutable approved plan');
+      }
+    }
+  } finally {
+    if (!process.env.FVS_TEST_EVIDENCE_ROOT) fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 for (const absPath of [STAGE_FILES.cmdEval, STAGE_FILES.wfEval,
   path.join(AGENTS_DIR, 'fvs-crypto-thinker.md')]) {
   whenExists(absPath, `Crypto loop: kernel-trusting eval in ${rel(absPath)}`, (content) => {

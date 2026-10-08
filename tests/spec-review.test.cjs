@@ -52,7 +52,7 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
       "if (args[0] === 'exec') {",
       "  fs.writeFileSync(args[args.indexOf('--output-last-message') + 1], review);",
       '} else {',
-      "  console.log(JSON.stringify({ result: review, is_error: mode === 'error', modelUsage: { 'claude-reported-test-model': {} } }));",
+      "  console.log(JSON.stringify({ result: review, is_error: mode === 'error', modelUsage: mode === 'unknown' ? {} : { [mode === 'mismatch' ? 'different-observed-model' : args[args.indexOf('--model') + 1]]: {} } }));",
       '}',
     ].join('\n');
     for (const runtime of ['codex', 'claude']) {
@@ -203,7 +203,20 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
     assert.equal(call.args[call.args.indexOf('--model') + 1], 'catalog-claude-model');
     assert.equal(call.args[call.args.indexOf('--effort') + 1], 'high');
     assert.match(fs.readFileSync(path.join(directory(claude), 'review.md'), 'utf8'),
-      /claude-reported-test-model/);
+      /catalog-claude-model/);
+
+    const mismatch = run({ runtime: 'claude', model: 'catalog-claude-model', effort: 'high' }, 'mismatch');
+    assert.notEqual(mismatch.status, 0);
+    assert.match(mismatch.stderr, /SETTINGS_MISMATCH.*model/);
+    assert.ok(!fs.existsSync(path.join(directory(mismatch), 'review.md')));
+    const unknown = run({ runtime: 'claude', model: 'catalog-claude-model', effort: 'low' }, 'unknown');
+    assert.equal(unknown.status, 0, unknown.stderr);
+    const unknownRecord = fs.readFileSync(path.join(directory(unknown), 'review.md'), 'utf8');
+    const settings = JSON.parse(unknownRecord.match(/^- Stage settings: (.+)$/m)[1]);
+    assert.equal(settings.stage, 'spec_review');
+    assert.equal(settings.observed.model.value, 'unknown');
+    assert.equal(settings.observed.effort.value, 'unknown');
+    assert.equal(settings.resolved.effort, 'low');
 
     const piOutsideHost = run({ runtime: 'pi', model: 'openai/catalog-pi-authority', effort: 'max',
       author_runtime: 'claude' }, 'pi-outside', nonPiEnv);
