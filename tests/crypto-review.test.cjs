@@ -19,7 +19,7 @@ const REVIEW = '# FVS Crypto Plan Review\n\n## Authority hierarchy\nPaper, then 
 it('runs crypto review through selected read-only runtimes and immutable packets', {
   skip: process.platform === 'win32',
 }, () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-crypto-review-test-'));
+  const tmp = fs.mkdtempSync(path.join((process.env.FVS_TEST_EVIDENCE_ROOT || os.tmpdir()), 'fvs-crypto-review-test-'));
   try {
     const project = path.join(tmp, 'project with spaces');
     const bin = path.join(tmp, 'bin');
@@ -266,6 +266,7 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     assert.match(fs.readFileSync(path.join(same.topic, 'reviews', 'PLAN_REVIEW_n1.md'), 'utf8'),
       /same-runtime, fresh reviewer/);
     for (const reviewer of ['opencode', 'gemini']) {
+      const callsBefore = fs.readFileSync(calls, 'utf8');
       const limited = run(`${reviewer}-limited`, reviewer, ['Pi', 'Pi'],
         ['--model', 'provider/exact-model', '--effort', 'high']);
       assert.notEqual(limited.result.status, 0);
@@ -273,6 +274,7 @@ it('runs crypto review through selected read-only runtimes and immutable packets
       assert.match(limited.result.stderr, /sandbox|memory/i);
       assert.match(limited.result.stderr, /codex|claude/);
       assert.ok(!fs.existsSync(path.join(limited.topic, 'reviews', 'PLAN_REVIEW_n1.md')));
+      assert.equal(fs.readFileSync(calls, 'utf8'), callsBefore, 'limited route must not launch any provider');
     }
     for (const author of ['Pi', 'OpenCode', 'Gemini CLI']) {
       const known = run(`known-${author.replace(/ /g, '-')}`, 'codex', [author, author]);
@@ -386,6 +388,6 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     assert.notEqual(invoke(['review-import', '--topic', '.formalising/fv-plans/external',
       '--packet', path.relative(project, packetDir), '--response', '../response.md']).status, 0);
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    if (!process.env.FVS_TEST_EVIDENCE_ROOT) fs.rmSync(tmp, { recursive: true, force: true });
   }
 });

@@ -17,8 +17,8 @@ export function loadReviewContract(name) {
     fs.readFileSync(path.join(directory, 'review-policy.md'), 'utf8');
 }
 export function validateReviewerOptions(input) {
-  if (!['codex', 'claude', 'pi', 'other'].includes(input.runtime)) {
-    throw new Error('runtime must be codex, claude, pi, or other');
+  if (!['codex', 'claude', 'pi', 'opencode', 'gemini', 'other'].includes(input.runtime)) {
+    throw new Error('runtime must be codex, claude, pi, opencode, gemini, or other');
   }
   const model = input.model;
   if (typeof model !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:/+-]*$/.test(model.trim())) {
@@ -141,8 +141,8 @@ function readRequest(file) {
   const input = readJSON(file);
   const reviewer = validateReviewerOptions(input);
   const author = input.author_runtime ?? 'unknown';
-  if (!['codex', 'claude', 'other', 'unknown'].includes(author)) {
-    throw new Error('author_runtime must be codex, claude, other, or unknown');
+  if (!['codex', 'claude', 'pi', 'opencode', 'gemini', 'other', 'unknown'].includes(author)) {
+    throw new Error('author_runtime must be codex, claude, pi, opencode, gemini, other, or unknown');
   }
   if (!Array.isArray(input.context) || input.context.length === 0) {
     throw new Error('context must list the Rust/Lean sources and definitions for review');
@@ -220,8 +220,8 @@ function persist(directory, packet, response, reportedModels = [], external = fa
   }
   const reviewer = validateReviewerOptions(packet.request);
   const author = packet.request.author_runtime ?? 'unknown';
-  if (!['codex', 'claude', 'other', 'unknown'].includes(author)) {
-    throw new Error('author_runtime must be codex, claude, other, or unknown');
+  if (!['codex', 'claude', 'pi', 'opencode', 'gemini', 'other', 'unknown'].includes(author)) {
+    throw new Error('author_runtime must be codex, claude, pi, opencode, gemini, other, or unknown');
   }
   const expectedProvenance = classifyReviewProvenance(author, reviewer.runtime);
   if (packet.provenance !== expectedProvenance) {
@@ -561,7 +561,25 @@ export function recordValidatedResponse(directory, response, options) {
   }
 }
 
+// Named alternate routes must never inherit Claude's launch, auth or confinement.
+// These are limitations of this diagnostic CLI route, not ordinary native authoring.
+function requireReviewerRoute(runtime, model = 'selected model', effort = 'selected effort') {
+  const alternatives = 'Choose codex or claude CLI explicitly, a fresh Pi child on an active Pi host, ' +
+    'or the explicit Other export/import route with its guarantees recorded in triage. Reconfirm any change; no substitution.';
+  if (runtime === 'opencode') throw new Error(
+    `CAPABILITY_UNAVAILABLE: opencode / ${model} / ${effort}: diagnostic Bash has no native OS sandbox ` +
+    'for immutable sources and proof-engineering memory exclusion. Agent edit/bash permissions are not isolation; ' +
+    'a model/variant selection alone cannot supply that boundary. ' + alternatives);
+  if (runtime === 'gemini') throw new Error(
+    `CAPABILITY_UNAVAILABLE: gemini / ${model} / ${effort}: this diagnostic CLI route lacks a qualified ` +
+    'isolated named-agent invocation with memory-excluding shell sandbox and applicable provider-native effort control. ' +
+    'Markdown agents reject effort fields; modelConfig overrides alone do not prove CLI reachability or confinement. ' + alternatives);
+  if (!['codex', 'claude'].includes(runtime)) throw new Error(
+    `${runtime}: no external CLI reviewer route; use the explicit Pi fresh-child/import or Other handoff, not Claude fallback`);
+}
+
 export async function preflightReviewer(runtime, workingRoot = root, attempt, timeoutMs) {
+  requireReviewerRoute(runtime);
   try {
     const version = await invoke(runtime, ['--version'], workingRoot,
       { captureDirectory: attempt, phase: 'version', timeoutMs });
@@ -640,6 +658,7 @@ export async function runReviewer({ runtime, model, effort, prompt, workingRoot 
     const authTimeoutMs = deadline('FVS_REVIEW_AUTH_TIMEOUT_MS', 30000);
     save('request.json', JSON.stringify({ runtime, model, effort, workingRoot, prompt,
       reviewTimeoutMs, authTimeoutMs }, null, 2));
+    requireReviewerRoute(runtime, model, effort);
     await preflightReviewer(runtime, workingRoot, attempt, authTimeoutMs);
     const scopedPrompt = 'Review tool boundary (wrapper-owned):\n' +
       `Repository root (read-only): ${workingRoot}\nSaved scratch directory (session cwd): ${scratch}\n` +
@@ -661,6 +680,7 @@ export async function runReviewer({ runtime, model, effort, prompt, workingRoot 
       if (!fs.existsSync(lastMessage)) throw new Error('Codex returned no final review');
       return finish(decode(fs.readFileSync(lastMessage)), []);
     }
+    if (runtime !== 'claude') throw new Error('No qualified external reviewer branch for the selected runtime');
     if (!['darwin', 'linux'].includes(process.platform)) {
       throw new Error('Claude review probes require macOS/Linux native sandboxing; no unsafe fallback');
     }

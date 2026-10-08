@@ -16,6 +16,13 @@ for Claude-authored plans running under Pi, prefer a fresh provider-qualified Op
 Codex CLI. The Pi choice launches a fresh read-only Pi child with the exact selected model/effort;
 it is not an Other handoff. Never route a Claude Code subscription through Pi.
 
+OpenCode and Gemini selections remain named choices, not Claude/Other aliases. The external
+helper returns a specific `CAPABILITY_UNAVAILABLE` for their currently unqualified diagnostic
+CLI routes (OpenCode has no native shell isolation; Gemini lacks this isolated named-agent,
+memory-excluding shell/effort route). Offer explicit Codex/Claude, fresh Pi, or acknowledged
+Other alternatives and reconfirm any changed choice; never launch unsafely or substitute.
+An unavailable observed setting is unknown, not this capability failure or a command-wide gate.
+
 Build and confirm one selection manifest with reviewer runner, provenance, exact catalog model, and
 effort. Notes rebuild the manifest and require reconfirmation. Adjust once is ephemeral; Save
 override changes only `crypto_review`. Missing models/unsupported efforts ask one-run/save/cancel;

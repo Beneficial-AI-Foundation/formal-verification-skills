@@ -17,7 +17,7 @@ const REVIEW = '# FC Specification Review\n\n## Findings\nNone.\n' +
 it('runs FC reviews with explicit choices, honest failures, and immutable input history', {
   skip: process.platform === 'win32',
 }, () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-spec-review-test-'));
+  const tmp = fs.mkdtempSync(path.join((process.env.FVS_TEST_EVIDENCE_ROOT || os.tmpdir()), 'fvs-spec-review-test-'));
   try {
     const project = path.join(tmp, 'project with spaces');
     const bin = path.join(tmp, 'bin');
@@ -167,10 +167,12 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
     assert.ok(!fs.existsSync(path.join(project, 'INJECTED')));
 
     for (const runtime of ['opencode', 'gemini']) {
+      const callsBefore = fs.readFileSync(calls, 'utf8');
       const limited = run({ runtime, model: 'provider/exact-model', effort: 'high', author_runtime: 'pi' });
       assert.notEqual(limited.status, 0);
       assert.match(limited.stderr, new RegExp(`CAPABILITY_UNAVAILABLE.*${runtime}`, 'i'));
       assert.ok(!fs.existsSync(path.join(directory(limited), 'review.md')));
+      assert.equal(fs.readFileSync(calls, 'utf8'), callsBefore);
     }
     for (const author_runtime of ['pi', 'opencode', 'gemini']) {
       const known = run({ author_runtime });
@@ -321,6 +323,6 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
     assert.equal(fs.readFileSync(path.join(project, spec), 'utf8'), specText);
     assert.equal(fs.readFileSync(path.join(first, 'review.md'), 'utf8'), firstReview);
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    if (!process.env.FVS_TEST_EVIDENCE_ROOT) fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
