@@ -50,7 +50,7 @@ it('runs crypto review through selected read-only runtimes and immutable packets
       "if (mode === 'wrapper') review = 'All evidence is gathered; writing the review.\\n\\n' + review;",
       "if (mode === 'root-exited') { const child = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {stdio:['ignore','inherit','inherit']}); fs.writeFileSync(process.env.FVS_FAKE_PID_FILE, String(child.pid)); }",
       "if (args[0] === 'exec') fs.writeFileSync(args[args.indexOf('--output-last-message') + 1], review);",
-      "else console.log(JSON.stringify({ result: review, is_error: mode === 'error', modelUsage: { 'claude-observed': {} } }));",
+      "else console.log(JSON.stringify({ result: review, is_error: mode === 'error', modelUsage: mode === 'unknown' ? {} : { [mode === 'mismatch' ? 'different-observed-model' : args[args.indexOf('--model') + 1]]: {} } }));",
     ].join('\n');
     for (const runtime of ['codex', 'claude']) {
       fs.writeFileSync(path.join(bin, runtime), fake);
@@ -199,7 +199,18 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     assert.equal(claude.result.status, 0, claude.result.stderr);
     record = fs.readFileSync(path.join(claude.topic, 'reviews', 'PLAN_REVIEW_n1.md'), 'utf8');
     assert.match(record, /Provenance: cross-runtime/);
-    assert.match(record, /Runtime-reported models: claude-observed/);
+    assert.match(record, /Runtime-reported models: catalog-claude-scout/);
+    assert.match(record, /^- Stage settings: /m, 'completed review must persist separated settings evidence');
+    const settings = JSON.parse(record.match(/^- Stage settings: (.+)$/m)[1]);
+    assert.equal(settings.stage, 'crypto_review');
+    assert.equal(settings.requested.model, 'catalog-claude-scout');
+    assert.equal(settings.observed.model.value, 'catalog-claude-scout');
+    assert.equal(settings.observed.effort.value, 'unknown');
+    const mismatch = run('actual-model-mismatch', 'claude', ['Codex CLI', 'Codex CLI'], [], 'mismatch');
+    assert.notEqual(mismatch.result.status, 0);
+    assert.match(mismatch.result.stderr, /SETTINGS_MISMATCH.*model/);
+    assert.match(mismatch.result.stderr, /reconfirm|choose/i);
+    assert.ok(!fs.existsSync(path.join(mismatch.topic, 'reviews', 'PLAN_REVIEW_n1.md')));
     call = JSON.parse(fs.readFileSync(log));
     for (const flag of ['--safe-mode', '--strict-mcp-config', '--no-session-persistence']) {
       assert.ok(call.args.includes(flag));

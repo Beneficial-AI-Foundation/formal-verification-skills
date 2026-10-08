@@ -34,6 +34,22 @@ const DISPATCH_STAGES = {
 };
 
 describe('runtime-aware FVS model settings', () => {
+  it('records settings in existing stage artifacts without making unknown telemetry a gate', () => {
+    const reference = read('fv-skills/references/model-profiles.md');
+    assert.match(reference, /Stage settings evidence/);
+    for (const stage of ['plan', 'eval', 'followup', 'execute', 'review']) {
+      for (const base of ['commands/fvs', 'fv-skills/workflows']) {
+        const source = read(`${base}/crypto-${stage}.md`);
+        assert.match(source, /Stage settings:/, `${base}/${stage} missing persistence instruction`);
+        assert.match(source, /unknown/i);
+      }
+    }
+    for (const base of ['commands/fvs', 'fv-skills/workflows']) {
+      const source = read(`${base}/crypto-execute.md`);
+      assert.match(source, /build\.log[\s\S]*never rewrite.*EXEC_PLAN/i);
+    }
+  });
+
   it('ships stage-scoped overrides and profile-driven review defaults', () => {
     const config = JSON.parse(read('fv-skills/templates/config.json'));
     assert.equal(config.model_profile, 'quality');
@@ -143,7 +159,7 @@ describe('runtime-aware FVS model settings', () => {
     assert.doesNotMatch(reviewHelper, /reviewerDefaults|defaultEffort/);
     assert.match(reviewHelper, /Select an explicit model from the reviewer runtime catalog/);
     assert.match(reviewHelper, /Select an explicit effort reported for the selected reviewer model/);
-    assert.match(reviewHelper, /codex', 'claude', 'pi', 'other/);
+    assert.match(reviewHelper, /codex', 'claude', 'pi', 'opencode', 'gemini', 'other/);
     assert.match(reviewHelper, /Pi reviewer models must be provider-qualified/);
     assert.match(reviewHelper, /validatePiDispatchReceipt/);
     assert.match(reviewHelper, /requires an active Pi host/);
