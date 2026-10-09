@@ -312,6 +312,72 @@ Null values keep profile routing and the confirmation menu active.
 
 </stable_rules>
 
+<stage_settings_evidence>
+
+## Stage settings evidence
+
+At each EXISTING persistence boundary, write one `Stage settings:` JSON record. This is metadata,
+not a receipt/policy engine or a new approval gate. Keep the existing artifact names and owners:
+`PLAN_nN.md`, `EXEC_PLAN_nN.md`, `FOLLOWUP_PLAN_nN.md`, `EVAL_nN.md`, execution `build.log`, and
+review/separate author triage. An EXEC_PLAN carries its authoring tuple; the executor resolves
+`crypto_execute` independently and never rewrites the approved plan to record execution settings.
+
+The record contains `stage`, `route`, and three tuples, each with runtime/provider/model/effort:
+- `requested`: original explicit or policy input, retaining its selection source (per field where
+  sources differ: one-run, stage override, agent override, profile/catalog, confirmed adjustment).
+- `resolved`: the confirmed inputs actually supplied through the selected route controls, with
+  launch/definition/manifest evidence source. `inherit` is an input, not an observed model.
+- `observed`: field-wise independently returned child/runtime evidence. Each field is
+  `{ "value": "...", "source": "..." }`, or `{ "value": "unknown", "reason": "...", "source": "..." }`.
+
+Compact example for a valid completed external stage with unavailable telemetry:
+
+```json
+{
+  "stage": "crypto_plan",
+  "route": "external-codex-read-only",
+  "requested": {"runtime":"codex","provider":"unknown","model":"<selected exact ID>","effort":"low","source":"explicit one-run choice"},
+  "resolved": {"runtime":"codex","provider":"unknown","model":"<selected exact ID>","effort":"low","source":"launch.json"},
+  "observed": {
+    "runtime":{"value":"unknown","reason":"not independently reported","source":"final-response.md"},
+    "provider":{"value":"unknown","reason":"not independently reported","source":"final-response.md"},
+    "model":{"value":"unknown","reason":"not reported","source":"final-response.md"},
+    "effort":{"value":"unknown","reason":"not reported","source":"final-response.md"}
+  }
+}
+```
+
+CLI arguments, definitions, and launch-derived Pi thinking belong only in `resolved`; never copy
+these into `observed`. Preserve relevant available role/definition digest, child ID/status,
+tools/sandbox/owner/attempt bounds, and packet/response hashes where already available. No extra
+session discovery, unrelated chat inspection, backfill, or new mandatory receipt is required.
+Legacy missing metadata reads as unknown; do not alter historical or immutable reviewer artifacts.
+
+A valid completed response/review with unknown observations succeeds. Unknown telemetry does not
+establish honored effective settings, provider independence, unsupported capability, or a new
+failure status. A known different author/runtime is `cross-runtime`, not automatically opposite-
+provider independent: that claim needs known provider/seat and fresh completion evidence. Keep
+existing Pi receipt, input integrity, approval/triage and bounded revision requirements unchanged.
+
+Surface a REAL reported exact-ID/model/effort/runtime mismatch at that selection/claim, preserve raw
+evidence, and offer concrete supported choices or explicit informed reconfirmation before changing
+it. A versioned model observation for a catalog-confirmed CLI alias is not proof of substitution;
+retain both and report unknown equivalence. Mark `model_is_alias: true` in the existing reviewer
+request only when the confirmed catalog identifies an alias (`--model-is-alias` for crypto review).
+Never guess alias status from a name's spelling or silently waive an exact-ID mismatch. Missing
+catalog observations alone do not veto valid existing dispatch. Harmless bounded implementation or
+diagnostic adjustments within approved task/ownership/safety limits need no additional consent.
+
+External OpenCode/Gemini diagnostic reviewer selections reach only their named capability branch:
+OpenCode lacks native shell isolation; Gemini lacks this qualified isolated named-agent CLI path
+with memory-excluding shell and applicable provider-native effort controls. Their model/variant or
+modelConfig settings do not themselves provide confinement. Offer explicit Codex/Claude CLI, active-
+host fresh Pi, or acknowledged Other export/import alternatives; never implicitly launch Claude or
+relabel the selection. These limitations affect only that operation, not ordinary five-runtime
+commands. Source/schema evidence and simulated fixtures are not completed native acceptance.
+
+</stage_settings_evidence>
+
 <runtime_notes>
 
 ## Runtime detection and adapters

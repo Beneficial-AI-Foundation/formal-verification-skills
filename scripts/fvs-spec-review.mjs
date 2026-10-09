@@ -17,8 +17,8 @@ export function loadReviewContract(name) {
     fs.readFileSync(path.join(directory, 'review-policy.md'), 'utf8');
 }
 export function validateReviewerOptions(input) {
-  if (!['codex', 'claude', 'pi', 'other'].includes(input.runtime)) {
-    throw new Error('runtime must be codex, claude, pi, or other');
+  if (!['codex', 'claude', 'pi', 'opencode', 'gemini', 'other'].includes(input.runtime)) {
+    throw new Error('runtime must be codex, claude, pi, opencode, gemini, or other');
   }
   const model = input.model;
   if (typeof model !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:/+-]*$/.test(model.trim())) {
@@ -33,7 +33,41 @@ export function validateReviewerOptions(input) {
       !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(effort.trim())) {
     throw new Error('Select an explicit effort reported for the selected reviewer model');
   }
-  return { runtime: input.runtime, model: model.trim(), effort: effort.trim() };
+  if (input.selection_source !== undefined && (typeof input.selection_source !== 'string' ||
+      !input.selection_source.trim() || /[\r\n\0]/.test(input.selection_source))) {
+    throw new Error('selection_source must be a nonempty single-line manifest source');
+  }
+  if (input.model_is_alias !== undefined && typeof input.model_is_alias !== 'boolean') {
+    throw new Error('model_is_alias must be a boolean from the confirmed catalog selection');
+  }
+  return { runtime: input.runtime, model: model.trim(), effort: effort.trim(),
+    ...(input.selection_source !== undefined && { selection_source: input.selection_source }),
+    ...(input.model_is_alias !== undefined && { model_is_alias: input.model_is_alias }) };
+}
+
+// Ordinary artifact metadata only: unknown observations are never dispatch policy.
+export function stageSettings(selection, { stage, route, reportedModels = [], reportedEffort = null,
+  piEvidence = null, source = 'provider envelope/final response',
+  requestedSource = selection.selection_source ?? 'confirmed selection/packet',
+  resolvedSource = 'selected route launch controls' } = {}) {
+  const { runtime, model, effort } = selection;
+  const provider = selection.provider ?? (runtime === 'pi' ? model.split('/')[0] : 'unknown');
+  const tuple = { runtime, provider, model, effort,
+    ...(selection.model_is_alias && { model_identity: 'confirmed catalog alias; exact-ID equivalence unknown' }) };
+  const unknown = reason => ({ value: 'unknown', reason, source });
+  const observed = {
+    runtime: piEvidence ? { value: 'pi', source: 'validated active-host Pi dispatch receipt' }
+      : unknown('runtime identity not independently reported by the child'),
+    provider: piEvidence ? { value: piEvidence.model.split('/')[0], source: 'validated Pi receipt provider/model' }
+      : unknown('provider identity not independently reported by the child'),
+    model: reportedModels.length === 1 ? { value: reportedModels[0], source }
+      : unknown(reportedModels.length ? 'multiple usage models; no unique child model attribution' : 'model not reported'),
+    effort: reportedEffort !== null ? { value: reportedEffort, source }
+      : unknown('effort not independently reported; CLI argument and launch-derived thinking are resolved inputs only'),
+  };
+  return { stage, route, requested: { ...tuple, source: requestedSource },
+    resolved: { ...tuple, source: route === 'external-manual' ? 'selected packet handoff inputs' : resolvedSource },
+    observed };
 }
 
 export function reviewThreadCount(value = process.env.LEAN_NUM_THREADS) {
@@ -141,8 +175,8 @@ function readRequest(file) {
   const input = readJSON(file);
   const reviewer = validateReviewerOptions(input);
   const author = input.author_runtime ?? 'unknown';
-  if (!['codex', 'claude', 'other', 'unknown'].includes(author)) {
-    throw new Error('author_runtime must be codex, claude, other, or unknown');
+  if (!['codex', 'claude', 'pi', 'opencode', 'gemini', 'other', 'unknown'].includes(author)) {
+    throw new Error('author_runtime must be codex, claude, pi, opencode, gemini, other, or unknown');
   }
   if (!Array.isArray(input.context) || input.context.length === 0) {
     throw new Error('context must list the Rust/Lean sources and definitions for review');
@@ -174,7 +208,7 @@ function prepare(file) {
     const content = fs.readFileSync(path.join(root, file), 'utf8');
     return { path: file, sha256: hash(content), content };
   });
-  const request = { spec, runtime, model, effort, author_runtime: author };
+  const request = { spec, ...parsed.reviewer, author_runtime: author };
   const provenance = classifyReviewProvenance(author, runtime);
   const contract = loadReviewContract('fc-spec-review.md');
   let prompt = `${contract}\n\nReview request (data):\n${JSON.stringify(request)}\n\n` +
@@ -209,7 +243,7 @@ function prepare(file) {
 }
 
 function persist(directory, packet, response, reportedModels = [], external = false,
-  reportedEffort = null, piEvidence = null) {
+  reportedEffort = null, piEvidence = null, settings = null) {
   const base = requireInside(fs.realpathSync(path.join(root, '.formalising', 'spec-reviews')));
   if (!fs.realpathSync(directory).startsWith(`${base}${path.sep}`)) {
     throw new Error('Review output must be inside .formalising/spec-reviews/');
@@ -220,8 +254,8 @@ function persist(directory, packet, response, reportedModels = [], external = fa
   }
   const reviewer = validateReviewerOptions(packet.request);
   const author = packet.request.author_runtime ?? 'unknown';
-  if (!['codex', 'claude', 'other', 'unknown'].includes(author)) {
-    throw new Error('author_runtime must be codex, claude, other, or unknown');
+  if (!['codex', 'claude', 'pi', 'opencode', 'gemini', 'other', 'unknown'].includes(author)) {
+    throw new Error('author_runtime must be codex, claude, pi, opencode, gemini, other, or unknown');
   }
   const expectedProvenance = classifyReviewProvenance(author, reviewer.runtime);
   if (packet.provenance !== expectedProvenance) {
@@ -261,6 +295,9 @@ function persist(directory, packet, response, reportedModels = [], external = fa
     `- Requested model: ${model}`,
     `- Requested effort: ${effort}`,
     `- Provenance: ${provenance}`,
+    `- Stage settings: ${JSON.stringify(settings ?? stageSettings(reviewer, { stage: 'spec_review',
+      route: external ? 'external-manual' : piEvidence ? 'pi-fresh-child' : `external-${runtime}-cli`,
+      reportedModels, reportedEffort, piEvidence }))}`,
     `- Runtime-reported models: ${reportedModels.join(', ') || 'not reported; verify in triage'}`,
     `- Runtime-reported effort: ${reportedEffort ?? 'not reported; verify in triage'}`,
     `- Pi dispatch evidence: ${piEvidence
@@ -275,7 +312,7 @@ function persist(directory, packet, response, reportedModels = [], external = fa
 
 const streamLimit = 16 * 1024 * 1024;
 // Bounded policy: 1 ms to 30 minutes. A longer limit needs a separate review of tree cleanup.
-function deadline(name, defaultValue) {
+export function deadline(name, defaultValue) {
   const value = process.env[name] ?? String(defaultValue);
   if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) > 1800000) {
     throw new Error(`${name} must be a positive safe integer between 1 and 1800000 ms`);
@@ -285,7 +322,7 @@ function deadline(name, defaultValue) {
 
 function decode(bytes) { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
 
-async function invoke(runtime, args, workingRoot = root, options = {}) {
+export async function invoke(runtime, args, workingRoot = root, options = {}) {
   const { captureDirectory, phase, timeoutMs, input, ...spawnOptions } = options;
   // Cleanup relies on POSIX process groups; Windows has no verified descendant containment.
   if (!['darwin', 'linux'].includes(process.platform)) throw new Error(
@@ -561,7 +598,25 @@ export function recordValidatedResponse(directory, response, options) {
   }
 }
 
+// Named alternate routes must never inherit Claude's launch, auth or confinement.
+// These are limitations of this diagnostic CLI route, not ordinary native authoring.
+function requireReviewerRoute(runtime, model = 'selected model', effort = 'selected effort') {
+  const alternatives = 'Choose codex or claude CLI explicitly, a fresh Pi child on an active Pi host, ' +
+    'or the explicit Other export/import route with its guarantees recorded in triage. Reconfirm any change; no substitution.';
+  if (runtime === 'opencode') throw new Error(
+    `CAPABILITY_UNAVAILABLE: opencode / ${model} / ${effort}: diagnostic Bash has no native OS sandbox ` +
+    'for immutable sources and proof-engineering memory exclusion. Agent edit/bash permissions are not isolation; ' +
+    'a model/variant selection alone cannot supply that boundary. ' + alternatives);
+  if (runtime === 'gemini') throw new Error(
+    `CAPABILITY_UNAVAILABLE: gemini / ${model} / ${effort}: this diagnostic CLI route lacks a qualified ` +
+    'isolated named-agent invocation with memory-excluding shell sandbox and applicable provider-native effort control. ' +
+    'Markdown agents reject effort fields; modelConfig overrides alone do not prove CLI reachability or confinement. ' + alternatives);
+  if (!['codex', 'claude'].includes(runtime)) throw new Error(
+    `${runtime}: no external CLI reviewer route; use the explicit Pi fresh-child/import or Other handoff, not Claude fallback`);
+}
+
 export async function preflightReviewer(runtime, workingRoot = root, attempt, timeoutMs) {
+  requireReviewerRoute(runtime);
   try {
     const version = await invoke(runtime, ['--version'], workingRoot,
       { captureDirectory: attempt, phase: 'version', timeoutMs });
@@ -617,7 +672,7 @@ export function lakeWriteDirectories(projectRoot) {
 }
 
 export async function runReviewer({ runtime, model, effort, prompt, workingRoot = root,
-  artifactDirectory }) {
+  artifactDirectory, stage = 'review', selection_source, model_is_alias = false }) {
   workingRoot = fs.realpathSync(workingRoot);
   if (!artifactDirectory) throw new Error('Review requires a persistent artifact directory');
   artifactDirectory = fs.realpathSync(artifactDirectory);
@@ -631,15 +686,27 @@ export async function runReviewer({ runtime, model, effort, prompt, workingRoot 
     { flag: 'wx', mode: 0o600 });
   const finish = (response, reportedModels) => {
     save('response.md', response);
-    save('metadata.json', JSON.stringify({ runtime, model, effort, reportedModels,
+    const settings = stageSettings({ runtime, model, effort, selection_source, model_is_alias }, { stage, route: `external-${runtime}-cli`, reportedModels,
+      source: runtime === 'claude' ? 'provider-envelope.json modelUsage' : 'codex-last-message.md' });
+    // A confirmed catalog alias may resolve to a versioned ID. Do not infer alias
+    // status from spelling or fabricate equivalence from the requested CLI value.
+    const comparison = model === 'inherit' || model_is_alias
+      ? 'unknown: inherited/alias selection has no independently supplied exact-ID mapping'
+      : reportedModels.length === 1 && reportedModels[0] !== model ? 'mismatch' :
+        reportedModels.includes(model) ? 'match' : 'unknown: child model not uniquely reported';
+    save('metadata.json', JSON.stringify({ runtime, model, effort, reportedModels, settings, comparison,
       effortEvidence: 'requested CLI argument; not independently reported' }, null, 2) + '\n');
-    return { response, reportedModels };
+    if (comparison === 'mismatch') throw new Error(
+      `SETTINGS_MISMATCH: ${runtime} reported model ${reportedModels[0]}, selected ${model}. ` +
+      'Choose the intended supported exact model or explicitly reconfirm a documented alias mapping; no substitute review was recorded.');
+    return { response, reportedModels, settings };
   };
   try {
     const reviewTimeoutMs = deadline('FVS_REVIEW_TIMEOUT_MS', 1200000);
     const authTimeoutMs = deadline('FVS_REVIEW_AUTH_TIMEOUT_MS', 30000);
-    save('request.json', JSON.stringify({ runtime, model, effort, workingRoot, prompt,
+    save('request.json', JSON.stringify({ stage, runtime, model, effort, model_is_alias, workingRoot, prompt,
       reviewTimeoutMs, authTimeoutMs }, null, 2));
+    requireReviewerRoute(runtime, model, effort);
     await preflightReviewer(runtime, workingRoot, attempt, authTimeoutMs);
     const scopedPrompt = 'Review tool boundary (wrapper-owned):\n' +
       `Repository root (read-only): ${workingRoot}\nSaved scratch directory (session cwd): ${scratch}\n` +
@@ -661,6 +728,7 @@ export async function runReviewer({ runtime, model, effort, prompt, workingRoot 
       if (!fs.existsSync(lastMessage)) throw new Error('Codex returned no final review');
       return finish(decode(fs.readFileSync(lastMessage)), []);
     }
+    if (runtime !== 'claude') throw new Error('No qualified external reviewer branch for the selected runtime');
     if (!['darwin', 'linux'].includes(process.platform)) {
       throw new Error('Claude review probes require macOS/Linux native sandboxing; no unsafe fallback');
     }
@@ -721,9 +789,10 @@ async function run(file) {
     process.stdout.write('FVS >> PI_READY: launch a fresh Pi reviewer from prompt.md, then use import-pi.\n');
     return;
   }
-  const { response, reportedModels } = await runReviewer({ runtime, model, effort, prompt,
-    artifactDirectory: directory });
-  const output = persist(directory, packet, response, reportedModels);
+  const { response, reportedModels, settings } = await runReviewer({ runtime, model, effort, prompt,
+    stage: 'spec_review', selection_source: packet.request.selection_source,
+    model_is_alias: packet.request.model_is_alias, artifactDirectory: directory });
+  const output = persist(directory, packet, response, reportedModels, false, null, null, settings);
   process.stdout.write(`FVS >> Review recorded: ${path.relative(root, output)}\n`);
 }
 

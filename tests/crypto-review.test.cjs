@@ -19,7 +19,7 @@ const REVIEW = '# FVS Crypto Plan Review\n\n## Authority hierarchy\nPaper, then 
 it('runs crypto review through selected read-only runtimes and immutable packets', {
   skip: process.platform === 'win32',
 }, () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-crypto-review-test-'));
+  const tmp = fs.mkdtempSync(path.join((process.env.FVS_TEST_EVIDENCE_ROOT || os.tmpdir()), 'fvs-crypto-review-test-'));
   try {
     const project = path.join(tmp, 'project with spaces');
     const bin = path.join(tmp, 'bin');
@@ -50,7 +50,7 @@ it('runs crypto review through selected read-only runtimes and immutable packets
       "if (mode === 'wrapper') review = 'All evidence is gathered; writing the review.\\n\\n' + review;",
       "if (mode === 'root-exited') { const child = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {stdio:['ignore','inherit','inherit']}); fs.writeFileSync(process.env.FVS_FAKE_PID_FILE, String(child.pid)); }",
       "if (args[0] === 'exec') fs.writeFileSync(args[args.indexOf('--output-last-message') + 1], review);",
-      "else console.log(JSON.stringify({ result: review, is_error: mode === 'error', modelUsage: { 'claude-observed': {} } }));",
+      "else console.log(JSON.stringify({ result: review, is_error: mode === 'error', modelUsage: mode === 'unknown' ? {} : { [mode === 'mismatch' ? 'different-observed-model' : args[args.indexOf('--model') + 1]]: {} } }));",
     ].join('\n');
     for (const runtime of ['codex', 'claude']) {
       fs.writeFileSync(path.join(bin, runtime), fake);
@@ -199,7 +199,35 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     assert.equal(claude.result.status, 0, claude.result.stderr);
     record = fs.readFileSync(path.join(claude.topic, 'reviews', 'PLAN_REVIEW_n1.md'), 'utf8');
     assert.match(record, /Provenance: cross-runtime/);
-    assert.match(record, /Runtime-reported models: claude-observed/);
+    assert.match(record, /Runtime-reported models: catalog-claude-scout/);
+    assert.match(record, /^- Stage settings: /m, 'completed review must persist separated settings evidence');
+    const settings = JSON.parse(record.match(/^- Stage settings: (.+)$/m)[1]);
+    assert.equal(settings.stage, 'crypto_review');
+    assert.equal(settings.requested.model, 'catalog-claude-scout');
+    assert.equal(settings.observed.model.value, 'catalog-claude-scout');
+    assert.equal(settings.observed.effort.value, 'unknown');
+    const mismatch = run('actual-model-mismatch', 'claude', ['Codex CLI', 'Codex CLI'], [], 'mismatch');
+    assert.notEqual(mismatch.result.status, 0);
+    assert.match(mismatch.result.stderr, /SETTINGS_MISMATCH.*model/);
+    assert.match(mismatch.result.stderr, /reconfirm|choose/i);
+    assert.ok(!fs.existsSync(path.join(mismatch.topic, 'reviews', 'PLAN_REVIEW_n1.md')));
+    const unknown = run('unknown-observations-valid', 'claude', ['Pi', 'Pi'], [], 'unknown');
+    assert.equal(unknown.result.status, 0, unknown.result.stderr);
+    const unknownRecord = fs.readFileSync(path.join(unknown.topic, 'reviews/PLAN_REVIEW_n1.md'), 'utf8');
+    const unknownSettings = JSON.parse(unknownRecord.match(/^- Stage settings: (.+)$/m)[1]);
+    assert.equal(unknownSettings.requested.effort, 'high');
+    for (const field of ['runtime', 'provider', 'model', 'effort']) {
+      assert.equal(unknownSettings.observed[field].value, 'unknown');
+      assert.ok(unknownSettings.observed[field].reason && unknownSettings.observed[field].source);
+    }
+    const alias = run('alias-observation-unresolved', 'claude', ['Pi', 'Pi'],
+      ['--model', 'catalogalias', '--model-is-alias'], 'mismatch');
+    assert.equal(alias.result.status, 0,
+      `a confirmed catalog alias without exact-ID equivalence is not a proven substitution: ${alias.result.stderr}`);
+    const bareExact = run('bare-exact-model-mismatch', 'claude', ['Pi', 'Pi'],
+      ['--model', 'exactmodel'], 'mismatch');
+    assert.notEqual(bareExact.result.status, 0, 'bare exact IDs must not be guessed to be aliases');
+    assert.match(bareExact.result.stderr, /SETTINGS_MISMATCH/);
     call = JSON.parse(fs.readFileSync(log));
     for (const flag of ['--safe-mode', '--strict-mcp-config', '--no-session-persistence']) {
       assert.ok(call.args.includes(flag));
@@ -265,7 +293,28 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     assert.equal(same.result.status, 0, same.result.stderr);
     assert.match(fs.readFileSync(path.join(same.topic, 'reviews', 'PLAN_REVIEW_n1.md'), 'utf8'),
       /same-runtime, fresh reviewer/);
+    for (const reviewer of ['opencode', 'gemini']) {
+      const callsBefore = fs.readFileSync(calls, 'utf8');
+      const limited = run(`${reviewer}-limited`, reviewer, ['Pi', 'Pi'],
+        ['--model', 'provider/exact-model', '--effort', 'high']);
+      assert.notEqual(limited.result.status, 0);
+      assert.match(limited.result.stderr, new RegExp(`CAPABILITY_UNAVAILABLE.*${reviewer}`, 'i'));
+      assert.match(limited.result.stderr, /sandbox|memory/i);
+      assert.match(limited.result.stderr, /codex|claude/);
+      assert.ok(!fs.existsSync(path.join(limited.topic, 'reviews', 'PLAN_REVIEW_n1.md')));
+      assert.equal(fs.readFileSync(calls, 'utf8'), callsBefore, 'limited route must not launch any provider');
+    }
+    for (const author of ['Pi', 'OpenCode', 'Gemini CLI']) {
+      const known = run(`known-${author.replace(/ /g, '-')}`, 'codex', [author, author]);
+      assert.equal(known.result.status, 0, known.result.stderr);
+      const packetDir = path.join(project, known.result.stdout.match(/Review packet: (.+)/)[1]);
+      const packet = JSON.parse(fs.readFileSync(path.join(packetDir, 'packet.json'), 'utf8'));
+      assert.notEqual(packet.request.author_runtime, 'unknown');
+      assert.equal(packet.request.observed_author_runtime, author);
+    }
     for (const [name, markers] of [
+      ['unrelated-codex', ['not Codex tooling', 'not Codex tooling']],
+      ['conflicting-one-file', ['Pi\nAuthoring runtime: Claude Code', 'Pi']],
       ['unknown-author', [null, null]],
       ['foreign-author', ['Local Model', 'Local Model']],
       ['conflicting-author', ['Claude Code', 'Codex CLI']],
@@ -368,6 +417,6 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     assert.notEqual(invoke(['review-import', '--topic', '.formalising/fv-plans/external',
       '--packet', path.relative(project, packetDir), '--response', '../response.md']).status, 0);
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    if (!process.env.FVS_TEST_EVIDENCE_ROOT) fs.rmSync(tmp, { recursive: true, force: true });
   }
 });

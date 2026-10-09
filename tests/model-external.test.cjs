@@ -86,7 +86,7 @@ describe('External Rust modeling command', () => {
   });
 
   it('resolves and hashes an exact Cargo.lock registry source range', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-model-external-registry-'));
+    const root = fs.mkdtempSync(path.join((process.env.FVS_TEST_EVIDENCE_ROOT || os.tmpdir()), 'fvs-model-external-registry-'));
     const cargoHome = path.join(root, 'cargo-home');
     const crate = path.join(cargoHome, 'registry', 'src', 'index.test', 'demo-1.2.3');
     fs.mkdirSync(path.join(crate, 'src'), { recursive: true });
@@ -123,7 +123,7 @@ describe('External Rust modeling command', () => {
   });
 
   it('resolves configured vendored source and rejects disagreement with the Cargo cache', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-model-external-vendor-'));
+    const root = fs.mkdtempSync(path.join((process.env.FVS_TEST_EVIDENCE_ROOT || os.tmpdir()), 'fvs-model-external-vendor-'));
     const cargoHome = path.join(root, 'cargo-home');
     const vendor = path.join(root, 'vendor', 'demo');
     const cache = path.join(cargoHome, 'registry', 'src', 'index.test', 'demo-1.2.3');
@@ -163,7 +163,7 @@ describe('External Rust modeling command', () => {
   });
 
   it('resolves a Cargo.lock git source only at its exact checked-out revision', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-model-external-git-'));
+    const root = fs.mkdtempSync(path.join((process.env.FVS_TEST_EVIDENCE_ROOT || os.tmpdir()), 'fvs-model-external-git-'));
     const cargoHome = path.join(root, 'cargo-home');
     const checkout = path.join(cargoHome, 'git', 'checkouts', 'demo-hash', 'checkout');
     fs.mkdirSync(path.join(checkout, 'src'), { recursive: true });
@@ -202,7 +202,7 @@ describe('External Rust modeling command', () => {
   });
 
   it('binds rustc sysroot source to the compiler commit', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-model-external-sysroot-'));
+    const root = fs.mkdtempSync(path.join((process.env.FVS_TEST_EVIDENCE_ROOT || os.tmpdir()), 'fvs-model-external-sysroot-'));
     const sysroot = path.join(root, 'toolchain');
     const library = path.join(sysroot, 'lib', 'rustlib', 'src', 'rust', 'library', 'core');
     fs.mkdirSync(path.join(library, 'src'), { recursive: true });
@@ -230,7 +230,7 @@ describe('External Rust modeling command', () => {
   });
 
   it('restores every canonical target and preserves the failed candidate patch', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-model-external-transaction-'));
+    const root = fs.mkdtempSync(path.join((process.env.FVS_TEST_EVIDENCE_ROOT || os.tmpdir()), 'fvs-model-external-transaction-'));
     fs.mkdirSync(path.join(root, 'Specs'));
     fs.writeFileSync(path.join(root, 'ExternalModel.lean'), 'def demo := 0\n');
     const request = path.join(root, 'begin.json');
@@ -261,7 +261,7 @@ describe('External Rust modeling command', () => {
   });
 
   it('refuses generated Lean before creating a candidate transaction', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-model-external-generated-'));
+    const root = fs.mkdtempSync(path.join((process.env.FVS_TEST_EVIDENCE_ROOT || os.tmpdir()), 'fvs-model-external-generated-'));
     fs.writeFileSync(path.join(root, 'Funs.lean'), '-- generated\n');
     const request = path.join(root, 'begin.json');
     fs.writeFileSync(request, JSON.stringify({
@@ -292,7 +292,7 @@ describe('External Rust modeling command', () => {
   });
 
   it('finalizes only review-bound, proved, built, CLEAN target hashes', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-model-external-finalize-'));
+    const root = fs.mkdtempSync(path.join((process.env.FVS_TEST_EVIDENCE_ROOT || os.tmpdir()), 'fvs-model-external-finalize-'));
     fs.mkdirSync(path.join(root, 'Specs'));
     fs.writeFileSync(path.join(root, 'ExternalModel.lean'), 'def demo := 0\n');
     fs.writeFileSync(path.join(root, 'Specs', 'Demo.lean'), 'theorem demo_spec : True := by trivial\n');
@@ -341,7 +341,7 @@ describe('External Rust modeling command', () => {
   });
 
   it('records separate immutable model and specification reviews', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-model-external-review-'));
+    const root = fs.mkdtempSync(path.join((process.env.FVS_TEST_EVIDENCE_ROOT || os.tmpdir()), 'fvs-model-external-review-'));
     const run = path.join(root, '.formalising', 'model-external', 'demo');
     fs.mkdirSync(path.join(run, 'source'), { recursive: true });
     fs.writeFileSync(path.join(run, 'source', '000-source.rs'), 'pub fn demo() -> bool { true }\n');
@@ -408,7 +408,7 @@ describe('External Rust modeling command', () => {
     const nativeEnv = { PATH: `${bin}${path.delimiter}${process.env.PATH}`,
       FVS_REVIEW_TIMEOUT_MS: '1100', FVS_REVIEW_AUTH_TIMEOUT_MS: '2500',
       FVS_FAKE_PID_FILE: path.join(root, 'review-child.pid') };
-    for (const mode of ['wrapper', 'competing', 'fail', 'auth', 'root-exited']) {
+    for (const mode of ['wrapper', 'competing', 'fail', 'auth', 'root-exited', 'opencode', 'gemini']) {
       const modeRun = path.join(root, '.formalising', 'model-external', mode);
       fs.mkdirSync(path.join(modeRun, 'source'), { recursive: true });
       fs.copyFileSync(path.join(run, 'source/000-source.rs'), path.join(modeRun, 'source/000-source.rs'));
@@ -418,8 +418,9 @@ describe('External Rust modeling command', () => {
         source_records: [{ evidence: 'source/000-source.rs' }],
       }));
       const request = path.join(root, `${mode}-run.json`);
-      fs.writeFileSync(request, JSON.stringify({ mode: 'model', round: 1, runtime: 'codex',
-        model: 'exact-test-model', effort: 'high', author_runtime: 'claude',
+      fs.writeFileSync(request, JSON.stringify({ mode: 'model', round: 1,
+        runtime: ['opencode', 'gemini'].includes(mode) ? mode : 'codex',
+        model: 'exact-test-model', effort: 'high', author_runtime: 'gemini',
         run_directory: `.formalising/model-external/${mode}`,
         inputs: [`.formalising/model-external/${mode}/source/000-source.rs`, 'ExternalModel.lean'], history: [] }));
       const result = runHelper(root, ['run', request], { ...nativeEnv, FVS_FAKE_MODEL_MODE: mode }, REVIEW_SCRIPT);
@@ -432,9 +433,17 @@ describe('External Rust modeling command', () => {
       if (mode === 'wrapper') {
         assert.equal(result.status, 0, result.stderr);
         assert.match(fs.readFileSync(path.join(latest, 'review.md'), 'utf8'), /VERDICT: PASS/);
+        const settings = JSON.parse(fs.readFileSync(path.join(latest, 'metadata.json'))).settings;
+        assert.equal(settings.stage, 'external_model_review');
+        assert.equal(settings.requested.model, 'exact-test-model');
+        assert.equal(settings.observed.model.value, 'unknown');
+        assert.equal(settings.observed.effort.value, 'unknown');
       } else {
         assert.notEqual(result.status, 0, `${mode}: ${result.stderr}`);
         assert.match(result.stderr, /Review attempt preserved|invalid response preserved/);
+        if (['opencode', 'gemini'].includes(mode)) {
+          assert.match(result.stderr, new RegExp(`CAPABILITY_UNAVAILABLE.*${mode}`, 'i'));
+        }
         assert.ok(!fs.existsSync(path.join(latest, 'review.md')));
         if (mode === 'root-exited') {
           assert.match(result.stderr, /deadline/);

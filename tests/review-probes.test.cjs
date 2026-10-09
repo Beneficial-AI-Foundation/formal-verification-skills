@@ -22,7 +22,7 @@ if (args[0] === '--version' || args[0] === 'auth') {
 } else if (mode === 'failed') { process.stderr.write('sandbox unavailable'); process.exitCode = 9; }
 else {
   fs.writeFileSync(process.env.FVS_FAKE_STDIN_FILE, fs.readFileSync(0));
-  console.log(JSON.stringify({result:'valid-looking review', modelUsage:{requested:{}}}));
+  console.log(JSON.stringify({result:'valid-looking review', modelUsage:{[args[args.indexOf('--model') + 1]]:{}}}));
   if (mode === 'root-exited' || mode === 'root-alive') {
     const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {stdio:['ignore','inherit','inherit']});
     fs.writeFileSync(process.env.FVS_FAKE_PID_FILE, String(child.pid));

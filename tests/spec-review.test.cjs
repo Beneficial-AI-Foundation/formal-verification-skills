@@ -17,7 +17,7 @@ const REVIEW = '# FC Specification Review\n\n## Findings\nNone.\n' +
 it('runs FC reviews with explicit choices, honest failures, and immutable input history', {
   skip: process.platform === 'win32',
 }, () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-spec-review-test-'));
+  const tmp = fs.mkdtempSync(path.join((process.env.FVS_TEST_EVIDENCE_ROOT || os.tmpdir()), 'fvs-spec-review-test-'));
   try {
     const project = path.join(tmp, 'project with spaces');
     const bin = path.join(tmp, 'bin');
@@ -52,7 +52,7 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
       "if (args[0] === 'exec') {",
       "  fs.writeFileSync(args[args.indexOf('--output-last-message') + 1], review);",
       '} else {',
-      "  console.log(JSON.stringify({ result: review, is_error: mode === 'error', modelUsage: { 'claude-reported-test-model': {} } }));",
+      "  console.log(JSON.stringify({ result: review, is_error: mode === 'error', modelUsage: mode === 'unknown' ? {} : { [mode === 'mismatch' ? 'different-observed-model' : args[args.indexOf('--model') + 1]]: {} } }));",
       '}',
     ].join('\n');
     for (const runtime of ['codex', 'claude']) {
@@ -166,6 +166,19 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
     assert.equal(JSON.parse(fs.readFileSync(path.join(first, 'grounding.json'))).cited_apis[0].signature, 'def example := 1');
     assert.ok(!fs.existsSync(path.join(project, 'INJECTED')));
 
+    for (const runtime of ['opencode', 'gemini']) {
+      const callsBefore = fs.readFileSync(calls, 'utf8');
+      const limited = run({ runtime, model: 'provider/exact-model', effort: 'high', author_runtime: 'pi' });
+      assert.notEqual(limited.status, 0);
+      assert.match(limited.stderr, new RegExp(`CAPABILITY_UNAVAILABLE.*${runtime}`, 'i'));
+      assert.ok(!fs.existsSync(path.join(directory(limited), 'review.md')));
+      assert.equal(fs.readFileSync(calls, 'utf8'), callsBefore);
+    }
+    for (const author_runtime of ['pi', 'opencode', 'gemini']) {
+      const known = run({ author_runtime });
+      assert.equal(known.status, 0, known.stderr);
+      assert.equal(JSON.parse(fs.readFileSync(path.join(directory(known), 'packet.json'))).request.author_runtime, author_runtime);
+    }
     const same = run({ author_runtime: 'codex', model: 'catalog-codex-authority', effort: 'medium' });
     assert.equal(same.status, 0, same.stderr);
     assert.notEqual(directory(same), first);
@@ -190,7 +203,20 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
     assert.equal(call.args[call.args.indexOf('--model') + 1], 'catalog-claude-model');
     assert.equal(call.args[call.args.indexOf('--effort') + 1], 'high');
     assert.match(fs.readFileSync(path.join(directory(claude), 'review.md'), 'utf8'),
-      /claude-reported-test-model/);
+      /catalog-claude-model/);
+
+    const mismatch = run({ runtime: 'claude', model: 'catalog-claude-model', effort: 'high' }, 'mismatch');
+    assert.notEqual(mismatch.status, 0);
+    assert.match(mismatch.stderr, /SETTINGS_MISMATCH.*model/);
+    assert.ok(!fs.existsSync(path.join(directory(mismatch), 'review.md')));
+    const unknown = run({ runtime: 'claude', model: 'catalog-claude-model', effort: 'low' }, 'unknown');
+    assert.equal(unknown.status, 0, unknown.stderr);
+    const unknownRecord = fs.readFileSync(path.join(directory(unknown), 'review.md'), 'utf8');
+    const settings = JSON.parse(unknownRecord.match(/^- Stage settings: (.+)$/m)[1]);
+    assert.equal(settings.stage, 'spec_review');
+    assert.equal(settings.observed.model.value, 'unknown');
+    assert.equal(settings.observed.effort.value, 'unknown');
+    assert.equal(settings.resolved.effort, 'low');
 
     const piOutsideHost = run({ runtime: 'pi', model: 'openai/catalog-pi-authority', effort: 'max',
       author_runtime: 'claude' }, 'pi-outside', nonPiEnv);
@@ -310,6 +336,6 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
     assert.equal(fs.readFileSync(path.join(project, spec), 'utf8'), specText);
     assert.equal(fs.readFileSync(path.join(first, 'review.md'), 'utf8'), firstReview);
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    if (!process.env.FVS_TEST_EVIDENCE_ROOT) fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
