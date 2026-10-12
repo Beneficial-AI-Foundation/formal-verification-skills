@@ -4,6 +4,8 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
+const os = require('node:os');
+const { spawnSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 
 // Pure policy checks: importing this module must never discover or launch a backend.
@@ -39,11 +41,17 @@ function observedRequest() {
     toolchain: { name: 'leanprover/lean4:v4.33.1', lean: '/owned/bin/lean', lake: '/owned/bin/lake' },
     savedFiles: [{ path: '/owned/lean-fixture/Probe.lean', sha256: 'a'.repeat(64), version: 2 }],
     hostControls: { verified: true, sourceWritesWithheld: true, evidence: '/owned/no-write-proof.json' },
+    beamQualification: {
+      evidence: '/owned/beam-proof.json', source: 'host-qualification',
+      sourceRevision: '6511cd96917d74cf59e03e303c69e2b6785aba78',
+      toolchain: { name: 'leanprover/lean4:v4.33.1', lean: '/owned/bin/lean', lake: '/owned/bin/lake' },
+      bundleSha256: 'c'.repeat(64),
+    },
   });
   const scope = {
     requestId: context.requestId, runtime: context.runtime, channel: context.channel,
     role: context.role, mode: context.mode, root: context.root, targets: context.targets,
-    toolchain: context.toolchain,
+    toolchain: context.toolchain, requestedBackend: context.requestedBackend,
   };
   context.observations = [{
     source: 'child-call', childId: 'same-writer', evidence: '/owned/call-record.json',
@@ -56,6 +64,31 @@ function observedRequest() {
   return context;
 }
 
+describe('Pure preflight CLI (Node only, no backend)', () => {
+  it('labels supplied unknown evidence and rejects malformed input without backend discovery', () => {
+    const root = fs.mkdtempSync(path.join(process.env.FVS_TEST_EVIDENCE_ROOT || os.tmpdir(), 'diagnostics-policy-'));
+    const file = path.join(root, 'request.json');
+    try {
+      fs.writeFileSync(file, JSON.stringify(request()));
+      const run = () => spawnSync(process.execPath, [path.join(__dirname, '..', 'scripts/fvs-lean-diagnostics.mjs'),
+        'preflight', '--request', file], { encoding: 'utf8', timeout: 5000, env: { PATH: '/usr/bin:/bin' } });
+      const unknown = run();
+      assert.equal(unknown.status, 0, unknown.stderr);
+      assert.equal(JSON.parse(unknown.stdout).status, 'unknown');
+      fs.writeFileSync(file, JSON.stringify(request({ requireLive: true })));
+      const blocked = run();
+      assert.equal(blocked.status, 1, blocked.stderr);
+      assert.equal(JSON.parse(blocked.stdout).status, 'blocked');
+      fs.writeFileSync(file, '{bad json');
+      const invalid = run();
+      assert.equal(invalid.status, 2);
+      assert.match(invalid.stderr, /FVS_DIAGNOSTICS_ERROR/);
+    } finally {
+      if (!process.env.FVS_TEST_EVIDENCE_ROOT) fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('Crypto diagnostics uses the existing dispatch and preferences', () => {
   for (const file of ['commands/fvs/crypto-execute.md', 'fv-skills/workflows/crypto-execute.md']) {
     it(`${file} inlines readiness with the confirmed manifest before writing dispatch`, () => {
@@ -64,7 +97,7 @@ describe('Crypto diagnostics uses the existing dispatch and preferences', () => 
       assert.match(source, /lean-diagnostics\.md/);
       assert.match(source, /readiness-only/);
       assert.match(source, /host-enforced/);
-      assert.match(source, /required-live/);
+      assert.match(source, /required-live/i);
       assert.ok(source.indexOf('diagnostics_context') < source.indexOf('subagent_type="fvs-crypto-executor"'));
       assert.match(source, /Stage settings:/);
       assert.match(source, /PIPESTATUS/);
@@ -169,6 +202,38 @@ describe('Lean diagnostics readiness does not infer child access', () => {
     assert.equal((await evaluate(context)).status, 'blocked');
   });
 
+  it('does not promote Beam calls without exact scoped local qualification', async () => {
+    const context = observedRequest();
+    context.beamQualification = null;
+    assert.equal((await evaluate(context)).status, 'blocked');
+  });
+
+  it('does not borrow another Beam source/toolchain qualification', async () => {
+    const context = observedRequest();
+    context.beamQualification.sourceRevision = 'other';
+    assert.equal((await evaluate(context)).status, 'blocked');
+  });
+
+  it('rejects target and toolchain drift', async () => {
+    for (const field of ['targets', 'toolchain']) {
+      const context = observedRequest();
+      context.observations[0].scope = { ...context.observations[0].scope, [field]: [] };
+      assert.equal((await evaluate(context)).status, 'blocked');
+    }
+  });
+
+  it('does not derive an opt-in Beam default from a shell', async () => {
+    const context = observedRequest();
+    context.requestedBackend = 'auto';
+    assert.equal((await evaluate(context)).status, 'unknown');
+  });
+
+  it('rejects request scope with no identity or escaped targets', async () => {
+    for (const patch of [{ requestId: '' }, { targets: ['/elsewhere/Probe.lean'] }]) {
+      assert.equal((await evaluate({ ...observedRequest(), ...patch })).status, 'blocked');
+    }
+  });
+
   it('revokes readiness when the owned generation changes', async () => {
     const context = observedRequest();
     context.session = { ...context.session, generation: 'generation-2' };
@@ -181,9 +246,12 @@ describe('Lean diagnostics readiness does not infer child access', () => {
       warned: true, explicitlyAccepted: true,
       scope: { requestId: context.requestId, runtime: context.runtime, channel: context.channel,
         role: context.role, mode: context.mode, root: context.root, targets: context.targets,
-        toolchain: context.toolchain },
+        toolchain: context.toolchain, requestedBackend: context.requestedBackend },
     };
     assert.equal((await evaluate(context)).status, 'compiler-accepted');
+    context.requestedBackend = 'beam';
+    assert.equal((await evaluate(context)).status, 'blocked');
+    context.requestedBackend = 'compiler';
     context.requestId = 'other-request';
     assert.equal((await evaluate(context)).status, 'blocked');
   });
