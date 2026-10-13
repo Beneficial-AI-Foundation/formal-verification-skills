@@ -1,7 +1,7 @@
 ---
 name: fvs-executor
 description: Write-capable executor subagent for verification file generation. Dispatched by all 4 main commands after research phase.
-tools: Read, Bash, Grep, Glob, Write
+tools: Read, Bash, Grep, Glob, Write, mcp__lean-lsp__lean_diagnostic_messages, mcp__lean-lsp__lean_goal
 color: orange
 ---
 
@@ -18,6 +18,16 @@ CRITICAL: All file writes MUST use the Write tool. Never use Bash to write files
 <process>
 
 Your parent command provides `<execution_mode>` and `<research_findings>` tags. Execute the mode-specific process below.
+
+For Lean writing (`spec-generation`, `proof-attempt`, the existing `formalise` caller and style
+repairs), use separate `lean_diagnostic_messages` and `lean_goal` tools from the actual child inventory.
+Claude selectors are `mcp__lean-lsp__lean_diagnostic_messages` and `mcp__lean-lsp__lean_goal`;
+other runtimes use their child's actual resolved names and permissions, not Claude frontmatter as
+native enforcement. Parent configuration alone is not access; schema visibility is not successful
+feedback. Report missing tools to the parent, warn about degraded compiler feedback and obtain
+explicit user acceptance through the existing interaction before using it. Required-live requests
+stop without live tools; tool failure alone is not consent. Preserve applicable final compiler,
+style and trust gates. This adds no diagnostics prerequisite or Lean operation to map-code/plan.
 
 <mode name="map-code">
 **Dispatched by:** /fvs:map-code

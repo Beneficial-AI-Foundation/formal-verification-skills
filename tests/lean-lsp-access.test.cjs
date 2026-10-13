@@ -138,7 +138,7 @@ describe('All canonical Lean writers and existing full-role delivery', () => {
       for (const output of [body, toml, converted]) {
         assert.match(output, /lean_diagnostic_messages/);
         assert.match(output, /lean_goal/);
-        assert.match(output, /actual child inventory/i);
+        assert.match(output, /actual child\s+inventory/i);
         assert.match(output, /other runtimes[\s\S]{0,130}(?:names|selectors)/i);
       }
     });
