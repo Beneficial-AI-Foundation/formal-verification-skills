@@ -4,7 +4,8 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { convertClaudeToGeminiAgent, convertClaudeToOpencodeFrontmatter } = require('../bin/install.js');
+const { convertClaudeToGeminiAgent, convertClaudeToOpencodeFrontmatter,
+  generateCodexAgentToml, convertClaudeAgentToCodexAgent, extractFrontmatterAndBody } = require('../bin/install.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const PAIR = ['lean_diagnostic_messages', 'lean_goal'];
@@ -61,6 +62,11 @@ function assertPair(selected) {
   assert.deepEqual(selected.map(tool => [tool.server, tool.raw]), PAIR.map(raw => ['lean-lsp', raw]));
 }
 
+const WRITERS = [
+  ['fvs-crypto-executor', true], ['fvs-executor', false],
+  ['fvs-external-modeler', true], ['fvs-lean-refactorer', false],
+];
+
 const CRYPTO = 'fvs-crypto-executor';
 describe('Crypto definition -> actual converter -> registry-selection fixture', () => {
   it('grants only the existing built-ins, conditional IDE and narrow Lean pair', () => {
@@ -108,5 +114,62 @@ describe('Crypto definition -> actual converter -> registry-selection fixture', 
     assert.deepEqual(geminiTools(converted), ['read_file']);
     assert.match(converted, /\$ROOT \*\(note\)\*/);
     assert.equal(SOURCE_PROVENANCE.gemini.version, '0.31.0');
+  });
+});
+
+describe('All canonical Lean writers and existing full-role delivery', () => {
+  for (const [name, hasIde] of WRITERS) {
+    it(`${name} retains exact built-ins and only the standard diagnostic/goal pair`, () => {
+      assert.deepEqual(claudeTools(role(name)), ['Read', 'Bash', 'Grep', 'Glob', 'Write',
+        ...(hasIde ? ['mcp__ide__getDiagnostics'] : []), ...CLAUDE_PAIR]);
+      const gemini = geminiTools(convertClaudeToGeminiAgent(role(name)));
+      const opencode = opencodeTools(convertClaudeToOpencodeFrontmatter(role(name)));
+      assertPair(selectFixture(gemini, registryFixture('__')));
+      assertPair(selectFixture(opencode, registryFixture('_')));
+    });
+
+    it(`${name} gives Codex full body guidance without pretending frontmatter grants permissions`, () => {
+      const source = role(name);
+      const { body } = extractFrontmatterAndBody(source);
+      const toml = generateCodexAgentToml(name, source);
+      assert.ok(toml.includes(body.trim()), 'complete body must survive TOML generation');
+      assert.doesNotMatch(toml, /^tools\s*=/m, 'no invented native TOML tools key');
+      const converted = convertClaudeAgentToCodexAgent(source);
+      for (const output of [body, toml, converted]) {
+        assert.match(output, /lean_diagnostic_messages/);
+        assert.match(output, /lean_goal/);
+        assert.match(output, /actual child inventory/i);
+        assert.match(output, /other runtimes[\s\S]{0,130}(?:names|selectors)/i);
+      }
+    });
+  }
+
+  it('reaches the same roles through existing named writing dispatches', () => {
+    for (const [command, writer] of [
+      ['crypto-execute', 'fvs-crypto-executor'], ['lean-specify', 'fvs-executor'],
+      ['lean-verify', 'fvs-executor'], ['lean-formalise', 'fvs-executor'],
+      ['lean-refactor', 'fvs-lean-refactorer'],
+    ]) {
+      assert.match(fs.readFileSync(path.join(ROOT, 'commands/fvs', `${command}.md`), 'utf8'),
+        new RegExp(`subagent_type="${writer}"`));
+    }
+    assert.match(fs.readFileSync(path.join(ROOT, 'fv-skills/workflows/model-external.md'), 'utf8'), /fvs-external-modeler/);
+    assert.match(fs.readFileSync(path.join(ROOT, 'commands/fvs/lean-formalise.md'), 'utf8'), /Execute mode: formalise/);
+  });
+
+  it('scopes executor feedback to Lean writing and leaves map-code/plan alone', () => {
+    const source = role('fvs-executor');
+    assert.match(source, /spec-generation[\s\S]{0,140}proof-attempt[\s\S]{0,140}formalise[\s\S]{0,140}repairs/i);
+    for (const mode of ['map-code', 'plan']) {
+      const section = source.split(`<mode name="${mode}">`)[1].split('</mode>')[0];
+      assert.doesNotMatch(section, /lean_diagnostic_messages|lean_goal|diagnostics prerequisite/);
+    }
+  });
+
+  it('keeps Pi canonical-role and plugin-copy contracts without adding an extension or helper', () => {
+    const source = fs.readFileSync(path.join(ROOT, 'scripts/build-plugin.cjs'), 'utf8');
+    assert.match(source, /Agent role instructions live under[\s\S]{0,150}agents/);
+    assert.match(source, /copyTextTree\(path\.join\(ROOT, 'agents'\), path\.join\(pluginRoot, 'agents'\)\)/);
+    assert.doesNotMatch(source, /fvs-lean-diagnostics\.mjs/);
   });
 });
