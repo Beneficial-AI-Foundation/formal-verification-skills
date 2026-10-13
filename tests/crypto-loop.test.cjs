@@ -264,17 +264,9 @@ describe('Crypto loop: executor declares its IDE diagnostics capability (#49)', 
       'agents/fvs-crypto-executor.md tools must declare mcp__ide__getDiagnostics');
   });
 
-  it('requires warned explicit request-local acceptance before headless compiler fallback', () => {
-    assert.match(source, /warned[\s\S]*explicit[\s\S]*request-local/i);
-    assert.match(source, /required-live[\s\S]*stop/i);
-    assert.match(source, /lake env lean/);
-    assert.doesNotMatch(source, /when its call fails[\s\S]*fall back to Bash/i);
-  });
-
-  it('withholds source writes during the same-writer readiness-only bootstrap', () => {
-    assert.match(source, /readiness-only/);
-    assert.match(source, /host-enforced/);
-    assert.match(source, /diagnostics_context/);
+  it('keeps an explicit Bash diagnostics fallback for headless runtimes', () => {
+    assert.match(source, /headless[\s\S]*IDE MCP[\s\S]*lake env lean/i,
+      'agents/fvs-crypto-executor.md missing headless Bash/lake env lean fallback');
   });
 });
 

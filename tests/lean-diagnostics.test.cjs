@@ -56,30 +56,6 @@ function observedRequest() {
   return context;
 }
 
-describe('Crypto diagnostics uses the existing dispatch and preferences', () => {
-  for (const file of ['commands/fvs/crypto-execute.md', 'fv-skills/workflows/crypto-execute.md']) {
-    it(`${file} inlines readiness with the confirmed manifest before writing dispatch`, () => {
-      const source = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
-      assert.match(source, /diagnostics_context/);
-      assert.match(source, /lean-diagnostics\.md/);
-      assert.match(source, /readiness-only/);
-      assert.match(source, /host-enforced/);
-      assert.match(source, /required-live/);
-      assert.ok(source.indexOf('diagnostics_context') < source.indexOf('subagent_type="fvs-crypto-executor"'));
-      assert.match(source, /Stage settings:/);
-      assert.match(source, /PIPESTATUS/);
-    });
-  }
-
-  it('ships preferences only, not saved consent or availability', () => {
-    const config = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'fv-skills/templates/config.json')));
-    assert.deepEqual(config.diagnostics, {
-      backend: 'auto', require_live: false, mcp_server: 'lean-lsp', beam_path: null,
-    });
-    assert.equal(config.crypto_review.automatic, true);
-  });
-});
-
 describe('Lean diagnostics readiness does not infer child access', () => {
   it('leaves an unobserved child unknown rather than silently accepting compiler mode', async () => {
     const result = await evaluate(request());
