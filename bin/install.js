@@ -476,6 +476,10 @@ const colorNameToHex = {
 // Tool name mapping from Claude Code to OpenCode
 // OpenCode uses lowercase tool names; special mappings for renamed tools
 const claudeToOpencodeTools = {
+  // OpenCode 1.18.31: sanitized server + '_' + sanitized tool; permissions still apply.
+  'mcp__lean-lsp__lean_diagnostic_messages': 'lean-lsp_lean_diagnostic_messages',
+  'mcp__lean-lsp__lean_goal': 'lean-lsp_lean_goal',
+  mcp__ide__getDiagnostics: 'ide_getDiagnostics',
   AskUserQuestion: 'question',
   SlashCommand: 'skill',
   TodoWrite: 'todowrite',
@@ -486,6 +490,10 @@ const claudeToOpencodeTools = {
 // Tool name mapping from Claude Code to Gemini CLI
 // Gemini CLI uses snake_case built-in tool names
 const claudeToGeminiTools = {
+  // Gemini 0.31.0 explicit child registry uses qualified server__tool selectors.
+  'mcp__lean-lsp__lean_diagnostic_messages': 'lean-lsp__lean_diagnostic_messages',
+  'mcp__lean-lsp__lean_goal': 'lean-lsp__lean_goal',
+  mcp__ide__getDiagnostics: 'ide__getDiagnostics',
   Read: 'read_file',
   Write: 'write_file',
   Edit: 'replace',
@@ -501,7 +509,7 @@ const claudeToGeminiTools = {
 /**
  * Convert a Claude Code tool name to OpenCode format
  * - Applies special mappings (AskUserQuestion -> question, etc.)
- * - Converts to lowercase (except MCP tools which keep their format)
+ * - Translates the narrow diagnostic selectors; unrelated MCP tools keep existing spelling
  */
 function convertToolName(claudeTool) {
   // Check for special mapping first
@@ -519,14 +527,14 @@ function convertToolName(claudeTool) {
 /**
  * Convert a Claude Code tool name to Gemini CLI format
  * - Applies Claude->Gemini mapping (Read->read_file, Bash->run_shell_command, etc.)
- * - Filters out MCP tools (mcp__*) -- they are auto-discovered at runtime in Gemini
+ * - Keeps only explicitly mapped MCP selectors in the child's exclusive tools list
  * - Filters out Task -- agents are auto-registered as tools in Gemini
  * @returns {string|null} Gemini tool name, or null if tool should be excluded
  */
 function convertGeminiToolName(claudeTool) {
-  // MCP tools: exclude -- auto-discovered from mcpServers config at runtime
+  // Parent discovery does not populate an explicit child's isolated registry.
   if (claudeTool.startsWith('mcp__')) {
-    return null;
+    return claudeToGeminiTools[claudeTool] || null;
   }
   // Task: exclude -- agents are auto-registered as callable tools
   if (claudeTool === 'Task') {
@@ -556,7 +564,7 @@ function stripSubTags(content) {
  * - tools: must be a YAML array (not comma-separated string)
  * - tool names: must use Gemini built-in names (read_file, not Read)
  * - color: must be removed (causes validation error)
- * - mcp__* tools: must be excluded (auto-discovered at runtime)
+ * - MCP: preserve the narrow mapped selectors for explicit child registration
  */
 function convertClaudeToGeminiAgent(content) {
   if (!content.startsWith('---')) return content;
@@ -3935,6 +3943,8 @@ module.exports = {
   generateCodexAgentToml,
   getCodexSkillAdapterHeader,
   convertClaudeToCodexMarkdown,
+  convertClaudeToGeminiAgent,
+  convertClaudeToOpencodeFrontmatter,
   convertClaudeCommandToCodexSkill,
   convertClaudeAgentToCodexAgent,
   convertSlashCommandsToCodexSkillMentions,

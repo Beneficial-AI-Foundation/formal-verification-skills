@@ -77,7 +77,7 @@ describe('Crypto definition -> actual converter -> registry-selection fixture', 
       assertPair(selected);
       assert.deepEqual(selected.map(tool => tool.schema.name),
         PAIR.map(raw => schemaQualified ? `lean-lsp__${raw}` : raw));
-      assert.deepEqual(selectors, ['read_file', 'run_shell_command', 'grep_search',
+      assert.deepEqual(selectors, ['read_file', 'run_shell_command', 'search_file_content',
         'glob', 'write_file', 'ide__getDiagnostics', ...PAIR.map(raw => `lean-lsp__${raw}`)]);
       assert.doesNotMatch(frontmatter(converted), /^color:/m);
     });
