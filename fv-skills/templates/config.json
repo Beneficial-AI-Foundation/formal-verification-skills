@@ -14,12 +14,6 @@
     "extract_workspace": ".formalising/extract"
   },
   "native_decide": "ask",
-  "diagnostics": {
-    "backend": "auto",
-    "require_live": false,
-    "mcp_server": "lean-lsp",
-    "beam_path": null
-  },
   "model_profile": "quality",
   "stage_overrides": {
     "claude": {},

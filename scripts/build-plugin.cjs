@@ -24,7 +24,6 @@ const PLUGIN_DESCRIPTION =
 const SCRIPT_FILES = [
   'fvs-codex-think.mjs',
   'fvs-kb-query.py',
-  'fvs-lean-diagnostics.mjs',
   'fvs-lean-style-check.mjs',
   'fvs-model-external.mjs',
   'fvs-model-review.mjs',

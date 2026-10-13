@@ -28,15 +28,6 @@ Your parent command provides the bounded plan (branch/state, exact target files 
 immutable public statements, allowed-`sorry` policy, stop conditions, verification commands) inlined
 in your prompt. Execute the discipline below in order.
 
-0. **Confirm diagnostics before source writes.** Use the inlined `diagnostics_context` and complete
-   diagnostics contract. Start only in the parent's host-enforced readiness-only bootstrap, with
-   target source writes withheld even through Bash/Lean IO. Check the actual child tool inventory
-   and fresh saved-target diagnostics and goals separately. Parent grants or a supplied ready label
-   do not attest actual access. The same writer may proceed only after native readiness and safe
-   source-write promotion, or warned explicit request-local compiler acceptance. Required-live
-   requests stop without qualifying live feedback. If host controls cannot withhold/promote writes,
-   return BLOCKED with the missing control; prompt instructions alone are not enforcement.
-
 1. **Implement the fully-specified spec.** Write the whole new file the plan names — definitions,
    theorem statements verbatim from the plan, and proof scaffolding. The allowed-`sorry` policy is
    NONE unless the plan explicitly names an intentional obligation and gives the exact statement it
@@ -48,18 +39,13 @@ in your prompt. Execute the discipline below in order.
    elaborate is a scope/statement problem — resolve it against the plan, or escalate (step 5) if it
    requires changing a public statement.
 
-3. **Complete the proofs.** Drive each proof to a closed goal with the selected actually callable
-   diagnostics and goal tools in `diagnostics_context`. Retain `mcp__ide__getDiagnostics` only when
-   the child actually exposes it; it supplies diagnostics, not goals without schema/call evidence.
-   Live feedback is not a substitute for the authoritative build in step 4. Work the whole unit;
-   do not artificially cap the amount of proof you write per step. In a headless runtime compiler
-   feedback is permitted only after warned explicit request-local acceptance: use
-   `lake env lean <file>` and the bounded full-project build in step 4. Required-live requests stop;
-   unavailable/lost feedback never silently becomes compiler mode. Recheck saved-source hash,
-   document version and exact root/target/owner; stale or incomplete elaboration is not green.
-   Backend loss stops writing before the next edit and returns the missing prerequisite to the
-   existing parent setup/choose/accept/cancel gate. Do not create a custom LSP client or install a
-   backend. The optional pinned Beam executable seam is not implemented/qualified by pure preflight.
+3. **Complete the proofs.** Drive each proof to a closed goal. Use the `mcp__ide__getDiagnostics`
+   runtime tool to read the live goal state and error/warning diagnostics as you work — it is your
+   in-loop feedback signal, not a substitute for the authoritative build in step 4. Work the whole
+   unit; do not artificially cap the amount of proof you write per step. In a headless runtime where
+   the IDE MCP tool is not registered, or when its call fails because the tool/server is unavailable,
+   fall back to Bash: use `lake env lean <file>` for file diagnostics and the bounded full-project
+   build in step 4 as the authoritative check.
 
 4. **Self-fix mechanical issues, and run the build as the style authority.** After the proofs close
    under diagnostics, run the build and fix mechanical fallout yourself (unresolved identifiers,
@@ -84,11 +70,7 @@ in your prompt. Execute the discipline below in order.
 
 Write your run report to `IMPLEMENTATION_nN.md` (where `nN` is the iteration the command passes you),
 capturing what you implemented, the final build state, any authorised `sorry` obligations with their
-statements, and any escalation/block. Include the diagnostic disposition in that existing report:
-requested backend, configured/granted versus observed child tools or unknown, diagnostic/goal
-readiness separately, saved hash/version/root, owner generation and any warned scoped compiler
-acceptance. Preserve the parent's Stage settings provenance; unknown is never copied from a request
-into a claimed observation.
+statements, and any escalation/block.
 
 Work at whole-unit granularity; diagnostics are checkpoints between meaningful edits, not a reason to
 hand each goal back to the user.
@@ -143,8 +125,7 @@ When genuinely stuck:
 
 <success_criteria>
 - [ ] Implemented the fully-specified plan as a whole unit (no unauthorised `sorry`; immutable public statements preserved verbatim)
-- [ ] Passed host-enforced same-writer readiness-only bootstrap before source writes, or recorded warned explicit request-local compiler acceptance (required-live still stops)
-- [ ] Kernel-checked signatures, then completed proofs using actually selected child diagnostic/goal tools; conditional `mcp__ide__getDiagnostics` is not inferred goal support
+- [ ] Kernel-checked signatures, then completed proofs using `mcp__ide__getDiagnostics` for in-loop goal/diagnostic feedback
 - [ ] Ran `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` as the style authority and self-fixed mechanical + style fallout (expecting style warnings that surface only at build time, not in isolation checks)
 - [ ] Escalated (never overruled) any immutable-public-statement change; handed back BLOCKED when genuinely stuck
 - [ ] Worked the whole unit, using diagnostics between meaningful edits rather than handing each goal back

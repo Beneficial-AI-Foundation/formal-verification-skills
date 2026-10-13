@@ -235,7 +235,7 @@ describe('References (fv-skills/references/)', () => {
   const expected = [
     'aeneas-patterns.md', 'blocker-catalog.md', 'crypto-plan-review.md',
     'external-modeling.md', 'extraction-safety-model.md', 'fc-spec-review.md',
-    'lean-diagnostics.md', 'lean-refactoring.md', 'lean-spec-conventions.md', 'model-profiles.md',
+    'lean-refactoring.md', 'lean-spec-conventions.md', 'model-profiles.md',
     'proof-engineering-loop.md', 'proof-strategies.md',
     'review-diagnostics.md', 'review-grounding.md', 'review-policy.md', 'tactic-usage.md', 'ui-brand.md',
   ];
