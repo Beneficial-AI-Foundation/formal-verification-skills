@@ -264,9 +264,14 @@ describe('Crypto loop: executor declares its IDE diagnostics capability (#49)', 
       'agents/fvs-crypto-executor.md tools must declare mcp__ide__getDiagnostics');
   });
 
-  it('keeps an explicit Bash diagnostics fallback for headless runtimes', () => {
-    assert.match(source, /headless[\s\S]*IDE MCP[\s\S]*lake env lean/i,
-      'agents/fvs-crypto-executor.md missing headless Bash/lake env lean fallback');
+  it('separates diagnostics and goals and requires warned parent-mediated compiler consent', () => {
+    assert.match(source, /lean_diagnostic_messages/);
+    assert.match(source, /lean_goal/);
+    assert.match(source, /IDE[\s\S]{0,100}diagnostics[\s\S]{0,100}not goals/i);
+    assert.match(source, /warn[\s\S]{0,180}explicit[\s\S]{0,100}accept/i);
+    assert.match(source, /required-live[\s\S]{0,100}stop/i);
+    assert.match(source, /lake env lean/);
+    assert.doesNotMatch(source, /when its call fails[\s\S]*fall back to Bash/i);
   });
 });
 
@@ -319,9 +324,11 @@ for (const absPath of [STAGE_FILES.cmdExecute, STAGE_FILES.wfExecute,
 // ---------------------------------------------------------------------------
 const CRYPTO_EXECUTOR = path.join(AGENTS_DIR, 'fvs-crypto-executor.md');
 whenExists(CRYPTO_EXECUTOR, `Crypto loop: executor discipline in ${rel(CRYPTO_EXECUTOR)} (D-01/D-04)`, (content, absPath) => {
-  it('completes proofs via the runtime getDiagnostics tool', () => {
-    assert.ok(/mcp__ide__getDiagnostics/.test(content),
-      `${rel(absPath)} missing the mcp__ide__getDiagnostics runtime tool reference`);
+  it('uses actual separate diagnostic and goal tools, retaining conditional IDE diagnostics', () => {
+    assert.match(content, /mcp__ide__getDiagnostics/);
+    assert.match(content, /lean_diagnostic_messages/);
+    assert.match(content, /lean_goal/);
+    assert.match(content, /child[\s\S]{0,180}inventory/i);
   });
   it('reports to an IMPLEMENTATION_ report file', () => {
     assert.ok(/IMPLEMENTATION_/.test(content),
