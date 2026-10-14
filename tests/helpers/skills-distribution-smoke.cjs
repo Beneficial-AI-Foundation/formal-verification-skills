@@ -130,7 +130,7 @@ function assertSuccess(result) {
 function sourceSnapshot(q, area) {
   const destination = path.join(area, 'source');
   fs.mkdirSync(destination);
-  const listing = spawnSync(q.tools.git.path, ['-C', ROOT, 'ls-files', '-z'], { env: environment(q, path.join(area, 'git-profile')), encoding: 'utf8' });
+  const listing = spawnSync(q.tools.sandbox.path, ['-f', q.confinement.qaProfile.path, q.tools.git.path, '-C', ROOT, 'ls-files', '-z'], { env: environment(q, path.join(area, 'git-profile')), encoding: 'utf8' });
   assert.equal(listing.status, 0, listing.stderr);
   const files = [...new Set([...listing.stdout.split('\0').filter(Boolean), 'tests/skills-distribution.test.cjs', 'tests/helpers/skills-distribution-smoke.cjs'])];
   const sourceFiles = [];
@@ -159,7 +159,11 @@ function assertContract(text) {
   assert.ok(text.indexOf('## Consent') < text.indexOf('## Complete source installation'), 'consent barrier precedes command recipe');
   assert.match(text, /WAIT/);
   assert.match(text, /inspection consent is not installation consent/i);
-  assert.doesNotMatch(text, /CLAUDE_PLUGIN_ROOT|@\.\.\/|\.\.\/\.\.\//, 'transported bootstrap must not load parents');
+  assert.doesNotMatch(text, /CLAUDE_PLUGIN_ROOT|@\.{1,2}\/|(?:\]\()\.{1,2}\//, 'transported bootstrap must not use adjacent relative resource loaders');
+  assert.doesNotMatch(text, /\.\.\/\.\.\//, 'transported bootstrap must not load parents');
+}
+function requireResource(file) {
+  assert.ok(fs.existsSync(file) && fs.statSync(file).isFile(), `missing native resource: ${file}`);
 }
 async function nativeFootprint(q, area, source, env, runtime = 'claude') {
   const project = path.join(area, `native-${runtime}`);
@@ -198,6 +202,11 @@ async function nativeFootprint(q, area, source, env, runtime = 'claude') {
     }
   }
   closure(path.join(source, 'fv-skills'));
+  for (const script of fs.readdirSync(path.join(source, 'plugins/fvs/scripts'))) {
+    const installed = path.join(nativeRoot, 'scripts', script);
+    assert.ok(fs.statSync(installed).isFile(), `complete generator-owned script inventory: ${script}`);
+    resources.push({ path: installed, bytes: fs.statSync(installed).size, sha256: digest(fs.readFileSync(installed)) });
+  }
   for (const role of fs.readdirSync(path.join(source, 'agents')).filter(n => n.endsWith('.md'))) {
     assert.ok(fs.statSync(path.join(nativeRoot, 'agents', role)).isFile(), `complete role: ${role}`);
   }
@@ -234,7 +243,7 @@ async function nativeFootprint(q, area, source, env, runtime = 'claude') {
   }
   fs.writeFileSync(path.join(area, `native-${runtime}-resources.json`), JSON.stringify({ nativeRoot, manifest: manifests[0], resources, commandsDirectory, commandPath, configFile }, null, 2) + '\n');
   for (const rel of ['fv-skills/workflows/fc-plan.md', 'fv-skills/workflows/crypto-review.md', 'fv-skills/templates/config.json', 'fv-skills/references/fc-spec-review.md', 'scripts/fvs-probe-inventory.mjs', 'agents/fvs-researcher.md', 'hooks/fvs-check-update.js', 'fv-skills/VERSION']) {
-    assert.ok(fs.statSync(path.join(nativeRoot, rel)).isFile(), `native installed resource ${rel}`);
+    requireResource(path.join(nativeRoot, rel));
   }
   if (runtime === 'claude') {
     const settings = fs.readFileSync(path.join(nativeRoot, 'settings.json'), 'utf8');
@@ -267,11 +276,11 @@ async function tracer(q, area) {
   const native = await nativeFootprint(q, area, source, env);
   return { discovery: 'one', installed, installedSha256: digest(text), relocated, native };
 }
-async function nativeResources(q, area) {
+async function nativeResources(q, area, full = false) {
   const env = environment(q, path.join(area, 'profile'));
   const source = sourceSnapshot(q, area);
   assertSuccess(await run(q, area, 'verification-hook-build', [q.tools.node.path, path.join(source, 'scripts/build-hooks.js')], source, env));
-  assertSuccess(await run(q, area, 'verification-unit', [q.tools.node.path, '--test', 'tests/skills-distribution.test.cjs', 'tests/pi-installer.test.cjs', 'tests/install.test.cjs', 'tests/codex-config.test.cjs'], source, unitEnvironment(env), { timeout: 45000 }));
+  assertSuccess(await run(q, area, 'verification-unit', [q.tools.node.path, '--test', 'tests/skills-distribution.test.cjs', 'tests/pi-installer.test.cjs', 'tests/install.test.cjs', 'tests/codex-config.test.cjs', ...(full ? ['tests/task-ref-sweep.test.cjs'] : [])], source, unitEnvironment(env), { timeout: 45000 }));
   const results = {};
   for (const runtime of ['claude', 'opencode', 'gemini', 'codex']) {
     results[runtime] = await nativeFootprint(q, area, source, env, runtime);
@@ -318,17 +327,126 @@ async function nativeResources(q, area) {
   return results;
 }
 
+async function transport(q, area) {
+  const env = environment(q, path.join(area, 'profile'));
+  const source = sourceSnapshot(q, area);
+  const result = { copies: {}, discovery: {} };
+  const listingProject = path.join(area, 'listing-project');
+  fs.mkdirSync(listingProject);
+  for (const [name, input, flags, count] of [
+    ['root', source, [], 1], ['direct', path.join(source, 'skills/fvs-setup'), [], 1],
+    ['full-depth', source, ['--full-depth'], 61], ['pi-subpath', path.join(source, 'pi/skills'), [], 30],
+    ['plugin-subpath', path.join(source, 'plugins/fvs/skills'), [], 30],
+  ]) {
+    const listed = await run(q, area, `list-${name}`, [q.tools.node.path, q.cli.path, 'add', input, '--list', ...flags], listingProject, env);
+    assertSuccess(listed);
+    assert.match(listed.stdout, new RegExp(`Found ${count} skills?\\b`));
+    result.discovery[name] = count;
+  }
+  for (const agent of ['claude-code', 'codex', 'gemini-cli', 'opencode', 'pi']) {
+    const project = path.join(area, `copy-${agent}`);
+    fs.mkdirSync(project);
+    const input = agent === 'pi' ? path.join(source, 'skills/fvs-setup') : source;
+    const copied = await run(q, area, `copy-${agent}`, [q.tools.node.path, q.cli.path, 'add', input, '--skill', 'fvs-setup', '--agent', agent, '--copy', '--yes'], project, env);
+    assertSuccess(copied);
+    const directory = path.join(project, agent === 'claude-code' ? '.claude/skills/fvs-setup' : '.agents/skills/fvs-setup');
+    assert.ok(fs.lstatSync(directory).isDirectory() && !fs.lstatSync(directory).isSymbolicLink());
+    assert.deepEqual(fs.readdirSync(directory), ['SKILL.md']);
+    const text = fs.readFileSync(path.join(directory, 'SKILL.md'), 'utf8');
+    assertContract(text);
+    assert.equal(text, fs.readFileSync(path.join(source, 'skills/fvs-setup/SKILL.md'), 'utf8'));
+    assert.ok(fs.statSync(path.join(project, 'skills-lock.json')).isFile());
+    result.copies[agent] = { directory, sha256: digest(text), lock: path.join(project, 'skills-lock.json'), evidence: 'transport-only-not-host-loading' };
+  }
+  const project = path.join(area, 'multi-agent-symlink');
+  fs.mkdirSync(project);
+  const linked = await run(q, area, 'multi-agent-symlink', [q.tools.node.path, q.cli.path, 'add', source, '--skill', 'fvs-setup', '--agent', 'claude-code', 'codex', '--yes'], project, env);
+  assertSuccess(linked);
+  const alias = path.join(project, '.claude/skills/fvs-setup');
+  const canonical = path.join(project, '.agents/skills/fvs-setup');
+  assert.equal(fs.lstatSync(alias).isSymbolicLink(), true, 'genuine multi-target symlink required');
+  assert.ok(fs.lstatSync(canonical).isDirectory() && !fs.lstatSync(canonical).isSymbolicLink());
+  assert.equal(fs.realpathSync(alias), fs.realpathSync(canonical));
+  const relocatedSource = path.join(area, 'source-relocated');
+  fs.renameSync(source, relocatedSource);
+  assert.equal(fs.existsSync(source), false);
+  for (const directory of [alias, canonical]) assertContract(fs.readFileSync(path.join(directory, 'SKILL.md'), 'utf8'));
+  result.symlink = { alias, canonical, readlink: fs.readlinkSync(alias), realpath: fs.realpathSync(alias), originalSource: source, relocatedSource, sourceRetained: true, installedSha256: digest(fs.readFileSync(path.join(alias, 'SKILL.md'))) };
+  return result;
+}
+async function denials(q, area, qualification, acceptance) {
+  const env = environment(q, path.join(area, 'profile'));
+  const results = {};
+  for (const variable of ['DISABLE_TELEMETRY', 'DO_NOT_TRACK']) {
+    const missing = { DISABLE_TELEMETRY: '1', DO_NOT_TRACK: '1' };
+    delete missing[variable];
+    assert.throws(() => validateQualification(qualification, acceptance, missing), /opt-out/);
+    results[variable] = 'rejected-before-invocation';
+  }
+  assert.throws(() => validateQualification(null, acceptance), /qualification/);
+  for (const [name, argv, options, check] of [
+    ['nonzero', ['-e', 'process.exit(17)'], {}, r => assert.equal(r.code, 17)],
+    ['signal', ['-e', "process.kill(process.pid, 'SIGTERM')"], {}, r => assert.equal(r.signal, 'SIGTERM')],
+    ['deadline', ['-e', 'setInterval(()=>{},1000)'], { timeout: 100 }, r => assert.equal(r.reason, 'deadline')],
+    ['overflow', ['-e', "process.stdout.write('x'.repeat(524288)); setInterval(()=>{},1000)"], { maxBytes: 1024 }, r => assert.equal(r.reason, 'output-overflow')],
+  ]) {
+    const observed = await run(q, area, `denial-${name}`, [q.tools.node.path, ...argv], area, env, options);
+    check(observed);
+    assert.throws(() => assertSuccess(observed));
+    results[name] = 'cannot-pass';
+  }
+  const malformed = path.join(area, 'qualification-altered.json');
+  const changed = JSON.parse(fs.readFileSync(qualification, 'utf8'));
+  changed.cli.version = '0.0.0';
+  fs.writeFileSync(malformed, JSON.stringify(changed));
+  assert.throws(() => validateQualification(malformed, acceptance), /Expected values|integrity|equal/);
+  results.alteredQualification = 'rejected-before-invocation';
+  const official = q.restoration.find(p => p.name === 'skills').installedFiles.find(f => f.path === q.cli.path);
+  const altered = path.join(area, 'altered-cli.mjs');
+  fs.writeFileSync(altered, fs.readFileSync(q.cli.path, 'utf8') + '\n// altered fixture\n');
+  assert.throws(() => verifyFile({ ...official, path: altered }), /integrity mismatch/);
+  const dep = q.restoration.find(p => p.name === 'yaml').installedFiles[0];
+  const alteredDep = path.join(area, 'altered-dependency');
+  fs.writeFileSync(alteredDep, 'changed');
+  assert.throws(() => verifyFile({ ...dep, path: alteredDep }), /integrity mismatch/);
+  results.alteredOfficialAndDependency = 'rejected-before-execution';
+  const linked = path.join(area, 'redirected-root');
+  fs.symlinkSync(q.root, linked);
+  assert.throws(() => canonicalDirectory(linked), /symlink/);
+  results.redirectedRoot = 'rejected';
+  assert.throws(() => requireResource(path.join(area, 'absent-native-resource')), /missing native resource/);
+  results.absentNativeResource = 'cannot-pass-footprint-check';
+  results.consentAndControlDenials = 'renderer semantic states tested; no fabricated conversational enforcement or hidden installer invoked';
+  return results;
+}
+async function acceptance(q, area, qualification, acceptanceFile) {
+  const results = {};
+  for (const [name, execute] of [
+    ['tracer', child => tracer(q, child)],
+    ['native-resources', child => nativeResources(q, child, true)],
+    ['transport', child => transport(q, child)],
+    ['denials', child => denials(q, child, qualification, acceptanceFile)],
+  ]) {
+    const child = path.join(area, name);
+    fs.mkdirSync(child);
+    results[name] = await execute(child);
+  }
+  return results;
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const qualification = args[args.indexOf('--qualification') + 1];
   assert.ok(args.includes('--qualification'), 'qualification required before any invocation');
   const q = validateQualification(qualification, process.env.FVS_SKILLS_DISTRIBUTION_ACCEPTANCE);
   const which = args[args.indexOf('--case') + 1];
-  assert.ok(['tracer', 'native-resources'].includes(which), 'supported case required');
+  assert.ok(['tracer', 'native-resources', 'transport', 'acceptance'].includes(which), 'supported case required');
   const area = fs.mkdtempSync(path.join(q.root, 'profiles', `${which}-`));
   const started = Date.now();
   try {
-    const result = which === 'tracer' ? await tracer(q, area) : await nativeResources(q, area);
+    const cases = { tracer, 'native-resources': nativeResources, transport, acceptance: (record, root) => acceptance(record, root, qualification, process.env.FVS_SKILLS_DISTRIBUTION_ACCEPTANCE) };
+    const result = await cases[which](q, area);
+    assert.ok(Date.now() - started < 60000, 'local case wall-time budget exceeded');
     fs.writeFileSync(path.join(area, 'outcome.json'), JSON.stringify({ status: 'pass', elapsedMs: Date.now() - started, result }, null, 2) + '\n');
     console.log(JSON.stringify({ status: 'pass', case: which, area, result }));
   } catch (error) {
