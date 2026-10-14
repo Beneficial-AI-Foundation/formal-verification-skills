@@ -6,6 +6,13 @@ reviews pass, proofs close, the guarded build is green, and trust audit reports 
 
 <process>
 
+Load trusted shipped guidance from the installed FVS root before dispatch, never from consumer cwd:
+
+```bash
+LAKE_BUILD_GUIDE=$(cat ~/.claude/fv-skills/references/lake-build.md) || exit 1
+```
+
+
 ## 0. Resolve the installed FVS root
 
 Resolve the current runtime's installed FVS package/plugin root from its runtime header and set
@@ -87,6 +94,18 @@ whole bounded unit but may write only the exact confirmed hand-written targets. 
 `@[rust_fun]` signatures/namespaces and produce transparent, unfoldable definitions without `sorry`,
 `axiom`, `partial`, unsafe assumptions, or unrelated cleanup.
 
+The actual model-writing child prompt includes this block with the confirmed manifest, bounded
+closure and delimited untrusted source records. Reuse the SAME prompt content for every model
+revision; the guidance does not expand write permissions:
+
+```text
+<external_modeler_prompt mode="model">
+<lake_build_guide>
+$LAKE_BUILD_GUIDE
+</lake_build_guide>
+</external_modeler_prompt>
+```
+
 Create an immutable model-review packet containing the full Rust ranges and hashes, complete Lean
 model files and hashes, closure, abstraction rulings, imports, and prior round evidence. Run
 `node "$FVS_ROOT/scripts/fvs-model-review.mjs" run <request.json>` in `model` mode with a fresh
@@ -104,6 +123,16 @@ Dispatch the same dedicated executor in mode `specification` with the approved m
 step-tagged specifications for the root and only required closure members, preserving exact project
 conventions. No theorem body may retain `sorry` at the completion gate.
 
+The actual specification-writing child prompt, also used for every specification revision:
+
+```text
+<external_modeler_prompt mode="specification">
+<lake_build_guide>
+$LAKE_BUILD_GUIDE
+</lake_build_guide>
+</external_modeler_prompt>
+```
+
 Run a separate immutable `specification` review through
 `node "$FVS_ROOT/scripts/fvs-model-review.mjs" run <request.json>`. The fresh reviewer
 checks that each theorem states the intended external contract over the approved model, covers all
@@ -119,6 +148,16 @@ Specification edits that also change the model invalidate both gates.
 Dispatch `fvs-external-modeler` in mode `proof` for the whole bounded unit. It must close every proof,
 using live diagnostics between meaningful edits. `sorry`, `admit`, placeholder axioms, and
 `implemented_by` trust shortcuts are forbidden.
+
+The actual whole-unit proof-writing child prompt (including any permitted proof repair):
+
+```text
+<external_modeler_prompt mode="proof">
+<lake_build_guide>
+$LAKE_BUILD_GUIDE
+</lake_build_guide>
+</external_modeler_prompt>
+```
 
 Run the authoritative build exactly once after current executor evidence, or use the existing one
 guarded fallback only when the project policy permits it. Never run a bare `lake build`; preserve

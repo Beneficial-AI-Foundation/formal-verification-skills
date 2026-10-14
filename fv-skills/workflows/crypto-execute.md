@@ -24,6 +24,13 @@ Hard invariants this workflow preserves:
 
 <process>
 
+Load trusted shipped guidance from the installed FVS root before dispatch, never from consumer cwd:
+
+```bash
+LAKE_BUILD_GUIDE=$(cat ~/.claude/fv-skills/references/lake-build.md) || exit 1
+```
+
+
 <step name="resolve_topic">
 ## Step 1: Resolve the topic + iteration (path safety)
 
@@ -87,6 +94,10 @@ Task(
   reasoning_effort="$EXECUTOR_EFFORT", // when supported; otherwise apply the capability gate
   description="Run bounded plan",
   prompt="Execute the bounded crypto plan.
+
+<lake_build_guide>
+$LAKE_BUILD_GUIDE
+</lake_build_guide>
 
 <bounded_plan>...the inlined bounded plan...</bounded_plan>
 

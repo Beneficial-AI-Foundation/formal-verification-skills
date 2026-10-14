@@ -611,6 +611,9 @@ exclusions and verify that the target function actually appears in `Funs.lean` b
 attempting to write a specification. Functions behind `#[cfg(not(verify))]` will be
 silently absent.
 
+For selectors, import prerequisites and conditional bounded builds, see [Practical Lake builds](lake-build.md).
+A targeted check does not replace final compiler/style/trust gates or grant execution permission.
+
 ## NEVER run `lake build` without resource limits
 
 Full project compilation is computationally expensive (30+ minutes). Always use

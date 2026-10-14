@@ -27,7 +27,15 @@ green build, and a CLEAN trust audit.
 </execution_context>
 
 <process>
-Follow the workflow with `$ARGUMENTS`.
+Load trusted shipped guidance from the installed FVS root, not the consumer cwd:
+
+```bash
+LAKE_BUILD_GUIDE=$(cat ~/.claude/fv-skills/references/lake-build.md) || exit 1
+```
+
+Follow the workflow with `$ARGUMENTS` and forward the loaded `LAKE_BUILD_GUIDE` as content.
+Its model, specification, proof and revision child prompts inline the named guide block; links
+alone do not cross a child boundary. The host adapter transforms the canonical installed path.
 
 The public interface is intentionally small: one target external stub, an optional iteration/resume
 selector, and confirmed runtime/model settings. The workflow hides locked-source resolution,

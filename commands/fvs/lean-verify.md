@@ -44,6 +44,14 @@ Parse --max-attempts flag from $ARGUMENTS:
 
 <process>
 
+Before any dispatch, load trusted shipped guidance from the installed FVS root (the host adapter
+transforms this canonical path; never resolve it from the consumer cwd):
+
+```bash
+LAKE_BUILD_GUIDE=$(cat ~/.claude/fv-skills/references/lake-build.md) || exit 1
+```
+
+
 ## Step 1: Parse Spec File Path and Options
 
 Parse $ARGUMENTS for spec file path and optional --max-attempts flag:
@@ -209,6 +217,10 @@ Task(
   description="Research proof context for $SPEC_FILE",
   prompt="Research mode: proof-attempt
 
+<lake_build_guide>
+$LAKE_BUILD_GUIDE
+</lake_build_guide>
+
 <spec_file_path>$SPEC_FILE</spec_file_path>
 <spec_content>
 $SPEC_FILE_CONTENT
@@ -283,6 +295,10 @@ FOR EACH SORRY (in recommended order from research):
       reasoning_effort="$EXECUTOR_EFFORT", // when supported; otherwise apply the capability gate
       description="Prove sorry {N} in $SPEC_FILE",
       prompt="Execute mode: proof-attempt
+
+<lake_build_guide>
+$LAKE_BUILD_GUIDE
+</lake_build_guide>
 
 <research_findings>
 $RESEARCH_SUBAGENT_OUTPUT

@@ -12,6 +12,13 @@ Output: Refactored spec file with before/after metrics, or NO_CHANGE if already 
 
 <process>
 
+Load trusted shipped guidance from the installed FVS root before dispatch, never from consumer cwd:
+
+```bash
+LAKE_BUILD_GUIDE=$(cat ~/.claude/fv-skills/references/lake-build.md) || exit 1
+```
+
+
 <step name="cache_preflight">
 Run the mandatory cache preflight from the validated Lean project root before the baseline build.
 A failure stops the workflow:
@@ -99,6 +106,10 @@ Task(
   description="Research refactoring context for $SPEC_FILE",
   prompt="Research mode: lean-refactor
 
+<lake_build_guide>
+$LAKE_BUILD_GUIDE
+</lake_build_guide>
+
 <spec_file_path>$SPEC_PATH</spec_file_path>
 <spec_content>
 $SPEC_FILE_CONTENT
@@ -155,7 +166,10 @@ WHILE PASS < MAX_PASSES:
     model="$REFACTORER_MODEL",
     reasoning_effort="$REFACTORER_EFFORT", // when supported; otherwise apply the capability gate
     description="Refactor {theorem_name} pass {PASS+1}",
-    prompt="<refactoring_reference>$LEAN_REFACTORING_CONTENT</refactoring_reference>
+    prompt="<lake_build_guide>
+$LAKE_BUILD_GUIDE
+</lake_build_guide>
+<refactoring_reference>$LEAN_REFACTORING_CONTENT</refactoring_reference>
     <research_findings>$RESEARCH_OUTPUT</research_findings>
     <current_spec>$CURRENT_SPEC</current_spec>
     <target_theorem>{theorem_name}</target_theorem>

@@ -8,7 +8,7 @@ const read = name => fs.readFileSync(path.join(ROOT,name),'utf8');
 const families = ['lean-specify','lean-verify','lean-formalise','lean-refactor','crypto-execute','model-external'];
 it('provides a practical source-cited Lake guide without measured claims', () => {
   assert.ok(fs.existsSync(path.join(ROOT,'fv-skills/references/lake-build.md')), 'Lake reference must exist');
-  const guide = read('fv-skills/references/lake-build.md');
+  const guide = read('fv-skills/references/lake-build.md').replace(/\s+/g,' ');
   for (const fragment of ['<overview>','<quick_reference>','<patterns>','<anti_patterns>', '551c61ba0263a59279ffaa892d2927b269e713c9','4.34.1','v4.31.0','v4.33.1','[@[<package>]/][<target>|[+]<module>][:<facet>]', '@a/b','@a/+A:c','Foo/Bar.lean:o',':olean','leanArts',':static',':shared','lake env','does not build imports','lake-manifest.json','lean-toolchain','LAKE_CACHE_DIR','Mathlib','intentional dependency change','ONE simultaneous compiler','TWO threads','nice19','ALL descendants','UNRUN','operator-postrelease','configured default targets','final project/style/trust']) assert.ok(guide.includes(fragment), fragment);
 });
 it('loads installed-root content before actual child prompts in all six pairs', () => {
@@ -56,6 +56,19 @@ it('optional preflight refuses incomplete and synthetic qualification before loa
     assert.equal(result.operations,0);
     assert.ok(result.reason);
   }
+  // This synthetic packet contains plain text, NOT executable tools or real control proof.
+  const os=require('node:os'), crypto=require('node:crypto');
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'fvs-lake-preflight-synthetic-'));
+  const input=path.join(root,'plain-data.txt'); fs.writeFileSync(input,'synthetic data only\n');
+  const row={path:input,bytes:fs.statSync(input).size,sha256:crypto.createHash('sha256').update(fs.readFileSync(input)).digest('hex')};
+  const q={operation:'synthetic-never-authorized',permissionEvidence:row,root,tools:{},dynamicLibraries:[row],source:{toolchain:row,manifest:row,configuration:row},environment:{},evidence:{}};
+  for(const name of ['lean','lake','nativeCompiler','linker']) q.tools[name]={...row,version:'synthetic',origin:'plain-text-test-data'};
+  for(const name of ['HOME','TMPDIR','toolHome','cacheHome']) {const p=path.join(root,name); fs.mkdirSync(p); q.environment[name]=p;}
+  for(const name of ['osConfinement','oneCompiler','twoThreads','nice19AllDescendants','cacheControls','lifecycle']) q.evidence[name]={...row,source:'synthetic-not-source-qualification',operation:q.operation};
+  assert.match(preflight(q).reason,/unsupported real whole-chain control/);
+  for(const name of Object.keys(q.evidence)) {const broken=structuredClone(q); delete broken.evidence[name]; assert.match(preflight(broken).reason,new RegExp(name));}
+  const mismatch=structuredClone(q); mismatch.tools.lean.sha256='0'.repeat(64); assert.match(preflight(mismatch).reason,/digest mismatch/);
+  const unsafe=structuredClone(q); unsafe.environment.HOME=ROOT; assert.match(preflight(unsafe).reason,/owned HOME/);
   const source=read('tests/helpers/lake-reference-live.cjs');
   assert.ok(!/require\(['"]node:child_process|spawn\(|execFile\(/.test(source), 'no execution bypass');
 });
