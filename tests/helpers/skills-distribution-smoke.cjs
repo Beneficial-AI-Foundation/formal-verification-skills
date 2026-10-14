@@ -90,6 +90,12 @@ function environment(q, area) {
     CI: '1', NO_COLOR: '1', SKILLS_CLONE_TIMEOUT_MS: '10000',
   };
 }
+function unitEnvironment(env) {
+  const result = { ...env };
+  // Installer tests intentionally replace HOME for each independent fixture.
+  for (const name of ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'GEMINI_CONFIG_DIR', 'OPENCODE_CONFIG_DIR', 'PI_CODING_AGENT_DIR']) delete result[name];
+  return result;
+}
 function run(q, area, label, argv, cwd, env, { timeout = 15000, maxBytes = 1048576 } = {}) {
   assert.ok(cwd === q.root || cwd.startsWith(q.root + path.sep), 'subprocess cwd escapes owned root');
   const raw = path.join(area, label);
@@ -155,12 +161,16 @@ function assertContract(text) {
   assert.match(text, /inspection consent is not installation consent/i);
   assert.doesNotMatch(text, /CLAUDE_PLUGIN_ROOT|@\.\.\/|\.\.\/\.\.\//, 'transported bootstrap must not load parents');
 }
-async function nativeClaude(q, area, source, env) {
-  const project = path.join(area, 'native-claude');
+async function nativeFootprint(q, area, source, env, runtime = 'claude') {
+  const project = path.join(area, `native-${runtime}`);
   fs.mkdirSync(project);
-  const build = await run(q, area, 'hook-build', [q.tools.node.path, path.join(source, 'scripts/build-hooks.js')], source, env);
+  const config = path.join(project, `.${runtime}`);
+  fs.mkdirSync(config);
+  if (runtime === 'codex') fs.writeFileSync(path.join(config, 'config.toml'), 'foreign_setting = "keep"\n');
+  else fs.writeFileSync(path.join(config, runtime === 'opencode' ? 'opencode.json' : 'settings.json'), JSON.stringify({ foreignSetting: 'keep' }));
+  const build = await run(q, area, `hook-build-${runtime}`, [q.tools.node.path, path.join(source, 'scripts/build-hooks.js')], source, env);
   assertSuccess(build);
-  const result = await run(q, area, 'native-install-claude', [q.tools.node.path, path.join(source, 'bin/install.js'), '--claude', '--local'], project, env);
+  const result = await run(q, area, `native-install-${runtime}`, [q.tools.node.path, path.join(source, 'bin/install.js'), `--${runtime}`, '--local'], project, env);
   assertSuccess(result);
   const manifests = [];
   function walk(directory) {
@@ -191,24 +201,53 @@ async function nativeClaude(q, area, source, env) {
   for (const role of fs.readdirSync(path.join(source, 'agents')).filter(n => n.endsWith('.md'))) {
     assert.ok(fs.statSync(path.join(nativeRoot, 'agents', role)).isFile(), `complete role: ${role}`);
   }
-  for (const hook of ['fvs-check-update.js', 'fvs-statusline.js']) {
-    assert.deepEqual(fs.readFileSync(path.join(nativeRoot, 'hooks', hook)), fs.readFileSync(path.join(source, 'hooks/dist', hook)));
+  const hooks = runtime === 'codex' ? ['fvs-check-update.js'] : ['fvs-check-update.js', 'fvs-statusline.js'];
+  for (const hook of hooks) {
+    const original = fs.readFileSync(path.join(source, 'hooks/dist', hook), 'utf8');
+    // Local installation templates only quoted config-directory literals.
+    const expected = original.replace(/'\.claude'/g, `'.${runtime}'`);
+    assert.equal(fs.readFileSync(path.join(nativeRoot, 'hooks', hook), 'utf8'), expected, `exact ${runtime} hook conversion`);
   }
-  fs.writeFileSync(path.join(area, 'native-claude-resources.json'), JSON.stringify({ nativeRoot, manifest: manifests[0], resources }, null, 2) + '\n');
-  assert.equal(fs.readdirSync(path.join(nativeRoot, 'commands/fvs')).filter(n => n.endsWith('.md')).length, 30);
-  for (const rel of ['fv-skills/workflows/fc-plan.md', 'fv-skills/workflows/crypto-review.md', 'fv-skills/templates/config.json', 'fv-skills/references/fc-spec-review.md', 'scripts/fvs-probe-inventory.mjs', 'agents/fvs-researcher.md', 'hooks/fvs-check-update.js', 'hooks/fvs-statusline.js', 'fv-skills/VERSION']) {
+  if (runtime === 'codex') assert.equal(fs.existsSync(path.join(nativeRoot, 'hooks/fvs-statusline.js')), false);
+  const commandsDirectory = path.join(nativeRoot, runtime === 'codex' ? 'skills' : runtime === 'opencode' ? 'command' : 'commands/fvs');
+  const commands = fs.readdirSync(commandsDirectory);
+  assert.equal(commands.length, 30);
+  let commandPath;
+  if (runtime === 'codex') commandPath = path.join(commandsDirectory, 'fvs-fc-plan/SKILL.md');
+  else if (runtime === 'opencode') commandPath = path.join(commandsDirectory, 'fvs-fc-plan.md');
+  else commandPath = path.join(commandsDirectory, `fc-plan.${runtime === 'gemini' ? 'toml' : 'md'}`);
+  const installedCommand = fs.readFileSync(commandPath, 'utf8');
+  if (runtime !== 'claude') assert.doesNotMatch(installedCommand, /~\/\.claude\//, 'native command paths converted');
+  const configFile = path.join(nativeRoot, runtime === 'codex' ? 'config.toml' : runtime === 'opencode' ? 'opencode.json' : 'settings.json');
+  assert.match(fs.readFileSync(configFile, 'utf8'), /keep/, 'unrelated seeded settings survive');
+  if (runtime === 'codex') {
+    const installer = require(path.join(source, 'bin/install.js'));
+    const roles = fs.readdirSync(path.join(nativeRoot, 'agents')).filter(n => n.endsWith('.toml'));
+    assert.equal(roles.length, 14);
+    for (const role of roles) {
+      const markdown = fs.readFileSync(path.join(source, 'agents', role.replace(/\.toml$/, '.md')), 'utf8')
+        .replace(/~\/\.claude\//g, nativeRoot + '/')
+        .replace(/\$HOME\/\.claude\//g, nativeRoot + '/');
+      assert.equal(fs.readFileSync(path.join(nativeRoot, 'agents', role), 'utf8'), installer.generateCodexAgentToml(role.slice(0, -5), markdown), 'complete source-owned role body in actual Codex TOML');
+    }
+    assert.match(fs.readFileSync(path.join(nativeRoot, 'hooks.json'), 'utf8'), /fvs-check-update\.js/);
+  }
+  fs.writeFileSync(path.join(area, `native-${runtime}-resources.json`), JSON.stringify({ nativeRoot, manifest: manifests[0], resources, commandsDirectory, commandPath, configFile }, null, 2) + '\n');
+  for (const rel of ['fv-skills/workflows/fc-plan.md', 'fv-skills/workflows/crypto-review.md', 'fv-skills/templates/config.json', 'fv-skills/references/fc-spec-review.md', 'scripts/fvs-probe-inventory.mjs', 'agents/fvs-researcher.md', 'hooks/fvs-check-update.js', 'fv-skills/VERSION']) {
     assert.ok(fs.statSync(path.join(nativeRoot, rel)).isFile(), `native installed resource ${rel}`);
   }
-  const settings = fs.readFileSync(path.join(nativeRoot, 'settings.json'), 'utf8');
-  assert.match(settings, /fvs-check-update\.js/);
-  assert.match(settings, /fvs-statusline\.js/);
+  if (runtime === 'claude') {
+    const settings = fs.readFileSync(path.join(nativeRoot, 'settings.json'), 'utf8');
+    assert.match(settings, /fvs-check-update\.js/);
+    assert.match(settings, /fvs-statusline\.js/);
+  }
   return { nativeRoot, resources: 'installed-footprint-only-not-model-enforcement' };
 }
 async function tracer(q, area) {
   const env = environment(q, path.join(area, 'profile'));
   const source = sourceSnapshot(q, area);
   assertSuccess(await run(q, area, 'verification-hook-build', [q.tools.node.path, path.join(source, 'scripts/build-hooks.js')], source, env));
-  assertSuccess(await run(q, area, 'verification-unit', [q.tools.node.path, '--test', 'tests/skills-distribution.test.cjs'], source, env));
+  assertSuccess(await run(q, area, 'verification-unit', [q.tools.node.path, '--test', 'tests/skills-distribution.test.cjs'], source, unitEnvironment(env)));
   const project = path.join(area, 'transport-project');
   fs.mkdirSync(project);
   const list = await run(q, area, 'root-list', [q.tools.node.path, q.cli.path, 'add', source, '--list'], project, env);
@@ -225,20 +264,71 @@ async function tracer(q, area) {
   fs.mkdirSync(relocated);
   fs.copyFileSync(installed, path.join(relocated, 'SKILL.md'));
   assertContract(fs.readFileSync(path.join(relocated, 'SKILL.md'), 'utf8'));
-  const native = await nativeClaude(q, area, source, env);
+  const native = await nativeFootprint(q, area, source, env);
   return { discovery: 'one', installed, installedSha256: digest(text), relocated, native };
 }
+async function nativeResources(q, area) {
+  const env = environment(q, path.join(area, 'profile'));
+  const source = sourceSnapshot(q, area);
+  assertSuccess(await run(q, area, 'verification-hook-build', [q.tools.node.path, path.join(source, 'scripts/build-hooks.js')], source, env));
+  assertSuccess(await run(q, area, 'verification-unit', [q.tools.node.path, '--test', 'tests/skills-distribution.test.cjs', 'tests/pi-installer.test.cjs', 'tests/install.test.cjs', 'tests/codex-config.test.cjs'], source, unitEnvironment(env), { timeout: 45000 }));
+  const results = {};
+  for (const runtime of ['claude', 'opencode', 'gemini', 'codex']) {
+    results[runtime] = await nativeFootprint(q, area, source, env, runtime);
+  }
+  const piProject = path.join(area, 'native-pi');
+  fs.mkdirSync(path.join(piProject, '.pi'), { recursive: true });
+  fs.writeFileSync(path.join(piProject, '.pi/settings.json'), JSON.stringify({ foreignSetting: 'keep' }));
+  const driver = `
+    import fs from 'node:fs';
+    import path from 'node:path';
+    const base = ${JSON.stringify(q.pi.packageRoot)};
+    const {DefaultPackageManager} = await import(base + '/dist/core/package-manager.js');
+    const {SettingsManager} = await import(base + '/dist/core/settings-manager.js');
+    const {loadSkills} = await import(base + '/dist/core/skills.js');
+    const cwd = ${JSON.stringify(piProject)};
+    const agentDir = ${JSON.stringify(env.PI_CODING_AGENT_DIR)};
+    const source = ${JSON.stringify(source)};
+    const settings = SettingsManager.create(cwd, agentDir, {projectTrusted: true});
+    const manager = new DefaultPackageManager({cwd, agentDir, settingsManager: settings});
+    await manager.installAndPersist(source, {local: true});
+    await settings.flush();
+    const resolved = await manager.resolve(() => {throw new Error('unexpected missing package');});
+    const entries = resolved.skills.filter(x => x.metadata.origin === 'package');
+    const loaded = loadSkills({cwd, agentDir, includeDefaults: false, skillPaths: entries.filter(x => x.enabled).map(x => x.path)});
+    console.log(JSON.stringify({configured: manager.listConfiguredPackages(), projectSettings: settings.getProjectSettings(), entries, loaded}, null, 2));
+  `;
+  const driverPath = path.join(area, 'pi-resource-discovery.mjs');
+  fs.writeFileSync(driverPath, driver);
+  const pi = await run(q, area, 'pi-resource-discovery', [q.tools.node.path, driverPath], piProject, env);
+  assertSuccess(pi);
+  const observed = JSON.parse(pi.stdout);
+  assert.equal(observed.projectSettings.foreignSetting, 'keep');
+  assert.equal(observed.entries.length, 30);
+  assert.equal(observed.loaded.skills.length, 30);
+  assert.deepEqual(observed.loaded.diagnostics, []);
+  assert.ok(observed.configured.some(e => e.scope === 'project' && e.installedPath === source));
+  const nativeRoots = [...new Set(observed.entries.map(e => e.metadata.packageRoot))];
+  assert.equal(nativeRoots.length, 1);
+  const nativeRoot = fs.realpathSync(nativeRoots[0]);
+  assert.equal(nativeRoot, fs.realpathSync(source), 'actual Pi resolver metadata identifies complete sourceRoot');
+  for (const rel of ['fv-skills/workflows/fc-plan.md', 'fv-skills/workflows/crypto-review.md', 'scripts/fvs-probe-inventory.mjs', 'agents/fvs-researcher.md']) assert.ok(fs.statSync(path.join(nativeRoot, rel)).isFile());
+  assert.ok(observed.loaded.skills.every(s => s.filePath.startsWith(path.join(nativeRoot, 'pi/skills') + path.sep)));
+  results.pi = { nativeRoot, actualResourceDiscovery: true, projectScope: true, skills: 30, modelSession: false };
+  return results;
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const qualification = args[args.indexOf('--qualification') + 1];
   assert.ok(args.includes('--qualification'), 'qualification required before any invocation');
   const q = validateQualification(qualification, process.env.FVS_SKILLS_DISTRIBUTION_ACCEPTANCE);
   const which = args[args.indexOf('--case') + 1];
-  assert.equal(which, 'tracer', 'supported case required');
+  assert.ok(['tracer', 'native-resources'].includes(which), 'supported case required');
   const area = fs.mkdtempSync(path.join(q.root, 'profiles', `${which}-`));
   const started = Date.now();
   try {
-    const result = await tracer(q, area);
+    const result = which === 'tracer' ? await tracer(q, area) : await nativeResources(q, area);
     fs.writeFileSync(path.join(area, 'outcome.json'), JSON.stringify({ status: 'pass', elapsedMs: Date.now() - started, result }, null, 2) + '\n');
     console.log(JSON.stringify({ status: 'pass', case: which, area, result }));
   } catch (error) {

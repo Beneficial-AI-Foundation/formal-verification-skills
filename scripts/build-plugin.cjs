@@ -37,6 +37,8 @@ const SCRIPT_FILES = [
 ];
 
 function renderSetupSkill() {
+  const nonPi = ALL_RUNTIMES.filter(runtime => runtime !== 'pi');
+  const choices = ALL_RUNTIMES.map(runtime => `| ${runtime} | ${runtime === 'pi' ? 'complete local-source native package; personal or trusted project scope' : `complete source installer --${runtime}; --local or --global`} |`).join('\n');
   return `---
 name: fvs-setup
 description: Consent-gated native FVS installation and setup guidance, not standalone verification workflows
@@ -84,9 +86,50 @@ latest/an older version for a requested unavailable version. A newer unpublished
 request remains blocked until a version-matching immutable source or chosen channel
 is independently available. Do not install/download tools implicitly.
 
+## Runtime and channel choices
+
+All existing native candidates remain available; an unsupported actual host gets
+explicit supported alternatives or cancel, not a claimed generic native fallback:
+
+| Runtime | Native source route |
+|---|---|
+${choices}
+
+Choose ONE complete installation per runtime. Inspect existing alternate-source
+identities and user/project scope before changing anything; channel switching
+requires an explicit removal/setup choice, not stacking a plugin and direct install.
+
+Claude native catalog commands are \`claude plugin marketplace add Beneficial-AI-Foundation/plugins\`
+and \`claude plugin install fvs@${MARKETPLACE_ID}\`. Claude scopes are host-specific
+user/project/local choices; confirm the installed client's actual scope interface.
+Codex uses \`codex plugin marketplace add Beneficial-AI-Foundation/plugins\` then
+\`codex plugin add fvs@${MARKETPLACE_ID}\`; do not transplant Claude's scope flags.
+Catalog source: https://github.com/Beneficial-AI-Foundation/plugins.
+A catalog route cannot promise a requested version until its actual source/catalog
+pin contains it. Marketplace Markdown does not register specialist Codex agent roles;
+check exact roles/settings and stop settings-dependent dispatch/writes if unavailable.
+Installing this setup skill does not register FVS specialists.
+
+An explicitly selected npm route uses package ${PI_PACKAGE_NAME}; Pi's exact source
+notation for THIS source artifact version is \`${buildPiPackageSource(VERSION)}\`.
+That notation is not publication evidence. Independently confirm the exact requested
+registry version before choosing an npm command; a requested unpublished npm pin
+stays blocked. Do not substitute latest or an older release. The source snapshot's
+unified --pi path delegates to npm, NOT that snapshot. Use the complete local-source
+Pi lane below instead when it is independently available and explicitly chosen.
+
+## Stop conditions
+
+Every one of these is a STOP with no changes: declined setup; missing runtime;
+missing tool; missing setting; required-live without actual live access;
+fresh-review missing; source/version mismatch; unpublished npm pin. Ask for an
+explicit supported alternative, separately consented setup assistance, or cancel.
+These are installed Markdown contract states, not proof of conversational enforcement
+by an unobserved native agent. Static refusal assertions never claim a model complied.
+
 ## Complete source installation
 
-The npm-independent Claude route uses an independently acquired and inspected
+The npm-independent source route uses an independently acquired and inspected
 COMPLETE snapshot of ${REPOSITORY_URL} at the accepted full SHA. The user selects
 its retained absolute sourceRoot; do not use the transported entry as that root.
 First verify qualified Node/Git are already available, the immutable revision and
@@ -101,14 +144,32 @@ The explained variable scopeFlag is exactly --local for that workspace, or --glo
 for the accepted user profile; never omit scope. Node is the verified executable:
 
 \`node "$sourceRoot/scripts/build-hooks.js"\`
-\`node "$sourceRoot/bin/install.js" --claude "$scopeFlag"\`
+\`node "$sourceRoot/bin/install.js" "$runtimeFlag" "$scopeFlag"\`
 
+For non-Pi runtimeFlag, validate the chosen runtime against exactly
+${nonPi.map(runtime => `\`--${runtime}\``).join(', ')}; never use --all. Scope is mandatory.
 The hook build copies two pure Node hooks; this lane needs no npm install or npx.
 Keep the complete source snapshot. Observe actual installed version, all thirty
 commands and resources, hook registrations and role/settings footprints. Discover
 the nativeRoot from the actual channel's installation/resource metadata, not this
-entry's physical/logical location or a guessed transferred path. Reload/start a
-new session afterward. Invoke only that channel's actual help entry when the user
+entry's physical/logical location or a guessed transferred path.
+
+For Pi, qualify the existing native package manager first and preview its exact
+local-source declaration/retention/scope effects. After permission use the retained
+complete source directory: \`pi install "$sourceRoot" --local\` for the selected
+trusted project, or \`pi install "$sourceRoot"\` for personal scope. This is a local
+source directory, loaded without a registry dependency install, not a transported
+skill directory. The explicit package.json pi.skills selects ONLY pi/skills, thirty
+native skills, not this setup entry. Keep sourceRoot at its verified location.
+Project declarations require project trust; review it explicitly. Project identities
+normally take precedence over personal entries; inspect both and do not silently
+remove/migrate an existing alternate source or scope. Observe the actual native
+resolver's packageRoot/sourceRoot metadata and every selected physical resource.
+Pi Git refs are alternatives ONLY after exact manager/dependency/lifecycle/source-root
+qualification with immutable version-matching refs; they can install dependencies,
+so do not silently fall back to Git/npm or run an unqualified install.
+
+Reload/start a new session afterward. Invoke only that channel's actual help entry when the user
 requests it (Claude: /fvs:help); do not start proof or execution from setup.
 
 ## Native controls
