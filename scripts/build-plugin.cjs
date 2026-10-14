@@ -10,11 +10,15 @@ const {
   extractFrontmatterAndBody,
   extractFrontmatterField,
   getCodexSkillAdapterHeader,
+  ALL_RUNTIMES,
+  PI_PACKAGE_NAME,
+  buildPiPackageSource,
 } = require('../bin/install.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const COMMITTED_PLUGIN_ROOT = path.join(ROOT, 'plugins', 'fvs');
 const COMMITTED_PI_SKILLS_ROOT = path.join(ROOT, 'pi', 'skills');
+const COMMITTED_SETUP_ROOT = path.join(ROOT, 'skills', 'fvs-setup');
 const PACKAGE_JSON = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 const VERSION = PACKAGE_JSON.version;
 const REPOSITORY_URL = 'https://github.com/Beneficial-AI-Foundation/formal-verification-skills';
@@ -31,6 +35,159 @@ const SCRIPT_FILES = [
   'fvs-review-grounding.mjs',
   'fvs-spec-review.mjs',
 ];
+
+function renderSetupSkill() {
+  return `---
+name: fvs-setup
+description: Consent-gated native FVS installation and setup guidance, not standalone verification workflows
+---
+
+<!-- Generated native setup guidance. -->
+
+## Scope
+
+This is ONE setup entry, not a portable FVS workflow catalog. Installing or copying
+this entry does not install FVS, register specialist roles, or grant setup permission.
+It works by itself after copy, symlink, relocation, and from any working directory;
+there are no adjacent scripts or resources to load. Never infer an FVS sourceRoot
+or nativeRoot from this entry's parents. A complete native installation supplies
+its own thirty commands, workflows, references, templates, scripts, hooks and roles.
+
+The functional-correctness (FC) track proceeds through understanding, specification,
+fresh statement review and explicitly requested interactive proof. Extracted-code
+work first needs the project's actual source/translation prerequisites. The crypto
+track proceeds through planning, fresh review, explicit execution, adversarial
+evaluation and follow-up. Setup does not start either track or choose models.
+
+Source artifact version: ${VERSION}. This is not evidence that an npm version,
+public tag, catalog pin or release is available. Public source: ${REPOSITORY_URL}.
+Native help source: ${REPOSITORY_URL}/blob/main/commands/fvs/help.md.
+
+## Consent
+
+Before any acquisition or installation, ask for the actual runtime, installation
+channel, project/workspace directory or user scope, and whether to perform setup.
+Use the host question tool if available; otherwise ask the same questions in plain
+text and WAIT. Inspection consent is not installation consent. Copying this entry
+alone never authorizes setup. Decline, cancel, undecided scope, missing permission,
+unsupported runtime, unavailable tools, or unhonorable requested controls means
+STOP with no changes; offer supported explicit choices, setup assistance, or cancel.
+
+Preview the exact public repository and immutable full SHA/tag resolved to a full
+SHA; requested and observed FVS/package version; retained complete source location;
+qualified executable paths, exact commands and flags; chosen workspace directory;
+native installation destination, profile/settings/config paths; existing-install
+and local-patch effects; diagnostics preference and any separate permission needed.
+Obtain explicit permission for those effects BEFORE executing any command below.
+Do not silently stack channels, migrate/remove an existing install or substitute
+latest/an older version for a requested unavailable version. A newer unpublished
+request remains blocked until a version-matching immutable source or chosen channel
+is independently available. Do not install/download tools implicitly.
+
+## Complete source installation
+
+The npm-independent Claude route uses an independently acquired and inspected
+COMPLETE snapshot of ${REPOSITORY_URL} at the accepted full SHA. The user selects
+its retained absolute sourceRoot; do not use the transported entry as that root.
+First verify qualified Node/Git are already available, the immutable revision and
+requested version match package.json AND fv-skills/VERSION, and complete commands,
+agents, fv-skills, scripts and hook sources exist. Preview and consent to the exact
+Git acquisition commands/source location before acquiring it. A missing immutable
+snapshot or payload/version mismatch stops, rather than falling back to 2.3.6.
+
+Only AFTER the consent barrier and independent complete-source verification, run
+these commands using that retained absolute sourceRoot and chosen workspace as cwd.
+The explained variable scopeFlag is exactly --local for that workspace, or --global
+for the accepted user profile; never omit scope. Node is the verified executable:
+
+\`node "$sourceRoot/scripts/build-hooks.js"\`
+\`node "$sourceRoot/bin/install.js" --claude "$scopeFlag"\`
+
+The hook build copies two pure Node hooks; this lane needs no npm install or npx.
+Keep the complete source snapshot. Observe actual installed version, all thirty
+commands and resources, hook registrations and role/settings footprints. Discover
+the nativeRoot from the actual channel's installation/resource metadata, not this
+entry's physical/logical location or a guessed transferred path. Reload/start a
+new session afterward. Invoke only that channel's actual help entry when the user
+requests it (Claude: /fvs:help); do not start proof or execution from setup.
+
+## Native controls
+
+The complete native installation owns role, tool, model, effort and sandbox checks.
+Unavailable exact roles/settings or required fresh reviewers stop settings-dependent
+dispatch/writes; a generic full-role prompt is not native identity/settings parity.
+Preserve automatic adversarial FC/crypto review, author-owned triage and explicit
+approval after revisions. Never perform required fresh review inline; failed,
+skipped or pending review is not approval and never starts proof/execution.
+
+Strongly recommend existing lean-lsp-mcp: https://github.com/oOo0oOo/lean-lsp-mcp.
+Source-tested narrow diagnostics AND goal grants and the Gemini/OpenCode converter
+fix do not prove effective child permissions, inventory/schema exposure or live
+feedback; these remain UNKNOWN. Live qualification follows a usable public release,
+not setup-source delivery. Conditional IDE diagnostics are not goals. Report actual
+unavailability; a required-live request stops. Compiler-only fallback needs that
+request's warned explicit acceptance; final compiler/style/trust gates remain.
+No automatic diagnostics/toolchain install or enforced readiness/write-promotion
+system is delivered. Setup itself runs no Lean/compiler/diagnostics operation.
+
+## Privacy
+
+Installation analytics can occur BEFORE any setup conversation. Public instructions
+and automation must establish BOTH DISABLE_TELEMETRY=1 and DO_NOT_TRACK=1 BEFORE
+invoking the skills CLI. Later setup consent cannot retroactively consent to those
+requests. In inspected skills@1.7.1, these opt-outs also suppress external security-
+audit lookup; retain independent source, tarball/dependency integrity and legitimacy
+checks. This entry adds no FVS collector, private upload or custom telemetry metadata.
+
+Official CLI/FAQ: https://www.skills.sh/docs/cli and https://www.skills.sh/docs/faq.
+Privacy notice: https://vercel.com/legal/privacy-policy. Installation reporting can
+send public repository/skill/agent/CLI/version/scope/path/CI metadata to
+https://www.skills.sh/tele/t; the recipient sees the network source IP. Retention,
+anonymisation, notice and legal status are not independently verified. No legal
+anonymity, harmlessness or EU exemption is promised. No private project, proof,
+source or conversation should be uploaded, and no repeated/artificial adoption
+counts should be manufactured. QA always disables telemetry. Maintainer choice
+about ONE genuine reporting-enabled public installation after validated release
+is a separate owner gate, not consent for all users; this entry does not opt in.
+Local source/contract/transport/resource checks prove neither native model behavior
+nor public release/installation or an observed skills.sh listing.
+`;
+}
+
+function buildSetupSkill(setupRoot) {
+  const resolved = path.resolve(setupRoot);
+  if (resolved === ROOT || resolved === path.parse(resolved).root) {
+    throw new Error(`Refusing unsafe setup path: ${resolved}`);
+  }
+  let current = path.parse(resolved).root;
+  for (const part of resolved.slice(current.length).split(path.sep)) {
+    current = path.join(current, part);
+    if (!fs.existsSync(current) && !fs.lstatSync(path.dirname(current)).isSymbolicLink()) {
+      // Missing suffixes are created only after every existing ancestor is checked.
+      break;
+    }
+    const stat = fs.lstatSync(current);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`Symlink/non-directory setup ancestor: ${current}`);
+  }
+  if (!resolved.endsWith(`${path.sep}skills${path.sep}fvs-setup`)) {
+    throw new Error('Setup output must end in skills/fvs-setup');
+  }
+  if (fs.existsSync(resolved)) {
+    const directory = fs.lstatSync(resolved);
+    if (process.getuid && directory.uid !== process.getuid()) throw new Error('Unowned setup output');
+    for (const name of fs.readdirSync(resolved)) {
+      if (name !== 'SKILL.md') throw new Error(`Unknown setup output file: ${name}`);
+      const file = path.join(resolved, name);
+      const stat = fs.lstatSync(file);
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 ||
+          (process.getuid && stat.uid !== process.getuid()) ||
+          !fs.readFileSync(file, 'utf8').includes('<!-- Generated native setup guidance. -->')) {
+        throw new Error('Unexpected or unowned setup SKILL.md');
+      }
+    }
+  }
+  writeText(path.join(resolved, 'SKILL.md'), renderSetupSkill());
+}
 
 function assertSafePluginRoot(pluginRoot) {
   const resolved = path.resolve(pluginRoot);
@@ -414,19 +571,24 @@ function main() {
   if (!checkOnly) {
     buildPlugin(COMMITTED_PLUGIN_ROOT);
     buildPiSkills(COMMITTED_PI_SKILLS_ROOT);
-    console.log(`Built plugins/fvs and pi/skills for v${VERSION}`);
+    buildSetupSkill(COMMITTED_SETUP_ROOT);
+    console.log(`Built plugins/fvs, pi/skills and skills/fvs-setup for v${VERSION}`);
     return;
   }
 
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-plugin-check-'));
   const generatedPluginRoot = path.join(temporaryRoot, 'fvs');
   const generatedPiSkillsRoot = path.join(temporaryRoot, 'pi', 'skills');
+  const generatedSetupRoot = path.join(temporaryRoot, 'skills', 'fvs-setup');
   try {
     buildPlugin(generatedPluginRoot);
     buildPiSkills(generatedPiSkillsRoot);
+    buildSetupSkill(generatedSetupRoot);
     const differences = [
       ...compareTrees(COMMITTED_PLUGIN_ROOT, generatedPluginRoot).map((relative) => `plugins/fvs/${relative}`),
       ...compareTrees(COMMITTED_PI_SKILLS_ROOT, generatedPiSkillsRoot).map((relative) => `pi/skills/${relative}`),
+      ...(fs.existsSync(COMMITTED_SETUP_ROOT) ? compareTrees(COMMITTED_SETUP_ROOT, generatedSetupRoot) : ['SKILL.md missing'])
+        .map((relative) => `skills/fvs-setup/${relative}`),
     ];
     if (differences.length > 0) {
       console.error('Generated packages are stale. Run: npm run build:plugin');
@@ -435,7 +597,7 @@ function main() {
       process.exitCode = 1;
       return;
     }
-    console.log(`Plugin and Pi packages are synchronized for v${VERSION}`);
+    console.log(`Plugin, Pi and setup packages are synchronized for v${VERSION}`);
   } finally {
     fs.rmSync(temporaryRoot, { recursive: true, force: true });
   }
@@ -444,6 +606,8 @@ function main() {
 if (require.main === module) main();
 
 module.exports = {
+  buildSetupSkill,
+  renderSetupSkill,
   buildPiSkills,
   buildPlugin,
   portablePiPaths,

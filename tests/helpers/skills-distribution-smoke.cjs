@@ -162,7 +162,39 @@ async function nativeClaude(q, area, source, env) {
   assertSuccess(build);
   const result = await run(q, area, 'native-install-claude', [q.tools.node.path, path.join(source, 'bin/install.js'), '--claude', '--local'], project, env);
   assertSuccess(result);
-  const nativeRoot = path.join(project, '.claude');
+  const manifests = [];
+  function walk(directory) {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const file = path.join(directory, entry.name);
+      if (entry.isDirectory()) walk(file);
+      else if (entry.name === 'fvs-file-manifest.json') manifests.push(file);
+    }
+  }
+  walk(project);
+  assert.equal(manifests.length, 1, 'one actual installed FVS manifest');
+  const nativeRoot = fs.realpathSync(path.dirname(manifests[0]));
+  const manifest = JSON.parse(fs.readFileSync(manifests[0], 'utf8'));
+  assert.equal(manifest.version, JSON.parse(fs.readFileSync(path.join(source, 'package.json'), 'utf8')).version);
+  const resources = [];
+  function closure(sourceDir, relative = '') {
+    for (const entry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
+      const child = path.join(relative, entry.name);
+      if (entry.isDirectory()) closure(path.join(sourceDir, entry.name), child);
+      else {
+        const installed = path.join(nativeRoot, 'fv-skills', child);
+        assert.ok(fs.statSync(installed).isFile(), `complete installed support: ${child}`);
+        resources.push({ path: installed, bytes: fs.statSync(installed).size, sha256: digest(fs.readFileSync(installed)) });
+      }
+    }
+  }
+  closure(path.join(source, 'fv-skills'));
+  for (const role of fs.readdirSync(path.join(source, 'agents')).filter(n => n.endsWith('.md'))) {
+    assert.ok(fs.statSync(path.join(nativeRoot, 'agents', role)).isFile(), `complete role: ${role}`);
+  }
+  for (const hook of ['fvs-check-update.js', 'fvs-statusline.js']) {
+    assert.deepEqual(fs.readFileSync(path.join(nativeRoot, 'hooks', hook)), fs.readFileSync(path.join(source, 'hooks/dist', hook)));
+  }
+  fs.writeFileSync(path.join(area, 'native-claude-resources.json'), JSON.stringify({ nativeRoot, manifest: manifests[0], resources }, null, 2) + '\n');
   assert.equal(fs.readdirSync(path.join(nativeRoot, 'commands/fvs')).filter(n => n.endsWith('.md')).length, 30);
   for (const rel of ['fv-skills/workflows/fc-plan.md', 'fv-skills/workflows/crypto-review.md', 'fv-skills/templates/config.json', 'fv-skills/references/fc-spec-review.md', 'scripts/fvs-probe-inventory.mjs', 'agents/fvs-researcher.md', 'hooks/fvs-check-update.js', 'hooks/fvs-statusline.js', 'fv-skills/VERSION']) {
     assert.ok(fs.statSync(path.join(nativeRoot, rel)).isFile(), `native installed resource ${rel}`);
@@ -175,6 +207,8 @@ async function nativeClaude(q, area, source, env) {
 async function tracer(q, area) {
   const env = environment(q, path.join(area, 'profile'));
   const source = sourceSnapshot(q, area);
+  assertSuccess(await run(q, area, 'verification-hook-build', [q.tools.node.path, path.join(source, 'scripts/build-hooks.js')], source, env));
+  assertSuccess(await run(q, area, 'verification-unit', [q.tools.node.path, '--test', 'tests/skills-distribution.test.cjs'], source, env));
   const project = path.join(area, 'transport-project');
   fs.mkdirSync(project);
   const list = await run(q, area, 'root-list', [q.tools.node.path, q.cli.path, 'add', source, '--list'], project, env);
