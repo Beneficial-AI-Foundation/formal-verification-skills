@@ -7,6 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const generator = require('../scripts/build-plugin.cjs');
 const root = path.resolve(__dirname, '..');
+const { ALL_RUNTIMES, PI_PACKAGE_NAME, buildPiPackageSource } = require('../bin/install.js');
 
 test('renders one self-contained native setup entry rather than relocated workflows', () => {
   const text = generator.renderSetupSkill?.() ?? '';
@@ -19,6 +20,38 @@ test('renders one self-contained native setup entry rather than relocated workfl
   assert.equal(fs.readdirSync(path.join(root, 'commands/fvs')).filter(n => n.endsWith('.md')).length, 30);
   assert.equal(fs.readdirSync(path.join(root, 'pi/skills')).length, 30);
   assert.equal(fs.readdirSync(path.join(root, 'plugins/fvs/skills')).length, 30);
+});
+
+test('covers all supported native channels without hidden registry or role substitution', () => {
+  const text = generator.renderSetupSkill();
+  assert.match(text, /## Runtime and channel choices/);
+  for (const runtime of ALL_RUNTIMES) assert.ok(text.includes(`| ${runtime} |`), `native candidate ${runtime}`);
+  for (const runtime of ALL_RUNTIMES.filter(r => r !== 'pi')) assert.ok(text.includes(`--${runtime}`));
+  assert.ok(text.includes(buildPiPackageSource(require('../package.json').version)));
+  assert.ok(text.includes(PI_PACKAGE_NAME));
+  assert.match(text, /pi install "\$sourceRoot" --local/);
+  assert.match(text, /project trust/i);
+  assert.match(text, /marketplace add Beneficial-AI-Foundation\/plugins/);
+  assert.match(text, /claude plugin install fvs@beneficial-ai-foundation/);
+  assert.match(text, /codex plugin add fvs@beneficial-ai-foundation/);
+  assert.match(text, /does not register.*Codex.*roles/i);
+  assert.match(text, /unified --pi.*delegates to npm/i);
+});
+
+test('names explicit refusal states without pretending a Markdown contract enforces conversations', () => {
+  const text = generator.renderSetupSkill();
+  assert.match(text, /## Stop conditions/);
+  const stops = text.split('## Stop conditions')[1].split('\n## ')[0];
+  for (const state of ['declined setup', 'missing runtime', 'missing tool', 'missing setting', 'required-live', 'fresh-review missing', 'source/version mismatch', 'unpublished npm pin']) {
+    assert.ok(stops.includes(state), `explicit stop contract: ${state}`);
+  }
+  assert.match(text, /not.*conversational enforcement/i);
+  assert.match(text, /fresh review inline/);
+  assert.match(text, /triage/);
+  assert.match(text, /author-owned/);
+  assert.match(text, /Compiler-only fallback needs/);
+  assert.match(text, /Conditional IDE diagnostics are not goals/);
+  assert.doesNotMatch(text, /Beam|readiness-only|write-promotion broker/);
 });
 
 test('builds only a deterministic owned setup file without damaging siblings', () => {
