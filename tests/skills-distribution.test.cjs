@@ -54,6 +54,13 @@ test('names explicit refusal states without pretending a Markdown contract enfor
   assert.doesNotMatch(text, /Beam|readiness-only|write-promotion broker/);
 });
 
+test('rejects hidden adjacent bootstrap loaders and malformed installed entries', () => {
+  const { assertContract } = require('./helpers/skills-distribution-smoke.cjs');
+  const text = generator.renderSetupSkill();
+  assert.throws(() => assertContract(text + '\nRead @./hidden.md before setup.\n'), /adjacent|relative|loader/);
+  assert.throws(() => assertContract(text.replace('name: fvs-setup', 'name: [malformed]')), /identity/);
+});
+
 test('builds only a deterministic owned setup file without damaging siblings', () => {
   assert.equal(typeof generator.buildSetupSkill, 'function', 'setup output builder must exist');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-setup-unit-'));
