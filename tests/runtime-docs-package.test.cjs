@@ -97,13 +97,17 @@ function packageFixture(packetFile, acceptanceFile) {
   // Use npm's already byte-qualified tar dependency as a data reader, never a lifecycle runner.
   const tar = require(path.join(path.dirname(q.npmPackage), 'node_modules/tar'));
   const members = new Map();
+  const archiveFiles = [];
   return tar.t({file:tarball, sync:true, onReadEntry:entry => {
     assert.ok(entry.path.startsWith('package/') && !entry.path.split('/').includes('..'));
     assert.ok(['File', 'Directory'].includes(entry.type), 'no archive links or special files');
+    assert.ok(!entry.path.split('/').some(part => ['.planning', '.git', '.npmrc', 'node_modules'].includes(part)), 'no private state, credentials or dependencies in archive');
+    if (entry.type === 'File') archiveFiles.push(entry.path.slice('package/'.length));
     const chunks = [];
     entry.on('data', chunk => chunks.push(chunk));
     entry.on('end', () => members.set(entry.path, Buffer.concat(chunks)));
   }}), Promise.resolve().then(() => {
+    assert.deepEqual(archiveFiles.sort(), packed[0].files.map(row => row.path).sort(), 'actual archive must equal the reported package inventory');
     for (const relative of ['README.md', 'package.json', 'assets/terminal.svg']) {
       const actual = members.get('package/' + relative);
       assert.ok(actual, `${relative} absent from archive`);
@@ -132,7 +136,7 @@ if (process.argv.includes('--package-fixture')) {
     assert.deepEqual(pkg.bugs,{url:REPOSITORY+'/issues'});
     assert.ok(pkg.files.includes('assets/terminal.svg'));
     assert.match(fs.readFileSync(path.join(ROOT,'README.md'),'utf8'), /!\[FVS Install\]\(assets\/terminal\.svg\)/);
-    assert.match(fs.readFileSync(path.join(ROOT,'assets/terminal.svg'),'utf8'), /2\.3\.6/);
+    assert.ok(fs.readFileSync(path.join(ROOT,'assets/terminal.svg'),'utf8').includes(`v${pkg.version}`), 'SVG label must match the package version');
   });
   it('real help follows the package version and explains registry availability', () => {
     const installer = require('../bin/install.js');
@@ -163,17 +167,30 @@ if (process.argv.includes('--package-fixture')) {
   it('concise README converges routes controls reviews privacy and source-only claims', () => {
     const readme=fs.readFileSync(path.join(ROOT,'README.md'),'utf8');
     assert.ok(readme.split('\n').filter(line=>line.trim()).length<=220);
-    const installs=section(readme,'## Getting Started','## Workflows');
-    const flows=section(readme,'## Workflows','## Tooling and evidence limits');
-    const tooling=section(readme,'## Tooling and evidence limits','## Command index');
-    const discovery=section(readme,'### Setup discovery','## Workflows');
+    const installs=section(readme,'## Getting started','## Workflows');
+    const flows=section(readme,'## Workflows','## Commands');
+    const tooling=section(readme,'### Before your first Lean task','## Workflows');
+    const updates=section(readme,'## Updates and removal','## Credits and license');
     for(const runtime of require('../bin/install.js').ALL_RUNTIMES) assert.ok(installs.includes(`--${runtime} --global`),runtime);
     for(const token of ['/skill:fvs-help','/fvs:help','$fvs:help','$fvs-help','--local','--pi-conflict','chosen published version','Beneficial-AI-Foundation/plugins','fvs@beneficial-ai-foundation']) assert.ok(installs.includes(token),token);
-    for(const token of ['requested','resolved','observed','UNKNOWN','role','model','effort','triage','approval']) assert.ok(readme.includes(token),token);
-    for(const token of ['fresh read-only','author-owned','immutable','bounded','explicitly requested','one-sorry','whole-unit','HUMAN_RULING','BLOCKED','memory-blind','at most eight','at most three']) assert.ok(flows.includes(token),token);
-    for(const token of ['fvs-setup','skills/fvs-setup/SKILL.md','thirty','61','four','Pi','UNPERFORMED','UNDECIDED','IP','audit lookup','not retroactive']) assert.ok(discovery.includes(token),token);
+    for(const token of ['requested','resolved','observed','role','model','effort','triage']) assert.ok(readme.toLowerCase().includes(token),token);
+    for(const token of ['fresh read-only','immutable','bounded','one-sorry','whole-unit','HUMAN_RULING','BLOCKED','memory-blind','at most eight','at most three']) assert.ok(flows.includes(token),token);
+    assert.match(flows, /author owns triage and accepted edits/i);
+    assert.match(flows, /Approval after edits requires the prescribed checks/);
+    assert.match(flows, /Skipped, disabled, failed or pending review does not approve/);
+    assert.match(flows, /explicitly request trusted-path work.*unreviewed status/);
+    assert.match(flows, /when you request proof work/);
+    for(const token of ['fvs-setup','DISABLE_TELEMETRY=1','DO_NOT_TRACK=1','before invoking','audit lookup','integrity checks','https://www.skills.sh/docs/faq']) assert.ok(updates.includes(token),token);
+    assert.match(updates, /copying it alone does not install the full FVS workflows/);
+    assert.match(updates, /Later setup consent cannot cover earlier analytics/);
     for(const line of readme.split('\n').filter(line=>/npx skills/.test(line))) assert.match(line,/DISABLE_TELEMETRY=1 DO_NOT_TRACK=1.*npx skills/);
-    for(const token of ['lakefile.lean','lakefile.toml','lean-toolchain','lake-build.md','probe-aeneas','TESTED_TUPLES','SPQR','unsupported/unverified','whole item','deferred','UNKNOWN','postrelease','UNRUN','ONE','TWO','nice19']) assert.ok(tooling.includes(token),token);
+    for(const token of ['lakefile.lean','lakefile.toml','lean-toolchain','lake-build.md','probe-aeneas','compatibility table','SPQR']) assert.ok(tooling.includes(token),token);
+    assert.match(tooling, /Unsupported platforms or unverified probe\/toolchain combinations cannot produce a verified graph/);
+    assert.match(tooling, /SPQR compatibility is not supported/);
+    assert.match(tooling, /If live feedback is required but unavailable, the task stops/);
+    assert.match(tooling, /Compiler-only work needs your explicit acceptance/);
+    assert.match(tooling, /Project build, style and trust checks still apply/);
+    assert.doesNotMatch(readme, /#\d+|FULL_PUBLIC_SHA|UNRUN|UNKNOWN|UNPERFORMED|UNDECIDED|sourceRoot|integrator-generated|Qualified local discovery/);
     assert.ok(readme.includes('https://github.com/open-gsd/gsd-core'));
     assert.ok(readme.includes('https://pi.dev/packages/fv-skills-baif'));
   });
