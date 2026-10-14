@@ -83,7 +83,7 @@ function packageFixture(packetFile, acceptanceFile) {
   const dry = run('pack-dry-run', ['pack', '--dry-run', '--json']);
   const packed = run('pack', ['pack', '--json']);
   const publish = run('publish-dry-run', ['publish', '--dry-run', '--json']);
-  for (const metadata of [dry[0], packed[0], publish]) {
+  for (const metadata of [dry[0], packed[0], publish[pkg.name]]) {
     assert.equal(metadata.name, pkg.name);
     assert.equal(metadata.version, pkg.version);
     for (const file of ['README.md', 'package.json', 'assets/terminal.svg']) {
@@ -92,7 +92,8 @@ function packageFixture(packetFile, acceptanceFile) {
     assert.ok(metadata.files.every(row => !row.path.includes('..') && !path.isAbsolute(row.path) && !row.path.includes('.planning')));
   }
   const tarball = path.join(copy, packed[0].filename);
-  assert.equal(hash(fs.readFileSync(tarball)), hash(fs.readFileSync(tarball)));
+  assert.equal(crypto.createHash('sha1').update(fs.readFileSync(tarball)).digest('hex'), packed[0].shasum);
+  assert.equal('sha512-' + crypto.createHash('sha512').update(fs.readFileSync(tarball)).digest('base64'), packed[0].integrity);
   // Use npm's already byte-qualified tar dependency as a data reader, never a lifecycle runner.
   const tar = require(path.join(path.dirname(q.npmPackage), 'node_modules/tar'));
   const members = new Map();

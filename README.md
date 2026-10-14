@@ -48,7 +48,7 @@ Use the unified installer for an updateable user install or an exact project pin
 
 ```bash
 npx fv-skills-baif --pi --global
-npx fv-skills-baif --pi --local --pi-version 2.3.4
+npx fv-skills-baif --pi --local
 ```
 
 Pi's default scope is user/global. The default `latest` source stays unpinned and follows Pi
@@ -61,14 +61,14 @@ Direct Pi commands remain available:
 
 ```bash
 pi install npm:fv-skills-baif
-pi install npm:fv-skills-baif@2.3.4 --local
+pi install npm:fv-skills-baif --local
 pi update npm:fv-skills-baif
 pi remove npm:fv-skills-baif
 pi remove npm:fv-skills-baif --local
 ```
 
-To roll back, reinstall the required exact version, for example
-`npx fv-skills-baif --pi --global --pi-version 2.3.4`. To remove FVS through the unified installer,
+To roll back, reinstall a chosen published version using `--pi-version X.Y.Z`.
+Here X.Y.Z is a metavariable, not a copy-ready version or publication claim. To remove FVS through the unified installer,
 run `npx fv-skills-baif --pi --global --uninstall` or replace `--global` with `--local`.
 
 Start a new session, then run `/skill:fvs-help`. Bundle routers such as `/skill:fvs-fc` and
@@ -184,9 +184,9 @@ npx fv-skills-baif --opencode --global # Install to ~/.config/opencode/
 # Gemini CLI
 npx fv-skills-baif --gemini --global   # Install to ~/.gemini/
 
-# Pi (latest is updateable; an exact version is pinned)
+# Pi (latest is updateable; an exact chosen published pin is not)
 npx fv-skills-baif --pi --global
-npx fv-skills-baif --pi --local --pi-version 2.3.4
+npx fv-skills-baif --pi --local
 
 # All runtimes (noninteractive use fails before mutation if Pi is unavailable)
 npx fv-skills-baif --all --global

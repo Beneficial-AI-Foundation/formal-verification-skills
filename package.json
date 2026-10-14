@@ -2,6 +2,14 @@
   "name": "fv-skills-baif",
   "version": "2.3.6",
   "description": "Formal verification skills for Pi, Claude Code, Codex, OpenCode, and Gemini. Rust -> Lean 4 via Aeneas.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Beneficial-AI-Foundation/formal-verification-skills.git"
+  },
+  "homepage": "https://github.com/Beneficial-AI-Foundation/formal-verification-skills#readme",
+  "bugs": {
+    "url": "https://github.com/Beneficial-AI-Foundation/formal-verification-skills/issues"
+  },
   "bin": {
     "fv-skills-baif": "bin/install.js"
   },
@@ -13,7 +21,8 @@
     "agents",
     "hooks/dist",
     "scripts",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "assets/terminal.svg"
   ],
   "keywords": [
     "claude",

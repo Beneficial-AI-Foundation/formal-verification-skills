@@ -232,6 +232,8 @@ describe('Pi installer adapter', () => {
     assert.match(help.stdout, /--pi-version/);
     assert.match(help.stdout, /--pi-conflict/);
     assert.match(help.stdout, /Pi/);
+    assert.ok(help.stdout.includes(`--pi-version ${require('../package.json').version}`));
+    assert.match(help.stdout, /exact versions must be available in the registry/i);
 
     const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
     for (const pattern of [
@@ -239,7 +241,8 @@ describe('Pi installer adapter', () => {
       /pi install npm:fv-skills-baif/,
       /project.*(?:wins|precedence)/i,
       /pi update npm:fv-skills-baif/,
-      /--pi-version 2\.3\.4/,
+      /--pi-version X\.Y\.Z/,
+      /chosen published (?:version|pin)/i,
       /--pi.*--uninstall/,
     ]) assert.match(readme, pattern);
   });
