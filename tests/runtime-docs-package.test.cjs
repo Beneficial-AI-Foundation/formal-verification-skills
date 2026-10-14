@@ -155,6 +155,28 @@ if (process.argv.includes('--package-fixture')) {
     assert.match(result.stdout,/exact versions must be available in the registry/i);
     assert.deepEqual(fs.readdirSync(area).sort(),['bin','help.stderr','help.stdout','package.json']);
   });
+  function section(text, heading, next) {
+    const start=text.indexOf(heading), end=text.indexOf(next,start+heading.length);
+    assert.ok(start>=0 && end>start, `named section ${heading}`);
+    return text.slice(start,end).replace(/\s+/g,' ');
+  }
+  it('concise README converges routes controls reviews privacy and source-only claims', () => {
+    const readme=fs.readFileSync(path.join(ROOT,'README.md'),'utf8');
+    assert.ok(readme.split('\n').filter(line=>line.trim()).length<=220);
+    const installs=section(readme,'## Getting Started','## Workflows');
+    const flows=section(readme,'## Workflows','## Tooling and evidence limits');
+    const tooling=section(readme,'## Tooling and evidence limits','## Command index');
+    const discovery=section(readme,'### Setup discovery','## Workflows');
+    for(const runtime of require('../bin/install.js').ALL_RUNTIMES) assert.ok(installs.includes(`--${runtime} --global`),runtime);
+    for(const token of ['/skill:fvs-help','/fvs:help','$fvs:help','$fvs-help','--local','--pi-conflict','chosen published version','Beneficial-AI-Foundation/plugins','fvs@beneficial-ai-foundation']) assert.ok(installs.includes(token),token);
+    for(const token of ['requested','resolved','observed','UNKNOWN','role','model','effort','triage','approval']) assert.ok(readme.includes(token),token);
+    for(const token of ['fresh read-only','author-owned','immutable','bounded','explicitly requested','one-sorry','whole-unit','HUMAN_RULING','BLOCKED','memory-blind','at most eight','at most three']) assert.ok(flows.includes(token),token);
+    for(const token of ['fvs-setup','skills/fvs-setup/SKILL.md','thirty','61','four','Pi','UNPERFORMED','UNDECIDED','IP','audit lookup','not retroactive']) assert.ok(discovery.includes(token),token);
+    for(const line of readme.split('\n').filter(line=>/npx skills/.test(line))) assert.match(line,/DISABLE_TELEMETRY=1 DO_NOT_TRACK=1.*npx skills/);
+    for(const token of ['lakefile.lean','lakefile.toml','lean-toolchain','lake-build.md','probe-aeneas','TESTED_TUPLES','SPQR','unsupported/unverified','whole item','deferred','UNKNOWN','postrelease','UNRUN','ONE','TWO','nice19']) assert.ok(tooling.includes(token),token);
+    assert.ok(readme.includes('https://github.com/open-gsd/gsd-core'));
+    assert.ok(readme.includes('https://pi.dev/packages/fv-skills-baif'));
+  });
   it('physical fixtures refuse missing qualification before package side effects', () => {
     assert.throws(() => packageQualification(undefined,undefined), /path|absolute/i);
     assert.throws(() => packageQualification(path.join(ROOT,'package.json'),path.join(ROOT,'package.json')), /parent-exact/);
