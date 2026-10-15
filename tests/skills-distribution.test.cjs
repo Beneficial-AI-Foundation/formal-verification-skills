@@ -63,7 +63,7 @@ test('rejects hidden adjacent bootstrap loaders and malformed installed entries'
 
 test('builds only a deterministic owned setup file without damaging siblings', () => {
   assert.equal(typeof generator.buildSetupSkill, 'function', 'setup output builder must exist');
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-setup-unit-'));
+  const tmp = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'fvs-setup-unit-'));
   const dest = path.join(tmp, 'skills/fvs-setup');
   fs.mkdirSync(path.join(tmp, 'skills/unrelated'), { recursive: true });
   fs.writeFileSync(path.join(tmp, 'skills/unrelated/keep.txt'), 'keep');

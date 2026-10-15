@@ -58,7 +58,7 @@ it('optional preflight refuses incomplete and synthetic qualification before loa
   }
   // This synthetic packet contains plain text, NOT executable tools or real control proof.
   const os=require('node:os'), crypto=require('node:crypto');
-  const root=fs.mkdtempSync(path.join(os.tmpdir(),'fvs-lake-preflight-synthetic-'));
+  const root=fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()),'fvs-lake-preflight-synthetic-'));
   const input=path.join(root,'plain-data.txt'); fs.writeFileSync(input,'synthetic data only\n');
   const row={path:input,bytes:fs.statSync(input).size,sha256:crypto.createHash('sha256').update(fs.readFileSync(input)).digest('hex')};
   const q={operation:'synthetic-never-authorized',permissionEvidence:row,root,tools:{},dynamicLibraries:[row],source:{toolchain:row,manifest:row,configuration:row},environment:{},evidence:{}};
