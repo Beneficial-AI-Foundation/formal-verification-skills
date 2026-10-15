@@ -47,7 +47,7 @@ Resolve numeric `nN` and `--target plan|followup`. Initial review consumes `PLAN
 `EXEC_PLAN_nN.md` and owns `PLAN_REVIEW_nN.md`; follow-up consumes `FOLLOWUP_PLAN_nN.md` plus
 available original-plan/eval context and owns `FOLLOWUP_REVIEW_nN.md`. Refuse an occupied output.
 
-Normalize the target's `Authoring runtime:` marker to `codex`, `claude`, `other`, or `unknown`.
+Normalize the target's `Authoring runtime:` marker by exact aliases to `codex`, `claude`, `pi`, `opencode`, `gemini`, `other`, or `unknown`.
 Missing, foreign, or conflicting markers are `unverified`; they do not block review, but never
 claim independence. Label a different known runtime `cross-runtime`, an explicitly selected
 matching runtime `same-runtime, fresh reviewer`, and Other `unverified`.
@@ -63,6 +63,13 @@ provider-qualified OpenAI Pi seat when running in Pi, then Codex CLI. The Pi rou
 read-only Pi child with the exact selected provider/model; it is not an Other/manual handoff.
 Unknown authors receive an explicit reviewer menu without an independence claim. Never route a
 Claude Code subscription through Pi.
+
+OpenCode and Gemini selections remain named choices, not Claude/Other aliases. The external
+helper returns a specific `CAPABILITY_UNAVAILABLE` for their currently unqualified diagnostic
+CLI routes (OpenCode has no native shell isolation; Gemini lacks this isolated named-agent,
+memory-excluding shell/effort route). Offer explicit Codex/Claude, fresh Pi, or acknowledged
+Other alternatives and reconfirm any changed choice; never launch unsafely or substitute.
+An unavailable observed setting is unknown, not this capability failure or a command-wide gate.
 
 Build one review selection manifest containing reviewer runner, provenance, exact catalog model,
 and effort. Confirm it before launch with Continue once, Adjust once, Save override, or Cancel;
@@ -98,10 +105,16 @@ scope as `review-grounding.md` describes (never compact repeated spans) and reru
 passes. Then run the review, which repeats the same check against current sources:
 
 ```bash
+MODEL_IDENTITY_ARGS=()
+[ "$MODEL_IS_ALIAS" != "true" ] || MODEL_IDENTITY_ARGS=(--model-is-alias)
 node ../../../scripts/fvs-codex-think.mjs review \
   --topic "$ROOT" --iteration "n$N" --target "$TARGET_KIND" \
-  --reviewer "$REVIEWER" --model "$MODEL" --effort "$EFFORT" --grounding "$GROUNDING_FILE"
+  --reviewer "$REVIEWER" --model "$MODEL" --effort "$EFFORT" --grounding "$GROUNDING_FILE" \
+  "${MODEL_IDENTITY_ARGS[@]}"
 ```
+
+Set `$MODEL_IS_ALIAS` only from the confirmed catalog identity (false for exact IDs).
+Unknown alias-to-version equivalence is metadata, never guessed from spelling or called honored.
 
 The shared provider machinery preflights only the selected CLI. Codex runs ephemeral with user
 config ignored: its saved scratch directory is writable while the repository remains read-only.
@@ -124,6 +137,15 @@ from requested values. If capability or result evidence is missing, leave the re
 For Other, the command reports `PENDING` and a managed packet. Give `prompt.md` to the selected
 reviewer, save its Markdown response inside the project, then run the printed `review-import`
 command with `--topic`, `--packet`, and `--response`. A pending export is not a completed review.
+
+Persist `Stage settings:` in the completed review and separate authoring-seat triage under `crypto_review`, using the single
+Stage settings evidence contract in `model-profiles.md`: requested and resolved
+runtime/provider/model/effort plus selection/launch source, field-wise independently
+observed values or explicit unknown with reason/source, and dispatch route. Retain
+relevant existing role/child/hash evidence only. Valid completion with unknown telemetry
+succeeds; never copy launch inputs into observations or invent effective settings.
+A real reported mismatch needs an actionable supported choice/reconfirmation, not silent
+substitution. Legacy missing metadata stays unknown; immutable history is not backfilled.
 
 ## 3. Triage in the authoring seat
 

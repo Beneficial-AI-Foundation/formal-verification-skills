@@ -120,6 +120,14 @@ Arguments: $ARGUMENTS (none expected -- all parameters collected interactively).
 
 <process>
 
+Before any dispatch, load trusted shipped guidance from the installed FVS root (the host adapter
+transforms this canonical path; never resolve it from the consumer cwd):
+
+```bash
+LAKE_BUILD_GUIDE=$(cat ${CLAUDE_PLUGIN_ROOT}/fv-skills/references/lake-build.md) || exit 1
+```
+
+
 ## Step 1: Collect Parameters via Interactive Prompts
 
 Use AskUserQuestion for all four prompts. This command is fully interactive -- no flags.
@@ -287,6 +295,10 @@ Task(
   description="Research context for formalisation: $TASK_DESCRIPTION",
   prompt="Research mode: formalise
 
+<lake_build_guide>
+$LAKE_BUILD_GUIDE
+</lake_build_guide>
+
 <task_description>$TASK_DESCRIPTION</task_description>
 <resources_path>$RESOURCES_PATH</resources_path>
 <kb_config>$KB_CONFIG_JSON</kb_config>
@@ -363,6 +375,10 @@ Task(
   reasoning_effort="$EXECUTOR_EFFORT", // when supported; otherwise apply the capability gate
   description="Create Lean files for formalisation: $TASK_DESCRIPTION",
   prompt="Execute mode: formalise
+
+<lake_build_guide>
+$LAKE_BUILD_GUIDE
+</lake_build_guide>
 
 <research_findings>
 $RESEARCH_SUBAGENT_OUTPUT

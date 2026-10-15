@@ -1,6 +1,9 @@
 <purpose>Define the shared diagnostic-only boundary for crypto and FC reviewers.</purpose>
 
 <diagnostic_policy>
+For source-cited selectors/import artifacts, see [Practical Lake builds](lake-build.md), only as
+read-only diagnostic guidance within the wrapper's existing confinement. It grants no reviewer
+writes, tool installation or compiler permission; stricter request-local controls still apply.
 Reviewers may use installed Lean, Verus, Rocq, Isabelle, or other target toolchains
 for bounded diagnostic prototypes: signature/type/API checks, minimal counterexamples,
 and short executable traces. Each probe answers one stated review question. Default

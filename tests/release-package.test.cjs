@@ -293,7 +293,7 @@ describe('2.3.7 release surfaces', () => {
   it('agrees on one version across all six surfaces and the copied payload', () => {
     assert.equal(json('package.json').version, RELEASE);
     assert.deepEqual(read('fv-skills/VERSION'), Buffer.from(RELEASE), 'VERSION is exactly the version bytes');
-    assert.deepEqual(read('plugins/fvs/fv-skills/VERSION'), Buffer.from(RELEASE));
+    assert.equal(read('plugins/fvs/fv-skills/VERSION').toString(), `${RELEASE}\n`, 'the generator ends copied text with a newline');
     assert.equal(json('plugins/fvs/.claude-plugin/plugin.json').version, RELEASE);
     assert.equal(json('plugins/fvs/.codex-plugin/plugin.json').version, RELEASE);
     const changelog = read('CHANGELOG.md').toString();

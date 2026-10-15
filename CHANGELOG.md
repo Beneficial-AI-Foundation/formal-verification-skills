@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.3.7] - 2026-10-15
+
+### Added
+
+- The GitHub repository has a self-contained `skills/fvs-setup` entry, so the skills CLI can
+  discover FVS. It explains the native installation for Pi, Claude Code, Codex, OpenCode and Gemini
+  and asks before running an installer. Copying it alone does not install the FVS workflows (#81).
+- A practical Lake builds reference covers targeted checks, import artifacts and caches without
+  changing your project's toolchain or dependency pins, and credits its source talk. The Lean
+  writing commands load it (#79).
+
+### Changed
+
+- The README is shorter and organised around installation for each runtime, the two workflows,
+  commands, and updates and removal (#70).
+- Codex thinking stages for `/fvs:crypto-plan`, `/fvs:crypto-eval` and `/fvs:crypto-followup`
+  receive the full crypto-thinker role and a complete context file, run read-only, and return their
+  response. The parent command checks the response and writes the stage files (#63).
+- Crypto stages record requested, resolved and observed model settings separately and report a real
+  settings mismatch instead of completing the stage. Choosing OpenCode or Gemini as a statement
+  reviewer now says that route is unavailable and offers Codex, Claude, a fresh Pi session or an
+  acknowledged other reviewer, rather than substituting one (#63).
+
+### Fixed
+
+- Every Lean-writing specialist (executor, crypto executor, external modeler and Lean refactorer)
+  is granted lean-lsp-mcp diagnostics and goal states, and the Gemini and OpenCode conversions keep
+  those grants. Effective access inside each host has not been verified yet (#74).
+- The README lists OpenCode's help command as `/fvs-help`, the name the installer creates.
+- `npm run check:plugin`, which `npm publish` runs, no longer fails on macOS, where the default
+  temporary directory is reached through a symlink.
+
 ## [2.3.6] - 2026-09-29
 
 ### Added

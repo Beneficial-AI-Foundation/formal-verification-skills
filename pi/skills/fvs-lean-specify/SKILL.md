@@ -38,6 +38,14 @@ Target function: $ARGUMENTS (required -- function name in Lean or Rust form).
 
 <process>
 
+Before any dispatch, load trusted shipped guidance from the installed FVS root (the host adapter
+transforms this canonical path; never resolve it from the consumer cwd):
+
+```bash
+LAKE_BUILD_GUIDE=$(cat ../../../fv-skills/references/lake-build.md) || exit 1
+```
+
+
 ## Step 1: Resolve Target Function
 
 Accept $ARGUMENTS as function name. Search in CODEMAP.md if available:
@@ -170,6 +178,10 @@ Task(
   description="Research context for spec generation of $FUNCTION_NAME",
   prompt="Research mode: spec-generation
 
+<lake_build_guide>
+$LAKE_BUILD_GUIDE
+</lake_build_guide>
+
 <target_function>$FUNCTION_NAME</target_function>
 <funs_lean_path>$FUNS_LEAN</funs_lean_path>
 
@@ -226,6 +238,10 @@ Task(
   reasoning_effort="$EXECUTOR_EFFORT", // when supported; otherwise apply the capability gate
   description="Generate spec for $FUNCTION_NAME",
   prompt="Execute mode: spec-generation
+
+<lake_build_guide>
+$LAKE_BUILD_GUIDE
+</lake_build_guide>
 
 <research_findings>
 $RESEARCH_SUBAGENT_OUTPUT

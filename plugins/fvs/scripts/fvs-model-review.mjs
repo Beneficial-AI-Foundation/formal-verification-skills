@@ -11,6 +11,7 @@ import {
   runReviewer,
   validatePiDispatchReceipt,
   validateReviewerOptions,
+  stageSettings,
 } from './fvs-spec-review.mjs';
 
 const root = fs.realpathSync(process.cwd());
@@ -70,8 +71,8 @@ export function prepareReview(request) {
     fail('external-model review round must be between 1 and 3');
   }
   const reviewer = validateReviewerOptions(request);
-  if (!['codex', 'claude', 'pi', 'other', 'unknown'].includes(request.author_runtime)) {
-    fail('author_runtime must be codex, claude, pi, other, or unknown');
+  if (!['codex', 'claude', 'pi', 'opencode', 'gemini', 'other', 'unknown'].includes(request.author_runtime)) {
+    fail('author_runtime must be codex, claude, pi, opencode, gemini, other, or unknown');
   }
   if (!Array.isArray(request.inputs) || request.inputs.length < 2 ||
       new Set(request.inputs).size !== request.inputs.length) {
@@ -148,7 +149,7 @@ function assertInputsUnchanged(packet) {
   }
 }
 
-function persist(directory, response, reportedModels = [], external = false, piReceipt = null) {
+function persist(directory, response, reportedModels = [], external = false, piReceipt = null, settings = null) {
   directory = insideProject(directory);
   const packetFile = path.join(directory, 'packet.json');
   const packet = readJson(packetFile);
@@ -161,6 +162,10 @@ function persist(directory, response, reportedModels = [], external = false, piR
     model: packet.request.model,
     effort: packet.request.effort,
     reportedModels,
+    settings: settings ?? stageSettings(packet.request, { stage: `external_${packet.mode}_review`,
+      route: external ? 'external-manual' : piReceipt ? 'pi-fresh-child' : `external-${packet.request.runtime}-cli`,
+      reportedModels: piReceipt ? [piReceipt.model] : reportedModels,
+      reportedEffort: piReceipt?.effort ?? null, piEvidence: piReceipt }),
     external,
     piReceipt,
     packet_sha256: hash(fs.readFileSync(packetFile)),
@@ -176,14 +181,17 @@ export async function runReview(requestFile) {
   const packet = readJson(path.join(directory, 'packet.json'));
   if (packet.request.runtime === 'other' || packet.request.runtime === 'pi') return prepared;
   const prompt = fs.readFileSync(path.join(directory, 'prompt.md'), 'utf8');
-  const { response, reportedModels } = await runReviewer({
+  const { response, reportedModels, settings } = await runReviewer({
     runtime: packet.request.runtime,
     model: packet.request.model,
     effort: packet.request.effort,
     prompt,
+    stage: `external_${packet.mode}_review`,
+    selection_source: packet.request.selection_source,
+    model_is_alias: packet.request.model_is_alias,
     artifactDirectory: directory,
   });
-  return persist(directory, response, reportedModels);
+  return persist(directory, response, reportedModels, false, null, settings);
 }
 
 async function cli() {

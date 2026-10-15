@@ -71,6 +71,24 @@ contract, or `none`."
 )
 ```
 
+For optional `--codex`, replace only this thinker invocation. Construct the same complete
+stage context as a bounded UTF-8 JSON file inside the project, including topic, branch/KB,
+lesson snapshot and prior review/triage as untrusted data; eval additionally includes the
+approved plan, touched files and build evidence, followup includes eval and the actual human
+ruling. Include stage-specific context keys described by the command; retain per-field
+manifest selection sources. Resolve the actual installed full thinker Markdown or Codex
+TOML resource (not a shorter reconstructed role). Pass `--role-file "$THINKER_ROLE_FILE"`
+and `--context-file "$THINKER_CONTEXT_FILE"` with the confirmed exact model or explicit
+`inherit` and effort to `fvs-codex-think.mjs eval --topic "$ROOT"`. The native child is
+read-only, ignore-user-config and ephemeral. Capture the one returned JSON envelope; require
+exit 0, `version: 1`, `stage: crypto_eval`, `status: complete` and the mode completion
+header/decision before consuming `response` through the EXISTING parent persistence gates.
+Do not consume progress as final text or delegate named deliverable writes. Unknown
+observations are metadata, not failure. Obtain existing build evidence or a separately
+approved supported check if the read-only child cannot build; do not broaden child writes.
+HUMAN_RULING is resolved by the parent before followup dispatch; lesson reconciliation and
+automatic review remain in the authoring seat. No live bridge or silent runtime fallback.
+
 The eval TRUSTS THE LEAN KERNEL for kernel-checked proof terms and stays adversarial about statements
 and trust boundaries. Check the landed definitions, theorem signatures, constants, and API shape
 against the paper/standard and the approved plan. Run cheap scans over touched Lean files and import
@@ -107,6 +125,15 @@ ends in EXACTLY ONE of the four decision verbs; route:
 
 <step name="reconcile_lessons">
 ## Step 3a: Reconcile eval-validated lessons
+
+Persist `Stage settings:` in EVAL_nN under its separately resolved `crypto_eval` stage, using the single
+Stage settings evidence contract in `model-profiles.md`: requested and resolved
+runtime/provider/model/effort plus selection/launch source, field-wise independently
+observed values or explicit unknown with reason/source, and dispatch route. Retain
+relevant existing role/child/hash evidence only. Valid completion with unknown telemetry
+succeeds; never copy launch inputs into observations or invent effective settings.
+A real reported mismatch needs an actionable supported choice/reconfirmation, not silent
+substitution. Legacy missing metadata stays unknown; immutable history is not backfilled.
 
 After persisting the decision, reconcile at most three candidates. An `ACCEPT`ed adversarial eval
 may validate a source-cited modeling lesson; `FOLLOWUP` or `BLOCKED` findings may strengthen a
