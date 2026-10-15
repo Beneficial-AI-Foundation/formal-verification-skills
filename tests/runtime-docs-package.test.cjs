@@ -184,7 +184,10 @@ if (process.argv.includes('--package-fixture')) {
     assert.match(updates, /copying it alone does not install the full FVS workflows/);
     assert.match(updates, /Later setup consent cannot cover earlier analytics/);
     for(const line of readme.split('\n').filter(line=>/npx skills/.test(line))) assert.match(line,/DISABLE_TELEMETRY=1 DO_NOT_TRACK=1.*npx skills/);
-    for(const token of ['lakefile.lean','lakefile.toml','lean-toolchain','lake-build.md','probe-aeneas','compatibility table','SPQR']) assert.ok(tooling.includes(token),token);
+    for(const token of ['lakefile.lean','lakefile.toml','lean-toolchain','lake-build.md','probe-aeneas','/fvs:map-code','/fvs:fc-plan','setup diagnostics','.formalising/CODEMAP.md','SPQR']) assert.ok(tooling.includes(token),token);
+    // The probe JSON is qualification data; users read the commands' resolver diagnostics instead.
+    assert.doesNotMatch(tooling, /probe-compatibility\.json/);
+    for(const command of ['map-code','fc-plan']) assert.match(fs.readFileSync(path.join(ROOT,'commands/fvs',`${command}.md`),'utf8'), /resolve --project-root "\$PROJECT_ROOT" --format text/, command);
     assert.match(tooling, /Unsupported platforms or unverified probe\/toolchain combinations cannot produce a verified graph/);
     assert.match(tooling, /SPQR compatibility is not supported/);
     assert.match(tooling, /If live feedback is required but unavailable, the task stops/);
@@ -193,6 +196,27 @@ if (process.argv.includes('--package-fixture')) {
     assert.doesNotMatch(readme, /#\d+|FULL_PUBLIC_SHA|UNRUN|UNKNOWN|UNPERFORMED|UNDECIDED|sourceRoot|integrator-generated|Qualified local discovery/);
     assert.ok(readme.includes('https://github.com/open-gsd/gsd-core'));
     assert.ok(readme.includes('https://pi.dev/packages/fv-skills-baif'));
+  });
+  it('each README help row names the command its runtime installer prints', () => {
+    const {ALL_RUNTIMES}=require('../bin/install.js');
+    const rows={};
+    for(const line of fs.readFileSync(path.join(ROOT,'README.md'),'utf8').split('\n')) {
+      const match=line.match(/^\| [^|]+ \| `npx fv-skills-baif --(\w+) --global` \| `([^`]+)` \|$/);
+      if(match) rows[match[1]]=match[2];
+    }
+    assert.deepEqual(Object.keys(rows).sort(),[...ALL_RUNTIMES].sort());
+    assert.equal(rows.pi,'/skill:fvs-help'); // Pi delegates to its own package manager
+    for(const runtime of ALL_RUNTIMES.filter(runtime=>runtime!=='pi')) {
+      const dir=fs.mkdtempSync(path.join(os.tmpdir(),`fvs-help-row-${runtime}-`));
+      const env={...process.env,HOME:dir,XDG_CONFIG_HOME:path.join(dir,'xdg'),CLAUDE_CONFIG_DIR:dir,CODEX_HOME:dir,GEMINI_CONFIG_DIR:dir};
+      delete env.OPENCODE_CONFIG_DIR; delete env.OPENCODE_CONFIG;
+      const result=spawnSync(process.execPath,[path.join(ROOT,'bin/install.js'),`--${runtime}`,'--global','--config-dir',dir],{cwd:dir,env,encoding:'utf8',timeout:60000});
+      assert.equal(result.status,0,result.stderr);
+      const printed=result.stdout.replace(/\x1b\[[0-9;]*m/g,'').match(/Done! Launch .+ and run (\S+)\./)?.[1];
+      assert.equal(rows[runtime],printed,runtime);
+      // OpenCode flattens commands/fvs/help.md into command/fvs-help.md.
+      if(runtime==='opencode') assert.ok(fs.existsSync(path.join(dir,'command',`${printed.slice(1)}.md`)),printed);
+    }
   });
   it('physical fixtures refuse missing qualification before package side effects', () => {
     assert.throws(() => packageQualification(undefined,undefined), /path|absolute/i);
