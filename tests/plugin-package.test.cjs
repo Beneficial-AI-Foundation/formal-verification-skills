@@ -33,16 +33,19 @@ function basenames(root, suffix) {
 describe('published FVS plugin package', () => {
   it('marketplace role warning is conditional in emitted skill adapters', () => {
     const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
-    const marketplace = readme.slice(readme.indexOf('### Plugin marketplace'), readme.indexOf('### Unified npm installer'));
+    const start = readme.indexOf('### Claude Code and Codex marketplace');
+    const end = readme.indexOf('### Before your first Lean task', start);
+    assert.ok(start >= 0 && end > start, 'marketplace section boundaries must exist');
+    const marketplace = readme.slice(start, end);
     const prose = marketplace.replace(/\s+/g, ' ');
-    assert.match(prose, /ships the FVS agent prompts as Markdown but does not register them as Codex agent roles/);
-    assert.match(prose, /asks for an FVS specialist that Codex has not registered, FVS warns you/);
-    assert.match(prose, /does not guarantee the specialist's identity, sandbox, model, or reasoning effort/);
-    assert.match(prose, /FVS stops before starting the agent or writing files/);
-    assert.match(marketplace, /#### Codex specialist roles/);
-    assert.match(prose, /The npm installer installs a complete, separately managed FVS for Codex/);
+    assert.match(prose, /ships specialist prompts as Markdown without registering Codex agent roles/);
+    assert.match(prose, /FVS warns when a requested role is missing/);
+    assert.match(prose, /identity, sandbox, model and reasoning effort are not guaranteed/);
+    assert.match(prose, /settings-dependent step stops before dispatch or file writes/);
+    assert.match(prose, /Registered roles also need their settings checked/);
+    assert.match(prose, /npm installer supplies a complete, separately managed Codex installation with roles, hooks and configuration/);
     assert.match(marketplace, /codex plugin remove fvs@beneficial-ai-foundation\nnpx fv-skills-baif --codex --global/);
-    assert.match(prose, /including with `\$fvs:update`, never registers roles or runs the npm installer/);
+    assert.match(prose, /including `\$fvs:update`, do not register roles or run the npm installer/);
     const manifest = readJson('plugins/fvs/.codex-plugin/plugin.json');
     assert.ok(!Object.prototype.hasOwnProperty.call(manifest, 'agents'), 'marketplace manifest must not claim agent registration');
     for (const skillName of ['map-code', 'lean-specify', 'help']) {

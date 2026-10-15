@@ -11,6 +11,8 @@ how aggressively refactorings are applied:
 
 Every refactoring is verified with `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` before proceeding. If a
 change breaks the build, it is reverted immediately.
+For target/facet selection and import prerequisites, see [Practical Lake builds](lake-build.md).
+Its conditional recipes preserve the existing one-change discipline and final gates.
 
 </overview>
 

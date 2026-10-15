@@ -42,6 +42,14 @@ iteration from `plans/` and runs it. The loop is restartable from its on-disk re
 
 <process>
 
+Before any dispatch, load trusted shipped guidance from the installed FVS root (the host adapter
+transforms this canonical path; never resolve it from the consumer cwd):
+
+```bash
+LAKE_BUILD_GUIDE=$(cat ~/.claude/fv-skills/references/lake-build.md) || exit 1
+```
+
+
 ## Step 1: Resolve the topic slug + paths (path safety)
 
 Resolve the topic into a slug (whitespace -> `-`, capitalization preserved, e.g.
@@ -137,6 +145,10 @@ Task(
   reasoning_effort="$EXECUTOR_EFFORT", // when supported; otherwise apply the capability gate
   description="Run bounded plan",
   prompt="Execute the bounded crypto plan.
+
+<lake_build_guide>
+$LAKE_BUILD_GUIDE
+</lake_build_guide>
 
 <bounded_plan>...the inlined EXEC_PLAN_nN.md / FOLLOWUP_PLAN_nN.md...</bounded_plan>
 
