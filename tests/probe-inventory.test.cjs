@@ -18,8 +18,8 @@ after(() => {
   }
 });
 
-function temporaryDirectory() {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-probe-inventory-'));
+function temporaryDirectory(root = os.tmpdir()) {
+  const directory = fs.mkdtempSync(path.join(root, 'fvs-probe-inventory-'));
   temporaryDirectories.push(directory);
   return directory;
 }
@@ -446,10 +446,10 @@ describe('probe-aeneas canonical function inventory', () => {
 
 const FIXTURE = path.join(ROOT, 'tests', 'fixtures', 'probe-compatibility.json');
 const TESTED_TARGET = 'aarch64-apple-darwin';
+const LINUX_TARGET = 'x86_64-unknown-linux-gnu';
+const HOST_TARGET = `${{ arm64: 'aarch64', x64: 'x86_64' }[process.arch] ?? process.arch}-${{ darwin: 'apple-darwin', linux: 'unknown-linux-gnu', win32: 'pc-windows-msvc' }[process.platform] ?? process.platform}`;
 const ON_TESTED_HOST = process.platform === 'darwin' && process.arch === 'arm64' &&
   fs.existsSync('/usr/bin/sandbox-exec');
-const HAS_BSDTAR = (spawnSync('/usr/bin/tar', ['--version'], { encoding: 'utf8' }).stdout || '')
-  .includes('bsdtar');
 const NODE_DIR = path.dirname(process.execPath);
 const ENTRY_POINTS = [
   'commands/fvs/map-code.md',
@@ -523,14 +523,14 @@ function toolEnvironment(directory) {
   };
 }
 
-function installStubHelpers({ home, bin }) {
-  const helpers = testedTuple().platforms[TESTED_TARGET].helpers;
+function installStubHelpers({ home, bin }, target = TESTED_TARGET) {
+  const helpers = testedTuple().platforms[target].helpers;
   writeExecutable(path.join(bin, 'probe-rust'), `echo "${helpers['probe-rust'].version}"`);
   writeExecutable(path.join(bin, 'scip'), `echo "${helpers.scip.version}"`);
   writeExecutable(path.join(home, '.local', 'bin', 'probe-lean-v4.31.0'), `echo "${helpers['probe-lean'].version}"`);
   fs.mkdirSync(path.join(home, '.local', 'lib', 'probe-lean-v4.31.0'), { recursive: true });
   writeExecutable(path.join(bin, 'rust-analyzer'), `echo "${helpers['rust-analyzer'].version}"`);
-  writeExecutable(path.join(bin, 'rustup'), 'printf "rust-analyzer-aarch64-apple-darwin\\nrust-src\\n"');
+  writeExecutable(path.join(bin, 'rustup'), `printf "rust-analyzer-${target}\\nrust-src\\n"`);
 }
 
 // A stand-in probe-aeneas that tries every forbidden write before emitting a
@@ -555,8 +555,8 @@ function stubProbe(directory) {
   return file;
 }
 
-function cli(args, env, cwd = ROOT, script = SCRIPT) {
-  return spawnSync(process.execPath, [script, ...args], { cwd, env, encoding: 'utf8' });
+function cli(args, env, cwd = ROOT) {
+  return spawnSync(process.execPath, [SCRIPT, ...args], { cwd, env, encoding: 'utf8' });
 }
 
 function resolveJson(root, env, extra = []) {
@@ -616,7 +616,7 @@ function stubRelease(archiveBytes, overrides = {}) {
     tagCommit: '0'.repeat(40),
     baseUrl: 'https://example.invalid/',
     assets: {
-      'stub-target': {
+      [HOST_TARGET]: {
         asset: 'probe-aeneas-stub.tar.xz',
         archiveSha256: sha256(archiveBytes),
         members: STUB_MEMBERS,
@@ -635,8 +635,11 @@ function writeArchive(directory, name, raw, { xz = false } = {}) {
   fs.writeFileSync(rawFile, raw);
   if (!xz) return rawFile;
   const xzFile = path.join(directory, `${name}.tar.xz`);
-  const packed = spawnSync('/usr/bin/tar', ['-cJf', xzFile, `@${rawFile}`], { encoding: 'utf8' });
-  assert.equal(packed.status, 0, packed.stderr);
+  const packed = process.platform === 'linux'
+    ? spawnSync('/usr/bin/xz', ['--compress', '--stdout'], { input: raw })
+    : spawnSync('/usr/bin/tar', ['-cJf', xzFile, `@${rawFile}`], { encoding: 'utf8' });
+  assert.equal(packed.status, 0, String(packed.stderr));
+  if (process.platform === 'linux') fs.writeFileSync(xzFile, packed.stdout);
   return xzFile;
 }
 
@@ -664,6 +667,7 @@ describe('verified probe-aeneas compatibility evidence', () => {
     fs.mkdirSync(path.join(layout, 'scripts'), { recursive: true });
     const copied = path.join(layout, 'scripts', 'fvs-probe-inventory.mjs');
     fs.copyFileSync(SCRIPT, copied);
+    fs.copyFileSync(path.join(ROOT, 'scripts', 'fvs-probe-linux.mjs'), path.join(path.dirname(copied), 'fvs-probe-linux.mjs'));
     assert.ok(!fs.existsSync(path.join(layout, 'tests')));
 
     const shipped = await loadSetup(copied);
@@ -685,7 +689,7 @@ describe('verified probe-aeneas compatibility evidence', () => {
       if (!asset.supported) assert.ok(asset.reason, `${target} needs an unsupported reason`);
     }
     assert.deepEqual(assets.filter(([, asset]) => asset.supported).map(([target]) => target),
-      [TESTED_TARGET]);
+      [TESTED_TARGET, LINUX_TARGET]);
 
     for (const tuple of evidence.tuples) {
       for (const [target, platform] of Object.entries(tuple.platforms)) {
@@ -716,10 +720,16 @@ describe('verified probe-aeneas compatibility evidence', () => {
     assert.equal(resolved.status, 0, resolved.stderr);
     const result = JSON.parse(resolved.stdout);
     assert.equal(result.tuple, evidence.tuples[0].id);
-    assert.equal(result.status, 'missing');
-    assert.equal(result.install.available, true);
-    assert.equal(result.install.destination,
-      path.join(env.toolsHome, 'probe-aeneas', `0.20.0-${TESTED_TARGET}`, 'probe-aeneas'));
+    if (HOST_TARGET === TESTED_TARGET) {
+      assert.equal(result.status, 'missing');
+      assert.equal(result.install.available, true);
+      assert.equal(result.install.destination,
+        path.join(env.toolsHome, 'probe-aeneas', `0.20.0-${TESTED_TARGET}`, 'probe-aeneas'));
+    } else {
+      assert.equal(result.status, 'unsupported-platform');
+      assert.equal(result.install.available, false);
+      assert.match(result.reasons.join(' '), /does not match actual host/);
+    }
     assert.ok(!fs.existsSync(env.toolsHome), 'resolve must not write');
   });
 
@@ -730,6 +740,7 @@ describe('verified probe-aeneas compatibility evidence', () => {
     const list = builder.match(/const SCRIPT_FILES = \[([\s\S]*?)\];/);
     assert.ok(list);
     assert.match(list[1], /'fvs-probe-inventory\.mjs'/);
+    assert.match(list[1], /'fvs-probe-linux\.mjs'/);
   });
 });
 
@@ -772,12 +783,12 @@ describe('verified probe-aeneas resolution', () => {
     }
   });
 
-  it('classifies every other official asset as an unsupported platform', () => {
+  it('classifies every unverified official asset as an unsupported platform', () => {
     const directory = temporaryDirectory();
     const env = toolEnvironment(directory);
     const project = tupleProject(directory);
     const assets = fixture().release.assets;
-    for (const target of [...Object.keys(assets).filter((name) => name !== TESTED_TARGET), 'riscv64gc-unknown-linux-gnu']) {
+    for (const target of [...Object.keys(assets).filter((name) => !assets[name].supported), 'riscv64gc-unknown-linux-gnu']) {
       const result = resolveJson(project, env.env, ['--platform', target]);
       assert.equal(result.status, 'unsupported-platform', target);
       assert.equal(result.platformSupported, false);
@@ -788,7 +799,7 @@ describe('verified probe-aeneas resolution', () => {
     assert.match(resolveJson(project, env.env, ['--platform', 'aarch64-unknown-linux-gnu']).reasons[0], /#77/);
   });
 
-  it('verifies the probe and every preinstalled helper by exact version', () => {
+  it('verifies the probe and every preinstalled helper by exact version', { skip: !ON_TESTED_HOST && 'requires the tested macOS host and confinement' }, () => {
     const directory = temporaryDirectory();
     const env = toolEnvironment(directory);
     const project = tupleProject(directory);
@@ -829,7 +840,7 @@ describe('verified probe-aeneas resolution', () => {
     assert.equal(drift.helpers['probe-lean'].status, 'missing');
   });
 
-  it('preserves an incompatible user probe and offers a side-by-side install', () => {
+  it('preserves an incompatible user probe and offers a side-by-side install', { skip: !ON_TESTED_HOST && 'requires the tested macOS host and confinement' }, () => {
     const directory = temporaryDirectory();
     const env = toolEnvironment(directory);
     const project = tupleProject(directory);
@@ -851,6 +862,194 @@ describe('verified probe-aeneas resolution', () => {
     assert.equal(tampered.probe.source, 'fvs-managed');
     assert.equal(tampered.status, 'incompatible');
     assert.match(tampered.probe.reason, /pinned executable digest/);
+  });
+});
+
+describe('Linux verified resolution', () => {
+  it('checks the measured Linux helper tuple and refuses missing helpers before extraction', { skip: HOST_TARGET !== LINUX_TARGET }, async (t) => {
+    const { planLinuxSandbox, runLinuxSandbox } = await import('../scripts/fvs-probe-linux.mjs');
+    try {
+      const control = runLinuxSandbox(planLinuxSandbox({ command: '/usr/bin/true', cwd: ROOT }));
+      if (!control.ok) return t.skip(`Linux confinement unavailable: ${control.stderr || control.error}`);
+    } catch (error) {
+      return t.skip(`Linux confinement unavailable: ${error.message}`);
+    }
+    const directory = fs.mkdtempSync(path.join(os.homedir(), '.fvs-resolve-test-'));
+    temporaryDirectories.push(directory);
+    const env = toolEnvironment(directory);
+    const project = tupleProject(directory);
+    const probe = stubProbe(directory);
+    installStubHelpers(env, LINUX_TARGET);
+    const verified = resolveJson(project, env.env, ['--probe', probe]);
+    assert.equal(verified.status, 'verified', verified.reasons.join('\n'));
+    assert.equal(verified.platform, LINUX_TARGET);
+    assert.equal(verified.helpers['rust-analyzer'].found, 'rust-analyzer 1.98.1 (48a229c 2026-09-01)');
+    assert.ok(Object.values(verified.helpers).every(helper => helper.status === 'ok'));
+    fs.rmSync(path.join(env.bin, 'scip'));
+    const missing = resolveJson(project, env.env, ['--probe', probe]);
+    assert.equal(missing.status, 'missing');
+    assert.equal(missing.helpers.scip.status, 'missing');
+    assert.equal(missing.install.available, false);
+    assert.match(missing.manual.join('\n'), /scip-linux-amd64/);
+    const output = path.join(directory, 'missing-scip.json');
+    const run = cli(['run', '--project-root', project, '--probe', probe, '--output', output], env.env);
+    assert.equal(run.status, 3);
+    assert.match(run.stderr, /scip missing/);
+    assert.ok(!fs.existsSync(output));
+    assert.ok(!fs.existsSync(env.toolsHome));
+  });
+
+  it('uses the same selected helper aliases, external files and Lean library in both phases', {
+    skip: HOST_TARGET !== LINUX_TARGET || !fs.existsSync('/usr/bin/bwrap'),
+  }, () => {
+    const directory = fs.mkdtempSync(path.join(os.homedir(), '.fvs-helper-paths-'));
+    temporaryDirectories.push(directory);
+    const env = toolEnvironment(directory);
+    const project = tupleProject(directory);
+    installStubHelpers(env, LINUX_TARGET);
+
+    const local = path.join(directory, 'local-tools');
+    fs.renameSync(path.join(env.home, '.local'), local);
+    fs.symlinkSync(local, path.join(env.home, '.local'));
+    const library = path.join(directory, 'lean-library');
+    fs.renameSync(path.join(local, 'lib', 'probe-lean-v4.31.0'), library);
+    fs.symlinkSync(library, path.join(local, 'lib', 'probe-lean-v4.31.0'));
+    fs.writeFileSync(path.join(library, 'sentinel'), 'Lean library');
+    writeExecutable(path.join(local, 'bin', 'probe-lean-v4.31.0'),
+      'test -r "$HOME/.local/lib/probe-lean-v4.31.0/sentinel" || exit 31\necho 0.14.0');
+
+    const external = path.join(directory, 'external-bin');
+    const target = path.join(external, 'probe-rust');
+    writeExecutable(target, `test ! -e "${external}/private-sibling" || exit 32\necho "probe-rust 0.11.0"`);
+    fs.writeFileSync(path.join(external, 'private-sibling'), 'unrelated');
+    fs.rmSync(path.join(env.bin, 'probe-rust'));
+    fs.symlinkSync(target, path.join(env.bin, 'probe-rust'));
+    writeExecutable(path.join(env.home, '.cargo', 'bin', 'probe-rust'), 'echo wrong-fallback');
+
+    const cached = path.join(directory, 'cached-scip');
+    writeExecutable(path.join(cached, 'tools', 'scip'), 'echo "scip version v0.10.0"');
+    fs.symlinkSync(cached, path.join(env.home, '.probe-rust'));
+    writeExecutable(path.join(env.bin, 'scip'), 'echo wrong-PATH-scip');
+    const rustup = path.join(external, 'rustup');
+    writeExecutable(rustup, [
+      `test ! -e "${external}/private-sibling" || exit 33`,
+      'case "$0" in',
+      '  */rust-analyzer) echo "rust-analyzer 1.98.1 (48a229c 2026-09-01)" ;;',
+      `  */rustup) printf 'rust-analyzer-${LINUX_TARGET}\\nrust-src\\n' ;;`,
+      '  *) exit 34 ;;',
+      'esac',
+    ].join('\n'));
+    for (const name of ['rustup', 'rust-analyzer']) {
+      fs.rmSync(path.join(env.bin, name));
+      fs.symlinkSync(rustup, path.join(env.bin, name));
+    }
+
+    const probe = path.join(directory, 'probe', 'probe-aeneas');
+    const graph = JSON.stringify(envelope(fixtureData(), {
+      tool: { name: 'probe-aeneas', version: '0.20.0', command: 'extract' },
+    }));
+    writeExecutable(probe, [
+      'set -eu',
+      'if [ "$1" = --version ]; then echo "probe-aeneas 0.20.0"; exit 0; fi',
+      'probe-rust --version',
+      '"$HOME/.probe-rust/tools/scip" --version',
+      '"$HOME/.local/bin/probe-lean-v4.31.0" --version',
+      'rust-analyzer --version',
+      'rustup component list --installed',
+      `printf '%s' '${graph}' > "$4"`,
+    ].join('\n'));
+
+    const resolved = resolveJson(project, env.env, ['--probe', probe]);
+    assert.equal(resolved.status, 'verified', resolved.reasons.join('\n'));
+    assert.equal(resolved.helpers['probe-rust'].path, path.join(env.bin, 'probe-rust'));
+    assert.equal(resolved.helpers.scip.path, path.join(env.home, '.probe-rust', 'tools', 'scip'));
+    assert.equal(resolved.helpers['rust-analyzer'].rustupPath, path.join(env.bin, 'rustup'));
+    assert.equal(resolved.helpers['probe-lean'].libraryPath,
+      path.join(env.home, '.local', 'lib', 'probe-lean-v4.31.0'));
+    const output = path.join(directory, 'extract.json');
+    const run = cli(['run', '--project-root', project, '--probe', probe, '--output', output], env.env);
+    assert.equal(run.status, 0, run.stderr);
+    assert.deepEqual(JSON.parse(fs.readFileSync(output, 'utf8')), JSON.parse(graph));
+    assert.equal(fs.readFileSync(path.join(library, 'sentinel'), 'utf8'), 'Lean library');
+    assert.equal(fs.readFileSync(path.join(external, 'private-sibling'), 'utf8'), 'unrelated');
+  });
+
+  it('keeps crate cwd, ancestor toolchain inputs, nested overrides and the explicit environment in public checks', {
+    skip: HOST_TARGET !== LINUX_TARGET || !fs.existsSync('/usr/bin/bwrap'),
+  }, () => {
+    const directory = fs.mkdtempSync(path.join(os.homedir(), '.fvs-toolchain-context-'));
+    temporaryDirectories.push(directory);
+    const env = toolEnvironment(directory);
+    const project = tupleProject(directory);
+    const probe = stubProbe(directory);
+    installStubHelpers(env, LINUX_TARGET);
+    fs.writeFileSync(path.join(project, 'rust-toolchain.toml'), 'root-context');
+    const checks = [
+      ['root', 'test "$(cat ../rust-toolchain.toml)" = root-context', {}],
+      ['nested', 'test "$(cat rust-toolchain)" = nested-context', {}],
+      ['explicit', 'test "$RUSTUP_TOOLCHAIN" = 1.98.1', { RUSTUP_TOOLCHAIN: '1.98.1' }],
+    ];
+    for (const [name, check, extra] of checks) {
+      if (name === 'nested') fs.writeFileSync(path.join(project, 'crate', 'rust-toolchain'), 'nested-context');
+      const prefix = `set -eu\ntest "$PWD" = "${project}/crate"\n${check}\n`;
+      writeExecutable(path.join(env.bin, 'rust-analyzer'), `${prefix}echo "rust-analyzer 1.98.1 (48a229c 2026-09-01)"`);
+      writeExecutable(path.join(env.bin, 'rustup'), `${prefix}printf 'rust-analyzer-${LINUX_TARGET}\\nrust-src\\n'`);
+      const resolved = resolveJson(project, { ...env.env, ...extra }, ['--probe', probe]);
+      assert.equal(resolved.status, 'verified', `${name}: ${resolved.reasons.join('\n')}`);
+    }
+  });
+
+  it('rejects an intermediate helper symlink before verification without suggesting reinstallation', {
+    skip: HOST_TARGET !== LINUX_TARGET,
+  }, () => {
+    const directory = fs.mkdtempSync(path.join(os.homedir(), '.fvs-helper-layout-'));
+    temporaryDirectories.push(directory);
+    const env = toolEnvironment(directory);
+    const project = tupleProject(directory);
+    const probe = stubProbe(directory);
+    installStubHelpers(env, LINUX_TARGET);
+    const target = path.join(directory, 'outside', 'probe-rust');
+    writeExecutable(target, 'echo "probe-rust 0.11.0"');
+    const middle = path.join(directory, 'middle');
+    fs.symlinkSync(target, middle);
+    fs.rmSync(path.join(env.bin, 'probe-rust'));
+    fs.symlinkSync(middle, path.join(env.bin, 'probe-rust'));
+    const resolved = resolveJson(project, env.env, ['--probe', probe]);
+    assert.equal(resolved.status, 'incompatible');
+    assert.match(resolved.reasons.join('\n'), /unsupported helper layout.*intermediate/);
+    assert.doesNotMatch(resolved.manual.join('\n'), /install|download/i);
+    assert.equal(resolved.install.available, false);
+    assert.equal(fs.existsSync(env.toolsHome), false);
+    assert.equal(fs.readlinkSync(middle), target);
+  });
+});
+
+describe('actual-host confinement gate', () => {
+  it('never executes helper or probe binaries through a foreign platform override', { skip: HOST_TARGET === TESTED_TARGET }, () => {
+    const directory = temporaryDirectory();
+    const env = toolEnvironment(directory);
+    const project = tupleProject(directory);
+    const marker = path.join(directory, 'executed');
+    const probe = path.join(env.bin, 'probe-aeneas');
+    writeExecutable(probe, `touch "${marker}"; echo "probe-aeneas 0.20.0"`);
+    installStubHelpers(env);
+    const result = resolveJson(project, env.env, ['--platform', TESTED_TARGET, '--probe', probe]);
+    assert.equal(result.status, 'unsupported-platform');
+    assert.equal(result.platformSupported, false);
+    assert.equal(result.install.available, false);
+    assert.equal(result.probe, null);
+    assert.deepEqual(result.helpers, {});
+    assert.ok(!fs.existsSync(marker));
+    assert.ok(!fs.existsSync(env.toolsHome));
+  });
+
+  it('rejects a foreign installer target before creating tool directories', async () => {
+    const { installProbe } = await loadSetup();
+    const toolsRoot = path.join(temporaryDirectory(), 'tools');
+    const release = stubRelease(Buffer.from('x'));
+    release.assets.foreign = release.assets[HOST_TARGET];
+    await assert.rejects(installProbe({ toolsRoot, target: 'foreign', release, decision: 'interactive' }), /actual host/);
+    assert.ok(!fs.existsSync(toolsRoot));
   });
 });
 
@@ -953,19 +1152,175 @@ describe('confined probe-aeneas invocation', () => {
   });
 });
 
-describe('consented probe-aeneas installer', () => {
-  const bsdtar = { skip: !HAS_BSDTAR && 'requires bsdtar (the installer runs on macOS only)' };
+describe('Linux production graph publication', () => {
+  it('publishes only valid nonempty graphs and preserves an existing destination', { skip: process.platform !== 'linux' || process.arch !== 'x64' }, async (t) => {
+    const { planLinuxSandbox, runLinuxSandbox } = await import('../scripts/fvs-probe-linux.mjs');
+    try {
+      const control = runLinuxSandbox(planLinuxSandbox({ command: '/usr/bin/true', cwd: ROOT }));
+      if (!control.ok) return t.skip(`Linux confinement unavailable: ${control.stderr || control.error}`);
+    } catch (error) {
+      return t.skip(`Linux confinement unavailable: ${error.message}`);
+    }
+    const { confinedExtract } = await loadSetup();
+    const directory = fs.mkdtempSync(path.join(os.homedir(), '.fvs-extract-test-'));
+    temporaryDirectories.push(directory);
+    const project = tupleProject(directory);
+    const out = path.join(directory, 'out');
+    fs.mkdirSync(out);
+    const probe = path.join(directory, 'tools', 'probe-aeneas');
+    const valid = envelope(fixtureData(), { tool: { name: 'probe-aeneas', version: '0.20.0', command: 'extract' } });
+    const cases = [
+      ['valid', JSON.stringify(valid), 0, null],
+      ['malformed', '{', 0, /JSON|Unexpected/],
+      ['empty', JSON.stringify({ ...valid, data: {} }), 0, /canonical inventory is empty/],
+      ['wrong-version', JSON.stringify({ ...valid, tool: { ...valid.tool, version: '0.19.0' } }), 0, /extract came from probe-aeneas/],
+      ['failed', JSON.stringify(valid), 27, /exited with 27/],
+    ];
+    for (const [name, text, status, error] of cases) {
+      writeExecutable(probe, `echo staged > "$2/staging-only"\nprintf '%s' '${Buffer.from(text).toString('base64')}' | /usr/bin/base64 -d > "$4"\necho diagnostic-${name} >&2\nexit ${status}`);
+      const output = path.join(out, `${name}.json`);
+      const result = confinedExtract({ probePath: probe, projectRoot: project, rustProject: path.join(project, 'crate'), output, stdio: 'pipe' });
+      assert.equal(result.ok, !error, `${name}: ${result.error}`);
+      assert.ok(!fs.existsSync(path.join(project, 'staging-only')), 'original checkout is never writable');
+      if (error) {
+        assert.match(result.error, error);
+        assert.ok(!fs.existsSync(output));
+        assert.match(result.log, new RegExp(`diagnostic-${name}`));
+      } else {
+        assert.equal(result.status, 0);
+        assert.equal(result.signal, null);
+        assert.deepEqual(JSON.parse(fs.readFileSync(output)), valid);
+      }
+      assert.ok(!fs.readdirSync(out).some(name => name.startsWith('.fvs-probe-output-')));
+    }
+    const existing = path.join(out, 'valid.json');
+    const before = fs.readFileSync(existing);
+    const refused = confinedExtract({ probePath: probe, projectRoot: project, rustProject: path.join(project, 'crate'), output: existing, stdio: 'pipe' });
+    assert.equal(refused.ok, false);
+    assert.match(refused.error, /output already exists; left unchanged/);
+    assert.deepEqual(fs.readFileSync(existing), before);
+    const forbiddenOutput = path.join(path.dirname(probe), 'graph.json');
+    const protectedOutput = confinedExtract({ probePath: probe, projectRoot: project, rustProject: path.join(project, 'crate'), output: forbiddenOutput, stdio: 'pipe' });
+    assert.equal(protectedOutput.ok, false);
+    assert.match(protectedOutput.error, /protected tool directory/);
+    assert.ok(!fs.existsSync(forbiddenOutput));
+  });
 
-  it('stages, verifies and atomically selects the pinned executable with an audit', bsdtar, async () => {
+  it('protects selected external executable files and Lean libraries before host publication', {
+    skip: HOST_TARGET !== LINUX_TARGET,
+  }, async () => {
+    const { confinedExtract } = await loadSetup();
+    const directory = fs.mkdtempSync(path.join(os.homedir(), '.fvs-publication-tools-'));
+    temporaryDirectories.push(directory);
+    const project = tupleProject(directory);
+    const probe = stubProbe(directory);
+    const helper = path.join(directory, 'external', 'probe-rust');
+    writeExecutable(helper, 'echo "probe-rust 0.11.0"');
+    const helperAlias = path.join(directory, 'helper-alias');
+    fs.symlinkSync(helper, helperAlias);
+    const library = path.join(directory, 'external-library');
+    fs.mkdirSync(library);
+    const libraryAlias = path.join(directory, 'library-alias');
+    fs.symlinkSync(library, libraryAlias);
+    const before = fs.readFileSync(helper);
+    const toolPaths = { executables: [helperAlias], libraries: [libraryAlias] };
+    for (const output of [helper, path.join(library, 'new.json'), path.join(libraryAlias, 'alias.json')]) {
+      const result = confinedExtract({
+        probePath: probe, projectRoot: project, rustProject: path.join(project, 'crate'),
+        output, stdio: 'pipe', toolPaths,
+      });
+      assert.equal(result.ok, false);
+      assert.match(result.error, /protected tool directory/);
+      assert.doesNotMatch(result.error, /already exists/);
+      assert.equal(result.status, undefined);
+    }
+    assert.deepEqual(fs.readFileSync(helper), before);
+    assert.deepEqual(fs.readdirSync(library), []);
+    assert.deepEqual(fs.readdirSync(path.dirname(helper)), ['probe-rust']);
+  });
+
+  it('preserves successful child diagnostics but never publishes after private-stage cleanup fails', {
+    skip: HOST_TARGET !== LINUX_TARGET || !fs.existsSync('/usr/bin/bwrap'),
+  }, async () => {
+    const { confinedExtract } = await loadSetup();
+    const directory = fs.mkdtempSync(path.join(os.homedir(), '.fvs-publication-cleanup-'));
+    temporaryDirectories.push(directory);
+    const project = tupleProject(directory);
+    const outputDir = path.join(directory, 'out');
+    fs.mkdirSync(outputDir);
+    const output = path.join(outputDir, 'extract.json');
+    const probe = path.join(directory, 'tools', 'probe-aeneas');
+    const graph = JSON.stringify(envelope(fixtureData(), {
+      tool: { name: 'probe-aeneas', version: '0.20.0', command: 'extract' },
+    }));
+    writeExecutable(probe, `printf '%s' '${graph}' > "$4"\necho child-stdout\necho child-stderr >&2`);
+    const remove = fs.rmSync;
+    let stage;
+    fs.rmSync = (file, options) => {
+      if (typeof file === 'string' && path.dirname(file) === '/tmp' && path.basename(file).startsWith('fvs-probe-stage-')) {
+        stage = file;
+        throw Object.assign(new Error('injected private-stage cleanup denial'), { code: 'EPERM', path: file });
+      }
+      return remove(file, options);
+    };
+    try {
+      const result = confinedExtract({
+        probePath: probe, projectRoot: project, rustProject: path.join(project, 'crate'), output, stdio: 'pipe',
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.status, 0);
+      assert.equal(result.signal, null);
+      assert.match(result.log, /child-stdout/);
+      assert.match(result.log, /child-stderr/);
+      assert.deepEqual(result.cleanupError, {
+        code: 'EPERM', message: 'injected private-stage cleanup denial', path: stage,
+      });
+      assert.equal(result.retainedStage, stage);
+      assert.equal(result.primaryError, null);
+      assert.match(result.error, /cannot remove private staging directory/);
+      assert.equal(fs.existsSync(output), false);
+      assert.deepEqual(fs.readdirSync(outputDir), []);
+      assert.equal(fs.existsSync(stage), true);
+    } finally {
+      fs.rmSync = remove;
+      if (stage) remove(stage, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('consented probe-aeneas installer', () => {
+  function installerDirectory() {
+    if (process.platform !== 'linux') return temporaryDirectory();
+    const directory = fs.mkdtempSync(path.join(os.homedir(), '.fvs-probe-installer-test-'));
+    temporaryDirectories.push(directory);
+    return directory;
+  }
+
+  async function unavailableBackend() {
+    if (ON_TESTED_HOST) return null;
+    if (process.platform !== 'linux' || process.arch !== 'x64') return 'requires native tested confinement';
+    try {
+      const { planLinuxSandbox, runLinuxSandbox } = await import('../scripts/fvs-probe-linux.mjs');
+      const result = runLinuxSandbox(planLinuxSandbox({ command: '/usr/bin/true', cwd: ROOT }));
+      return result.ok ? null : `live Linux confinement unavailable: ${result.stderr || result.error}`;
+    } catch (error) {
+      return `live Linux confinement unavailable: ${error.message}`;
+    }
+  }
+
+
+  it('stages, verifies and atomically selects the pinned executable with an audit', async (t) => {
+    const unavailable = await unavailableBackend();
+    if (unavailable) return t.skip(unavailable);
     const { installProbe } = await loadSetup();
-    const directory = temporaryDirectory();
+    const directory = installerDirectory();
     const archive = writeArchive(directory, 'good', stubArchive(goodEntries()), { xz: true });
     const release = stubRelease(fs.readFileSync(archive));
     const toolsRoot = path.join(directory, 'tools');
     const provenance = { tuple: 'stub' };
 
-    const installed = await installProbe({ toolsRoot, target: 'stub-target', release, archive, decision: 'interactive', provenance });
-    const destination = path.join(toolsRoot, 'probe-aeneas', '9.9.9-stub-target');
+    const installed = await installProbe({ toolsRoot, target: HOST_TARGET, release, archive, decision: 'interactive', provenance });
+    const destination = path.join(toolsRoot, 'probe-aeneas', `9.9.9-${HOST_TARGET}`);
     assert.equal(installed.outcome, 'installed');
     assert.equal(installed.executable, path.join(destination, 'probe-aeneas'));
     assert.deepEqual(fs.readFileSync(installed.executable), STUB_EXECUTABLE);
@@ -981,21 +1336,23 @@ describe('consented probe-aeneas installer', () => {
     assert.equal(JSON.parse(fs.readFileSync(path.join(destination, 'INSTALL.json'), 'utf8')).outcome, 'installed');
 
     const mtime = fs.statSync(installed.executable).mtimeMs;
-    const again = await installProbe({ toolsRoot, target: 'stub-target', release, archive, decision: 'policy' });
+    const again = await installProbe({ toolsRoot, target: HOST_TARGET, release, archive, decision: 'policy' });
     assert.equal(again.outcome, 'already-installed');
     assert.equal(fs.statSync(installed.executable).mtimeMs, mtime);
 
     fs.writeFileSync(installed.executable, '#!/bin/sh\necho tampered\n');
-    await assert.rejects(installProbe({ toolsRoot, target: 'stub-target', release, archive, decision: 'interactive' }),
+    await assert.rejects(installProbe({ toolsRoot, target: HOST_TARGET, release, archive, decision: 'interactive' }),
       /destination exists with unverified content/);
     assert.equal(fs.readFileSync(installed.executable, 'utf8'), '#!/bin/sh\necho tampered\n');
   });
 
-  it('leaves nothing selected on every archive, digest or version fault', bsdtar, async () => {
+  it('leaves nothing selected on every archive, digest or version fault', async (t) => {
+    const unavailable = await unavailableBackend();
+    if (unavailable) return t.skip(unavailable);
     const { installProbe } = await loadSetup();
     const good = goodEntries();
     const wrongVersion = Buffer.from('#!/bin/sh\necho "probe-aeneas 9.9.8"\n');
-    const failing = Buffer.from('#!/bin/sh\nexit 7\n');
+    const failing = Buffer.from('#!/bin/sh\necho "probe-aeneas 9.9.9"\nexit 7\n');
     const cases = [
       ['wrong compressed digest', stubArchive(good), { archiveSha256: '0'.repeat(64) }, /archive SHA-256 does not match/],
       ['symlink member', stubArchive([...good, tarEntry('probe-aeneas-stub/link', { type: '2', linkname: 'probe-aeneas' })]), {}, /not a regular file/],
@@ -1011,18 +1368,87 @@ describe('consented probe-aeneas installer', () => {
       ['failing executable', stubArchive(goodEntries(failing)), { executableSha256: sha256(failing) }, /staged executable reports/],
     ];
     for (const [label, raw, overrides, error] of cases) {
-      const directory = temporaryDirectory();
-      const archive = writeArchive(directory, 'fault', raw);
+      const directory = installerDirectory();
+      const archive = writeArchive(directory, 'fault', raw, { xz: true });
       const bytes = fs.readFileSync(archive);
       const release = stubRelease(bytes, overrides);
       const toolsRoot = path.join(directory, 'tools');
-      await assert.rejects(installProbe({ toolsRoot, target: 'stub-target', release, archive, decision: 'interactive' }), error, label);
-      assert.ok(!fs.existsSync(path.join(toolsRoot, 'probe-aeneas', '9.9.9-stub-target')), label);
+      await assert.rejects(installProbe({ toolsRoot, target: HOST_TARGET, release, archive, decision: 'interactive' }), error, label);
+      assert.ok(!fs.existsSync(path.join(toolsRoot, 'probe-aeneas', `9.9.9-${HOST_TARGET}`)), label);
       assert.deepEqual(stagingLeftovers(toolsRoot), [], label);
       const audit = auditLines(toolsRoot);
       assert.equal(audit.length, 1, label);
       assert.match(audit[0].outcome, /^failed: /, label);
     }
+  });
+
+  it('checks staged installer versions without consumer context or unrelated helper targets', {
+    skip: HOST_TARGET !== LINUX_TARGET || !fs.existsSync('/usr/bin/bwrap'),
+  }, async () => {
+    const { installProbe } = await loadSetup();
+    const directory = installerDirectory();
+    const archive = writeArchive(directory, 'good', stubArchive(goodEntries()), { xz: true });
+    const release = stubRelease(fs.readFileSync(archive));
+    const bin = path.join(directory, 'bin');
+    fs.mkdirSync(bin);
+    const actual = path.join(directory, 'outside', 'probe-rust');
+    writeExecutable(actual, 'exit 37');
+    const intermediate = path.join(directory, 'intermediate');
+    fs.symlinkSync(actual, intermediate);
+    fs.symlinkSync(intermediate, path.join(bin, 'probe-rust'));
+    const savedPath = process.env.PATH;
+    try {
+      process.env.PATH = `${bin}:${savedPath}`;
+      const result = await installProbe({
+        toolsRoot: path.join(directory, 'managed'), target: HOST_TARGET,
+        release, archive, decision: 'interactive',
+      });
+      assert.equal(result.outcome, 'installed');
+      assert.deepEqual(fs.readFileSync(result.executable), STUB_EXECUTABLE);
+      assert.equal(fs.readlinkSync(intermediate), actual);
+    } finally {
+      if (savedPath === undefined) delete process.env.PATH;
+      else process.env.PATH = savedPath;
+    }
+  });
+
+  it('validates Linux archives before any executable can run and cleans failed staging', { skip: process.platform !== 'linux' }, async () => {
+    const { installProbe } = await loadSetup();
+    const cases = [
+      ['compressed digest', goodEntries(), { archiveSha256: '0'.repeat(64) }, /archive SHA-256/],
+      ['executable digest', goodEntries(), { executableSha256: '0'.repeat(64) }, /executable SHA-256/],
+      ['link', [...goodEntries(), tarEntry('probe-aeneas-stub/link', { type: '2', linkname: 'probe-aeneas' })], {}, /not a regular file/],
+      ['traversal', [...goodEntries(), tarEntry('../outside', { body: Buffer.from('x') })], {}, /escapes the archive root/],
+      ['duplicate', [...goodEntries(), goodEntries()[1]], {}, /duplicated/],
+      ['unexpected', [...goodEntries(), tarEntry('probe-aeneas-stub/extra')], {}, /unexpected/],
+      ['missing executable', [goodEntries()[0]], {}, /has no/],
+    ];
+    for (const [label, entries, overrides, error] of cases) {
+      const directory = temporaryDirectory();
+      const archive = writeArchive(directory, label.replaceAll(' ', '-'), stubArchive(entries), { xz: true });
+      const release = stubRelease(fs.readFileSync(archive), overrides);
+      const toolsRoot = path.join(directory, 'tools');
+      await assert.rejects(installProbe({ toolsRoot, target: HOST_TARGET, release, archive, decision: 'interactive' }), error, label);
+      assert.ok(!fs.existsSync(path.join(toolsRoot, 'probe-aeneas', `9.9.9-${HOST_TARGET}`)), label);
+      assert.deepEqual(stagingLeftovers(toolsRoot), [], label);
+      assert.match(auditLines(toolsRoot)[0].outcome, /^failed:/, label);
+    }
+  });
+
+  it('does not directly execute staged Linux versions when confinement cannot be established', { skip: process.platform !== 'linux' }, async () => {
+    const { installProbe } = await loadSetup();
+    const directory = temporaryDirectory('/tmp');
+    const marker = path.join(directory, 'executed');
+    const body = Buffer.from(`#!/bin/sh\ntouch "${marker}"\necho "probe-aeneas 9.9.9"\n`);
+    const archive = writeArchive(directory, 'blocked', stubArchive(goodEntries(body)), { xz: true });
+    const release = stubRelease(fs.readFileSync(archive), { executableSha256: sha256(body) });
+    // The staged executable is in a hidden runtime tree: even a host with
+    // bubblewrap must reject this layout rather than execute it directly.
+    const toolsRoot = path.join(directory, 'tools');
+    await assert.rejects(installProbe({ toolsRoot, target: HOST_TARGET, release, archive, decision: 'interactive' }), /staged executable reports/);
+    assert.ok(!fs.existsSync(marker));
+    assert.deepEqual(stagingLeftovers(toolsRoot), []);
+    assert.ok(!fs.existsSync(path.join(toolsRoot, 'probe-aeneas', `9.9.9-${HOST_TARGET}`)));
   });
 
   it('bounds downloads and requires HTTPS without touching the network', async () => {
@@ -1037,7 +1463,7 @@ describe('consented probe-aeneas installer', () => {
     ];
     for (const [fetchImpl, error] of cases) {
       const toolsRoot = path.join(temporaryDirectory(), 'tools');
-      await assert.rejects(installProbe({ toolsRoot, target: 'stub-target', release, decision: 'interactive', fetchImpl }), error);
+      await assert.rejects(installProbe({ toolsRoot, target: HOST_TARGET, release, decision: 'interactive', fetchImpl }), error);
       assert.deepEqual(stagingLeftovers(toolsRoot), []);
       assert.match(auditLines(toolsRoot)[0].outcome, /^failed: /);
     }
@@ -1047,7 +1473,7 @@ describe('consented probe-aeneas installer', () => {
     const { installProbe } = await loadSetup();
     const toolsRoot = path.join(temporaryDirectory(), 'tools');
     const release = stubRelease(Buffer.from('x'));
-    await assert.rejects(installProbe({ toolsRoot, target: 'stub-target', release, decision: undefined }), /explicit consent/);
+    await assert.rejects(installProbe({ toolsRoot, target: HOST_TARGET, release, decision: undefined }), /explicit consent/);
     await assert.rejects(installProbe({ toolsRoot, target: 'x86_64-pc-windows-msvc', decision: 'interactive' }), /not installable/);
     assert.ok(!fs.existsSync(toolsRoot));
 
@@ -1144,6 +1570,7 @@ describe('verified-or-exploratory routing at every probe entry point', () => {
   function routeIn(project, extraEnv, directory, home = path.join(directory, 'route-home')) {
     fs.mkdirSync(path.join(home, '.claude', 'scripts'), { recursive: true });
     fs.copyFileSync(SCRIPT, path.join(home, '.claude', 'scripts', 'fvs-probe-inventory.mjs'));
+    fs.copyFileSync(path.join(ROOT, 'scripts', 'fvs-probe-linux.mjs'), path.join(home, '.claude', 'scripts', 'fvs-probe-linux.mjs'));
     const script = [
       bashBlock(reference, 'fvs:probe-mode'),
       bashBlock(reference, 'fvs:probe-mode-noninteractive'),

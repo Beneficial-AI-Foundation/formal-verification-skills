@@ -8,6 +8,10 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import {
+  decodeLinuxTarXz, planLinuxSandbox, runLinuxSandbox, runLinuxStagedExtract,
+  selectProbeToolPaths, validateLinuxToolPaths,
+} from './fvs-probe-linux.mjs';
 
 const MINIMUM_VERSION = [0, 19, 0];
 const VERIFICATION_STATUSES = [
@@ -526,9 +530,18 @@ export const PROBE_RELEASE = {
     },
     'x86_64-unknown-linux-gnu': {
       asset: 'probe-aeneas-x86_64-unknown-linux-gnu.tar.xz',
+      assetId: 554534287,
       archiveSha256: '988ce6e1d2596e31a2464c8e612dc03f9fff47c957e7c1975ab502212582bd0f',
-      supported: false,
-      reason: 'Linux support is tracked in Beneficial-AI-Foundation/formal-verification-skills#77',
+      archiveBytes: 1013924,
+      members: [
+        'probe-aeneas-x86_64-unknown-linux-gnu/',
+        'probe-aeneas-x86_64-unknown-linux-gnu/README.md',
+        'probe-aeneas-x86_64-unknown-linux-gnu/CHANGELOG.md',
+        'probe-aeneas-x86_64-unknown-linux-gnu/probe-aeneas',
+      ],
+      executable: 'probe-aeneas-x86_64-unknown-linux-gnu/probe-aeneas',
+      executableSha256: '3b7f2998db8e2105c221e946c4942cf45046a0073e520d7b71ff808bee8ff150',
+      supported: true,
     },
     'x86_64-pc-windows-msvc': {
       asset: 'probe-aeneas-x86_64-pc-windows-msvc.zip',
@@ -551,6 +564,24 @@ export const TESTED_TUPLES = [
     probeAeneasVersion: '0.20.0',
     testedWith: 'Beneficial-AI-Foundation/curve25519-dalek-lean-verify@0a22c281a9a14b6465a5473c200c7d3f1ac92df8',
     platforms: {
+      'x86_64-unknown-linux-gnu': {
+        isolation: 'bubblewrap',
+        helpers: {
+          'probe-rust': {
+            version: 'probe-rust 0.11.0',
+          },
+          scip: {
+            version: 'scip version v0.10.0',
+          },
+          'probe-lean': {
+            version: '0.14.0',
+          },
+          'rust-analyzer': {
+            version: 'rust-analyzer 1.98.1 (48a229c 2026-09-01)',
+            components: ['rust-analyzer', 'rust-src'],
+          },
+        },
+      },
       'aarch64-apple-darwin': {
         isolation: 'sandbox-exec',
         helpers: {
@@ -570,6 +601,12 @@ export const TESTED_TUPLES = [
 // Manual setup for each helper at the tested version. FVS never installs a
 // helper; it only prints these steps.
 const HELPER_SETUP = {
+  'x86_64-unknown-linux-gnu': {
+    'probe-rust': 'cargo install --locked --git https://github.com/Beneficial-AI-Foundation/probe-rust --rev 1d2a7c5d0e5a5dd95e55c8d6a51cddae0b3d7572',
+    scip: 'download https://github.com/scip-code/scip/releases/download/v0.10.0/scip-linux-amd64.tar.gz (sha256 eeb28ebbff443c01609fb1691809958f3f0c7a8651af689a5bc8560061cd8ab0) and place its scip executable on PATH or at ~/.probe-rust/tools/scip',
+    'probe-lean': 'download https://github.com/Beneficial-AI-Foundation/probe-lean/releases/download/v0.14.0/probe-lean-v4.31.0-linux-x86_64.tar.gz (sha256 41416f5c3e2eca5ce676c9bc42ce58fc93a2dbb5e6e47e36ab400ec14f24669d); install bin/probe-lean as ~/.local/bin/probe-lean-v4.31.0 and lib/ as ~/.local/lib/probe-lean-v4.31.0',
+    'rust-analyzer': 'rustup toolchain install 1.98.1 --profile minimal --component rust-analyzer --component rust-src, then make it the active toolchain for this project (rustup override set 1.98.1)',
+  },
   'aarch64-apple-darwin': {
     'probe-rust': 'cargo install --locked --git https://github.com/Beneficial-AI-Foundation/probe-rust --rev 1d2a7c5d0e5a5dd95e55c8d6a51cddae0b3d7572',
     scip: 'download https://github.com/scip-code/scip/releases/download/v0.10.0/scip-darwin-arm64.tar.gz (sha256 7ea200390e0790b3da8999b7b1cd4e3597700dcb3d354911872523bfe0090779) and place its scip executable on PATH or at ~/.probe-rust/tools/scip',
@@ -793,8 +830,23 @@ const READ_ONLY_POLICY = [
   `(allow file-write* ${READ_ONLY_DEVICES.join(' ')})`,
 ].join('\n');
 
-function readOnlyRun(bin, args, cwd) {
-  const argv = fs.existsSync(SANDBOX_EXEC) ? [SANDBOX_EXEC, '-p', READ_ONLY_POLICY, bin, ...args] : [bin, ...args];
+function readOnlyRun(bin, args, cwd, { projectRoot = null, toolPaths = null } = {}) {
+  if (process.platform === 'linux') {
+    try {
+      const result = runLinuxSandbox(planLinuxSandbox({
+        command: bin, commandArgs: args, cwd, sourceEnv: process.env,
+        readOnlyPaths: projectRoot ? [projectRoot] : [], toolPaths,
+      }));
+      const output = `${result.stdout ?? ''}${result.stderr ?? ''}`.trim();
+      return { ok: result.ok, stdout: (result.stdout ?? '').trim(), output: output || result.error || '' };
+    } catch (error) {
+      return { ok: false, stdout: '', output: `Linux confinement unavailable: ${error.message}` };
+    }
+  }
+  if (process.platform !== 'darwin' || !fs.existsSync(SANDBOX_EXEC)) {
+    return { ok: false, stdout: '', output: 'read-only confinement is unavailable on this host' };
+  }
+  const argv = [SANDBOX_EXEC, '-p', READ_ONLY_POLICY, bin, ...args];
   const result = spawnSync(argv[0], argv.slice(1), {
     cwd,
     encoding: 'utf8',
@@ -816,23 +868,18 @@ function firstLine(text) {
 // observed digests are recorded as evidence in the test fixture instead.
 // Version 0.11.0 of probe-rust cannot distinguish the tested source commit
 // from the v0.11.0 tag, so the manual step pins the commit.
-function checkHelpers(spec, provenance) {
-  const home = os.homedir();
-  const leanVersion = (provenance.leanToolchain ?? '').split(':').pop();
+function checkHelpers(spec, provenance, selected) {
   const cwd = provenance.rustProject;
-  const located = {
-    'probe-rust': which('probe-rust') ?? executableFile(path.join(home, '.cargo', 'bin', 'probe-rust')),
-    scip: executableFile(path.join(home, '.probe-rust', 'tools', 'scip')) ?? which('scip'),
-    'probe-lean': executableFile(path.join(home, '.local', 'bin', `probe-lean-${leanVersion}`)),
-    'rust-analyzer': which('rust-analyzer'),
-  };
+  const context = { projectRoot: provenance.projectRoot, toolPaths: selected };
   const results = {};
   for (const [name, expected] of Object.entries(spec)) {
-    const bin = located[name];
+    const bin = selected.helpers[name];
     const entry = { status: 'missing', path: bin, expected: expected.version, found: null };
+    if (name === 'probe-lean') entry.libraryPath = selected.libraryPath;
+    if (expected.components) entry.rustupPath = selected.rustupPath;
     results[name] = entry;
     if (!bin) continue;
-    const version = readOnlyRun(bin, ['--version'], cwd);
+    const version = readOnlyRun(bin, ['--version'], cwd, context);
     if (!version.ok) {
       entry.found = firstLine(version.output);
       if (name !== 'rust-analyzer') entry.status = 'incompatible';
@@ -841,13 +888,13 @@ function checkHelpers(spec, provenance) {
     entry.found = firstLine(version.stdout);
     entry.status = entry.found === expected.version ? 'ok' : 'incompatible';
     if (entry.status === 'ok' && name === 'probe-lean' &&
-        !fs.existsSync(path.join(home, '.local', 'lib', `probe-lean-${leanVersion}`))) {
+        !selected.libraries.includes(selected.libraryPath)) {
       entry.status = 'missing';
-      entry.found += ` (library directory ~/.local/lib/probe-lean-${leanVersion} is missing)`;
+      entry.found += ` (library directory ${selected.libraryPath} is missing)`;
     }
     if (entry.status === 'ok' && expected.components) {
-      const rustup = which('rustup');
-      const listed = rustup ? readOnlyRun(rustup, ['component', 'list', '--installed'], cwd) : null;
+      const rustup = selected.rustupPath;
+      const listed = rustup ? readOnlyRun(rustup, ['component', 'list', '--installed'], cwd, context) : null;
       const installed = listed?.ok ? listed.stdout.split(/\r?\n/).map((line) => line.trim()) : [];
       const absent = expected.components.filter((component) =>
         !installed.some((line) => line === component || line.startsWith(`${component}-`)));
@@ -871,7 +918,7 @@ function candidateProbe(explicit, target) {
   return onPath ? { source: 'path', path: onPath } : null;
 }
 
-function checkProbe(candidate, asset, cwd) {
+function checkProbe(candidate, asset, cwd, context) {
   if (!candidate) return { status: 'missing', reason: 'probe-aeneas is not installed' };
   const probe = { ...candidate, status: 'incompatible' };
   if (candidate.error) return { ...probe, reason: candidate.error };
@@ -883,10 +930,10 @@ function checkProbe(candidate, asset, cwd) {
   if (candidate.source === 'fvs-managed' && !probe.official) {
     return { ...probe, reason: 'the FVS-managed probe-aeneas does not match the pinned executable digest' };
   }
-  const version = readOnlyRun(probe.path, ['--version'], cwd);
+  const version = readOnlyRun(probe.path, ['--version'], cwd, context);
   probe.version = firstLine(version.ok ? version.stdout : version.output);
   const expected = `probe-aeneas ${PROBE_RELEASE.version}`;
-  if (probe.version !== expected) return { ...probe, reason: `found "${probe.version}", the tested release is "${expected}"` };
+  if (!version.ok || probe.version !== expected) return { ...probe, reason: `found "${probe.version}", the tested release is "${expected}"` };
   return { ...probe, status: 'ok' };
 }
 
@@ -955,7 +1002,27 @@ export function resolveProbe({ projectRoot, probe = null, platform = hostTarget(
   }
   result.tuple = tuple.id;
 
-  result.probe = checkProbe(candidateProbe(probe, platform), asset, provenance.rustProject);
+  // --platform is a reporting selector, never permission to run another
+  // platform's tools or borrow its confinement/evidence on this host.
+  if (platform !== hostTarget()) {
+    result.platformSupported = false;
+    result.reasons.push(`requested platform ${platform} does not match actual host ${hostTarget()}; cross-platform probe execution is disabled`);
+    result.manual.push('Continue without a graph for exploratory work, or use a host with independent evidence for its exact target.');
+    return finish('unsupported-platform');
+  }
+
+  const selected = selectProbeToolPaths({ leanToolchain: provenance.leanToolchain });
+  if (process.platform === 'linux') {
+    try {
+      validateLinuxToolPaths(selected, { projectRoot: root });
+    } catch (error) {
+      result.reasons.push(`unsupported helper layout: ${error.message}`);
+      result.manual.push('Use helper paths supported by Linux confinement, or continue without a graph. Existing helpers were left unchanged.');
+      return finish('incompatible');
+    }
+  }
+  result.probe = checkProbe(candidateProbe(probe, platform), asset, provenance.rustProject,
+    { projectRoot: root, toolPaths: selected });
   if (result.probe.status !== 'ok') {
     result.reasons.push(`probe-aeneas ${result.probe.status}: ${result.probe.reason}`);
     const destination = managedProbePath(toolsHome(), platform);
@@ -971,7 +1038,7 @@ export function resolveProbe({ projectRoot, probe = null, platform = hostTarget(
     };
     result.manual.push(`FVS can install the official probe-aeneas ${PROBE_RELEASE.tag} side by side at ${destination} after consent (install --consent interactive). Manually: download ${result.install.url}, check sha256 ${asset.archiveSha256}, unpack it and pass the absolute executable path with --probe.`);
   }
-  result.helpers = checkHelpers(tested.helpers, provenance);
+  result.helpers = checkHelpers(tested.helpers, provenance, selected);
   for (const [name, helper] of Object.entries(result.helpers)) {
     if (helper.status === 'ok') continue;
     result.reasons.push(`${name} ${helper.status}: expected "${helper.expected}", found ${helper.found ? `"${helper.found}"` : 'nothing'}`);
@@ -1066,9 +1133,64 @@ export function extractionPolicy({ projectRoot, rustProject, outputDir, privateT
   ].join('\n') + '\n';
 }
 
-// Runs probe-aeneas by absolute path under the generated profile. On any
-// failure the output file is removed so no partial graph is accepted.
-export function confinedExtract({ probePath, projectRoot, rustProject, output, withPublicApi = false, stdio = 'inherit' }) {
+// Run the probe by absolute path under native confinement. Linux writes only
+// to an independent project copy and publishes a validated, nonempty graph
+// atomically; an existing destination is refused without changing it.
+export function confinedExtract({ probePath, projectRoot, rustProject, output, withPublicApi = false, stdio = 'inherit', toolPaths = null }) {
+  if (process.platform === 'linux') {
+    let staging = null;
+    let log = '';
+    let status = null;
+    try {
+      const selected = toolPaths ?? selectProbeToolPaths({ projectRoot });
+      const tools = validateLinuxToolPaths(selected, { projectRoot });
+      const outputDir = fs.realpathSync(path.dirname(path.resolve(output)));
+      const outputFile = path.join(outputDir, path.basename(output));
+      for (const directory of [...protectedDirs(probePath), ...tools.protectedPaths]) {
+        const relative = path.relative(directory, outputFile);
+        if (relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))) {
+          return { ok: false, error: `output must not be inside a protected tool directory: ${directory}` };
+        }
+      }
+      if (fs.existsSync(outputFile) || fs.lstatSync(outputFile, { throwIfNoEntry: false })) {
+        return { ok: false, error: `output already exists; left unchanged: ${outputFile}` };
+      }
+      const child = runLinuxStagedExtract({ probePath, projectRoot, rustProject, withPublicApi, toolPaths: selected });
+      log = `${child.stdout ?? ''}${child.stderr ?? ''}`;
+      status = child.status ?? null;
+      if (stdio === 'inherit') {
+        if (child.stdout) process.stdout.write(child.stdout);
+        if (child.stderr) process.stderr.write(child.stderr);
+      }
+      if (!child.ok || typeof child.outputText !== 'string') {
+        return {
+          ok: false, status, signal: child.signal ?? null, log,
+          error: child.error ?? 'confined probe produced no candidate graph',
+          ...(child.cleanupError ? {
+            cleanupError: child.cleanupError,
+            retainedStage: child.retainedStage,
+            primaryError: child.primaryError,
+          } : {}),
+        };
+      }
+      const envelope = JSON.parse(child.outputText);
+      validateEnvelope(envelope);
+      if (envelope.tool.version !== PROBE_RELEASE.version) fatal(`extract came from probe-aeneas ${envelope.tool.version}`);
+      project(envelope, withPublicApi); // Reject malformed or empty canonical inventories before publication.
+      // Publish a fully written file atomically, without replacing an existing
+      // output, including one created while the confined probe was running.
+      staging = fs.mkdtempSync(path.join(outputDir, '.fvs-probe-output-'));
+      const candidate = path.join(staging, 'extract.json');
+      fs.writeFileSync(candidate, child.outputText, { mode: 0o600, flag: 'wx' });
+      fs.linkSync(candidate, outputFile);
+      return { ok: true, status, signal: child.signal ?? null, output: outputFile, policy: child.policy ?? child.plan, log };
+    } catch (error) {
+      return { ok: false, status, log, error: error.message };
+    } finally {
+      if (staging) fs.rmSync(staging, { recursive: true, force: true });
+    }
+  }
+  if (process.platform !== 'darwin') return { ok: false, error: 'extraction confinement is unavailable on this host' };
   if (!fs.existsSync(SANDBOX_EXEC)) return { ok: false, error: `${SANDBOX_EXEC} is unavailable` };
   const outputDir = fs.realpathSync(path.dirname(path.resolve(output)));
   const outputFile = path.join(outputDir, path.basename(output));
@@ -1226,6 +1348,7 @@ export async function installProbe({
   const asset = release.assets[target];
   if (!asset?.supported) fatal(`${target} is not installable: ${asset?.reason ?? 'no official asset'}`);
   if (!['interactive', 'policy'].includes(decision)) fatal('install requires an explicit consent decision');
+  if (target !== hostTarget()) fatal(`cannot install executable for ${target} on actual host ${hostTarget()}`);
   const parent = path.join(toolsRoot, release.tool);
   const destination = path.join(parent, `${release.version}-${target}`);
   const record = {
@@ -1267,9 +1390,15 @@ export async function installProbe({
     if (record.actualArchiveSha256 !== asset.archiveSha256) fatal('archive SHA-256 does not match the pinned official digest');
     const archiveFile = path.join(staging, asset.asset);
     fs.writeFileSync(archiveFile, bytes, { mode: 0o600 });
-    const tar = spawnSync(BSDTAR, ['-cf', '-', `@${archiveFile}`], { maxBuffer: 256 * 1024 * 1024 });
-    if (tar.status !== 0) fatal(`cannot decompress archive: ${String(tar.stderr ?? tar.error?.message).trim()}`);
-    const executableBytes = inspectTar(tar.stdout, asset);
+    let tarBytes;
+    if (process.platform === 'linux') {
+      tarBytes = decodeLinuxTarXz(bytes, asset.archiveSha256);
+    } else {
+      const tar = spawnSync(BSDTAR, ['-cf', '-', `@${archiveFile}`], { maxBuffer: 256 * 1024 * 1024 });
+      if (tar.status !== 0) fatal(`cannot decompress archive: ${String(tar.stderr ?? tar.error?.message).trim()}`);
+      tarBytes = tar.stdout;
+    }
+    const executableBytes = inspectTar(tarBytes, asset);
     fs.rmSync(archiveFile);
     record.actualExecutableSha256 = sha256(executableBytes);
     if (record.actualExecutableSha256 !== asset.executableSha256) fatal('executable SHA-256 does not match the pinned digest');
@@ -1277,7 +1406,7 @@ export async function installProbe({
     fs.writeFileSync(staged, executableBytes, { mode: 0o755 });
     const version = readOnlyRun(staged, ['--version'], staging);
     record.versionOutput = firstLine(version.ok ? version.stdout : version.output);
-    if (record.versionOutput !== `${release.tool} ${release.version}`) fatal(`staged executable reports "${record.versionOutput}"`);
+    if (!version.ok || record.versionOutput !== `${release.tool} ${release.version}`) fatal(`staged executable reports "${record.versionOutput}"`);
     record.outcome = 'installed';
     fs.writeFileSync(path.join(staging, 'INSTALL.json'), `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
     fs.renameSync(staging, destination);
@@ -1340,6 +1469,10 @@ function runCli(argv) {
     probePath: result.probe.path,
     projectRoot: result.provenance.projectRoot,
     rustProject: result.provenance.rustProject,
+    toolPaths: {
+      executables: [...Object.values(result.helpers).map((helper) => helper.path), result.helpers['rust-analyzer']?.rustupPath].filter(Boolean),
+      libraries: [result.helpers['probe-lean']?.libraryPath].filter(Boolean),
+    },
     output: flags.output,
     withPublicApi: Boolean(flags['with-public-api']),
   });

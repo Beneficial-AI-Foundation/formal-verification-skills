@@ -95,6 +95,19 @@ Unsupported platforms or unverified probe/toolchain combinations cannot produce 
 SPQR compatibility is not supported. Tools are not installed automatically, and runtime installation
 alone does not establish tool access.
 
+The optional verified probe workflow supports tested toolchain combinations on macOS arm64
+and Linux x86_64. Linux requires native tools, an absolute Linux-only `PATH`, `/usr/bin/xz`,
+and `/usr/bin/bwrap` with working unprivileged namespaces, `--disable-userns`, and seccomp.
+FVS does not install these
+prerequisites or change system security policy; unavailable confinement stops execution.
+The receipt records preparation requirements and indexing/proof limitations. Native Windows
+and Linux arm64 remain unsupported.
+
+Linux extraction stages an independent project copy and keeps tool homes read-only.
+Helper executable or library links through an intermediate symlink are rejected during resolution.
+Malformed `.git` pointer files and symlinked `.git` entries are unsupported and rejected;
+ordinary linked Git worktrees remain supported with read-only external Git metadata.
+
 FVS asks for runtime, model and effort choices at each relevant stage. Requested settings,
 resolved settings and observed settings are recorded separately; unavailable observations are stated
 explicitly. Use `/fvs:configure` to save defaults. See [model profiles](fv-skills/references/model-profiles.md)

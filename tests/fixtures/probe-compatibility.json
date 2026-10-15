@@ -39,9 +39,18 @@
       },
       "x86_64-unknown-linux-gnu": {
         "asset": "probe-aeneas-x86_64-unknown-linux-gnu.tar.xz",
+        "assetId": 554534287,
         "archiveSha256": "988ce6e1d2596e31a2464c8e612dc03f9fff47c957e7c1975ab502212582bd0f",
-        "supported": false,
-        "reason": "Linux support is tracked in Beneficial-AI-Foundation/formal-verification-skills#77"
+        "archiveBytes": 1013924,
+        "members": [
+          "probe-aeneas-x86_64-unknown-linux-gnu/",
+          "probe-aeneas-x86_64-unknown-linux-gnu/README.md",
+          "probe-aeneas-x86_64-unknown-linux-gnu/CHANGELOG.md",
+          "probe-aeneas-x86_64-unknown-linux-gnu/probe-aeneas"
+        ],
+        "executable": "probe-aeneas-x86_64-unknown-linux-gnu/probe-aeneas",
+        "executableSha256": "3b7f2998db8e2105c221e946c4942cf45046a0073e520d7b71ff808bee8ff150",
+        "supported": true
       },
       "x86_64-pc-windows-msvc": {
         "asset": "probe-aeneas-x86_64-pc-windows-msvc.zip",
@@ -69,6 +78,27 @@
             "rust-analyzer": {
               "version": "rust-analyzer 1.98.1 (48a229ce 2026-09-01)",
               "components": ["rust-analyzer", "rust-src"]
+            }
+          }
+        },
+        "x86_64-unknown-linux-gnu": {
+          "isolation": "bubblewrap",
+          "helpers": {
+            "probe-rust": {
+              "version": "probe-rust 0.11.0"
+            },
+            "scip": {
+              "version": "scip version v0.10.0"
+            },
+            "probe-lean": {
+              "version": "0.14.0"
+            },
+            "rust-analyzer": {
+              "version": "rust-analyzer 1.98.1 (48a229c 2026-09-01)",
+              "components": [
+                "rust-analyzer",
+                "rust-src"
+              ]
             }
           }
         }
@@ -171,6 +201,359 @@
           "homeProbeRustCreated": false,
           "mergedOutputWritten": false,
           "toolHomesUnchanged": true
+        }
+      }
+    },
+    "x86_64-unknown-linux-gnu": {
+      "tuple": "aeneas-6e167c9b-charon-0.1.225-lean-v4.31.0",
+      "recorded": "2026-10-15",
+      "host": {
+        "os": "Ubuntu 24.04.4 LTS (WSL2)",
+        "kernel": "6.18.54.1-microsoft-standard-WSL2",
+        "rustTarget": "x86_64-unknown-linux-gnu",
+        "uid": 1000,
+        "node": "v24.21.0"
+      },
+      "consumer": {
+        "repo": "https://github.com/Beneficial-AI-Foundation/curve25519-dalek-lean-verify",
+        "commit": "0a22c281a9a14b6465a5473c200c7d3f1ac92df8",
+        "translationJson": "Curve25519Dalek/translation.json",
+        "translationJsonSha256": "968a0725b105de2a38a94ee606bd7da85e775267da04dea6a8c9067061372fbd",
+        "aeneasVersion": "6e167c9b",
+        "charonVersion": "0.1.225",
+        "aeneasLakeRev": "6e167c9b63a4dafd66d0e0edd9d94669f957ff7b",
+        "leanToolchain": "leanprover/lean4:v4.31.0",
+        "cargoLockTracked": false,
+        "cargoLockSha256": "cbbee5089c53ab3a89387442a88c19ca71b4af160daeef17c82446b5a2353cf5"
+      },
+      "inputPreparation": {
+        "source": "Independent copies of cached inputs prepared for the 2026-10-13 investigation; no fresh helper build, cargo fetch/check, or lake build is claimed.",
+        "historicalConsumerPreparation": {
+          "cargoFetchExitCode": 0,
+          "cargoCheckExitCode": 101,
+          "cargoCheckLimitation": "E0554: stable cannot enable register_tool under tracked cfg verify; no consumer configuration changed",
+          "lakeBuildExitCode": 0,
+          "sourceChanges": "No tracked consumer/provenance changes; untracked lockfile prepared explicitly."
+        },
+        "freshChecks": "Pinned consumer commits/tracked-file hashes, absent graph caches, archive/helper hashes, independent copied inodes, and real confined helper versions rechecked for this revision.",
+        "positiveScipPresent": true,
+        "denialScipAbsent": true,
+        "historicalProvenanceNote": "Helper source-build and release/archive metadata below describe the cached inputs; their binary digests and versions are checked again by this receipt."
+      },
+      "probeAeneas": {
+        "url": "https://github.com/Beneficial-AI-Foundation/probe-aeneas/releases/download/v0.20.0/probe-aeneas-x86_64-unknown-linux-gnu.tar.xz",
+        "archiveSha256": "988ce6e1d2596e31a2464c8e612dc03f9fff47c957e7c1975ab502212582bd0f",
+        "executableSha256": "3b7f2998db8e2105c221e946c4942cf45046a0073e520d7b71ff808bee8ff150",
+        "versionOutput": "probe-aeneas 0.20.0"
+      },
+      "helpers": {
+        "probe-rust": {
+          "version": "probe-rust 0.11.0",
+          "sourceCommit": "1d2a7c5d0e5a5dd95e55c8d6a51cddae0b3d7572",
+          "build": "cargo build --release --locked (rustc 1.98.1), source clean/unpatched",
+          "cargoLockSha256": "d2bdbe69e1414fa9cdc096af7860c93030ae55d52223be70be81fc9bd10088ce",
+          "sha256": "4437d05306432a56dfccda1ff3efbdd14ed8841c3e33e5654f27ced0db311b0f"
+        },
+        "scip": {
+          "version": "scip version v0.10.0",
+          "url": "https://github.com/scip-code/scip/releases/download/v0.10.0/scip-linux-amd64.tar.gz",
+          "archiveSha256": "eeb28ebbff443c01609fb1691809958f3f0c7a8651af689a5bc8560061cd8ab0",
+          "sha256": "7af5dbd13ba1d447457bb735d3f43372a067950a51b5234d2465f7a57a0d8eb2"
+        },
+        "probe-lean": {
+          "version": "0.14.0",
+          "url": "https://github.com/Beneficial-AI-Foundation/probe-lean/releases/download/v0.14.0/probe-lean-v4.31.0-linux-x86_64.tar.gz",
+          "archiveSha256": "41416f5c3e2eca5ce676c9bc42ce58fc93a2dbb5e6e47e36ab400ec14f24669d",
+          "sha256": "c3bd7e2a76d4a9fb7a1ce15e6e319b4284987e748a3c7e299e46a4d46a110eab"
+        },
+        "rust-analyzer": {
+          "version": "rust-analyzer 1.98.1 (48a229c 2026-09-01)",
+          "source": "official rustup component of toolchain 1.98.1-x86_64-unknown-linux-gnu",
+          "components": [
+            "rust-analyzer",
+            "rust-src"
+          ],
+          "archiveUrl": "https://static.rust-lang.org/dist/2026-09-03/rust-analyzer-1.98.1-x86_64-unknown-linux-gnu.tar.xz",
+          "archiveSha256": "19beefa939b986be0086a36a24c540801ce849ee74f39ee933b60f947b0d4431",
+          "sha256": "25da0296e9aa8e538e6ee36675f48b0cd3896c5d1764a3a71a0e2438757f5640",
+          "rustupProxySha256": "dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71",
+          "note": "Linux official executable prints seven revision characters (48a229c), independently digest-matched to its official component archive."
+        },
+        "notRequired": [
+          "charon",
+          "charon-driver",
+          "cargo-public-api"
+        ]
+      },
+      "isolation": {
+        "mechanism": "bubblewrap",
+        "version": "bubblewrap 0.9.0",
+        "runtimeSha256": "5169a3eb0b5d96d5acf48810535ce4879d192af3b96fb68cba2d099b682ae2ec",
+        "coreInventorySha256": "9d8e7d0b7111f9801a08a3fdbe655e6e80b3e0d2b533b1019e19bfb09ad50656",
+        "publicCliInventorySha256": "090c03840e5f28e080a694a44e38ef1c6eecdd31e716d3205ba7ed97690e063a",
+        "rules": [
+          "allowlisted read-only host filesystem, protected default/custom tool homes and PATH bins",
+          "independent disposable source copy bound at original project path, private output and temporary directories",
+          "new user/PID/network/IPC/UTS namespaces; nested user namespaces disabled; capabilities dropped",
+          "seccomp denies socket/connect/io_uring_setup, including pathname Unix socket access",
+          "clear inherited environment; hide /run, host temporary mounts, Windows mounts, /usr/lib/wsl"
+        ],
+        "selectedToolPaths": "Logical helper/proxy aliases and selected external target files/libraries are read-only in both checking and extraction; arbitrary external target siblings are not mounted.",
+        "privateStageRemovedAfterPositiveAndDenial": true,
+        "visibleWindowsPeSha256": "97ac98b1a92c286054cce55239cfccdfc23a5517bd07fe693072c9ca96c7dabb",
+        "visibleWindowsPeControlExitCode": 0,
+        "visibleWindowsPeConfinedExitCode": 1,
+        "visibleWindowsPeFailureMechanism": "The visible PE reached the registered WSL interop handler, which exited nonzero while parsing /proc/1/stat in the isolated PID namespace. This observed failure is not attributed solely to seccomp. The separate AF_VSOCK check records the socket errno.",
+        "afVsockDenied": true,
+        "afVsockErrno": "EPERM"
+      },
+      "observed": {
+        "positive": {
+          "exitCode": 0,
+          "signal": null,
+          "schema": "probe-aeneas/extract",
+          "schemaVersion": "3.0",
+          "toolVersion": "0.20.0",
+          "inputCommits": [
+            "0a22c281a9a14b6465a5473c200c7d3f1ac92df8"
+          ],
+          "canonicalCount": 279,
+          "canonicalWithCharonDefId": 189,
+          "defIdJoins": 189,
+          "defIdJoinMismatches": 0,
+          "totalEntries": 3027,
+          "extractSha256": "7d0bb9385c7e8cc91a254f6651be2c248f9642253b20c387d5ea6c0647aa469f",
+          "toolHomesUnchanged": true,
+          "productionSourceUnchanged": true,
+          "sourceSnapshotScope": "entire source tree: entries, file contents, modes, mtimes, symlink targets",
+          "privateStageRemoved": true,
+          "joinExample": {
+            "atom": "probe:curve25519-dalek/4.2.0/backend/get_selected_backend()",
+            "defId": 535,
+            "leanName": "curve25519_dalek.backend.get_selected_backend"
+          }
+        },
+        "denial": {
+          "hiddenHelper": "scip",
+          "exitCode": 1,
+          "signal": null,
+          "networkDenied": true,
+          "tracedHelperSocketErrors": [
+            "AF_INET: EPERM",
+            "AF_UNIX: EPERM"
+          ],
+          "missingHelperBranchObserved": true,
+          "attemptedUrl": "https://github.com/sourcegraph/scip/releases/download/v0.6.1/scip-linux-amd64.tar.gz",
+          "helperInstalled": false,
+          "mergedOutputWritten": false,
+          "toolHomesUnchanged": true,
+          "productionSourceUnchanged": true,
+          "sourceSnapshotScope": "entire source tree: entries, file contents, modes, mtimes, symlink targets",
+          "privateStageRemoved": true
+        },
+        "publicCli": {
+          "explicitAndManagedResolverStatus": "verified",
+          "managedProbeSha256": "3b7f2998db8e2105c221e946c4942cf45046a0073e520d7b71ff808bee8ff150",
+          "caseExitCodes": {
+            "resolve-explicit-positive": 0,
+            "install-manifest": 0,
+            "install-no-consent": 3,
+            "install-manual": 0,
+            "install-official-archive": 0,
+            "install-already-verified": 0,
+            "resolve-managed-positive": 0,
+            "run-managed-positive": 0,
+            "run-existing-output-refused": 1,
+            "resolve-missing-scip": 0,
+            "run-missing-scip-refused": 3
+          },
+          "missingScipResolverStatus": "missing",
+          "positiveCanonicalCount": 279,
+          "positiveDefIdJoins": 189,
+          "positiveDefIdJoinMismatches": 0,
+          "extractSha256": "5d808ebae37294c2ab6b288a56b971b33d6884c37c87d11b2a8b9cdca8d4860f",
+          "independentProjectorBaselineBlob": "52e005ea19d95bff7a3fa28ea83546a4a1872c36",
+          "positiveAndNegativeToolHomesUnchanged": true,
+          "positiveAndNegativeSourceSnapshotsUnchanged": true,
+          "sourceSnapshotScope": "tracked files, lockfiles and directory metadata; untracked cache contents excluded; fresh core positive and denial hash the entire original source tree",
+          "existingOutputPreserved": true,
+          "missingHelperAcceptedOutputWritten": false,
+          "missingHelperBehavior": "Public CLI refuses before extraction; the fresh traced production component establishes actual attempted auto-install and kernel denial."
+        },
+        "toolchainContext": {
+          "method": "Real confined public-resolver version checks and real rustup selection from a staged canary. spawnSync observation forwards all calls unchanged. This is not a probe extraction receipt.",
+          "limitation": "Only Rust 1.98.1 is installed. An intentionally absent custom toolchain tests visibility and precedence without installing another toolchain.",
+          "cases": [
+            {
+              "name": "root-installed",
+              "rootToolchain": "1.98.1",
+              "nestedToolchain": null,
+              "environmentToolchain": null,
+              "resolverStatus": "verified",
+              "stagedRustupExitCode": 0,
+              "stagedRustupOutput": "1.98.1-x86_64-unknown-linux-gnu (overridden by '<project-path>')"
+            },
+            {
+              "name": "root-absent",
+              "rootToolchain": "fvs77-missing-context",
+              "nestedToolchain": null,
+              "environmentToolchain": null,
+              "resolverStatus": "missing",
+              "stagedRustupExitCode": 1,
+              "stagedRustupOutput": ""
+            },
+            {
+              "name": "nested-installed",
+              "rootToolchain": "fvs77-missing-context",
+              "nestedToolchain": "1.98.1",
+              "environmentToolchain": null,
+              "resolverStatus": "verified",
+              "stagedRustupExitCode": 0,
+              "stagedRustupOutput": "1.98.1-x86_64-unknown-linux-gnu (overridden by '<project-path>')"
+            },
+            {
+              "name": "environment-installed",
+              "rootToolchain": "fvs77-missing-context",
+              "nestedToolchain": "fvs77-missing-nested",
+              "environmentToolchain": "1.98.1",
+              "resolverStatus": "verified",
+              "stagedRustupExitCode": 0,
+              "stagedRustupOutput": "1.98.1-x86_64-unknown-linux-gnu (overridden by environment variable RUSTUP_TOOLCHAIN)"
+            }
+          ]
+        }
+      },
+      "warnings": {
+        "rustAnalyzerUnnamedEnclosingDefinitionErrors": 30,
+        "rustAnalyzerMissingScipDocumentErrors": 8,
+        "rustAnalyzerDuplicateSymbolRecords": [
+          "rust-analyzer cargo curve25519-dalek 4.2.0 crate/",
+          "rust-analyzer cargo curve25519-dalek 4.2.0 crate/",
+          "rust-analyzer cargo curve25519-dalek 4.2.0 backend/serial/u64/field/LOW_51_BIT_MASK.",
+          "rust-analyzer cargo curve25519-dalek 4.2.0 backend/serial/u64/field/m().",
+          "rust-analyzer cargo curve25519-dalek 4.2.0 backend/serial/u64/field/LOW_51_BIT_MASK."
+        ],
+        "probeLeanDuplicateNames": [
+          "probe:curve25519_dalek.scalar.Scalar.I8x64_update_get",
+          "probe:curve25519_dalek.scalar.Scalar.I8x64_update_get.mvcgen_spec"
+        ],
+        "duplicateLeanNamesUsedAsCanonicalTranslationTargets": [],
+        "missingDependenciesTreatedAsTrustedUnique": [
+          "probe:Edwards.Point.mk.congr_simp",
+          "probe:curve25519_dalek.Shared1MontgomeryPoint.Insts.CoreOpsArithMulShared0ScalarMontgomeryPoint.mul_loop.mutual",
+          "probe:curve25519_dalek.backend.serial.curve_models.AffineNielsPoint.Insts.CoreCmpPartialEqAffineNielsPoint",
+          "probe:curve25519_dalek.backend.serial.curve_models.ProjectiveNielsPoint.Insts.SubtleConditionallySelectable",
+          "probe:curve25519_dalek.backend.serial.u64.field.FieldElement51.Insts.CoreOpsArithAddAssignSharedAFieldElement51.add_assign_loop.mutual",
+          "probe:curve25519_dalek.backend.serial.u64.scalar.Scalar52.add_loop.mutual",
+          "probe:curve25519_dalek.backend.serial.u64.scalar.Scalar52.conditional_add_l_loop.mutual",
+          "probe:curve25519_dalek.backend.serial.u64.scalar.Scalar52.sub_loop.mutual",
+          "probe:curve25519_dalek.edwards.CompressedEdwardsY.Insts.CoreCmpPartialEqCompressedEdwardsY",
+          "probe:curve25519_dalek.montgomery.ProjectivePoint.Insts.SubtleConditionallySelectable",
+          "probe:curve25519_dalek.ristretto.CompressedRistretto.Insts.CoreCmpPartialEqCompressedRistretto",
+          "probe:curve25519_dalek.scalar.Scalar.Insts.CoreCmpPartialEqScalar",
+          "probe:curve25519_dalek.scalar.Scalar.Insts.SubtleConditionallySelectable.conditional_select_loop.mutual",
+          "probe:curve25519_dalek.scalar.Scalar.as_radix_2w_loop.mutual",
+          "probe:curve25519_dalek.scalar.Scalar.batch_invert_loop0.mutual",
+          "probe:curve25519_dalek.scalar.Scalar.batch_invert_loop1.mutual",
+          "probe:curve25519_dalek.scalar.Scalar.non_adjacent_form_loop.mutual",
+          "probe:curve25519_dalek.scalar.Scalar52.montgomery_invert.square_multiply_loop.mutual",
+          "probe:curve25519_dalek.subtle.Choice.mk.congr_simp",
+          "probe:curve25519_dalek.window.LookupTable.select_loop.mutual",
+          "probe:curve25519_dalek.window.LookupTableProjectiveNielsPoint.Insts.CoreConvertFromSharedAEdwardsPoint.from_loop.mutual"
+        ],
+        "missingDependencyWarningOccurrences": 42,
+        "leanSorryWarningSummary": [
+          "Found 8 sorry warnings"
+        ],
+        "buildCacheSummary": [
+          "Build cache is up-to-date, skipping lake build..."
+        ]
+      },
+      "limitations": [
+        "This receipt establishes extraction and confinement for the pinned tuple; it does not certify complete SCIP indexing or proof completeness.",
+        "The warnings section is parsed from the fresh production log. Successful exit and exact observed joins do not eliminate indexing errors, collapsed declarations, trusted dependencies, or sorry warnings.",
+        "Historical prepared Cargo and Lean inputs were independently copied and revalidated; preparation commands were not repeated for this revision.",
+        "Native Windows and Linux arm64 support were not tested. The visible PE and AF_VSOCK canaries measure WSL confinement only; the PE failure is not attributed solely to seccomp.",
+        "Linux requires working unprivileged namespaces, seccomp and bubblewrap; unsupported host policy fails closed."
+      ],
+      "rawEvidence": {
+        "locationNote": "Relative paths refer to this revision investigation results directory; raw logs contain private host paths and are not shipped.",
+        "files": {
+          "copy-preparation.json": "1599c7cd8c119ebf01a162bccdebfd02806dd9e4bf52c6a4251be5197fde53ce",
+          "input-preparation.json": "a826d35f04caa0b863b63b4bf54d6bcda38e4cda2c69cfede0d76ec3244a916d",
+          "interop-canary-rmX535.json": "d6d822137392690c0950e2f1c70d0673b565b2ebdfc0e28c0662d2aad1c9f32d",
+          "runtime-freeze.json": "e6a579fd56da4cfb9311c6059f5e1fd25fed901f8f89f50361208c0766a9a9c3",
+          "shipping-cli-ncwnnyke/cli-extract.json": "5d808ebae37294c2ab6b288a56b971b33d6884c37c87d11b2a8b9cdca8d4860f",
+          "shipping-cli-ncwnnyke/cli-independent-review.json": "06a0c565dd09a6d88cfec60745d8430235568bee02d2b33c6fdc2929d72b8145",
+          "shipping-cli-ncwnnyke/cli-inventory.json": "7361842ab19d77b5a33cf557b8b9754ec31bb7f9ac1d6c501803131358f0cf16",
+          "shipping-cli-ncwnnyke/install-already-verified.stderr": "ac00eacfc6f5380cc4f22557d1352c58ddbc4a86036e4d488847d702e037ab95",
+          "shipping-cli-ncwnnyke/install-already-verified.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "shipping-cli-ncwnnyke/install-manifest.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "shipping-cli-ncwnnyke/install-manifest.stdout": "311bd04dca4a03754ba85da800633466ac1534d613c4134f05814965798d1c03",
+          "shipping-cli-ncwnnyke/install-manual.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "shipping-cli-ncwnnyke/install-manual.stdout": "10b980a292da2432612e9e44bbdaed14580fff21ee2b276f59abc811ebfd231c",
+          "shipping-cli-ncwnnyke/install-no-consent.stderr": "21f9154544a3978fa2f3b0c42b953fe03b8e5f456ed26104eafc7b041f734ae2",
+          "shipping-cli-ncwnnyke/install-no-consent.stdout": "311bd04dca4a03754ba85da800633466ac1534d613c4134f05814965798d1c03",
+          "shipping-cli-ncwnnyke/install-official-archive.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "shipping-cli-ncwnnyke/install-official-archive.stdout": "8acf0650b8d03f90dde5cc510ef6e286d189b17de62610c5cab9a76740cda824",
+          "shipping-cli-ncwnnyke/negative-protected-after.json": "4e57da29d2d470c8f46bca90b233d8f1e191cf5573d4602219faf33f294e6ffd",
+          "shipping-cli-ncwnnyke/negative-protected-before.json": "4e57da29d2d470c8f46bca90b233d8f1e191cf5573d4602219faf33f294e6ffd",
+          "shipping-cli-ncwnnyke/negative-source-after.json": "850b7f9b580ececaf92a16ec81be1b81a6ec49cd5c942447b28ec71bb497eb6f",
+          "shipping-cli-ncwnnyke/negative-source-before.json": "850b7f9b580ececaf92a16ec81be1b81a6ec49cd5c942447b28ec71bb497eb6f",
+          "shipping-cli-ncwnnyke/protected-after.json": "b5428ef081eaac88bdd56c884f2f4472a9ea3a9aa0fb591c6a0784ab5bfc174c",
+          "shipping-cli-ncwnnyke/protected-before.json": "b5428ef081eaac88bdd56c884f2f4472a9ea3a9aa0fb591c6a0784ab5bfc174c",
+          "shipping-cli-ncwnnyke/report.json": "418ebeb12421e1ded1f037215cebb560973dbb3eb426e04f9a062e6c234c231f",
+          "shipping-cli-ncwnnyke/resolve-explicit-positive.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "shipping-cli-ncwnnyke/resolve-explicit-positive.stdout": "053ab4c82b61029f3ad4e219f704a00c5e8df04e2a58a74acd64b30eb9105a0f",
+          "shipping-cli-ncwnnyke/resolve-managed-positive.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "shipping-cli-ncwnnyke/resolve-managed-positive.stdout": "ccda45f295816b4d80800525f284fb47531a311644f6891f5f6053898ba5ac5e",
+          "shipping-cli-ncwnnyke/resolve-missing-scip.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "shipping-cli-ncwnnyke/resolve-missing-scip.stdout": "50dc7bbf89e4db3681d902eb96e91708d127dabd5a9b45b3ba572c99b13dae5f",
+          "shipping-cli-ncwnnyke/run-existing-output-refused.stderr": "da218d15ae9ca972b6c24e1c6b9a9cc87147de9ac7713b4dc214b3b6c55e2403",
+          "shipping-cli-ncwnnyke/run-existing-output-refused.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "shipping-cli-ncwnnyke/run-managed-positive.stderr": "0c7c6f352ba179185f58733cd7b85587dcc843facfa3ed61386b9e82a78aff93",
+          "shipping-cli-ncwnnyke/run-managed-positive.stdout": "1442813e8330d3be3e5f480186f6af4290ccc1eadeec138100b27453c92420fa",
+          "shipping-cli-ncwnnyke/run-missing-scip-refused.stderr": "36bbbefe6d8293601e505e075fb176e86ec5eeb4e5fb0cc7c9fb99bc64dbb121",
+          "shipping-cli-ncwnnyke/run-missing-scip-refused.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "shipping-cli-ncwnnyke/source-after.json": "8224f91522a1e560d0192275e6f2133f37a2dd4c582ad480b5b245cb06fb828f",
+          "shipping-cli-ncwnnyke/source-before.json": "8224f91522a1e560d0192275e6f2133f37a2dd4c582ad480b5b245cb06fb828f",
+          "shipping-deny-scip-tlel8k45/bwrap-1-argv.json": "c9eb7f056f7586aab2fbabdb31cef394b0b8e01cdfea2bf817756f3919b2bca5",
+          "shipping-deny-scip-tlel8k45/bwrap-1-result.json": "92fb8c01c8f7a66d6886086dbac39ea45f2101d0f51655d8e42dda144a31d798",
+          "shipping-deny-scip-tlel8k45/bwrap-1.stderr": "02050d6cf56c9ebfad49ecef80c6b4c3ca2899863682b402dc44e298a47ca501",
+          "shipping-deny-scip-tlel8k45/bwrap-1.stdout": "2028e98f79768b32ef90ab96eb6118f71dd0f82b8bebaf2cf691dc7aebd1bf2e",
+          "shipping-deny-scip-tlel8k45/child.json": "90d4df3cb94b2649f006fc6dd11b4db047dbab3eee6afa7c6e24463f54722725",
+          "shipping-deny-scip-tlel8k45/cleanup-observed.json": "d9e14954dd6e23c58ed6847dbcedf61f36584616643d05f1c79a20472faa1b27",
+          "shipping-deny-scip-tlel8k45/denial-trace-review-corrected.json": "7d9072ebf7eba8a75348b9b2f6039a744f995d8afceecea2a9d51c2ad8286c34",
+          "shipping-deny-scip-tlel8k45/denial-trace-review.json": "90498effd2d7306942cf938dee07abd36b6ea0db39740a409a02d9e9673a23d1",
+          "shipping-deny-scip-tlel8k45/independent-review.json": "ac0ca57f3b3163545311fb6033aa0d9c7d954787c0cfdb8db68889736bd20612",
+          "shipping-deny-scip-tlel8k45/launch-reviewed.json": "f7fc2f5d31f9ae64f8bd078cdc058985eb9463c14fceb5e0ada6bf3d3c6e512a",
+          "shipping-deny-scip-tlel8k45/launch.json": "ffd1a63f0afdb9b45903983053e2506c18b81df05851678bf8c067589a6d5c52",
+          "shipping-deny-scip-tlel8k45/probe.log": "18c7f3b670b18ee0c88509faaa6f8925194f23c11fc727405120d54b016b678f",
+          "shipping-deny-scip-tlel8k45/protected-after.json": "98614f64d372bc2759459dd5cd7553ee2cb457bea085169a3f343f55bf3740eb",
+          "shipping-deny-scip-tlel8k45/protected-before.json": "98614f64d372bc2759459dd5cd7553ee2cb457bea085169a3f343f55bf3740eb",
+          "shipping-deny-scip-tlel8k45/report.json": "424871b84be9ed61326c312612dff4d2a7cd252f1ebf1de5043c3c39449c7de0",
+          "shipping-deny-scip-tlel8k45/source-after.json": "9fa5beb0b97642dce5b82c25a53efff7b7edbd611cc3b4be996bc5bb26a182db",
+          "shipping-deny-scip-tlel8k45/source-before.json": "9fa5beb0b97642dce5b82c25a53efff7b7edbd611cc3b4be996bc5bb26a182db",
+          "shipping-deny-scip-tlel8k45/syscalls.log": "4a34a07ca7c7a0737fecb965024600b642dd12f7953372190d8a65d1c8e80504",
+          "shipping-positive-vc6rzar1/bwrap-1-argv.json": "072bb5221629074ea25b7a2d74a16e99bb7c1d6bc77bb940f322edd0bf564f71",
+          "shipping-positive-vc6rzar1/bwrap-1-result.json": "9b369f15cd50d771c98fc7e20be3c06844ff895926c2a5f266026d76b00623a0",
+          "shipping-positive-vc6rzar1/bwrap-1.stderr": "74a31da15ce407124f28cb80718626b74c7ed8b7b64cec0534ab5f53dbd5c703",
+          "shipping-positive-vc6rzar1/bwrap-1.stdout": "236f212e2322a444c6e91207bc4acbe5994a5348f948739f7e5fa845c1ce6a6f",
+          "shipping-positive-vc6rzar1/child.json": "99f8b6582533268992bb0d28a72430ef9e1deab4b2aeae2c0b623a5ebab4e0d0",
+          "shipping-positive-vc6rzar1/cleanup-observed.json": "0cf1471844c46a6228fbd3a99d1582a8713b38144103b86e971fce4110d96455",
+          "shipping-positive-vc6rzar1/independent-review.json": "f65e9f316eb6e5e2c7780ee00362fa80f97d1dbae609871603511c5f78d137f8",
+          "shipping-positive-vc6rzar1/inventory.json": "f4b33e9191c30f83a2b506390acc785e7ddc34b879f2de6bd977967105915445",
+          "shipping-positive-vc6rzar1/launch.json": "47291ec52aee01f29580c282d87d18f929a1a0df0c30bc6fa40196e8856f9adf",
+          "shipping-positive-vc6rzar1/probe.log": "c9df7d0480099d6f235bceb8f23b9a31a3bce09831567e66d71482f578e40acf",
+          "shipping-positive-vc6rzar1/protected-after.json": "ce3dea20ad54747cb26aedc6b8c47bd18827c6dd26bc7287abf5f56be7740ac8",
+          "shipping-positive-vc6rzar1/protected-before.json": "ce3dea20ad54747cb26aedc6b8c47bd18827c6dd26bc7287abf5f56be7740ac8",
+          "shipping-positive-vc6rzar1/report.json": "7ec50231648814936f9a270499acb5ab286f6cc8e08851be7cd6ef7b0fa7fabd",
+          "shipping-positive-vc6rzar1/shipping-extract.json": "7d0bb9385c7e8cc91a254f6651be2c248f9642253b20c387d5ea6c0647aa469f",
+          "shipping-positive-vc6rzar1/source-after.json": "5694f5d677d8fc94423b74366c4ca0f9ce1f92ca2a276aded0cb0918d8a2889d",
+          "shipping-positive-vc6rzar1/source-before.json": "5694f5d677d8fc94423b74366c4ca0f9ce1f92ca2a276aded0cb0918d8a2889d",
+          "snapshot-utility-equivalence.json": "a4b5c24b75dd45d9c873295fe3e6414ca4127b939fabbdfaaa97792541a42aa5",
+          "toolchain-context-HvOEFV/report.json": "125b63938b12423909e22a5af259bbc093607c01b679b76c4bc013e0a128bcb2",
+          "wsl-preflight.json": "ded0b0c476b6237751774b7e7e91a0acd936ac0c32af48c3351ba5622c567cf8"
         }
       }
     }
