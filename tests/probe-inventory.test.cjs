@@ -18,8 +18,8 @@ after(() => {
   }
 });
 
-function temporaryDirectory() {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-probe-inventory-'));
+function temporaryDirectory(root = os.tmpdir()) {
+  const directory = fs.mkdtempSync(path.join(root, 'fvs-probe-inventory-'));
   temporaryDirectories.push(directory);
   return directory;
 }
@@ -1437,7 +1437,7 @@ describe('consented probe-aeneas installer', () => {
 
   it('does not directly execute staged Linux versions when confinement cannot be established', { skip: process.platform !== 'linux' }, async () => {
     const { installProbe } = await loadSetup();
-    const directory = temporaryDirectory();
+    const directory = temporaryDirectory('/tmp');
     const marker = path.join(directory, 'executed');
     const body = Buffer.from(`#!/bin/sh\ntouch "${marker}"\necho "probe-aeneas 9.9.9"\n`);
     const archive = writeArchive(directory, 'blocked', stubArchive(goodEntries(body)), { xz: true });

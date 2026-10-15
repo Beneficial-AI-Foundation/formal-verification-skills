@@ -95,10 +95,10 @@ Unsupported platforms or unverified probe/toolchain combinations cannot produce 
 SPQR compatibility is not supported. Tools are not installed automatically, and runtime installation
 alone does not establish tool access.
 
-The optional verified probe workflow supports the macOS arm64 and Linux x86_64
-[recorded toolchain tuples](tests/fixtures/probe-compatibility.json). Linux requires native
-tools, an absolute Linux-only `PATH`, `/usr/bin/xz`, and `/usr/bin/bwrap` with working
-unprivileged namespaces, `--disable-userns`, and seccomp. FVS does not install these
+The optional verified probe workflow supports tested toolchain combinations on macOS arm64
+and Linux x86_64. Linux requires native tools, an absolute Linux-only `PATH`, `/usr/bin/xz`,
+and `/usr/bin/bwrap` with working unprivileged namespaces, `--disable-userns`, and seccomp.
+FVS does not install these
 prerequisites or change system security policy; unavailable confinement stops execution.
 The receipt records preparation requirements and indexing/proof limitations. Native Windows
 and Linux arm64 remain unsupported.
