@@ -19,7 +19,7 @@ Run `npx fv-skills-baif` for an interactive installation, or select your runtime
 | Claude Code | `npx fv-skills-baif --claude --global` | `/fvs:help` |
 | Codex | `npx fv-skills-baif --codex --global` | `$fvs-help` |
 | Gemini CLI | `npx fv-skills-baif --gemini --global` | `/fvs:help` |
-| OpenCode | `npx fv-skills-baif --opencode --global` | `/fvs:help` |
+| OpenCode | `npx fv-skills-baif --opencode --global` | `/fvs-help` |
 
 Replace `--global` with `--local` to install for the current project. Non-Pi installs copy the
 commands and support files into the runtime's configuration directory. Use
@@ -87,10 +87,13 @@ checks still apply. [Practical Lake builds](fv-skills/references/lake-build.md) 
 checks, import artifacts and caches without changing your project's toolchain or dependency pins.
 
 FC dependency graphs use [probe-aeneas](https://github.com/Beneficial-AI-Foundation/probe-aeneas).
-Follow the [shipped resolver's setup instructions](scripts/fvs-probe-inventory.mjs) and
-[compatibility table](tests/fixtures/probe-compatibility.json). Unsupported platforms or unverified
-probe/toolchain combinations cannot produce a verified graph. SPQR compatibility is not supported.
-Tools are not installed automatically, and runtime installation alone does not establish tool access.
+`/fvs:map-code` and `/fvs:fc-plan` first check your project's probe/toolchain combination and print
+readable setup diagnostics, so you never need to read the compatibility data yourself. If the
+combination is not verified, they offer probe setup, continuing without a graph, or cancelling.
+Verified mapping writes the function inventory and progress to `.formalising/CODEMAP.md`.
+Unsupported platforms or unverified probe/toolchain combinations cannot produce a verified graph.
+SPQR compatibility is not supported. Tools are not installed automatically, and runtime installation
+alone does not establish tool access.
 
 FVS asks for runtime, model and effort choices at each relevant stage. Requested settings,
 resolved settings and observed settings are recorded separately; unavailable observations are stated
