@@ -637,7 +637,8 @@ function main() {
     return;
   }
 
-  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-plugin-check-'));
+  // The setup builder refuses symlinked ancestors, and macOS's default TMPDIR sits under /var.
+  const temporaryRoot = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'fvs-plugin-check-'));
   const generatedPluginRoot = path.join(temporaryRoot, 'fvs');
   const generatedPiSkillsRoot = path.join(temporaryRoot, 'pi', 'skills');
   const generatedSetupRoot = path.join(temporaryRoot, 'skills', 'fvs-setup');

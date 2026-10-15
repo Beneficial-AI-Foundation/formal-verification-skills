@@ -4,6 +4,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const childProcess = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -68,6 +69,17 @@ describe('published FVS plugin package', () => {
   it('is synchronized with its deterministic generator', () => {
     childProcess.execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'build-plugin.cjs'), '--check'], {
       cwd: ROOT,
+      stdio: 'pipe',
+    });
+  });
+
+  it('checks freshness when the temp directory is reached through a symlink', () => {
+    // macOS's default TMPDIR sits under the /var symlink; npm publish runs this check.
+    const real = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'fvs-check-tmp-'));
+    fs.symlinkSync(real, `${real}-link`);
+    childProcess.execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'build-plugin.cjs'), '--check'], {
+      cwd: ROOT,
+      env: { ...process.env, TMPDIR: `${real}-link` },
       stdio: 'pipe',
     });
   });
