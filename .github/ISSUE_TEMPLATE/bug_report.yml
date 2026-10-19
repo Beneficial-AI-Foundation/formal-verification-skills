@@ -1,0 +1,80 @@
+name: Bug report
+description: Something in FVS misbehaves, fails, or produces a wrong result.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Exact output and the FVS version help most.
+        Remove secrets, private paths and unpublished source from anything you paste.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong, in one or two sentences.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: FVS version
+      description: >
+        Run `/fvs:update` (or your channel's equivalent), which prints the installed version,
+        or read `fv-skills/VERSION` in your runtime's configuration directory,
+        for example `~/.claude/fv-skills/VERSION`. Include the commit if you run from a checkout.
+      placeholder: "2.3.7"
+    validations:
+      required: true
+
+  - type: input
+    id: command
+    attributes:
+      label: Affected command, skill or script
+      description: The FVS entry point that misbehaves.
+      placeholder: "/fvs:map-code, /fvs:lean-verify, npx fv-skills-baif --claude --global, scripts/fvs-probe-inventory.mjs ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: >
+        Exact commands, prompts or arguments, in order. Link the project (repository and commit)
+        if it is public, or describe its layout if it is not.
+      placeholder: |
+        1. In a Lean project with Aeneas output under `lean/`, run `/fvs:map-code`.
+        2. Choose "set up probe" when prompted.
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: What should have happened. Quote the README, command help or reference file if they promise it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour and output
+      description: >
+        What happened instead. Paste the exact output: `FVS >>` lines, the agent's final report,
+        Lean or Lake errors, installer output. This field renders as a code block.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: >
+        Anything else that helps: runtime and platform, Lean or Aeneas versions,
+        `.formalising/` artifacts, screenshots, a workaround you found, or why you think it happens.

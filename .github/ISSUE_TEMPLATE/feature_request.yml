@@ -1,0 +1,46 @@
+name: Feature request
+description: Propose a new capability or a change to how FVS behaves.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the proposal. Describe the problem first; the solution can be a sketch.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: >
+        What is hard, slow or impossible today, and who runs into it. Point at the current
+        behaviour in this repository (file and line) when you can.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: What FVS should do instead, from the user's point of view. Include an example invocation or transcript if it helps.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Where the change lands. Select all that apply.
+      multiple: true
+      options:
+        - Installer and distribution (npm, Pi, marketplace, skills.sh)
+        - Functional correctness track (map-code, fc-plan, natural-language, lean-specify, lean-verify, lean-refactor, trust-audit)
+        - Papers and crypto track (lean-formalise, crypto-plan/review/execute/eval/followup)
+        - Aeneas extraction and probe (aeneas-extract, model-external, probe-aeneas setup)
+        - Review policy and evidence (spec review, crypto review, reviewer agents)
+        - Learning store (`.formalising/proof-engineering/`)
+        - Management commands (help, configure, update, reapply-patches, kb-setup)
+        - Documentation and references
+        - Other (say which above)
+    validations:
+      required: true
