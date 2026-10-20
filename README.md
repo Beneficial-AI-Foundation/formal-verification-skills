@@ -177,11 +177,15 @@ for the user installation or `pi remove npm:fv-skills-baif --local` for the proj
 also supports `npx fv-skills-baif --pi --global --uninstall` (or `--local`). Remove a marketplace
 installation with its host's `plugin remove fvs@beneficial-ai-foundation` command.
 
-If you use the skills CLI, set both `DISABLE_TELEMETRY=1` and `DO_NOT_TRACK=1` before invoking it.
-Later setup consent cannot cover earlier analytics. The opt-out also disables the CLI's external
-audit lookup, so retain independent source and integrity checks. See the [skills CLI FAQ](https://www.skills.sh/docs/faq)
-and [privacy policy](https://vercel.com/legal/privacy-policy). The `fvs-setup` entry provides native
-installation guidance; copying it alone does not install the full FVS workflows.
+If you use the skills CLI, it reports each install to skills.sh: the CLI version, the public
+repository, the skill names and their paths in it, and the target agents, plus, when they apply, a
+global-install flag, the name of the AI agent running the CLI, a CI flag and any `--metadata` you
+pass. skills.sh sees your IP address; no account, machine ID, local path or file contents are sent.
+To opt out, set `DISABLE_TELEMETRY=1` or `DO_NOT_TRACK=1` before invoking it; opting out also turns
+off the CLI's security-audit lookup, so retain independent source and integrity checks. See the
+[skills CLI FAQ](https://www.skills.sh/docs/faq) and [privacy policy](https://vercel.com/legal/privacy-policy).
+The `fvs-setup` entry provides native installation guidance; copying it alone does not install the
+full FVS workflows.
 
 ## Credits and license
 

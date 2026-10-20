@@ -180,10 +180,8 @@ if (process.argv.includes('--package-fixture')) {
     assert.match(flows, /Skipped, disabled, failed or pending review does not approve/);
     assert.match(flows, /explicitly request trusted-path work.*unreviewed status/);
     assert.match(flows, /when you request proof work/);
-    for(const token of ['fvs-setup','DISABLE_TELEMETRY=1','DO_NOT_TRACK=1','before invoking','audit lookup','integrity checks','https://www.skills.sh/docs/faq']) assert.ok(updates.includes(token),token);
+    for(const token of ['fvs-setup','DISABLE_TELEMETRY=1','DO_NOT_TRACK=1','To opt out','audit lookup','integrity checks','https://www.skills.sh/docs/faq']) assert.ok(updates.includes(token),token);
     assert.match(updates, /copying it alone does not install the full FVS workflows/);
-    assert.match(updates, /Later setup consent cannot cover earlier analytics/);
-    for(const line of readme.split('\n').filter(line=>/npx skills/.test(line))) assert.match(line,/DISABLE_TELEMETRY=1 DO_NOT_TRACK=1.*npx skills/);
     for(const token of ['lakefile.lean','lakefile.toml','lean-toolchain','lake-build.md','probe-aeneas','/fvs:map-code','/fvs:fc-plan','setup diagnostics','.formalising/CODEMAP.md','SPQR']) assert.ok(tooling.includes(token),token);
     // The probe JSON is qualification data; users read the commands' resolver diagnostics instead.
     assert.doesNotMatch(tooling, /probe-compatibility\.json/);
