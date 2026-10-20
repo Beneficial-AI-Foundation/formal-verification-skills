@@ -182,6 +182,7 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     assert.match(record, /Provenance: cross-runtime/);
     assert.match(record, /Requested reviewer: codex/);
     assert.match(record, /Requested model: catalog-codex-authority/);
+    assert.match(record, /^- Reviewer wall time: \d+ ms$/m);
     let call = JSON.parse(fs.readFileSync(log));
     assert.equal(call.args[call.args.indexOf('--sandbox') + 1], 'workspace-write');
     assert.ok(call.args.includes('--ignore-user-config') && call.args.includes('--ephemeral'));
@@ -287,6 +288,7 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     assert.match(record, /Runtime-reported models: openai\/catalog-pi-authority/);
     assert.match(record, /Runtime-reported effort: max/);
     assert.match(record, /Pi dispatch evidence: run pi-child-test-run/);
+    assert.match(record, /^- Reviewer wall time: not measured \(imported response\)$/m);
 
     const same = run('same-runtime', 'codex', ['Codex CLI', 'Codex CLI'],
       ['--effort', 'medium']);

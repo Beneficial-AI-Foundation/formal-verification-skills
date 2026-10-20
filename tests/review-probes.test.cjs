@@ -79,6 +79,9 @@ else {
     const success = JSON.parse(fs.readFileSync(path.join(attempt(), 'process.json')));
     assert.equal(success.status, 0);
     assert.equal(success.phase, 'review');
+    assert.ok(!Number.isNaN(Date.parse(success.startedAt)) && !Number.isNaN(Date.parse(success.finishedAt)));
+    assert.ok(Number.isInteger(success.durationMs) && success.durationMs >= 0);
+    assert.equal(success.durationMs, Date.parse(success.finishedAt) - Date.parse(success.startedAt));
     const crypto = require('node:crypto');
     for (const stream of ['stdout', 'stderr']) {
       assert.equal(success[`${stream}Sha256`], crypto.createHash('sha256')
@@ -95,6 +98,8 @@ else {
       const record = path.join(records, fs.readdirSync(records).find(name => !before.has(name)));
       const receipt = JSON.parse(fs.readFileSync(path.join(record, mode === 'auth' || mode === 'version' ? `${mode}-process.json` : 'process.json')));
       assert.equal(receipt.timedOut, ['version', 'auth', 'root-alive', 'root-exited'].includes(mode));
+      if (receipt.timedOut) assert.ok(receipt.durationMs >= (mode.startsWith('root-') ? 3500 : 2500),
+        `${mode} duration covers its deadline`);
       if (mode.startsWith('root-')) {
         assert.equal(receipt.closed, true);
         assert.equal(receipt.reason, 'deadline');

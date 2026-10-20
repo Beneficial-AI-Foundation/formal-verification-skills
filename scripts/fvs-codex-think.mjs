@@ -662,7 +662,8 @@ function validatePacket(packet, projectRoot, topicDir, reviewsDir) {
 }
 
 function persistReview({ packet, packetDirectory, response, reportedModels = [], projectRoot,
-  topicDir, external = false, reportedEffort = null, piEvidence = null, settings = null }) {
+  topicDir, external = false, reportedEffort = null, piEvidence = null, settings = null,
+  durationMs = null }) {
   const reviewsDir = fs.realpathSync(path.join(topicDir, 'reviews'));
   packetDirectory = fs.realpathSync(packetDirectory);
   if (!isInside(reviewsDir, packetDirectory) || packetDirectory === reviewsDir) {
@@ -690,6 +691,7 @@ function persistReview({ packet, packetDirectory, response, reportedModels = [],
       reportedModels, reportedEffort, piEvidence }))}`,
     `- Runtime-reported models: ${reportedModels.join(', ') || 'not reported; verify in triage'}`,
     `- Runtime-reported effort: ${reportedEffort ?? 'not reported; verify in triage'}`,
+    `- Reviewer wall time: ${typeof durationMs === 'number' ? `${durationMs} ms` : 'not measured (imported response)'}`,
     `- Pi dispatch evidence: ${piEvidence
       ? `run ${piEvidence.runId}; host-attested fresh/read-only; packet and response hashes verified`
       : 'not applicable'}`,

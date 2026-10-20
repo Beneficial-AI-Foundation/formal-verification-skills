@@ -330,6 +330,7 @@ export async function invoke(runtime, args, workingRoot = root, options = {}) {
   const file = phase === 'version' || phase === 'auth' ? `${phase}-` : '';
   const save = (name, value) => fs.writeFileSync(path.join(captureDirectory, `${file}${name}`), value,
     { flag: 'wx', mode: 0o600 });
+  const startedAt = new Date();
   const child = spawn(runtime, args, { cwd: workingRoot, shell: false, windowsHide: true,
     detached: true, stdio: ['pipe', 'pipe', 'pipe'], ...spawnOptions });
   let status = null, signal = null, error = null, timedOut = false, reason = null;
@@ -387,10 +388,12 @@ export async function invoke(runtime, args, workingRoot = root, options = {}) {
     try { process.kill(-child.pid, 0); cleanup = 'group-still-alive'; }
     catch (e) { if (e.code !== 'ESRCH') cleanup = `group-check-error: ${e.message}`; }
   }
+  const finishedAt = new Date();
   const stdout = Buffer.concat(streams.stdout), stderr = Buffer.concat(streams.stderr);
   save('provider-stdout.bin', stdout); save('provider-stderr.bin', stderr);
   save('process.json', JSON.stringify({ phase: phase ?? 'review', runtime, args, cwd: workingRoot,
-    timeoutMs, status, signal, error, timedOut, reason, cleanup, closed,
+    timeoutMs, startedAt: startedAt.toISOString(), finishedAt: finishedAt.toISOString(),
+    durationMs: finishedAt - startedAt, status, signal, error, timedOut, reason, cleanup, closed,
     stdoutSha256: hash(stdout), stderrSha256: hash(stderr),
     stdoutBytes: stdout.length, stderrBytes: stderr.length }, null, 2) + '\n');
   if (reason || error || signal || status !== 0) throw new Error(
@@ -678,6 +681,7 @@ export async function runReviewer({ runtime, model, effort, prompt, workingRoot 
   artifactDirectory = fs.realpathSync(artifactDirectory);
   if (!artifactDirectory.startsWith(workingRoot + path.sep)) throw new Error('Review artifacts must remain inside the project');
   const threads = reviewThreadCount();
+  const startedAt = Date.now();
   const attempt = fs.mkdtempSync(path.join(artifactDirectory, 'attempt-'));
   const scratch = path.join(attempt, 'scratch');
   fs.mkdirSync(scratch);
@@ -699,7 +703,7 @@ export async function runReviewer({ runtime, model, effort, prompt, workingRoot 
     if (comparison === 'mismatch') throw new Error(
       `SETTINGS_MISMATCH: ${runtime} reported model ${reportedModels[0]}, selected ${model}. ` +
       'Choose the intended supported exact model or explicitly reconfirm a documented alias mapping; no substitute review was recorded.');
-    return { response, reportedModels, settings };
+    return { response, reportedModels, settings, durationMs: Date.now() - startedAt };
   };
   try {
     const reviewTimeoutMs = deadline('FVS_REVIEW_TIMEOUT_MS', 1200000);
