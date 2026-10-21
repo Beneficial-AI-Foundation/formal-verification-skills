@@ -1,7 +1,7 @@
 {
   "name": "fv-skills-baif",
   "version": "2.3.7",
-  "description": "Formal verification skills for Pi, Claude Code, Codex, OpenCode, and Gemini. Rust -> Lean 4 via Aeneas.",
+  "description": "Formal verification skills for Pi, Claude Code, Codex, OpenCode, and Antigravity. Rust -> Lean 4 via Aeneas.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Beneficial-AI-Foundation/formal-verification-skills.git"
@@ -33,8 +33,8 @@
     "aeneas",
     "rust",
     "proof",
-    "gemini",
-    "gemini-cli",
+    "antigravity",
+    "agy",
     "codex",
     "openai",
     "pi",

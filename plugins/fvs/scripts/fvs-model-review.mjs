@@ -71,8 +71,8 @@ export function prepareReview(request) {
     fail('external-model review round must be between 1 and 3');
   }
   const reviewer = validateReviewerOptions(request);
-  if (!['codex', 'claude', 'pi', 'opencode', 'gemini', 'other', 'unknown'].includes(request.author_runtime)) {
-    fail('author_runtime must be codex, claude, pi, opencode, gemini, other, or unknown');
+  if (!['codex', 'claude', 'pi', 'opencode', 'antigravity', 'other', 'unknown'].includes(request.author_runtime)) {
+    fail('author_runtime must be codex, claude, pi, opencode, antigravity, other, or unknown');
   }
   if (!Array.isArray(request.inputs) || request.inputs.length < 2 ||
       new Set(request.inputs).size !== request.inputs.length) {

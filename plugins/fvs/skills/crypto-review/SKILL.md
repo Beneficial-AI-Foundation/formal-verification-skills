@@ -1,7 +1,7 @@
 ---
 name: crypto-review
 description: Adversarially review a crypto plan with a chosen runtime, model, and effort
-argument-hint: "<topic> [nN] [--target plan|followup] [--reviewer codex|claude|pi|opencode|gemini|other] [--model ID] [--effort LEVEL]"
+argument-hint: "<topic> [nN] [--target plan|followup] [--reviewer codex|claude|pi|opencode|antigravity|other] [--model ID] [--effort LEVEL]"
 allowed-tools:
   - Read
   - Bash
@@ -131,7 +131,7 @@ Resolve numeric `nN` and `--target plan|followup`. Initial review consumes `PLAN
 `EXEC_PLAN_nN.md` and owns `PLAN_REVIEW_nN.md`; follow-up consumes `FOLLOWUP_PLAN_nN.md` plus
 available original-plan/eval context and owns `FOLLOWUP_REVIEW_nN.md`. Refuse an occupied output.
 
-Normalize the target's `Authoring runtime:` marker by exact aliases to `codex`, `claude`, `pi`, `opencode`, `gemini`, `other`, or `unknown`.
+Normalize the target's `Authoring runtime:` marker by exact aliases to `codex`, `claude`, `pi`, `opencode`, `antigravity`, `other`, or `unknown`.
 Missing, foreign, or conflicting markers are `unverified`; they do not block review, but never
 claim independence. Label a different known runtime `cross-runtime`, an explicitly selected
 matching runtime `same-runtime, fresh reviewer`, and Other `unverified`.
@@ -148,10 +148,10 @@ read-only Pi child with the exact selected provider/model; it is not an Other/ma
 Unknown authors receive an explicit reviewer menu without an independence claim. Never route a
 Claude Code subscription through Pi.
 
-OpenCode and Gemini selections remain named choices, not Claude/Other aliases. The external
+OpenCode and Antigravity selections remain named choices, not Claude/Other aliases. The external
 helper returns a specific `CAPABILITY_UNAVAILABLE` for their currently unqualified diagnostic
-CLI routes (OpenCode has no native shell isolation; Gemini lacks this isolated named-agent,
-memory-excluding shell/effort route). Offer explicit Codex/Claude, fresh Pi, or acknowledged
+CLI routes (OpenCode has no native shell isolation; agy offers no deny-read paths, tool allowlist
+or no-persistence control for a memory-excluding reviewer). Offer explicit Codex/Claude, fresh Pi, or acknowledged
 Other alternatives and reconfirm any changed choice; never launch unsafely or substitute.
 An unavailable observed setting is unknown, not this capability failure or a command-wide gate.
 

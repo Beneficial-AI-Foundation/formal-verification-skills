@@ -408,7 +408,7 @@ describe('External Rust modeling command', () => {
     const nativeEnv = { PATH: `${bin}${path.delimiter}${process.env.PATH}`,
       FVS_REVIEW_TIMEOUT_MS: '1100', FVS_REVIEW_AUTH_TIMEOUT_MS: '2500',
       FVS_FAKE_PID_FILE: path.join(root, 'review-child.pid') };
-    for (const mode of ['wrapper', 'competing', 'fail', 'auth', 'root-exited', 'opencode', 'gemini']) {
+    for (const mode of ['wrapper', 'competing', 'fail', 'auth', 'root-exited', 'opencode', 'antigravity']) {
       const modeRun = path.join(root, '.formalising', 'model-external', mode);
       fs.mkdirSync(path.join(modeRun, 'source'), { recursive: true });
       fs.copyFileSync(path.join(run, 'source/000-source.rs'), path.join(modeRun, 'source/000-source.rs'));
@@ -419,8 +419,8 @@ describe('External Rust modeling command', () => {
       }));
       const request = path.join(root, `${mode}-run.json`);
       fs.writeFileSync(request, JSON.stringify({ mode: 'model', round: 1,
-        runtime: ['opencode', 'gemini'].includes(mode) ? mode : 'codex',
-        model: 'exact-test-model', effort: 'high', author_runtime: 'gemini',
+        runtime: ['opencode', 'antigravity'].includes(mode) ? mode : 'codex',
+        model: 'exact-test-model', effort: 'high', author_runtime: 'antigravity',
         run_directory: `.formalising/model-external/${mode}`,
         inputs: [`.formalising/model-external/${mode}/source/000-source.rs`, 'ExternalModel.lean'], history: [] }));
       const result = runHelper(root, ['run', request], { ...nativeEnv, FVS_FAKE_MODEL_MODE: mode }, REVIEW_SCRIPT);
@@ -441,7 +441,7 @@ describe('External Rust modeling command', () => {
       } else {
         assert.notEqual(result.status, 0, `${mode}: ${result.stderr}`);
         assert.match(result.stderr, /Review attempt preserved|invalid response preserved/);
-        if (['opencode', 'gemini'].includes(mode)) {
+        if (['opencode', 'antigravity'].includes(mode)) {
           assert.match(result.stderr, new RegExp(`CAPABILITY_UNAVAILABLE.*${mode}`, 'i'));
         }
         assert.ok(!fs.existsSync(path.join(latest, 'review.md')));

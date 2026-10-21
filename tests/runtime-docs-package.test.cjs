@@ -206,7 +206,7 @@ if (process.argv.includes('--package-fixture')) {
     assert.equal(rows.pi,'/skill:fvs-help'); // Pi delegates to its own package manager
     for(const runtime of ALL_RUNTIMES.filter(runtime=>runtime!=='pi')) {
       const dir=fs.mkdtempSync(path.join(os.tmpdir(),`fvs-help-row-${runtime}-`));
-      const env={...process.env,HOME:dir,XDG_CONFIG_HOME:path.join(dir,'xdg'),CLAUDE_CONFIG_DIR:dir,CODEX_HOME:dir,GEMINI_CONFIG_DIR:dir};
+      const env={...process.env,HOME:dir,XDG_CONFIG_HOME:path.join(dir,'xdg'),CLAUDE_CONFIG_DIR:dir,CODEX_HOME:dir};
       delete env.OPENCODE_CONFIG_DIR; delete env.OPENCODE_CONFIG;
       const result=spawnSync(process.execPath,[path.join(ROOT,'bin/install.js'),`--${runtime}`,'--global','--config-dir',dir],{cwd:dir,env,encoding:'utf8',timeout:60000});
       assert.equal(result.status,0,result.stderr);

@@ -1,7 +1,7 @@
 ---
 name: lean-spec-review
 description: Adversarially review an FC Lean specification with a chosen runtime, model, and effort
-argument-hint: "<spec.lean> [--reviewer codex|claude|pi|opencode|gemini|other] [--model ID] [--effort LEVEL]"
+argument-hint: "<spec.lean> [--reviewer codex|claude|pi|opencode|antigravity|other] [--model ID] [--effort LEVEL]"
 allowed-tools:
   - Read
   - Bash
@@ -124,10 +124,10 @@ model/effort. It launches a fresh read-only child, never a manual Other packet. 
 the workflow's completed-child receipt with actual run ID/model/effort and packet/response hashes;
 missing capability or evidence leaves the review pending.
 
-OpenCode and Gemini selections remain named choices, not Claude/Other aliases. The external
+OpenCode and Antigravity selections remain named choices, not Claude/Other aliases. The external
 helper returns a specific `CAPABILITY_UNAVAILABLE` for their currently unqualified diagnostic
-CLI routes (OpenCode has no native shell isolation; Gemini lacks this isolated named-agent,
-memory-excluding shell/effort route). Offer explicit Codex/Claude, fresh Pi, or acknowledged
+CLI routes (OpenCode has no native shell isolation; agy offers no deny-read paths, tool allowlist
+or no-persistence control for a memory-excluding reviewer). Offer explicit Codex/Claude, fresh Pi, or acknowledged
 Other alternatives and reconfirm any changed choice; never launch unsafely or substitute.
 An unavailable observed setting is unknown, not this capability failure or a command-wide gate.
 

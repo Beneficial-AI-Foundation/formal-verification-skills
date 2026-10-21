@@ -17,8 +17,8 @@ export function loadReviewContract(name) {
     fs.readFileSync(path.join(directory, 'review-policy.md'), 'utf8');
 }
 export function validateReviewerOptions(input) {
-  if (!['codex', 'claude', 'pi', 'opencode', 'gemini', 'other'].includes(input.runtime)) {
-    throw new Error('runtime must be codex, claude, pi, opencode, gemini, or other');
+  if (!['codex', 'claude', 'pi', 'opencode', 'antigravity', 'other'].includes(input.runtime)) {
+    throw new Error('runtime must be codex, claude, pi, opencode, antigravity, or other');
   }
   const model = input.model;
   if (typeof model !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:/+-]*$/.test(model.trim())) {
@@ -175,8 +175,8 @@ function readRequest(file) {
   const input = readJSON(file);
   const reviewer = validateReviewerOptions(input);
   const author = input.author_runtime ?? 'unknown';
-  if (!['codex', 'claude', 'pi', 'opencode', 'gemini', 'other', 'unknown'].includes(author)) {
-    throw new Error('author_runtime must be codex, claude, pi, opencode, gemini, other, or unknown');
+  if (!['codex', 'claude', 'pi', 'opencode', 'antigravity', 'other', 'unknown'].includes(author)) {
+    throw new Error('author_runtime must be codex, claude, pi, opencode, antigravity, other, or unknown');
   }
   if (!Array.isArray(input.context) || input.context.length === 0) {
     throw new Error('context must list the Rust/Lean sources and definitions for review');
@@ -254,8 +254,8 @@ function persist(directory, packet, response, reportedModels = [], external = fa
   }
   const reviewer = validateReviewerOptions(packet.request);
   const author = packet.request.author_runtime ?? 'unknown';
-  if (!['codex', 'claude', 'pi', 'opencode', 'gemini', 'other', 'unknown'].includes(author)) {
-    throw new Error('author_runtime must be codex, claude, pi, opencode, gemini, other, or unknown');
+  if (!['codex', 'claude', 'pi', 'opencode', 'antigravity', 'other', 'unknown'].includes(author)) {
+    throw new Error('author_runtime must be codex, claude, pi, opencode, antigravity, other, or unknown');
   }
   const expectedProvenance = classifyReviewProvenance(author, reviewer.runtime);
   if (packet.provenance !== expectedProvenance) {
@@ -610,10 +610,10 @@ function requireReviewerRoute(runtime, model = 'selected model', effort = 'selec
     `CAPABILITY_UNAVAILABLE: opencode / ${model} / ${effort}: diagnostic Bash has no native OS sandbox ` +
     'for immutable sources and proof-engineering memory exclusion. Agent edit/bash permissions are not isolation; ' +
     'a model/variant selection alone cannot supply that boundary. ' + alternatives);
-  if (runtime === 'gemini') throw new Error(
-    `CAPABILITY_UNAVAILABLE: gemini / ${model} / ${effort}: this diagnostic CLI route lacks a qualified ` +
-    'isolated named-agent invocation with memory-excluding shell sandbox and applicable provider-native effort control. ' +
-    'Markdown agents reject effort fields; modelConfig overrides alone do not prove CLI reachability or confinement. ' + alternatives);
+  if (runtime === 'antigravity') throw new Error(
+    `CAPABILITY_UNAVAILABLE: antigravity / ${model} / ${effort}: this diagnostic CLI route lacks a qualified ` +
+    'isolated reviewer invocation with a memory-excluding shell sandbox; agy offers no deny-read paths, ' +
+    'tool allowlist or no-persistence control. ' + alternatives);
   if (!['codex', 'claude'].includes(runtime)) throw new Error(
     `${runtime}: no external CLI reviewer route; use the explicit Pi fresh-child/import or Other handoff, not Claude fallback`);
 }

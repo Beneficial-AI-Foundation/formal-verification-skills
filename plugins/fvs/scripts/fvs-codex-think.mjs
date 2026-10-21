@@ -88,7 +88,7 @@ function printUsage() {
       '  node scripts/fvs-codex-think.mjs review-preflight --topic <dir> --iteration nN',
       '       [--target plan|followup] [--grounding <inventory.json>]',
       '  node scripts/fvs-codex-think.mjs review --topic <dir> --iteration nN',
-      '       [--target plan|followup] [--reviewer codex|claude|pi|opencode|gemini|other]',
+      '       [--target plan|followup] [--reviewer codex|claude|pi|opencode|antigravity|other]',
       '       --model <exact-id-or-inherit> --effort <supported-level>',
       '       [--history <review-or-triage.md>]',
       '  node scripts/fvs-codex-think.mjs <review-import|review-import-pi> --topic <dir>',
@@ -102,7 +102,7 @@ function printUsage() {
       '                         artifact root; must already exist.',
       '  --iteration <nN>       Required for review and review-preflight (for example n1).',
       '  --target <kind>        Review target: plan | followup (default: auto).',
-      '  --reviewer <runtime>   codex | claude | pi | opencode | gemini | other (default: codex).',
+      '  --reviewer <runtime>   codex | claude | pi | opencode | antigravity | other (default: codex).',
       '  --model-is-alias       Review only: confirmed catalog alias, never inferred from spelling.',
       '  --model <id>           Exact selected review/authoring model; review requires this flag.',
       '                         Authoring omits it only for a confirmed inherit selection.',
@@ -277,14 +277,14 @@ function readThinkerRole(file) {
     if (!match) throw new Error('malformed installed thinker Markdown');
     const frontmatter = match[1];
     const sourceTools = /^tools:\s*Read, Bash, Grep, Glob\s*$/m.test(frontmatter);
-    const geminiTools = /^tools:\r?\n  - read_file\r?\n  - run_shell_command\r?\n  - search_file_content\r?\n  - glob\s*$/m.test(frontmatter);
+    const antigravityTools = /^tools:\r?\n  - Read\r?\n  - Bash\r?\n  - Grep\r?\n  - Glob\s*$/m.test(frontmatter);
     const opencodeTools = /^tools:\r?\n  read: true\r?\n  bash: true\r?\n  grep: true\r?\n  glob: true\s*$/m.test(frontmatter);
     const named = /^name:\s*fvs-crypto-thinker\s*$/m.test(frontmatter);
-    if (!(named && (sourceTools || geminiTools)) &&
+    if (!(named && (sourceTools || antigravityTools)) &&
         !(opencodeTools && path.basename(resolved) === 'fvs-crypto-thinker.md' && !/^name:/m.test(frontmatter))) {
       throw new Error('Markdown role must identify the read-only fvs-crypto-thinker');
     }
-    body = match[2]; format = geminiTools ? 'markdown-gemini' : opencodeTools ? 'markdown-opencode' : 'markdown';
+    body = match[2]; format = antigravityTools ? 'markdown-antigravity' : opencodeTools ? 'markdown-opencode' : 'markdown';
     // The OpenCode installer changes slash-command spelling, not role semantics.
     if (opencodeTools) body = body.replace(/\/fvs-crypto-(plan|eval|followup)\b/g, '/fvs:crypto-$1');
   }
@@ -410,7 +410,7 @@ function realFile(file, base, label) {
 function normalizeAuthorRuntime(value) {
   const aliases = { codex: 'codex', 'codex cli': 'codex', claude: 'claude',
     'claude code': 'claude', pi: 'pi', opencode: 'opencode',
-    gemini: 'gemini', 'gemini cli': 'gemini', other: 'other' };
+    antigravity: 'antigravity', agy: 'antigravity', other: 'other' };
   return aliases[String(value).trim().toLowerCase()] ?? 'unknown';
 }
 
@@ -608,7 +608,7 @@ function validatePacket(packet, projectRoot, topicDir, reviewsDir) {
   }
   const reviewer = validateReviewerOptions(packet.request ?? {});
   const author = packet.request.author_runtime;
-  if (!['codex', 'claude', 'pi', 'opencode', 'gemini', 'other', 'unknown'].includes(author) ||
+  if (!['codex', 'claude', 'pi', 'opencode', 'antigravity', 'other', 'unknown'].includes(author) ||
       typeof packet.request.observed_author_runtime !== 'string' ||
       /[\r\n\0]/.test(packet.request.observed_author_runtime) ||
       !/^n[1-9][0-9]*$/.test(packet.request.iteration ?? '') ||

@@ -46,6 +46,7 @@ stable alias present in the selected runtime/provider catalog.
 |------------------|-----------|------|-------|
 | Claude Code | detected Fable + `max` | detected Opus + `xhigh` | detected Sonnet + `high` |
 | Codex / OpenAI | detected Astra + `max` | detected Sol + `xhigh` | detected Terra + `high` |
+| Antigravity (agy) | detected Argon 4 (e.g. `gemini-4-argon-high`) + `high` | ask or exact stage override | ask or exact stage override |
 
 Review stages (`spec_review`, `crypto_review`, and model-external's independent reviewers) use the
 authority model at `xhigh` effort. `max` stays available as an explicit opt-in from the review menu
@@ -54,8 +55,10 @@ or a saved review effort; authoring stages keep `max`.
 Pi uses the row belonging to its active provider with exact provider-qualified IDs. Ordinary Pi
 work never switches providers automatically. An Anthropic-backed Pi provider uses the Claude-family
 row only when Pi reports a valid authenticated Anthropic model; an OpenAI/Codex-backed provider uses
-the OpenAI row. OpenCode and Gemini receive no guessed family mapping: ask interactively or require
-an exact stage override.
+the OpenAI row. OpenCode receives no guessed family mapping, and neither do Antigravity work and
+scout stages: ask interactively or require an exact stage override. Argon 4 IDs carry their effort
+level as a suffix (`-low`, `-medium`, `-high`), so the Antigravity authority choice is the `-high`
+variant reported by `agy models`.
 
 If the preferred quality model is absent, do not choose a lower family silently. Interactive runs
 ask the user to select a detected model for this run, save an exact runtime+stage override, or
@@ -83,21 +86,21 @@ the profile effort was applied.
     "codex": {},
     "pi": {},
     "opencode": {},
-    "gemini": {}
+    "antigravity": {}
   },
   "model_overrides": {
     "claude": {},
     "codex": {},
     "pi": {},
     "opencode": {},
-    "gemini": {}
+    "antigravity": {}
   },
   "effort_overrides": {
     "claude": {},
     "codex": {},
     "pi": {},
     "opencode": {},
-    "gemini": {}
+    "antigravity": {}
   },
   "spec_review": {
     "automatic": true,
@@ -372,10 +375,10 @@ Never guess alias status from a name's spelling or silently waive an exact-ID mi
 catalog observations alone do not veto valid existing dispatch. Harmless bounded implementation or
 diagnostic adjustments within approved task/ownership/safety limits need no additional consent.
 
-External OpenCode/Gemini diagnostic reviewer selections reach only their named capability branch:
-OpenCode lacks native shell isolation; Gemini lacks this qualified isolated named-agent CLI path
-with memory-excluding shell and applicable provider-native effort controls. Their model/variant or
-modelConfig settings do not themselves provide confinement. Offer explicit Codex/Claude CLI, active-
+External OpenCode/Antigravity diagnostic reviewer selections reach only their named capability
+branch: OpenCode lacks native shell isolation; agy offers no deny-read paths, tool allowlist or
+no-persistence control for a memory-excluding reviewer. Their model/variant or effort settings do
+not themselves provide confinement. Offer explicit Codex/Claude CLI, active-
 host fresh Pi, or acknowledged Other export/import alternatives; never implicitly launch Claude or
 relabel the selection. These limitations affect only that operation, not ordinary five-runtime
 commands. Source/schema evidence and simulated fixtures are not completed native acceptance.
@@ -399,7 +402,8 @@ fail before dispatch. Never omit a requested value and continue with only a warn
 
 Pi uses exact provider/model IDs. When its subagent facility supports a thinking suffix, use
 `provider/model:<effort>`; otherwise use its separate effort field. `inherit` omits model override.
-OpenCode and Gemini use only exact IDs returned by their own catalogs.
+OpenCode and Antigravity use only exact IDs returned by their own catalogs (`agy models` for
+Antigravity).
 
 </runtime_notes>
 

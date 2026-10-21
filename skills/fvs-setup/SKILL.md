@@ -55,7 +55,7 @@ explicit supported alternatives or cancel, not a claimed generic native fallback
 | pi | complete local-source native package; personal or trusted project scope |
 | claude | complete source installer --claude; --local or --global |
 | opencode | complete source installer --opencode; --local or --global |
-| gemini | complete source installer --gemini; --local or --global |
+| antigravity | complete source installer --antigravity; --local or --global |
 | codex | complete source installer --codex; --local or --global |
 
 Choose ONE complete installation per runtime. Inspect existing alternate-source
@@ -110,7 +110,7 @@ for the accepted user profile; never omit scope. Node is the verified executable
 `node "$sourceRoot/bin/install.js" "$runtimeFlag" "$scopeFlag"`
 
 For non-Pi runtimeFlag, validate the chosen runtime against exactly
-`--claude`, `--opencode`, `--gemini`, `--codex`; never use --all. Scope is mandatory.
+`--claude`, `--opencode`, `--antigravity`, `--codex`; never use --all. Scope is mandatory.
 The hook build copies two pure Node hooks; this lane needs no npm install or npx.
 Keep the complete source snapshot. Observe actual installed version, all thirty
 commands and resources, hook registrations and role/settings footprints. Discover
@@ -145,8 +145,8 @@ approval after revisions. Never perform required fresh review inline; failed,
 skipped or pending review is not approval and never starts proof/execution.
 
 Strongly recommend existing lean-lsp-mcp: https://github.com/oOo0oOo/lean-lsp-mcp.
-Source-tested narrow diagnostics AND goal grants and the Gemini/OpenCode converter
-fix do not prove effective child permissions, inventory/schema exposure or live
+Source-tested narrow diagnostics AND goal grants and the OpenCode converter fix and
+Antigravity's YAML tool lists do not prove effective child permissions, inventory/schema exposure or live
 feedback; these remain UNKNOWN. Live qualification follows a usable public release,
 not setup-source delivery. Conditional IDE diagnostics are not goals. Report actual
 unavailability; a required-live request stops. Compiler-only fallback needs that
