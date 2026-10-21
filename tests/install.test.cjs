@@ -486,7 +486,7 @@ describe('installed tree matches final bundle shape', () => {
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     assert.equal(config.model_profile, 'quality',
       'model_profile must use the top-level schema consumed by commands');
-    for (const runtime of ['claude', 'codex', 'pi', 'opencode', 'gemini']) {
+    for (const runtime of ['claude', 'codex', 'pi', 'opencode', 'antigravity']) {
       assert.deepEqual(config.model_overrides?.[runtime], {}, `${runtime} model overrides`);
       assert.deepEqual(config.effort_overrides?.[runtime], {}, `${runtime} effort overrides`);
     }

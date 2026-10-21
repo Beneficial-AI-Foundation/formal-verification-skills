@@ -301,7 +301,7 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     assert.equal(same.result.status, 0, same.result.stderr);
     assert.match(fs.readFileSync(path.join(same.topic, 'reviews', 'PLAN_REVIEW_n1.md'), 'utf8'),
       /same-runtime, fresh reviewer/);
-    for (const reviewer of ['opencode', 'gemini']) {
+    for (const reviewer of ['opencode', 'antigravity']) {
       const callsBefore = fs.readFileSync(calls, 'utf8');
       const limited = run(`${reviewer}-limited`, reviewer, ['Pi', 'Pi'],
         ['--model', 'provider/exact-model', '--effort', 'high']);
@@ -312,7 +312,7 @@ it('runs crypto review through selected read-only runtimes and immutable packets
       assert.ok(!fs.existsSync(path.join(limited.topic, 'reviews', 'PLAN_REVIEW_n1.md')));
       assert.equal(fs.readFileSync(calls, 'utf8'), callsBefore, 'limited route must not launch any provider');
     }
-    for (const author of ['Pi', 'OpenCode', 'Gemini CLI']) {
+    for (const author of ['Pi', 'OpenCode', 'Antigravity']) {
       const known = run(`known-${author.replace(/ /g, '-')}`, 'codex', [author, author]);
       assert.equal(known.result.status, 0, known.result.stderr);
       const packetDir = path.join(project, known.result.stdout.match(/Review packet: (.+)/)[1]);

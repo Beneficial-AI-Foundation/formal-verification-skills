@@ -166,7 +166,7 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
     assert.equal(JSON.parse(fs.readFileSync(path.join(first, 'grounding.json'))).cited_apis[0].signature, 'def example := 1');
     assert.ok(!fs.existsSync(path.join(project, 'INJECTED')));
 
-    for (const runtime of ['opencode', 'gemini']) {
+    for (const runtime of ['opencode', 'antigravity']) {
       const callsBefore = fs.readFileSync(calls, 'utf8');
       const limited = run({ runtime, model: 'provider/exact-model', effort: 'high', author_runtime: 'pi' });
       assert.notEqual(limited.status, 0);
@@ -174,7 +174,7 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
       assert.ok(!fs.existsSync(path.join(directory(limited), 'review.md')));
       assert.equal(fs.readFileSync(calls, 'utf8'), callsBefore);
     }
-    for (const author_runtime of ['pi', 'opencode', 'gemini']) {
+    for (const author_runtime of ['pi', 'opencode', 'antigravity']) {
       const known = run({ author_runtime });
       assert.equal(known.status, 0, known.stderr);
       assert.equal(JSON.parse(fs.readFileSync(path.join(directory(known), 'packet.json'))).request.author_runtime, author_runtime);
