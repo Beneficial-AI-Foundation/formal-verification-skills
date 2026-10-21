@@ -18,7 +18,7 @@ implementation.
 For Lean, prefer `#check`, `#print axioms`, and statement-only signature stubs;
 successful elaboration is not proof of the target claim.
 
-A necessary build of existing sources is separate from the probe budget. The Claude
+A necessary build of existing sources counts as one probe in that budget. The Claude
 provider permits only explicitly listed generated Lake `.lake/build` and `.lake/config`
 outputs, including installed packages. `LEAN_NUM_THREADS` defaults to 4 and must be a positive safe
 integer; the wrapper rejects invalid or unsafe values before launching the reviewer. Use bounded targets and

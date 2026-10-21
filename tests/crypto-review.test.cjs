@@ -194,6 +194,9 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     assert.ok(fs.statSync(codexScratch).isDirectory(), 'Codex scratch must survive with the review attempt');
     assert.ok(call.input.includes('Source fidelity') && call.input.includes('PLAN_n1.md'));
     assert.ok(call.input.includes('theorem helper : True := by trivial'));
+    for (const text of ['Default budget: at most 3 probes', 'A build of existing sources counts as one probe',
+      'Codex sandbox: only the saved scratch directory is writable']) assert.ok(call.input.includes(text), text);
+    assert.ok(!call.input.includes('Bash is OS-sandboxed'), 'Codex must not get Claude-only sandbox lines');
 
     const claude = run('claude-cross', 'claude', ['Codex CLI', 'Codex CLI'],
       ['--model', 'catalog-claude-scout', '--effort', 'high']);
@@ -201,6 +204,9 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     record = fs.readFileSync(path.join(claude.topic, 'reviews', 'PLAN_REVIEW_n1.md'), 'utf8');
     assert.match(record, /Provenance: cross-runtime/);
     assert.match(record, /Runtime-reported models: catalog-claude-scout/);
+    call = JSON.parse(fs.readFileSync(log));
+    assert.ok(call.input.includes('Bash is OS-sandboxed') &&
+      call.input.includes('A build of existing sources counts as one probe'));
     assert.match(record, /^- Stage settings: /m, 'completed review must persist separated settings evidence');
     const settings = JSON.parse(record.match(/^- Stage settings: (.+)$/m)[1]);
     assert.equal(settings.stage, 'crypto_review');

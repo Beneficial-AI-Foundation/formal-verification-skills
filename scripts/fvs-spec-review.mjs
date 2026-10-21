@@ -718,6 +718,15 @@ export async function runReviewer({ runtime, model, effort, prompt, workingRoot 
       'Never edit source or plan files. Do not implement the plan or attempt full proofs.\n' +
       `LEAN_NUM_THREADS is validated and set to ${threads}; use ` +
       'LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 for Lean checks.\n\n' + prompt;
+    const probeBudget = 'You may write tiny diagnostic prototypes in scratch, in the target language\n' +
+      '(Lean, Verus, Rocq, Isabelle, or another installed toolchain): signature/type checks,\n' +
+      'API checks, minimal counterexamples, or short executable traces. Each must answer\n' +
+      'one stated review question. Default budget: at most 3 probes, about 40 lines each,\n' +
+      'with at most one correction per probe; report uncertainty if more work is needed.\n' +
+      'A build of existing sources counts as one probe.\n' +
+      'Do not implement planned definitions or proofs, run extended proof search, or modify targets.\n' +
+      'Preserve exact probe code, commands, and outcomes in the review.\n' +
+      'For Lean, prefer #check / #print axioms or signature stubs; these do not prove target claims.\n';
     if (runtime === 'codex') {
       const lastMessage = path.join(attempt, 'codex-last-message.md');
       const args = ['exec', '-C', scratch];
@@ -726,9 +735,12 @@ export async function runReviewer({ runtime, model, effort, prompt, workingRoot 
         '--color', 'never', '--output-last-message', lastMessage,
         '-c', `model_reasoning_effort="${effort}"`);
       save('launch.json', JSON.stringify({ runtime, args: [...args, '-'], cwd: scratch }, null, 2) + '\n');
-      save('prompt.md', scopedPrompt);
+      const codexPrompt = scopedPrompt + '\n' + probeBudget +
+        'Codex sandbox: only the saved scratch directory is writable; the repository, including its\n' +
+        'Lake build outputs, is read-only. Report a blocked check instead of retrying with more access.\n';
+      save('prompt.md', codexPrompt);
       await invoke('codex', [...args, '-'], scratch,
-        { input: scopedPrompt, captureDirectory: attempt, phase: 'review', timeoutMs: reviewTimeoutMs, env: childEnv });
+        { input: codexPrompt, captureDirectory: attempt, phase: 'review', timeoutMs: reviewTimeoutMs, env: childEnv });
       if (!fs.existsSync(lastMessage)) throw new Error('Codex returned no final review');
       return finish(decode(fs.readFileSync(lastMessage)), []);
     }
@@ -753,14 +765,7 @@ export async function runReviewer({ runtime, model, effort, prompt, workingRoot 
       '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
       '--permission-mode', 'dontAsk', '--no-session-persistence', '--effort', effort);
     const claudePrompt = scopedPrompt + '\nBash is OS-sandboxed: source/plan writes and unsandboxed retries are forbidden.\n' +
-      'You may write tiny diagnostic prototypes in scratch, in the target language\n' +
-      '(Lean, Verus, Rocq, Isabelle, or another installed toolchain): signature/type checks,\n' +
-      'API checks, minimal counterexamples, or short executable traces. Each must answer\n' +
-      'one stated review question. Default budget: at most 3 probes, about 40 lines each,\n' +
-      'with at most one correction per probe; report uncertainty if more work is needed.\n' +
-      'Do not implement planned definitions or proofs, run extended proof search, or modify targets.\n' +
-      'Preserve exact probe code, commands, and outcomes in the review.\n' +
-      'For Lean, prefer #check / #print axioms or signature stubs; these do not prove target claims.\n' +
+      probeBudget +
       'For necessary existing-tree Lean checks, cd to the repository and use\n' +
       'LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build <target>, or the same\n' +
       'prefix for lake env lean <absolute-scratch-probe>. Only generated Lake build/config\n' +
