@@ -193,23 +193,21 @@ system is delivered. Setup itself runs no Lean/compiler/diagnostics operation.
 
 ## Privacy
 
-Installation analytics can occur BEFORE any setup conversation. Public instructions
-and automation must establish BOTH DISABLE_TELEMETRY=1 and DO_NOT_TRACK=1 BEFORE
-invoking the skills CLI. Later setup consent cannot retroactively consent to those
-requests. In inspected skills@1.7.1, these opt-outs also suppress external security-
-audit lookup; retain independent source, tarball/dependency integrity and legitimacy
-checks. This entry adds no FVS collector, private upload or custom telemetry metadata.
+The skills CLI reports each install (contents below). Setting either DISABLE_TELEMETRY=1
+or DO_NOT_TRACK=1 before invoking it disables that reporting. In inspected skills@1.7.1,
+opting out also suppresses the external security-audit lookup; retain independent
+source, tarball/dependency integrity and legitimacy checks. This entry adds no FVS
+collector, private upload or custom telemetry metadata.
 
 Official CLI/FAQ: https://www.skills.sh/docs/cli and https://www.skills.sh/docs/faq.
 Privacy notice: https://vercel.com/legal/privacy-policy. Installation reporting can
 send public repository/skill/agent/CLI/version/scope/path/CI metadata to
-https://www.skills.sh/tele/t; the recipient sees the network source IP. Retention,
+https://www.skills.sh/tele/t; the recipient sees the network source IP. No account,
+machine ID, local path, file contents or hashes are sent. Retention,
 anonymisation, notice and legal status are not independently verified. No legal
 anonymity, harmlessness or EU exemption is promised. No private project, proof,
 source or conversation should be uploaded, and no repeated/artificial adoption
-counts should be manufactured. QA always disables telemetry. Maintainer choice
-about ONE genuine reporting-enabled public installation after validated release
-is a separate owner gate, not consent for all users; this entry does not opt in.
+counts should be manufactured. QA always disables telemetry.
 Local source/contract/transport/resource checks prove neither native model behavior
 nor public release/installation or an observed skills.sh listing.
 `;
