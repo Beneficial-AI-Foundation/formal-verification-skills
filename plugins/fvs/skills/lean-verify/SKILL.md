@@ -1,7 +1,7 @@
 ---
 name: lean-verify
-description: Attempt proof of Lean spec using domain tactics with interactive feedback
-argument-hint: "<spec_file_path> [--max-attempts N]"
+description: Prove a Lean spec autonomously with domain tactics; accept it only after a clean build and a cheat audit
+argument-hint: "<spec_file_path> [--budget DURATION]"
 allowed-tools:
   - Read
   - Bash
@@ -94,17 +94,21 @@ Result parsing:
 </codex_skill_adapter>
 
 <objective>
-Orchestrate interactive proof development for a Lean specification using two-phase subagent
-dispatch (research -> iterative execute). Load the target repository's style guide, dispatch
-fvs-researcher to analyze sorry locations and recommend proof strategies, then iteratively
-dispatch fvs-executor to replace each sorry ONE AT A TIME with small, mechanically style-checked
-tactic blocks.
+Orchestrate autonomous proof development for a Lean specification using two-phase subagent
+dispatch (research -> autonomous execute). Load the target repository's style guide, dispatch
+fvs-researcher to analyze sorry locations and recommend proof strategies, then dispatch
+fvs-executor to work through every sorry itself: it chooses the order and size of each step and may
+revise its own earlier proof steps and helper lemmas.
 
-This is a functional-correctness (FC) track command. Its `fvs-executor` `proof-attempt` mode is FC-only: the crypto formalise track drives its own dedicated executor, so the one-sorry pair-programming loop below is exclusive to this command and is not shared with or borrowed by any other track.
+This is a functional-correctness (FC) track command. Its `fvs-executor` `proof-attempt` mode is FC-only: the crypto formalise track drives its own dedicated executor, so the autonomous proof loop below is exclusive to this command and is not shared with or borrowed by any other track.
 
-This is the most interactive command -- it feels like pair programming. The executor proposes a small tactic step, the user checks Lean compiles, and the cycle repeats. This is a locked user decision and must not be overridden.
+The executor checks compilation itself. There is no per-step approval and no compile question.
+After the one up-front model/effort confirmation, the user is asked only to change a theorem
+statement, when the budget runs out or the executor is stuck, or when the cheat audit flags
+something.
 
-Output: Spec file with sorry replaced by complete proof (VERIFIED) or clear report of where proof got stuck (STUCK).
+Output: either a spec whose sorry are all replaced by a proof that builds and passes the cheat
+audit (VERIFIED), or a report of what remains (PARTIAL or STUCK).
 </objective>
 
 <execution_context>
@@ -116,12 +120,11 @@ Output: Spec file with sorry replaced by complete proof (VERIFIED) or clear repo
 <context>
 Spec file path: $ARGUMENTS (required -- path to spec .lean file).
 
-Parse --max-attempts flag from $ARGUMENTS:
-- Default: 10
-- Hard cap: 25 (never exceed regardless of user request)
+Parse the optional --budget flag from $ARGUMENTS: a wall-clock duration in whole minutes or hours
+(e.g. `90m`, `2h`), default `4h`.
 
 - Check for .formalising/CODEMAP.md for dependency context
-- Track iteration count in command scope (agents are stateless per Task() invocation)
+- Track the start time and deadline in command scope (agents are stateless per Task() invocation)
 </context>
 
 <process>
@@ -136,16 +139,20 @@ LAKE_BUILD_GUIDE=$(cat ${CLAUDE_PLUGIN_ROOT}/fv-skills/references/lake-build.md)
 
 ## Step 1: Parse Spec File Path and Options
 
-Parse $ARGUMENTS for spec file path and optional --max-attempts flag:
+Parse $ARGUMENTS for spec file path and optional --budget flag:
 
 ```bash
 SPEC_PATH="(parsed from $ARGUMENTS, excluding flags)"
-MAX_ATTEMPTS="(parsed from --max-attempts flag, default 10)"
+BUDGET="(parsed from --budget flag, default 4h)"
 
-# Hard cap: never exceed 25
-if [ "$MAX_ATTEMPTS" -gt 25 ]; then
-  MAX_ATTEMPTS=25
+if [[ ! "$BUDGET" =~ ^[1-9][0-9]*[mh]$ ]]; then
+  echo "Usage: /fvs:lean-verify <spec_file_path> [--budget DURATION] (e.g. 90m or 2h)" >&2
+  exit 1
 fi
+case "$BUDGET" in
+  *m) BUDGET_SECONDS=$(( ${BUDGET%m} * 60 )) ;;
+  *h) BUDGET_SECONDS=$(( ${BUDGET%h} * 3600 )) ;;
+esac
 
 [ -f "$SPEC_PATH" ] && echo "Spec found" || echo "Spec not found"
 ```
@@ -216,6 +223,14 @@ Offer one-run adjustment, exact-stage Save override, notes that rebuild and reco
 and Cancel. Missing preferred models or unsupported efforts prompt interactively; noninteractive
 unresolved choices fail before dispatch with exact remediation.
 
+This manifest confirmation is the only up-front question. Immediately after it, start the budget
+clock; the budget covers research, proving and the audit:
+
+```bash
+START_EPOCH=$(date +%s)
+DEADLINE_EPOCH=$((START_EPOCH + BUDGET_SECONDS))
+```
+
 ## Step 3: Discover the Target Style Guide and Capture a Baseline
 
 Run the installed discovery helper from the target repository root:
@@ -240,7 +255,9 @@ diagnostics:
 ```bash
 STYLE_BASELINE=$(mktemp /tmp/fvs-lean-style-baseline-XXXXXX.lean)
 cp "$SPEC_PATH" "$STYLE_BASELINE"
-trap 'rm -f "$STYLE_BASELINE"' EXIT
+AUDIT_DIR=$(mktemp -d "${TMPDIR:-/tmp}/fvs-lean-verify-audit.XXXXXX")
+find . -name .lake -prune -o \( -name '*.lean' -o -name 'lakefile.toml' \) -type f \
+  -exec cksum {} + | LC_ALL=C sort > "$AUDIT_DIR/tree-before.txt"
 
 BASELINE_STYLE_DIAGNOSTICS=$(node ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-lean-style-check.mjs \
   check "$SPEC_PATH" --root . --config .formalising/fvs-config.json 2>&1)
@@ -249,6 +266,10 @@ BASELINE_STYLE_STATUS=$?
 
 Existing legacy violations are baseline debt, not permission to add more. Show a concise baseline
 warning when `BASELINE_STYLE_STATUS` is nonzero.
+
+`tree-before.txt` fingerprints every project Lean source and lakefile (`*.lean` already covers
+`lakefile.lean`). Keep `$STYLE_BASELINE` and `$AUDIT_DIR` until the Step 7a audit has run, and
+remove them in Step 8.
 
 Ordinary proof-attempt mode MUST NOT edit theorem names or theorem statements. If the user
 explicitly requests such an edit, apply the full target guide to that declaration and require a
@@ -274,14 +295,19 @@ SORRY_COUNT=$(grep -c "sorry" "$SPEC_PATH")
 echo "Found $SORRY_COUNT sorry to resolve"
 ```
 
-If zero sorry: spec may already be proved. Run build check to confirm:
+If zero sorry: the spec may already be proved. Skip Steps 6-7 and run the build gate, reading the
+real exit status rather than the tail of the pipe:
 
 ```bash
-LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build 2>&1 | tail -20
+set -o pipefail
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build 2>&1 | tail -40
+BUILD_STATUS=${PIPESTATUS[0]}
 ```
 
-- If build clean: report VERIFIED status and exit.
-- If build errors: report errors and exit.
+Decide on `BUILD_STATUS`, never on the tail. When it is zero, run the Step 7a cheat audit; a finding
+is handled as in Step 7a. Do not exit inline: in every case continue to Step 8 (cleanup and
+summary), Step 9 and Step 10, so the before-images are removed and CODEMAP is updated. A failed
+build is reported in Step 8 as a build error.
 
 If sorry found: extract theorem name and current proof state. Continue to research phase.
 
@@ -351,32 +377,22 @@ Parse the returned research findings to get:
 - Tactic suggestions per sorry
 - Related proof examples
 
-## Step 7: Iterative Executor Dispatch (One Sorry at a Time -- LOCKED DECISION)
+## Step 7: Autonomous Proof Loop
 
 ```
-SORRY_RESOLVED=0
-SORRY_STUCK=0
-SORRY_REMAINING=$SORRY_COUNT
+PREVIOUS_FEEDBACK=""
 
-FOR EACH SORRY (in recommended order from research):
+WHILE sorry remain in the spec AND $(date +%s) < DEADLINE_EPOCH:
 
-  Display:
-  >> Attempting sorry {N}/{TOTAL}: {goal description}
+  # Re-read spec file each iteration (the executor rewrites it)
+  CURRENT_SPEC=$(cat "$SPEC_PATH")
 
-  ATTEMPT_FOR_THIS_SORRY=0
-  MAX_PER_SORRY=3
-
-  WHILE ATTEMPT_FOR_THIS_SORRY < MAX_PER_SORRY:
-
-    # Re-read spec file each iteration (it changes after each write!)
-    CURRENT_SPEC=$(cat "$SPEC_PATH")
-
-    Task(
-      subagent_type="fvs-executor",
-      model="$EXECUTOR_MODEL",
-      reasoning_effort="$EXECUTOR_EFFORT", // when supported; otherwise apply the capability gate
-      description="Prove sorry {N} in $SPEC_FILE",
-      prompt="Execute mode: proof-attempt
+  Task(
+    subagent_type="fvs-executor",
+    model="$EXECUTOR_MODEL",
+    reasoning_effort="$EXECUTOR_EFFORT", // when supported; otherwise apply the capability gate
+    description="Prove the remaining sorry in $SPEC_FILE",
+    prompt="Execute mode: proof-attempt
 
 <lake_build_guide>
 $LAKE_BUILD_GUIDE
@@ -401,94 +417,153 @@ $TARGET_STYLE_GUIDE_CONTENT
 $CURRENT_SPEC_FILE_CONTENT (re-read each iteration -- it changes!)
 </current_spec>
 
-<target_sorry>sorry #{N}</target_sorry>
-<goal_state>{goal from research findings}</goal_state>
+<feedback>
+$PREVIOUS_FEEDBACK (empty on the first dispatch; afterwards the style, build or audit
+diagnostics, or the user's answer)
+</feedback>
 
-<user_feedback>
-$PREVIOUS_FEEDBACK (empty on first attempt, contains Lean error or user hint after)
-</user_feedback>
+<deadline_epoch>$DEADLINE_EPOCH</deadline_epoch>
 
-<attempt>{ATTEMPT_FOR_THIS_SORRY} of {MAX_PER_SORRY}</attempt>
-
-Write a SMALL tactic block to replace this ONE sorry.
-Use tactics: have, calc, step, unfold, simp, ring, field_simp, agrind, scalar_tac.
-Explain your reasoning before writing.
+Prove every sorry in the spec. Choose the order and size of each step. Revise your own earlier
+proof steps and helper lemmas freely. Write only the spec file and put helper lemmas there.
+Check every change with lean_diagnostic_messages and lean_goal. Before returning, run
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build
+The parent runs the mechanical style gate after you return; do not run the style checker.
+Never ask for approval or for compile results.
+Useful tactics include have, calc, step, unfold, simp, ring, field_simp, agrind, scalar_tac.
 Do not edit the theorem name or statement. Follow the target style guide as a hard constraint:
 no new over-limit line and no ordinary identifier with three or more namespace dots.
+Do not use sorry, admit, native_decide, axiom, implemented_by, extern, @[csimp], unsafe or
+kernel-weakening options such as debug.skipKernelTC, and do not edit definitions, extracted code
+or the lakefile: the parent's cheat audit rejects all of these.
+Stop and return before the deadline epoch; compare it with date +%s.
 
-IMPORTANT: Write the change using VS Code diff (Write tool). User will approve inline.
-After the write, the user will check if Lean compiles. Wait for feedback.
+Return ## EXECUTION COMPLETE when no sorry remains and the build is clean, or near the deadline,
+listing the remaining sorry in the summary. Return ## NEEDS INPUT only when a theorem statement
+must change or you are genuinely stuck. In every case return a separate <lesson_candidates>
+block using the shared candidate contract, or `none`."
+  )
 
-If stuck, return ## NEEDS INPUT with what you need.
-If successful, return ## EXECUTION COMPLETE. In either case return a separate
-<lesson_candidates> block using the shared candidate contract, or `none`."
-    )
+  AFTER EACH EXECUTOR RETURN:
 
-    AFTER EACH EXECUTOR RETURN:
+  If ## EXECUTION COMPLETE, apply these gates in order:
+    1. Run the baseline-aware mechanical style gate:
 
-    If ## EXECUTION COMPLETE:
-      - FIRST run the baseline-aware mechanical style gate:
+         node ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-lean-style-check.mjs check "$SPEC_PATH" \
+           --root . --config .formalising/fvs-config.json --baseline "$STYLE_BASELINE"
 
-        node ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-lean-style-check.mjs check "$SPEC_PATH" \
-          --root . --config .formalising/fvs-config.json --baseline "$STYLE_BASELINE"
+       For a user-authorized statement edit, run the same check WITHOUT `--baseline`; the complete
+       file must pass because statement edits cannot inherit legacy style exemptions. On failure,
+       store the exact diagnostics as PREVIOUS_FEEDBACK and loop without asking the user.
+    2. Inspect the diff. If a theorem name or statement changed without the user's explicit
+       request, store a request to restore it as PREVIOUS_FEEDBACK and loop.
+    3. Run the build gate from Step 5 (`set -o pipefail`, the bounded build piped to tail,
+       `BUILD_STATUS=${PIPESTATUS[0]}`). On a nonzero BUILD_STATUS, store the errors as
+       PREVIOUS_FEEDBACK and loop.
+    4. If a sorry remains, put the remaining list in PREVIOUS_FEEDBACK and loop. If the spec is
+       byte-identical to the one sent in this dispatch, the executor is stuck: ask the user.
+    5. Otherwise run Step 7a. A clean audit is VERIFIED and ends the loop. A finding stops the
+       loop and goes to the user.
 
-      - If the style gate fails: store its exact diagnostics as PREVIOUS_FEEDBACK, increment
-        ATTEMPT_FOR_THIS_SORRY, and re-dispatch. Do not ask for compilation and do not accept the
-        edit yet.
-      - Inspect the diff. If the theorem name or statement changed without the user's explicit
-        request, treat that as a failed attempt and require the executor to restore it.
-      - For a user-authorized statement edit, run the same check WITHOUT `--baseline`; the complete
-        file must pass because statement edits cannot inherit legacy style exemptions.
-      - Only after the applicable style gate passes, remind the user:
-        'Check compilation: LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build'
-      - Wait for user feedback on whether Lean compiles
-      - If compiles: SORRY_RESOLVED += 1, break inner loop, move to next sorry
-      - If does not compile: store error as PREVIOUS_FEEDBACK, ATTEMPT_FOR_THIS_SORRY += 1
+  If ## NEEDS INPUT:
+    - Present to user: the executor's question and what it tried
+    - The user's answer (a hint, a lemma pointer, an authorized statement edit, more budget, or
+      stop) becomes PREVIOUS_FEEDBACK, or ends the loop
 
-    If ## NEEDS INPUT:
-      - Present to user: the executor's question, what it tried, what it needs
-      - Wait for user response (hint, invariant, lemma pointer)
-      - If user provides hint: store as PREVIOUS_FEEDBACK, ATTEMPT_FOR_THIS_SORRY += 1
-      - If user says "skip": mark as STUCK, break inner loop, move to next sorry
+  If ## ERROR:
+    - Display the error and end the loop
 
-    If ## ERROR:
-      - Display error to user
-      - ATTEMPT_FOR_THIS_SORRY += 1
+END WHILE
 
-  END WHILE
-
-  If ATTEMPT_FOR_THIS_SORRY >= MAX_PER_SORRY:
-    Mark this sorry as STUCK
-    SORRY_STUCK += 1
-    Display: ">> sorry {N} stuck after {MAX_PER_SORRY} attempts. Moving to next."
-
-END FOR
+If the deadline passed without VERIFIED, ask the user once: extend the budget with a new duration
+(set a new DEADLINE_EPOCH and continue the loop) or stop and report.
 ```
 
-**CRITICAL LOCKED DECISIONS:**
-- One sorry at a time (not batch)
-- Small tactic blocks (have, calc, unfold + step)
-- User checks Lean compiles between each step
-- Mechanical style gate passes before each compile check
+**Loop rules:**
+- Autonomous: no per-step approval
+- The executor checks compilation; the parent confirms it with the bounded build gate
+- The mechanical style gate runs before every build gate
 - Theorem names/statements stay immutable unless the user explicitly authorized an edit
-- Feels like pair programming
-- All writes via VS Code diffs
+- Only the bounded build command is used
+- The user is asked only to change a theorem statement, when the budget runs out or the executor
+  is stuck, or when the cheat audit flags something
+- VERIFIED only after a clean Step 7a audit
 
-## Step 8: Display Summary
+## Step 7a: Cheat Audit (required before VERIFIED)
+
+The executor's success header never decides the status. Before any VERIFIED, the command itself
+runs four checks from the project root:
+
+1. **Axioms.** Write `$AUDIT_DIR/Axioms.lean` containing `import <spec module>` followed by one
+   `#print axioms <fully qualified name>` per theorem and lemma declared in the spec. Derive the
+   spec module from `$SPEC_PATH` relative to the package source root: drop `.lean` and turn `/`
+   into `.`, e.g. `Specs/Backend/Field/Sub.lean` becomes `Specs.Backend.Field.Sub`. Then run:
+
+   ```bash
+   LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake env lean "$AUDIT_DIR/Axioms.lean"
+   ```
+
+   This is the /fvs:trust-audit harness and classification. It passes only when every declaration
+   depends on no axioms or only on `propext`, `Classical.choice` and `Quot.sound`. `sorryAx`
+   (sorry or admit anywhere in the dependency cone), `Lean.ofReduceBool` (native_decide) or any
+   other axiom is a finding. A failed introspection or a missing declaration is a finding, never a
+   pass.
+
+2. **Statements and definitions.** Diff `"$STYLE_BASELINE"` against `"$SPEC_PATH"`. Every baseline
+   declaration keeps its name and statement verbatim, except a statement the user explicitly
+   authorized. Every baseline def, abbrev, structure, inductive, instance and opaque keeps its full
+   text. Only proof bodies change, and helper declarations may be added. Do not flag helper lemmas.
+
+3. **Rest of the project.** Recompute the fingerprint and compare it with the Step 3 one:
+
+   ```bash
+   find . -name .lake -prune -o \( -name '*.lean' -o -name 'lakefile.toml' \) -type f \
+     -exec cksum {} + | LC_ALL=C sort | diff "$AUDIT_DIR/tree-before.txt" -
+   ```
+
+   The spec file's own line is the only allowed difference. Any other changed, added or removed
+   Lean source or lakefile is a finding. This covers the extracted code (`Funs.lean`,
+   `Types.lean`), the definitions the theorems refer to, and lakefile `leanOptions` such as a
+   kernel-weakening option.
+
+4. **Banned constructs.** Scan the added lines:
+
+   ```bash
+   diff "$STYLE_BASELINE" "$SPEC_PATH" | grep '^>' \
+     | grep -n -w -E 'axiom|implemented_by|extern|csimp|unsafe|skipKernelTC'
+   ```
+
+   Any hit is a finding: an introduced axiom declaration, an implemented_by, extern or @[csimp]
+   attribute, an unsafe definition, or debug.skipKernelTC.
+
+On any finding, stop, show the evidence and ask the user. Never classify a hit as a false positive
+yourself. The user may direct a fix, which re-enters Step 7 with the finding as PREVIOUS_FEEDBACK
+while budget remains, or stop. A spec with an open finding is never VERIFIED.
+
+## Step 8: Clean Up and Display Summary
+
+Every exit path reaches this step. Remove both before-images first:
+
+```bash
+rm -f "$STYLE_BASELINE"
+rm -rf -- "$AUDIT_DIR"
+```
 
 ```
 FVS >> VERIFICATION {STATUS}
 
-File:     {spec_file}
-Resolved: {SORRY_RESOLVED}/{SORRY_COUNT} sorry
-Stuck:    {SORRY_STUCK}
-Style:    {no new violations | full guide clean after an authorized statement edit}
-Status:   {VERIFIED if 0 sorry remain, PARTIAL if some remain, STUCK if none resolved}
+File:      {spec_file}
+Resolved:  {SORRY_RESOLVED}/{SORRY_COUNT} sorry
+Remaining: {sorry left}
+Budget:    {elapsed} of {BUDGET}
+Style:     {no new violations | full guide clean after an authorized statement edit}
+Audit:     {clean | findings: ... | not run}
+Status:    {VERIFIED | PARTIAL | STUCK}
 ```
 
 **Status classification:**
-- **VERIFIED:** All sorry resolved, zero remaining
-- **PARTIAL:** Some sorry resolved, some remain
+- **VERIFIED:** Zero sorry, green build and a clean Step 7a audit
+- **PARTIAL:** Progress was made, but sorry remain or an audit finding is unresolved
 - **STUCK:** No sorry resolved
 
 ## Step 9: Update CODEMAP.md Verification Status
@@ -499,9 +574,10 @@ If .formalising/CODEMAP.md exists, update the function's status:
 [ -f ".formalising/CODEMAP.md" ] && echo "CODEMAP exists" || echo "No CODEMAP"
 ```
 
-Update via Write tool (VS Code diff):
-- Verified: change status to `[OK]`
-- Still has sorry: change status to `[??]`
+Update via Write tool (VS Code diff), basing the status on the Step 8 status rather than on whether
+sorry remain:
+- VERIFIED: change status to `[OK]`
+- PARTIAL or STUCK (including a sorry-free spec with an open audit finding): change status to `[??]`
 - Build error: change status to `[XX]`
 
 ## Step 10: Suggest Next Steps
@@ -520,14 +596,15 @@ Update via Write tool (VS Code diff):
 >> Options
 
 - Provide a hint and run /fvs:lean-verify {spec_path} again
+- Rerun /fvs:lean-verify {spec_path} --budget {larger duration} for more time
 - /fvs:fc-plan to try a different target
 - /fvs:lean-specify {function_name} to regenerate the spec with different postconditions
 ```
 
 ## Step 11: Reconcile Evidence-Backed Proof-Engineering Lessons
 
-After classifying the interactive result, evidence-gate at most three candidates. Positive proof
-patterns require a user-confirmed green Lean build; negative lessons require an observed Lean
+After classifying the result, evidence-gate at most three candidates. Positive proof patterns
+require a green Lean build observed by this command; negative lessons require an observed Lean
 diagnostic. Compare with the index and relevant records: strengthen an equivalent lesson, or create
 one file per new lesson under `lessons/fc/` from `proof-engineering-lesson.md`, then update its index
 row in the same reviewable Write diff. Scope target-specific facts precisely. Preferences require
@@ -543,14 +620,15 @@ guesses, or inferred preferences. If nothing survives, leave the store unchanged
 - [ ] Target style guide discovered unambiguously, read completely, and baseline captured
 - [ ] Research subagent dispatched with inlined tactics, strategies, conventions, and target guide
 - [ ] Research identified all sorry locations with goals and tactic recommendations
-- [ ] Executor dispatched iteratively per sorry (one at a time, not batch)
-- [ ] Each executor writes small tactic blocks via VS Code diff
-- [ ] Every edit passes the baseline-aware style gate before compilation; authorized statement
-      edits pass the full-file gate
+- [ ] Executor works through every sorry autonomously
+- [ ] Every executor return passes the baseline-aware style gate before the build gate; authorized
+      statement edits pass the full-file gate
 - [ ] Theorem names/statements remain unchanged unless explicitly authorized by the user
-- [ ] User checks Lean compiles between each step (pair programming feel)
-- [ ] NEEDS INPUT handling for stuck proofs with user hint collection
-- [ ] Max-attempts guardrail enforced per sorry (3) and total (25 hard cap)
+- [ ] Compilation checked by the executor and by the parent build gate, with no compile questions
+- [ ] User asked only to change a theorem statement, when the budget runs out or the executor is
+      stuck, or when the cheat audit flags something
+- [ ] Wall-clock budget (default 4h) bounds the loop
+- [ ] VERIFIED, including the zero-sorry path, requires a green build plus the Step 7a cheat audit
 - [ ] Build checks use LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build (never plain lake build)
 - [ ] Result correctly classified as VERIFIED, PARTIAL, or STUCK
 - [ ] CODEMAP.md updated with verification status if available

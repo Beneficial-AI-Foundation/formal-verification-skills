@@ -111,7 +111,7 @@ Commands are grouped into five bundles. Each bundle has a router command (e.g. `
 3. `/fvs:map-code` - Analyze project, build dependency graph
 4. `/fvs:fc-plan` - Select verification targets
 5. `/fvs:lean-specify <function>` - Generate spec with sorry, then choose an adversarial reviewer
-6. `/fvs:lean-verify <spec_path>` - Attempt proof interactively
+6. `/fvs:lean-verify <spec_path>` - Prove autonomously, then cheat-audit
 7. `/fvs:lean-refactor <spec_path>` - Golf and clean up verified proofs
 8. `/fvs:trust-audit <target>` - Audit the sorry/axiom trust surface
 
@@ -250,20 +250,25 @@ or create the file with `{"spec_review": {"automatic": false}}`. Manual invocati
 Usage: `/fvs:lean-spec-review Specs/Scalar/Mul.lean --reviewer codex --model <exact-catalog-id> --effort <supported-effort>`
 
 **`/fvs:lean-verify <spec_file_path>`**
-Attempt proof using domain tactics with interactive feedback.
+Prove a Lean spec autonomously with domain tactics; accept it only after a clean build and a cheat audit.
 
-- Interactive proof loop: agent proposes ONE tactic step at a time
+- Autonomous proof loop: the agent works through every sorry, picks order and step size and checks
+  compilation itself
 - Inlines the target style guide and mechanically blocks new style violations before compile checks
 - Keeps theorem names/statements immutable unless the user explicitly authorizes an edit
-- User provides feedback (goal state, errors, hints) between iterations
-- Configurable max attempts (default 10, hard cap 25)
-- Routes on proof status: TACTIC PROPOSED, VERIFIED, STUCK
+- Asks you only to change a theorem statement, when the budget runs out or it is stuck, or when the
+  cheat audit flags something
+- Optional wall-clock budget (`--budget 90m`, `--budget 2h`, default 4h)
+- VERIFIED requires a green build plus a cheat audit: `#print axioms` limited to propext,
+  Classical.choice and Quot.sound; unchanged statements, definitions, extracted code and lakefile;
+  no new axiom, implemented_by, extern, @[csimp], unsafe or kernel-weakening option
+- Routes on proof status: VERIFIED, PARTIAL, STUCK
 - Updates CODEMAP.md verification status on completion
 - Loads a bounded selection from `.formalising/proof-engineering/` before research and reviewably
   captures only green-build proof patterns or observed-diagnostic lessons for future sessions
 
 Usage: `/fvs:lean-verify Specs/Backend/Field/Sub.lean`
-Usage: `/fvs:lean-verify Specs/Backend/Field/Sub.lean --max-attempts 15`
+Usage: `/fvs:lean-verify Specs/Backend/Field/Sub.lean --budget 2h`
 
 **`/fvs:natural-language <function_name>`**
 Generate detailed natural-language explanation of a function.

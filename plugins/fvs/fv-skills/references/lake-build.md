@@ -119,7 +119,7 @@ Do not infer negative/positive compiler semantics from these source-cited exampl
 Capture real exit status independently from displayed logs: Bash pipelines need `set -o pipefail`
 and `${PIPESTATUS[0]}` captured immediately; also check `tee`/log-write failure. A green tail/grep
 is not a build result. Run the existing configured full package/style/tests/trust gates after a
-useful targeted check; preserve one-sorry FC, whole-unit crypto and one-change refactor discipline.
+useful targeted check; preserve the FC cheat audit, whole-unit crypto and one-change refactor discipline.
 
 ## Configuration, locks and caches are different
 

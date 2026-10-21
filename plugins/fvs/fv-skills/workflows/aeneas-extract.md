@@ -276,8 +276,8 @@ All four bounds are config-tunable; the documented defaults and rationale:
 
 | Bound | Default | Rationale |
 |-------|---------|-----------|
-| Per-blocker attempt-cap | `3` | Matches the established FVS `lean-verify` per-sorry limit; defensibly conservative. |
-| Per-run cycle hard-cap | `~25` | Mirrors the `lean-verify` total cap; on exhaustion ESCALATE with the full transcript. |
+| Per-blocker attempt-cap | `3` | A small fixed cap: a blocker that survives three distinct fixes needs escalation, not more retries. |
+| Per-run cycle hard-cap | `~25` | Bounds a whole run; on exhaustion ESCALATE with the full transcript. |
 | Bisection variant-budget | `~12` | Comfortably covers the worked NO-BOTTOMS example (6 rows) with headroom; on exhaustion emit best partial isolation + ESCALATE. |
 | No-progress key | `sha256(layer || signature)` | `symbol` is kept for the escalation report (the fix site), NOT the match key. |
 
