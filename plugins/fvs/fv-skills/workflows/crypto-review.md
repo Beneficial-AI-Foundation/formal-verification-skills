@@ -24,7 +24,7 @@ Other alternatives and reconfirm any changed choice; never launch unsafely or su
 An unavailable observed setting is unknown, not this capability failure or a command-wide gate.
 
 Build and confirm one selection manifest with reviewer runner, provenance, exact catalog model, and
-effort. Notes rebuild the manifest and require reconfirmation. Adjust once is ephemeral; Save
+effort (default `xhigh`; `max` only as an explicit opt-in). Notes rebuild the manifest and require reconfirmation. Adjust once is ephemeral; Save
 override changes only `crypto_review`. Missing models/unsupported efforts ask one-run/save/cancel;
 unresolved noninteractive choices fail before launch. If no opposite runner is authenticated, ask
 among setup/retry, fresh same-runtime review, Other handoff, one-run skip, or cancel. Record known

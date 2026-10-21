@@ -18,7 +18,7 @@ Use `/fvs:configure` (Pi: `/skill:fvs-configure`) for menu-driven editing, or ed
 
 | Profile | Model policy | Effort policy |
 |---------|--------------|---------------|
-| quality | detected runtime-native model by stage tier | authority `max`; work `xhigh`; scout `high` |
+| quality | detected runtime-native model by stage tier | authority `max` (review stages `xhigh`); work `xhigh`; scout `high` |
 | balanced | `inherit` | `high` |
 | budget | `inherit` | `medium` |
 
@@ -46,6 +46,10 @@ stable alias present in the selected runtime/provider catalog.
 |------------------|-----------|------|-------|
 | Claude Code | detected Fable + `max` | detected Opus + `xhigh` | detected Sonnet + `high` |
 | Codex / OpenAI | detected Astra + `max` | detected Sol + `xhigh` | detected Terra + `high` |
+
+Review stages (`spec_review`, `crypto_review`, and model-external's independent reviewers) use the
+authority model at `xhigh` effort. `max` stays available as an explicit opt-in from the review menu
+or a saved review effort; authoring stages keep `max`.
 
 Pi uses the row belonging to its active provider with exact provider-qualified IDs. Ordinary Pi
 work never switches providers automatically. An Anthropic-backed Pi provider uses the Claude-family
@@ -201,7 +205,7 @@ effort ??= config.effort_overrides[runtime][agent]
 if profile == "quality":
   tier = QUALITY_STAGE_TIER[stage]
   model ??= exact_detected_match(runtime, provider, QUALITY_MODEL[runtime][tier])
-  effort ??= QUALITY_EFFORT[tier]
+  effort ??= is_review_stage(stage) ? "xhigh" : QUALITY_EFFORT[tier]
 else:
   model ??= "inherit"
   effort ??= PROFILE_EFFORT[profile]
@@ -263,13 +267,13 @@ per-child control fails before dispatch with exact flags/config keys. Do not fal
 
 ## Adversarial review routing
 
-Quality treats `spec_review` and `crypto_review` as authority stages. Detect the authoring runtime
-and recommend an authenticated opposite provider/runtime, then confirm reviewer, model, effort, and
-one-run skip:
+Quality uses the authority model for `spec_review` and `crypto_review` at `xhigh` effort. Detect
+the authoring runtime and recommend an authenticated opposite provider/runtime, then confirm
+reviewer, model, effort (`max` only as an explicit opt-in), and one-run skip:
 
-- OpenAI/Codex-authored artifact: prefer Claude Code CLI with detected Fable + `max`.
+- OpenAI/Codex-authored artifact: prefer Claude Code CLI with detected Fable + `xhigh`.
 - Claude-authored artifact: from Pi prefer a fresh provider-qualified OpenAI Pi seat with detected
-  Astra + `max`, then Codex CLI; outside Pi prefer Codex CLI.
+  Astra + `xhigh`, then Codex CLI; outside Pi prefer Codex CLI.
 - Unknown/Other author: show the explicit reviewer menu without claiming independence.
 
 Do not route a Claude Code subscription through Pi. Use Claude Code's own authenticated CLI unless

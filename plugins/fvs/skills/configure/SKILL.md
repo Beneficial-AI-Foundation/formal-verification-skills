@@ -163,8 +163,9 @@ choose a lower family. Custom input must exactly match a catalog entry. On Pi it
 provider. For ordinary Pi stages, reject entries whose catalog provider differs from the active
 provider; review stages use their separate opposite-provider policy.
 
-For effort, offer every value the selected catalog model reports as supported, with the stage
-tier's quality effort first. Never advertise a value the model cannot accept. Save either or both fields under:
+For effort, offer every value the selected catalog model reports as supported, with the stage's
+quality effort first (`xhigh` for review stages, `max` as an explicit opt-in). Never advertise a
+value the model cannot accept. Save either or both fields under:
 
 ```
 stage_overrides[runtime][stage] = { model?, effort? }
@@ -221,7 +222,8 @@ Codex/Claude, fresh Pi, or acknowledged Other alternatives; reconfirm before sav
 selection. Preserve preexisting values and ordinary five-runtime stage choices. Unknown telemetry
 alone never removes a working choice or forces a new approval.
 
-Quality recommends the authenticated opposite provider/runtime and its authority-tier model+effort.
+Quality recommends the authenticated opposite provider/runtime and its authority-tier model at
+`xhigh` effort; `max` is an explicit opt-in.
 On Pi, OpenAI review of Claude-authored work prefers a fresh provider-qualified Pi seat only when
 the child facility can honor and report the exact per-child model/effort, then Codex CLI. Review of
 OpenAI-authored work uses authenticated Claude Code CLI when available. If the opposite runner is

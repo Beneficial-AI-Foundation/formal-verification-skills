@@ -134,7 +134,8 @@ An unavailable observed setting is unknown, not this capability failure or a com
 Build one review selection manifest containing reviewer runner, provenance, exact catalog model,
 and effort. Confirm it before launch with Continue once, Adjust once, Save override, or Cancel;
 retain notes. Notes rebuild the manifest and require reconfirmation. Save writes only the
-`spec_review` object. Offer every effort value the selected model/provider reports as supported.
+`spec_review` object. Offer every effort value the selected model/provider reports as supported,
+with `xhigh` as the default and `max` as an explicit opt-in.
 Missing models or unsupported efforts ask for one-run/save/cancel; unresolved noninteractive
 choices fail before launch with exact remediation.
 
