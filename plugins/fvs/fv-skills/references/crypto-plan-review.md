@@ -34,7 +34,7 @@ You MAY perform read-only evidence gathering:
 - Hand-execute short concrete traces and include explicit state/value tables.
 - Run `#check` / `#print axioms` probes against the existing tree.
 - Run bounded disposable probes and necessary existing-source builds under the shared
-  `<diagnostic_policy>` appended by the wrapper.
+  `<diagnostic_policy>` appended by the wrapper; each such build counts toward its probe budget.
 
 You MUST NOT:
 
@@ -90,8 +90,9 @@ Work through every applicable item and record both findings and cleared surfaces
 5. **Precedent and interface realism.** Verify cited repository precedents, immutable/colleague
    files, import relationships, API names, transitive dependencies, and cycle risks against the
    actual tree.
-6. **Gates.** Check that every verification command is runnable as written and catches the
-   deviation it claims to catch. Look for masked pipeline failures, mismatched porcelain/file-list
+6. **Gates.** By reading the commands and the tree, not by running them, check that every
+   verification command is runnable as written (its paths, targets, flags, and tools exist) and
+   catches the deviation it claims to catch. Look for masked pipeline failures, mismatched porcelain/file-list
    expectations, and executor deviations that pass all gates.
 7. **Boundedness and safety.** Check exact file/theorem scope, stop conditions, allowed-`sorry`
    statements, data-loss/overwrite risks, concurrency/race assumptions, security boundaries, and

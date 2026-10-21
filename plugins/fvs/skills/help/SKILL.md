@@ -232,7 +232,7 @@ Result: `Specs/{path}/{FunctionName}.lean` with sorry placeholder
 **`/fvs:lean-spec-review <spec.lean> [--reviewer codex|claude|pi|other] [--model ID] [--effort LEVEL]`**
 Adversarially review an FC specification against Rust, extracted Lean, and interpretation definitions.
 
-- Quality recommends the authenticated opposite provider/runtime at authority-tier effort
+- Quality recommends the authenticated opposite provider/runtime at `xhigh` effort; `max` is an explicit opt-in
 - Shows one reviewer/model/effort selection manifest before launch; notes rebuild and reconfirm it
 - Supports one-run adjustments or saved `spec_review` overrides without changing sibling stages
 - Uses fresh reviewers and labels cross-runtime versus same-runtime review
@@ -345,7 +345,7 @@ Usage: `/fvs:crypto-plan "CKA from KEM" --codex`   # hand the planning think-ste
 **`/fvs:crypto-review <topic> [nN] [--target plan|followup] [--reviewer codex|claude|pi|other] [--model ID] [--effort LEVEL]`**
 Send a plan to a selected fresh adversarial reviewer.
 
-- Quality recommends an authenticated opposite provider/runtime with its authority-tier model + max effort
+- Quality recommends an authenticated opposite provider/runtime with its authority-tier model + `xhigh` effort; `max` is an explicit opt-in
 - Shows one confirmed selection manifest; notes rebuild it, one-run edits stay ephemeral, and saves affect only `crypto_review`
 - Labels cross-runtime, same-runtime fresh reviewer, and unverified provenance honestly
 - Runs provider-qualified Pi, Codex CLI, or Claude Code CLI with bounded read-only source controls
@@ -389,8 +389,9 @@ Session, maintenance, and setup commands.
 **`/fvs:configure`**
 Configure the role-aware quality profile, exact runtime+stage overrides, compatibility agent
 overrides, and FC/crypto review defaults through choice menus. Quality uses strongest+max for
-authority artifacts, executor+xhigh for plan execution/proof filling, and smaller+high for scout
-work, but only after matching an exact current runtime/provider catalog entry. Every command shows
+authored authority artifacts, strongest+xhigh for reviews, executor+xhigh for plan
+execution/proof filling, and smaller+high for scout work, but only after matching an exact
+current runtime/provider catalog entry. Every command shows
 one confirmable selection manifest; notes rebuild it before launch.
 
 Usage: `/fvs:configure`

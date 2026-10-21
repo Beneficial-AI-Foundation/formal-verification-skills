@@ -147,7 +147,8 @@ describe('runtime-aware FVS model settings', () => {
     }
     assert.match(profiles, /one confirmation covers the command/i);
     assert.match(profiles, /fresh provider-qualified OpenAI Pi seat[\s\S]*Codex CLI/i);
-    assert.match(profiles, /Claude Code CLI with detected Fable \+ `max`/i);
+    assert.match(profiles, /Claude Code CLI with detected Fable \+ `xhigh`/i);
+    assert.match(profiles, /`max` stays available as an explicit opt-in/);
     assert.match(profiles, /candidate's\s+provider metadata[\s\S]*active Pi provider/i);
     assert.match(profiles, /active\/inherited model[\s\S]*fail before dispatch/i);
 
