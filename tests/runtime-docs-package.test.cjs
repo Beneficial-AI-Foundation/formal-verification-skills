@@ -174,7 +174,7 @@ if (process.argv.includes('--package-fixture')) {
     for(const runtime of require('../bin/install.js').ALL_RUNTIMES) assert.ok(installs.includes(`--${runtime} --global`),runtime);
     for(const token of ['/skill:fvs-help','/fvs:help','$fvs:help','$fvs-help','--local','--pi-conflict','chosen published version','Beneficial-AI-Foundation/plugins','fvs@beneficial-ai-foundation']) assert.ok(installs.includes(token),token);
     for(const token of ['requested','resolved','observed','role','model','effort','triage']) assert.ok(readme.toLowerCase().includes(token),token);
-    for(const token of ['fresh read-only','immutable','bounded','one-sorry','whole-unit','HUMAN_RULING','BLOCKED','memory-blind','at most eight','at most three']) assert.ok(flows.includes(token),token);
+    for(const token of ['fresh read-only','immutable','bounded','cheat audit','whole-unit','HUMAN_RULING','BLOCKED','memory-blind','at most eight','at most three']) assert.ok(flows.includes(token),token);
     assert.match(flows, /author owns triage and accepted edits/i);
     assert.match(flows, /Approval after edits requires the prescribed checks/);
     assert.match(flows, /Skipped, disabled, failed or pending review does not approve/);

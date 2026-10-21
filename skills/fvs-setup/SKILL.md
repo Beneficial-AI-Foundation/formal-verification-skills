@@ -15,7 +15,7 @@ or nativeRoot from this entry's parents. A complete native installation supplies
 its own thirty commands, workflows, references, templates, scripts, hooks and roles.
 
 The functional-correctness (FC) track proceeds through understanding, specification,
-fresh statement review and explicitly requested interactive proof. Extracted-code
+fresh statement review and explicitly requested autonomous proof. Extracted-code
 work first needs the project's actual source/translation prerequisites. The crypto
 track proceeds through planning, fresh review, explicit execution, adversarial
 evaluation and follow-up. Setup does not start either track or choose models.
