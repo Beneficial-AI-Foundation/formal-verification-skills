@@ -56,7 +56,10 @@ ruling and exact abstraction; it never becomes a saved global default.
 
 Resolve runtime/model/effort settings through `model-profiles.md`: work stage for the external
 modeler and authority/review settings for both independent reviewers. Prefer a fresh authenticated
-opposite-provider reviewer. Same-runtime or external review follows `review-policy.md`; never claim
+opposite-provider reviewer.
+For Claude- or OpenAI-authored models and specifications, also offer the `antigravity` reviewer with a detected Argon ID; it runs in a review copy without proof-engineering memory (see `model-profiles.md`).
+An Argon review sends the review packet (the user's sources and plans) to Google under the user's own agy account terms; on consumer accounts Google may use that content.
+Same-runtime or external review follows `review-policy.md`; never claim
 independence without a fresh read-only child and a validated receipt.
 
 Show and confirm one manifest containing:

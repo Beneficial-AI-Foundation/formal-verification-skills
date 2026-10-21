@@ -134,9 +134,11 @@ profile routing and the per-command confirmation active. For each explicit saved
 3. choose a supported effort;
 4. keep `automatic` unchanged unless explicitly edited.
 
-Only source-qualified routes enter the confirmed launch manifest. OpenCode/Antigravity selections
-currently receive named diagnostic-route limitations from the shared helper, not a Claude fallback
-or automatic Other relabeling. Explain missing shell/memory/effort controls and offer explicit
+Only source-qualified routes enter the confirmed launch manifest. OpenCode selections currently
+receive a named diagnostic-route limitation from the shared helper, not a Claude fallback or
+automatic Other relabeling.
+Antigravity reviewer selections need an exact `gemini-4-argon-*` ID and run in a review copy without proof-engineering memory.
+Explain missing shell/memory/effort controls and offer explicit
 Codex/Claude, fresh Pi, or acknowledged Other alternatives; reconfirm before saving a changed
 selection. Preserve preexisting values and ordinary five-runtime stage choices. Unknown telemetry
 alone never removes a working choice or forces a new approval.
