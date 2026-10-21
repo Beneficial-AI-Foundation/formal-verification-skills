@@ -19,12 +19,14 @@ Declare authority stage `spec_review` and use the canonical profile resolution a
 in `model-profiles.md`. Explicit flags win, then non-null saved `spec_review` values, then the
 quality opposite-runtime recommendation. Recommend Claude Code CLI for OpenAI/Codex-authored specs;
 for Claude-authored specs running under Pi, prefer a fresh provider-qualified OpenAI Pi seat, then
-Codex CLI. Never route a Claude Code subscription through Pi.
+Codex CLI.
+For OpenAI/Codex- and Claude-authored specs, also offer the `antigravity` reviewer: Antigravity CLI (`agy`) with a detected Argon ID (`gemini-4-argon-*` from `agy models`), launched in a review copy without proof-engineering memory.
+An Argon review sends the review packet (the user's sources and specifications) to Google under the user's own agy account terms; on consumer accounts Google may use that content.
+Never route a Claude Code subscription through Pi.
 
-OpenCode and Antigravity selections remain named choices, not Claude/Other aliases. The external
-helper returns a specific `CAPABILITY_UNAVAILABLE` for their currently unqualified diagnostic
-CLI routes (OpenCode has no native shell isolation; agy offers no deny-read paths, tool allowlist
-or no-persistence control for a memory-excluding reviewer). Offer explicit Codex/Claude, fresh Pi, or acknowledged
+OpenCode selections remain a named choice, not a Claude/Other alias. The external helper returns a
+specific `CAPABILITY_UNAVAILABLE` for its currently unqualified diagnostic CLI route (no native
+shell isolation). Offer explicit Codex/Claude, fresh Pi, or acknowledged
 Other alternatives and reconfirm any changed choice; never launch unsafely or substitute.
 An unavailable observed setting is unknown, not this capability failure or a command-wide gate.
 
