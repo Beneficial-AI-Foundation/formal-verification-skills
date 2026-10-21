@@ -56,6 +56,21 @@ it('runs crypto review through selected read-only runtimes and immutable packets
       fs.writeFileSync(path.join(bin, runtime), fake);
       fs.chmodSync(path.join(bin, runtime), 0o755);
     }
+    // The real agy bills its account: this fake must shadow it for every antigravity run.
+    fs.writeFileSync(path.join(bin, 'agy'), [
+      '#!/usr/bin/env node',
+      "const fs = require('node:fs');",
+      'const args = process.argv.slice(2);',
+      "fs.appendFileSync(process.env.FVS_REVIEW_TEST_CALLS, JSON.stringify(args) + '\\n');",
+      "if (args[0] === '--version') { console.log('1.4.3'); process.exit(0); }",
+      "if (args[0] === 'models') { console.log('gemini-4-argon-high'); process.exit(0); }",
+      "const input = JSON.parse(fs.readFileSync(0, 'utf8').split('\\n')[0]).message.content;",
+      "const topic = '.formalising/fv-plans/agy-cross/';",
+      'fs.writeFileSync(process.env.FVS_REVIEW_TEST_LOG, JSON.stringify({ args, input, cwd: process.cwd(),',
+      "  plan: fs.existsSync(topic + 'plans/PLAN_n1.md'), snapshot: fs.existsSync(topic + 'sources/proof-engineering-context.md') }));",
+      "console.log(JSON.stringify({ event: 'init', init: { model: args[args.indexOf('--model') + 1] } }));",
+      `console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: ${JSON.stringify(REVIEW)} } }));`,
+    ].join('\n'), { mode: 0o755 });
 
     const makeTopic = (name, markers = ['Claude Code', 'Claude Code']) => {
       const topic = path.join(topicRoot, name);
@@ -301,7 +316,7 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     assert.equal(same.result.status, 0, same.result.stderr);
     assert.match(fs.readFileSync(path.join(same.topic, 'reviews', 'PLAN_REVIEW_n1.md'), 'utf8'),
       /same-runtime, fresh reviewer/);
-    for (const reviewer of ['opencode', 'antigravity']) {
+    for (const reviewer of ['opencode']) {
       const callsBefore = fs.readFileSync(calls, 'utf8');
       const limited = run(`${reviewer}-limited`, reviewer, ['Pi', 'Pi'],
         ['--model', 'provider/exact-model', '--effort', 'high']);
@@ -312,6 +327,17 @@ it('runs crypto review through selected read-only runtimes and immutable packets
       assert.ok(!fs.existsSync(path.join(limited.topic, 'reviews', 'PLAN_REVIEW_n1.md')));
       assert.equal(fs.readFileSync(calls, 'utf8'), callsBefore, 'limited route must not launch any provider');
     }
+    fs.mkdirSync(path.join(topicRoot, 'agy-cross', 'sources'), { recursive: true });
+    fs.writeFileSync(path.join(topicRoot, 'agy-cross', 'sources', 'proof-engineering-context.md'), 'SNAPSHOT-CANARY');
+    const agy = run('agy-cross', 'antigravity', ['Claude Code', 'Claude Code'],
+      ['--model', 'gemini-4-argon-high', '--effort', 'high'], '', { HOME: path.join(tmp, 'agy-home') });
+    assert.equal(agy.result.status, 0, agy.result.stderr);
+    record = fs.readFileSync(path.join(agy.topic, 'reviews', 'PLAN_REVIEW_n1.md'), 'utf8');
+    assert.match(record, /Requested reviewer: antigravity/);
+    assert.match(record, /Provenance: cross-runtime/);
+    call = JSON.parse(fs.readFileSync(log));
+    assert.ok(call.plan && !call.snapshot, 'the review copy keeps the plan but not the memory snapshot');
+    assert.ok(!call.input.includes('SNAPSHOT-CANARY'));
     for (const author of ['Pi', 'OpenCode', 'Antigravity']) {
       const known = run(`known-${author.replace(/ /g, '-')}`, 'codex', [author, author]);
       assert.equal(known.result.status, 0, known.result.stderr);
