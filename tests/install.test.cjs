@@ -654,7 +654,7 @@ describe('Antigravity native plugin install', () => {
     assert.deepEqual(fs.readdirSync(target), ['sentinel']);
   });
 
-  it('validates with agy (scratch HOME) when agy is on PATH', t => {
+  it('passes agy plugin validate (scratch HOME) when agy is on PATH', t => {
     const home = makeTmpDir('fvs-agy-validate-');
     assert.equal(runInstaller(home, ['--antigravity', '--global']).status, 0);
     const root = path.join(home, '.gemini/config/plugins/fvs');
