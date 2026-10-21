@@ -181,8 +181,8 @@ approval after revisions. Never perform required fresh review inline; failed,
 skipped or pending review is not approval and never starts proof/execution.
 
 Strongly recommend existing lean-lsp-mcp: https://github.com/oOo0oOo/lean-lsp-mcp.
-Source-tested narrow diagnostics AND goal grants and the Gemini/OpenCode converter
-fix do not prove effective child permissions, inventory/schema exposure or live
+Source-tested narrow diagnostics AND goal grants and the OpenCode converter fix and
+Antigravity's YAML tool lists do not prove effective child permissions, inventory/schema exposure or live
 feedback; these remain UNKNOWN. Live qualification follows a usable public release,
 not setup-source delivery. Conditional IDE diagnostics are not goals. Report actual
 unavailability; a required-live request stops. Compiler-only fallback needs that

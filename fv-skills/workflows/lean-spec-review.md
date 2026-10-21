@@ -21,10 +21,10 @@ quality opposite-runtime recommendation. Recommend Claude Code CLI for OpenAI/Co
 for Claude-authored specs running under Pi, prefer a fresh provider-qualified OpenAI Pi seat, then
 Codex CLI. Never route a Claude Code subscription through Pi.
 
-OpenCode and Gemini selections remain named choices, not Claude/Other aliases. The external
+OpenCode and Antigravity selections remain named choices, not Claude/Other aliases. The external
 helper returns a specific `CAPABILITY_UNAVAILABLE` for their currently unqualified diagnostic
-CLI routes (OpenCode has no native shell isolation; Gemini lacks this isolated named-agent,
-memory-excluding shell/effort route). Offer explicit Codex/Claude, fresh Pi, or acknowledged
+CLI routes (OpenCode has no native shell isolation; agy offers no deny-read paths, tool allowlist
+or no-persistence control for a memory-excluding reviewer). Offer explicit Codex/Claude, fresh Pi, or acknowledged
 Other alternatives and reconfirm any changed choice; never launch unsafely or substitute.
 An unavailable observed setting is unknown, not this capability failure or a command-wide gate.
 
@@ -66,7 +66,7 @@ OS temporary request file with the Write tool (preserve JSON escaping):
 Use actual existing project-relative paths. Include complete relevant files, including definitions
 used by the statement; do not pass only the theorem, an author summary, or proof-engineering
 lessons. The reviewer must report unresolved/missing evidence as BLOCKED. `runtime` is
-`codex|claude|pi|opencode|gemini|other`; `author_runtime` is `codex|claude|pi|opencode|gemini|other|unknown`. Use `pi` only inside Pi
+`codex|claude|pi|opencode|antigravity|other`; `author_runtime` is `codex|claude|pi|opencode|antigravity|other|unknown`. Use `pi` only inside Pi
 with an authenticated provider-qualified catalog model. Record the precise identity of Other
 separately in triage. Keep the selected model/effort explicit. Set optional `model_is_alias: true` only when the
 confirmed catalog identifies a stable alias; do not infer it from the string. Unknown alias-to-ID

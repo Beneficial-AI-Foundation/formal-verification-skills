@@ -18,12 +18,16 @@ Run `npx fv-skills-baif` for an interactive installation, or select your runtime
 | Pi | `npx fv-skills-baif --pi --global` | `/skill:fvs-help` |
 | Claude Code | `npx fv-skills-baif --claude --global` | `/fvs:help` |
 | Codex | `npx fv-skills-baif --codex --global` | `$fvs-help` |
-| Gemini CLI | `npx fv-skills-baif --gemini --global` | `/fvs:help` |
+| Antigravity (agy) | `npx fv-skills-baif --antigravity --global` | `/fvs:help` |
 | OpenCode | `npx fv-skills-baif --opencode --global` | `/fvs-help` |
 
 Replace `--global` with `--local` to install for the current project. Non-Pi installs copy the
 commands and support files into the runtime's configuration directory. Use
 `npx fv-skills-baif --help` for custom directory options. Keep one FVS installation per runtime.
+
+Antigravity gets a native agy plugin in `~/.gemini/config/plugins/fvs/` (or `.agents/plugins/fvs/`
+in the project), loaded after restarting agy. `--gemini` was removed with the retired Gemini CLI;
+installing or removing with `--antigravity` also clears an old FVS Gemini install.
 
 ### Pi
 
