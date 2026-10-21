@@ -103,6 +103,7 @@ describe('Pi installer adapter', () => {
     assert.equal(installer.resolvePiConflictChoice('1'), 'keep');
     assert.equal(installer.resolvePiConflictChoice('2'), 'move');
     assert.equal(installer.resolvePiConflictChoice('3'), 'cancel');
+    assert.deepEqual(installer.resolveRuntimeChoice('3'), ['antigravity']);
     assert.deepEqual(installer.resolveRuntimeChoice('5'), ['pi']);
     assert.deepEqual(installer.resolveRuntimeChoice('6'), installer.ALL_RUNTIMES);
 

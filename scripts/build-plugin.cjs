@@ -11,6 +11,7 @@ const {
   extractFrontmatterField,
   getCodexSkillAdapterHeader,
   ALL_RUNTIMES,
+  FVS_PLUGIN_DESCRIPTION,
   PI_PACKAGE_NAME,
   buildPiPackageSource,
 } = require('../bin/install.js');
@@ -23,8 +24,6 @@ const PACKAGE_JSON = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'),
 const VERSION = PACKAGE_JSON.version;
 const REPOSITORY_URL = 'https://github.com/Beneficial-AI-Foundation/formal-verification-skills';
 const MARKETPLACE_ID = 'beneficial-ai-foundation';
-const PLUGIN_DESCRIPTION =
-  'Formal verification workflows for Lean 4, including Rust extraction through Aeneas and paper or cryptography formalisation.';
 const SCRIPT_FILES = [
   'fvs-codex-think.mjs',
   'fvs-kb-query.py',
@@ -504,7 +503,7 @@ function renderClaudeManifest() {
     $schema: 'https://json.schemastore.org/claude-code-plugin-manifest.json',
     name: 'fvs',
     version: VERSION,
-    description: PLUGIN_DESCRIPTION,
+    description: FVS_PLUGIN_DESCRIPTION,
     author: { name: 'Beneficial AI Foundation' },
     homepage: REPOSITORY_URL,
     repository: REPOSITORY_URL,
@@ -518,7 +517,7 @@ function renderCodexManifest() {
   return {
     name: 'fvs',
     version: VERSION,
-    description: PLUGIN_DESCRIPTION,
+    description: FVS_PLUGIN_DESCRIPTION,
     author: {
       name: 'Beneficial AI Foundation',
       url: REPOSITORY_URL,
@@ -531,7 +530,7 @@ function renderCodexManifest() {
     interface: {
       displayName: 'Formal Verification Skills',
       shortDescription: 'Lean 4 specification, proof, and audit workflows',
-      longDescription: PLUGIN_DESCRIPTION,
+      longDescription: FVS_PLUGIN_DESCRIPTION,
       developerName: 'Beneficial AI Foundation',
       category: 'Productivity',
       capabilities: ['Interactive', 'Read', 'Write'],

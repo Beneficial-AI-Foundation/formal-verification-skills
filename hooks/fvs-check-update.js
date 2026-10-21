@@ -10,7 +10,7 @@ const { spawn } = require('child_process');
 const homeDir = os.homedir();
 const cwd = process.cwd();
 
-// Detect runtime config directory (supports Claude, OpenCode, Gemini)
+// Detect runtime config directory (supports Claude, OpenCode, Antigravity)
 // Respects CLAUDE_CONFIG_DIR for custom config directory setups
 // Mirrors GSD's detectConfigDir pattern for consistency
 function detectConfigDir(baseDir) {
@@ -18,7 +18,7 @@ function detectConfigDir(baseDir) {
   if (envDir && fs.existsSync(path.join(envDir, 'fv-skills', 'VERSION'))) {
     return envDir;
   }
-  for (const dir of ['.config/opencode', '.opencode', '.gemini', '.claude']) {
+  for (const dir of ['.config/opencode', '.opencode', '.gemini/config/plugins/fvs', '.agents/plugins/fvs', '.claude']) {
     if (fs.existsSync(path.join(baseDir, dir, 'fv-skills', 'VERSION'))) {
       return path.join(baseDir, dir);
     }

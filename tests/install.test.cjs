@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const INSTALLER = path.join(ROOT, 'bin', 'install.js');
@@ -492,5 +492,184 @@ describe('installed tree matches final bundle shape', () => {
     }
     assert.ok(!Object.hasOwn(config, 'model'),
       'obsolete nested model config would be ignored by command resolvers');
+  });
+});
+
+describe('Antigravity native plugin install', () => {
+  const pkgVersion = require('../package.json').version;
+  // Every run gets a scratch HOME and cwd: the installer also sweeps ~/.gemini.
+  function runInstaller(scratch, argv, cwd = scratch) {
+    return spawnSync(process.execPath, [INSTALLER, ...argv], {
+      cwd, env: { ...process.env, HOME: scratch, USERPROFILE: scratch }, encoding: 'utf8',
+    });
+  }
+  function hashTree(dir, skip = () => false) {
+    const out = {};
+    const walk = (current, rel = '') => {
+      for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+        const childRel = rel ? `${rel}/${entry.name}` : entry.name;
+        if (skip(childRel)) continue;
+        const full = path.join(current, entry.name);
+        if (entry.isDirectory()) walk(full, childRel);
+        else out[childRel] = crypto.createHash('sha256').update(fs.readFileSync(full)).digest('hex');
+      }
+    };
+    if (fs.existsSync(dir)) walk(dir);
+    return out;
+  }
+  function write(file, content) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, content);
+  }
+  function seedLegacyGemini(gemini) {
+    write(path.join(gemini, 'commands/fvs/help.toml'), 'prompt = "x"\n');
+    write(path.join(gemini, 'agents/fvs-executor.md'), '---\nname: fvs-executor\n---\n');
+    write(path.join(gemini, 'agents/user-agent.md'), '---\nname: user-agent\n---\n');
+    write(path.join(gemini, 'fv-skills/VERSION'), '2.0.0');
+    write(path.join(gemini, 'hooks/fvs-check-update.js'), '// old\n');
+    write(path.join(gemini, 'settings.json'), JSON.stringify({
+      foreign: 'keep',
+      hooks: { SessionStart: [
+        { hooks: [{ type: 'command', command: 'node foreign-hook.js' }] },
+        { hooks: [{ type: 'command', command: `node "${gemini}/hooks/fvs-check-update.js"` }] },
+      ] },
+      statusLine: { type: 'command', command: `node "${gemini}/hooks/fvs-statusline.js"` },
+      experimental: { enableAgents: true },
+    }));
+    // agy's own files: must survive byte-identical.
+    write(path.join(gemini, 'config/config.json'), '{"plugins":{"other":true}}\n');
+    write(path.join(gemini, 'config/plugins/other/plugin.json'), '{"name":"other"}\n');
+    write(path.join(gemini, 'config/skills/fvs-own/SKILL.md'), '---\nname: fvs-own\n---\nmine\n');
+    write(path.join(gemini, 'antigravity-cli/fvs-note.md'), 'note\n');
+  }
+  const agyOwned = gemini => ({
+    config: hashTree(path.join(gemini, 'config'), rel => rel === 'plugins/fvs'),
+    cli: hashTree(path.join(gemini, 'antigravity-cli')),
+  });
+  function assertLegacyCleaned(gemini) {
+    assert.ok(!fs.existsSync(path.join(gemini, 'commands/fvs')), 'legacy commands/fvs removed');
+    assert.ok(!fs.existsSync(path.join(gemini, 'agents/fvs-executor.md')), 'legacy FVS agent removed');
+    assert.ok(fs.existsSync(path.join(gemini, 'agents/user-agent.md')), 'foreign agent kept');
+    assert.ok(!fs.existsSync(path.join(gemini, 'fv-skills')), 'legacy fv-skills removed');
+    assert.ok(!fs.existsSync(path.join(gemini, 'hooks/fvs-check-update.js')), 'legacy hook removed');
+    const settings = JSON.parse(fs.readFileSync(path.join(gemini, 'settings.json'), 'utf8'));
+    assert.deepEqual(settings, {
+      foreign: 'keep',
+      hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'node foreign-hook.js' }] }] },
+    });
+  }
+
+  const scratch = makeTmpDir('fvs-agy-global-');
+  const gemini = path.join(scratch, '.gemini');
+  const pluginRoot = path.join(gemini, 'config', 'plugins', 'fvs');
+  let before;
+
+  it('installs a native plugin under ~/.gemini/config/plugins/fvs and clears the old Gemini install', () => {
+    seedLegacyGemini(gemini);
+    before = agyOwned(gemini);
+    const result = runInstaller(scratch, ['--antigravity', '--global']);
+    assert.equal(result.status, 0, result.stderr);
+
+    const manifest = JSON.parse(fs.readFileSync(path.join(pluginRoot, 'plugin.json'), 'utf8'));
+    assert.deepEqual(Object.keys(manifest).sort(), ['description', 'displayName', 'name', 'version']);
+    assert.equal(manifest.name, 'fvs');
+    assert.equal(manifest.version, pkgVersion);
+
+    const skills = fs.readdirSync(path.join(pluginRoot, 'skills'));
+    assert.equal(skills.length, 30);
+    for (const name of skills) {
+      const skillFile = path.join(pluginRoot, 'skills', name, 'SKILL.md');
+      const text = fs.readFileSync(skillFile, 'utf8');
+      assert.match(text, new RegExp(`^---\\nname: ${name}\\ndescription: "`), `${name} frontmatter`);
+      assert.ok(fs.statSync(skillFile).size < 24000, `${name} stub under agy's body limit`);
+      assert.ok(text.includes(`${pluginRoot}/skills/${name}/references/${name}.md`), `${name} stub names its reference`);
+      const reference = fs.readFileSync(path.join(pluginRoot, 'skills', name, 'references', `${name}.md`), 'utf8');
+      assert.doesNotMatch(reference, /~\/\.claude\//, `${name} reference paths converted`);
+    }
+
+    const agents = fs.readdirSync(path.join(pluginRoot, 'agents')).filter(n => /^fvs-.*\.md$/.test(n));
+    assert.equal(agents.length, 14);
+    for (const agent of agents) {
+      assert.match(fs.readFileSync(path.join(pluginRoot, 'agents', agent), 'utf8'), /^tools:\n  - \S/m, agent);
+    }
+
+    assert.ok(fs.existsSync(path.join(pluginRoot, 'hooks', 'fvs-check-update.js')));
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(pluginRoot, 'hooks.json'), 'utf8')), {
+      'fvs-check-update': { SessionStart: [{ type: 'command', command: 'node hooks/fvs-check-update.js' }] },
+    });
+    assert.equal(fs.readFileSync(path.join(pluginRoot, 'package.json'), 'utf8'), '{"type":"commonjs"}\n');
+    assert.ok(fs.existsSync(path.join(pluginRoot, 'fvs-file-manifest.json')));
+    assert.ok(!fs.existsSync(path.join(pluginRoot, 'settings.json')), 'agy install never writes settings.json');
+
+    assertLegacyCleaned(gemini);
+    assert.deepEqual(agyOwned(gemini), before, 'agy config and antigravity-cli untouched by install');
+  });
+
+  it('uninstalls the plugin directory but keeps local patches and sibling plugins', () => {
+    write(path.join(pluginRoot, 'fvs-local-patches', 'agents', 'fvs-executor.md'), 'patched\n');
+    const result = runInstaller(scratch, ['--agy', '--global', '--uninstall']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(fs.readdirSync(pluginRoot), ['fvs-local-patches']);
+    assert.ok(fs.existsSync(path.join(gemini, 'config/plugins/other/plugin.json')));
+    assert.deepEqual(agyOwned(gemini), before, 'agy config and antigravity-cli untouched by uninstall');
+  });
+
+  it('uninstall clears an old Gemini install even without a plugin directory', () => {
+    const home = makeTmpDir('fvs-agy-legacy-only-');
+    const legacy = path.join(home, '.gemini');
+    seedLegacyGemini(legacy);
+    const owned = agyOwned(legacy);
+    const result = runInstaller(home, ['--antigravity', '--global', '--uninstall']);
+    assert.equal(result.status, 0, result.stderr);
+    assertLegacyCleaned(legacy);
+    assert.deepEqual(agyOwned(legacy), owned);
+  });
+
+  it('installs locally under .agents/plugins/fvs with project-relative stub paths', () => {
+    const project = makeTmpDir('fvs-agy-local-');
+    const result = runInstaller(project, ['--agy', '--local']);
+    assert.equal(result.status, 0, result.stderr);
+    const stub = fs.readFileSync(path.join(project, '.agents/plugins/fvs/skills/help/SKILL.md'), 'utf8');
+    assert.ok(stub.includes('./.agents/plugins/fvs/skills/help/references/help.md'));
+    assert.ok(fs.existsSync(path.join(project, '.agents/plugins/fvs/plugin.json')));
+  });
+
+  it('--gemini points to --antigravity and installs nothing', () => {
+    const home = makeTmpDir('fvs-agy-gemini-flag-');
+    const result = runInstaller(home, ['--gemini', '--global']);
+    assert.equal(result.status, 1);
+    assert.match(`${result.stdout}${result.stderr}`, /--antigravity/);
+    assert.ok(!fs.existsSync(path.join(home, '.claude')));
+    assert.ok(!fs.existsSync(path.join(home, '.gemini')));
+  });
+
+  it('refuses a symlinked plugin directory', () => {
+    const home = makeTmpDir('fvs-agy-symlink-');
+    const target = makeTmpDir('fvs-agy-symlink-target-');
+    write(path.join(target, 'sentinel'), 'keep\n');
+    fs.mkdirSync(path.join(home, '.gemini/config/plugins'), { recursive: true });
+    fs.symlinkSync(target, path.join(home, '.gemini/config/plugins/fvs'));
+    const result = runInstaller(home, ['--antigravity', '--global']);
+    assert.notEqual(result.status, 0);
+    assert.deepEqual(fs.readdirSync(target), ['sentinel']);
+  });
+
+  it('validates with agy (scratch HOME) when agy is on PATH', t => {
+    const home = makeTmpDir('fvs-agy-validate-');
+    assert.equal(runInstaller(home, ['--antigravity', '--global']).status, 0);
+    const root = path.join(home, '.gemini/config/plugins/fvs');
+    const result = spawnSync('agy', ['plugin', 'validate', root, '--json'], {
+      cwd: home, env: { ...process.env, HOME: home }, encoding: 'utf8', timeout: 60000,
+    });
+    if (result.error?.code === 'ENOENT') {
+      t.skip('agy is not on PATH');
+      return;
+    }
+    assert.ifError(result.error);
+    const report = JSON.parse(result.stdout);
+    assert.deepEqual((report.findings ?? []).filter(f => f.severity === 'error'), []);
+    assert.equal(report.components.agents, 14);
+    assert.equal(report.components.skills, 30);
+    assert.equal(report.components.hooks, 1);
   });
 });
