@@ -655,12 +655,17 @@ function agyReviewCopy(workingRoot) {
       'as its workspace. Point TMPDIR outside the project; no review was launched.');
   }
   const skipped = new Set(['.git', '.lake', '.agents', 'node_modules', 'target']);
-  fs.cpSync(workingRoot, copy, { recursive: true, filter: source => {
-    const relative = path.relative(workingRoot, source).split(path.sep).join('/');
-    if (relative === '') return true;
-    return !fs.lstatSync(source).isSymbolicLink() && !skipped.has(path.basename(source)) &&
-      !/(^|\/)proof-engineering(\/|$)|(^|\/)proof-engineering-context\.md$/.test(relative);
-  } });
+  try {
+    fs.cpSync(workingRoot, copy, { recursive: true, filter: source => {
+      const relative = path.relative(workingRoot, source).split(path.sep).join('/');
+      if (relative === '') return true;
+      return !fs.lstatSync(source).isSymbolicLink() && !skipped.has(path.basename(source)) &&
+        !/(^|\/)proof-engineering(\/|$)|(^|\/)proof-engineering-context\.md$/.test(relative);
+    } });
+  } catch (error) {
+    fs.rmSync(copy, { recursive: true, force: true });
+    throw error;
+  }
   return copy;
 }
 
