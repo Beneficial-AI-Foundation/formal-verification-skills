@@ -669,9 +669,11 @@ function persistReview({ packet, packetDirectory, response, reportedModels = [],
   if (!isInside(reviewsDir, packetDirectory) || packetDirectory === reviewsDir) {
     throw new Error('Review packet must remain inside the topic reviews tree');
   }
+  const warnings = [];
   response = recordValidatedResponse(packetDirectory, response, {
     verdicts: ['APPROVE', 'APPROVE-WITH-EDITS', 'REJECT'],
     headings: ['Authority hierarchy', 'Findings', 'Content coverage statement', 'Cleared surfaces', 'Probe log', 'Resolution map'],
+    warnings,
   });
   const { reviewer, outputPath, provenance } = validatePacket(packet, projectRoot, topicDir, reviewsDir);
   validateGrounding(projectRoot, packet.grounding, packetDirectory);
@@ -692,6 +694,7 @@ function persistReview({ packet, packetDirectory, response, reportedModels = [],
     `- Runtime-reported models: ${reportedModels.join(', ') || 'not reported; verify in triage'}`,
     `- Runtime-reported effort: ${reportedEffort ?? 'not reported; verify in triage'}`,
     `- Reviewer wall time: ${typeof durationMs === 'number' ? `${durationMs} ms` : 'not measured (imported response)'}`,
+    `- Validation warnings: ${warnings.join('; ') || 'none'}`,
     `- Pi dispatch evidence: ${piEvidence
       ? `run ${piEvidence.runId}; host-attested fresh/read-only; packet and response hashes verified`
       : 'not applicable'}`,

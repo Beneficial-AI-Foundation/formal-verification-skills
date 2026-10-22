@@ -229,9 +229,11 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
       /catalog-claude-model/);
 
     const mismatch = run({ runtime: 'claude', model: 'catalog-claude-model', effort: 'high' }, 'mismatch');
-    assert.notEqual(mismatch.status, 0);
-    assert.match(mismatch.stderr, /SETTINGS_MISMATCH.*model/);
-    assert.ok(!fs.existsSync(path.join(directory(mismatch), 'review.md')));
+    assert.equal(mismatch.status, 0, mismatch.stderr);
+    assert.match(mismatch.stderr, /SETTINGS_MISMATCH/);
+    const mismatchRecord = fs.readFileSync(path.join(directory(mismatch), 'review.md'), 'utf8');
+    assert.match(JSON.parse(mismatchRecord.match(/^- Stage settings: (.+)$/m)[1]).mismatch,
+      /SETTINGS_MISMATCH.*different-observed-model/);
     const unknown = run({ runtime: 'claude', model: 'catalog-claude-model', effort: 'low' }, 'unknown');
     assert.equal(unknown.status, 0, unknown.stderr);
     const unknownRecord = fs.readFileSync(path.join(directory(unknown), 'review.md'), 'utf8');

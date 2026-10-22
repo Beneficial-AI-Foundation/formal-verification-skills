@@ -154,7 +154,8 @@ function persist(directory, response, reportedModels = [], external = false, piR
   const packetFile = path.join(directory, 'packet.json');
   const packet = readJson(packetFile);
   assertInputsUnchanged(packet);
-  const validated = recordValidatedResponse(directory, response, reviewOptions(packet.mode));
+  const warnings = [];
+  const validated = recordValidatedResponse(directory, response, { ...reviewOptions(packet.mode), warnings });
   fs.writeFileSync(path.join(directory, 'review.md'), `${validated}\n`, { flag: 'wx' });
   fs.writeFileSync(path.join(directory, 'metadata.json'), `${JSON.stringify({
     provenance: packet.provenance,
@@ -162,6 +163,7 @@ function persist(directory, response, reportedModels = [], external = false, piR
     model: packet.request.model,
     effort: packet.request.effort,
     reportedModels,
+    warnings,
     settings: settings ?? stageSettings(packet.request, { stage: `external_${packet.mode}_review`,
       route: external ? 'external-manual' : piReceipt ? 'pi-fresh-child' : `external-${packet.request.runtime}-cli`,
       reportedModels: piReceipt ? [piReceipt.model] : reportedModels,

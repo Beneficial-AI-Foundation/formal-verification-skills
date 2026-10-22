@@ -198,6 +198,7 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     assert.match(record, /Requested reviewer: codex/);
     assert.match(record, /Requested model: catalog-codex-authority/);
     assert.match(record, /^- Reviewer wall time: \d+ ms$/m);
+    assert.match(record, /^- Validation warnings: none$/m);
     let call = JSON.parse(fs.readFileSync(log));
     assert.equal(call.args[call.args.indexOf('--sandbox') + 1], 'workspace-write');
     assert.ok(call.args.includes('--ignore-user-config') && call.args.includes('--ephemeral'));
@@ -229,10 +230,11 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     assert.equal(settings.observed.model.value, 'catalog-claude-scout');
     assert.equal(settings.observed.effort.value, 'unknown');
     const mismatch = run('actual-model-mismatch', 'claude', ['Codex CLI', 'Codex CLI'], [], 'mismatch');
-    assert.notEqual(mismatch.result.status, 0);
+    assert.equal(mismatch.result.status, 0, mismatch.result.stderr);
     assert.match(mismatch.result.stderr, /SETTINGS_MISMATCH.*model/);
     assert.match(mismatch.result.stderr, /reconfirm|choose/i);
-    assert.ok(!fs.existsSync(path.join(mismatch.topic, 'reviews', 'PLAN_REVIEW_n1.md')));
+    const mismatchRecord = fs.readFileSync(path.join(mismatch.topic, 'reviews', 'PLAN_REVIEW_n1.md'), 'utf8');
+    assert.match(JSON.parse(mismatchRecord.match(/^- Stage settings: (.+)$/m)[1]).mismatch, /SETTINGS_MISMATCH/);
     const unknown = run('unknown-observations-valid', 'claude', ['Pi', 'Pi'], [], 'unknown');
     assert.equal(unknown.result.status, 0, unknown.result.stderr);
     const unknownRecord = fs.readFileSync(path.join(unknown.topic, 'reviews/PLAN_REVIEW_n1.md'), 'utf8');
@@ -246,10 +248,15 @@ it('runs crypto review through selected read-only runtimes and immutable packets
       ['--model', 'catalogalias', '--model-is-alias'], 'mismatch');
     assert.equal(alias.result.status, 0,
       `a confirmed catalog alias without exact-ID equivalence is not a proven substitution: ${alias.result.stderr}`);
+    const aliasRecord = fs.readFileSync(path.join(alias.topic, 'reviews', 'PLAN_REVIEW_n1.md'), 'utf8');
+    assert.ok(!('mismatch' in JSON.parse(aliasRecord.match(/^- Stage settings: (.+)$/m)[1])));
     const bareExact = run('bare-exact-model-mismatch', 'claude', ['Pi', 'Pi'],
       ['--model', 'exactmodel'], 'mismatch');
-    assert.notEqual(bareExact.result.status, 0, 'bare exact IDs must not be guessed to be aliases');
+    assert.equal(bareExact.result.status, 0, bareExact.result.stderr);
     assert.match(bareExact.result.stderr, /SETTINGS_MISMATCH/);
+    const bareRecord = fs.readFileSync(path.join(bareExact.topic, 'reviews', 'PLAN_REVIEW_n1.md'), 'utf8');
+    assert.match(JSON.parse(bareRecord.match(/^- Stage settings: (.+)$/m)[1]).mismatch, /SETTINGS_MISMATCH/,
+      'bare exact IDs must not be guessed to be aliases');
     call = JSON.parse(fs.readFileSync(log));
     for (const flag of ['--safe-mode', '--strict-mcp-config', '--no-session-persistence']) {
       assert.ok(call.args.includes(flag));

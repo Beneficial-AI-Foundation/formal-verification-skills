@@ -779,9 +779,12 @@ export async function runReviewer({ runtime, model, effort, prompt, workingRoot 
         reportedModels.includes(model) ? 'match' : 'unknown: child model not uniquely reported';
     save('metadata.json', JSON.stringify({ runtime, model, effort, reportedModels, settings, comparison,
       effortEvidence: 'requested CLI argument; not independently reported' }, null, 2) + '\n');
-    if (comparison === 'mismatch') throw new Error(
-      `SETTINGS_MISMATCH: ${runtime} reported model ${reportedModels[0]}, selected ${model}. ` +
-      'Choose the intended supported exact model or explicitly reconfirm a documented alias mapping; no substitute review was recorded.');
+    if (comparison === 'mismatch') {
+      settings.mismatch = `SETTINGS_MISMATCH: ${runtime} reported model ${reportedModels[0]}, selected ${model}; ` +
+        'the completed review was recorded for triage';
+      process.stderr.write(`FVS >> ${settings.mismatch}. ` +
+        'Choose the intended exact model or reconfirm a documented alias before relying on this review.\n');
+    }
     return { response, reportedModels, settings, durationMs: Date.now() - startedAt };
   };
   let copy = null;
