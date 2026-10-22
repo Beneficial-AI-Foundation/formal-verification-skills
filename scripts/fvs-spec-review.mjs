@@ -789,7 +789,7 @@ export async function runReviewer({ runtime, model, effort, prompt, workingRoot 
   };
   let copy = null;
   try {
-    const reviewTimeoutMs = deadline('FVS_REVIEW_TIMEOUT_MS', 1200000);
+    const reviewTimeoutMs = deadline('FVS_REVIEW_TIMEOUT_MS', 1800000);
     const authTimeoutMs = deadline('FVS_REVIEW_AUTH_TIMEOUT_MS', 30000);
     save('request.json', JSON.stringify({ stage, runtime, model, effort, model_is_alias, workingRoot, prompt,
       reviewTimeoutMs, authTimeoutMs }, null, 2));
@@ -964,7 +964,7 @@ try {
       [evidence.model], false, evidence.effort, evidence);
     process.stdout.write(`FVS >> Review recorded: ${path.relative(root, output)}\n`);
   } else {
-    process.stdout.write('Usage: fvs-spec-review.mjs automatic | preflight <request.json> | run <request.json> | import <review-directory> <response.md> | import-pi <review-directory> <response.md> <dispatch-receipt.json>\nReviewer deadlines: FVS_REVIEW_TIMEOUT_MS=1200000; FVS_REVIEW_AUTH_TIMEOUT_MS=30000 (1..1800000 ms).\n');
+    process.stdout.write('Usage: fvs-spec-review.mjs automatic | preflight <request.json> | run <request.json> | import <review-directory> <response.md> | import-pi <review-directory> <response.md> <dispatch-receipt.json>\nReviewer deadlines: FVS_REVIEW_TIMEOUT_MS=1800000; FVS_REVIEW_AUTH_TIMEOUT_MS=30000 (1..1800000 ms).\n');
     process.exitCode = command === '--help' ? 0 : 2;
   }
 } catch (error) {

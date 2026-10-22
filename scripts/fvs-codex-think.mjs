@@ -340,7 +340,7 @@ async function runAuthoring({ args, topicDir, projectRoot }) {
   const scratch = fs.mkdtempSync(path.join(topicDir, 'thinker-attempt-'));
   const save = (name, value) => fs.writeFileSync(path.join(scratch, name), value, { flag: 'wx', mode: 0o600 });
   try {
-    const timeoutMs = deadline('FVS_THINKER_TIMEOUT_MS', 1200000);
+    const timeoutMs = deadline('FVS_THINKER_TIMEOUT_MS', 1800000);
     const authTimeoutMs = deadline('FVS_REVIEW_AUTH_TIMEOUT_MS', 30000);
     save('role.json', JSON.stringify(role.provenance));
     save('prompt.md', prompt);
