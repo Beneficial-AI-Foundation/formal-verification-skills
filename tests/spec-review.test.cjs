@@ -378,6 +378,15 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
     fs.writeFileSync(response, REVIEW);
     assert.equal(invoke(['import', directory(external), response]).status, 0);
     assert.match(fs.readFileSync(path.join(directory(external), 'review.md'), 'utf8'), /externally supplied response/);
+    assert.match(fs.readFileSync(path.join(directory(external), 'review.md'), 'utf8'), /^- Validation warnings: none$/m);
+    const observed = run({ runtime: 'other', model: 'my-provider/model', effort: 'low' });
+    const observedResponse = path.join(tmp, 'observed-response.md');
+    fs.writeFileSync(observedResponse, REVIEW.replace('None.', '### F-1 — OBSERVATION\nClass: PROCESS\n' +
+      'Claim: A useful note.\nEvidence: lib.rs:1\nSuggested change: Record the note.'));
+    const observedImport = invoke(['import', directory(observed), observedResponse]);
+    assert.equal(observedImport.status, 0, observedImport.stderr);
+    assert.match(fs.readFileSync(path.join(directory(observed), 'review.md'), 'utf8'),
+      /^- Validation warnings: .*F-1.*MINOR/m);
     assert.notEqual(invoke(['import', directory(external), response]).status, 0, 'must not overwrite');
     const neutral = run({ runtime: 'other', model: 'my-provider/model', effort: 'low' });
     fs.writeFileSync(response, 'Review complete.\n' + REVIEW);

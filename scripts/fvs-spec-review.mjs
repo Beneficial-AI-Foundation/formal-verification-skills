@@ -265,9 +265,11 @@ function persist(directory, packet, response, reportedModels = [], external = fa
   const provenance = expectedProvenance + (external
     ? '; externally supplied response (verify reviewer/model/effort in triage)'
     : '');
+  const warnings = [];
   response = recordValidatedResponse(directory, response, {
     verdicts: ['PASS', 'APPROVE-WITH-EDITS', 'REVISE', 'BLOCKED'],
     headings: ['Findings', 'Content coverage statement', 'Coverage', 'Evidence'],
+    warnings,
   });
   if (packet.version !== 2) throw new Error('Prepare a new review packet with grounding');
   validateGrounding(root, packet.grounding, directory);
@@ -304,6 +306,7 @@ function persist(directory, packet, response, reportedModels = [], external = fa
     `- Pi dispatch evidence: ${piEvidence
       ? `run ${piEvidence.runId}; host-attested fresh/read-only; packet and response hashes verified`
       : 'not applicable'}`,
+    `- Validation warnings: ${warnings.join('; ') || 'none'}`,
     '- Input hashes: packet.json',
   ].join('\n');
   const output = path.join(directory, 'review.md');
@@ -473,6 +476,9 @@ export function validateReviewResponse(response, options) {
   const ids = new Set();
   const severities = ['BLOCKER', 'MAJOR', 'MINOR', 'OBSERVATION'];
   const observationsAllowed = !verdicts.includes('PASS');
+  // Format defects in a completed review are recorded for triage instead of discarding the
+  // reviewer's work; verdict-integrity checks below still reject the review.
+  const warnings = [];
   let rank = -1;
   const verdict = lines[0].trim().replace(/^-\s*/, '').slice('VERDICT:'.length).trim().toUpperCase();
   for (const block of blocks) {
@@ -480,13 +486,15 @@ export function validateReviewResponse(response, options) {
     const first = block.split('\n')[0];
     const match = first.match(/^### (F-[0-9]+) — (BLOCKER|MAJOR|MINOR|OBSERVATION)\s*$/);
     if (!match || ids.has(match[1])) throw new Error(`Invalid or duplicate finding heading: ${first}`);
-    if (match[2] === 'OBSERVATION' && !observationsAllowed) {
-      throw new Error('FC reviews do not support OBSERVATION severity');
+    let severity = match[2];
+    if (severity === 'OBSERVATION' && !observationsAllowed) {
+      severity = 'MINOR';
+      warnings.push(`${match[1]} OBSERVATION is not a severity for this review; recorded as MINOR`);
     }
     ids.add(match[1]);
-    if ((['APPROVE', 'PASS'].includes(verdict) && ['BLOCKER', 'MAJOR'].includes(match[2])) ||
-        (verdict === 'APPROVE-WITH-EDITS' && match[2] === 'BLOCKER')) {
-      throw new Error(`Verdict ${verdict} contradicts ${match[1]} severity ${match[2]}`);
+    if ((['APPROVE', 'PASS'].includes(verdict) && ['BLOCKER', 'MAJOR'].includes(severity)) ||
+        (verdict === 'APPROVE-WITH-EDITS' && severity === 'BLOCKER')) {
+      throw new Error(`Verdict ${verdict} contradicts ${match[1]} severity ${severity}`);
     }
     const fields = [...markdownStructure(block).matchAll(/^(?:\*\*)?(Class|Claim|Evidence|Minimal suggested edit|Suggested change|Non-binding alternative):(?:\*\*)?[^\S\r\n]*/gm)];
     const values = new Map();
@@ -500,17 +508,20 @@ export function validateReviewResponse(response, options) {
       if (!values.get(field)) throw new Error(`${match[1]} requires ${field}`);
     }
     const edit = values.get('Minimal suggested edit') ?? values.get('Suggested change');
-    if (!edit || edit.length > 4000 || edit.split('\n').length > 80) {
-      throw new Error(`${match[1]} requires a bounded suggested edit (at most 80 lines / 4000 characters)`);
+    if (!edit) throw new Error(`${match[1]} requires a suggested edit`);
+    if (edit.length > 4000 || edit.split('\n').length > 80) {
+      warnings.push(`${match[1]} suggested edit exceeds 80 lines / 4000 characters`);
     }
-    const nextRank = severities.indexOf(match[2]) * 2 + (classification === 'CONTENT' ? 0 : 1);
-    if (nextRank < rank) throw new Error('Order findings by severity, then CONTENT before PROCESS');
+    const nextRank = severities.indexOf(severity) * 2 + (classification === 'CONTENT' ? 0 : 1);
+    const unordered = 'Findings are not ordered by severity, then CONTENT before PROCESS';
+    if (nextRank < rank && !warnings.includes(unordered)) warnings.push(unordered);
     rank = nextRank;
   }
   if ([...structure.matchAll(/^### F-/gm)].length !== ids.size) throw new Error('Findings must occur only in the Findings section');
   if (ids.size === 0 && ['REJECT', 'REVISE', 'APPROVE-WITH-EDITS'].includes(verdict)) {
     throw new Error(`Verdict ${verdict} requires at least one finding`);
   }
+  options.warnings?.push(...warnings);
   return response.trim();
 }
 
@@ -543,6 +554,8 @@ export function normalizeReviewResponse(response, verdicts) {
 }
 
 export function recordValidatedResponse(directory, response, options) {
+  const warnings = options.warnings ?? [];
+  options = { ...options, warnings };
   const record = fs.mkdtempSync(path.join(directory, 'validation-'));
   const save = (name, text) => fs.writeFileSync(path.join(record, name), text, { flag: 'wx', mode: 0o600 });
   if (Buffer.isBuffer(response)) {
@@ -591,7 +604,7 @@ export function recordValidatedResponse(directory, response, options) {
     throw new Error(`${error.message}; invalid response preserved at ${record}`);
   } finally {
     const validated = fs.existsSync(path.join(record, 'normalized-response.md'));
-    save('transformation.json', JSON.stringify({ validated, operations: transformations, hashes: {
+    save('transformation.json', JSON.stringify({ validated, operations: transformations, warnings, hashes: {
       'raw-response.md': hash(response), ...(validated && { 'normalized-response.md': hash(normalized) }),
     }, replay_matches: transformations.reduce((text, operation) => {
       if (operation.type === 'neutral-prefix') return text.slice(operation.removed.length);
