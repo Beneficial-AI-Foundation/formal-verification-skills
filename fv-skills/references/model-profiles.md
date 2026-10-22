@@ -274,10 +274,19 @@ Quality uses the authority model for `spec_review` and `crypto_review` at `xhigh
 the authoring runtime and recommend an authenticated opposite provider/runtime, then confirm
 reviewer, model, effort (`max` only as an explicit opt-in), and one-run skip:
 
-- OpenAI/Codex-authored artifact: prefer Claude Code CLI with detected Fable + `xhigh`.
+- OpenAI/Codex-authored artifact: prefer Claude Code CLI with detected Fable + `xhigh`; also offer Antigravity CLI (`agy`) with a detected Argon ID (`gemini-4-argon-*` from `agy models`).
 - Claude-authored artifact: from Pi prefer a fresh provider-qualified OpenAI Pi seat with detected
-  Astra + `xhigh`, then Codex CLI; outside Pi prefer Codex CLI.
+  Astra + `xhigh`, then Codex CLI; outside Pi prefer Codex CLI. Antigravity CLI (`agy`) with a detected Argon ID is also offered.
 - Unknown/Other author: show the explicit reviewer menu without claiming independence.
+
+The `antigravity` reviewer runs `agy` headless in a disposable review copy: a fresh temporary
+directory outside the project holding the project files except symlinks, `.git`, `.lake`, `.agents`,
+`node_modules`, `target`, proof-engineering memory, and `proof-engineering-context.md` snapshots.
+Its model must be an exact `gemini-4-argon-*` ID because agy also serves Claude and OpenAI models.
+The helper passes `--sandbox` and `--mode accept-edits`, and refuses agy older than 1.4.3 or an agy
+settings.json that widens file or sandbox access. Project Lake builds are unavailable to this
+reviewer. Effort goes to `agy --effort` verbatim; confirm a value agy accepts for that model.
+An Argon review sends the review packet (the user's sources and plans) to Google under the user's own agy account terms; on consumer accounts Google may use that content.
 
 Do not route a Claude Code subscription through Pi. Use Claude Code's own authenticated CLI unless
 Pi independently reports a valid Anthropic provider credential. OpenAI review may use a fresh Pi
@@ -375,10 +384,9 @@ Never guess alias status from a name's spelling or silently waive an exact-ID mi
 catalog observations alone do not veto valid existing dispatch. Harmless bounded implementation or
 diagnostic adjustments within approved task/ownership/safety limits need no additional consent.
 
-External OpenCode/Antigravity diagnostic reviewer selections reach only their named capability
-branch: OpenCode lacks native shell isolation; agy offers no deny-read paths, tool allowlist or
-no-persistence control for a memory-excluding reviewer. Their model/variant or effort settings do
-not themselves provide confinement. Offer explicit Codex/Claude CLI, active-
+External OpenCode diagnostic reviewer selections reach only their named capability branch: OpenCode
+lacks native shell isolation. Its model/variant or effort settings do not themselves provide
+confinement. Antigravity reaches its CLI route only with an exact Argon ID, inside the review copy described in review routing. Offer explicit Codex/Claude CLI, active-
 host fresh Pi, or acknowledged Other export/import alternatives; never implicitly launch Claude or
 relabel the selection. These limitations affect only that operation, not ordinary five-runtime
 commands. Source/schema evidence and simulated fixtures are not completed native acceptance.

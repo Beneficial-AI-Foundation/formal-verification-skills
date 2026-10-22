@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // FC review owns its result files; reviewers receive no source-write tools.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -604,24 +605,75 @@ export function recordValidatedResponse(directory, response, options) {
 // Named alternate routes must never inherit Claude's launch, auth or confinement.
 // These are limitations of this diagnostic CLI route, not ordinary native authoring.
 function requireReviewerRoute(runtime, model = 'selected model', effort = 'selected effort') {
-  const alternatives = 'Choose codex or claude CLI explicitly, a fresh Pi child on an active Pi host, ' +
+  const alternatives = 'Choose codex, claude, or antigravity (agy) CLI explicitly, a fresh Pi child on an active Pi host, ' +
     'or the explicit Other export/import route with its guarantees recorded in triage. Reconfirm any change; no substitution.';
   if (runtime === 'opencode') throw new Error(
     `CAPABILITY_UNAVAILABLE: opencode / ${model} / ${effort}: diagnostic Bash has no native OS sandbox ` +
     'for immutable sources and proof-engineering memory exclusion. Agent edit/bash permissions are not isolation; ' +
     'a model/variant selection alone cannot supply that boundary. ' + alternatives);
-  if (runtime === 'antigravity') throw new Error(
-    `CAPABILITY_UNAVAILABLE: antigravity / ${model} / ${effort}: this diagnostic CLI route lacks a qualified ` +
-    'isolated reviewer invocation with a memory-excluding shell sandbox; agy offers no deny-read paths, ' +
-    'tool allowlist or no-persistence control. ' + alternatives);
-  if (!['codex', 'claude'].includes(runtime)) throw new Error(
+  if (!['codex', 'claude', 'antigravity'].includes(runtime)) throw new Error(
     `${runtime}: no external CLI reviewer route; use the explicit Pi fresh-child/import or Other handoff, not Claude fallback`);
 }
 
-export async function preflightReviewer(runtime, workingRoot = root, attempt, timeoutMs) {
-  requireReviewerRoute(runtime);
+// agy also serves Claude and OpenAI models and honours persisted user settings in headless runs,
+// so a cross-provider review needs an exact Argon ID and settings that keep agy inside its workspace.
+function requireAgyReviewer(model, effort) {
+  if (!/^gemini-4-argon-[A-Za-z0-9._-]+$/.test(model)) throw new Error(
+    `antigravity / ${model} / ${effort}: agy also serves Claude and OpenAI models; a cross-provider review ` +
+    'needs an exact gemini-4-argon-* ID from agy models. No review was launched.');
+  const file = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'settings.json');
+  if (!fs.existsSync(file)) return;
+  let settings;
+  try { settings = JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch (error) {
+    throw new Error(`CAPABILITY_UNAVAILABLE: antigravity / ${model} / ${effort}: ${file} does not parse ` +
+      `(${error.message}); its access settings cannot be checked. No review was launched.`);
+  }
+  const blockers = [];
+  if (settings?.allowNonWorkspaceAccess === true) blockers.push('allowNonWorkspaceAccess: true');
+  if (settings?.toolPermission === 'always-proceed') blockers.push('toolPermission: always-proceed');
+  const allow = settings?.permissions?.allow;
+  for (const rule of Array.isArray(allow) ? allow : []) {
+    if (typeof rule === 'string' && /^(read_file|write_file|unsandboxed)\(/.test(rule.trim())) {
+      blockers.push(`permissions.allow ${rule.trim()}`);
+    }
+  }
+  if (blockers.length) throw new Error(
+    `CAPABILITY_UNAVAILABLE: antigravity / ${model} / ${effort}: ${file} widens agy beyond the review copy ` +
+    `(${blockers.join('; ')}). Remove those settings, or choose codex or claude CLI, a fresh Pi child, ` +
+    'or the explicit Other handoff. No review was launched.');
+}
+
+// Reviewers must not read proof-engineering memory, and agy has no deny-read control, so agy works
+// in a disposable copy outside the project that omits memory, symlinks, VCS history, build outputs,
+// dependency checkouts and project agent configuration.
+function agyReviewCopy(workingRoot) {
+  const copy = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-agy-review-')));
+  if (copy === workingRoot || copy.startsWith(workingRoot + path.sep)) {
+    fs.rmSync(copy, { recursive: true, force: true });
+    throw new Error('The temporary directory is inside the project, so agy would use the original project ' +
+      'as its workspace. Point TMPDIR outside the project; no review was launched.');
+  }
+  const skipped = new Set(['.git', '.lake', '.agents', 'node_modules', 'target']);
   try {
-    const version = await invoke(runtime, ['--version'], workingRoot,
+    fs.cpSync(workingRoot, copy, { recursive: true, filter: source => {
+      const relative = path.relative(workingRoot, source).split(path.sep).join('/');
+      if (relative === '') return true;
+      return !fs.lstatSync(source).isSymbolicLink() && !skipped.has(path.basename(source)) &&
+        !/(^|\/)proof-engineering(\/|$)|(^|\/)proof-engineering-context\.md$/.test(relative);
+    } });
+  } catch (error) {
+    fs.rmSync(copy, { recursive: true, force: true });
+    throw error;
+  }
+  return copy;
+}
+
+export async function preflightReviewer(runtime, workingRoot = root, attempt, timeoutMs, model) {
+  requireReviewerRoute(runtime);
+  const command = runtime === 'antigravity' ? 'agy' : runtime;
+  try {
+    const version = await invoke(command, ['--version'], workingRoot,
       { captureDirectory: attempt, phase: 'version', timeoutMs });
     if (runtime === 'claude') {
       const parts = version.match(/^(\d+)\.(\d+)\.(\d+)/)?.slice(1).map(Number);
@@ -630,12 +682,25 @@ export async function preflightReviewer(runtime, workingRoot = root, attempt, ti
         throw new Error('review probes require Claude Code >= 2.1.267 (tested sandbox policy)');
       }
     }
-    await invoke(runtime, runtime === 'codex' ? ['login', 'status'] : ['auth', 'status'], workingRoot,
-      { captureDirectory: attempt, phase: 'auth', timeoutMs });
+    if (runtime === 'antigravity') {
+      const parts = version.trim().match(/^(\d+)\.(\d+)\.(\d+)/)?.slice(1).map(Number);
+      if (!parts || parts[0] < 1 || (parts[0] === 1 &&
+          (parts[1] < 4 || (parts[1] === 4 && parts[2] < 3)))) {
+        throw new Error('review requires Antigravity CLI (agy) >= 1.4.3 (tested headless permission policy)');
+      }
+    }
+    const status = await invoke(command, runtime === 'codex' ? ['login', 'status']
+      : runtime === 'antigravity' ? ['models'] : ['auth', 'status'], workingRoot,
+    { captureDirectory: attempt, phase: 'auth', timeoutMs });
+    if (runtime === 'antigravity' && !status.split(/\s+/).includes(model)) {
+      throw new Error(`agy models does not list ${model}`);
+    }
   } catch (error) {
     throw new Error(runtime === 'codex'
       ? `Codex is not ready (${error.message}). Install @openai/codex; run codex login, then codex login status. Select a fallback explicitly.`
-      : `Claude is not ready (${error.message}). Install Claude Code from code.claude.com; run claude auth login, then claude auth status. Select a fallback explicitly.`);
+      : runtime === 'antigravity'
+        ? `Antigravity CLI is not ready (${error.message}). Install agy from antigravity.google; run agy once interactively to sign in, then agy models. Select a fallback explicitly.`
+        : `Claude is not ready (${error.message}). Install Claude Code from code.claude.com; run claude auth login, then claude auth status. Select a fallback explicitly.`);
   }
 }
 
@@ -691,7 +756,8 @@ export async function runReviewer({ runtime, model, effort, prompt, workingRoot 
   const finish = (response, reportedModels) => {
     save('response.md', response);
     const settings = stageSettings({ runtime, model, effort, selection_source, model_is_alias }, { stage, route: `external-${runtime}-cli`, reportedModels,
-      source: runtime === 'claude' ? 'provider-envelope.json modelUsage' : 'codex-last-message.md' });
+      source: runtime === 'antigravity' ? 'agy stream-json init.model'
+        : runtime === 'claude' ? 'provider-envelope.json modelUsage' : 'codex-last-message.md' });
     // A confirmed catalog alias may resolve to a versioned ID. Do not infer alias
     // status from spelling or fabricate equivalence from the requested CLI value.
     const comparison = model === 'inherit' || model_is_alias
@@ -705,15 +771,21 @@ export async function runReviewer({ runtime, model, effort, prompt, workingRoot 
       'Choose the intended supported exact model or explicitly reconfirm a documented alias mapping; no substitute review was recorded.');
     return { response, reportedModels, settings, durationMs: Date.now() - startedAt };
   };
+  let copy = null;
   try {
     const reviewTimeoutMs = deadline('FVS_REVIEW_TIMEOUT_MS', 1200000);
     const authTimeoutMs = deadline('FVS_REVIEW_AUTH_TIMEOUT_MS', 30000);
     save('request.json', JSON.stringify({ stage, runtime, model, effort, model_is_alias, workingRoot, prompt,
       reviewTimeoutMs, authTimeoutMs }, null, 2));
     requireReviewerRoute(runtime, model, effort);
-    await preflightReviewer(runtime, workingRoot, attempt, authTimeoutMs);
+    if (runtime === 'antigravity') requireAgyReviewer(model, effort);
+    await preflightReviewer(runtime, workingRoot, attempt, authTimeoutMs, model);
+    if (runtime === 'antigravity') copy = agyReviewCopy(workingRoot);
+    const promptScratch = copy ? path.join(copy, path.relative(workingRoot, scratch)) : scratch;
+    if (copy) fs.mkdirSync(promptScratch, { recursive: true });
     const scopedPrompt = 'Review tool boundary (wrapper-owned):\n' +
-      `Repository root (read-only): ${workingRoot}\nSaved scratch directory (session cwd): ${scratch}\n` +
+      `Repository root (read-only): ${copy ?? workingRoot}\n` +
+      `Saved scratch directory${copy ? '' : ' (session cwd)'}: ${promptScratch}\n` +
       'Use absolute repository paths for reading; write only inside the saved scratch directory.\n' +
       'Never edit source or plan files. Do not implement the plan or attempt full proofs.\n' +
       `LEAN_NUM_THREADS is validated and set to ${threads}; use ` +
@@ -743,6 +815,41 @@ export async function runReviewer({ runtime, model, effort, prompt, workingRoot 
         { input: codexPrompt, captureDirectory: attempt, phase: 'review', timeoutMs: reviewTimeoutMs, env: childEnv });
       if (!fs.existsSync(lastMessage)) throw new Error('Codex returned no final review');
       return finish(decode(fs.readFileSync(lastMessage)), []);
+    }
+    if (runtime === 'antigravity') {
+      // The prompt goes over stdin: argv cannot carry whole line-numbered plans and sources.
+      const args = ['--input-format', 'stream-json', '--output-format', 'stream-json',
+        '--model', model, '--effort', effort, '--sandbox', '--mode', 'accept-edits',
+        '--disable-slash-commands', '--print-timeout', `${reviewTimeoutMs}ms`];
+      const agyPrompt = scopedPrompt + '\n' + probeBudget +
+        'Antigravity review copy: the session cwd is the repository root above, a disposable copy\n' +
+        'made for this review without proof-engineering memory, VCS history, Lake outputs or dependency\n' +
+        'checkouts, or project agent configuration.\n' +
+        'Write diagnostic files only in the saved scratch directory.\n' +
+        'Lake builds of the project are unavailable in this copy; report such checks as blocked.\n' +
+        'Shell commands that need approval are denied in this non-interactive run; report a\n' +
+        'blocked check instead of retrying with more access.\n';
+      save('launch.json', JSON.stringify({ runtime, args, cwd: copy }, null, 2) + '\n');
+      save('prompt.md', agyPrompt);
+      const stdout = await invoke('agy', args, copy, { input: JSON.stringify({ event: 'user',
+        message: { content: agyPrompt } }) + '\n', captureDirectory: attempt, phase: 'review',
+      timeoutMs: reviewTimeoutMs, env: childEnv });
+      const events = stdout.split('\n').filter(line => line.trim()).map(line => {
+        try { return JSON.parse(line); }
+        catch { throw new Error('Antigravity printed non-JSON output; no completed review was recorded'); }
+      });
+      const results = events.filter(event => event?.event === 'result');
+      // A --print-timeout expiry exits 0 with partial output, so only SUCCESS counts.
+      const result = results.length === 1 ? results[0].result : null;
+      if (result?.status !== 'SUCCESS' || typeof result.response !== 'string') {
+        throw new Error('Antigravity returned an error or no final review; no completed review was recorded');
+      }
+      const init = events.find(event => event?.event === 'init')?.init;
+      save('provider-envelope.json', JSON.stringify({ init, result }, null, 2) + '\n');
+      // Diagnostic files come back into the project; links agy left there do not.
+      fs.cpSync(promptScratch, scratch, { recursive: true,
+        filter: source => !fs.lstatSync(source).isSymbolicLink() });
+      return finish(result.response, typeof init?.model === 'string' ? [init.model] : []);
     }
     if (runtime !== 'claude') throw new Error('No qualified external reviewer branch for the selected runtime');
     if (!['darwin', 'linux'].includes(process.platform)) {
@@ -783,6 +890,8 @@ export async function runReviewer({ runtime, model, effort, prompt, workingRoot 
   } catch (error) {
     save('error.txt', `${error.message}\n`);
     throw new Error(`${error.message}\nReview attempt preserved at ${attempt}`);
+  } finally {
+    if (copy) fs.rmSync(copy, { recursive: true, force: true });
   }
 }
 

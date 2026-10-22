@@ -139,7 +139,9 @@ Both tracks use a fresh read-only reviewer and immutable review evidence. The au
 and accepted edits. Approval after edits requires the prescribed checks; revision rounds are bounded.
 Skipped, disabled, failed or pending review does not approve a statement or start proof/execution.
 You can opt out of automatic review and explicitly request trusted-path work while retaining its
-unreviewed status. See [review policy](fv-skills/references/review-policy.md),
+unreviewed status. Review can also use Google's Argon through the Antigravity CLI (`agy`). An Argon
+review sends the review packet (your sources and plans) to Google under your own agy account terms,
+and on consumer accounts Google may use that content. See [review policy](fv-skills/references/review-policy.md),
 [FC statement review](fv-skills/references/fc-spec-review.md) and
 [crypto plan review](fv-skills/references/crypto-plan-review.md).
 
