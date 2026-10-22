@@ -6,10 +6,9 @@ read-only diagnostic guidance within the wrapper's existing confinement. It gran
 writes, tool installation or compiler permission; stricter request-local controls still apply.
 Reviewers may use installed Lean, Verus, Rocq, Isabelle, or other target toolchains
 for bounded diagnostic prototypes: signature/type/API checks, minimal counterexamples,
-and short executable traces. Each probe answers one stated review question. Default
-instruction budget: three probes, about 40 lines each, at most one correction each.
-Record exact code, commands, exit status and relevant output. Report uncertainty when
-the budget or available tools cannot answer the question. This is not a CPU quota.
+and short executable traces. Each probe answers one stated review question. Record exact
+code, commands, exit status and relevant output. A check the available tools could not run
+is recorded in coverage; it is not by itself a finding or a BLOCKED reason.
 
 Keep prototypes only in the permitted scratch directory, which the wrapper saves with the review
 attempt. Preserve reviewed sources and plans. Do not implement planned definitions or proofs,
@@ -18,8 +17,7 @@ implementation.
 For Lean, prefer `#check`, `#print axioms`, and statement-only signature stubs;
 successful elaboration is not proof of the target claim.
 
-A necessary build of existing sources counts as one probe in that budget. The Claude
-provider permits only explicitly listed generated Lake `.lake/build` and `.lake/config`
+The Claude provider permits only explicitly listed generated Lake `.lake/build` and `.lake/config`
 outputs, including installed packages. `LEAN_NUM_THREADS` defaults to 4 and must be a positive safe
 integer; the wrapper rejects invalid or unsafe values before launching the reviewer. Use bounded targets and
 that thread budget. Try `nice -n 19` where available; if priority adjustment is denied, report that
