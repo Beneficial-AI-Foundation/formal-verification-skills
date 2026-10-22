@@ -229,9 +229,11 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
       /catalog-claude-model/);
 
     const mismatch = run({ runtime: 'claude', model: 'catalog-claude-model', effort: 'high' }, 'mismatch');
-    assert.notEqual(mismatch.status, 0);
-    assert.match(mismatch.stderr, /SETTINGS_MISMATCH.*model/);
-    assert.ok(!fs.existsSync(path.join(directory(mismatch), 'review.md')));
+    assert.equal(mismatch.status, 0, mismatch.stderr);
+    assert.match(mismatch.stderr, /SETTINGS_MISMATCH/);
+    const mismatchRecord = fs.readFileSync(path.join(directory(mismatch), 'review.md'), 'utf8');
+    assert.match(JSON.parse(mismatchRecord.match(/^- Stage settings: (.+)$/m)[1]).mismatch,
+      /SETTINGS_MISMATCH.*different-observed-model/);
     const unknown = run({ runtime: 'claude', model: 'catalog-claude-model', effort: 'low' }, 'unknown');
     assert.equal(unknown.status, 0, unknown.stderr);
     const unknownRecord = fs.readFileSync(path.join(directory(unknown), 'review.md'), 'utf8');
@@ -378,6 +380,15 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
     fs.writeFileSync(response, REVIEW);
     assert.equal(invoke(['import', directory(external), response]).status, 0);
     assert.match(fs.readFileSync(path.join(directory(external), 'review.md'), 'utf8'), /externally supplied response/);
+    assert.match(fs.readFileSync(path.join(directory(external), 'review.md'), 'utf8'), /^- Validation warnings: none$/m);
+    const observed = run({ runtime: 'other', model: 'my-provider/model', effort: 'low' });
+    const observedResponse = path.join(tmp, 'observed-response.md');
+    fs.writeFileSync(observedResponse, REVIEW.replace('None.', '### F-1 — OBSERVATION\nClass: PROCESS\n' +
+      'Claim: A useful note.\nEvidence: lib.rs:1\nSuggested change: Record the note.'));
+    const observedImport = invoke(['import', directory(observed), observedResponse]);
+    assert.equal(observedImport.status, 0, observedImport.stderr);
+    assert.match(fs.readFileSync(path.join(directory(observed), 'review.md'), 'utf8'),
+      /^- Validation warnings: .*F-1.*MINOR/m);
     assert.notEqual(invoke(['import', directory(external), response]).status, 0, 'must not overwrite');
     const neutral = run({ runtime: 'other', model: 'my-provider/model', effort: 'low' });
     fs.writeFileSync(response, 'Review complete.\n' + REVIEW);

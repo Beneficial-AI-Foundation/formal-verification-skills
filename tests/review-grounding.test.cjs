@@ -142,12 +142,24 @@ test('review schema rejects malformed findings and format repair preserves subst
     review.replace('Class: CONTENT\n', ''), review.replace('Evidence: Mathlib/Example.lean:1', 'Evidence:'),
     review.replace(finding, finding + finding), review.replace('F-1', 'arbitrary'),
     review.replace('— MAJOR', '— MAJOR | MINOR'), review.replace('Class: CONTENT', 'Class: OTHER'),
-    review.replace('Reuse existing_helper.', 'x'.repeat(4001)),
+    review.replace('Suggested change: Reuse existing_helper.\n', ''),
     review.replace('Checked implementation semantics and helper signature.', ''),
     review + '\nVERDICT: PASS', review.replace('VERDICT: APPROVE-WITH-EDITS', 'VERDICT: PASS'),
     review.replace('Class: CONTENT', 'Class: CONTENT\nClass: PROCESS'),
     review.replace('## Evidence', '## Findings'),
   ]) assert.throws(() => validateReviewResponse(invalid, options));
+  const longEdit = review.replace('Reuse existing_helper.', 'x'.repeat(4001));
+  const warnings = [];
+  assert.equal(validateReviewResponse(longEdit, { ...options, warnings }), longEdit);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /F-1 suggested edit exceeds 80 lines \/ 4000 characters/);
+  assert.equal(validateReviewResponse(longEdit, options), longEdit);
+  const second = '### F-2 — MAJOR\nClass: CONTENT\nClaim: Missing bound.\n' +
+    'Evidence: source.rs:3\nSuggested change: Add the bound.\n';
+  const unordered = review.replace(finding, finding.replace('— MAJOR', '— MINOR') + second);
+  const orderWarnings = [];
+  assert.equal(validateReviewResponse(unordered, { ...options, warnings: orderWarnings }), unordered);
+  assert.deepEqual(orderWarnings, ['Findings are not ordered by severity, then CONTENT before PROCESS']);
   const styled = '```markdown\n' + review.replace('VERDICT: APPROVE-WITH-EDITS', '**VERDICT:** APPROVE-WITH-EDITS') + '\n```';
   assert.equal(normalizeReviewResponse(styled, options.verdicts), review);
   const missing = review.replace('Evidence: Mathlib/Example.lean:1', 'Evidence:');
@@ -160,7 +172,10 @@ test('review schema rejects malformed findings and format repair preserves subst
       empty.replace('VERDICT: PASS', `VERDICT: ${verdict}`), options), /requires at least one finding/);
   }
   const observation = review.replace('— MAJOR', '— OBSERVATION');
-  assert.throws(() => validateReviewResponse(observation, options), /OBSERVATION/);
+  const observationWarnings = [];
+  assert.equal(validateReviewResponse(observation, { ...options, warnings: observationWarnings }), observation);
+  assert.equal(observationWarnings.length, 1);
+  assert.match(observationWarnings[0], /F-1 OBSERVATION is not a severity for this review; recorded as MINOR/);
   const code = review.replace('Evidence: Mathlib/Example.lean:1',
     'Evidence: Mathlib/Example.lean:1\n```text\n## Trace\nClass: a literal in diagnostic output\nVERDICT: PASS\n```');
   assert.equal(validateReviewResponse(code, options), code);
@@ -212,6 +227,15 @@ test('review recovery records lossless originals and rejects ambiguous wrappers'
       assert.ok(!fs.existsSync(path.join(last, 'normalized-response.md')), 'rejected review has no validated copy');
       assert.equal(JSON.parse(fs.readFileSync(path.join(last, 'transformation.json'))).validated, false);
     }
+    const long = review.replace('None.', '### F-1 — MINOR\nClass: CONTENT\nClaim: Wordy.\n' +
+      'Evidence: source:1\nSuggested change: ' + 'x'.repeat(4001));
+    const warnings = [];
+    const prior = new Set(fs.readdirSync(root));
+    assert.equal(recordValidatedResponse(root, 'Review complete.\n' + long, { ...options, warnings }), long);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /F-1 suggested edit exceeds 80 lines \/ 4000 characters/);
+    const item = path.join(root, fs.readdirSync(root).find(name => !prior.has(name)));
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(item, 'transformation.json'))).warnings, warnings);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
