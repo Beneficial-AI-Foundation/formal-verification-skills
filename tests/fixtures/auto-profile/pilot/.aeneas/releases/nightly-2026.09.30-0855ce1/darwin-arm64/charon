@@ -1,0 +1,4 @@
+#!/bin/sh
+if [ "$1" = version ]; then echo "0.1.274 (e435e5f341863a49a7e85d2fee9988bc0c687c82)"; exit 0; fi
+echo "error: unexpected argument '$1' found" >&2
+exit 2

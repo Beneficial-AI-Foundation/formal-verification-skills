@@ -1,0 +1,2 @@
+#!/bin/sh
+if [ "$1" = component ]; then printf "rust-analyzer-aarch64-apple-darwin\nrust-src\n"; else echo "rustup 1.28.2 (fixture stub)"; fi
