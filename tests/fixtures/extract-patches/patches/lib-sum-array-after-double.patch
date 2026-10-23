@@ -1,0 +1,19 @@
+Translation patch: fixture::sum
+
+Change: the slice parameter becomes a three-element array.
+Why: fixture rewrite whose hunk overlaps the end of `double`, written after the `double` patch.
+Behaviour: callers must pass exactly three elements.
+Relies on: the `wrapping_mul` rewrite of `double` being applied first.
+
+diff --git a/src/lib.rs b/src/lib.rs
+index 230c299..d6d3924 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -6,6 +6,6 @@ pub fn double(x: u32) -> u32 {
+     x.wrapping_mul(2)
+ }
+ 
+-pub fn sum(xs: &[u32]) -> u32 {
++pub fn sum(xs: &[u32; 3]) -> u32 {
+     xs.iter().fold(0, |acc, x| acc.wrapping_add(*x))
+ }

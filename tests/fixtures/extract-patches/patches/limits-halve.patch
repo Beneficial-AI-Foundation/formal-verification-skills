@@ -1,0 +1,17 @@
+Translation patch: fixture::limits::halve
+
+Change: `x >> 1` becomes `x.wrapping_shr(1)`.
+Why: fixture patch written against an older `halve`, so it is stale.
+Behaviour: identical.
+
+diff --git a/src/limits.rs b/src/limits.rs
+index 93f1b7e..9f60e86 100644
+--- a/src/limits.rs
++++ b/src/limits.rs
+@@ -5,5 +5,5 @@ pub fn clamp(x: u32) -> u32 {
+ }
+ 
+ pub fn halve(x: u32) -> u32 {
+-    x >> 1
++    x.wrapping_shr(1)
+ }

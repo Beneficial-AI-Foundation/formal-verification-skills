@@ -1,0 +1,16 @@
+Supporting patch: imports of fixture::limits
+
+Change: the `min` import becomes an `Ordering` import.
+Why: the `clamp` rewrite needs `Ordering` instead of `min`.
+Behaviour: identical.
+
+diff --git a/src/limits.rs b/src/limits.rs
+index d711507..011164a 100644
+--- a/src/limits.rs
++++ b/src/limits.rs
+@@ -1,4 +1,4 @@
+-use core::cmp::min;
++use core::cmp::Ordering;
+ 
+ pub fn clamp(x: u32) -> u32 {
+     min(x, 100)

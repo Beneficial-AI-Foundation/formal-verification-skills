@@ -1,0 +1,9 @@
+Translation patch: fixture::limits file mode
+
+Change: `src/limits.rs` becomes executable.
+Why: fixture patch that changes only a file mode.
+Behaviour: identical.
+
+diff --git a/src/limits.rs b/src/limits.rs
+old mode 100644
+new mode 100755
