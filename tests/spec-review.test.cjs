@@ -59,7 +59,30 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
       fs.writeFileSync(path.join(bin, runtime), fake);
       fs.chmodSync(path.join(bin, runtime), 0o755);
     }
-    const invoke = (args, mode = '', env = {}) => spawnSync(process.execPath, [SCRIPT, ...args], {
+    // The real agy bills its account: this fake must shadow it for every antigravity run.
+    fs.writeFileSync(path.join(bin, 'agy'), [
+      '#!/usr/bin/env node',
+      "const fs = require('node:fs');",
+      "const path = require('node:path');",
+      'const args = process.argv.slice(2);',
+      "fs.appendFileSync(process.env.FVS_REVIEW_TEST_CALLS, JSON.stringify(args) + '\\n');",
+      "if (args[0] === '--version') { console.log(process.env.FVS_AGY_VERSION || '1.4.3'); process.exit(0); }",
+      "const mode = process.env.FVS_REVIEW_TEST_MODE || '';",
+      "if (args[0] === 'models') { if (mode === 'auth') process.exit(1); console.log('gemini-4-argon-high\\ngemini-4-argon-low\\nclaude-catalog-model-high'); process.exit(0); }",
+      "const input = JSON.parse(fs.readFileSync(0, 'utf8').split('\\n')[0]).message.content;",
+      'const cwd = process.cwd();',
+      'const exists = file => !!fs.lstatSync(path.join(cwd, file), { throwIfNoEntry: false });',
+      "const seen = { memory: exists('.formalising/proof-engineering'),",
+      "  snapshot: exists('.formalising/fv-plans/t/sources/proof-engineering-context.md'),",
+      `  lake: exists('.lake'), agents: exists('.agents'), link: exists('memory-link'), spec: exists(${JSON.stringify(spec)}) };`,
+      'fs.writeFileSync(process.env.FVS_REVIEW_TEST_LOG, JSON.stringify({ args, input, cwd, seen }));',
+      "fs.writeFileSync(path.join(input.match(/^Saved scratch directory[^:]*: (.+)$/m)[1], 'probe.txt'), 'probe');",
+      "if (mode === 'fail') process.exit(9);",
+      "const init = { cwd }; if (mode !== 'unknown') init.model = args[args.indexOf('--model') + 1];",
+      "console.log(JSON.stringify({ event: 'init', init }));",
+      `console.log(JSON.stringify({ event: 'result', result: { status: mode === 'agy-error' ? 'ERROR' : 'SUCCESS', response: ${JSON.stringify(REVIEW)}, usage: {} } }));`,
+    ].join('\n'), { mode: 0o755 });
+    const invoke =(args, mode = '', env = {}) => spawnSync(process.execPath, [SCRIPT, ...args], {
       cwd: project, encoding: 'utf8', env: { ...process.env,
         PATH: `${bin}${path.delimiter}${process.env.PATH || ''}`,
         FVS_REVIEW_TEST_LOG: log, FVS_REVIEW_TEST_CALLS: calls, FVS_REVIEW_TEST_MODE: mode,
@@ -166,7 +189,7 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
     assert.equal(JSON.parse(fs.readFileSync(path.join(first, 'grounding.json'))).cited_apis[0].signature, 'def example := 1');
     assert.ok(!fs.existsSync(path.join(project, 'INJECTED')));
 
-    for (const runtime of ['opencode', 'gemini']) {
+    for (const runtime of ['opencode']) {
       const callsBefore = fs.readFileSync(calls, 'utf8');
       const limited = run({ runtime, model: 'provider/exact-model', effort: 'high', author_runtime: 'pi' });
       assert.notEqual(limited.status, 0);
@@ -174,7 +197,7 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
       assert.ok(!fs.existsSync(path.join(directory(limited), 'review.md')));
       assert.equal(fs.readFileSync(calls, 'utf8'), callsBefore);
     }
-    for (const author_runtime of ['pi', 'opencode', 'gemini']) {
+    for (const author_runtime of ['pi', 'opencode', 'antigravity']) {
       const known = run({ author_runtime });
       assert.equal(known.status, 0, known.stderr);
       assert.equal(JSON.parse(fs.readFileSync(path.join(directory(known), 'packet.json'))).request.author_runtime, author_runtime);
@@ -206,9 +229,11 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
       /catalog-claude-model/);
 
     const mismatch = run({ runtime: 'claude', model: 'catalog-claude-model', effort: 'high' }, 'mismatch');
-    assert.notEqual(mismatch.status, 0);
-    assert.match(mismatch.stderr, /SETTINGS_MISMATCH.*model/);
-    assert.ok(!fs.existsSync(path.join(directory(mismatch), 'review.md')));
+    assert.equal(mismatch.status, 0, mismatch.stderr);
+    assert.match(mismatch.stderr, /SETTINGS_MISMATCH/);
+    const mismatchRecord = fs.readFileSync(path.join(directory(mismatch), 'review.md'), 'utf8');
+    assert.match(JSON.parse(mismatchRecord.match(/^- Stage settings: (.+)$/m)[1]).mismatch,
+      /SETTINGS_MISMATCH.*different-observed-model/);
     const unknown = run({ runtime: 'claude', model: 'catalog-claude-model', effort: 'low' }, 'unknown');
     assert.equal(unknown.status, 0, unknown.stderr);
     const unknownRecord = fs.readFileSync(path.join(directory(unknown), 'review.md'), 'utf8');
@@ -275,6 +300,67 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
     assert.match(piRecord, /Runtime-reported effort: max/);
     assert.match(piRecord, /Pi dispatch evidence: run pi-child-test-run/);
 
+    // Antigravity: a scratch HOME and the fake agy above; nothing reaches the real CLI.
+    const agyHome = path.join(tmp, 'agy-home');
+    const agySettings = path.join(agyHome, '.gemini', 'antigravity-cli', 'settings.json');
+    fs.mkdirSync(path.dirname(agySettings), { recursive: true });
+    const agyEnv = { HOME: agyHome, FVS_REVIEW_TIMEOUT_MS: '900000' };
+    const agyRequest = { runtime: 'antigravity', model: 'gemini-4-argon-high', effort: 'high', author_runtime: 'claude' };
+    const realProject = fs.realpathSync(project);
+    for (const [file, text] of [['.formalising/proof-engineering/lessons.md', 'MEMORY-CANARY'],
+      ['.formalising/fv-plans/t/sources/proof-engineering-context.md', 'SNAPSHOT-CANARY'],
+      ['.lake/build/out.txt', 'lake'], ['.agents/rules/r.md', 'rule']]) {
+      fs.mkdirSync(path.dirname(path.join(project, file)), { recursive: true });
+      fs.writeFileSync(path.join(project, file), text);
+    }
+    fs.symlinkSync(path.join(project, '.formalising', 'proof-engineering'), path.join(project, 'memory-link'));
+    const agyRefused = (changes, pattern, mode = '', env = {}) => {
+      const callsBefore = fs.readFileSync(calls, 'utf8');
+      const result = run({ ...agyRequest, ...changes }, mode, { ...agyEnv, ...env });
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, pattern);
+      assert.ok(!fs.existsSync(path.join(directory(result), 'review.md')));
+      return fs.readFileSync(calls, 'utf8').slice(callsBefore.length);
+    };
+    for (const model of ['claude-catalog-model-high', 'inherit']) {
+      assert.equal(agyRefused({ model }, /gemini-4-argon-/), '', `${model} must be refused before any launch`);
+    }
+    fs.writeFileSync(agySettings, '{"allowNonWorkspaceAccess":true}');
+    assert.equal(agyRefused({}, /CAPABILITY_UNAVAILABLE.*antigravity.*allowNonWorkspaceAccess/), '');
+    fs.rmSync(agySettings);
+    assert.ok(!agyRefused({}, /1\.4\.3/, '', { FVS_AGY_VERSION: '1.4.2' }).includes('stream-json'));
+
+    const agy = run(agyRequest, '', agyEnv);
+    assert.equal(agy.status, 0, agy.stderr);
+    call = JSON.parse(fs.readFileSync(log));
+    for (const [flag, value] of [['--input-format', 'stream-json'], ['--output-format', 'stream-json'],
+      ['--model', 'gemini-4-argon-high'], ['--effort', 'high'], ['--mode', 'accept-edits'],
+      ['--print-timeout', '900000ms']]) assert.equal(call.args[call.args.indexOf(flag) + 1], value, flag);
+    assert.ok(call.args.includes('--sandbox') && call.args.includes('--disable-slash-commands'));
+    assert.ok(!call.args.includes('-p') && !call.args.includes('--dangerously-skip-permissions'));
+    assert.ok(call.cwd !== realProject && !call.cwd.startsWith(realProject + path.sep), 'review copy must sit outside the project');
+    assert.deepEqual(call.seen, { memory: false, snapshot: false, lake: false, agents: false, link: false, spec: true });
+    assert.ok(call.input.includes(call.cwd) && !call.input.includes(realProject) && !call.input.includes(project));
+    assert.ok(!fs.existsSync(call.cwd), 'review copy must be deleted after success');
+    const agyDirectory = directory(agy);
+    const agyAttempt = fs.readdirSync(agyDirectory).find(name => name.startsWith('attempt-'));
+    assert.equal(fs.readFileSync(path.join(agyDirectory, agyAttempt, 'scratch', 'probe.txt'), 'utf8'), 'probe');
+    const agyRecord = fs.readFileSync(path.join(agyDirectory, 'review.md'), 'utf8');
+    assert.match(agyRecord, /Requested reviewer: antigravity/);
+    assert.match(agyRecord, /Provenance: cross-runtime/);
+    assert.equal(JSON.parse(agyRecord.match(/^- Stage settings: (.+)$/m)[1]).observed.model.value, 'gemini-4-argon-high');
+    const agyUnknown = run(agyRequest, 'unknown', agyEnv);
+    assert.equal(agyUnknown.status, 0, agyUnknown.stderr);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(directory(agyUnknown), 'review.md'), 'utf8')
+      .match(/^- Stage settings: (.+)$/m)[1]).observed.model.value, 'unknown');
+    for (const mode of ['agy-error', 'fail']) {
+      const failed = run(agyRequest, mode, agyEnv);
+      assert.notEqual(failed.status, 0, mode);
+      assert.ok(!fs.existsSync(path.join(directory(failed), 'review.md')), mode);
+      assert.ok(!fs.existsSync(JSON.parse(fs.readFileSync(log)).cwd), `${mode}: review copy must be deleted`);
+    }
+    fs.rmSync(path.join(project, 'memory-link'));
+
     for (const mode of ['fail', 'auth', 'invalid', 'blank', 'duplicate', 'changed', 'revise', 'edits']) {
       const result = run({}, mode);
       assert.notEqual(result.status, 0, mode);
@@ -294,6 +380,15 @@ it('runs FC reviews with explicit choices, honest failures, and immutable input 
     fs.writeFileSync(response, REVIEW);
     assert.equal(invoke(['import', directory(external), response]).status, 0);
     assert.match(fs.readFileSync(path.join(directory(external), 'review.md'), 'utf8'), /externally supplied response/);
+    assert.match(fs.readFileSync(path.join(directory(external), 'review.md'), 'utf8'), /^- Validation warnings: none$/m);
+    const observed = run({ runtime: 'other', model: 'my-provider/model', effort: 'low' });
+    const observedResponse = path.join(tmp, 'observed-response.md');
+    fs.writeFileSync(observedResponse, REVIEW.replace('None.', '### F-1 — OBSERVATION\nClass: PROCESS\n' +
+      'Claim: A useful note.\nEvidence: lib.rs:1\nSuggested change: Record the note.'));
+    const observedImport = invoke(['import', directory(observed), observedResponse]);
+    assert.equal(observedImport.status, 0, observedImport.stderr);
+    assert.match(fs.readFileSync(path.join(directory(observed), 'review.md'), 'utf8'),
+      /^- Validation warnings: .*F-1.*MINOR/m);
     assert.notEqual(invoke(['import', directory(external), response]).status, 0, 'must not overwrite');
     const neutral = run({ runtime: 'other', model: 'my-provider/model', effort: 'low' });
     fs.writeFileSync(response, 'Review complete.\n' + REVIEW);

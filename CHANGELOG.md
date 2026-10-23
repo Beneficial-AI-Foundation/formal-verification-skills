@@ -6,6 +6,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.3.8] - 2026-10-23
+
+### Added
+
+- Antigravity's `agy` CLI replaces the retired Gemini CLI. `npx fv-skills-baif --antigravity` (or
+  `--agy`) installs FVS as a native agy plugin in `~/.gemini/config/plugins/fvs/`, or
+  `.agents/plugins/fvs/` for a local install, and the model profiles add an Antigravity planner
+  row (Argon 4). Installing or uninstalling for Antigravity removes FVS's own files left by an
+  earlier Gemini install and leaves everything else in `~/.gemini` alone; `--gemini` now points to
+  `--antigravity`. The plugin passes `agy plugin validate`; how agy uses the agents' tools and the
+  update hook at runtime has not been verified yet (#93).
+- Argon (`gemini-4-argon-*` through agy) can review Claude- or OpenAI-authored crypto plans,
+  specifications and external models. agy runs sandboxed in a temporary copy of the project without
+  proof-engineering memory, and the review stops if agy's settings allow access outside the
+  workspace. An Argon review sends the review packet to Google under your own agy account terms; on
+  consumer accounts Google may use that content (#93).
+- Each reviewer process records its start, end and duration, and crypto review records show the
+  reviewer's wall time, so slow rounds can be measured (#94).
+
+### Changed
+
+- `/fvs:lean-verify` proves on its own: it works through every `sorry`, checks compilation itself
+  and no longer asks for approval at each step. `--budget` (for example `90m` or `2h`, default `4h`)
+  replaces `--max-attempts`. It asks you only to change a theorem statement, when the budget runs
+  out or it is stuck, or when the audit flags something. VERIFIED now requires a cheat audit:
+  `#print axioms` shows only `propext`, `Classical.choice` and `Quot.sound`; theorem statements,
+  the definitions they use and the other Lean sources are unchanged; and no axiom,
+  `implemented_by`, `extern`, `@[csimp]`, `unsafe` or kernel-weakening option was added (#90).
+- Plan and specification reviews spend less time on checks that add no assurance. Reviewers default
+  to `xhigh` effort, with `max` as an explicit choice. They check that verification commands are
+  runnable by reading them, not running them. The numeric probe budget is gone: a check the
+  available tools could not run is recorded in coverage and is not by itself a finding or a
+  BLOCKED reason. Plan-review checklist items are narrower, reviewers no longer re-confirm the
+  branch, base or already verified source spans, and triage after a review is lighter (#94).
+- The README and `fvs-setup` describe what a skills CLI install report contains and how to opt out,
+  instead of telling every user to opt out (#89).
+
+### Fixed
+
+- A completed review is no longer thrown away when its findings are out of order, a suggested edit
+  is long, or the reviewer reports a different model than requested; the record lists the warning
+  or mismatch instead. Reviewer and planner deadlines default to 30 minutes (#94).
+
 ## [2.3.7] - 2026-10-15
 
 ### Added

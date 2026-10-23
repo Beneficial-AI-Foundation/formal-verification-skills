@@ -1,7 +1,7 @@
 ---
 name: crypto-review
 description: Adversarially review a crypto plan with a chosen runtime, model, and effort
-argument-hint: "<topic> [nN] [--target plan|followup] [--reviewer codex|claude|pi|opencode|gemini|other] [--model ID] [--effort LEVEL]"
+argument-hint: "<topic> [nN] [--target plan|followup] [--reviewer codex|claude|pi|opencode|antigravity|other] [--model ID] [--effort LEVEL]"
 allowed-tools:
   - Read
   - Bash
@@ -131,7 +131,7 @@ Resolve numeric `nN` and `--target plan|followup`. Initial review consumes `PLAN
 `EXEC_PLAN_nN.md` and owns `PLAN_REVIEW_nN.md`; follow-up consumes `FOLLOWUP_PLAN_nN.md` plus
 available original-plan/eval context and owns `FOLLOWUP_REVIEW_nN.md`. Refuse an occupied output.
 
-Normalize the target's `Authoring runtime:` marker by exact aliases to `codex`, `claude`, `pi`, `opencode`, `gemini`, `other`, or `unknown`.
+Normalize the target's `Authoring runtime:` marker by exact aliases to `codex`, `claude`, `pi`, `opencode`, `antigravity`, `other`, or `unknown`.
 Missing, foreign, or conflicting markers are `unverified`; they do not block review, but never
 claim independence. Label a different known runtime `cross-runtime`, an explicitly selected
 matching runtime `same-runtime, fresh reviewer`, and Other `unverified`.
@@ -143,23 +143,25 @@ profile routing active.
 
 Recommend an authenticated opposite provider/runtime from the normalized author marker:
 OpenAI/Codex-authored plans use Claude Code CLI; Claude-authored plans use a fresh
-provider-qualified OpenAI Pi seat when running in Pi, then Codex CLI. The Pi route launches a fresh
+provider-qualified OpenAI Pi seat when running in Pi, then Codex CLI.
+For OpenAI/Codex- and Claude-authored plans, also offer the `antigravity` reviewer: Antigravity CLI (`agy`) with a detected Argon ID (`gemini-4-argon-*` from `agy models`), launched in a review copy without proof-engineering memory.
+An Argon review sends the review packet (the user's sources and plans) to Google under the user's own agy account terms; on consumer accounts Google may use that content.
+The Pi route launches a fresh
 read-only Pi child with the exact selected provider/model; it is not an Other/manual handoff.
 Unknown authors receive an explicit reviewer menu without an independence claim. Never route a
 Claude Code subscription through Pi.
 
-OpenCode and Gemini selections remain named choices, not Claude/Other aliases. The external
-helper returns a specific `CAPABILITY_UNAVAILABLE` for their currently unqualified diagnostic
-CLI routes (OpenCode has no native shell isolation; Gemini lacks this isolated named-agent,
-memory-excluding shell/effort route). Offer explicit Codex/Claude, fresh Pi, or acknowledged
+OpenCode selections remain a named choice, not a Claude/Other alias. The external helper returns a
+specific `CAPABILITY_UNAVAILABLE` for its currently unqualified diagnostic CLI route (no native
+shell isolation). Offer explicit Codex/Claude, fresh Pi, or acknowledged
 Other alternatives and reconfirm any changed choice; never launch unsafely or substitute.
 An unavailable observed setting is unknown, not this capability failure or a command-wide gate.
 
 Build one review selection manifest containing reviewer runner, provenance, exact catalog model,
 and effort. Confirm it before launch with Continue once, Adjust once, Save override, or Cancel;
 retain notes. Notes rebuild the manifest and require reconfirmation. Save writes only the
-`crypto_review` object. Offer every effort value the selected model/provider reports as supported;
-never advertise a guessed value such as `ultra`. Missing models or unsupported efforts ask for
+`crypto_review` object. Offer every effort value the selected model/provider reports as supported,
+with `xhigh` as the default and `max` as an explicit opt-in; never advertise a guessed value such as `ultra`. Missing models or unsupported efforts ask for
 one-run/save/cancel; unresolved noninteractive choices fail before launch with exact remediation.
 
 If no opposite runner is authenticated, ask among setup/retry, fresh same-runtime review, Other
@@ -246,16 +248,19 @@ re-checks every finding and exclusively writes one separate file:
 - `PLAN_REVIEW_nN_TRIAGE.md`, or
 - `FOLLOWUP_REVIEW_nN_TRIAGE.md`.
 
-Record requested and observed runtime/model/effort, provenance, each finding ID with
-accept/reject/defer and checked evidence, pre-edit target hashes, post-edit target hashes when
-applicable, gates rerun, and one status. Refuse to overwrite either review or triage history.
+Record requested and observed runtime/model/effort, provenance, pre-edit target hashes, post-edit
+target hashes when applicable, gates rerun, and one status. Record checked evidence, with finding
+IDs, only for REJECT-FINDING, DESCOPE, DEFER-WITH-RULING and applied edits; record dispositions
+only after a REJECT verdict. Refuse to overwrite either review or triage history.
 
 Route the verdict:
 
 - `APPROVE`: write supported triage status `approved`; execution may be suggested.
 - `APPROVE-WITH-EDITS`: the authoring seat applies every accepted, exhaustively named bounded edit,
-  reruns the plan's own verification gates, records accepted/rejected finding IDs plus pre-edit and
-  post-edit hashes, then writes `approved after edits`. This is terminal: no second review.
+  reruns the plan contract checks (required fields present; PLAN_nN.md and EXEC_PLAN_nN.md
+  consistent for an initial plan), not Lean builds, records accepted/rejected finding IDs plus
+  pre-edit and post-edit hashes, then writes `approved after edits`.
+  This is terminal: no second review.
 - `REJECT`: bounded edits cannot promote it. The authoring seat creates a fresh authored revision
   at the next immutable iteration and a fresh review.
 

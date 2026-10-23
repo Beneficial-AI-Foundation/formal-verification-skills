@@ -61,7 +61,7 @@ silently overwritten.
 
 Resolve `_sync-meta.json` from the installed FVS tree before reading config, prompting for clone
 paths, fetching upstream content, or dispatching a worker. The installer rewrites this
-runtime-neutral source path for Claude, Codex, OpenCode, and Gemini:
+runtime-neutral source path for Claude, Codex, OpenCode, and Antigravity:
 
 ```bash
 SYNC_META="$HOME/.claude/fv-skills/upstream/aeneas/_sync-meta.json"

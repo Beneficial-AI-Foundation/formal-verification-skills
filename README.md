@@ -18,12 +18,16 @@ Run `npx fv-skills-baif` for an interactive installation, or select your runtime
 | Pi | `npx fv-skills-baif --pi --global` | `/skill:fvs-help` |
 | Claude Code | `npx fv-skills-baif --claude --global` | `/fvs:help` |
 | Codex | `npx fv-skills-baif --codex --global` | `$fvs-help` |
-| Gemini CLI | `npx fv-skills-baif --gemini --global` | `/fvs:help` |
+| Antigravity (agy) | `npx fv-skills-baif --antigravity --global` | `/fvs:help` |
 | OpenCode | `npx fv-skills-baif --opencode --global` | `/fvs-help` |
 
 Replace `--global` with `--local` to install for the current project. Non-Pi installs copy the
 commands and support files into the runtime's configuration directory. Use
 `npx fv-skills-baif --help` for custom directory options. Keep one FVS installation per runtime.
+
+Antigravity gets a native agy plugin in `~/.gemini/config/plugins/fvs/` (or `.agents/plugins/fvs/`
+in the project), loaded after restarting agy. `--gemini` was removed with the retired Gemini CLI;
+installing or removing with `--antigravity` also clears an old FVS Gemini install.
 
 ### Pi
 
@@ -124,8 +128,8 @@ for selection rules and runtime limitations.
 ```
 
 Use `/fvs:map-code` to map dependencies and `/fvs:fc-plan` to choose targets in dependency order.
-The FC prover works interactively, one-sorry at a time, with reviewable Write diffs and compilation
-feedback. Finish with `/fvs:lean-refactor` and `/fvs:trust-audit`.
+The FC prover works on its own within a wall-clock budget, checks its own builds and reports
+VERIFIED only after a cheat audit. Finish with `/fvs:lean-refactor` and `/fvs:trust-audit`.
 `/fvs:model-external` handles external Rust stubs with separate model and specification reviews,
 reversible writes, proof completion and a trust audit.
 
@@ -148,7 +152,9 @@ Both tracks use a fresh read-only reviewer and immutable review evidence. The au
 and accepted edits. Approval after edits requires the prescribed checks; revision rounds are bounded.
 Skipped, disabled, failed or pending review does not approve a statement or start proof/execution.
 You can opt out of automatic review and explicitly request trusted-path work while retaining its
-unreviewed status. See [review policy](fv-skills/references/review-policy.md),
+unreviewed status. Review can also use Google's Argon through the Antigravity CLI (`agy`). An Argon
+review sends the review packet (your sources and plans) to Google under your own agy account terms,
+and on consumer accounts Google may use that content. See [review policy](fv-skills/references/review-policy.md),
 [FC statement review](fv-skills/references/fc-spec-review.md) and
 [crypto plan review](fv-skills/references/crypto-plan-review.md).
 
@@ -190,11 +196,15 @@ for the user installation or `pi remove npm:fv-skills-baif --local` for the proj
 also supports `npx fv-skills-baif --pi --global --uninstall` (or `--local`). Remove a marketplace
 installation with its host's `plugin remove fvs@beneficial-ai-foundation` command.
 
-If you use the skills CLI, set both `DISABLE_TELEMETRY=1` and `DO_NOT_TRACK=1` before invoking it.
-Later setup consent cannot cover earlier analytics. The opt-out also disables the CLI's external
-audit lookup, so retain independent source and integrity checks. See the [skills CLI FAQ](https://www.skills.sh/docs/faq)
-and [privacy policy](https://vercel.com/legal/privacy-policy). The `fvs-setup` entry provides native
-installation guidance; copying it alone does not install the full FVS workflows.
+If you use the skills CLI, it reports each install to skills.sh: the CLI version, the public
+repository, the skill names and their paths in it, and the target agents, plus, when they apply, a
+global-install flag, the name of the AI agent running the CLI, a CI flag and any `--metadata` you
+pass. skills.sh sees your IP address; no account, machine ID, local path or file contents are sent.
+To opt out, set `DISABLE_TELEMETRY=1` or `DO_NOT_TRACK=1` before invoking it; opting out also turns
+off the CLI's security-audit lookup, so retain independent source and integrity checks. See the
+[skills CLI FAQ](https://www.skills.sh/docs/faq) and [privacy policy](https://vercel.com/legal/privacy-policy).
+The `fvs-setup` entry provides native installation guidance; copying it alone does not install the
+full FVS workflows.
 
 ## Credits and license
 

@@ -11,6 +11,7 @@ const {
   extractFrontmatterField,
   getCodexSkillAdapterHeader,
   ALL_RUNTIMES,
+  FVS_PLUGIN_DESCRIPTION,
   PI_PACKAGE_NAME,
   buildPiPackageSource,
 } = require('../bin/install.js');
@@ -23,8 +24,6 @@ const PACKAGE_JSON = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'),
 const VERSION = PACKAGE_JSON.version;
 const REPOSITORY_URL = 'https://github.com/Beneficial-AI-Foundation/formal-verification-skills';
 const MARKETPLACE_ID = 'beneficial-ai-foundation';
-const PLUGIN_DESCRIPTION =
-  'Formal verification workflows for Lean 4, including Rust extraction through Aeneas and paper or cryptography formalisation.';
 const SCRIPT_FILES = [
   'fvs-codex-think.mjs',
   'fvs-kb-query.py',
@@ -57,7 +56,7 @@ or nativeRoot from this entry's parents. A complete native installation supplies
 its own thirty commands, workflows, references, templates, scripts, hooks and roles.
 
 The functional-correctness (FC) track proceeds through understanding, specification,
-fresh statement review and explicitly requested interactive proof. Extracted-code
+fresh statement review and explicitly requested autonomous proof. Extracted-code
 work first needs the project's actual source/translation prerequisites. The crypto
 track proceeds through planning, fresh review, explicit execution, adversarial
 evaluation and follow-up. Setup does not start either track or choose models.
@@ -183,8 +182,8 @@ approval after revisions. Never perform required fresh review inline; failed,
 skipped or pending review is not approval and never starts proof/execution.
 
 Strongly recommend existing lean-lsp-mcp: https://github.com/oOo0oOo/lean-lsp-mcp.
-Source-tested narrow diagnostics AND goal grants and the Gemini/OpenCode converter
-fix do not prove effective child permissions, inventory/schema exposure or live
+Source-tested narrow diagnostics AND goal grants and the OpenCode converter fix and
+Antigravity's YAML tool lists do not prove effective child permissions, inventory/schema exposure or live
 feedback; these remain UNKNOWN. Live qualification follows a usable public release,
 not setup-source delivery. Conditional IDE diagnostics are not goals. Report actual
 unavailability; a required-live request stops. Compiler-only fallback needs that
@@ -194,23 +193,21 @@ system is delivered. Setup itself runs no Lean/compiler/diagnostics operation.
 
 ## Privacy
 
-Installation analytics can occur BEFORE any setup conversation. Public instructions
-and automation must establish BOTH DISABLE_TELEMETRY=1 and DO_NOT_TRACK=1 BEFORE
-invoking the skills CLI. Later setup consent cannot retroactively consent to those
-requests. In inspected skills@1.7.1, these opt-outs also suppress external security-
-audit lookup; retain independent source, tarball/dependency integrity and legitimacy
-checks. This entry adds no FVS collector, private upload or custom telemetry metadata.
+The skills CLI reports each install (contents below). Setting either DISABLE_TELEMETRY=1
+or DO_NOT_TRACK=1 before invoking it disables that reporting. In inspected skills@1.7.1,
+opting out also suppresses the external security-audit lookup; retain independent
+source, tarball/dependency integrity and legitimacy checks. This entry adds no FVS
+collector, private upload or custom telemetry metadata.
 
 Official CLI/FAQ: https://www.skills.sh/docs/cli and https://www.skills.sh/docs/faq.
 Privacy notice: https://vercel.com/legal/privacy-policy. Installation reporting can
 send public repository/skill/agent/CLI/version/scope/path/CI metadata to
-https://www.skills.sh/tele/t; the recipient sees the network source IP. Retention,
+https://www.skills.sh/tele/t; the recipient sees the network source IP. No account,
+machine ID, local path, file contents or hashes are sent. Retention,
 anonymisation, notice and legal status are not independently verified. No legal
 anonymity, harmlessness or EU exemption is promised. No private project, proof,
 source or conversation should be uploaded, and no repeated/artificial adoption
-counts should be manufactured. QA always disables telemetry. Maintainer choice
-about ONE genuine reporting-enabled public installation after validated release
-is a separate owner gate, not consent for all users; this entry does not opt in.
+counts should be manufactured. QA always disables telemetry.
 Local source/contract/transport/resource checks prove neither native model behavior
 nor public release/installation or an observed skills.sh listing.
 `;
@@ -507,7 +504,7 @@ function renderClaudeManifest() {
     $schema: 'https://json.schemastore.org/claude-code-plugin-manifest.json',
     name: 'fvs',
     version: VERSION,
-    description: PLUGIN_DESCRIPTION,
+    description: FVS_PLUGIN_DESCRIPTION,
     author: { name: 'Beneficial AI Foundation' },
     homepage: REPOSITORY_URL,
     repository: REPOSITORY_URL,
@@ -521,7 +518,7 @@ function renderCodexManifest() {
   return {
     name: 'fvs',
     version: VERSION,
-    description: PLUGIN_DESCRIPTION,
+    description: FVS_PLUGIN_DESCRIPTION,
     author: {
       name: 'Beneficial AI Foundation',
       url: REPOSITORY_URL,
@@ -534,7 +531,7 @@ function renderCodexManifest() {
     interface: {
       displayName: 'Formal Verification Skills',
       shortDescription: 'Lean 4 specification, proof, and audit workflows',
-      longDescription: PLUGIN_DESCRIPTION,
+      longDescription: FVS_PLUGIN_DESCRIPTION,
       developerName: 'Beneficial AI Foundation',
       category: 'Productivity',
       capabilities: ['Interactive', 'Read', 'Write'],

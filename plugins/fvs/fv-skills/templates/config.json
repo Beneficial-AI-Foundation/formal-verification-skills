@@ -20,21 +20,21 @@
     "codex": {},
     "pi": {},
     "opencode": {},
-    "gemini": {}
+    "antigravity": {}
   },
   "model_overrides": {
     "claude": {},
     "codex": {},
     "pi": {},
     "opencode": {},
-    "gemini": {}
+    "antigravity": {}
   },
   "effort_overrides": {
     "claude": {},
     "codex": {},
     "pi": {},
     "opencode": {},
-    "gemini": {}
+    "antigravity": {}
   },
   "spec_review": {
     "automatic": true,

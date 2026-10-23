@@ -106,7 +106,9 @@ const FVS_CODEX_AGENT_EFFORT = {
 const pkg = require('../package.json');
 
 const PI_PACKAGE_NAME = 'fv-skills-baif';
-const ALL_RUNTIMES = ['pi', 'claude', 'opencode', 'gemini', 'codex'];
+const ALL_RUNTIMES = ['pi', 'claude', 'opencode', 'antigravity', 'codex'];
+const FVS_PLUGIN_DESCRIPTION =
+  'Formal verification workflows for Lean 4, including Rust extraction through Aeneas and paper or cryptography formalisation.';
 
 function buildPiPackageSource(version = 'latest') {
   if (version === 'latest') return `npm:${PI_PACKAGE_NAME}`;
@@ -220,7 +222,7 @@ const hasGlobal = args.includes('--global') || args.includes('-g');
 const hasLocal = args.includes('--local') || args.includes('-l');
 const hasOpencode = args.includes('--opencode');
 const hasClaude = args.includes('--claude');
-const hasGemini = args.includes('--gemini');
+const hasAntigravity = args.includes('--antigravity') || args.includes('--agy');
 const hasCodex = args.includes('--codex');
 const hasPi = args.includes('--pi');
 const hasAll = args.includes('--all');
@@ -234,7 +236,7 @@ if (hasAll) {
   if (hasPi) selectedRuntimes.push('pi');
   if (hasOpencode) selectedRuntimes.push('opencode');
   if (hasClaude) selectedRuntimes.push('claude');
-  if (hasGemini) selectedRuntimes.push('gemini');
+  if (hasAntigravity) selectedRuntimes.push('antigravity');
   if (hasCodex) selectedRuntimes.push('codex');
 }
 
@@ -242,7 +244,7 @@ if (hasAll) {
 function getDirName(runtime) {
   if (runtime === 'pi') return '.pi';
   if (runtime === 'opencode') return '.opencode';
-  if (runtime === 'gemini') return '.gemini';
+  if (runtime === 'antigravity') return '.agents/plugins/fvs';
   if (runtime === 'codex') return '.codex';
   return '.claude';
 }
@@ -265,7 +267,7 @@ function toHomePrefix(pathPrefix) {
 /**
  * Get the config directory path relative to home directory for a runtime
  * Used for templating hooks that use path.join(homeDir, '<configDir>', ...)
- * @param {string} runtime - 'claude', 'opencode', 'gemini', or 'codex'
+ * @param {string} runtime - 'claude', 'opencode', 'antigravity', or 'codex'
  * @param {boolean} isGlobal - Whether this is a global install
  */
 function getConfigDirFromHome(runtime, isGlobal) {
@@ -279,7 +281,7 @@ function getConfigDirFromHome(runtime, isGlobal) {
     // Return as comma-separated for path.join() replacement
     return "'.config', 'opencode'";
   }
-  if (runtime === 'gemini') return "'.gemini'";
+  if (runtime === 'antigravity') return "'.gemini/config/plugins/fvs'";
   if (runtime === 'codex') return "'.codex'";
   return "'.claude'";
 }
@@ -311,7 +313,7 @@ function getOpencodeGlobalDir() {
 
 /**
  * Get the global config directory for a runtime
- * @param {string} runtime - 'claude', 'opencode', 'gemini', or 'codex'
+ * @param {string} runtime - 'claude', 'opencode', 'antigravity', or 'codex'
  * @param {string|null} explicitDir - Explicit directory from --config-dir flag
  */
 function getGlobalDir(runtime, explicitDir = null) {
@@ -339,15 +341,11 @@ function getGlobalDir(runtime, explicitDir = null) {
     return getOpencodeGlobalDir();
   }
 
-  if (runtime === 'gemini') {
-    // Gemini: --config-dir > GEMINI_CONFIG_DIR > ~/.gemini
-    if (explicitDir) {
-      return expandTilde(explicitDir);
-    }
-    if (process.env.GEMINI_CONFIG_DIR) {
-      return expandTilde(process.env.GEMINI_CONFIG_DIR);
-    }
-    return path.join(os.homedir(), '.gemini');
+  if (runtime === 'antigravity') {
+    // Antigravity: --config-dir names agy's config root (default ~/.gemini/config);
+    // FVS is one native plugin inside it.
+    const root = explicitDir ? expandTilde(explicitDir) : path.join(os.homedir(), '.gemini', 'config');
+    return path.join(root, 'plugins', 'fvs');
   }
 
   // Claude Code: --config-dir > CLAUDE_CONFIG_DIR > ~/.claude
@@ -405,7 +403,7 @@ if (require.main === module) {
 
 // Show help if requested
 if (require.main === module && hasHelp) {
-  console.log(`  ${yellow}Usage:${reset} npx fv-skills-baif [options]\n\n  ${yellow}Options:${reset}\n    ${orange}-g, --global${reset}              Install globally (to config directory)\n    ${orange}-l, --local${reset}               Install locally (to current directory)\n    ${orange}--claude${reset}                  Install for Claude Code only\n    ${orange}--opencode${reset}                Install for OpenCode only\n    ${orange}--gemini${reset}                  Install for Gemini only\n    ${orange}--codex${reset}                   Install for Codex only\n    ${orange}--pi${reset}                      Install as a native Pi package only\n    ${orange}--all${reset}                     Install for all runtimes, including Pi\n    ${orange}--pi-version <latest|X.Y.Z>${reset}  Select updateable or pinned Pi package\n    ${orange}--pi-conflict <keep|move>${reset} Resolve an opposite-scope Pi install noninteractively\n    ${orange}-u, --uninstall${reset}           Uninstall FVS (remove all FVS files)\n    ${orange}-c, --config-dir <path>${reset}   Specify custom config directory\n    ${orange}-h, --help${reset}                Show this help message\n    ${orange}--force-statusline${reset}        Replace existing statusline config\n\n  ${yellow}Examples:${reset}\n    ${dim}# Interactive install (prompts for runtime and location)${reset}\n    npx fv-skills-baif\n\n    ${dim}# Install for Claude Code globally${reset}\n    npx fv-skills-baif --claude --global\n\n    ${dim}# Install for Codex globally${reset}\n    npx fv-skills-baif --codex --global\n\n    ${dim}# Install the updateable Pi package globally${reset}\n    npx fv-skills-baif --pi --global\n\n    ${dim}# Pin an exact Pi package in this project${reset}\n    npx fv-skills-baif --pi --local --pi-version ${pkg.version}\n\n    ${dim}# Install for Gemini globally${reset}\n    npx fv-skills-baif --gemini --global\n\n    ${dim}# Install for all runtimes globally${reset}\n    npx fv-skills-baif --all --global\n\n    ${dim}# Install to custom config directory${reset}\n    npx fv-skills-baif --claude --global --config-dir ~/.claude-bc\n\n    ${dim}# Install to current project only${reset}\n    npx fv-skills-baif --claude --local\n\n    ${dim}# Uninstall FVS from Claude Code globally${reset}\n    npx fv-skills-baif --claude --global --uninstall\n\n  ${yellow}Notes:${reset}\n    Exact versions must be available in the registry; source version is not publication evidence.\n    The --config-dir option is useful when you have multiple configurations.\n    It takes priority over CLAUDE_CONFIG_DIR / GEMINI_CONFIG_DIR / CODEX_HOME environment variables.\n    Pi uses native fixed user/project settings, so --config-dir is reported and ignored for Pi.\n`);
+  console.log(`  ${yellow}Usage:${reset} npx fv-skills-baif [options]\n\n  ${yellow}Options:${reset}\n    ${orange}-g, --global${reset}              Install globally (to config directory)\n    ${orange}-l, --local${reset}               Install locally (to current directory)\n    ${orange}--claude${reset}                  Install for Claude Code only\n    ${orange}--opencode${reset}                Install for OpenCode only\n    ${orange}--antigravity, --agy${reset}      Install for Antigravity (agy) as a native plugin\n    ${orange}--codex${reset}                   Install for Codex only\n    ${orange}--pi${reset}                      Install as a native Pi package only\n    ${orange}--all${reset}                     Install for all runtimes, including Pi\n    ${orange}--pi-version <latest|X.Y.Z>${reset}  Select updateable or pinned Pi package\n    ${orange}--pi-conflict <keep|move>${reset} Resolve an opposite-scope Pi install noninteractively\n    ${orange}-u, --uninstall${reset}           Uninstall FVS (remove all FVS files)\n    ${orange}-c, --config-dir <path>${reset}   Specify custom config directory\n    ${orange}-h, --help${reset}                Show this help message\n    ${orange}--force-statusline${reset}        Replace existing statusline config\n\n  ${yellow}Examples:${reset}\n    ${dim}# Interactive install (prompts for runtime and location)${reset}\n    npx fv-skills-baif\n\n    ${dim}# Install for Claude Code globally${reset}\n    npx fv-skills-baif --claude --global\n\n    ${dim}# Install for Codex globally${reset}\n    npx fv-skills-baif --codex --global\n\n    ${dim}# Install the updateable Pi package globally${reset}\n    npx fv-skills-baif --pi --global\n\n    ${dim}# Pin an exact Pi package in this project${reset}\n    npx fv-skills-baif --pi --local --pi-version ${pkg.version}\n\n    ${dim}# Install for Antigravity globally${reset}\n    npx fv-skills-baif --antigravity --global\n\n    ${dim}# Install for all runtimes globally${reset}\n    npx fv-skills-baif --all --global\n\n    ${dim}# Install to custom config directory${reset}\n    npx fv-skills-baif --claude --global --config-dir ~/.claude-bc\n\n    ${dim}# Install to current project only${reset}\n    npx fv-skills-baif --claude --local\n\n    ${dim}# Uninstall FVS from Claude Code globally${reset}\n    npx fv-skills-baif --claude --global --uninstall\n\n  ${yellow}Notes:${reset}\n    Exact versions must be available in the registry; source version is not publication evidence.\n    The --config-dir option is useful when you have multiple configurations.\n    It takes priority over CLAUDE_CONFIG_DIR / CODEX_HOME environment variables.\n    For Antigravity, --config-dir names agy's config root (default ~/.gemini/config); FVS installs into its plugins/fvs/.\n    Pi uses native fixed user/project settings, so --config-dir is reported and ignored for Pi.\n`);
   process.exit(0);
 }
 
@@ -487,25 +485,6 @@ const claudeToOpencodeTools = {
   WebSearch: 'websearch',  // Plugin/MCP - keep for compatibility
 };
 
-// Tool name mapping from Claude Code to Gemini CLI
-// Gemini CLI uses snake_case built-in tool names
-const claudeToGeminiTools = {
-  // Gemini 0.31.0 explicit child registry uses qualified server__tool selectors.
-  'mcp__lean-lsp__lean_diagnostic_messages': 'lean-lsp__lean_diagnostic_messages',
-  'mcp__lean-lsp__lean_goal': 'lean-lsp__lean_goal',
-  mcp__ide__getDiagnostics: 'ide__getDiagnostics',
-  Read: 'read_file',
-  Write: 'write_file',
-  Edit: 'replace',
-  Bash: 'run_shell_command',
-  Glob: 'glob',
-  Grep: 'search_file_content',
-  WebSearch: 'google_web_search',
-  WebFetch: 'web_fetch',
-  TodoWrite: 'write_todos',
-  AskUserQuestion: 'ask_user',
-};
-
 /**
  * Convert a Claude Code tool name to OpenCode format
  * - Applies special mappings (AskUserQuestion -> question, etc.)
@@ -525,124 +504,19 @@ function convertToolName(claudeTool) {
 }
 
 /**
- * Convert a Claude Code tool name to Gemini CLI format
- * - Applies Claude->Gemini mapping (Read->read_file, Bash->run_shell_command, etc.)
- * - Keeps only explicitly mapped MCP selectors in the child's exclusive tools list
- * - Filters out Task -- agents are auto-registered as tools in Gemini
- * @returns {string|null} Gemini tool name, or null if tool should be excluded
+ * Convert a Claude Code agent to an Antigravity (agy) plugin agent.
+ * agy skips any agent whose `tools:` field is a string, so the comma list becomes
+ * a YAML list. The Claude tool names are kept: agy's validator does not check
+ * them, and how agy maps them at runtime is unverified. The rest of the role
+ * file stays byte-identical.
  */
-function convertGeminiToolName(claudeTool) {
-  // Parent discovery does not populate an explicit child's isolated registry.
-  if (claudeTool.startsWith('mcp__')) {
-    return claudeToGeminiTools[claudeTool] || null;
-  }
-  // Task: exclude -- agents are auto-registered as callable tools
-  if (claudeTool === 'Task') {
-    return null;
-  }
-  // Check for explicit mapping
-  if (claudeToGeminiTools[claudeTool]) {
-    return claudeToGeminiTools[claudeTool];
-  }
-  // Default: lowercase
-  return claudeTool.toLowerCase();
-}
-
-/**
- * Strip HTML <sub> tags for Gemini CLI output
- * Terminals don't support subscript -- Gemini renders these as raw HTML.
- * Converts <sub>text</sub> to italic *(text)* for readable terminal output.
- */
-function stripSubTags(content) {
-  return content.replace(/<sub>(.*?)<\/sub>/g, '*($1)*');
-}
-
-/**
- * Convert Claude Code agent frontmatter to Gemini CLI format
- * Gemini agents use .md files with YAML frontmatter, same as Claude,
- * but with different field names and formats:
- * - tools: must be a YAML array (not comma-separated string)
- * - tool names: must use Gemini built-in names (read_file, not Read)
- * - color: must be removed (causes validation error)
- * - MCP: preserve the narrow mapped selectors for explicit child registration
- */
-function convertClaudeToGeminiAgent(content) {
+function convertClaudeToAntigravityAgent(content) {
   if (!content.startsWith('---')) return content;
-
-  const endIndex = content.indexOf('---', 3);
-  if (endIndex === -1) return content;
-
-  const frontmatter = content.substring(3, endIndex).trim();
-  const body = content.substring(endIndex + 3);
-
-  const lines = frontmatter.split('\n');
-  const newLines = [];
-  let inAllowedTools = false;
-  const tools = [];
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    // Convert allowed-tools YAML array to tools list
-    if (trimmed.startsWith('allowed-tools:')) {
-      inAllowedTools = true;
-      continue;
-    }
-
-    // Handle inline tools: field (comma-separated string)
-    if (trimmed.startsWith('tools:')) {
-      const toolsValue = trimmed.substring(6).trim();
-      if (toolsValue) {
-        const parsed = toolsValue.split(',').map(t => t.trim()).filter(t => t);
-        for (const t of parsed) {
-          const mapped = convertGeminiToolName(t);
-          if (mapped) tools.push(mapped);
-        }
-      } else {
-        // tools: with no value means YAML array follows
-        inAllowedTools = true;
-      }
-      continue;
-    }
-
-    // Strip color field (not supported by Gemini CLI, causes validation error)
-    if (trimmed.startsWith('color:')) continue;
-
-    // Collect allowed-tools/tools array items
-    if (inAllowedTools) {
-      if (trimmed.startsWith('- ')) {
-        const mapped = convertGeminiToolName(trimmed.substring(2).trim());
-        if (mapped) tools.push(mapped);
-        continue;
-      } else if (trimmed && !trimmed.startsWith('-')) {
-        inAllowedTools = false;
-      }
-    }
-
-    if (!inAllowedTools) {
-      newLines.push(line);
-    }
-  }
-
-  // Add tools as YAML array (Gemini requires array format)
-  if (tools.length > 0) {
-    newLines.push('tools:');
-    for (const tool of tools) {
-      newLines.push(`  - ${tool}`);
-    }
-  }
-
-  const newFrontmatter = newLines.join('\n').trim();
-
-  // Escape ${VAR} patterns in agent body for Gemini CLI compatibility.
-  // Gemini's templateString() treats all ${word} patterns as template variables
-  // and throws "Template validation failed: Missing required input parameters"
-  // when they can't be resolved. FVS agents use ${PHASE}, ${PLAN}, etc. as
-  // shell variables in bash code blocks — convert to $VAR (no braces) which
-  // is equivalent bash and invisible to Gemini's /\$\{(\w+)\}/g regex.
-  const escapedBody = body.replace(/\$\{(\w+)\}/g, '$$$1');
-
-  return `---\n${newFrontmatter}\n---${stripSubTags(escapedBody)}`;
+  const end = content.indexOf('---', 3);
+  if (end === -1) return content;
+  const frontmatter = content.slice(0, end).replace(/^tools:[ \t]*(\S.*)$/m, (_, list) =>
+    'tools:' + list.split(',').map(t => t.trim()).filter(Boolean).map(t => `\n  - ${t}`).join(''));
+  return frontmatter + content.slice(end);
 }
 
 function convertClaudeToOpencodeFrontmatter(content) {
@@ -748,47 +622,6 @@ function convertClaudeToOpencodeFrontmatter(content) {
   // Rebuild frontmatter (body already has tool names converted)
   const newFrontmatter = newLines.join('\n').trim();
   return `---\n${newFrontmatter}\n---${body}`;
-}
-
-/**
- * Convert Claude Code markdown command to Gemini TOML format
- * @param {string} content - Markdown file content with YAML frontmatter
- * @returns {string} - TOML content
- */
-function convertClaudeToGeminiToml(content) {
-  // Check if content has frontmatter
-  if (!content.startsWith('---')) {
-    return `prompt = ${JSON.stringify(content)}\n`;
-  }
-
-  const endIndex = content.indexOf('---', 3);
-  if (endIndex === -1) {
-    return `prompt = ${JSON.stringify(content)}\n`;
-  }
-
-  const frontmatter = content.substring(3, endIndex).trim();
-  const body = content.substring(endIndex + 3).trim();
-
-  // Extract description from frontmatter
-  let description = '';
-  const lines = frontmatter.split('\n');
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith('description:')) {
-      description = trimmed.substring(12).trim();
-      break;
-    }
-  }
-
-  // Construct TOML
-  let toml = '';
-  if (description) {
-    toml += `description = ${JSON.stringify(description)}\n`;
-  }
-
-  toml += `prompt = ${JSON.stringify(body)}\n`;
-
-  return toml;
 }
 
 // ── Codex conversion functions ──────────────────────────────────────────────
@@ -2137,6 +1970,43 @@ function copyCommandsAsCodexSkills(srcDir, skillsDir, prefix, pathPrefix, runtim
 }
 
 /**
+ * Copy commands as Antigravity plugin skills (skills/<command>/SKILL.md).
+ * agy loads only the first 24000 bytes of a skill body and several commands are
+ * longer, so each SKILL.md is a short stub that points at the full converted
+ * command text in skills/<command>/references/<command>.md.
+ */
+function copyCommandsAsAntigravitySkills(srcDir, skillsDir, pathPrefix) {
+  // skillsDir lies inside the FVS-owned plugin root, so it is replaced whole.
+  fs.rmSync(skillsDir, { recursive: true, force: true });
+  for (const file of fs.readdirSync(srcDir).filter(name => name.endsWith('.md'))) {
+    const command = file.slice(0, -'.md'.length);
+    const skillDir = path.join(skillsDir, command);
+    fs.mkdirSync(path.join(skillDir, 'references'), { recursive: true });
+    const content = fs.readFileSync(path.join(srcDir, file), 'utf8')
+      .replace(/~\/\.claude\//g, pathPrefix)
+      .replace(/\$HOME\/\.claude\//g, toHomePrefix(pathPrefix))
+      .replace(/\.\/\.claude\//g, `./${getDirName('antigravity')}/`);
+    fs.writeFileSync(path.join(skillDir, 'references', `${command}.md`), content);
+    const { frontmatter } = extractFrontmatterAndBody(content);
+    const description = toSingleLine(
+      (frontmatter && extractFrontmatterField(frontmatter, 'description')) || `Run FVS workflow ${command}.`);
+    const reference = `${pathPrefix}skills/${command}/references/${command}.md`;
+    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), `---
+name: ${command}
+description: ${yamlQuote(description)}
+---
+
+This is the FVS \`/fvs:${command}\` workflow for Antigravity. Its complete instructions are in a separate file because agy loads only the first 24000 bytes of a skill body.
+
+1. Read \`${reference}\` in full before acting, and follow it as the instructions for this invocation.
+2. Treat \`$ARGUMENTS\` in that file as the text the user gave with this invocation, or as empty if none was given.
+3. \`AskUserQuestion\` means: ask the user with agy's question tool, or in plain text, and wait for the answer.
+4. \`Task(subagent_type="fvs-…")\` means: run that agent from this plugin's \`agents/\` folder as a subagent. If agy cannot apply a requested model or effort for it, say so before dispatch instead of claiming the setting.
+`);
+  }
+}
+
+/**
  * Copy commands to a flat structure for OpenCode
  * OpenCode expects: command/fvs-help.md (invoked as /fvs-help)
  * Source structure: commands/fvs/help.md
@@ -2201,9 +2071,9 @@ function copyFlattenedCommands(srcDir, destDir, prefix, pathPrefix, runtime) {
  * @param {string} srcDir - Source directory
  * @param {string} destDir - Destination directory
  * @param {string} pathPrefix - Path prefix for file references
- * @param {string} runtime - Target runtime ('claude', 'opencode', 'gemini', 'codex')
+ * @param {string} runtime - Target runtime ('claude', 'opencode', 'antigravity', 'codex')
  */
-function copyWithPathReplacement(srcDir, destDir, pathPrefix, runtime, isCommand = false) {
+function copyWithPathReplacement(srcDir, destDir, pathPrefix, runtime) {
   const isOpencode = runtime === 'opencode';
   const isCodex = runtime === 'codex';
   const dirName = getDirName(runtime);
@@ -2221,7 +2091,7 @@ function copyWithPathReplacement(srcDir, destDir, pathPrefix, runtime, isCommand
     const destPath = path.join(destDir, entry.name);
 
     if (entry.isDirectory()) {
-      copyWithPathReplacement(srcPath, destPath, pathPrefix, runtime, isCommand);
+      copyWithPathReplacement(srcPath, destPath, pathPrefix, runtime);
     } else if (entry.name.endsWith('.md')) {
       // Replace ~/.claude/ and $HOME/.claude/ and ./.claude/ with runtime-appropriate paths
       let content = fs.readFileSync(srcPath, 'utf8');
@@ -2239,17 +2109,6 @@ function copyWithPathReplacement(srcDir, destDir, pathPrefix, runtime, isCommand
       } else if (isCodex) {
         content = convertClaudeToCodexMarkdown(content);
         fs.writeFileSync(destPath, content);
-      } else if (runtime === 'gemini') {
-        if (isCommand) {
-          // Convert to TOML for Gemini (strip <sub> tags — terminals can't render subscript)
-          content = stripSubTags(content);
-          const tomlContent = convertClaudeToGeminiToml(content);
-          // Replace extension with .toml
-          const tomlPath = destPath.replace(/\.md$/, '.toml');
-          fs.writeFileSync(tomlPath, tomlContent);
-        } else {
-          fs.writeFileSync(destPath, content);
-        }
       } else {
         fs.writeFileSync(destPath, content);
       }
@@ -2263,11 +2122,9 @@ function copyWithPathReplacement(srcDir, destDir, pathPrefix, runtime, isCommand
  * Uninstall FVS from the specified directory for a specific runtime
  * Removes only FVS-specific files/directories, preserves user content
  * @param {boolean} isGlobal - Whether to uninstall from global or local
- * @param {string} runtime - Target runtime ('claude', 'opencode', 'gemini')
+ * @param {string} runtime - Target runtime ('claude', 'opencode', 'antigravity', 'codex')
  */
 function uninstall(isGlobal, runtime = 'claude') {
-  const isOpencode = runtime === 'opencode';
-  const isCodex = runtime === 'codex';
   const dirName = getDirName(runtime);
 
   // Get the target directory based on runtime and install type
@@ -2281,18 +2138,55 @@ function uninstall(isGlobal, runtime = 'claude') {
 
   let runtimeLabel = 'Claude Code';
   if (runtime === 'opencode') runtimeLabel = 'OpenCode';
-  if (runtime === 'gemini') runtimeLabel = 'Gemini';
+  if (runtime === 'antigravity') runtimeLabel = 'Antigravity';
   if (runtime === 'codex') runtimeLabel = 'Codex';
 
   console.log(`  Uninstalling FVS from ${orange}${runtimeLabel}${reset} at ${orange}${locationLabel}${reset}\n`);
 
+  const legacyRemoved = runtime === 'antigravity' ? removeLegacyGeminiInstall(isGlobal) : 0;
+
   // Check if target directory exists
   if (!fs.existsSync(targetDir)) {
-    console.log(`  ${yellow}⚠${reset} Directory does not exist: ${locationLabel}`);
-    console.log(`  Nothing to uninstall.\n`);
-    return;
+    if (legacyRemoved === 0) {
+      console.log(`  ${yellow}⚠${reset} Directory does not exist: ${locationLabel}`);
+      console.log(`  Nothing to uninstall.\n`);
+      return;
+    }
+  } else if (removeFvsFiles(targetDir, runtime) + legacyRemoved === 0) {
+    console.log(`  ${yellow}⚠${reset} No FVS files found to remove.`);
   }
 
+  console.log(`
+  ${green}Done!${reset} FVS has been uninstalled from ${runtimeLabel}.
+  Your other files and settings have been preserved.
+`);
+}
+
+/**
+ * Remove FVS's own files from an old Gemini CLI install (~/.gemini or
+ * <project>/.gemini). Only the fixed FVS names removeFvsFiles handles are
+ * touched, so agy's config/ and antigravity* trees under the same root are
+ * never read or written.
+ */
+function removeLegacyGeminiInstall(isGlobal) {
+  const root = path.join(isGlobal ? os.homedir() : process.cwd(), '.gemini');
+  if (!fs.existsSync(root)) return 0;
+  const removed = removeFvsFiles(root, 'legacy-gemini');
+  if (removed > 0) {
+    console.log(`  ${green}✓${reset} Removed FVS files left by an old Gemini install at ${root.replace(os.homedir(), '~')}\n`);
+  }
+  return removed;
+}
+
+/**
+ * Remove FVS-owned files from one config directory and return how many groups
+ * were removed. 'legacy-gemini' is an old Gemini CLI install (commands/fvs and
+ * settings.json, like Claude Code).
+ */
+function removeFvsFiles(targetDir, runtime) {
+  const isOpencode = runtime === 'opencode';
+  const isCodex = runtime === 'codex';
+  const isAntigravity = runtime === 'antigravity';
   let removedCount = 0;
 
   // 1. Remove FVS commands/skills directory
@@ -2368,8 +2262,18 @@ function uninstall(isGlobal, runtime = 'claude') {
       }
       console.log(`  ${green}✓${reset} Removed FVS commands from command/`);
     }
+  } else if (isAntigravity) {
+    // Antigravity: the plugin's skills/, plugin.json and hooks.json are FVS-owned
+    for (const name of ['skills', 'plugin.json', 'hooks.json']) {
+      const file = path.join(targetDir, name);
+      if (fs.existsSync(file)) {
+        fs.rmSync(file, { recursive: true });
+        removedCount++;
+        console.log(`  ${green}✓${reset} Removed ${name}`);
+      }
+    }
   } else {
-    // Claude Code & Gemini: remove commands/fvs/ directory
+    // Claude Code & an old Gemini install: remove commands/fvs/ directory
     const fvsCommandsDir = path.join(targetDir, 'commands', 'fvs');
     if (fs.existsSync(fvsCommandsDir)) {
       fs.rmSync(fvsCommandsDir, { recursive: true });
@@ -2496,9 +2400,9 @@ function uninstall(isGlobal, runtime = 'claude') {
     }
   }
 
-  // 7. Clean up settings.json (remove FVS hooks and statusline). Codex has no
-  // settings.json surface — its hook removal runs via the hooks.json path above.
-  if (!isCodex) {
+  // 7. Clean up settings.json (remove FVS hooks and statusline). Codex and
+  // Antigravity have no FVS settings.json surface — their hooks live in hooks.json.
+  if (!isCodex && !isAntigravity) {
     const settingsPath = path.join(targetDir, 'settings.json');
     if (fs.existsSync(settingsPath)) {
       let settings = readSettings(settingsPath);
@@ -2537,6 +2441,14 @@ function uninstall(isGlobal, runtime = 'claude') {
         if (Object.keys(settings.hooks).length === 0) {
           delete settings.hooks;
         }
+      }
+
+      // An old Gemini install enabled experimental agents for FVS's sub-agents
+      if (runtime === 'legacy-gemini' && settings.experimental?.enableAgents === true) {
+        delete settings.experimental.enableAgents;
+        if (Object.keys(settings.experimental).length === 0) delete settings.experimental;
+        settingsModified = true;
+        console.log(`  ${green}✓${reset} Removed experimental.enableAgents from settings`);
       }
 
       if (settingsModified) {
@@ -2588,14 +2500,24 @@ function uninstall(isGlobal, runtime = 'claude') {
     }
   }
 
-  if (removedCount === 0) {
-    console.log(`  ${yellow}⚠${reset} No FVS files found to remove.`);
+  // 9. Antigravity: drop the manifest and update cache, then the emptied plugin
+  // directory. Local patches are never removed.
+  if (isAntigravity) {
+    for (const rel of [MANIFEST_NAME, 'cache/fvs-update-check.json']) {
+      const file = path.join(targetDir, rel);
+      if (fs.existsSync(file)) fs.unlinkSync(file);
+    }
+    for (const rel of ['agents', 'hooks', 'cache', '.']) {
+      const directory = path.join(targetDir, rel);
+      if (fs.existsSync(directory) && fs.readdirSync(directory).length === 0) fs.rmdirSync(directory);
+    }
+    const patchesDir = path.join(targetDir, PATCHES_DIR_NAME);
+    if (fs.existsSync(patchesDir)) {
+      console.log(`  ${yellow}ℹ${reset} Kept local patches at ${patchesDir.replace(os.homedir(), '~')}`);
+    }
   }
 
-  console.log(`
-  ${green}Done!${reset} FVS has been uninstalled from ${runtimeLabel}.
-  Your other files and settings have been preserved.
-`);
+  return removedCount;
 }
 
 /**
@@ -2819,7 +2741,8 @@ function ownedFileHashes(configDir, runtime) {
     } else files[rel] = fileHash(file);
   };
   collect('fv-skills');
-  if (runtime === 'claude' || runtime === 'gemini') collect('commands/fvs');
+  if (runtime === 'claude') collect('commands/fvs');
+  if (runtime === 'antigravity') for (const rel of ['skills', 'plugin.json', 'hooks.json']) collect(rel);
   for (const [dir, match] of [
     ['skills', name => runtime === 'codex' && name.startsWith('fvs-')],
     ['command', name => runtime === 'opencode' && /^fvs-.*\.md$/.test(name)],
@@ -3041,11 +2964,11 @@ function reportV2Migration(priorVersion) {
 /**
  * Install to the specified directory for a specific runtime
  * @param {boolean} isGlobal - Whether to install globally or locally
- * @param {string} runtime - Target runtime ('claude', 'opencode', 'gemini')
+ * @param {string} runtime - Target runtime ('claude', 'opencode', 'antigravity', 'codex')
  */
 function install(isGlobal, runtime = 'claude') {
   const isOpencode = runtime === 'opencode';
-  const isGemini = runtime === 'gemini';
+  const isAntigravity = runtime === 'antigravity';
   const isCodex = runtime === 'codex';
   const dirName = getDirName(runtime);
   const src = path.join(__dirname, '..');
@@ -3068,10 +2991,12 @@ function install(isGlobal, runtime = 'claude') {
 
   let runtimeLabel = 'Claude Code';
   if (isOpencode) runtimeLabel = 'OpenCode';
-  if (isGemini) runtimeLabel = 'Gemini';
+  if (isAntigravity) runtimeLabel = 'Antigravity';
   if (isCodex) runtimeLabel = 'Codex';
 
   console.log(`  Installing for ${orange}${runtimeLabel}${reset} to ${orange}${locationLabel}${reset}\n`);
+
+  if (isAntigravity) removeLegacyGeminiInstall(isGlobal);
 
   // Inform user about existing install of the other type (local overrides global)
   if (isGlobal) {
@@ -3103,8 +3028,21 @@ function install(isGlobal, runtime = 'claude') {
 
   // OpenCode uses 'command/' (singular) with flat structure
   // Codex uses 'skills/' with skill directories
-  // Claude Code & Gemini use 'commands/' (plural) with nested structure
-  if (isCodex) {
+  // Antigravity uses plugin skills/<command>/SKILL.md stubs
+  // Claude Code uses 'commands/' (plural) with nested structure
+  if (isAntigravity) {
+    const skillsDir = path.join(targetDir, 'skills');
+    const fvsSrc = path.join(src, 'commands', 'fvs');
+    copyCommandsAsAntigravitySkills(fvsSrc, skillsDir, pathPrefix);
+    const expected = fs.readdirSync(fvsSrc).filter(name => name.endsWith('.md')).length;
+    const installed = fs.readdirSync(skillsDir)
+      .filter(name => fs.existsSync(path.join(skillsDir, name, 'SKILL.md'))).length;
+    if (installed === expected) {
+      console.log(`  ${green}✓${reset} Installed ${installed} skills to skills/`);
+    } else {
+      failures.push('skills/*/SKILL.md');
+    }
+  } else if (isCodex) {
     // Codex: skill directories in skills/ (skills/fvs-help/SKILL.md)
     const skillsDir = path.join(targetDir, 'skills');
     const fvsSrc = path.join(src, 'commands', 'fvs');
@@ -3131,13 +3069,13 @@ function install(isGlobal, runtime = 'claude') {
       failures.push('command/fvs-*');
     }
   } else {
-    // Claude Code & Gemini: nested structure in commands/ directory
+    // Claude Code: nested structure in commands/ directory
     const commandsDir = path.join(targetDir, 'commands');
     fs.mkdirSync(commandsDir, { recursive: true });
 
     const fvsSrc = path.join(src, 'commands', 'fvs');
     const fvsDest = path.join(commandsDir, 'fvs');
-    copyWithPathReplacement(fvsSrc, fvsDest, pathPrefix, runtime, /* isCommand= */ true);
+    copyWithPathReplacement(fvsSrc, fvsDest, pathPrefix, runtime);
     if (verifyInstalled(fvsDest, 'commands/fvs')) {
       console.log(`  ${green}✓${reset} Installed commands/fvs`);
     } else {
@@ -3211,8 +3149,8 @@ function install(isGlobal, runtime = 'claude') {
           content = convertClaudeToOpencodeFrontmatter(content);
         } else if (isCodex) {
           content = convertClaudeAgentToCodexAgent(content);
-        } else if (isGemini) {
-          content = convertClaudeToGeminiAgent(content);
+        } else if (isAntigravity) {
+          content = convertClaudeToAntigravityAgent(content);
         }
         fs.writeFileSync(path.join(agentsDest, entry.name), content);
       }
@@ -3341,8 +3279,23 @@ function install(isGlobal, runtime = 'claude') {
     return { settingsPath: null, settings: null, statuslineCommand: null, runtime };
   }
 
+  // Antigravity: write the plugin manifest and the plugin's own hooks.json, then
+  // return early; agy's settings.json is never read or written.
+  if (isAntigravity) {
+    const manifest = { name: 'fvs', description: FVS_PLUGIN_DESCRIPTION, version: pkg.version, displayName: 'FVS' };
+    fs.writeFileSync(path.join(targetDir, 'plugin.json'), JSON.stringify(manifest, null, 2) + '\n');
+    console.log(`  ${green}✓${reset} Wrote plugin.json`);
+    if (fs.existsSync(path.join(targetDir, 'hooks', 'fvs-check-update.js'))) {
+      // agy runs hook commands from the folder holding hooks.json: the plugin root.
+      const hooks = { 'fvs-check-update': { SessionStart: [{ type: 'command', command: 'node hooks/fvs-check-update.js' }] } };
+      fs.writeFileSync(path.join(targetDir, 'hooks.json'), JSON.stringify(hooks, null, 2) + '\n');
+      console.log(`  ${green}✓${reset} Configured SessionStart update check (hooks.json)`);
+    }
+    writeManifest(targetDir, runtime);
+    return { settingsPath: null, settings: null, statuslineCommand: null, runtime };
+  }
+
   // Configure statusline and hooks in settings.json
-  // Gemini shares same hook system as Claude Code for now
   const settingsPath = path.join(targetDir, 'settings.json');
   const settings = readSettings(settingsPath);
   const statuslineCommand = isGlobal
@@ -3351,17 +3304,6 @@ function install(isGlobal, runtime = 'claude') {
   const updateCheckCommand = isGlobal
     ? buildHookCommand(targetDir, 'fvs-check-update.js')
     : 'node ' + dirName + '/hooks/fvs-check-update.js';
-
-  // Enable experimental agents for Gemini CLI (required for custom sub-agents)
-  if (isGemini) {
-    if (!settings.experimental) {
-      settings.experimental = {};
-    }
-    if (!settings.experimental.enableAgents) {
-      settings.experimental.enableAgents = true;
-      console.log(`  ${green}✓${reset} Enabled experimental agents`);
-    }
-  }
 
   // Configure SessionStart hook for update checking (skip for opencode)
   if (!isOpencode) {
@@ -3400,7 +3342,7 @@ function finishInstall(settingsPath, settings, statuslineCommand, shouldInstallS
   const isOpencode = runtime === 'opencode';
   const isCodex = runtime === 'codex';
 
-  if (shouldInstallStatusline && !isOpencode && !isCodex) {
+  if (shouldInstallStatusline && settingsPath && !isOpencode) {
     settings.statusLine = {
       type: 'command',
       command: statuslineCommand
@@ -3409,7 +3351,7 @@ function finishInstall(settingsPath, settings, statuslineCommand, shouldInstallS
   }
 
   // Write settings when runtime supports settings.json
-  if (!isCodex) {
+  if (settingsPath) {
     writeSettings(settingsPath, settings);
   }
 
@@ -3420,7 +3362,7 @@ function finishInstall(settingsPath, settings, statuslineCommand, shouldInstallS
 
   let program = 'Claude Code';
   if (runtime === 'opencode') program = 'OpenCode';
-  if (runtime === 'gemini') program = 'Gemini';
+  if (runtime === 'antigravity') program = 'Antigravity';
   if (runtime === 'codex') program = 'Codex';
 
   let command = '/fvs:help';
@@ -3510,7 +3452,7 @@ function existingAncestor(target) {
 }
 
 function preflightNonPiRuntime(runtime, isGlobal) {
-  if (!['claude', 'opencode', 'gemini', 'codex'].includes(runtime)) {
+  if (!['claude', 'opencode', 'antigravity', 'codex'].includes(runtime)) {
     throw new Error(`Unsupported runtime: ${runtime}`);
   }
   for (const source of ['commands/fvs', 'agents', 'fv-skills']) {
@@ -3519,6 +3461,9 @@ function preflightNonPiRuntime(runtime, isGlobal) {
     }
   }
   const target = isGlobal ? getGlobalDir(runtime, explicitConfigDir) : path.join(process.cwd(), getDirName(runtime));
+  if (runtime === 'antigravity' && fs.lstatSync(target, { throwIfNoEntry: false })?.isSymbolicLink()) {
+    throw new Error(`Refusing to modify a symlinked Antigravity plugin directory: ${target}`);
+  }
   if (fs.existsSync(target) && !fs.statSync(target).isDirectory()) {
     throw new Error(`Installer target is not a directory: ${target}`);
   }
@@ -3578,7 +3523,7 @@ function resolveRuntimeChoice(choice) {
   return choice === '6' ? [...ALL_RUNTIMES]
     : choice === '5' ? ['pi']
       : choice === '4' ? ['codex']
-        : choice === '3' ? ['gemini']
+        : choice === '3' ? ['antigravity']
           : choice === '2' ? ['opencode']
             : ['claude'];
 }
@@ -3661,7 +3606,7 @@ function promptRuntime(callback) {
 
   console.log(`  ${yellow}Which runtime(s) would you like to install for?${reset}\n\n  ${orange}1${reset}) Claude Code ${dim}(~/.claude)${reset}
   ${orange}2${reset}) OpenCode    ${dim}(~/.config/opencode)${reset} - open source, free models
-  ${orange}3${reset}) Gemini      ${dim}(~/.gemini)${reset}
+  ${orange}3${reset}) Antigravity ${dim}(~/.gemini/config/plugins/fvs)${reset}
   ${orange}4${reset}) Codex       ${dim}(~/.codex)${reset}
   ${orange}5${reset}) Pi          ${dim}(native package manager)${reset}
   ${orange}6${reset}) All
@@ -3837,43 +3782,20 @@ function installAllRuntimes(runtimes, isGlobal, isInteractive, piPlan = null) {
     return;
   }
 
-  // Handle statusline for Claude & Gemini (OpenCode uses themes)
+  // Only Claude Code carries the FVS statusline; every other runtime finishes without it
+  const finishOthers = () => {
+    for (const result of results.filter(r => r.runtime !== 'claude')) {
+      finishInstall(result.settingsPath, result.settings, result.statuslineCommand, false, result.runtime, isGlobal);
+    }
+  };
   const claudeResult = results.find(r => r.runtime === 'claude');
-  const geminiResult = results.find(r => r.runtime === 'gemini');
-
-  if (claudeResult || geminiResult) {
-    // Use whichever settings exist to check for existing statusline
-    const primaryResult = claudeResult || geminiResult;
-
-    handleStatusline(primaryResult.settings, isGlobal, isInteractive, (shouldInstallStatusline) => {
-      if (claudeResult) {
-        finishInstall(claudeResult.settingsPath, claudeResult.settings, claudeResult.statuslineCommand, shouldInstallStatusline, 'claude', isGlobal);
-      }
-      if (geminiResult) {
-         finishInstall(geminiResult.settingsPath, geminiResult.settings, geminiResult.statuslineCommand, shouldInstallStatusline, 'gemini', isGlobal);
-      }
-
-      const opencodeResult = results.find(r => r.runtime === 'opencode');
-      if (opencodeResult) {
-        finishInstall(opencodeResult.settingsPath, opencodeResult.settings, opencodeResult.statuslineCommand, false, 'opencode', isGlobal);
-      }
-
-      const codexResult = results.find(r => r.runtime === 'codex');
-      if (codexResult) {
-        finishInstall(codexResult.settingsPath, codexResult.settings, codexResult.statuslineCommand, false, 'codex', isGlobal);
-      }
+  if (claudeResult) {
+    handleStatusline(claudeResult.settings, isGlobal, isInteractive, (shouldInstallStatusline) => {
+      finishInstall(claudeResult.settingsPath, claudeResult.settings, claudeResult.statuslineCommand, shouldInstallStatusline, 'claude', isGlobal);
+      finishOthers();
     });
   } else {
-    // Only OpenCode and/or Codex (no statusline runtimes)
-    const opencodeResult = results.find(r => r.runtime === 'opencode');
-    if (opencodeResult) {
-      finishInstall(opencodeResult.settingsPath, opencodeResult.settings, opencodeResult.statuslineCommand, false, 'opencode', isGlobal);
-    }
-
-    const codexResult = results.find(r => r.runtime === 'codex');
-    if (codexResult) {
-      finishInstall(codexResult.settingsPath, codexResult.settings, codexResult.statuslineCommand, false, 'codex', isGlobal);
-    }
+    finishOthers();
   }
 }
 
@@ -3897,7 +3819,9 @@ function startUninstall(runtimes, isGlobal) {
 
 // Main logic
 if (require.main === module) {
-if (hasGlobal && hasLocal) {
+if (args.includes('--gemini')) {
+  cliFailure('--gemini was removed with the retired Gemini CLI: use --antigravity (alias --agy), which also removes an old FVS Gemini install.');
+} else if (hasGlobal && hasLocal) {
   console.error(`  ${yellow}Cannot specify both --global and --local${reset}`);
   process.exit(1);
 } else if (hasUninstall) {
@@ -3943,7 +3867,7 @@ module.exports = {
   generateCodexAgentToml,
   getCodexSkillAdapterHeader,
   convertClaudeToCodexMarkdown,
-  convertClaudeToGeminiAgent,
+  convertClaudeToAntigravityAgent,
   convertClaudeToOpencodeFrontmatter,
   convertClaudeCommandToCodexSkill,
   convertClaudeAgentToCodexAgent,
@@ -3969,6 +3893,7 @@ module.exports = {
   FVS_CODEX_AGENT_EFFORT,
   PI_PACKAGE_NAME,
   ALL_RUNTIMES,
+  FVS_PLUGIN_DESCRIPTION,
   buildPiPackageSource,
   buildPiCommand,
   detectPiPackageScopes,

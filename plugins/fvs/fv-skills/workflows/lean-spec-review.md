@@ -19,17 +19,19 @@ Declare authority stage `spec_review` and use the canonical profile resolution a
 in `model-profiles.md`. Explicit flags win, then non-null saved `spec_review` values, then the
 quality opposite-runtime recommendation. Recommend Claude Code CLI for OpenAI/Codex-authored specs;
 for Claude-authored specs running under Pi, prefer a fresh provider-qualified OpenAI Pi seat, then
-Codex CLI. Never route a Claude Code subscription through Pi.
+Codex CLI.
+For OpenAI/Codex- and Claude-authored specs, also offer the `antigravity` reviewer: Antigravity CLI (`agy`) with a detected Argon ID (`gemini-4-argon-*` from `agy models`), launched in a review copy without proof-engineering memory.
+An Argon review sends the review packet (the user's sources and specifications) to Google under the user's own agy account terms; on consumer accounts Google may use that content.
+Never route a Claude Code subscription through Pi.
 
-OpenCode and Gemini selections remain named choices, not Claude/Other aliases. The external
-helper returns a specific `CAPABILITY_UNAVAILABLE` for their currently unqualified diagnostic
-CLI routes (OpenCode has no native shell isolation; Gemini lacks this isolated named-agent,
-memory-excluding shell/effort route). Offer explicit Codex/Claude, fresh Pi, or acknowledged
+OpenCode selections remain a named choice, not a Claude/Other alias. The external helper returns a
+specific `CAPABILITY_UNAVAILABLE` for its currently unqualified diagnostic CLI route (no native
+shell isolation). Offer explicit Codex/Claude, fresh Pi, or acknowledged
 Other alternatives and reconfirm any changed choice; never launch unsafely or substitute.
 An unavailable observed setting is unknown, not this capability failure or a command-wide gate.
 
 Build and confirm one selection manifest with reviewer runner, provenance, exact catalog model, and
-effort. Retain the question UI's notes/custom path: notes rebuild the manifest and require
+effort (default `xhigh`; `max` only as an explicit opt-in). Retain the question UI's notes/custom path: notes rebuild the manifest and require
 reconfirmation. Adjust once is ephemeral; Save override changes only `spec_review`. Missing models
 or unsupported efforts ask one-run/save/cancel; unresolved noninteractive choices fail before
 launch. If no opposite runner is authenticated, ask among setup/retry, fresh same-runtime review,
@@ -66,7 +68,7 @@ OS temporary request file with the Write tool (preserve JSON escaping):
 Use actual existing project-relative paths. Include complete relevant files, including definitions
 used by the statement; do not pass only the theorem, an author summary, or proof-engineering
 lessons. The reviewer must report unresolved/missing evidence as BLOCKED. `runtime` is
-`codex|claude|pi|opencode|gemini|other`; `author_runtime` is `codex|claude|pi|opencode|gemini|other|unknown`. Use `pi` only inside Pi
+`codex|claude|pi|opencode|antigravity|other`; `author_runtime` is `codex|claude|pi|opencode|antigravity|other|unknown`. Use `pi` only inside Pi
 with an authenticated provider-qualified catalog model. Record the precise identity of Other
 separately in triage. Keep the selected model/effort explicit. Set optional `model_is_alias: true` only when the
 confirmed catalog identifies a stable alias; do not infer it from the string. Unknown alias-to-ID

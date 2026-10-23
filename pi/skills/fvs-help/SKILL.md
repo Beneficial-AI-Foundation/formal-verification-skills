@@ -37,7 +37,7 @@ Commands are grouped into five bundles. Each bundle has a router command (e.g. `
 3. `/skill:fvs-map-code` - Analyze project, build dependency graph
 4. `/skill:fvs-fc-plan` - Select verification targets
 5. `/skill:fvs-lean-specify <function>` - Generate spec with sorry, then choose an adversarial reviewer
-6. `/skill:fvs-lean-verify <spec_path>` - Attempt proof interactively
+6. `/skill:fvs-lean-verify <spec_path>` - Prove autonomously, then cheat-audit
 7. `/skill:fvs-lean-refactor <spec_path>` - Golf and clean up verified proofs
 8. `/skill:fvs-trust-audit <target>` - Audit the sorry/axiom trust surface
 
@@ -158,7 +158,7 @@ Result: `Specs/{path}/{FunctionName}.lean` with sorry placeholder
 **`/skill:fvs-lean-spec-review <spec.lean> [--reviewer codex|claude|pi|other] [--model ID] [--effort LEVEL]`**
 Adversarially review an FC specification against Rust, extracted Lean, and interpretation definitions.
 
-- Quality recommends the authenticated opposite provider/runtime at authority-tier effort
+- Quality recommends the authenticated opposite provider/runtime at `xhigh` effort; `max` is an explicit opt-in
 - Shows one reviewer/model/effort selection manifest before launch; notes rebuild and reconfirm it
 - Supports one-run adjustments or saved `spec_review` overrides without changing sibling stages
 - Uses fresh reviewers and labels cross-runtime versus same-runtime review
@@ -176,20 +176,25 @@ or create the file with `{"spec_review": {"automatic": false}}`. Manual invocati
 Usage: `/skill:fvs-lean-spec-review Specs/Scalar/Mul.lean --reviewer codex --model <exact-catalog-id> --effort <supported-effort>`
 
 **`/skill:fvs-lean-verify <spec_file_path>`**
-Attempt proof using domain tactics with interactive feedback.
+Prove a Lean spec autonomously with domain tactics; accept it only after a clean build and a cheat audit.
 
-- Interactive proof loop: agent proposes ONE tactic step at a time
+- Autonomous proof loop: the agent works through every sorry, picks order and step size and checks
+  compilation itself
 - Inlines the target style guide and mechanically blocks new style violations before compile checks
 - Keeps theorem names/statements immutable unless the user explicitly authorizes an edit
-- User provides feedback (goal state, errors, hints) between iterations
-- Configurable max attempts (default 10, hard cap 25)
-- Routes on proof status: TACTIC PROPOSED, VERIFIED, STUCK
+- Asks you only to change a theorem statement, when the budget runs out or it is stuck, or when the
+  cheat audit flags something
+- Optional wall-clock budget (`--budget 90m`, `--budget 2h`, default 4h)
+- VERIFIED requires a green build plus a cheat audit: `#print axioms` limited to propext,
+  Classical.choice and Quot.sound; unchanged statements, definitions, extracted code and lakefile;
+  no new axiom, implemented_by, extern, @[csimp], unsafe or kernel-weakening option
+- Routes on proof status: VERIFIED, PARTIAL, STUCK
 - Updates CODEMAP.md verification status on completion
 - Loads a bounded selection from `.formalising/proof-engineering/` before research and reviewably
   captures only green-build proof patterns or observed-diagnostic lessons for future sessions
 
 Usage: `/skill:fvs-lean-verify Specs/Backend/Field/Sub.lean`
-Usage: `/skill:fvs-lean-verify Specs/Backend/Field/Sub.lean --max-attempts 15`
+Usage: `/skill:fvs-lean-verify Specs/Backend/Field/Sub.lean --budget 2h`
 
 **`/skill:fvs-natural-language <function_name>`**
 Generate detailed natural-language explanation of a function.
@@ -271,7 +276,7 @@ Usage: `/skill:fvs-crypto-plan "CKA from KEM" --codex`   # hand the planning thi
 **`/skill:fvs-crypto-review <topic> [nN] [--target plan|followup] [--reviewer codex|claude|pi|other] [--model ID] [--effort LEVEL]`**
 Send a plan to a selected fresh adversarial reviewer.
 
-- Quality recommends an authenticated opposite provider/runtime with its authority-tier model + max effort
+- Quality recommends an authenticated opposite provider/runtime with its authority-tier model + `xhigh` effort; `max` is an explicit opt-in
 - Shows one confirmed selection manifest; notes rebuild it, one-run edits stay ephemeral, and saves affect only `crypto_review`
 - Labels cross-runtime, same-runtime fresh reviewer, and unverified provenance honestly
 - Runs provider-qualified Pi, Codex CLI, or Claude Code CLI with bounded read-only source controls
@@ -315,8 +320,9 @@ Session, maintenance, and setup commands.
 **`/skill:fvs-configure`**
 Configure the role-aware quality profile, exact runtime+stage overrides, compatibility agent
 overrides, and FC/crypto review defaults through choice menus. Quality uses strongest+max for
-authority artifacts, executor+xhigh for plan execution/proof filling, and smaller+high for scout
-work, but only after matching an exact current runtime/provider catalog entry. Every command shows
+authored authority artifacts, strongest+xhigh for reviews, executor+xhigh for plan
+execution/proof filling, and smaller+high for scout work, but only after matching an exact
+current runtime/provider catalog entry. Every command shows
 one confirmable selection manifest; notes rebuild it before launch.
 
 Usage: `/skill:fvs-configure`
