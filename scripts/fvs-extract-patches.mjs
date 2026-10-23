@@ -14,6 +14,7 @@ const DEFAULT_INPUTS = ['Cargo.toml', 'Cargo.lock', 'build.rs', 'src'];
 const PATCH_DIR = 'translation-patches';
 const SERIES = 'series';
 const LEDGER_FILES = ['src-modifications.diff', 'src-modifications.json', 'src-modifications.md'];
+const INACTIVE_MARKER = 'src-modifications.inactive.json';
 const FORBIDDEN_SEGMENTS = new Set(['.git', '.formalising', '.planning']);
 const MANIFEST = 'manifest.json';
 const EXIT = {
@@ -48,6 +49,7 @@ function usage() {
     '       node fvs-extract-patches.mjs verify-restore --out DIR [--format json|text]',
     '       node fvs-extract-patches.mjs verify-tree --out DIR [--format json|text]',
     '       node fvs-extract-patches.mjs status --out DIR [--format json|text]',
+    '       node fvs-extract-patches.mjs migrate --project-root DIR [--format json|text]',
     '',
     'Applies the translation patches in DIR/translation-patches, in the order listed',
     'in DIR/translation-patches/series (one file name per line, every patch exactly',
@@ -57,7 +59,10 @@ function usage() {
     'copy; prepare builds OUT/tree and OUT/manifest.json (OUT must be a new directory',
     'outside the project); verify-restore compares the touched original sources with',
     'the recorded start; verify-tree compares OUT/tree with the tree prepare recorded;',
-    'status reads the manifest.',
+    'status reads the manifest. migrate turns an active legacy src-modifications ledger',
+    'into translation patches (one per hunk, entries from src-modifications.json kept',
+    'verbatim) and marks the ledger inactive in place with',
+    'src-modifications.inactive.json; it never edits the ledger or the source.',
     '',
     'Exit codes: 0 ok; 1 a patch does not fit (stale, already applied, not reversible,',
     'or not independent although it declares Independent: yes); 2 usage or internal',
@@ -122,9 +127,7 @@ function inputPaths(projectRoot, config) {
   return [...new Set(configured)].sort();
 }
 
-function parsePatch(file) {
-  const name = path.basename(file);
-  const bytes = fs.readFileSync(file);
+function parsePatch(name, bytes) {
   const text = bytes.toString('utf8');
   const start = text.search(/^diff --git /m);
   if (start < 0) refuse('invalid-input', `${name} has no "diff --git" section`);
@@ -172,33 +175,63 @@ function readPatches(projectRoot) {
   if (duplicated.length > 0 || missing.length > 0 || unlisted.length > 0) {
     refuse('invalid-input', `${PATCH_DIR}/${SERIES} must list every .patch file in ${PATCH_DIR}/ exactly once`, { duplicated, missing, unlisted });
   }
-  return listed.map((name) => parsePatch(path.join(directory, name)));
+  return listed.map((name) => parsePatch(name, fs.readFileSync(path.join(directory, name))));
 }
 
-// extraction.mode decides when set. Unset, a project that still has a legacy
+// The legacy ledger files at each crate root (the project root and the
+// directory of every Cargo.toml input). A ledger is inactive only while the
+// marker a successful migration wrote next to it still records its exact
+// files; a ledger edited after migration is active again.
+function legacyLedger(projectRoot, inputs) {
+  const crateRoots = new Set(['.', ...inputs.filter((input) => path.posix.basename(input) === 'Cargo.toml').map(path.posix.dirname)]);
+  const ledger = { active: [], inactive: [], changed: [] };
+  for (const crateRoot of crateRoots) {
+    const present = LEDGER_FILES.filter((name) => lexists(path.join(projectRoot, crateRoot, name)));
+    if (present.length === 0) continue;
+    const files = present.map((name) => path.posix.join(crateRoot, name));
+    const markerFile = path.join(projectRoot, crateRoot, INACTIVE_MARKER);
+    let marker = null;
+    if (lexists(markerFile)) {
+      try {
+        marker = JSON.parse(fs.readFileSync(markerFile, 'utf8'));
+      } catch (error) {
+        refuse('invalid-input', `cannot parse ${path.posix.join(crateRoot, INACTIVE_MARKER)}: ${error.message}`);
+      }
+    }
+    const current = Object.fromEntries(present.map((name) => [name, fileState(path.join(projectRoot, crateRoot, name))]));
+    if (marker && sameState(marker.ledger, current)) {
+      ledger.inactive.push(...files);
+    } else {
+      ledger.active.push(...files);
+      if (marker) ledger.changed.push(...files);
+    }
+  }
+  return ledger;
+}
+
+// extraction.mode decides when set. Unset, a project with an active legacy
 // source ledger keeps the legacy interpretation and every other project uses
-// translation patches. A ledger and a patch list are never both active: the
-// ledger is never deleted or reinterpreted here, so it must be migrated
-// explicitly first.
+// translation patches. An active ledger and a patch list are never both in use:
+// the ledger is never deleted or reinterpreted here; the migrate subcommand
+// marks it inactive in place.
 function resolveMode(projectRoot, config, inputs, patches) {
   const configured = config.extraction?.mode;
   if (configured !== undefined && !MODES.includes(configured)) {
     refuse('invalid-input', `extraction.mode must be one of ${MODES.join(', ')}`);
   }
-  const crateRoots = new Set(['.', ...inputs.filter((input) => path.posix.basename(input) === 'Cargo.toml').map(path.posix.dirname)]);
-  const ledger = [...crateRoots]
-    .flatMap((crateRoot) => LEDGER_FILES.map((name) => path.posix.join(crateRoot, name)))
-    .filter((file) => lexists(path.join(projectRoot, file)));
-  const mode = configured ?? (ledger.length > 0 ? 'legacy-source-ledger' : 'translation-patches');
-  const details = { mode, ledger, patches: patches.map((patch) => patch.file) };
-  if (mode === 'translation-patches' && ledger.length > 0) {
-    refuse('mixed-mode', `mixed active records: extraction.mode is translation-patches but the legacy source ledger is still present (${ledger.join(', ')}); migrate it explicitly before using translation patches`, details);
+  const { active, inactive, changed } = legacyLedger(projectRoot, inputs);
+  const mode = configured ?? (active.length > 0 ? 'legacy-source-ledger' : 'translation-patches');
+  const details = { mode, ledger: active, inactive, patches: patches.map((patch) => patch.file) };
+  const reactivated = changed.length > 0 ? ` (${changed.join(', ')} changed after its migration, so the ledger is active again)` : '';
+  if (mode === 'translation-patches' && active.length > 0) {
+    refuse('mixed-mode', `mixed active records: translation patches are in use but the legacy source ledger is active (${active.join(', ')})${reactivated}; migrate it explicitly first`, details);
   }
   if (mode === 'legacy-source-ledger' && patches.length > 0) {
-    refuse('mixed-mode', `mixed active records: this project uses the legacy source ledger${ledger.length > 0 ? ` (${ledger.join(', ')})` : ''} but ${PATCH_DIR}/ holds ${patches.length} patch(es); migrate explicitly and set extraction.mode to translation-patches`, details);
+    refuse('mixed-mode', `mixed active records: this project uses the legacy source ledger${active.length > 0 ? ` (${active.join(', ')})` : ''}${reactivated} but ${PATCH_DIR}/ holds ${patches.length} patch(es)`, details);
   }
   if (mode === 'legacy-source-ledger') {
-    refuse('legacy-mode', 'this project uses the legacy source ledger; translation patches apply only after an explicit migration sets extraction.mode to translation-patches', details);
+    const migrated = inactive.length > 0 ? ' The ledger is already marked inactive; set extraction.mode to translation-patches.' : ' Run migrate to move it to translation patches.';
+    refuse('legacy-mode', `this project uses the legacy source ledger; translation patches apply only after an explicit migration.${migrated}`, details);
   }
   return mode;
 }
@@ -245,6 +278,15 @@ function sourceIdentity(projectRoot, inputs) {
   return { commit: head.stdout.trim(), dirty: [...new Set(dirty)].sort() };
 }
 
+function refuseOutsideInputs(patches, inputs) {
+  for (const patch of patches) {
+    const outside = patch.touches.filter((file) => !inputs.some((input) => file === input || file.startsWith(`${input}/`)));
+    if (outside.length > 0) {
+      refuse('invalid-input', `${patch.file} touches ${outside.join(', ')}, outside the extraction input set (${inputs.join(', ')})`, { patch: patch.file, outside });
+    }
+  }
+}
+
 function load(projectRootFlag) {
   if (!fs.existsSync(projectRootFlag)) refuse('usage', `--project-root ${projectRootFlag} does not exist`);
   const projectRoot = fs.realpathSync(projectRootFlag);
@@ -252,12 +294,7 @@ function load(projectRootFlag) {
   const inputs = inputPaths(projectRoot, config);
   const patches = readPatches(projectRoot);
   const mode = resolveMode(projectRoot, config, inputs, patches);
-  for (const patch of patches) {
-    const outside = patch.touches.filter((file) => !inputs.some((input) => file === input || file.startsWith(`${input}/`)));
-    if (outside.length > 0) {
-      refuse('invalid-input', `${patch.file} touches ${outside.join(', ')}, outside the extraction input set (${inputs.join(', ')})`, { patch: patch.file, outside });
-    }
-  }
+  refuseOutsideInputs(patches, inputs);
   const files = walkInputs(projectRoot, inputs);
   const touched = [...new Set(patches.flatMap((patch) => patch.touches))].sort();
   return { projectRoot, inputs, patches, mode, files, touched, ...sourceIdentity(projectRoot, inputs) };
@@ -485,12 +522,149 @@ function verifyTree(flags) {
   return { message: `the extraction copy matches the recorded tree (${Object.keys(recorded).length} file(s))`, touchedSha256: manifest.final.touchedSha256 };
 }
 
+// One patch body per hunk of a legacy ledger diff. Each keeps its file
+// section's header (without the index line, and with a mode change only on the
+// section's first hunk); a section without hunks stays whole.
+function splitLedger(text) {
+  return text.split(/^(?=diff --git )/m)
+    .filter((section) => section.startsWith('diff --git '))
+    .flatMap((section) => {
+      const file = section.match(/^diff --git a\/\S+ b\/(\S+)$/m)?.[1];
+      if (!file) refuse('invalid-input', 'cannot read a file name in a "diff --git" line of src-modifications.diff');
+      const lines = section.replace(/\n$/, '').split('\n').filter((line) => !line.startsWith('index '));
+      const first = lines.findIndex((line) => line.startsWith('@@'));
+      if (first < 0) return [{ file, body: `${lines.join('\n')}\n` }];
+      const header = lines.slice(0, first);
+      const hunks = [];
+      for (const line of lines.slice(first)) {
+        if (line.startsWith('@@')) hunks.push([]);
+        hunks[hunks.length - 1].push(line);
+      }
+      return hunks.map((hunk, index) => {
+        const kept = index === 0 ? header : header.filter((line) => !/^(old|new) mode /.test(line));
+        return { file, body: `${[...kept, ...hunk].join('\n')}\n` };
+      });
+    });
+}
+
+const MIGRATED_FIELDS = [
+  ['classification', 'Classification'],
+  ['assumptions', 'Assumptions'],
+  ['obligations', 'Obligations'],
+  ['evidence', 'Evidence'],
+  ['ratification', 'Ratification'],
+];
+
+function migratedPatch(entry, hunk, index) {
+  const id = typeof entry?.id === 'string' && /^[A-Za-z0-9_.-]+$/.test(entry.id) ? entry.id : `hunk${index + 1}`;
+  const lines = [
+    `Translation patch: legacy ${id} in ${hunk.file}`,
+    '',
+    `Change: hunk ${index + 1} of src-modifications.diff, migrated verbatim.`,
+    `Why: recorded in the legacy source ledger as ${id}; see src-modifications.md.`,
+    'Behaviour: as recorded in the legacy source ledger; migration does not re-establish equivalence.',
+  ];
+  for (const [key, label] of MIGRATED_FIELDS) {
+    const value = entry?.[key];
+    if (value === undefined || value === null || (Array.isArray(value) && value.length === 0)) continue;
+    lines.push(`${label}: ${typeof value === 'string' ? value.replace(/\s*\n\s*/g, ' ') : JSON.stringify(value)}`);
+  }
+  const stem = path.posix.basename(hunk.file).replace(/\.[^.]*$/, '');
+  return parsePatch(`${stem}-legacy-${id}.patch`, Buffer.from(`${lines.join('\n')}\n\n${hunk.body}`));
+}
+
+// Explicit, one-off migration of the active legacy source ledger to translation
+// patches: one patch per ledger hunk, paired in order with the entries of
+// src-modifications.json. Each entry is kept verbatim in the inactive marker and
+// its classification, assumptions, obligations, evidence and ratification also
+// go into its patch header. Nothing is written until the patches, rehearsed
+// against the pin rebuilt in a scratch copy, rebuild the working source exactly.
+// The ledger and the source are left as they are.
+function migrate(flags) {
+  if (!fs.existsSync(flags['project-root'])) refuse('usage', `--project-root ${flags['project-root']} does not exist`);
+  const projectRoot = fs.realpathSync(flags['project-root']);
+  const inputs = inputPaths(projectRoot, readConfig(projectRoot));
+  const directory = path.join(projectRoot, PATCH_DIR);
+  if (fs.existsSync(directory) && fs.readdirSync(directory).some((name) => name.endsWith('.patch') || name === SERIES)) {
+    refuse('mixed-mode', `${PATCH_DIR}/ already holds a patch list; migration writes a new list and never merges into one`);
+  }
+  const diffs = legacyLedger(projectRoot, inputs).active.filter((file) => path.posix.basename(file) === LEDGER_FILES[0]);
+  if (diffs.length !== 1) {
+    refuse('invalid-input', diffs.length === 0
+      ? `there is no active legacy source ledger (${LEDGER_FILES[0]}) to migrate`
+      : `more than one active legacy source ledger: ${diffs.join(', ')}`);
+  }
+  const crateRoot = path.posix.dirname(diffs[0]);
+  const at = (name) => path.join(projectRoot, crateRoot, name);
+  if (lexists(at(INACTIVE_MARKER))) refuse('invalid-input', `${path.posix.join(crateRoot, INACTIVE_MARKER)} is left from an earlier migration; remove it explicitly before migrating again`);
+  let index = null;
+  try {
+    index = JSON.parse(fs.readFileSync(at(LEDGER_FILES[1]), 'utf8'));
+  } catch (error) {
+    refuse('invalid-input', `cannot read ${LEDGER_FILES[1]}: ${error.message}`);
+  }
+  const entries = Array.isArray(index) ? index : index?.entries;
+  if (!Array.isArray(entries)) refuse('invalid-input', `${LEDGER_FILES[1]} must hold an array of entries or an object with an "entries" array`);
+  const ledgerBytes = fs.readFileSync(at(LEDGER_FILES[0]));
+  const hunks = splitLedger(ledgerBytes.toString('utf8'));
+  if (hunks.length !== entries.length) {
+    refuse('invalid-input', `${LEDGER_FILES[0]} has ${hunks.length} hunk(s) but ${LEDGER_FILES[1]} has ${entries.length} entr(ies); they must map one to one, in order`);
+  }
+  hunks.forEach((hunk, position) => {
+    const named = entries[position]?.file;
+    if (typeof named === 'string' && named !== hunk.file) {
+      refuse('invalid-input', `entry ${position + 1} names ${named} but hunk ${position + 1} changes ${hunk.file}`);
+    }
+  });
+  const patches = hunks.map((hunk, position) => migratedPatch(entries[position], hunk, position));
+  const names = patches.map((patch) => patch.file);
+  if (new Set(names).size !== names.length) refuse('invalid-input', `the ids in ${LEDGER_FILES[1]} must be unique`);
+  refuseOutsideInputs(patches, inputs);
+
+  const files = walkInputs(projectRoot, inputs);
+  const scratch = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'fvs-extract-migrate-'));
+  try {
+    const tree = path.join(scratch, 'tree');
+    materialise({ projectRoot, inputs, files }, tree);
+    const reverted = gitApply(tree, { bytes: ledgerBytes }, '-R');
+    if (reverted.status !== 0) {
+      refuse('stale', `the working source does not carry ${LEDGER_FILES[0]}: ${reverted.stderr.trim()}`, { kind: 'stale' });
+    }
+    const pinned = { inputs, patches, files: walkInputs(tree, inputs) };
+    rehearse(pinned, tree);
+    applyAll(pinned, tree, []);
+    if (!sameState(walkInputs(tree, inputs), files)) {
+      refuse('stale', 'the migrated patches do not rebuild the working source from the pin', { kind: 'irreversible' });
+    }
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
+
+  fs.mkdirSync(directory, { recursive: true });
+  for (const patch of patches) fs.writeFileSync(path.join(directory, patch.file), patch.bytes, { flag: 'wx' });
+  fs.writeFileSync(path.join(directory, SERIES), `${names.join('\n')}\n`, { flag: 'wx' });
+  const ledger = LEDGER_FILES.filter((name) => lexists(at(name)));
+  const marker = {
+    schema: 'fvs-extract-patches/legacy-inactive',
+    version: 1,
+    ledger: Object.fromEntries(ledger.map((name) => [name, fileState(at(name))])),
+    patches: patches.map((patch, position) => ({ file: patch.file, sha256: patch.sha256, hunk: position + 1, entry: entries[position] })),
+  };
+  fs.writeFileSync(at(INACTIVE_MARKER), `${JSON.stringify(marker, null, 2)}\n`, { flag: 'wx' });
+  return {
+    message: `migrated ${patches.length} ledger hunk(s) to ${PATCH_DIR}/ and marked the ledger inactive; restore the pristine source before extracting`,
+    patches: names,
+    marker: path.posix.join(crateRoot, INACTIVE_MARKER),
+  };
+}
+
 const COMMANDS = {
   check: { required: ['project-root'], run: check },
   prepare: { required: ['project-root', 'out'], run: prepare },
   'verify-restore': { required: ['out'], run: verifyRestore },
   'verify-tree': { required: ['out'], run: verifyTree },
   status: { required: ['out'], run: status },
+  migrate: { required: ['project-root'], run: migrate },
 };
 
 function parseFlags(argv, required) {

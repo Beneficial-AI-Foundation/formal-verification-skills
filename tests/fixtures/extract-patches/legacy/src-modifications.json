@@ -1,0 +1,27 @@
+{
+  "entries": [
+    {
+      "id": "M1",
+      "file": "src/lib.rs",
+      "classification": "A-mechanical",
+      "assumptions": [],
+      "obligations": []
+    },
+    {
+      "id": "M2",
+      "file": "src/lib.rs",
+      "classification": "B",
+      "assumptions": ["A1: the accumulator starts at zero"],
+      "obligations": ["fork === upstream: the same wrapping sum for every slice"],
+      "evidence": "equivalence-gate/M2.md",
+      "ratification": "equivalence-ratified: 2026-05-08"
+    },
+    {
+      "id": "M3",
+      "file": "src/limits.rs",
+      "classification": "A-opacity",
+      "assumptions": ["A2: halve is treated as an opaque leaf"],
+      "obligations": ["the halve correspondence stays open"]
+    }
+  ]
+}

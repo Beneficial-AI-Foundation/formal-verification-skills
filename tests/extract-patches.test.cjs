@@ -346,6 +346,91 @@ describe('fvs-extract-patches: extraction mode', () => {
   });
 });
 
+describe('fvs-extract-patches: legacy ledger migration', () => {
+  const LEDGER_FILES = ['src-modifications.diff', 'src-modifications.json', 'src-modifications.md'];
+
+  // A legacy-mode project: the ledger records changes the working source carries.
+  function legacyProject() {
+    const root = project();
+    for (const name of LEDGER_FILES) {
+      fs.copyFileSync(path.join(FIXTURES, 'legacy', name), path.join(root, name));
+    }
+    const applied = spawnSync('git', ['apply', 'src-modifications.diff'], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(root) },
+    });
+    assert.equal(applied.status, 0, applied.stderr);
+    return root;
+  }
+
+  it('migrates every ledger entry into the patch list and marks the ledger inactive', () => {
+    const root = legacyProject();
+    const ledger = Object.fromEntries(LEDGER_FILES.map((name) => [name, fs.readFileSync(path.join(root, name))]));
+    const source = snapshot(path.join(root, 'src'));
+
+    const migrated = run('migrate', '--project-root', root);
+    assert.equal(migrated.status, 0, migrated.stdout);
+    for (const name of LEDGER_FILES) assert.deepEqual(fs.readFileSync(path.join(root, name)), ledger[name], name);
+    assert.deepEqual(snapshot(path.join(root, 'src')), source, 'migration changed the source');
+
+    const entries = JSON.parse(ledger['src-modifications.json']).entries;
+    const marker = JSON.parse(fs.readFileSync(path.join(root, 'src-modifications.inactive.json'), 'utf8'));
+    assert.deepEqual(marker.patches.map((patch) => patch.entry), entries);
+    const series = fs.readFileSync(path.join(root, 'translation-patches', 'series'), 'utf8').trim().split('\n');
+    assert.deepEqual(series, ['lib-legacy-M1.patch', 'lib-legacy-M2.patch', 'limits-legacy-M3.patch']);
+    series.forEach((name, index) => {
+      const header = fs.readFileSync(path.join(root, 'translation-patches', name), 'utf8').split('diff --git')[0];
+      const entry = entries[index];
+      assert.ok(header.includes(`Classification: ${entry.classification}\n`), header);
+      for (const [key, label] of [['assumptions', 'Assumptions'], ['obligations', 'Obligations']]) {
+        if (entry[key].length > 0) assert.ok(header.includes(`${label}: ${JSON.stringify(entry[key])}\n`), header);
+      }
+      if (entry.evidence) assert.ok(header.includes(`Evidence: ${entry.evidence}\n`), header);
+      if (entry.ratification) assert.ok(header.includes(`Ratification: ${entry.ratification}\n`), header);
+    });
+    assert.equal(run('migrate', '--project-root', root).status, 4, 'a second migration overwrote the patch list');
+
+    // The working source still carries the changes until the owner restores it.
+    const unrestored = run('check', '--project-root', root);
+    assert.equal(unrestored.status, 1, unrestored.stdout);
+    assert.equal(unrestored.json.kind, 'already-applied');
+
+    for (const file of ['src/lib.rs', 'src/limits.rs']) {
+      fs.copyFileSync(path.join(FIXTURES, 'crate', file), path.join(root, file));
+    }
+    const restored = run('check', '--project-root', root);
+    assert.equal(restored.status, 0, restored.stdout);
+    assert.equal(restored.json.mode, 'translation-patches');
+    // The migrated list rebuilds the legacy working source from the pristine one.
+    assert.equal(`644:${restored.json.patches[1].post['src/lib.rs'].sha256}`, source['lib.rs']);
+    assert.equal(`644:${restored.json.patches[2].post['src/limits.rs'].sha256}`, source['limits.rs']);
+  });
+
+  it('treats a ledger edited after migration as active again', () => {
+    const root = legacyProject();
+    assert.equal(run('migrate', '--project-root', root).status, 0);
+    fs.appendFileSync(path.join(root, 'src-modifications.md'), '- M4: a late edit\n');
+    const checked = run('check', '--project-root', root);
+    assert.equal(checked.status, 4, checked.stdout);
+    assert.equal(checked.json.code, 'mixed-mode');
+    assert.match(checked.json.message, /changed after .*migration/);
+  });
+
+  it('refuses a ledger whose entries do not map one to one onto its hunks', () => {
+    const root = legacyProject();
+    const index = path.join(root, 'src-modifications.json');
+    const ledger = JSON.parse(fs.readFileSync(index, 'utf8'));
+    ledger.entries.pop();
+    fs.writeFileSync(index, JSON.stringify(ledger));
+    const before = snapshot(root);
+    const migrated = run('migrate', '--project-root', root);
+    assert.equal(migrated.status, 5, migrated.stdout);
+    assert.match(migrated.json.message, /3 hunk.*2 entr/);
+    assert.deepEqual(snapshot(root), before);
+  });
+});
+
 describe('fvs-extract-patches: copy boundary', () => {
   it('rejects a symbolic link in the input set instead of following it', () => {
     const outside = temporaryDirectory('fvs-extract-outside-');
