@@ -325,6 +325,20 @@ describe('fvs-extract-patches: extraction mode', () => {
     assert.match(named.json.message, /src-modifications\.diff/);
   });
 
+  it('finds a legacy ledger at a crate root inside a directory input', () => {
+    const root = project(['lib-double'], { config: { extraction: { inputs: ['Cargo.toml', 'crates'] } } });
+    const member = path.join(root, 'crates', 'member');
+    fs.mkdirSync(member, { recursive: true });
+    fs.cpSync(path.join(FIXTURES, 'crate'), member, { recursive: true });
+    fs.writeFileSync(path.join(member, 'src-modifications.diff'), LEDGER);
+    const before = snapshot(root);
+    const checked = run('check', '--project-root', root);
+    assert.equal(checked.status, 4, checked.stdout);
+    assert.equal(checked.json.code, 'mixed-mode');
+    assert.deepEqual(checked.json.ledger, ['crates/member/src-modifications.diff']);
+    assert.deepEqual(snapshot(root), before);
+  });
+
   it('keeps a legacy-ledger project on the legacy interpretation until it migrates', () => {
     for (const root of [
       withLedger(project()),

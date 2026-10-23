@@ -201,12 +201,13 @@ function readPatches(projectRoot) {
   return listed.map((name) => parsePatch(name, fs.readFileSync(path.join(directory, name))));
 }
 
-// The legacy ledger files at each crate root (the project root and the
-// directory of every Cargo.toml input). A ledger is inactive only while the
+// The legacy ledger files at each crate root: the project root and the
+// directory of every Cargo.toml in the walked input set, so workspace members
+// under a directory input are covered. A ledger is inactive only while the
 // marker a successful migration wrote next to it still records its exact
 // files; a ledger edited after migration is active again.
-function legacyLedger(projectRoot, inputs) {
-  const crateRoots = new Set(['.', ...inputs.filter((input) => path.posix.basename(input) === 'Cargo.toml').map(path.posix.dirname)]);
+function legacyLedger(projectRoot, files) {
+  const crateRoots = new Set(['.', ...Object.keys(files).filter((file) => path.posix.basename(file) === 'Cargo.toml').map(path.posix.dirname)]);
   const ledger = { active: [], inactive: [], changed: [] };
   for (const crateRoot of crateRoots) {
     const present = LEDGER_FILES.filter((name) => lexists(path.join(projectRoot, crateRoot, name)));
@@ -230,12 +231,12 @@ function legacyLedger(projectRoot, inputs) {
 // translation patches. An active ledger and a patch list are never both in use:
 // the ledger is never deleted or reinterpreted here; the migrate subcommand
 // marks it inactive in place.
-function resolveMode(projectRoot, config, inputs, patches) {
+function resolveMode(projectRoot, config, files, patches) {
   const configured = config.extraction?.mode;
   if (configured !== undefined && !MODES.includes(configured)) {
     refuse('invalid-input', `extraction.mode must be one of ${MODES.join(', ')}`);
   }
-  const { active, inactive, changed } = legacyLedger(projectRoot, inputs);
+  const { active, inactive, changed } = legacyLedger(projectRoot, files);
   const mode = configured ?? (active.length > 0 ? 'legacy-source-ledger' : 'translation-patches');
   const details = { mode, ledger: active, inactive, patches: patches.map((patch) => patch.file) };
   const reactivated = changed.length > 0 ? ` (${changed.join(', ')} changed after its migration, so the ledger is active again)` : '';
@@ -309,9 +310,9 @@ function load(projectRootFlag) {
   const config = readConfig(projectRoot);
   const inputs = inputPaths(projectRoot, config);
   const patches = readPatches(projectRoot);
-  const mode = resolveMode(projectRoot, config, inputs, patches);
-  refuseOutsideInputs(patches, inputs);
   const files = walkInputs(projectRoot, inputs);
+  const mode = resolveMode(projectRoot, config, files, patches);
+  refuseOutsideInputs(patches, inputs);
   const touched = [...new Set(patches.flatMap((patch) => patch.touches))].sort();
   return { projectRoot, inputs, patches, mode, files, touched, ...sourceIdentity(projectRoot, inputs) };
 }
@@ -605,7 +606,8 @@ function migrate(flags) {
   if (fs.existsSync(directory) && fs.readdirSync(directory).some((name) => name.endsWith('.patch') || name === SERIES)) {
     refuse('mixed-mode', `${PATCH_DIR}/ already holds a patch list; migration writes a new list and never merges into one`);
   }
-  const diffs = legacyLedger(projectRoot, inputs).active.filter((file) => path.posix.basename(file) === LEDGER_DIFF);
+  const files = walkInputs(projectRoot, inputs);
+  const diffs = legacyLedger(projectRoot, files).active.filter((file) => path.posix.basename(file) === LEDGER_DIFF);
   if (diffs.length !== 1) {
     refuse('invalid-input', diffs.length === 0
       ? `there is no active legacy source ledger (${LEDGER_DIFF}) to migrate`
@@ -635,7 +637,6 @@ function migrate(flags) {
   if (new Set(names).size !== names.length) refuse('invalid-input', `the ids in ${LEDGER_INDEX} must be unique`);
   refuseOutsideInputs(patches, inputs);
 
-  const files = walkInputs(projectRoot, inputs);
   const scratch = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'fvs-extract-migrate-'));
   try {
     const tree = path.join(scratch, 'tree');
