@@ -24,6 +24,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   consumer accounts Google may use that content (#93).
 - Each reviewer process records its start, end and duration, and crypto review records show the
   reviewer's wall time, so slow rounds can be measured (#94).
+- The verified probe-aeneas workflow also runs on Linux x86_64. Extraction is confined with
+  bubblewrap and works on a separate copy of the project. You need native tools, `/usr/bin/xz`
+  and `/usr/bin/bwrap` with working unprivileged namespaces and seccomp; FVS does not install
+  them, and it stops if confinement is unavailable. Native Windows and Linux arm64 are still
+  unsupported (#77).
 
 ### Changed
 
