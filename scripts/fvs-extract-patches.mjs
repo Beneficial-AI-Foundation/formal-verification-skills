@@ -13,6 +13,9 @@ const MODES = ['translation-patches', 'legacy-source-ledger'];
 const DEFAULT_INPUTS = ['Cargo.toml', 'Cargo.lock', 'build.rs', 'src'];
 const PATCH_DIR = 'translation-patches';
 const SERIES = 'series';
+// Generated artifacts allowed to appear in the extraction copy after prepare:
+// cargo's build directory. Anything else new in the copy is a changed tree.
+const GENERATED_IN_COPY = new Set(['target']);
 const LEDGER_DIFF = 'src-modifications.diff';
 const LEDGER_INDEX = 'src-modifications.json';
 const LEDGER_FILES = [LEDGER_DIFF, LEDGER_INDEX, 'src-modifications.md'];
@@ -60,11 +63,12 @@ function usage() {
     'The original checkout is never written. check rehearses the list in a temporary',
     'copy; prepare builds OUT/tree and OUT/manifest.json (OUT must be a new directory',
     'outside the project); verify-restore compares the touched original sources with',
-    'the recorded start; verify-tree compares OUT/tree with the tree prepare recorded;',
-    'status reads the manifest. migrate turns an active legacy src-modifications ledger',
-    'into translation patches (one per hunk, entries from src-modifications.json kept',
-    'verbatim) and marks the ledger inactive in place with',
-    'src-modifications.inactive.json; it never edits the ledger or the source.',
+    'the recorded start; verify-tree compares every file under OUT/tree, except cargo\'s',
+    'target/ directory, with the tree prepare recorded; status reads the manifest.',
+    'migrate turns an active legacy src-modifications ledger into translation patches',
+    '(one per hunk, entries from src-modifications.json kept verbatim) and marks the',
+    'ledger inactive in place with src-modifications.inactive.json; it never edits',
+    'the ledger or the source.',
     '',
     'Exit codes: 0 ok; 1 a patch does not fit (stale, already applied, not reversible,',
     'or not independent although it declares Independent: yes); 2 usage or internal',
@@ -470,10 +474,10 @@ function prepare(flags) {
       throw new Error('the rehearsal copy reached different states from the extraction copy');
     }
     refuseChangedOriginals(manifest);
-    // The exact tree handed to the next stage: the touched set's hash and every input file.
+    // The exact tree handed to the next stage: the touched set's hash and every file in the copy.
     manifest.final = {
       touchedSha256: sha256(JSON.stringify(touchedState(tree, context.touched))),
-      files: walkInputs(tree, context.inputs),
+      files: copyState(tree),
     };
     manifest.status = 'prepared';
   } catch (error) {
@@ -522,6 +526,23 @@ function status(flags) {
   return { message: `prepared copy at ${manifest.tree}`, manifest };
 }
 
+// Every entry under the extraction copy, not only the recorded inputs, so a
+// file added later (a build script, a .cargo/config.toml) shows up; only the
+// generated artifacts in GENERATED_IN_COPY are left out.
+function copyState(tree) {
+  const files = {};
+  (function visit(relative) {
+    for (const name of fs.readdirSync(path.join(tree, relative)).sort()) {
+      const child = relative ? `${relative}/${name}` : name;
+      if (GENERATED_IN_COPY.has(child)) continue;
+      const absolute = path.join(tree, child);
+      if (fs.lstatSync(absolute).isDirectory()) visit(child);
+      else files[child] = fileState(absolute);
+    }
+  })('');
+  return files;
+}
+
 // The copy as it is now against the tree prepare recorded, so a later stage
 // can show that what it consumed is what the manifest describes.
 function verifyTree(flags) {
@@ -529,7 +550,7 @@ function verifyTree(flags) {
   if (manifest.status !== 'prepared' || !manifest.final) {
     refuse('partial', 'the manifest records no prepared extraction copy; there is no recorded tree to verify', { status: manifest.status });
   }
-  const actual = walkInputs(manifest.tree, manifest.source.inputs);
+  const actual = copyState(manifest.tree);
   const recorded = manifest.final.files;
   const changed = [...new Set([...Object.keys(actual), ...Object.keys(recorded)])].sort()
     .filter((relative) => !sameState(actual[relative] ?? null, recorded[relative] ?? null));

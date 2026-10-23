@@ -574,6 +574,23 @@ describe('fvs-extract-patches: extraction copy identity', () => {
     assert.deepEqual([edited.json.code, edited.json.changed], ['changed-tree', ['src/added.rs', 'src/limits.rs']]);
   });
 
+  it('detects files added to the copy outside the recorded inputs, except the cargo target directory', () => {
+    const root = project(['lib-double']);
+    const out = outDirectory();
+    assert.equal(run('prepare', '--project-root', root, '--out', out).status, 0);
+    const tree = path.join(out, 'tree');
+    fs.mkdirSync(path.join(tree, 'target', 'debug'), { recursive: true });
+    fs.writeFileSync(path.join(tree, 'target', 'debug', 'fixture.d'), 'generated\n');
+    assert.equal(run('verify-tree', '--out', out).status, 0, 'a cargo build artifact was flagged');
+
+    fs.writeFileSync(path.join(tree, 'build.rs'), 'fn main() {}\n');
+    fs.mkdirSync(path.join(tree, '.cargo'));
+    fs.writeFileSync(path.join(tree, '.cargo', 'config.toml'), '[build]\n');
+    const added = run('verify-tree', '--out', out);
+    assert.equal(added.status, 7, added.stdout);
+    assert.deepEqual(added.json.changed, ['.cargo/config.toml', 'build.rs']);
+  });
+
   it('refuses to vouch for a partial copy', () => {
     const out = outDirectory();
     assert.equal(run('prepare', '--project-root', project(['limits-halve']), '--out', out).status, 1);
