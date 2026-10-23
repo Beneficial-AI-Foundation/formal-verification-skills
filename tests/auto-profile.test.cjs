@@ -146,6 +146,26 @@ describe('fvs-auto profile verdicts', () => {
     assert.match(aeneas.nextStep, /nightly-2026\.09\.30-0855ce1/);
   });
 
+  it('counts only Aeneas releases built for this host, keeping foreign ones as evidence', async () => {
+    const linux = 'x86_64-unknown-linux-gnu';
+    const foreignOnly = item(await profileOf(path.join(FIXTURES, 'pilot'), { platform: linux }), 'aeneas');
+    assert.equal(foreignOnly.verdict, 'missing', 'darwin-arm64 binaries are not available on Linux');
+    assert.match(foreignOnly.reason, /aeneas and charon not found for x86_64-unknown-linux-gnu/);
+    assert.match(foreignOnly.reason, /installed releases are for other hosts: nightly-2026\.09\.30-0855ce1\/darwin-arm64/);
+    assert.deepEqual(foreignOnly.evidence.releases.map((entry) => [entry.platform, entry.forHost]), [['darwin-arm64', false]]);
+
+    // darwin-arm64 sorts before linux-x64, so selection must not take the first match.
+    const project = copyFixture('pilot');
+    const local = path.join(project, '.aeneas', 'releases', 'nightly-2026.09.30-0855ce1', 'linux-x64');
+    fs.cpSync(path.join(project, '.aeneas', 'releases', 'nightly-2026.09.30-0855ce1', 'darwin-arm64'), local, { recursive: true });
+    const mixed = item(await profileOf(project, { platform: linux }), 'aeneas');
+    assert.equal(mixed.verdict, 'available-but-unverified');
+    assert.equal(mixed.evidence.aeneas, path.join(local, 'aeneas'));
+    assert.equal(mixed.evidence.charon.path, path.join(local, 'charon'));
+    assert.deepEqual(mixed.evidence.releases.map((entry) => [entry.platform, entry.forHost]),
+      [['darwin-arm64', false], ['linux-x64', true]]);
+  });
+
   it('reports provenance that contradicts a tested tuple on a pinned field as incompatible', async () => {
     const project = copyFixture('tested', {
       files: { 'Lean/translation.json': translation({ aeneas_version: '6e167c9b', charon_version: '0.1.226' }) },

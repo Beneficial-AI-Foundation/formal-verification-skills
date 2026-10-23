@@ -240,31 +240,44 @@ function manifestInputRev(root) {
   }
 }
 
-// Installed releases under .aeneas/releases/<tag>/<platform>/.
-// ponytail: platform directory names are not matched against the host; add
-// that when a project carries releases for several platforms.
-function aeneasReleases(root) {
+// The CPU and OS a release directory or target name stands for, from common
+// spellings (darwin-arm64, macos-aarch64, aarch64-apple-darwin, linux-x64,
+// x86_64-unknown-linux-gnu). Null when the name says neither clearly.
+function cpuAndOs(name) {
+  const tokens = name.toLowerCase().split(/[-_.]/);
+  const has = (...words) => words.some((word) => tokens.includes(word));
+  const cpu = has('arm64', 'aarch64') ? 'aarch64' : has('x64', 'x86', 'amd64') ? 'x86_64' : null;
+  const system = has('darwin', 'macos', 'apple') ? 'darwin' : has('linux') ? 'linux'
+    : has('windows', 'win32', 'msvc') ? 'windows' : null;
+  return cpu && system ? `${cpu}-${system}` : null;
+}
+
+// Installed releases under .aeneas/releases/<tag>/<platform>/. Only a
+// release whose directory name clearly matches the host counts as usable.
+function aeneasReleases(root, platform) {
+  const host = cpuAndOs(platform);
   const base = path.join(root, '.aeneas', 'releases');
-  return sortedDirectories(base).flatMap((tag) => sortedDirectories(path.join(base, tag)).map((platform) => {
-    const directory = path.join(base, tag, platform);
+  return sortedDirectories(base).flatMap((tag) => sortedDirectories(path.join(base, tag)).map((name) => {
+    const directory = path.join(base, tag, name);
     return {
       tag,
-      platform,
+      platform: name,
+      forHost: host !== null && cpuAndOs(name) === host,
       aeneas: executableFile(path.join(directory, 'aeneas')),
       charon: executableFile(path.join(directory, 'charon')),
     };
   }));
 }
 
-function aeneasItem(root, provenance) {
+function aeneasItem(root, platform, provenance) {
   const lakefile = lakefileAeneas(root);
   const inputRev = manifestInputRev(root);
   const pins = [...new Set([lakefile.rev, inputRev, provenance.aeneasRev].filter(Boolean))];
-  const releases = aeneasReleases(root);
-  // With no pin at all, any installed release counts as present; which
-  // Aeneas Lake would use is then reported as uncertain.
-  const release = releases.find((entry) =>
-    (pins.length === 0 || pins.includes(entry.tag)) && entry.aeneas && entry.charon) ?? null;
+  const releases = aeneasReleases(root, platform);
+  // With no pin at all, any installed release for this host counts as
+  // present; which Aeneas Lake would use is then reported as uncertain.
+  const pinned = releases.filter((entry) => pins.length === 0 || pins.includes(entry.tag));
+  const release = pinned.find((entry) => entry.forHost && entry.aeneas && entry.charon) ?? null;
   const evidence = {
     lakefile,
     manifest: { rev: provenance.aeneasRev, inputRev },
@@ -295,13 +308,16 @@ function aeneasItem(root, provenance) {
     .filter(([, found]) => !found).map(([name]) => name);
   if (absent.length > 0) {
     const rev = lakefile.rev ?? inputRev ?? provenance.aeneasRev;
-    const install = `Aeneas and Charon for ${rev ?? 'it'} (an Aeneas release from https://github.com/AeneasVerif/aeneas/releases bundles both) under .aeneas/releases/${rev ?? '<rev>'}/<platform>/, or put aeneas and charon on PATH.`;
+    const install = `Aeneas and Charon for ${rev ?? 'it'} built for ${platform} (an Aeneas release from https://github.com/AeneasVerif/aeneas/releases bundles both) under .aeneas/releases/${rev ?? '<rev>'}/<platform>/, or put aeneas and charon on PATH.`;
     let step = `Install ${install}`;
     if (!rev) step = `Pin the Aeneas rev in the lakefile, then install ${install}`;
     else if (uncertainty) step = `Run lake update so lake-manifest.json matches the lakefile, then install ${install}`;
-    return item('aeneas', 'missing',
-      `${absent.join(' and ')} not found under .aeneas/releases/${pins.join(' or ') || '*'}/ or on PATH${uncertainty ? `; ${uncertainty}` : ''}`,
-      step, evidence);
+    const foreign = pinned.filter((entry) => !entry.forHost).map((entry) => `${entry.tag}/${entry.platform}`);
+    return item('aeneas', 'missing', [
+      `${absent.join(' and ')} not found for ${platform} under .aeneas/releases/${pins.join(' or ') || '*'}/ or on PATH`,
+      ...(foreign.length > 0 ? [`installed releases are for other hosts: ${foreign.join(', ')}`] : []),
+      ...(uncertainty ? [uncertainty] : []),
+    ].join('; '), step, evidence);
   }
   if (uncertainty) {
     return item('aeneas', 'available-but-unverified', uncertainty, pins.length === 0
@@ -448,7 +464,7 @@ export function profile({ projectRoot, platform = hostTarget() }) {
       aoItem(),
       rustItem(root, resolver.provenance.rustProject),
       leanItem(root),
-      aeneasItem(root, resolver.provenance),
+      aeneasItem(root, platform, resolver.provenance),
       probeItem(root, platform, resolver),
     ],
   };
