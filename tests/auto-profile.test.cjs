@@ -189,11 +189,17 @@ describe('fvs-auto profile verdicts', () => {
   it('reports a lakefile Aeneas pin that lake-manifest.json has not resolved as unverified until lake update', async () => {
     const lakefile = fs.readFileSync(path.join(FIXTURES, 'pilot', 'lakefile.toml'), 'utf8')
       .replace('nightly-2026.09.30-0855ce1', 'nightly-2026.10.14-1234abc');
+    const stale = /lakefile\.toml requires Aeneas nightly-2026\.10\.14-1234abc but lake-manifest\.json resolved nightly-2026\.09\.30-0855ce1/;
     const aeneas = item(await profileOf(copyFixture('pilot', { files: { 'lakefile.toml': lakefile } })), 'aeneas');
     assert.equal(aeneas.verdict, 'available-but-unverified');
-    assert.match(aeneas.reason,
-      /lakefile\.toml requires Aeneas nightly-2026\.10\.14-1234abc but lake-manifest\.json resolved nightly-2026\.09\.30-0855ce1/);
+    assert.match(aeneas.reason, stale);
     assert.match(aeneas.nextStep, /lake update/);
+
+    const absent = item(await profileOf(copyFixture('pilot', { omit: ['.aeneas'], files: { 'lakefile.toml': lakefile } })), 'aeneas');
+    assert.equal(absent.verdict, 'missing', 'an uncertain pin never hides absent binaries');
+    assert.match(absent.reason, /aeneas and charon not found/);
+    assert.match(absent.reason, stale);
+    assert.match(absent.nextStep, /lake update.*install Aeneas and Charon for nightly-2026\.10\.14-1234abc/);
   });
 
   it('reads the Rust toolchain pin the crate directory sees', async () => {
@@ -219,10 +225,18 @@ describe('fvs-auto profile verdicts', () => {
   it('reports an Aeneas requirement without a readable revision as unverified, never inventing one', async () => {
     const lakefile = fs.readFileSync(path.join(FIXTURES, 'fresh', 'lakefile.toml'), 'utf8')
       .replace(/^rev = .*\n/m, '');
+    const unread = /lakefile\.toml requires aeneas but no revision was read from it/;
     const aeneas = item(await profileOf(copyFixture('fresh', { files: { 'lakefile.toml': lakefile } })), 'aeneas');
     assert.equal(aeneas.verdict, 'available-but-unverified');
-    assert.match(aeneas.reason, /lakefile\.toml requires aeneas but no revision was read from it/);
+    assert.match(aeneas.reason, unread);
     assert.deepEqual(aeneas.evidence.lakefile, { file: 'lakefile.toml', required: true, rev: null });
+
+    const absent = item(await profileOf(copyFixture('fresh', { omit: ['.aeneas'], files: { 'lakefile.toml': lakefile } })), 'aeneas');
+    assert.equal(absent.verdict, 'missing', 'an unread pin never hides absent binaries');
+    assert.match(absent.reason, /aeneas and charon not found/);
+    assert.match(absent.reason, unread);
+    assert.match(absent.nextStep, /^Pin the Aeneas rev in the lakefile, then install Aeneas and Charon for it/);
+    assert.equal(absent.evidence.lakefile.rev, null, 'no revision is invented');
   });
 
   it('reports the exact tested tuple on aarch64-apple-darwin as supported and tested, scoped to the probe inventory', async () => {

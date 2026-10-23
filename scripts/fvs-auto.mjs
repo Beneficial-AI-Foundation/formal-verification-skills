@@ -259,9 +259,12 @@ function aeneasReleases(root) {
 function aeneasItem(root, provenance) {
   const lakefile = lakefileAeneas(root);
   const inputRev = manifestInputRev(root);
-  const pin = inputRev ?? lakefile.rev;
+  const pins = [...new Set([lakefile.rev, inputRev, provenance.aeneasRev].filter(Boolean))];
   const releases = aeneasReleases(root);
-  const release = releases.find((entry) => entry.tag === pin && entry.aeneas && entry.charon) ?? null;
+  // With no pin at all, any installed release counts as present; which
+  // Aeneas Lake would use is then reported as uncertain.
+  const release = releases.find((entry) =>
+    (pins.length === 0 || pins.includes(entry.tag)) && entry.aeneas && entry.charon) ?? null;
   const evidence = {
     lakefile,
     manifest: { rev: provenance.aeneasRev, inputRev },
@@ -270,13 +273,7 @@ function aeneasItem(root, provenance) {
     aeneas: release?.aeneas ?? which('aeneas'),
     charon: { path: release?.charon ?? which('charon'), version: null, output: null },
   };
-  if (!pin && !provenance.aeneasRev) {
-    if (lakefile.required) {
-      return item('aeneas', 'available-but-unverified',
-        `${lakefile.file} requires aeneas but no revision was read from it, and lake-manifest.json pins none`,
-        'Pin the Aeneas rev in the lakefile, or run lake update so lake-manifest.json records the resolved revision, then rerun the profile.',
-        evidence);
-    }
+  if (pins.length === 0 && !lakefile.required) {
     return item('aeneas', 'missing', 'no Aeneas requirement in the lakefile or lake-manifest.json',
       'Require the Aeneas Lean backend in lakefile.toml ([[require]] name = "aeneas" with a pinned rev).', evidence);
   }
@@ -286,17 +283,30 @@ function aeneasItem(root, provenance) {
       'Regenerate the extraction so translation.json, lake-manifest.json and aeneas-config.yml agree, then rerun the profile.',
       evidence);
   }
-  if (lakefile.rev && inputRev && lakefile.rev !== inputRev) {
-    return item('aeneas', 'available-but-unverified',
-      `${lakefile.file} requires Aeneas ${lakefile.rev} but lake-manifest.json resolved ${inputRev}, so which Aeneas Lake uses is uncertain`,
-      'Run lake update so lake-manifest.json matches the lakefile, then rerun the profile.', evidence);
+  // An uncertain pin never hides absent binaries: presence is checked first
+  // and the uncertainty is carried into the reason.
+  let uncertainty = null;
+  if (pins.length === 0) {
+    uncertainty = `${lakefile.file} requires aeneas but no revision was read from it, and lake-manifest.json pins none`;
+  } else if (lakefile.rev && inputRev && lakefile.rev !== inputRev) {
+    uncertainty = `${lakefile.file} requires Aeneas ${lakefile.rev} but lake-manifest.json resolved ${inputRev}, so which Aeneas Lake uses is uncertain`;
   }
   const absent = [['aeneas', evidence.aeneas], ['charon', evidence.charon.path]]
     .filter(([, found]) => !found).map(([name]) => name);
   if (absent.length > 0) {
-    return item('aeneas', 'missing', `${absent.join(' and ')} not found under .aeneas/releases/${pin}/ or on PATH`,
-      `Install Aeneas and Charon for ${pin} (an Aeneas release from https://github.com/AeneasVerif/aeneas/releases bundles both) under .aeneas/releases/${pin}/<platform>/, or put aeneas and charon on PATH.`,
-      evidence);
+    const rev = lakefile.rev ?? inputRev ?? provenance.aeneasRev;
+    const install = `Aeneas and Charon for ${rev ?? 'it'} (an Aeneas release from https://github.com/AeneasVerif/aeneas/releases bundles both) under .aeneas/releases/${rev ?? '<rev>'}/<platform>/, or put aeneas and charon on PATH.`;
+    let step = `Install ${install}`;
+    if (!rev) step = `Pin the Aeneas rev in the lakefile, then install ${install}`;
+    else if (uncertainty) step = `Run lake update so lake-manifest.json matches the lakefile, then install ${install}`;
+    return item('aeneas', 'missing',
+      `${absent.join(' and ')} not found under .aeneas/releases/${pins.join(' or ') || '*'}/ or on PATH${uncertainty ? `; ${uncertainty}` : ''}`,
+      step, evidence);
+  }
+  if (uncertainty) {
+    return item('aeneas', 'available-but-unverified', uncertainty, pins.length === 0
+      ? 'Pin the Aeneas rev in the lakefile, or run lake update so lake-manifest.json records the resolved revision, then rerun the profile.'
+      : 'Run lake update so lake-manifest.json matches the lakefile, then rerun the profile.', evidence);
   }
   // Only the installed Charon counts here: it is what the next extraction
   // uses. The probe item judges the one recorded in translation.json.
@@ -306,7 +316,7 @@ function aeneasItem(root, provenance) {
   charon.version = run?.ok ? run.stdout.match(/\b(\d+\.\d+\.\d+)\b/)?.[1] ?? null : null;
 
   const tuples = compareTuples({
-    aeneas: provenance.aeneasRev ?? pin,
+    aeneas: provenance.aeneasRev ?? inputRev ?? lakefile.rev,
     charon: charon.version,
     lean: provenance.leanToolchain,
   });
