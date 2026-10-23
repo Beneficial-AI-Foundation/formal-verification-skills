@@ -617,7 +617,7 @@ const HELPER_SETUP = {
 
 const PREREQUISITE_NOTE = 'The confined run has no network: build the Lean project (lake exe cache get, lake build) and fetch Cargo dependencies (cargo fetch) first.';
 const LINUX_CONFINEMENT_GUIDANCE = 'Check whether unprivileged user namespaces are permitted, including any AppArmor restrictions. FVS does not change system security policy.';
-const SANDBOX_EXEC = '/usr/bin/sandbox-exec';
+export const SANDBOX_EXEC = '/usr/bin/sandbox-exec';
 const BSDTAR = '/usr/bin/tar';
 const CHOICES = ['setup', 'continue-without-graph', 'cancel'];
 const MAX_ARCHIVE_BYTES = 32 * 1024 * 1024;
@@ -646,7 +646,7 @@ function sha256File(file) {
   return sha256(fs.readFileSync(file));
 }
 
-function executableFile(file) {
+export function executableFile(file) {
   try {
     if (!fs.statSync(file).isFile()) return null;
     fs.accessSync(file, fs.constants.X_OK);
@@ -656,7 +656,7 @@ function executableFile(file) {
   }
 }
 
-function which(name) {
+export function which(name) {
   for (const dir of (process.env.PATH || '').split(path.delimiter)) {
     if (!path.isAbsolute(dir)) continue;
     const found = executableFile(path.join(dir, name));
@@ -831,7 +831,7 @@ const READ_ONLY_POLICY = [
   `(allow file-write* ${READ_ONLY_DEVICES.join(' ')})`,
 ].join('\n');
 
-function readOnlyRun(bin, args, cwd, { projectRoot = null, toolPaths = null } = {}) {
+export function readOnlyRun(bin, args, cwd, { projectRoot = null, toolPaths = null } = {}) {
   if (process.platform === 'linux') {
     const unavailable = (diagnostic) => ({
       ok: false, stdout: '', output: '', confinementError: `Linux confinement unavailable: ${diagnostic}`,

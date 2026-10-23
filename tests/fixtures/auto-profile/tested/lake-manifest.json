@@ -1,0 +1,15 @@
+{"version": "1.1.0",
+ "packagesDir": ".lake/packages",
+ "packages":
+ [{"url": "https://github.com/AeneasVerif/aeneas.git",
+   "type": "git",
+   "subDir": "backends/lean",
+   "scope": "",
+   "rev": "6e167c9b63a4dafd66d0e0edd9d94669f957ff7b",
+   "name": "aeneas",
+   "manifestFile": "lake-manifest.json",
+   "inputRev": "6e167c9b63a4dafd66d0e0edd9d94669f957ff7b",
+   "inherited": false,
+   "configFile": "lakefile.lean"}],
+ "name": "Crate",
+ "lakeDir": ".lake"}
