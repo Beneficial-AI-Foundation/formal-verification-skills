@@ -616,6 +616,7 @@ const HELPER_SETUP = {
 };
 
 const PREREQUISITE_NOTE = 'The confined run has no network: build the Lean project (lake exe cache get, lake build) and fetch Cargo dependencies (cargo fetch) first.';
+const LINUX_CONFINEMENT_GUIDANCE = 'Check whether unprivileged user namespaces are permitted, including any AppArmor restrictions. FVS does not change system security policy.';
 const SANDBOX_EXEC = '/usr/bin/sandbox-exec';
 const BSDTAR = '/usr/bin/tar';
 const CHOICES = ['setup', 'continue-without-graph', 'cancel'];
@@ -832,15 +833,27 @@ const READ_ONLY_POLICY = [
 
 function readOnlyRun(bin, args, cwd, { projectRoot = null, toolPaths = null } = {}) {
   if (process.platform === 'linux') {
+    const unavailable = (diagnostic) => ({
+      ok: false, stdout: '', output: '', confinementError: `Linux confinement unavailable: ${diagnostic}`,
+    });
     try {
-      const result = runLinuxSandbox(planLinuxSandbox({
+      const plan = planLinuxSandbox({
         command: bin, commandArgs: args, cwd, sourceEnv: process.env,
         readOnlyPaths: projectRoot ? [projectRoot] : [], toolPaths,
-      }));
+      });
+      const ready = runLinuxSandbox({
+        ...plan, command: '/usr/bin/true',
+        args: [...plan.args.slice(0, -args.length - 1), '/usr/bin/true'],
+      });
+      if (!ready.ok) return unavailable(ready.stderr.trim() || ready.error);
+      const result = bin === '/usr/bin/true' && args.length === 0 ? ready : runLinuxSandbox(plan);
+      if (!result.ok && (/^bwrap:/m.test(result.stderr) || ['ENOENT', 'EACCES'].includes(result.spawnError))) {
+        return unavailable(result.stderr.trim() || result.error);
+      }
       const output = `${result.stdout ?? ''}${result.stderr ?? ''}`.trim();
       return { ok: result.ok, stdout: (result.stdout ?? '').trim(), output: output || result.error || '' };
     } catch (error) {
-      return { ok: false, stdout: '', output: `Linux confinement unavailable: ${error.message}` };
+      return unavailable(error.message);
     }
   }
   if (process.platform !== 'darwin' || !fs.existsSync(SANDBOX_EXEC)) {
@@ -880,6 +893,11 @@ function checkHelpers(spec, provenance, selected) {
     results[name] = entry;
     if (!bin) continue;
     const version = readOnlyRun(bin, ['--version'], cwd, context);
+    if (version.confinementError) {
+      entry.status = 'incompatible';
+      entry.confinementError = version.confinementError;
+      continue;
+    }
     if (!version.ok) {
       entry.found = firstLine(version.output);
       if (name !== 'rust-analyzer') entry.status = 'incompatible';
@@ -895,6 +913,12 @@ function checkHelpers(spec, provenance, selected) {
     if (entry.status === 'ok' && expected.components) {
       const rustup = selected.rustupPath;
       const listed = rustup ? readOnlyRun(rustup, ['component', 'list', '--installed'], cwd, context) : null;
+      if (listed?.confinementError) {
+        entry.status = 'incompatible';
+        entry.found = null;
+        entry.confinementError = listed.confinementError;
+        continue;
+      }
       const installed = listed?.ok ? listed.stdout.split(/\r?\n/).map((line) => line.trim()) : [];
       const absent = expected.components.filter((component) =>
         !installed.some((line) => line === component || line.startsWith(`${component}-`)));
@@ -927,10 +951,11 @@ function checkProbe(candidate, asset, cwd, context) {
   probe.path = fs.realpathSync(bin);
   probe.sha256 = sha256File(probe.path);
   probe.official = Boolean(asset?.executableSha256) && probe.sha256 === asset.executableSha256;
-  if (candidate.source === 'fvs-managed' && !probe.official) {
-    return { ...probe, reason: 'the FVS-managed probe-aeneas does not match the pinned executable digest' };
+  if (!probe.official) {
+    return { ...probe, reason: 'the probe-aeneas executable does not match the pinned executable digest' };
   }
   const version = readOnlyRun(probe.path, ['--version'], cwd, context);
+  if (version.confinementError) return { ...probe, confinementError: version.confinementError, reason: version.confinementError };
   probe.version = firstLine(version.ok ? version.stdout : version.output);
   const expected = `probe-aeneas ${PROBE_RELEASE.version}`;
   if (!version.ok || probe.version !== expected) return { ...probe, reason: `found "${probe.version}", the tested release is "${expected}"` };
@@ -972,6 +997,12 @@ export function resolveProbe({ projectRoot, probe = null, platform = hostTarget(
     result.status = status;
     if (status === 'verified') result.choices = [];
     return result;
+  };
+  const unavailable = (diagnostic) => {
+    result.confinementError = diagnostic;
+    result.reasons.push(diagnostic);
+    result.manual.push(LINUX_CONFINEMENT_GUIDANCE);
+    return finish('incompatible');
   };
 
   if (!asset?.supported) {
@@ -1016,13 +1047,18 @@ export function resolveProbe({ projectRoot, probe = null, platform = hostTarget(
     try {
       validateLinuxToolPaths(selected, { projectRoot: root });
     } catch (error) {
-      result.reasons.push(`unsupported helper layout: ${error.message}`);
-      result.manual.push('Use helper paths supported by Linux confinement, or continue without a graph. Existing helpers were left unchanged.');
-      return finish('incompatible');
+      return unavailable(`Linux confinement unavailable: unsupported helper layout: ${error.message}`);
     }
+    const ready = readOnlyRun('/usr/bin/true', [], provenance.rustProject,
+      { projectRoot: root, toolPaths: selected });
+    if (ready.confinementError) return unavailable(ready.confinementError);
   }
   result.probe = checkProbe(candidateProbe(probe, platform), asset, provenance.rustProject,
     { projectRoot: root, toolPaths: selected });
+  if (result.probe.confinementError) return unavailable(result.probe.confinementError);
+  result.helpers = checkHelpers(tested.helpers, provenance, selected);
+  const blockedHelper = Object.values(result.helpers).find((helper) => helper.confinementError);
+  if (blockedHelper) return unavailable(blockedHelper.confinementError);
   if (result.probe.status !== 'ok') {
     result.reasons.push(`probe-aeneas ${result.probe.status}: ${result.probe.reason}`);
     const destination = managedProbePath(toolsHome(), platform);
@@ -1038,7 +1074,6 @@ export function resolveProbe({ projectRoot, probe = null, platform = hostTarget(
     };
     result.manual.push(`FVS can install the official probe-aeneas ${PROBE_RELEASE.tag} side by side at ${destination} after consent (install --consent interactive). Manually: download ${result.install.url}, check sha256 ${asset.archiveSha256}, unpack it and pass the absolute executable path with --probe.`);
   }
-  result.helpers = checkHelpers(tested.helpers, provenance, selected);
   for (const [name, helper] of Object.entries(result.helpers)) {
     if (helper.status === 'ok') continue;
     result.reasons.push(`${name} ${helper.status}: expected "${helper.expected}", found ${helper.found ? `"${helper.found}"` : 'nothing'}`);
@@ -1405,6 +1440,7 @@ export async function installProbe({
     const staged = path.join(staging, release.tool);
     fs.writeFileSync(staged, executableBytes, { mode: 0o755 });
     const version = readOnlyRun(staged, ['--version'], staging);
+    if (version.confinementError) fatal(`${version.confinementError}. ${LINUX_CONFINEMENT_GUIDANCE}`);
     record.versionOutput = firstLine(version.ok ? version.stdout : version.output);
     if (!version.ok || record.versionOutput !== `${release.tool} ${release.version}`) fatal(`staged executable reports "${record.versionOutput}"`);
     record.outcome = 'installed';
@@ -1489,6 +1525,7 @@ async function installCli(argv) {
   const result = resolveProbe({ projectRoot: flags['project-root'] });
   if (!result.install.available) {
     process.stderr.write(renderResolveText(result));
+    if (result.confinementError) return 3;
     if (result.status === 'verified') {
       process.stderr.write('FVS >> nothing to install: probe-aeneas is already verified for this project\n');
       return 0;
