@@ -91,9 +91,10 @@ DEFER-WITH-RULING, REJECT-FINDING, ASK-HUMAN and the accepted-major-reuse rule.
 Preserve `validation-*/raw-response.md` byte-for-byte. If deterministic formatting normalization
 is needed, keep the cleaned copy separately as `validation-*/normalized-response.md`; the sibling
 README identifies both. The authoring seat exclusively writes separate immutable
-`PLAN_REVIEW_nN_TRIAGE.md` or `FOLLOWUP_REVIEW_nN_TRIAGE.md`, recording finding IDs,
-accept/reject/defer evidence, requested/observed provenance, pre-edit and post-edit hashes, gates,
-and status.
+`PLAN_REVIEW_nN_TRIAGE.md` or `FOLLOWUP_REVIEW_nN_TRIAGE.md`, recording requested/observed
+provenance, pre-edit and post-edit hashes, gates, status, and checked evidence with finding IDs
+only for REJECT-FINDING, DESCOPE, DEFER-WITH-RULING and applied edits; dispositions are recorded
+only after a REJECT verdict.
 
 Persist `Stage settings:` in the completed review and separate authoring-seat triage under `crypto_review`, using the single
 Stage settings evidence contract in `model-profiles.md`: requested and resolved
@@ -105,8 +106,9 @@ A real reported mismatch needs an actionable supported choice/reconfirmation, no
 substitution. Legacy missing metadata stays unknown; immutable history is not backfilled.
 
 - APPROVE -> `approved`.
-- APPROVE-WITH-EDITS -> authoring seat applies accepted bounded edits, reruns plan gates, and sets
-  `approved after edits`; terminal without another review (no second review).
+- APPROVE-WITH-EDITS -> authoring seat applies accepted bounded edits, reruns the plan contract
+  checks (not Lean builds), and sets `approved after edits`; terminal without another review
+  (no second review).
 - REJECT -> fresh authored revision and fresh review; never convert it to bounded edits.
 
 A REJECT round passes its prior review and triage as delimited untrusted `--history`, never as
