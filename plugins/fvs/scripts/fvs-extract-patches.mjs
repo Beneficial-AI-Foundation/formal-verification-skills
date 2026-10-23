@@ -26,6 +26,7 @@ const EXIT = {
   'legacy-mode': 4,
   'invalid-input': 5,
   partial: 6,
+  'changed-tree': 7,
 };
 
 class Refusal extends Error {
@@ -45,6 +46,7 @@ function usage() {
     'Usage: node fvs-extract-patches.mjs check --project-root DIR [--format json|text]',
     '       node fvs-extract-patches.mjs prepare --project-root DIR --out DIR [--format json|text]',
     '       node fvs-extract-patches.mjs verify-restore --out DIR [--format json|text]',
+    '       node fvs-extract-patches.mjs verify-tree --out DIR [--format json|text]',
     '       node fvs-extract-patches.mjs status --out DIR [--format json|text]',
     '',
     'Applies the translation patches in DIR/translation-patches, in the order listed',
@@ -54,11 +56,13 @@ function usage() {
     'The original checkout is never written. check rehearses the list in a temporary',
     'copy; prepare builds OUT/tree and OUT/manifest.json (OUT must be a new directory',
     'outside the project); verify-restore compares the touched original sources with',
-    'the recorded start; status reads the manifest.',
+    'the recorded start; verify-tree compares OUT/tree with the tree prepare recorded;',
+    'status reads the manifest.',
     '',
     'Exit codes: 0 ok; 1 a patch does not fit (stale, already applied, not reversible,',
     'or not independent although it declares Independent: yes); 2 usage or internal',
-    'error; 3 dirty original; 4 mixed or legacy mode; 5 invalid input; 6 partial manifest.',
+    'error; 3 dirty original; 4 mixed or legacy mode; 5 invalid input; 6 partial manifest;',
+    '7 the extraction copy changed after prepare.',
   ].join('\n') + '\n');
 }
 
@@ -207,7 +211,8 @@ function walkInputs(root, inputs) {
   const files = {};
   function visit(relative) {
     const absolute = path.join(root, relative);
-    const stat = fs.lstatSync(absolute);
+    const stat = fs.lstatSync(absolute, { throwIfNoEntry: false });
+    if (!stat) return; // an input a patch deleted from the copy
     if (stat.isSymbolicLink()) {
       refuse('invalid-input', `${relative} is a symbolic link; the extraction input set takes only regular files, so replace it with the intended content or leave it out of extraction.inputs`, { kind: 'symlink', path: relative });
     }
@@ -411,6 +416,11 @@ function prepare(flags) {
       throw new Error('the rehearsal copy reached different states from the extraction copy');
     }
     refuseChangedOriginals(manifest);
+    // The exact tree handed to the next stage: the touched set's hash and every input file.
+    manifest.final = {
+      touchedSha256: sha256(JSON.stringify(touchedState(tree, context.touched))),
+      files: walkInputs(tree, context.inputs),
+    };
     manifest.status = 'prepared';
   } catch (error) {
     manifest.failure = error instanceof Refusal
@@ -458,10 +468,28 @@ function status(flags) {
   return { message: `prepared copy at ${manifest.tree}`, manifest };
 }
 
+// The copy as it is now against the tree prepare recorded, so a later stage
+// can show that what it consumed is what the manifest describes.
+function verifyTree(flags) {
+  const manifest = readManifest(flags.out);
+  if (manifest.status !== 'prepared') {
+    refuse('partial', 'the manifest records a partial extraction copy; there is no recorded tree to verify', { status: manifest.status });
+  }
+  const actual = walkInputs(manifest.tree, manifest.source.inputs);
+  const recorded = manifest.final.files;
+  const changed = [...new Set([...Object.keys(actual), ...Object.keys(recorded)])].sort()
+    .filter((relative) => !sameState(actual[relative] ?? null, recorded[relative] ?? null));
+  if (changed.length > 0) {
+    refuse('changed-tree', `the extraction copy differs from the recorded tree: ${changed.join(', ')}`, { changed });
+  }
+  return { message: `the extraction copy matches the recorded tree (${Object.keys(recorded).length} file(s))`, touchedSha256: manifest.final.touchedSha256 };
+}
+
 const COMMANDS = {
   check: { required: ['project-root'], run: check },
   prepare: { required: ['project-root', 'out'], run: prepare },
   'verify-restore': { required: ['out'], run: verifyRestore },
+  'verify-tree': { required: ['out'], run: verifyTree },
   status: { required: ['out'], run: status },
 };
 

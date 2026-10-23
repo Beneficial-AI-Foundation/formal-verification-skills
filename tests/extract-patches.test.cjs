@@ -431,6 +431,34 @@ describe('fvs-extract-patches: restoration check', () => {
   });
 });
 
+describe('fvs-extract-patches: extraction copy identity', () => {
+  it('records the tree handed to the next stage and detects an unrecorded edit in it', () => {
+    const root = project(['limits-imports', 'limits-clamp', 'lib-double']);
+    const out = outDirectory();
+    assert.equal(run('prepare', '--project-root', root, '--out', out).status, 0);
+    const manifest = readManifest(out);
+    assert.match(manifest.final.touchedSha256, /^[0-9a-f]{64}$/);
+    assert.equal(manifest.final.files['src/limits.rs'].sha256, sha256(PATCHED_LIMITS));
+    assert.deepEqual(Object.keys(manifest.final.files).sort(), ['Cargo.toml', 'src/lib.rs', 'src/limits.rs']);
+    assert.equal(run('verify-tree', '--out', out).status, 0);
+
+    const copied = path.join(out, 'tree', 'src', 'limits.rs');
+    fs.appendFileSync(copied, '// edited after prepare\n');
+    fs.writeFileSync(path.join(out, 'tree', 'src', 'added.rs'), 'pub fn added() {}\n');
+    const edited = run('verify-tree', '--out', out);
+    assert.equal(edited.status, 7, edited.stdout);
+    assert.deepEqual([edited.json.code, edited.json.changed], ['changed-tree', ['src/added.rs', 'src/limits.rs']]);
+  });
+
+  it('refuses to vouch for a partial copy', () => {
+    const out = outDirectory();
+    assert.equal(run('prepare', '--project-root', project(['limits-halve']), '--out', out).status, 1);
+    const verified = run('verify-tree', '--out', out);
+    assert.equal(verified.status, 6, verified.stdout);
+    assert.equal(verified.json.code, 'partial');
+  });
+});
+
 describe('fvs-extract-patches: patch file convention', () => {
   it('rejects a patch without the Change, Why and Behaviour header', () => {
     const root = project(['lib-double']);
