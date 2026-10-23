@@ -98,6 +98,7 @@ describe('Installer (install + uninstall round-trip)', () => {
       'scripts/fvs-codex-think.mjs',
       'scripts/fvs-lean-style-check.mjs',
       'scripts/fvs-probe-inventory.mjs',
+      'scripts/fvs-probe-linux.mjs',
       'scripts/fvs-spec-review.mjs',
     ];
     for (const rel of checks) {
@@ -493,6 +494,32 @@ describe('installed tree matches final bundle shape', () => {
     assert.ok(!Object.hasOwn(config, 'model'),
       'obsolete nested model config would be ignored by command resolvers');
   });
+});
+
+describe('probe runtime dependencies in every direct install mode', () => {
+  for (const runtime of ['claude', 'codex', 'opencode', 'antigravity']) {
+    for (const scope of ['local', 'global']) {
+      it(`${runtime} ${scope} installs both probe modules and resolves without missing imports`, () => {
+        const directory = makeTmpDir(`fvs-probe-${runtime}-${scope}-`);
+        const home = path.join(directory, 'home');
+        const project = path.join(directory, 'project');
+        fs.mkdirSync(home);
+        fs.mkdirSync(project);
+        const configDir = scope === 'global' ? path.join(directory, 'installed')
+          : path.join(project, runtime === 'antigravity' ? '.agents' : `.${runtime}`);
+        const target = runtime === 'antigravity' ? path.join(configDir, 'plugins', 'fvs') : configDir;
+        const args = [INSTALLER, `--${runtime}`, `--${scope}`];
+        if (scope === 'global') args.push('--config-dir', configDir);
+        const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: path.join(home, '.config') };
+        execFileSync(process.execPath, args, { cwd: project, env, stdio: 'pipe' });
+        for (const name of ['fvs-probe-inventory.mjs', 'fvs-probe-linux.mjs']) {
+          assert.ok(fs.existsSync(path.join(target, 'scripts', name)), name);
+        }
+        const result = JSON.parse(execFileSync(process.execPath, [path.join(target, 'scripts', 'fvs-probe-inventory.mjs'), 'resolve', '--project-root', project], { env, encoding: 'utf8' }));
+        assert.ok(['unsupported-platform', 'unknown'].includes(result.status));
+      });
+    }
+  }
 });
 
 describe('Antigravity native plugin install', () => {
