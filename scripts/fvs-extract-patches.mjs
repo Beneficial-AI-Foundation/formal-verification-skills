@@ -99,6 +99,22 @@ function fileState(file) {
   return { sha256: sha256(fs.readFileSync(file)), mode: (stat.mode & 0o777).toString(8) };
 }
 
+// Every existing component of a project-relative directory must be a real
+// directory, checked without following links: a link anywhere on the path
+// would carry a read or a write outside the project.
+function refuseLinkedDirectory(projectRoot, relative) {
+  let current = projectRoot;
+  for (const part of relative.split('/').filter((segment) => segment !== '' && segment !== '.')) {
+    current = path.join(current, part);
+    const stat = fs.lstatSync(current, { throwIfNoEntry: false });
+    if (!stat) return;
+    if (!stat.isDirectory()) {
+      const shown = path.relative(projectRoot, current);
+      refuse('invalid-input', `${shown} is ${stat.isSymbolicLink() ? 'a symbolic link' : 'not a directory'}; the engine reads and writes only through real directories inside the project`, { kind: stat.isSymbolicLink() ? 'symlink' : 'not-a-directory', path: shown });
+    }
+  }
+}
+
 function readJson(file) {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -127,6 +143,7 @@ function inputPaths(projectRoot, config) {
       || input.split('/').some((part) => ['', '.', '..'].includes(part) || FORBIDDEN_SEGMENTS.has(part))) {
       refuse('invalid-input', `extraction.inputs entry ${JSON.stringify(input)} must be a plain project-relative path outside .git, .formalising and .planning`);
     }
+    refuseLinkedDirectory(projectRoot, path.posix.dirname(input));
     if (!lexists(path.join(projectRoot, input))) refuse('invalid-input', `extraction input ${input} does not exist`);
   }
   return [...new Set(configured)].sort();
@@ -162,6 +179,7 @@ function parsePatch(name, bytes) {
 // never inferred from file names.
 function readPatches(projectRoot) {
   const directory = path.join(projectRoot, PATCH_DIR);
+  refuseLinkedDirectory(projectRoot, PATCH_DIR);
   if (!fs.existsSync(directory)) return [];
   const present = fs.readdirSync(directory).filter((name) => name.endsWith('.patch')).sort();
   const seriesFile = path.join(directory, SERIES);
@@ -583,6 +601,7 @@ function migrate(flags) {
   const projectRoot = fs.realpathSync(flags['project-root']);
   const inputs = inputPaths(projectRoot, readConfig(projectRoot));
   const directory = path.join(projectRoot, PATCH_DIR);
+  refuseLinkedDirectory(projectRoot, PATCH_DIR);
   if (fs.existsSync(directory) && fs.readdirSync(directory).some((name) => name.endsWith('.patch') || name === SERIES)) {
     refuse('mixed-mode', `${PATCH_DIR}/ already holds a patch list; migration writes a new list and never merges into one`);
   }
@@ -593,6 +612,7 @@ function migrate(flags) {
       : `more than one active legacy source ledger: ${diffs.join(', ')}`);
   }
   const crateRoot = path.posix.dirname(diffs[0]);
+  refuseLinkedDirectory(projectRoot, crateRoot);
   const at = (name) => path.join(projectRoot, crateRoot, name);
   if (lexists(at(INACTIVE_MARKER))) refuse('invalid-input', `${path.posix.join(crateRoot, INACTIVE_MARKER)} is left from an earlier migration; remove it explicitly before migrating again`);
   if (!lexists(at(LEDGER_INDEX))) refuse('invalid-input', `${LEDGER_DIFF} has no ${LEDGER_INDEX} next to it`);

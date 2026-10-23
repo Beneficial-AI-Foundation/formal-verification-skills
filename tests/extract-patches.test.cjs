@@ -417,6 +417,20 @@ describe('fvs-extract-patches: legacy ledger migration', () => {
     assert.match(checked.json.message, /changed after .*migration/);
   });
 
+  it('refuses to write the migrated patch list through a symbolic link', () => {
+    const root = legacyProject();
+    const external = temporaryDirectory('fvs-extract-external-');
+    fs.symlinkSync(external, path.join(root, 'translation-patches'));
+    const before = snapshot(root);
+
+    const migrated = run('migrate', '--project-root', root);
+    assert.equal(migrated.status, 5, migrated.stdout);
+    assert.deepEqual([migrated.json.code, migrated.json.kind, migrated.json.path], ['invalid-input', 'symlink', 'translation-patches']);
+    assert.deepEqual(fs.readdirSync(external), [], 'migration wrote outside the project');
+    assert.deepEqual(snapshot(root), before, 'migration published something before refusing');
+    assert.equal(fs.existsSync(path.join(root, 'src-modifications.inactive.json')), false, 'the ledger was marked inactive');
+  });
+
   it('refuses a ledger whose entries do not map one to one onto its hunks', () => {
     const root = legacyProject();
     const index = path.join(root, 'src-modifications.json');
@@ -450,6 +464,17 @@ describe('fvs-extract-patches: copy boundary', () => {
       assert.deepEqual(snapshot(root), before);
     }
     assert.equal(fs.readFileSync(path.join(outside, 'shared.rs'), 'utf8'), 'pub fn shared() {}\n');
+  });
+
+  it('rejects an input reached through a linked directory', () => {
+    const outside = temporaryDirectory('fvs-extract-outside-');
+    fs.mkdirSync(path.join(outside, 'src'));
+    fs.writeFileSync(path.join(outside, 'src', 'lib.rs'), 'pub fn outside() {}\n');
+    const root = project([], { config: { extraction: { inputs: ['Cargo.toml', 'linked/src'] } } });
+    fs.symlinkSync(outside, path.join(root, 'linked'));
+    const checked = run('check', '--project-root', root);
+    assert.equal(checked.status, 5, checked.stdout);
+    assert.deepEqual([checked.json.kind, checked.json.path], ['symlink', 'linked']);
   });
 
   it('rejects a patch that touches a file outside the recorded input set', () => {
