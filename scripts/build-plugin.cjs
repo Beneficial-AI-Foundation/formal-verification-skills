@@ -26,6 +26,7 @@ const REPOSITORY_URL = 'https://github.com/Beneficial-AI-Foundation/formal-verif
 const MARKETPLACE_ID = 'beneficial-ai-foundation';
 const SCRIPT_FILES = [
   'fvs-codex-think.mjs',
+  'fvs-extract-patches.mjs',
   'fvs-kb-query.py',
   'fvs-lean-style-check.mjs',
   'fvs-model-external.mjs',

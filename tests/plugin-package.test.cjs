@@ -134,6 +134,7 @@ describe('published FVS plugin package', () => {
       filesUnder(path.join(PLUGIN_ROOT, 'scripts')),
       [
         'fvs-codex-think.mjs',
+        'fvs-extract-patches.mjs',
         'fvs-kb-query.py',
         'fvs-lean-style-check.mjs',
         'fvs-model-external.mjs',
