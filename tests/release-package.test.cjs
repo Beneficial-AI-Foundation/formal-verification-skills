@@ -13,7 +13,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const ROOT = path.resolve(__dirname, '..');
-const RELEASE = '2.3.7';
+const RELEASE = '2.3.8';
 const HOOKS = ['fvs-check-update.js', 'fvs-statusline.js'];
 const ALLOWLIST = ['bin', 'commands', 'pi', 'fv-skills', 'agents', 'hooks/dist', 'scripts', 'CHANGELOG.md', 'assets/terminal.svg'];
 const ALWAYS_SHIPPED = ['package.json', 'README.md', 'LICENSE'];
@@ -289,7 +289,7 @@ function archiveGate(qualificationFile, run = spawnSync) {
   return result;
 }
 
-describe('2.3.7 release surfaces', () => {
+describe('2.3.8 release surfaces', () => {
   it('agrees on one version across all six surfaces and the copied payload', () => {
     assert.equal(json('package.json').version, RELEASE);
     assert.deepEqual(read('fv-skills/VERSION'), Buffer.from(RELEASE), 'VERSION is exactly the version bytes');
