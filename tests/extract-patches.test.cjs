@@ -34,19 +34,23 @@ function sha256(data) {
   return crypto.createHash('sha256').update(data).digest('hex');
 }
 
-// A project root holding the fixture crate and the named fixture patches. The
-// engine applies patches in file-name order, so a numeric prefix declares the
-// order given here.
+// A project root holding the fixture crate and the given fixture patches, listed
+// in translation-patches/series in the order given. An entry is a fixture name,
+// or a [fixture, installed name] pair to install one fixture twice.
 function project(patches = [], { config } = {}) {
   const root = temporaryDirectory('fvs-extract-project-');
   fs.cpSync(path.join(FIXTURES, 'crate'), root, { recursive: true });
-  if (patches.length > 0) fs.mkdirSync(path.join(root, 'translation-patches'));
-  patches.forEach((name, index) => {
-    fs.copyFileSync(
-      path.join(FIXTURES, 'patches', `${name}.patch`),
-      path.join(root, 'translation-patches', `${String(index + 1).padStart(2, '0')}-${name}.patch`),
-    );
-  });
+  for (const file of ['Cargo.toml', 'src/lib.rs', 'src/limits.rs']) fs.chmodSync(path.join(root, file), 0o644);
+  if (patches.length > 0) {
+    const directory = path.join(root, 'translation-patches');
+    fs.mkdirSync(directory);
+    const names = patches.map((entry) => {
+      const [fixture, installed] = Array.isArray(entry) ? entry : [entry, entry];
+      fs.copyFileSync(path.join(FIXTURES, 'patches', `${fixture}.patch`), path.join(directory, `${installed}.patch`));
+      return `${installed}.patch`;
+    });
+    fs.writeFileSync(path.join(directory, 'series'), `# application order\n${names.join('\n')}\n`);
+  }
   if (config) {
     fs.mkdirSync(path.join(root, '.formalising'));
     fs.writeFileSync(path.join(root, '.formalising', 'fvs-config.json'), JSON.stringify(config));
@@ -125,9 +129,9 @@ describe('fvs-extract-patches: clean ordered extraction', () => {
     assert.deepEqual(
       manifest.patches.map(patch => [patch.file, patch.kind]),
       [
-        ['01-limits-imports.patch', 'supporting'],
-        ['02-limits-clamp.patch', 'translation'],
-        ['03-lib-double.patch', 'translation'],
+        ['limits-imports.patch', 'supporting'],
+        ['limits-clamp.patch', 'translation'],
+        ['lib-double.patch', 'translation'],
       ],
     );
     assert.equal(
@@ -159,7 +163,7 @@ describe('fvs-extract-patches: clean ordered extraction', () => {
     assert.equal(checked.status, 0, checked.stderr + checked.stdout);
     assert.equal(checked.json.ok, true);
     assert.deepEqual(checked.json.patches.map(patch => patch.file),
-      ['01-limits-imports.patch', '02-limits-clamp.patch', '03-lib-double.patch']);
+      ['limits-imports.patch', 'limits-clamp.patch', 'lib-double.patch']);
     assert.deepEqual(snapshot(root), before);
   });
 });
@@ -178,18 +182,19 @@ describe('fvs-extract-patches: stale and already-applied patches', () => {
   }
 
   it('refuses a patch written against other source', () => {
-    assertRefusedUntouched(project(['limits-halve']), 'stale', '01-limits-halve.patch', 0);
+    assertRefusedUntouched(project(['limits-halve']), 'stale', 'limits-halve.patch', 0);
   });
 
   it('refuses a patch whose change the original source already carries', () => {
     const root = project(['lib-double']);
     const lib = path.join(root, 'src', 'lib.rs');
     fs.writeFileSync(lib, fs.readFileSync(lib, 'utf8').replace('x.wrapping_add(x)', 'x.wrapping_mul(2)'));
-    assertRefusedUntouched(root, 'already-applied', '01-lib-double.patch', 0);
+    assertRefusedUntouched(root, 'already-applied', 'lib-double.patch', 0);
   });
 
   it('refuses a patch that an earlier patch in the list already applied', () => {
-    assertRefusedUntouched(project(['lib-double', 'lib-double']), 'already-applied', '02-lib-double.patch', 1);
+    assertRefusedUntouched(project(['lib-double', ['lib-double', 'lib-double-again']]),
+      'already-applied', 'lib-double-again.patch', 1);
   });
 });
 
@@ -208,10 +213,10 @@ describe('fvs-extract-patches: failure part-way through the list', () => {
 
     const manifest = readManifest(out);
     assert.equal(manifest.status, 'partial');
-    assert.deepEqual(manifest.patches.map(patch => patch.file), ['01-limits-imports.patch', '02-limits-clamp.patch']);
+    assert.deepEqual(manifest.patches.map(patch => patch.file), ['limits-imports.patch', 'limits-clamp.patch']);
     assert.ok(manifest.patches.every(patch => patch.pre && patch.post));
     assert.deepEqual([manifest.failure.code, manifest.failure.patch, manifest.failure.index],
-      ['stale', '03-limits-halve.patch', 2]);
+      ['stale', 'limits-halve.patch', 2]);
     assert.deepEqual(snapshot(root), before, 'the original source or its evidence changed');
 
     const status = run('status', '--out', out);
@@ -276,16 +281,16 @@ describe('fvs-extract-patches: overlapping patches', () => {
     assert.equal(run('check', '--project-root', project(['lib-sum-array'])).status, 0);
     const checked = run('check', '--project-root', project(['lib-double', 'lib-sum-array']));
     assert.equal(checked.status, 1, checked.stdout);
-    assert.deepEqual([checked.json.kind, checked.json.patch], ['stale', '02-lib-sum-array.patch']);
+    assert.deepEqual([checked.json.kind, checked.json.patch], ['stale', 'lib-sum-array.patch']);
   });
 
   it('tests a patch on its own only when it declares Independent: yes', () => {
     const root = project(['lib-double', 'lib-sum-array-after-double']);
-    const patch = path.join(root, 'translation-patches', '02-lib-sum-array-after-double.patch');
+    const patch = path.join(root, 'translation-patches', 'lib-sum-array-after-double.patch');
     fs.writeFileSync(patch, fs.readFileSync(patch, 'utf8').replace('Behaviour:', 'Independent: yes\nBehaviour:'));
     const checked = run('check', '--project-root', root);
     assert.equal(checked.status, 1, checked.stdout);
-    assert.deepEqual([checked.json.kind, checked.json.patch], ['not-independent', '02-lib-sum-array-after-double.patch']);
+    assert.deepEqual([checked.json.kind, checked.json.patch], ['not-independent', 'lib-sum-array-after-double.patch']);
 
     const declared = run('check', '--project-root', project(['limits-imports', 'limits-clamp', 'lib-double', 'lib-sum']));
     assert.equal(declared.status, 0, declared.stdout);
@@ -417,9 +422,11 @@ describe('fvs-extract-patches: restoration check', () => {
     const prepared = run('prepare', '--project-root', root, '--out', out);
     assert.equal(prepared.status, 0, prepared.stdout);
     const [record] = readManifest(out).patches;
-    assert.deepEqual([record.pre['src/limits.rs'].mode, record.post['src/limits.rs'].mode], ['644', '755']);
+    // git apply grants the executable bits allowed by the umask, so only the bit is pinned.
+    assert.equal(record.pre['src/limits.rs'].mode, '644');
+    assert.ok(parseInt(record.post['src/limits.rs'].mode, 8) & 0o100, record.post['src/limits.rs'].mode);
     assert.equal(record.pre['src/limits.rs'].sha256, record.post['src/limits.rs'].sha256);
-    assert.equal(fs.statSync(path.join(out, 'tree', 'src', 'limits.rs')).mode & 0o777, 0o755);
+    assert.ok(fs.statSync(path.join(out, 'tree', 'src', 'limits.rs')).mode & 0o100);
     assert.equal(fs.statSync(path.join(root, 'src', 'limits.rs')).mode & 0o777, 0o644);
   });
 });
@@ -427,7 +434,7 @@ describe('fvs-extract-patches: restoration check', () => {
 describe('fvs-extract-patches: patch file convention', () => {
   it('rejects a patch without the Change, Why and Behaviour header', () => {
     const root = project(['lib-double']);
-    const patch = path.join(root, 'translation-patches', '01-lib-double.patch');
+    const patch = path.join(root, 'translation-patches', 'lib-double.patch');
     const body = fs.readFileSync(patch, 'utf8');
     fs.writeFileSync(patch, body.slice(body.indexOf('diff --git')));
     const checked = run('check', '--project-root', root);
@@ -438,7 +445,24 @@ describe('fvs-extract-patches: patch file convention', () => {
   it('reports in plain text when asked', () => {
     const checked = run('check', '--project-root', project(['limits-halve']), '--format', 'text');
     assert.equal(checked.status, 1);
-    assert.match(checked.stdout, /^FVS >> stale: 01-limits-halve\.patch does not apply/);
+    assert.match(checked.stdout, /^FVS >> stale: limits-halve\.patch does not apply/);
+  });
+
+  it('takes the order only from a series file that lists every patch once', () => {
+    const unlisted = project(['lib-double']);
+    fs.copyFileSync(path.join(FIXTURES, 'patches', 'lib-sum.patch'), path.join(unlisted, 'translation-patches', 'lib-sum.patch'));
+    const missingSeries = project(['lib-double']);
+    fs.rmSync(path.join(missingSeries, 'translation-patches', 'series'));
+    const listedTwice = project(['lib-double']);
+    fs.appendFileSync(path.join(listedTwice, 'translation-patches', 'series'), 'lib-double.patch\n');
+
+    for (const root of [unlisted, missingSeries, listedTwice]) {
+      const checked = run('check', '--project-root', root);
+      assert.equal(checked.status, 5, checked.stdout);
+      assert.equal(checked.json.code, 'invalid-input');
+      assert.match(checked.json.message, /series/);
+    }
+    assert.deepEqual(run('check', '--project-root', unlisted).json.unlisted, ['lib-sum.patch']);
   });
 });
 
@@ -456,7 +480,7 @@ describe('fvs-extract-patches: dependent patches', () => {
     assert.equal(checked.status, 1, checked.stdout);
     assert.equal(checked.json.code, 'stale');
     assert.equal(checked.json.kind, 'stale');
-    assert.equal(checked.json.patch, '01-lib-double-shift.patch');
+    assert.equal(checked.json.patch, 'lib-double-shift.patch');
     assert.equal(checked.json.index, 0);
 
     const out = outDirectory();

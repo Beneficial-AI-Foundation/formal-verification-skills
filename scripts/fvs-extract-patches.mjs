@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 const MODES = ['translation-patches', 'legacy-source-ledger'];
 const DEFAULT_INPUTS = ['Cargo.toml', 'Cargo.lock', 'build.rs', 'src'];
 const PATCH_DIR = 'translation-patches';
+const SERIES = 'series';
 const LEDGER_FILES = ['src-modifications.diff', 'src-modifications.json', 'src-modifications.md'];
 const FORBIDDEN_SEGMENTS = new Set(['.git', '.formalising', '.planning']);
 const MANIFEST = 'manifest.json';
@@ -46,12 +47,14 @@ function usage() {
     '       node fvs-extract-patches.mjs verify-restore --out DIR [--format json|text]',
     '       node fvs-extract-patches.mjs status --out DIR [--format json|text]',
     '',
-    'Applies the translation patches in DIR/translation-patches, in file-name order,',
-    'to a disposable copy of the Rust extraction input set. The original checkout is',
-    'never written. check rehearses the list in a temporary copy; prepare builds',
-    'OUT/tree and OUT/manifest.json (OUT must be a new directory outside the project);',
-    'verify-restore compares the touched original sources with the recorded start;',
-    'status reads the manifest.',
+    'Applies the translation patches in DIR/translation-patches, in the order listed',
+    'in DIR/translation-patches/series (one file name per line, every patch exactly',
+    'once), to a disposable copy of the Rust extraction input set (extraction.inputs',
+    'in .formalising/fvs-config.json, default Cargo.toml, Cargo.lock, build.rs, src).',
+    'The original checkout is never written. check rehearses the list in a temporary',
+    'copy; prepare builds OUT/tree and OUT/manifest.json (OUT must be a new directory',
+    'outside the project); verify-restore compares the touched original sources with',
+    'the recorded start; status reads the manifest.',
     '',
     'Exit codes: 0 ok; 1 a patch does not fit (stale, already applied, not reversible,',
     'or not independent although it declares Independent: yes); 2 usage or internal',
@@ -81,6 +84,7 @@ function fileState(file) {
   const stat = fs.lstatSync(file, { throwIfNoEntry: false });
   if (!stat) return null;
   if (stat.isSymbolicLink()) return { link: fs.readlinkSync(file) };
+  if (!stat.isFile()) return { type: stat.isDirectory() ? 'directory' : 'other' };
   return { sha256: sha256(fs.readFileSync(file)), mode: (stat.mode & 0o777).toString(8) };
 }
 
@@ -140,13 +144,31 @@ function parsePatch(file) {
   };
 }
 
+// translation-patches/series is the one ordered list: one patch file name per
+// line, applied top to bottom (blank lines and # comments are skipped). Every
+// .patch file must be listed exactly once, so the order is always declared,
+// never inferred from file names.
 function readPatches(projectRoot) {
   const directory = path.join(projectRoot, PATCH_DIR);
   if (!fs.existsSync(directory)) return [];
-  return fs.readdirSync(directory)
-    .filter((name) => name.endsWith('.patch'))
-    .sort()
-    .map((name) => parsePatch(path.join(directory, name)));
+  const present = fs.readdirSync(directory).filter((name) => name.endsWith('.patch')).sort();
+  const seriesFile = path.join(directory, SERIES);
+  if (!fs.existsSync(seriesFile)) {
+    if (present.length > 0) {
+      refuse('invalid-input', `${PATCH_DIR}/ holds ${present.length} patch(es) but no ${SERIES} file; list them there, one per line, in application order`, { unlisted: present });
+    }
+    return [];
+  }
+  const listed = fs.readFileSync(seriesFile, 'utf8').split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'));
+  const duplicated = listed.filter((name, index) => listed.indexOf(name) !== index);
+  const missing = listed.filter((name) => !present.includes(name));
+  const unlisted = present.filter((name) => !listed.includes(name));
+  if (duplicated.length > 0 || missing.length > 0 || unlisted.length > 0) {
+    refuse('invalid-input', `${PATCH_DIR}/${SERIES} must list every .patch file in ${PATCH_DIR}/ exactly once`, { duplicated, missing, unlisted });
+  }
+  return listed.map((name) => parsePatch(path.join(directory, name)));
 }
 
 // extraction.mode decides when set. Unset, a project that still has a legacy
@@ -244,9 +266,10 @@ function gitEnv(extra = {}) {
 
 // git apply on the copy only. The ceiling stops git from discovering an
 // enclosing repository (which would make it skip every path silently), and no
-// user or system configuration can loosen whitespace or context matching.
+// user or system configuration can loosen whitespace or context matching (the
+// command-line pin also covers git versions that ignore GIT_CONFIG_GLOBAL).
 function gitApply(tree, patch, ...flags) {
-  const result = spawnSync('git', ['apply', '--whitespace=nowarn', ...flags], {
+  const result = spawnSync('git', ['-c', 'apply.ignoreWhitespace=no', 'apply', '--whitespace=nowarn', ...flags], {
     cwd: tree,
     input: patch.bytes,
     encoding: 'utf8',
