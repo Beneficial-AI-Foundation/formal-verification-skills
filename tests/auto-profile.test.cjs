@@ -14,6 +14,9 @@ const SCRIPT = path.join(ROOT, 'scripts', 'fvs-auto.mjs');
 const FIXTURES = path.join(__dirname, 'fixtures', 'auto-profile');
 const BIN = path.join(FIXTURES, 'bin');
 const PLATFORM = 'aarch64-apple-darwin';
+// Version checks run only under sandbox-exec; elsewhere they are skipped.
+const CONFINED = fs.existsSync('/usr/bin/sandbox-exec');
+const NOT_CHECKED = 'not checked: this host has no read-only sandbox';
 const temporaryDirectories = [];
 
 after(() => {
@@ -125,9 +128,15 @@ describe('fvs-auto profile verdicts', () => {
     assert.equal(aeneas.verdict, 'available-but-unverified');
     assert.match(aeneas.reason, /differs from aeneas-6e167c9b-charon-0\.1\.225-lean-v4\.31\.0/);
     assert.match(aeneas.reason, /Aeneas 0855ce1b8ed3958512b6c19de6bf3035b7acb552 vs 6e167c9b/);
-    assert.match(aeneas.reason, /Charon 0\.1\.274 vs 0\.1\.225/);
     assert.doesNotMatch(aeneas.reason, /Lean /, 'the pilot shares the tested Lean toolchain');
-    assert.equal(aeneas.evidence.charon.version, '0.1.274');
+    if (CONFINED) {
+      assert.match(aeneas.reason, /Charon 0\.1\.274 vs 0\.1\.225/);
+      assert.equal(aeneas.evidence.charon.version, '0.1.274');
+    } else {
+      assert.match(aeneas.reason, /Charon unknown vs 0\.1\.225/);
+      assert.equal(aeneas.evidence.charon.version, null);
+      assert.equal(aeneas.evidence.charon.output, NOT_CHECKED);
+    }
   });
 
   it('reports the same pilot tuple as missing, not unverified, when its binaries are absent', async () => {
@@ -192,6 +201,8 @@ describe('fvs-auto profile verdicts', () => {
     assert.equal(rust.evidence.toolchainFile, path.join('rust', 'rust-toolchain'));
     assert.equal(rust.evidence.toolchainPin, '1.98.1');
     assert.match(rust.reason, /pinned by rust\/rust-toolchain/);
+    if (CONFINED) assert.equal(rust.evidence.version, 'rustc 1.98.1 (fixture stub)');
+    else assert.match(rust.reason, new RegExp(`the version was ${NOT_CHECKED}`));
   });
 
   it('separates the not-validated Linux x64 host from unsupported hosts', async () => {

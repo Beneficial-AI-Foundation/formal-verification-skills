@@ -153,9 +153,10 @@ function rustItem(root, rustProject) {
     return item('rust', 'missing', `${absent.join(' and ')} not on PATH`,
       'Install Rust with rustup (https://rustup.rs), then rerun the profile.', evidence);
   }
+  const pinned = toolchainFile ? `, pinned by ${toolchainFile}` : '';
   const run = confinedRun(evidence.rustc, ['-vV'], rustProject);
   if (!run) {
-    return item('rust', 'available-but-unverified', `cargo and rustc are on PATH; the version was ${NOT_CHECKED}`,
+    return item('rust', 'available-but-unverified', `cargo and rustc are on PATH${pinned}; the version was ${NOT_CHECKED}`,
       'Run rustc -vV in the crate directory yourself to confirm the toolchain.', evidence);
   }
   if (!run.ok) {
@@ -166,7 +167,7 @@ function rustItem(root, rustProject) {
   evidence.version = firstLine(run.stdout);
   evidence.hostTarget = run.stdout.match(/^host: (.+)$/m)?.[1] ?? null;
   return item('rust', 'available-but-unverified',
-    `${evidence.version} for ${evidence.hostTarget ?? 'an unknown host'}${toolchainFile ? `, pinned by ${toolchainFile}` : ''}; FVS records no tested Rust toolchain for the auto track`,
+    `${evidence.version} for ${evidence.hostTarget ?? 'an unknown host'}${pinned}; FVS records no tested Rust toolchain for the auto track`,
     'None required now.', evidence);
 }
 
