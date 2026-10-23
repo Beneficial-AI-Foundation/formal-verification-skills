@@ -3,8 +3,8 @@
 <shared_review_policy>
 Grounding is evidence, not authority by itself. Check the supplied inventory against
 the target: declarations, analogs, searches yielding no analog, and cited API signatures.
-The wrapper verifies verbatim source spans and freshness; scout selections and search
-claims remain untrusted. A missing/incomplete inventory is a finding where it prevents
+The wrapper verifies verbatim source spans and freshness; those spans count as read and
+are not re-hashed. Scout selections and search claims remain untrusted. A missing/incomplete inventory is a finding where it prevents
 judging reuse or source fidelity. Never infer semantic absence from a keyword search.
 
 Reuse: inspect existing project and pinned dependency APIs before endorsing new helpers
@@ -15,7 +15,8 @@ reuse candidates, not authority for inventing different implementation semantics
 
 Scope economy: check unused parameters, helper lemmas without consumers, trivial
 wrappers, and work belonging to a later iteration. State the concrete wasted or
-misleading interface/obligation, not a preference for a different design.
+misleading interface/obligation, not a preference for a different design. Scope-economy
+findings default to MINOR unless they change a public interface or obligation.
 
 Classify each finding as CONTENT (mathematics, source fidelity, API/reuse, semantic
 scope) or PROCESS (workflow, evidence tracking, gates). Order by BLOCKER, MAJOR, MINOR,

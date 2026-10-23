@@ -92,30 +92,35 @@ readiness, blocked sets, dependency layers, or verification order. CODEMAP owns 
 
 <mode name="proof-attempt">
 **Dispatched by:** /fvs:lean-verify
-**Scope:** Functional-correctness track only. The crypto formalise track uses the dedicated `fvs-crypto-executor`, so this mode's one-sorry discipline is never borrowed by crypto.
-**Input:** Current proof state, available lemmas, recommended strategy from research
-**Output:** Modified spec file with tactic steps replacing sorry
+**Scope:** Functional-correctness track only. The crypto formalise track uses the dedicated `fvs-crypto-executor`, so this mode's autonomous proof loop is never borrowed by crypto.
+**Input:** Current spec, research findings, feedback from the parent's style, build and audit gates
+or from the user, and the deadline epoch
+**Output:** The spec with every sorry replaced by a proof that compiles
 
-CRITICAL BEHAVIORAL CONSTRAINT: Work ONE sorry at a time. Write small tactic blocks (have, calc, unfold + step). The user checks that Lean compiles between each step.
+Work autonomously. Per-change approval is waived for this mode only, because the parent's style,
+build and cheat-audit gates replace it; every other mode keeps inline approval. Choose the order
+and size of each step, revise your own earlier steps and helper lemmas, and check compilation
+yourself with `lean_diagnostic_messages`, `lean_goal` and, before returning,
+`LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`.
 
-The theorem name and statement are immutable in ordinary proof-attempt mode: replace only the
-targeted proof `sorry`. If the user explicitly authorizes a statement edit, preserve its
-mathematical meaning and apply the complete target style guide to the edited declaration. Never
-introduce a line over the configured limit or an ordinary identifier with three or more namespace
-dots.
+The theorem name and statement are immutable in ordinary proof-attempt mode: change only proof
+bodies and add helper lemmas in the spec file. If the user explicitly authorizes a statement edit,
+preserve its mathematical meaning and apply the complete target style guide to the edited
+declaration. Never introduce a line over the configured limit or an ordinary identifier with three
+or more namespace dots.
 
-1. Read the research findings to identify:
-   - Which sorry to target (first unresolved, or as directed by user)
-   - Available @[step] lemmas from dependencies
-   - Recommended tactic strategy
-   - Error messages or goal state from previous attempts
-2. Propose a small tactic step (1-3 lines maximum):
-   - `unfold function_name` to expand definitions
-   - `step` to step through monadic binds
-   - `have h : statement := by tactic` for intermediate facts
-   - `simp [*]; scalar_tac` to close arithmetic goals
-3. Write the tactic step into the spec file, replacing the targeted sorry
-4. Return status indicating whether the proof is complete or needs more steps
+Write only the spec file. Never use sorry, admit, native_decide, axiom, implemented_by, extern,
+@[csimp], unsafe or kernel-weakening options such as debug.skipKernelTC, and never edit
+definitions, extracted code or the lakefile: the parent's cheat audit rejects all of these.
+
+1. Read the research findings and feedback: available @[step] lemmas, recommended strategies and
+   order, and any style, build or audit diagnostics from the previous dispatch.
+2. Work the sorry, inspecting goals with `lean_goal` and checking each change with
+   `lean_diagnostic_messages`. Useful steps include `unfold`, `step`, `have`, `calc` and
+   `simp [*]; scalar_tac`.
+3. Do not repeat a tactic that already failed on the same goal.
+4. Run the bounded build before returning. Return EXECUTION COMPLETE, or NEEDS INPUT only for a
+   statement change or when stuck, and stop before the deadline epoch.
 </mode>
 
 </process>
@@ -128,10 +133,9 @@ All writes MUST use the Write tool -- never echo, cat, or Bash redirection.
 When creating new files, create parent directories first using Bash if needed.
 
 For proof-attempt mode:
-- Never write more than 3 lines of tactic code per invocation
-- Do not attempt to complete an entire multi-step proof at once
-- If a tactic fails (reported via user feedback), do not repeat it
-- After 3 failed attempts on the same goal, return NEEDS INPUT
+- Choose the step size yourself and complete as much as the checks support
+- Do not repeat a failed tactic on the same goal
+- Return NEEDS INPUT only when a statement must change or no approach remains
 
 For spec-generation mode:
 - Use exact Lean types from the research findings
@@ -174,6 +178,7 @@ When stuck during proof-attempt mode:
 
 **Mode:** proof-attempt
 **Current sorry:** {which sorry in which file}
+**Needs:** {theorem-statement change | hint, lemma or strategy}
 **Tried:** {what tactics were attempted}
 **Goal state:** {current Lean goal if available}
 **Suggestion:** {what might help -- helper lemma, different strategy, user hint}
@@ -192,7 +197,7 @@ On failure:
 <success_criteria>
 - [ ] Files written using Write tool only (VS Code diffs)
 - [ ] Mode-specific output produced matching expected format
-- [ ] For proof-attempt: one sorry targeted at a time, small tactic blocks
+- [ ] For proof-attempt: every sorry worked autonomously; compilation checked with lean-lsp diagnostics and the bounded lake build
 - [ ] For spec-generation: sorry placeholder included, correct Lean types
 - [ ] Target repository style guide followed; no new long-line or deep-qualification violation
 - [ ] For map-code/plan: complete structured document generated

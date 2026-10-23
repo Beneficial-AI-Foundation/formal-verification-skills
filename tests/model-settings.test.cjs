@@ -53,7 +53,7 @@ describe('runtime-aware FVS model settings', () => {
   it('ships stage-scoped overrides and profile-driven review defaults', () => {
     const config = JSON.parse(read('fv-skills/templates/config.json'));
     assert.equal(config.model_profile, 'quality');
-    for (const runtime of ['claude', 'codex', 'pi', 'opencode', 'gemini']) {
+    for (const runtime of ['claude', 'codex', 'pi', 'opencode', 'antigravity']) {
       assert.deepEqual(config.stage_overrides[runtime], {});
       assert.deepEqual(config.model_overrides[runtime], {});
       assert.deepEqual(config.effort_overrides[runtime], {});
@@ -75,6 +75,7 @@ describe('runtime-aware FVS model settings', () => {
     for (const row of [
       /Claude Code \| detected Fable \+ `max` \| detected Opus \+ `xhigh` \| detected Sonnet \+ `high`/,
       /Codex \/ OpenAI \| detected Astra \+ `max` \| detected Sol \+ `xhigh` \| detected Terra \+ `high`/,
+      /\| Antigravity \(agy\) \| detected Argon 4 \(e\.g\. `gemini-4-argon-high`\) \+ `high` \| ask or exact stage override \| ask or exact stage override \|/,
     ]) assert.match(profiles, row);
     assert.match(profiles, /balanced \| `inherit` \| `high`/);
     assert.match(profiles, /budget \| `inherit` \| `medium`/);
@@ -147,7 +148,10 @@ describe('runtime-aware FVS model settings', () => {
     }
     assert.match(profiles, /one confirmation covers the command/i);
     assert.match(profiles, /fresh provider-qualified OpenAI Pi seat[\s\S]*Codex CLI/i);
-    assert.match(profiles, /Claude Code CLI with detected Fable \+ `max`/i);
+    assert.match(profiles, /Claude Code CLI with detected Fable \+ `xhigh`/i);
+    assert.match(profiles, /`max` stays available as an explicit opt-in/);
+    assert.match(profiles, /Antigravity CLI \(`agy`\) with a detected Argon ID/);
+    assert.match(profiles, /disposable review copy/);
     assert.match(profiles, /candidate's\s+provider metadata[\s\S]*active Pi provider/i);
     assert.match(profiles, /active\/inherited model[\s\S]*fail before dispatch/i);
 
@@ -159,7 +163,7 @@ describe('runtime-aware FVS model settings', () => {
     assert.doesNotMatch(reviewHelper, /reviewerDefaults|defaultEffort/);
     assert.match(reviewHelper, /Select an explicit model from the reviewer runtime catalog/);
     assert.match(reviewHelper, /Select an explicit effort reported for the selected reviewer model/);
-    assert.match(reviewHelper, /codex', 'claude', 'pi', 'opencode', 'gemini', 'other/);
+    assert.match(reviewHelper, /codex', 'claude', 'pi', 'opencode', 'antigravity', 'other/);
     assert.match(reviewHelper, /Pi reviewer models must be provider-qualified/);
     assert.match(reviewHelper, /validatePiDispatchReceipt/);
     assert.match(reviewHelper, /requires an active Pi host/);

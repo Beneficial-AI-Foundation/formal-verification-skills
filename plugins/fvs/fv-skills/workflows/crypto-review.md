@@ -13,18 +13,20 @@ Declare authority stage `crypto_review` and use the canonical profile resolution
 in `model-profiles.md`. Explicit flags win, then non-null saved `crypto_review` values, then the
 quality opposite-runtime recommendation. Recommend Claude Code CLI for OpenAI/Codex-authored plans;
 for Claude-authored plans running under Pi, prefer a fresh provider-qualified OpenAI Pi seat, then
-Codex CLI. The Pi choice launches a fresh read-only Pi child with the exact selected model/effort;
+Codex CLI.
+For OpenAI/Codex- and Claude-authored plans, also offer the `antigravity` reviewer: Antigravity CLI (`agy`) with a detected Argon ID (`gemini-4-argon-*` from `agy models`), launched in a review copy without proof-engineering memory.
+An Argon review sends the review packet (the user's sources and plans) to Google under the user's own agy account terms; on consumer accounts Google may use that content.
+The Pi choice launches a fresh read-only Pi child with the exact selected model/effort;
 it is not an Other handoff. Never route a Claude Code subscription through Pi.
 
-OpenCode and Gemini selections remain named choices, not Claude/Other aliases. The external
-helper returns a specific `CAPABILITY_UNAVAILABLE` for their currently unqualified diagnostic
-CLI routes (OpenCode has no native shell isolation; Gemini lacks this isolated named-agent,
-memory-excluding shell/effort route). Offer explicit Codex/Claude, fresh Pi, or acknowledged
+OpenCode selections remain a named choice, not a Claude/Other alias. The external helper returns a
+specific `CAPABILITY_UNAVAILABLE` for its currently unqualified diagnostic CLI route (no native
+shell isolation). Offer explicit Codex/Claude, fresh Pi, or acknowledged
 Other alternatives and reconfirm any changed choice; never launch unsafely or substitute.
 An unavailable observed setting is unknown, not this capability failure or a command-wide gate.
 
 Build and confirm one selection manifest with reviewer runner, provenance, exact catalog model, and
-effort. Notes rebuild the manifest and require reconfirmation. Adjust once is ephemeral; Save
+effort (default `xhigh`; `max` only as an explicit opt-in). Notes rebuild the manifest and require reconfirmation. Adjust once is ephemeral; Save
 override changes only `crypto_review`. Missing models/unsupported efforts ask one-run/save/cancel;
 unresolved noninteractive choices fail before launch. If no opposite runner is authenticated, ask
 among setup/retry, fresh same-runtime review, Other handoff, one-run skip, or cancel. Record known
@@ -89,9 +91,10 @@ DEFER-WITH-RULING, REJECT-FINDING, ASK-HUMAN and the accepted-major-reuse rule.
 Preserve `validation-*/raw-response.md` byte-for-byte. If deterministic formatting normalization
 is needed, keep the cleaned copy separately as `validation-*/normalized-response.md`; the sibling
 README identifies both. The authoring seat exclusively writes separate immutable
-`PLAN_REVIEW_nN_TRIAGE.md` or `FOLLOWUP_REVIEW_nN_TRIAGE.md`, recording finding IDs,
-accept/reject/defer evidence, requested/observed provenance, pre-edit and post-edit hashes, gates,
-and status.
+`PLAN_REVIEW_nN_TRIAGE.md` or `FOLLOWUP_REVIEW_nN_TRIAGE.md`, recording requested/observed
+provenance, pre-edit and post-edit hashes, gates, status, and checked evidence with finding IDs
+only for REJECT-FINDING, DESCOPE, DEFER-WITH-RULING and applied edits; dispositions are recorded
+only after a REJECT verdict.
 
 Persist `Stage settings:` in the completed review and separate authoring-seat triage under `crypto_review`, using the single
 Stage settings evidence contract in `model-profiles.md`: requested and resolved
@@ -103,8 +106,9 @@ A real reported mismatch needs an actionable supported choice/reconfirmation, no
 substitution. Legacy missing metadata stays unknown; immutable history is not backfilled.
 
 - APPROVE -> `approved`.
-- APPROVE-WITH-EDITS -> authoring seat applies accepted bounded edits, reruns plan gates, and sets
-  `approved after edits`; terminal without another review (no second review).
+- APPROVE-WITH-EDITS -> authoring seat applies accepted bounded edits, reruns the plan contract
+  checks (not Lean builds), and sets `approved after edits`; terminal without another review
+  (no second review).
 - REJECT -> fresh authored revision and fresh review; never convert it to bounded edits.
 
 A REJECT round passes its prior review and triage as delimited untrusted `--history`, never as

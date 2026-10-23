@@ -104,7 +104,7 @@ it('returns full-role Codex authoring to parent-owned plans with unknown observa
   const installedDir = path.join(tmp, 'installed-roles'); fs.mkdirSync(installedDir);
   const markdown = path.join(installedDir, 'fvs-crypto-thinker.md');
   for (const [header, converted, format] of [
-    ['name: fvs-crypto-thinker\ntools:\n  - read_file\n  - run_shell_command\n  - search_file_content\n  - glob', body, 'markdown-gemini'],
+    ['name: fvs-crypto-thinker\ntools:\n  - Read\n  - Bash\n  - Grep\n  - Glob', body, 'markdown-antigravity'],
     ['description: Installed thinker\ntools:\n  read: true\n  bash: true\n  grep: true\n  glob: true', body.replace(/\/fvs:/g, '/fvs-'), 'markdown-opencode'],
   ]) {
     fs.writeFileSync(markdown, '---\n' + header + '\n---\n' + converted);

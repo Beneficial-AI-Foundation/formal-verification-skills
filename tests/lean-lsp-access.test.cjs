@@ -4,7 +4,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { convertClaudeToGeminiAgent, convertClaudeToOpencodeFrontmatter,
+const { convertClaudeToAntigravityAgent, convertClaudeToOpencodeFrontmatter,
   generateCodexAgentToml, convertClaudeAgentToCodexAgent, extractFrontmatterAndBody } = require('../bin/install.js');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -12,17 +12,10 @@ const PAIR = ['lean_diagnostic_messages', 'lean_goal'];
 const CLAUDE_PAIR = PAIR.map(name => `mcp__lean-lsp__${name}`);
 
 // Source-labelled contracts, not loaded runtime code or actual-child evidence.
-// Gemini 0.31.0 mcp-tool.js getFullyQualifiedName: server + '__' + valid(raw name).
-// tool-registry.js getTool checks getFullyQualifiedName after direct-name lookup.
-// LocalAgentExecutor copies definition.toolConfig.tools to its isolated registry;
-// schema filtering retains the resolved tool's model-visible (possibly raw) name.
+// Antigravity (agy 1.4.3): `agy plugin validate` requires agents' `tools:` to be a
+// YAML list and does not check the names, so the installed footprint below is
+// validation-backed only; how agy resolves Claude tool names at runtime is unverified.
 const SOURCE_PROVENANCE = {
-  gemini: {
-    version: '0.31.0',
-    mcpToolSha256: '9d0ccef40dac94325c60f43df62cc799ce91984760b5c910905ab2a5eec2fa65',
-    registrySha256: '6e21fb5199e5047bcd319e2a3dc4bd17fd84b47c55b51fdf986f0c076e3bab39',
-    executorSha256: 'ff2b5e3f9581f857c90d8d48cbfadd47f49be2cc3cfb2c38e30d2e957a4930fb',
-  },
   opencode: {
     version: '1.18.31',
     binarySha256: '16c960ba77421da11b53e785f359b73f328a86118b48feb4af143db5d9afb198',
@@ -40,7 +33,7 @@ function frontmatter(source) {
 function claudeTools(source) {
   return frontmatter(source).match(/^tools:\s*(.+)$/m)[1].split(',').map(name => name.trim());
 }
-function geminiTools(source) {
+function antigravityTools(source) {
   return [...frontmatter(source).matchAll(/^  - (.+)$/gm)].map(match => match[1]);
 }
 function opencodeTools(source) {
@@ -75,19 +68,12 @@ describe('Crypto definition -> actual converter -> registry-selection fixture', 
     ]);
   });
 
-  for (const schemaQualified of [false, true]) {
-    it(`Gemini resolves qualified selectors with ${schemaQualified ? 'collision-qualified' : 'raw'} schema names`, () => {
-      const converted = convertClaudeToGeminiAgent(role(CRYPTO));
-      const selectors = geminiTools(converted);
-      const selected = selectFixture(selectors, registryFixture('__', 'lean-lsp', schemaQualified));
-      assertPair(selected);
-      assert.deepEqual(selected.map(tool => tool.schema.name),
-        PAIR.map(raw => schemaQualified ? `lean-lsp__${raw}` : raw));
-      assert.deepEqual(selectors, ['read_file', 'run_shell_command', 'search_file_content',
-        'glob', 'write_file', 'ide__getDiagnostics', ...PAIR.map(raw => `lean-lsp__${raw}`)]);
-      assert.doesNotMatch(frontmatter(converted), /^color:/m);
-    });
-  }
+  it('Antigravity installs the exact Claude selectors as a YAML list (validation-backed footprint, runtime resolution unverified)', () => {
+    const source = role(CRYPTO);
+    const converted = convertClaudeToAntigravityAgent(source);
+    assert.deepEqual(antigravityTools(converted), claudeTools(source));
+    assert.match(frontmatter(converted), /^tools:\n(?:  - .+\n?)+/m);
+  });
 
   it('OpenCode emits the inspected server_tool selectors without changing built-ins', () => {
     const selectors = opencodeTools(convertClaudeToOpencodeFrontmatter(role(CRYPTO)));
@@ -97,23 +83,22 @@ describe('Crypto definition -> actual converter -> registry-selection fixture', 
   });
 
   it('denies wrong server, unqualified selector, missing goals and effective permission denial in fixtures', () => {
-    const selectors = PAIR.map(raw => `lean-lsp__${raw}`);
+    const selectors = PAIR.map(raw => `lean-lsp_${raw}`);
     for (const [requested, registry, denied] of [
-      [selectors, registryFixture('__', 'other-server'), []],
-      [PAIR, registryFixture('__'), []],
-      [selectors, registryFixture('__').slice(0, 1), []],
-      [selectors, registryFixture('__'), ['lean-lsp__lean_goal']],
+      [selectors, registryFixture('_', 'other-server'), []],
+      [PAIR, registryFixture('_'), []],
+      [selectors, registryFixture('_').slice(0, 1), []],
+      [selectors, registryFixture('_'), ['lean-lsp_lean_goal']],
     ]) {
       assert.throws(() => assertPair(selectFixture(requested, registry, denied)), assert.AssertionError);
     }
   });
 
-  it('retains Task exclusion, body/template escaping and unrelated MCP exclusion in Gemini', () => {
-    const source = '---\nname: test\ntools: Read, Task, mcp__custom__lean_goal, mcp__lean-lsp__other\ncolor: pink\n---\n${ROOT} <sub>note</sub>\n';
-    const converted = convertClaudeToGeminiAgent(source);
-    assert.deepEqual(geminiTools(converted), ['read_file']);
-    assert.match(converted, /\$ROOT \*\(note\)\*/);
-    assert.equal(SOURCE_PROVENANCE.gemini.version, '0.31.0');
+  it('changes only the tools line for Antigravity (validation-backed footprint, runtime resolution unverified)', () => {
+    const source = '---\nname: test\ndescription: d\ntools: Read, Task, mcp__custom__lean_goal\ncolor: pink\n---\n${ROOT} <sub>note</sub>\n';
+    assert.equal(convertClaudeToAntigravityAgent(source),
+      '---\nname: test\ndescription: d\ntools:\n  - Read\n  - Task\n  - mcp__custom__lean_goal\ncolor: pink\n---\n${ROOT} <sub>note</sub>\n');
+    assert.equal(SOURCE_PROVENANCE.opencode.version, '1.18.31');
   });
 });
 
@@ -122,9 +107,9 @@ describe('All canonical Lean writers and existing full-role delivery', () => {
     it(`${name} retains exact built-ins and only the standard diagnostic/goal pair`, () => {
       assert.deepEqual(claudeTools(role(name)), ['Read', 'Bash', 'Grep', 'Glob', 'Write',
         ...(hasIde ? ['mcp__ide__getDiagnostics'] : []), ...CLAUDE_PAIR]);
-      const gemini = geminiTools(convertClaudeToGeminiAgent(role(name)));
+      // Antigravity: validation-backed installed footprint; runtime resolution unverified.
+      assert.deepEqual(antigravityTools(convertClaudeToAntigravityAgent(role(name))), claudeTools(role(name)));
       const opencode = opencodeTools(convertClaudeToOpencodeFrontmatter(role(name)));
-      assertPair(selectFixture(gemini, registryFixture('__')));
       assertPair(selectFixture(opencode, registryFixture('_')));
     });
 

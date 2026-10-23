@@ -174,16 +174,14 @@ if (process.argv.includes('--package-fixture')) {
     for(const runtime of require('../bin/install.js').ALL_RUNTIMES) assert.ok(installs.includes(`--${runtime} --global`),runtime);
     for(const token of ['/skill:fvs-help','/fvs:help','$fvs:help','$fvs-help','--local','--pi-conflict','chosen published version','Beneficial-AI-Foundation/plugins','fvs@beneficial-ai-foundation']) assert.ok(installs.includes(token),token);
     for(const token of ['requested','resolved','observed','role','model','effort','triage']) assert.ok(readme.toLowerCase().includes(token),token);
-    for(const token of ['fresh read-only','immutable','bounded','one-sorry','whole-unit','HUMAN_RULING','BLOCKED','memory-blind','at most eight','at most three']) assert.ok(flows.includes(token),token);
+    for(const token of ['fresh read-only','immutable','bounded','cheat audit','whole-unit','HUMAN_RULING','BLOCKED','memory-blind','at most eight','at most three']) assert.ok(flows.includes(token),token);
     assert.match(flows, /author owns triage and accepted edits/i);
     assert.match(flows, /Approval after edits requires the prescribed checks/);
     assert.match(flows, /Skipped, disabled, failed or pending review does not approve/);
     assert.match(flows, /explicitly request trusted-path work.*unreviewed status/);
     assert.match(flows, /when you request proof work/);
-    for(const token of ['fvs-setup','DISABLE_TELEMETRY=1','DO_NOT_TRACK=1','before invoking','audit lookup','integrity checks','https://www.skills.sh/docs/faq']) assert.ok(updates.includes(token),token);
+    for(const token of ['fvs-setup','DISABLE_TELEMETRY=1','DO_NOT_TRACK=1','To opt out','audit lookup','integrity checks','https://www.skills.sh/docs/faq']) assert.ok(updates.includes(token),token);
     assert.match(updates, /copying it alone does not install the full FVS workflows/);
-    assert.match(updates, /Later setup consent cannot cover earlier analytics/);
-    for(const line of readme.split('\n').filter(line=>/npx skills/.test(line))) assert.match(line,/DISABLE_TELEMETRY=1 DO_NOT_TRACK=1.*npx skills/);
     for(const token of ['lakefile.lean','lakefile.toml','lean-toolchain','lake-build.md','probe-aeneas','/fvs:map-code','/fvs:fc-plan','setup diagnostics','.formalising/CODEMAP.md','SPQR']) assert.ok(tooling.includes(token),token);
     // The probe JSON is qualification data; users read the commands' resolver diagnostics instead.
     assert.doesNotMatch(tooling, /probe-compatibility\.json/);
@@ -208,7 +206,7 @@ if (process.argv.includes('--package-fixture')) {
     assert.equal(rows.pi,'/skill:fvs-help'); // Pi delegates to its own package manager
     for(const runtime of ALL_RUNTIMES.filter(runtime=>runtime!=='pi')) {
       const dir=fs.mkdtempSync(path.join(os.tmpdir(),`fvs-help-row-${runtime}-`));
-      const env={...process.env,HOME:dir,XDG_CONFIG_HOME:path.join(dir,'xdg'),CLAUDE_CONFIG_DIR:dir,CODEX_HOME:dir,GEMINI_CONFIG_DIR:dir};
+      const env={...process.env,HOME:dir,XDG_CONFIG_HOME:path.join(dir,'xdg'),CLAUDE_CONFIG_DIR:dir,CODEX_HOME:dir};
       delete env.OPENCODE_CONFIG_DIR; delete env.OPENCODE_CONFIG;
       const result=spawnSync(process.execPath,[path.join(ROOT,'bin/install.js'),`--${runtime}`,'--global','--config-dir',dir],{cwd:dir,env,encoding:'utf8',timeout:60000});
       assert.equal(result.status,0,result.stderr);

@@ -56,6 +56,21 @@ it('runs crypto review through selected read-only runtimes and immutable packets
       fs.writeFileSync(path.join(bin, runtime), fake);
       fs.chmodSync(path.join(bin, runtime), 0o755);
     }
+    // The real agy bills its account: this fake must shadow it for every antigravity run.
+    fs.writeFileSync(path.join(bin, 'agy'), [
+      '#!/usr/bin/env node',
+      "const fs = require('node:fs');",
+      'const args = process.argv.slice(2);',
+      "fs.appendFileSync(process.env.FVS_REVIEW_TEST_CALLS, JSON.stringify(args) + '\\n');",
+      "if (args[0] === '--version') { console.log('1.4.3'); process.exit(0); }",
+      "if (args[0] === 'models') { console.log('gemini-4-argon-high'); process.exit(0); }",
+      "const input = JSON.parse(fs.readFileSync(0, 'utf8').split('\\n')[0]).message.content;",
+      "const topic = '.formalising/fv-plans/agy-cross/';",
+      'fs.writeFileSync(process.env.FVS_REVIEW_TEST_LOG, JSON.stringify({ args, input, cwd: process.cwd(),',
+      "  plan: fs.existsSync(topic + 'plans/PLAN_n1.md'), snapshot: fs.existsSync(topic + 'sources/proof-engineering-context.md') }));",
+      "console.log(JSON.stringify({ event: 'init', init: { model: args[args.indexOf('--model') + 1] } }));",
+      `console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: ${JSON.stringify(REVIEW)} } }));`,
+    ].join('\n'), { mode: 0o755 });
 
     const makeTopic = (name, markers = ['Claude Code', 'Claude Code']) => {
       const topic = path.join(topicRoot, name);
@@ -182,6 +197,8 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     assert.match(record, /Provenance: cross-runtime/);
     assert.match(record, /Requested reviewer: codex/);
     assert.match(record, /Requested model: catalog-codex-authority/);
+    assert.match(record, /^- Reviewer wall time: \d+ ms$/m);
+    assert.match(record, /^- Validation warnings: none$/m);
     let call = JSON.parse(fs.readFileSync(log));
     assert.equal(call.args[call.args.indexOf('--sandbox') + 1], 'workspace-write');
     assert.ok(call.args.includes('--ignore-user-config') && call.args.includes('--ephemeral'));
@@ -193,6 +210,10 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     assert.ok(fs.statSync(codexScratch).isDirectory(), 'Codex scratch must survive with the review attempt');
     assert.ok(call.input.includes('Source fidelity') && call.input.includes('PLAN_n1.md'));
     assert.ok(call.input.includes('theorem helper : True := by trivial'));
+    for (const text of ['one stated review question',
+      'Codex sandbox: only the saved scratch directory is writable']) assert.ok(call.input.includes(text), text);
+    assert.ok(!call.input.includes('about 40 lines'), 'reviewer instructions carry no numeric probe budget');
+    assert.ok(!call.input.includes('Bash is OS-sandboxed'), 'Codex must not get Claude-only sandbox lines');
 
     const claude = run('claude-cross', 'claude', ['Codex CLI', 'Codex CLI'],
       ['--model', 'catalog-claude-scout', '--effort', 'high']);
@@ -200,6 +221,9 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     record = fs.readFileSync(path.join(claude.topic, 'reviews', 'PLAN_REVIEW_n1.md'), 'utf8');
     assert.match(record, /Provenance: cross-runtime/);
     assert.match(record, /Runtime-reported models: catalog-claude-scout/);
+    call = JSON.parse(fs.readFileSync(log));
+    assert.ok(call.input.includes('Bash is OS-sandboxed') &&
+      call.input.includes('one stated review question'));
     assert.match(record, /^- Stage settings: /m, 'completed review must persist separated settings evidence');
     const settings = JSON.parse(record.match(/^- Stage settings: (.+)$/m)[1]);
     assert.equal(settings.stage, 'crypto_review');
@@ -207,10 +231,11 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     assert.equal(settings.observed.model.value, 'catalog-claude-scout');
     assert.equal(settings.observed.effort.value, 'unknown');
     const mismatch = run('actual-model-mismatch', 'claude', ['Codex CLI', 'Codex CLI'], [], 'mismatch');
-    assert.notEqual(mismatch.result.status, 0);
+    assert.equal(mismatch.result.status, 0, mismatch.result.stderr);
     assert.match(mismatch.result.stderr, /SETTINGS_MISMATCH.*model/);
     assert.match(mismatch.result.stderr, /reconfirm|choose/i);
-    assert.ok(!fs.existsSync(path.join(mismatch.topic, 'reviews', 'PLAN_REVIEW_n1.md')));
+    const mismatchRecord = fs.readFileSync(path.join(mismatch.topic, 'reviews', 'PLAN_REVIEW_n1.md'), 'utf8');
+    assert.match(JSON.parse(mismatchRecord.match(/^- Stage settings: (.+)$/m)[1]).mismatch, /SETTINGS_MISMATCH/);
     const unknown = run('unknown-observations-valid', 'claude', ['Pi', 'Pi'], [], 'unknown');
     assert.equal(unknown.result.status, 0, unknown.result.stderr);
     const unknownRecord = fs.readFileSync(path.join(unknown.topic, 'reviews/PLAN_REVIEW_n1.md'), 'utf8');
@@ -224,10 +249,15 @@ it('runs crypto review through selected read-only runtimes and immutable packets
       ['--model', 'catalogalias', '--model-is-alias'], 'mismatch');
     assert.equal(alias.result.status, 0,
       `a confirmed catalog alias without exact-ID equivalence is not a proven substitution: ${alias.result.stderr}`);
+    const aliasRecord = fs.readFileSync(path.join(alias.topic, 'reviews', 'PLAN_REVIEW_n1.md'), 'utf8');
+    assert.ok(!('mismatch' in JSON.parse(aliasRecord.match(/^- Stage settings: (.+)$/m)[1])));
     const bareExact = run('bare-exact-model-mismatch', 'claude', ['Pi', 'Pi'],
       ['--model', 'exactmodel'], 'mismatch');
-    assert.notEqual(bareExact.result.status, 0, 'bare exact IDs must not be guessed to be aliases');
+    assert.equal(bareExact.result.status, 0, bareExact.result.stderr);
     assert.match(bareExact.result.stderr, /SETTINGS_MISMATCH/);
+    const bareRecord = fs.readFileSync(path.join(bareExact.topic, 'reviews', 'PLAN_REVIEW_n1.md'), 'utf8');
+    assert.match(JSON.parse(bareRecord.match(/^- Stage settings: (.+)$/m)[1]).mismatch, /SETTINGS_MISMATCH/,
+      'bare exact IDs must not be guessed to be aliases');
     call = JSON.parse(fs.readFileSync(log));
     for (const flag of ['--safe-mode', '--strict-mcp-config', '--no-session-persistence']) {
       assert.ok(call.args.includes(flag));
@@ -287,13 +317,14 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     assert.match(record, /Runtime-reported models: openai\/catalog-pi-authority/);
     assert.match(record, /Runtime-reported effort: max/);
     assert.match(record, /Pi dispatch evidence: run pi-child-test-run/);
+    assert.match(record, /^- Reviewer wall time: not measured \(imported response\)$/m);
 
     const same = run('same-runtime', 'codex', ['Codex CLI', 'Codex CLI'],
       ['--effort', 'medium']);
     assert.equal(same.result.status, 0, same.result.stderr);
     assert.match(fs.readFileSync(path.join(same.topic, 'reviews', 'PLAN_REVIEW_n1.md'), 'utf8'),
       /same-runtime, fresh reviewer/);
-    for (const reviewer of ['opencode', 'gemini']) {
+    for (const reviewer of ['opencode']) {
       const callsBefore = fs.readFileSync(calls, 'utf8');
       const limited = run(`${reviewer}-limited`, reviewer, ['Pi', 'Pi'],
         ['--model', 'provider/exact-model', '--effort', 'high']);
@@ -304,7 +335,20 @@ it('runs crypto review through selected read-only runtimes and immutable packets
       assert.ok(!fs.existsSync(path.join(limited.topic, 'reviews', 'PLAN_REVIEW_n1.md')));
       assert.equal(fs.readFileSync(calls, 'utf8'), callsBefore, 'limited route must not launch any provider');
     }
-    for (const author of ['Pi', 'OpenCode', 'Gemini CLI']) {
+    fs.mkdirSync(path.join(topicRoot, 'agy-cross', 'sources'), { recursive: true });
+    fs.writeFileSync(path.join(topicRoot, 'agy-cross', 'sources', 'proof-engineering-context.md'), 'SNAPSHOT-CANARY');
+    const agy = run('agy-cross', 'antigravity', ['Claude Code', 'Claude Code'],
+      ['--model', 'gemini-4-argon-high', '--effort', 'high'], '', { HOME: path.join(tmp, 'agy-home') });
+    assert.equal(agy.result.status, 0, agy.result.stderr);
+    record = fs.readFileSync(path.join(agy.topic, 'reviews', 'PLAN_REVIEW_n1.md'), 'utf8');
+    assert.match(record, /Requested reviewer: antigravity/);
+    assert.match(record, /Provenance: cross-runtime/);
+    call = JSON.parse(fs.readFileSync(log));
+    assert.ok(call.plan && !call.snapshot, 'the review copy keeps the plan but not the memory snapshot');
+    assert.ok(!call.input.includes('SNAPSHOT-CANARY'));
+    assert.ok(call.input.includes('Lake builds of the project are unavailable in this copy. A check the available tools could') &&
+      !call.input.includes('checks as blocked'), 'an unavailable Lake build is a coverage note, not a blocked check');
+    for (const author of ['Pi', 'OpenCode', 'Antigravity']) {
       const known = run(`known-${author.replace(/ /g, '-')}`, 'codex', [author, author]);
       assert.equal(known.result.status, 0, known.result.stderr);
       const packetDir = path.join(project, known.result.stdout.match(/Review packet: (.+)/)[1]);

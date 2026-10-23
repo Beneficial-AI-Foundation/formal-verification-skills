@@ -1,7 +1,7 @@
 ---
 name: fvs:lean-spec-review
 description: Adversarially review an FC Lean specification with a chosen runtime, model, and effort
-argument-hint: "<spec.lean> [--reviewer codex|claude|pi|opencode|gemini|other] [--model ID] [--effort LEVEL]"
+argument-hint: "<spec.lean> [--reviewer codex|claude|pi|opencode|antigravity|other] [--model ID] [--effort LEVEL]"
 allowed-tools:
   - Read
   - Bash
@@ -34,7 +34,10 @@ opposite-runtime recommendation. Null saved values keep profile routing active.
 
 Detect the specification authoring runtime. Recommend an authenticated opposite provider/runtime:
 OpenAI/Codex-authored specs use Claude Code CLI; Claude-authored specs use a fresh
-provider-qualified OpenAI Pi seat when running in Pi, then Codex CLI. Unknown authors receive an
+provider-qualified OpenAI Pi seat when running in Pi, then Codex CLI.
+For OpenAI/Codex- and Claude-authored specs, also offer the `antigravity` reviewer: Antigravity CLI (`agy`) with a detected Argon ID (`gemini-4-argon-*` from `agy models`), launched in a review copy without proof-engineering memory.
+An Argon review sends the review packet (the user's sources and specifications) to Google under the user's own agy account terms; on consumer accounts Google may use that content.
+Unknown authors receive an
 explicit reviewer menu without an independence claim. Never route a Claude Code subscription
 through Pi. The `pi` reviewer is available only inside Pi with a provider-qualified model from its
 live authenticated catalog and a fresh-child facility that can honor and report the exact per-child
@@ -42,17 +45,17 @@ model/effort. It launches a fresh read-only child, never a manual Other packet. 
 the workflow's completed-child receipt with actual run ID/model/effort and packet/response hashes;
 missing capability or evidence leaves the review pending.
 
-OpenCode and Gemini selections remain named choices, not Claude/Other aliases. The external
-helper returns a specific `CAPABILITY_UNAVAILABLE` for their currently unqualified diagnostic
-CLI routes (OpenCode has no native shell isolation; Gemini lacks this isolated named-agent,
-memory-excluding shell/effort route). Offer explicit Codex/Claude, fresh Pi, or acknowledged
+OpenCode selections remain a named choice, not a Claude/Other alias. The external helper returns a
+specific `CAPABILITY_UNAVAILABLE` for its currently unqualified diagnostic CLI route (no native
+shell isolation). Offer explicit Codex/Claude, fresh Pi, or acknowledged
 Other alternatives and reconfirm any changed choice; never launch unsafely or substitute.
 An unavailable observed setting is unknown, not this capability failure or a command-wide gate.
 
 Build one review selection manifest containing reviewer runner, provenance, exact catalog model,
 and effort. Confirm it before launch with Continue once, Adjust once, Save override, or Cancel;
 retain notes. Notes rebuild the manifest and require reconfirmation. Save writes only the
-`spec_review` object. Offer every effort value the selected model/provider reports as supported.
+`spec_review` object. Offer every effort value the selected model/provider reports as supported,
+with `xhigh` as the default and `max` as an explicit opt-in.
 Missing models or unsupported efforts ask for one-run/save/cancel; unresolved noninteractive
 choices fail before launch with exact remediation.
 

@@ -69,7 +69,7 @@ function validateQualification(file, acceptanceFile, env = process.env) {
   return q;
 }
 function environment(q, area) {
-  const dirs = ['home', 'tmp', 'config', 'cache', 'data', 'state', 'claude', 'codex', 'pi', 'gemini', 'opencode', 'git-empty'];
+  const dirs = ['home', 'tmp', 'config', 'cache', 'data', 'state', 'claude', 'codex', 'pi', 'opencode', 'git-empty'];
   for (const name of dirs) fs.mkdirSync(path.join(area, name), { recursive: true, mode: 0o700 });
   return {
     PATH: `${path.dirname(q.tools.node.path)}:/usr/bin:/bin`, HOME: path.join(area, 'home'),
@@ -77,7 +77,7 @@ function environment(q, area) {
     XDG_CONFIG_HOME: path.join(area, 'config'), XDG_CACHE_HOME: path.join(area, 'cache'),
     XDG_DATA_HOME: path.join(area, 'data'), XDG_STATE_HOME: path.join(area, 'state'),
     CLAUDE_CONFIG_DIR: path.join(area, 'claude'), CODEX_HOME: path.join(area, 'codex'),
-    PI_CODING_AGENT_DIR: path.join(area, 'pi'), GEMINI_CONFIG_DIR: path.join(area, 'gemini'),
+    PI_CODING_AGENT_DIR: path.join(area, 'pi'),
     OPENCODE_CONFIG_DIR: path.join(area, 'opencode'),
     npm_config_cache: path.join(area, 'cache'), npm_config_prefix: path.join(area, 'npm-prefix'),
     npm_config_userconfig: path.join(area, 'npmrc'), npm_config_globalconfig: path.join(area, 'global-npmrc'),
@@ -93,7 +93,7 @@ function environment(q, area) {
 function unitEnvironment(env) {
   const result = { ...env };
   // Installer tests intentionally replace HOME for each independent fixture.
-  for (const name of ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'GEMINI_CONFIG_DIR', 'OPENCODE_CONFIG_DIR', 'PI_CODING_AGENT_DIR']) delete result[name];
+  for (const name of ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'OPENCODE_CONFIG_DIR', 'PI_CODING_AGENT_DIR']) delete result[name];
   return result;
 }
 function run(q, area, label, argv, cwd, env, { timeout = 15000, maxBytes = 1048576 } = {}) {
@@ -168,7 +168,9 @@ function requireResource(file) {
 async function nativeFootprint(q, area, source, env, runtime = 'claude') {
   const project = path.join(area, `native-${runtime}`);
   fs.mkdirSync(project);
-  const config = path.join(project, `.${runtime}`);
+  // Antigravity installs under .agents/plugins/fvs; seed an old Gemini settings file instead,
+  // which the legacy cleanup must leave with its foreign entry intact.
+  const config = path.join(project, runtime === 'antigravity' ? '.gemini' : `.${runtime}`);
   fs.mkdirSync(config);
   if (runtime === 'codex') fs.writeFileSync(path.join(config, 'config.toml'), 'foreign_setting = "keep"\n');
   else fs.writeFileSync(path.join(config, runtime === 'opencode' ? 'opencode.json' : 'settings.json'), JSON.stringify({ foreignSetting: 'keep' }));
@@ -214,20 +216,22 @@ async function nativeFootprint(q, area, source, env, runtime = 'claude') {
   for (const hook of hooks) {
     const original = fs.readFileSync(path.join(source, 'hooks/dist', hook), 'utf8');
     // Local installation templates only quoted config-directory literals.
-    const expected = original.replace(/'\.claude'/g, `'.${runtime}'`);
+    const expected = original.replace(/'\.claude'/g, runtime === 'antigravity' ? "'.agents/plugins/fvs'" : `'.${runtime}'`);
     assert.equal(fs.readFileSync(path.join(nativeRoot, 'hooks', hook), 'utf8'), expected, `exact ${runtime} hook conversion`);
   }
   if (runtime === 'codex') assert.equal(fs.existsSync(path.join(nativeRoot, 'hooks/fvs-statusline.js')), false);
-  const commandsDirectory = path.join(nativeRoot, runtime === 'codex' ? 'skills' : runtime === 'opencode' ? 'command' : 'commands/fvs');
+  const commandsDirectory = path.join(nativeRoot, ['codex', 'antigravity'].includes(runtime) ? 'skills' : runtime === 'opencode' ? 'command' : 'commands/fvs');
   const commands = fs.readdirSync(commandsDirectory);
   assert.equal(commands.length, 30);
   let commandPath;
   if (runtime === 'codex') commandPath = path.join(commandsDirectory, 'fvs-fc-plan/SKILL.md');
   else if (runtime === 'opencode') commandPath = path.join(commandsDirectory, 'fvs-fc-plan.md');
-  else commandPath = path.join(commandsDirectory, `fc-plan.${runtime === 'gemini' ? 'toml' : 'md'}`);
+  else if (runtime === 'antigravity') commandPath = path.join(commandsDirectory, 'fc-plan/references/fc-plan.md');
+  else commandPath = path.join(commandsDirectory, 'fc-plan.md');
   const installedCommand = fs.readFileSync(commandPath, 'utf8');
   if (runtime !== 'claude') assert.doesNotMatch(installedCommand, /~\/\.claude\//, 'native command paths converted');
-  const configFile = path.join(nativeRoot, runtime === 'codex' ? 'config.toml' : runtime === 'opencode' ? 'opencode.json' : 'settings.json');
+  const configFile = runtime === 'antigravity' ? path.join(config, 'settings.json')
+    : path.join(nativeRoot, runtime === 'codex' ? 'config.toml' : runtime === 'opencode' ? 'opencode.json' : 'settings.json');
   assert.match(fs.readFileSync(configFile, 'utf8'), /keep/, 'unrelated seeded settings survive');
   if (runtime === 'codex') {
     const installer = require(path.join(source, 'bin/install.js'));
@@ -282,7 +286,7 @@ async function nativeResources(q, area, full = false) {
   assertSuccess(await run(q, area, 'verification-hook-build', [q.tools.node.path, path.join(source, 'scripts/build-hooks.js')], source, env));
   assertSuccess(await run(q, area, 'verification-unit', [q.tools.node.path, '--test', 'tests/skills-distribution.test.cjs', 'tests/pi-installer.test.cjs', 'tests/install.test.cjs', 'tests/codex-config.test.cjs', ...(full ? ['tests/task-ref-sweep.test.cjs'] : [])], source, unitEnvironment(env), { timeout: 45000 }));
   const results = {};
-  for (const runtime of ['claude', 'opencode', 'gemini', 'codex']) {
+  for (const runtime of ['claude', 'opencode', 'antigravity', 'codex']) {
     results[runtime] = await nativeFootprint(q, area, source, env, runtime);
   }
   const piProject = path.join(area, 'native-pi');

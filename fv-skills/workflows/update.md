@@ -165,7 +165,9 @@ Use AskUserQuestion:
 </step>
 
 <step name="run_update">
-Run the update using the install type detected in step 1:
+Run the update using the install type detected in step 1. Add the flag of the runtime running this
+command (`--claude`, `--opencode`, `--antigravity` or `--codex`): without one the noninteractive
+installer defaults to Claude Code, so an update run inside agy would not update the agy plugin.
 
 **If LOCAL install:**
 ```bash
@@ -183,7 +185,7 @@ Clear the update cache so statusline indicator disappears:
 
 ```bash
 # Clear update cache across all runtime directories
-for dir in .claude .config/opencode .opencode .gemini; do
+for dir in .claude .config/opencode .opencode .gemini/config/plugins/fvs .agents/plugins/fvs; do
   rm -f "./$dir/cache/fvs-update-check.json"
   rm -f "$HOME/$dir/cache/fvs-update-check.json"
 done

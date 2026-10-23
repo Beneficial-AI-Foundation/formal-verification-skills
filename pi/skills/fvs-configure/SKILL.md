@@ -39,7 +39,7 @@ Add missing current-schema containers without deleting old settings: `stage_over
 Prefer explicit host identity over directory guesses:
 
 1. `PI_CODING_AGENT=true` or `AI_AGENT=pi` means Pi.
-2. A host adapter or `AI_AGENT` value naming Claude, Codex, OpenCode, or Gemini wins next.
+2. A host adapter or `AI_AGENT` value naming Claude, Codex, OpenCode, or Antigravity wins next.
 3. If identity is still unknown, ask which runtime is being configured.
 
 Read the runtime's current model catalog or picker. On Pi, `pi --list-models` is the CLI fallback.
@@ -82,8 +82,9 @@ choose a lower family. Custom input must exactly match a catalog entry. On Pi it
 provider. For ordinary Pi stages, reject entries whose catalog provider differs from the active
 provider; review stages use their separate opposite-provider policy.
 
-For effort, offer every value the selected catalog model reports as supported, with the stage
-tier's quality effort first. Never advertise a value the model cannot accept. Save either or both fields under:
+For effort, offer every value the selected catalog model reports as supported, with the stage's
+quality effort first (`xhigh` for review stages, `max` as an explicit opt-in). Never advertise a
+value the model cannot accept. Save either or both fields under:
 
 ```
 stage_overrides[runtime][stage] = { model?, effort? }
@@ -128,19 +129,22 @@ persists; only this configuration menu changes the stored policy.
 Choose `spec_review`, `crypto_review`, or both. Null reviewer/model/effort values keep role-aware
 profile routing and the per-command confirmation active. For each explicit saved review setting:
 
-1. choose reviewer runtime `codex`, `claude`, `pi`, `opencode`, `gemini`, or `other` (`pi` only when the active host is Pi and the selected provider is authenticated);
+1. choose reviewer runtime `codex`, `claude`, `pi`, `opencode`, `antigravity`, or `other` (`pi` only when the active host is Pi and the selected provider is authenticated);
 2. choose an exact model from that reviewer's catalog;
 3. choose a supported effort;
 4. keep `automatic` unchanged unless explicitly edited.
 
-Only source-qualified routes enter the confirmed launch manifest. OpenCode/Gemini selections
-currently receive named diagnostic-route limitations from the shared helper, not a Claude fallback
-or automatic Other relabeling. Explain missing shell/memory/effort controls and offer explicit
+Only source-qualified routes enter the confirmed launch manifest. OpenCode selections currently
+receive a named diagnostic-route limitation from the shared helper, not a Claude fallback or
+automatic Other relabeling.
+Antigravity reviewer selections need an exact `gemini-4-argon-*` ID and run in a review copy without proof-engineering memory.
+Explain missing shell/memory/effort controls and offer explicit
 Codex/Claude, fresh Pi, or acknowledged Other alternatives; reconfirm before saving a changed
 selection. Preserve preexisting values and ordinary five-runtime stage choices. Unknown telemetry
 alone never removes a working choice or forces a new approval.
 
-Quality recommends the authenticated opposite provider/runtime and its authority-tier model+effort.
+Quality recommends the authenticated opposite provider/runtime and its authority-tier model at
+`xhigh` effort; `max` is an explicit opt-in.
 On Pi, OpenAI review of Claude-authored work prefers a fresh provider-qualified Pi seat only when
 the child facility can honor and report the exact per-child model/effort, then Codex CLI. Review of
 OpenAI-authored work uses authenticated Claude Code CLI when available. If the opposite runner is

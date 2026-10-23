@@ -15,12 +15,12 @@ or nativeRoot from this entry's parents. A complete native installation supplies
 its own thirty commands, workflows, references, templates, scripts, hooks and roles.
 
 The functional-correctness (FC) track proceeds through understanding, specification,
-fresh statement review and explicitly requested interactive proof. Extracted-code
+fresh statement review and explicitly requested autonomous proof. Extracted-code
 work first needs the project's actual source/translation prerequisites. The crypto
 track proceeds through planning, fresh review, explicit execution, adversarial
 evaluation and follow-up. Setup does not start either track or choose models.
 
-Source artifact version: 2.3.7. This is not evidence that an npm version,
+Source artifact version: 2.3.8. This is not evidence that an npm version,
 public tag, catalog pin or release is available. Public source: https://github.com/Beneficial-AI-Foundation/formal-verification-skills.
 Native help source: https://github.com/Beneficial-AI-Foundation/formal-verification-skills/blob/main/commands/fvs/help.md.
 
@@ -55,7 +55,7 @@ explicit supported alternatives or cancel, not a claimed generic native fallback
 | pi | complete local-source native package; personal or trusted project scope |
 | claude | complete source installer --claude; --local or --global |
 | opencode | complete source installer --opencode; --local or --global |
-| gemini | complete source installer --gemini; --local or --global |
+| antigravity | complete source installer --antigravity; --local or --global |
 | codex | complete source installer --codex; --local or --global |
 
 Choose ONE complete installation per runtime. Inspect existing alternate-source
@@ -74,7 +74,7 @@ check exact roles/settings and stop settings-dependent dispatch/writes if unavai
 Installing this setup skill does not register FVS specialists.
 
 An explicitly selected npm route uses package fv-skills-baif; Pi's exact source
-notation for THIS source artifact version is `npm:fv-skills-baif@2.3.7`.
+notation for THIS source artifact version is `npm:fv-skills-baif@2.3.8`.
 That notation is not publication evidence. Independently confirm the exact requested
 registry version before choosing an npm command; a requested unpublished npm pin
 stays blocked. Do not substitute latest or an older release. The source snapshot's
@@ -110,7 +110,7 @@ for the accepted user profile; never omit scope. Node is the verified executable
 `node "$sourceRoot/bin/install.js" "$runtimeFlag" "$scopeFlag"`
 
 For non-Pi runtimeFlag, validate the chosen runtime against exactly
-`--claude`, `--opencode`, `--gemini`, `--codex`; never use --all. Scope is mandatory.
+`--claude`, `--opencode`, `--antigravity`, `--codex`; never use --all. Scope is mandatory.
 The hook build copies two pure Node hooks; this lane needs no npm install or npx.
 Keep the complete source snapshot. Observe actual installed version, all thirty
 commands and resources, hook registrations and role/settings footprints. Discover
@@ -145,8 +145,8 @@ approval after revisions. Never perform required fresh review inline; failed,
 skipped or pending review is not approval and never starts proof/execution.
 
 Strongly recommend existing lean-lsp-mcp: https://github.com/oOo0oOo/lean-lsp-mcp.
-Source-tested narrow diagnostics AND goal grants and the Gemini/OpenCode converter
-fix do not prove effective child permissions, inventory/schema exposure or live
+Source-tested narrow diagnostics AND goal grants and the OpenCode converter fix and
+Antigravity's YAML tool lists do not prove effective child permissions, inventory/schema exposure or live
 feedback; these remain UNKNOWN. Live qualification follows a usable public release,
 not setup-source delivery. Conditional IDE diagnostics are not goals. Report actual
 unavailability; a required-live request stops. Compiler-only fallback needs that
@@ -156,22 +156,20 @@ system is delivered. Setup itself runs no Lean/compiler/diagnostics operation.
 
 ## Privacy
 
-Installation analytics can occur BEFORE any setup conversation. Public instructions
-and automation must establish BOTH DISABLE_TELEMETRY=1 and DO_NOT_TRACK=1 BEFORE
-invoking the skills CLI. Later setup consent cannot retroactively consent to those
-requests. In inspected skills@1.7.1, these opt-outs also suppress external security-
-audit lookup; retain independent source, tarball/dependency integrity and legitimacy
-checks. This entry adds no FVS collector, private upload or custom telemetry metadata.
+The skills CLI reports each install (contents below). Setting either DISABLE_TELEMETRY=1
+or DO_NOT_TRACK=1 before invoking it disables that reporting. In inspected skills@1.7.1,
+opting out also suppresses the external security-audit lookup; retain independent
+source, tarball/dependency integrity and legitimacy checks. This entry adds no FVS
+collector, private upload or custom telemetry metadata.
 
 Official CLI/FAQ: https://www.skills.sh/docs/cli and https://www.skills.sh/docs/faq.
 Privacy notice: https://vercel.com/legal/privacy-policy. Installation reporting can
 send public repository/skill/agent/CLI/version/scope/path/CI metadata to
-https://www.skills.sh/tele/t; the recipient sees the network source IP. Retention,
+https://www.skills.sh/tele/t; the recipient sees the network source IP. No account,
+machine ID, local path, file contents or hashes are sent. Retention,
 anonymisation, notice and legal status are not independently verified. No legal
 anonymity, harmlessness or EU exemption is promised. No private project, proof,
 source or conversation should be uploaded, and no repeated/artificial adoption
-counts should be manufactured. QA always disables telemetry. Maintainer choice
-about ONE genuine reporting-enabled public installation after validated release
-is a separate owner gate, not consent for all users; this entry does not opt in.
+counts should be manufactured. QA always disables telemetry.
 Local source/contract/transport/resource checks prove neither native model behavior
 nor public release/installation or an observed skills.sh listing.
