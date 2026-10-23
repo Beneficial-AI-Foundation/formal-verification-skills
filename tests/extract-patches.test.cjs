@@ -358,7 +358,7 @@ describe('fvs-extract-patches: legacy ledger migration', () => {
     const applied = spawnSync('git', ['apply', 'src-modifications.diff'], {
       cwd: root,
       encoding: 'utf8',
-      env: { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(root) },
+      env: { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(root), GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: '1' },
     });
     assert.equal(applied.status, 0, applied.stderr);
     return root;

@@ -13,7 +13,9 @@ const MODES = ['translation-patches', 'legacy-source-ledger'];
 const DEFAULT_INPUTS = ['Cargo.toml', 'Cargo.lock', 'build.rs', 'src'];
 const PATCH_DIR = 'translation-patches';
 const SERIES = 'series';
-const LEDGER_FILES = ['src-modifications.diff', 'src-modifications.json', 'src-modifications.md'];
+const LEDGER_DIFF = 'src-modifications.diff';
+const LEDGER_INDEX = 'src-modifications.json';
+const LEDGER_FILES = [LEDGER_DIFF, LEDGER_INDEX, 'src-modifications.md'];
 const INACTIVE_MARKER = 'src-modifications.inactive.json';
 const FORBIDDEN_SEGMENTS = new Set(['.git', '.formalising', '.planning']);
 const MANIFEST = 'manifest.json';
@@ -97,14 +99,17 @@ function fileState(file) {
   return { sha256: sha256(fs.readFileSync(file)), mode: (stat.mode & 0o777).toString(8) };
 }
 
+function readJson(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (error) {
+    return refuse('invalid-input', `cannot read ${file}: ${error.message}`);
+  }
+}
+
 function readConfig(projectRoot) {
   const file = path.join(projectRoot, '.formalising', 'fvs-config.json');
-  if (!fs.existsSync(file)) return {};
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8')) ?? {};
-  } catch (error) {
-    return refuse('invalid-input', `cannot parse ${file}: ${error.message}`);
-  }
+  return fs.existsSync(file) ? readJson(file) ?? {} : {};
 }
 
 function inputPaths(projectRoot, config) {
@@ -190,14 +195,7 @@ function legacyLedger(projectRoot, inputs) {
     if (present.length === 0) continue;
     const files = present.map((name) => path.posix.join(crateRoot, name));
     const markerFile = path.join(projectRoot, crateRoot, INACTIVE_MARKER);
-    let marker = null;
-    if (lexists(markerFile)) {
-      try {
-        marker = JSON.parse(fs.readFileSync(markerFile, 'utf8'));
-      } catch (error) {
-        refuse('invalid-input', `cannot parse ${path.posix.join(crateRoot, INACTIVE_MARKER)}: ${error.message}`);
-      }
-    }
+    const marker = lexists(markerFile) ? readJson(markerFile) : null;
     const current = Object.fromEntries(present.map((name) => [name, fileState(path.join(projectRoot, crateRoot, name))]));
     if (marker && sameState(marker.ledger, current)) {
       ledger.inactive.push(...files);
@@ -509,8 +507,8 @@ function status(flags) {
 // can show that what it consumed is what the manifest describes.
 function verifyTree(flags) {
   const manifest = readManifest(flags.out);
-  if (manifest.status !== 'prepared') {
-    refuse('partial', 'the manifest records a partial extraction copy; there is no recorded tree to verify', { status: manifest.status });
+  if (manifest.status !== 'prepared' || !manifest.final) {
+    refuse('partial', 'the manifest records no prepared extraction copy; there is no recorded tree to verify', { status: manifest.status });
   }
   const actual = walkInputs(manifest.tree, manifest.source.inputs);
   const recorded = manifest.final.files;
@@ -588,27 +586,23 @@ function migrate(flags) {
   if (fs.existsSync(directory) && fs.readdirSync(directory).some((name) => name.endsWith('.patch') || name === SERIES)) {
     refuse('mixed-mode', `${PATCH_DIR}/ already holds a patch list; migration writes a new list and never merges into one`);
   }
-  const diffs = legacyLedger(projectRoot, inputs).active.filter((file) => path.posix.basename(file) === LEDGER_FILES[0]);
+  const diffs = legacyLedger(projectRoot, inputs).active.filter((file) => path.posix.basename(file) === LEDGER_DIFF);
   if (diffs.length !== 1) {
     refuse('invalid-input', diffs.length === 0
-      ? `there is no active legacy source ledger (${LEDGER_FILES[0]}) to migrate`
+      ? `there is no active legacy source ledger (${LEDGER_DIFF}) to migrate`
       : `more than one active legacy source ledger: ${diffs.join(', ')}`);
   }
   const crateRoot = path.posix.dirname(diffs[0]);
   const at = (name) => path.join(projectRoot, crateRoot, name);
   if (lexists(at(INACTIVE_MARKER))) refuse('invalid-input', `${path.posix.join(crateRoot, INACTIVE_MARKER)} is left from an earlier migration; remove it explicitly before migrating again`);
-  let index = null;
-  try {
-    index = JSON.parse(fs.readFileSync(at(LEDGER_FILES[1]), 'utf8'));
-  } catch (error) {
-    refuse('invalid-input', `cannot read ${LEDGER_FILES[1]}: ${error.message}`);
-  }
-  const entries = Array.isArray(index) ? index : index?.entries;
-  if (!Array.isArray(entries)) refuse('invalid-input', `${LEDGER_FILES[1]} must hold an array of entries or an object with an "entries" array`);
-  const ledgerBytes = fs.readFileSync(at(LEDGER_FILES[0]));
+  if (!lexists(at(LEDGER_INDEX))) refuse('invalid-input', `${LEDGER_DIFF} has no ${LEDGER_INDEX} next to it`);
+  const ledgerIndex = readJson(at(LEDGER_INDEX));
+  const entries = Array.isArray(ledgerIndex) ? ledgerIndex : ledgerIndex?.entries;
+  if (!Array.isArray(entries)) refuse('invalid-input', `${LEDGER_INDEX} must hold an array of entries or an object with an "entries" array`);
+  const ledgerBytes = fs.readFileSync(at(LEDGER_DIFF));
   const hunks = splitLedger(ledgerBytes.toString('utf8'));
   if (hunks.length !== entries.length) {
-    refuse('invalid-input', `${LEDGER_FILES[0]} has ${hunks.length} hunk(s) but ${LEDGER_FILES[1]} has ${entries.length} entr(ies); they must map one to one, in order`);
+    refuse('invalid-input', `${LEDGER_DIFF} has ${hunks.length} hunk(s) but ${LEDGER_INDEX} has ${entries.length} entr(ies); they must map one to one, in order`);
   }
   hunks.forEach((hunk, position) => {
     const named = entries[position]?.file;
@@ -618,7 +612,7 @@ function migrate(flags) {
   });
   const patches = hunks.map((hunk, position) => migratedPatch(entries[position], hunk, position));
   const names = patches.map((patch) => patch.file);
-  if (new Set(names).size !== names.length) refuse('invalid-input', `the ids in ${LEDGER_FILES[1]} must be unique`);
+  if (new Set(names).size !== names.length) refuse('invalid-input', `the ids in ${LEDGER_INDEX} must be unique`);
   refuseOutsideInputs(patches, inputs);
 
   const files = walkInputs(projectRoot, inputs);
@@ -628,7 +622,7 @@ function migrate(flags) {
     materialise({ projectRoot, inputs, files }, tree);
     const reverted = gitApply(tree, { bytes: ledgerBytes }, '-R');
     if (reverted.status !== 0) {
-      refuse('stale', `the working source does not carry ${LEDGER_FILES[0]}: ${reverted.stderr.trim()}`, { kind: 'stale' });
+      refuse('stale', `the working source does not carry ${LEDGER_DIFF}: ${reverted.stderr.trim()}`, { kind: 'stale' });
     }
     const pinned = { inputs, patches, files: walkInputs(tree, inputs) };
     rehearse(pinned, tree);
