@@ -210,8 +210,9 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     assert.ok(fs.statSync(codexScratch).isDirectory(), 'Codex scratch must survive with the review attempt');
     assert.ok(call.input.includes('Source fidelity') && call.input.includes('PLAN_n1.md'));
     assert.ok(call.input.includes('theorem helper : True := by trivial'));
-    for (const text of ['Default budget: at most 3 probes', 'A build of existing sources counts as one probe',
+    for (const text of ['one stated review question',
       'Codex sandbox: only the saved scratch directory is writable']) assert.ok(call.input.includes(text), text);
+    assert.ok(!call.input.includes('about 40 lines'), 'reviewer instructions carry no numeric probe budget');
     assert.ok(!call.input.includes('Bash is OS-sandboxed'), 'Codex must not get Claude-only sandbox lines');
 
     const claude = run('claude-cross', 'claude', ['Codex CLI', 'Codex CLI'],
@@ -222,7 +223,7 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     assert.match(record, /Runtime-reported models: catalog-claude-scout/);
     call = JSON.parse(fs.readFileSync(log));
     assert.ok(call.input.includes('Bash is OS-sandboxed') &&
-      call.input.includes('A build of existing sources counts as one probe'));
+      call.input.includes('one stated review question'));
     assert.match(record, /^- Stage settings: /m, 'completed review must persist separated settings evidence');
     const settings = JSON.parse(record.match(/^- Stage settings: (.+)$/m)[1]);
     assert.equal(settings.stage, 'crypto_review');
@@ -345,6 +346,8 @@ it('runs crypto review through selected read-only runtimes and immutable packets
     call = JSON.parse(fs.readFileSync(log));
     assert.ok(call.plan && !call.snapshot, 'the review copy keeps the plan but not the memory snapshot');
     assert.ok(!call.input.includes('SNAPSHOT-CANARY'));
+    assert.ok(call.input.includes('Lake builds of the project are unavailable in this copy. A check the available tools could') &&
+      !call.input.includes('checks as blocked'), 'an unavailable Lake build is a coverage note, not a blocked check');
     for (const author of ['Pi', 'OpenCode', 'Antigravity']) {
       const known = run(`known-${author.replace(/ /g, '-')}`, 'codex', [author, author]);
       assert.equal(known.result.status, 0, known.result.stderr);

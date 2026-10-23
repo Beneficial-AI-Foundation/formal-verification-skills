@@ -806,12 +806,10 @@ export async function runReviewer({ runtime, model, effort, prompt, workingRoot 
       'Never edit source or plan files. Do not implement the plan or attempt full proofs.\n' +
       `LEAN_NUM_THREADS is validated and set to ${threads}; use ` +
       'LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 for Lean checks.\n\n' + prompt;
-    const probeBudget = 'You may write tiny diagnostic prototypes in scratch, in the target language\n' +
+    const probeRules = 'You may write tiny diagnostic prototypes in scratch, in the target language\n' +
       '(Lean, Verus, Rocq, Isabelle, or another installed toolchain): signature/type checks,\n' +
       'API checks, minimal counterexamples, or short executable traces. Each must answer\n' +
-      'one stated review question. Default budget: at most 3 probes, about 40 lines each,\n' +
-      'with at most one correction per probe; report uncertainty if more work is needed.\n' +
-      'A build of existing sources counts as one probe.\n' +
+      'one stated review question.\n' +
       'Do not implement planned definitions or proofs, run extended proof search, or modify targets.\n' +
       'Preserve exact probe code, commands, and outcomes in the review.\n' +
       'For Lean, prefer #check / #print axioms or signature stubs; these do not prove target claims.\n';
@@ -823,7 +821,7 @@ export async function runReviewer({ runtime, model, effort, prompt, workingRoot 
         '--color', 'never', '--output-last-message', lastMessage,
         '-c', `model_reasoning_effort="${effort}"`);
       save('launch.json', JSON.stringify({ runtime, args: [...args, '-'], cwd: scratch }, null, 2) + '\n');
-      const codexPrompt = scopedPrompt + '\n' + probeBudget +
+      const codexPrompt = scopedPrompt + '\n' + probeRules +
         'Codex sandbox: only the saved scratch directory is writable; the repository, including its\n' +
         'Lake build outputs, is read-only. Report a blocked check instead of retrying with more access.\n';
       save('prompt.md', codexPrompt);
@@ -837,12 +835,13 @@ export async function runReviewer({ runtime, model, effort, prompt, workingRoot 
       const args = ['--input-format', 'stream-json', '--output-format', 'stream-json',
         '--model', model, '--effort', effort, '--sandbox', '--mode', 'accept-edits',
         '--disable-slash-commands', '--print-timeout', `${reviewTimeoutMs}ms`];
-      const agyPrompt = scopedPrompt + '\n' + probeBudget +
+      const agyPrompt = scopedPrompt + '\n' + probeRules +
         'Antigravity review copy: the session cwd is the repository root above, a disposable copy\n' +
         'made for this review without proof-engineering memory, VCS history, Lake outputs or dependency\n' +
         'checkouts, or project agent configuration.\n' +
         'Write diagnostic files only in the saved scratch directory.\n' +
-        'Lake builds of the project are unavailable in this copy; report such checks as blocked.\n' +
+        'Lake builds of the project are unavailable in this copy. A check the available tools could\n' +
+        'not run is recorded in coverage; it is not by itself a finding or a BLOCKED reason.\n' +
         'Shell commands that need approval are denied in this non-interactive run; report a\n' +
         'blocked check instead of retrying with more access.\n';
       save('launch.json', JSON.stringify({ runtime, args, cwd: copy }, null, 2) + '\n');
@@ -888,7 +887,7 @@ export async function runReviewer({ runtime, model, effort, prompt, workingRoot 
       '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
       '--permission-mode', 'dontAsk', '--no-session-persistence', '--effort', effort);
     const claudePrompt = scopedPrompt + '\nBash is OS-sandboxed: source/plan writes and unsandboxed retries are forbidden.\n' +
-      probeBudget +
+      probeRules +
       'For necessary existing-tree Lean checks, cd to the repository and use\n' +
       'LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build <target>, or the same\n' +
       'prefix for lake env lean <absolute-scratch-probe>. Only generated Lake build/config\n' +

@@ -166,16 +166,19 @@ re-checks every finding and exclusively writes one separate file:
 - `PLAN_REVIEW_nN_TRIAGE.md`, or
 - `FOLLOWUP_REVIEW_nN_TRIAGE.md`.
 
-Record requested and observed runtime/model/effort, provenance, each finding ID with
-accept/reject/defer and checked evidence, pre-edit target hashes, post-edit target hashes when
-applicable, gates rerun, and one status. Refuse to overwrite either review or triage history.
+Record requested and observed runtime/model/effort, provenance, pre-edit target hashes, post-edit
+target hashes when applicable, gates rerun, and one status. Record checked evidence, with finding
+IDs, only for REJECT-FINDING, DESCOPE, DEFER-WITH-RULING and applied edits; record dispositions
+only after a REJECT verdict. Refuse to overwrite either review or triage history.
 
 Route the verdict:
 
 - `APPROVE`: write supported triage status `approved`; execution may be suggested.
 - `APPROVE-WITH-EDITS`: the authoring seat applies every accepted, exhaustively named bounded edit,
-  reruns the plan's own verification gates, records accepted/rejected finding IDs plus pre-edit and
-  post-edit hashes, then writes `approved after edits`. This is terminal: no second review.
+  reruns the plan contract checks (required fields present; PLAN_nN.md and EXEC_PLAN_nN.md
+  consistent for an initial plan), not Lean builds, records accepted/rejected finding IDs plus
+  pre-edit and post-edit hashes, then writes `approved after edits`.
+  This is terminal: no second review.
 - `REJECT`: bounded edits cannot promote it. The authoring seat creates a fresh authored revision
   at the next immutable iteration and a fresh review.
 
