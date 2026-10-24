@@ -6,8 +6,8 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import {
+  CONFINEMENT_UNAVAILABLE,
   PROBE_RELEASE,
-  SANDBOX_EXEC,
   TESTED_TUPLES,
   executableFile,
   hostTarget,
@@ -18,10 +18,6 @@ import {
 } from './fvs-probe-inventory.mjs';
 
 const GREEN = 'supported-and-tested';
-const NOT_CHECKED = 'not checked: this host has no read-only sandbox';
-// Linux x64 has upstream binaries but no FVS validation for extraction or
-// acceptance; any other host without recorded evidence is unsupported.
-const NOT_VALIDATED = { 'x86_64-unknown-linux-gnu': 'Linux x64' };
 
 function fatal(message) {
   throw new Error(message);
@@ -50,11 +46,14 @@ function firstLine(text) {
   return (text ?? '').split(/\r?\n/)[0].trim();
 }
 
-// Version checks run only under the read-only sandbox: unconfined, a rustup
-// or elan proxy could download the toolchain a project pins. Returns null
-// when the check cannot be confined.
-function confinedRun(bin, args, cwd) {
-  return fs.existsSync(SANDBOX_EXEC) ? readOnlyRun(bin, args, cwd) : null;
+// Version checks run only under the resolver's read-only confinement
+// (sandbox-exec on macOS, bubblewrap on Linux): unconfined, a rustup or elan
+// proxy could download the toolchain a project pins. Where confinement is
+// unavailable the check is skipped and `skipped` says why.
+function versionCheck(bin, args, cwd, root) {
+  const run = readOnlyRun(bin, args, cwd, { projectRoot: root });
+  const unavailable = run.confinementError ?? (run.output === CONFINEMENT_UNAVAILABLE ? run.output : null);
+  return { ...run, skipped: unavailable ? `not checked: ${unavailable}` : null };
 }
 
 function item(id, verdict, reason, nextStep, evidence, scope = null) {
@@ -106,12 +105,6 @@ function hostItem(platform) {
     const asset = PROBE_RELEASE.assets[platform];
     const probeReason = asset?.reason ?? `no official probe-aeneas ${PROBE_RELEASE.tag} asset exists for it`;
     const hosts = [...new Set(TESTED_TUPLES.flatMap((tuple) => Object.keys(tuple.platforms)))].join(', ');
-    if (NOT_VALIDATED[platform]) {
-      return item('host', 'available-but-unverified',
-        `${NOT_VALIDATED[platform]} is not validated for FVS extraction or acceptance, and verified probe operations are unsupported here: ${probeReason}`,
-        `Expect exploratory work without a graph here; use a host with recorded evidence (${hosts}) for verified probe operations.`,
-        evidence);
-    }
     return item('host', 'unsupported-platform', `${platform} has no recorded FVS confined run: ${probeReason}`,
       `Use a host with recorded evidence (${hosts}) for the auto track; here only exploratory work without a graph is possible.`,
       evidence);
@@ -154,9 +147,9 @@ function rustItem(root, rustProject) {
       'Install Rust with rustup (https://rustup.rs), then rerun the profile.', evidence);
   }
   const pinned = toolchainFile ? `, pinned by ${toolchainFile}` : '';
-  const run = confinedRun(evidence.rustc, ['-vV'], rustProject);
-  if (!run) {
-    return item('rust', 'available-but-unverified', `cargo and rustc are on PATH${pinned}; the version was ${NOT_CHECKED}`,
+  const run = versionCheck(evidence.rustc, ['-vV'], rustProject, root);
+  if (run.skipped) {
+    return item('rust', 'available-but-unverified', `cargo and rustc are on PATH${pinned}; the version was ${run.skipped}`,
       'Run rustc -vV in the crate directory yourself to confirm the toolchain.', evidence);
   }
   if (!run.ok) {
@@ -190,9 +183,9 @@ function leanItem(root) {
     return item('lean', 'missing', 'lake is not on PATH',
       'Install elan (https://github.com/leanprover/elan); it provides lake and the pinned Lean toolchain.', evidence);
   }
-  const run = confinedRun(evidence.lake, ['--version'], root);
-  if (!run) {
-    return item('lean', 'available-but-unverified', `lake is on PATH; its version was ${NOT_CHECKED}`,
+  const run = versionCheck(evidence.lake, ['--version'], root, root);
+  if (run.skipped) {
+    return item('lean', 'available-but-unverified', `lake is on PATH; its version was ${run.skipped}`,
       'Run lake --version in the project root yourself to confirm the pinned toolchain.', evidence);
   }
   if (!run.ok) {
@@ -327,9 +320,9 @@ function aeneasItem(root, platform, provenance) {
   // Only the installed Charon counts here: it is what the next extraction
   // uses. The probe item judges the one recorded in translation.json.
   const charon = evidence.charon;
-  const run = confinedRun(charon.path, ['version'], root);
-  charon.output = run ? firstLine(run.output) : NOT_CHECKED;
-  charon.version = run?.ok ? run.stdout.match(/\b(\d+\.\d+\.\d+)\b/)?.[1] ?? null : null;
+  const run = versionCheck(charon.path, ['version'], root, root);
+  charon.output = run.skipped ?? firstLine(run.output);
+  charon.version = run.ok ? run.stdout.match(/\b(\d+\.\d+\.\d+)\b/)?.[1] ?? null : null;
 
   const tuples = compareTuples({
     aeneas: provenance.aeneasRev ?? inputRev ?? lakefile.rev,
