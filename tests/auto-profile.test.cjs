@@ -28,8 +28,11 @@ before(async () => {
   CONFINED = confinedAt(FIXTURES);
 });
 
-function confinedAt(cwd, projectRoot = cwd) {
-  return readOnlyRun('/bin/sh', ['-c', 'exit 0'], cwd, { projectRoot }).ok;
+// Probed under the same fixture environment the profile runs in: the Linux
+// sandbox planner validates HOME and PATH, so the inherited ones must not
+// decide what a test expects.
+function confinedAt(cwd, projectRoot = cwd, bin = BIN) {
+  return withStubEnvironment(bin, () => readOnlyRun('/bin/sh', ['-c', 'exit 0'], cwd, { projectRoot }).ok);
 }
 
 after(() => {
@@ -52,21 +55,27 @@ function stubEnvironment(bin = BIN) {
   };
 }
 
-// Runs the exported profile in-process with the stub tools as the only tools
-// on PATH, so verdicts do not depend on what the test machine has installed.
-async function profileOf(projectRoot, { bin, platform = PLATFORM, script = SCRIPT } = {}) {
-  const { profile } = await import(pathToFileURL(script).href);
+// Runs fn with the stub tools as the only tools on PATH, then restores the
+// caller's environment.
+function withStubEnvironment(bin, fn) {
   const environment = stubEnvironment(bin);
   const saved = Object.fromEntries(Object.keys(environment).map((key) => [key, process.env[key]]));
   Object.assign(process.env, environment);
   try {
-    return profile({ projectRoot, platform });
+    return fn();
   } finally {
     for (const [key, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
   }
+}
+
+// Runs the exported profile in-process under the stub environment, so
+// verdicts do not depend on what the test machine has installed.
+async function profileOf(projectRoot, { bin, platform = PLATFORM, script = SCRIPT } = {}) {
+  const { profile } = await import(pathToFileURL(script).href);
+  return withStubEnvironment(bin, () => profile({ projectRoot, platform }));
 }
 
 // A copy of the scripts whose pinned probe-aeneas digest is the stub's, so the
@@ -123,6 +132,24 @@ function item(result, id) {
   assert.ok(found, `no ${id} item`);
   return found;
 }
+
+describe('fvs-auto profile confinement probe', () => {
+  it('probes confinement under the fixture environment, not the inherited one', () => {
+    const saved = { PATH: process.env.PATH, HOME: process.env.HOME };
+    // A Windows-mounted PATH entry and a root HOME, both of which the Linux
+    // sandbox planner rejects; the profile itself never sees them.
+    process.env.PATH = ['/mnt/c/Windows/System32', saved.PATH].join(path.delimiter);
+    process.env.HOME = '/';
+    try {
+      assert.equal(confinedAt(FIXTURES), CONFINED);
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+});
 
 describe('fvs-auto profile verdicts', () => {
   it('reports a fresh pre-extraction project as not extracted yet, with nothing missing', async () => {
