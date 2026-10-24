@@ -1,0 +1,14 @@
+Translation patch: fixture::shared link
+
+Change: adds `src/shared.rs` as a symbolic link to a file outside the crate.
+Why: fixture patch that creates a link, which the extraction copy must refuse.
+Behaviour: not applicable.
+
+diff --git a/src/shared.rs b/src/shared.rs
+new file mode 120000
+index 0000000..6635d92
+--- /dev/null
++++ b/src/shared.rs
+@@ -0,0 +1 @@
++../../outside/shared.rs
+\ No newline at end of file

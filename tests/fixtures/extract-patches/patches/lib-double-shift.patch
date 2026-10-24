@@ -1,0 +1,20 @@
+Translation patch: fixture::double
+
+Change: `x.wrapping_mul(2)` becomes `x << 1`.
+Why: fixture rewrite written on top of the previous `double` patch.
+Behaviour: identical.
+Relies on: the `wrapping_mul` rewrite of `double` being applied first.
+
+diff --git a/src/lib.rs b/src/lib.rs
+index 230c299..203f1d8 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -3,7 +3,7 @@
+ pub mod limits;
+ 
+ pub fn double(x: u32) -> u32 {
+-    x.wrapping_mul(2)
++    x << 1
+ }
+ 
+ pub fn sum(xs: &[u32]) -> u32 {

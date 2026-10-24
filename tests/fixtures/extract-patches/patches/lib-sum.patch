@@ -1,0 +1,22 @@
+Translation patch: fixture::sum
+
+Change: the `fold` becomes a `for` loop with a wrapping accumulator.
+Why: fixture rewrite for the patch-engine tests.
+Behaviour: identical.
+Independent: yes
+
+diff --git a/src/lib.rs b/src/lib.rs
+index 1895b11..7408308 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -7,5 +7,9 @@ pub fn double(x: u32) -> u32 {
+ }
+ 
+ pub fn sum(xs: &[u32]) -> u32 {
+-    xs.iter().fold(0, |acc, x| acc.wrapping_add(*x))
++    let mut acc = 0u32;
++    for x in xs {
++        acc = acc.wrapping_add(*x);
++    }
++    acc
+ }

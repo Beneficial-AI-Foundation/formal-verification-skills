@@ -1,0 +1,20 @@
+Translation patch: fixture::double
+
+Change: `x.wrapping_add(x)` becomes `x.wrapping_mul(2)`.
+Why: fixture rewrite for the patch-engine tests.
+Behaviour: identical.
+Independent: yes
+
+diff --git a/src/lib.rs b/src/lib.rs
+index 1895b11..230c299 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -3,7 +3,7 @@
+ pub mod limits;
+ 
+ pub fn double(x: u32) -> u32 {
+-    x.wrapping_add(x)
++    x.wrapping_mul(2)
+ }
+ 
+ pub fn sum(xs: &[u32]) -> u32 {

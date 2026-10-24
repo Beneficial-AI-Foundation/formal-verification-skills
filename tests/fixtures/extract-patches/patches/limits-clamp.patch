@@ -1,0 +1,23 @@
+Translation patch: fixture::limits::clamp
+
+Change: `min(x, 100)` becomes a `match` on `x.cmp(&100)`.
+Why: fixture rewrite that depends on the supporting import patch.
+Behaviour: identical.
+Relies on: the supporting import patch being applied first.
+
+diff --git a/src/limits.rs b/src/limits.rs
+index 011164a..7512c0d 100644
+--- a/src/limits.rs
++++ b/src/limits.rs
+@@ -1,7 +1,10 @@
+ use core::cmp::Ordering;
+ 
+ pub fn clamp(x: u32) -> u32 {
+-    min(x, 100)
++    match x.cmp(&100) {
++        Ordering::Greater => 100,
++        _ => x,
++    }
+ }
+ 
+ pub fn halve(x: u32) -> u32 {

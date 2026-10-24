@@ -1,0 +1,23 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 1895b11..c9de549 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -5,3 +5,3 @@
+ pub fn double(x: u32) -> u32 {
+-    x.wrapping_add(x)
++    x.wrapping_mul(2)
+ }
+@@ -9,3 +9,3 @@ pub fn double(x: u32) -> u32 {
+ pub fn sum(xs: &[u32]) -> u32 {
+-    xs.iter().fold(0, |acc, x| acc.wrapping_add(*x))
++    xs.iter().fold(0u32, |acc, x| acc.wrapping_add(*x))
+ }
+diff --git a/src/limits.rs b/src/limits.rs
+index d711507..93f1b7e 100644
+--- a/src/limits.rs
++++ b/src/limits.rs
+@@ -7,3 +7,3 @@ pub fn clamp(x: u32) -> u32 {
+ pub fn halve(x: u32) -> u32 {
+-    x / 2
++    x >> 1
+ }
