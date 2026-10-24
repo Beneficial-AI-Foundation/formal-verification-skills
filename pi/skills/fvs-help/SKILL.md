@@ -74,6 +74,7 @@ Drive a Rust crate/folder/file through the bounded Aeneas extraction repair loop
 - Pre-flight pin audit: warn-and-confirm on Charon/Aeneas pin drift, records `pin_context`
 - Loop: extract → classify → dispatch (auto-apply / bisect / gate / escalate) → document → re-extract
 - Fires a synchronous Category-B equivalence gate with an independent assessor; refuses completion without the human ratification token
+- Extraction mode comes from `scripts/fvs-extract-patches.mjs`: translation patches by default (every change is a patch in `translation-patches/`, applied only in a disposable copy while Charon runs), the legacy `src-modifications.diff` ledger for projects that have not migrated; migration is explicit (`fv-skills/references/extraction-patch-migration.md`)
 - Reversible source records at the crate root; generated Lean is never written
 - Bounded (attempt-cap 3, no-progress rule); escalation is a human decision point and a valid outcome
 

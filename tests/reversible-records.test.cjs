@@ -11,6 +11,12 @@
 //   - annotations are preferred over source edits
 //   - generated Lean (Types.lean / Funs.lean) is NEVER written
 //
+// Those three files are the legacy source ledger. Translation-patch mode, the
+// default for new projects, records the same change as one patch per function in
+// translation-patches/ (plus the series file that orders them) and keeps
+// src-assumptions.md; the legacy ledger names stay in the workflow for projects
+// that have not migrated.
+//
 // This gate asserts the contract tokens are present in the extraction command +
 // workflow bodies so a future edit that drops the reversible-record discipline
 // fails the suite instead of silently regressing EXTR-04.
@@ -75,5 +81,25 @@ describe('Reversible records: src-modification artifacts present (EXTR-04)', () 
       present(workflowText, /generated .*never|never .*generated/i),
       'workflow missing the generated-files-never-written contract phrase'
     );
+  });
+});
+
+describe('Reversible records: translation-patch records (EXTR-04)', () => {
+  const commandText = fs.readFileSync(COMMAND, 'utf8');
+  const workflowText = fs.readFileSync(WORKFLOW, 'utf8');
+
+  it('the workflow records each change as a patch listed in series, with its classification', () => {
+    for (const token of ['translation-patches/', 'series', 'Classification:', 'Obligations:']) {
+      assert.ok(workflowText.includes(token), `workflow missing the patch-record token ${token}`);
+    }
+  });
+
+  it('the workflow ties assumptions to patch identities', () => {
+    assert.match(workflowText, /src-assumptions\.md[^\n]*(names|naming)[^\n]*patch/i);
+  });
+
+  it('the command references the patch records and keeps the generated-Lean rule', () => {
+    assert.match(commandText, /translation-patches\//);
+    assert.match(commandText, /generated[^\n]*never|never[^\n]*generated/i);
   });
 });

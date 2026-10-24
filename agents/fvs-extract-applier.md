@@ -83,6 +83,14 @@ crate root using the Write tool:
 - append the trusted assumption to `src-assumptions.md` when the recipe axiomatizes, excludes, or
   gates an item (every A-opacity and every gated build-script edit leaves an assumption).
 
+**Patch mode.** When the dispatch prompt says the extraction mode is `translation-patches`, a
+recipe that changes the Rust extraction inputs (an opacity annotation, a gated build script) is NOT
+an edit to the checkout and writes no `src-modifications.*` file. Write it as one translation patch
+in the crate root's `translation-patches/`, append its name to `series`, and run the `check` the
+prompt gives you; a refusal means remove the patch and its `series` line and report ERROR. The
+prompt carries the header fields and the authoring recipe. The assumption entry in
+`src-assumptions.md` names the patch file. Edits to hand-authored Lean files stay ordinary edits.
+
 Then rebuild to confirm the recipe cleared the blocker, ALWAYS with `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`.
 
 </process>

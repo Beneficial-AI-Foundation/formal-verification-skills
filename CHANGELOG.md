@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- `scripts/fvs-extract-patches.mjs` applies ordered translation patches to a disposable copy of
+  the Rust extraction inputs and never writes to your checkout. `check` rehearses the patch list
+  (every patch applies in order and undoes to the exact starting state), `prepare` builds the copy
+  and a manifest with the base source identity and the ordered patch hashes, `verify-tree` shows
+  that the tree Charon consumed is the recorded one, `verify-restore` shows that your original
+  sources are byte for byte what they were, and `migrate` converts a legacy ledger. A stale or
+  already-applied patch fails and is never fuzzy-applied.
+
+### Changed
+
+- Breaking for new projects: `/fvs:aeneas-extract` now extracts through translation patches by
+  default. Every change to the Rust inputs is one patch in `translation-patches/`, listed in order
+  in `translation-patches/series`, and the loop writes no `src-modifications.*` files for such a
+  project. Extraction runs Charon inside the engine's copy, and a run completes only when the
+  build is clean, the copy still matches its recorded tree (an unrecorded repair made inside it
+  fails the run), your original sources are restored, every Category-B patch carries its
+  ratification token, and the records match the patches by name and hash. The run reports
+  extraction, restored source, evidence and the remaining correspondence obligations separately.
+- Projects that already carry an active `src-modifications.diff` ledger keep the legacy in-place
+  flow, unchanged, until they migrate. The engine picks the mode (`extraction.mode` in
+  `.formalising/fvs-config.json` under the crate root overrides it), and a project with both an
+  active ledger and a patch list stops with a mixed-mode message instead of picking one.
+- To migrate a legacy project, run `node ~/.claude/scripts/fvs-extract-patches.mjs migrate
+  --project-root <crate root>`. It writes one patch per ledger hunk, copies each entry's
+  classification, assumptions, correspondence obligations, assessor evidence and ratification into
+  its patch header, and marks the ledger inactive without editing it or the source. Then restore
+  the pristine source, run `check`, and set `extraction.mode` to `translation-patches` if you had
+  set it to the legacy value. Migration is never automatic, and it does not re-establish
+  anything: the steps and limits are in `fv-skills/references/extraction-patch-migration.md`.
+- A translation patch changes the program the extractor sees, so a clean extraction of a patched
+  function does not prove equivalence with the original source. The correspondence obligations each
+  patch records stay open until correspondence evidence closes them.
+
 ## [2.3.8] - 2026-10-23
 
 ### Added
