@@ -1,8 +1,9 @@
 'use strict';
 
-const { describe, it, after } = require('node:test');
+const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -14,10 +15,15 @@ const SCRIPT = path.join(ROOT, 'scripts', 'fvs-auto.mjs');
 const FIXTURES = path.join(__dirname, 'fixtures', 'auto-profile');
 const BIN = path.join(FIXTURES, 'bin');
 const PLATFORM = 'aarch64-apple-darwin';
-// Version checks run only under sandbox-exec; elsewhere they are skipped.
-const CONFINED = fs.existsSync('/usr/bin/sandbox-exec');
-const NOT_CHECKED = 'not checked: this host has no read-only sandbox';
 const temporaryDirectories = [];
+// Version checks run only where the resolver can confine them (sandbox-exec
+// on macOS, bubblewrap on Linux); elsewhere they are skipped as not checked.
+let CONFINED = false;
+
+before(async () => {
+  const { readOnlyRun } = await import(pathToFileURL(path.join(ROOT, 'scripts', 'fvs-probe-inventory.mjs')).href);
+  CONFINED = readOnlyRun('/bin/sh', ['-c', 'exit 0'], FIXTURES, { projectRoot: FIXTURES }).ok;
+});
 
 after(() => {
   for (const directory of temporaryDirectories) {
@@ -41,8 +47,8 @@ function stubEnvironment(bin = BIN) {
 
 // Runs the exported profile in-process with the stub tools as the only tools
 // on PATH, so verdicts do not depend on what the test machine has installed.
-async function profileOf(projectRoot, { bin, platform = PLATFORM } = {}) {
-  const { profile } = await import(pathToFileURL(SCRIPT).href);
+async function profileOf(projectRoot, { bin, platform = PLATFORM, script = SCRIPT } = {}) {
+  const { profile } = await import(pathToFileURL(script).href);
   const environment = stubEnvironment(bin);
   const saved = Object.fromEntries(Object.keys(environment).map((key) => [key, process.env[key]]));
   Object.assign(process.env, environment);
@@ -54,6 +60,23 @@ async function profileOf(projectRoot, { bin, platform = PLATFORM } = {}) {
       else process.env[key] = value;
     }
   }
+}
+
+// A copy of the scripts whose pinned probe-aeneas digest is the stub's, so the
+// stub passes the official-binary check, as the probe tests do.
+function officialStubScripts() {
+  const scripts = path.join(temporaryDirectory(), 'scripts');
+  fs.mkdirSync(scripts);
+  const evidence = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'probe-compatibility.json'), 'utf8'));
+  const pinned = evidence.release.assets[PLATFORM].executableSha256;
+  const stub = crypto.createHash('sha256').update(fs.readFileSync(path.join(BIN, 'probe-aeneas'))).digest('hex');
+  const resolver = fs.readFileSync(path.join(ROOT, 'scripts', 'fvs-probe-inventory.mjs'), 'utf8');
+  assert.ok(resolver.includes(pinned), 'the shipped resolver pins the fixture digest');
+  fs.writeFileSync(path.join(scripts, 'fvs-probe-inventory.mjs'), resolver.replace(pinned, stub));
+  for (const name of ['fvs-auto.mjs', 'fvs-probe-linux.mjs']) {
+    fs.copyFileSync(path.join(ROOT, 'scripts', name), path.join(scripts, name));
+  }
+  return path.join(scripts, 'fvs-auto.mjs');
 }
 
 // A stub tool directory with some tools left out.
@@ -135,7 +158,7 @@ describe('fvs-auto profile verdicts', () => {
     } else {
       assert.match(aeneas.reason, /Charon unknown vs 0\.1\.225/);
       assert.equal(aeneas.evidence.charon.version, null);
-      assert.equal(aeneas.evidence.charon.output, NOT_CHECKED);
+      assert.match(aeneas.evidence.charon.output, /^not checked: /);
     }
   });
 
@@ -228,18 +251,21 @@ describe('fvs-auto profile verdicts', () => {
     assert.equal(rust.evidence.toolchainPin, '1.98.1');
     assert.match(rust.reason, /pinned by rust\/rust-toolchain/);
     if (CONFINED) assert.equal(rust.evidence.version, 'rustc 1.98.1 (fixture stub)');
-    else assert.match(rust.reason, new RegExp(`the version was ${NOT_CHECKED}`));
+    else assert.match(rust.reason, /the version was not checked: /);
   });
 
-  it('separates the not-validated Linux x64 host from unsupported hosts', async () => {
+  it('reports hosts by their recorded probe evidence and every other host as unsupported', async () => {
     const project = path.join(FIXTURES, 'fresh');
     const linux = await profileOf(project, { platform: 'x86_64-unknown-linux-gnu' });
     assert.equal(item(linux, 'host').verdict, 'available-but-unverified');
-    assert.match(item(linux, 'host').reason, /Linux x64 is not validated for FVS extraction or acceptance/);
-    assert.equal(item(linux, 'probe').verdict, 'unsupported-platform');
-    const windows = await profileOf(project, { platform: 'x86_64-pc-windows-msvc' });
-    assert.equal(item(windows, 'host').verdict, 'unsupported-platform');
-    assert.match(item(windows, 'host').reason, /no Windows binaries/);
+    assert.match(item(linux, 'host').reason,
+      /x86_64-unknown-linux-gnu has recorded confined-run evidence only for the probe-aeneas inventory operation/);
+    assert.equal(item(linux, 'probe').verdict, 'not-extracted-yet');
+    for (const [platform, reason] of [['aarch64-unknown-linux-gnu', /#77/], ['x86_64-pc-windows-msvc', /no Windows binaries/]]) {
+      const host = item(await profileOf(project, { platform }), 'host');
+      assert.equal(host.verdict, 'unsupported-platform', platform);
+      assert.match(host.reason, reason);
+    }
   });
 
   it('reports an Aeneas requirement without a readable revision as unverified, never inventing one', async () => {
@@ -259,8 +285,18 @@ describe('fvs-auto profile verdicts', () => {
     assert.equal(absent.evidence.lakefile.rev, null, 'no revision is invented');
   });
 
-  it('reports the exact tested tuple on aarch64-apple-darwin as supported and tested, scoped to the probe inventory', async () => {
-    const result = await profileOf(path.join(FIXTURES, 'tested'));
+  it('reports the exact tested tuple on aarch64-apple-darwin as supported and tested, scoped to the probe inventory', async (t) => {
+    // The resolver checks probe and helpers only on the actual host and only
+    // under confinement; the stub helpers mirror the macOS tested versions.
+    if (process.platform !== 'darwin' || process.arch !== 'arm64' || !CONFINED) {
+      t.skip('requires the confined macOS arm64 host');
+      return;
+    }
+    const unofficial = item(await profileOf(path.join(FIXTURES, 'tested')), 'probe');
+    assert.equal(unofficial.verdict, 'incompatible', 'a probe-aeneas without the pinned digest is not the tested binary');
+    assert.match(unofficial.reason, /does not match the pinned executable digest/);
+
+    const result = await profileOf(path.join(FIXTURES, 'tested'), { script: officialStubScripts() });
     const probe = item(result, 'probe');
     assert.equal(probe.verdict, 'supported-and-tested', probe.reason);
     assert.deepEqual(probe.scope, {

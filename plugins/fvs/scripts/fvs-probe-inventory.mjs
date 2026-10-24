@@ -617,7 +617,8 @@ const HELPER_SETUP = {
 
 const PREREQUISITE_NOTE = 'The confined run has no network: build the Lean project (lake exe cache get, lake build) and fetch Cargo dependencies (cargo fetch) first.';
 const LINUX_CONFINEMENT_GUIDANCE = 'Check whether unprivileged user namespaces are permitted, including any AppArmor restrictions. FVS does not change system security policy.';
-export const SANDBOX_EXEC = '/usr/bin/sandbox-exec';
+const SANDBOX_EXEC = '/usr/bin/sandbox-exec';
+export const CONFINEMENT_UNAVAILABLE = 'read-only confinement is unavailable on this host';
 const BSDTAR = '/usr/bin/tar';
 const CHOICES = ['setup', 'continue-without-graph', 'cancel'];
 const MAX_ARCHIVE_BYTES = 32 * 1024 * 1024;
@@ -857,7 +858,7 @@ export function readOnlyRun(bin, args, cwd, { projectRoot = null, toolPaths = nu
     }
   }
   if (process.platform !== 'darwin' || !fs.existsSync(SANDBOX_EXEC)) {
-    return { ok: false, stdout: '', output: 'read-only confinement is unavailable on this host' };
+    return { ok: false, stdout: '', output: CONFINEMENT_UNAVAILABLE };
   }
   const argv = [SANDBOX_EXEC, '-p', READ_ONLY_POLICY, bin, ...args];
   const result = spawnSync(argv[0], argv.slice(1), {
