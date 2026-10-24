@@ -133,6 +133,7 @@ describe('published FVS plugin package', () => {
     assert.deepEqual(
       filesUnder(path.join(PLUGIN_ROOT, 'scripts')),
       [
+        'fvs-auto.mjs',
         'fvs-codex-think.mjs',
         'fvs-kb-query.py',
         'fvs-lean-style-check.mjs',

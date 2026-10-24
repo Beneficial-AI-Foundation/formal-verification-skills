@@ -25,6 +25,7 @@ const VERSION = PACKAGE_JSON.version;
 const REPOSITORY_URL = 'https://github.com/Beneficial-AI-Foundation/formal-verification-skills';
 const MARKETPLACE_ID = 'beneficial-ai-foundation';
 const SCRIPT_FILES = [
+  'fvs-auto.mjs',
   'fvs-codex-think.mjs',
   'fvs-kb-query.py',
   'fvs-lean-style-check.mjs',

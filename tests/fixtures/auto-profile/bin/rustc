@@ -1,0 +1,2 @@
+#!/bin/sh
+printf "rustc 1.98.1 (fixture stub)\nbinary: rustc\nhost: aarch64-apple-darwin\nrelease: 1.98.1\n"

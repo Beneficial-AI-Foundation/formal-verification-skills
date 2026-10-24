@@ -1,0 +1,8 @@
+aeneas:
+  commit: "6e167c9b"
+
+crate:
+  dir: "rust"
+
+aeneas_args:
+  dest: "Lean"

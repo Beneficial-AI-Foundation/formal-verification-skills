@@ -1,0 +1,2 @@
+#!/bin/sh
+echo "probe-aeneas 0.20.0"
