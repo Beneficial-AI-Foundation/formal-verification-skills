@@ -369,7 +369,16 @@ function applyPatch(tree, patch, index) {
   if (applied.status !== 0) throw new Error(`git apply failed for ${patch.file}: ${applied.stderr.trim()}`);
   const post = touchedState(tree, patch.touches);
   if (sameState(pre, post)) throw new Error(`git apply reported success for ${patch.file} but changed nothing`);
+  // A patch may not create a link either: it would point the copy at content
+  // outside the recorded input set, and a write through it would reach the
+  // original checkout or shared storage.
+  const created = Object.keys(post).find((file) => post[file]?.link !== undefined);
+  if (created) refuseCopyLink(created, patch.file);
   return { ...publicPatch(patch), pre, post };
+}
+
+function refuseCopyLink(file, patch) {
+  refuse('invalid-input', `${patch ? `${patch} makes ${file}` : file} a symbolic link; the extraction copy takes only regular files, so write the intended content instead`, { kind: 'symlink', path: file, ...(patch ? { patch } : {}) });
 }
 
 function materialise(context, tree) {
@@ -474,11 +483,12 @@ function prepare(flags) {
       throw new Error('the rehearsal copy reached different states from the extraction copy');
     }
     refuseChangedOriginals(manifest);
-    // The exact tree handed to the next stage: the touched set's hash and every file in the copy.
-    manifest.final = {
-      touchedSha256: sha256(JSON.stringify(touchedState(tree, context.touched))),
-      files: copyState(tree),
-    };
+    // The exact tree handed to the next stage: the touched set's hash and every file in the
+    // copy. A completed tree holding any link is refused before it is recorded.
+    const files = copyState(tree);
+    const link = Object.keys(files).find((file) => files[file].link !== undefined);
+    if (link) refuseCopyLink(link);
+    manifest.final = { touchedSha256: sha256(JSON.stringify(touchedState(tree, context.touched))), files };
     manifest.status = 'prepared';
   } catch (error) {
     manifest.failure = error instanceof Refusal
@@ -528,16 +538,21 @@ function status(flags) {
 
 // Every entry under the extraction copy, not only the recorded inputs, so a
 // file added later (a build script, a .cargo/config.toml) shows up; only the
-// generated artifacts in GENERATED_IN_COPY are left out.
+// generated artifacts in GENERATED_IN_COPY are left out, and only as real
+// directories: a link with a generated artifact's name is recorded like any
+// other link, never exempted.
 function copyState(tree) {
   const files = {};
   (function visit(relative) {
     for (const name of fs.readdirSync(path.join(tree, relative)).sort()) {
       const child = relative ? `${relative}/${name}` : name;
-      if (GENERATED_IN_COPY.has(child)) continue;
       const absolute = path.join(tree, child);
-      if (fs.lstatSync(absolute).isDirectory()) visit(child);
-      else files[child] = fileState(absolute);
+      const stat = fs.lstatSync(absolute);
+      if (stat.isDirectory()) {
+        if (!GENERATED_IN_COPY.has(child)) visit(child);
+      } else {
+        files[child] = fileState(absolute);
+      }
     }
   })('');
   return files;

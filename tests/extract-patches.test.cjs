@@ -491,6 +491,27 @@ describe('fvs-extract-patches: copy boundary', () => {
     assert.deepEqual([checked.json.kind, checked.json.path], ['symlink', 'linked']);
   });
 
+  it('refuses a patch that creates a symbolic link in the copy', () => {
+    const root = project(['lib-double', 'shared-link']);
+    const before = snapshot(root);
+
+    const checked = run('check', '--project-root', root);
+    assert.equal(checked.status, 5, checked.stdout);
+    assert.deepEqual([checked.json.code, checked.json.kind, checked.json.path, checked.json.patch],
+      ['invalid-input', 'symlink', 'src/shared.rs', 'shared-link.patch']);
+
+    const out = outDirectory();
+    const prepared = run('prepare', '--project-root', root, '--out', out);
+    assert.equal(prepared.status, 5, prepared.stdout);
+    assert.equal(prepared.json.kind, 'symlink');
+    const manifest = readManifest(out);
+    assert.equal(manifest.status, 'partial');
+    assert.equal(manifest.final, undefined, 'a copy with a link was given a recorded tree');
+    assert.equal(run('status', '--out', out).status, 6);
+    assert.equal(run('verify-tree', '--out', out).status, 6);
+    assert.deepEqual(snapshot(root), before);
+  });
+
   it('rejects a patch that touches a file outside the recorded input set', () => {
     const root = project(['lib-double'], { config: { extraction: { inputs: ['Cargo.toml', 'src/limits.rs'] } } });
     const checked = run('check', '--project-root', root);
@@ -589,6 +610,17 @@ describe('fvs-extract-patches: extraction copy identity', () => {
     const added = run('verify-tree', '--out', out);
     assert.equal(added.status, 7, added.stdout);
     assert.deepEqual(added.json.changed, ['.cargo/config.toml', 'build.rs']);
+  });
+
+  it('does not let a link stand in for the cargo target directory', () => {
+    const root = project(['lib-double']);
+    const out = outDirectory();
+    assert.equal(run('prepare', '--project-root', root, '--out', out).status, 0);
+    const external = temporaryDirectory('fvs-extract-external-');
+    fs.symlinkSync(external, path.join(out, 'tree', 'target'));
+    const verified = run('verify-tree', '--out', out);
+    assert.equal(verified.status, 7, verified.stdout);
+    assert.deepEqual(verified.json.changed, ['target']);
   });
 
   it('refuses to vouch for a partial copy', () => {
