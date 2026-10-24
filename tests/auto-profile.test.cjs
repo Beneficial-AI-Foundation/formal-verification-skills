@@ -18,12 +18,19 @@ const PLATFORM = 'aarch64-apple-darwin';
 const temporaryDirectories = [];
 // Version checks run only where the resolver can confine them (sandbox-exec
 // on macOS, bubblewrap on Linux); elsewhere they are skipped as not checked.
+// CONFINED holds for the persistent fixtures; a copied fixture under the
+// system temp directory needs confinedAt, because bubblewrap refuses /tmp.
+let readOnlyRun = null;
 let CONFINED = false;
 
 before(async () => {
-  const { readOnlyRun } = await import(pathToFileURL(path.join(ROOT, 'scripts', 'fvs-probe-inventory.mjs')).href);
-  CONFINED = readOnlyRun('/bin/sh', ['-c', 'exit 0'], FIXTURES, { projectRoot: FIXTURES }).ok;
+  ({ readOnlyRun } = await import(pathToFileURL(path.join(ROOT, 'scripts', 'fvs-probe-inventory.mjs')).href));
+  CONFINED = confinedAt(FIXTURES);
 });
+
+function confinedAt(cwd, projectRoot = cwd) {
+  return readOnlyRun('/bin/sh', ['-c', 'exit 0'], cwd, { projectRoot }).ok;
+}
 
 after(() => {
   for (const directory of temporaryDirectories) {
@@ -246,12 +253,18 @@ describe('fvs-auto profile verdicts', () => {
   });
 
   it('reads the Rust toolchain pin the crate directory sees', async () => {
-    const rust = item(await profileOf(copyFixture('tested', { files: { 'rust/rust-toolchain': '1.98.1\n' } })), 'rust');
+    const project = copyFixture('tested', { files: { 'rust/rust-toolchain': '1.98.1\n' } });
+    const rust = item(await profileOf(project), 'rust');
     assert.equal(rust.evidence.toolchainFile, path.join('rust', 'rust-toolchain'));
     assert.equal(rust.evidence.toolchainPin, '1.98.1');
     assert.match(rust.reason, /pinned by rust\/rust-toolchain/);
-    if (CONFINED) assert.equal(rust.evidence.version, 'rustc 1.98.1 (fixture stub)');
-    else assert.match(rust.reason, /the version was not checked: /);
+    // rustc -vV runs in the crate directory of this copied project.
+    if (confinedAt(path.join(project, 'rust'), project)) {
+      assert.equal(rust.evidence.version, 'rustc 1.98.1 (fixture stub)');
+    } else {
+      assert.equal(rust.evidence.version, null);
+      assert.match(rust.reason, /the version was not checked: /);
+    }
   });
 
   it('reports hosts by their recorded probe evidence and every other host as unsupported', async () => {
