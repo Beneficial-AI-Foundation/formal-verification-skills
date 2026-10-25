@@ -233,7 +233,7 @@ describe('References (fv-skills/references/)', () => {
   const files = mdFiles(dir);
 
   const expected = [
-    'aeneas-patterns.md', 'blocker-catalog.md', 'crypto-plan-review.md',
+    'aeneas-patterns.md', 'auto-setup.md', 'blocker-catalog.md', 'crypto-plan-review.md',
     'external-modeling.md', 'extraction-patch-migration.md', 'extraction-safety-model.md',
     'fc-spec-review.md',
     'lake-build.md', 'lean-refactoring.md', 'lean-spec-conventions.md', 'model-profiles.md',

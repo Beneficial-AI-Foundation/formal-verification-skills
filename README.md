@@ -112,6 +112,11 @@ Helper executable or library links through an intermediate symlink are rejected 
 Malformed `.git` pointer files and symlinked `.git` entries are unsupported and rejected;
 ordinary linked Git worktrees remain supported with read-only external Git metadata.
 
+To prepare a host for the FVS auto track, follow the [auto-track setup walkthrough](fv-skills/references/auto-setup.md).
+It lists the tools you install yourself with the command that checks each one, explains each
+compatibility verdict and its next step, and gives the tested matrix. Today only the confined
+probe-aeneas inventory on the listed tuples and platforms has evidence behind it.
+
 FVS asks for runtime, model and effort choices at each relevant stage. Requested settings,
 resolved settings and observed settings are recorded separately; unavailable observations are stated
 explicitly. Use `/fvs:configure` to save defaults. See [model profiles](fv-skills/references/model-profiles.md)
