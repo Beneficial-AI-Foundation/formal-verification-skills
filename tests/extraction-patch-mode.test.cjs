@@ -116,7 +116,8 @@ describe('Patch mode: records and the success oracle', () => {
     for (const token of ['verify-tree', 'verify-restore', 'equivalence-ratified:', 'sha256', 'PIPESTATUS']) {
       assert.ok(patchMode.includes(token), `patch-mode oracle never requires ${token}`);
     }
-    assert.match(patchMode, /patch identit/i);
+    assert.match(patchMode, /diff-to-record check holds over patch identities/);
+    assert.match(patchMode, /manifest's recorded post-patch state/);
     assert.match(patchMode, /unrecorded/i, 'an unrecorded repair in the copy must fail the run');
     assert.doesNotMatch(patchMode, /src-modifications\.diff/, 'the patch-mode oracle must not consult the legacy diff');
   });

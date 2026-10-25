@@ -221,13 +221,13 @@ may have changed since the last one; an earlier cycle's copy is never reused.
 ```bash
 set -o pipefail
 OUT="$(mktemp -d "${TMPDIR:-/tmp}/fvs-extract.XXXXXX")/copy"
-node "$PATCH_ENGINE" prepare --project-root "$CRATE_ROOT" --out "$OUT"   # records the manifest; refusal -> STOP
-node "$PATCH_ENGINE" verify-tree --out "$OUT"                            # before Charon: the copy is the recorded post-patch tree
+node "$PATCH_ENGINE" prepare --project-root "$CRATE_ROOT" --out "$OUT" || exit 1   # records the manifest; refusal -> STOP
+node "$PATCH_ENGINE" verify-tree --out "$OUT" || exit 1                  # before Charon: the copy is the recorded post-patch tree
 ( cd "$OUT/tree" && <the project's Charon command> --dest-file "$OUT/<crate>.llbc" ) 2>&1 | tee "$OUT/charon.log"
 test ${PIPESTATUS[0]} -eq 0 || echo "charon-layer failure"               # read the TOOL's status, not the pipe's
-node "$PATCH_ENGINE" verify-tree --out "$OUT"                            # after Charon: the tree it consumed is still the recorded one
+node "$PATCH_ENGINE" verify-tree --out "$OUT" || exit 1                  # after Charon: the tree it consumed is still the recorded one
 # Aeneas on "$OUT/<crate>.llbc" with the project's usual options, then its split and tweaks steps
-node "$PATCH_ENGINE" verify-restore --out "$OUT"                         # the original sources still match the recorded start
+node "$PATCH_ENGINE" verify-restore --out "$OUT" || exit 1               # the original sources still match the recorded start
 LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build 2>&1 | tee build.log
 test ${PIPESTATUS[0]} -eq 0 || echo "lean-layer failure"                 # read the TOOL's status, not the pipe's
 ```
@@ -510,7 +510,7 @@ All of, for the cycle whose `OUT` built the extraction:
    packet in the workspace and `grep equivalence-ratified:` matches that packet. When the packet
    records a `patch-sha256:`, it equals the sha256 the manifest records for that patch, so an
    edited patch is not ratified. Refuse "complete" while any token is absent.
-5. The record check holds over patch identities (file name and sha256), compared with the
+5. The diff-to-record check holds over patch identities (file name and sha256), compared with the
    manifest (`node "$PATCH_ENGINE" status --out "$OUT"`, which refuses a partial manifest): the
    patches `translation-patches/series` lists now are exactly the manifest's patches, in its
    order, with unchanged sha256; each carries a `Classification:` line; and no gate packet and no
@@ -578,7 +578,7 @@ FVS >> EXTRACTION RUN COMPLETE
 Target:                {target} ({SHAPE}), mode translation-patches
 Extraction:            {clean build | escalated | stopped: <engine code>} ({K} patches in series)
 Restored source:       {verify-restore ok | refused: <message>}
-Evidence:              tree check {ok | refused}; B-changes {N} ratified ({C} carried over from a legacy ledger); record check {ok | failed}
+Evidence:              tree check {ok | refused}; B-changes {N} ratified ({C} carried over from a legacy ledger); diff-to-record check {ok | failed}
 Obligations remaining: {the open `Obligations:` lines of the patches, grouped by patch file}
 Escalations:           {M} outstanding (re-offer drafts: {ids})
 Pin context:           {pin_context summary}
@@ -599,7 +599,7 @@ Records:               translation-patches/ and series, src-assumptions.md (crat
 - [ ] DOCUMENT (patch mode) writes `translation-patches/<name>.patch` + `series` + `src-assumptions.md` at the crate root and never `src-modifications.*`; (legacy mode) writes `src-modifications.diff` + derived `.json` + `src-modifications.md` + `src-assumptions.md`; generated Lean never written; annotations preferred.
 - [ ] LOOP BOUNDS: attempt-cap 3, cycle hard-cap ~25, variant-budget ~12, no-progress key `sha256(layer || signature)`; same-key recurrence after a fix -> immediate escalate.
 - [ ] ESCALATE persists to the workspace, surfaces to the user, offers a draft (drafting only on acceptance), and "skip" is an explicit human choice.
-- [ ] SUCCESS ORACLE (patch mode): clean build AND `verify-tree` AND `verify-restore` AND every B patch has a present token AND the record check over patch identities holds; (legacy mode) clean build AND every B-change has a present token AND diff <-> record 1:1; refuses completion otherwise.
+- [ ] SUCCESS ORACLE (patch mode): clean build AND `verify-tree` AND `verify-restore` AND every B patch has a present token AND the diff-to-record check over patch identities holds; (legacy mode) clean build AND every B-change has a present token AND diff <-> record 1:1; refuses completion otherwise.
 - [ ] Retired legacy records are inactive and never read as patch evidence; the run-end summary reports extraction, restored source, evidence and remaining obligations separately.
 - [ ] No `gh` open/create call appears in the draft or escalation steps.
 </success_criteria>

@@ -220,7 +220,7 @@ Patch mode, for the cycle whose `OUT` built the extraction:
    packet in `<extract_workspace>/<target>/equivalence-gate/` and
    `grep "equivalence-ratified:"` matches it; a recorded `patch-sha256:` equals the manifest's
    sha256 for that patch. Refuse completion while any token is absent.
-5. The record check holds over patch identities (file name and sha256): the patches in
+5. The diff-to-record check holds over patch identities (file name and sha256): the patches in
    `translation-patches/series` are exactly the manifest's patches (`status --out "$OUT"`), in
    its order, each with a `Classification:` line, and no gate packet or `src-assumptions.md`
    entry names a patch absent from the manifest.
@@ -281,7 +281,7 @@ FVS >> EXTRACTION RUN COMPLETE
 Target:                {target} ({shape}), mode translation-patches
 Extraction:            {clean build | escalated | stopped: <engine code>} ({K} patches in series)
 Restored source:       {verify-restore ok | refused: <message>}
-Evidence:              tree check {ok | refused}; B-changes {N} ratified ({C} carried over from a legacy ledger); record check {ok | failed}
+Evidence:              tree check {ok | refused}; B-changes {N} ratified ({C} carried over from a legacy ledger); diff-to-record check {ok | failed}
 Obligations remaining: {the open `Obligations:` lines of the patches, grouped by patch file}
 Escalations:           {M} outstanding (re-offer drafts: {ids})
 Pin context:           {pin_context summary}
@@ -311,7 +311,7 @@ confirmed field.
 - [ ] Patch-mode EXTRACT runs `prepare`, `verify-tree`, Charon in the copy, `verify-tree`, Aeneas, `verify-restore`; an engine refusal stops the run and is never repaired in the copy.
 - [ ] The orchestrator fires the gate itself, dispatching `fvs-equivalence-assessor` distinctly from `fvs-extract-bisector`; the success oracle greps `equivalence-ratified:` and refuses completion without it.
 - [ ] Reversible records at the crate root (patch mode: `translation-patches/` + `series`, never `src-modifications.*`); generated Lean never written; annotations preferred.
-- [ ] Patch-mode oracle: clean build AND `verify-tree` AND `verify-restore` AND a token for every B patch AND the record check over patch identities; retired legacy records are inactive and never read as patch evidence.
+- [ ] Patch-mode oracle: clean build AND `verify-tree` AND `verify-restore` AND a token for every B patch AND the diff-to-record check over patch identities; retired legacy records are inactive and never read as patch evidence.
 - [ ] Attempt-cap 3 + no-progress rule enforced; escalation is a human decision point and a valid outcome.
 - [ ] Drafting runs only on acceptance; no `gh` open/create call anywhere in the command or the draft path.
 </success_criteria>
