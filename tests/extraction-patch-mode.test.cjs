@@ -165,6 +165,19 @@ describe('Patch mode: records and the success oracle', () => {
     assert.match(commandText, /existing `series` entry/);
   });
 
+  it('references patches in assumption records on a patch-file line and describes retiring a patch', () => {
+    const document = step('document');
+    assert.match(document, /`patch-file: <exact file name>`/);
+    for (const token of ['translation-patches/retired/', 'retired-patch:', 'status: retired']) {
+      assert.ok(document.includes(token), `the retirement walkthrough never mentions ${token}`);
+    }
+    for (const [name, text] of [['command', commandText], ['applier', fs.readFileSync(APPLIER, 'utf8')]]) {
+      assert.match(text, /patch-file: <exact file name>/, `${name} does not name the assumption reference field`);
+    }
+    assert.match(commandText, /translation-patches\/retired\//);
+    assert.match(commandText, /retired-patch:/);
+  });
+
   it('keeps retained rejected, superseded and retired packets out of the active scans', () => {
     const patchMode = section(step('success_oracle'), 'Patch mode');
     for (const token of ['record-check', 'active', 'status: rejected', 'status: superseded', 'status: retired']) {

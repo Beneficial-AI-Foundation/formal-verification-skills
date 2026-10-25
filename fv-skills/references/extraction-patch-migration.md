@@ -110,10 +110,13 @@ stale. The gate packets in the extraction workspace and `src-assumptions.md` are
 `src-assumptions.md` keeps naming the legacy ids (`M2`). Each migrated patch is named
 `<file stem>-legacy-<id>.patch`, repeats its entry's assumptions in its `Assumptions:` header, and
 is listed in the marker with its file name, sha256 and entry, so an old reference resolves to a
-patch by id. An entry that names only a legacy id names no patch, so the extraction run's record
-check does not treat it as an orphan; add the patch file name beside the id (step 7 below) to give
-it a current identity. A patch's identity is its file name and the sha256 recorded in the run's
-manifest; the marker's sha256 only records the bytes at migration.
+patch by id. The extraction run's record check reads one reference field in `src-assumptions.md`,
+a line `patch-file: <exact file name>`, and compares the rest of the line, whole, with the patches
+in the manifest. An entry that carries no such line names no patch, so the check does not treat it
+as an orphan, and prose that merely mentions a file name is not a reference; add a `patch-file:`
+line to an entry (step 7 below) to give it a current identity. A patch's identity is its file name
+and the sha256 recorded in the run's manifest; the marker's sha256 only records the bytes at
+migration.
 
 ## The inactive state
 
@@ -147,7 +150,8 @@ whether to keep the retained ledger files is the owner's decision.
 6. Review each migrated patch's `Obligations:`. They are still open obligations; the copied
    `Evidence:` and `Ratification:` are history. The patches are per hunk, not per function;
    regrouping them is a manual edit the engine does not check against the marker.
-7. In `src-assumptions.md`, add the patch file name beside each legacy id it records.
+7. In `src-assumptions.md`, add a line `patch-file: <exact file name>` to each entry for a legacy
+   id, naming the migrated patch (`<file stem>-legacy-<id>.patch`).
 8. Run `/fvs:aeneas-extract`. The first run records a manifest with the base source identity and
    the ordered patch hashes, and its completion check asks for a new, hash-bound gate for every
    migrated Category-B patch. Ratifying a migrated patch changes nothing in

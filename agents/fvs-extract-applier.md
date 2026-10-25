@@ -99,8 +99,9 @@ patch list is a mixed state the engine refuses.
   `tweaks-substitution`, any edit to hand-authored Lean or project config) stays an ordinary edit
   and writes neither a patch nor a ledger entry.
 - Either way, append the trusted assumption to `src-assumptions.md` when the recipe axiomatizes,
-  excludes, or gates an item. The entry names the patch file when there is one, and otherwise
-  the catalog id and the files edited.
+  excludes, or gates an item. When there is a patch, the entry names it on a line
+  `patch-file: <exact file name>`; otherwise the entry records the catalog id and the files
+  edited, with no `patch-file:` line.
 
 In either mode, then rebuild to confirm the recipe cleared the blocker, ALWAYS with `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`.
 

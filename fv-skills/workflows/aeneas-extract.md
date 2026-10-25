@@ -381,8 +381,7 @@ only; retained packets stay in `equivalence-gate/` as the audit trail and are ne
 - **Rejected** -> record the rejection reason and a `status: rejected` line in the packet (it is
   kept, and the checks skip it) and ESCALATE; NEVER re-submit the identical change (the loop must
   propose a smaller/different one). When the loop later replaces or removes an installed patch,
-  it removes the patch's `series` entry and marks that patch's packet `status: superseded` (or
-  `status: retired` when no replacement follows), with the reason.
+  it retires the patch as Step 6 describes.
 </step>
 
 <step name="document">
@@ -424,8 +423,10 @@ are:
   `patch-sha256:`, never through `Evidence:` or `Ratification:`.
 - `translation-patches/series` -- one patch file name per line, in application order; every
   `.patch` file listed exactly once (the engine refuses any other list).
-- `src-assumptions.md` -- each entry names the patch (file name and sha256) that introduced it;
-  it stays at the crate root in both modes.
+- `src-assumptions.md` -- each entry names the patch that introduced it on a line
+  `patch-file: <exact file name>` (the rest of the line is the name, so any name `series` accepts
+  compares whole, and prose that merely mentions a file is not a reference); it stays at the crate
+  root in both modes.
 
 A patch identity is its file name together with the sha256 `prepare` records for it in the
 manifest. Only changes to the Rust extraction inputs are patches (the engine refuses a patch that
@@ -451,6 +452,21 @@ Write the header followed by that diff body with the Write tool as
 not undo cleanly, the header is incomplete, a path is outside the extraction inputs) means remove
 the patch and its `series` line and report the message; an unchecked patch is never left in the
 list. Only a patch that passes `check` starts the next cycle, with a new `prepare`.
+
+**Retiring an installed patch.** When the loop replaces or removes a patch that is already
+installed, reconcile every record and keep the history:
+
+1. Remove its name from `series`, and move the patch file to `translation-patches/retired/` (a
+   subdirectory the engine does not read). The engine refuses a `.patch` file that is not listed,
+   so removing only the `series` entry leaves the list unusable.
+2. Mark its gate packet `status: superseded` (a replacement follows) or `status: retired`, with
+   the reason. The packet stays in `equivalence-gate/`.
+3. In `src-assumptions.md`, change the entry's `patch-file:` line to `retired-patch: <exact file
+   name>` (and add a `patch-file:` line for the replacement when it carries the assumption). The
+   entry's text stays as history, and a `retired-patch:` line is not a reference.
+
+An active packet or a `patch-file:` line that still names the retired patch fails the record
+check. Then run `check` and start the next cycle with a new `prepare`.
 
 ### Legacy mode (legacy-source-ledger)
 
@@ -538,7 +554,8 @@ All of, for the cycle whose `OUT` built the extraction:
    check below with the same variables. It passes only when the patches
    `translation-patches/series` lists now are exactly the manifest's patches, in its order, with
    unchanged sha256; each carries a `Classification:` line; and no active gate packet and no
-   `src-assumptions.md` entry names a patch absent from the manifest (no orphan record). The
+   `src-assumptions.md` entry names a patch absent from the manifest on a `patch-file:` line (no
+   orphan record). The
    manifest is the one `prepare` wrote for this cycle, and
    `node "$PATCH_ENGINE" status --out "$OUT"` refuses a partial one. A patch added after `prepare`
    needs a new cycle.
@@ -605,16 +622,21 @@ const retained = /^status:[ \t]*(rejected|superseded|retired)\b/;
 const packets = (fs.existsSync(gateDir) ? fs.readdirSync(gateDir).filter((name) => name.endsWith('.md')).sort() : [])
   .map((name) => ({ name, lines: fs.readFileSync(path.join(gateDir, name), 'utf8').split('\n').map((line) => line.trim()) }))
   .filter(({ lines }) => !lines.some((line) => retained.test(line)));
+// A reference is a whole line `patch-file: <exact file name>` (optionally after a "- " bullet):
+// the rest of the line is the name, so any name `series` accepts compares whole, and prose that
+// merely mentions a file is not a reference.
+const reference = /^(?:[-*][ \t]+)?patch-file:[ \t]*(\S.*)$/;
 for (const { name, lines } of packets) {
   for (const line of lines) {
-    const named = line.match(/^patch-file:[ \t]*(\S+)$/);
+    const named = line.match(reference);
     if (named && !known.includes(named[1])) problems.push(`active gate packet ${name} names ${named[1]}, which is not in the manifest`);
   }
 }
 const assumptions = path.join(crateRoot, 'src-assumptions.md');
 if (fs.existsSync(assumptions)) {
-  for (const named of new Set(fs.readFileSync(assumptions, 'utf8').match(/[\w.-]+\.patch\b/g) ?? [])) {
-    if (!known.includes(named)) problems.push(`src-assumptions.md names ${named}, which is not in the manifest`);
+  for (const line of fs.readFileSync(assumptions, 'utf8').split('\n').map((entry) => entry.trim())) {
+    const named = line.match(reference);
+    if (named && !known.includes(named[1])) problems.push(`src-assumptions.md names ${named[1]}, which is not in the manifest`);
   }
 }
 for (const problem of problems) console.error(problem);

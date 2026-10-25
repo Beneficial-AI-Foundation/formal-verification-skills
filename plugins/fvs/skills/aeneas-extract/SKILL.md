@@ -247,7 +247,8 @@ fix escalates immediately).
   - Patch mode: one `translation-patches/<name>.patch` per function (a classified supporting
     patch is allowed), appended to `translation-patches/series`, with the header the workflow
     specifies (`Classification:`, `Assumptions:`, `Obligations:`, `Evidence:` for B), then
-    `check`; plus `src-assumptions.md` entries that name the patch. Patch mode never writes
+    `check`; plus `src-assumptions.md` entries that name the patch on a line
+    `patch-file: <exact file name>`. Patch mode never writes
     `src-modifications.diff`, `.json` or `.md`: an active ledger beside a patch list is a mixed
     state the engine refuses.
   - Legacy mode: `src-modifications.diff` (regenerated against the pin),
@@ -294,8 +295,10 @@ entry makes `check` refuse the list.
 A packet is active unless it carries a `status: rejected`, `status: superseded` or
 `status: retired` line. The oracle's checks read active packets only; retained packets stay in
 `equivalence-gate/` as the audit trail. When the loop replaces or removes an installed patch, it
-removes its `series` entry and marks that patch's packet `status: superseded` (or
-`status: retired`) with the reason.
+retires it as the workflow's Step 6 describes: remove its `series` entry AND move the patch file
+to `translation-patches/retired/` (the engine refuses an unlisted `.patch` file), mark its packet
+`status: superseded` (or `status: retired`) with the reason, and change its `src-assumptions.md`
+`patch-file:` line to `retired-patch:`, keeping the history.
 
 ## Step 5: SUCCESS ORACLE -- refuse completion without the token
 
@@ -322,8 +325,9 @@ Patch mode, for the cycle whose `OUT` built the extraction:
 5. The diff-to-record check holds over patch identities (file name and sha256): the workflow's
    record check finds the patches in `translation-patches/series` exactly the manifest's patches
    (`status --out "$OUT"`), in its order, each with a `Classification:` line, and no active gate
-   packet or `src-assumptions.md` entry naming a patch absent from the manifest. Retained
-   (rejected, superseded or retired) packets are the audit trail and never block completion.
+   packet or `src-assumptions.md` entry naming a patch absent from the manifest on a
+   `patch-file:` line. Retained (rejected, superseded or retired) packets are the audit trail and
+   never block completion.
 
 Legacy mode:
 
