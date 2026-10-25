@@ -70,6 +70,7 @@ function section(text, heading) {
 }
 
 let tested = null;
+let linux = null;
 let doc = null;
 let raw = null;
 let outputs = null;
@@ -91,6 +92,7 @@ function profileText(projectRoot, format = 'text') {
 
 before(async () => {
   ({ TESTED_TUPLES: tested } = await import(pathToFileURL(INVENTORY_SCRIPT).href));
+  linux = await import(pathToFileURL(path.join(ROOT, 'scripts', 'fvs-probe-linux.mjs')).href);
   raw = fs.readFileSync(REFERENCE, 'utf8');
   doc = flat(raw);
   outputs = ['fresh', 'pilot', 'tested'].map((name) => profileText(path.join(FIXTURES, name)));
@@ -147,6 +149,48 @@ describe('auto-setup reference: prerequisites', () => {
     }
   });
 
+  it('documents the Rust components each tested helper needs, with a command that checks them', () => {
+    const blocks = raw.split(/\n\s*\n/);
+    let required = 0;
+    for (const tuple of tested) {
+      for (const helper of Object.values(tuple.platforms).flatMap((platform) => Object.values(platform.helpers))) {
+        if (!helper.components) continue;
+        const toolchain = helper.version.match(/\d+\.\d+\.\d+/)[0];
+        const command = `rustup component list --installed --toolchain ${toolchain}`;
+        const block = blocks.find((candidate) => candidate.includes(`\`${command}\``));
+        assert.ok(block, `no check for the ${toolchain} components`);
+        for (const component of helper.components) {
+          assert.ok(block.includes(`\`${component}\``), `${component} is not named beside its check`);
+          required += 1;
+        }
+      }
+    }
+    assert.ok(required >= 2, 'the tested helpers no longer list required components');
+  });
+
+  it('documents the confinement each tested platform needs, with its source and check', () => {
+    const isolations = new Set(tested.flatMap((tuple) => Object.values(tuple.platforms).map((platform) => platform.isolation)));
+    // A new isolation mechanism must come with its own documented prerequisite.
+    assert.deepEqual([...isolations].sort(), ['bubblewrap', 'sandbox-exec']);
+    assert.ok(raw.includes('https://github.com/containers/bubblewrap'));
+    for (const binary of [linux.BWRAP, linux.XZ]) assert.ok(raw.includes(`\`${binary} --version\``), binary);
+    assert.ok(raw.includes('`/usr/bin/sandbox-exec`'));
+    // The resolver's own guidance, quoted, and no advice to loosen system policy.
+    for (const guidance of [
+      'Check whether unprivileged user namespaces are permitted, including any AppArmor restrictions.',
+      'FVS does not change system security policy.',
+    ]) {
+      assert.ok(fs.readFileSync(INVENTORY_SCRIPT, 'utf8').includes(guidance), `the resolver no longer prints: ${guidance}`);
+      assert.ok(doc.includes(guidance), `reference lacks: ${guidance}`);
+    }
+    assert.doesNotMatch(raw, /\bsysctl\b|apparmor_parser|aa-disable|unprivileged_userns_clone|setenforce/i);
+  });
+
+  it('says that an ignore rule does not untrack committed files', () => {
+    assert.match(doc, /does not untrack files already committed/);
+    assert.ok(raw.includes('git ls-files .formalising/'));
+  });
+
   it('shows how to run the profile and the resolver that prints helper setup steps', () => {
     assert.ok(raw.includes('node ~/.claude/scripts/fvs-auto.mjs profile --project-root . --format text'));
     assert.ok(raw.includes('fvs-probe-inventory.mjs resolve --project-root . --format text'));
@@ -161,7 +205,10 @@ describe('auto-setup reference: prerequisites', () => {
       'https://github.com/Beneficial-AI-Foundation/probe-aeneas/releases',
       'https://github.com/OrchestratorInc/agent-orchestrator/releases',
     ]) assert.ok(raw.includes(source), source);
-    assert.match(doc, /FVS does not install any of these/);
+    assert.match(doc, /This walkthrough and the profile install nothing/);
+    assert.match(doc, /you install every prerequisite below yourself/);
+    // The walkthrough must not describe an installer next to its no-install promise.
+    assert.doesNotMatch(raw, /installer|consent-gated|FVS-owned/i);
   });
 
   it('explains how .formalising stays out of git and how to check it', () => {

@@ -3,18 +3,16 @@
 How to get from a clean host to a recorded auto-init state when you are new to functional-correctness
 verification: what you install yourself, how to check each tool, what each compatibility verdict means
 and what the single next step is, how to keep `.formalising/` out of git, and which operation, tuple
-and platforms have a recorded run. FVS does not install any of these tools and makes no claim beyond
-the tested matrix at the end. `TESTED_TUPLES` in `scripts/fvs-probe-inventory.mjs` is the authority;
-the matrix mirrors it and a test keeps the two in step.
+and platforms have a recorded run. This walkthrough installs nothing and makes no claim beyond the
+tested matrix at the end. `TESTED_TUPLES` in `scripts/fvs-probe-inventory.mjs` is the authority; the
+matrix mirrors it and a test keeps the two in step.
 
 </overview>
 
 ## Prerequisites you install yourself
 
-FVS does not install any of these. The profile described below only detects: it never installs,
-downloads or modifies anything. The one installer FVS has is the consent-gated probe-aeneas install that
-the dependency-graph commands offer for a tested tuple; it places the official release in an
-FVS-owned directory and touches none of the tools in this table.
+This walkthrough and the profile install nothing: you install every prerequisite below yourself. The
+profile described below only detects; it never installs, downloads or modifies anything.
 
 | Prerequisite | Official source | Version check | What the profile reads |
 |---|---|---|---|
@@ -38,14 +36,29 @@ The confined probe-aeneas inventory also needs four helpers at exact versions: p
 (https://github.com/Beneficial-AI-Foundation/probe-rust), scip (https://github.com/scip-code/scip/releases),
 probe-lean (https://github.com/Beneficial-AI-Foundation/probe-lean/releases) and rust-analyzer with its
 `rust-src` component (installed through rustup). Check them with `probe-rust --version`,
-`scip --version`, `~/.local/bin/probe-lean-v4.31.0 --version` and `rust-analyzer --version`. The resolver
-finds probe-lean only as `~/.local/bin/probe-lean-<Lean version from lean-toolchain>`, with its libraries in
+`scip --version`, `~/.local/bin/probe-lean-v4.31.0 --version` and `rust-analyzer --version`. That last
+check can pass without `rust-src`, so also run `rustup component list --installed --toolchain 1.98.1`
+and confirm that it lists an entry for `rust-analyzer` (such as `rust-analyzer-<target>`) and one for
+`rust-src`. The resolver runs the same listing in the crate directory, so that toolchain must be the
+one active there. The resolver finds probe-lean only as `~/.local/bin/probe-lean-<Lean version from lean-toolchain>`, with its libraries in
 `~/.local/lib/probe-lean-<Lean version>`, so a `probe-lean` elsewhere on PATH does not count. The pinned
 downloads, digests and install steps for your host are printed by the resolver, which only reads:
 
 ```bash
 node ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-probe-inventory.mjs resolve --project-root . --format text
 ```
+
+The confined probe-aeneas inventory runs every tool check and the probe itself under the operating
+system's confinement. On Linux x86_64 the confined probe-aeneas inventory uses bubblewrap, so you need `/usr/bin/bwrap`
+(https://github.com/containers/bubblewrap; check it with `/usr/bin/bwrap --version`) and `/usr/bin/xz`
+(check it with `/usr/bin/xz --version`) to unpack the probe-aeneas archive. The confined probe-aeneas
+inventory there also needs native Linux tools, a PATH of absolute Linux directories without
+Windows-mounted entries, and a HOME and project outside `/tmp`, `/var/tmp` and `/run`. The resolver's
+guidance for the last prerequisite is: Check whether unprivileged user namespaces are permitted,
+including any AppArmor restrictions. FVS does not change system security policy. Neither should you: if
+confinement stays unavailable, the profile and the resolver say so and nothing runs, so use a host where
+it is already permitted. On macOS the confinement is the system's `/usr/bin/sandbox-exec`, which needs no
+installation.
 
 ## Check your host
 
@@ -115,8 +128,10 @@ printf '/.formalising\n' >> "$(git rev-parse --git-path info/exclude)"
 git check-ignore -v .formalising/
 ```
 
-The second command prints the rule that matches; no output means the path is not ignored. Use
-`.gitignore` instead only if your team agrees to share the rule.
+The second command prints the rule that matches; no output means the path is not ignored. An ignore
+rule does not untrack files already committed: if `git ls-files .formalising/` lists anything, remove
+it from the index yourself with `git rm -r --cached .formalising/`. Use `.gitignore` instead only if
+your team agrees to share the rule.
 
 ## Tested matrix
 
