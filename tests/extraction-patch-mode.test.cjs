@@ -158,6 +158,23 @@ describe('Patch mode: records and the success oracle', () => {
     assert.match(step('gate'), /migrated/i);
   });
 
+  it('distinguishes installing a new proposal from ratifying an already-installed patch', () => {
+    assert.match(step('gate'), /already installed/i);
+    assert.match(step('gate'), /existing `series` entry/);
+    assert.match(commandText, /already installed/i);
+    assert.match(commandText, /existing `series` entry/);
+  });
+
+  it('keeps retained rejected, superseded and retired packets out of the active scans', () => {
+    const patchMode = section(step('success_oracle'), 'Patch mode');
+    for (const token of ['record-check', 'active', 'status: rejected', 'status: superseded', 'status: retired']) {
+      assert.ok(patchMode.includes(token), `patch-mode oracle never mentions ${token}`);
+    }
+    assert.match(step('gate'), /status: rejected/);
+    assert.match(commandText, /status: rejected/);
+    assert.match(commandText, /active/);
+  });
+
   it('states that a translation adaptation does not prove equivalence with the original source', () => {
     assert.match(workflowText, /does not prove (equivalence|the original)/i);
   });

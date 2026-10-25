@@ -195,14 +195,23 @@ a fixing subagent:
    degrade to a plain-text question and WAIT (fail-closed -- never auto-pick a default, never
    self-ratify).
 4. Re-extract only once the token `equivalence-ratified:` is present. Reject -> record the
-   reason and ESCALATE; never re-submit the identical change.
+   reason and a `status: rejected` line in the packet and ESCALATE; never re-submit the identical
+   change.
 
 In patch mode, section 1 is the candidate translation patch itself, with its complete header,
 held beside the packet as `equivalence-gate/<change-id>.patch`, and the packet records its
-`patch-file:` and `patch-sha256:`. It enters `translation-patches/` and `series` byte for byte
-only after ratification; then run `check` and re-extract with a new `prepare`. A patch that
-`migrate` produced is already installed and its legacy approval is historical: fire the gate for
-it as it stands, with the installed patch as section 1.
+`patch-file:` and `patch-sha256:`. After ratification, a NEW proposal enters
+`translation-patches/` and `series` byte for byte; then run `check` and re-extract with a new
+`prepare`. A patch that is already installed (a migrated patch, whose legacy approval is
+historical) is fired through the gate as it stands, with the installed patch as section 1, and is
+NOT installed again: its bytes and its existing `series` entry stay as they are, because a second
+entry makes `check` refuse the list.
+
+A packet is active unless it carries a `status: rejected`, `status: superseded` or
+`status: retired` line. The oracle's checks read active packets only; retained packets stay in
+`equivalence-gate/` as the audit trail. When the loop replaces or removes an installed patch, it
+removes its `series` entry and marks that patch's packet `status: superseded` (or
+`status: retired`) with the reason.
 
 ## Step 5: SUCCESS ORACLE -- refuse completion without the token
 
@@ -219,16 +228,18 @@ Patch mode, for the cycle whose `OUT` built the extraction:
    recorded start.
 4. Every Category-B patch, migrated ones included, carries a human ratification bound to its
    current bytes: the workflow's ratification check finds, in
-   `<extract_workspace>/<target>/equivalence-gate/`, a packet that carries `equivalence-ratified:`,
-   names the patch on a `patch-file:` line, and records on a `patch-sha256:` line the sha256 the
+   `<extract_workspace>/<target>/equivalence-gate/`, an active packet that carries
+   `equivalence-ratified:`, names the patch on a `patch-file:` line, and records on a
+   `patch-sha256:` line the sha256 the
    manifest records for it. A patch edited after ratification, and any B patch without such a
    packet, fails. A migrated patch's `Evidence:` and `Ratification:` lines are historical
    metadata the check never reads, so it needs a new gate (Step 4) before the run can complete.
    Refuse completion while the check fails.
-5. The diff-to-record check holds over patch identities (file name and sha256): the patches in
-   `translation-patches/series` are exactly the manifest's patches (`status --out "$OUT"`), in
-   its order, each with a `Classification:` line, and no gate packet or `src-assumptions.md`
-   entry names a patch absent from the manifest.
+5. The diff-to-record check holds over patch identities (file name and sha256): the workflow's
+   record check finds the patches in `translation-patches/series` exactly the manifest's patches
+   (`status --out "$OUT"`), in its order, each with a `Classification:` line, and no active gate
+   packet or `src-assumptions.md` entry naming a patch absent from the manifest. Retained
+   (rejected, superseded or retired) packets are the audit trail and never block completion.
 
 Legacy mode:
 

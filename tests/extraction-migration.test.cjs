@@ -84,6 +84,22 @@ function prepare(root) {
   return out;
 }
 
+// One of the workflow's own bash blocks, run against a real prepared copy and a gate directory
+// holding the given packets. The result carries the gate directory it ran against.
+function workflowCheck(name, root, out, packets) {
+  const gate = temporaryDirectory('fvs-migration-gate-');
+  for (const [file, text] of Object.entries(packets)) fs.writeFileSync(path.join(gate, file), text);
+  const block = fs.readFileSync(WORKFLOW, 'utf8').match(new RegExp(`\`\`\`bash\\n# ${name}\\n([\\s\\S]*?)\\n\`\`\``));
+  assert.ok(block, `the workflow has no ${name} block`);
+  const result = spawnSync('bash', ['-c', block[1]], {
+    encoding: 'utf8',
+    env: { ...process.env, PATCH_ENGINE: ENGINE, CRATE_ROOT: root, OUT: out, GATE_DIR: gate },
+  });
+  return { ...result, gate, output: `${result.stdout}${result.stderr}` };
+}
+const ratificationCheck = (root, out, packets) => workflowCheck('ratification-check', root, out, packets);
+const recordCheck = (root, out, packets) => workflowCheck('record-check', root, out, packets);
+
 const engineSource = fs.readFileSync(ENGINE, 'utf8');
 const usage = spawnSync(process.execPath, [ENGINE, '--help'], { encoding: 'utf8' }).stdout;
 const subcommands = [...usage.matchAll(/node fvs-extract-patches\.mjs (\S+)/g)].map((match) => match[1]);
@@ -198,18 +214,6 @@ describe('Migration sequence: starting from an explicit legacy mode', () => {
 });
 
 describe('Migrated Category-B patches need a ratification bound to their current hash', () => {
-  // The workflow's own ratification-check block, run against a real prepared copy.
-  function ratificationCheck(root, out, packets) {
-    const gate = temporaryDirectory('fvs-migration-gate-');
-    for (const [name, text] of Object.entries(packets)) fs.writeFileSync(path.join(gate, name), text);
-    const block = fs.readFileSync(WORKFLOW, 'utf8').match(/```bash\n# ratification-check\n([\s\S]*?)\n```/);
-    assert.ok(block, 'the workflow has no ratification-check block');
-    return spawnSync('bash', ['-c', block[1]], {
-      encoding: 'utf8',
-      env: { ...process.env, PATCH_ENGINE: ENGINE, CRATE_ROOT: root, OUT: out, GATE_DIR: gate },
-    });
-  }
-
   function migrated() {
     const root = legacyProject();
     assert.equal(run('migrate', '--project-root', root).status, 0);
@@ -259,5 +263,106 @@ describe('Migrated Category-B patches need a ratification bound to their current
     const root = migrated();
     const checked = ratificationCheck(root, prepare(root), bound(root));
     assert.doesNotMatch(checked.stdout + checked.stderr, /M1|M3/);
+  });
+
+  it('ratifies an already-installed migrated patch without touching its bytes or its series entry', () => {
+    const root = migrated();
+    const series = path.join(root, 'translation-patches', 'series');
+    const before = { series: fs.readFileSync(series), patch: fs.readFileSync(patchOf(root)) };
+
+    // The documented continuation: bind the packet to the installed bytes, then check and re-prepare.
+    const out = prepare(root);
+    assert.equal(ratificationCheck(root, out, bound(root)).status, 0);
+    const checked = run('check', '--project-root', root);
+    assert.equal(checked.status, 0, checked.stdout);
+    assert.deepEqual(fs.readFileSync(series), before.series, 'ratification changed the series');
+    assert.deepEqual(fs.readFileSync(patchOf(root)), before.patch, 'ratification changed the patch bytes');
+    assert.equal(recordCheck(root, prepare(root), bound(root)).status, 0);
+
+    // Installing it again, as for a new proposal, is what the engine refuses.
+    fs.appendFileSync(series, 'lib-legacy-M2.patch\n');
+    const duplicated = run('check', '--project-root', root);
+    assert.equal(duplicated.status, 5, duplicated.stdout);
+    assert.equal(duplicated.json.code, 'invalid-input');
+  });
+});
+
+describe('Retained rejected proposals are an audit trail, not orphan records', () => {
+  function migrated() {
+    const root = legacyProject();
+    assert.equal(run('migrate', '--project-root', root).status, 0);
+    restorePristine(root);
+    return root;
+  }
+
+  const patchOf = (root) => path.join(root, 'translation-patches', 'lib-legacy-M2.patch');
+  const sha256 = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  const ratified = (root) => ({
+    'M2-rebound.md': `patch-file: lib-legacy-M2.patch\npatch-sha256: ${sha256(patchOf(root))}\nequivalence-ratified: stamped by the owner\n`,
+  });
+  const REJECTED = [
+    '# gate packet for proposal A',
+    'patch-file: proposal-a.patch',
+    `patch-sha256: ${'0'.repeat(64)}`,
+    'status: rejected',
+    'rejected: the rewrite changed the wrong function; proposal B replaces it',
+    '',
+  ].join('\n');
+
+  it('completes after a rejected proposal A and a ratified replacement B, keeping A\'s rejection', () => {
+    const root = migrated();
+    const out = prepare(root);
+    const packets = { ...ratified(root), 'proposal-a.md': REJECTED };
+
+    const ratification = workflowCheck('ratification-check', root, out, packets);
+    assert.equal(ratification.status, 0, ratification.output);
+    const record = workflowCheck('record-check', root, out, packets);
+    assert.equal(record.status, 0, record.output);
+    assert.equal(fs.readFileSync(path.join(record.gate, 'proposal-a.md'), 'utf8'), REJECTED, 'the rejection was not retained');
+  });
+
+  it('still rejects an active packet that names a patch absent from the manifest', () => {
+    const root = migrated();
+    const pending = { ...ratified(root), 'proposal-a.md': REJECTED.replace('status: rejected\n', '') };
+    const record = recordCheck(root, prepare(root), pending);
+    assert.notEqual(record.status, 0, record.output);
+    assert.match(record.output, /proposal-a\.patch/);
+  });
+
+  it('skips superseded and retired packets the same way', () => {
+    const root = migrated();
+    for (const status of ['superseded', 'retired']) {
+      const packets = { ...ratified(root), 'old.md': REJECTED.replace('status: rejected', `status: ${status}`) };
+      const record = recordCheck(root, prepare(root), packets);
+      assert.equal(record.status, 0, record.output);
+    }
+  });
+
+  it('never lets a retained packet ratify anything', () => {
+    const root = migrated();
+    const retired = ratified(root)['M2-rebound.md'].concat('status: retired\n');
+    const checked = workflowCheck('ratification-check', root, prepare(root), { 'M2-rebound.md': retired });
+    assert.notEqual(checked.status, 0, checked.output);
+    assert.match(checked.output, /lib-legacy-M2\.patch/);
+  });
+
+  it('still rejects a src-assumptions.md entry that names a patch absent from the manifest', () => {
+    const root = migrated();
+    fs.writeFileSync(path.join(root, 'src-assumptions.md'), '- A1: trusted by lib-legacy-M2.patch\n- A9: trusted by ghost.patch\n');
+    const record = recordCheck(root, prepare(root), ratified(root));
+    assert.notEqual(record.status, 0, record.output);
+    assert.match(record.output, /ghost\.patch/);
+    assert.doesNotMatch(record.output, /lib-legacy-M2\.patch/);
+  });
+
+  it('rejects a series that no longer matches the manifest', () => {
+    const root = migrated();
+    const out = prepare(root);
+    const series = path.join(root, 'translation-patches', 'series');
+    const names = fs.readFileSync(series, 'utf8').trim().split('\n');
+    fs.writeFileSync(series, `${names.slice(1).join('\n')}\n`);
+    const record = recordCheck(root, out, ratified(root));
+    assert.notEqual(record.status, 0, record.output);
+    assert.match(record.output, /series/);
   });
 });

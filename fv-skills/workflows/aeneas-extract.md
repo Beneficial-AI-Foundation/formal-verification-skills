@@ -364,12 +364,25 @@ them: a patch edited after ratification no longer matches its packet. A migrated
 (Step 9), so the gate is fired for it as it stands: section 1 is the installed patch, and the
 packet records `patch-file:` and `patch-sha256:` of the installed bytes.
 
-- **Ratified** (`equivalence-ratified:` present) -> the change stands. Patch mode: install the
-  staged patch byte for byte as `translation-patches/<name>.patch`, append it to `series`, run
-  `check`, then re-EXTRACT (Step 2) with a new `prepare`. Legacy mode: apply the change in place
+A packet is **active** unless it carries a `status: rejected`, `status: superseded` or
+`status: retired` line. The record check and the ratification check (Step 9) read active packets
+only; retained packets stay in `equivalence-gate/` as the audit trail and are never deleted.
+
+- **Ratified** (`equivalence-ratified:` present) -> the change stands. Patch mode, by what the
+  patch is:
+  - A new proposal (staged beside its packet) is installed byte for byte as
+    `translation-patches/<name>.patch` and appended to `series`; then run `check`.
+  - A patch that is already installed (a migrated patch, or any patch already listed in `series`)
+    is NOT installed again. Its bytes and its existing `series` entry stay exactly as they are,
+    because a second entry makes `check` refuse the list; only `check` follows.
+
+  Either way, re-EXTRACT (Step 2) with a new `prepare`. Legacy mode: apply the change in place
   and re-EXTRACT (Step 2).
-- **Rejected** -> record the rejection reason in the packet and ESCALATE; NEVER re-submit the
-  identical change (the loop must propose a smaller/different one).
+- **Rejected** -> record the rejection reason and a `status: rejected` line in the packet (it is
+  kept, and the checks skip it) and ESCALATE; NEVER re-submit the identical change (the loop must
+  propose a smaller/different one). When the loop later replaces or removes an installed patch,
+  it removes the patch's `series` entry and marks that patch's packet `status: superseded` (or
+  `status: retired` when no replacement follows), with the reason.
 </step>
 
 <step name="document">
@@ -516,17 +529,25 @@ All of, for the cycle whose `OUT` built the extraction:
 4. Every Category-B patch, migrated ones included, carries a human ratification bound to its
    current bytes. Run the ratification check below with `GATE_DIR` set to
    `<extract_workspace>/<target>/equivalence-gate`. For each patch whose header says
-   `Classification: B` it needs a packet in `GATE_DIR` that carries `equivalence-ratified:`, names
-   the patch on a `patch-file:` line, and records on a `patch-sha256:` line the sha256 the
-   manifest records for that patch. A B patch with no such packet fails, and so does a patch
-   edited after ratification, because its sha256 no longer matches. Refuse "complete" while the
-   check fails.
-5. The diff-to-record check holds over patch identities (file name and sha256), compared with the
-   manifest (`node "$PATCH_ENGINE" status --out "$OUT"`, which refuses a partial manifest): the
-   patches `translation-patches/series` lists now are exactly the manifest's patches, in its
-   order, with unchanged sha256; each carries a `Classification:` line; and no gate packet and no
-   `src-assumptions.md` entry names a patch absent from the manifest (no orphan record). A patch
-   added after `prepare` needs a new cycle.
+   `Classification: B` it needs an active packet in `GATE_DIR` that carries
+   `equivalence-ratified:`, names the patch on a `patch-file:` line, and records on a
+   `patch-sha256:` line the sha256 the manifest records for that patch. A B patch with no such
+   packet fails, and so does a patch edited after ratification, because its sha256 no longer
+   matches. Refuse "complete" while the check fails.
+5. The diff-to-record check holds over patch identities (file name and sha256). Run the record
+   check below with the same variables. It passes only when the patches
+   `translation-patches/series` lists now are exactly the manifest's patches, in its order, with
+   unchanged sha256; each carries a `Classification:` line; and no active gate packet and no
+   `src-assumptions.md` entry names a patch absent from the manifest (no orphan record). The
+   manifest is the one `prepare` wrote for this cycle, and
+   `node "$PATCH_ENGINE" status --out "$OUT"` refuses a partial one. A patch added after `prepare`
+   needs a new cycle.
+
+Both checks read **active** packets only: a packet with no `status: rejected`,
+`status: superseded` or `status: retired` line (Step 5). A rejected proposal, a packet for a patch
+the loop later replaced or removed, and a legacy packet the owner retired stay in
+`equivalence-gate/` as the audit trail, so a rejected proposal never blocks completion after an
+accepted alternative, and a retained packet never ratifies anything.
 
 ```bash
 # ratification-check
@@ -539,18 +560,65 @@ if (manifest.status !== 'prepared') {
   console.error('the manifest does not record a prepared copy');
   process.exit(1);
 }
-const packets = fs.existsSync(gateDir)
-  ? fs.readdirSync(gateDir).filter((name) => name.endsWith('.md')).map((name) => fs.readFileSync(path.join(gateDir, name), 'utf8').split('\n').map((line) => line.trim()))
-  : [];
+const retained = /^status:[ \t]*(rejected|superseded|retired)\b/;
+const packets = (fs.existsSync(gateDir) ? fs.readdirSync(gateDir).filter((name) => name.endsWith('.md')).sort() : [])
+  .map((name) => ({ name, lines: fs.readFileSync(path.join(gateDir, name), 'utf8').split('\n').map((line) => line.trim()) }))
+  .filter(({ lines }) => !lines.some((line) => retained.test(line)));
 const unratified = manifest.patches.filter((patch) => {
   const header = fs.readFileSync(path.join(crateRoot, 'translation-patches', patch.file), 'utf8').split(/^diff --git /m)[0];
   if (!/^Classification:[ \t]*B[ \t]*$/m.test(header)) return false;
-  return !packets.some((lines) => lines.some((line) => line.startsWith('equivalence-ratified:'))
+  return !packets.some(({ lines }) => lines.some((line) => line.startsWith('equivalence-ratified:'))
     && lines.includes(`patch-file: ${patch.file}`)
     && lines.includes(`patch-sha256: ${patch.sha256}`));
 });
 for (const patch of unratified) console.error(`no ratification bound to ${patch.file} (sha256 ${patch.sha256})`);
 process.exit(unratified.length === 0 ? 0 : 1);
+NODE
+```
+
+```bash
+# record-check
+node - "$CRATE_ROOT" "$OUT" "$GATE_DIR" <<'NODE'
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+const [crateRoot, out, gateDir] = process.argv.slice(2);
+const manifest = JSON.parse(fs.readFileSync(path.join(out, 'manifest.json'), 'utf8'));
+if (manifest.status !== 'prepared') {
+  console.error('the manifest does not record a prepared copy');
+  process.exit(1);
+}
+const directory = path.join(crateRoot, 'translation-patches');
+const seriesFile = path.join(directory, 'series');
+const series = fs.existsSync(seriesFile)
+  ? fs.readFileSync(seriesFile, 'utf8').split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith('#'))
+  : [];
+const known = manifest.patches.map((patch) => patch.file);
+const problems = [];
+if (series.join('\n') !== known.join('\n')) problems.push(`series lists [${series}] but the manifest records [${known}]`);
+for (const patch of manifest.patches) {
+  const bytes = fs.readFileSync(path.join(directory, patch.file));
+  if (crypto.createHash('sha256').update(bytes).digest('hex') !== patch.sha256) problems.push(`${patch.file} changed after prepare`);
+  if (!/^Classification:[ \t]*(A-mechanical|A-opacity|B)[ \t]*$/m.test(bytes.toString('utf8').split(/^diff --git /m)[0])) problems.push(`${patch.file} has no Classification: line`);
+}
+const retained = /^status:[ \t]*(rejected|superseded|retired)\b/;
+const packets = (fs.existsSync(gateDir) ? fs.readdirSync(gateDir).filter((name) => name.endsWith('.md')).sort() : [])
+  .map((name) => ({ name, lines: fs.readFileSync(path.join(gateDir, name), 'utf8').split('\n').map((line) => line.trim()) }))
+  .filter(({ lines }) => !lines.some((line) => retained.test(line)));
+for (const { name, lines } of packets) {
+  for (const line of lines) {
+    const named = line.match(/^patch-file:[ \t]*(\S+)$/);
+    if (named && !known.includes(named[1])) problems.push(`active gate packet ${name} names ${named[1]}, which is not in the manifest`);
+  }
+}
+const assumptions = path.join(crateRoot, 'src-assumptions.md');
+if (fs.existsSync(assumptions)) {
+  for (const named of new Set(fs.readFileSync(assumptions, 'utf8').match(/[\w.-]+\.patch\b/g) ?? [])) {
+    if (!known.includes(named)) problems.push(`src-assumptions.md names ${named}, which is not in the manifest`);
+  }
+}
+for (const problem of problems) console.error(problem);
+process.exit(problems.length === 0 ? 0 : 1);
 NODE
 ```
 

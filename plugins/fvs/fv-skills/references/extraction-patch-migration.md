@@ -150,7 +150,8 @@ whether to keep the retained ledger files is the owner's decision.
 7. In `src-assumptions.md`, add the patch file name beside each legacy id it records.
 8. Run `/fvs:aeneas-extract`. The first run records a manifest with the base source identity and
    the ordered patch hashes, and its completion check asks for a new, hash-bound gate for every
-   migrated Category-B patch.
+   migrated Category-B patch. Ratifying a migrated patch changes nothing in
+   `translation-patches/`: the patch and its `series` entry stay as migration wrote them.
 
 </migration>
 
