@@ -238,6 +238,7 @@ describe('References (fv-skills/references/)', () => {
     'lake-build.md', 'lean-refactoring.md', 'lean-spec-conventions.md', 'model-profiles.md',
     'proof-engineering-loop.md', 'proof-strategies.md',
     'review-diagnostics.md', 'review-grounding.md', 'review-policy.md', 'tactic-usage.md', 'ui-brand.md',
+    'windows-probe.md',
   ];
 
   it('has exactly the declared reference files', () => {

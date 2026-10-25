@@ -99,6 +99,11 @@ describe('Installer (install + uninstall round-trip)', () => {
       'scripts/fvs-lean-style-check.mjs',
       'scripts/fvs-probe-inventory.mjs',
       'scripts/fvs-probe-linux.mjs',
+      'scripts/fvs-probe-windows.mjs',
+      'scripts/fvs-probe-windows-qualification.mjs',
+      'scripts/fvs-probe-windows-runtime.mjs',
+      'scripts/fvs-probe-windows-setup.mjs',
+      'scripts/fvs-probe-windows-sandbox.mjs',
       'scripts/fvs-spec-review.mjs',
     ];
     for (const rel of checks) {
@@ -499,7 +504,7 @@ describe('installed tree matches final bundle shape', () => {
 describe('probe runtime dependencies in every direct install mode', () => {
   for (const runtime of ['claude', 'codex', 'opencode', 'antigravity']) {
     for (const scope of ['local', 'global']) {
-      it(`${runtime} ${scope} installs both probe modules and resolves without missing imports`, () => {
+      it(`${runtime} ${scope} installs the probe modules and resolves without missing imports`, () => {
         const directory = makeTmpDir(`fvs-probe-${runtime}-${scope}-`);
         const home = path.join(directory, 'home');
         const project = path.join(directory, 'project');
@@ -512,8 +517,13 @@ describe('probe runtime dependencies in every direct install mode', () => {
         if (scope === 'global') args.push('--config-dir', configDir);
         const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: path.join(home, '.config') };
         execFileSync(process.execPath, args, { cwd: project, env, stdio: 'pipe' });
-        for (const name of ['fvs-probe-inventory.mjs', 'fvs-probe-linux.mjs']) {
-          assert.ok(fs.existsSync(path.join(target, 'scripts', name)), name);
+        for (const name of ['fvs-probe-inventory.mjs', 'fvs-probe-linux.mjs', 'fvs-probe-windows.mjs',
+          'fvs-probe-windows-runtime.mjs', 'fvs-probe-windows-setup.mjs', 'fvs-probe-windows-sandbox.mjs', 'fvs-probe-windows-qualification.mjs']) {
+          assert.deepEqual(fs.readFileSync(path.join(target, 'scripts', name)), fs.readFileSync(path.join(ROOT, 'scripts', name)), name);
+        }
+        const { nativeAssetFiles } = require('../scripts/fvs-probe-assets.cjs');
+        for (const relative of nativeAssetFiles(path.join(ROOT, 'scripts'))) {
+          assert.deepEqual(fs.readFileSync(path.join(target, 'scripts', relative)), fs.readFileSync(path.join(ROOT, 'scripts', relative)), relative);
         }
         const result = JSON.parse(execFileSync(process.execPath, [path.join(target, 'scripts', 'fvs-probe-inventory.mjs'), 'resolve', '--project-root', project], { env, encoding: 'utf8' }));
         assert.ok(['unsupported-platform', 'unknown'].includes(result.status));

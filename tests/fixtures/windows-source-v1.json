@@ -1,0 +1,2774 @@
+{
+  "schema": "fvs/windows-source-compatibility/v1",
+  "status": "passed",
+  "recordedAt": "2026-10-25T20:24:19.504Z",
+  "distribution": {
+    "id": "windows-source-v1",
+    "target": "x86_64-pc-windows-msvc",
+    "official": false,
+    "policySha256": "323acfbff84d5841615612ffc110479123b9c5556a83a40b74a6b651fcbb4216",
+    "tuple": "aeneas-6e167c9b-charon-0.1.225-lean-v4.31.0",
+    "isolation": "windows-appcontainer-journal-v2"
+  },
+  "identity": {
+    "managedInstallationReceiptSha256": "cda70d2deada871e8db8e5489b7d5251f31a8763cc7f0445d49f032e99faf4b3",
+    "launcherSha256": "16374d01f69fe7729571e124ff18a52cfac492be9399577da4906ce7b21222ec",
+    "launcherSourceSetSha256": "a930297e58af6300f84b78f2d33fad7533bcffe6bc70ef19ca541d78f566ae17",
+    "launcherBuildReceiptSha256": "8e1d91f656e8c51e1e15d03eef3a649ce0ceb1769897ff4580fd54b9e4944d42",
+    "launcherTestHooks": false,
+    "probeSha256": "6676a15473d6dd8d7e34d02e705e84b24537b24bb0de81feabf4288e49f5434f"
+  },
+  "source": {
+    "policySha256": "323acfbff84d5841615612ffc110479123b9c5556a83a40b74a6b651fcbb4216",
+    "policyFiles": [
+      {
+        "name": "Extract-Archive.ps1",
+        "sha256": "f571f5c21406e84f3088c2ed2950c21746f56dc0cba7c384641895e859467085"
+      },
+      {
+        "name": "SetupCreation.cs",
+        "sha256": "94062d4013431934e190d33816079c3193441c6c483e2f04a6adf2d419ebdf0d"
+      },
+      {
+        "name": "SetupHost.cs",
+        "sha256": "b4e57104f1ce57f57bed9d66a0ff93dc07b515c9774efd872dcbfe1399b317b6"
+      },
+      {
+        "name": "build-source.mjs",
+        "sha256": "335ddbf4d782178a966b59b81afb1999dedbd01419252fa8dc77bc02547823bc"
+      },
+      {
+        "name": "fs-at.patch",
+        "sha256": "5575e0a75e20e7679779c15e073d91baf53b401e8e54cf9691ff379f0cbfb8a3"
+      },
+      {
+        "name": "policy.json",
+        "sha256": "73b0ed32cc1c790d5853219e9745608fb3619e31dada402c2e94d506bbb97e5a"
+      },
+      {
+        "name": "probe-aeneas.patch",
+        "sha256": "7dfa2564190812e90acd29fb799f52db9ff0f0afd99e8008c153d0b9cc1887f9"
+      },
+      {
+        "name": "probe-lean.patch",
+        "sha256": "d8f346e30452a6caf34527c05af5caa46ebd49e2af0a2580af18f8c5b5f43576"
+      },
+      {
+        "name": "probe-rust.patch",
+        "sha256": "551f1cc7bd25e9c49e8d00d36db4d29b520a7a1d92cad9f57d4317b0e40e85b4"
+      },
+      {
+        "name": "reviewed-artifacts.json",
+        "sha256": "96a227ba278429589e5e7b65987ce90629b3777923e9f95be5b0645f490f96a6"
+      },
+      {
+        "name": "../windows/NativeMethods.cs",
+        "sha256": "41d93ea073f269c162b4aa37d13a5ef1228a952ac7f905abbb34c1b6325fdce1"
+      },
+      {
+        "name": "../windows/NativeExtra.cs",
+        "sha256": "cb7ffafb57801a593841ee7afc64951774db1e196c20d8142b2c9722fa11b6c0"
+      },
+      {
+        "name": "../windows/VerifiedPrivateLeafCleanup.cs",
+        "sha256": "ffe2ae24450d3f697b03d9f4c4f6c8fc57fa7a3d3e7e447cd9a9fcc0f7e1449c"
+      },
+      {
+        "name": "../windows/FvsWindowsLauncher.cs",
+        "sha256": "3bdcd963d718870f3b487edc9684e3999ec15863c66c9311c0eef3f8781420e5"
+      },
+      {
+        "name": "../windows/WindowsLifecycle.cs",
+        "sha256": "c19f393655dabf3b9a78c6fd69b5e5cbfa7d939f365f8ab37f49bdd0fd820ed3"
+      },
+      {
+        "name": "../windows/Build-Launcher.ps1",
+        "sha256": "20f7e87d65ecbd39062640f07f8e032236ea78abf81defd89f8d2128afce4911"
+      },
+      {
+        "name": "../../fvs-probe-windows-runtime.mjs",
+        "sha256": "58c729fed16a75e3dcc9ea8eecaf1739050f16f845b55b21b29bad1304273c71"
+      },
+      {
+        "name": "../../fvs-probe-windows-setup.mjs",
+        "sha256": "5b2839ccb418c4688b10b913886360ef298aa650dd1ac8eff63154f9f899e6e7"
+      },
+      {
+        "name": "../../fvs-probe-windows-sandbox.mjs",
+        "sha256": "6a7276846e8abc267e3e53123e146382e9153a0f4a03e20cd63258e371a6f0e7"
+      }
+    ],
+    "sources": {
+      "probe-aeneas": {
+        "repository": "https://github.com/Beneficial-AI-Foundation/probe-aeneas.git",
+        "commit": "70cbb9b4675d1639721fa60d1e0f2cd2df80cb54",
+        "patch": "probe-aeneas.patch",
+        "lockSha256": "b5bd6e78b63a09c752394a5cc98faff209eef114e27b36804d8d6cd9d415e39e"
+      },
+      "probe-rust": {
+        "repository": "https://github.com/Beneficial-AI-Foundation/probe-rust.git",
+        "commit": "1d2a7c5d0e5a5dd95e55c8d6a51cddae0b3d7572",
+        "patch": "probe-rust.patch",
+        "lockSha256": "d2bdbe69e1414fa9cdc096af7860c93030ae55d52223be70be81fc9bd10088ce"
+      },
+      "probe-lean": {
+        "repository": "https://github.com/Beneficial-AI-Foundation/probe-lean.git",
+        "commit": "fa581edfcb3de7eb801580ea183430edaa50cc68",
+        "patch": "probe-lean.patch",
+        "cliCommit": "92564e5770e4d09f2d86dfbf8ada1e9c715b384c"
+      },
+      "scip": {
+        "repository": "https://github.com/scip-code/scip.git",
+        "commit": "1c2b6db7e560d5233c944f36e4ac1377cc6963fc"
+      },
+      "rustup": {
+        "repository": "https://github.com/rust-lang/rustup.git",
+        "commit": "d8c92c6765f85625b20482e165066bf1e98e7297",
+        "lockOriginalSha256": "a7081f4b94a8a9b10422a643a7bd855b541ed7c595cd488e0c86f9580ab4ba1a",
+        "lockSha256": "f60011f494763d3671041aa9c2f434a6e975cd83cdc06cd44f3b754beb4dbfe6",
+        "fsAtPatch": "fs-at.patch",
+        "fsAtWinSha256": "4b7d59cfa7739468f89748c9a947716ced54c088f9a49cebb24baca59dacabc9"
+      }
+    },
+    "modules": [
+      {
+        "file": "scripts/fvs-probe-inventory.mjs",
+        "sha256": "10ffa5333addb60b7f7d01b5e8410196c376ed0740e0a93ff855dba1c008da76"
+      },
+      {
+        "file": "scripts/fvs-probe-windows-runtime.mjs",
+        "sha256": "58c729fed16a75e3dcc9ea8eecaf1739050f16f845b55b21b29bad1304273c71"
+      },
+      {
+        "file": "scripts/fvs-probe-windows-setup.mjs",
+        "sha256": "5b2839ccb418c4688b10b913886360ef298aa650dd1ac8eff63154f9f899e6e7"
+      },
+      {
+        "file": "scripts/fvs-probe-windows-sandbox.mjs",
+        "sha256": "6a7276846e8abc267e3e53123e146382e9153a0f4a03e20cd63258e371a6f0e7"
+      }
+    ],
+    "packagedModules": [
+      {
+        "file": "plugins/fvs/scripts/fvs-probe-inventory.mjs",
+        "sha256": "10ffa5333addb60b7f7d01b5e8410196c376ed0740e0a93ff855dba1c008da76"
+      },
+      {
+        "file": "plugins/fvs/scripts/fvs-probe-windows-runtime.mjs",
+        "sha256": "58c729fed16a75e3dcc9ea8eecaf1739050f16f845b55b21b29bad1304273c71"
+      },
+      {
+        "file": "plugins/fvs/scripts/fvs-probe-windows-setup.mjs",
+        "sha256": "5b2839ccb418c4688b10b913886360ef298aa650dd1ac8eff63154f9f899e6e7"
+      },
+      {
+        "file": "plugins/fvs/scripts/fvs-probe-windows-sandbox.mjs",
+        "sha256": "6a7276846e8abc267e3e53123e146382e9153a0f4a03e20cd63258e371a6f0e7"
+      }
+    ],
+    "nativeSources": [
+      {
+        "file": "scripts/fvs-probe-native/windows/NativeMethods.cs",
+        "sha256": "41d93ea073f269c162b4aa37d13a5ef1228a952ac7f905abbb34c1b6325fdce1"
+      },
+      {
+        "file": "scripts/fvs-probe-native/windows/NativeExtra.cs",
+        "sha256": "cb7ffafb57801a593841ee7afc64951774db1e196c20d8142b2c9722fa11b6c0"
+      },
+      {
+        "file": "scripts/fvs-probe-native/windows/VerifiedPrivateLeafCleanup.cs",
+        "sha256": "ffe2ae24450d3f697b03d9f4c4f6c8fc57fa7a3d3e7e447cd9a9fcc0f7e1449c"
+      },
+      {
+        "file": "scripts/fvs-probe-native/windows/FvsWindowsLauncher.cs",
+        "sha256": "3bdcd963d718870f3b487edc9684e3999ec15863c66c9311c0eef3f8781420e5"
+      },
+      {
+        "file": "scripts/fvs-probe-native/windows/WindowsLifecycle.cs",
+        "sha256": "c19f393655dabf3b9a78c6fd69b5e5cbfa7d939f365f8ab37f49bdd0fd820ed3"
+      }
+    ],
+    "qualificationMetadataIsSeparate": true,
+    "recipeQualifiedField": "The recipe JSON qualified:false field is inert historical metadata; the separately bound release gate controls qualification."
+  },
+  "positive": {
+    "mode": "commands",
+    "synthetic": false,
+    "reportSha256": "6533bcf0dd722535f837f02a26f181450b4eab59e5ba9fb3072604345d95f00b",
+    "startedAt": "2026-10-25T14:06:28.702Z",
+    "finishedAt": "2026-10-25T17:59:07.200Z",
+    "candidateMetadata": {
+      "recordSha256": "9eeabb129ef3040b90b3b01cebe85f646105f976685db27a752184d53b8cbf30",
+      "qualificationModuleSha256": "6ad28a161dfeade256e6aa8fed3694a3019e294303e110e0ffe9970e7c84641c",
+      "metadata": {
+        "id": "windows-source-v1",
+        "target": "x86_64-pc-windows-msvc",
+        "qualified": true,
+        "policySha256": "323acfbff84d5841615612ffc110479123b9c5556a83a40b74a6b651fcbb4216",
+        "tuple": "aeneas-6e167c9b-charon-0.1.225-lean-v4.31.0",
+        "isolation": "windows-appcontainer-journal-v2",
+        "reason": "Private release candidate awaiting native acceptance; this metadata is not the shipped qualification."
+      },
+      "scope": "Private candidate metadata enabled the ordinary public commands; all source-policy/module bytes are bound above. Shipped release metadata is enabled separately after inspection."
+    },
+    "provenance": {
+      "consumerRevision": "0a22c281a9a14b6465a5473c200c7d3f1ac92df8",
+      "aeneasRevision": "6e167c9b63a4dafd66d0e0edd9d94669f957ff7b",
+      "charonVersion": "0.1.225",
+      "leanToolchain": "leanprover/lean4:v4.31.0",
+      "translationSha256": "968a0725b105de2a38a94ee606bd7da85e775267da04dea6a8c9067061372fbd",
+      "translationFunctions": 313,
+      "leanBuildLogSha256": "1e5f050f9620470a90aa7a8a0baac585ee1fa793aff3ee1543b3e6ed10fc3ae2",
+      "leanBuildLogBytes": 23826,
+      "inputs": [
+        {
+          "schema": "probe-rust/extract",
+          "source": {
+            "repo": "https://github.com/Beneficial-AI-Foundation/curve25519-dalek-lean-verify.git",
+            "commit": "0a22c281a9a14b6465a5473c200c7d3f1ac92df8",
+            "language": "rust",
+            "package": "curve25519-dalek",
+            "package-version": "4.2.0"
+          }
+        },
+        {
+          "schema": "probe-lean/extract",
+          "source": {
+            "repo": "https://github.com/Beneficial-AI-Foundation/curve25519-dalek-lean-verify.git",
+            "commit": "0a22c281a9a14b6465a5473c200c7d3f1ac92df8",
+            "language": "lean",
+            "package": "Curve25519Dalek",
+            "package-version": "0.1.0"
+          }
+        }
+      ]
+    },
+    "graph": {
+      "schema": "probe-aeneas/extract",
+      "schemaVersion": "3.0",
+      "tool": {
+        "name": "probe-aeneas",
+        "version": "0.20.0",
+        "command": "extract"
+      },
+      "sha256": "e6e7022619dc754892525758fedb6f3749eaa144d2ee805fcc7b4d5d75ab10c5",
+      "bytes": 11134223,
+      "atoms": 3027,
+      "atomCounts": {
+        "lean": 2352,
+        "rust": 675
+      },
+      "dependencyReferences": 18571,
+      "resolvedCrossLanguageEdges": 1962,
+      "missingLeanReferences": 47,
+      "missingLeanKeys": 22
+    },
+    "canonical": {
+      "count": 279,
+      "baselineFunctionsEqual": true,
+      "baselineProgressEqual": true,
+      "baselineSha256": "dd061d96a81bf398e9b147e94a794e8d5d5aeea9155ae0c8d0dc6273e5e28d2a",
+      "charonJoins": 189,
+      "withoutCharonId": 90,
+      "mismatches": 0,
+      "progress": {
+        "total": 279,
+        "specification": {
+          "specified": 183,
+          "unspecified": 96
+        },
+        "verification": {
+          "unverified": 96,
+          "failed": 0,
+          "verified": 0,
+          "transitively-verified": 182,
+          "trusted": 1,
+          "proved": 182
+        }
+      },
+      "upstreamLeanStatuses": {
+        "transitively-verified": 2161,
+        "unverified": 3,
+        "verified": 93,
+        "trusted": 95
+      },
+      "publicApiClassified": false
+    },
+    "commands": [
+      {
+        "name": "resolve",
+        "exitCode": 0,
+        "elapsedMs": 4078022.1115,
+        "commandSha256": "a94d91a1d028d2ff796bd3ed211a8e1b360377c3c03e231f3146368d5ff5e48d",
+        "stdoutSha256": "e399ac707b74c378818eb7f81249e31ae5578f00259fe69855fb10f054e4de06",
+        "stderrSha256": "fd27b5ae66e09edce3437680c5739af5ecb0e8b8c903431a66b44bb7bdb0931b"
+      },
+      {
+        "name": "run",
+        "exitCode": 0,
+        "elapsedMs": 9879237.9707,
+        "commandSha256": "37aee5e1e72c8e102213070ee726ba546ce4eb950261e230ee637f7fa821ca76",
+        "stdoutSha256": "d64f173f2e2187c70b3a6ad58da85cf228fb2969f6c290535d6a3ca4061d41d7",
+        "stderrSha256": "f3b6b10e36be45033dbc213b62aff2a7bb5e6b1055ab6e5629d49e862f1495c1"
+      },
+      {
+        "name": "inventory",
+        "exitCode": 0,
+        "elapsedMs": 486.63360000029206,
+        "commandSha256": "13e21308b7c0df1d25e8235ed6ebe44cba63b4ac0a1d9268c04717b8275be5e7",
+        "stdoutSha256": "f9a17726522f36a31441f2e6815ac533aed58148f3d05d24b563cb5ac407f655",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    ],
+    "helperVersions": [
+      {
+        "name": "probe-aeneas",
+        "args": [
+          "--version"
+        ],
+        "expected": "probe-aeneas 0.20.0",
+        "observed": "probe-aeneas 0.20.0",
+        "executableSha256": "6676a15473d6dd8d7e34d02e705e84b24537b24bb0de81feabf4288e49f5434f",
+        "nativeRunSha256": "731427a3c26c35002cdfc5a1a8839533b58912e4de7865c8607f42cf46c7b751"
+      },
+      {
+        "name": "probe-rust",
+        "args": [
+          "--version"
+        ],
+        "expected": "probe-rust 0.11.0",
+        "observed": "probe-rust 0.11.0",
+        "executableSha256": "25457bb1ddcaabc94b4375311dada9053cff3830c59bfd2da8402e7a3455553c",
+        "nativeRunSha256": "ea02dc2b04d365595f2f88e3be9a171b2cd5a8f0bb2043cf5e9bebd7f83751ca"
+      },
+      {
+        "name": "probe-lean",
+        "args": [
+          "--version"
+        ],
+        "expected": "0.14.0",
+        "observed": "0.14.0",
+        "executableSha256": "254ec59b40094559533cd4615a574fe5b68ef0c638eda0a2faa086d9f40a811a",
+        "nativeRunSha256": "27da798debdc7a325032edea38852cdae5c032b4703d3f4b9bb9541eb6d2a5c6"
+      },
+      {
+        "name": "scip",
+        "args": [
+          "--version"
+        ],
+        "expected": "scip version v0.10.0",
+        "observed": "scip version v0.10.0",
+        "executableSha256": "c1db890cee8cc820f76ed59563c489da83e18eabe990c2e348b4759b1952e850",
+        "nativeRunSha256": "72b1233d75eaf87213788ee7e54519599cd911c666232ebc920972c03090521f"
+      },
+      {
+        "name": "lean",
+        "args": [
+          "--version"
+        ],
+        "expected": "Lean (version 4.31.0, x86_64-w64-windows-gnu, commit 68218e876d2a38b1985b8590fff244a83c321783, Release)",
+        "observed": "Lean (version 4.31.0, x86_64-w64-windows-gnu, commit 68218e876d2a38b1985b8590fff244a83c321783, Release)",
+        "executableSha256": "9b216deb50d37c32c829d1efaaa5bafd5560417d382df35a815489e31a31593f",
+        "nativeRunSha256": "6f8602f8e815ff6bbea4d7e118406315bfd84f770711192c6f139388b54b8dee"
+      },
+      {
+        "name": "lake",
+        "args": [
+          "--version"
+        ],
+        "expected": "Lake version 5.0.0-src+68218e8 (Lean version 4.31.0)",
+        "observed": "Lake version 5.0.0-src+68218e8 (Lean version 4.31.0)",
+        "executableSha256": "a5be0113af1c08ba678c1fad07594e1c5de6b871fe0c4144da2998488eba88a1",
+        "nativeRunSha256": "9648e0ed9cd71ef2b6090eef998629c8f65a7cc908df16a8f44426e0cf7e7603"
+      },
+      {
+        "name": "rust-analyzer",
+        "args": [
+          "--version"
+        ],
+        "expected": "rust-analyzer 1.98.1 (48a229ce 2026-09-01)",
+        "observed": "rust-analyzer 1.98.1 (48a229ce 2026-09-01)",
+        "executableSha256": "561661468f23bf02106274c777a4d90ff77d2d6f4729910486112490a9a83f43",
+        "nativeRunSha256": "89a7691350b8038c5d0ee7837694b3f9baca9811fc2eb6585ae1a87c2048d0cd"
+      },
+      {
+        "name": "cargo",
+        "args": [
+          "--version"
+        ],
+        "expected": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+        "observed": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+        "executableSha256": "561661468f23bf02106274c777a4d90ff77d2d6f4729910486112490a9a83f43",
+        "nativeRunSha256": "47f1d1e93fe32a74e099022dc558e0d9254ee694ca871e03051aeabf0dfb326b"
+      },
+      {
+        "name": "rustc",
+        "args": [
+          "--version"
+        ],
+        "expected": "rustc 1.98.1 (48a229cea 2026-09-01)",
+        "observed": "rustc 1.98.1 (48a229cea 2026-09-01)",
+        "executableSha256": "561661468f23bf02106274c777a4d90ff77d2d6f4729910486112490a9a83f43",
+        "nativeRunSha256": "ac3ef83298e1386044e25e03acc021169a82066d83e06a6e630fba3156563154"
+      },
+      {
+        "name": "git",
+        "args": [
+          "--version"
+        ],
+        "expected": "git version 2.56.0.windows.3",
+        "observed": "git version 2.56.0.windows.3",
+        "executableSha256": "9c131f3052b17c8bbd1bce7211414cf589b85cbdbd74d0b0aa40e0a602d47930",
+        "nativeRunSha256": "d6de6efd81557db659151b2cc931b41ce713e60a16aa8697af3fd1a08e6558ec"
+      },
+      {
+        "name": "rustup-components",
+        "args": [
+          "component",
+          "list",
+          "--installed",
+          "--toolchain",
+          "1.98.1-x86_64-pc-windows-msvc"
+        ],
+        "expected": "cargo-x86_64-pc-windows-msvc\nrust-analyzer-x86_64-pc-windows-msvc\nrust-src\nrust-std-x86_64-pc-windows-msvc\nrustc-x86_64-pc-windows-msvc\nrustfmt-x86_64-pc-windows-msvc",
+        "observed": "cargo-x86_64-pc-windows-msvc\nrust-analyzer-x86_64-pc-windows-msvc\nrust-src\nrust-std-x86_64-pc-windows-msvc\nrustc-x86_64-pc-windows-msvc\nrustfmt-x86_64-pc-windows-msvc",
+        "executableSha256": "561661468f23bf02106274c777a4d90ff77d2d6f4729910486112490a9a83f43",
+        "nativeRunSha256": "9a3ed05252c46da3eda9b9181381795b8036f7c0daa57a228b05c491ca992998"
+      }
+    ],
+    "helperCleanup": {
+      "sha256": "3d8ad4ce6d9889c0a620a2ef7dc6ea409439507d31d2a84a75763f91f52da318",
+      "sessionId": "0baf3e1859764c1d92a177f05fdc1e4b",
+      "status": "disposed",
+      "launcherSha256": "16374d01f69fe7729571e124ff18a52cfac492be9399577da4906ce7b21222ec",
+      "stateSha256": "5e7d94c750e51be2f1ce72d5108cb2141ee53075ffdac1e37eaca811eb2e455e",
+      "journalRevision": 96,
+      "lastRunId": "80dd522ae62a4c158ab3385f4664a0fe",
+      "lastRunResultSha256": "d6de6efd81557db659151b2cc931b41ce713e60a16aa8697af3fd1a08e6558ec",
+      "jobDrained": true,
+      "profileAbsent": true,
+      "stageRemoved": true,
+      "aclCleanupConfirmed": true,
+      "exactAclsRestored": true,
+      "originalEntriesChecked": 4874,
+      "resourcesChecked": 18,
+      "descendantAclAudit": {
+        "checked": 4874,
+        "exactRestored": true,
+        "changedPreserved": [],
+        "ownSidRemaining": 0
+      },
+      "nativeRuns": [
+        {
+          "runId": "00bcc6dcdd834f2f97cb1583a67b19ca",
+          "sha256": "47f1d1e93fe32a74e099022dc558e0d9254ee694ca871e03051aeabf0dfb326b",
+          "exitCode": 0,
+          "activeProcessesAfter": 0,
+          "lpacAccessCheckVerified": true,
+          "inheritedSentinelExcluded": true,
+          "capabilities": [
+            "registryRead"
+          ]
+        },
+        {
+          "runId": "042b49012a0f412ab3f3b33a96869c5d",
+          "sha256": "ea02dc2b04d365595f2f88e3be9a171b2cd5a8f0bb2043cf5e9bebd7f83751ca",
+          "exitCode": 0,
+          "activeProcessesAfter": 0,
+          "lpacAccessCheckVerified": true,
+          "inheritedSentinelExcluded": true,
+          "capabilities": [
+            "registryRead"
+          ]
+        },
+        {
+          "runId": "092e4804a30e4f609bbd8a470830fa01",
+          "sha256": "89a7691350b8038c5d0ee7837694b3f9baca9811fc2eb6585ae1a87c2048d0cd",
+          "exitCode": 0,
+          "activeProcessesAfter": 0,
+          "lpacAccessCheckVerified": true,
+          "inheritedSentinelExcluded": true,
+          "capabilities": [
+            "registryRead"
+          ]
+        },
+        {
+          "runId": "17abc8c77ece44a8836fe0d3bfc10d41",
+          "sha256": "9648e0ed9cd71ef2b6090eef998629c8f65a7cc908df16a8f44426e0cf7e7603",
+          "exitCode": 0,
+          "activeProcessesAfter": 0,
+          "lpacAccessCheckVerified": true,
+          "inheritedSentinelExcluded": true,
+          "capabilities": [
+            "registryRead"
+          ]
+        },
+        {
+          "runId": "180730d678564c83ba7a17208b0a52af",
+          "sha256": "72b1233d75eaf87213788ee7e54519599cd911c666232ebc920972c03090521f",
+          "exitCode": 0,
+          "activeProcessesAfter": 0,
+          "lpacAccessCheckVerified": true,
+          "inheritedSentinelExcluded": true,
+          "capabilities": [
+            "registryRead"
+          ]
+        },
+        {
+          "runId": "2acf28077bbf48ef8e0c438e6b347856",
+          "sha256": "731427a3c26c35002cdfc5a1a8839533b58912e4de7865c8607f42cf46c7b751",
+          "exitCode": 0,
+          "activeProcessesAfter": 0,
+          "lpacAccessCheckVerified": true,
+          "inheritedSentinelExcluded": true,
+          "capabilities": [
+            "registryRead"
+          ]
+        },
+        {
+          "runId": "80dd522ae62a4c158ab3385f4664a0fe",
+          "sha256": "d6de6efd81557db659151b2cc931b41ce713e60a16aa8697af3fd1a08e6558ec",
+          "exitCode": 0,
+          "activeProcessesAfter": 0,
+          "lpacAccessCheckVerified": true,
+          "inheritedSentinelExcluded": true,
+          "capabilities": [
+            "registryRead"
+          ]
+        },
+        {
+          "runId": "d684abd8b10c463aa2836c3e80f22f28",
+          "sha256": "ac3ef83298e1386044e25e03acc021169a82066d83e06a6e630fba3156563154",
+          "exitCode": 0,
+          "activeProcessesAfter": 0,
+          "lpacAccessCheckVerified": true,
+          "inheritedSentinelExcluded": true,
+          "capabilities": [
+            "registryRead"
+          ]
+        },
+        {
+          "runId": "daa84d9e080144cd9d55540c15e5ac00",
+          "sha256": "6f8602f8e815ff6bbea4d7e118406315bfd84f770711192c6f139388b54b8dee",
+          "exitCode": 0,
+          "activeProcessesAfter": 0,
+          "lpacAccessCheckVerified": true,
+          "inheritedSentinelExcluded": true,
+          "capabilities": [
+            "registryRead"
+          ]
+        },
+        {
+          "runId": "f8255c4135294885853e5d6b81c388a7",
+          "sha256": "27da798debdc7a325032edea38852cdae5c032b4703d3f4b9bb9541eb6d2a5c6",
+          "exitCode": 0,
+          "activeProcessesAfter": 0,
+          "lpacAccessCheckVerified": true,
+          "inheritedSentinelExcluded": true,
+          "capabilities": [
+            "registryRead"
+          ]
+        },
+        {
+          "runId": "fdcda1fc53d640bba45adcf37fbd2e20",
+          "sha256": "9a3ed05252c46da3eda9b9181381795b8036f7c0daa57a228b05c491ca992998",
+          "exitCode": 0,
+          "activeProcessesAfter": 0,
+          "lpacAccessCheckVerified": true,
+          "inheritedSentinelExcluded": true,
+          "capabilities": [
+            "registryRead"
+          ]
+        }
+      ]
+    },
+    "extractionCleanup": {
+      "sha256": "594054f8306dca9af16cf8a74c972719552d41df09dc5e1dcae3d00a0fe4510d",
+      "sessionId": "4b4a00957fd341dcac478cc833c8126f",
+      "status": "disposed",
+      "launcherSha256": "16374d01f69fe7729571e124ff18a52cfac492be9399577da4906ce7b21222ec",
+      "stateSha256": "ee92fa8092b21f755e7d5baf81dfb5e2217d415965e8afa3443e21920e258160",
+      "journalRevision": 120,
+      "lastRunId": "c0c8f884f82e4b089e3d9919c0023d5e",
+      "lastRunResultSha256": "60b498798449cd83afd0314f13366f7a2fec47aeabdbff83bcdb25c88634cc7b",
+      "jobDrained": true,
+      "profileAbsent": true,
+      "stageRemoved": true,
+      "aclCleanupConfirmed": true,
+      "exactAclsRestored": true,
+      "originalEntriesChecked": 30221,
+      "resourcesChecked": 38,
+      "descendantAclAudit": {
+        "checked": 30221,
+        "exactRestored": true,
+        "changedPreserved": [],
+        "ownSidRemaining": 0
+      },
+      "nativeRuns": [
+        {
+          "runId": "c0c8f884f82e4b089e3d9919c0023d5e",
+          "sha256": "60b498798449cd83afd0314f13366f7a2fec47aeabdbff83bcdb25c88634cc7b",
+          "exitCode": 0,
+          "activeProcessesAfter": 0,
+          "lpacAccessCheckVerified": true,
+          "inheritedSentinelExcluded": true,
+          "capabilities": [
+            "registryRead"
+          ]
+        }
+      ]
+    },
+    "protectedInputs": {
+      "equalityEnforcedBySuccessfulAdapter": true,
+      "completedBeforePublication": true,
+      "digestExposed": false,
+      "evidence": "Successful ordinary commands require complete adapter before/after source/tool byte inventories and independent ACL checks before returning candidate bytes. Per-root inventory digests are internal and are not invented in this receipt."
+    },
+    "phaseTimings": {
+      "resolve": [
+        {
+          "phase": "inventory-before",
+          "elapsedMs": 1961196
+        },
+        {
+          "phase": "reserve",
+          "elapsedMs": 2093
+        },
+        {
+          "phase": "prepare",
+          "elapsedMs": 11643
+        },
+        {
+          "phase": "run:probe-aeneas",
+          "elapsedMs": 6802
+        },
+        {
+          "phase": "run:probe-rust",
+          "elapsedMs": 4771
+        },
+        {
+          "phase": "run:probe-lean",
+          "elapsedMs": 5175
+        },
+        {
+          "phase": "run:scip",
+          "elapsedMs": 5572
+        },
+        {
+          "phase": "run:lean",
+          "elapsedMs": 4920
+        },
+        {
+          "phase": "run:lake",
+          "elapsedMs": 4767
+        },
+        {
+          "phase": "run:rust-analyzer",
+          "elapsedMs": 6533
+        },
+        {
+          "phase": "run:rustup-components",
+          "elapsedMs": 5045
+        },
+        {
+          "phase": "run:cargo",
+          "elapsedMs": 7328
+        },
+        {
+          "phase": "run:rustc",
+          "elapsedMs": 7343
+        },
+        {
+          "phase": "run:git",
+          "elapsedMs": 5623
+        },
+        {
+          "phase": "dispose",
+          "elapsedMs": 10183
+        },
+        {
+          "phase": "verify-acls",
+          "elapsedMs": 767
+        },
+        {
+          "phase": "inventory-after",
+          "elapsedMs": 1976905
+        }
+      ],
+      "run": [
+        {
+          "phase": "inventory-before",
+          "elapsedMs": 1784197
+        },
+        {
+          "phase": "reserve",
+          "elapsedMs": 2314
+        },
+        {
+          "phase": "prepare",
+          "elapsedMs": 9521
+        },
+        {
+          "phase": "run:probe-aeneas",
+          "elapsedMs": 6324
+        },
+        {
+          "phase": "run:probe-rust",
+          "elapsedMs": 5700
+        },
+        {
+          "phase": "run:probe-lean",
+          "elapsedMs": 5141
+        },
+        {
+          "phase": "run:scip",
+          "elapsedMs": 5733
+        },
+        {
+          "phase": "run:lean",
+          "elapsedMs": 4899
+        },
+        {
+          "phase": "run:lake",
+          "elapsedMs": 4845
+        },
+        {
+          "phase": "run:rust-analyzer",
+          "elapsedMs": 6346
+        },
+        {
+          "phase": "run:rustup-components",
+          "elapsedMs": 5469
+        },
+        {
+          "phase": "run:cargo",
+          "elapsedMs": 6320
+        },
+        {
+          "phase": "run:rustc",
+          "elapsedMs": 6464
+        },
+        {
+          "phase": "run:git",
+          "elapsedMs": 5487
+        },
+        {
+          "phase": "dispose",
+          "elapsedMs": 9473
+        },
+        {
+          "phase": "verify-acls",
+          "elapsedMs": 789
+        },
+        {
+          "phase": "inventory-after",
+          "elapsedMs": 1831631
+        },
+        {
+          "phase": "inventory-before",
+          "elapsedMs": 2074991
+        },
+        {
+          "phase": "reserve",
+          "elapsedMs": 5127
+        },
+        {
+          "phase": "stage-copy",
+          "elapsedMs": 331112
+        },
+        {
+          "phase": "verify-staged-provenance",
+          "elapsedMs": 89
+        },
+        {
+          "phase": "prepare",
+          "elapsedMs": 370245
+        },
+        {
+          "phase": "run:extract",
+          "elapsedMs": 1074821
+        },
+        {
+          "phase": "capture-output",
+          "elapsedMs": 34
+        },
+        {
+          "phase": "dispose",
+          "elapsedMs": 203467
+        },
+        {
+          "phase": "verify-acls",
+          "elapsedMs": 1070
+        },
+        {
+          "phase": "inventory-after",
+          "elapsedMs": 1838486
+        }
+      ],
+      "inventory": []
+    },
+    "versionExecutionScope": "Eleven checks in the explicit resolve; normal run performs another internal resolve before extraction. HelperCleanup here identifies the explicit resolve session; extractionCleanup identifies the extraction session.",
+    "warnings": {
+      "upstreamSorryWarnings": 8,
+      "missingLeanReferences": 47,
+      "missingLeanKeys": 22,
+      "importedModules": 231,
+      "rawLeanDeclarations": 2354,
+      "publishedLeanKeys": 2352,
+      "cacheReuseObserved": true,
+      "cacheObservation": "Build cache is up-to-date, skipping lake build...",
+      "duplicateAtomWarnings": [
+        "Warning: duplicate atom name probe:curve25519_dalek.scalar.Scalar.I8x64_update_get (private declarations in different modules recover to the same user-facing name)",
+        "Warning: duplicate atom name probe:curve25519_dalek.scalar.Scalar.I8x64_update_get.mvcgen_spec (private declarations in different modules recover to the same user-facing name)"
+      ],
+      "missingDependencyWarningOccurrences": 42,
+      "uniqueWarnedDependencies": [
+        "probe:Edwards.Point.mk.congr_simp",
+        "probe:curve25519_dalek.Shared1MontgomeryPoint.Insts.CoreOpsArithMulShared0ScalarMontgomeryPoint.mul_loop.mutual",
+        "probe:curve25519_dalek.backend.serial.curve_models.AffineNielsPoint.Insts.CoreCmpPartialEqAffineNielsPoint",
+        "probe:curve25519_dalek.backend.serial.curve_models.ProjectiveNielsPoint.Insts.SubtleConditionallySelectable",
+        "probe:curve25519_dalek.backend.serial.u64.field.FieldElement51.Insts.CoreOpsArithAddAssignSharedAFieldElement51.add_assign_loop.mutual",
+        "probe:curve25519_dalek.backend.serial.u64.scalar.Scalar52.add_loop.mutual",
+        "probe:curve25519_dalek.backend.serial.u64.scalar.Scalar52.conditional_add_l_loop.mutual",
+        "probe:curve25519_dalek.backend.serial.u64.scalar.Scalar52.sub_loop.mutual",
+        "probe:curve25519_dalek.edwards.CompressedEdwardsY.Insts.CoreCmpPartialEqCompressedEdwardsY",
+        "probe:curve25519_dalek.montgomery.ProjectivePoint.Insts.SubtleConditionallySelectable",
+        "probe:curve25519_dalek.ristretto.CompressedRistretto.Insts.CoreCmpPartialEqCompressedRistretto",
+        "probe:curve25519_dalek.scalar.Scalar.Insts.CoreCmpPartialEqScalar",
+        "probe:curve25519_dalek.scalar.Scalar.Insts.SubtleConditionallySelectable.conditional_select_loop.mutual",
+        "probe:curve25519_dalek.scalar.Scalar.as_radix_2w_loop.mutual",
+        "probe:curve25519_dalek.scalar.Scalar.batch_invert_loop0.mutual",
+        "probe:curve25519_dalek.scalar.Scalar.batch_invert_loop1.mutual",
+        "probe:curve25519_dalek.scalar.Scalar.non_adjacent_form_loop.mutual",
+        "probe:curve25519_dalek.scalar.Scalar52.montgomery_invert.square_multiply_loop.mutual",
+        "probe:curve25519_dalek.subtle.Choice.mk.congr_simp",
+        "probe:curve25519_dalek.window.LookupTable.select_loop.mutual",
+        "probe:curve25519_dalek.window.LookupTableProjectiveNielsPoint.Insts.CoreConvertFromSharedAEdwardsPoint.from_loop.mutual"
+      ],
+      "absentLeanKeys": [
+        "probe:Edwards.Point.mk.congr_simp",
+        "probe:curve25519_dalek.Shared1MontgomeryPoint.Insts.CoreOpsArithMulShared0ScalarMontgomeryPoint.mul_loop.mutual",
+        "probe:curve25519_dalek.backend.BackendKind.Serial",
+        "probe:curve25519_dalek.backend.serial.curve_models.AffineNielsPoint.Insts.CoreCmpPartialEqAffineNielsPoint",
+        "probe:curve25519_dalek.backend.serial.curve_models.ProjectiveNielsPoint.Insts.SubtleConditionallySelectable",
+        "probe:curve25519_dalek.backend.serial.u64.field.FieldElement51.Insts.CoreOpsArithAddAssignSharedAFieldElement51.add_assign_loop.mutual",
+        "probe:curve25519_dalek.backend.serial.u64.scalar.Scalar52.add_loop.mutual",
+        "probe:curve25519_dalek.backend.serial.u64.scalar.Scalar52.conditional_add_l_loop.mutual",
+        "probe:curve25519_dalek.backend.serial.u64.scalar.Scalar52.sub_loop.mutual",
+        "probe:curve25519_dalek.edwards.CompressedEdwardsY.Insts.CoreCmpPartialEqCompressedEdwardsY",
+        "probe:curve25519_dalek.montgomery.ProjectivePoint.Insts.SubtleConditionallySelectable",
+        "probe:curve25519_dalek.ristretto.CompressedRistretto.Insts.CoreCmpPartialEqCompressedRistretto",
+        "probe:curve25519_dalek.scalar.Scalar.Insts.CoreCmpPartialEqScalar",
+        "probe:curve25519_dalek.scalar.Scalar.Insts.SubtleConditionallySelectable.conditional_select_loop.mutual",
+        "probe:curve25519_dalek.scalar.Scalar.as_radix_2w_loop.mutual",
+        "probe:curve25519_dalek.scalar.Scalar.batch_invert_loop0.mutual",
+        "probe:curve25519_dalek.scalar.Scalar.batch_invert_loop1.mutual",
+        "probe:curve25519_dalek.scalar.Scalar.non_adjacent_form_loop.mutual",
+        "probe:curve25519_dalek.scalar.Scalar52.montgomery_invert.square_multiply_loop.mutual",
+        "probe:curve25519_dalek.subtle.Choice.mk.congr_simp",
+        "probe:curve25519_dalek.window.LookupTable.select_loop.mutual",
+        "probe:curve25519_dalek.window.LookupTableProjectiveNielsPoint.Insts.CoreConvertFromSharedAEdwardsPoint.from_loop.mutual"
+      ],
+      "duplicateScipSymbols": [
+        "Duplicate symbol: rust-analyzer cargo curve25519-dalek 4.2.0 crate/",
+        "Duplicate symbol: rust-analyzer cargo curve25519-dalek 4.2.0 crate/",
+        "Duplicate symbol: rust-analyzer cargo curve25519-dalek 4.2.0 backend/serial/u64/field/LOW_51_BIT_MASK.",
+        "Duplicate symbol: rust-analyzer cargo curve25519-dalek 4.2.0 backend/serial/u64/field/m().",
+        "Duplicate symbol: rust-analyzer cargo curve25519-dalek 4.2.0 backend/serial/u64/field/LOW_51_BIT_MASK."
+      ],
+      "rustAnalyzerErrorLines": 38,
+      "rustAnalyzerCategories": {
+        "enclosingDefinitionWithoutName": 30,
+        "definitionAbsentFromScipDocument": 8
+      },
+      "otherErrorLineDigests": [],
+      "projectSorryDeclarations": [
+        {
+          "id": "probe:Edwards.add_assoc_Ed25519",
+          "upstreamStatus": "unverified",
+          "retainsSorryAx": true,
+          "existingExternalVerificationAnnotation": false
+        },
+        {
+          "id": "probe:curve25519_dalek.ristretto.IsEven_iff_in_doubling_image_right",
+          "upstreamStatus": "unverified",
+          "retainsSorryAx": true,
+          "existingExternalVerificationAnnotation": false
+        },
+        {
+          "id": "probe:curve25519_dalek.math.elligator_ristretto_flavor_pure",
+          "upstreamStatus": "unverified",
+          "retainsSorryAx": true,
+          "existingExternalVerificationAnnotation": false
+        },
+        {
+          "id": "probe:curve25519_dalek.Shared1MontgomeryPoint.Insts.CoreOpsArithMulShared0ScalarMontgomeryPoint.mul_loop_spec",
+          "upstreamStatus": "trusted",
+          "retainsSorryAx": true,
+          "existingExternalVerificationAnnotation": true
+        }
+      ],
+      "interpretation": "These are fresh extraction observations. Proof statuses are upstream classifications, not independent proof certification; successful extraction does not establish complete SCIP indexing or dependency closure."
+    }
+  },
+  "historicalEvidence": {
+    "setup": {
+      "artifact": ".native-work/evidence/windows-setup-acceptance-public.json",
+      "sha256": "b684178fdce1fa3cb81f36e03f1c8de4d8efbb95e2ddacb97df28b60ca8285ae",
+      "bytes": 24251,
+      "record": {
+        "schema": "fvs/windows-source-setup-acceptance-public/v1",
+        "scope": "Normal source-distribution setup acceptance; full confined extraction qualification is recorded separately",
+        "status": "passed",
+        "distribution": {
+          "id": "windows-source-v1",
+          "target": "x86_64-pc-windows-msvc",
+          "officialRelease": false,
+          "policySha256": "323acfbff84d5841615612ffc110479123b9c5556a83a40b74a6b651fcbb4216"
+        },
+        "identity": {
+          "installationId": "5b5f861f33b08a819ffb0f17b62a78a8",
+          "receiptSha256": "cda70d2deada871e8db8e5489b7d5251f31a8763cc7f0445d49f032e99faf4b3",
+          "registrationSha256": "30095cfefd02b2817109115677c8f5ba3dcfbdf9c04c7f046a77ed6dd60fce81",
+          "receiptRegistrationMatches": true,
+          "launcherSha256": "16374d01f69fe7729571e124ff18a52cfac492be9399577da4906ce7b21222ec",
+          "launcherBuildReceiptSha256": "8e1d91f656e8c51e1e15d03eef3a649ce0ceb1769897ff4580fd54b9e4944d42",
+          "launcherSourceSetSha256": "a930297e58af6300f84b78f2d33fad7533bcffe6bc70ef19ca541d78f566ae17",
+          "launcherRecipeSha256": "20f7e87d65ecbd39062640f07f8e032236ea78abf81defd89f8d2128afce4911",
+          "launcherTestHooks": false,
+          "compilerSha256": "46809206887326d2d24db1eff1f3064de972c3451abe766b49111450a5e08e00",
+          "compilerVersion": "4.8.9221.0 built by: NET481REL1LAST_25H2"
+        },
+        "host": {
+          "windowsMajor": 10,
+          "windowsMinor": 0,
+          "build": 26200,
+          "productType": 1,
+          "nativeMachine": 34404,
+          "processMachine": 0,
+          "pointerBits": 64
+        },
+        "origins": {
+          "probe-aeneas": {
+            "origin": "reviewed-existing-artifact",
+            "source": {
+              "repository": "https://github.com/Beneficial-AI-Foundation/probe-aeneas.git",
+              "commit": "70cbb9b4675d1639721fa60d1e0f2cd2df80cb54",
+              "patch": "probe-aeneas.patch",
+              "lockSha256": "b5bd6e78b63a09c752394a5cc98faff209eef114e27b36804d8d6cd9d415e39e"
+            },
+            "historicalEvidenceSha256": "635dd1915c2ddab9db94559a3064ef716bc124aa8614cb88a39a34bb953b0dc4",
+            "reviewedFileCount": 1
+          },
+          "probe-rust": {
+            "origin": "reviewed-existing-artifact",
+            "source": {
+              "repository": "https://github.com/Beneficial-AI-Foundation/probe-rust.git",
+              "commit": "1d2a7c5d0e5a5dd95e55c8d6a51cddae0b3d7572",
+              "patch": "probe-rust.patch",
+              "lockSha256": "d2bdbe69e1414fa9cdc096af7860c93030ae55d52223be70be81fc9bd10088ce"
+            },
+            "historicalEvidenceSha256": "360473c60066b5574e8b7a46cede95623b97044a94b1cf39a0fe45eb530c9aee",
+            "reviewedFileCount": 1
+          },
+          "probe-lean": {
+            "origin": "reviewed-existing-artifact",
+            "source": {
+              "repository": "https://github.com/Beneficial-AI-Foundation/probe-lean.git",
+              "commit": "fa581edfcb3de7eb801580ea183430edaa50cc68",
+              "patch": "probe-lean.patch",
+              "cliCommit": "92564e5770e4d09f2d86dfbf8ada1e9c715b384c"
+            },
+            "historicalEvidenceSha256": "f8210a408363c279264da8dc35172f438752919c2a515bf25fb742358259b86c",
+            "reviewedFileCount": 100
+          },
+          "scip": {
+            "origin": "reviewed-existing-artifact",
+            "source": {
+              "repository": "https://github.com/scip-code/scip.git",
+              "commit": "1c2b6db7e560d5233c944f36e4ac1377cc6963fc"
+            },
+            "historicalEvidenceSha256": "f8210a408363c279264da8dc35172f438752919c2a515bf25fb742358259b86c",
+            "reviewedFileCount": 1
+          },
+          "rustup": {
+            "origin": "reviewed-existing-artifact",
+            "source": {
+              "repository": "https://github.com/rust-lang/rustup.git",
+              "commit": "d8c92c6765f85625b20482e165066bf1e98e7297",
+              "lockOriginalSha256": "a7081f4b94a8a9b10422a643a7bd855b541ed7c595cd488e0c86f9580ab4ba1a",
+              "lockSha256": "f60011f494763d3671041aa9c2f434a6e975cd83cdc06cd44f3b754beb4dbfe6",
+              "fsAtPatch": "fs-at.patch",
+              "fsAtWinSha256": "4b7d59cfa7739468f89748c9a947716ced54c088f9a49cebb24baca59dacabc9"
+            },
+            "historicalEvidenceSha256": "1798f91ef8dc72205146e393f98a16a56c550de1983697db4c3a0d5e5ae4a0de",
+            "reviewedFileCount": 1
+          },
+          "launcher": {
+            "origin": "fresh-source-build"
+          }
+        },
+        "measurements": {
+          "count": 11,
+          "context": "Explicit unconfined setup commands, each owned by a drained setup job; confined equality is a separate acceptance step",
+          "versions": [
+            {
+              "tool": "probe-aeneas",
+              "args": [
+                "--version"
+              ],
+              "stdout": "probe-aeneas 0.20.0",
+              "executableSha256": "6676a15473d6dd8d7e34d02e705e84b24537b24bb0de81feabf4288e49f5434f",
+              "stdoutSha256": "3b9e4cdcb8a32b5e03107223ea5c86812786f9ba5d00a1b8806670fbacc50a7a",
+              "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "exitCode": 0,
+              "jobEmpty": true
+            },
+            {
+              "tool": "probe-rust",
+              "args": [
+                "--version"
+              ],
+              "stdout": "probe-rust 0.11.0",
+              "executableSha256": "25457bb1ddcaabc94b4375311dada9053cff3830c59bfd2da8402e7a3455553c",
+              "stdoutSha256": "ff7b0ac2fc8e58b35da17c4d868343266410bc892a2494369507a927c0964508",
+              "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "exitCode": 0,
+              "jobEmpty": true
+            },
+            {
+              "tool": "probe-lean",
+              "args": [
+                "--version"
+              ],
+              "stdout": "0.14.0",
+              "executableSha256": "254ec59b40094559533cd4615a574fe5b68ef0c638eda0a2faa086d9f40a811a",
+              "stdoutSha256": "065582655aacd6fc83ff742a5715c04bb4a57395bf3ee4559798fa42c2ce4589",
+              "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "exitCode": 0,
+              "jobEmpty": true
+            },
+            {
+              "tool": "scip",
+              "args": [
+                "--version"
+              ],
+              "stdout": "scip version v0.10.0",
+              "executableSha256": "c1db890cee8cc820f76ed59563c489da83e18eabe990c2e348b4759b1952e850",
+              "stdoutSha256": "becfcc75510a6246ebe931e50284d77446b49b9bc5628895f4f35f1647d0a4d3",
+              "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "exitCode": 0,
+              "jobEmpty": true
+            },
+            {
+              "tool": "lean",
+              "args": [
+                "--version"
+              ],
+              "stdout": "Lean (version 4.31.0, x86_64-w64-windows-gnu, commit 68218e876d2a38b1985b8590fff244a83c321783, Release)",
+              "executableSha256": "9b216deb50d37c32c829d1efaaa5bafd5560417d382df35a815489e31a31593f",
+              "stdoutSha256": "3786e94dc241478d2e13cd024164e380820ad3c4b1f8312aa3ea432eb5df0d0a",
+              "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "exitCode": 0,
+              "jobEmpty": true
+            },
+            {
+              "tool": "lake",
+              "args": [
+                "--version"
+              ],
+              "stdout": "Lake version 5.0.0-src+68218e8 (Lean version 4.31.0)",
+              "executableSha256": "a5be0113af1c08ba678c1fad07594e1c5de6b871fe0c4144da2998488eba88a1",
+              "stdoutSha256": "505c28438dd7c4f3782bcf74a5be56648cb3b682ca60cfaeac71b569a2b89985",
+              "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "exitCode": 0,
+              "jobEmpty": true
+            },
+            {
+              "tool": "rust-analyzer",
+              "args": [
+                "--version"
+              ],
+              "stdout": "rust-analyzer 1.98.1 (48a229ce 2026-09-01)",
+              "executableSha256": "561661468f23bf02106274c777a4d90ff77d2d6f4729910486112490a9a83f43",
+              "stdoutSha256": "1bb12cd7ad4780644c823d65f7ee3e992ee1e3b9fb060c4f37051f39d6c2061b",
+              "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "exitCode": 0,
+              "jobEmpty": true
+            },
+            {
+              "tool": "cargo",
+              "args": [
+                "--version"
+              ],
+              "stdout": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+              "executableSha256": "561661468f23bf02106274c777a4d90ff77d2d6f4729910486112490a9a83f43",
+              "stdoutSha256": "9950bbb2d5c3417b1a068f0e81f6d3cac991a363193bdf2a22d447f5acf8b503",
+              "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "exitCode": 0,
+              "jobEmpty": true
+            },
+            {
+              "tool": "rustc",
+              "args": [
+                "--version"
+              ],
+              "stdout": "rustc 1.98.1 (48a229cea 2026-09-01)",
+              "executableSha256": "561661468f23bf02106274c777a4d90ff77d2d6f4729910486112490a9a83f43",
+              "stdoutSha256": "2073de5abf149185c2f4d7473dc833bc921b99135560d24ae7b2293f33a9c376",
+              "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "exitCode": 0,
+              "jobEmpty": true
+            },
+            {
+              "tool": "git",
+              "args": [
+                "--version"
+              ],
+              "stdout": "git version 2.56.0.windows.3",
+              "executableSha256": "9c131f3052b17c8bbd1bce7211414cf589b85cbdbd74d0b0aa40e0a602d47930",
+              "stdoutSha256": "2964ef01f7b45b90e9c4fd64bd55299c72d255f6c194b69339fd4950b26050dc",
+              "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "exitCode": 0,
+              "jobEmpty": true
+            },
+            {
+              "tool": "rustup-components",
+              "args": [
+                "component",
+                "list",
+                "--installed",
+                "--toolchain",
+                "1.98.1-x86_64-pc-windows-msvc"
+              ],
+              "stdout": "cargo-x86_64-pc-windows-msvc\nrust-analyzer-x86_64-pc-windows-msvc\nrust-src\nrust-std-x86_64-pc-windows-msvc\nrustc-x86_64-pc-windows-msvc\nrustfmt-x86_64-pc-windows-msvc",
+              "executableSha256": "561661468f23bf02106274c777a4d90ff77d2d6f4729910486112490a9a83f43",
+              "stdoutSha256": "705d84778f4cea69722c3d749d95e86a6788ddfe4d6287f3b92d6d04260aefac",
+              "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "exitCode": 0,
+              "jobEmpty": true
+            }
+          ]
+        },
+        "timing": {
+          "totalElapsedMs": 1048342,
+          "setupApiElapsedMs": 1047488,
+          "phases": [
+            {
+              "phase": "plan",
+              "elapsedMs": 7820
+            },
+            {
+              "phase": "initialize-build-environment",
+              "elapsedMs": 0
+            },
+            {
+              "phase": "materialize-git-prerequisite",
+              "elapsedMs": 203763
+            },
+            {
+              "phase": "command",
+              "label": "rust-version",
+              "elapsedMs": 104
+            },
+            {
+              "phase": "command",
+              "label": "git-version",
+              "elapsedMs": 493
+            },
+            {
+              "phase": "source-artifact",
+              "label": "probe-aeneas",
+              "elapsedMs": 347
+            },
+            {
+              "phase": "source-artifact",
+              "label": "probe-rust",
+              "elapsedMs": 666
+            },
+            {
+              "phase": "source-artifact",
+              "label": "probe-lean",
+              "elapsedMs": 12497
+            },
+            {
+              "phase": "source-artifact",
+              "label": "scip",
+              "elapsedMs": 2040
+            },
+            {
+              "phase": "source-artifact",
+              "label": "rustup",
+              "elapsedMs": 22774
+            },
+            {
+              "phase": "command",
+              "label": "unpack-lean",
+              "elapsedMs": 387314
+            },
+            {
+              "phase": "runtime-copy",
+              "label": "msvc-bin",
+              "elapsedMs": 1577
+            },
+            {
+              "phase": "runtime-copy",
+              "label": "msvc-lib",
+              "elapsedMs": 5810
+            },
+            {
+              "phase": "runtime-copy",
+              "label": "sdk-ucrt",
+              "elapsedMs": 592
+            },
+            {
+              "phase": "runtime-copy",
+              "label": "sdk-um",
+              "elapsedMs": 12828
+            },
+            {
+              "phase": "command",
+              "label": "build-launcher",
+              "elapsedMs": 1916
+            },
+            {
+              "phase": "prepare-locked-dependencies",
+              "elapsedMs": 16554
+            },
+            {
+              "phase": "command",
+              "label": "vendor-project",
+              "elapsedMs": 284791
+            },
+            {
+              "phase": "command",
+              "label": "setup-version-probe-aeneas",
+              "elapsedMs": 469
+            },
+            {
+              "phase": "command",
+              "label": "setup-version-probe-rust",
+              "elapsedMs": 388
+            },
+            {
+              "phase": "command",
+              "label": "setup-version-probe-lean",
+              "elapsedMs": 358
+            },
+            {
+              "phase": "command",
+              "label": "setup-version-scip",
+              "elapsedMs": 1391
+            },
+            {
+              "phase": "command",
+              "label": "setup-version-lean",
+              "elapsedMs": 189
+            },
+            {
+              "phase": "command",
+              "label": "setup-version-lake",
+              "elapsedMs": 215
+            },
+            {
+              "phase": "command",
+              "label": "setup-version-rust-analyzer",
+              "elapsedMs": 1516
+            },
+            {
+              "phase": "command",
+              "label": "setup-version-cargo",
+              "elapsedMs": 1592
+            },
+            {
+              "phase": "command",
+              "label": "setup-version-rustc",
+              "elapsedMs": 1558
+            },
+            {
+              "phase": "command",
+              "label": "setup-version-git",
+              "elapsedMs": 429
+            },
+            {
+              "phase": "command",
+              "label": "setup-version-rustup-components",
+              "elapsedMs": 1820
+            },
+            {
+              "phase": "flush-runtime-files",
+              "elapsedMs": 61734
+            },
+            {
+              "phase": "publish-installation",
+              "elapsedMs": 488
+            },
+            {
+              "phase": "remove-private-build-stage",
+              "elapsedMs": 13455
+            }
+          ],
+          "commands": [
+            {
+              "label": "creation-directory",
+              "elapsedMs": 1028
+            },
+            {
+              "label": "creation-directory",
+              "elapsedMs": 829
+            },
+            {
+              "label": "msvc-environment",
+              "elapsedMs": 1956
+            },
+            {
+              "label": "rust-version",
+              "elapsedMs": 101
+            },
+            {
+              "label": "git-version",
+              "elapsedMs": 492
+            },
+            {
+              "label": "unpack-lean",
+              "elapsedMs": 101450
+            },
+            {
+              "label": "build-launcher",
+              "elapsedMs": 1911
+            },
+            {
+              "label": "vendor-project",
+              "elapsedMs": 68244
+            },
+            {
+              "label": "setup-version-probe-aeneas",
+              "elapsedMs": 430
+            },
+            {
+              "label": "setup-version-probe-rust",
+              "elapsedMs": 387
+            },
+            {
+              "label": "setup-version-probe-lean",
+              "elapsedMs": 355
+            },
+            {
+              "label": "setup-version-scip",
+              "elapsedMs": 1386
+            },
+            {
+              "label": "setup-version-lean",
+              "elapsedMs": 187
+            },
+            {
+              "label": "setup-version-lake",
+              "elapsedMs": 211
+            },
+            {
+              "label": "setup-version-rust-analyzer",
+              "elapsedMs": 1513
+            },
+            {
+              "label": "setup-version-cargo",
+              "elapsedMs": 1590
+            },
+            {
+              "label": "setup-version-rustc",
+              "elapsedMs": 1556
+            },
+            {
+              "label": "setup-version-git",
+              "elapsedMs": 426
+            },
+            {
+              "label": "setup-version-rustup-components",
+              "elapsedMs": 1467
+            }
+          ]
+        },
+        "knownFolderPreservation": {
+          "requiredFiles": 100,
+          "existingByteIdenticalFilesPreserved": 100,
+          "newlyPublishedFiles": 0,
+          "evidence": "All reviewed helper/library/DLL hashes matched; the only creation commands created the two private setup directories; no creation-copy command occurred"
+        },
+        "terminalSetupState": {
+          "observedAtSetupCompletion": true,
+          "exitCode": 0,
+          "setupMarkerAbsent": true,
+          "setupJournalAbsent": true,
+          "stageAbsent": true,
+          "sharedLeaseReleased": true,
+          "evidence": {
+            "artifact": "packaged-setup-04-verified.json",
+            "sha256": "4cf17fbbb2fde18df0a4996975d4d7b9256247bae2c8284c0bfabf17036db22c"
+          }
+        },
+        "initialFailuresAndRecoveries": [
+          {
+            "attempt": 1,
+            "problem": "cmd.exe quoting in MSVC environment initialization",
+            "fix": "Use cmd-specific outer quotes; retain CRT quoting for ordinary executables",
+            "setupExitCode": 2,
+            "elapsedMs": 14223,
+            "recoveryStatus": "rolled-back",
+            "evidence": [
+              {
+                "artifact": "packaged-setup-timing.json",
+                "sha256": "f65a3008c07e4f9653f29bec7e8a547cade59bef1c325f1be2afdecb242f12df"
+              },
+              {
+                "artifact": "packaged-setup-result.json",
+                "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              },
+              {
+                "artifact": "packaged-setup.stderr.txt",
+                "sha256": "21c4a908f110889f7d651bed217fed7fadd6c9c9f3c11dd1ef12df2723567324"
+              },
+              {
+                "artifact": "packaged-setup-recovery-01.json",
+                "sha256": "5dbc35afe73a3d8e51c0cb0501bc0563548a9f5fb1bc3f8f6ebaffe0cedd4805"
+              },
+              {
+                "artifact": "packaged-setup-recovery-01.stderr.txt",
+                "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              }
+            ]
+          },
+          {
+            "attempt": 2,
+            "problem": "Installed Git uses intentional hardlinks and the ucrt64 layout",
+            "fix": "Materialize independent source copies; support canonical ucrt64 and mingw64 installations",
+            "setupExitCode": 2,
+            "elapsedMs": 8844,
+            "recoveryStatus": "rolled-back",
+            "evidence": [
+              {
+                "artifact": "packaged-setup-02-timing.json",
+                "sha256": "7586fb4d3df5beaf452ea2bc36f2fb40044827ad058706622e895de4ad9a588d"
+              },
+              {
+                "artifact": "packaged-setup-02-result.json",
+                "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              },
+              {
+                "artifact": "packaged-setup-02.stderr.txt",
+                "sha256": "be422716f868dcb85437fc246bd9cd427209ed6e98fc8d588c42d1b182d56d2b"
+              },
+              {
+                "artifact": "packaged-setup-recovery-02.json",
+                "sha256": "e67269cd6bd59d43bdbf34214c65f7ea037767e5f20fc8d9541cb017b1210463"
+              },
+              {
+                "artifact": "packaged-setup-recovery-02.stderr.txt",
+                "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              }
+            ]
+          },
+          {
+            "attempt": 3,
+            "problem": "Launcher receipt source ordering was nondeterministic",
+            "fix": "Sort explicit filename strings ordinal before hashing the native source set",
+            "setupExitCode": 2,
+            "elapsedMs": 709156,
+            "recoveryStatus": "rolled-back",
+            "evidence": [
+              {
+                "artifact": "packaged-setup-03-timing.json",
+                "sha256": "d5804ffaf33ca6c73eb626066ea04489e727fc94702b16c61de34b829348ec5c"
+              },
+              {
+                "artifact": "packaged-setup-03-result.json",
+                "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              },
+              {
+                "artifact": "packaged-setup-03.stderr.txt",
+                "sha256": "afc7f07c9bea91743933ede7f6516e06909f26a8e6d68b19292089865f121b42"
+              },
+              {
+                "artifact": "packaged-setup-recovery-03.json",
+                "sha256": "f9408bcafc069bb131026aa2964f44cb570e1f31f945ea51d366d5e39bd85552"
+              },
+              {
+                "artifact": "packaged-setup-recovery-03.stderr.txt",
+                "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              }
+            ]
+          }
+        ],
+        "tests": {
+          "focusedSuite": {
+            "passed": 16,
+            "failed": 0,
+            "artifact": "production-runtime-setup-tests-03.txt",
+            "sha256": "3811502503bdd4e02be89b8815094c5c0b9e6b55ea37ffb0401b9a2e54231bde"
+          },
+          "additionalRuntimeRecoveryRun": {
+            "passed": 7,
+            "failed": 0,
+            "artifact": "production-runtime-recovery-tests.txt",
+            "sha256": "94c2faaab1402748449e38de6ca6ad356326712264b78dd3bdf182f3a6c59f1d",
+            "overlapsFocusedSuite": true
+          },
+          "copyAliasAndHardlinkRegression": {
+            "passed": 1,
+            "failed": 0,
+            "artifact": "setup-copy-optimization-tests.txt",
+            "sha256": "1b8e09ebdbe364e7abc617639e76f69ab72e32846253b69658a63980eb7aec06"
+          },
+          "setupLayoutRegression": {
+            "passed": 1,
+            "failed": 0,
+            "artifact": "setup-layout-preflight-tests.txt",
+            "sha256": "d09db99f911de548bdf6e8a3612b1ee5aa43a6ffdc1e9c3eac568d0c00eb6f42"
+          },
+          "hardExitCreationGapRecovery": {
+            "passed": 1,
+            "failed": 0,
+            "artifact": "setup-journal-creation-gap-tests.txt",
+            "sha256": "b5a5270e540cad553c9c03c23315288e59db27532f4a9ae528687d30fce38862"
+          },
+          "atomicCreation": {
+            "passed": 10,
+            "failed": 0,
+            "sourceSha256": "94062d4013431934e190d33816079c3193441c6c483e2f04a6adf2d419ebdf0d",
+            "artifact": "setup-atomic-creation.json",
+            "sha256": "683ce05f8c7c1ace808a775fa4623878e6f7c5a602d2d242c8075b15517bd48a"
+          },
+          "deterministicLauncherBuilds": {
+            "passed": 3,
+            "failed": 0,
+            "artifact": "native-build-recipe-determinism-verified/summary.json",
+            "sha256": "f1b7eaf54500b36aec8ebaaf2df61f39c5ca8b8b46a5633795dfe79cfbca70a5"
+          }
+        },
+        "preflight": {
+          "prerequisiteScan": {
+            "roots": [
+              {
+                "id": "git",
+                "files": 9608,
+                "bytes": 424553173,
+                "sourceHardlinks": 172,
+                "unsupportedObjects": 0
+              },
+              {
+                "id": "msvc-bin",
+                "files": 85,
+                "bytes": 73061533,
+                "sourceHardlinks": 0,
+                "unsupportedObjects": 0
+              },
+              {
+                "id": "msvc-lib",
+                "files": 122,
+                "bytes": 309054963,
+                "sourceHardlinks": 0,
+                "unsupportedObjects": 0
+              },
+              {
+                "id": "sdk-ucrt",
+                "files": 8,
+                "bytes": 90629762,
+                "sourceHardlinks": 0,
+                "unsupportedObjects": 0
+              },
+              {
+                "id": "sdk-um",
+                "files": 481,
+                "bytes": 110173182,
+                "sourceHardlinks": 0,
+                "unsupportedObjects": 0
+              }
+            ],
+            "artifact": "setup-prerequisite-preflight.json",
+            "sha256": "401e07e2faffe2cc8f0433d40cb4350d575a75b91758e8e2b88139e5977b83f8"
+          },
+          "independentGitCopy": {
+            "files": 9608,
+            "version": "git version 2.56.0.windows.3",
+            "copiedHelperPrefixConfirmed": true,
+            "elapsedMs": 355748,
+            "artifact": "setup-git-prerequisite-copy.json",
+            "sha256": "afbb38f18c88cb80de1ac58d41f7c960877686a778f7a87e73ea09f79231f5c6"
+          },
+          "vendor": {
+            "ok": true,
+            "reportSha256": "ae94bfccd69da77301504a9966974ea6a78a47e078d5ffb447b037d6c581df32",
+            "packages": 90,
+            "vendorDirectories": 96,
+            "lockAndConfigInputsUnchanged": true,
+            "offlineReplacementResolves": true,
+            "commands": [
+              {
+                "label": "vendor",
+                "exitCode": 0,
+                "elapsedMs": 88035
+              },
+              {
+                "label": "metadata",
+                "exitCode": 0,
+                "elapsedMs": 441
+              }
+            ],
+            "artifact": "production-vendor-preflight.json",
+            "sha256": "98b1e131d723bd609d870e27c44f7bade05d4518bb49aa3994bcb7118b90c866"
+          },
+          "optionalOptimizedCopyTiming": {
+            "status": "stopped to prioritize actual setup I/O; no independent speedup claim",
+            "artifact": "setup-copy-timing-stopped.json",
+            "sha256": "380bb4f03b7e5bacb58fc51d0d9eeb07d75a451b163e6d562d2875cadb785870"
+          }
+        },
+        "evidence": [
+          {
+            "artifact": "packaged-setup-04-result.json",
+            "sha256": "c5adc1805796c9f0e2a3c170ebf966e8691387266bca942e1ecd2290be25c702"
+          },
+          {
+            "artifact": "packaged-setup-04.stderr.txt",
+            "sha256": "aea2bfd2d19c6d1dc8d8724cb1ea0cea4e2addb4a8d9d0d519edf5377798cd56"
+          },
+          {
+            "artifact": "packaged-setup-04-timing.json",
+            "sha256": "a95d59f3561542e0192411fad828899b6c9ff9eba1da6b046448951a0ca7d759"
+          }
+        ],
+        "limitations": [
+          "Five helper groups reused exact reviewed artifacts; this setup freshly compiled the launcher and did not rebuild every helper from source.",
+          "The immutable setup receipt remains unverified until the separate confined resolver/extraction acceptance succeeds.",
+          "Receipts are local installer records whose trust boundary ends at the account owner.",
+          "Windows 11 client native AMD64 and the pinned Aeneas/Charon/Lean tuple only; public-API extraction remains unsupported.",
+          "Cross-logon or alternate-session recovery remains unqualified and is refused before mutation.",
+          "The pinned Rust-only dependency closure uses copied MSVC/SDK libraries without C headers.",
+          "Upstream Lean trusted/sorry classifications and dependency-completeness caveats remain separate from Windows setup acceptance."
+        ]
+      }
+    },
+    "native": {
+      "artifact": ".native-work/evidence/native-production-public.json",
+      "sha256": "f98f6c209f89f8af2b3d54e6a08f3fd627ef4f6e489bff4cc4e20b73f54d5e67",
+      "bytes": 18033,
+      "record": {
+        "schema": "fvs/windows-native-public-evidence/v1",
+        "recordedAt": "2026-10-25T13:28:57.313Z",
+        "status": "Native primitive and isolated setup-creation evidence; overall Windows production-route qualification is pending.",
+        "windowsProductionRouteQualified": false,
+        "derivedFrom": [
+          {
+            "file": ".native-work/evidence/native-production-summary.json",
+            "sha256": "e913936676525bfafbf1aedf1c44007884e96aad21a8f1814a413a13db526737"
+          },
+          {
+            "file": ".native-work/evidence/setup-atomic-creation.json",
+            "sha256": "683ce05f8c7c1ace808a775fa4623878e6f7c5a602d2d242c8075b15517bd48a"
+          },
+          {
+            "file": ".native-work/evidence/native-build-recipe-determinism-verified/summary.json",
+            "sha256": "f1b7eaf54500b36aec8ebaaf2df61f39c5ca8b8b46a5633795dfe79cfbca70a5"
+          }
+        ],
+        "productionLauncher": {
+          "sha256": "0e9a869296bf64dd58e288f8f12eac83e5eeabc399865004ce5c81954efa809f",
+          "sourceSetSha256": "b9b2ef8f889032e0d80b882d09b2b9f7551478bb2e8e171f263ff36fb3805472",
+          "testHooks": false,
+          "buildReceipt": {
+            "file": ".native-work/production-native/release-12/fvs-windows-launcher.build.json",
+            "sha256": "a46e448ec1cb1706563c8b0ca18133499553c83347a5021ef38bb76baf72cd83"
+          },
+          "recipeSha256": "6ce9f42f123bd6ff722ffdee5b41142042fa88b7c0f3bac0397c145bb729076f",
+          "compilerSha256": "46809206887326d2d24db1eff1f3064de972c3451abe766b49111450a5e08e00",
+          "sources": [
+            {
+              "file": "scripts/fvs-probe-native/windows/NativeMethods.cs",
+              "sha256": "41d93ea073f269c162b4aa37d13a5ef1228a952ac7f905abbb34c1b6325fdce1"
+            },
+            {
+              "file": "scripts/fvs-probe-native/windows/NativeExtra.cs",
+              "sha256": "cb7ffafb57801a593841ee7afc64951774db1e196c20d8142b2c9722fa11b6c0"
+            },
+            {
+              "file": "scripts/fvs-probe-native/windows/VerifiedPrivateLeafCleanup.cs",
+              "sha256": "ffe2ae24450d3f697b03d9f4c4f6c8fc57fa7a3d3e7e447cd9a9fcc0f7e1449c"
+            },
+            {
+              "file": "scripts/fvs-probe-native/windows/FvsWindowsLauncher.cs",
+              "sha256": "3bdcd963d718870f3b487edc9684e3999ec15863c66c9311c0eef3f8781420e5"
+            },
+            {
+              "file": "scripts/fvs-probe-native/windows/WindowsLifecycle.cs",
+              "sha256": "c19f393655dabf3b9a78c6fd69b5e5cbfa7d939f365f8ab37f49bdd0fd820ed3"
+            }
+          ]
+        },
+        "lineage": {
+          "build10": "Durable lifecycle, per-entry readonly grants, compact staging, host gate, execution/release fault hooks.",
+          "release11Delta": "Strict UTF-8 input, coordinator/profile resource-overlap rejection, live LPAC AAP/ARAP effective-access qualification.",
+          "release12Delta": "Read-only setup-active marker classification and session blocking; authenticated native Global-job owner before recovery termination. No further production-source edits."
+        },
+        "testGroups": [
+          {
+            "name": "lifecycle termination transitions",
+            "build": "build-10",
+            "passed": 85,
+            "sourceSetSha256": "16373d77c4c18f71efb3926a1e9e57685239cec33732590ec15414c65324b409",
+            "launcherSha256": "4a6de2c456667517846e0890e74e22058bff2139bd13a095adfcbdf6ef2dbd1f",
+            "testHooks": true,
+            "canarySha256": "ce39d14d6b8a00f18fa83c7d3d17efcba5da30c71dcf19b3416fc979e28253e4",
+            "report": {
+              "file": ".native-work/evidence/native-production-faults-10/summary.json",
+              "sha256": "549b4fdb52b941342646a261821526b2aa4ecba310e5461f9909bed597f42d31"
+            },
+            "buildReceipt": {
+              "file": ".native-work/production-native/build-10/fvs-windows-launcher.build.json",
+              "sha256": "55c4c0be71ad8f2e657da5df759881479f7d0c8475cfbb2497b52ed9308c83cc"
+            }
+          },
+          {
+            "name": "Unicode and LPAC release smoke",
+            "build": "release-11",
+            "passed": 5,
+            "sourceSetSha256": "1c8de3debafba1ef146b5f0e84f364576224cf486927befd36d079cfada9618c",
+            "launcherSha256": "94770b4689cceab0b2e632e8ff3903dfe551af7aa73d0eac74f55bb1ef273f19",
+            "testHooks": false,
+            "canarySha256": "ce39d14d6b8a00f18fa83c7d3d17efcba5da30c71dcf19b3416fc979e28253e4",
+            "report": {
+              "file": ".native-work/evidence/native-production-unicode-release-11/summary.json",
+              "sha256": "69d552eb139a24cd79921ae4b8e82b9987ababb4776fec0fdc9788bb5542c194"
+            },
+            "buildReceipt": {
+              "file": ".native-work/production-native/release-11/fvs-windows-launcher.build.json",
+              "sha256": "392fba1ed9c406bc93ebadbdb517965032dd9bf844c816c6251f2159836866b9"
+            }
+          },
+          {
+            "name": "journal I/O/corruption/substitution recovery",
+            "build": "build-12",
+            "passed": 10,
+            "sourceSetSha256": "b9b2ef8f889032e0d80b882d09b2b9f7551478bb2e8e171f263ff36fb3805472",
+            "launcherSha256": "f05840b3c3e8d36a5cf3f3040d6afef24926a27a9d87aba05fb73d24e125861f",
+            "testHooks": true,
+            "canarySha256": "ce39d14d6b8a00f18fa83c7d3d17efcba5da30c71dcf19b3416fc979e28253e4",
+            "report": {
+              "file": ".native-work/evidence/native-production-extended-12/summary.json",
+              "sha256": "00e7051383793c47b957b0555908baa9903fad2d3b281cc876dbe9088f28de14"
+            },
+            "buildReceipt": {
+              "file": ".native-work/production-native/build-12/fvs-windows-launcher.build.json",
+              "sha256": "d4fc6a1f5d48c5e803f4556cd917979be039a9eec8a3f9489440b7d48f76c889"
+            }
+          },
+          {
+            "name": "production boundary adversarial checks",
+            "build": "release-12",
+            "passed": 28,
+            "sourceSetSha256": "b9b2ef8f889032e0d80b882d09b2b9f7551478bb2e8e171f263ff36fb3805472",
+            "launcherSha256": "0e9a869296bf64dd58e288f8f12eac83e5eeabc399865004ce5c81954efa809f",
+            "testHooks": false,
+            "canarySha256": "bf2d7a6b23877dda1bde1aa5522a62bedeff3593d0a8c1639fd0e263d78a271d",
+            "report": {
+              "file": ".native-work/evidence/native-production-adversarial-12-final/summary.json",
+              "sha256": "c684d08798cccebb11d9cfe5d7c77d057d37bd17c579648c42f1d6fd3c20b1ba"
+            },
+            "buildReceipt": {
+              "file": ".native-work/production-native/release-12/fvs-windows-launcher.build.json",
+              "sha256": "a46e448ec1cb1706563c8b0ca18133499553c83347a5021ef38bb76baf72cd83"
+            }
+          },
+          {
+            "name": "Global job collision and retained-job recovery",
+            "build": "release-12",
+            "passed": 2,
+            "sourceSetSha256": "b9b2ef8f889032e0d80b882d09b2b9f7551478bb2e8e171f263ff36fb3805472",
+            "launcherSha256": "0e9a869296bf64dd58e288f8f12eac83e5eeabc399865004ce5c81954efa809f",
+            "testHooks": false,
+            "canarySha256": "bf2d7a6b23877dda1bde1aa5522a62bedeff3593d0a8c1639fd0e263d78a271d",
+            "report": {
+              "file": ".native-work/evidence/native-production-job-recovery-12/summary.json",
+              "sha256": "ecaf9ea36e49d568e8659294976b42fda5d644f39656bfc8e22e9e6d31bc6039"
+            },
+            "buildReceipt": {
+              "file": ".native-work/production-native/release-12/fvs-windows-launcher.build.json",
+              "sha256": "a46e448ec1cb1706563c8b0ca18133499553c83347a5021ef38bb76baf72cd83"
+            }
+          }
+        ],
+        "countInterpretation": "85 termination checks use build-10; 5 Unicode/LPAC checks use release-11; 10 extended checks use the final release-12 sources compiled with test hooks; 28 adversarial and 2 job checks use release-12 without hooks. These are distinct test groups with exact build lineage.",
+        "measuredBoundaries": {
+          "adversarial": 28,
+          "jobRecovery": 2,
+          "extendedSameSourceTestBuild": 10,
+          "threeGenerations": true,
+          "networkResults": "IPv4 TCP, IPv6 TCP and UDP each returned WSAEACCES (10013) in all three generations.",
+          "filesystemResults": "Readonly source/tool/profile writes and owner-DACL rewrites returned access denied (5). Private writes, replacement, deletion and directory rename succeeded. Creating absent LocalState returned access denied (5); a subsequent write returned path not found (3).",
+          "lpacResults": "Live token AAP-only read denied; ARAP-only read allowed; registryRead is the only capability; launcher sentinel excluded.",
+          "cleanup": "Source and actual profile ACL invariants checked after each case; idempotent terminal receipts and private-stage deletion verified. Unrelated trusted ACE remains and exactRestored=false prevents publication."
+        },
+        "supportingReports": [
+          {
+            "file": ".native-work/evidence/native-production-compact-path-audit.json",
+            "sha256": "dc2c493be63f3173e89bd9b7b18400c1d553f42a1d0eae6c16295a147c4edf25"
+          },
+          {
+            "file": ".native-work/evidence/native-production-adversarial-12-final/three-generation-canary.json",
+            "sha256": "fd5ef1ad870720da5ac0c9cc2a2df68f4780f0f446b1435374332dcbeb5be94c"
+          },
+          {
+            "file": ".native-work/evidence/native-production-job-recovery-12/retained-job.json",
+            "sha256": "9a147b9e6e35429a0aabc129b0e6e00377b3147e741158f244ed5d40437d129c"
+          }
+        ],
+        "setupCreation": {
+          "source": {
+            "file": "scripts/fvs-probe-native/windows-source/SetupCreation.cs",
+            "sha256": "94062d4013431934e190d33816079c3193441c6c483e2f04a6adf2d419ebdf0d"
+          },
+          "report": {
+            "file": ".native-work/evidence/setup-atomic-creation.json",
+            "sha256": "683ce05f8c7c1ace808a775fa4623878e6f7c5a602d2d242c8075b15517bd48a"
+          },
+          "passed": 10,
+          "profileFree": true,
+          "sharedCoordinatorUntouched": true,
+          "interruptedCopyBytes": 4341760,
+          "checks": [
+            "atomic Unicode directory owner/DACL/tag",
+            "existing directory preserved",
+            "wrong tag refuses authorization and deletion",
+            "exclusive tagged file copy and durable flush",
+            "existing temporary preserved",
+            "kernel refuses nonempty directory removal",
+            "leaf and intermediate junctions refused without following",
+            "multiply linked file refuses deletion; alias bytes preserved",
+            "verified handle unlink removes only tagged empty objects",
+            "hard termination during partial copy leaves recoverable atomic creation tag"
+          ]
+        },
+        "testSources": [
+          {
+            "file": "tests/helpers/fvs-windows-native/lifecycle.mjs",
+            "sha256": "98cad5d0858ff27723409c1ab93c71e10fa42da30e4716f8e90192d9df442bd7"
+          },
+          {
+            "file": "tests/helpers/fvs-windows-native/canary.go",
+            "sha256": "839407abad0d9cf69731167f747bde8f10b76d9655e0c73af6bc2b411018a253"
+          },
+          {
+            "file": "tests/helpers/fvs-windows-native/JobHolder.cs",
+            "sha256": "ee8b978e20f7bd237daddd2db6c5f6a35d39cbfe895d559f9abb15f5e00c81db"
+          },
+          {
+            "file": "tests/helpers/fvs-windows-native/Build-TestHelpers.ps1",
+            "sha256": "7e1134f207e98f80f64166404e0bced920ccb98a1338de9096debfa84d825b90"
+          }
+        ],
+        "correctedFixtureAssertion": {
+          "report": {
+            "file": ".native-work/evidence/native-production-adversarial-12/failure.json",
+            "sha256": "44352071fc13d5a60d572059254bf1f48b2c2c9a21a97516aeb268ef093a52e9"
+          },
+          "explanation": "The original fixture incorrectly expected ACCESS_DENIED for a write under an absent package LocalState directory. It actually returned PATH_NOT_FOUND. The strengthened final canary directly attempts LocalState creation and requires ACCESS_DENIED; all generations passed. Production source was unchanged; the failed suite disposed normally."
+        },
+        "limits": [
+          "Only native Windows 11 client AMD64, OS 10.0 builds 22000..29999, is accepted; no Server, Windows 10, or ARM64 emulation.",
+          "Alternate-logon execution/recovery was unavailable; origin session/logon mismatch is refused before mutation. Simulated mismatch is a rejection test, not cross-logon qualification.",
+          "A foreign-user-owned job was not constructible without another logon; recovery now checks the actual kernel job owner and rejects a foreign owner. Same-owner collision and retained-job recovery were exercised.",
+          "Process termination and injected write/flush/replace failures are measured; arbitrary hardware power-loss durability is not claimed.",
+          "Trusted host caller and exclusive FVS lifecycle/setup coordination are required. Hostile concurrent same-user filesystem/ACL tampering is outside the threat model; detected changes fail closed.",
+          "Fixed local NTFS canonical paths only; general long-path, reparse, hardlink, network-share, case-sensitive directory support is not claimed.",
+          "Ambient OS registry/device access is not an exhaustive zero-access proof. No elevated privileges or global policy changes were used.",
+          "Full source-build distribution/public command acceptance is separate from these native primitive tests and must succeed before the support gate is enabled."
+        ],
+        "primaryReferences": [
+          "https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-getsecurityinfo",
+          "https://learn.microsoft.com/en-us/windows/win32/procthread/job-object-security-and-access-rights"
+        ],
+        "deterministicBuildRecipeCorrection": {
+          "recordedAt": "2026-10-25T13:46:04.533Z",
+          "originalPublicEvidenceSha256": "d0504a92289b6546fc8ed847a007f9d949ba122e922539e77bc6cb649c6b5536",
+          "report": {
+            "file": ".native-work/evidence/native-build-recipe-determinism-verified/summary.json",
+            "sha256": "f1b7eaf54500b36aec8ebaaf2df61f39c5ca8b8b46a5633795dfe79cfbca70a5"
+          },
+          "scope": "Metadata-only source-set sorting correction. Explicit filename strings are sorted ordinally before hashing. All five C# source files and the compiler argument order are unchanged. No native profile tests were rerun for this recipe-only correction.",
+          "historicalInterpretation": "The productionLauncher and testGroups fields retain the exact original binary, recipe, receipt and reported sourceSet hashes. In particular, historical b9b2ef8f889032e0d80b882d09b2b9f7551478bb2e8e171f263ff36fb3805472 is preserved as recorded metadata; it is not the canonical ordinal source-set digest and is not relabeled as such.",
+          "correctedRecipe": {
+            "file": "scripts/fvs-probe-native/windows/Build-Launcher.ps1",
+            "sha256": "20f7e87d65ecbd39062640f07f8e032236ea78abf81defd89f8d2128afce4911"
+          },
+          "sourceSetAlgorithm": "Ordinal filename strings; filename+NUL+lowercase file SHA256+LF; UTF8 SHA256",
+          "canonicalSourceSetSha256": "a930297e58af6300f84b78f2d33fad7533bcffe6bc70ef19ca541d78f566ae17",
+          "independentSourceEqualityVerified": true,
+          "sourceEqualityComparisons": [
+            "Current C# bytes versus historical release-12 receipt",
+            "Current C# bytes versus original public evidence source records",
+            "Current C# bytes versus all three fresh build receipts"
+          ],
+          "sources": [
+            {
+              "file": "scripts/fvs-probe-native/windows/NativeMethods.cs",
+              "sha256": "41d93ea073f269c162b4aa37d13a5ef1228a952ac7f905abbb34c1b6325fdce1",
+              "matchesHistoricalRelease12": true,
+              "matchesRegressionCopy": true
+            },
+            {
+              "file": "scripts/fvs-probe-native/windows/NativeExtra.cs",
+              "sha256": "cb7ffafb57801a593841ee7afc64951774db1e196c20d8142b2c9722fa11b6c0",
+              "matchesHistoricalRelease12": true,
+              "matchesRegressionCopy": true
+            },
+            {
+              "file": "scripts/fvs-probe-native/windows/VerifiedPrivateLeafCleanup.cs",
+              "sha256": "ffe2ae24450d3f697b03d9f4c4f6c8fc57fa7a3d3e7e447cd9a9fcc0f7e1449c",
+              "matchesHistoricalRelease12": true,
+              "matchesRegressionCopy": true
+            },
+            {
+              "file": "scripts/fvs-probe-native/windows/FvsWindowsLauncher.cs",
+              "sha256": "3bdcd963d718870f3b487edc9684e3999ec15863c66c9311c0eef3f8781420e5",
+              "matchesHistoricalRelease12": true,
+              "matchesRegressionCopy": true
+            },
+            {
+              "file": "scripts/fvs-probe-native/windows/WindowsLifecycle.cs",
+              "sha256": "c19f393655dabf3b9a78c6fd69b5e5cbfa7d939f365f8ab37f49bdd0fd820ed3",
+              "matchesHistoricalRelease12": true,
+              "matchesRegressionCopy": true
+            }
+          ],
+          "regression": {
+            "testSource": {
+              "file": "tests/helpers/fvs-windows-native/build-recipe.mjs",
+              "sha256": "0f1b9740246aee1605fb1819ef25fdb4a557254913765b3279625d532b78960d"
+            },
+            "profileFree": true,
+            "sourceAndOutputPathsContainSpaces": true,
+            "passed": 3,
+            "modes": [
+              "PowerShell 7 direct recipe file",
+              "Windows PowerShell trusted inline scriptblock",
+              "Windows PowerShell trusted inline scriptblock repeat"
+            ],
+            "builds": [
+              {
+                "mode": "direct",
+                "passed": true,
+                "sourceSetSha256": "a930297e58af6300f84b78f2d33fad7533bcffe6bc70ef19ca541d78f566ae17",
+                "testHooks": false,
+                "launcherSha256": "07262ee2d829da09c9134dd0e249dfd9ea724684b3d5656cda86cba1213df724",
+                "buildReceiptSha256": "c26b339b699f2f45dc6fcd4dac73d9fdfea1279e90c4d846319ec0bfae141805",
+                "compilerSha256": "46809206887326d2d24db1eff1f3064de972c3451abe766b49111450a5e08e00"
+              },
+              {
+                "mode": "inline-1",
+                "passed": true,
+                "sourceSetSha256": "a930297e58af6300f84b78f2d33fad7533bcffe6bc70ef19ca541d78f566ae17",
+                "testHooks": false,
+                "launcherSha256": "613aadc9da831aaa673531b12eaffc5952c490fae7dd002261555a2fe1afd121",
+                "buildReceiptSha256": "76d6200c6a77489647f539177b934b1039a99a3d4f3290980a3fe7014243750c",
+                "compilerSha256": "46809206887326d2d24db1eff1f3064de972c3451abe766b49111450a5e08e00"
+              },
+              {
+                "mode": "inline-2",
+                "passed": true,
+                "sourceSetSha256": "a930297e58af6300f84b78f2d33fad7533bcffe6bc70ef19ca541d78f566ae17",
+                "testHooks": false,
+                "launcherSha256": "c2787090659e50287f3a7d0a6df894b15727c8d2370599f77b9dc0749873a677",
+                "buildReceiptSha256": "9a0994dcead2a0172828c00b5b849c9d4ceb460b538cc66c6e7f4cae749de629",
+                "compilerSha256": "46809206887326d2d24db1eff1f3064de972c3451abe766b49111450a5e08e00"
+              }
+            ],
+            "binaryReproducibilityClaimed": false,
+            "qualification": "These tests prove stable source-set metadata and fresh non-test-hook release compilation. Their distinct executable hashes remain individually recorded; they do not replace the historical native runtime test lineage or complete overall Windows-route qualification."
+          }
+        }
+      }
+    },
+    "adapter": {
+      "artifact": ".native-work/evidence/windows-adapter-acceptance-public.json",
+      "sha256": "bafaf60eadd90ee6aa164b3eb3f4fffcd4798242447383ad185b647785297111",
+      "bytes": 10085,
+      "record": {
+        "schema": "fvs/windows-adapter-acceptance-public/v1",
+        "recordedAt": "2026-10-25T14:07:33.989Z",
+        "ok": true,
+        "package": "Windows source candidate 04",
+        "adapterSha256": "6a7276846e8abc267e3e53123e146382e9153a0f4a03e20cd63258e371a6f0e7",
+        "focusedTestsSha256": "8f2be9fd6065cf27b8032aac9dc780c434ae6026f4528ef5e0680e820e66314b",
+        "focusedTestsPassed": 29,
+        "launcherSha256": "16374d01f69fe7729571e124ff18a52cfac492be9399577da4906ce7b21222ec",
+        "launcherBuildReceiptSha256": "8e1d91f656e8c51e1e15d03eef3a649ce0ceb1769897ff4580fd54b9e4944d42",
+        "launcherSourceSetSha256": "a930297e58af6300f84b78f2d33fad7533bcffe6bc70ef19ca541d78f566ae17",
+        "launcherTestHooks": false,
+        "policySha256": "323acfbff84d5841615612ffc110479123b9c5556a83a40b74a6b651fcbb4216",
+        "smoke": {
+          "reportSha256": "33d86db35538218adb8680791cb617e4bc90067e5fc5878679a50bd2903e7dfb",
+          "harnessSha256": "3b2aa10c9233534003ffaa77256cbf49b9e7949e6f70014079f0a7a5ce634238",
+          "canarySha256": "a36982454636588e02db7821a19b4339de1b4699b5db7b4e417d04fe294ba8ce",
+          "ok": true,
+          "unicodeSourceAndToolPaths": true,
+          "protectedOriginalWriteDenied": true,
+          "independentPrivateCopyWriteAllowed": true,
+          "protectedTreesUnchanged": true,
+          "candidateGraphReturned": true,
+          "graphPublished": false,
+          "versions": [
+            {
+              "name": "probe-lean",
+              "stdout": "0.14.0",
+              "exitCode": 0,
+              "activeProcessesAfter": 0
+            },
+            {
+              "name": "lean",
+              "stdout": "Lean (version 4.31.0, x86_64-w64-windows-gnu, commit 68218e876d2a38b1985b8590fff244a83c321783, Release)",
+              "exitCode": 0,
+              "activeProcessesAfter": 0
+            }
+          ],
+          "dllDecoys": {
+            "injected": true,
+            "count": 9,
+            "invalidDecoysNotLoaded": true,
+            "privateDecoysRemoved": true,
+            "decoyFiles": [
+              {
+                "name": "libc++.dll",
+                "sha256": "02b3e7775f755b606a66902cf316f8cdf2304b5178a7e54f8258901b5e17fd92"
+              },
+              {
+                "name": "libclang-cpp.dll",
+                "sha256": "02b3e7775f755b606a66902cf316f8cdf2304b5178a7e54f8258901b5e17fd92"
+              },
+              {
+                "name": "libInit_shared.dll",
+                "sha256": "02b3e7775f755b606a66902cf316f8cdf2304b5178a7e54f8258901b5e17fd92"
+              },
+              {
+                "name": "libLake_shared.dll",
+                "sha256": "02b3e7775f755b606a66902cf316f8cdf2304b5178a7e54f8258901b5e17fd92"
+              },
+              {
+                "name": "libleanshared_1.dll",
+                "sha256": "02b3e7775f755b606a66902cf316f8cdf2304b5178a7e54f8258901b5e17fd92"
+              },
+              {
+                "name": "libleanshared_2.dll",
+                "sha256": "02b3e7775f755b606a66902cf316f8cdf2304b5178a7e54f8258901b5e17fd92"
+              },
+              {
+                "name": "libleanshared.dll",
+                "sha256": "02b3e7775f755b606a66902cf316f8cdf2304b5178a7e54f8258901b5e17fd92"
+              },
+              {
+                "name": "libLLVM-22.dll",
+                "sha256": "02b3e7775f755b606a66902cf316f8cdf2304b5178a7e54f8258901b5e17fd92"
+              },
+              {
+                "name": "zlib1.dll",
+                "sha256": "02b3e7775f755b606a66902cf316f8cdf2304b5178a7e54f8258901b5e17fd92"
+              }
+            ],
+            "verifiedRuntimeFiles": [
+              {
+                "name": "libc++.dll",
+                "sha256": "8a9deaac6d2f4d2de468a544d1f35cd0dd4bcde03cda3cfb76fb9674749828d4"
+              },
+              {
+                "name": "libclang-cpp.dll",
+                "sha256": "1b32dd58335db4a984237e1fd1993cfd0f0fa413b5d10957290703eb03377ca4"
+              },
+              {
+                "name": "libInit_shared.dll",
+                "sha256": "05c276249845a9d39e202180fb175936cda1cf6e0502550388dabbcaf961fb26"
+              },
+              {
+                "name": "libLake_shared.dll",
+                "sha256": "f2910e72d74919a27ae2dbeb59e3ece4bfb4c9bb6e8cc8c915ac8a0b20b688a4"
+              },
+              {
+                "name": "libleanshared_1.dll",
+                "sha256": "19a6aa7a1ab088b678d843e7fe0a9f0c19a4b4937b8f825f348abc3b04366bbd"
+              },
+              {
+                "name": "libleanshared_2.dll",
+                "sha256": "802312bf16252a12602f6f02eabcba39c109b8906ca46e86cbb28a95d480e863"
+              },
+              {
+                "name": "libleanshared.dll",
+                "sha256": "d5d3bc9156fe3088487fd5d3b4057d1451ad89459d20af7912c7c8ee7e8fa114"
+              },
+              {
+                "name": "libLLVM-22.dll",
+                "sha256": "beaba61b3176e06fc0c4bf87e8bfae094a2405d01fa8e03d78029471555445d2"
+              },
+              {
+                "name": "zlib1.dll",
+                "sha256": "94dd0a72d4da79e25294a91d1edf902d76eade7512d9218609a5fe43e3a7397a"
+              }
+            ]
+          },
+          "terminalReceipts": [
+            {
+              "sessionId": "60c6a9bed9bf49b993184fc7d89c2b25",
+              "sha256": "40a6aec77dd20604334b4ced41cd8e37a7e4e5490c1a8e054be7ddb6c2aeff86",
+              "schema": "fvs/windows-terminal-receipt/v2",
+              "status": "disposed",
+              "jobDrained": true,
+              "profileAbsent": true,
+              "stageRemoved": true,
+              "aclCleanupConfirmed": true,
+              "resourceCount": 3,
+              "resourcesExactlyRestored": true,
+              "descendantAclAudit": {
+                "checked": 4,
+                "exactRestored": true,
+                "changedPreserved": [],
+                "ownSidRemaining": 0
+              },
+              "lastRunId": "a9870616c6b8460ea81f885bf182701c",
+              "lastRunResultSha256": "07a708121c7515d2c45d40a7f69d819b2a47a03d1fd189b6ce3aac1ae0c45648"
+            },
+            {
+              "sessionId": "e4b6c778f287476d9647ff4006b8c7b0",
+              "sha256": "95576beac6d272fba2ae37b67e8c726c2a4a475bd914d215a2fa1fe5ccaf5b99",
+              "schema": "fvs/windows-terminal-receipt/v2",
+              "status": "disposed",
+              "jobDrained": true,
+              "profileAbsent": true,
+              "stageRemoved": true,
+              "aclCleanupConfirmed": true,
+              "resourceCount": 4,
+              "resourcesExactlyRestored": true,
+              "descendantAclAudit": {
+                "checked": 6,
+                "exactRestored": true,
+                "changedPreserved": [],
+                "ownSidRemaining": 0
+              },
+              "lastRunId": "cc0cf99569bc4cc6a1e65d485068f77d",
+              "lastRunResultSha256": "80bf90945ff3d1276a4bc0c40e313c50ccbc5581b4b808a136508d2145e99a9d"
+            },
+            {
+              "sessionId": "6b38b5eee9a843f2b53ec4514037623c",
+              "sha256": "8a33b413423755d0aafc47c09413c21a1d6754a00eb183b75d78e5b2c65fd29e",
+              "schema": "fvs/windows-terminal-receipt/v2",
+              "status": "disposed",
+              "jobDrained": true,
+              "profileAbsent": true,
+              "stageRemoved": true,
+              "aclCleanupConfirmed": true,
+              "resourceCount": 13,
+              "resourcesExactlyRestored": true,
+              "descendantAclAudit": {
+                "checked": 43,
+                "exactRestored": true,
+                "changedPreserved": [],
+                "ownSidRemaining": 0
+              },
+              "lastRunId": "2be515ec74594e6daf4f428bcf10a0e5",
+              "lastRunResultSha256": "e09386c3fdf0c1c4aff6fec4d86077470795a9cd46f1d04bc4be1608dd7f2308"
+            }
+          ]
+        },
+        "missingHelperDenial": {
+          "reportSha256": "477ebe45bb68c5fd670f5fd531681f9a8c92ff1d599fca5d7eb7807acc64d82e",
+          "harnessSha256": "cbc0391da1c4b5e0568f458324eb094fbaf634b05f61aed81fab3569866e84eb",
+          "managedInstallationReceiptSha256": "cda70d2deada871e8db8e5489b7d5251f31a8763cc7f0445d49f032e99faf4b3",
+          "probeAeneasSha256": "6676a15473d6dd8d7e34d02e705e84b24537b24bb0de81feabf4288e49f5434f",
+          "cargoSha256": "c37545ec61d48d31bdefce53280ecab61c4ea54eaace372fac6a0316c6e165d9",
+          "ok": true,
+          "autoInstallReached": true,
+          "denialObserved": true,
+          "osError": 5,
+          "observation": "Unmodified managed probe-aeneas reached cargo install probe-rust; direct pinned Cargo failed creating its git database in the empty readonly private Cargo home with Access is denied.",
+          "noAcceptedGraph": true,
+          "protectedTreesUnchanged": true,
+          "cargoHomeRemainedEmpty": true,
+          "terminalReceipts": [
+            {
+              "sessionId": "747f837065a04353a32ff729497c4285",
+              "sha256": "8833d5861eab46e6db0812e4d8210623abce742624f7fef1375df4528c2531c4",
+              "schema": "fvs/windows-terminal-receipt/v2",
+              "status": "disposed",
+              "jobDrained": true,
+              "profileAbsent": true,
+              "stageRemoved": true,
+              "aclCleanupConfirmed": true,
+              "resourceCount": 5,
+              "resourcesExactlyRestored": true,
+              "descendantAclAudit": {
+                "checked": 26,
+                "exactRestored": true,
+                "changedPreserved": [],
+                "ownSidRemaining": 0
+              },
+              "lastRunId": "cb6f4edb05cf4859b947b599ba9abd37",
+              "lastRunResultSha256": "c0696efd41503b7e8a1353775f425a183c1d258bac0c63184906997f5c8a3f99"
+            },
+            {
+              "sessionId": "b7fbe5d365e2498b92782519b14e3625",
+              "sha256": "932c105b75fdd3c6cce18daa03e6ed097f79375bb033dd04d0e5a019f16608d2",
+              "schema": "fvs/windows-terminal-receipt/v2",
+              "status": "disposed",
+              "jobDrained": true,
+              "profileAbsent": true,
+              "stageRemoved": true,
+              "aclCleanupConfirmed": true,
+              "resourceCount": 7,
+              "resourcesExactlyRestored": true,
+              "descendantAclAudit": {
+                "checked": 165,
+                "exactRestored": true,
+                "changedPreserved": [],
+                "ownSidRemaining": 0
+              },
+              "lastRunId": "309c84e699fe409db8b507ca4a832d5e",
+              "lastRunResultSha256": "c2d0f4bfce2197fbef96237374a525c3d18aa7f1a9c40c925b3c46cb483c32ba"
+            }
+          ]
+        },
+        "finalStatus": "idle",
+        "slotReleasedTo": "root",
+        "authority": "Both tests use synthetic sibling runtime branding only inside disposable harness copies of the byte-identical candidate adapter. The native launcher and real helpers are unmodified managed binaries. These tests do not claim that the normal resolver accepts an incomplete runtime; normal public CLI qualification is tested separately by the parent.",
+        "scope": [
+          "Canary graph checks lifecycle and independent-copy behavior, not graph semantics.",
+          "Version checks with invalid cwd DLL decoys verify those decoys are not loaded; retained earlier tests separately observed loaded module paths.",
+          "No production runtime brand, public bypass, source gate, or existing helper was altered by these tests."
+        ],
+        "rawReportsRetained": true
+      }
+    },
+    "nativeSupplemental": {
+      "artifact": ".native-work/evidence/native-production-cleanup-faults-12/summary.json",
+      "sha256": "97fbd7ad6d025af997aa1fa9c769ba6fc3f18c030417f7ecef9998b2459ebd44",
+      "bytes": 9377,
+      "record": {
+        "schema": "fvs/windows-native-lifecycle-tests/v2",
+        "ok": true,
+        "mode": "cleanup-faults",
+        "finishedAt": "2026-10-25T20:23:41.333Z",
+        "launcherSha256": "f05840b3c3e8d36a5cf3f3040d6afef24926a27a9d87aba05fb73d24e125861f",
+        "launcherBuild": {
+          "receiptSha256": "d4fc6a1f5d48c5e803f4556cd917979be039a9eec8a3f9489440b7d48f76c889",
+          "recordedSourceSetSha256": "b9b2ef8f889032e0d80b882d09b2b9f7551478bb2e8e171f263ff36fb3805472",
+          "sources": [
+            {
+              "file": "NativeMethods.cs",
+              "sha256": "41d93ea073f269c162b4aa37d13a5ef1228a952ac7f905abbb34c1b6325fdce1"
+            },
+            {
+              "file": "NativeExtra.cs",
+              "sha256": "cb7ffafb57801a593841ee7afc64951774db1e196c20d8142b2c9722fa11b6c0"
+            },
+            {
+              "file": "VerifiedPrivateLeafCleanup.cs",
+              "sha256": "ffe2ae24450d3f697b03d9f4c4f6c8fc57fa7a3d3e7e447cd9a9fcc0f7e1449c"
+            },
+            {
+              "file": "FvsWindowsLauncher.cs",
+              "sha256": "3bdcd963d718870f3b487edc9684e3999ec15863c66c9311c0eef3f8781420e5"
+            },
+            {
+              "file": "WindowsLifecycle.cs",
+              "sha256": "c19f393655dabf3b9a78c6fd69b5e5cbfa7d939f365f8ab37f49bdd0fd820ed3"
+            }
+          ],
+          "testHooks": true
+        },
+        "canonicalSourceSetSha256": "a930297e58af6300f84b78f2d33fad7533bcffe6bc70ef19ca541d78f566ae17",
+        "currentNativeSourceBytesMatch": true,
+        "canarySha256": "bf2d7a6b23877dda1bde1aa5522a62bedeff3593d0a8c1639fd0e263d78a271d",
+        "harnessSha256": "15461b3cf2a2ed5cc68e175fb7df1b209de361f21e9e50bcde45d3d85fd4f69e",
+        "checks": [
+          {
+            "name": "additional prepare termination grant-1:before-intent",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination grant-1:after-intent",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination grant-1:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination grant-1:after-completion",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination grant-3:before-intent",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination grant-3:after-intent",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination grant-3:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination grant-3:after-completion",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination grant-4:before-intent",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination grant-4:after-intent",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination grant-4:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination grant-4:after-completion",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination create-handle-sentinel:before-intent",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination create-handle-sentinel:after-intent",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination create-handle-sentinel:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination create-handle-sentinel:after-completion",
+            "passed": true
+          },
+          {
+            "name": "additional readonly entry grant-entry-0-0:before-mutation",
+            "passed": true
+          },
+          {
+            "name": "additional readonly entry grant-entry-0-0:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "additional readonly entry grant-entry-1-0:before-mutation",
+            "passed": true
+          },
+          {
+            "name": "additional readonly entry grant-entry-1-0:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "writable resource cleanup termination remove-resource-3:before-intent",
+            "passed": true
+          },
+          {
+            "name": "writable resource cleanup termination remove-resource-3:after-intent",
+            "passed": true
+          },
+          {
+            "name": "writable resource cleanup termination remove-resource-3:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "writable resource cleanup termination remove-resource-3:after-completion",
+            "passed": true
+          },
+          {
+            "name": "writable resource cleanup termination remove-resource-4:before-intent",
+            "passed": true
+          },
+          {
+            "name": "writable resource cleanup termination remove-resource-4:after-intent",
+            "passed": true
+          },
+          {
+            "name": "writable resource cleanup termination remove-resource-4:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "writable resource cleanup termination remove-resource-4:after-completion",
+            "passed": true
+          },
+          {
+            "name": "dispose original-entry cleanup termination source.txt remove-entry-3:before-mutation",
+            "passed": true
+          },
+          {
+            "name": "dispose original-entry cleanup termination source.txt remove-entry-3:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "dispose original-entry cleanup termination protected remove-entry-4:before-mutation",
+            "passed": true
+          },
+          {
+            "name": "dispose original-entry cleanup termination protected remove-entry-4:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "recover original-entry cleanup termination source.txt remove-entry-3:before-mutation",
+            "passed": true
+          },
+          {
+            "name": "recover original-entry cleanup termination source.txt remove-entry-3:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "recover original-entry cleanup termination protected remove-entry-4:before-mutation",
+            "passed": true
+          },
+          {
+            "name": "recover original-entry cleanup termination protected remove-entry-4:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "dispose created-entry cleanup termination remove-created-entry:before-intent",
+            "passed": true
+          },
+          {
+            "name": "dispose created-entry cleanup termination remove-created-entry:after-intent",
+            "passed": true
+          },
+          {
+            "name": "dispose created-entry cleanup termination remove-created-entry:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "dispose created-entry cleanup termination remove-created-entry:after-completion",
+            "passed": true
+          },
+          {
+            "name": "recover created-entry cleanup termination remove-created-entry:before-intent",
+            "passed": true
+          },
+          {
+            "name": "recover created-entry cleanup termination remove-created-entry:after-intent",
+            "passed": true
+          },
+          {
+            "name": "recover created-entry cleanup termination remove-created-entry:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "recover created-entry cleanup termination remove-created-entry:after-completion",
+            "passed": true
+          },
+          {
+            "name": "recovery directory termination recover-session-directory:before-intent",
+            "passed": true
+          },
+          {
+            "name": "recovery directory termination recover-session-directory:after-intent",
+            "passed": true
+          },
+          {
+            "name": "recovery directory termination recover-session-directory:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "recovery directory termination recover-session-directory:after-completion",
+            "passed": true
+          },
+          {
+            "name": "recovery directory termination recover-control-directory:before-intent",
+            "passed": true
+          },
+          {
+            "name": "recovery directory termination recover-control-directory:after-intent",
+            "passed": true
+          },
+          {
+            "name": "recovery directory termination recover-control-directory:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "recovery directory termination recover-control-directory:after-completion",
+            "passed": true
+          },
+          {
+            "name": "cleanup durable I/O refusal write:active.json",
+            "passed": true
+          },
+          {
+            "name": "cleanup durable I/O refusal flush:active.json",
+            "passed": true
+          },
+          {
+            "name": "cleanup durable I/O refusal replace:active.json",
+            "passed": true
+          },
+          {
+            "name": "cleanup durable I/O refusal write:cleanup-audit.json",
+            "passed": true
+          },
+          {
+            "name": "cleanup durable I/O refusal flush:cleanup-audit.json",
+            "passed": true
+          },
+          {
+            "name": "cleanup durable I/O refusal replace:cleanup-audit.json",
+            "passed": true
+          },
+          {
+            "name": "cleanup durable I/O refusal write:terminal-receipt.json",
+            "passed": true
+          },
+          {
+            "name": "cleanup durable I/O refusal flush:terminal-receipt.json",
+            "passed": true
+          },
+          {
+            "name": "cleanup durable I/O refusal replace:terminal-receipt.json",
+            "passed": true
+          },
+          {
+            "name": "control-file durable I/O refusal write:run.lock",
+            "passed": true
+          },
+          {
+            "name": "control-file durable I/O refusal flush:run.lock",
+            "passed": true
+          },
+          {
+            "name": "control-file durable I/O refusal replace:run.lock",
+            "passed": true
+          },
+          {
+            "name": "control-file durable I/O refusal write:handle-sentinel",
+            "passed": true
+          },
+          {
+            "name": "control-file durable I/O refusal flush:handle-sentinel",
+            "passed": true
+          },
+          {
+            "name": "control-file durable I/O refusal replace:handle-sentinel",
+            "passed": true
+          }
+        ],
+        "passed": 67,
+        "failed": 0,
+        "crossLogonRecovery": "not qualified; native refuses a different logon",
+        "scope": "Supplemental injected cleanup-transition and durable-I/O failures on the retained test-hook launcher whose five C# file hashes equal the current production source. Historical recorded source-set metadata is retained; no claim of execution using the managed non-test-hook binary is made."
+      }
+    }
+  },
+  "regressionReference": {
+    "artifact": ".native-work/FVS_Windows_Native_Installed_2026-10-25.zip",
+    "sha256": "7e63c2f24c88fb3f75529362550b10bec464854f44e6acaa9676e8927756811b",
+    "bytes": 2470789,
+    "scope": "Retained experimental v10 implementation regression reference: confinement/candidate-v10 C# sources and recipes, harnesses, graph and evidence. The exact archive identity is verified without extraction; its historical implementation is not relabeled as the current production launcher."
+  },
+  "rawEvidence": [
+    {
+      "artifact": ".native-work/evidence/production-positive-04/qualification.json",
+      "sha256": "6533bcf0dd722535f837f02a26f181450b4eab59e5ba9fb3072604345d95f00b",
+      "bytes": 15346
+    },
+    {
+      "artifact": ".native-work/evidence/windows-candidate-04.json",
+      "sha256": "9eeabb129ef3040b90b3b01cebe85f646105f976685db27a752184d53b8cbf30",
+      "bytes": 41884
+    },
+    {
+      "artifact": ".native-work/evidence/packaged-setup-04-verified.json",
+      "sha256": "4cf17fbbb2fde18df0a4996975d4d7b9256247bae2c8284c0bfabf17036db22c",
+      "bytes": 1371
+    },
+    {
+      "artifact": ".native-work/evidence/native-production-cleanup-faults-12/summary.json",
+      "sha256": "97fbd7ad6d025af997aa1fa9c769ba6fc3f18c030417f7ecef9998b2459ebd44",
+      "bytes": 9377
+    },
+    {
+      "artifact": ".native-work/FVS_Windows_Native_Installed_2026-10-25.zip",
+      "sha256": "7e63c2f24c88fb3f75529362550b10bec464854f44e6acaa9676e8927756811b",
+      "bytes": 2470789
+    },
+    {
+      "artifact": ".native-work/evidence/windows-setup-acceptance-public.json",
+      "sha256": "b684178fdce1fa3cb81f36e03f1c8de4d8efbb95e2ddacb97df28b60ca8285ae",
+      "bytes": 24251
+    },
+    {
+      "artifact": ".native-work/evidence/native-production-public.json",
+      "sha256": "f98f6c209f89f8af2b3d54e6a08f3fd627ef4f6e489bff4cc4e20b73f54d5e67",
+      "bytes": 18033
+    },
+    {
+      "artifact": ".native-work/evidence/windows-adapter-acceptance-public.json",
+      "sha256": "bafaf60eadd90ee6aa164b3eb3f4fffcd4798242447383ad185b647785297111",
+      "bytes": 10085
+    },
+    {
+      "artifact": ".native-work/evidence/production-positive-04/resolve.stdout.log",
+      "sha256": "e399ac707b74c378818eb7f81249e31ae5578f00259fe69855fb10f054e4de06",
+      "bytes": 4812
+    },
+    {
+      "artifact": ".native-work/evidence/production-positive-04/resolve.stderr.log",
+      "sha256": "fd27b5ae66e09edce3437680c5739af5ecb0e8b8c903431a66b44bb7bdb0931b",
+      "bytes": 8907
+    },
+    {
+      "artifact": ".native-work/evidence/production-positive-04/resolve.command.json",
+      "sha256": "a94d91a1d028d2ff796bd3ed211a8e1b360377c3c03e231f3146368d5ff5e48d",
+      "bytes": 458
+    },
+    {
+      "artifact": ".native-work/evidence/production-positive-04/run.stdout.log",
+      "sha256": "d64f173f2e2187c70b3a6ad58da85cf228fb2969f6c290535d6a3ca4061d41d7",
+      "bytes": 5101
+    },
+    {
+      "artifact": ".native-work/evidence/production-positive-04/run.stderr.log",
+      "sha256": "f3b6b10e36be45033dbc213b62aff2a7bb5e6b1055ab6e5629d49e862f1495c1",
+      "bytes": 25692
+    },
+    {
+      "artifact": ".native-work/evidence/production-positive-04/run.command.json",
+      "sha256": "37aee5e1e72c8e102213070ee726ba546ce4eb950261e230ee637f7fa821ca76",
+      "bytes": 553
+    },
+    {
+      "artifact": ".native-work/evidence/production-positive-04/inventory.stdout.log",
+      "sha256": "f9a17726522f36a31441f2e6815ac533aed58148f3d05d24b563cb5ac407f655",
+      "bytes": 588771
+    },
+    {
+      "artifact": ".native-work/evidence/production-positive-04/inventory.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "artifact": ".native-work/evidence/production-positive-04/inventory.command.json",
+      "sha256": "13e21308b7c0df1d25e8235ed6ebe44cba63b4ac0a1d9268c04717b8275be5e7",
+      "bytes": 445
+    },
+    {
+      "artifact": ".native-work/evidence/production-positive-04/extract.json",
+      "sha256": "e6e7022619dc754892525758fedb6f3749eaa144d2ee805fcc7b4d5d75ab10c5",
+      "bytes": 11134223
+    },
+    {
+      "artifact": ".native-work/evidence/production-positive-04/charon-joins.json",
+      "sha256": "8b9c753fdedd1a61de559a9aa6e43be9bcdd18fe13b366c64d754fdeacbcd824",
+      "bytes": 44759
+    },
+    {
+      "artifact": ".native-work/evidence/production-positive-04/missing-lean-references.json",
+      "sha256": "b55fef8af0f070d4ee47ce89544fb2df388fde6698e1474383d3ba7868cbc9fa",
+      "bytes": 9853
+    },
+    {
+      "artifact": "managed/INSTALL.json",
+      "sha256": "cda70d2deada871e8db8e5489b7d5251f31a8763cc7f0445d49f032e99faf4b3",
+      "bytes": 3243250
+    },
+    {
+      "artifact": "managed/launcher-build.json",
+      "sha256": "8e1d91f656e8c51e1e15d03eef3a649ce0ceb1769897ff4580fd54b9e4944d42",
+      "bytes": 1921
+    },
+    {
+      "artifact": "positive/helper/state.json",
+      "sha256": "5e7d94c750e51be2f1ce72d5108cb2141ee53075ffdac1e37eaca811eb2e455e",
+      "bytes": 2330603
+    },
+    {
+      "artifact": "positive/helper/run-00bcc6dcdd834f2f97cb1583a67b19ca.json",
+      "sha256": "47f1d1e93fe32a74e099022dc558e0d9254ee694ca871e03051aeabf0dfb326b",
+      "bytes": 284
+    },
+    {
+      "artifact": "positive/helper/run-042b49012a0f412ab3f3b33a96869c5d.json",
+      "sha256": "ea02dc2b04d365595f2f88e3be9a171b2cd5a8f0bb2043cf5e9bebd7f83751ca",
+      "bytes": 266
+    },
+    {
+      "artifact": "positive/helper/run-092e4804a30e4f609bbd8a470830fa01.json",
+      "sha256": "89a7691350b8038c5d0ee7837694b3f9baca9811fc2eb6585ae1a87c2048d0cd",
+      "bytes": 291
+    },
+    {
+      "artifact": "positive/helper/run-17abc8c77ece44a8836fe0d3bfc10d41.json",
+      "sha256": "9648e0ed9cd71ef2b6090eef998629c8f65a7cc908df16a8f44426e0cf7e7603",
+      "bytes": 301
+    },
+    {
+      "artifact": "positive/helper/run-180730d678564c83ba7a17208b0a52af.json",
+      "sha256": "72b1233d75eaf87213788ee7e54519599cd911c666232ebc920972c03090521f",
+      "bytes": 269
+    },
+    {
+      "artifact": "positive/helper/run-2acf28077bbf48ef8e0c438e6b347856.json",
+      "sha256": "731427a3c26c35002cdfc5a1a8839533b58912e4de7865c8607f42cf46c7b751",
+      "bytes": 268
+    },
+    {
+      "artifact": "positive/helper/run-80dd522ae62a4c158ab3385f4664a0fe.json",
+      "sha256": "d6de6efd81557db659151b2cc931b41ce713e60a16aa8697af3fd1a08e6558ec",
+      "bytes": 277
+    },
+    {
+      "artifact": "positive/helper/run-d684abd8b10c463aa2836c3e80f22f28.json",
+      "sha256": "ac3ef83298e1386044e25e03acc021169a82066d83e06a6e630fba3156563154",
+      "bytes": 284
+    },
+    {
+      "artifact": "positive/helper/run-daa84d9e080144cd9d55540c15e5ac00.json",
+      "sha256": "6f8602f8e815ff6bbea4d7e118406315bfd84f770711192c6f139388b54b8dee",
+      "bytes": 352
+    },
+    {
+      "artifact": "positive/helper/run-f8255c4135294885853e5d6b81c388a7.json",
+      "sha256": "27da798debdc7a325032edea38852cdae5c032b4703d3f4b9bb9541eb6d2a5c6",
+      "bytes": 255
+    },
+    {
+      "artifact": "positive/helper/run-fdcda1fc53d640bba45adcf37fbd2e20.json",
+      "sha256": "9a3ed05252c46da3eda9b9181381795b8036f7c0daa57a228b05c491ca992998",
+      "bytes": 420
+    },
+    {
+      "artifact": "positive/helper/terminal-receipt.json",
+      "sha256": "3d8ad4ce6d9889c0a620a2ef7dc6ea409439507d31d2a84a75763f91f52da318",
+      "bytes": 9904
+    },
+    {
+      "artifact": "positive/extract/state.json",
+      "sha256": "ee92fa8092b21f755e7d5baf81dfb5e2217d415965e8afa3443e21920e258160",
+      "bytes": 80350940
+    },
+    {
+      "artifact": "positive/extract/run-c0c8f884f82e4b089e3d9919c0023d5e.json",
+      "sha256": "60b498798449cd83afd0314f13366f7a2fec47aeabdbff83bcdb25c88634cc7b",
+      "bytes": 21001
+    },
+    {
+      "artifact": "positive/extract/terminal-receipt.json",
+      "sha256": "594054f8306dca9af16cf8a74c972719552d41df09dc5e1dcae3d00a0fe4510d",
+      "bytes": 21080
+    },
+    {
+      "artifact": "collector/finalize-windows-evidence.mjs",
+      "sha256": "6b3418a52f482bdb5899d3c00b1caae2ecbff60878a5f334f6b7a7580069e4dd",
+      "bytes": 33579
+    }
+  ],
+  "limitations": [
+    "Source-build distribution identity is separate from the official Windows archive; the official route is not qualified by this receipt.",
+    "Tested native Windows 11 AMD64/local NTFS and this pinned Aeneas/Charon/Lean consumer tuple. Public API extraction, ARM64 emulation, network shares and unsupported alias/path layouts remain unsupported.",
+    "Five helper groups reused exact reviewed artifacts; normal setup freshly compiled the launcher. Existing prepared Lean builds and translation metadata were reused, not regenerated.",
+    "Canonical proof classifications are upstream-reported. Eight sorry warnings, duplicate declarations, missing Lean dependency keys and actual Rust-analyzer diagnostics remain visible.",
+    "Synthetic adapter/auto-install denial authority and historical native build metadata are preserved verbatim in nested evidence; they are not relabeled as normal-resolution tests.",
+    "The native source-set ordering correction preserves the original historical digest and verifies unchanged C# file hashes; deterministic executable-byte reproduction is not claimed.",
+    "Cross-logon recovery remains unqualified and refused. Process termination and injected I/O failure recovery are measured; arbitrary hardware power-loss durability is not claimed.",
+    "Trusted host orchestration and account-owner receipt trust are required; hostile concurrent same-user filesystem/ACL tampering is outside the qualified threat model."
+  ]
+}

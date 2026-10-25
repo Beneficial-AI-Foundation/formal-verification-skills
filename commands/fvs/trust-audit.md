@@ -55,7 +55,11 @@ provenance cannot be read here, the resolver reports `unknown` and the choice is
 before any work that could fail.
 
 This is the first operational decision. Run it before path prompts, model selection,
-`.formalising/` writes, cache or build work, and any agent dispatch. The resolver is read-only:
+`.formalising/` writes, cache or build work, and any agent dispatch. Resolution never installs
+or downloads tools or changes project/tool contents. Windows checks temporarily create
+confinement profiles and access grants, then remove them. For native PowerShell commands,
+source-build setup, and interruption recovery, use `fv-skills/references/windows-probe.md`.
+The resolver classifies readiness:
 it compares the project's generated `translation.json`, its Aeneas pin in `lake-manifest.json`
 and `aeneas-config.yml`, and `lean-toolchain` with the tested tuples shipped in
 `fvs-probe-inventory.mjs`, then checks the probe-aeneas executable and the preinstalled helpers
@@ -83,17 +87,30 @@ before doing anything else:
   Install / Show manual instructions / Cancel. Install runs
   `node "$INVENTORY_SCRIPT" install --project-root "$PROJECT_ROOT" --consent interactive`; then
   rerun this step and continue verified only if it now reports `verified`. Missing or
-  incompatible helpers get the printed manual steps only: FVS never installs a helper. After
-  showing manual steps, stop so the user can rerun.
+  incompatible helpers in an official distribution get the printed manual steps only.
+  For Windows, when `setup.available` is true, show
+  `node "$INVENTORY_SCRIPT" setup --distribution windows-source-v1 --project-root "$PROJECT_ROOT" --manifest`.
+  Explicitly authorized source-build setup uses the same command with `--consent interactive`
+  instead of `--manifest`; then resolve again. Reuse existing user authorization; source
+  setup is never inferred from resolution or extraction. A recovery-required result must
+  be handled through its recorded session before another run. After showing manual steps,
+  stop so the user can rerun.
 - **Continue without graph.** Set `FVS_MODE=exploratory`.
-- **Cancel.** Stop now. Nothing has been written.
+- **Cancel.** Stop now. No graph is accepted.
 
 A noninteractive run never prompts and never infers consent. Installing needs
 `FVS_PROBE_INSTALL_POLICY=install`; continuing without a graph needs the separate opt-in
-`FVS_ALLOW_EXPLORATORY=1`:
+`FVS_ALLOW_EXPLORATORY=1`. Windows source setup uses its separate explicit policy
+`FVS_PROBE_SETUP_POLICY=build`:
 
 ```bash
 # fvs:probe-mode-noninteractive
+if [ -z "$FVS_MODE" ] && [ "${FVS_PROBE_SETUP_POLICY:-}" = build ]; then
+  if node "$INVENTORY_SCRIPT" setup --distribution windows-source-v1 --project-root "$PROJECT_ROOT" --consent policy; then
+    PROBE_STATUS=$(node "$INVENTORY_SCRIPT" resolve --project-root "$PROJECT_ROOT" --format status)
+    if [ "$PROBE_STATUS" = verified ]; then FVS_MODE=verified; fi
+  fi
+fi
 if [ -z "$FVS_MODE" ] && [ "${FVS_PROBE_INSTALL_POLICY:-}" = install ]; then
   if node "$INVENTORY_SCRIPT" install --project-root "$PROJECT_ROOT" --consent policy; then
     PROBE_STATUS=$(node "$INVENTORY_SCRIPT" resolve --project-root "$PROJECT_ROOT" --format status)
@@ -113,8 +130,9 @@ fi
 Exploratory mode never writes the managed CODEMAP block, canonical counts, graph, endpoint or
 progress facts, or an audit verdict. Only verified mode runs the probe, and only through
 `fvs-probe-inventory.mjs run`, which invokes the resolved probe-aeneas by absolute path under an
-FVS-generated sandbox (no network; writes limited to the project's build directories, the
-output directory and a private tmp; every tool home and bin directory denied).
+FVS-generated sandbox with no network access and read-only tool homes. Linux and Windows
+write only to independent private project/output/temp staging; the original project stays
+read-only. macOS restricts writes to approved project build paths, output and private temp.
 
 Exploratory mode skips Steps 1a through 6: no cache preflight, build, extraction, auditor
 dispatch, justification-store merge or table write. The command may read the target files and give

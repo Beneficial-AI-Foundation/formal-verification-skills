@@ -1,7 +1,7 @@
 {
   "schema": "fvs/probe-compatibility-evidence",
   "schemaVersion": 1,
-  "note": "Independent evidence for the tested-tuple and release tables embedded in scripts/fvs-probe-inventory.mjs. `release` and `tuples` must equal the shipped tables exactly; `receipts` hold the observations behind each supported platform.",
+  "note": "Independent evidence for the tested-tuple and release tables embedded in scripts/fvs-probe-inventory.mjs. release and tuples equal the shipped official tables; receipts record official-platform observations. sourceReceipts bind separately qualified built-in source distributions without relabeling official archives.",
   "release": {
     "tool": "probe-aeneas",
     "tag": "v0.20.0",
@@ -54,9 +54,18 @@
       },
       "x86_64-pc-windows-msvc": {
         "asset": "probe-aeneas-x86_64-pc-windows-msvc.zip",
+        "assetId": 554534285,
         "archiveSha256": "91ebd551073d0f705fdf905185e8d82224c53909f22ef774c231aa411000a2dc",
+        "archiveBytes": 1445872,
+        "members": [
+          "CHANGELOG.md",
+          "probe-aeneas.exe",
+          "README.md"
+        ],
+        "executable": "probe-aeneas.exe",
+        "executableSha256": "68a131d2c8bb02b23e17cd8d99f5d1de059a7adb2f4ff1ba52fd8b635f5c4c77",
         "supported": false,
-        "reason": "scip and probe-lean publish no Windows binaries, and there is no confinement equivalent"
+        "reason": "the official Windows executable has not been qualified; native source builds use a separate distribution; tracked in Beneficial-AI-Foundation/formal-verification-skills#77"
       }
     }
   },
@@ -72,12 +81,21 @@
         "aarch64-apple-darwin": {
           "isolation": "sandbox-exec",
           "helpers": {
-            "probe-rust": { "version": "probe-rust 0.11.0" },
-            "scip": { "version": "scip version v0.10.0" },
-            "probe-lean": { "version": "0.14.0" },
+            "probe-rust": {
+              "version": "probe-rust 0.11.0"
+            },
+            "scip": {
+              "version": "scip version v0.10.0"
+            },
+            "probe-lean": {
+              "version": "0.14.0"
+            },
             "rust-analyzer": {
               "version": "rust-analyzer 1.98.1 (48a229ce 2026-09-01)",
-              "components": ["rust-analyzer", "rust-src"]
+              "components": [
+                "rust-analyzer",
+                "rust-src"
+              ]
             }
           }
         },
@@ -158,10 +176,17 @@
         "rust-analyzer": {
           "version": "rust-analyzer 1.98.1 (48a229ce 2026-09-01)",
           "source": "rustup 1.29.1 component of toolchain 1.98.1-aarch64-apple-darwin",
-          "components": ["rust-analyzer", "rust-src"],
+          "components": [
+            "rust-analyzer",
+            "rust-src"
+          ],
           "sha256": "78082ea1a96a008751767bd35f43738b5d4565cbef06ee5b31ad742a316133b5"
         },
-        "notRequired": ["charon", "charon-driver", "cargo-public-api"]
+        "notRequired": [
+          "charon",
+          "charon-driver",
+          "cargo-public-api"
+        ]
       },
       "isolation": {
         "mechanism": "sandbox-exec",
@@ -179,7 +204,9 @@
           "schema": "probe-aeneas/extract",
           "schemaVersion": "3.0",
           "toolVersion": "0.20.0",
-          "inputCommits": ["0a22c281a9a14b6465a5473c200c7d3f1ac92df8"],
+          "inputCommits": [
+            "0a22c281a9a14b6465a5473c200c7d3f1ac92df8"
+          ],
           "canonicalCount": 279,
           "canonicalWithCharonDefId": 189,
           "defIdJoins": 189,
@@ -556,6 +583,26 @@
           "wsl-preflight.json": "ded0b0c476b6237751774b7e7e91a0acd936ac0c32af48c3351ba5622c567cf8"
         }
       }
+    }
+  },
+  "sourceReceipts": {
+    "windows-source-v1": {
+      "tuple": "aeneas-6e167c9b-charon-0.1.225-lean-v4.31.0",
+      "target": "x86_64-pc-windows-msvc",
+      "official": false,
+      "policySha256": "323acfbff84d5841615612ffc110479123b9c5556a83a40b74a6b651fcbb4216",
+      "evidence": {
+        "path": "tests/fixtures/windows-source-v1.json",
+        "sha256": "54e7f395dd87b9cb982f460f2f43718b6b6c5234bee253918857bf6c0b6ec8ba"
+      },
+      "observed": {
+        "canonicalFunctions": 279,
+        "charonJoins": 189,
+        "upstreamSorryWarnings": 8,
+        "missingLeanReferences": 47,
+        "missingLeanKeys": 22
+      },
+      "scope": "Native Windows 11 x64/local NTFS, pinned Dalek consumer; full setup, normal resolve/run, real installation denial and interruption recovery passed. Official Windows binary and Linux arm64 remain unsupported."
     }
   }
 }

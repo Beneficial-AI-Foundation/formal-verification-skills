@@ -1,0 +1,175 @@
+{
+  "schema": "fvs/windows-source-policy/v1",
+  "id": "windows-source-v1",
+  "target": "x86_64-pc-windows-msvc",
+  "version": "0.20.0",
+  "qualified": false,
+  "toolchain": "1.98.1-x86_64-pc-windows-msvc",
+  "leanToolchain": "leanprover/lean4:v4.31.0",
+  "msvcVersion": "14.44.35207",
+  "sdkVersion": "10.0.26100.0",
+  "sources": {
+    "probe-aeneas": {
+      "repository": "https://github.com/Beneficial-AI-Foundation/probe-aeneas.git",
+      "commit": "70cbb9b4675d1639721fa60d1e0f2cd2df80cb54",
+      "patch": "probe-aeneas.patch",
+      "lockSha256": "b5bd6e78b63a09c752394a5cc98faff209eef114e27b36804d8d6cd9d415e39e"
+    },
+    "probe-rust": {
+      "repository": "https://github.com/Beneficial-AI-Foundation/probe-rust.git",
+      "commit": "1d2a7c5d0e5a5dd95e55c8d6a51cddae0b3d7572",
+      "patch": "probe-rust.patch",
+      "lockSha256": "d2bdbe69e1414fa9cdc096af7860c93030ae55d52223be70be81fc9bd10088ce"
+    },
+    "probe-lean": {
+      "repository": "https://github.com/Beneficial-AI-Foundation/probe-lean.git",
+      "commit": "fa581edfcb3de7eb801580ea183430edaa50cc68",
+      "patch": "probe-lean.patch",
+      "cliCommit": "92564e5770e4d09f2d86dfbf8ada1e9c715b384c"
+    },
+    "scip": {
+      "repository": "https://github.com/scip-code/scip.git",
+      "commit": "1c2b6db7e560d5233c944f36e4ac1377cc6963fc"
+    },
+    "rustup": {
+      "repository": "https://github.com/rust-lang/rustup.git",
+      "commit": "d8c92c6765f85625b20482e165066bf1e98e7297",
+      "lockOriginalSha256": "a7081f4b94a8a9b10422a643a7bd855b541ed7c595cd488e0c86f9580ab4ba1a",
+      "lockSha256": "f60011f494763d3671041aa9c2f434a6e975cd83cdc06cd44f3b754beb4dbfe6",
+      "fsAtPatch": "fs-at.patch",
+      "fsAtWinSha256": "4b7d59cfa7739468f89748c9a947716ced54c088f9a49cebb24baca59dacabc9"
+    }
+  },
+  "archives": {
+    "lean": {
+      "filename": "lean-4.31.0-windows.zip",
+      "url": "https://github.com/leanprover/lean4/releases/download/v4.31.0/lean-4.31.0-windows.zip",
+      "sha256": "f73208f53dcdc901745cb35fc916c476e0e18ed0856937740e46d07848f57f19",
+      "root": "lean-4.31.0-windows"
+    },
+    "go": {
+      "filename": "go1.27.3.windows-amd64.zip",
+      "url": "https://go.dev/dl/go1.27.3.windows-amd64.zip",
+      "sha256": "f26081f438319757f8a1b46d7d0b2c5ec7583d4038e485e0aa725cfde7885fff",
+      "root": "go"
+    },
+    "cmake": {
+      "filename": "cmake-4.4.4-windows-x86_64.zip",
+      "url": "https://github.com/Kitware/CMake/releases/download/v4.4.4/cmake-4.4.4-windows-x86_64.zip",
+      "sha256": "bace36e94b31c68ab6fa295f26dfa11219e0701cf7c94b0284a7d1cb13dac536",
+      "root": "cmake-4.4.4-windows-x86_64"
+    },
+    "nasm": {
+      "filename": "nasm-3.02-win64.zip",
+      "url": "https://www.nasm.us/pub/nasm/releasebuilds/3.02/win64/nasm-3.02-win64.zip",
+      "sha256": "161d0bfaff53c2f9e9f3e69fd0672323ebabafd1268976a5cec11be92a19aee7",
+      "root": "nasm-3.02"
+    },
+    "fsAt": {
+      "filename": "fs_at-0.2.1.crate",
+      "url": "https://static.crates.io/crates/fs_at/fs_at-0.2.1.crate",
+      "sha256": "14af6c9694ea25db25baa2a1788703b9e7c6648dcaeeebeb98f7561b5384c036",
+      "root": "fs_at-0.2.1"
+    }
+  },
+  "patches": {
+    "probe-aeneas.patch": "7dfa2564190812e90acd29fb799f52db9ff0f0afd99e8008c153d0b9cc1887f9",
+    "probe-rust.patch": "551f1cc7bd25e9c49e8d00d36db4d29b520a7a1d92cad9f57d4317b0e40e85b4",
+    "probe-lean.patch": "d8f346e30452a6caf34527c05af5caa46ebd49e2af0a2580af18f8c5b5f43576",
+    "fs-at.patch": "5575e0a75e20e7679779c15e073d91baf53b401e8e54cf9691ff379f0cbfb8a3"
+  },
+  "versions": [
+    {
+      "name": "probe-aeneas",
+      "helper": "probe-aeneas",
+      "args": [
+        "--version"
+      ],
+      "expected": "probe-aeneas 0.20.0"
+    },
+    {
+      "name": "probe-rust",
+      "helper": "probe-rust",
+      "args": [
+        "--version"
+      ],
+      "expected": "probe-rust 0.11.0"
+    },
+    {
+      "name": "probe-lean",
+      "helper": "probe-lean",
+      "args": [
+        "--version"
+      ],
+      "expected": "0.14.0"
+    },
+    {
+      "name": "scip",
+      "helper": "scip",
+      "args": [
+        "--version"
+      ],
+      "expected": "scip version v0.10.0"
+    },
+    {
+      "name": "lean",
+      "helper": "lean",
+      "args": [
+        "--version"
+      ],
+      "expected": "Lean (version 4.31.0, x86_64-w64-windows-gnu, commit 68218e876d2a38b1985b8590fff244a83c321783, Release)"
+    },
+    {
+      "name": "lake",
+      "helper": "lake",
+      "args": [
+        "--version"
+      ],
+      "expected": "Lake version 5.0.0-src+68218e8 (Lean version 4.31.0)"
+    },
+    {
+      "name": "rust-analyzer",
+      "helper": "rust-analyzer",
+      "args": [
+        "--version"
+      ],
+      "expected": "rust-analyzer 1.98.1 (48a229ce 2026-09-01)"
+    },
+    {
+      "name": "rustup-components",
+      "helper": "rustup",
+      "args": [
+        "component",
+        "list",
+        "--installed",
+        "--toolchain",
+        "1.98.1-x86_64-pc-windows-msvc"
+      ],
+      "expected": "cargo-x86_64-pc-windows-msvc\nrust-analyzer-x86_64-pc-windows-msvc\nrust-src\nrust-std-x86_64-pc-windows-msvc\nrustc-x86_64-pc-windows-msvc\nrustfmt-x86_64-pc-windows-msvc"
+    },
+    {
+      "name": "cargo",
+      "helper": "cargo",
+      "args": [
+        "--version"
+      ],
+      "expected": "cargo 1.98.1 (797e8a9bc 2026-08-05)"
+    },
+    {
+      "name": "rustc",
+      "helper": "rustc",
+      "args": [
+        "--version"
+      ],
+      "expected": "rustc 1.98.1 (48a229cea 2026-09-01)"
+    },
+    {
+      "name": "git",
+      "helper": "git",
+      "args": [
+        "--version"
+      ],
+      "expected": "git version 2.56.0.windows.3"
+    }
+  ]
+}

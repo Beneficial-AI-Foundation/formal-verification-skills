@@ -12,6 +12,14 @@ const ROOT = path.resolve(__dirname, '..');
 const SCRIPT = path.join(ROOT, 'scripts', 'fvs-probe-inventory.mjs');
 const temporaryDirectories = [];
 
+function copyWindowsDependencies(scripts) {
+  for (const name of ['runtime', 'setup', 'sandbox', 'qualification']) {
+    const file = `fvs-probe-windows-${name}.mjs`;
+    fs.copyFileSync(path.join(ROOT, 'scripts', file), path.join(scripts, file));
+  }
+  require('../scripts/fvs-probe-assets.cjs').copyNativeAssets(path.join(ROOT, 'scripts'), scripts);
+}
+
 after(() => {
   for (const directory of temporaryDirectories) {
     fs.rmSync(directory, { recursive: true, force: true });
@@ -584,6 +592,8 @@ function testRuntime(directory, { probe = null, sandbox = null } = {}) {
     ].join('\n'));
   }
   fs.writeFileSync(path.join(scripts, 'fvs-probe-linux.mjs'), linux);
+  fs.copyFileSync(path.join(ROOT, 'scripts', 'fvs-probe-windows.mjs'), path.join(scripts, 'fvs-probe-windows.mjs'));
+  copyWindowsDependencies(scripts);
   return script;
 }
 
@@ -700,6 +710,8 @@ describe('verified probe-aeneas compatibility evidence', () => {
     const copied = path.join(layout, 'scripts', 'fvs-probe-inventory.mjs');
     fs.copyFileSync(SCRIPT, copied);
     fs.copyFileSync(path.join(ROOT, 'scripts', 'fvs-probe-linux.mjs'), path.join(path.dirname(copied), 'fvs-probe-linux.mjs'));
+    fs.copyFileSync(path.join(ROOT, 'scripts', 'fvs-probe-windows.mjs'), path.join(path.dirname(copied), 'fvs-probe-windows.mjs'));
+    copyWindowsDependencies(path.dirname(copied));
     assert.ok(!fs.existsSync(path.join(layout, 'tests')));
 
     const shipped = await loadSetup(copied);
@@ -773,6 +785,30 @@ describe('verified probe-aeneas compatibility evidence', () => {
     assert.ok(list);
     assert.match(list[1], /'fvs-probe-inventory\.mjs'/);
     assert.match(list[1], /'fvs-probe-linux\.mjs'/);
+    assert.match(list[1], /'fvs-probe-windows\.mjs'/);
+  });
+
+  it('uses an .exe managed path for Windows without enabling unverified execution', async () => {
+    const { managedProbePath, PROBE_RELEASE, TESTED_TUPLES, resolveProbe, installProbe } = await loadSetup();
+    const directory = temporaryDirectory();
+    const toolsRoot = path.join(directory, 'tools');
+    const target = 'x86_64-pc-windows-msvc';
+    assert.equal(managedProbePath(toolsRoot, target),
+      path.join(toolsRoot, 'probe-aeneas', `0.20.0-${target}`, 'probe-aeneas.exe'));
+    assert.equal(path.basename(managedProbePath(toolsRoot, LINUX_TARGET)), 'probe-aeneas');
+    assert.equal(path.basename(managedProbePath(toolsRoot, TESTED_TARGET)), 'probe-aeneas');
+    assert.equal(PROBE_RELEASE.assets[target].supported, false);
+    assert.ok(TESTED_TUPLES.every(tuple => !tuple.platforms[target]));
+    const result = resolveProbe({ projectRoot: tupleProject(directory), platform: target, distribution: 'official' });
+    assert.equal(result.status, 'unsupported-platform');
+    assert.equal(result.platformSupported, false);
+    assert.equal(result.install.available, false);
+    assert.equal(result.probe, null);
+    assert.deepEqual(result.helpers, {});
+    assert.match(result.reasons.join(' '), /official Windows executable has not been qualified/);
+    await assert.rejects(installProbe({ toolsRoot, target, decision: 'interactive',
+      fetchImpl: async () => assert.fail('unsupported Windows must not download') }), /not installable/);
+    assert.ok(!fs.existsSync(toolsRoot));
   });
 });
 
@@ -821,7 +857,7 @@ describe('verified probe-aeneas resolution', () => {
     const project = tupleProject(directory);
     const assets = fixture().release.assets;
     for (const target of [...Object.keys(assets).filter((name) => !assets[name].supported), 'riscv64gc-unknown-linux-gnu']) {
-      const result = resolveJson(project, env.env, ['--platform', target]);
+      const result = resolveJson(project, env.env, ['--platform', target, '--distribution', 'official']);
       assert.equal(result.status, 'unsupported-platform', target);
       assert.equal(result.platformSupported, false);
       assert.equal(result.install.available, false);
@@ -1724,7 +1760,10 @@ describe('verified-or-exploratory routing at every probe entry point', () => {
       assert.match(content, /\*\*Cancel\.\*\*/);
       assert.match(content, /--consent interactive/);
       assert.match(content, /install --project-root "\$PROJECT_ROOT" --manifest/);
-      assert.match(content, /never installs a helper/);
+      assert.match(content, /helpers in an official distribution get the printed manual steps only/);
+      assert.match(content, /setup --distribution windows-source-v1/);
+      assert.match(content, /FVS_PROBE_SETUP_POLICY=build/);
+      assert.match(content, /Windows checks temporarily create\s+confinement profiles and access grants/);
       assert.match(content, /FVS_ALLOW_EXPLORATORY=1/);
       assert.match(content, /FVS_PROBE_INSTALL_POLICY=install/);
       assert.match(content, /never writes the managed CODEMAP block/);
@@ -1778,6 +1817,8 @@ describe('verified-or-exploratory routing at every probe entry point', () => {
     fs.mkdirSync(path.join(home, '.claude', 'scripts'), { recursive: true });
     fs.copyFileSync(runtime, path.join(home, '.claude', 'scripts', 'fvs-probe-inventory.mjs'));
     fs.copyFileSync(path.join(ROOT, 'scripts', 'fvs-probe-linux.mjs'), path.join(home, '.claude', 'scripts', 'fvs-probe-linux.mjs'));
+    fs.copyFileSync(path.join(ROOT, 'scripts', 'fvs-probe-windows.mjs'), path.join(home, '.claude', 'scripts', 'fvs-probe-windows.mjs'));
+    copyWindowsDependencies(path.join(home, '.claude', 'scripts'));
     const script = [
       bashBlock(reference, 'fvs:probe-mode'),
       bashBlock(reference, 'fvs:probe-mode-noninteractive'),
