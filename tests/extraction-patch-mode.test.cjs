@@ -22,6 +22,7 @@ const { spawnSync } = require('child_process');
 const ROOT = path.resolve(__dirname, '..');
 const COMMAND = path.join(ROOT, 'commands', 'fvs', 'aeneas-extract.md');
 const WORKFLOW = path.join(ROOT, 'fv-skills', 'workflows', 'aeneas-extract.md');
+const APPLIER = path.join(ROOT, 'agents', 'fvs-extract-applier.md');
 const ENGINE = path.join(ROOT, 'scripts', 'fvs-extract-patches.mjs');
 
 const commandText = fs.readFileSync(COMMAND, 'utf8');
@@ -143,9 +144,47 @@ describe('Patch mode: records and the success oracle', () => {
     for (const label of ['Extraction:', 'Restored source:', 'Evidence:', 'Obligations remaining:']) {
       assert.ok(summary.includes(label), `run-end summary has no ${label} line`);
     }
+    assert.doesNotMatch(summary, /carried over/, 'a legacy approval is history, not evidence');
+  });
+
+  it('binds every Category-B ratification to the patch hash, migrated patches included', () => {
+    const patchMode = section(step('success_oracle'), 'Patch mode');
+    for (const token of ['patch-file:', 'patch-sha256:', 'historical', 'migrated', 'ratification-check']) {
+      assert.ok(patchMode.includes(token), `patch-mode oracle never mentions ${token}`);
+    }
+    assert.match(patchMode, /new gate/i, 'a migrated B patch must go through the gate again');
+    assert.doesNotMatch(patchMode, /carried over/);
+    assert.match(step('gate'), /patch-file:/);
+    assert.match(step('gate'), /migrated/i);
   });
 
   it('states that a translation adaptation does not prove equivalence with the original source', () => {
     assert.match(workflowText, /does not prove (equivalence|the original)/i);
+  });
+});
+
+describe('Patch mode: the applier agent', () => {
+  const applier = fs.readFileSync(APPLIER, 'utf8');
+  const legacy = section(applier, 'Legacy mode');
+  const rest = applier.replace(legacy, '');
+
+  it('appends to the ledger in legacy mode only', () => {
+    assert.match(legacy, /src-modifications\.md/);
+    for (const line of rest.split('\n').filter((entry) => /src-modifications/.test(entry))) {
+      assert.match(line, /never|no `?src-modifications|writes no/i, `a ledger write outside legacy mode: ${line.trim()}`);
+    }
+  });
+
+  it('forbids every ledger write in patch mode, including non-Rust repairs', () => {
+    const patchMode = section(applier, 'Patch mode');
+    assert.match(patchMode, /never writes? any `src-modifications\.\*` file/i);
+    for (const recipe of ['namespace-cascade', 'refresh-manifest']) {
+      assert.ok(patchMode.includes(recipe), `patch mode never covers ${recipe}`);
+    }
+    assert.match(patchMode, /src-assumptions\.md/);
+  });
+
+  it('keeps the success criterion consistent with both modes', () => {
+    assert.match(applier, /- \[ \] Records written for the dispatch mode[^\n]*never[^\n]*src-modifications/i);
   });
 });

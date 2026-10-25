@@ -95,14 +95,25 @@ in the inactive marker:
 | `classification` | `Classification:` | the recorded value (A-mechanical, A-opacity or B) |
 | `assumptions` | `Assumptions:` | the recorded assumptions |
 | `obligations` | `Obligations:` | the correspondence obligations the entry recorded |
-| `evidence` | `Evidence:` | the assessor evidence reference (the gate packet path) |
-| `ratification` | `Ratification:` | the human ratification token, verbatim |
+| `evidence` | `Evidence:` | historical metadata: the assessor evidence reference (the gate packet path) |
+| `ratification` | `Ratification:` | historical metadata: the human ratification token, verbatim |
 
 A key that is absent or empty gets no line. Every patch also states in its header that it is
-migrated verbatim from the ledger and that migration does not re-establish equivalence: the
-copied classification, assumptions, obligations, assessor evidence and ratification are what the
-legacy run recorded, carried over rather than re-proved. The gate packets in the extraction
-workspace and `src-assumptions.md` are not touched.
+migrated verbatim from the ledger and that migration does not re-establish equivalence. The
+classification, assumptions and obligations are the patch's record from now on. The assessor
+evidence and the ratification are kept so the history is not lost, but they approved the legacy
+hunk, not the patch file in its current bytes, so they never count toward completion: every
+migrated Category-B patch needs a new gate whose packet names the patch (`patch-file:`) and
+records its current sha256 (`patch-sha256:`), and editing the patch afterwards makes that packet
+stale. The gate packets in the extraction workspace and `src-assumptions.md` are not touched.
+
+`src-assumptions.md` keeps naming the legacy ids (`M2`). Each migrated patch is named
+`<file stem>-legacy-<id>.patch`, repeats its entry's assumptions in its `Assumptions:` header, and
+is listed in the marker with its file name, sha256 and entry, so an old reference resolves to a
+patch by id. An entry that names only a legacy id names no patch, so the extraction run's record
+check does not treat it as an orphan; add the patch file name beside the id (step 7 below) to give
+it a current identity. A patch's identity is its file name and the sha256 recorded in the run's
+manifest; the marker's sha256 only records the bytes at migration.
 
 ## The inactive state
 
@@ -111,7 +122,8 @@ exact content and mode of every ledger file at that moment, the file name and sh
 migrated patch with its hunk number, and each legacy entry verbatim. The ledger files themselves
 stay in place, byte for byte. A ledger whose files still match the marker is **inactive**: it
 does not make the project legacy or mixed, and the extraction workflow never reads it as evidence
-for a patch. Only the values copied into patch headers count, and they count as carried over.
+for a patch. The classification, assumptions and obligations copied into patch headers are the
+patch's record; the copied approval is historical metadata only.
 
 A ledger file edited after migration no longer matches the marker, so the ledger is active again
 and the engine reports `mixed-mode` until the owner resolves it. Nothing is deleted automatically;
@@ -124,18 +136,21 @@ whether to keep the retained ledger files is the owner's decision.
 1. Before migrating, make sure the working source carries exactly the changes the ledger
    records (the migration checks this) and that you can get back to it, for example with a commit.
 2. Run `migrate` as above and read the patches it wrote.
-3. Restore the pristine source (the pin the ledger was made against). The working source still
+3. If `extraction.mode` is set to `legacy-source-ledger`, set it to `translation-patches` now,
+   before any `check`: while the old value stays, the engine refuses with `mixed-mode` because a
+   patch list now exists, and no later step can succeed.
+4. Restore the pristine source (the pin the ledger was made against). The working source still
    carries the legacy edits, so until it is restored `check` stops at the first patch, reporting
    it as already applied. The engine does not restore the source for you.
-4. Run `node ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-extract-patches.mjs check --project-root "$CRATE_ROOT"`. It
+5. Run `node ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-extract-patches.mjs check --project-root "$CRATE_ROOT"`. It
    must report `translation-patches` and that every patch applies in order and undoes exactly.
-5. If `extraction.mode` is set to `legacy-source-ledger`, set it to `translation-patches`; while
-   the old value stays, the engine refuses with `mixed-mode` because a patch list now exists.
-6. Review each migrated patch's `Obligations:` and `Ratification:`. They are still open
-   obligations and carried-over ratifications. The patches are per hunk, not per function;
+6. Review each migrated patch's `Obligations:`. They are still open obligations; the copied
+   `Evidence:` and `Ratification:` are history. The patches are per hunk, not per function;
    regrouping them is a manual edit the engine does not check against the marker.
-7. Run `/fvs:aeneas-extract`. The first run records a manifest with the base source identity and
-   the ordered patch hashes.
+7. In `src-assumptions.md`, add the patch file name beside each legacy id it records.
+8. Run `/fvs:aeneas-extract`. The first run records a manifest with the base source identity and
+   the ordered patch hashes, and its completion check asks for a new, hash-bound gate for every
+   migrated Category-B patch.
 
 </migration>
 
@@ -145,7 +160,8 @@ whether to keep the retained ledger files is the owner's decision.
 
 A translation patch changes the program the extractor sees. A clean extraction of a patched
 function does not prove equivalence with the original source, and a migrated patch carries no
-more than the legacy run recorded. The correspondence obligations in the patch headers stay open
+more than the legacy run recorded: its old approval is history, not a ratification of the patch
+as it now stands. The correspondence obligations in the patch headers stay open
 until correspondence evidence closes them, and the extraction run reports them separately from
 extraction success, restored source and valid evidence.
 

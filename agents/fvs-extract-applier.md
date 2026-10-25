@@ -75,23 +75,34 @@ intend to trust stays A; opacity on a coverage target becomes B and is not yours
 
 ## One recipe, then the reversible records
 
-Apply exactly one recipe per invocation. After applying it, write the reversible records at the
-crate root using the Write tool:
+Apply exactly one recipe per invocation. The dispatch prompt names the extraction mode, and the
+records depend on it. After applying the recipe, write them using the Write tool:
 
-- append the applied change to `src-modifications.md` (or the project's equivalent) -- the exact
-  edit, the catalog id, and the recipe, so the change is machine-reversible.
+### Legacy mode (legacy-source-ledger)
+
+- append the applied change to `src-modifications.md` (or the project's equivalent) at the crate
+  root -- the exact edit, the catalog id, and the recipe, so the change is machine-reversible.
 - append the trusted assumption to `src-assumptions.md` when the recipe axiomatizes, excludes, or
   gates an item (every A-opacity and every gated build-script edit leaves an assumption).
 
-**Patch mode.** When the dispatch prompt says the extraction mode is `translation-patches`, a
-recipe that changes the Rust extraction inputs (an opacity annotation, a gated build script) is NOT
-an edit to the checkout and writes no `src-modifications.*` file. Write it as one translation patch
-in the crate root's `translation-patches/`, append its name to `series`, and run the `check` the
-prompt gives you; a refusal means remove the patch and its `series` line and report ERROR. The
-prompt carries the header fields and the authoring recipe. The assumption entry in
-`src-assumptions.md` names the patch file. Edits to hand-authored Lean files stay ordinary edits.
+### Patch mode (translation-patches)
 
-Then rebuild to confirm the recipe cleared the blocker, ALWAYS with `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`.
+Patch mode never writes any `src-modifications.*` file, for any recipe: an active ledger beside a
+patch list is a mixed state the engine refuses.
+
+- A recipe that changes the Rust extraction inputs (an opacity annotation, a gated build script)
+  is NOT an edit to the checkout. Write it as one translation patch in the crate root's
+  `translation-patches/`, append its name to `series`, and run the `check` the prompt gives you;
+  a refusal means remove the patch and its `series` line and report ERROR. The prompt carries the
+  header fields and the authoring recipe.
+- Every other recipe (`namespace-cascade`, `refresh-manifest`, an axiom-signature port, a
+  `tweaks-substitution`, any edit to hand-authored Lean or project config) stays an ordinary edit
+  and writes neither a patch nor a ledger entry.
+- Either way, append the trusted assumption to `src-assumptions.md` when the recipe axiomatizes,
+  excludes, or gates an item. The entry names the patch file when there is one, and otherwise
+  the catalog id and the files edited.
+
+In either mode, then rebuild to confirm the recipe cleared the blocker, ALWAYS with `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`.
 
 </process>
 
@@ -145,7 +156,7 @@ On failure:
 - [ ] Exactly one Category-A recipe applied per invocation
 - [ ] Coverage guard enforced: A-opacity on a coverage target is NOT applied -- it escalates
 - [ ] Generated Lean (`Types.lean` / `Funs.lean`) never edited by hand
-- [ ] Reversible records written (src-modifications + src-assumptions where an assumption arises)
+- [ ] Records written for the dispatch mode: legacy mode appends to src-modifications.md and src-assumptions.md; patch mode writes patches, series and src-assumptions.md and never any src-modifications.* file
 - [ ] `tweaks-substitution` guards honored (>= 1 match; 0-match is a HARD failure)
 - [ ] Rebuild run with `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`, never bare
 - [ ] All writes via the Write tool; no `gh` auto-open; Lean-via-Aeneas pipeline only

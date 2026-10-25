@@ -151,7 +151,8 @@ fix escalates immediately).
     The coverage-escalation guard: A-opacity on a function inside required coverage is NOT
     auto-applied -- it becomes Category-B and routes to the gate. The prompt names the mode; in
     patch mode a change to the Rust inputs is a translation patch, never an in-place edit, and
-    the applier writes no `src-modifications.*` file.
+    the applier writes no `src-modifications.*` file for any recipe, including non-Rust repairs
+    such as `namespace-cascade` and `refresh-manifest`, which stay ordinary edits.
   - NOVEL -> `Task(subagent_type="fvs-extract-bisector", model="$BISECTOR_MODEL", reasoning_effort="$BISECTOR_EFFORT", ...)` to
     minimize to an MFE, write a schema-conformant candidate, and PROPOSE a fix.
   - Forced Category-B -> the GATE (Step 4).
@@ -198,8 +199,10 @@ a fixing subagent:
 
 In patch mode, section 1 is the candidate translation patch itself, with its complete header,
 held beside the packet as `equivalence-gate/<change-id>.patch`, and the packet records its
-`patch-sha256:`. It enters `translation-patches/` and `series` byte for byte only after
-ratification; then run `check` and re-extract with a new `prepare`.
+`patch-file:` and `patch-sha256:`. It enters `translation-patches/` and `series` byte for byte
+only after ratification; then run `check` and re-extract with a new `prepare`. A patch that
+`migrate` produced is already installed and its legacy approval is historical: fire the gate for
+it as it stands, with the installed patch as section 1.
 
 ## Step 5: SUCCESS ORACLE -- refuse completion without the token
 
@@ -214,10 +217,14 @@ Patch mode, for the cycle whose `OUT` built the extraction:
    `prepare` fails the run.
 3. `node "$PATCH_ENGINE" verify-restore --out "$OUT"` passes: the original sources equal the
    recorded start.
-4. Every Category-B patch carries a present ratification token: its `Evidence:` line names a gate
-   packet in `<extract_workspace>/<target>/equivalence-gate/` and
-   `grep "equivalence-ratified:"` matches it; a recorded `patch-sha256:` equals the manifest's
-   sha256 for that patch. Refuse completion while any token is absent.
+4. Every Category-B patch, migrated ones included, carries a human ratification bound to its
+   current bytes: the workflow's ratification check finds, in
+   `<extract_workspace>/<target>/equivalence-gate/`, a packet that carries `equivalence-ratified:`,
+   names the patch on a `patch-file:` line, and records on a `patch-sha256:` line the sha256 the
+   manifest records for it. A patch edited after ratification, and any B patch without such a
+   packet, fails. A migrated patch's `Evidence:` and `Ratification:` lines are historical
+   metadata the check never reads, so it needs a new gate (Step 4) before the run can complete.
+   Refuse completion while the check fails.
 5. The diff-to-record check holds over patch identities (file name and sha256): the patches in
    `translation-patches/series` are exactly the manifest's patches (`status --out "$OUT"`), in
    its order, each with a `Classification:` line, and no gate packet or `src-assumptions.md`
@@ -234,7 +241,8 @@ Legacy mode:
 
 A ledger that `migrate` retired is inactive (`src-modifications.inactive.json` marks it, its
 files stay byte for byte): the oracle never reads it and never treats legacy evidence as patch
-evidence; only the values `migrate` copied into patch headers count, as carried over.
+evidence. The classification, assumptions and obligations `migrate` copied into patch headers are
+the patch's record; the copied approval is historical and never counts toward completion.
 
 If any clause fails, the run is not complete -- continue the loop or HALT for the human.
 
@@ -279,7 +287,7 @@ FVS >> EXTRACTION RUN COMPLETE
 Target:                {target} ({shape}), mode translation-patches
 Extraction:            {clean build | escalated | stopped: <engine code>} ({K} patches in series)
 Restored source:       {verify-restore ok | refused: <message>}
-Evidence:              tree check {ok | refused}; B-changes {N} ratified ({C} carried over from a legacy ledger); diff-to-record check {ok | failed}
+Evidence:              tree check {ok | refused}; B patches {N} ratified and bound to their hashes; diff-to-record check {ok | failed}
 Obligations remaining: {the open `Obligations:` lines of the patches, grouped by patch file}
 Escalations:           {M} outstanding (re-offer drafts: {ids})
 Pin context:           {pin_context summary}
@@ -309,7 +317,7 @@ confirmed field.
 - [ ] Patch-mode EXTRACT runs `prepare`, `verify-tree`, Charon in the copy, `verify-tree`, Aeneas, `verify-restore`; an engine refusal stops the run and is never repaired in the copy.
 - [ ] The orchestrator fires the gate itself, dispatching `fvs-equivalence-assessor` distinctly from `fvs-extract-bisector`; the success oracle greps `equivalence-ratified:` and refuses completion without it.
 - [ ] Reversible records at the crate root (patch mode: `translation-patches/` + `series`, never `src-modifications.*`); generated Lean never written; annotations preferred.
-- [ ] Patch-mode oracle: clean build AND `verify-tree` AND `verify-restore` AND a token for every B patch AND the diff-to-record check over patch identities; retired legacy records are inactive and never read as patch evidence.
+- [ ] Patch-mode oracle: clean build AND `verify-tree` AND `verify-restore` AND a ratification bound to the `patch-sha256:` of every B patch, migrated ones included, AND the diff-to-record check over patch identities; retired legacy records are inactive and never read as patch evidence.
 - [ ] Attempt-cap 3 + no-progress rule enforced; escalation is a human decision point and a valid outcome.
 - [ ] Drafting runs only on acceptance; no `gh` open/create call anywhere in the command or the draft path.
 </success_criteria>

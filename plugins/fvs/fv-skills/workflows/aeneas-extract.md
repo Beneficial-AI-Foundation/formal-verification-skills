@@ -303,8 +303,10 @@ Route the classified blocker:
 
   The dispatch prompt names `MODE`. In patch mode a change to the Rust extraction inputs is
   written as a translation patch (Step 6), never edited into the checkout, and the applier writes
-  no `src-modifications.*` file; the prompt inlines the Step 6 header fields, the authoring recipe
-  and the `check` command, because the applier has no @-references.
+  no `src-modifications.*` file for any recipe, including non-Rust repairs such as
+  `namespace-cascade` and `refresh-manifest`, which stay ordinary edits; the prompt inlines the
+  Step 6 header fields, the authoring recipe and the `check` command, because the applier has no
+  @-references.
 
 - **NOVEL** -> dispatch the bisector to shrink/grow to a minimal failing example (MFE) under
   the variant-budget, emit a schema-conformant `candidate` (real evidence = the MFE path +
@@ -355,9 +357,12 @@ the reversible record for the B-change (the minimized diff + the stamped token).
 **Patch mode.** Section 1 is the candidate translation patch itself, authored as in Step 6 with
 its complete header (`Classification: B` and an `Evidence:` line naming this packet) and held
 beside the packet as `equivalence-gate/<change-id>.patch`. It is NOT in `translation-patches/` or
-`series` until ratified. The packet records the patch's identity on a `patch-sha256:` line (the
-sha256 of those exact bytes), so the token binds to them: a patch edited after ratification no
-longer matches its packet.
+`series` until ratified. The packet records the patch's identity on a `patch-file:` line (its
+file name) and a `patch-sha256:` line (the sha256 of those exact bytes), so the token binds to
+them: a patch edited after ratification no longer matches its packet. A migrated patch (one
+`migrate` produced) is already installed and its legacy approval is historical metadata only
+(Step 9), so the gate is fired for it as it stands: section 1 is the installed patch, and the
+packet records `patch-file:` and `patch-sha256:` of the installed bytes.
 
 - **Ratified** (`equivalence-ratified:` present) -> the change stands. Patch mode: install the
   staged patch byte for byte as `translation-patches/<name>.patch`, append it to `series`, run
@@ -392,7 +397,7 @@ are:
   Classification: A-mechanical | A-opacity | B
   Assumptions: <trust assumptions it introduces; omit when none>
   Obligations: <correspondence obligations that stay open; omit when none>
-  Evidence: <B only: equivalence-gate/<change-id>.md>
+  Evidence: <B only: equivalence-gate/<change-id>.md, a pointer for readers>
   Independent: yes                    (only when it applies on its own to the source snapshot)
 
   diff --git a/<path> b/<path>
@@ -401,7 +406,9 @@ are:
 
   The same `Classification:`, `Assumptions:`, `Obligations:` and `Evidence:` lines are what
   `migrate` writes. A `Ratification:` line appears only on a patch `migrate` produced, carrying the
-  legacy token verbatim; a patch written by this workflow keeps its ratification in its packet.
+  legacy token verbatim as historical metadata; a patch written by this workflow keeps its
+  ratification in its packet. The oracle finds a ratifying packet by `patch-file:` and
+  `patch-sha256:`, never through `Evidence:` or `Ratification:`.
 - `translation-patches/series` -- one patch file name per line, in application order; every
   `.patch` file listed exactly once (the engine refuses any other list).
 - `src-assumptions.md` -- each entry names the patch (file name and sha256) that introduced it;
@@ -506,10 +513,14 @@ All of, for the cycle whose `OUT` built the extraction:
    copy after `prepare` fails here, and the run fails.
 3. `node "$PATCH_ENGINE" verify-restore --out "$OUT"` passes: the original sources equal the
    recorded start.
-4. Every Category-B patch carries a present ratification token: its `Evidence:` line names a gate
-   packet in the workspace and `grep equivalence-ratified:` matches that packet. When the packet
-   records a `patch-sha256:`, it equals the sha256 the manifest records for that patch, so an
-   edited patch is not ratified. Refuse "complete" while any token is absent.
+4. Every Category-B patch, migrated ones included, carries a human ratification bound to its
+   current bytes. Run the ratification check below with `GATE_DIR` set to
+   `<extract_workspace>/<target>/equivalence-gate`. For each patch whose header says
+   `Classification: B` it needs a packet in `GATE_DIR` that carries `equivalence-ratified:`, names
+   the patch on a `patch-file:` line, and records on a `patch-sha256:` line the sha256 the
+   manifest records for that patch. A B patch with no such packet fails, and so does a patch
+   edited after ratification, because its sha256 no longer matches. Refuse "complete" while the
+   check fails.
 5. The diff-to-record check holds over patch identities (file name and sha256), compared with the
    manifest (`node "$PATCH_ENGINE" status --out "$OUT"`, which refuses a partial manifest): the
    patches `translation-patches/series` lists now are exactly the manifest's patches, in its
@@ -517,10 +528,38 @@ All of, for the cycle whose `OUT` built the extraction:
    `src-assumptions.md` entry names a patch absent from the manifest (no orphan record). A patch
    added after `prepare` needs a new cycle.
 
-A patch that `migrate` produced names its legacy packet in `Evidence:` and carries the legacy
-`Ratification:`. That packet predates the patch and records no `patch-sha256:`, so clause 4 reads
-its token as for any B patch and the run-end summary reports it as carried over from the legacy
-ledger, never as fresh evidence that the patched function matches the original.
+```bash
+# ratification-check
+node - "$CRATE_ROOT" "$OUT" "$GATE_DIR" <<'NODE'
+const fs = require('fs');
+const path = require('path');
+const [crateRoot, out, gateDir] = process.argv.slice(2);
+const manifest = JSON.parse(fs.readFileSync(path.join(out, 'manifest.json'), 'utf8'));
+if (manifest.status !== 'prepared') {
+  console.error('the manifest does not record a prepared copy');
+  process.exit(1);
+}
+const packets = fs.existsSync(gateDir)
+  ? fs.readdirSync(gateDir).filter((name) => name.endsWith('.md')).map((name) => fs.readFileSync(path.join(gateDir, name), 'utf8').split('\n').map((line) => line.trim()))
+  : [];
+const unratified = manifest.patches.filter((patch) => {
+  const header = fs.readFileSync(path.join(crateRoot, 'translation-patches', patch.file), 'utf8').split(/^diff --git /m)[0];
+  if (!/^Classification:[ \t]*B[ \t]*$/m.test(header)) return false;
+  return !packets.some((lines) => lines.some((line) => line.startsWith('equivalence-ratified:'))
+    && lines.includes(`patch-file: ${patch.file}`)
+    && lines.includes(`patch-sha256: ${patch.sha256}`));
+});
+for (const patch of unratified) console.error(`no ratification bound to ${patch.file} (sha256 ${patch.sha256})`);
+process.exit(unratified.length === 0 ? 0 : 1);
+NODE
+```
+
+The `Evidence:` and `Ratification:` lines of a migrated patch are the legacy run's approval, kept
+as historical metadata. The check never reads them, and a legacy packet, which records no
+`patch-file:` or `patch-sha256:`, never counts. A migrated B patch therefore needs a new gate
+(Step 5) before the run can complete: when the check names it, fire the gate with the installed
+patch as section 1, and the human stamps a packet that records its `patch-file:` and
+`patch-sha256:`. Editing the patch afterwards makes that packet stale and needs another gate.
 
 ### Legacy mode (legacy-source-ledger)
 
@@ -539,9 +578,10 @@ All of:
 After a successful `migrate`, the retired ledger (`src-modifications.diff`, `.json` and `.md`)
 stays on disk byte for byte and is **inactive**: `src-modifications.inactive.json` records its
 exact files and the entries `migrate` copied. The oracle never reads inactive records and never
-reinterprets legacy evidence as patch evidence; the only legacy values that count are the ones
-`migrate` copied into patch headers, and they count as carried over. Editing a retired ledger
-file makes it active again, and `check` then reports `mixed-mode`.
+reinterprets legacy evidence as patch evidence. The classification, assumptions and obligations
+`migrate` copied into patch headers are the patch's record; the copied approval (`Evidence:` and
+`Ratification:`) is historical metadata and never counts toward completion. Editing a retired
+ledger file makes it active again, and `check` then reports `mixed-mode`.
 
 ### Both modes
 
@@ -578,7 +618,7 @@ FVS >> EXTRACTION RUN COMPLETE
 Target:                {target} ({SHAPE}), mode translation-patches
 Extraction:            {clean build | escalated | stopped: <engine code>} ({K} patches in series)
 Restored source:       {verify-restore ok | refused: <message>}
-Evidence:              tree check {ok | refused}; B-changes {N} ratified ({C} carried over from a legacy ledger); diff-to-record check {ok | failed}
+Evidence:              tree check {ok | refused}; B patches {N} ratified and bound to their hashes; diff-to-record check {ok | failed}
 Obligations remaining: {the open `Obligations:` lines of the patches, grouped by patch file}
 Escalations:           {M} outstanding (re-offer drafts: {ids})
 Pin context:           {pin_context summary}
@@ -599,7 +639,7 @@ Records:               translation-patches/ and series, src-assumptions.md (crat
 - [ ] DOCUMENT (patch mode) writes `translation-patches/<name>.patch` + `series` + `src-assumptions.md` at the crate root and never `src-modifications.*`; (legacy mode) writes `src-modifications.diff` + derived `.json` + `src-modifications.md` + `src-assumptions.md`; generated Lean never written; annotations preferred.
 - [ ] LOOP BOUNDS: attempt-cap 3, cycle hard-cap ~25, variant-budget ~12, no-progress key `sha256(layer || signature)`; same-key recurrence after a fix -> immediate escalate.
 - [ ] ESCALATE persists to the workspace, surfaces to the user, offers a draft (drafting only on acceptance), and "skip" is an explicit human choice.
-- [ ] SUCCESS ORACLE (patch mode): clean build AND `verify-tree` AND `verify-restore` AND every B patch has a present token AND the diff-to-record check over patch identities holds; (legacy mode) clean build AND every B-change has a present token AND diff <-> record 1:1; refuses completion otherwise.
+- [ ] SUCCESS ORACLE (patch mode): clean build AND `verify-tree` AND `verify-restore` AND every B patch, migrated ones included, has a ratification bound to its `patch-sha256:` (the ratification check) AND the diff-to-record check over patch identities holds; (legacy mode) clean build AND every B-change has a present token AND diff <-> record 1:1; refuses completion otherwise.
 - [ ] Retired legacy records are inactive and never read as patch evidence; the run-end summary reports extraction, restored source, evidence and remaining obligations separately.
 - [ ] No `gh` open/create call appears in the draft or escalation steps.
 </success_criteria>

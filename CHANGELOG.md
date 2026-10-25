@@ -23,8 +23,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   in `translation-patches/series`, and the loop writes no `src-modifications.*` files for such a
   project. Extraction runs Charon inside the engine's copy, and a run completes only when the
   build is clean, the copy still matches its recorded tree (an unrecorded repair made inside it
-  fails the run), your original sources are restored, every Category-B patch carries its
-  ratification token, and the records match the patches by name and hash. The run reports
+  fails the run), your original sources are restored, every Category-B patch has a human
+  ratification bound to its current hash, and the records match the patches by name and hash. The run reports
   extraction, restored source, evidence and the remaining correspondence obligations separately.
 - Projects that already carry an active `src-modifications.diff` ledger keep the legacy in-place
   flow, unchanged, until they migrate. The engine picks the mode (`extraction.mode` in
@@ -33,10 +33,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - To migrate a legacy project, run `node ~/.claude/scripts/fvs-extract-patches.mjs migrate
   --project-root <crate root>`. It writes one patch per ledger hunk, copies each entry's
   classification, assumptions, correspondence obligations, assessor evidence and ratification into
-  its patch header, and marks the ledger inactive without editing it or the source. Then restore
-  the pristine source, run `check`, and set `extraction.mode` to `translation-patches` if you had
-  set it to the legacy value. Migration is never automatic, and it does not re-establish
-  anything: the steps and limits are in `fv-skills/references/extraction-patch-migration.md`.
+  its patch header, and marks the ledger inactive without editing it or the source. If you had set
+  `extraction.mode` to the legacy value, set it to `translation-patches` now, then restore the
+  pristine source and run `check`. The copied assessor evidence and ratification are history: they
+  approved the legacy hunk, so every migrated Category-B patch needs a new ratification bound to
+  its hash before a run completes, and editing it afterwards invalidates that ratification.
+  Migration is never automatic, and it does not re-establish anything: the steps and limits are
+  in `fv-skills/references/extraction-patch-migration.md`.
 - A translation patch changes the program the extractor sees, so a clean extraction of a patched
   function does not prove equivalence with the original source. The correspondence obligations each
   patch records stay open until correspondence evidence closes them.
