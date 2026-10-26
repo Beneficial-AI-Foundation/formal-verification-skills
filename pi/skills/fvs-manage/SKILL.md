@@ -26,6 +26,7 @@ When invoked WITH a request, match it against the table below and invoke the mat
 | Reapply local patches after an update | fvs:reapply-patches |
 | Set up a NotebookLM knowledge base | fvs:kb-setup |
 | Turn a chat or a prompt into a long-horizon verification roadmap | fvs:roadmap |
+| Break a roadmap or chat into reviewable issues | fvs:to-issues |
 | Choose where issues live (GitHub, local markdown, other) | fvs:issues-setup |
 
 Invoke the matched skill directly using the Skill tool.

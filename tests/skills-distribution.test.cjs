@@ -13,13 +13,15 @@ test('renders one self-contained native setup entry rather than relocated workfl
   const text = generator.renderSetupSkill?.() ?? '';
   assert.match(text, /^---\nname: fvs-setup\ndescription: .*native.*setup/m);
   assert.match(text, /## Scope/);
+  assert.match(text, /thirty-three commands/);
+  assert.doesNotMatch(text, /\bthirty commands/);
   assert.match(text, /## Consent/);
   assert.match(text, /## Complete source installation/);
   assert.match(text, /## Privacy/);
   assert.doesNotMatch(text, /CLAUDE_PLUGIN_ROOT|@\.\.\/|\.\.\/\.\.\//);
-  assert.equal(fs.readdirSync(path.join(root, 'commands/fvs')).filter(n => n.endsWith('.md')).length, 32);
-  assert.equal(fs.readdirSync(path.join(root, 'pi/skills')).length, 32);
-  assert.equal(fs.readdirSync(path.join(root, 'plugins/fvs/skills')).length, 32);
+  assert.equal(fs.readdirSync(path.join(root, 'commands/fvs')).filter(n => n.endsWith('.md')).length, 33);
+  assert.equal(fs.readdirSync(path.join(root, 'pi/skills')).length, 33);
+  assert.equal(fs.readdirSync(path.join(root, 'plugins/fvs/skills')).length, 33);
 });
 
 test('covers all supported native channels without hidden registry or role substitution', () => {

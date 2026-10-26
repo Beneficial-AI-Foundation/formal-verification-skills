@@ -222,7 +222,7 @@ async function nativeFootprint(q, area, source, env, runtime = 'claude') {
   if (runtime === 'codex') assert.equal(fs.existsSync(path.join(nativeRoot, 'hooks/fvs-statusline.js')), false);
   const commandsDirectory = path.join(nativeRoot, ['codex', 'antigravity'].includes(runtime) ? 'skills' : runtime === 'opencode' ? 'command' : 'commands/fvs');
   const commands = fs.readdirSync(commandsDirectory);
-  assert.equal(commands.length, 32);
+  assert.equal(commands.length, 33);
   let commandPath;
   if (runtime === 'codex') commandPath = path.join(commandsDirectory, 'fvs-fc-plan/SKILL.md');
   else if (runtime === 'opencode') commandPath = path.join(commandsDirectory, 'fvs-fc-plan.md');
@@ -317,8 +317,8 @@ async function nativeResources(q, area, full = false) {
   assertSuccess(pi);
   const observed = JSON.parse(pi.stdout);
   assert.equal(observed.projectSettings.foreignSetting, 'keep');
-  assert.equal(observed.entries.length, 32);
-  assert.equal(observed.loaded.skills.length, 32);
+  assert.equal(observed.entries.length, 33);
+  assert.equal(observed.loaded.skills.length, 33);
   assert.deepEqual(observed.loaded.diagnostics, []);
   assert.ok(observed.configured.some(e => e.scope === 'project' && e.installedPath === source));
   const nativeRoots = [...new Set(observed.entries.map(e => e.metadata.packageRoot))];
@@ -327,7 +327,7 @@ async function nativeResources(q, area, full = false) {
   assert.equal(nativeRoot, fs.realpathSync(source), 'actual Pi resolver metadata identifies complete sourceRoot');
   for (const rel of ['fv-skills/workflows/fc-plan.md', 'fv-skills/workflows/crypto-review.md', 'scripts/fvs-probe-inventory.mjs', 'agents/fvs-researcher.md']) assert.ok(fs.statSync(path.join(nativeRoot, rel)).isFile());
   assert.ok(observed.loaded.skills.every(s => s.filePath.startsWith(path.join(nativeRoot, 'pi/skills') + path.sep)));
-  results.pi = { nativeRoot, actualResourceDiscovery: true, projectScope: true, skills: 32, modelSession: false };
+  results.pi = { nativeRoot, actualResourceDiscovery: true, projectScope: true, skills: 33, modelSession: false };
   return results;
 }
 
@@ -339,8 +339,8 @@ async function transport(q, area) {
   fs.mkdirSync(listingProject);
   for (const [name, input, flags, count] of [
     ['root', source, [], 1], ['direct', path.join(source, 'skills/fvs-setup'), [], 1],
-    ['full-depth', source, ['--full-depth'], 65], ['pi-subpath', path.join(source, 'pi/skills'), [], 32],
-    ['plugin-subpath', path.join(source, 'plugins/fvs/skills'), [], 32],
+    ['full-depth', source, ['--full-depth'], 1 + 2 * fs.readdirSync(path.join(source, 'commands/fvs')).filter(n => n.endsWith('.md')).length], ['pi-subpath', path.join(source, 'pi/skills'), [], 33],
+    ['plugin-subpath', path.join(source, 'plugins/fvs/skills'), [], 33],
   ]) {
     const listed = await run(q, area, `list-${name}`, [q.tools.node.path, q.cli.path, 'add', input, '--list', ...flags], listingProject, env);
     assertSuccess(listed);

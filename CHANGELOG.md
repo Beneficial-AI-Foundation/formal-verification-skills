@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- `/fvs:to-issues` breaks a roadmap or conversation into reviewable outcomes with blockers and
+  acceptance evidence, exporting local markdown or publishing an approved, sanitized GitHub batch
+  with explicit relationships and a recovery log.
+
 - `/fvs:roadmap` turns the current conversation or a short prompt into a long-horizon verification
   roadmap (`ROADMAP.md`): the claims to establish, scope and exclusions, external boundaries,
   milestones that an existing FVS command or checker decides, and decisions and status logs that a

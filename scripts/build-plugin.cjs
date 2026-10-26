@@ -53,7 +53,7 @@ this entry does not install FVS, register specialist roles, or grant setup permi
 It works by itself after copy, symlink, relocation, and from any working directory;
 there are no adjacent scripts or resources to load. Never infer an FVS sourceRoot
 or nativeRoot from this entry's parents. A complete native installation supplies
-its own thirty commands, workflows, references, templates, scripts, hooks and roles.
+its own thirty-three commands, workflows, references, templates, scripts, hooks and roles.
 
 The functional-correctness (FC) track proceeds through understanding, specification,
 fresh statement review and explicitly requested autonomous proof. Extracted-code
@@ -149,7 +149,7 @@ for the accepted user profile; never omit scope. Node is the verified executable
 For non-Pi runtimeFlag, validate the chosen runtime against exactly
 ${nonPi.map(runtime => `\`--${runtime}\``).join(', ')}; never use --all. Scope is mandatory.
 The hook build copies two pure Node hooks; this lane needs no npm install or npx.
-Keep the complete source snapshot. Observe actual installed version, all thirty
+Keep the complete source snapshot. Observe actual installed version, all thirty-three
 commands and resources, hook registrations and role/settings footprints. Discover
 the nativeRoot from the actual channel's installation/resource metadata, not this
 entry's physical/logical location or a guessed transferred path.
@@ -159,7 +159,7 @@ local-source declaration/retention/scope effects. After permission use the retai
 complete source directory: \`pi install "$sourceRoot" --local\` for the selected
 trusted project, or \`pi install "$sourceRoot"\` for personal scope. This is a local
 source directory, loaded without a registry dependency install, not a transported
-skill directory. The explicit package.json pi.skills selects ONLY pi/skills, thirty
+skill directory. The explicit package.json pi.skills selects ONLY pi/skills, thirty-three
 native skills, not this setup entry. Keep sourceRoot at its verified location.
 Project declarations require project trust; review it explicitly. Project identities
 normally take precedence over personal entries; inspect both and do not silently

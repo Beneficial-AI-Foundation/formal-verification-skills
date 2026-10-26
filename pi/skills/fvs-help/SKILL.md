@@ -61,7 +61,7 @@ Five router commands group the skills. Invoke a router bare to print its routing
 - `/skill:fvs-context` — Codebase context (map-code)
 - `/skill:fvs-fc` — Formal-correctness core (fc-plan, model-external, lean-specify, lean-spec-review, lean-verify, natural-language, lean-refactor, trust-audit)
 - `/skill:fvs-formalise` — Paper formalisation (lean-formalise, lean-refactor)
-- `/skill:fvs-manage` — Management (help, update, checkpoint, pause-work, resume-work, reapply-patches, kb-setup, roadmap, issues-setup)
+- `/skill:fvs-manage` — Management (help, update, checkpoint, pause-work, resume-work, reapply-patches, kb-setup, roadmap, issues-setup, to-issues)
 
 ### Aeneas (`/skill:fvs-aeneas`)
 
@@ -393,6 +393,15 @@ Turn the current conversation or a short prompt into a long-horizon verification
 
 Usage: `/skill:fvs-roadmap prove security of this protocol`
 Usage: `/skill:fvs-roadmap .formalising/fv-plans/ntt/ROADMAP.md`
+
+**`/skill:fvs-to-issues [path/ROADMAP.md]`**
+Break a roadmap or the current conversation into independently reviewable outcomes with blockers,
+named evidence and an acceptance procedure. Quiz before publishing; local files stay beneath the
+roadmap directory. GitHub publication requires the full sanitized batch's consent, separately
+approved label creation, explicit relationships and a retained recovery log. Other trackers stop
+with guidance. Creating issues never establishes proof acceptance.
+
+Usage: `/skill:fvs-to-issues .formalising/fv-plans/ntt/ROADMAP.md`
 
 **`/skill:fvs-issues-setup`**
 Choose where issues live and record it in fvs-config.json.

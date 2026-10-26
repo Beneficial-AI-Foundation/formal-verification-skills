@@ -175,7 +175,13 @@ and arguments. Bundle routers list their members when invoked without arguments.
 | `/fvs:context` | `/fvs:map-code` |
 | `/fvs:fc` | `/fvs:fc-plan`, `/fvs:natural-language`, `/fvs:lean-specify`, `/fvs:lean-spec-review`, `/fvs:lean-verify`, `/fvs:lean-refactor`, `/fvs:model-external`, `/fvs:trust-audit` |
 | `/fvs:formalise` | `/fvs:lean-formalise`, `/fvs:lean-refactor`, `/fvs:crypto-plan`, `/fvs:crypto-review`, `/fvs:crypto-execute`, `/fvs:crypto-eval`, `/fvs:crypto-followup` |
-| `/fvs:manage` | `/fvs:help`, `/fvs:configure`, `/fvs:update`, `/fvs:reapply-patches`, `/fvs:kb-setup`, `/fvs:roadmap`, `/fvs:issues-setup` |
+| `/fvs:manage` | `/fvs:help`, `/fvs:configure`, `/fvs:update`, `/fvs:reapply-patches`, `/fvs:kb-setup`, `/fvs:roadmap`, `/fvs:issues-setup`, `/fvs:to-issues` |
+
+`/fvs:to-issues [path/ROADMAP.md]` drafts reviewable outcomes with blockers and acceptance
+evidence from a roadmap or the current conversation. It quizzes the decomposition, then previews
+the full batch before local export or GitHub publication. The tracker comes from the roadmap's
+override or project configuration; GitHub publication requires explicit consent for sanitized
+content and relationships, with a retained log for safe retries.
 
 ## Updates and removal
 
