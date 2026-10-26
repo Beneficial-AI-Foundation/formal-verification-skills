@@ -53,7 +53,7 @@ Five router commands group the skills. Invoke a router bare to print its routing
 - `/fvs:context` — Codebase context (map-code)
 - `/fvs:fc` — Formal-correctness core (fc-plan, model-external, lean-specify, lean-spec-review, lean-verify, natural-language, lean-refactor, trust-audit)
 - `/fvs:formalise` — Paper formalisation (lean-formalise, lean-refactor)
-- `/fvs:manage` — Management (help, update, checkpoint, pause-work, resume-work, reapply-patches, kb-setup, roadmap)
+- `/fvs:manage` — Management (help, update, checkpoint, pause-work, resume-work, reapply-patches, kb-setup, roadmap, issues-setup)
 
 ### Aeneas (`/fvs:aeneas`)
 
@@ -385,6 +385,18 @@ Turn the current conversation or a short prompt into a long-horizon verification
 
 Usage: `/fvs:roadmap prove security of this protocol`
 Usage: `/fvs:roadmap .formalising/fv-plans/ntt/ROADMAP.md`
+
+**`/fvs:issues-setup`**
+Choose where issues live and record it in fvs-config.json.
+
+- Explores the git remote, `gh` authentication, the existing `issues` section and roadmap overrides (read-only)
+- Offers GitHub, local markdown, or other (freeform prose); recommends GitHub only for a GitHub remote with write access
+- Keeps the five default labels or maps them to existing ones
+- Shows the exact `issues` section, then merges it into `.formalising/fvs-config.json`, preserving every other key
+- A roadmap's own `issues:` frontmatter block replaces this default as a whole block
+- Never creates GitHub labels or issues
+
+Usage: `/fvs:issues-setup`
 
 **`/fvs:help`**
 Show this command reference.

@@ -1,11 +1,11 @@
 ---
 name: fvs:manage
-description: "management | help configure update checkpoint pause resume patches kb roadmap"
+description: "management | help configure update checkpoint pause resume patches kb roadmap issues"
 argument-hint: ""
 allowed-tools:
   - Read
   - Skill
-requires: [help, configure, update, checkpoint, pause-work, resume-work, reapply-patches, kb-setup, roadmap]
+requires: [help, configure, update, checkpoint, pause-work, resume-work, reapply-patches, kb-setup, roadmap, issues-setup]
 ---
 
 Route to the appropriate management skill based on the user's intent.
@@ -23,5 +23,6 @@ When invoked WITH a request, match it against the table below and invoke the mat
 | Reapply local patches after an update | fvs:reapply-patches |
 | Set up a NotebookLM knowledge base | fvs:kb-setup |
 | Turn a chat or a prompt into a long-horizon verification roadmap | fvs:roadmap |
+| Choose where issues live (GitHub, local markdown, other) | fvs:issues-setup |
 
 Invoke the matched skill directly using the Skill tool.

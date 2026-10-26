@@ -51,5 +51,8 @@
   "behavior": {
     "mode": "interactive"
   },
-  "knowledge_bases": []
+  "knowledge_bases": [],
+  "issues": {
+    "provider": null
+  }
 }
