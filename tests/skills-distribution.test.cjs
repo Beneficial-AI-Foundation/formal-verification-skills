@@ -17,9 +17,9 @@ test('renders one self-contained native setup entry rather than relocated workfl
   assert.match(text, /## Complete source installation/);
   assert.match(text, /## Privacy/);
   assert.doesNotMatch(text, /CLAUDE_PLUGIN_ROOT|@\.\.\/|\.\.\/\.\.\//);
-  assert.equal(fs.readdirSync(path.join(root, 'commands/fvs')).filter(n => n.endsWith('.md')).length, 30);
-  assert.equal(fs.readdirSync(path.join(root, 'pi/skills')).length, 30);
-  assert.equal(fs.readdirSync(path.join(root, 'plugins/fvs/skills')).length, 30);
+  assert.equal(fs.readdirSync(path.join(root, 'commands/fvs')).filter(n => n.endsWith('.md')).length, 31);
+  assert.equal(fs.readdirSync(path.join(root, 'pi/skills')).length, 31);
+  assert.equal(fs.readdirSync(path.join(root, 'plugins/fvs/skills')).length, 31);
 });
 
 test('covers all supported native channels without hidden registry or role substitution', () => {

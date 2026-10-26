@@ -53,7 +53,7 @@ Five router commands group the skills. Invoke a router bare to print its routing
 - `/fvs:context` — Codebase context (map-code)
 - `/fvs:fc` — Formal-correctness core (fc-plan, model-external, lean-specify, lean-spec-review, lean-verify, natural-language, lean-refactor, trust-audit)
 - `/fvs:formalise` — Paper formalisation (lean-formalise, lean-refactor)
-- `/fvs:manage` — Management (help, update, checkpoint, pause-work, resume-work, reapply-patches, kb-setup)
+- `/fvs:manage` — Management (help, update, checkpoint, pause-work, resume-work, reapply-patches, kb-setup, roadmap)
 
 ### Aeneas (`/fvs:aeneas`)
 
@@ -373,6 +373,18 @@ Set up NotebookLM knowledge base integration.
 
 Usage: `/fvs:kb-setup`
 Usage: `/fvs:kb-setup --add`
+
+**`/fvs:roadmap [path/ROADMAP.md | path/] [goal prompt]`**
+Turn the current conversation or a short prompt into a long-horizon verification roadmap.
+
+- Synthesizes from the conversation first; with only a prompt, asks one bounded round of at most seven questions
+- Records claims to establish, scope, external boundaries, milestones with a checkable "done when", and decisions and status logs
+- Writes `.formalising/fv-plans/<topic>/ROADMAP.md` (or an explicit path) after checking it is git-excluded
+- Bare invocation lists existing roadmaps; a rerun appends to the logs and never rewrites a decision
+- Grants no execution, spending or publication authority
+
+Usage: `/fvs:roadmap prove security of this protocol`
+Usage: `/fvs:roadmap .formalising/auto-fv/ROADMAP.md`
 
 **`/fvs:help`**
 Show this command reference.

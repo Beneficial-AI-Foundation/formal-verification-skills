@@ -1,6 +1,6 @@
 ---
 name: manage
-description: "management | help configure update checkpoint pause resume patches kb"
+description: "management | help configure update checkpoint pause resume patches kb roadmap"
 argument-hint: ""
 allowed-tools:
   - Read
@@ -103,5 +103,6 @@ When invoked WITH a request, match it against the table below and invoke the mat
 | Resume previously paused work | fvs:resume-work |
 | Reapply local patches after an update | fvs:reapply-patches |
 | Set up a NotebookLM knowledge base | fvs:kb-setup |
+| Turn a chat or a prompt into a long-horizon verification roadmap | fvs:roadmap |
 
 Invoke the matched skill directly using the Skill tool.

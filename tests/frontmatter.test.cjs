@@ -25,6 +25,10 @@ function parseFrontmatter(filePath) {
     }
   }
 
+  // Frontmatter is only the block that opens the file; a `---` fence quoted
+  // further down (a template embedded in a workflow) is body text.
+  if (start !== 0) { start = -1; end = -1; }
+
   const meta = {};
   if (start !== -1 && end !== -1) {
     for (let i = start + 1; i < end; i++) {
@@ -63,12 +67,12 @@ describe('Commands (commands/fvs/)', () => {
     'crypto-plan.md', 'crypto-review.md', 'fc-plan.md', 'fc.md', 'formalise.md', 'help.md',
     'kb-setup.md', 'lean-formalise.md', 'lean-refactor.md', 'lean-spec-review.md', 'lean-specify.md',
     'lean-verify.md', 'manage.md', 'map-code.md', 'model-external.md', 'natural-language.md',
-    'pause-work.md', 'reapply-patches.md', 'resume-work.md',
+    'pause-work.md', 'reapply-patches.md', 'resume-work.md', 'roadmap.md',
     'sync-aeneas-verif.md', 'trust-audit.md', 'update.md',
   ];
 
-  it('has exactly 30 command files', () => {
-    assert.equal(files.length, 30, `Expected 30 commands, got ${files.length}: ${files.join(', ')}`);
+  it('has exactly 31 command files', () => {
+    assert.equal(files.length, 31, `Expected 31 commands, got ${files.length}: ${files.join(', ')}`);
   });
 
   it('has the expected set of command files', () => {
@@ -196,11 +200,11 @@ describe('Workflows (fv-skills/workflows/)', () => {
     'aeneas-extract.md', 'crypto-eval.md', 'crypto-execute.md',
     'crypto-followup.md', 'crypto-plan.md', 'crypto-review.md', 'fc-plan.md', 'lean-formalise.md',
     'lean-refactor.md', 'lean-spec-review.md', 'lean-specify.md', 'lean-verify.md', 'map-code.md',
-    'model-external.md', 'natural-language.md', 'sync-aeneas-verif.md', 'trust-audit.md', 'update.md',
+    'model-external.md', 'natural-language.md', 'roadmap.md', 'sync-aeneas-verif.md', 'trust-audit.md', 'update.md',
   ];
 
-  it('has exactly 18 workflow files', () => {
-    assert.equal(files.length, 18, `Expected 18 workflows, got ${files.length}: ${files.join(', ')}`);
+  it('has exactly 19 workflow files', () => {
+    assert.equal(files.length, 19, `Expected 19 workflows, got ${files.length}: ${files.join(', ')}`);
   });
 
   it('has the expected set of workflow files', () => {

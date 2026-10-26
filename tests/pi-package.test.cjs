@@ -23,14 +23,14 @@ describe('Pi package', () => {
     assert.ok(pkg.files.includes('pi'));
   });
 
-  it('loads 30 generated skills with zero structural diagnostics', () => {
+  it('loads 31 generated skills with zero structural diagnostics', () => {
     const commands = fs.readdirSync(path.join(ROOT, 'commands', 'fvs'))
       .filter((name) => name.endsWith('.md'))
       .map((name) => `fvs-${name.slice(0, -3)}`)
       .sort();
     const diagnostics = [];
 
-    assert.equal(commands.length, 30);
+    assert.equal(commands.length, 31);
     assert.deepEqual(skillNames(), commands);
     for (const name of commands) {
       const raw = fs.readFileSync(path.join(PI_SKILLS_ROOT, name, 'SKILL.md'), 'utf8');
