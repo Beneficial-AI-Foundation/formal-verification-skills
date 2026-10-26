@@ -16,6 +16,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   checking that git excludes the file, offers to add `.formalising/` to the repository's local
   `info/exclude` rather than any tracked ignore file, and records unknowns as blocked milestones.
   Approving a roadmap grants no execution, spending or publication authority.
+- `/fvs:issues-setup` lets you choose where a project's issues live (GitHub, local markdown, or another
+  tracker) and records the choice, with its label vocabulary, in `.formalising/fvs-config.json`. A
+  roadmap can override it in its own frontmatter. It only records the choice: it never creates GitHub
+  labels or issues, and never edits ignore files.
 
 ## [2.3.8] - 2026-10-23
 
