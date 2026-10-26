@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- `/fvs:roadmap` turns the current conversation or a short prompt into a long-horizon verification
+  roadmap (`ROADMAP.md`): the claims to establish, scope and exclusions, external boundaries,
+  milestones that an existing FVS command or checker decides, and decisions and status logs that a
+  rerun only appends to. With only a prompt it asks one bounded round of at most seven questions,
+  and only for gaps the conversation leaves. It writes under `.formalising/fv-plans/<topic>/` after
+  checking that git excludes the file, offers to add `.formalising/` to the repository's local
+  `info/exclude` rather than any tracked ignore file, and records unknowns as blocked milestones.
+  Approving a roadmap grants no execution, spending or publication authority.
+
 ## [2.3.8] - 2026-10-23
 
 ### Added
