@@ -21,8 +21,9 @@ user before creating local markdown issues or publishing an exactly approved Git
 </execution_context>
 
 <context>
-Arguments: $ARGUMENTS (optional roadmap path). With no path, use the current conversation; if a
-roadmap directory is needed for local export or a publication log, offer `/fvs:roadmap` first.
+Arguments: $ARGUMENTS (optional roadmap path). With no path, use the current conversation and select
+an existing roadmap or create one via `/fvs:roadmap` before resolving the tracker or drafting issues.
+Changing the selected roadmap restarts tracker resolution and affected checks, preview and consent.
 </context>
 
 <process>

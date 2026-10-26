@@ -18,11 +18,45 @@ test('to-issues exposes its workflow and interactive tools', () => {
 
 test('tracker resolution is override, project default, then setup; invalid overrides stop', () => {
   const s = step(1);
-  assert.match(s, /1\. A per-roadmap[\s\S]*2\. Only when[\s\S]*3\. If neither/);
+  assert.match(s, /1\. A per-roadmap[\s\S]*2\. Only when[\s\S]*3\. Only when the override is absent/);
   for (const text of ['replaces the whole', 'never fill override gaps', 'provider: null',
     'malformed JSON/YAML', 'all five label roles', 'BEFORE drafting', 'For `other`, stop'])
     assert.ok(s.includes(text), text);
   assert.match(s, /Setup's explicit config write is a separate flow/);
+});
+
+test('null roadmap override stops for both project-default states without project-only repair', () => {
+  const s = step(1);
+  for (const project of ['Configured', 'Unconfigured']) {
+    const row = s.split('\n').find(line => line.startsWith(`| Complete, provider null | ${project} |`));
+    assert.ok(row, `null override with ${project} default`);
+    assert.match(row, /Stop; separately approve replacing\/removing the override, then rerun Step 1/);
+  }
+  assert.match(s, /project-only `\/fvs:issues-setup` cannot repair it because setup never edits roadmaps/);
+  assert.match(s, /Show the exact\nroadmap path and its `issues:` block/);
+  assert.match(s, /replaces the entire override with a complete configured record or removes the entire `issues:`\nblock/);
+  assert.match(s, /Do not perform that edit in this command, silently fall back\nto the project default, or loop through setup/);
+  assert.match(s, /After that separate action, rerun Step 1 from disk/);
+});
+
+test('conversation selects roadmap before resolution and conflicting overrides determine destination', () => {
+  const s = step(1);
+  const selection = s.indexOf('For conversation input, select an existing roadmap');
+  assert.ok(selection >= 0 && selection < s.indexOf('Resolve the tracker in this order:'));
+  assert.match(s, /approval BEFORE resolving the tracker or drafting issues/);
+  for (const row of [
+    '| Local | GitHub | GitHub; announce its repo/visibility and run GitHub checks before drafting |',
+    '| GitHub | Local | Local; announce its roadmap directory before drafting |',
+    '| Local or GitHub | Other | Stop with manual-tracker guidance |',
+    '| Local or GitHub | Invalid | Stop; never fill gaps from the default |',
+    '| Local or GitHub | Provider null | Stop using the null-override guidance above |',
+  ]) assert.ok(s.includes(row), row);
+  assert.match(s, /selected roadmap changes at any later step[\s\S]*restart Step 1/);
+  assert.match(s, /Read and validate the newly selected override as a whole block/);
+  assert.match(s, /announce\nthe new effective destination[\s\S]*repeat all relevant GitHub checks/);
+  assert.match(s, /Rebuild affected drafts, the quiz and the full sanitized preview[\s\S]*fresh affected batch\nand label consent/);
+  assert.match(s, /already attempted batch[\s\S]*never authorizes duplicate creation/);
+  assert.match(step(3), /roadmap already selected in Step 1[\s\S]*full Step 1 restart/);
 });
 
 test('vertical outcomes distinguish scheduling, semantic dependencies and proof acceptance', () => {
