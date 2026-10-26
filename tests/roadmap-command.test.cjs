@@ -281,6 +281,14 @@ describe('roadmap rerun', () => {
     assert.match(text, /names? (the|any) replacement explicitly/i);
   });
 
+  it('appends one dated status-log row on every rerun, even when no decision changed', () => {
+    assert.match(text, /every rerun appends exactly one dated status log row/i);
+  });
+
+  it('only treats an existing file as a roadmap when it is named ROADMAP.md or carries the marker', () => {
+    assert.match(text, /named ROADMAP\.md or carrying the marker/i);
+  });
+
   it('edits in place with Edit rather than rewriting the whole file', () => {
     assert.match(text, /Edit/);
     assert.match(text, /byte[- ]for[- ]byte|untouched text/i);
@@ -401,6 +409,23 @@ describe('roadmap path block', () => {
       it('requires exactly one of topic and path', () => {
         assert.equal(resolve({}).status, 2);
         assert.equal(resolve({ ROADMAP_TOPIC: 'a', ROADMAP_PATH: 'b.md' }).status, 2);
+      });
+
+      it('refuses an existing file that is not a roadmap, but accepts ROADMAP.md or a marked file', () => {
+        const dir = scratchDir('path-existing');
+        fs.writeFileSync(path.join(dir, 'README.md'), '# not a roadmap\n');
+        fs.writeFileSync(path.join(dir, 'ROADMAP.md'), '# hand-written, no marker\n');
+        fs.writeFileSync(path.join(dir, 'custom.md'), '---\nfvs_roadmap: true\n---\n');
+        const refused = run(shell, block, dir, { ROADMAP_PATH: 'README.md' });
+        assert.equal(refused.status, 2);
+        assert.equal(refused.stdout, '');
+        assert.match(refused.stderr, /not a roadmap/);
+        for (const name of ['ROADMAP.md', 'custom.md']) {
+          const accepted = run(shell, block, dir, { ROADMAP_PATH: name });
+          assert.equal(accepted.status, 0, `${name}: ${accepted.stderr}`);
+          assert.equal(accepted.stdout, `${name}\n`);
+        }
+        assert.equal(fs.readFileSync(path.join(dir, 'README.md'), 'utf8'), '# not a roadmap\n');
       });
 
       it('refuses to write through a symlinked roadmap file', () => {

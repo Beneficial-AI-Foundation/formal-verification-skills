@@ -92,6 +92,13 @@ else
   fail "no topic or path given"
 fi
 if [ -L "$FILE" ]; then fail "refusing to write through a symlinked roadmap file"; fi
+if [ -e "$FILE" ]; then
+  case ${FILE##*/} in
+    ROADMAP.md) ;;
+    *) grep -q '^fvs_roadmap: true' -- "$FILE" 2>/dev/null ||
+         fail "$FILE exists and is not a roadmap (no fvs_roadmap marker): pass a new path" ;;
+  esac
+fi
 printf '%s\n' "$FILE"
 ```
 
@@ -165,7 +172,9 @@ report.
 
 ## 3. Rerun on an existing roadmap
 
-If `ROADMAP_FILE` already exists, read it fully before doing anything else and follow the rerun rules at
+If `ROADMAP_FILE` already exists, it is a roadmap only when it is named ROADMAP.md or carrying the
+marker; the path block refuses any other existing file, so a stray first word of a prompt can never
+turn a README into a roadmap. Read it fully before doing anything else and follow the rerun rules at
 the end of this workflow instead of steps 4 to 6.
 
 ## 4. Synthesize before asking
@@ -319,7 +328,8 @@ Then name the first unblocked milestone and the command that decides its "done w
 
 ## Rerun rules
 
-Read the existing roadmap fully first. A rerun may only:
+Read the existing roadmap fully first. Every rerun appends exactly one dated Status log row, even when
+no decision changed. A rerun may only:
 
 - append rows to the Decisions log and the Status log;
 - replace an `UNKNOWN` with an answer the user gave, unblocking the milestones that needed it and
