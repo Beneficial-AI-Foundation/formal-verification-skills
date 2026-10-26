@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import {
   assertValidatedWindowsRuntime, assertValidatedWindowsLauncher,
-  resolveWindowsRecoveryLauncher,
+  resolveWindowsRecoveryLauncher, matchesWindowsVersion,
 } from './fvs-probe-windows-runtime.mjs';
 
 const HEX = /^[a-f0-9]{64}$/;
@@ -287,7 +287,7 @@ function runLifecycle({ runtime, projectRoot, cwd, commands, staged, rustProject
       if (!Array.isArray(commands) || commands.length === 0) fail('At least one validated readonly command is required');
       commands = commands.map(command => {
         const known = runtime.versions.find(item => item.name === command.name && item.executable === command.executable
-          && item.sha256 === command.sha256 && item.expected === command.expected && JSON.stringify(item.args) === JSON.stringify(command.args));
+          && item.sha256 === command.sha256 && item.expected === command.expected && JSON.stringify(item.requiredComponents) === JSON.stringify(command.requiredComponents) && JSON.stringify(item.args) === JSON.stringify(command.args));
         if (!known) fail('Readonly command is not an exact validated version check');
         if (!selected.some(root => inside(root, known.executable))) fail('Readonly executable is outside validated version resources');
         checkedFile(known.executable, known.sha256); return known;
@@ -356,7 +356,7 @@ function runLifecycle({ runtime, projectRoot, cwd, commands, staged, rustProject
       for (const [key, value] of Object.entries(persistedRun)) if (JSON.stringify(value) !== JSON.stringify(lastRun[key])) fail('Persisted confined result differs from launcher response');
       if (persistedRun.runId !== lastRun.runId) fail('Confined run result identity differs');
       const execution = { ...lastRun, name: command.name, ok: lastRun.ok === true && lastRun.launcherExitCode === 0 && lastRun.status === 'exited' && lastRun.exitCode === 0 && lastRun.activeProcessesAfter === 0 };
-      if (!staged && execution.stdout?.trim() !== command.expected) { execution.ok = false; execution.error = 'Pinned version output did not match'; }
+      if (!staged && !matchesWindowsVersion(command, execution.stdout)) { execution.ok = false; execution.error = 'Pinned version output did not match'; }
       result.results.push(execution);
       result.stdout = execution.stdout || ''; result.stderr = execution.stderr || ''; result.status = execution.status;
       if (!execution.ok) fail(execution.error || diagnosticsText(execution.diagnostics) || `Confined ${command.name} failed`);

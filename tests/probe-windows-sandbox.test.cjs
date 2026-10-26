@@ -18,6 +18,7 @@ describe('Windows production adapter lifecycle with synthetic native transport',
 }, () => {
   let fixtureRoot, adapter, brand, runtime, project, crate, session, control, stage;
   let originalSpawn, originalCopy, calls, mode, prepared, finalRun, runCounter, observations;
+  let versionOutput;
   const sessionId = 'a'.repeat(32);
   const save = (file, value) => { const bytes = Buffer.from(JSON.stringify(value)); fs.writeFileSync(file, bytes); return digest(bytes); };
 
@@ -53,6 +54,7 @@ describe('Windows production adapter lifecycle with synthetic native transport',
     // runtime module is synthetic, so production exports have no test bypass.
     fs.copyFileSync(path.join(ROOT, 'scripts', 'fvs-probe-windows-sandbox.mjs'), path.join(modules, 'fvs-probe-windows-sandbox.mjs'));
     fs.writeFileSync(path.join(modules, 'fvs-probe-windows-runtime.mjs'), [
+      `export { matchesWindowsVersion } from ${JSON.stringify(pathToFileURL(path.join(ROOT, 'scripts/fvs-probe-windows-runtime.mjs')).href)};`,
       'const runtimes=new WeakSet(), launchers=new WeakSet();',
       'export function brand(runtime){runtimes.add(runtime);launchers.add(runtime.launcher);return runtime}',
       'export function assertValidatedWindowsRuntime(runtime){if(!runtimes.has(runtime))throw new Error("unbranded runtime")}',
@@ -121,7 +123,7 @@ describe('Windows production adapter lifecycle with synthetic native transport',
         const runId = (++runCounter).toString(16).padStart(32, '0');
         const resultPath = path.join(control, `run-${runId}.json`);
         const base = { ok: mode !== 'run-failed', status: 'exited', exitCode: mode === 'run-failed' ? 1 : 0, activeProcessesAfter: 0,
-          stdout: staged ? 'extracted' : 'pinned version', stderr: '', runId };
+          stdout: staged ? 'extracted' : versionOutput, stderr: '', runId };
         const resultSha256 = save(resultPath, base);
         finalRun = { ...base, resultPath, resultSha256 };
         if (mode === 'changed-run-result') fs.appendFileSync(resultPath, ' ');
@@ -136,7 +138,7 @@ describe('Windows production adapter lifecycle with synthetic native transport',
   });
 
   beforeEach(() => {
-    calls = []; mode = ''; prepared = null; finalRun = null; runCounter = 0; observations = {};
+    calls = []; mode = ''; prepared = null; finalRun = null; runCounter = 0; observations = {}; versionOutput = 'pinned version';
     fs.copyFileSync = originalCopy;
     const example = fs.mkdtempSync(path.join(fixtureRoot, 'case '));
     project = path.join(example, 'project with spaces'); crate = path.join(project, 'rust crate');
@@ -187,6 +189,20 @@ describe('Windows production adapter lifecycle with synthetic native transport',
     assert.ok(observations.prepare.readOnlyPaths.includes(observations.versionCwd));
     assert.equal(fs.existsSync(stage), false);
     assert.equal(result.outputText, undefined);
+  });
+
+  for (const extras of [false, true, 'missing']) it(`confined component set agrees with setup: ${extras}`, async () => {
+    const { getWindowsSourcePolicy, matchesWindowsVersion } = await import(pathToFileURL(path.join(ROOT, 'scripts/fvs-probe-windows-runtime.mjs')));
+    const version = getWindowsSourcePolicy().versions.find(x => x.name === 'rustup-components');
+    const components = [...version.requiredComponents];
+    if (extras === true) components.push('clippy-x86_64-pc-windows-msvc', 'rust-docs-x86_64-pc-windows-msvc');
+    if (extras === 'missing') components.pop();
+    versionOutput = components.join('\r\n');
+    runtime.versions = [{ ...runtime.versions[0], ...version }];
+    const result = adapter.runWindowsReadOnly({ runtime, commands: runtime.versions, projectRoot: project });
+    assert.equal(result.ok, matchesWindowsVersion(version, versionOutput), JSON.stringify(result));
+    assert.equal(result.ok, extras !== 'missing');
+    assert.equal(fs.existsSync(stage), false);
   });
 
   it('observes actual Unicode resource ACLs through strict UTF-8 pipes', () => {

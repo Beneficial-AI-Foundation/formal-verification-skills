@@ -587,12 +587,28 @@
   },
   "sourceReceipts": {
     "windows-source-v1": {
+      "id": "windows-source-v1",
+      "target": "x86_64-pc-windows-msvc",
+      "official": false,
+      "policySha256": "d5ef0588040b6ba8ce5e52f19d17f23a817b557580e437750fcb8264c2311177",
+      "tuple": "aeneas-6e167c9b-charon-0.1.225-lean-v4.31.0",
+      "isolation": "windows-appcontainer-journal-v2",
+      "status": "unqualified",
+      "evidence": {
+        "path": "tests/fixtures/windows-source-v1.json",
+        "sha256": "8ae23aaa4f51f6a1a80fa0a3428ec1951af3f5a8caf18537c09aa9fbbcb9d70a"
+      },
+      "scope": "Unqualified. Successful fresh helper-build installation is blocked by a differing existing Lean profile helper; preserving that helper prevents completing this acceptance case on the current profile. Complete packaged resolve/run acceptance on the reconfigured project: stopped at user request after helper-session cleanup; final protected inventory was incomplete and extraction was not started."
+    }
+  },
+  "historicalSourceReceipts": {
+    "windows-source-v1@7ad374b": {
       "tuple": "aeneas-6e167c9b-charon-0.1.225-lean-v4.31.0",
       "target": "x86_64-pc-windows-msvc",
       "official": false,
       "policySha256": "323acfbff84d5841615612ffc110479123b9c5556a83a40b74a6b651fcbb4216",
       "evidence": {
-        "path": "tests/fixtures/windows-source-v1.json",
+        "path": "tests/fixtures/windows-source-v1-historical-7ad374b.json",
         "sha256": "54e7f395dd87b9cb982f460f2f43718b6b6c5234bee253918857bf6c0b6ec8ba"
       },
       "observed": {

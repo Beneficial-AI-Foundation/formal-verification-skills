@@ -28,6 +28,7 @@ func token() {
 }
 func nativeWrite(path string)error {name,err:=syscall.UTF16PtrFromString(path);if err!=nil{return err}; h,err:=syscall.CreateFile(name,syscall.GENERIC_WRITE,syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE,nil,syscall.CREATE_ALWAYS,syscall.FILE_ATTRIBUTE_NORMAL,0);if err!=nil{return err};defer syscall.CloseHandle(h);var written uint32;return syscall.WriteFile(h,[]byte("allowed"),&written,nil)}
 func main() {
+ if len(os.Args)>1&&os.Args[1]=="create-readonly"{file:=os.Args[2];if err:=nativeWrite(file);err!=nil{panic(err)};name,_:=syscall.UTF16PtrFromString(file);if err:=syscall.SetFileAttributes(name,syscall.FILE_ATTRIBUTE_READONLY);err!=nil{panic(err)};record("readonly-created",map[string]any{"path":file});return}
  if len(os.Args)>1&&os.Args[1]=="echo-args"{record("arguments",map[string]any{"args":os.Args[2:]});return}
  if len(os.Args)>1&&os.Args[1]=="flood"{for n:=0;n<100000;n++{fmt.Println("untrusted-output-output-output-output-output-output-output-output-output-output")};return}
  if len(os.Args)>1&&os.Args[1]=="linger-leaf"{record("linger-child",map[string]any{});time.Sleep(30*time.Second);return}

@@ -35,6 +35,7 @@ describe('Windows public integration with synthetic reviewed runtime', { skip: p
     for (const name of ['fvs-probe-inventory.mjs', 'fvs-probe-linux.mjs', 'fvs-probe-windows.mjs']) fs.copyFileSync(path.join(ROOT, 'scripts', name), path.join(modules, name));
     fs.writeFileSync(path.join(modules, 'fvs-probe-windows-qualification.mjs'), `export const WINDOWS_SOURCE_QUALIFICATION=Object.freeze({id:'windows-source-v1',target:'${TARGET}',qualified:true,policySha256:'${'b'.repeat(64)}',tuple:'aeneas-6e167c9b-charon-0.1.225-lean-v4.31.0'});`);
     fs.writeFileSync(path.join(modules, 'fvs-probe-windows-runtime.mjs'), [
+      `export { matchesWindowsVersion } from ${JSON.stringify(pathToFileURL(path.join(ROOT, 'scripts/fvs-probe-windows-runtime.mjs')).href)};`,
       'export const control={};',
       'export function assertValidatedWindowsRuntime(value){if(value!==control.runtime)throw Error("unbranded runtime")}',
       'export function plainWindowsPath(value){if(typeof value!=="string")throw Error("invalid path");return value}',

@@ -13,7 +13,7 @@ const launcher=path.resolve(launcherArg),canary=path.resolve(canaryArg),evidence
 fs.mkdirSync(evidence,{recursive:true});
 const hash=file=>crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 let launcherBuild=null;
-if(mode==='cleanup-faults'){
+if(mode==='cleanup-faults'||mode==='review-regressions'){
  const file=path.join(path.dirname(launcher),'fvs-windows-launcher.build.json');
  const receipt=JSON.parse(fs.readFileSync(file,'utf8'));
  assert.equal(receipt.testHooks,true,'Transition injections require the retained test-hook build');
@@ -92,6 +92,51 @@ try{
   reserve();prepare();result=run(['chain-linger','0',active.request.writablePaths[0]],{timeoutMs:500});assert.equal(result.status,'timeout');assert.equal(result.activeProcessesAfter,0);dispose();check('bounded timeout drains three generations');
   reserve();prepare();const externalAlias=path.join(active.request.writablePaths[0],'outside-alias');fs.linkSync(protectedFile,externalAlias);const before=acls([protectedFile])[0].acl;const d=call('dispose',{schema:'fvs/windows-dispose/v2',stateSha256:active.stateSha256},active.statePath);assert.equal(d.ok,false);assert.equal(acls([protectedFile])[0].acl,before);const recovered=recover();assert(recovered.aclCleanupConfirmed);assert.equal(fs.statSync(protectedFile).nlink,1);check('strict default rejects generated hardlink before ACL mutation; scoped recovery unlinks only private alias');
   reserve();prepare();const request={schema:'fvs/windows-run/v2',stateSha256:active.stateSha256,executable:active.request.executablePaths[0],args:['chain-linger','0',active.request.writablePaths[0]],cwd:active.request.writablePaths[0],environment:{},timeoutMs:30000,maxOutputBytes:1048576};const child=spawn(launcher,['run',active.statePath,'-'],{windowsHide:true,stdio:['pipe','pipe','pipe']});child.stdin.end(JSON.stringify(request));let stdout='';child.stdout.on('data',x=>stdout+=x);const done=new Promise(resolve=>child.once('close',resolve));for(let n=0;n<200&&!fs.existsSync(path.join(active.request.writablePaths[0],'pid-2.txt'));n++)await new Promise(r=>setTimeout(r,25));assert(fs.existsSync(path.join(active.request.writablePaths[0],'pid-2.txt')));const cancel=call('cancel',{schema:'fvs/windows-cancel/v2',sessionId:active.sessionId});assert(cancel.ok,JSON.stringify(cancel));await done;result=JSON.parse(stdout);assert.equal(result.status,'cancelled');assert.equal(result.activeProcessesAfter,0);dispose();check('separate cancellation signal reaches locked run and drains descendants');
+ }else if(mode==='review-regressions'){
+  function attribute(file){return Number(powershell('[int][IO.File]::GetAttributes($env:FVS_TEST_PATH)',{FVS_TEST_PATH:file}));}
+  function readonly(file){powershell('[IO.File]::SetAttributes($env:FVS_TEST_PATH,[IO.File]::GetAttributes($env:FVS_TEST_PATH) -bor [IO.FileAttributes]::ReadOnly)',{FVS_TEST_PATH:file});}
+  for(const readOnly of [false,true]){
+   reserve();
+   if(readOnly){
+    const w=path.join(active.stageRoot,'w');fs.mkdirSync(w);const request={schema:'fvs/windows-prepare/v2',sessionId:active.sessionId,readOnlyPaths:[canary,protectedRoot,w],writablePaths:[],disposablePaths:[],executablePaths:[canary],profileTempWritable:false};
+    const p=call('prepare',request);assert(p.ok,JSON.stringify(p));active={...active,...p,request};
+   }else prepare();
+   const removed=readOnly?'w':'work';
+   dispose('remove-stage-directory:'+removed+':after-mutation');
+   assert(fs.existsSync(active.stageRoot));assert(!fs.existsSync(path.join(active.stageRoot,removed)));
+   if(!readOnly){
+    const survivor=path.join(active.stageRoot,'output'),saved=survivor+'.saved';assert(fs.existsSync(survivor));
+    fs.renameSync(survivor,saved);fs.mkdirSync(survivor);
+    try{const refused=call('recover',{schema:'fvs/windows-recover/v2',sessionId:active.sessionId});assert.equal(refused.ok,false);assert.match(refused.diagnostics.join(' '),/identity changed/i);}
+    finally{fs.rmdirSync(survivor);fs.renameSync(saved,survivor);}
+   }
+   // A surviving protected identity may not be replaced or disappear even
+   // when an authenticated private-root removal is in progress.
+   const saved=protectedFile+'.saved';fs.renameSync(protectedFile,saved);
+   try{
+    const missing=call('recover',{schema:'fvs/windows-recover/v2',sessionId:active.sessionId});assert.equal(missing.ok,false);assert.match(missing.diagnostics.join(' '),/disappeared|not exist|missing/i);
+    fs.writeFileSync(protectedFile,'substitute');
+    const substituted=call('recover',{schema:'fvs/windows-recover/v2',sessionId:active.sessionId});assert.equal(substituted.ok,false);assert.match(substituted.diagnostics.join(' '),/identity changed/i);
+   }finally{if(fs.existsSync(protectedFile))fs.unlinkSync(protectedFile);fs.renameSync(saved,protectedFile);}
+   if(!readOnly)call('recover',{schema:'fvs/windows-recover/v2',sessionId:active.sessionId},null,'remove-stage-directory:output:after-mutation');
+   assertExactRecovery(recover());reserve();prepare();dispose();
+   check('partial '+(readOnly?'readonly w':'writable work')+' removal recovers idempotently, rejects protected replacement/missing file, releases session');
+  }
+  for(const kind of ['copied','child','hardlink'])for(const recovery of [false,true]){
+   const outside=path.join(protectedRoot,'outside-readonly.txt');fs.writeFileSync(outside,'outside readonly bytes');readonly(outside);
+   const before={hash:hash(outside),acl:acls([outside]),attributes:attribute(outside),links:fs.statSync(outside).nlink};
+   reserve();prepare();const leaf=path.join(active.request.writablePaths[0],'private-readonly.txt');
+   if(kind==='copied'){fs.copyFileSync(outside,leaf);assert.notEqual(fs.statSync(leaf).ino,fs.statSync(outside).ino);}
+   if(kind==='hardlink')fs.linkSync(outside,leaf);
+   if(kind==='child'){const result=run(['create-readonly',leaf]);assert(result.ok,JSON.stringify(result));assert.equal(result.activeProcessesAfter,0);}
+   assert.equal(attribute(leaf)&1,1,'Actual READONLY attribute required');
+   if(recovery)assertExactRecovery(recover());else dispose();
+   assert.deepEqual({hash:hash(outside),acl:acls([outside]),attributes:attribute(outside),links:fs.statSync(outside).nlink},before);
+   // Fixture teardown changes only this independently created outside file,
+   // after asserting its attributes and hardlink count remained unchanged.
+   powershell('[IO.File]::SetAttributes($env:FVS_TEST_PATH,[IO.FileAttributes]::Normal);[IO.File]::Delete($env:FVS_TEST_PATH)',{FVS_TEST_PATH:outside});
+   check(kind+' readonly private leaf '+(recovery?'recovery':'disposal')+' preserves outside bytes/ACL/attributes/link count');
+  }
  }else if(mode==='faults'){
   for(const step of ['create-session','create-control','create-stage'])for(const edge of ['before-intent','after-intent','after-mutation','after-completion']){reserve(`${step}:${edge}`);recover();check(`reserve termination ${step}:${edge}`);}
   for(const step of ['create-profile','create-temp','harden-profile','grant-0','grant-2','grant-5','publish-state','create-run.lock'])for(const edge of ['before-intent','after-intent','after-mutation','after-completion']){reserve();prepare(`${step}:${edge}`);recover();check(`prepare termination ${step}:${edge}`);}

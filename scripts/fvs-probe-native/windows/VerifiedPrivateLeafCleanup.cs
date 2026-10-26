@@ -13,7 +13,7 @@ using System.Security.Principal;
 public static class VerifiedPrivateLeafCleanup {
  [StructLayout(LayoutKind.Sequential)] struct Info {public uint attributes;public System.Runtime.InteropServices.ComTypes.FILETIME created,accessed,written;public uint volume,sizeHigh,sizeLow,links,indexHigh,indexLow;}
  [StructLayout(LayoutKind.Sequential)] struct Accounting {public long user,kernel,periodUser,periodKernel;public uint faults,total,active,terminated;}
- [StructLayout(LayoutKind.Sequential)] struct Disposition {[MarshalAs(UnmanagedType.Bool)] public bool delete;}
+ [StructLayout(LayoutKind.Sequential)] struct Disposition {public uint flags;}
  [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr CreateFile(string path,uint access,uint share,IntPtr security,uint disposition,uint flags,IntPtr template);
  [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetFileInformationByHandle(IntPtr file,out Info info);
  [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern uint GetFinalPathNameByHandle(IntPtr file,StringBuilder path,uint size,uint flags);
@@ -66,7 +66,7 @@ public static class VerifiedPrivateLeafCleanup {
    }
    // Every ancestor/directory remains leased against deletion or replacement.
    // No ACL, owner, content, or attributes are changed, even for outside aliases.
-   int deleted=0;foreach(var leaf in leaves){IntPtr h=Open(leaf.path,false,true);try{if(Identity(Inspect(h,leaf.path,false))!=leaf.identity)throw new Exception("Cleanup leaf identity changed");var disposition=new Disposition{delete=true};Check(SetFileInformationByHandle(h,4,ref disposition,4),"unlink private leaf "+leaf.path);}finally{CloseHandle(h);}if(File.Exists(leaf.path))throw new Exception("Private leaf remains after unlink");deleted++;}
+   int deleted=0;foreach(var leaf in leaves){IntPtr h=Open(leaf.path,false,true);try{if(Identity(Inspect(h,leaf.path,false))!=leaf.identity)throw new Exception("Cleanup leaf identity changed");var disposition=new Disposition{flags=0x1u|0x2u|0x10u};Check(SetFileInformationByHandle(h,21,ref disposition,4),"unlink private leaf "+leaf.path);}finally{CloseHandle(h);}if(File.Exists(leaf.path))throw new Exception("Private leaf remains after unlink");deleted++;}
    foreach(string root in roots){var pending=new Stack<string>();pending.Push(root);while(pending.Count!=0){string directory=pending.Pop();foreach(string entry in Directory.EnumerateFileSystemEntries(directory)){if(!directories.ContainsKey(entry))throw new Exception("New/unremoved private entry after cleanup");Inspect(directories[entry],entry,true);pending.Push(entry);}}}
    return deleted;
   }finally{foreach(IntPtr handle in directories.Values)CloseHandle(handle);}

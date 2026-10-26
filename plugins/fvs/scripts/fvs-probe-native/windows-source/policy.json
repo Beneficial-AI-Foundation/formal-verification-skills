@@ -145,7 +145,14 @@
         "--toolchain",
         "1.98.1-x86_64-pc-windows-msvc"
       ],
-      "expected": "cargo-x86_64-pc-windows-msvc\nrust-analyzer-x86_64-pc-windows-msvc\nrust-src\nrust-std-x86_64-pc-windows-msvc\nrustc-x86_64-pc-windows-msvc\nrustfmt-x86_64-pc-windows-msvc"
+      "requiredComponents": [
+        "cargo-x86_64-pc-windows-msvc",
+        "rust-analyzer-x86_64-pc-windows-msvc",
+        "rust-src",
+        "rust-std-x86_64-pc-windows-msvc",
+        "rustc-x86_64-pc-windows-msvc",
+        "rustfmt-x86_64-pc-windows-msvc"
+      ]
     },
     {
       "name": "cargo",

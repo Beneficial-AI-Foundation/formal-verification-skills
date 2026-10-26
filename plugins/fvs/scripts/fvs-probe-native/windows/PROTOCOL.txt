@@ -103,6 +103,11 @@ Journal and terminal receipt
   order, UTF-8, no whitespace/BOM/newline. Validate original parsed fields before
   adding future default fields. Every mutation has a durable preceding intent;
   subtree intents bind the complete pre-entry manifest before any member update.
+  stageRemovalIntended is durably recorded together with remove-stage intent,
+  after the cleanup audit has been persisted and bound by its digest. Recovery
+  authenticates that audit before accepting absent private paths under stageRoot.
+  Surviving resources retain their identity checks; missing protected resources
+  are never excused. The intent survives interruptions during recovery itself.
   Same-volume pending snapshots use WriteThrough, Flush(true), and write-through
   replacement. Ambiguous I/O or corrupt state prevents new sessions/publication.
   The current entry limit is 250000 and each resource/state snapshot is bounded
@@ -115,6 +120,12 @@ Journal and terminal receipt
   hash is returned and pinned in the terminal journal. Native cleanup success
   alone does not authorize graph publication: the caller must also validate graph
   semantics, exact original ACL/inventory invariants and captured output bytes.
+
+  Private leaves use SetFileInformationByHandle(FileDispositionInfoEx) with
+  FILE_DISPOSITION_DELETE | FILE_DISPOSITION_POSIX_SEMANTICS |
+  FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE on the qualified Windows/NTFS host.
+  Deletion uses the already identity-checked handle while ancestors remain leased.
+  It does not clear attributes, rewrite ACLs or change contents through a hardlink.
 
 Scope
   Local fixed NTFS only; no UNC/device/ADS/reparse/hardlink aliases, no permissive

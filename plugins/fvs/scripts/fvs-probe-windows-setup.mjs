@@ -9,7 +9,7 @@ import {
   WINDOWS_SOURCE_DISTRIBUTION, WindowsRuntimeError, getWindowsHostFacts,
   getWindowsSourcePolicy, windowsInstallRoot, plainWindowsPath,
   fingerprintWindowsResource, windowsFileSha256, windowsSourceAssets,
-  checkWindowsManagedDirectory,
+  checkWindowsManagedDirectory, matchesWindowsVersion, reusableWindowsGroups,
   createWindowsManagedDirectory,
 } from './fvs-probe-windows-runtime.mjs';
 import { buildWindowsGroups, copyIndependent, copyPrerequisiteIndependent, unpackArchive } from './fvs-probe-native/windows-source/build-source.mjs';
@@ -118,7 +118,7 @@ function discoverPrerequisites(facts, policy) {
   const discovered = JSON.parse(result.stdout.replace(/^\uFEFF/, ''));
   const toolchainRoot = path.join(facts.profile, '.rustup', 'toolchains', policy.toolchain);
   const vcRoot = discovered.vs && path.join(discovered.vs, 'VC', 'Tools', 'MSVC', policy.msvcVersion);
-  const prerequisites = { git: discovered.git, vsDevCmd: discovered.vs && path.join(discovered.vs, 'Common7', 'Tools', 'VsDevCmd.bat'), toolchainRoot, cargo: path.join(toolchainRoot, 'bin', 'cargo.exe'), rustc: path.join(toolchainRoot, 'bin', 'rustc.exe'), vcRoot, sdkRoot: discovered.sdk, compiler: path.join(facts.windowsDirectory, 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe') };
+  const prerequisites = { rustup: path.join(facts.profile, '.cargo', 'bin', 'rustup.exe'), git: discovered.git, vsDevCmd: discovered.vs && path.join(discovered.vs, 'Common7', 'Tools', 'VsDevCmd.bat'), toolchainRoot, cargo: path.join(toolchainRoot, 'bin', 'cargo.exe'), rustc: path.join(toolchainRoot, 'bin', 'rustc.exe'), vcRoot, sdkRoot: discovered.sdk, compiler: path.join(facts.windowsDirectory, 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe') };
   if (prerequisites.git) {
     const gitDirectory = path.dirname(prerequisites.git);
     const gitRoot = path.basename(gitDirectory).toLowerCase() === 'cmd' ? path.dirname(gitDirectory) : path.basename(gitDirectory).toLowerCase() === 'bin' && ['ucrt64', 'mingw64'].includes(path.basename(path.dirname(gitDirectory)).toLowerCase()) ? path.dirname(path.dirname(gitDirectory)) : null;
@@ -406,6 +406,7 @@ export async function setupWindowsRuntime({ projectRoot, distributionId, toolsRo
     const marker = readSetupMarker(facts);
     if (marker) { const error = new WindowsRuntimeError('setup-recovery-required', 'An authoritative source setup requires recovery before new work.'); error.recovery = { sessionId: marker.sessionId }; throw error; }
     if (fs.existsSync(journalFile)) { const pending = readJson(journalFile); const error = new WindowsRuntimeError('setup-recovery-required', 'An interrupted setup journal requires recovery first.'); error.recovery = { sessionId: 'setup:' + pending.installationId }; throw error; }
+    const reusableGroups = reusableWindowsGroups({ toolsRoot, facts });
     writeSetupMarker(root, installationId, facts, policy.sha256);
     ownsMarker = true;
     fs.mkdirSync(path.join(root, 'staging'), { recursive: true }); fs.mkdirSync(path.join(root, 'installations'), { recursive: true });
@@ -415,17 +416,34 @@ export async function setupWindowsRuntime({ projectRoot, distributionId, toolsRo
     await creation.directory(stage, journal.stageCreationTag); journal.stageIdentity = observedIdentity(stage, true); journal.bundleParentIdentity = journal.stageIdentity; atomicJson(journalFile, journal);
     await creation.directory(bundle, journal.bundleCreationTag); journal.bundleIdentity = observedIdentity(bundle, true); atomicJson(journalFile, journal);
     fs.mkdirSync(path.join(stage, 'temp'));
+    progress({ phase: 'check-prerequisites' });
+    const prerequisiteContext = { stage, facts, lease: unlock, commands, environment: {
+      PATH: facts.systemDirectory, RUSTUP_HOME: path.join(facts.profile, '.rustup'),
+      RUSTUP_TOOLCHAIN: policy.toolchain, RUSTUP_AUTO_INSTALL: '0',
+    } };
+    const prerequisiteRustup = path.join(stage, 'prerequisite-rustup', 'rustup.exe');
+    copyPrerequisiteIndependent(plan.prerequisites.rustup, prerequisiteRustup);
+    const checkPrerequisite = executeFactory(prerequisiteContext);
+    for (const name of ['rustc', 'cargo', 'rustup-components']) {
+      const version = policy.versions.find(item => item.name === name);
+      const executable = plainWindowsPath(version.helper === 'rustup' ? prerequisiteRustup : plan.prerequisites[version.helper]);
+      const identity = windowsFileSha256(executable);
+      const result = await checkPrerequisite(executable, version.args, { label: 'prerequisite-' + name });
+      if (windowsFileSha256(executable) !== identity || !matchesWindowsVersion(version, result.stdout))
+        fail('unsupported-toolchain', 'Required pinned prerequisite differs: ' + name);
+    }
     progress({ phase: 'initialize-build-environment' });
     progress({ phase: 'materialize-git-prerequisite' });
     const gitPrivate = path.join(stage, 'git-prerequisite'), gitSourceFiles = copyPrerequisiteIndependent(plan.prerequisites.gitRoot, gitPrivate);
     const privatePrerequisites = { ...plan.prerequisites, git: path.join(gitPrivate, path.relative(plan.prerequisites.gitRoot, plan.prerequisites.git)), gitRuntimeBin: path.join(gitPrivate, path.relative(plan.prerequisites.gitRoot, plan.prerequisites.gitRuntimeBin)) };
-    const ctx = { stage, bundle, cacheDirectory: plan.cacheDirectory, policy, facts, prerequisites: privatePrerequisites, onProgress: progress, commands, lease: unlock };
+    const ctx = { stage, bundle, reusableGroups, cacheDirectory: plan.cacheDirectory, policy, facts, prerequisites: privatePrerequisites, onProgress: progress, commands, lease: unlock };
     ctx.environment = await buildEnvironment(facts, privatePrerequisites, stage, unlock, ctx.commands); ctx.run = executeFactory(ctx);
     const rustVersion = (await ctx.run(plan.prerequisites.rustc, ['--version'], { label: 'rust-version' })).stdout.trim();
     if (rustVersion !== 'rustc 1.98.1 (48a229cea 2026-09-01)') fail('unsupported-toolchain', 'The source recipe requires Rust 1.98.1 exactly.');
     const gitVersion = (await ctx.run(privatePrerequisites.git, ['--version'], { label: 'git-version' })).stdout.trim();
     if (gitVersion !== policy.versions.find(version => version.name === 'git').expected) fail('unsupported-toolchain', 'The source recipe requires the reviewed native Git version.');
     const { groups, builds } = await buildWindowsGroups(ctx);
+    for (const [name, source] of Object.entries(groups)) copyIndependent(source, path.join(bundle, 'helper-artifacts', name));
     const probeBin = path.join(bundle, 'probe-bin'), proxyBin = path.join(bundle, 'proxy-bin');
     fs.mkdirSync(probeBin); fs.mkdirSync(proxyBin);
     for (const name of ['probe-aeneas', 'probe-rust', 'scip']) copyIndependent(path.join(groups[name], name + '.exe'), path.join(probeBin, name + '.exe'));
@@ -472,7 +490,8 @@ export async function setupWindowsRuntime({ projectRoot, distributionId, toolsRo
     if (JSON.stringify(filesBelow(leanGroup).sort()) !== JSON.stringify(expectedLeanFiles)) fail('helper-layout-unsupported', 'Built Lean helper library layout differs from the reviewed source recipe.');
     const existingLeanLib = path.join(facts.profile, '.local', 'lib', 'probe-lean-v4.31.0');
     const allowedLibraryFiles = new Set(expectedLeanFiles.filter(x => x.startsWith('lib/')).map(x => x.slice(4)));
-    if (filesBelow(existingLeanLib).some(name => !allowedLibraryFiles.has(name))) fail('helper-conflict', 'Existing versioned Lean library contains unreviewed extra files; it was preserved.');
+    const legacyTraces = new Set(policy.reviewedArtifacts['probe-lean'].runtimeSelection.excludedBuildTraces.map(x => x.relativePath.slice(4)));
+    if (filesBelow(existingLeanLib).some(name => !allowedLibraryFiles.has(name) && !legacyTraces.has(name))) fail('helper-conflict', 'Existing versioned Lean library contains unreviewed extra files; it was preserved.');
     async function publishTree(from, to) { const stat = fs.lstatSync(from); if (stat.isDirectory()) { for (const name of fs.readdirSync(from).sort()) await publishTree(path.join(from, name), path.join(to, name)); } else await publishKnownFile(from, to, journal, save, creation); }
     await publishTree(path.join(leanGroup, 'bin'), path.join(facts.profile, '.local', 'bin'));
     await publishTree(path.join(leanGroup, 'lib'), path.join(facts.profile, '.local', 'lib', 'probe-lean-v4.31.0'));
@@ -500,8 +519,8 @@ export async function setupWindowsRuntime({ projectRoot, distributionId, toolsRo
       const args = name === 'rustup-components' ? ['component', 'list', '--installed', '--toolchain', policy.toolchain] : ['--version'];
       const result = await ctx.run(executable, args, { label: 'setup-version-' + name, env: { PATH: [proxyBin, probeBin, localBin, path.join(leanRuntime, 'bin'), gitBin, facts.systemDirectory].join(';'), RUSTUP_HOME: path.join(facts.profile, '.rustup') } });
       const approvedVersion = policy.versions.find(version => version.name === name);
-      if (!approvedVersion || result.stdout.trim() !== approvedVersion.expected) fail('version-mismatch', `The approved source recipe version differs: ${name}`);
-      versions.push({ name, helper, args, expected: result.stdout.trim(), sha256: item.sha256, measurement: 'Explicit setup smoke; confined equality checks are required separately' });
+      if (!approvedVersion || !matchesWindowsVersion(approvedVersion, result.stdout)) fail('version-mismatch', `The approved source recipe version differs: ${name}`);
+      versions.push({ ...approvedVersion, observed: result.stdout.trim(), sha256: item.sha256, measurement: 'Explicit setup smoke; confined policy checks are required separately' });
     }
     copyIndependent(path.join(stage, 'logs'), path.join(bundle, 'build-evidence'));
     progress({ phase: 'flush-runtime-files' }); flushFiles(bundle);

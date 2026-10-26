@@ -14,7 +14,7 @@ import {
 } from './fvs-probe-linux.mjs';
 import { decodeWindowsZip } from './fvs-probe-windows.mjs';
 import { WINDOWS_SOURCE_QUALIFICATION } from './fvs-probe-windows-qualification.mjs';
-import { assertValidatedWindowsRuntime, plainWindowsPath, resolveWindowsRuntime } from './fvs-probe-windows-runtime.mjs';
+import { matchesWindowsVersion, assertValidatedWindowsRuntime, plainWindowsPath, resolveWindowsRuntime } from './fvs-probe-windows-runtime.mjs';
 import { planWindowsSetup, setupWindowsRuntime, recoverWindowsSetup } from './fvs-probe-windows-setup.mjs';
 import {
   getWindowsConfinementStatus, recoverWindowsSession,
@@ -1138,7 +1138,7 @@ function resolveWindowsSource({ result, probe, root, onProgress }) {
   if (observations.length !== runtime.versions.length) return finish('incompatible', 'Incomplete confined Windows helper checks.');
   for (const [index, version] of runtime.versions.entries()) {
     const observation = observations.find(item => item.name === version.name) ?? observations[index];
-    if (!observation?.ok || observation.stdout?.trim() !== version.expected.trim()) {
+    if (!observation?.ok || !matchesWindowsVersion(version, observation.stdout)) {
       return finish('incompatible', `Confined ${version.name} output does not match the source-build recipe.`);
     }
   }

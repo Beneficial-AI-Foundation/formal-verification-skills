@@ -18,12 +18,29 @@ test('runtime and launcher brands cannot be supplied or copied by callers', asyn
   assert.throws(() => m.assertValidatedWindowsRuntime({ policyId: 'windows-source-v1' }), /resolved by the built-in/);
   assert.throws(() => m.assertValidatedWindowsLauncher({ path: 'C:\\arbitrary.exe', sha256: 'a'.repeat(64) }), /managed source-build/);
 });
+
+test('only the pinned component check accepts required sets with optional default-profile components', async () => {
+  const { getWindowsSourcePolicy, matchesWindowsVersion } = await runtime;
+  const policy = getWindowsSourcePolicy(), version = policy.versions.find(x => x.name === 'rustup-components');
+  const required = version.requiredComponents;
+  assert.deepEqual(version.args, ['component', 'list', '--installed', '--toolchain', policy.toolchain]);
+  assert(matchesWindowsVersion(version, required.join('\n')));
+  assert(matchesWindowsVersion(version, [...required, 'clippy-x86_64-pc-windows-msvc', 'rust-docs-x86_64-pc-windows-msvc'].reverse().join('\r\n')));
+  for (const absent of required) assert.equal(matchesWindowsVersion(version, required.filter(x => x !== absent).join('\n')), false, absent);
+  assert.equal(matchesWindowsVersion(version, required.join('\n').replaceAll('x86_64-pc-windows-msvc', 'aarch64-pc-windows-msvc')), false);
+  for (const exact of policy.versions.filter(x => x.expected)) {
+    assert(matchesWindowsVersion(exact, exact.expected));
+    assert.equal(matchesWindowsVersion(exact, exact.expected + '\nextra'), false);
+    assert.equal(matchesWindowsVersion(exact, exact.expected.replace(/\d/, '9')), false);
+  }
+});
 test('source policy binds patches, setup host, recipes and native launcher sources', async () => {
   const m = await runtime, policy = m.getWindowsSourcePolicy();
   assert.equal(policy.qualified, false);
   assert.equal(m.WINDOWS_SOURCE_DISTRIBUTION.origin, 'source-build');
   for (const name of ['SetupHost.cs', 'build-source.mjs', '../../fvs-probe-windows-setup.mjs', '../windows/WindowsLifecycle.cs']) assert.ok(policy.sourceFiles.some(x => x.name === name && /^[a-f0-9]{64}$/.test(x.sha256)), name);
-  assert.equal(policy.reviewedArtifacts['probe-lean'].files.length, 100);
+  assert.equal(policy.reviewedArtifacts['probe-lean'].files.length + policy.reviewedArtifacts['probe-lean'].runtimeSelection.excludedBuildTraces.length, 100);
+  assert(policy.reviewedArtifacts['probe-lean'].files.every(x => !x.relativePath.endsWith('.trace')));
   assert.ok(Object.isFrozen(policy));
 });
 test('Windows aliases and non-local paths fail before reading files', async () => {
@@ -77,8 +94,10 @@ test('registered receipts reject alteration, same-version executable bytes, and 
     write(path.join(base, 'CURRENT.json'), JSON.stringify({ installationId: id })); register();
     fs.appendFileSync(receiptPath, ' ');
     assert.equal(m.resolveWindowsRuntime({ toolsRoot }).diagnostics[0].code, 'receipt-invalid');
+    assert.throws(() => m.reusableWindowsGroups({ toolsRoot, facts: fake }), /registered digest/);
     register(); write(probe, 'probe-aeneas 0.20.0\nunrecognized fixture');
     assert.equal(m.resolveWindowsRuntime({ toolsRoot }).diagnostics[0].code, 'artifact-mismatch');
+    assert.throws(() => m.reusableWindowsGroups({ toolsRoot, facts: fake }), /Registered runtime failed validation/);
     register(); write(probe, 'probe-aeneas 0.20.0\napproved fixture'); write(dll, 'different adjacent bytes');
     const events = []; assert.equal(m.resolveWindowsRuntime({ toolsRoot, onProgress: event => events.push(event) }).diagnostics[0].code, 'resource-mismatch');
     assert.ok(events.some(x => x.phase === 'hash-resource-start')); assert.ok(events.every(x => typeof x.elapsedMs === 'number'));

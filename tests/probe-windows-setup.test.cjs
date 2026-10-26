@@ -34,6 +34,28 @@ test('installed prerequisite hardlinks become independent copies without changin
   assert.throws(() => copyPrerequisiteIndependent(source, path.join(root, 'alias-copy')), /Link or special/);
   fs.symlinkSync(source, path.join(root, 'source-alias'), 'junction'); assert.throws(() => copyPrerequisiteIndependent(path.join(root, 'source-alias'), path.join(root, 'root-alias-copy')), /Link or special/);
 });
+
+test('registered helper reuse needs no external cache or compiler and rejects changed bytes during reuse', { skip: !native }, async t => {
+  const { buildWindowsGroups } = await import(pathToFileURL(path.resolve(__dirname, '../scripts/fvs-probe-native/windows-source/build-source.mjs')));
+  const { fingerprintWindowsResource } = await runtime;
+  const root = fixture(t), reusableGroups = {};
+  for (const name of ['probe-aeneas', 'probe-rust', 'probe-lean', 'scip', 'rustup']) {
+    const source = path.join(root, 'registered', name);
+    write(path.join(source, name + '.exe'), 'previously authenticated bytes: ' + name);
+    reusableGroups[name] = { source, installationId: 'a'.repeat(32), receiptSha256: 'b'.repeat(64),
+      build: { origin: 'fresh-source-build', source: { commit: 'c'.repeat(40) }, output: fingerprintWindowsResource(source) } };
+  }
+  const ctx = { stage: path.join(root, 'new-stage'), reusableGroups,
+    run: () => { throw Error('Reuse must not launch a compiler or download'); } };
+  const { builds, groups } = await buildWindowsGroups(ctx);
+  for (const [name, previous] of Object.entries(reusableGroups)) {
+    assert.deepEqual(builds[name].output, previous.build.output);
+    assert.deepEqual(builds[name].reusedFrom, { installationId: previous.installationId, receiptSha256: previous.receiptSha256 });
+    assert.notEqual(fs.statSync(path.join(groups[name], name + '.exe')).ino, fs.statSync(path.join(previous.source, name + '.exe')).ino);
+  }
+  write(path.join(reusableGroups['probe-aeneas'].source, 'probe-aeneas.exe'), 'same version, substituted binary');
+  await assert.rejects(buildWindowsGroups({ ...ctx, stage: path.join(root, 'changed-stage') }), /Registered helper changed while copying/);
+});
 test('setup checks actual pinned project provenance without writing a tools root', { skip: !native }, async t => {
   const m = await setup, root = fixture(t), input = path.join(root, 'project'), tools = path.join(root, 'tools'); project(input);
   const plan = m.planWindowsSetup({ projectRoot: input, toolsRoot: tools });

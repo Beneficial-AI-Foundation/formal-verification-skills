@@ -29,8 +29,9 @@ function copyTree(source, destination, records, relative, allowSourceHardlinks) 
 export function copyIndependent(source, destination) {
   plainWindowsPath(source); copyTree(source, destination, null, '', false);
 }
-// Installed prerequisites may contain intentional hardlinks (Git for Windows
-// does). Only source leaves may be linked; every copied output is independent.
+// Trusted build products and prerequisites may contain intentional hardlinks
+// (Cargo and Git for Windows do). Only source leaves may be linked; every
+// copied output is independent and its source identity and bytes are rechecked.
 export function copyPrerequisiteIndependent(source, destination, records = [], relative = '') {
   plainWindowsPath(fs.lstatSync(source).isDirectory() ? source : path.dirname(source));
   copyTree(source, destination, records, relative, true);
@@ -109,7 +110,7 @@ async function build(ctx, name, output) {
     await ctx.run(ctx.prerequisites.cargo, ['fetch', '--locked'], { ...extra, label: `fetch-${name}` });
     await ctx.run(ctx.prerequisites.cargo, ['test', '--locked', '--offline'], { ...extra, label: `test-${name}` });
     await ctx.run(ctx.prerequisites.cargo, ['build', '--locked', '--release', '--offline'], { ...extra, label: `build-${name}` });
-    copyIndependent(path.join(source, 'target', 'release', name + '.exe'), path.join(output, name + '.exe'));
+    copyPrerequisiteIndependent(path.join(source, 'target', 'release', name + '.exe'), path.join(output, name + '.exe'));
   } else if (name === 'scip') {
     const goRoot = await unpackArchive(ctx, 'go'), go = path.join(goRoot, 'bin', 'go.exe');
     const env = { GOROOT: goRoot, GOPATH: path.join(ctx.stage, 'go-home'), GOCACHE: path.join(ctx.stage, 'go-cache'), CGO_ENABLED: '0', GOOS: 'windows', GOARCH: 'amd64', GOWORK: 'off', GOTOOLCHAIN: 'local' };
@@ -127,7 +128,7 @@ async function build(ctx, name, output) {
     copyIndependent(path.join(source, '.lake', 'build', 'bin', 'probe-lean.exe'), path.join(output, 'bin', 'probe-lean-v4.31.0.exe'));
     // Install only runtime library products, not object files or test libraries.
     const library = path.join(source, '.lake', 'build', 'lib', 'lean');
-    for (const entry of fs.readdirSync(library)) if (entry === 'ProbeLean' || /^ProbeLean\./.test(entry)) copyIndependent(path.join(library, entry), path.join(output, 'lib', entry));
+    for (const file of ctx.policy.reviewedArtifacts['probe-lean'].files.filter(x => x.relativePath.startsWith('lib/'))) copyIndependent(path.join(library, file.relativePath.slice(4)), path.join(output, file.relativePath));
     for (const file of ctx.policy.reviewedArtifacts['probe-lean'].files.filter(x => x.relativePath.endsWith('.dll'))) copyIndependent(path.join(leanRoot, 'bin', path.basename(file.relativePath)), path.join(output, file.relativePath));
   } else if (name === 'rustup') {
     const recipe = ctx.policy.sources.rustup, lock = path.join(source, 'Cargo.lock');
@@ -144,7 +145,7 @@ async function build(ctx, name, output) {
     const env = { PATH: path.join(cmake, 'bin') + ';' + nasm + ';' + ctx.environment.PATH };
     await ctx.run(ctx.prerequisites.cargo, ['fetch', '--locked', '--config', patchConfig], { ...extra, env, label: 'fetch-rustup' });
     await ctx.run(ctx.prerequisites.cargo, ['build', '--locked', '--release', '--offline', '--config', patchConfig, '--bin', 'rustup-init'], { ...extra, env, label: 'build-rustup' });
-    copyIndependent(path.join(source, 'target', 'release', 'rustup-init.exe'), path.join(output, 'rustup-init.exe'));
+    copyPrerequisiteIndependent(path.join(source, 'target', 'release', 'rustup-init.exe'), path.join(output, 'rustup-init.exe'));
   }
   return { origin: 'fresh-source-build', source: await sourceManifest(ctx, source, name), output: fingerprintWindowsResource(output) };
 }
@@ -153,8 +154,15 @@ export async function buildWindowsGroups(ctx) {
   for (const name of ['probe-aeneas', 'probe-rust', 'probe-lean', 'scip', 'rustup']) {
     ctx.onProgress?.({ phase: 'source-artifact', name });
     const output = path.join(ctx.stage, 'outputs', name); fs.mkdirSync(output, { recursive: true });
-    const cached = cachedGroup(ctx, name);
-    if (cached) {
+    const reused = ctx.reusableGroups?.[name];
+    const cached = reused ? null : cachedGroup(ctx, name);
+    if (reused) {
+      ctx.onProgress?.({ phase: 'reuse-registered-helper', name, installationId: reused.installationId });
+      copyIndependent(reused.source, output);
+      const fingerprint = fingerprintWindowsResource(output);
+      if (JSON.stringify(fingerprint) !== JSON.stringify(reused.build.output)) throw new Error('Registered helper changed while copying: ' + name);
+      builds[name] = { ...reused.build, output: fingerprint, reusedFrom: { installationId: reused.installationId, receiptSha256: reused.receiptSha256 } };
+    } else if (cached) {
       for (const item of cached.group.files) copyIndependent(path.join(cached.source, item.relativePath), path.join(output, item.relativePath));
       builds[name] = { origin: 'reviewed-existing-artifact', source: cached.group.source, build: cached.group.build, historicalEvidenceSha256: cached.group.evidenceSha256, approvedFiles: cached.group.files, output: fingerprintWindowsResource(output) };
     } else builds[name] = await build(ctx, name, output);

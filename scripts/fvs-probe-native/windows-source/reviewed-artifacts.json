@@ -106,11 +106,6 @@
           "bytes": 16
         },
         {
-          "relativePath": "lib/ProbeLean.trace",
-          "sha256": "9014113eb473d46c960975a6b561417733400d405c7625db6312d3e9494e737f",
-          "bytes": 4132
-        },
-        {
           "relativePath": "lib/ProbeLean/Analysis.ilean",
           "sha256": "286b6b87d55fc674e355f1851124336a2a579272bdb2e9ba017bfd6e0ca0ce4f",
           "bytes": 67595
@@ -129,11 +124,6 @@
           "relativePath": "lib/ProbeLean/Analysis.olean.hash",
           "sha256": "6e161e5f1d0f5be9a25d49a288d30b098215aa11b60c7bfff95eefd85f6144fb",
           "bytes": 16
-        },
-        {
-          "relativePath": "lib/ProbeLean/Analysis.trace",
-          "sha256": "5c2d54a8bdfa8c452dd3fd0216d56ca9c957f8426dff6dd2a274c1642d7b56cc",
-          "bytes": 2715
         },
         {
           "relativePath": "lib/ProbeLean/Atomize.ilean",
@@ -156,11 +146,6 @@
           "bytes": 16
         },
         {
-          "relativePath": "lib/ProbeLean/Atomize.trace",
-          "sha256": "ce8650334de24c3a1416f5dc21b802d50beef5438ee53757943fc6269bf5985b",
-          "bytes": 2700
-        },
-        {
           "relativePath": "lib/ProbeLean/Attrs.ilean",
           "sha256": "cf6dfbe0385c4eae7e3c0f2e5edc23a6e22666fdf8168118d01e99a9ff926e5c",
           "bytes": 2926
@@ -179,11 +164,6 @@
           "relativePath": "lib/ProbeLean/Attrs.olean.hash",
           "sha256": "3e4dc2f510a5cf6077ebb461ed199dc560a4e5179495c3dd696354ffe52933ee",
           "bytes": 16
-        },
-        {
-          "relativePath": "lib/ProbeLean/Attrs.trace",
-          "sha256": "aacd8375249c661927f9017b97d472d1d11bbf739451d56f55063c3ea483a508",
-          "bytes": 2110
         },
         {
           "relativePath": "lib/ProbeLean/AxiomCheck.ilean",
@@ -206,11 +186,6 @@
           "bytes": 16
         },
         {
-          "relativePath": "lib/ProbeLean/AxiomCheck.trace",
-          "sha256": "0011002150837ddf7310045483a24b9c497a99ecfb86c97bd498b48948e2f50d",
-          "bytes": 2150
-        },
-        {
           "relativePath": "lib/ProbeLean/CheckAxioms.ilean",
           "sha256": "abdd2e3fad5e1363459e6f6d2441701b05f96fd8ee776fef07340c9e1cf26948",
           "bytes": 4381
@@ -229,11 +204,6 @@
           "relativePath": "lib/ProbeLean/CheckAxioms.olean.hash",
           "sha256": "59579a1acedc0a84537a01b0545214e2afae3f03a037e555e6c4a8fd11c5182e",
           "bytes": 16
-        },
-        {
-          "relativePath": "lib/ProbeLean/CheckAxioms.trace",
-          "sha256": "25bdaa4038d0cf454cb1f6ffc57748c29bcf57e89d2181f991c8c6286f26942e",
-          "bytes": 2588
         },
         {
           "relativePath": "lib/ProbeLean/Coimport.ilean",
@@ -256,11 +226,6 @@
           "bytes": 16
         },
         {
-          "relativePath": "lib/ProbeLean/Coimport.trace",
-          "sha256": "fefd50970769764f66bade140d32cdef7a4e7b400839e468058c25a2d1257d2d",
-          "bytes": 2276
-        },
-        {
           "relativePath": "lib/ProbeLean/Environment.ilean",
           "sha256": "8206b04ac13d7abfaedcb3a8b470140bbbd458142ec52440f519da58a14ea09e",
           "bytes": 21506
@@ -279,11 +244,6 @@
           "relativePath": "lib/ProbeLean/Environment.olean.hash",
           "sha256": "a8ec1a353d9cbe83b6cda0a5f6ce5897d745cbe2ccd781510cf5d6b0228db955",
           "bytes": 16
-        },
-        {
-          "relativePath": "lib/ProbeLean/Environment.trace",
-          "sha256": "a4de6b00ebc200ae5a37024e25118a96039b6e502514d4c4f719aea649c7f78a",
-          "bytes": 2281
         },
         {
           "relativePath": "lib/ProbeLean/Extract.ilean",
@@ -306,11 +266,6 @@
           "bytes": 16
         },
         {
-          "relativePath": "lib/ProbeLean/Extract.trace",
-          "sha256": "802f175528fa8bbc551302cf05dcb4436a6e4d2ed40964479c2fe2ee01ea3af6",
-          "bytes": 3024
-        },
-        {
           "relativePath": "lib/ProbeLean/Loader.ilean",
           "sha256": "e740e804c2870383aaeaad194a65bac480e0f7b2b1b6a1c4c625a2901838b311",
           "bytes": 2731
@@ -329,11 +284,6 @@
           "relativePath": "lib/ProbeLean/Loader.olean.hash",
           "sha256": "d7fe720b8d81ecc2bcd2b306e0fb280a4e2e0af851aa4d394dfafc88777a9b88",
           "bytes": 16
-        },
-        {
-          "relativePath": "lib/ProbeLean/Loader.trace",
-          "sha256": "9f760b87a9d5da56aee3adc04fd1824b0aa79914293abf87dc5eac3b318e3ed2",
-          "bytes": 2239
         },
         {
           "relativePath": "lib/ProbeLean/Main.ilean",
@@ -356,11 +306,6 @@
           "bytes": 16
         },
         {
-          "relativePath": "lib/ProbeLean/Main.trace",
-          "sha256": "b2e59552e4fef4ed5b8e9c1ff3f1b52868c2048a7be7b70e2a181a1f110a2dd1",
-          "bytes": 2791
-        },
-        {
           "relativePath": "lib/ProbeLean/Metadata.ilean",
           "sha256": "28a3a3f670c46a1f2f469c9332e0f8a5fc20aebc130cd35e3068a966b0765f11",
           "bytes": 21951
@@ -379,11 +324,6 @@
           "relativePath": "lib/ProbeLean/Metadata.olean.hash",
           "sha256": "0de4d236a16d232a39021ef7f6f36329314282b3f2c23fe9ef39d7ecb0dc2e38",
           "bytes": 16
-        },
-        {
-          "relativePath": "lib/ProbeLean/Metadata.trace",
-          "sha256": "6eefa14f39b1a6b779d226558dfe86004dbf529630e568f29599525537432a74",
-          "bytes": 2416
         },
         {
           "relativePath": "lib/ProbeLean/NixEnv.ilean",
@@ -406,11 +346,6 @@
           "bytes": 16
         },
         {
-          "relativePath": "lib/ProbeLean/NixEnv.trace",
-          "sha256": "a1055f3adf5b9160c554ac8edc4bc9a4564889bddd97138f09af0ef84ec0986d",
-          "bytes": 2118
-        },
-        {
           "relativePath": "lib/ProbeLean/Transitive.ilean",
           "sha256": "5214240d50d8cc663ce71b8c94309e0fc373c3406e25683b91970fde9af0216a",
           "bytes": 13460
@@ -429,11 +364,6 @@
           "relativePath": "lib/ProbeLean/Transitive.olean.hash",
           "sha256": "12e10782f20da9337e1cb52868dd8570e277aa40431aed839cafda971d654bea",
           "bytes": 16
-        },
-        {
-          "relativePath": "lib/ProbeLean/Transitive.trace",
-          "sha256": "70a4dd7e4cdaef9aeeb20344c066ff1ba2573104c7a775bf7e286a74da12b8c7",
-          "bytes": 2271
         },
         {
           "relativePath": "lib/ProbeLean/Types.ilean",
@@ -456,11 +386,6 @@
           "bytes": 16
         },
         {
-          "relativePath": "lib/ProbeLean/Types.trace",
-          "sha256": "847742d2246475ce9a8ab1ddbe6d241959a19d84a5bdf96da258910e0b1070fb",
-          "bytes": 2235
-        },
-        {
           "relativePath": "lib/ProbeLean/VerifyInternal.ilean",
           "sha256": "e61bc1e3e01a5f64c59f4fb5963e24aee7c52d5bb0f85432dd1780e7339cb01e",
           "bytes": 12206
@@ -479,11 +404,6 @@
           "relativePath": "lib/ProbeLean/VerifyInternal.olean.hash",
           "sha256": "59ea351e9bf379792f37aff98a1e6dd564c0e7e1f1e1f086b537a73bb8778495",
           "bytes": 16
-        },
-        {
-          "relativePath": "lib/ProbeLean/VerifyInternal.trace",
-          "sha256": "7885ec59f414e574b53a6977f4a3d6fe8531325a69d499f975df958f9b0f0283",
-          "bytes": 2449
         },
         {
           "relativePath": "lib/ProbeLean/Version.ilean",
@@ -506,11 +426,6 @@
           "bytes": 16
         },
         {
-          "relativePath": "lib/ProbeLean/Version.trace",
-          "sha256": "950772d308ca7ee67f8edebfa9334744982e87f6671554ad21fe192f71c422c6",
-          "bytes": 2126
-        },
-        {
           "relativePath": "lib/ProbeLean/View.ilean",
           "sha256": "12bf7d84432b95d1f70ad5b0cd0b4ae89891297c7d0ba7f056ae8be2a0197475",
           "bytes": 16481
@@ -529,11 +444,6 @@
           "relativePath": "lib/ProbeLean/View.olean.hash",
           "sha256": "1364a9f3eb10ae3b4777332a65d3a839a1c63fe071e5f39e01f7d3904c35dab0",
           "bytes": 16
-        },
-        {
-          "relativePath": "lib/ProbeLean/View.trace",
-          "sha256": "84c8455da0dbf07994e12f4c2aacab829f6914045bfcd4168fb2d50287bfa35b",
-          "bytes": 2511
         },
         {
           "relativePath": "bin/libc++.dll",
@@ -580,7 +490,103 @@
           "sha256": "94dd0a72d4da79e25294a91d1edf902d76eade7512d9218609a5fe43e3a7397a",
           "bytes": 131072
         }
-      ]
+      ],
+      "runtimeSelection": {
+        "originalManifestSha256": "96a227ba278429589e5e7b65987ce90629b3777923e9f95be5b0645f490f96a6",
+        "reason": "Runtime-only subset of the unchanged historical build; Lake traces contain transient compiler paths and are not published or reused.",
+        "excludedBuildTraces": [
+          {
+            "relativePath": "lib/ProbeLean.trace",
+            "sha256": "9014113eb473d46c960975a6b561417733400d405c7625db6312d3e9494e737f",
+            "bytes": 4132
+          },
+          {
+            "relativePath": "lib/ProbeLean/Analysis.trace",
+            "sha256": "5c2d54a8bdfa8c452dd3fd0216d56ca9c957f8426dff6dd2a274c1642d7b56cc",
+            "bytes": 2715
+          },
+          {
+            "relativePath": "lib/ProbeLean/Atomize.trace",
+            "sha256": "ce8650334de24c3a1416f5dc21b802d50beef5438ee53757943fc6269bf5985b",
+            "bytes": 2700
+          },
+          {
+            "relativePath": "lib/ProbeLean/Attrs.trace",
+            "sha256": "aacd8375249c661927f9017b97d472d1d11bbf739451d56f55063c3ea483a508",
+            "bytes": 2110
+          },
+          {
+            "relativePath": "lib/ProbeLean/AxiomCheck.trace",
+            "sha256": "0011002150837ddf7310045483a24b9c497a99ecfb86c97bd498b48948e2f50d",
+            "bytes": 2150
+          },
+          {
+            "relativePath": "lib/ProbeLean/CheckAxioms.trace",
+            "sha256": "25bdaa4038d0cf454cb1f6ffc57748c29bcf57e89d2181f991c8c6286f26942e",
+            "bytes": 2588
+          },
+          {
+            "relativePath": "lib/ProbeLean/Coimport.trace",
+            "sha256": "fefd50970769764f66bade140d32cdef7a4e7b400839e468058c25a2d1257d2d",
+            "bytes": 2276
+          },
+          {
+            "relativePath": "lib/ProbeLean/Environment.trace",
+            "sha256": "a4de6b00ebc200ae5a37024e25118a96039b6e502514d4c4f719aea649c7f78a",
+            "bytes": 2281
+          },
+          {
+            "relativePath": "lib/ProbeLean/Extract.trace",
+            "sha256": "802f175528fa8bbc551302cf05dcb4436a6e4d2ed40964479c2fe2ee01ea3af6",
+            "bytes": 3024
+          },
+          {
+            "relativePath": "lib/ProbeLean/Loader.trace",
+            "sha256": "9f760b87a9d5da56aee3adc04fd1824b0aa79914293abf87dc5eac3b318e3ed2",
+            "bytes": 2239
+          },
+          {
+            "relativePath": "lib/ProbeLean/Main.trace",
+            "sha256": "b2e59552e4fef4ed5b8e9c1ff3f1b52868c2048a7be7b70e2a181a1f110a2dd1",
+            "bytes": 2791
+          },
+          {
+            "relativePath": "lib/ProbeLean/Metadata.trace",
+            "sha256": "6eefa14f39b1a6b779d226558dfe86004dbf529630e568f29599525537432a74",
+            "bytes": 2416
+          },
+          {
+            "relativePath": "lib/ProbeLean/NixEnv.trace",
+            "sha256": "a1055f3adf5b9160c554ac8edc4bc9a4564889bddd97138f09af0ef84ec0986d",
+            "bytes": 2118
+          },
+          {
+            "relativePath": "lib/ProbeLean/Transitive.trace",
+            "sha256": "70a4dd7e4cdaef9aeeb20344c066ff1ba2573104c7a775bf7e286a74da12b8c7",
+            "bytes": 2271
+          },
+          {
+            "relativePath": "lib/ProbeLean/Types.trace",
+            "sha256": "847742d2246475ce9a8ab1ddbe6d241959a19d84a5bdf96da258910e0b1070fb",
+            "bytes": 2235
+          },
+          {
+            "relativePath": "lib/ProbeLean/VerifyInternal.trace",
+            "sha256": "7885ec59f414e574b53a6977f4a3d6fe8531325a69d499f975df958f9b0f0283",
+            "bytes": 2449
+          },
+          {
+            "relativePath": "lib/ProbeLean/Version.trace",
+            "sha256": "950772d308ca7ee67f8edebfa9334744982e87f6671554ad21fe192f71c422c6",
+            "bytes": 2126
+          },
+          {
+            "relativePath": "lib/ProbeLean/View.trace",
+            "sha256": "84c8455da0dbf07994e12f4c2aacab829f6914045bfcd4168fb2d50287bfa35b",
+            "bytes": 2511
+          }
+        ]
+      }
     }
   }
 }

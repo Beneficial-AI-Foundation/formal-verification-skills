@@ -26,6 +26,17 @@ export function freezeWindowsValue(value) {
   return value;
 }
 export const WINDOWS_SOURCE_DISTRIBUTION = freezeWindowsValue({ id: approved.id, target: approved.target, version: approved.version, qualified: WINDOWS_SOURCE_QUALIFICATION.qualified, origin: 'source-build', recipe: 'fvs-probe-native/windows-source/policy.json' });
+// Only the built-in component policy permits additional lines; all other
+// version outputs remain exact. Arguments and executable digests are checked
+// independently when binding receipts and confined commands.
+export function matchesWindowsVersion(version, output) {
+  if (typeof output !== 'string') return false;
+  if (!version.requiredComponents) return output.trim() === version.expected;
+  const installed = output.trim().split(/\r?\n/);
+  return installed.every(item => /^[a-z0-9][a-z0-9_-]*$/.test(item))
+    && new Set(installed).size === installed.length
+    && version.requiredComponents.every(item => installed.includes(item));
+}
 export function windowsFileSha256(file) {
   const fd = fs.openSync(file, 'r');
   try {
@@ -187,6 +198,26 @@ function installedReceipt({ toolsRoot, facts, installationId, historical = false
   }
   return { base, bundle, receipt, policy };
 }
+// Setup may reuse only the currently registered, fully validated installation
+// with exactly this source policy. Caller caches and version strings confer no
+// authority. Project inputs are intentionally re-vendored by the new setup.
+export function reusableWindowsGroups({ toolsRoot, facts }) {
+  const base = windowsInstallRoot({ toolsRoot, facts });
+  if (!fs.existsSync(path.join(base, 'CURRENT.json'))) return null;
+  const previous = installedReceipt({ toolsRoot, facts, historical: true });
+  if (previous.receipt.policySha256 !== previous.policy.sha256) return null;
+  const validated = resolveWindowsRuntime({ toolsRoot });
+  if (!validated.ok) fail('reuse-invalid', 'Registered runtime failed validation: ' + JSON.stringify(validated.diagnostics));
+  if (validated.runtime.installationId !== previous.receipt.installationId) fail('reuse-invalid', 'Current installation changed while validating reuse.');
+  const groups = {};
+  for (const name of ['probe-aeneas', 'probe-rust', 'probe-lean', 'scip', 'rustup']) {
+    const source = plainWindowsPath(path.join(previous.bundle, 'helper-artifacts', name));
+    const build = previous.receipt.builds[name];
+    if (JSON.stringify(fingerprintWindowsResource(source)) !== JSON.stringify(build.output)) fail('artifact-mismatch', 'Registered helper output changed: ' + name);
+    groups[name] = { source, build, installationId: previous.receipt.installationId, receiptSha256: windowsFileSha256(path.join(previous.bundle, 'INSTALL.json')) };
+  }
+  return groups;
+}
 function verifyArtifact(bundle, item) {
   if (!item || typeof item.relativePath !== 'string' || path.isAbsolute(item.relativePath) || item.relativePath.split(/[\\/]/).some(x => !x || x === '.' || x === '..')) fail('receipt-invalid', 'Invalid relative artifact path.');
   const file = plainWindowsPath(path.join(bundle, item.relativePath));
@@ -325,7 +356,7 @@ export function resolveWindowsRuntime({ projectRoot, distributionId = approved.i
     const versions = policy.versions.map(approvedVersion => {
       const matches = receipt.versions.filter(version => version.name === approvedVersion.name);
       const artifact = approvedVersion.name === 'probe-aeneas' ? artifacts['probe-aeneas'] : helpers[approvedVersion.helper];
-      if (matches.length !== 1 || matches[0].expected !== approvedVersion.expected || JSON.stringify(matches[0].args) !== JSON.stringify(approvedVersion.args) || matches[0].sha256 !== artifact.sha256) fail('receipt-invalid', `Version identity differs from approved policy: ${approvedVersion.name}`);
+      if (matches.length !== 1 || matches[0].expected !== approvedVersion.expected || JSON.stringify(matches[0].requiredComponents) !== JSON.stringify(approvedVersion.requiredComponents) || !matchesWindowsVersion(approvedVersion, matches[0].observed) || JSON.stringify(matches[0].args) !== JSON.stringify(approvedVersion.args) || matches[0].sha256 !== artifact.sha256) fail('receipt-invalid', `Version identity differs from approved policy: ${approvedVersion.name}`);
       return { ...approvedVersion, sha256: artifact.sha256, executable: artifact.path };
     });
     const runtime = {

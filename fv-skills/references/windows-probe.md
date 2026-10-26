@@ -3,9 +3,14 @@
 <overview>
 
 The `windows-source-v1` distribution builds pinned, patched sources. Its identity
-is separate from the official `probe-aeneas` Windows archive. Verified support
+is separate from the official `probe-aeneas` Windows archive. The changed setup
+and recovery implementation remains unqualified. Native regressions, authenticated
+setup reuse and production installation denial have passed. Fresh installation
+was blocked by a differing existing Lean helper, which setup preserved; complete
+normal-command acceptance also remains outstanding. The previous qualification
+remains historical. Verified support
 is available only when the shipped qualification metadata and the project's
-Aeneas/Charon/Lean tuple match. The measured native acceptance used the normal
+Aeneas/Charon/Lean tuple match. The historical native acceptance used the normal
 `setup`, `resolve` and `run` commands on Windows 11 x64 with the pinned Dalek
 project in a directory containing spaces. Installing tools alone does not
 establish that a particular project and runtime are verified.
@@ -39,7 +44,11 @@ node $InventoryScript resolve --project-root $ProjectRoot --format json
 Setup requires the native Rust 1.98.1 MSVC toolchain, Visual Studio 2022 Build
 Tools with MSVC 14.44.35207, Windows SDK 10.0.26100.0, Git for Windows, and the
 Windows x64 .NET Framework compiler. The manifest reports the discovered paths
-and missing prerequisites. Rust must include `rust-analyzer` and `rust-src`.
+and missing prerequisites. Rust must include `cargo`, `rustc`, `rust-std`,
+`rustfmt`, `rust-analyzer` and `rust-src` for the pinned toolchain. Additional
+default-profile components such as Clippy and Rust documentation are accepted.
+Setup checks the required set before copying the full build environment or building helpers;
+confined resolution uses the same set check. Other version checks remain exact.
 The project must already contain its Cargo lockfile and generated translation
 metadata. Setup vendors that locked dependency closure in an isolated project
 copy; it does not change the original lockfile.
@@ -50,6 +59,12 @@ authority. It pins the source commits and patch checksums for probe-aeneas
 plus SCIP 0.10.0 and the Lean 4.31.0 archive. Fresh builds reconstruct those
 sources in private directories. Receipts distinguish a fresh build from reuse
 of an exact reviewed historical artifact; reuse does not claim a new compilation.
+An ordinary subsequent setup also reuses helper outputs from the current
+registered installation when its complete source policy and runtime identities
+still match. Receipts record that installation and receipt digest in `reusedFrom`.
+Project dependencies are vendored again, including for a different project.
+Lake `.trace` files are excluded from newly published helper outputs. Existing
+historical traces remain untouched and protected with their containing directory.
 
 For explicitly authorized noninteractive setup, set the process environment
 `FVS_PROBE_SETUP_POLICY=build` and use `--consent policy`. The official installer
@@ -83,6 +98,8 @@ profile. Setup reuses only explicitly approved identical files and refuses
 conflicts. It does not replace the user's official Rustup or silently rewrite
 existing helpers. The real known folders, not `HOME`/`USERPROFILE` overrides,
 determine these paths. Setup records which files it created for safe recovery.
+Differing existing executables or libraries remain conflicts, even if their
+reported versions match. A new build never overwrites such files.
 
 ## Extract through FVS
 
@@ -116,7 +133,7 @@ Prepare project dependencies and the Lean build before offline extraction. Keep
 successful build output, including `sorry` warnings, intact. Do not synthesize
 build logs or change project pins to make a cache appear valid.
 
-Large prepared caches also make integrity checks expensive. On the qualification
+Large prepared caches also make integrity checks expensive. On the historical qualification
 host, setup with reviewed helper artifacts took about 17 minutes, explicit
 resolution took 68 minutes, and `run` took 165 minutes. The confined extractor
 itself took 18 minutes; repeated integrity inventories of roughly 131,000 project
@@ -154,7 +171,7 @@ confinement sessions to recover with the exact responsible launcher.
 
 ## Meaning of a successful run
 
-The normal-command acceptance produced 279 canonical functions and 189 matched
+The historical normal-command acceptance produced 279 canonical functions and 189 matched
 Charon/Lean joins, exactly matching the retained v10 function inventory and proof
 classifications. Its pinned source has eight `sorry` warnings, and the combined graph has
 47 Lean dependency references to 22 absent keys. Preserve these warnings and
