@@ -153,7 +153,7 @@ gh label list --repo "$REPO" --json name --limit 200
 
 To map each role to an existing label, offer those labels. For `local` and `other`, ask for the label strings. Every role gets exactly one non-empty label. Reject a mapping in which two roles share the same label, and ask again.
 
-For `github`, compare the final labels, defaults included, with that list: name any that do not exist yet and say this command does not create them. If `gh` cannot list the labels, say they could not be checked. Creating labels is outside this command; issue-creating commands ask for separate consent first.
+For `github`, compare the final labels, defaults included, with that list: name any that are not found in the returned list and say this command does not create them. The list is capped at 200 labels and can omit some, so a label that is not found in the returned list is not proven absent. If `gh` cannot list the labels, say they could not be checked. Creating labels is outside this command; issue-creating commands ask for separate consent first.
 
 ## Step 4: Preview
 

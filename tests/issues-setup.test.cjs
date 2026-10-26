@@ -57,6 +57,12 @@ describe('/fvs:issues-setup command', () => {
     assert.match(source, /two roles .*same label/i, 'duplicate label mapping must be rejected');
   });
 
+  it('reports labels as not found in the returned list, since the list can be truncated', () => {
+    assert.match(source, /not found in the returned list/i);
+    assert.match(source, /list[^\n]*(omit|incomplete|truncat)/i, 'says the limited list may omit labels');
+    assert.doesNotMatch(source, /do(es)? not exist/i, 'a label missing from a limited list is not proven absent');
+  });
+
   it('explores read-only and only ever runs read-only gh subcommands', () => {
     const invoked = [...source.matchAll(/^\s*gh ([a-z-]+ [a-z-]+)/gm)].map(match => match[1]);
     assert.ok(invoked.length > 0, 'expected gh probes in the exploration step');
