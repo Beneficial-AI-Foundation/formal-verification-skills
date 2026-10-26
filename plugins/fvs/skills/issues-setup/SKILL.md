@@ -211,15 +211,15 @@ For `github`: confirm `repo` (default `REPO`; the free-text answer may name anot
 
 For `other`: ask for the description (the free-text answer carries the prose). It must say where issues are filed, how one is referenced, and how blocking is expressed. Reject an empty answer.
 
-For `local`: say that setup creates no directory; issue files appear when issues are first created. Then check, read-only, how git treats the issue files each roadmap would hold: one proposed path per roadmap directory found in Step 1, `<roadmap directory>/issues/probe.md` (the file does not need to exist). Run this once per roadmap directory, substituting it for `$ROADMAP_DIR`. Exit status 0 means ignored, 1 means not ignored, anything else (for example `.formalising` being a symlink) means unknown:
+For `local`: say that setup creates no directory; issue files appear when issues are first created. Then check, read-only, git's ignore status for one example path per roadmap directory found in Step 1, `<roadmap directory>/issues/probe.md` (the file does not need to exist). Git decides ignore status per path, so each result describes only that exact path. Run this once per roadmap directory, substituting it for `$ROADMAP_DIR`. Exit status 0 means that path is ignored, 1 means it is not ignored, anything else (for example `.formalising` being a symlink) means unknown:
 
 ```bash
-git check-ignore -q "$ROADMAP_DIR/issues/probe.md"; case $? in 0) echo "ISSUES_IGNORED $ROADMAP_DIR/issues";; 1) echo "ISSUES_NOT_IGNORED $ROADMAP_DIR/issues";; *) echo "ISSUES_UNKNOWN $ROADMAP_DIR/issues";; esac
+git check-ignore -q "$ROADMAP_DIR/issues/probe.md"; case $? in 0) echo "PATH_IGNORED $ROADMAP_DIR/issues/probe.md";; 1) echo "PATH_NOT_IGNORED $ROADMAP_DIR/issues/probe.md";; *) echo "PATH_UNKNOWN $ROADMAP_DIR/issues/probe.md";; esac
 ```
 
-Report the result per path, so the user knows which issue directories could be committed. This probe covers only those paths, never `.formalising/fvs-config.json`. If no roadmap exists yet there is no issue path to probe: say that issue-file status is not checked.
+Report each result as the status of that exact path, and say plainly that real issue files and directory-wide status are not checked. Make no claim about whether future issue files will be committed. If no roadmap exists yet there is no example path to check: say so.
 
-Never modify `.gitignore`, `.git/info/exclude` or any other ignore or exclusion setting. If the user wants issue files excluded, show the exact line for `.git/info/exclude` (the per-clone exclusion file that is never committed) and let them add it themselves.
+Never modify `.gitignore`, `.git/info/exclude` or any other ignore or exclusion setting. If the user wants issue files kept out of commits, they may add `.formalising/` (or a narrower path) to `.git/info/exclude` themselves: show the exact line for `.git/info/exclude` (the per-clone exclusion file that is never committed) and let them add it.
 
 ## Step 3: Label vocabulary
 

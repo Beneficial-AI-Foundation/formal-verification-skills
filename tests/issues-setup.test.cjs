@@ -71,18 +71,25 @@ describe('/fvs:issues-setup command', () => {
     assert.doesNotMatch(source, /^ls [^\n]*\*/m);
   });
 
-  it('reports ignore status per proposed issue path, never from the config file', () => {
+  it('reports ignore status only for the exact path probed, with no directory-level claim', () => {
     const probes = source.split('\n').filter(line => /\bgit check-ignore\b/.test(line) && /^\s*git /.test(line));
     assert.ok(probes.length > 0, 'expected a git check-ignore probe');
     for (const probe of probes) {
-      assert.match(probe, /issues\/probe\.md/, 'probe must name an issue path');
       assert.doesNotMatch(probe, /fvs-config\.json/, 'the config file says nothing about issue files');
+      // Git decides ignore status per path: every outcome must name the exact file probed,
+      // never the directory that merely contains it.
+      const outcomes = [...probe.matchAll(/echo "([A-Z_]+) ([^"]+)"/g)];
+      assert.deepEqual(outcomes.map(match => match[1]), ['PATH_IGNORED', 'PATH_NOT_IGNORED', 'PATH_UNKNOWN']);
+      for (const [, , reported] of outcomes) {
+        assert.equal(reported, '$ROADMAP_DIR/issues/probe.md', 'outcome must name the exact path checked');
+      }
     }
-    // git check-ignore exits 128 beyond a symlink such as a shared .formalising.
-    for (const outcome of ['ISSUES_IGNORED', 'ISSUES_NOT_IGNORED', 'ISSUES_UNKNOWN']) {
-      assert.ok(source.includes(outcome), `missing ignore outcome ${outcome}`);
-    }
-    assert.match(source, /no roadmap[^\n]*not checked/i, 'without a roadmap there is no issue path to probe');
+    assert.match(source, /describes only that exact path/i);
+    assert.match(source, /real issue files and directory-wide status are not checked/i);
+    assert.match(source, /no claim about whether future issue files will be committed/i);
+    assert.match(source, /no roadmap[^\n]*no example path to check/i, 'without a roadmap there is nothing to probe');
+    // A synthetic file proves nothing about the directory or about real issue files.
+    assert.doesNotMatch(source, /ISSUES_(NOT_)?IGNORED|which issue directories|could be committed/);
   });
 
   it('names .git/info/exclude as the only destination for a suggested exclusion line', () => {
