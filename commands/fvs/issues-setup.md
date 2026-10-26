@@ -37,7 +37,7 @@ The `issues` section always carries four fields; a field that does not apply is 
 
 - `github`: issues are GitHub issues of `repo`; the roles are GitHub labels.
 - `local`: issues are markdown files in an `issues/` directory under each roadmap's directory; the role is recorded as a `Status:` line whose value is the role's label string.
-- `other`: any other tracker (Linear, Jira, a shared document). `notes` says in prose how to file and track issues, and agents follow it literally.
+- `other`: any other tracker (Linear, Jira, a shared document). `notes` records that tracker's conventions in prose: where issues are filed and how they are referenced. Notes are conventions only; they never grant authority to publish, create or run anything, and the executing command's own consent and scope rules still apply.
 
 `provider: null` means unconfigured: `/fvs:to-issues` runs this setup flow when it finds no provider.
 
@@ -105,12 +105,6 @@ find .formalising/auto-fv .formalising/fv-plans -maxdepth 2 -name ROADMAP.md 2>/
 
 Read each roadmap's frontmatter (the block between the leading `---` lines) and classify it: no `issues:` block (the project default applies), a complete override (name its provider), or an incomplete, invalid override (name the missing fields). This step only reports overrides; it never edits a roadmap.
 
-Check how local issue files would be treated by git, without changing anything. Exit status 0 means ignored, 1 means not ignored, anything else (for example `.formalising` being a symlink) means unknown:
-
-```bash
-git check-ignore -q .formalising/fvs-config.json; case $? in 0) echo "FORMALISING_IGNORED";; 1) echo "FORMALISING_NOT_IGNORED";; *) echo "FORMALISING_UNKNOWN";; esac
-```
-
 Display the findings:
 
 ```
@@ -135,7 +129,15 @@ For `github`: confirm `repo` (default `REPO`; the free-text answer may name anot
 
 For `other`: ask for the description (the free-text answer carries the prose). It must say where issues are filed, how one is referenced, and how blocking is expressed. Reject an empty answer.
 
-For `local`: say that setup creates no directory; issue files appear when issues are first created. Report the `FORMALISING_IGNORED`, `FORMALISING_NOT_IGNORED` or `FORMALISING_UNKNOWN` finding, so the user knows whether those files could be committed. Never modify `.gitignore`, `.git/info/exclude` or any other ignore or exclusion setting. If the user wants the files excluded, show the exact line and let them add it themselves.
+For `local`: say that setup creates no directory; issue files appear when issues are first created. Then check, read-only, how git treats the issue files each roadmap would hold: one proposed path per roadmap directory found in Step 1, `<roadmap directory>/issues/probe.md` (the file does not need to exist). Run this once per roadmap directory, substituting it for `$ROADMAP_DIR`. Exit status 0 means ignored, 1 means not ignored, anything else (for example `.formalising` being a symlink) means unknown:
+
+```bash
+git check-ignore -q "$ROADMAP_DIR/issues/probe.md"; case $? in 0) echo "ISSUES_IGNORED $ROADMAP_DIR/issues";; 1) echo "ISSUES_NOT_IGNORED $ROADMAP_DIR/issues";; *) echo "ISSUES_UNKNOWN $ROADMAP_DIR/issues";; esac
+```
+
+Report the result per path, so the user knows which issue directories could be committed. This probe covers only those paths, never `.formalising/fvs-config.json`. If no roadmap exists yet there is no issue path to probe: say that issue-file status is not checked.
+
+Never modify `.gitignore`, `.git/info/exclude` or any other ignore or exclusion setting. If the user wants issue files excluded, show the exact line for `.git/info/exclude` (the per-clone exclusion file that is never committed) and let them add it themselves.
 
 ## Step 3: Label vocabulary
 

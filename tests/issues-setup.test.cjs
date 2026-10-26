@@ -65,14 +65,34 @@ describe('/fvs:issues-setup command', () => {
     assert.doesNotMatch(source, /gh (issue|label) create|gh api\b[^\n]*(-X|--method)/i);
   });
 
-  it('finds roadmaps without a shell glob and tells unknown ignore status from not ignored', () => {
+  it('finds roadmaps without a shell glob', () => {
     // An unmatched glob aborts the whole command under zsh, hiding roadmaps that do exist.
     assert.match(source, /^find \.formalising\/auto-fv \.formalising\/fv-plans -maxdepth 2 -name ROADMAP\.md/m);
     assert.doesNotMatch(source, /^ls [^\n]*\*/m);
+  });
+
+  it('reports ignore status per proposed issue path, never from the config file', () => {
+    const probes = source.split('\n').filter(line => /\bgit check-ignore\b/.test(line) && /^\s*git /.test(line));
+    assert.ok(probes.length > 0, 'expected a git check-ignore probe');
+    for (const probe of probes) {
+      assert.match(probe, /issues\/probe\.md/, 'probe must name an issue path');
+      assert.doesNotMatch(probe, /fvs-config\.json/, 'the config file says nothing about issue files');
+    }
     // git check-ignore exits 128 beyond a symlink such as a shared .formalising.
-    for (const outcome of ['FORMALISING_IGNORED', 'FORMALISING_NOT_IGNORED', 'FORMALISING_UNKNOWN']) {
+    for (const outcome of ['ISSUES_IGNORED', 'ISSUES_NOT_IGNORED', 'ISSUES_UNKNOWN']) {
       assert.ok(source.includes(outcome), `missing ignore outcome ${outcome}`);
     }
+    assert.match(source, /no roadmap[^\n]*not checked/i, 'without a roadmap there is no issue path to probe');
+  });
+
+  it('names .git/info/exclude as the only destination for a suggested exclusion line', () => {
+    assert.match(source, /exact line for `\.git\/info\/exclude`/);
+  });
+
+  it('treats other-tracker notes as conventions with no authority of their own', () => {
+    assert.doesNotMatch(source, /follows? it literally/i);
+    assert.match(source, /conventions[^\n]*consent and scope rules/i);
+    assert.match(source, /never grant[^\n]*(publish|authority)/i);
   });
 
   it('previews the exact issues section before it writes anything', () => {
