@@ -266,6 +266,12 @@ describe('roadmap location and safety rules', () => {
   it('only writes the tracker override block when the user asks', () => {
     assert.match(text, /issues:.*only when the user asks/i);
   });
+
+  it('states that provider null means unconfigured and that the override replaces the default whole', () => {
+    assert.match(text, /provider: null.*unconfigured/i);
+    assert.match(text, /replaces the project default as a whole/i);
+    assert.match(text, /no field-wise merge/i);
+  });
 });
 
 describe('roadmap rerun', () => {

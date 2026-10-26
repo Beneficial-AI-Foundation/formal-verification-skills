@@ -240,7 +240,8 @@ every roadmap. Contents the sections always carry:
 
 The roadmap frontmatter may carry an `issues:` block (a per-roadmap tracker override owned by the
 issues-setup command); write one only when the user asks, and keep an existing block byte for byte on
-every rerun.
+every rerun. A project default whose `provider: null` means unconfigured, and a roadmap's `issues:`
+block replaces the project default as a whole, with no field-wise merge.
 
 ```markdown
 ---
