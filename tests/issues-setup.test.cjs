@@ -65,6 +65,16 @@ describe('/fvs:issues-setup command', () => {
     assert.doesNotMatch(source, /gh (issue|label) create|gh api\b[^\n]*(-X|--method)/i);
   });
 
+  it('finds roadmaps without a shell glob and tells unknown ignore status from not ignored', () => {
+    // An unmatched glob aborts the whole command under zsh, hiding roadmaps that do exist.
+    assert.match(source, /^find \.formalising\/auto-fv \.formalising\/fv-plans -maxdepth 2 -name ROADMAP\.md/m);
+    assert.doesNotMatch(source, /^ls [^\n]*\*/m);
+    // git check-ignore exits 128 beyond a symlink such as a shared .formalising.
+    for (const outcome of ['FORMALISING_IGNORED', 'FORMALISING_NOT_IGNORED', 'FORMALISING_UNKNOWN']) {
+      assert.ok(source.includes(outcome), `missing ignore outcome ${outcome}`);
+    }
+  });
+
   it('previews the exact issues section before it writes anything', () => {
     const preview = stepOffset(source, 'Preview');
     const write = stepOffset(source, 'Write');

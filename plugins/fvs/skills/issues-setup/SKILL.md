@@ -161,7 +161,7 @@ REMOTE=$(git remote get-url origin 2>/dev/null || true)
 REPO=$(printf '%s' "$REMOTE" | sed -nE 's#^(git@|ssh://git@|https://)github\.com[:/]([^/]+/[^/]+)$#\2#p' | sed -E 's#\.git$##')
 ```
 
-When `REPO` is set and `gh` is installed, probe GitHub. Treat a failed probe (no `gh`, not logged in, offline) as "condition not met" and say which probe failed; never guess.
+Shell variables do not persist between commands, so substitute the derived value wherever `$REPO` appears below. When `REPO` is set and `gh` is installed, probe GitHub. Treat a failed probe (no `gh`, not logged in, offline) as "condition not met" and say which probe failed; never guess.
 
 ```bash
 command -v gh && echo "GH_OK" || echo "GH_MISSING"
@@ -174,27 +174,23 @@ Recommend GitHub only when all four hold: the origin host is `github.com`, `gh a
 Read the existing configuration:
 
 ```bash
-if [ -f .formalising/fvs-config.json ]; then
-  node -e 'JSON.parse(require("fs").readFileSync(".formalising/fvs-config.json","utf8"))' 2>/dev/null && echo "JSON_OK" || echo "JSON_MALFORMED"
-else
-  echo "CONFIG_MISSING"
-fi
+[ -f .formalising/fvs-config.json ] && echo "CONFIG_PRESENT" || echo "CONFIG_MISSING"
 ```
 
-If the file is malformed JSON, stop before writing and tell the user to repair it; never overwrite it. Otherwise read it with the Read tool. If it has an `issues` section, show it. When its `provider` is not `null`, ask with `AskUserQuestion` whether to keep it or replace it; keeping ends the command with nothing written.
+If the file is present, read it with the Read tool. If it is malformed JSON, stop before writing and tell the user to repair it; never overwrite it. If it has an `issues` section, show it. When its `provider` is not `null`, ask with `AskUserQuestion` whether to keep it or replace it; keeping ends the command with nothing written.
 
 List the roadmaps and their overrides:
 
 ```bash
-ls .formalising/auto-fv/ROADMAP.md .formalising/fv-plans/*/ROADMAP.md 2>/dev/null
+find .formalising/auto-fv .formalising/fv-plans -maxdepth 2 -name ROADMAP.md 2>/dev/null
 ```
 
 Read each roadmap's frontmatter (the block between the leading `---` lines) and classify it: no `issues:` block (the project default applies), a complete override (name its provider), or an incomplete, invalid override (name the missing fields). This step only reports overrides; it never edits a roadmap.
 
-Check how local issue files would be treated by git, without changing anything:
+Check how local issue files would be treated by git, without changing anything. Exit status 0 means ignored, 1 means not ignored, anything else (for example `.formalising` being a symlink) means unknown:
 
 ```bash
-git check-ignore -q .formalising/fvs-config.json && echo "FORMALISING_IGNORED" || echo "FORMALISING_TRACKED"
+git check-ignore -q .formalising/fvs-config.json; case $? in 0) echo "FORMALISING_IGNORED";; 1) echo "FORMALISING_NOT_IGNORED";; *) echo "FORMALISING_UNKNOWN";; esac
 ```
 
 Display the findings:
@@ -217,11 +213,11 @@ Use `AskUserQuestion`: "Where should this project's issues live?" Offer three ch
 - **Local markdown** (`local`): files under each roadmap's `issues/` directory.
 - **Other** (`other`): a freeform description of the tracker, recorded as prose.
 
-For `github`: confirm `repo` (default `REPO`; the free-text answer may name another `owner/name`). When the chosen repository was not probed in Step 1, run the same read-only `gh repo view` for it. If a condition from the recommendation rule is not met, warn and name it; do not block, because the user may be about to authenticate.
+For `github`: confirm `repo` (default `REPO`; the free-text answer may name another `owner/name`) and use the confirmed value as `$REPO` from here on. When that repository was not probed in Step 1, run the same read-only `gh repo view` for it. If a condition from the recommendation rule is not met, warn and name it; do not block, because the user may be about to authenticate.
 
 For `other`: ask for the description (the free-text answer carries the prose). It must say where issues are filed, how one is referenced, and how blocking is expressed. Reject an empty answer.
 
-For `local`: say that setup creates no directory; issue files appear when issues are first created. Report the `FORMALISING_IGNORED` or `FORMALISING_TRACKED` finding, so the user knows whether those files would be committed. Never modify `.gitignore`, `.git/info/exclude` or any other ignore or exclusion setting. If the user wants the files excluded, show the exact line and let them add it themselves.
+For `local`: say that setup creates no directory; issue files appear when issues are first created. Report the `FORMALISING_IGNORED`, `FORMALISING_NOT_IGNORED` or `FORMALISING_UNKNOWN` finding, so the user knows whether those files could be committed. Never modify `.gitignore`, `.git/info/exclude` or any other ignore or exclusion setting. If the user wants the files excluded, show the exact line and let them add it themselves.
 
 ## Step 3: Label vocabulary
 
@@ -229,15 +225,15 @@ Use `AskUserQuestion`: keep the five defaults (Recommended), or map each role to
 
 The defaults are `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human` and `wontfix`, each mapped to a label of the same name.
 
-To map each role to an existing label, offer the labels the tracker already has. For `github`, list them read-only:
+For `github`, list the repository's existing labels read-only:
 
 ```bash
 gh label list --repo "$REPO" --json name --limit 200
 ```
 
-For `local` and `other`, ask for the label strings. Every role gets exactly one non-empty label. Reject a mapping in which two roles share the same label, and ask again.
+To map each role to an existing label, offer those labels. For `local` and `other`, ask for the label strings. Every role gets exactly one non-empty label. Reject a mapping in which two roles share the same label, and ask again.
 
-For `github`, compare the final labels with the repository's: list any that do not exist yet and say this command does not create them. Creating labels is outside this command; issue-creating commands ask for separate consent first.
+For `github`, compare the final labels, defaults included, with that list: name any that do not exist yet and say this command does not create them. If `gh` cannot list the labels, say they could not be checked. Creating labels is outside this command; issue-creating commands ask for separate consent first.
 
 ## Step 4: Preview
 
@@ -275,7 +271,7 @@ Read the file and keep its content in memory. If it is malformed JSON, stop befo
 
 Replace only the top-level `issues` key with the confirmed record. Preserve every other top-level key and every nested value, unknown keys included, along with key order and two-space indentation. Never write or replace the file with a partial settings object. Write it with the Write tool.
 
-Verify by reading the file back: it parses as JSON, `issues` equals the confirmed record, and every other top-level key is unchanged from the content read before writing. If verification fails, restore the original content and report the failure.
+Verify by reading the file back: it parses as JSON, `issues` equals the confirmed record, and every other top-level key is unchanged from the content read before writing. If verification fails, restore the content read before writing (or remove the file if this step created it) and report the failure.
 
 ## Step 6: Report
 
