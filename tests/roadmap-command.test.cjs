@@ -236,9 +236,8 @@ describe('roadmap interview', () => {
 describe('roadmap location and safety rules', () => {
   const text = flat(workflow);
 
-  it('writes under fv-plans by default, accepts an explicit path and names the auto-track location', () => {
+  it('writes under fv-plans by default and accepts an explicit path', () => {
     assert.match(text, /\.formalising\/fv-plans\/<topic>\/ROADMAP\.md/);
-    assert.match(text, /\.formalising\/auto-fv\/ROADMAP\.md/);
     assert.match(text, /explicit path/i);
   });
 
@@ -380,7 +379,7 @@ describe('roadmap path block', () => {
 
       it('accepts an explicit file or directory path', () => {
         const cases = {
-          '.formalising/auto-fv/ROADMAP.md': '.formalising/auto-fv/ROADMAP.md',
+          '.formalising/fv-plans/ntt/ROADMAP.md': '.formalising/fv-plans/ntt/ROADMAP.md',
           'docs/road.md': 'docs/road.md',
           '.formalising/fv-plans/CKA-from-KEM/': '.formalising/fv-plans/CKA-from-KEM/ROADMAP.md',
         };
@@ -534,7 +533,8 @@ describe('roadmap discovery block', () => {
       'fv-plans/a/ROADMAP.md': '---\nfvs_roadmap: true\n---\n',
       'fv-plans/b/custom-name.md': '---\nfvs_roadmap: true\n---\n',
       'fv-plans/c/notes.md': '# not a roadmap\n',
-      'auto-fv/ROADMAP.md': '# roadmap without the marker\n',
+      'fv-plans/d/ROADMAP.md': '# roadmap without the marker\n',
+      'other/ROADMAP.md': '# hand-written roadmap elsewhere, no marker\n',
       'other/elsewhere.md': '---\nfvs_roadmap: true\n---\n',
       '.kb-venv/lib/skip.md': '---\nfvs_roadmap: true\n---\n',
       'extract/skip.md': '---\nfvs_roadmap: true\n---\n',
@@ -545,9 +545,9 @@ describe('roadmap discovery block', () => {
     }
   };
   const expected = [
-    '.formalising/auto-fv/ROADMAP.md',
     '.formalising/fv-plans/a/ROADMAP.md',
     '.formalising/fv-plans/b/custom-name.md',
+    '.formalising/fv-plans/d/ROADMAP.md',
     '.formalising/other/elsewhere.md',
   ];
 

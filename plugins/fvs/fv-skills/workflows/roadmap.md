@@ -32,13 +32,14 @@ call. The blocks below validate before anything is created.
 ### Discovery (bare invocation)
 
 Union scan, following the handoff discovery of `/fvs:resume-work`: roadmaps are found by name under
-the two roadmap locations and by the frontmatter marker anywhere under `.formalising/`, so a
-custom-named or marker-less roadmap in a known location is still listed.
+`.formalising/fv-plans/` and by the frontmatter marker anywhere under `.formalising/`, so a
+custom-named roadmap is still listed. A hand-written `ROADMAP.md` elsewhere is listed only when it
+carries the marker; pass its path explicitly to update it.
 
 ```bash
 # fvs:roadmap-discover
 {
-  find .formalising/fv-plans .formalising/auto-fv -name ROADMAP.md -type f 2>/dev/null
+  find .formalising/fv-plans -name ROADMAP.md -type f 2>/dev/null
   grep -rl --include='*.md' --exclude-dir='.kb-venv' --exclude-dir=extract \
     --exclude-dir=model-external --exclude-dir=node_modules \
     '^fvs_roadmap: true' .formalising/ 2>/dev/null | sed 's|//|/|g'
@@ -54,8 +55,7 @@ custom-named or marker-less roadmap in a known location is still listed.
 
 An explicit path wins. Otherwise the roadmap lives at `.formalising/fv-plans/<topic>/ROADMAP.md`,
 where `<topic>` is a short slug you derive from the target (for example `libcrux-ml-kem-ntt`) and show
-to the user. The auto track keeps its roadmap at `.formalising/auto-fv/ROADMAP.md`; it passes that as
-the explicit path.
+to the user. To keep a roadmap anywhere else, pass an explicit path.
 
 Set exactly one of `ROADMAP_TOPIC` and `ROADMAP_PATH`, then run the block. It prints the resolved file
 path relative to the project root, or stops with `FVS >> <reason>`. Use the printed path as
@@ -106,8 +106,8 @@ printf '%s\n' "$FILE"
 
 Roadmaps hold planning and trust decisions, so the default is local storage that git does not see.
 Run the check with `ROADMAP_FILE` set. It reports `excluded`, `visible` or `not-git`; when a parent
-directory such as `.formalising` is a symlink (as in an Agent Orchestrator worktree) git cannot look
-beyond it, so the block checks the symlink itself.
+directory such as `.formalising` is a symlink, git cannot look beyond it, so the block checks the
+symlink itself.
 
 ```bash
 # fvs:roadmap-exclusion

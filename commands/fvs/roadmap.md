@@ -33,8 +33,7 @@ Arguments: $ARGUMENTS (optional)
 - **Bare:** list the existing roadmaps (union scan) as a numbered list and stop.
 - **First token ends in `.md` or `/`:** an explicit destination; the rest is the goal prompt.
 - **Otherwise:** the whole text is the goal prompt, and the roadmap goes to
-  `.formalising/fv-plans/<topic>/ROADMAP.md`. The auto track passes
-  `.formalising/auto-fv/ROADMAP.md` as the explicit path.
+  `.formalising/fv-plans/<topic>/ROADMAP.md`.
 
 Examples:
 
@@ -45,8 +44,8 @@ Examples:
 /fvs:roadmap formally verify the portable NTT in libcrux-ml-kem
   -> .formalising/fv-plans/<derived topic>/ROADMAP.md
 
-/fvs:roadmap .formalising/auto-fv/ROADMAP.md
-  -> the auto track's roadmap (an existing one is updated, never rewritten)
+/fvs:roadmap .formalising/fv-plans/ntt/ROADMAP.md
+  -> that roadmap (an existing one is updated, never rewritten)
 ```
 
 The command has access to the full current conversation. Use it before asking anything.

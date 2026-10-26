@@ -384,7 +384,7 @@ Turn the current conversation or a short prompt into a long-horizon verification
 - Grants no execution, spending or publication authority
 
 Usage: `/fvs:roadmap prove security of this protocol`
-Usage: `/fvs:roadmap .formalising/auto-fv/ROADMAP.md`
+Usage: `/fvs:roadmap .formalising/fv-plans/ntt/ROADMAP.md`
 
 **`/fvs:help`**
 Show this command reference.
