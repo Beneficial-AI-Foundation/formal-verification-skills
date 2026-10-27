@@ -134,8 +134,8 @@ Five router commands group the skills. Invoke a router bare to print its routing
 - `/fvs:aeneas` — Aeneas/Charon extraction maintenance (aeneas-extract, model-external, sync-aeneas-verif)
 - `/fvs:context` — Codebase context (map-code)
 - `/fvs:fc` — Formal-correctness core (fc-plan, model-external, lean-specify, lean-spec-review, lean-verify, natural-language, lean-refactor, trust-audit)
-- `/fvs:formalise` — Paper formalisation (lean-formalise, lean-refactor)
-- `/fvs:manage` — Management (help, update, checkpoint, pause-work, resume-work, reapply-patches, kb-setup)
+- `/fvs:formalise` — Paper formalisation (lean-formalise, lean-refactor, protocol-prose, crypto loop)
+- `/fvs:manage` — Management (help, update, checkpoint, pause-work, resume-work, reapply-patches, kb-setup, roadmap, issues-setup, to-issues, ask-baif)
 
 ### Aeneas (`/fvs:aeneas`)
 
@@ -308,6 +308,13 @@ Usage: `/fvs:trust-audit Specs/Backend/Field/Sub.lean`
 
 The paper track: formalise maths/crypto papers, then refactor.
 
+**`/fvs:protocol-prose <file-or-topic>`**
+Improve existing protocol module docs, docstrings or topic prose on explicit invocation.
+Uses the source paper's terms and repository conventions; preserves Lean definitions, statements,
+proofs and scientific scope. Checks the prose-only diff and baseline/revised builds. Runs in the
+current session without an extra model call or review stage. Historical plans/evals get suggestions
+instead of overwrites. Missing source or build evidence is reported as blocked.
+
 **`/fvs:lean-formalise`**
 Formalise mathematical paper content into Lean 4 specifications (paper track).
 
@@ -376,11 +383,15 @@ Run the current iteration's bounded plan under the green-build guard; a failed p
 
 Usage: `/fvs:crypto-execute "CKA from KEM" n1`
 
-**`/fvs:crypto-eval <topic> nN [--codex]`**
+**`/fvs:crypto-eval <topic> nN [--codex] [--fix-prose]`**
 Adversarially evaluate the iteration; ends in exactly one decision (ACCEPT / FOLLOWUP / HUMAN_RULING / BLOCKED).
 
 Usage: `/fvs:crypto-eval "CKA from KEM" n1`
 Usage: `/fvs:crypto-eval "CKA from KEM" n1 --codex`
+Optional `--fix-prose`: one editorial-only correction in the parent seat, then normal eval of the
+corrected prose in one fresh eval. This avoids the planning restart for eligible prose, without a
+measured speed claim; semantic/ambiguous findings retain normal followup. An
+unresolved finding or stale/incomplete correction record never counts as acceptance.
 
 **`/fvs:crypto-followup <topic> nN [--codex]`**
 Convert eval findings into the next bounded follow-up plan; HALTs for a human ruling on a modeling decision.
@@ -456,6 +467,50 @@ Set up NotebookLM knowledge base integration.
 Usage: `/fvs:kb-setup`
 Usage: `/fvs:kb-setup --add`
 
+**`/fvs:ask-baif [topic-or-target] [question | reconcile | take next | continue]`**
+Orient to the current goal/state/blockers and route one evidence-backed next action. Bare calls are
+advisory; explicit or already-authorized reconciliation/booking maintains existing tickets only,
+with ownership rechecks and honest concurrency limits. Optional within and between batches: compare
+progress against the whole goal, then finish, choose remaining ready work, or propose refinement or
+another consented batch. Existing track review/proof and publication gates remain intact.
+
+Usage: `/fvs:ask-baif where are we?`
+Usage: `/fvs:ask-baif take next`
+
+**`/fvs:roadmap [path/ROADMAP.md | path/] [goal prompt]`**
+Turn the current conversation or a short prompt into a long-horizon verification roadmap.
+
+- Synthesizes facts and existing decisions first; light clarification by default, adaptive deep rounds for material uncertainty or disagreement
+- Confirms new/materially changed shared intent explicitly, or reuses a current owner-approved agreement without a fresh interview
+- Records claims to establish, scope, external boundaries, milestones with a checkable "done when", and decisions and status logs
+- Writes `.formalising/fv-plans/<topic>/ROADMAP.md` (or an explicit path) after checking it is git-excluded
+- Bare invocation lists existing roadmaps; a rerun appends to the logs and never rewrites a decision
+- Grants no execution, spending or publication authority
+
+Usage: `/fvs:roadmap prove security of this protocol`
+Usage: `/fvs:roadmap .formalising/fv-plans/ntt/ROADMAP.md`
+
+**`/fvs:to-issues [path/ROADMAP.md]`**
+Break a roadmap or the current conversation into independently reviewable outcomes with blockers,
+named evidence and an acceptance procedure. Quiz before publishing; local files stay beneath the
+roadmap directory. GitHub publication requires the full sanitized batch's consent, separately
+approved label creation, explicit relationships and a retained recovery log. Other trackers stop
+with guidance. Creating issues never establishes proof acceptance.
+
+Usage: `/fvs:to-issues .formalising/fv-plans/ntt/ROADMAP.md`
+
+**`/fvs:issues-setup`**
+Choose where issues live and record it in fvs-config.json.
+
+- Explores the git remote, `gh` authentication, the existing `issues` section and roadmap overrides (read-only)
+- Offers GitHub, local markdown, or other (freeform prose); recommends GitHub only for a GitHub remote with write access
+- Keeps the five default labels or maps them to existing ones
+- Shows the exact `issues` section, then merges it into `.formalising/fvs-config.json`, preserving every other key
+- A roadmap's own `issues:` frontmatter block replaces this default as a whole block
+- Never creates GitHub labels or issues
+
+Usage: `/fvs:issues-setup`
+
 **`/fvs:help`**
 Show this command reference.
 
@@ -500,6 +555,7 @@ ${CLAUDE_PLUGIN_ROOT}/                   # Installed FVS content (global)
 │   ├── lean-verify.md
 │   ├── lean-refactor.md
 │   ├── natural-language.md
+│   ├── protocol-prose.md
 │   ├── lean-formalise.md
 │   ├── kb-setup.md
 │   ├── checkpoint.md

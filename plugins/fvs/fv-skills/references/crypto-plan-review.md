@@ -212,12 +212,15 @@ Requirements:
 <authoring_seat_resolution>
 
 The reviewer response is immutable evidence: keep it byte-for-byte unchanged. The separate
-authoring seat rechecks each finding and writes an exclusive triage artifact with finding IDs,
-evidence, accepted/rejected dispositions, and pre-edit/post-edit target hashes.
+authoring seat writes an exclusive triage artifact with pre-edit/post-edit target hashes, applied
+edits, checks, and status. Checked evidence with finding IDs is required for REJECT-FINDING,
+DESCOPE, and DEFER-WITH-RULING under the shared review policy; do not repeat evidence for accepted
+findings. Record per-finding dispositions only after a REJECT verdict.
 
 `APPROVE-WITH-EDITS` permits only exhaustively named bounded edits. It becomes terminal `approved
-after edits` once the authoring seat applies every accepted edit and reruns the plan gates; no
-second review is required. `REJECT` cannot be converted to edits: create a fresh authored revision
+after edits` once the authoring seat applies every accepted edit and checks required plan-contract
+fields for presence and consistency (not Lean builds or another content review); no second review
+is required. `REJECT` cannot be converted to edits: create a fresh authored revision
 and another review, carrying the prior review/triage only as delimited untrusted history. Run at
 most three reviewer rounds per invocation and never auto-approve at the cap.
 

@@ -64,7 +64,7 @@ const CRYPTO = 'fvs-crypto-executor';
 describe('Crypto definition -> actual converter -> registry-selection fixture', () => {
   it('grants only the existing built-ins, conditional IDE and narrow Lean pair', () => {
     assert.deepEqual(claudeTools(role(CRYPTO)), [
-      'Read', 'Bash', 'Grep', 'Glob', 'Write', 'mcp__ide__getDiagnostics', ...CLAUDE_PAIR,
+      'Read', 'Bash', 'Grep', 'Glob', 'Write', 'Edit', 'mcp__ide__getDiagnostics', ...CLAUDE_PAIR,
     ]);
   });
 
@@ -78,7 +78,7 @@ describe('Crypto definition -> actual converter -> registry-selection fixture', 
   it('OpenCode emits the inspected server_tool selectors without changing built-ins', () => {
     const selectors = opencodeTools(convertClaudeToOpencodeFrontmatter(role(CRYPTO)));
     assertPair(selectFixture(selectors, registryFixture('_')));
-    assert.deepEqual(selectors, ['read', 'bash', 'grep', 'glob', 'write',
+    assert.deepEqual(selectors, ['read', 'bash', 'grep', 'glob', 'write', 'edit',
       'ide_getDiagnostics', ...PAIR.map(raw => `lean-lsp_${raw}`)]);
   });
 
@@ -106,6 +106,7 @@ describe('All canonical Lean writers and existing full-role delivery', () => {
   for (const [name, hasIde] of WRITERS) {
     it(`${name} retains exact built-ins and only the standard diagnostic/goal pair`, () => {
       assert.deepEqual(claudeTools(role(name)), ['Read', 'Bash', 'Grep', 'Glob', 'Write',
+        ...(name === CRYPTO ? ['Edit'] : []),
         ...(hasIde ? ['mcp__ide__getDiagnostics'] : []), ...CLAUDE_PAIR]);
       // Antigravity: validation-backed installed footprint; runtime resolution unverified.
       assert.deepEqual(antigravityTools(convertClaudeToAntigravityAgent(role(name))), claudeTools(role(name)));

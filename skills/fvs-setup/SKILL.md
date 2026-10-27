@@ -12,7 +12,7 @@ this entry does not install FVS, register specialist roles, or grant setup permi
 It works by itself after copy, symlink, relocation, and from any working directory;
 there are no adjacent scripts or resources to load. Never infer an FVS sourceRoot
 or nativeRoot from this entry's parents. A complete native installation supplies
-its own thirty commands, workflows, references, templates, scripts, hooks and roles.
+its own 35 commands, workflows, references, templates, scripts, hooks and roles.
 
 The functional-correctness (FC) track proceeds through understanding, specification,
 fresh statement review and explicitly requested autonomous proof. Extracted-code
@@ -20,7 +20,7 @@ work first needs the project's actual source/translation prerequisites. The cryp
 track proceeds through planning, fresh review, explicit execution, adversarial
 evaluation and follow-up. Setup does not start either track or choose models.
 
-Source artifact version: 2.3.8. This is not evidence that an npm version,
+Source artifact version: 2.3.9. This is not evidence that an npm version,
 public tag, catalog pin or release is available. Public source: https://github.com/Beneficial-AI-Foundation/formal-verification-skills.
 Native help source: https://github.com/Beneficial-AI-Foundation/formal-verification-skills/blob/main/commands/fvs/help.md.
 
@@ -74,7 +74,7 @@ check exact roles/settings and stop settings-dependent dispatch/writes if unavai
 Installing this setup skill does not register FVS specialists.
 
 An explicitly selected npm route uses package fv-skills-baif; Pi's exact source
-notation for THIS source artifact version is `npm:fv-skills-baif@2.3.8`.
+notation for THIS source artifact version is `npm:fv-skills-baif@2.3.9`.
 That notation is not publication evidence. Independently confirm the exact requested
 registry version before choosing an npm command; a requested unpublished npm pin
 stays blocked. Do not substitute latest or an older release. The source snapshot's
@@ -112,7 +112,7 @@ for the accepted user profile; never omit scope. Node is the verified executable
 For non-Pi runtimeFlag, validate the chosen runtime against exactly
 `--claude`, `--opencode`, `--antigravity`, `--codex`; never use --all. Scope is mandatory.
 The hook build copies two pure Node hooks; this lane needs no npm install or npx.
-Keep the complete source snapshot. Observe actual installed version, all thirty
+Keep the complete source snapshot. Observe actual installed version, all 35
 commands and resources, hook registrations and role/settings footprints. Discover
 the nativeRoot from the actual channel's installation/resource metadata, not this
 entry's physical/logical location or a guessed transferred path.
@@ -122,7 +122,7 @@ local-source declaration/retention/scope effects. After permission use the retai
 complete source directory: `pi install "$sourceRoot" --local` for the selected
 trusted project, or `pi install "$sourceRoot"` for personal scope. This is a local
 source directory, loaded without a registry dependency install, not a transported
-skill directory. The explicit package.json pi.skills selects ONLY pi/skills, thirty
+skill directory. The explicit package.json pi.skills selects ONLY pi/skills, 35
 native skills, not this setup entry. Keep sourceRoot at its verified location.
 Project declarations require project trust; review it explicitly. Project identities
 normally take precedence over personal entries; inspect both and do not silently
