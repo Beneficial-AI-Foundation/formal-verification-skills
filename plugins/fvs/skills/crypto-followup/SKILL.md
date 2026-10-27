@@ -158,13 +158,21 @@ links and refresh `$ROOT/sources/proof-engineering-context.md` for either thinke
 
 ## Step 2: Read the latest eval + its decision
 
-Read the latest `EVAL_nN.md` from `reviews/` and extract its decision verb (exactly one of
+Resolve the requested or latest exact numeric eval iteration using the shared rule below,
+including any prose-attempt records, and extract its authoritative decision verb (exactly one of
 `ACCEPT | FOLLOWUP | HUMAN_RULING | BLOCKED`):
 
-```bash
-EVAL=$(ls "$ROOT"/reviews/EVAL_n*.md 2>/dev/null | sort -V | tail -1)
-DECISION=$(grep -Eo '\b(ACCEPT|FOLLOWUP|HUMAN_RULING|BLOCKED)\b' "$EVAL" | tail -1)
-```
+Resolve exact numeric iteration filenames, not arbitrary `EVAL_n*.md` suffixes. Read exactly one
+anchored `**Decision:**` field from the authoritative eval selected by the shared rule below;
+never grep the last decision word from quoted findings.
+
+Before routing, follow `eval_result_resolution` in the installed
+`fv-skills/workflows/protocol-prose.md`, resolved from the trusted FVS root. Select the current
+validated prose recheck when present; incomplete/stale correction evidence is BLOCKED, never an
+older ACCEPT. Keep all original/new findings. For an editorial-only FOLLOWUP with no consumed
+correction attempt, offer `/fvs:crypto-eval <topic> nN --fix-prose` and stop rather than dispatching
+a new planner automatically. If declined, mixed, ambiguous or already attempted, retain the normal
+semantic followup/HUMAN_RULING route. This command never edits protocol prose itself.
 
 Route by decision:
 - `ACCEPT` -- nothing to follow up; the loop is at its end. Report and stop.

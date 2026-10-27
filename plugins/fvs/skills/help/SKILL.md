@@ -383,11 +383,14 @@ Run the current iteration's bounded plan under the green-build guard; a failed p
 
 Usage: `/fvs:crypto-execute "CKA from KEM" n1`
 
-**`/fvs:crypto-eval <topic> nN [--codex]`**
+**`/fvs:crypto-eval <topic> nN [--codex] [--fix-prose]`**
 Adversarially evaluate the iteration; ends in exactly one decision (ACCEPT / FOLLOWUP / HUMAN_RULING / BLOCKED).
 
 Usage: `/fvs:crypto-eval "CKA from KEM" n1`
 Usage: `/fvs:crypto-eval "CKA from KEM" n1 --codex`
+Optional `--fix-prose`: one editorial-only correction in the parent seat, then normal eval of the
+corrected prose. No planning restart; semantic/ambiguous findings retain normal followup. An
+unresolved finding or stale/incomplete correction record never counts as acceptance.
 
 **`/fvs:crypto-followup <topic> nN [--codex]`**
 Convert eval findings into the next bounded follow-up plan; HALTs for a human ruling on a modeling decision.

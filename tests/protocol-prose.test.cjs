@@ -78,3 +78,63 @@ test('new public prose resources are self-contained and use synthetic examples',
     assert.doesNotMatch(read(file), /\/Users\/|\/home\/|\.agents\/skills|\.codex\/skills|discussion_r\d+|pullrequestreview-\d+/);
   }
 });
+
+test('eval prose correction is opted in, parent-owned and capped without new verdicts', () => {
+  const contract = read('fv-skills/workflows/protocol-prose.md');
+  assert.match(contract, /Only `\/fvs:crypto-eval <topic> nN --fix-prose` opts into this path/);
+  assert.match(contract, /at most one correction pass in the parent seat/);
+  assert.match(contract, /Reuse the normal\n   eval dispatch once/);
+  assert.match(contract, /No second correction pass\n   or planning restart/);
+  for (const base of ['commands/fvs', 'fv-skills/workflows']) {
+    const source = read(`${base}/crypto-eval.md`);
+    assert.match(source, /eval_editorial_correction/);
+    assert.match(source, /eval_result_resolution/);
+    assert.match(source, /prose_correction/);
+    assert.match(source, /Omit editorial\ncriteria when the flag is absent/);
+    assert.match(source, /parent-only; never forward it as a helper CLI flag/);
+    assert.match(source, /<protocol_prose>\n\$PROTOCOL_PROSE\n<\/protocol_prose>/);
+    assert.match(source, /<prose_correction>/);
+    assert.match(source, /read-only role/);
+    assert.match(source, /unresolved findings prevent ACCEPT/);
+  }
+});
+
+test('editorial qualification cannot authorize semantic fixes or widen source scope', () => {
+  const reference = read('fv-skills/references/protocol-prose.md');
+  const contract = read('fv-skills/workflows/protocol-prose.md');
+  assert.match(reference, /missing assumption, changed quantifier, security claim, source\ninterpretation, theorem statement, definition or proof is never editorial/);
+  assert.match(reference, /Mixed findings do not\nqualify/);
+  assert.match(contract, /semantic, source, trust and required build checks all pass/);
+  assert.match(contract, /intersection\n   of these spans and the approved task\/plan's exact editable files/);
+  assert.match(contract, /Generated files,\n   historical plans\/evals and unapproved paths are ineligible/);
+  assert.match(contract, /restores only this pass's edits.*BLOCKED/s);
+});
+
+test('final eval checks corrected prose and all findings with current immutable evidence', () => {
+  const contract = read('fv-skills/workflows/protocol-prose.md');
+  for (const name of ['PROSE_BASELINE_nN.md', 'PROSE_CORRECTION_nN.md', 'PROSE_RECHECK_nN.md']) {
+    assert.ok(contract.includes(name), name);
+  }
+  assert.match(contract, /hash the\n   entire evaluated file set, approved plan and source\/trust\/build evidence/);
+  assert.match(contract, /evaluator must\n   inspect the corrected prose, check every original finding/);
+  assert.match(contract, /Reject an `ACCEPT` response with any unresolved finding/);
+  assert.match(contract, /Only the authoritative final eval may validate lessons/);
+  assert.match(contract, /No.*byte preservation.*prove prose quality|byte preservation and green builds do not prove prose quality/s);
+  assert.match(contract, /absent\/partial\/malformed evidence is `BLOCKED`/);
+  assert.match(contract, /hashes equal to the\n  current files/);
+  assert.match(contract, /never fall back to an older `ACCEPT`/);
+});
+
+test('followup and discovery route editorial attempts without bypassing semantic review', () => {
+  for (const base of ['commands/fvs', 'fv-skills/workflows']) {
+    const source = read(`${base}/crypto-followup.md`);
+    assert.match(source, /eval_result_resolution/);
+    assert.match(source, /incomplete\/stale correction evidence is BLOCKED/);
+    assert.match(source, /--fix-prose/);
+    assert.match(source, /already attempted.*normal\nsemantic followup\/HUMAN_RULING/s);
+    assert.match(source, /never edits protocol prose itself/);
+  }
+  assert.doesNotMatch(read('commands/fvs/crypto-followup.md'), /grep -Eo.*ACCEPT/);
+  for (const file of ['README.md', 'commands/fvs/help.md', 'commands/fvs/crypto-execute.md',
+    'fv-skills/workflows/crypto-execute.md']) assert.match(read(file), /--fix-prose/);
+});

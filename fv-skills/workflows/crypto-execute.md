@@ -186,6 +186,9 @@ under `lessons/crypto/`, updating `index.md` in the same reviewable diff. Failed
 eligible only when the failure boundary and a better next move are stated.
 </step>
 
+After execution, the user may opt into `/fvs:crypto-eval <topic> nN --fix-prose` for one qualified
+editorial-only correction/recheck. This adds no executor capability or automatic rewrite pass.
+
 </process>
 
 <success_criteria>

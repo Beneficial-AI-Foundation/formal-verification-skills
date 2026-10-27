@@ -232,6 +232,10 @@ until eval or human ruling. Never persist raw logs, uncited claims, or secrets.
 
 ## Step 6: Run-end banner + next command
 
+Optionally append `--fix-prose` to the eval command to permit one qualified editorial-only
+correction/recheck in the parent seat. It never changes executor capabilities, plan scope or
+semantic acceptance; it is not an automatic rewrite pass.
+
 ```
 FVS >> CRYPTO EXECUTE COMPLETE
 

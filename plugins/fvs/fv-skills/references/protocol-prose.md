@@ -56,3 +56,12 @@ These are invented editorial examples, not claims about any particular protocol 
 - Given a plan with a security lemma still pending, replace “There remains the future task of
   proving the stated security lemma” with “The security lemma remains a proof obligation.”
   If its status is unclear, flag it separately rather than asserting completion.
+
+## Editorial eval findings
+
+An editorial correction fixes grammar, spelling or demonstrably redundant wording while preserving
+every technical assertion. A missing assumption, changed quantifier, security claim, source
+interpretation, theorem statement, definition or proof is never editorial. Ambiguity is semantic
+until resolved through the existing review/followup or human-ruling route. Mixed findings do not
+qualify for an editorial-only pass. A green build or a small textual diff cannot establish this
+classification or the quality of the corrected prose.
