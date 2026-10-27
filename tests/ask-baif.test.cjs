@@ -20,7 +20,9 @@ test('ask-baif is discoverable to users/agents and reuses the native invocation 
 });
 
 test('bare orientation is read-only; explicit or existing maintenance grants are narrower than execution', () => {
-  assert.match(section(1), /Bare invocation.*advisory: no writes, claims, builds, tests, model dispatch, installations, network mutations or command execution/);
+  assert.match(section(1), /Bare invocation.*advisory.*Permit scoped nonmutating inspection commands.*git status\/rev-parse and authorized tracker metadata reads within existing access authority/);
+  assert.match(section(1), /No writes, claims, project programs, builds, tests, model dispatch, installations, network mutations or mutating member execution\/dispatch/);
+  assert.doesNotMatch(section(1), /or command execution/);
   assert.match(section(1), /existing autonomous grant can cover these actions/);
   assert.match(section(1), /proof-execution permission alone cannot/);
   assert.match(section(1), /Do not ask for another confirmation of an unchanged action already authorized/);
@@ -59,7 +61,7 @@ test('routes are real member commands with explicit source contracts and no shor
     'lean-spec-review', 'lean-verify', 'trust-audit', 'aeneas-extract', 'model-external',
     'crypto-plan', 'crypto-review', 'crypto-execute', 'crypto-eval', 'crypto-followup'])
     assert.ok(names.includes(name), name);
-  assert.match(section(3), /installed member command\/skill and its required workflow BEFORE recommending or invoking it/);
+  assert.match(section(3), /When selecting a member route, read the matching installed member command\/skill and its required workflow BEFORE recommending or invoking it/);
   assert.match(section(3), /cannot create missing CODEMAP/);
   assert.match(section(3), /topLevelFunctions have no dependents; entryPointFunctions have no dependencies \(leaves\); neither implies public API/);
   assert.match(section(3), /Skip is unreviewed, not approval/);
@@ -128,7 +130,7 @@ test('audit outcomes and uncertain retry reconcile without duplicate notes/claim
 test('one authorized continuation uses the existing runner; unavailable tools produce an honest handoff', () => {
   assert.match(section(5), /explicit continue or an applicable existing execution grant/);
   assert.match(section(5), /ONE action through the available native Skill\/member invocation or the existing executor\/orchestrator/);
-  assert.match(section(5), /no native invocation mechanism.*execution was not started/);
+  assert.match(section(5), /no applicable invocation mechanism.*execution was not started/);
   assert.match(section(5), /Downstream manifests, budget, model\/provider restrictions, human rulings and publication consent still apply/);
   assert.match(section(5), /No redundant router confirmation/);
   assert.match(section(5), /keeping the review unreviewed/);
@@ -152,4 +154,30 @@ test('manage/help/readme and generated entries expose the bounded command', () =
     assert.match(generated, /NOT atomic|NOT an atomic/);
     assert.match(generated, /native Skill\/member invocation/);
   }
+});
+
+
+test('settled ordinary tasks get a bounded caller handoff without an invented member or interview', () => {
+  assert.match(section(3), /settled ordinary task with no applicable FVS member.*bounded-task handoff.*existing authorized caller\/executor: outcome, scope\/exclusions, current evidence, acceptance and authority reference/);
+  assert.match(section(3), /Do not invent a member, start a redundant investigation\/interview or implement inside the router/);
+  assert.match(section(3), /Member contract reads apply only when selecting a member/);
+  assert.match(section(5), /Next:.*bounded-task handoff.*bounded investigation\/owner decision/);
+  assert.match(section(5), /settled non-member task.*outcome, scope\/exclusions, evidence, acceptance and authority; no member invocation is required/);
+});
+
+test('each mutation and continuation rechecks relevant source and authority binding despite unchanged ownership', () => {
+  assert.match(section(2), /Retain a small relevant binding: selected repository\/branch\/target and revision, scoped source\/spec hashes.*roadmap agreement and owner approval references.*tracker\/configuration source and destination/);
+  assert.match(section(4), /Immediately before EACH bookkeeping action \(each status correction or claim\).*re-read.*retained binding/);
+  assert.match(section(4), /unchanged issue ownership, source, approval or configuration drift invalidates the affected action.*bounded reconciliation step.*unaffected authorized work/);
+  assert.match(section(4), /recheck is not atomic; retain serialization and readback/);
+  assert.match(section(5), /Immediately before EACH continuation handoff, re-read.*target\/revision.*source\/spec hashes.*roadmap\/tracker\/approval binding/);
+  assert.match(section(5), /Drift invalidates the affected handoff even when issue ownership is unchanged.*bounded reconciliation.*unaffected authorized work/);
+  assert.match(section(5), /Rechecking does not make the handoff atomic/);
+});
+
+test('route table has exactly two cells per row, including protocol review alternatives', () => {
+  const table = source.split('| Evidence / need |')[1].split('Within a batch,')[0];
+  for (const row of table.split('\n').filter(line => line.startsWith('|')))
+    assert.equal(row.split(/(?<!\\)\|/).length, 4, row);
+  assert.match(table, /--target plan` or `--target followup`/);
 });

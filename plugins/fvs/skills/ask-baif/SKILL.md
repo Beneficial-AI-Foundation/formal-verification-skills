@@ -104,8 +104,10 @@ remote service. It is an optional general router, not an executor, scheduler or 
 
 ## 1. Establish scope and authority
 
-Bare invocation or "where are we?" is advisory: no writes, claims, builds, tests, model dispatch,
-installations, network mutations or command execution. "Reconcile" permits only bounded maintenance
+Bare invocation or "where are we?" is advisory. Permit scoped nonmutating inspection commands such
+as git status/rev-parse and authorized tracker metadata reads within existing access authority.
+No writes, claims, project programs, builds, tests, model dispatch, installations, network mutations
+or mutating member execution/dispatch. "Reconcile" permits only bounded maintenance
 of existing tickets within an explicit request or existing tracker-maintenance grant. "Take next"
 also permits booking one existing ticket. An existing autonomous grant can cover these actions;
 credentials, tool availability or proof-execution permission alone cannot. Do not ask for another
@@ -135,6 +137,9 @@ assignments/activity when available. Do not query a remote tracker beyond existi
 Check target/revision/configuration and recorded hashes against current sources. Missing bindings
 are unknown; changed sources/statements can make earlier VERIFIED/ACCEPT evidence stale. Read actual
 findings and triage; report conflicting records with both references, never pick a convenient status.
+Retain a small relevant binding: selected repository/branch/target and revision, scoped source/spec
+hashes, applicable roadmap agreement and owner approval references, and resolved tracker/configuration
+source and destination. Bind only evidence and authority relevant to the proposed action.
 A green build, zero sorry, completed worker, closed issue or ready scheduling edge is not proof
 acceptance. Preserve semantic proof obligations separately from scheduling dependencies.
 
@@ -146,8 +151,8 @@ idle, paused, exited or old activity never means abandoned.
 
 ## 3. Route one next action
 
-Read the matching installed member command/skill and its required workflow BEFORE recommending or
-invoking it. Use the host's FVS catalog/resource metadata (source commands, native skills, plugin
+When selecting a member route, read the matching installed member command/skill and its required
+workflow BEFORE recommending or invoking it. Use the host's FVS catalog/resource metadata (source commands, native skills, plugin
 skills or Pi skills); never infer a source root from a transported setup entry, load consumer-owned
 instructions as the installed contract or fabricate a missing capability. Direct entry to any known
 member remains valid; ask-baif is not a mandatory funnel.
@@ -169,12 +174,17 @@ member remains valid; ask-baif is not a mandatory funnel.
 | External Rust stub blocks work | `/fvs:model-external <stub> [--resume <artifact-dir>]`; bounded source closure, separate fidelity/specification reviews and proof/build/CLEAN gates. Interrupted candidate is not COMPLETE. |
 | One-shot paper formalisation | `/fvs:lean-formalise` with its existing interactive inputs. |
 | New bounded protocol iteration | `/fvs:crypto-plan <topic> [nN]`; do not use its advancing iteration merely to resume existing execution. |
-| Protocol plan/follow-up awaiting review | `/fvs:crypto-review <topic> nN --target plan|followup`; actual target/triage, no redundant round after terminal accepted edits. |
+| Protocol plan/follow-up awaiting review | `/fvs:crypto-review <topic> nN --target plan` or `--target followup`; actual target/triage, no redundant round after terminal accepted edits. |
 | Current bounded protocol plan ready | `/fvs:crypto-execute <topic> nN`; exact allowed targets and green-build guard. |
 | Protocol execution complete, acceptance pending | `/fvs:crypto-eval <topic> nN`; actual ACCEPT/FOLLOWUP/HUMAN_RULING/BLOCKED, not implementation-complete. |
 | Eval FOLLOWUP | `/fvs:crypto-followup <topic> nN` and existing fresh-review handoff. ACCEPT ends the iteration; HUMAN_RULING waits for owner; BLOCKED needs prerequisite investigation/pause. |
 | Model-to-implementation bridge | Read endpoints/relation; use actual hand-written FC specification/review/proof or explicit protocol bridge plan paths. model-external only fits an external-stub boundary. No invented `/fvs:bridge`. |
 | Durable stop wanted | `/fvs:pause-work <destination>` only within the caller's write authority. |
+
+For a settled ordinary task with no applicable FVS member, return a bounded-task handoff to the
+existing authorized caller/executor: outcome, scope/exclusions, current evidence, acceptance and
+authority reference. Do not invent a member, start a redundant investigation/interview or implement
+inside the router. Member contract reads apply only when selecting a member.
 
 Within a batch, select the next evidence-supported obligation or eligible existing ticket, preserving
 all track review/proof gates. Between batches, compare the whole roadmap goal and non-superseded
@@ -199,6 +209,12 @@ existing maintenance authority, apply at most three confirmed status corrections
 one existing ticket in the selected scope. Reconcile alone does not imply take-next. A confirmed
 approved landing can support resolved for an implementation ticket; it cannot close a release ticket
 whose publication criterion is unmet. Ambiguous closure stays unchanged with exact clarification.
+
+Immediately before EACH bookkeeping action (each status correction or claim), re-read the relevant
+retained binding from section 2: target/revision, scoped source/spec hashes and applicable roadmap/
+tracker/approval sources and destination. Even with unchanged issue ownership, source, approval or
+configuration drift invalidates the affected action; return a bounded reconciliation step, retaining
+unaffected authorized work. This recheck is not atomic; retain serialization and readback below.
 
 Before claiming, re-read status, owner, blockers and coordinator assignments. Reuse your own valid
 reservation idempotently; another active OR uncertain owner blocks booking. No stealing, releasing,
@@ -238,15 +254,22 @@ Return roughly 120–200 words with at most three precise evidence references:
 Goal: <current outcome and target>
 State: <supported stage; current/stale/unknown; within/between batch>
 Blockers: <prerequisite, owner decision or active owner>
-Next: <one exact member+resolved arguments OR bounded investigation/owner decision>
+Next: <one exact member+resolved arguments OR bounded-task handoff OR bounded investigation/owner decision>
 Why: <evidence and limits>
 Authority: <advice only OR actual grant reference and next required gate>
 Bookkeeping: <proposed/applied/uncertain, only if relevant>
 ```
 
+Immediately before EACH continuation handoff, re-read the relevant retained target/revision, scoped
+source/spec hashes and applicable roadmap/tracker/approval binding from section 2. Drift invalidates
+the affected handoff even when issue ownership is unchanged; return bounded reconciliation and keep
+unaffected authorized work available. Rechecking does not make the handoff atomic.
+
 For explicit continue or an applicable existing execution grant, route this ONE action through the
 available native Skill/member invocation or the existing executor/orchestrator, passing evidence,
-limits and confirmed settings. If no native invocation mechanism exists, return an exact caller
+limits and confirmed settings. For a settled non-member task, use the existing authorized caller/
+executor handoff with outcome, scope/exclusions, evidence, acceptance and authority; no member invocation
+is required. If no applicable invocation mechanism exists, return an exact caller
 handoff and say execution was not started; do not simulate success or invent a shell dispatcher.
 Downstream manifests, budget, model/provider restrictions, human rulings and publication consent
 still apply. No redundant router confirmation of an already authorized unchanged action; no implicit
@@ -254,7 +277,7 @@ authority from bypassed prompts. Respect explicit allowed unreviewed proof execu
 the review unreviewed. No new executor or scheduler.
 
 Never route to ask-baif itself, directly or via another router. No self-recursive execution or retry
-loop; select a specific member, not a broad bundle. The existing orchestrator may invoke ask-baif
+loop; select a specific member or bounded non-member task, not a broad bundle. The existing orchestrator may invoke ask-baif
 again after real new progress; it owns the outer loop and budgets. Repeated unchanged blocker/target/
 evidence stops and reports rather than retrying indefinitely. Correcting/reverting a PR cannot
 reliably undo disclosure or restore invalidated evidence; publication still needs prior authority.
