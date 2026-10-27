@@ -495,6 +495,17 @@ whenExists(REVIEW_CONTRACT, 'Crypto loop: adversarial review contract covers for
     assert.match(content, /reviewer (?:response|artifact)[\s\S]*(?:unchanged|byte-for-byte|immutable)/i);
     assert.match(content, /REJECT[\s\S]*(?:fresh|another) review/i);
   });
+  it('keeps author resolution aligned with the bounded-edit workflow', () => {
+    const resolution = content.match(/<authoring_seat_resolution>([\s\S]*?)<\/authoring_seat_resolution>/)[1];
+    assert.match(resolution, /pre-edit\/post-edit target hashes/);
+    assert.match(resolution, /Checked evidence with finding IDs[\s\S]*REJECT-FINDING,[\s\S]*DESCOPE,[\s\S]*DEFER-WITH-RULING/);
+    assert.match(resolution, /do not repeat evidence for accepted\s+findings/);
+    assert.match(resolution, /dispositions only after a REJECT verdict/);
+    assert.match(resolution, /plan-contract\s+fields for presence and consistency/);
+    assert.match(resolution, /not Lean builds or another content review/);
+    assert.match(resolution, /at\s+most three reviewer rounds[\s\S]*never auto-approve at the cap/);
+    assert.doesNotMatch(resolution, /rechecks each finding|reruns the plan gates/);
+  });
 });
 
 for (const key of ['cmdPlan', 'cmdFollowup']) {
