@@ -119,6 +119,10 @@ in that manifest, rebuild and reconfirm before dispatch.
 Then dispatch the dedicated crypto executor, INLINING the bounded plan and passing only validated
 native model/effort fields:
 
+Read `fv-skills/references/protocol-prose.md` into `PROTOCOL_PROSE` and inline its full text
+in this existing authoring call. It guides newly authored prose within the approved scope;
+it adds no model call, review gate or permission to revise unrelated files.
+
 ```
 Task(
   subagent_type="fvs-crypto-executor",
@@ -130,6 +134,9 @@ Task(
 <editing_capability>
 $EDITING_CAPABILITY
 </editing_capability>
+<protocol_prose>
+$PROTOCOL_PROSE
+</protocol_prose>
 
 <lake_build_guide>
 $LAKE_BUILD_GUIDE
@@ -213,6 +220,9 @@ source, or diagnostic reference. Strengthen an equivalent record or create one f
 under `lessons/crypto/`, updating `index.md` in the same reviewable diff. Failed approaches are
 eligible only when the failure boundary and a better next move are stated.
 </step>
+
+After execution, the user may opt into `/fvs:crypto-eval <topic> nN --fix-prose` for one qualified
+editorial-only correction/recheck. This adds no executor capability or automatic rewrite pass.
 
 </process>
 

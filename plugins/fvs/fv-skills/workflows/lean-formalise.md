@@ -129,6 +129,11 @@ Use the command's confirmed selection manifest from `model-profiles.md`: authori
 Lean-definition/spec-authoring `fvs-executor`. If either stage is absent, rebuild and reconfirm the
 manifest before dispatch. Never infer tiers from agent names.
 
+For protocol tasks, read `fv-skills/references/protocol-prose.md` and inline its full text as
+`PROTOCOL_PROSE` in both existing research and executor prompts below. For other mathematical
+tasks use `not applicable`. This guides newly authored prose within the approved task; it adds
+no model call, review gate or permission to revise unrelated files.
+
 Read and inline reference files before dispatch:
 - fv-skills/references/lean-spec-conventions.md (applies to paper track too)
 - fv-skills/templates/spec-file.lean (spec template)
@@ -149,6 +154,10 @@ Inline into researcher prompt:
 The actual researcher prompt includes:
 
 ```text
+<protocol_prose>
+$PROTOCOL_PROSE
+</protocol_prose>
+
 <lake_build_guide>
 $LAKE_BUILD_GUIDE
 </lake_build_guide>
@@ -239,6 +248,10 @@ Inline into executor prompt:
 The actual executor prompt includes:
 
 ```text
+<protocol_prose>
+$PROTOCOL_PROSE
+</protocol_prose>
+
 <lake_build_guide>
 $LAKE_BUILD_GUIDE
 </lake_build_guide>

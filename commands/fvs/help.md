@@ -52,7 +52,7 @@ Five router commands group the skills. Invoke a router bare to print its routing
 - `/fvs:aeneas` — Aeneas/Charon extraction maintenance (aeneas-extract, model-external, sync-aeneas-verif)
 - `/fvs:context` — Codebase context (map-code)
 - `/fvs:fc` — Formal-correctness core (fc-plan, model-external, lean-specify, lean-spec-review, lean-verify, natural-language, lean-refactor, trust-audit)
-- `/fvs:formalise` — Paper formalisation (lean-formalise, lean-refactor)
+- `/fvs:formalise` — Paper formalisation (lean-formalise, lean-refactor, protocol-prose, crypto loop)
 - `/fvs:manage` — Management (help, update, checkpoint, pause-work, resume-work, reapply-patches, kb-setup, roadmap, issues-setup, to-issues, ask-baif)
 
 ### Aeneas (`/fvs:aeneas`)
@@ -226,6 +226,13 @@ Usage: `/fvs:trust-audit Specs/Backend/Field/Sub.lean`
 
 The paper track: formalise maths/crypto papers, then refactor.
 
+**`/fvs:protocol-prose <file-or-topic>`**
+Improve existing protocol module docs, docstrings or topic prose on explicit invocation.
+Uses the source paper's terms and repository conventions; preserves Lean definitions, statements,
+proofs and scientific scope. Checks the prose-only diff and baseline/revised builds. Runs in the
+current session without an extra model call or review stage. Historical plans/evals get suggestions
+instead of overwrites. Missing source or build evidence is reported as blocked.
+
 **`/fvs:lean-formalise`**
 Formalise mathematical paper content into Lean 4 specifications (paper track).
 
@@ -294,11 +301,15 @@ Run the current iteration's bounded plan under the green-build guard; a failed p
 
 Usage: `/fvs:crypto-execute "CKA from KEM" n1`
 
-**`/fvs:crypto-eval <topic> nN [--codex]`**
+**`/fvs:crypto-eval <topic> nN [--codex] [--fix-prose]`**
 Adversarially evaluate the iteration; ends in exactly one decision (ACCEPT / FOLLOWUP / HUMAN_RULING / BLOCKED).
 
 Usage: `/fvs:crypto-eval "CKA from KEM" n1`
 Usage: `/fvs:crypto-eval "CKA from KEM" n1 --codex`
+Optional `--fix-prose`: one editorial-only correction in the parent seat, then normal eval of the
+corrected prose in one fresh eval. This avoids the planning restart for eligible prose, without a
+measured speed claim; semantic/ambiguous findings retain normal followup. An
+unresolved finding or stale/incomplete correction record never counts as acceptance.
 
 **`/fvs:crypto-followup <topic> nN [--codex]`**
 Convert eval findings into the next bounded follow-up plan; HALTs for a human ruling on a modeling decision.
@@ -462,6 +473,7 @@ Show this command reference.
 │   ├── lean-verify.md
 │   ├── lean-refactor.md
 │   ├── natural-language.md
+│   ├── protocol-prose.md
 │   ├── lean-formalise.md
 │   ├── kb-setup.md
 │   ├── checkpoint.md

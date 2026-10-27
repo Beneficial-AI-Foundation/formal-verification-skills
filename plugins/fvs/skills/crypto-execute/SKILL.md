@@ -255,6 +255,10 @@ foreign/similarly named model or claim an unsupported effort was applied.
 
 `cat` the bounded plan and INLINE it into the prompt (references do not cross the Task boundary):
 
+Read `fv-skills/references/protocol-prose.md` into `PROTOCOL_PROSE` and inline its full text
+in this existing authoring call. It guides newly authored prose within the approved scope;
+it adds no model call, review gate or permission to revise unrelated files.
+
 ```
 Task(
   subagent_type="fvs-crypto-executor",
@@ -266,6 +270,9 @@ Task(
 <editing_capability>
 $EDITING_CAPABILITY
 </editing_capability>
+<protocol_prose>
+$PROTOCOL_PROSE
+</protocol_prose>
 
 <lake_build_guide>
 $LAKE_BUILD_GUIDE
@@ -346,6 +353,10 @@ the index in the same reviewable diff. A public-statement/modeling proposal rema
 until eval or human ruling. Never persist raw logs, uncited claims, or secrets.
 
 ## Step 6: Run-end banner + next command
+
+Optionally append `--fix-prose` to the eval command to permit one qualified editorial-only
+correction/recheck in the parent seat. It never changes executor capabilities, plan scope or
+semantic acceptance; it is not an automatic rewrite pass.
 
 ```
 FVS >> CRYPTO EXECUTE COMPLETE

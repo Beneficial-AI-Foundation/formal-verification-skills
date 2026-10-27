@@ -96,6 +96,7 @@ When invoked WITH a request, match it against the table below and invoke the mat
 | User wants | Invoke |
 |---|---|
 | Formalise a paper/topic into Lean (one-shot) | fvs:lean-formalise |
+| Improve existing protocol prose without changing formal content | fvs:protocol-prose |
 | Refactor / simplify / decompose a proof | fvs:lean-refactor |
 | Start/plan a topic-based crypto formalisation iteration | fvs:crypto-plan |
 | Fresh-review an initial or follow-up crypto plan | fvs:crypto-review |

@@ -41,7 +41,7 @@ test('scope/intent comes from actual assignment and approval rather than guessed
 
 test('missing/stale/conflicting evidence never becomes a verdict or a guessed active iteration', () => {
   const s = section(2);
-  assert.match(s, /latest filename\/mtime alone does not establish the active iteration/);
+  assert.match(s, /Latest filename\/mtime alone does not establish the active iteration/);
   assert.match(s, /Missing bindings are unknown/);
   assert.match(s, /changed sources\/statements can make earlier VERIFIED\/ACCEPT evidence stale/);
   assert.match(s, /report conflicting records with both references/);
@@ -59,7 +59,7 @@ test('routes are real member commands with explicit source contracts and no shor
   }
   for (const name of ['roadmap', 'issues-setup', 'to-issues', 'map-code', 'fc-plan', 'lean-specify',
     'lean-spec-review', 'lean-verify', 'trust-audit', 'aeneas-extract', 'model-external',
-    'crypto-plan', 'crypto-review', 'crypto-execute', 'crypto-eval', 'crypto-followup'])
+    'crypto-plan', 'crypto-review', 'crypto-execute', 'crypto-eval', 'crypto-followup', 'protocol-prose'])
     assert.ok(names.includes(name), name);
   assert.match(section(3), /When selecting a member route, read the matching installed member command\/skill and its required workflow BEFORE recommending or invoking it/);
   assert.match(section(3), /cannot create missing CODEMAP/);

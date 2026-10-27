@@ -242,6 +242,10 @@ Use the confirmed `crypto_plan` selection. `cat` the topic artifacts and cached 
 INLINE them into the prompt -- references do NOT cross the Task boundary. Without `--codex`,
 dispatch the in-runtime thinker:
 
+Read `fv-skills/references/protocol-prose.md` into `PROTOCOL_PROSE` and inline its full text
+in this existing authoring call. It guides newly authored prose within the approved scope;
+it adds no model call, review gate or permission to revise unrelated files.
+
 ```
 Task(
   subagent_type="fvs-crypto-thinker",
@@ -249,6 +253,10 @@ Task(
   reasoning_effort="$THINKER_EFFORT", // when supported; otherwise apply the capability gate
   description="Author bounded plan",
   prompt="Mode: plan
+
+<protocol_prose>
+$PROTOCOL_PROSE
+</protocol_prose>
 
 <topic>{TOPIC_RAW} (iteration n{NEXT})</topic>
 <branch_state>...the current branch + working-tree state...</branch_state>
@@ -270,6 +278,11 @@ Return `none` when nothing reusable was learned.
 </lesson_candidates>"
 )
 ```
+
+For the optional Codex authoring path, include the same full `PROTOCOL_PROSE` text in the
+parent-provided context JSON as `protocol_prose`; a path alone is insufficient. Treat it as
+editorial reference data under the existing role. Apply the reference to returned plan prose
+in the parent authoring seat without changing the bounded plan's formal content or decisions.
 
 When `--codex` is passed -- SWAP this `Task(subagent_type="fvs-crypto-thinker", …)` dispatch for the
 FVS-owned Codex thinker helper. The Codex thinker takes ONLY this thinker stage; everything downstream

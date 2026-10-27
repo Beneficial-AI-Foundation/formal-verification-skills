@@ -67,7 +67,7 @@ describe('Commands (commands/fvs/)', () => {
     'crypto-plan.md', 'crypto-review.md', 'fc-plan.md', 'fc.md', 'formalise.md', 'help.md', 'issues-setup.md',
     'kb-setup.md', 'lean-formalise.md', 'lean-refactor.md', 'lean-spec-review.md', 'lean-specify.md',
     'lean-verify.md', 'manage.md', 'map-code.md', 'model-external.md', 'natural-language.md',
-    'pause-work.md', 'reapply-patches.md', 'resume-work.md', 'roadmap.md',
+    'pause-work.md', 'protocol-prose.md', 'reapply-patches.md', 'resume-work.md', 'roadmap.md',
     'sync-aeneas-verif.md', 'to-issues.md', 'trust-audit.md', 'update.md',
   ];
 
@@ -200,11 +200,11 @@ describe('Workflows (fv-skills/workflows/)', () => {
     'aeneas-extract.md', 'crypto-eval.md', 'crypto-execute.md',
     'crypto-followup.md', 'crypto-plan.md', 'crypto-review.md', 'fc-plan.md', 'lean-formalise.md',
     'lean-refactor.md', 'lean-spec-review.md', 'lean-specify.md', 'lean-verify.md', 'map-code.md',
-    'model-external.md', 'natural-language.md', 'roadmap.md', 'sync-aeneas-verif.md', 'to-issues.md', 'trust-audit.md', 'update.md',
+    'model-external.md', 'natural-language.md', 'protocol-prose.md', 'roadmap.md', 'sync-aeneas-verif.md', 'to-issues.md', 'trust-audit.md', 'update.md',
   ];
 
-  it('has exactly 20 workflow files', () => {
-    assert.equal(files.length, 20, `Expected 20 workflows, got ${files.length}: ${files.join(', ')}`);
+  it('matches the declared workflow inventory size', () => {
+    assert.equal(files.length, expected.length, `Expected ${expected.length} workflows, got ${files.length}: ${files.join(', ')}`);
   });
 
   it('has the expected set of workflow files', () => {
@@ -240,7 +240,7 @@ describe('References (fv-skills/references/)', () => {
     'aeneas-patterns.md', 'blocker-catalog.md', 'crypto-plan-review.md',
     'external-modeling.md', 'extraction-safety-model.md', 'fc-spec-review.md',
     'lake-build.md', 'lean-refactoring.md', 'lean-spec-conventions.md', 'model-profiles.md',
-    'proof-engineering-loop.md', 'proof-strategies.md',
+    'proof-engineering-loop.md', 'proof-strategies.md', 'protocol-prose.md',
     'review-diagnostics.md', 'review-grounding.md', 'review-policy.md', 'tactic-usage.md', 'ui-brand.md',
   ];
 

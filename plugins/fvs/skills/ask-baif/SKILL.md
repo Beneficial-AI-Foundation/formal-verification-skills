@@ -130,7 +130,10 @@ propose labelled assumptions, never supply owner preferences, approve claims or 
 Read only the selected roadmap/handoff and exact references: CODEMAP/PLAN or exploratory records,
 target Rust/Lean files, review/triage/audit evidence, extraction ledgers, external-model run records,
 and crypto topic plans/reviews/sources/merge. For crypto read the actual PLAN/EXEC_PLAN/FOLLOWUP_PLAN,
-PLAN_REVIEW/FOLLOWUP_REVIEW and EVAL for the selected goal and nN; latest filename/mtime alone does
+PLAN_REVIEW/FOLLOWUP_REVIEW and authoritative eval for the selected goal and nN. If prose-attempt
+records exist, use crypto-eval/crypto-followup's installed `eval_result_resolution` contract and its
+current baseline/correction/recheck evidence; never infer acceptance from an older EVAL.
+Latest filename/mtime alone does
 not establish the active iteration. Inspect the scoped existing tracker, blockers and current worker
 assignments/activity when available. Do not query a remote tracker beyond existing access authority.
 
@@ -172,6 +175,7 @@ member remains valid; ask-baif is not a mandatory funnel.
 | Target-layer trust evidence needed | `/fvs:trust-audit <spec-or-subtree>`; build-backed audit, no CLEAN from status prose. |
 | Changed Rust/pins/translation or extraction blocker | `/fvs:aeneas-extract <crate-or-folder-or-file>`; reversible records, coverage/pin/equivalence gates, no generated Funs/Types edits. |
 | External Rust stub blocks work | `/fvs:model-external <stub> [--resume <artifact-dir>]`; bounded source closure, separate fidelity/specification reviews and proof/build/CLEAN gates. Interrupted candidate is not COMPLETE. |
+| Existing protocol prose needs editorial revision | `/fvs:protocol-prose <file-or-topic>`; explicit edit scope, source alignment and prose-only preservation/build checks; historical accepted records stay intact. |
 | One-shot paper formalisation | `/fvs:lean-formalise` with its existing interactive inputs. |
 | New bounded protocol iteration | `/fvs:crypto-plan <topic> [nN]`; do not use its advancing iteration merely to resume existing execution. |
 | Protocol plan/follow-up awaiting review | `/fvs:crypto-review <topic> nN --target plan` or `--target followup`; actual target/triage, no redundant round after terminal accepted edits. |

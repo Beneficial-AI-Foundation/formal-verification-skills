@@ -145,6 +145,10 @@ reversible writes, proof completion and a trust audit.
 `/fvs:lean-formalise` creates definitions and specification skeletons in one pass. For larger work,
 the crypto loop uses a dedicated whole-unit executor. Evaluation returns ACCEPT, FOLLOWUP,
 HUMAN_RULING or BLOCKED; unresolved human rulings and blockers stop the loop.
+Opt-in `/fvs:crypto-eval <topic> nN --fix-prose` permits one qualified editorial correction in the
+parent seat followed by one fresh normal eval of corrected files. This avoids a planning restart
+for eligible prose findings; no measured speed improvement is claimed. Scientific meaning and formal content
+stay fixed; unresolved or ambiguous findings retain semantic followup rather than acceptance.
 Thinking stages can explicitly use `--codex`; execution has no such flag. An unavailable requested
 runtime requires a new choice rather than a silent fallback.
 
@@ -174,7 +178,7 @@ and arguments. Bundle routers list their members when invoked without arguments.
 | `/fvs:aeneas` | `/fvs:aeneas-extract`, `/fvs:model-external`, `/fvs:sync-aeneas-verif` |
 | `/fvs:context` | `/fvs:map-code` |
 | `/fvs:fc` | `/fvs:fc-plan`, `/fvs:natural-language`, `/fvs:lean-specify`, `/fvs:lean-spec-review`, `/fvs:lean-verify`, `/fvs:lean-refactor`, `/fvs:model-external`, `/fvs:trust-audit` |
-| `/fvs:formalise` | `/fvs:lean-formalise`, `/fvs:lean-refactor`, `/fvs:crypto-plan`, `/fvs:crypto-review`, `/fvs:crypto-execute`, `/fvs:crypto-eval`, `/fvs:crypto-followup` |
+| `/fvs:formalise` | `/fvs:lean-formalise`, `/fvs:lean-refactor`, `/fvs:crypto-plan`, `/fvs:crypto-review`, `/fvs:crypto-execute`, `/fvs:crypto-eval`, `/fvs:crypto-followup`, `/fvs:protocol-prose` |
 | `/fvs:manage` | `/fvs:help`, `/fvs:configure`, `/fvs:update`, `/fvs:reapply-patches`, `/fvs:kb-setup`, `/fvs:roadmap`, `/fvs:issues-setup`, `/fvs:to-issues`, `/fvs:ask-baif` |
 
 `/fvs:ask-baif` gives a concise evidence-backed goal/state/blocker brief and routes one next step.
@@ -191,6 +195,12 @@ evidence from a roadmap or the current conversation. It quizzes the decompositio
 the full batch before local export or GitHub publication. The tracker comes from the roadmap's
 override or project configuration; GitHub publication requires explicit consent for sanitized
 content and relationships, with a retained log for safe retries.
+
+Protocol exposition: `/fvs:protocol-prose <file-or-topic>` is an opt-in prose-only revision using
+the source paper and target documentation conventions, with formal-content comparison and build
+checks. Existing crypto authoring calls also receive the shared prose guidance; no extra model
+call or review stage is added.
+
 
 ## Updates and removal
 
