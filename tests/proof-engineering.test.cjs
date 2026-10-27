@@ -204,7 +204,7 @@ describe('indexed proof-engineering memory', () => {
         ]) requires(content, fragment, file);
         const memoryIndex = content.includes('proof_engineering_memory')
           ? content.indexOf('proof_engineering_memory')
-          : content.indexOf('Step 1a: Load the Crypto Proof-Engineering Overlay');
+          : content.indexOf('Load the Crypto Proof-Engineering Overlay');
         const promptIndex = content.indexOf('<proof_engineering_context>');
         assert.ok(memoryIndex >= 0 && promptIndex > memoryIndex,
           `${file} must retrieve memory before dispatch`);

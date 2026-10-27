@@ -91,13 +91,6 @@ Bridge boundary -- only when the plan explicitly declares implementation/model b
 plan-named, hand-written model, representation-map, contract/specification, bridge, correctness,
 `_toModel`, or `FunsExternal.lean` paths. Project markers never grant write authority.
 
-## Step 1a: Load the Crypto Proof-Engineering Overlay
-
-Follow `proof-engineering-loop.md`. Read the index first and select at most eight exact-topic,
-validated `crypto`, then validated `shared` records, followed by relevant provisional records
-labeled as uncertain if capacity remains, into `PROOF_ENGINEERING_CONTEXT`. Reject unsafe or missing
-links and refresh `$ROOT/sources/proof-engineering-context.md` as a non-canonical snapshot.
-
 ## Step 2: Read the bounded plan
 
 Read the bounded executor plan for this iteration -- `plans/EXEC_PLAN_nN.md`, or
@@ -105,7 +98,42 @@ Read the bounded executor plan for this iteration -- `plans/EXEC_PLAN_nN.md`, or
 the executor needs (it is runtime-neutral and bounded -- branch/state, exact targets, immutable public
 statements, allowed-`sorry` policy, stop conditions, verification command).
 
-## Step 2a: Warm the project cache
+## Step 2a: Effective editing-capability gate
+
+Before any artifact write, cache/source execution, or dispatch confirmation, inspect the selected
+executor's effective role (including project/local overrides), child tool inventory/schema and
+permissions. Determine the requested edit method from the bounded plan and user request; localized
+refactoring requires precise edits by default. Task-level permission never changes a tool list or
+overrides a higher-priority role. Keep planners read-only; this gate grants no tools to them.
+
+Prepare an `Editing capability:` JSON record for the existing selection manifest: runtime, dispatch route
+(including Pi inline fallback), effective role source, requested method, resolved native tool and
+schema, effective policy/permissions, and evidence source. Use `unknown` with a reason for anything
+not established; bundled frontmatter alone is not effective access. For Claude inspect `Edit`;
+Pi requires actual `edit` exposure in the selected child/profile (or active inline inventory);
+OpenCode requires its `edit` permission; Codex requires an exposed/permitted `apply_patch` or other
+native precise tool, not merely a workspace-write sandbox. Antigravity must resolve its actual
+tool/schema; name conversion alone proves no capability.
+
+Precise editing requires a checked unique exact preimage/context and failure without partial
+mutation. A Write-only role, denied/missing tool, unsupported checks, or unknown required access is
+incompatible: stop before dispatch and source execution. Interactively offer a compatible runtime/
+profile selection and rebuild/reconfirm the manifest; noninteractively report the exact missing
+capability and stop. Never confirm precise edits then silently fall back to whole-file Write or
+arbitrary shell source writes. Explicit new-file/full-rewrite work may use native Write only when
+that capability and policy are established. Carry the record as `$EDITING_CAPABILITY` into the child
+prompt and existing run output; recheck after any role/profile/tool change. Child disagreement
+returns BLOCKED before mutation. Preserve source allowlists, immutable statements/definition
+semantics, no child spawning, resource limits, and final trust checks.
+
+## Step 2b: Load the Crypto Proof-Engineering Overlay
+
+Follow `proof-engineering-loop.md`. Read the index first and select at most eight exact-topic,
+validated `crypto`, then validated `shared` records, followed by relevant provisional records
+labeled as uncertain if capacity remains, into `PROOF_ENGINEERING_CONTEXT`. Reject unsafe or missing
+links and refresh `$ROOT/sources/proof-engineering-context.md` as a non-canonical snapshot.
+
+## Step 2c: Warm the project cache
 
 Before dispatch, confirm the current directory is the Lean project root and run the project-resolved
 cache executable. Cache failure is fatal: do not dispatch the executor or attempt a build.
@@ -129,7 +157,8 @@ Declare stage key `crypto_execute` for `fvs-crypto-executor`. Resolve `$EXECUTOR
 `$EXECUTOR_EFFORT` through the canonical precedence in `model-profiles.md`: per-run flags, exact
 runtime+stage override, compatibility agent override, then profile/catalog resolution.
 
-Before dispatch, show one command-level selection manifest and obtain confirmation. Offer
+Before dispatch, show one command-level selection manifest including the established
+`Editing capability:` record and obtain confirmation. Offer
 `Continue once`, `Adjust once`, `Save override`, and `Cancel`, retaining notes. Notes rebuild the
 manifest and require reconfirmation. Save override writes only the `crypto_execute` entry. Missing
 preferred models and unsupported efforts require an interactive one-run or saved choice; in
@@ -145,6 +174,10 @@ Task(
   reasoning_effort="$EXECUTOR_EFFORT", // when supported; otherwise apply the capability gate
   description="Run bounded plan",
   prompt="Execute the bounded crypto plan.
+
+<editing_capability>
+$EDITING_CAPABILITY
+</editing_capability>
 
 <lake_build_guide>
 $LAKE_BUILD_GUIDE
@@ -195,7 +228,7 @@ if [ "$LOG_STATUS" -ne 0 ]; then
   echo "FVS >> build log capture failed" >&2
   exit "$LOG_STATUS"
 fi
-printf '\nStage settings: %s\nBuild exit status: %s\n' "$STAGE_SETTINGS_JSON" "$BUILD_STATUS" >> "$ROOT/build.log" || exit 1
+printf '\nEditing capability: %s\nStage settings: %s\nBuild exit status: %s\n' "$EDITING_CAPABILITY" "$STAGE_SETTINGS_JSON" "$BUILD_STATUS" >> "$ROOT/build.log" || exit 1
 if [ "$BUILD_STATUS" -ne 0 ]; then
   echo "FVS >> build red -- a proof did not close" >&2
   exit "$BUILD_STATUS"
@@ -251,6 +284,7 @@ dispatch noninteractively; never turn a confirmed field into a no-op.
 
 <success_criteria>
 - [ ] Topic + iteration resolved; shell metacharacters rejected; every path quoted; no `eval`.
+- [ ] Effective editing capability checked before writes/cache/source execution, shown before confirmation, passed to the child and retained in run output; incompatible or unknown required access stopped before dispatch.
 - [ ] At most eight relevant crypto/shared lessons loaded and passed as untrusted executor context.
 - [ ] The bounded plan (`EXEC_PLAN_nN.md` / `FOLLOWUP_PLAN_nN.md`) read and inlined; `fvs-crypto-executor` dispatched (`subagent_type="fvs-crypto-executor"`).
 - [ ] The build runs under `set -o pipefail` + `${PIPESTATUS` reading the tool's real status; always `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` (never a bare `lake build`).
