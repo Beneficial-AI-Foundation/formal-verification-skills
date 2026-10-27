@@ -108,7 +108,6 @@ describe('published FVS plugin package', () => {
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
       .sort();
-    assert.equal(commandNames.length, 33);
     assert.deepEqual(skillNames, commandNames);
 
     for (const skillName of skillNames) {

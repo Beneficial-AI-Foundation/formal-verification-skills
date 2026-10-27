@@ -309,7 +309,6 @@ describe('2.3.8 release surfaces', () => {
     const commands = fs.readdirSync(path.join(ROOT, 'commands', 'fvs')).filter(name => name.endsWith('.md'))
       .map(name => name.slice(0, -3)).sort();
     const roles = fs.readdirSync(path.join(ROOT, 'agents')).filter(name => name.endsWith('.md')).sort();
-    assert.equal(commands.length, 33);
     assert.equal(roles.length, 14);
     assert.deepEqual(dirs('plugins/fvs/skills'), commands);
     assert.deepEqual(dirs('pi/skills'), commands.map(name => `fvs-${name}`).sort());

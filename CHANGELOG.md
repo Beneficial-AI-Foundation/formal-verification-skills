@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- `/fvs:ask-baif` orients users and agents to the current goal and evidence, routes one existing FVS
+  command, and reconciles/books existing issues when authorized. Within/between-batch checkpoints
+  preserve ownership, goal acceptance and publication consent without another executor or scheduler.
+
 - `/fvs:to-issues` breaks a roadmap or conversation into reviewable outcomes with blockers and
   acceptance evidence, exporting local markdown or publishing an approved, sanitized GitHub batch
   with explicit relationships and a recovery log.

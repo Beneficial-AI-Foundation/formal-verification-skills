@@ -175,7 +175,12 @@ and arguments. Bundle routers list their members when invoked without arguments.
 | `/fvs:context` | `/fvs:map-code` |
 | `/fvs:fc` | `/fvs:fc-plan`, `/fvs:natural-language`, `/fvs:lean-specify`, `/fvs:lean-spec-review`, `/fvs:lean-verify`, `/fvs:lean-refactor`, `/fvs:model-external`, `/fvs:trust-audit` |
 | `/fvs:formalise` | `/fvs:lean-formalise`, `/fvs:lean-refactor`, `/fvs:crypto-plan`, `/fvs:crypto-review`, `/fvs:crypto-execute`, `/fvs:crypto-eval`, `/fvs:crypto-followup` |
-| `/fvs:manage` | `/fvs:help`, `/fvs:configure`, `/fvs:update`, `/fvs:reapply-patches`, `/fvs:kb-setup`, `/fvs:roadmap`, `/fvs:issues-setup`, `/fvs:to-issues` |
+| `/fvs:manage` | `/fvs:help`, `/fvs:configure`, `/fvs:update`, `/fvs:reapply-patches`, `/fvs:kb-setup`, `/fvs:roadmap`, `/fvs:issues-setup`, `/fvs:to-issues`, `/fvs:ask-baif` |
+
+`/fvs:ask-baif` gives a concise evidence-backed goal/state/blocker brief and routes one next step.
+It is optional before, within and between issue batches. Explicit or already-authorized requests
+can reconcile or reserve existing tickets; new issues still require to-issues' exact batch consent.
+Batch completion is distinct from whole-goal completion and proof acceptance.
 
 `/fvs:roadmap` synthesizes existing context, clarifies lightly or deeply where needed, and confirms
 shared intent. It reuses current owner-approved agreements without repeating settled questions;

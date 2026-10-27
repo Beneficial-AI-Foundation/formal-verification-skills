@@ -122,8 +122,8 @@ test('proof machine state stays out of issues and entry points advertise the com
   for (const p of ['commands/fvs/manage.md', 'commands/fvs/help.md', 'README.md'])
     assert.ok(read(p).includes('fvs:to-issues'), p);
   assert.match(read('commands/fvs/manage.md'), /^requires: \[[^\]]*to-issues/m);
-  assert.equal(fs.readdirSync(path.join(root, 'commands/fvs')).filter(n => n.endsWith('.md')).length, 33);
   assert.equal(fs.readdirSync(path.join(root, 'fv-skills/workflows')).filter(n => n.endsWith('.md')).length, 20);
-  assert.match(read('scripts/build-plugin.cjs'), /thirty-three commands/);
+  const count = fs.readdirSync(path.join(root, 'commands/fvs')).filter(name => name.endsWith('.md')).length;
+  assert.ok(require('../scripts/build-plugin.cjs').renderSetupSkill().includes(`${count} commands`));
   assert.doesNotMatch(read('scripts/build-plugin.cjs'), /\bthirty commands/);
 });

@@ -53,7 +53,7 @@ Five router commands group the skills. Invoke a router bare to print its routing
 - `/fvs:context` — Codebase context (map-code)
 - `/fvs:fc` — Formal-correctness core (fc-plan, model-external, lean-specify, lean-spec-review, lean-verify, natural-language, lean-refactor, trust-audit)
 - `/fvs:formalise` — Paper formalisation (lean-formalise, lean-refactor)
-- `/fvs:manage` — Management (help, update, checkpoint, pause-work, resume-work, reapply-patches, kb-setup, roadmap, issues-setup, to-issues)
+- `/fvs:manage` — Management (help, update, checkpoint, pause-work, resume-work, reapply-patches, kb-setup, roadmap, issues-setup, to-issues, ask-baif)
 
 ### Aeneas (`/fvs:aeneas`)
 
@@ -373,6 +373,16 @@ Set up NotebookLM knowledge base integration.
 
 Usage: `/fvs:kb-setup`
 Usage: `/fvs:kb-setup --add`
+
+**`/fvs:ask-baif [topic-or-target] [question | reconcile | take next | continue]`**
+Orient to the current goal/state/blockers and route one evidence-backed next action. Bare calls are
+advisory; explicit or already-authorized reconciliation/booking maintains existing tickets only,
+with ownership rechecks and honest concurrency limits. Optional within and between batches: compare
+progress against the whole goal, then finish, choose remaining ready work, or propose refinement or
+another consented batch. Existing track review/proof and publication gates remain intact.
+
+Usage: `/fvs:ask-baif where are we?`
+Usage: `/fvs:ask-baif take next`
 
 **`/fvs:roadmap [path/ROADMAP.md | path/] [goal prompt]`**
 Turn the current conversation or a short prompt into a long-horizon verification roadmap.

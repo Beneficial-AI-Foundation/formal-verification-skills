@@ -95,6 +95,7 @@ When invoked WITH a request, match it against the table below and invoke the mat
 
 | User wants | Invoke |
 |---|---|
+| Orient to the goal, route next work, or reconcile/book existing issues | fvs:ask-baif |
 | Show the FVS command reference | fvs:help |
 | Configure subagent models, effort, and review defaults | fvs:configure |
 | Update FVS to the latest version | fvs:update |

@@ -61,7 +61,7 @@ Five router commands group the skills. Invoke a router bare to print its routing
 - `/skill:fvs-context` — Codebase context (map-code)
 - `/skill:fvs-fc` — Formal-correctness core (fc-plan, model-external, lean-specify, lean-spec-review, lean-verify, natural-language, lean-refactor, trust-audit)
 - `/skill:fvs-formalise` — Paper formalisation (lean-formalise, lean-refactor)
-- `/skill:fvs-manage` — Management (help, update, checkpoint, pause-work, resume-work, reapply-patches, kb-setup, roadmap, issues-setup, to-issues)
+- `/skill:fvs-manage` — Management (help, update, checkpoint, pause-work, resume-work, reapply-patches, kb-setup, roadmap, issues-setup, to-issues, ask-baif)
 
 ### Aeneas (`/skill:fvs-aeneas`)
 
@@ -381,6 +381,16 @@ Set up NotebookLM knowledge base integration.
 
 Usage: `/skill:fvs-kb-setup`
 Usage: `/skill:fvs-kb-setup --add`
+
+**`/skill:fvs-ask-baif [topic-or-target] [question | reconcile | take next | continue]`**
+Orient to the current goal/state/blockers and route one evidence-backed next action. Bare calls are
+advisory; explicit or already-authorized reconciliation/booking maintains existing tickets only,
+with ownership rechecks and honest concurrency limits. Optional within and between batches: compare
+progress against the whole goal, then finish, choose remaining ready work, or propose refinement or
+another consented batch. Existing track review/proof and publication gates remain intact.
+
+Usage: `/skill:fvs-ask-baif where are we?`
+Usage: `/skill:fvs-ask-baif take next`
 
 **`/skill:fvs-roadmap [path/ROADMAP.md | path/] [goal prompt]`**
 Turn the current conversation or a short prompt into a long-horizon verification roadmap.

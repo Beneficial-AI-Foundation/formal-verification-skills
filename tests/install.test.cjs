@@ -9,6 +9,7 @@ const path = require('path');
 const { execFileSync, spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
+const COMMAND_COUNT = fs.readdirSync(path.join(ROOT, 'commands/fvs')).filter(name => name.endsWith('.md')).length;
 const INSTALLER = path.join(ROOT, 'bin', 'install.js');
 
 // Track temp dirs for cleanup
@@ -603,7 +604,7 @@ describe('Antigravity native plugin install', () => {
     assert.equal(manifest.version, pkgVersion);
 
     const skills = fs.readdirSync(path.join(pluginRoot, 'skills'));
-    assert.equal(skills.length, 33);
+    assert.equal(skills.length, COMMAND_COUNT);
     for (const name of skills) {
       const skillFile = path.join(pluginRoot, 'skills', name, 'SKILL.md');
       const text = fs.readFileSync(skillFile, 'utf8');
@@ -696,7 +697,7 @@ describe('Antigravity native plugin install', () => {
     const report = JSON.parse(result.stdout);
     assert.deepEqual((report.findings ?? []).filter(f => f.severity === 'error'), []);
     assert.equal(report.components.agents, 14);
-    assert.equal(report.components.skills, 33);
+    assert.equal(report.components.skills, COMMAND_COUNT);
     assert.equal(report.components.hooks, 1);
   });
 });
