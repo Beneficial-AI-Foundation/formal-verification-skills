@@ -138,6 +138,10 @@ foreign/similarly named model or claim an unsupported effort was applied.
 
 `cat` the bounded plan and INLINE it into the prompt (references do not cross the Task boundary):
 
+Read `fv-skills/references/protocol-prose.md` into `PROTOCOL_PROSE` and inline its full text
+in this existing authoring call. It guides newly authored prose within the approved scope;
+it adds no model call, review gate or permission to revise unrelated files.
+
 ```
 Task(
   subagent_type="fvs-crypto-executor",
@@ -145,6 +149,10 @@ Task(
   reasoning_effort="$EXECUTOR_EFFORT", // when supported; otherwise apply the capability gate
   description="Run bounded plan",
   prompt="Execute the bounded crypto plan.
+
+<protocol_prose>
+$PROTOCOL_PROSE
+</protocol_prose>
 
 <lake_build_guide>
 $LAKE_BUILD_GUIDE

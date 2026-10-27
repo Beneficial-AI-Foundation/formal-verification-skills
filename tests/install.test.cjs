@@ -603,7 +603,7 @@ describe('Antigravity native plugin install', () => {
     assert.equal(manifest.version, pkgVersion);
 
     const skills = fs.readdirSync(path.join(pluginRoot, 'skills'));
-    assert.equal(skills.length, 30);
+    assert.equal(skills.length, 31);
     for (const name of skills) {
       const skillFile = path.join(pluginRoot, 'skills', name, 'SKILL.md');
       const text = fs.readFileSync(skillFile, 'utf8');
@@ -696,7 +696,7 @@ describe('Antigravity native plugin install', () => {
     const report = JSON.parse(result.stdout);
     assert.deepEqual((report.findings ?? []).filter(f => f.severity === 'error'), []);
     assert.equal(report.components.agents, 14);
-    assert.equal(report.components.skills, 30);
+    assert.equal(report.components.skills, 31);
     assert.equal(report.components.hooks, 1);
   });
 });

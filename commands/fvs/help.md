@@ -52,7 +52,7 @@ Five router commands group the skills. Invoke a router bare to print its routing
 - `/fvs:aeneas` — Aeneas/Charon extraction maintenance (aeneas-extract, model-external, sync-aeneas-verif)
 - `/fvs:context` — Codebase context (map-code)
 - `/fvs:fc` — Formal-correctness core (fc-plan, model-external, lean-specify, lean-spec-review, lean-verify, natural-language, lean-refactor, trust-audit)
-- `/fvs:formalise` — Paper formalisation (lean-formalise, lean-refactor)
+- `/fvs:formalise` — Paper formalisation (lean-formalise, lean-refactor, protocol-prose, crypto loop)
 - `/fvs:manage` — Management (help, update, checkpoint, pause-work, resume-work, reapply-patches, kb-setup)
 
 ### Aeneas (`/fvs:aeneas`)
@@ -225,6 +225,13 @@ Usage: `/fvs:trust-audit Specs/Backend/Field/Sub.lean`
 ### Formalise (`/fvs:formalise`)
 
 The paper track: formalise maths/crypto papers, then refactor.
+
+**`/fvs:protocol-prose <file-or-topic>`**
+Improve existing protocol module docs, docstrings or topic prose on explicit invocation.
+Uses the source paper's terms and repository conventions; preserves Lean definitions, statements,
+proofs and scientific scope. Checks the prose-only diff and baseline/revised builds. Runs in the
+current session without an extra model call or review stage. Historical plans/evals get suggestions
+instead of overwrites. Missing source or build evidence is reported as blocked.
 
 **`/fvs:lean-formalise`**
 Formalise mathematical paper content into Lean 4 specifications (paper track).
@@ -418,6 +425,7 @@ Show this command reference.
 │   ├── lean-verify.md
 │   ├── lean-refactor.md
 │   ├── natural-language.md
+│   ├── protocol-prose.md
 │   ├── lean-formalise.md
 │   ├── kb-setup.md
 │   ├── checkpoint.md

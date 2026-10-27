@@ -174,8 +174,14 @@ and arguments. Bundle routers list their members when invoked without arguments.
 | `/fvs:aeneas` | `/fvs:aeneas-extract`, `/fvs:model-external`, `/fvs:sync-aeneas-verif` |
 | `/fvs:context` | `/fvs:map-code` |
 | `/fvs:fc` | `/fvs:fc-plan`, `/fvs:natural-language`, `/fvs:lean-specify`, `/fvs:lean-spec-review`, `/fvs:lean-verify`, `/fvs:lean-refactor`, `/fvs:model-external`, `/fvs:trust-audit` |
-| `/fvs:formalise` | `/fvs:lean-formalise`, `/fvs:lean-refactor`, `/fvs:crypto-plan`, `/fvs:crypto-review`, `/fvs:crypto-execute`, `/fvs:crypto-eval`, `/fvs:crypto-followup` |
+| `/fvs:formalise` | `/fvs:lean-formalise`, `/fvs:lean-refactor`, `/fvs:crypto-plan`, `/fvs:crypto-review`, `/fvs:crypto-execute`, `/fvs:crypto-eval`, `/fvs:crypto-followup`, `/fvs:protocol-prose` |
 | `/fvs:manage` | `/fvs:help`, `/fvs:configure`, `/fvs:update`, `/fvs:reapply-patches`, `/fvs:kb-setup` |
+
+Protocol exposition: `/fvs:protocol-prose <file-or-topic>` is an opt-in prose-only revision using
+the source paper and target documentation conventions, with formal-content comparison and build
+checks. Existing crypto authoring calls also receive the shared prose guidance; no extra model
+call or review stage is added.
+
 
 ## Updates and removal
 
