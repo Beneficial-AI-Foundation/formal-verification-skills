@@ -143,3 +143,17 @@ test('followup and discovery route editorial attempts without bypassing semantic
   for (const file of ['README.md', 'commands/fvs/help.md', 'commands/fvs/crypto-execute.md',
     'fv-skills/workflows/crypto-execute.md']) assert.match(read(file), /--fix-prose/);
 });
+
+test('resolved followup evidence survives human ruling and both dispatch paths', () => {
+  for (const base of ['commands/fvs', 'fv-skills/workflows']) {
+    const source = read(`${base}/crypto-followup.md`);
+    assert.match(source, /Bind the result once as `RESOLVED_EVAL_EVIDENCE`/);
+    assert.match(source, /all outstanding original\/new findings/);
+    assert.match(source, /explicit absence for an\noptional ordinary `EVAL_nN.md`/);
+    const ruling = source.split('## Step 3: HUMAN_RULING')[1].split('## Step 4:')[0];
+    assert.match(ruling, /RESOLVED_EVAL_EVIDENCE/);
+    assert.match(source, /<eval_findings>\n\$RESOLVED_EVAL_EVIDENCE\n<\/eval_findings>/);
+    assert.match(source, /eval_findings`.*(?:full|identical).*`RESOLVED_EVAL_EVIDENCE` string/);
+    assert.doesNotMatch(source, /inlined EVAL_nN\.md|from EVAL_nN\.md/);
+  }
+});
