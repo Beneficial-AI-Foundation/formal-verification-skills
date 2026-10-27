@@ -61,6 +61,9 @@ revision without modifying Lean. Do not change dependencies, toolchain, tests or
 
 <step name="revise">
 In the current runtime, make the smallest useful prose revision under the shared reference.
+Identify the passage's expository job first; improve information order and connections before
+word choice. Match the detail to module exposition, declaration documentation or a theorem
+explanation. Leave already useful prose unchanged, including necessary repetition and caveats.
 For Lean files, edit only ordinary prose inside existing comments/docstrings. Preserve all bytes
 outside those regions: imports, identifiers, declaration order, definitions, types, statements,
 proofs, attributes, options and whitespace in code. Preserve comment delimiters, documentation

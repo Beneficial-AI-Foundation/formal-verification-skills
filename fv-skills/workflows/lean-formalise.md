@@ -132,7 +132,9 @@ manifest before dispatch. Never infer tiers from agent names.
 For protocol tasks, read `fv-skills/references/protocol-prose.md` and inline its full text as
 `PROTOCOL_PROSE` in both existing research and executor prompts below. For other mathematical
 tasks use `not applicable`. This guides newly authored prose within the approved task; it adds
-no model call, review gate or permission to revise unrelated files.
+no model call, review gate or permission to revise unrelated files. Apply the reference's
+expository jobs and information order to new explanations: develop constructions where useful,
+keep declaration docs on subject, and preserve supported detail, notation and attribution.
 
 Read and inline reference files before dispatch:
 - fv-skills/references/lean-spec-conventions.md (applies to paper track too)

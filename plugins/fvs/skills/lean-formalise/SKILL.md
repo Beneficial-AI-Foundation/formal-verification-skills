@@ -266,7 +266,9 @@ interactively; noninteractive unresolved choices fail before dispatch with exact
 For protocol tasks, read `fv-skills/references/protocol-prose.md` and inline its full text as
 `PROTOCOL_PROSE` in both existing research and executor prompts below. For other mathematical
 tasks use `not applicable`. This guides newly authored prose within the approved task; it adds
-no model call, review gate or permission to revise unrelated files.
+no model call, review gate or permission to revise unrelated files. Apply the reference's
+expository jobs and information order to new explanations: develop constructions where useful,
+keep declaration docs on subject, and preserve supported detail, notation and attribution.
 
 Read the reference files that MUST be inlined into Task() prompts because @-references do not cross Task boundaries:
 

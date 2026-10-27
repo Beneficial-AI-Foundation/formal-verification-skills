@@ -79,6 +79,40 @@ test('new public prose resources are self-contained and use synthetic examples',
   }
 });
 
+test('paired exposition examples retain every embedded technical expression', () => {
+  const reference = read('fv-skills/references/protocol-prose.md');
+  const pairs = [...reference.matchAll(/Before: “([\s\S]*?)”\n\nAfter: “([\s\S]*?)”/g)];
+  assert.equal(pairs.length, 4, 'construction, naming, notation and theorem examples');
+  const expressions = text => [...new Set([...text.matchAll(/`([^`]+)`/g)]
+    .map(match => match[1]))].sort();
+  for (const [, before, after] of pairs) {
+    assert.notEqual(before, after);
+    assert.deepEqual(expressions(after), expressions(before), before);
+  }
+  // This checks literal preservation, not quantifier scope or editorial quality.
+  // Those require reading both passages against their supplied facts.
+});
+
+test('shared exposition guidance reaches workflows and native prompt bodies unchanged', () => {
+  const reference = read('fv-skills/references/protocol-prose.md');
+  assert.equal(read('plugins/fvs/fv-skills/references/protocol-prose.md'), reference);
+  for (const name of ['protocol-prose', 'crypto-plan', 'crypto-execute', 'lean-formalise']) {
+    assert.equal(read(`plugins/fvs/fv-skills/workflows/${name}.md`),
+      read(`fv-skills/workflows/${name}.md`)
+        .replace(/(?:\$HOME|~)\/\.claude\//g, '${CLAUDE_PLUGIN_ROOT}/')
+        .replace(/[ \t]+$/gm, ''));
+    for (const native of [`plugins/fvs/skills/${name}/SKILL.md`,
+      `pi/skills/fvs-${name}/SKILL.md`]) {
+      // Runtime adapters may rewrite bundled paths; the editorial instruction must survive.
+      const command = read(`commands/fvs/${name}.md`);
+      if (name !== 'protocol-prose') {
+        const guidance = command.match(/Apply the reference's[\s\S]*?notation and attribution\./)[0];
+        assert.ok(read(native).includes(guidance), native);
+      }
+    }
+  }
+});
+
 test('eval prose correction is opted in, parent-owned and capped without new verdicts', () => {
   const contract = read('fv-skills/workflows/protocol-prose.md');
   assert.match(contract, /Only `\/fvs:crypto-eval <topic> nN --fix-prose` opts into this path/);

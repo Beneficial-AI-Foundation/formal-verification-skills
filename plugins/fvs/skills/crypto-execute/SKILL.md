@@ -257,7 +257,9 @@ foreign/similarly named model or claim an unsupported effort was applied.
 
 Read `fv-skills/references/protocol-prose.md` into `PROTOCOL_PROSE` and inline its full text
 in this existing authoring call. It guides newly authored prose within the approved scope;
-it adds no model call, review gate or permission to revise unrelated files.
+it adds no model call, review gate or permission to revise unrelated files. Apply the reference's
+expository jobs and information order to new explanations: develop constructions where useful,
+keep declaration docs on subject, and preserve supported detail, notation and attribution.
 
 ```
 Task(
