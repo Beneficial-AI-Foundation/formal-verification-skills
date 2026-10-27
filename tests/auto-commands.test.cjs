@@ -540,3 +540,69 @@ describe('externals record', () => {
     assert.equal(result.json.code, 'recorded');
   });
 });
+
+// The command and workflow text calls the state operations above; these
+// checks keep the text and the script in step.
+describe('auto command and workflow text', () => {
+  const read = (relative) => fs.readFileSync(path.join(ROOT, relative), 'utf8');
+  const members = ['auto-init', 'auto-extract', 'auto-top-specs', 'auto-execute'];
+  const text = (name) => `${read(`commands/fvs/${name}.md`)}\n${read(`fv-skills/workflows/${name}.md`)}`;
+
+  it('every command reports the state, the next action and the pending decision', () => {
+    for (const name of [...members, 'auto']) {
+      const body = name === 'auto' ? read('commands/fvs/auto.md') : text(name);
+      for (const line of ['State:', 'Next action:', 'Pending decision:']) assert.ok(body.includes(line), `${name} lacks ${line}`);
+    }
+  });
+
+  it('every member requires the ao CLI and reads state only through the script', () => {
+    for (const name of members) {
+      const workflow = read(`fv-skills/workflows/${name}.md`);
+      assert.match(workflow, /command -v ao/, name);
+      assert.match(workflow, /"\$AUTO" read-state --project-root \./, name);
+    }
+  });
+
+  it('every fvs-auto.mjs subcommand the workflows call exists', () => {
+    const help = cli('--help').stdout;
+    for (const name of members) {
+      for (const [, subcommand] of read(`fv-skills/workflows/${name}.md`).matchAll(/"\$AUTO" ([a-z-]+)/g)) {
+        assert.match(help, new RegExp(`fvs-auto\\.mjs ${subcommand} `), `${name} calls ${subcommand}`);
+      }
+    }
+  });
+
+  it('top-specs and execute stop at milestone 2 and write nothing', () => {
+    for (const name of ['auto-top-specs', 'auto-execute']) {
+      const body = text(name);
+      assert.match(body, /milestone 2 functionality not yet available/, name);
+      assert.match(body, /"Auto track" section of the FVS README/, name);
+      assert.doesNotMatch(read(`commands/fvs/${name}.md`), /^ {2}- (Write|Edit|Task|Skill)$/m, `${name} has no write or dispatch tool`);
+      assert.doesNotMatch(body, /record-(roadmap|extraction|externals)|init-state/, name);
+    }
+    assert.match(read('README.md'), /^### Auto track$/m);
+  });
+
+  it('auto-extract hands off to the shared extractor and records every attempt through the script', () => {
+    const body = text('auto-extract');
+    assert.match(body, /\/fvs:aeneas-extract "\$CRATE_ROOT"/);
+    assert.match(body, /"\$AUTO" record-extraction --project-root \. --out "\$OUT" --build-exit-code "\$BUILD_STATUS"/);
+    assert.match(body, /Record every attempt, success or failure/);
+    assert.match(body, /"\$AUTO" record-externals --project-root \. --input "\$RECORDS"/);
+    assert.match(body, /never migrate/i);
+    assert.match(body, /Extraction success is not a proof/);
+    assert.match(read('fv-skills/workflows/aeneas-extract.md'), /^Copy: {18}\{the OUT of the last cycle\}; build exit/m,
+      'the shared extractor reports the copy and the build status the handoff records');
+  });
+
+  it('auto-init writes only through init-state and offers the roadmap once, optionally', () => {
+    const body = text('auto-init');
+    assert.match(body, /"\$AUTO" init-state --project-root \. --input "\$CHOICES"/);
+    assert.match(body, /Only on an explicit yes rerun the same command with\s+`--confirm-overwrite`/);
+    assert.match(body, /record-roadmap --project-root \. --decision accepted/);
+    assert.match(body, /record-roadmap --project-root \. --decision declined/);
+    assert.match(body, /\/fvs:roadmap \.formalising\/auto-fv\/ROADMAP\.md/);
+    assert.match(body, /A recorded decline is not asked again/);
+    assert.match(body, /extraction does not wait for it/);
+  });
+});

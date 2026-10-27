@@ -58,7 +58,8 @@ describe('Commands (commands/fvs/)', () => {
   const files = mdFiles(dir);
 
   const expected = [
-    'aeneas-extract.md', 'aeneas.md', 'checkpoint.md', 'configure.md', 'context.md',
+    'aeneas-extract.md', 'aeneas.md', 'auto-execute.md', 'auto-extract.md', 'auto-init.md',
+    'auto-top-specs.md', 'auto.md', 'checkpoint.md', 'configure.md', 'context.md',
     'crypto-eval.md', 'crypto-execute.md', 'crypto-followup.md',
     'crypto-plan.md', 'crypto-review.md', 'fc-plan.md', 'fc.md', 'formalise.md', 'help.md',
     'kb-setup.md', 'lean-formalise.md', 'lean-refactor.md', 'lean-spec-review.md', 'lean-specify.md',
@@ -67,8 +68,8 @@ describe('Commands (commands/fvs/)', () => {
     'sync-aeneas-verif.md', 'trust-audit.md', 'update.md',
   ];
 
-  it('has exactly 30 command files', () => {
-    assert.equal(files.length, 30, `Expected 30 commands, got ${files.length}: ${files.join(', ')}`);
+  it('has exactly 35 command files', () => {
+    assert.equal(files.length, 35, `Expected 35 commands, got ${files.length}: ${files.join(', ')}`);
   });
 
   it('has the expected set of command files', () => {
@@ -112,7 +113,7 @@ describe('Commands (commands/fvs/)', () => {
 // ====================== ROUTER REQUIRES CLOSURE =============================
 describe('Router requires closure', () => {
   const dir = 'commands/fvs';
-  const routers = ['aeneas', 'fc', 'formalise', 'context', 'manage'];
+  const routers = ['aeneas', 'auto', 'fc', 'formalise', 'context', 'manage'];
 
   for (const router of routers) {
     const routerFile = `${router}.md`;
@@ -193,14 +194,15 @@ describe('Workflows (fv-skills/workflows/)', () => {
   const files = mdFiles(dir);
 
   const expected = [
-    'aeneas-extract.md', 'crypto-eval.md', 'crypto-execute.md',
+    'aeneas-extract.md', 'auto-execute.md', 'auto-extract.md', 'auto-init.md', 'auto-top-specs.md',
+    'crypto-eval.md', 'crypto-execute.md',
     'crypto-followup.md', 'crypto-plan.md', 'crypto-review.md', 'fc-plan.md', 'lean-formalise.md',
     'lean-refactor.md', 'lean-spec-review.md', 'lean-specify.md', 'lean-verify.md', 'map-code.md',
     'model-external.md', 'natural-language.md', 'sync-aeneas-verif.md', 'trust-audit.md', 'update.md',
   ];
 
-  it('has exactly 18 workflow files', () => {
-    assert.equal(files.length, 18, `Expected 18 workflows, got ${files.length}: ${files.join(', ')}`);
+  it('has exactly 22 workflow files', () => {
+    assert.equal(files.length, 22, `Expected 22 workflows, got ${files.length}: ${files.join(', ')}`);
   });
 
   it('has the expected set of workflow files', () => {

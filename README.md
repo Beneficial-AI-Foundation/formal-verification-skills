@@ -124,6 +124,23 @@ for selection rules and runtime limitations.
 
 ## Workflows
 
+### Auto track
+
+```text
+/fvs:auto-init → /fvs:auto-extract → /fvs:auto-top-specs → /fvs:auto-execute
+```
+
+The auto track runs a functional-correctness project with Agent Orchestrator as the coordinator and
+needs its `ao` CLI on the host. `/fvs:auto-init` runs the compatibility profile and records the source
+revision, configuration, initial scope and limits in `.formalising/auto-fv/state.json`; it offers to
+write the project roadmap once. `/fvs:auto-extract` extracts that revision through
+`/fvs:aeneas-extract` in translation-patch mode and records the result and one externals record per
+opaque, external, handwritten or semantic-patch boundary. A failed extraction is never recorded as
+success, and a successful one is not a proof. `/fvs:auto-top-specs` and `/fvs:auto-execute` report the
+recorded state and stop: root selection, frozen specifications, proof dispatch and acceptance are
+milestone 2 functionality not yet available. Every command is safe to rerun and never overwrites an
+owner choice without confirmation. `/fvs:auto` routes to the four commands.
+
 ### Functional correctness
 
 ```text
@@ -180,6 +197,7 @@ and arguments. Bundle routers list their members when invoked without arguments.
 | `/fvs:context` | `/fvs:map-code` |
 | `/fvs:fc` | `/fvs:fc-plan`, `/fvs:natural-language`, `/fvs:lean-specify`, `/fvs:lean-spec-review`, `/fvs:lean-verify`, `/fvs:lean-refactor`, `/fvs:model-external`, `/fvs:trust-audit` |
 | `/fvs:formalise` | `/fvs:lean-formalise`, `/fvs:lean-refactor`, `/fvs:crypto-plan`, `/fvs:crypto-review`, `/fvs:crypto-execute`, `/fvs:crypto-eval`, `/fvs:crypto-followup` |
+| `/fvs:auto` | `/fvs:auto-init`, `/fvs:auto-extract`, `/fvs:auto-top-specs`, `/fvs:auto-execute` |
 | `/fvs:manage` | `/fvs:help`, `/fvs:configure`, `/fvs:update`, `/fvs:reapply-patches`, `/fvs:kb-setup` |
 
 ## Updates and removal

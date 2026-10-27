@@ -16,6 +16,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   sources are byte for byte what they were, and `migrate` converts a legacy ledger. A stale or
   already-applied patch fails and is never fuzzy-applied.
 
+- The auto track's milestone 1 commands, coordinated by Agent Orchestrator (they need its `ao`
+  CLI): `/fvs:auto-init` runs the compatibility profile and records your source revision,
+  configuration, initial scope and limits (2 hours per node and 3 workers by default, plus a total
+  wall-clock cap you name) in `.formalising/auto-fv/state.json`, and offers once to write the
+  project roadmap; `/fvs:auto-extract` extracts that revision through `/fvs:aeneas-extract` in
+  translation-patch mode and records the result, an externals record with one entry per opaque,
+  external, handwritten or semantic-patch boundary, and regeneration instructions;
+  `/fvs:auto-top-specs` and `/fvs:auto-execute` report the recorded state and stop, because root
+  selection, frozen specifications, proof dispatch and acceptance are milestone 2 functionality
+  not yet available. `/fvs:auto` routes to the four. Every command is safe to rerun and changes a
+  recorded choice only after you confirm it.
+- `scripts/fvs-auto.mjs` gains the state operations behind those commands (`init-state`,
+  `read-state`, `record-roadmap`, `record-extraction`, `record-externals`). Writes are atomic and a
+  malformed file is reported, never overwritten. The extraction result is derived from the build
+  exit status and the patch engine's checks, so a failed extraction is never recorded as success,
+  and a successful one is recorded as not a proof. A recorded boundary is never dropped, and a
+  boundary is marked correspondence-proved only with a reference to a checked receipt; a
+  ratification packet or a review link does not count.
+- The patch-mode run-end summary of `/fvs:aeneas-extract` names the copy of the last cycle and that
+  cycle's build exit status.
+
 ### Changed
 
 - Breaking for new projects: `/fvs:aeneas-extract` now extracts through translation patches by

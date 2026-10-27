@@ -45,7 +45,7 @@ it('portable plugin and Pi renderers keep the loader-to-prompt content chain', (
 it('reference links preserve read-only reviewer and skill inventories', () => {
   for(const name of ['aeneas-patterns','lean-refactoring','review-diagnostics']) assert.ok(read(`fv-skills/references/${name}.md`).includes('(lake-build.md)'));
   assert.match(read('fv-skills/references/review-diagnostics.md'),/read-only|read.only/);
-  for(const [directory,count] of [['commands/fvs',30],['agents',14],['fv-skills/workflows',18]]) assert.equal(fs.readdirSync(path.join(ROOT,directory)).filter(n=>n.endsWith('.md')).length,count);
+  for(const [directory,count] of [['commands/fvs',35],['agents',14],['fv-skills/workflows',22]]) assert.equal(fs.readdirSync(path.join(ROOT,directory)).filter(n=>n.endsWith('.md')).length,count);
 });
 it('optional preflight refuses incomplete and synthetic qualification before loading tools', () => {
   assert.ok(fs.existsSync(path.join(ROOT,'tests/helpers/lake-reference-live.cjs')),'guarded preflight exists');

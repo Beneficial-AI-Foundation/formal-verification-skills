@@ -27,7 +27,7 @@ Output ONLY the reference content below. Do NOT add:
 
 **FVS** (Formal Verification Skills) encodes the expert verification workflow for Lean 4 across two tracks: the **functional-correctness track** verifies Rust code via Aeneas (Rust → Charon → LLBC → Aeneas → Lean 4), and the **paper track** formalises maths/crypto papers directly into Lean.
 
-Commands are grouped into five bundles. Each bundle has a router command (e.g. `/skill:fvs-fc`) that lists its members and forwards to the matched skill; the member commands are also directly typeable.
+Commands are grouped into six bundles. Each bundle has a router command (e.g. `/skill:fvs-fc`) that lists its members and forwards to the matched skill; the member commands are also directly typeable.
 
 ## Quick Start
 
@@ -55,9 +55,10 @@ Crypto loop: /skill:fvs-crypto-plan → /skill:fvs-crypto-review → /skill:fvs-
 
 ## Bundles
 
-Five router commands group the skills. Invoke a router bare to print its routing table, or with a request to forward to the matched skill.
+Six router commands group the skills. Invoke a router bare to print its routing table, or with a request to forward to the matched skill.
 
 - `/skill:fvs-aeneas` — Aeneas/Charon extraction maintenance (aeneas-extract, model-external, sync-aeneas-verif)
+- `/skill:fvs-auto` — Auto track with Agent Orchestrator (auto-init, auto-extract, auto-top-specs, auto-execute)
 - `/skill:fvs-context` — Codebase context (map-code)
 - `/skill:fvs-fc` — Formal-correctness core (fc-plan, model-external, lean-specify, lean-spec-review, lean-verify, natural-language, lean-refactor, trust-audit)
 - `/skill:fvs-formalise` — Paper formalisation (lean-formalise, lean-refactor)
@@ -106,6 +107,27 @@ Sync Aeneas/Charon upstream docs and reconcile the extraction blocker catalog vi
 - Read-only on-demand GitHub fetch as a fallback; never opens or creates an upstream artifact
 
 Usage: `/skill:fvs-sync-aeneas-verif`
+
+### Auto (`/skill:fvs-auto`)
+
+The FVS auto track, coordinated by Agent Orchestrator (requires the `ao` CLI). Every command reports
+the recorded state, the next action and any pending decision, and is safe to rerun. State lives in
+`.formalising/auto-fv/` and is written only through `scripts/fvs-auto.mjs`.
+
+**`/skill:fvs-auto-init`**
+Run the compatibility profile and record the source revision and configuration, the bounded initial
+scope and the limits (2 h per node and 3 workers by default, plus a total wall-clock cap the owner
+names). An unchanged rerun writes nothing; a changed choice needs the owner's confirmation. Offers once
+to write the project roadmap; the offer never blocks extraction.
+
+**`/skill:fvs-auto-extract <crate path>`**
+Extract the recorded revision through `/skill:fvs-aeneas-extract` in translation-patch mode, record the
+result (derived by the script from the build exit status and the patch engine's checks, so a failed
+extraction is never recorded as success), the externals record and regeneration instructions.
+Extraction success is not a proof.
+
+**`/skill:fvs-auto-top-specs`**, **`/skill:fvs-auto-execute`**
+Report the recorded state and stop: milestone 2 functionality not yet available.
 
 ### Context (`/skill:fvs-context`)
 
@@ -398,6 +420,7 @@ Show this command reference.
 │       ├── crypto/          # Crypto lessons and modeling decisions
 │       └── shared/          # Independently reused across tracks
 ├── fv-plans/                # Per-function/topic planning docs
+├── auto-fv/                 # Auto-track state: state.json, externals.json, regenerate.md
 └── model-external/          # Immutable source/review evidence and reversible candidates
 
 Pi package root              # Managed FVS content

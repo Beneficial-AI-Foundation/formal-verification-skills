@@ -300,6 +300,7 @@ Patch mode reports four things separately; a clean extraction never stands in fo
 FVS >> EXTRACTION RUN COMPLETE
 
 Target:                {target} ({shape}), mode translation-patches
+Copy:                  {the OUT of the last cycle}; build exit {that cycle's real exit status, or none when it stopped before the build}
 Extraction:            {clean build | escalated | stopped: <engine code>} ({K} patches in series)
 Restored source:       {verify-restore ok | refused: <message>}
 Evidence:              tree check {ok | refused}; B patches {N} ratified and bound to their hashes; diff-to-record check {ok | failed}
