@@ -606,37 +606,19 @@ function stateErrors(state) {
   return errors;
 }
 
-// A receipt reference: a file under receipts/ in the state directory, bound by
-// its hash. A ratification packet or a review link is never such evidence.
-function receiptErrors(receipt, directory, where) {
-  if (!plainObject(receipt) || !isText(receipt.path) || !/^[0-9a-f]{64}$/.test(receipt.sha256 ?? '')) {
-    return [`${where}: correspondence-proved needs correspondenceReceipt {path, sha256} naming a checked receipt under receipts/; a ratification packet or a review link is not correspondence evidence`];
-  }
-  const relative = path.posix.normalize(receipt.path);
-  const receipts = path.join(directory, 'receipts');
-  const file = path.join(directory, relative);
-  if (path.posix.isAbsolute(relative) || !relative.startsWith('receipts/')) {
-    return [`${where}: correspondenceReceipt.path must be under receipts/`];
-  }
-  let real = null;
-  try {
-    real = fs.realpathSync(file);
-  } catch {
-    return [`${where}: correspondenceReceipt ${relative} does not exist`];
-  }
-  if (!real.startsWith(`${fs.realpathSync(receipts)}${path.sep}`)) return [`${where}: correspondenceReceipt.path must be under receipts/`];
-  if (sha256(fs.readFileSync(real)) !== receipt.sha256) return [`${where}: correspondenceReceipt ${relative} does not match its recorded sha256`];
-  return [];
-}
+// correspondence-proved stays in the schema but no milestone 1 record may
+// claim it: nothing here can check that a receipt is checked correspondence
+// evidence, and a path or hash alone proves nothing.
+const NOT_PROVABLE = 'correspondence-proved is not available: checked correspondence receipt validation is not implemented in this milestone, so no record may claim it; keep the boundary open, assumption-accepted or blocked';
 
-function externalsErrors(records, directory) {
+function externalsErrors(records) {
   if (!Array.isArray(records)) return ['records must be an array'];
   const errors = [];
   const seen = new Set();
   records.forEach((record, index) => {
     const where = `records[${index}]`;
     if (!fields(errors, record, where, ['id', 'kind', 'source', 'model', 'claimedBehaviour', 'reason',
-      'affectedRoots', 'evidence', 'status', 'decision', 'correspondenceReceipt'])) return;
+      'affectedRoots', 'evidence', 'status', 'decision'])) return;
     if (!isText(record.id)) errors.push(`${where}.id must be a non-empty string`);
     else if (seen.has(record.id)) errors.push(`${where}.id ${record.id} is duplicated`);
     seen.add(record.id);
@@ -657,16 +639,16 @@ function externalsErrors(records, directory) {
     if (!(decided || (record.decision === null && record.status === 'open'))) {
       errors.push(`${where}.decision must name who decided, when and on what evidence (null only while open)`);
     }
-    if (record.status === 'correspondence-proved') errors.push(...receiptErrors(record.correspondenceReceipt, directory, where));
+    if (record.status === 'correspondence-proved') errors.push(`${where}: ${NOT_PROVABLE}`);
   });
   return errors;
 }
 
-function externalsFileErrors(value, directory) {
+function externalsFileErrors(value) {
   if (!plainObject(value) || value.schema !== 'fvs/auto-externals' || value.schemaVersion !== 1) {
     return ['schema must be fvs/auto-externals version 1'];
   }
-  return externalsErrors(value.records, directory);
+  return externalsErrors(value.records);
 }
 
 function projectDirectory(projectRoot) {
@@ -702,8 +684,7 @@ function loadRecord(file, code, validate, rerun) {
 }
 
 const loadState = (root) => loadRecord(statePath(root), 'malformed-state', stateErrors, '/fvs:auto-init');
-const loadExternals = (root) => loadRecord(externalsPath(root), 'malformed-externals',
-  (value) => externalsFileErrors(value, path.join(root, STATE_DIR)), '/fvs:auto-extract');
+const loadExternals = (root) => loadRecord(externalsPath(root), 'malformed-externals', externalsFileErrors, '/fvs:auto-extract');
 
 function requireState(root) {
   const state = loadState(root);
@@ -908,13 +889,13 @@ export function recordExtraction({ projectRoot, out, buildExitCode }) {
 export function recordExternals({ projectRoot, records }) {
   const root = projectDirectory(projectRoot);
   requireState(root);
-  const errors = externalsErrors(records, path.join(root, STATE_DIR));
+  const errors = externalsErrors(records);
   if (errors.length > 0) refuse('invalid-input', `invalid externals record: ${errors.join('; ')}`, { errors });
   const kept = new Set(records.map((record) => record.id));
   const lost = (loadExternals(root)?.records ?? []).map((record) => record.id).filter((id) => !kept.has(id));
   if (lost.length > 0) {
     refuse('record-loss', `the new externals record drops ${lost.join(', ')}; a boundary is never deleted, only moved to another status`,
-      { lost, nextStep: 'Resubmit every recorded boundary, changing only what the owner or a checked receipt decided.' });
+      { lost, nextStep: 'Resubmit every recorded boundary, changing only what the owner decided.' });
   }
   writeAtomic(externalsPath(root), { schema: 'fvs/auto-externals', schemaVersion: 1, records });
   return { code: 'recorded', message: `${records.length} boundary record(s) written to ${externalsPath(root)}` };

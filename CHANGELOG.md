@@ -31,9 +31,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   `read-state`, `record-roadmap`, `record-extraction`, `record-externals`). Writes are atomic and a
   malformed file is reported, never overwritten. The extraction result is derived from the build
   exit status and the patch engine's checks, so a failed extraction is never recorded as success,
-  and a successful one is recorded as not a proof. A recorded boundary is never dropped, and a
-  boundary is marked correspondence-proved only with a reference to a checked receipt; a
-  ratification packet or a review link does not count.
+  and a successful one is recorded as not a proof. A recorded boundary is never dropped. No
+  boundary can be marked correspondence-proved yet: that needs checked correspondence evidence,
+  which this release cannot validate, so a receipt path, a hash, a ratification packet or a review
+  link is refused.
 - The patch-mode run-end summary of `/fvs:aeneas-extract` names the copy of the last cycle and that
   cycle's build exit status.
 

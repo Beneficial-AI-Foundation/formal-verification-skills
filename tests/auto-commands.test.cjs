@@ -489,6 +489,8 @@ describe('externals record', () => {
     assert.equal(externals(root, [boundary({ status: 'assumption-accepted', decision })]).code, 'recorded');
   });
 
+  // Milestone 1 has no checker for correspondence receipts, so nothing can show
+  // that a receipt is checked correspondence evidence: the status is refused.
   describe('correspondence-proved', () => {
     const decision = { by: 'coordinator', at: '2026-10-27T10:00:00Z', evidence: 'checked receipt' };
 
@@ -502,39 +504,49 @@ describe('externals record', () => {
       });
       const result = externals(root, [proved]);
       assert.equal(result.code, 'invalid-input');
-      assert.match(result.message, /correspondenceReceipt/);
+      assert.match(result.message, /not implemented in this milestone/);
     });
 
-    it('is refused when the receipt is outside receipts/, missing or changed', () => {
+    it('a well-formed receipt path and matching hash cannot promote a boundary, and the record is unchanged', () => {
       const root = project();
       init(root);
-      const directory = path.join(root, '.formalising', 'auto-fv');
-      fs.mkdirSync(path.join(directory, 'receipts'), { recursive: true });
-      fs.writeFileSync(path.join(directory, 'equivalence-gate-sha3.md'), 'equivalence-ratified: owner');
-      fs.writeFileSync(path.join(directory, 'receipts', 'sha3.json'), '{}');
-      for (const receipt of [
-        { path: 'equivalence-gate-sha3.md', sha256: sha256('equivalence-ratified: owner') },
-        { path: 'receipts/../equivalence-gate-sha3.md', sha256: sha256('equivalence-ratified: owner') },
-        { path: 'receipts/absent.json', sha256: sha256('{}') },
-        { path: 'receipts/sha3.json', sha256: sha256('{"edited":true}') },
-      ]) {
-        const result = externals(root, [boundary({ status: 'correspondence-proved', decision, correspondenceReceipt: receipt })]);
-        assert.equal(result.code, 'invalid-input', JSON.stringify(receipt));
-      }
-    });
-
-    it('is accepted with a reference to a receipt under receipts/ bound by its hash', () => {
-      const root = project();
-      init(root);
+      const accepted = boundary({
+        id: 'opaque-reduce',
+        kind: 'opaque',
+        status: 'assumption-accepted',
+        decision: { by: 'owner', at: '2026-10-27T09:00:00Z', evidence: 'chat approval' },
+      });
+      assert.equal(externals(root, [boundary(), accepted]).code, 'recorded');
       const receipts = path.join(root, '.formalising', 'auto-fv', 'receipts');
       fs.mkdirSync(receipts, { recursive: true });
-      fs.writeFileSync(path.join(receipts, 'sha3.json'), '{}');
-      const proved = boundary({
+      fs.writeFileSync(path.join(receipts, 'sha3.json'), '{"status":"accepted"}');
+      const before = { externals: fs.readFileSync(externalsFile(root)), state: fs.readFileSync(stateFile(root)) };
+
+      const promoted = boundary({
         status: 'correspondence-proved',
         decision,
-        correspondenceReceipt: { path: 'receipts/sha3.json', sha256: sha256('{}') },
+        correspondenceReceipt: { path: 'receipts/sha3.json', sha256: sha256('{"status":"accepted"}') },
       });
-      assert.equal(externals(root, [proved]).code, 'recorded');
+      const result = externals(root, [promoted, accepted]);
+      assert.equal(result.code, 'invalid-input');
+      assert.match(result.message, /records\[0\]: correspondence-proved is not available: checked correspondence receipt validation is not implemented in this milestone/);
+      assert.deepEqual(fs.readFileSync(externalsFile(root)), before.externals, 'the recorded boundaries are untouched');
+      assert.deepEqual(fs.readFileSync(stateFile(root)), before.state);
+      const counts = auto.readState({ projectRoot: root }).externals;
+      assert.deepEqual([counts.total, counts.open, counts['assumption-accepted'], counts['correspondence-proved']], [2, 1, 1, 0]);
+    });
+
+    it('a hand-edited record claiming it is reported as malformed, never counted', () => {
+      const root = project();
+      init(root);
+      externals(root, [boundary()]);
+      const file = JSON.parse(fs.readFileSync(externalsFile(root), 'utf8'));
+      file.records[0] = { ...file.records[0], status: 'correspondence-proved', decision };
+      fs.writeFileSync(externalsFile(root), JSON.stringify(file));
+      const result = cli('read-state', '--project-root', root);
+      assert.equal(result.status, 3);
+      assert.equal(result.json.code, 'malformed-externals');
+      assert.match(result.json.message, /not implemented in this milestone/);
     });
   });
 
@@ -608,6 +620,8 @@ describe('auto command and workflow text', () => {
     assert.match(body, /"\$AUTO" record-externals --project-root \. --input "\$RECORDS"/);
     assert.match(body, /never migrate/i);
     assert.match(body, /Extraction success is not a proof/);
+    assert.match(body, /`correspondence-proved` is refused in this milestone/);
+    assert.doesNotMatch(body, /correspondenceReceipt/, 'no text offers a path and hash as correspondence evidence');
     assert.match(read('fv-skills/workflows/aeneas-extract.md'), /^Copy: {18}\{the OUT of the last cycle\}; build exit/m,
       'the shared extractor reports the copy and the build status the handoff records');
   });

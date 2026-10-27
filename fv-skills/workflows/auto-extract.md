@@ -90,10 +90,10 @@ in milestone 2), `evidence` (paths to the gate packet, the patch file or the mod
 
 Status changes only on a decision: `assumption-accepted` or `blocked` names who decided, when and
 on what evidence (`decision: {by, at, evidence}`); accepting an assumption is labelled as a
-limitation, never as proof. `correspondence-proved` needs `correspondenceReceipt` (`path` under
-`.formalising/auto-fv/receipts/` and its `sha256`) naming checked correspondence evidence; a
-ratification packet or a review link is not such evidence, and no milestone 1 step writes receipts.
-A replacement model never closes an open obligation.
+limitation, never as proof. `correspondence-proved` is refused in this milestone: it needs checked
+correspondence evidence, and checked correspondence receipt validation is not implemented yet. No
+file path, hash, ratification packet or review link stands in for it, so keep such a boundary
+`open`, `assumption-accepted` or `blocked`. A replacement model never closes an open obligation.
 
 ```bash
 RECORDS="$(mktemp)"
