@@ -182,7 +182,7 @@ describe('honest-scope language', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Synthesis first, then one bounded interview
+// Synthesis, adaptive clarification and applicable owner agreement
 // ---------------------------------------------------------------------------
 describe('roadmap interview', () => {
   const text = flat(workflow);
@@ -192,7 +192,7 @@ describe('roadmap interview', () => {
     assert.match(text, /without interviewing/i);
   });
 
-  it('bounds the initial interview at seven questions, as a ceiling and never a quota', () => {
+  it('bounds light clarification at seven initial questions without limiting focused deep rounds', () => {
     assert.match(text, /at most seven questions/i);
     assert.match(text, /ceiling/i);
     assert.match(text, /never a quota/i);
@@ -227,6 +227,99 @@ describe('roadmap interview', () => {
     const forbidden = new RegExp(['gri', 'll'].join(''), 'i');
     assert.doesNotMatch(both, forbidden);
     assert.doesNotMatch(frontmatter(command), /^  - Skill$/m);
+  });
+});
+
+describe('roadmap shared intent and autonomous reuse', () => {
+  const agreement = flat(workflow.slice(workflow.indexOf('## 4.'), workflow.indexOf('## 6.')));
+  const rerun = flat(workflow.slice(workflow.indexOf('## Rerun rules')));
+
+  it('defaults to light, supports chosen or recommended deep, and avoids ritual depth prompts', () => {
+    assert.match(agreement, /Default to light clarification when the context is clear/);
+    assert.match(agreement, /Honor an explicit depth preference.*without asking a depth-selection question again/);
+    assert.match(agreement, /recommend deep clarification when goals, claims, trust policy or external\/bridging boundaries are materially uncertain or disputed/);
+    assert.match(agreement, /Only ask a depth question when the preference actually matters and remains unresolved/);
+    assert.match(agreement, /Deep clarification uses dependency-aware rounds/);
+    assert.match(agreement, /question depending on an unanswered decision waits for a later round/);
+    assert.match(agreement, /budget\/no-progress boundary.*UNKNOWN.*instead of retrying indefinitely/);
+    assert.match(agreement, /same unresolved decision recurring without new evidence is no progress/);
+  });
+
+  it('investigates facts before owner questions and never manufactures answers', () => {
+    assert.match(agreement, /Investigate factual gaps from the available sources instead of asking the owner/);
+    assert.match(agreement, /Never invent an answer, owner preference or approval/);
+    assert.match(agreement, /Investigate facts yourself first; never roleplay the owner to answer/);
+  });
+
+  it('requires explicit new or changed interactive intent, independent of diff and execution permission', () => {
+    assert.match(agreement, /For new or materially changed interactive intent, show a concise proposed shared understanding of goal, non-goals, claims, assumptions\/trust boundaries and acceptance evidence\/authority/);
+    assert.match(agreement, /Wait for the actual owner response before recording intent as agreed/);
+    assert.match(agreement, /A prior response that explicitly approved this exact current understanding suffices/);
+    assert.match(agreement, /File\/diff approval alone does not confirm intent/);
+    assert.match(agreement, /intent confirmation alone does not approve a file write or execution\/publication/);
+    assert.match(agreement, /never infer the others from an unlabeled yes to a different question/);
+    assert.match(flat(workflow), /On a runtime without diff approval, ask once.*only if no applicable write grant exists/);
+  });
+
+  it('deepens only rejected decisions while preserving settled answers and cancellation', () => {
+    assert.match(agreement, /Disagreement triggers targeted deeper clarification of the rejected point and its dependent questions only/);
+    assert.match(agreement, /keep settled answers.*revised affected understanding for confirmation/);
+    assert.match(agreement, /Do not restart the full interview or silently reinterpret a rejection as approval/);
+    assert.match(agreement, /Cancellation leaves the existing roadmap unchanged/);
+  });
+
+  it('binds reused approval to actual owner evidence and applicable content/source', () => {
+    assert.match(agreement, /actual owner response it references, not just an agent's approval header/);
+    for (const field of ['repository', 'target revision/configuration', 'goal/non-goals', 'claims',
+      'trust boundaries/assumptions', 'acceptance evidence/authority', 'relevant limits']) {
+      assert.ok(agreement.includes(field), field);
+    }
+    assert.match(agreement, /exact approved content or its version\/hash plus section\/decision references/);
+    assert.match(agreement, /timestamp alone does not bind approval/);
+    assert.match(agreement, /Reuse a current applicable owner-approved agreement without interviewing or confirming the same intent again/);
+    assert.match(agreement, /Routine progress within that intent and its delegated scope is not a reason to ask again/);
+    assert.match(agreement, /changed sources may make earlier verification evidence stale/);
+  });
+
+  it('blocks only affected decisions for absent, stale or conflicting approval', () => {
+    assert.match(agreement, /Absent, stale or conflicting approval is not approval/);
+    assert.match(agreement, /block only the affected milestones with the precise owner decision needed/);
+    assert.match(agreement, /Preserve settled decisions that remain applicable/);
+    assert.match(agreement, /different revision\/configuration outside the approved bounds/);
+  });
+
+  it('keeps autonomous owner choices unknown and independent authorized work possible', () => {
+    assert.match(agreement, /No fresh user interview when settled, and no simulated owner response/);
+    assert.match(agreement, /Independent work already authorized may continue through the existing executor\/orchestrator/);
+    assert.match(agreement, /this roadmap command merely reports that work, not runs it/);
+    assert.match(agreement, /If authorized to write the roadmap, record unresolved owner choices without marking new or changed intent agreed/);
+    assert.match(agreement, /otherwise return the proposed blocked update without writing it/);
+    assert.match(agreement, /Do not replace a previously agreed field with a guess/);
+    assert.match(agreement, /owner-choice UNKNOWN needs the owner's actual answer/);
+    assert.match(agreement, /creating an issue or publishing it requires its own applicable grant and consent/);
+  });
+
+  it('preserves existing action grants without deriving them from skipped prompts or review', () => {
+    assert.match(agreement, /previously explicit grant remains valid within its actual scope; cite it rather than requesting it again/);
+    assert.match(agreement, /unspecified action stays ungranted/);
+    assert.match(agreement, /credentials, a preselected choice, a skipped\/bypassed prompt or a passing test/);
+    assert.match(agreement, /correction cannot reliably undo disclosure or restore stale evidence/);
+    assert.match(agreement, /adversarial model.*critiques the approved intent against sources and acceptance evidence/);
+    assert.match(agreement, /suggest clearly labelled assumptions, never approve them for the owner/);
+    assert.match(agreement, /supply owner preferences, change claims\/trust\/scope or extend delegated authority/);
+    assert.match(agreement, /No additional reviewer launch/);
+  });
+
+  it('stores only needed references in existing sections/logs and keeps reruns conservative', () => {
+    const text = flat(workflow);
+    assert.match(text, /Persist only the agreement and preference references needed for this topic/);
+    assert.match(text, /Store a depth preference only if the owner explicitly expressed one/);
+    assert.match(text, /No separate config, agreement file, mandatory glossary or ADR layer/);
+    assert.match(TEMPLATE, /Shared understanding: <owner response reference; approved content\/version and target\/source references/);
+    assert.match(rerun, /Routine status updates reuse a current agreement, not a new interview/);
+    assert.match(rerun, /Record relevant new approval\/depth-preference references in appended Decisions log rows/);
+    assert.match(rerun, /do not backfill or rewrite historical approvals, frontmatter or old prose/);
+    assert.match(rerun, /cancelled or unauthorized rerun writes nothing/);
   });
 });
 
@@ -287,7 +380,8 @@ describe('roadmap rerun', () => {
   });
 
   it('appends one dated status-log row on every rerun, even when no decision changed', () => {
-    assert.match(text, /every rerun appends exactly one dated status log row/i);
+    assert.match(text, /every rerun that writes appends exactly one dated status log row/i);
+    assert.match(text, /cancelled or unauthorized rerun writes nothing/i);
   });
 
   it('only treats an existing file as a roadmap when it is named ROADMAP.md or carries the marker', () => {

@@ -377,7 +377,8 @@ Usage: `/fvs:kb-setup --add`
 **`/fvs:roadmap [path/ROADMAP.md | path/] [goal prompt]`**
 Turn the current conversation or a short prompt into a long-horizon verification roadmap.
 
-- Synthesizes from the conversation first; with only a prompt, asks one bounded round of at most seven questions
+- Synthesizes facts and existing decisions first; light clarification by default, adaptive deep rounds for material uncertainty or disagreement
+- Confirms new/materially changed shared intent explicitly, or reuses a current owner-approved agreement without a fresh interview
 - Records claims to establish, scope, external boundaries, milestones with a checkable "done when", and decisions and status logs
 - Writes `.formalising/fv-plans/<topic>/ROADMAP.md` (or an explicit path) after checking it is git-excluded
 - Bare invocation lists existing roadmaps; a rerun appends to the logs and never rewrites a decision

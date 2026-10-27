@@ -177,6 +177,10 @@ and arguments. Bundle routers list their members when invoked without arguments.
 | `/fvs:formalise` | `/fvs:lean-formalise`, `/fvs:lean-refactor`, `/fvs:crypto-plan`, `/fvs:crypto-review`, `/fvs:crypto-execute`, `/fvs:crypto-eval`, `/fvs:crypto-followup` |
 | `/fvs:manage` | `/fvs:help`, `/fvs:configure`, `/fvs:update`, `/fvs:reapply-patches`, `/fvs:kb-setup`, `/fvs:roadmap`, `/fvs:issues-setup`, `/fvs:to-issues` |
 
+`/fvs:roadmap` synthesizes existing context, clarifies lightly or deeply where needed, and confirms
+shared intent. It reuses current owner-approved agreements without repeating settled questions;
+semantic agreement, file edits and execution/publication authority remain separate.
+
 `/fvs:to-issues [path/ROADMAP.md]` drafts reviewable outcomes with blockers and acceptance
 evidence from a roadmap or the current conversation. It quizzes the decomposition, then previews
 the full batch before local export or GitHub publication. The tracker comes from the roadmap's

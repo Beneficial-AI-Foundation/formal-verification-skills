@@ -48,7 +48,10 @@ Examples:
   -> that roadmap (an existing one is updated, never rewritten)
 ```
 
-The command has access to the full current conversation. Use it before asking anything.
+The command has access to the full current conversation. Use it before asking anything. Clarify
+lightly by default, deepen only material uncertainty/disagreement, or reuse a current applicable
+owner-approved agreement. New/materially changed interactive intent requires explicit shared
+understanding, separately from file-edit approval and execution/publication authority.
 </context>
 
 <process>
@@ -61,11 +64,13 @@ file. A rerun on an existing roadmap appends to its logs and never silently rewr
 </process>
 
 <success_criteria>
-- [ ] The conversation was synthesized before any question; at most one bounded interview round was asked, and only for unresolved material fields
+- [ ] Facts and existing owner decisions were read before questions; light/deep/reuse matched the context without redundant interviews
+- [ ] New/materially changed interactive intent was explicitly confirmed, or a current applicable owner-approved agreement was reused with evidence
+- [ ] Autonomous unresolved owner choices remained blocked; no model fabricated preference, approval or authority
 - [ ] The roadmap path was validated and git exclusion was checked before anything was written
 - [ ] The roadmap has the eight template sections, honest-scope language, and a "done when" per milestone that an existing FVS command or checker decides
 - [ ] Unknowns are explicit and their milestones are marked blocked; nothing was invented
 - [ ] Probe-derived facts are referenced from `.formalising/CODEMAP.md`, not restated
 - [ ] A rerun appended to the logs and preserved every existing decision
-- [ ] No execution, spending or publication authority was granted or assumed
+- [ ] No execution, spending or publication authority was created or inferred; existing explicit grants and downstream gates were preserved
 </success_criteria>
