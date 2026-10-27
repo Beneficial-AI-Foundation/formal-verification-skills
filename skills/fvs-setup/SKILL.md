@@ -20,7 +20,7 @@ work first needs the project's actual source/translation prerequisites. The cryp
 track proceeds through planning, fresh review, explicit execution, adversarial
 evaluation and follow-up. Setup does not start either track or choose models.
 
-Source artifact version: 2.3.8. This is not evidence that an npm version,
+Source artifact version: 2.3.9. This is not evidence that an npm version,
 public tag, catalog pin or release is available. Public source: https://github.com/Beneficial-AI-Foundation/formal-verification-skills.
 Native help source: https://github.com/Beneficial-AI-Foundation/formal-verification-skills/blob/main/commands/fvs/help.md.
 
@@ -74,7 +74,7 @@ check exact roles/settings and stop settings-dependent dispatch/writes if unavai
 Installing this setup skill does not register FVS specialists.
 
 An explicitly selected npm route uses package fv-skills-baif; Pi's exact source
-notation for THIS source artifact version is `npm:fv-skills-baif@2.3.8`.
+notation for THIS source artifact version is `npm:fv-skills-baif@2.3.9`.
 That notation is not publication evidence. Independently confirm the exact requested
 registry version before choosing an npm command; a requested unpublished npm pin
 stays blocked. Do not substitute latest or an older release. The source snapshot's

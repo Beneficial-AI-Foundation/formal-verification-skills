@@ -6,11 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.3.9] - 2026-10-27
+
 ### Added
 
 - `/fvs:ask-baif` orients users and agents to the current goal and evidence, routes one existing FVS
-  command, and reconciles/books existing issues when authorized. Within/between-batch checkpoints
-  preserve ownership, goal acceptance and publication consent without another executor or scheduler.
+  command or bounded ordinary-task handoff, and reconciles/books existing issues when authorized.
+  Within/between-batch checkpoints preserve ownership, goal acceptance and publication consent without another executor or scheduler.
 
 - `/fvs:to-issues` breaks a roadmap or conversation into reviewable outcomes with blockers and
   acceptance evidence, exporting local markdown or publishing an approved, sanitized GitHub batch
@@ -30,6 +32,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   tracker) and records the choice, with its label vocabulary, in `.formalising/fvs-config.json`. A
   roadmap can override it in its own frontmatter. It only records the choice: it never creates GitHub
   labels or issues, and never edits ignore files.
+
+- `/fvs:protocol-prose <file-or-topic>` revises protocol explanations against the source paper and
+  repository conventions while preserving formal content. Lean edits require before/after builds
+  and a prose-only comparison. Existing crypto and paper authoring calls receive the same guidance.
+- Optional `/fvs:crypto-eval <topic> nN --fix-prose` permits one qualified editorial correction in
+  the parent seat, followed by a fresh eval of the corrected files and all findings. Immutable
+  baseline/correction/recheck records preserve history; semantic followup remains available when
+  current acceptance cannot be established. This does not change the thinker's role or tool rights.
+
+### Changed
+
+- Crypto executors use the host's precise editing tool for localized changes, with unique-preimage
+  checks and readback. Dispatch first checks effective edit access; a missing tool or uncertain
+  policy blocks instead of silently rewriting whole files. Native whole-file writes remain for
+  new files and genuine full rewrites within the approved scope (#107).
+- Crypto plan reviews read the cited context needed to settle a question rather than repeatedly
+  rereading whole sources. Fresh review, source fidelity, reuse and statement/trust checks remain;
+  this wording change does not establish a model speedup or complete the broader #101 work.
+- The native inventory is 35 commands and 21 workflows. Setup and package discovery counts derive
+  from canonical commands, with explicit inventory allowlists retained in tests.
 
 ## [2.3.8] - 2026-10-23
 
