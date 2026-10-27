@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
+import { spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
@@ -26,11 +28,24 @@ function fatal(message) {
 function usage() {
   process.stdout.write([
     'Usage: node fvs-auto.mjs profile [--project-root DIR] [--format json|text]',
+    '       node fvs-auto.mjs init-state --input CHOICES.json [--project-root DIR] [--confirm-overwrite]',
+    '       node fvs-auto.mjs read-state [--project-root DIR]',
+    '       node fvs-auto.mjs record-roadmap --decision accepted|declined [--project-root DIR] [--confirm-overwrite]',
+    '       node fvs-auto.mjs record-extraction --out OUT --build-exit-code N [--project-root DIR]',
+    '       node fvs-auto.mjs record-externals --input RECORDS.json [--project-root DIR]',
     '',
     'profile reports what this host and project can do for the FVS auto track,',
     'one verdict per item: supported-and-tested, available-but-unverified,',
     'incompatible, missing, unsupported-platform or not-extracted-yet.',
     'It only detects: it never installs, downloads or modifies anything.',
+    '',
+    'The state subcommands keep the milestone 1 auto-track state under',
+    '.formalising/auto-fv/ in the project root: state.json (profile, owner choices,',
+    'roadmap decision, extraction record) and externals.json (one record per',
+    'boundary). Every write is atomic; malformed files are reported, never',
+    'overwritten. They print one JSON result. Exit codes: 0 ok; 1 refused',
+    '(confirmation required, blocked profile, failed extraction, record loss,',
+    'invalid input, no state); 2 usage or internal error; 3 malformed state.',
   ].join('\n') + '\n');
 }
 
@@ -492,6 +507,475 @@ function profileCli(argv) {
   return 0;
 }
 
+// Milestone 1 auto-track state: setup choices, the roadmap decision, the
+// extraction record (state.json) and the externals record (externals.json).
+// ponytail: no lock; the coordinator is the only writer of this state.
+const STATE_DIR = path.join('.formalising', 'auto-fv');
+const ROADMAP_PATH = '.formalising/auto-fv/ROADMAP.md';
+const DEFAULT_LIMITS = { nodeHours: 2, workers: 3 };
+const BOUNDARY_KINDS = ['opaque', 'external', 'handwritten-model', 'semantic-patch'];
+const BOUNDARY_STATUSES = ['open', 'assumption-accepted', 'correspondence-proved', 'blocked'];
+const NOT_A_PROOF = 'Extraction success is not a proof: it shows only that the recorded source and translation patches extract and build; no specification is stated or proved by it.';
+const ENGINE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fvs-extract-patches.mjs');
+
+export class Refusal extends Error {
+  constructor(code, message, details = {}) {
+    super(message);
+    this.code = code;
+    this.details = details;
+  }
+}
+
+function refuse(code, message, details) {
+  throw new Refusal(code, message, details);
+}
+
+const isText = (value) => typeof value === 'string' && value.trim() !== '';
+const plainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+const positive = (value) => typeof value === 'number' && Number.isFinite(value) && value > 0;
+const sha256 = (data) => crypto.createHash('sha256').update(data).digest('hex');
+const now = () => new Date().toISOString();
+
+// Pushes an error for a non-object or for any field outside `allowed`.
+function fields(errors, value, where, allowed) {
+  if (!plainObject(value)) {
+    errors.push(`${where} must be an object`);
+    return false;
+  }
+  for (const key of Object.keys(value)) if (!allowed.includes(key)) errors.push(`${where}.${key} is not a known field`);
+  return true;
+}
+
+function choiceErrors(choices) {
+  const errors = [];
+  if (!fields(errors, choices, 'choices', ['source', 'scope', 'limits'])) return errors;
+  if (fields(errors, choices.source, 'source', ['revision', 'configuration'])) {
+    // The revision reaches git as an argument, so an option-like value is refused.
+    if (!isText(choices.source.revision) || /^-|\s/.test(choices.source.revision)) {
+      errors.push('source.revision must be a git revision (a commit, tag or branch name)');
+    }
+    if (!isText(choices.source.configuration)) errors.push('source.configuration must be a non-empty string');
+  }
+  if (!isText(choices.scope)) errors.push('scope must be a non-empty string naming the bounded initial scope');
+  if (fields(errors, choices.limits, 'limits', ['nodeHours', 'workers', 'wallClockHours'])) {
+    const { nodeHours, workers, wallClockHours } = choices.limits;
+    if (!positive(nodeHours)) errors.push('limits.nodeHours must be a positive number of hours');
+    if (!Number.isInteger(workers) || workers < 1) errors.push('limits.workers must be a positive integer');
+    if (wallClockHours === undefined) errors.push('limits.wallClockHours is required: the owner names one total wall-clock cap');
+    else if (!positive(wallClockHours)) errors.push('limits.wallClockHours must be a positive number of hours');
+  }
+  return errors;
+}
+
+function normalizeChoices(input) {
+  const choices = plainObject(input) && plainObject(input.limits)
+    ? { ...input, limits: { ...DEFAULT_LIMITS, ...input.limits } }
+    : input;
+  const errors = choiceErrors(choices);
+  if (errors.length > 0) refuse('invalid-input', `invalid owner choices: ${errors.join('; ')}`, { errors });
+  const { source, scope, limits } = choices;
+  return {
+    source: { revision: source.revision, configuration: source.configuration },
+    scope,
+    limits: { nodeHours: limits.nodeHours, workers: limits.workers, wallClockHours: limits.wallClockHours },
+  };
+}
+
+function stateErrors(state) {
+  const errors = [];
+  if (!fields(errors, state, 'state', ['schema', 'schemaVersion', 'profiledAt', 'profile', 'choices', 'roadmap', 'extraction'])) return errors;
+  if (state.schema !== 'fvs/auto-state' || state.schemaVersion !== 1) errors.push('schema must be fvs/auto-state version 1');
+  if (!plainObject(state.profile) || state.profile.schema !== 'fvs/auto-profile' || !Array.isArray(state.profile.items)) {
+    errors.push('profile must be a recorded fvs/auto-profile result');
+  }
+  errors.push(...choiceErrors(state.choices));
+  const { roadmap, extraction } = state;
+  if (roadmap !== null && (!fields(errors, roadmap, 'roadmap', ['decision', 'path', 'decidedAt'])
+    || !['accepted', 'declined'].includes(roadmap.decision)
+    || roadmap.path !== (roadmap.decision === 'accepted' ? ROADMAP_PATH : null) || !isText(roadmap.decidedAt))) {
+    errors.push('roadmap must be null or an accepted or declined decision with its path and time');
+  }
+  if (extraction !== null && (!fields(errors, extraction, 'extraction', ['status', 'recordedAt', 'reasons', 'declared', 'checks', 'inputs', 'note'])
+    || !['succeeded', 'failed'].includes(extraction.status)
+    || !Array.isArray(extraction.reasons) || !extraction.reasons.every(isText)
+    || (extraction.status === 'succeeded') !== (extraction.reasons.length === 0)
+    || !plainObject(extraction.declared) || !Number.isInteger(extraction.declared.buildExitCode))) {
+    errors.push('extraction must be null or a succeeded record without reasons or a failed record with them');
+  }
+  return errors;
+}
+
+// A receipt reference: a file under receipts/ in the state directory, bound by
+// its hash. A ratification packet or a review link is never such evidence.
+function receiptErrors(receipt, directory, where) {
+  if (!plainObject(receipt) || !isText(receipt.path) || !/^[0-9a-f]{64}$/.test(receipt.sha256 ?? '')) {
+    return [`${where}: correspondence-proved needs correspondenceReceipt {path, sha256} naming a checked receipt under receipts/; a ratification packet or a review link is not correspondence evidence`];
+  }
+  const relative = path.posix.normalize(receipt.path);
+  const receipts = path.join(directory, 'receipts');
+  const file = path.join(directory, relative);
+  if (path.posix.isAbsolute(relative) || !relative.startsWith('receipts/')) {
+    return [`${where}: correspondenceReceipt.path must be under receipts/`];
+  }
+  let real = null;
+  try {
+    real = fs.realpathSync(file);
+  } catch {
+    return [`${where}: correspondenceReceipt ${relative} does not exist`];
+  }
+  if (!real.startsWith(`${fs.realpathSync(receipts)}${path.sep}`)) return [`${where}: correspondenceReceipt.path must be under receipts/`];
+  if (sha256(fs.readFileSync(real)) !== receipt.sha256) return [`${where}: correspondenceReceipt ${relative} does not match its recorded sha256`];
+  return [];
+}
+
+function externalsErrors(records, directory) {
+  if (!Array.isArray(records)) return ['records must be an array'];
+  const errors = [];
+  const seen = new Set();
+  records.forEach((record, index) => {
+    const where = `records[${index}]`;
+    if (!fields(errors, record, where, ['id', 'kind', 'source', 'model', 'claimedBehaviour', 'reason',
+      'affectedRoots', 'evidence', 'status', 'decision', 'correspondenceReceipt'])) return;
+    if (!isText(record.id)) errors.push(`${where}.id must be a non-empty string`);
+    else if (seen.has(record.id)) errors.push(`${where}.id ${record.id} is duplicated`);
+    seen.add(record.id);
+    if (!BOUNDARY_KINDS.includes(record.kind)) errors.push(`${where}.kind must be one of ${BOUNDARY_KINDS.join(', ')}`);
+    if (!plainObject(record.source) || !isText(record.source.symbol) || !isText(record.source.commit)) {
+      errors.push(`${where}.source must hold the source symbol and commit`);
+    }
+    if (!plainObject(record.model) || !isText(record.model.symbol) || !/^[0-9a-f]{64}$/.test(record.model.sha256 ?? '')) {
+      errors.push(`${where}.model must hold the model symbol and its sha256`);
+    }
+    for (const key of ['claimedBehaviour', 'reason']) if (!isText(record[key])) errors.push(`${where}.${key} must be a non-empty string`);
+    for (const key of ['affectedRoots', 'evidence']) {
+      if (!Array.isArray(record[key]) || !record[key].every(isText)) errors.push(`${where}.${key} must be an array of strings`);
+    }
+    if (!BOUNDARY_STATUSES.includes(record.status)) errors.push(`${where}.status must be one of ${BOUNDARY_STATUSES.join(', ')}`);
+    const decided = plainObject(record.decision) && ['by', 'at', 'evidence'].every((key) => isText(record.decision[key]))
+      && Object.keys(record.decision).length === 3;
+    if (!(decided || (record.decision === null && record.status === 'open'))) {
+      errors.push(`${where}.decision must name who decided, when and on what evidence (null only while open)`);
+    }
+    if (record.status === 'correspondence-proved') errors.push(...receiptErrors(record.correspondenceReceipt, directory, where));
+  });
+  return errors;
+}
+
+function externalsFileErrors(value, directory) {
+  if (!plainObject(value) || value.schema !== 'fvs/auto-externals' || value.schemaVersion !== 1) {
+    return ['schema must be fvs/auto-externals version 1'];
+  }
+  return externalsErrors(value.records, directory);
+}
+
+function projectDirectory(projectRoot) {
+  const root = path.resolve(projectRoot);
+  if (!fs.statSync(root, { throwIfNoEntry: false })?.isDirectory()) refuse('usage', `project root is not a directory: ${root}`);
+  return fs.realpathSync(root);
+}
+
+const statePath = (root) => path.join(root, STATE_DIR, 'state.json');
+const externalsPath = (root) => path.join(root, STATE_DIR, 'externals.json');
+
+// Null when the file is absent; a refusal naming the file and the next step
+// when it is unreadable or does not validate. It is never repaired here.
+function loadRecord(file, code, validate, rerun) {
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    text = null;
+  }
+  const nextStep = `Fix ${file} by hand or move it aside, then rerun ${rerun}; FVS never overwrites or repairs it.`;
+  if (text === null) refuse(code, `${file} cannot be read`, { file, nextStep });
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch (error) {
+    refuse(code, `${file} is not valid JSON: ${error.message}`, { file, nextStep });
+  }
+  const errors = validate(value);
+  if (errors.length > 0) refuse(code, `${file} is malformed: ${errors.join('; ')}`, { file, errors, nextStep });
+  return value;
+}
+
+const loadState = (root) => loadRecord(statePath(root), 'malformed-state', stateErrors, '/fvs:auto-init');
+const loadExternals = (root) => loadRecord(externalsPath(root), 'malformed-externals',
+  (value) => externalsFileErrors(value, path.join(root, STATE_DIR)), '/fvs:auto-extract');
+
+function requireState(root) {
+  const state = loadState(root);
+  if (!state) refuse('no-state', `no auto-track state in ${statePath(root)}`, { nextStep: 'Run /fvs:auto-init first.' });
+  return state;
+}
+
+// Written to a sibling temporary file, flushed, then renamed over the target,
+// so a crash leaves either the old file or the new one, never a torn one.
+function writeAtomic(file, value) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const temporary = `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+  const fd = fs.openSync(temporary, 'wx');
+  try {
+    fs.writeSync(fd, `${JSON.stringify(value, null, 2)}\n`);
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  try {
+    fs.renameSync(temporary, file);
+  } catch (error) {
+    fs.rmSync(temporary, { force: true });
+    throw error;
+  }
+}
+
+function flatten(value, prefix = '') {
+  if (!plainObject(value)) return { [prefix]: value };
+  return Object.assign({}, ...Object.entries(value).map(([key, inner]) => flatten(inner, prefix ? `${prefix}.${key}` : key)));
+}
+
+function choiceChanges(recorded, requested) {
+  const [before, after] = [flatten(recorded), flatten(requested)];
+  return Object.keys(after).filter((field) => before[field] !== after[field])
+    .map((field) => ({ field, recorded: before[field], requested: after[field] }));
+}
+
+// Verdicts that stop auto-init. A missing probe is expected until extraction,
+// and probe-aeneas is first needed by milestone 2.
+const blocks = (entry) => ['incompatible', 'unsupported-platform'].includes(entry.verdict)
+  || (entry.verdict === 'missing' && entry.id !== 'probe');
+
+export function initState({ projectRoot, choices, confirmOverwrite = false, platform = hostTarget() }) {
+  const root = projectDirectory(projectRoot);
+  const requested = normalizeChoices(choices);
+  const recorded = loadState(root);
+  if (recorded) {
+    const changes = choiceChanges(recorded.choices, requested);
+    if (changes.length === 0) {
+      return { code: 'unchanged', message: 'the recorded setup state already holds these choices; nothing was written', state: recorded };
+    }
+    if (!confirmOverwrite) {
+      refuse('confirmation-required', `the requested choices change recorded owner choices: ${changes.map((change) => change.field).join(', ')}`,
+        { changes, nextStep: 'Show each change to the owner and rerun with --confirm-overwrite only after they confirm it.' });
+    }
+  }
+  const result = profile({ projectRoot: root, platform });
+  const blocking = result.items.filter(blocks).map(({ id, verdict, reason, nextStep }) => ({ id, verdict, reason, nextStep }));
+  if (blocking.length > 0) {
+    refuse('profile-blocked', `the compatibility profile stops auto-init: ${blocking.map((entry) => `${entry.id} is ${entry.verdict}`).join(', ')}`,
+      { blocking, nextStep: blocking.map((entry) => entry.nextStep).join(' ') });
+  }
+  const state = {
+    schema: 'fvs/auto-state',
+    schemaVersion: 1,
+    profiledAt: now(),
+    profile: result,
+    choices: requested,
+    roadmap: recorded?.roadmap ?? null,
+    extraction: recorded?.extraction ?? null,
+  };
+  writeAtomic(statePath(root), state);
+  return { code: recorded ? 'updated' : 'created', message: `setup state written to ${statePath(root)}`, state };
+}
+
+function nextAction(state) {
+  if (state.extraction?.status === 'succeeded') {
+    return 'Run /fvs:auto-top-specs; milestone 2 functionality not yet available, so the auto track stops after extraction for now.';
+  }
+  if (state.extraction) return 'Rerun /fvs:auto-extract after fixing the recorded failure reasons.';
+  return 'Run /fvs:auto-extract to extract the selected revision.';
+}
+
+export function readState({ projectRoot }) {
+  const root = projectDirectory(projectRoot);
+  const state = loadState(root);
+  if (!state) {
+    return { code: 'no-state', message: `no auto-track state in ${statePath(root)}`, nextAction: 'Run /fvs:auto-init to record the setup state.', pendingDecisions: [] };
+  }
+  const records = loadExternals(root)?.records ?? [];
+  const externals = Object.fromEntries([['total', records.length],
+    ...BOUNDARY_STATUSES.map((status) => [status, records.filter((record) => record.status === status).length])]);
+  return {
+    code: 'ok',
+    message: `auto-track state in ${statePath(root)}`,
+    state,
+    roadmapPresent: state.roadmap?.path ? fs.existsSync(path.join(root, state.roadmap.path)) : false,
+    externals,
+    pendingDecisions: state.roadmap ? [] : ['roadmap'],
+    nextAction: nextAction(state),
+  };
+}
+
+export function recordRoadmap({ projectRoot, decision, confirmOverwrite = false }) {
+  if (!['accepted', 'declined'].includes(decision)) refuse('usage', '--decision must be accepted or declined');
+  const root = projectDirectory(projectRoot);
+  const state = requireState(root);
+  if (state.roadmap?.decision === decision) return { code: 'unchanged', message: `the roadmap offer is already recorded as ${decision}`, state };
+  if (state.roadmap && !confirmOverwrite) {
+    refuse('confirmation-required', `the roadmap offer is recorded as ${state.roadmap.decision}`, {
+      changes: [{ field: 'roadmap.decision', recorded: state.roadmap.decision, requested: decision }],
+      nextStep: 'Change it only when the owner asks, with --confirm-overwrite.',
+    });
+  }
+  state.roadmap = { decision, path: decision === 'accepted' ? ROADMAP_PATH : null, decidedAt: now() };
+  writeAtomic(statePath(root), state);
+  return { code: 'recorded', message: `roadmap offer recorded as ${decision}`, state };
+}
+
+function engineCheck(command, out) {
+  const run = spawnSync(process.execPath, [ENGINE, command, '--out', out], { encoding: 'utf8' });
+  try {
+    const { ok, code, message } = JSON.parse(run.stdout);
+    return { ok: ok === true, code, message };
+  } catch {
+    return { ok: false, code: 'internal', message: firstLine(run.stderr) || `the engine exited ${run.status}` };
+  }
+}
+
+function resolveRevision(directory, revision) {
+  const run = spawnSync('git', ['--no-optional-locks', '-C', directory, 'rev-parse', '--verify', '--quiet', `${revision}^{commit}`], { encoding: 'utf8' });
+  return run.status === 0 ? run.stdout.trim() : null;
+}
+
+// The status is derived here, never taken from the caller: success needs a
+// zero build exit (the one declared input) and the patch engine's own status,
+// verify-tree and verify-restore checks on the copy Charon consumed, taken
+// from this project at the recorded revision without uncommitted changes.
+export function recordExtraction({ projectRoot, out, buildExitCode }) {
+  if (!Number.isInteger(buildExitCode)) refuse('usage', '--build-exit-code must be an integer');
+  const root = projectDirectory(projectRoot);
+  const state = requireState(root);
+  const copy = path.resolve(out);
+  const checks = {
+    status: engineCheck('status', copy),
+    'verify-tree': engineCheck('verify-tree', copy),
+    'verify-restore': engineCheck('verify-restore', copy),
+  };
+  const reasons = [];
+  if (buildExitCode !== 0) reasons.push(`the build exited ${buildExitCode}`);
+  for (const [name, check] of Object.entries(checks)) {
+    if (!check.ok) reasons.push(`the patch engine ${name} check refused (${check.code}): ${check.message}`);
+  }
+  let inputs = null;
+  if (checks.status.ok) {
+    const bytes = fs.readFileSync(path.join(copy, 'manifest.json'));
+    const manifest = JSON.parse(bytes);
+    const { revision } = state.choices.source;
+    const crate = manifest.projectRoot;
+    if (manifest.mode !== 'translation-patches') reasons.push(`the copy was prepared in ${manifest.mode} mode; the auto track extracts through translation patches only`);
+    if (crate !== root && !crate.startsWith(`${root}${path.sep}`)) reasons.push(`the copy was prepared from ${crate}, outside this project`);
+    const resolved = resolveRevision(crate, revision);
+    if (!manifest.source.commit) reasons.push(`${crate} is not a git checkout, so the extraction cannot be tied to revision ${revision}`);
+    else if (manifest.source.commit !== resolved) {
+      reasons.push(`the copy was prepared from commit ${manifest.source.commit}, but the recorded revision ${revision} is ${resolved ?? 'not resolvable there'}`);
+    }
+    if (manifest.source.dirty?.length > 0) reasons.push(`the extraction inputs had uncommitted changes: ${manifest.source.dirty.join(', ')}`);
+    inputs = {
+      out: copy,
+      manifestSha256: sha256(bytes),
+      crateRoot: crate,
+      mode: manifest.mode,
+      sourceCommit: manifest.source.commit,
+      patches: manifest.patches.map(({ file, sha256: hash }) => ({ file, sha256: hash })),
+    };
+  }
+  const extraction = {
+    status: reasons.length === 0 ? 'succeeded' : 'failed',
+    recordedAt: now(),
+    reasons,
+    declared: { buildExitCode },
+    checks,
+    inputs,
+    note: NOT_A_PROOF,
+  };
+  state.extraction = extraction;
+  writeAtomic(statePath(root), state);
+  if (reasons.length > 0) {
+    refuse('extraction-failed', `extraction recorded as failed: ${reasons.join('; ')}`,
+      { extraction, nextStep: 'Fix the reasons above and rerun /fvs:auto-extract; a failed extraction is never recorded as success.' });
+  }
+  return { code: 'recorded', message: `extraction recorded as succeeded. ${NOT_A_PROOF}`, extraction };
+}
+
+export function recordExternals({ projectRoot, records }) {
+  const root = projectDirectory(projectRoot);
+  requireState(root);
+  const errors = externalsErrors(records, path.join(root, STATE_DIR));
+  if (errors.length > 0) refuse('invalid-input', `invalid externals record: ${errors.join('; ')}`, { errors });
+  const kept = new Set(records.map((record) => record.id));
+  const lost = (loadExternals(root)?.records ?? []).map((record) => record.id).filter((id) => !kept.has(id));
+  if (lost.length > 0) {
+    refuse('record-loss', `the new externals record drops ${lost.join(', ')}; a boundary is never deleted, only moved to another status`,
+      { lost, nextStep: 'Resubmit every recorded boundary, changing only what the owner or a checked receipt decided.' });
+  }
+  writeAtomic(externalsPath(root), { schema: 'fvs/auto-externals', schemaVersion: 1, records });
+  return { code: 'recorded', message: `${records.length} boundary record(s) written to ${externalsPath(root)}` };
+}
+
+function readInput(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (error) {
+    refuse('invalid-input', `cannot read JSON from ${file}: ${error.message}`);
+  }
+}
+
+function stateFlags(argv, values, switches = []) {
+  const flags = { 'project-root': '.' };
+  const rest = [...argv];
+  while (rest.length > 0) {
+    const flag = rest.shift();
+    const key = flag.replace(/^--/, '');
+    if (key !== flag && switches.includes(key)) {
+      flags[key] = true;
+      continue;
+    }
+    if (key === flag || ![...values, 'project-root'].includes(key)) refuse('usage', `unknown argument ${JSON.stringify(flag)}`);
+    const value = rest.shift();
+    if (!value || value.startsWith('--')) refuse('usage', `${flag} requires a value`);
+    flags[key] = value;
+  }
+  for (const key of values) if (flags[key] === undefined) refuse('usage', `--${key} is required`);
+  return flags;
+}
+
+const STATE_COMMANDS = {
+  'init-state': (argv) => {
+    const flags = stateFlags(argv, ['input'], ['confirm-overwrite']);
+    return initState({ projectRoot: flags['project-root'], choices: readInput(flags.input), confirmOverwrite: flags['confirm-overwrite'] === true });
+  },
+  'read-state': (argv) => readState({ projectRoot: stateFlags(argv, [])['project-root'] }),
+  'record-roadmap': (argv) => {
+    const flags = stateFlags(argv, ['decision'], ['confirm-overwrite']);
+    return recordRoadmap({ projectRoot: flags['project-root'], decision: flags.decision, confirmOverwrite: flags['confirm-overwrite'] === true });
+  },
+  'record-extraction': (argv) => {
+    const flags = stateFlags(argv, ['out', 'build-exit-code']);
+    if (!/^-?\d+$/.test(flags['build-exit-code'])) refuse('usage', '--build-exit-code must be an integer');
+    return recordExtraction({ projectRoot: flags['project-root'], out: flags.out, buildExitCode: Number(flags['build-exit-code']) });
+  },
+  'record-externals': (argv) => {
+    const flags = stateFlags(argv, ['input']);
+    return recordExternals({ projectRoot: flags['project-root'], records: readInput(flags.input) });
+  },
+};
+
+function stateMain(command, argv) {
+  let result;
+  try {
+    result = { ok: true, command, ...STATE_COMMANDS[command](argv) };
+  } catch (error) {
+    result = error instanceof Refusal
+      ? { ok: false, code: error.code, command, message: error.message, ...error.details }
+      : { ok: false, code: 'internal', command, message: error.message };
+  }
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  if (!result.ok) process.stderr.write(`FVS >> ${result.code}: ${result.message}\n`);
+  const malformed = ['malformed-state', 'malformed-externals'].includes(result.code);
+  process.exitCode = result.ok ? 0 : malformed ? 3 : ['usage', 'internal'].includes(result.code) ? 2 : 1;
+}
+
 const SUBCOMMANDS = { profile: profileCli };
 
 function main(argv) {
@@ -499,9 +983,14 @@ function main(argv) {
     usage();
     return;
   }
+  if (Object.prototype.hasOwnProperty.call(STATE_COMMANDS, argv[0])) {
+    stateMain(argv[0], argv.slice(1));
+    return;
+  }
   try {
     if (!Object.prototype.hasOwnProperty.call(SUBCOMMANDS, argv[0])) {
-      fatal(`unknown subcommand ${JSON.stringify(argv[0])}; available: ${Object.keys(SUBCOMMANDS).join(', ')}`);
+      const available = [...Object.keys(SUBCOMMANDS), ...Object.keys(STATE_COMMANDS)].join(', ');
+      fatal(`unknown subcommand ${JSON.stringify(argv[0])}; available: ${available}`);
     }
     process.exitCode = SUBCOMMANDS[argv[0]](argv.slice(1));
   } catch (error) {
