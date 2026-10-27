@@ -323,6 +323,118 @@ for (const absPath of [STAGE_FILES.cmdExecute, STAGE_FILES.wfExecute,
 //     whole bounded unit with diagnostics between meaningful edits.
 // ---------------------------------------------------------------------------
 const CRYPTO_EXECUTOR = path.join(AGENTS_DIR, 'fvs-crypto-executor.md');
+describe('Crypto executor: precise editing contract (#107)', () => {
+  const executor = fs.readFileSync(CRYPTO_EXECUTOR, 'utf8');
+  const tools = executor.match(/^tools: (.+)$/m)[1].split(', ');
+
+  it('grants Edit only to the executor, retaining read-only planners and no children', () => {
+    assert.ok(tools.includes('Edit') && tools.includes('Write'));
+    assert.ok(!tools.includes('Task') && !tools.includes('Agent'));
+    assert.match(executor, /Never spawn children or delegate implementation/);
+    const thinker = fs.readFileSync(path.join(AGENTS_DIR, 'fvs-crypto-thinker.md'), 'utf8');
+    assert.equal(thinker.match(/^tools: (.+)$/m)[1], 'Read, Bash, Grep, Glob');
+    assert.match(executor, /plan's exact source allowlist/);
+    assert.match(executor, /immutable\s+public statements and definition semantics/);
+  });
+
+  it('requires checked localized edits and native creation, with no shell-write workaround', () => {
+    for (const name of ['Claude `Edit`', 'Pi `edit`', 'OpenCode `edit`', 'Codex `apply_patch`']) {
+      assert.ok(executor.includes(name), `missing runtime tool guidance: ${name}`);
+    }
+    assert.match(executor, /actual tool\/schema; never infer availability/);
+    assert.match(executor, /exact preimage has one unique match/);
+    assert.match(executor, /missing or non-unique exact match, including a fuzzy-only match, stops before\s+the editing tool is called/);
+    assert.match(executor, /new files or genuine full rewrites only/);
+    assert.match(executor, /Never use replace-all or deliberately rely on fuzzy matching/);
+    assert.match(executor, /Pi 1\.2\.0 `edit` has fuzzy\s+fallback and no strict-match switch/);
+    assert.match(executor, /precheck does not disable that fallback or provide an atomic/);
+    assert.match(executor, /requires tool-enforced exact matching, report BLOCKED/);
+    assert.match(executor, /Never use Bash, scripts, shell redirection/);
+    assert.doesNotMatch(executor, /All (?:file )?writes MUST use the Write tool/);
+  });
+
+  for (const file of [STAGE_FILES.cmdExecute, STAGE_FILES.wfExecute,
+    path.join(ROOT, 'pi/skills/fvs-crypto-execute/SKILL.md'),
+    path.join(ROOT, 'plugins/fvs/skills/crypto-execute/SKILL.md')]) {
+    it(`${rel(file)} checks effective capability before writes/execution and confirmation`, () => {
+      const source = fs.readFileSync(file, 'utf8');
+      const gate = source.indexOf('## Step 2a: Effective editing-capability gate');
+      assert.ok(gate > 0);
+      for (const action of ['## Step 2b:', 'lake exe cache get', 'Task(\n']) {
+        assert.ok(gate < source.indexOf(action), `gate must precede ${action}`);
+      }
+      const policy = source.slice(gate, source.indexOf('## Step 2b:'));
+      for (const term of ['Write-only', 'unknown', 'permissions', 'schema', 'overrides',
+        'before dispatch', 'source execution', 'reconfirm', 'no child spawning']) {
+        assert.ok(policy.includes(term), `${rel(file)} missing ${term}`);
+      }
+      assert.match(policy, /before any artifact write, cache\/source\s+execution, or dispatch confirmation|Before any artifact write, cache\/source execution, or dispatch confirmation/);
+      assert.match(policy, /agent-prechecked/);
+      assert.match(policy, /native fuzzy fallback and no strict-match switch/);
+      assert.match(policy, /fuzzy-only matches stop before/);
+      assert.match(policy, /tool-enforced exact-match[\s\S]*native guarantee/);
+      assert.ok(source.includes('<editing_capability>\n$EDITING_CAPABILITY\n</editing_capability>'));
+      assert.match(source, /selection manifest including the established\s+`Editing capability:` record/);
+    });
+  }
+
+  // Contract simulation only: no host tools/model are invoked. Native tool qualification is separate.
+  function fixture({ inventory = tools, policy = 'precise', oldText = '  exact h', source,
+    requireNativeExact = false, nativeExact = false } = {}) {
+    let text = source || 'theorem retained (p : Prop) (h : p) : p := by\n  exact h\n-- untouched\n';
+    const before = text;
+    const calls = [];
+    // The parent must reject incompatible effective access before model/source dispatch.
+    if (!inventory.includes('Edit') || policy !== 'precise' || (requireNativeExact && !nativeExact)) {
+      return { text, before, calls, blocked: true };
+    }
+    calls.push('dispatch');
+    const first = text.indexOf(oldText);
+    if (!oldText || first < 0 || text.indexOf(oldText, first + 1) >= 0) {
+      return { text, before, calls, blocked: true };
+    }
+    calls.push({ tool: 'Edit', oldText, newText: '  assumption' });
+    text = text.slice(0, first) + '  assumption' + text.slice(first + oldText.length);
+    return { text, before, calls, blocked: false };
+  }
+
+  it('simulates a unique localized edit without a whole-file Write payload', () => {
+    const result = fixture();
+    assert.equal(result.blocked, false);
+    assert.equal(result.text, result.before.replace('  exact h', '  assumption'));
+    assert.deepEqual(result.calls, ['dispatch', { tool: 'Edit', oldText: '  exact h', newText: '  assumption' }]);
+  });
+  it('simulates mismatch/nonunique rejection without any partial mutation', () => {
+    for (const input of [{ oldText: 'missing' }, { source: '  exact h\n  exact h\n' }]) {
+      const result = fixture(input);
+      assert.equal(result.blocked, true);
+      assert.equal(result.text, result.before);
+      assert.deepEqual(result.calls, ['dispatch']);
+    }
+  });
+  it('rejects a fuzzy-only preimage at the agent precheck without calling the editor', () => {
+    const result = fixture({ source: '-- keep Unicode dash: a–b\n', oldText: 'a-b' });
+    assert.equal(result.blocked, true);
+    assert.equal(result.text, result.before);
+    assert.deepEqual(result.calls, ['dispatch']);
+  });
+  it('rejects a native-strict request before dispatch when only agent prechecks are supported', () => {
+    const result = fixture({ requireNativeExact: true });
+    assert.equal(result.blocked, true);
+    assert.equal(result.text, result.before);
+    assert.deepEqual(result.calls, []);
+  });
+  it('simulates Write-only tool or higher-priority policy incompatibility before dispatch', () => {
+    for (const input of [{ inventory: tools.filter(tool => tool !== 'Edit') }, { policy: 'write-only' },
+      { policy: 'unknown' }]) {
+      const result = fixture(input);
+      assert.equal(result.blocked, true);
+      assert.equal(result.text, result.before);
+      assert.deepEqual(result.calls, []);
+    }
+  });
+});
+
 whenExists(CRYPTO_EXECUTOR, `Crypto loop: executor discipline in ${rel(CRYPTO_EXECUTOR)} (D-01/D-04)`, (content, absPath) => {
   it('uses actual separate diagnostic and goal tools, retaining conditional IDE diagnostics', () => {
     assert.match(content, /mcp__ide__getDiagnostics/);
@@ -624,6 +736,9 @@ it('persists execution settings without masking simulated build failures or rewr
   // A private simulated nice executable stands in for the entire build invocation.
   fs.writeFileSync(path.join(bin, 'nice'), '#!/bin/sh\nprintf "simulated build stdout\\n"\nprintf "simulated build stderr\\n" >&2\nexit "$FVS_SIMULATED_BUILD_STATUS"\n', { mode: 0o755 });
   const approved = path.join(tmp, 'EXEC_PLAN_n1.md'); fs.writeFileSync(approved, 'immutable approved plan');
+  const editing = { runtime: 'pi', route: 'simulated-child', requested: 'precise', tool: 'edit',
+    policy: 'precise', enforcement: 'agent-prechecked', nativeFuzzyFallback: true,
+    evidence: 'simulated inventory; not native qualification' };
   const settings = { stage: 'crypto_execute', route: 'simulated-child',
     requested: { runtime: 'pi', model: 'provider/exact', effort: 'low', source: 'explicit run choice' },
     resolved: { runtime: 'pi', model: 'provider/exact', effort: 'low', source: 'simulated launch' },
@@ -636,11 +751,13 @@ it('persists execution settings without masking simulated build failures or rewr
       for (const code of [0, 9]) {
         const result = spawnSync('/bin/bash', ['-c', command], { cwd: tmp, encoding: 'utf8', env: {
           ...process.env, ROOT: tmp, PATH: bin + path.delimiter + process.env.PATH,
+          EDITING_CAPABILITY: JSON.stringify(editing),
           STAGE_SETTINGS_JSON: JSON.stringify(settings), FVS_SIMULATED_BUILD_STATUS: String(code),
         } });
         assert.equal(result.status, code, result.stderr);
         const log = fs.readFileSync(path.join(tmp, 'build.log'), 'utf8');
         assert.match(log, /simulated build stdout\nsimulated build stderr/);
+        assert.deepEqual(JSON.parse(log.match(/^Editing capability: (.+)$/m)[1]), editing);
         assert.equal(JSON.parse(log.match(/^Stage settings: (.+)$/m)[1]).observed.effort.value, 'unknown');
         assert.ok(log.includes(`Build exit status: ${code}`));
         assert.equal(fs.readFileSync(approved, 'utf8'), 'immutable approved plan');
