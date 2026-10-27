@@ -22,6 +22,7 @@ const COMMITTED_PI_SKILLS_ROOT = path.join(ROOT, 'pi', 'skills');
 const COMMITTED_SETUP_ROOT = path.join(ROOT, 'skills', 'fvs-setup');
 const PACKAGE_JSON = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 const VERSION = PACKAGE_JSON.version;
+const COMMAND_COUNT = fs.readdirSync(path.join(ROOT, 'commands', 'fvs')).filter(name => name.endsWith('.md')).length;
 const REPOSITORY_URL = 'https://github.com/Beneficial-AI-Foundation/formal-verification-skills';
 const MARKETPLACE_ID = 'beneficial-ai-foundation';
 const SCRIPT_FILES = [
@@ -55,7 +56,7 @@ this entry does not install FVS, register specialist roles, or grant setup permi
 It works by itself after copy, symlink, relocation, and from any working directory;
 there are no adjacent scripts or resources to load. Never infer an FVS sourceRoot
 or nativeRoot from this entry's parents. A complete native installation supplies
-its own thirty-five commands, workflows, references, templates, scripts, hooks and roles.
+its own ${COMMAND_COUNT} commands, workflows, references, templates, scripts, hooks and roles.
 
 The functional-correctness (FC) track proceeds through understanding, specification,
 fresh statement review and explicitly requested autonomous proof. Extracted-code
@@ -151,7 +152,7 @@ for the accepted user profile; never omit scope. Node is the verified executable
 For non-Pi runtimeFlag, validate the chosen runtime against exactly
 ${nonPi.map(runtime => `\`--${runtime}\``).join(', ')}; never use --all. Scope is mandatory.
 The hook build copies two pure Node hooks; this lane needs no npm install or npx.
-Keep the complete source snapshot. Observe actual installed version, all thirty-five
+Keep the complete source snapshot. Observe actual installed version, all ${COMMAND_COUNT}
 commands and resources, hook registrations and role/settings footprints. Discover
 the nativeRoot from the actual channel's installation/resource metadata, not this
 entry's physical/logical location or a guessed transferred path.
@@ -161,7 +162,7 @@ local-source declaration/retention/scope effects. After permission use the retai
 complete source directory: \`pi install "$sourceRoot" --local\` for the selected
 trusted project, or \`pi install "$sourceRoot"\` for personal scope. This is a local
 source directory, loaded without a registry dependency install, not a transported
-skill directory. The explicit package.json pi.skills selects ONLY pi/skills, thirty-five
+skill directory. The explicit package.json pi.skills selects ONLY pi/skills, ${COMMAND_COUNT}
 native skills, not this setup entry. Keep sourceRoot at its verified location.
 Project declarations require project trust; review it explicitly. Project identities
 normally take precedence over personal entries; inspect both and do not silently

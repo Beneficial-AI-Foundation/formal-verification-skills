@@ -113,6 +113,12 @@ selection manifest; if this stage was not in that manifest, rebuild and reconfir
 dispatch. Then INLINE the topic context + cached KB sources (references do not cross the Task
 boundary):
 
+Read `fv-skills/references/protocol-prose.md` into `PROTOCOL_PROSE` and inline its full text
+in this existing authoring call. It guides newly authored prose within the approved scope;
+it adds no model call, review gate or permission to revise unrelated files. Apply the reference's
+expository jobs and information order to new explanations: develop constructions where useful,
+keep declaration docs on subject, and preserve supported detail, notation and attribution.
+
 ```
 Task(
   subagent_type="fvs-crypto-thinker",
@@ -120,6 +126,10 @@ Task(
   reasoning_effort="$THINKER_EFFORT", // when supported; otherwise apply the capability gate
   description="Author bounded plan",
   prompt="Mode: plan
+
+<protocol_prose>
+$PROTOCOL_PROSE
+</protocol_prose>
 
 ...inlined topic + branch state + KB sources...
 
@@ -135,6 +145,11 @@ Return with ## PLAN COMPLETE and a separate <lesson_candidates> block using the 
 contract, or `none`."
 )
 ```
+
+For the optional Codex authoring path, include the same full `PROTOCOL_PROSE` text in the
+parent-provided context JSON as `protocol_prose`; a path alone is insufficient. Treat it as
+editorial reference data under the existing role. Apply the reference to returned plan prose
+in the parent authoring seat without changing the bounded plan's formal content or decisions.
 
 For optional `--codex`, replace only this thinker invocation. Construct the same complete
 stage context as a bounded UTF-8 JSON file inside the project, including topic, branch/KB,

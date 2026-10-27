@@ -7,19 +7,21 @@ const os = require('node:os');
 const path = require('node:path');
 const generator = require('../scripts/build-plugin.cjs');
 const root = path.resolve(__dirname, '..');
+const COMMAND_COUNT = fs.readdirSync(path.join(root, 'commands/fvs')).filter(name => name.endsWith('.md')).length;
 const { ALL_RUNTIMES, PI_PACKAGE_NAME, buildPiPackageSource } = require('../bin/install.js');
 
 test('renders one self-contained native setup entry rather than relocated workflows', () => {
   const text = generator.renderSetupSkill?.() ?? '';
   assert.match(text, /^---\nname: fvs-setup\ndescription: .*native.*setup/m);
   assert.match(text, /## Scope/);
+  assert.ok(text.includes(`${COMMAND_COUNT} commands`));
+  assert.doesNotMatch(text, /\bthirty commands/);
   assert.match(text, /## Consent/);
   assert.match(text, /## Complete source installation/);
   assert.match(text, /## Privacy/);
   assert.doesNotMatch(text, /CLAUDE_PLUGIN_ROOT|@\.\.\/|\.\.\/\.\.\//);
-  assert.equal(fs.readdirSync(path.join(root, 'commands/fvs')).filter(n => n.endsWith('.md')).length, 35);
-  assert.equal(fs.readdirSync(path.join(root, 'pi/skills')).length, 35);
-  assert.equal(fs.readdirSync(path.join(root, 'plugins/fvs/skills')).length, 35);
+  assert.equal(fs.readdirSync(path.join(root, 'pi/skills')).length, COMMAND_COUNT);
+  assert.equal(fs.readdirSync(path.join(root, 'plugins/fvs/skills')).length, COMMAND_COUNT);
 });
 
 test('covers all supported native channels without hidden registry or role substitution', () => {

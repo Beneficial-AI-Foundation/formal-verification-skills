@@ -635,5 +635,8 @@ describe('auto command and workflow text', () => {
     assert.match(body, /\/fvs:roadmap \.formalising\/auto-fv\/ROADMAP\.md/);
     assert.match(body, /A recorded decline is not asked again/);
     assert.match(body, /extraction does not wait for it/);
+    assert.match(read('commands/fvs/roadmap.md'), /`\.formalising\/auto-fv\/ROADMAP\.md`; `\/fvs:auto-init`/,
+      'the roadmap command documents the auto track location');
+    assert.match(read('fv-skills/workflows/roadmap.md'), /\*\.md\) FILE=\$ROADMAP_PATH/, 'an explicit .md path is accepted as is');
   });
 });

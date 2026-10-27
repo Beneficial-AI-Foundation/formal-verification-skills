@@ -84,9 +84,9 @@ describe('published FVS plugin package', () => {
     });
   });
 
-  it('keeps the 2.3.8 package, payload, and both plugin manifests on one version', () => {
+  it('keeps the 2.3.9 package, payload, and both plugin manifests on one version', () => {
     const version = readJson('package.json').version;
-    assert.equal(version, '2.3.8');
+    assert.equal(version, '2.3.9');
     assert.equal(fs.readFileSync(path.join(ROOT, 'fv-skills', 'VERSION'), 'utf8'), version);
     assert.equal(readJson('plugins/fvs/.claude-plugin/plugin.json').version, version);
     assert.equal(readJson('plugins/fvs/.codex-plugin/plugin.json').version, version);
@@ -108,7 +108,6 @@ describe('published FVS plugin package', () => {
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
       .sort();
-    assert.equal(commandNames.length, 35);
     assert.deepEqual(skillNames, commandNames);
 
     for (const skillName of skillNames) {
