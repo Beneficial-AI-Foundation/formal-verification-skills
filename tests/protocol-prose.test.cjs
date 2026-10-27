@@ -83,7 +83,8 @@ test('eval prose correction is opted in, parent-owned and capped without new ver
   const contract = read('fv-skills/workflows/protocol-prose.md');
   assert.match(contract, /Only `\/fvs:crypto-eval <topic> nN --fix-prose` opts into this path/);
   assert.match(contract, /at most one correction pass in the parent seat/);
-  assert.match(contract, /Reuse the normal\n   eval dispatch once/);
+  assert.match(contract, /Reuse the normal\n   eval dispatch once in a fresh invocation/);
+  assert.match(contract, /preserving existing reviewer-selection\/independence/);
   assert.match(contract, /No second correction pass\n   or planning restart/);
   for (const base of ['commands/fvs', 'fv-skills/workflows']) {
     const source = read(`${base}/crypto-eval.md`);
@@ -120,7 +121,10 @@ test('final eval checks corrected prose and all findings with current immutable 
   assert.match(contract, /Reject an `ACCEPT` response with any unresolved finding/);
   assert.match(contract, /Only the authoritative final eval may validate lessons/);
   assert.match(contract, /No.*byte preservation.*prove prose quality|byte preservation and green builds do not prove prose quality/s);
-  assert.match(contract, /absent\/partial\/malformed evidence is `BLOCKED`/);
+  assert.match(contract, /absent\/partial\/malformed evidence blocks acceptance/);
+  assert.match(contract, /missing recheck acceptance alone does not force a whole-topic pause/);
+  assert.match(contract, /Missing correction metadata alone does not prohibit\nreviewed semantic followup/);
+  assert.match(contract, /actual failed build, missing grounding\/access prerequisite\nor failed restoration still takes `BLOCKED`/);
   assert.match(contract, /hashes equal to the\n  current files/);
   assert.match(contract, /never fall back to an older `ACCEPT`/);
 });
@@ -129,7 +133,8 @@ test('followup and discovery route editorial attempts without bypassing semantic
   for (const base of ['commands/fvs', 'fv-skills/workflows']) {
     const source = read(`${base}/crypto-followup.md`);
     assert.match(source, /eval_result_resolution/);
-    assert.match(source, /incomplete\/stale correction evidence is BLOCKED/);
+    assert.match(source, /incomplete\/stale correction evidence blocks acceptance/);
+    assert.match(source, /acceptance-unverified.*semantic followup/s);
     assert.match(source, /--fix-prose/);
     assert.match(source, /already attempted.*normal\nsemantic followup\/HUMAN_RULING/s);
     assert.match(source, /never edits protocol prose itself/);

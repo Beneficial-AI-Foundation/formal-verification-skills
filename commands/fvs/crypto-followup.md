@@ -86,8 +86,11 @@ never grep the last decision word from quoted findings.
 
 Before routing, follow `eval_result_resolution` in the installed
 `fv-skills/workflows/protocol-prose.md`, resolved from the trusted FVS root. Select the current
-validated prose recheck when present; incomplete/stale correction evidence is BLOCKED, never an
-older ACCEPT. Keep all original/new findings. For an editorial-only FOLLOWUP with no consumed
+validated prose recheck when present; incomplete/stale correction evidence blocks acceptance, never
+falls back to an older ACCEPT. With no current validated recheck, carry current files and all
+records as acceptance-unverified into normal reviewed semantic followup, as the shared recovery
+rule permits; retain real prerequisite blockers and required human rulings. Keep all findings.
+For an editorial-only FOLLOWUP with no consumed
 correction attempt, offer `/fvs:crypto-eval <topic> nN --fix-prose` and stop rather than dispatching
 a new planner automatically. If declined, mixed, ambiguous or already attempted, retain the normal
 semantic followup/HUMAN_RULING route. This command never edits protocol prose itself.

@@ -146,7 +146,8 @@ reversible writes, proof completion and a trust audit.
 the crypto loop uses a dedicated whole-unit executor. Evaluation returns ACCEPT, FOLLOWUP,
 HUMAN_RULING or BLOCKED; unresolved human rulings and blockers stop the loop.
 Opt-in `/fvs:crypto-eval <topic> nN --fix-prose` permits one qualified editorial correction in the
-parent seat followed by the normal eval of corrected files. Scientific meaning and formal content
+parent seat followed by one fresh normal eval of corrected files. This avoids a planning restart
+for eligible prose findings; no measured speed improvement is claimed. Scientific meaning and formal content
 stay fixed; unresolved or ambiguous findings retain semantic followup rather than acceptance.
 Thinking stages can explicitly use `--codex`; execution has no such flag. An unavailable requested
 runtime requires a new choice rather than a silent fallback.

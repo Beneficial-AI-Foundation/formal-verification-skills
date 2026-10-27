@@ -315,7 +315,8 @@ Adversarially evaluate the iteration; ends in exactly one decision (ACCEPT / FOL
 Usage: `/skill:fvs-crypto-eval "CKA from KEM" n1`
 Usage: `/skill:fvs-crypto-eval "CKA from KEM" n1 --codex`
 Optional `--fix-prose`: one editorial-only correction in the parent seat, then normal eval of the
-corrected prose. No planning restart; semantic/ambiguous findings retain normal followup. An
+corrected prose in one fresh eval. This avoids the planning restart for eligible prose, without a
+measured speed claim; semantic/ambiguous findings retain normal followup. An
 unresolved finding or stale/incomplete correction record never counts as acceptance.
 
 **`/skill:fvs-crypto-followup <topic> nN [--codex]`**

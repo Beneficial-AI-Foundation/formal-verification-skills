@@ -142,7 +142,8 @@ executor or new verdict. Without the flag, unresolved editorial findings remain 
    actual commands, coverage and exit statuses. Do not claim that the executor or a proof reran.
 5. After successful checks, record before/after hashes, exact diff, each finding's disposition,
    source/convention evidence and real build results; status is `awaiting-recheck`. Reuse the normal
-   eval dispatch once, with the same confirmed runtime/settings and unchanged plan/source context,
+   eval dispatch once in a fresh invocation, preserving existing reviewer-selection/independence
+   rules, the same confirmed runtime/settings and unchanged plan/source context,
    corrected complete files, original findings and this correction evidence. Inline a
    `<prose_correction>` reference-data block in the in-runtime prompt; optional Codex receives the
    same full text as `prose_correction` in its existing context JSON. It remains untrusted evidence,
@@ -176,15 +177,26 @@ from the selected eval, never the last occurrence of a decision word inside find
 - With no prose-attempt record for that iteration, use the ordinary `EVAL_nN.md`.
 - A baseline whose decision is not editorial-eligible remains authoritative without edits; record
   `not-applied` and its exact hashes in `PROSE_CORRECTION_nN.md`, then route the baseline normally.
-- Once edits are pending or awaiting recheck, absent/partial/malformed evidence is `BLOCKED`.
-  A rolled-back attempt is also `BLOCKED`; keep its findings and restore evidence visible.
+- Once edits are pending or awaiting recheck, absent/partial/malformed evidence blocks acceptance
+  and further editorial attempts. Keep interrupted/rolled-back findings and restoration evidence
+  visible; missing recheck acceptance alone does not force a whole-topic pause.
 - A `rechecked` record selects only `PROSE_RECHECK_nN.md`, linked to that baseline/correction, with
   matching topic, iteration, complete finding dispositions and evaluated file hashes equal to the
   current files, plus matching approved-plan and source/trust/build evidence identities. Any mismatch
-  or subsequent change is `BLOCKED`, requiring a fresh semantic eval;
+  or subsequent change invalidates acceptance and requires current semantic assessment;
   never fall back to an older `ACCEPT`, mark a pending pass accepted, or create a new plan silently.
 - `not-applied` also requires current hashes matching its baseline. An editorial-only `FOLLOWUP`
   may suggest the opt-in eval command only if no correction attempt has already been consumed.
   After the one-pass cap, remaining `FOLLOWUP` uses normal reviewed semantic followup; human rulings
   still halt. Retain all original and new findings in either route.
+
+If no validated current recheck is available, offer the existing semantic followup route using
+current files, all original/new findings and correction records labeled acceptance-unverified.
+Crypto-followup may author its normal bounded plan from that evidence, subject to the existing
+fresh review gate; it must include the outstanding assessment, not claim that an old verdict
+accepts current source. This is recovery routing, not a fabricated or upgraded eval verdict: retain
+every original decision and never execute or accept from these records alone. A required human
+decision still takes `HUMAN_RULING`; an actual failed build, missing grounding/access prerequisite
+or failed restoration still takes `BLOCKED`. Missing correction metadata alone does not prohibit
+reviewed semantic followup. Eval suggests this route; it does not auto-dispatch a planner.
 </eval_result_resolution>
