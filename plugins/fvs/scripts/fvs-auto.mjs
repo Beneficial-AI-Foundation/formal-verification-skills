@@ -595,10 +595,11 @@ function stateErrors(state) {
     || roadmap.path !== (roadmap.decision === 'accepted' ? ROADMAP_PATH : null) || !isText(roadmap.decidedAt))) {
     errors.push('roadmap must be null or an accepted or declined decision with its path and time');
   }
-  if (extraction !== null && (!fields(errors, extraction, 'extraction', ['status', 'recordedAt', 'reasons', 'declared', 'checks', 'inputs', 'note'])
+  if (extraction !== null && (!fields(errors, extraction, 'extraction', ['status', 'recordedAt', 'selected', 'reasons', 'declared', 'checks', 'inputs', 'note'])
     || !['succeeded', 'failed'].includes(extraction.status)
     || !Array.isArray(extraction.reasons) || !extraction.reasons.every(isText)
     || (extraction.status === 'succeeded') !== (extraction.reasons.length === 0)
+    || !plainObject(extraction.selected) || !isText(extraction.selected.revision) || !isText(extraction.selected.configuration)
     || !plainObject(extraction.declared) || !Number.isInteger(extraction.declared.buildExitCode))) {
     errors.push('extraction must be null or a succeeded record without reasons or a failed record with them');
   }
@@ -780,6 +781,10 @@ export function initState({ projectRoot, choices, confirmOverwrite = false, plat
 }
 
 function nextAction(state) {
+  const { selected } = state.extraction ?? {};
+  if (selected && choiceChanges(selected, state.choices.source).length > 0) {
+    return `Rerun /fvs:auto-extract: the recorded extraction is for revision ${selected.revision} (${selected.configuration}), not the selected source.`;
+  }
   if (state.extraction?.status === 'succeeded') {
     return 'Run /fvs:auto-top-specs; milestone 2 functionality not yet available, so the auto track stops after extraction for now.';
   }
@@ -883,6 +888,8 @@ export function recordExtraction({ projectRoot, out, buildExitCode }) {
   const extraction = {
     status: reasons.length === 0 ? 'succeeded' : 'failed',
     recordedAt: now(),
+    // The source selection this record answers; a later confirmed change makes it history.
+    selected: { ...state.choices.source },
     reasons,
     declared: { buildExitCode },
     checks,

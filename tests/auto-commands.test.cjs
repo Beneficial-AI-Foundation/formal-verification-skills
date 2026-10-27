@@ -178,8 +178,25 @@ describe('auto-init setup state', () => {
     const root = project();
     init(root);
     auto.recordRoadmap({ projectRoot: root, decision: 'declined' });
+    const { out } = prepared(root);
+    assert.equal(record(root, out, 0).code, 'recorded');
     init(root, { ...CHOICES, scope: 'two modules' }, { confirmOverwrite: true });
-    assert.equal(JSON.parse(fs.readFileSync(stateFile(root), 'utf8')).roadmap.decision, 'declined');
+    const state = JSON.parse(fs.readFileSync(stateFile(root), 'utf8'));
+    assert.equal(state.roadmap.decision, 'declined');
+    assert.equal(state.extraction.status, 'succeeded');
+    assert.match(auto.readState({ projectRoot: root }).nextAction, /\/fvs:auto-top-specs/, 'a scope change keeps the extraction current');
+  });
+
+  it('a confirmed change of the source keeps the old extraction but asks for a new one', () => {
+    const root = project();
+    init(root);
+    const { out } = prepared(root);
+    record(root, out, 0);
+    init(root, { ...CHOICES, source: { revision: 'HEAD', configuration: 'feature simd' } }, { confirmOverwrite: true });
+    const read = auto.readState({ projectRoot: root });
+    assert.equal(read.state.extraction.status, 'succeeded', 'the history is kept');
+    assert.deepEqual(read.state.extraction.selected, CHOICES.source);
+    assert.match(read.nextAction, /\/fvs:auto-extract.*default features/);
   });
 
   it('missing or invalid choices are refused before anything is written', () => {
