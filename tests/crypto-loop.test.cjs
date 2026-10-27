@@ -343,9 +343,12 @@ describe('Crypto executor: precise editing contract (#107)', () => {
     }
     assert.match(executor, /actual tool\/schema; never infer availability/);
     assert.match(executor, /exact preimage has one unique match/);
-    assert.match(executor, /missing or\s+non-unique match must fail without partial mutation/);
+    assert.match(executor, /missing or non-unique exact match, including a fuzzy-only match, stops before\s+the editing tool is called/);
     assert.match(executor, /new files or genuine full rewrites only/);
-    assert.match(executor, /Never use replace-all, fuzzy matching, or a whole-file rewrite/);
+    assert.match(executor, /Never use replace-all or deliberately rely on fuzzy matching/);
+    assert.match(executor, /Pi 1\.2\.0 `edit` has fuzzy\s+fallback and no strict-match switch/);
+    assert.match(executor, /precheck does not disable that fallback or provide an atomic/);
+    assert.match(executor, /requires tool-enforced exact matching, report BLOCKED/);
     assert.match(executor, /Never use Bash, scripts, shell redirection/);
     assert.doesNotMatch(executor, /All (?:file )?writes MUST use the Write tool/);
   });
@@ -366,18 +369,25 @@ describe('Crypto executor: precise editing contract (#107)', () => {
         assert.ok(policy.includes(term), `${rel(file)} missing ${term}`);
       }
       assert.match(policy, /before any artifact write, cache\/source\s+execution, or dispatch confirmation|Before any artifact write, cache\/source execution, or dispatch confirmation/);
+      assert.match(policy, /agent-prechecked/);
+      assert.match(policy, /native fuzzy fallback and no strict-match switch/);
+      assert.match(policy, /fuzzy-only matches stop before/);
+      assert.match(policy, /tool-enforced exact-match[\s\S]*native guarantee/);
       assert.ok(source.includes('<editing_capability>\n$EDITING_CAPABILITY\n</editing_capability>'));
       assert.match(source, /selection manifest including the established\s+`Editing capability:` record/);
     });
   }
 
   // Contract simulation only: no host tools/model are invoked. Native tool qualification is separate.
-  function fixture({ inventory = tools, policy = 'precise', oldText = '  exact h', source } = {}) {
+  function fixture({ inventory = tools, policy = 'precise', oldText = '  exact h', source,
+    requireNativeExact = false, nativeExact = false } = {}) {
     let text = source || 'theorem retained (p : Prop) (h : p) : p := by\n  exact h\n-- untouched\n';
     const before = text;
     const calls = [];
     // The parent must reject incompatible effective access before model/source dispatch.
-    if (!inventory.includes('Edit') || policy !== 'precise') return { text, before, calls, blocked: true };
+    if (!inventory.includes('Edit') || policy !== 'precise' || (requireNativeExact && !nativeExact)) {
+      return { text, before, calls, blocked: true };
+    }
     calls.push('dispatch');
     const first = text.indexOf(oldText);
     if (!oldText || first < 0 || text.indexOf(oldText, first + 1) >= 0) {
@@ -401,6 +411,18 @@ describe('Crypto executor: precise editing contract (#107)', () => {
       assert.equal(result.text, result.before);
       assert.deepEqual(result.calls, ['dispatch']);
     }
+  });
+  it('rejects a fuzzy-only preimage at the agent precheck without calling the editor', () => {
+    const result = fixture({ source: '-- keep Unicode dash: a–b\n', oldText: 'a-b' });
+    assert.equal(result.blocked, true);
+    assert.equal(result.text, result.before);
+    assert.deepEqual(result.calls, ['dispatch']);
+  });
+  it('rejects a native-strict request before dispatch when only agent prechecks are supported', () => {
+    const result = fixture({ requireNativeExact: true });
+    assert.equal(result.blocked, true);
+    assert.equal(result.text, result.before);
+    assert.deepEqual(result.calls, []);
   });
   it('simulates Write-only tool or higher-priority policy incompatibility before dispatch', () => {
     for (const input of [{ inventory: tools.filter(tool => tool !== 'Edit') }, { policy: 'write-only' },
@@ -715,7 +737,8 @@ it('persists execution settings without masking simulated build failures or rewr
   fs.writeFileSync(path.join(bin, 'nice'), '#!/bin/sh\nprintf "simulated build stdout\\n"\nprintf "simulated build stderr\\n" >&2\nexit "$FVS_SIMULATED_BUILD_STATUS"\n', { mode: 0o755 });
   const approved = path.join(tmp, 'EXEC_PLAN_n1.md'); fs.writeFileSync(approved, 'immutable approved plan');
   const editing = { runtime: 'pi', route: 'simulated-child', requested: 'precise', tool: 'edit',
-    policy: 'precise', evidence: 'simulated inventory; not native qualification' };
+    policy: 'precise', enforcement: 'agent-prechecked', nativeFuzzyFallback: true,
+    evidence: 'simulated inventory; not native qualification' };
   const settings = { stage: 'crypto_execute', route: 'simulated-child',
     requested: { runtime: 'pi', model: 'provider/exact', effort: 'low', source: 'explicit run choice' },
     resolved: { runtime: 'pi', model: 'provider/exact', effort: 'low', source: 'simulated launch' },

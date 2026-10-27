@@ -57,13 +57,19 @@ execution, or dispatch confirmation. Inspect the effective role including projec
 child inventory/schema and permissions; requested permission alone never grants access. Localized
 refactoring requires precise edits by default. Record `Editing capability:` as JSON in the existing
 selection manifest and run output: runtime, dispatch route, effective role source, requested method,
-resolved native tool/schema, policy/permissions and evidence source; unestablished fields are
+resolved native tool/schema, policy/permissions, enforcement mode (agent-prechecked or tool-enforced
+exact), native fuzzy-fallback behavior and evidence source; unestablished fields are
 `unknown` with a reason. Bundled frontmatter or sandbox mode alone proves no effective access.
 
 Resolve Claude `Edit`, Pi `edit` in the selected child/profile or actual inline inventory, OpenCode
 `edit` permission, Codex exposed/permitted `apply_patch` or another native precise tool, and
-Antigravity's actual tool/schema. Require a checked unique exact preimage/context and failure
-without partial mutation. A Write-only role, denied/missing tool, unsupported checks, or unknown
+Antigravity's actual tool/schema. Default precise editing uses the executor's unique exact-preimage
+precheck: missing, nonunique or fuzzy-only matches stop before editing tool calls; verify the result
+afterward. Pi 1.2.0 has native fuzzy fallback and no strict-match switch. Report agent-prechecked
+editing, not native mismatch rejection or atomic exact matching against concurrent changes; stop
+and coordinate if concurrent source mutation is possible. Explicit tool-enforced exact-match
+requests require a native guarantee, so stock Pi 1.2.0 is incompatible with that request.
+A Write-only role, denied/missing tool, unsupported requested checks, or unknown
 required access is incompatible: stop before dispatch and source execution. Offer an explicit
 compatible selection interactively and rebuild/reconfirm; otherwise report the missing capability
 and stop. Never silently substitute whole-file Write or arbitrary shell source writes. Explicit

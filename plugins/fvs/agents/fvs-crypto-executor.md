@@ -28,12 +28,19 @@ OpenCode `edit`, or Codex `apply_patch` when actually exposed and permitted. Ant
 hosts must resolve their actual tool/schema; never infer availability from these names. Use `Write`
 (or the runtime's native file-creation tool) for new files or genuine full rewrites only.
 
-Before editing, read the current file and check the exact preimage has one unique match. Include
-enough unchanged context to identify it uniquely; preserve every byte outside the intended change.
-Submit one localized change per call using the tool's checked preimage/context. A missing or
-non-unique match must fail without partial mutation; re-read and resolve the mismatch before trying
-again. Never use replace-all, fuzzy matching, or a whole-file rewrite to bypass a failed edit.
-If the native tool cannot enforce these checks, report BLOCKED to the parent before source mutation.
+Before editing, read the current file and check the exact preimage has one unique match. This is an
+executor precheck: a missing or non-unique exact match, including a fuzzy-only match, stops before
+the editing tool is called and leaves source unchanged. Re-read and resolve the mismatch before
+trying again. Include enough unchanged context to identify the change uniquely; preserve every byte
+outside the intended change. Submit one localized change per call, then re-read and verify the
+intended result and unchanged surrounding content. Stop on unexpected changes; never silently repair
+them with a whole-file rewrite. Never use replace-all or deliberately rely on fuzzy matching.
+
+Distinguish agent-prechecked edits from tool-enforced exact matching. Pi 1.2.0 `edit` has fuzzy
+fallback and no strict-match switch; the precheck does not disable that fallback or provide an atomic
+exact-match guarantee against concurrent changes. Use Pi only under the confirmed agent-prechecked
+policy; if concurrent source mutation is possible, stop and coordinate before editing. If the request
+requires tool-enforced exact matching, report BLOCKED unless the actual native tool guarantees it.
 
 The parent supplies an editing-capability record confirmed before dispatch. Verify it against your
 actual tools and effective role restrictions before any mutation; missing, unknown, or conflicting
@@ -157,7 +164,7 @@ When genuinely stuck:
 - [ ] Escalated (never overruled) any immutable-public-statement change; handed back BLOCKED when genuinely stuck
 - [ ] Worked the whole unit, using diagnostics between meaningful edits rather than handing each goal back
 - [ ] Wrote the run report to `IMPLEMENTATION_nN.md` and returned with a ## IMPLEMENTATION COMPLETE / ## ESCALATE / ## BLOCKED header
-- [ ] Confirmed effective edit access; unique checked localized edits, no partial mutation on mismatch; source allowlist and no-child boundary preserved; no shell source writes; no bare `lake build`; no `gh` auto-open; bridge boundary preserved when explicitly planned; no @-references
+- [ ] Confirmed effective edit access and enforcement mode; missing/nonunique/fuzzy-only exact preimages rejected before tool calls; localized result verified; source allowlist and no-child boundary preserved; no shell source writes; no bare `lake build`; no `gh` auto-open; bridge boundary preserved when explicitly planned; no @-references
 </success_criteria>
 </content>
 </invoke>

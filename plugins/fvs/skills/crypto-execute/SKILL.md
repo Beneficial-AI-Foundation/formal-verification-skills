@@ -190,15 +190,21 @@ overrides a higher-priority role. Keep planners read-only; this gate grants no t
 
 Prepare an `Editing capability:` JSON record for the existing selection manifest: runtime, dispatch route
 (including Pi inline fallback), effective role source, requested method, resolved native tool and
-schema, effective policy/permissions, and evidence source. Use `unknown` with a reason for anything
+schema, effective policy/permissions, enforcement mode (agent-prechecked or tool-enforced exact),
+native fuzzy-fallback behavior, and evidence source. Use `unknown` with a reason for anything
 not established; bundled frontmatter alone is not effective access. For Claude inspect `Edit`;
 Pi requires actual `edit` exposure in the selected child/profile (or active inline inventory);
 OpenCode requires its `edit` permission; Codex requires an exposed/permitted `apply_patch` or other
 native precise tool, not merely a workspace-write sandbox. Antigravity must resolve its actual
 tool/schema; name conversion alone proves no capability.
 
-Precise editing requires a checked unique exact preimage/context and failure without partial
-mutation. A Write-only role, denied/missing tool, unsupported checks, or unknown required access is
+Default precise editing uses the executor's unique exact-preimage precheck: missing, nonunique or
+fuzzy-only matches stop before the editing tool is called. Verify the localized result afterward.
+Pi 1.2.0 has native fuzzy fallback and no strict-match switch; report agent-prechecked editing, not
+native mismatch rejection or atomic exact matching against concurrent changes. Stop and coordinate
+if concurrent source mutation is possible. Explicit tool-enforced exact-match requests require a
+native guarantee; stock Pi 1.2.0 is incompatible with that request, even with task permission.
+A Write-only role, denied/missing tool, unsupported requested checks, or unknown required access is
 incompatible: stop before dispatch and source execution. Interactively offer a compatible runtime/
 profile selection and rebuild/reconfirm the manifest; noninteractively report the exact missing
 capability and stop. Never confirm precise edits then silently fall back to whole-file Write or
