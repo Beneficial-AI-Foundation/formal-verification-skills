@@ -779,11 +779,12 @@ Typed mapping (only when the exact requested FVS role is registered AND agent_ty
 - \`Task(subagent_type="X", prompt="Y")\` -> \`spawn_agent(agent_type="X", message="Y")\`
 - \`Task(model="...")\` -> pass \`model\` if available for this child; otherwise omit only after the selection-capability gate proves it equals the active/inherited model.
 - \`Task(reasoning_effort="...")\` -> pass \`reasoning_effort\` if available for this child and the role does not pin it; otherwise omit only after the gate proves the effective (pinned or default) effort equals the confirmed effort.
-- \`fork_context: false\` by default -- FVS agents load their own context via \`<files_to_read>\` blocks.
 
 Generic-agent workaround (missing exact registered role OR no agent_type field):
 If the requested FVS type (${dispatchExamples}, etc.) is not registered, typed dispatch is NOT possible even with an \`agent_type\` field. If the field is absent, typed dispatch is also unavailable. Fallback:
 ${fallbackSteps}
+
+**Fresh context (typed and generic dispatch):** FVS children start without the parent conversation; put every input the child needs in its message (FVS workflow prompts already inline them). If the schema exposes \`fork_turns\`, pass \`fork_turns: "none"\` (omitting it or passing \`"all"\` forks the full history, which also refuses \`model\` and \`reasoning_effort\` overrides); if it exposes only \`fork_context\`, pass \`fork_context: false\`. If neither is exposed, fresh context is unconfirmed: say so before dispatch, and stop where the workflow requires a fresh child.
 
 Parallel fan-out:
 - Spawn multiple agents -> collect agent IDs -> call \`wait_agent(timeout_ms=...)\` (or the runtime's visible wait equivalent) until each completes

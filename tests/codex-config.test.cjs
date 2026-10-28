@@ -164,6 +164,24 @@ describe('Codex skill adapter header (getCodexSkillAdapterHeader)', () => {
     }
   });
 
+  // MultiAgentV2 rejects `fork_context` and treats an omitted `fork_turns` as a
+  // full-history fork, which also refuses model/effort overrides.
+  it('requests a fresh child for typed and generic dispatch on either spawn schema', () => {
+    for (const header of [
+      getCodexSkillAdapterHeader('crypto-eval'),
+      getCodexSkillAdapterHeader('crypto-execute', { pluginName: 'fvs' }),
+    ]) {
+      const fresh = header.indexOf('**Fresh context (typed and generic dispatch):**');
+      assert.ok(fresh > header.indexOf('Generic-agent workaround (missing exact registered role'));
+      assert.ok(fresh < header.indexOf('Parallel fan-out:'));
+      assert.match(header, /If the schema exposes `fork_turns`, pass `fork_turns: "none"`/);
+      assert.match(header, /omitting it or passing `"all"` forks the full history/);
+      assert.match(header, /if it exposes only `fork_context`, pass `fork_context: false`/);
+      assert.match(header, /stop where the workflow requires a fresh child/);
+      assert.ok(!header.includes('`fork_context: false` by default'), 'no unconditional V1-only mapping');
+    }
+  });
+
   it('checks visible per-child controls and fails closed on unconfirmed settings', () => {
     const header = getCodexSkillAdapterHeader('fvs-fc-plan');
     assert.match(header, /Selection-capability gate \(before manifest confirmation, child dispatch, or artifact writes\)/);

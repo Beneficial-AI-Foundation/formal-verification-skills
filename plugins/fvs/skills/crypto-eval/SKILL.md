@@ -73,7 +73,6 @@ Typed mapping (only when the exact requested FVS role is registered AND agent_ty
 - `Task(subagent_type="X", prompt="Y")` -> `spawn_agent(agent_type="X", message="Y")`
 - `Task(model="...")` -> pass `model` if available for this child; otherwise omit only after the selection-capability gate proves it equals the active/inherited model.
 - `Task(reasoning_effort="...")` -> pass `reasoning_effort` if available for this child and the role does not pin it; otherwise omit only after the gate proves the effective (pinned or default) effort equals the confirmed effort.
-- `fork_context: false` by default -- FVS agents load their own context via `<files_to_read>` blocks.
 
 Generic-agent workaround (missing exact registered role OR no agent_type field):
 If the requested FVS type (`fvs-crypto-thinker`, `fvs-crypto-executor`, etc.) is not registered, typed dispatch is NOT possible even with an `agent_type` field. If the field is absent, typed dispatch is also unavailable. Fallback:
@@ -81,6 +80,8 @@ If the requested FVS type (`fvs-crypto-thinker`, `fvs-crypto-executor`, etc.) is
 2. Only when the settings gate permits generic execution, spawn a generic/default child with those instructions as a role preamble before the task prompt. Do not pass an unregistered `agent_type`.
 3. Label output "generic-agent workaround". This is NOT equivalent to a registered specialist: the preamble does not assure typed identity, sandbox, model, or reasoning effort.
 4. If required guarantees cannot be honored, stop before dispatch or artifact writes; explain which guarantee is missing. Typed FVS roles currently require the direct Codex installation, a separate complete FVS install: point the user to "Codex specialist roles" in the FVS README and never suggest keeping both channels. Even after switching, confirm exact registration and settings in the runtime.
+
+**Fresh context (typed and generic dispatch):** FVS children start without the parent conversation; put every input the child needs in its message (FVS workflow prompts already inline them). If the schema exposes `fork_turns`, pass `fork_turns: "none"` (omitting it or passing `"all"` forks the full history, which also refuses `model` and `reasoning_effort` overrides); if it exposes only `fork_context`, pass `fork_context: false`. If neither is exposed, fresh context is unconfirmed: say so before dispatch, and stop where the workflow requires a fresh child.
 
 Parallel fan-out:
 - Spawn multiple agents -> collect agent IDs -> call `wait_agent(timeout_ms=...)` (or the runtime's visible wait equivalent) until each completes
