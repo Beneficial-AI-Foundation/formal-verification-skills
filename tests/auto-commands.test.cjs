@@ -384,6 +384,35 @@ describe('auto-extract extraction record', () => {
     }
   });
 
+  it('a blank oracle reason is omitted, so the written record stays readable', () => {
+    const root = project();
+    init(root);
+    const { out } = prepared(root);
+    const result = cli('record-extraction', '--project-root', root, '--out', out, '--build-exit-code', '0',
+      '--oracle', 'unknown', '--oracle-reason', '   ');
+    assert.equal(result.status, 1);
+    assert.equal(result.json.code, 'extraction-failed');
+    const read = cli('read-state', '--project-root', root);
+    assert.equal(read.status, 0, read.stdout);
+    assert.equal(read.json.state.extraction.status, 'failed');
+    assert.equal('oracleReason' in read.json.state.extraction.declared, false);
+  });
+
+  it('a non-string oracle reason is refused before anything is written', () => {
+    const root = project();
+    init(root);
+    const { out } = prepared(root);
+    assert.equal(record(root, out, 0).code, 'recorded');
+    const before = fs.readFileSync(stateFile(root));
+    for (const reason of [{ clause: 'ratification' }, 7, null, ['x']]) {
+      const result = record(root, out, 0, 'refused', reason);
+      assert.equal(result.code, 'usage', JSON.stringify(reason));
+      assert.match(result.message, /oracle reason must be text/);
+    }
+    assert.deepEqual(fs.readFileSync(stateFile(root)), before);
+    assert.equal(cli('read-state', '--project-root', root).json.code, 'ok');
+  });
+
   it('an absent or unrecognised oracle verdict records nothing', () => {
     const root = project();
     init(root);
@@ -712,7 +741,8 @@ describe('auto command and workflow text', () => {
   it('auto-extract hands off to the shared extractor and records every attempt through the script', () => {
     const body = text('auto-extract');
     assert.match(body, /\/fvs:aeneas-extract "\$CRATE_ROOT"/);
-    assert.match(body, /"\$AUTO" record-extraction --project-root \. --out "\$OUT" --build-exit-code "\$BUILD_STATUS" --oracle "\$ORACLE"/);
+    assert.match(body, /"\$AUTO" record-extraction --project-root \. --out "\$OUT" --build-exit-code "\$BUILD_STATUS" --oracle "\$ORACLE"\n/);
+    assert.match(body, /Add `--oracle-reason "<reason>"` only when the summary gives a reason/, 'no empty reason argument');
     assert.match(read('fv-skills/workflows/aeneas-extract.md'), /^Oracle: {16}\{complete \| refused: /m,
       'the shared extractor reports its final success-oracle verdict');
     assert.match(body, /Record every attempt, success or failure/);

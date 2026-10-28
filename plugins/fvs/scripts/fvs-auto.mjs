@@ -879,6 +879,9 @@ function resolveRevision(directory, revision) {
 export function recordExtraction({ projectRoot, out, buildExitCode, oracle, oracleReason }) {
   if (!Number.isInteger(buildExitCode)) refuse('usage', '--build-exit-code must be an integer');
   if (!ORACLE_VERDICTS.includes(oracle)) refuse('usage', `--oracle must be ${ORACLE_VERDICTS.slice(0, -1).join(', ')} or ${ORACLE_VERDICTS.at(-1)}`);
+  if (oracleReason !== undefined && typeof oracleReason !== 'string') refuse('usage', 'the oracle reason must be text');
+  // A blank reason is the same as none, so the record satisfies the reader's optional-text rule.
+  const reason = isText(oracleReason) ? oracleReason : undefined;
   const root = projectDirectory(projectRoot);
   const state = requireState(root);
   const copy = path.resolve(out);
@@ -889,8 +892,8 @@ export function recordExtraction({ projectRoot, out, buildExitCode, oracle, orac
   };
   const reasons = [];
   if (buildExitCode !== 0) reasons.push(`the build exited ${buildExitCode}`);
-  if (oracle === 'refused') reasons.push(`the shared extractor's success oracle refused completion: ${oracleReason ?? 'no reason given'}`);
-  if (oracle === 'unknown') reasons.push(`the shared extractor did not report a complete success oracle (verdict unknown)${oracleReason ? `: ${oracleReason}` : ''}`);
+  if (oracle === 'refused') reasons.push(`the shared extractor's success oracle refused completion: ${reason ?? 'no reason given'}`);
+  if (oracle === 'unknown') reasons.push(`the shared extractor did not report a complete success oracle (verdict unknown)${reason ? `: ${reason}` : ''}`);
   for (const [name, check] of Object.entries(checks)) {
     if (!check.ok) reasons.push(`the patch engine ${name} check refused (${check.code}): ${check.message}`);
   }
@@ -923,7 +926,7 @@ export function recordExtraction({ projectRoot, out, buildExitCode, oracle, orac
     // The source selection this record answers; a later confirmed change makes it history.
     selected: { ...state.choices.source },
     reasons,
-    declared: { buildExitCode, oracle, ...(oracleReason ? { oracleReason } : {}) },
+    declared: { buildExitCode, oracle, ...(reason ? { oracleReason: reason } : {}) },
     checks,
     inputs,
     note: NOT_A_PROOF,

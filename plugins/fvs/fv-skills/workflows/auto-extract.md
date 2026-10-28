@@ -62,8 +62,11 @@ oracle refusal after a clean build (an unratified Category-B patch, a failed dif
 Record every attempt, success or failure:
 
 ```bash
-node "$AUTO" record-extraction --project-root . --out "$OUT" --build-exit-code "$BUILD_STATUS" --oracle "$ORACLE" --oracle-reason "<the oracle's reason, when refused or unknown>"
+node "$AUTO" record-extraction --project-root . --out "$OUT" --build-exit-code "$BUILD_STATUS" --oracle "$ORACLE"
 ```
+
+Add `--oracle-reason "<reason>"` only when the summary gives a reason for a `refused` or `unknown`
+verdict; leave the flag out otherwise. A blank reason is recorded as no reason.
 
 - `recorded`: the script found a zero build exit, a `complete` oracle verdict, a prepared copy whose
   tree and restored source pass the engine's checks, the recorded revision and no uncommitted input
