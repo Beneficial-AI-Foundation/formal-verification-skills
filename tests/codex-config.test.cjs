@@ -147,6 +147,23 @@ describe('Codex skill adapter header (getCodexSkillAdapterHeader)', () => {
     assert.ok(header.includes('agent_type'), 'maps subagent_type to agent_type');
   });
 
+  // Codex only spawns when the user or skill instructions explicitly ask for
+  // sub-agents; a bare Task() translation table is not such a request.
+  it('authorizes workflow sub-agent dispatch explicitly, before the schema gate', () => {
+    for (const header of [
+      getCodexSkillAdapterHeader('crypto-plan'),
+      getCodexSkillAdapterHeader('crypto-eval', { pluginName: 'fvs' }),
+    ]) {
+      const auth = header.indexOf('**Delegation authorization:**');
+      assert.ok(auth > -1 && auth < header.indexOf('**Schema detection (required first step):**'));
+      assert.match(header, /Invoking this skill is the user's explicit request for the sub-agent delegation/);
+      assert.match(header, /do not wait for the user to ask for sub-agents again/);
+      assert.match(header, /do not perform a delegated role inline/);
+      assert.match(header, /discover it with `tool_search` first/);
+      assert.match(header, /stop before that dispatch, tell the user why/);
+    }
+  });
+
   it('checks visible per-child controls and fails closed on unconfirmed settings', () => {
     const header = getCodexSkillAdapterHeader('fvs-fc-plan');
     assert.match(header, /Selection-capability gate \(before manifest confirmation, child dispatch, or artifact writes\)/);
