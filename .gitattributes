@@ -1,0 +1,14 @@
+# These bytes are inputs to the Windows source-policy and build receipts.
+# Preserve them exactly even in checkouts using core.autocrlf=true.
+/scripts/fvs-probe-native/** -text whitespace=cr-at-eol
+/scripts/fvs-probe-windows*.mjs -text whitespace=cr-at-eol
+/plugins/fvs/scripts/fvs-probe-native/** -text whitespace=cr-at-eol
+/plugins/fvs/scripts/fvs-probe-windows*.mjs -text whitespace=cr-at-eol
+/scripts/fvs-probe-inventory.mjs -text
+/plugins/fvs/scripts/fvs-probe-inventory.mjs -text
+/tests/helpers/fvs-windows-native/** -text
+/tests/fixtures/windows-source-v1.json -text
+/tests/fixtures/windows-source-v1-historical-7ad374b.json -text
+# Unified-diff context markers and original CRLF bytes are intentional inputs.
+/scripts/fvs-probe-native/windows-source/*.patch whitespace=-blank-at-eol,cr-at-eol
+/plugins/fvs/scripts/fvs-probe-native/windows-source/*.patch whitespace=-blank-at-eol,cr-at-eol

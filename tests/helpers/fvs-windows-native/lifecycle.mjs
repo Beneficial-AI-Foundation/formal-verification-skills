@@ -1,0 +1,210 @@
+// Explicit native integration suite. Requires a test-hook launcher and built canary.
+// Never run concurrently with another native lifecycle/profile suite.
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import assert from 'node:assert/strict';
+import net from 'node:net';
+import {spawn,spawnSync} from 'node:child_process';
+
+const [launcherArg,canaryArg,evidenceArg,mode='smoke']=process.argv.slice(2);
+if(process.platform!=='win32'||!launcherArg||!canaryArg||!evidenceArg)throw Error('Usage: node lifecycle.mjs <test-launcher.exe> <canary.exe> <evidence-directory> [smoke|faults|cleanup-faults|extended|adversarial|job-recovery]');
+const launcher=path.resolve(launcherArg),canary=path.resolve(canaryArg),evidence=path.resolve(evidenceArg);
+fs.mkdirSync(evidence,{recursive:true});
+const hash=file=>crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+let launcherBuild=null;
+if(mode==='cleanup-faults'||mode==='review-regressions'){
+ const file=path.join(path.dirname(launcher),'fvs-windows-launcher.build.json');
+ const receipt=JSON.parse(fs.readFileSync(file,'utf8'));
+ assert.equal(receipt.testHooks,true,'Transition injections require the retained test-hook build');
+ assert.equal(receipt.launcherSha256,hash(launcher));
+ assert.equal(receipt.sources.length,5);
+ for(const source of receipt.sources){assert.equal(path.basename(source.file),source.file);assert.equal(hash(path.resolve('scripts/fvs-probe-native/windows',source.file)),source.sha256,'Retained test launcher must use the frozen current C# bytes');}
+ launcherBuild={receiptSha256:hash(file),recordedSourceSetSha256:receipt.sourceSetSha256,sources:receipt.sources,testHooks:true};
+}
+let serial=0,active=null;const checks=[];
+const write=(name,value)=>fs.writeFileSync(path.join(evidence,name),JSON.stringify(value,null,2)+'\n');
+function powershell(script,values={}){const r=spawnSync(path.join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe'),['-NoProfile','-NonInteractive','-Command','$ErrorActionPreference="Stop";'+script],{encoding:'utf8',windowsHide:true,env:{...process.env,...values}});assert.equal(r.status,0,r.stderr);return r.stdout.trim().replace(/^\uFEFF/,'');}
+function canonical(value){if(Array.isArray(value))return '['+value.map(canonical).join(',')+']';if(value&&typeof value==='object')return '{'+Object.keys(value).sort().map(k=>JSON.stringify(k)+':'+canonical(value[k])).join(',')+'}';return JSON.stringify(value);}
+function checksum(value){return crypto.createHash('sha256').update(canonical(value)).digest('hex');}
+function call(command,body,state,fault,ioFault){
+ const args=[command,...(state?[state]:[]),...(body?['-']:[])];
+ const result=spawnSync(launcher,args,{input:body?JSON.stringify(body):undefined,encoding:'utf8',windowsHide:true,maxBuffer:16*1024*1024,env:{...process.env,FVS_NATIVE_FAULT:fault??'',FVS_NATIVE_IO_FAULT:ioFault??''}});
+ let value;try{value=JSON.parse(result.stdout)}catch{value=null;}
+ write(`${String(++serial).padStart(4,'0')}-${command}.json`,{command,request:body,fault,ioFault,exitCode:result.status,stdout:result.stdout,stderr:result.stderr,result:value});
+ if(fault){assert.equal(result.status,197,`Fault did not terminate at ${fault}: ${result.stdout} ${result.stderr}`);return null;}
+ assert(value,`Invalid native output: ${result.stdout} ${result.stderr}`);return value;
+}
+function acls(paths){const script='$ErrorActionPreference="Stop";$s=[Security.AccessControl.AccessControlSections]::Owner -bor [Security.AccessControl.AccessControlSections]::Access;$p=$env:FVS_TEST_PATHS|ConvertFrom-Json;$a=foreach($v in $p){$d=if([IO.Directory]::Exists($v)){[IO.Directory]::GetAccessControl($v,$s)}else{[IO.File]::GetAccessControl($v,$s)};[pscustomobject]@{path=$v;acl=$d.GetSecurityDescriptorSddlForm($s)}};ConvertTo-Json -InputObject @($a) -Compress';const p=spawnSync(path.join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe'),['-NoProfile','-NonInteractive','-Command',script],{encoding:'utf8',windowsHide:true,env:{...process.env,FVS_TEST_PATHS:JSON.stringify(paths)}});assert.equal(p.status,0,p.stderr);return JSON.parse(p.stdout.replace(/^\uFEFF/,''));}
+const fixture=path.join(evidence,'fixture λ');fs.mkdirSync(fixture,{recursive:true});const protectedRoot=path.join(fixture,'protected');fs.mkdirSync(protectedRoot,{recursive:true});const protectedFile=path.join(protectedRoot,'source.txt');fs.writeFileSync(protectedFile,'protected original');
+const userProfile=process.env.USERPROFILE;const invariantPaths=[protectedRoot,protectedFile,userProfile];const originalAcl=acls(invariantPaths);const originalBytes=hash(protectedFile);
+function invariant(){assert.deepEqual(acls(invariantPaths),originalAcl);assert.equal(hash(protectedFile),originalBytes);}
+function check(name){checks.push({name,passed:true});console.log('PASS '+name);}
+function reserve(fault){const r=call('reserve',{schema:'fvs/windows-reserve/v2',mode:'staged'},null,fault);active=r??call('status');if(!fault)assert(active.ok,JSON.stringify(active));return active;}
+function makePrepare(){const work=path.join(active.stageRoot,'work'),output=path.join(active.stageRoot,'output'),exe=path.join(active.stageRoot,'canary.exe');fs.mkdirSync(work);fs.mkdirSync(output);fs.copyFileSync(canary,exe);fs.writeFileSync(path.join(active.stageRoot,'readonly.txt'),'readonly original');return {schema:'fvs/windows-prepare/v2',sessionId:active.sessionId,readOnlyPaths:[exe,path.join(active.stageRoot,'readonly.txt'),protectedRoot],writablePaths:[work,output],disposablePaths:[work,output],executablePaths:[exe],profileTempWritable:true};}
+function prepare(fault){const request=makePrepare();const p=call('prepare',request,null,fault);if(p){assert(p.ok,JSON.stringify(p));active={...active,...p,request};}else active.request=request;return p;}
+function recover(){if(!active)return;const r=call('recover',{schema:'fvs/windows-recover/v2',sessionId:active.sessionId});assert(r.ok,JSON.stringify(r));const receipt=JSON.parse(fs.readFileSync(r.terminalReceiptPath,'utf8'));assert.equal(hash(r.terminalReceiptPath),r.terminalReceiptSha256);assert(receipt.jobDrained&&receipt.profileAbsent&&receipt.stageRemoved&&receipt.aclCleanupConfirmed);assert(!fs.existsSync(active.stageRoot));invariant();const again=call('recover',{schema:'fvs/windows-recover/v2',sessionId:active.sessionId});assert(again.ok);assert.equal(again.terminalReceiptSha256,r.terminalReceiptSha256);active=null;return receipt;}
+function dispose(fault){const r=call('dispose',{schema:'fvs/windows-dispose/v2',stateSha256:active.stateSha256,cleanPrivatePaths:active.request.writablePaths},active.statePath,fault);if(r){assert(r.ok,JSON.stringify(r));const receipt=JSON.parse(fs.readFileSync(r.terminalReceiptPath,'utf8'));assert(receipt.descendantAclAudit.exactRestored,JSON.stringify(receipt));assert(receipt.resourceAclResults.every(r=>r.exactRestored));assert(!fs.existsSync(active.stageRoot));invariant();active=null;return receipt;}return null;}
+function run(args,options={}){return call('run',{schema:'fvs/windows-run/v2',stateSha256:active.stateSha256,executable:active.request.executablePaths[0],args,cwd:active.request.writablePaths[0],environment:{},timeoutMs:3000,maxOutputBytes:1024*1024,...options},active.statePath);}
+function assertExactRecovery(receipt){
+ assert.equal(receipt.descendantAclAudit.exactRestored,true,JSON.stringify(receipt));
+ assert.deepEqual(receipt.descendantAclAudit.changedPreserved,[]);
+ assert.equal(receipt.descendantAclAudit.ownSidRemaining,0);
+ assert(receipt.resourceAclResults.every(resource=>resource.exactRestored&&resource.beforeAcl===resource.currentAcl));
+}
+function interruptedThenRecover({runMustRefuse=true}={}){
+ const journalFile=path.resolve(active.controlDirectory,'../../..','active.json');
+ const before=fs.readFileSync(journalFile),journal=JSON.parse(before);
+ assert(!['disposed','recovered'].includes(journal.phase),'Injected interruption must leave logical ownership active');
+ const status=call('status');assert.equal(status.sessionId,active.sessionId);
+ assert.notEqual(status.status,'idle');assert.notEqual(status.status,'quarantined');
+ assert(!fs.existsSync(path.join(active.controlDirectory,'terminal-receipt.json')),'No terminal receipt may authorize publication after this interruption');
+ const second=call('reserve',{schema:'fvs/windows-reserve/v2',mode:'readonly'});assert.equal(second.ok,false);
+ if(runMustRefuse&&fs.existsSync(active.statePath)){
+  const refused=run(['echo-args','must-not-run'],{stateSha256:journal.stateSha256});
+  assert.equal(refused.ok,false);assert.equal(refused.stdout??'','');
+ }
+ assert.deepEqual(fs.readFileSync(journalFile),before,'Inspection/refused operations must not silently repair interrupted state');
+ const receipt=recover();assertExactRecovery(receipt);return receipt;
+}
+function removalPoint(file,edge){
+ const plan=JSON.parse(fs.readFileSync(path.join(active.controlDirectory,'plan.json'),'utf8'));
+ // This fixture starts with empty writable roots, so leaf cleanup does not
+ // remove any original entry before the native reverse-order ACL audit.
+ assert(plan.entries.every(entry=>fs.existsSync(entry.path)));
+ const index=[...plan.entries].reverse().findIndex(entry=>entry.path===file);
+ assert(index>=0,'Requested original entry must belong to the immutable plan');
+ return `remove-entry-${index}:${edge}`;
+}
+function newPrivateAclEntry(){
+ const directory=path.join(active.request.writablePaths[0],'created-protected-acl');fs.mkdirSync(directory);
+ // Convert the inherited unique package ACE into an explicit one on a new
+ // disposable directory. Root inheritance cleanup must leave this for the
+ // native remove-created-entry transition; no protected tree ACL is edited.
+ powershell('$a=[IO.Directory]::GetAccessControl($env:FVS_TEST_PATH);$a.SetAccessRuleProtection($true,$true);[IO.Directory]::SetAccessControl($env:FVS_TEST_PATH,$a)',{FVS_TEST_PATH:directory});
+ assert(acls([directory])[0].acl.includes(active.profileSid),'New private fixture must contain the prepared package SID');
+ return directory;
+}
+try{
+ if(mode==='smoke'){
+  reserve();prepare();let result=run(['echo-args','space value','quote"','unicode-λ']);assert(result.ok,JSON.stringify(result));assert.deepEqual(JSON.parse(result.stdout).args,['space value','quote"','unicode-λ']);assert.equal(result.activeProcessesAfter,0);assert.deepEqual(result.capabilities,['registryRead']);assert(result.inheritedSentinelExcluded);assert.equal(hash(result.resultPath),result.resultSha256);const receipt=dispose();assert.equal(receipt.lastRunId,result.runId);assert.equal(receipt.lastRunResultSha256,result.resultSha256);check('execution, effective readonly check, digest-bound receipt and exact ACL restoration');
+  reserve();const owner=spawnSync(process.execPath,['--input-type=module','-e',`import {spawnSync} from 'node:child_process';const x=spawnSync(process.argv[1],['recover','-'],{input:process.argv[2],encoding:'utf8',windowsHide:true});process.stdout.write(x.stdout);`,launcher,JSON.stringify({schema:'fvs/windows-recover/v2',sessionId:active.sessionId})],{encoding:'utf8',windowsHide:true});const denied=JSON.parse(owner.stdout);assert.equal(denied.ok,false);assert.match(denied.diagnostics.join(' '),/live-session-owner/);assert(fs.existsSync(active.stageRoot));recover();check('different live outer copier owner cannot be recovered');
+  reserve();prepare();result=run(['chain-linger','0',active.request.writablePaths[0]],{timeoutMs:500});assert.equal(result.status,'timeout');assert.equal(result.activeProcessesAfter,0);dispose();check('bounded timeout drains three generations');
+  reserve();prepare();const externalAlias=path.join(active.request.writablePaths[0],'outside-alias');fs.linkSync(protectedFile,externalAlias);const before=acls([protectedFile])[0].acl;const d=call('dispose',{schema:'fvs/windows-dispose/v2',stateSha256:active.stateSha256},active.statePath);assert.equal(d.ok,false);assert.equal(acls([protectedFile])[0].acl,before);const recovered=recover();assert(recovered.aclCleanupConfirmed);assert.equal(fs.statSync(protectedFile).nlink,1);check('strict default rejects generated hardlink before ACL mutation; scoped recovery unlinks only private alias');
+  reserve();prepare();const request={schema:'fvs/windows-run/v2',stateSha256:active.stateSha256,executable:active.request.executablePaths[0],args:['chain-linger','0',active.request.writablePaths[0]],cwd:active.request.writablePaths[0],environment:{},timeoutMs:30000,maxOutputBytes:1048576};const child=spawn(launcher,['run',active.statePath,'-'],{windowsHide:true,stdio:['pipe','pipe','pipe']});child.stdin.end(JSON.stringify(request));let stdout='';child.stdout.on('data',x=>stdout+=x);const done=new Promise(resolve=>child.once('close',resolve));for(let n=0;n<200&&!fs.existsSync(path.join(active.request.writablePaths[0],'pid-2.txt'));n++)await new Promise(r=>setTimeout(r,25));assert(fs.existsSync(path.join(active.request.writablePaths[0],'pid-2.txt')));const cancel=call('cancel',{schema:'fvs/windows-cancel/v2',sessionId:active.sessionId});assert(cancel.ok,JSON.stringify(cancel));await done;result=JSON.parse(stdout);assert.equal(result.status,'cancelled');assert.equal(result.activeProcessesAfter,0);dispose();check('separate cancellation signal reaches locked run and drains descendants');
+ }else if(mode==='review-regressions'){
+  function attribute(file){return Number(powershell('[int][IO.File]::GetAttributes($env:FVS_TEST_PATH)',{FVS_TEST_PATH:file}));}
+  function readonly(file){powershell('[IO.File]::SetAttributes($env:FVS_TEST_PATH,[IO.File]::GetAttributes($env:FVS_TEST_PATH) -bor [IO.FileAttributes]::ReadOnly)',{FVS_TEST_PATH:file});}
+  for(const readOnly of [false,true]){
+   reserve();
+   if(readOnly){
+    const w=path.join(active.stageRoot,'w');fs.mkdirSync(w);const request={schema:'fvs/windows-prepare/v2',sessionId:active.sessionId,readOnlyPaths:[canary,protectedRoot,w],writablePaths:[],disposablePaths:[],executablePaths:[canary],profileTempWritable:false};
+    const p=call('prepare',request);assert(p.ok,JSON.stringify(p));active={...active,...p,request};
+   }else prepare();
+   const removed=readOnly?'w':'work';
+   dispose('remove-stage-directory:'+removed+':after-mutation');
+   assert(fs.existsSync(active.stageRoot));assert(!fs.existsSync(path.join(active.stageRoot,removed)));
+   if(!readOnly){
+    const survivor=path.join(active.stageRoot,'output'),saved=survivor+'.saved';assert(fs.existsSync(survivor));
+    fs.renameSync(survivor,saved);fs.mkdirSync(survivor);
+    try{const refused=call('recover',{schema:'fvs/windows-recover/v2',sessionId:active.sessionId});assert.equal(refused.ok,false);assert.match(refused.diagnostics.join(' '),/identity changed/i);}
+    finally{fs.rmdirSync(survivor);fs.renameSync(saved,survivor);}
+   }
+   // A surviving protected identity may not be replaced or disappear even
+   // when an authenticated private-root removal is in progress.
+   const saved=protectedFile+'.saved';fs.renameSync(protectedFile,saved);
+   try{
+    const missing=call('recover',{schema:'fvs/windows-recover/v2',sessionId:active.sessionId});assert.equal(missing.ok,false);assert.match(missing.diagnostics.join(' '),/disappeared|not exist|missing/i);
+    fs.writeFileSync(protectedFile,'substitute');
+    const substituted=call('recover',{schema:'fvs/windows-recover/v2',sessionId:active.sessionId});assert.equal(substituted.ok,false);assert.match(substituted.diagnostics.join(' '),/identity changed/i);
+   }finally{if(fs.existsSync(protectedFile))fs.unlinkSync(protectedFile);fs.renameSync(saved,protectedFile);}
+   if(!readOnly)call('recover',{schema:'fvs/windows-recover/v2',sessionId:active.sessionId},null,'remove-stage-directory:output:after-mutation');
+   assertExactRecovery(recover());reserve();prepare();dispose();
+   check('partial '+(readOnly?'readonly w':'writable work')+' removal recovers idempotently, rejects protected replacement/missing file, releases session');
+  }
+  for(const kind of ['copied','child','hardlink'])for(const recovery of [false,true]){
+   const outside=path.join(protectedRoot,'outside-readonly.txt');fs.writeFileSync(outside,'outside readonly bytes');readonly(outside);
+   const before={hash:hash(outside),acl:acls([outside]),attributes:attribute(outside),links:fs.statSync(outside).nlink};
+   reserve();prepare();const leaf=path.join(active.request.writablePaths[0],'private-readonly.txt');
+   if(kind==='copied'){fs.copyFileSync(outside,leaf);assert.notEqual(fs.statSync(leaf).ino,fs.statSync(outside).ino);}
+   if(kind==='hardlink')fs.linkSync(outside,leaf);
+   if(kind==='child'){const result=run(['create-readonly',leaf]);assert(result.ok,JSON.stringify(result));assert.equal(result.activeProcessesAfter,0);}
+   assert.equal(attribute(leaf)&1,1,'Actual READONLY attribute required');
+   if(recovery)assertExactRecovery(recover());else dispose();
+   assert.deepEqual({hash:hash(outside),acl:acls([outside]),attributes:attribute(outside),links:fs.statSync(outside).nlink},before);
+   // Fixture teardown changes only this independently created outside file,
+   // after asserting its attributes and hardlink count remained unchanged.
+   powershell('[IO.File]::SetAttributes($env:FVS_TEST_PATH,[IO.FileAttributes]::Normal);[IO.File]::Delete($env:FVS_TEST_PATH)',{FVS_TEST_PATH:outside});
+   check(kind+' readonly private leaf '+(recovery?'recovery':'disposal')+' preserves outside bytes/ACL/attributes/link count');
+  }
+ }else if(mode==='faults'){
+  for(const step of ['create-session','create-control','create-stage'])for(const edge of ['before-intent','after-intent','after-mutation','after-completion']){reserve(`${step}:${edge}`);recover();check(`reserve termination ${step}:${edge}`);}
+  for(const step of ['create-profile','create-temp','harden-profile','grant-0','grant-2','grant-5','publish-state','create-run.lock'])for(const edge of ['before-intent','after-intent','after-mutation','after-completion']){reserve();prepare(`${step}:${edge}`);recover();check(`prepare termination ${step}:${edge}`);}
+  for(const step of ['remove-resource-5','delete-profile','persist-cleanup-audit','remove-stage','terminal-receipt','session-release'])for(const edge of ['before-intent','after-intent','after-mutation','after-completion']){reserve();prepare();dispose(`${step}:${edge}`);recover();check(`dispose termination ${step}:${edge}`);}
+  for(const point of ['grant-entry-2-0:before-mutation','grant-entry-2-0:after-mutation','grant-entry-2-1:before-mutation','grant-entry-2-1:after-mutation']){reserve();prepare(point);recover();check('individual readonly '+point);}
+  for(const point of ['run:before-intent','run:after-intent','job:before-create','job:after-configure','child:after-create-suspended','child:after-token-checks','child:before-resume','child:after-resume','job:after-drain','run-result:before-write','run-result:after-write','run-complete:before-write','run-complete:after-write']){reserve();prepare();call('run',{schema:'fvs/windows-run/v2',stateSha256:active.stateSha256,executable:active.request.executablePaths[0],args:['echo-args','fault'],cwd:active.request.writablePaths[0],environment:{},timeoutMs:3000,maxOutputBytes:1048576},active.statePath,point);recover();check('execution termination '+point);}
+ }else if(mode==='cleanup-faults'){
+  const edges=['before-intent','after-intent','after-mutation','after-completion'];
+  // Additional concrete resource indices exercise both inheritable writable
+  // grants and the remaining readonly/control-file transitions.
+  for(const step of ['grant-1','grant-3','grant-4','create-handle-sentinel'])for(const edge of edges){
+   reserve();prepare(`${step}:${edge}`);interruptedThenRecover();check(`additional prepare termination ${step}:${edge}`);
+  }
+  for(const point of ['grant-entry-0-0:before-mutation','grant-entry-0-0:after-mutation','grant-entry-1-0:before-mutation','grant-entry-1-0:after-mutation']){
+   reserve();prepare(point);interruptedThenRecover();check('additional readonly entry '+point);
+  }
+  for(const step of ['remove-resource-3','remove-resource-4'])for(const edge of edges){
+   reserve();prepare();dispose(`${step}:${edge}`);interruptedThenRecover();check(`writable resource cleanup termination ${step}:${edge}`);
+  }
+  for(const operation of ['dispose','recover'])for(const file of [protectedFile,protectedRoot])for(const edge of ['before-mutation','after-mutation']){
+   reserve();prepare();const point=removalPoint(file,edge);
+   if(operation==='dispose')dispose(point);else call('recover',{schema:'fvs/windows-recover/v2',sessionId:active.sessionId},null,point);
+   interruptedThenRecover();check(`${operation} original-entry cleanup termination ${path.basename(file)} ${point}`);
+  }
+  for(const operation of ['dispose','recover'])for(const edge of edges){
+   reserve();prepare();const created=newPrivateAclEntry(),point=`remove-created-entry:${edge}`;
+   if(operation==='dispose')dispose(point);else call('recover',{schema:'fvs/windows-recover/v2',sessionId:active.sessionId},null,point);
+   interruptedThenRecover();assert(!fs.existsSync(created));check(`${operation} created-entry cleanup termination ${point}`);
+  }
+  for(const [initial,step] of [['create-session:after-intent','recover-session-directory'],['create-control:after-intent','recover-control-directory']])for(const edge of edges){
+   reserve(initial);call('recover',{schema:'fvs/windows-recover/v2',sessionId:active.sessionId},null,`${step}:${edge}`);
+   interruptedThenRecover();check(`recovery directory termination ${step}:${edge}`);
+  }
+  for(const file of ['active.json','cleanup-audit.json','terminal-receipt.json'])for(const action of ['write','flush','replace']){
+   reserve();prepare();const point=`${action}:${file}`;
+   const failed=call('dispose',{schema:'fvs/windows-dispose/v2',stateSha256:active.stateSha256,cleanPrivatePaths:active.request.writablePaths},active.statePath,null,point);
+   assert.equal(failed.ok,false);assert.match(JSON.stringify(failed),/Injected durable I\/O failure/);
+   // Failure to persist the initial dispose intent changes no native state;
+   // the original prepared state remains valid, but another reserve is blocked.
+   interruptedThenRecover({runMustRefuse:file!=='active.json'});check('cleanup durable I/O refusal '+point);
+  }
+  for(const file of ['run.lock','handle-sentinel'])for(const action of ['write','flush','replace']){
+   reserve();const request=makePrepare();active.request=request;
+   const point=`${action}:${file}`,failed=call('prepare',request,null,null,point);
+   assert.equal(failed.ok,false);assert.equal(failed.status,'preparation-failed-rolled-back',JSON.stringify(failed));
+   assert(!fs.existsSync(active.stageRoot));assertExactRecovery(recover());check('control-file durable I/O refusal '+point);
+  }
+ }else if(mode==='extended'){
+  reserve();const before=fs.readFileSync(path.resolve(active.controlDirectory,'../../..','active.json'));const second=call('reserve',{schema:'fvs/windows-reserve/v2',mode:'readonly'});assert.equal(second.ok,false);assert.deepEqual(fs.readFileSync(path.resolve(active.controlDirectory,'../../..','active.json')),before);recover();check('second reservation cannot replace active logical session');
+  reserve();prepare();const journalPath=path.resolve(active.controlDirectory,'../../..','active.json'),original=fs.readFileSync(journalPath),preparedAcl=acls(invariantPaths);try{const damaged=JSON.parse(original);damaged.phase='disposed';fs.writeFileSync(journalPath,JSON.stringify(damaged));const status=call('status');assert.equal(status.status,'quarantined');const next=call('reserve',{schema:'fvs/windows-reserve/v2',mode:'readonly'});assert.equal(next.ok,false);assert.deepEqual(acls(invariantPaths),preparedAcl);}finally{fs.writeFileSync(journalPath,original);}recover();check('valid-JSON journal corruption fails checksum before any cleanup or reservation');
+  for(const point of ['write:plan.json','flush:plan.json','replace:plan.json','write:state.json','flush:state.json','replace:state.json']){reserve();const request=makePrepare();const failed=call('prepare',request,null,null,point);assert.equal(failed.ok,false);assert.equal(failed.status,'preparation-failed-rolled-back',JSON.stringify(failed));assert(!fs.existsSync(active.stageRoot));invariant();active=null;check('durable I/O refusal '+point);}
+  reserve();prepare();const held=path.join(fixture,'held-original');fs.renameSync(protectedFile,held);fs.writeFileSync(protectedFile,'replacement');const prior=acls([protectedRoot,userProfile]);try{const rejected=call('dispose',{schema:'fvs/windows-dispose/v2',stateSha256:active.stateSha256,cleanPrivatePaths:active.request.writablePaths},active.statePath);assert.equal(rejected.ok,false);assert.match(rejected.diagnostics.join(' '),/identity changed/);assert.deepEqual(acls([protectedRoot,userProfile]),prior);}finally{fs.unlinkSync(protectedFile);fs.renameSync(held,protectedFile);}recover();check('protected descendant identity replacement refuses all ACL cleanup');
+  reserve();prepare();call('recover',{schema:'fvs/windows-recover/v2',sessionId:active.sessionId},null,'remove-resource-5:after-mutation');recover();check('interrupted recovery resumes idempotently');
+ }else if(mode==='adversarial'){
+  for(const [name,bad] of [['UNC','\\\\localhost\\C$\\bad'],['device namespace','\\\\?\\'+protectedRoot],['drive relative','C:bad'],['alternate stream',protectedFile+':stream'],['trailing dot',protectedRoot+'.'],['trailing space',protectedRoot+' '],['dot component',protectedRoot+'\\.'],['reserved device',fixture+'\\NUL'],['mixed separators',protectedRoot.replaceAll('\\','/')]]){reserve();const request=makePrepare();request.readOnlyPaths[2]=bad;const rejected=call('prepare',request);assert.equal(rejected.ok,false,name);assert.equal(rejected.status,'preparation-failed-rolled-back',JSON.stringify(rejected));assert(!fs.existsSync(active.stageRoot));active=null;invariant();check('reject '+name);}
+  for(const kind of ['junction','hardlink','overlap','coordinator','descendant-junction']){reserve();const request=makePrepare();let cleanup=()=>{};if(kind==='junction'){const link=path.join(fixture,'junction');fs.symlinkSync(protectedRoot,link,'junction');request.readOnlyPaths[2]=link;cleanup=()=>fs.rmdirSync(link);}if(kind==='hardlink'){const link=path.join(fixture,'hardlink');fs.linkSync(protectedFile,link);cleanup=()=>fs.unlinkSync(link);}if(kind==='overlap')request.readOnlyPaths.push(request.writablePaths[0].toUpperCase());if(kind==='coordinator')request.readOnlyPaths.push(path.resolve(active.controlDirectory,'../../..'));if(kind==='descendant-junction'){const root=path.join(fixture,'junction-parent');fs.mkdirSync(root);const link=path.join(root,'child');fs.symlinkSync(protectedRoot,link,'junction');request.readOnlyPaths.push(root);cleanup=()=>{fs.rmdirSync(link);fs.rmdirSync(root)};}try{const rejected=call('prepare',request);assert.equal(rejected.ok,false,kind);assert.equal(rejected.status,'preparation-failed-rolled-back',JSON.stringify(rejected));active=null;}finally{cleanup();}invariant();check('reject '+kind);}
+  const short=powershell('$f=New-Object -ComObject Scripting.FileSystemObject;$f.GetFolder($env:FVS_TEST_PATH).ShortPath',{FVS_TEST_PATH:protectedRoot});if(short.toLowerCase()!==protectedRoot.toLowerCase()){reserve();const request=makePrepare();request.readOnlyPaths[2]=short;const rejected=call('prepare',request);assert.equal(rejected.ok,false);assert.equal(rejected.status,'preparation-failed-rolled-back');active=null;check('reject actual NTFS short-name alias');}else checks.push({name:'NTFS short-name alias',skipped:true,reason:'Host supplied no distinct short name'});
+  for(const kind of ['bad-state-digest','changed-state','changed-executable','metadata-cwd','metadata-executable','reserved-environment','output-limit','background-descendant']){reserve();prepare();let restore=()=>{},result;try{let options={};let args=['echo-args'];if(kind==='bad-state-digest')options.stateSha256='0'.repeat(64);if(kind==='changed-state'){const bytes=fs.readFileSync(active.statePath);fs.appendFileSync(active.statePath,' ');restore=()=>fs.writeFileSync(active.statePath,bytes);}if(kind==='changed-executable'){const exe=active.request.executablePaths[0],bytes=fs.readFileSync(exe);fs.appendFileSync(exe,' ');restore=()=>fs.writeFileSync(exe,bytes);}if(kind==='metadata-cwd')options.cwd=userProfile;if(kind==='metadata-executable')options.executable=path.join(userProfile,'arbitrary.exe');if(kind==='reserved-environment')options.environment={USERPROFILE:fixture};if(kind==='output-limit'){args=['flood'];options.maxOutputBytes=2048;}if(kind==='background-descendant')args=['spawn-linger'];result=run(args,options);if(kind==='background-descendant'){assert(result.ok,JSON.stringify(result));assert.equal(result.activeProcessesAfter,0);const child=result.stdout.trim().split(/\r?\n/).map(x=>JSON.parse(x)).find(x=>x.check==='background-child');assert(child);let alive=true;try{process.kill(child.childPid,0)}catch{alive=false}assert(!alive);}else{assert.equal(result.ok,false,JSON.stringify(result));if(kind==='output-limit'){assert.equal(result.status,'output-limit');assert.equal(result.activeProcessesAfter,0);assert(Buffer.byteLength(result.stdout)<=2048);}}}finally{restore();recover();}check(kind);}
+  reserve();prepare();const link=path.join(active.request.writablePaths[0],'unsafe-link');fs.symlinkSync(protectedRoot,link,'junction');const aclBefore=acls(invariantPaths);try{const rejected=call('dispose',{schema:'fvs/windows-dispose/v2',stateSha256:active.stateSha256,cleanPrivatePaths:active.request.writablePaths},active.statePath);assert.equal(rejected.ok,false);assert.deepEqual(acls(invariantPaths),aclBefore);assert(fs.existsSync(protectedFile));}finally{fs.rmdirSync(link);recover();}check('private cleanup refuses junction before touching outside bytes or ACLs');
+  reserve();prepare();const original=acls([protectedFile])[0].acl;try{powershell('$a=[IO.File]::GetAccessControl($env:FVS_TEST_FILE);$a.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new("S-1-5-32-545"),[Security.AccessControl.FileSystemRights]::ReadAttributes,[Security.AccessControl.AccessControlType]::Allow));[IO.File]::SetAccessControl($env:FVS_TEST_FILE,$a)',{FVS_TEST_FILE:protectedFile});const r=call('recover',{schema:'fvs/windows-recover/v2',sessionId:active.sessionId});assert(r.ok,JSON.stringify(r));const receipt=JSON.parse(fs.readFileSync(r.terminalReceiptPath));assert.equal(receipt.descendantAclAudit.exactRestored,false);assert(receipt.descendantAclAudit.changedPreserved.length>0);assert.notEqual(acls([protectedFile])[0].acl,originalAcl[1].acl);assert(!fs.existsSync(active.stageRoot));active=null;}finally{powershell('$a=[IO.File]::GetAccessControl($env:FVS_TEST_FILE);$a.RemoveAccessRuleSpecific([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new("S-1-5-32-545"),[Security.AccessControl.FileSystemRights]::ReadAttributes,[Security.AccessControl.AccessControlType]::Allow));[IO.File]::SetAccessControl($env:FVS_TEST_FILE,$a)',{FVS_TEST_FILE:protectedFile});}invariant();check('cleanup preserves unrelated trusted ACE and refuses exact-restoration attestation');
+  reserve();prepare();const journal=path.resolve(active.controlDirectory,'../../..','active.json'),snapshot=fs.readFileSync(journal);try{const value=JSON.parse(snapshot);value.originSessionId+=100;delete value.integritySha256;value.integritySha256=checksum(value);fs.writeFileSync(journal,JSON.stringify(value));const denied=call('recover',{schema:'fvs/windows-recover/v2',sessionId:active.sessionId});assert.equal(denied.ok,false);assert.match(denied.diagnostics.join(' '),/cross-logon-recovery-unqualified/);}finally{fs.writeFileSync(journal,snapshot);recover();}check('simulated origin-logon mismatch refuses mutation; actual alternate logon remains unqualified');
+  reserve();const request=makePrepare();const old=request.writablePaths[0],writable=path.join(active.stageRoot,'write');fs.renameSync(old,writable);request.writablePaths[0]=writable;request.disposablePaths[0]=writable;for(const name of ['aap-only.txt','arap-only.txt']){const file=path.join(active.stageRoot,name);fs.writeFileSync(file,'group-readable');powershell('$a=[Security.AccessControl.FileSecurity]::new();$u=[Security.Principal.WindowsIdentity]::GetCurrent().User;$a.SetOwner($u);$a.SetAccessRuleProtection($true,$false);$a.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($u,[Security.AccessControl.FileSystemRights]::FullControl,[Security.AccessControl.AccessControlType]::Allow));$a.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($env:FVS_TEST_GROUP),[Security.AccessControl.FileSystemRights]::Read,[Security.AccessControl.AccessControlType]::Allow));[IO.File]::SetAccessControl($env:FVS_TEST_FILE,$a)',{FVS_TEST_FILE:file,FVS_TEST_GROUP:name==='aap-only.txt'?'S-1-15-2-1':'S-1-15-2-2'});}const p=call('prepare',request);assert(p.ok,JSON.stringify(p));active={...active,...p,request};const state=JSON.parse(fs.readFileSync(p.statePath));const listener=net.createServer(socket=>socket.destroy());await new Promise(resolve=>listener.listen(0,'127.0.0.1',resolve));try{const result=run(['0',protectedRoot,String(listener.address().port)],{timeoutMs:10000,environment:{FVS_PROOF_PROFILE_ROOT:state.profileRoot,FVS_PROOF_PROFILE_TEMP:state.privateTemp}});assert(result.ok,JSON.stringify(result));assert.equal(result.lpacAccessCheckVerified,true);assert.equal(result.inheritedSentinelExcluded,true);assert.deepEqual(result.capabilities,['registryRead']);const rows=result.stdout.trim().split(/\r?\n/).map(x=>JSON.parse(x));write('three-generation-canary.json',rows);assert.equal(rows.filter(x=>x.check==='started').length,3);for(const name of ['private-write','private-replace-delete','private-directory-rename','all-restricted-packages-read','profile-temp-write']){const matches=rows.filter(x=>x.check===name);assert.equal(matches.length,3,name);assert(matches.every(x=>x.success),JSON.stringify(matches));}for(const name of ['all-app-packages-read','profile-root-write','profile-localstate-create','readonly-dacl-rewrite','profile-dacl-rewrite','protected-dacl-rewrite','readonly-write','protected-write','protected-delete','absent-directory']){const matches=rows.filter(x=>x.check===name);assert.equal(matches.length,3,name);assert(matches.every(x=>!x.success&&x.errorCode===5),JSON.stringify(matches));}assert(rows.filter(x=>x.check==='profile-localstate-write').every(x=>!x.success&&x.errorCode===3),'LocalState must remain absent after denied creation');for(const name of ['network-connect','network-connect-ipv6','network-connect-udp']){const matches=rows.filter(x=>x.check===name);assert.equal(matches.length,3,name);assert(matches.every(x=>!x.success&&x.errorCode===10013),JSON.stringify(matches));}assert(rows.filter(x=>x.check==='child-process').every(x=>x.success));}finally{await new Promise(resolve=>listener.close(resolve));dispose();}check('three-generation native network/write/owner/LPAC/handle boundary canary');
+  const status=call('status'),coordinator=path.resolve(status.controlDirectory,'../../..'),marker=path.join(coordinator,'setup-active.json'),journalBefore=fs.readFileSync(path.join(coordinator,'active.json'));assert(!fs.existsSync(marker));const sid=powershell('[Security.Principal.WindowsIdentity]::GetCurrent().User.Value');const id=crypto.randomBytes(16).toString('hex'),value={schema:'fvs/windows-source-setup-active/v1',sessionId:'setup:'+id,installationId:id,userSid:sid};value.integritySha256=checksum(value);try{fs.writeFileSync(marker,JSON.stringify(value));for(const operation of ['status','reserve','recover']){const result=call(operation,operation==='status'?null:{schema:`fvs/windows-${operation}/v2`,mode:'readonly'});assert.equal(result.status,'recovery-required',JSON.stringify(result));assert.equal(result.sessionId,value.sessionId);assert.equal(result.recoveryKind,'setup');assert.deepEqual(fs.readFileSync(path.join(coordinator,'active.json')),journalBefore);}fs.writeFileSync(marker,'{"torn":');assert.equal(call('status').status,'quarantined');assert.equal(call('reserve',{schema:'fvs/windows-reserve/v2',mode:'readonly'}).status,'quarantined');assert.deepEqual(fs.readFileSync(path.join(coordinator,'active.json')),journalBefore);}finally{fs.unlinkSync(marker);}check('durable setup marker blocks native sessions and malformed marker quarantines without repair');
+ }else if(mode==='job-recovery'){
+  const holderExe=path.resolve(process.env.FVS_TEST_JOB_HOLDER??'');assert(fs.statSync(holderExe).isFile(),'FVS_TEST_JOB_HOLDER must identify the compiled JobHolder.cs fixture');
+  reserve();prepare();const collisionState=JSON.parse(fs.readFileSync(active.statePath));const collision=spawn(holderExe,[collisionState.jobName,'create'],{windowsHide:true,stdio:['pipe','pipe','pipe']});try{await new Promise((resolve,reject)=>{collision.stdout.once('data',x=>x.toString().includes('ready')?resolve():reject(Error(x.toString())));collision.once('exit',code=>reject(Error('Collision fixture exited before ready '+code)));});const result=run(['echo-args','must-not-launch']);assert.equal(result.ok,false);assert.match(result.diagnostics.join(' '),/job already exists/);assert.equal(result.stdout,'');recover();check('preexisting same-owner Global job collision refuses child creation');}finally{collision.stdin.end('\n');await new Promise(resolve=>collision.exitCode!==null?resolve():collision.once('close',resolve));}
+  reserve();prepare();const state=JSON.parse(fs.readFileSync(active.statePath));const request={schema:'fvs/windows-run/v2',stateSha256:active.stateSha256,executable:active.request.executablePaths[0],args:['chain-linger','0',active.request.writablePaths[0]],cwd:active.request.writablePaths[0],environment:{},timeoutMs:30000,maxOutputBytes:1048576};const child=spawn(launcher,['run',active.statePath,'-'],{windowsHide:true,stdio:['pipe','pipe','pipe']});child.stdin.end(JSON.stringify(request));child.stdout.resume();child.stderr.resume();const exited=new Promise(resolve=>child.once('exit',resolve));const closed=new Promise(resolve=>child.once('close',resolve));let holder=null;
+  try{for(let n=0;n<200&&!fs.existsSync(path.join(active.request.writablePaths[0],'pid-2.txt'));n++)await new Promise(r=>setTimeout(r,25));assert(fs.existsSync(path.join(active.request.writablePaths[0],'pid-2.txt')));const pids=[0,1,2].map(n=>Number(fs.readFileSync(path.join(active.request.writablePaths[0],`pid-${n}.txt`),'utf8')));holder=spawn(holderExe,[state.jobName],{windowsHide:true,stdio:['pipe','pipe','pipe']});await new Promise((resolve,reject)=>{holder.stdout.once('data',x=>x.toString().includes('ready')?resolve():reject(Error(x.toString())));holder.once('exit',code=>reject(Error('Holder exited before ready '+code)));});const busy=call('dispose',{schema:'fvs/windows-dispose/v2',stateSha256:active.stateSha256,cleanPrivatePaths:active.request.writablePaths},active.statePath);assert.equal(busy.ok,false);child.kill();await exited;for(const pid of pids)process.kill(pid,0);const receipt=recover();assert(receipt.jobDrained);await closed;for(const pid of pids){let alive=true;try{process.kill(pid,0)}catch{alive=false}assert(!alive,`Descendant ${pid} survived named-job recovery`);}write('retained-job.json',{jobName:state.jobName,pids,holderSha256:hash(holderExe),jobDrained:true,ownerVerifiedByNative:true});check('hard launcher termination with externally retained job handle recovers and drains all three generations');}finally{if(holder){holder.stdin.end('\n');await new Promise(resolve=>holder.exitCode!==null?resolve():holder.once('close',resolve));}if(child.exitCode===null){child.kill();await exited;}}
+ }else throw Error('Unknown suite');
+ const result={schema:'fvs/windows-native-lifecycle-tests/v2',ok:true,mode,launcher,launcherSha256:hash(launcher),launcherBuild,canarySha256:hash(canary),harnessSha256:hash(new URL(import.meta.url)),checks,crossLogonRecovery:'not qualified; native refuses a different logon',finishedAt:new Date().toISOString()};write('summary.json',result);console.log(JSON.stringify({ok:true,mode,checks:checks.length,evidence}));
+}catch(error){write('failure.json',{error:error.stack,active});throw error;}finally{if(active)recover();}

@@ -137,12 +137,24 @@ describe('published FVS plugin package', () => {
         'fvs-lean-style-check.mjs',
         'fvs-model-external.mjs',
         'fvs-model-review.mjs',
+        'fvs-probe-assets.cjs',
         'fvs-probe-inventory.mjs',
         'fvs-probe-linux.mjs',
+        'fvs-probe-windows.mjs',
+        'fvs-probe-windows-qualification.mjs',
+        'fvs-probe-windows-runtime.mjs',
+        'fvs-probe-windows-sandbox.mjs',
+        'fvs-probe-windows-setup.mjs',
         'fvs-review-grounding.mjs',
         'fvs-spec-review.mjs',
+        ...filesUnder(path.join(ROOT, 'scripts', 'fvs-probe-native')).map(relative => path.join('fvs-probe-native', relative)),
       ].sort(),
     );
+    const hashedSources = filesUnder(path.join(ROOT, 'scripts', 'fvs-probe-native'))
+      .map(relative => path.join('fvs-probe-native', relative));
+    hashedSources.push(...['runtime', 'setup', 'sandbox', 'qualification'].map(name => `fvs-probe-windows-${name}.mjs`));
+    for (const relative of hashedSources) assert.deepEqual(fs.readFileSync(path.join(PLUGIN_ROOT, 'scripts', relative)),
+      fs.readFileSync(path.join(ROOT, 'scripts', relative)), `Hash-sensitive package bytes: ${relative}`);
   });
 
   it('uses the portable plugin-root inventory helper in map-code and trust-audit', () => {

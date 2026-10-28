@@ -6,6 +6,8 @@ const os = require('os');
 const crypto = require('crypto');
 const readline = require('readline');
 const { spawnSync } = require('child_process');
+// Keep standalone --help/version usable before the support payload is present.
+const nativeProbeAssets = () => require('../scripts/fvs-probe-assets.cjs');
 
 // Colors
 const orange = '\x1b[38;5;208m';
@@ -2367,7 +2369,10 @@ function removeFvsFiles(targetDir, runtime) {
     const scriptFiles = fs.readdirSync(scriptsUninstallDir);
     let scriptCount = 0;
     for (const file of scriptFiles) {
-      if (file.startsWith('fvs-')) {
+      if (file === 'fvs-probe-native') {
+        nativeProbeAssets().removeNativeAssets(scriptsUninstallDir);
+        scriptCount++;
+      } else if (file.startsWith('fvs-')) {
         fs.unlinkSync(path.join(scriptsUninstallDir, file));
         scriptCount++;
       }
@@ -3174,6 +3179,7 @@ function install(isGlobal, runtime = 'claude') {
         fs.copyFileSync(path.join(scriptsSrc, entry.name), path.join(scriptsDest, entry.name));
       }
     }
+    nativeProbeAssets().copyNativeAssets(scriptsSrc, scriptsDest);
     if (verifyInstalled(scriptsDest, 'scripts')) {
       console.log(`  ${green}✓${reset} Installed scripts`);
     } else {

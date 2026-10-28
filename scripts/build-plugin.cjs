@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
+const { copyNativeAssets } = require('./fvs-probe-assets.cjs');
 
 const {
   extractFrontmatterAndBody,
@@ -32,7 +33,13 @@ const SCRIPT_FILES = [
   'fvs-model-external.mjs',
   'fvs-model-review.mjs',
   'fvs-probe-inventory.mjs',
+  'fvs-probe-assets.cjs',
   'fvs-probe-linux.mjs',
+  'fvs-probe-windows.mjs',
+  'fvs-probe-windows-qualification.mjs',
+  'fvs-probe-windows-runtime.mjs',
+  'fvs-probe-windows-setup.mjs',
+  'fvs-probe-windows-sandbox.mjs',
   'fvs-review-grounding.mjs',
   'fvs-spec-review.mjs',
 ];
@@ -595,8 +602,10 @@ function buildPlugin(pluginRoot) {
     exclude: new Set(['workflows/update.md']),
   });
   for (const scriptName of SCRIPT_FILES) {
-    copyTextFile(path.join(ROOT, 'scripts', scriptName), path.join(pluginRoot, 'scripts', scriptName));
+    const copier = scriptName.startsWith('fvs-probe-windows-') ? copyFile : copyTextFile;
+    copier(path.join(ROOT, 'scripts', scriptName), path.join(pluginRoot, 'scripts', scriptName));
   }
+  copyNativeAssets(path.join(ROOT, 'scripts'), path.join(pluginRoot, 'scripts'));
   copyFile(path.join(ROOT, 'assets', 'FVS.png'), path.join(pluginRoot, 'assets', 'fvs.png'));
   copyFile(path.join(ROOT, 'LICENSE'), path.join(pluginRoot, 'LICENSE'));
 }
