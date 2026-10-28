@@ -65,8 +65,9 @@ const CODEX_AGENT_SANDBOX = {
   // introspects and returns a table -- both are read-only.
   'fvs-crypto-thinker': 'read-only',
   // The crypto executor owns the deliverable file -- it writes the new spec and
-  // completes proofs, so it needs workspace-write; the unmapped default is
-  // read-only, which would silently fail every write on Codex.
+  // completes proofs, so it declares workspace-write. Codex role layers do not
+  // apply sandbox_mode (children run in the parent session's sandbox), so these
+  // values record the intended access rather than enforce it.
   'fvs-crypto-executor': 'workspace-write',
   // External modeling owns exact hand-written model/specification targets inside
   // a parent-managed reversible transaction.
@@ -770,6 +771,7 @@ Before spawning, inspect the \`spawn_agent\` tool's visible parameter schema to 
 
 Selection-capability gate (before manifest confirmation, child dispatch, or artifact writes):
 - Check required specialist identity and sandbox against the exact registered role and effective child settings. A generic role preamble cannot meet a mandatory typed identity or sandbox requirement; stop and explain the unavailable guarantee before dispatch or artifact writes.
+- On Codex a registered role does not set the child's sandbox: Codex applies a role's model, effort and instructions, never its \`sandbox_mode\`, so the child runs in the parent session's sandbox. Report that sandbox as the child's, never the role file's value, and never call a child read-only when the parent session can write.
 - If \`model\` is exposed for this child, pass the requested model. Otherwise compare it with the exact active/inherited Codex model; a different or unconfirmed model is unresolved. Rebuild the manifest around confirmed settings and ask explicitly, choose a capable external runner, or fail before dispatch in noninteractive mode.
 - If \`reasoning_effort\` is exposed for this child, pass the requested effort. Otherwise compare it with the confirmed effective installed/runtime default; a different or unconfirmed effort is unresolved and follows the same rebuild/ask-or-fail rule.
 - Model and effort are separate values: pass an exact catalog model id and an effort that model lists. A registered role that pins \`model\` or \`reasoning_effort\` (its role description says the setting is locked, or its TOML sets it) overrides the per-call value, so the pinned value is the effective one; if it differs from the confirmed selection it is unresolved.
@@ -847,8 +849,9 @@ purpose: ${toSingleLine(description)}
  * Generate a per-agent .toml config file for Codex.
  *
  * Emits the agent name, description, sandbox_mode, and reasoning effort, then
- * the agent body as developer_instructions. The sandbox is fail-closed
- * (read-only for any unmapped name) and the effort defaults to high. No `model`
+ * the agent body as developer_instructions. The declared sandbox defaults to
+ * read-only for any unmapped name (Codex does not apply a role's sandbox_mode;
+ * the child keeps the parent session's sandbox) and the effort defaults to high. No `model`
  * line is emitted: Codex agents inherit the user's selected model, so FVS sets
  * only the reasoning-effort budget.
  */

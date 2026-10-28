@@ -182,6 +182,21 @@ describe('Codex skill adapter header (getCodexSkillAdapterHeader)', () => {
     }
   });
 
+  // Codex role layers carry model, effort and instructions but not sandbox_mode,
+  // so a child always runs in the parent session's sandbox.
+  it('reports the parent session sandbox as the child sandbox, never the role file value', () => {
+    for (const header of [
+      getCodexSkillAdapterHeader('crypto-plan'),
+      getCodexSkillAdapterHeader('crypto-eval', { pluginName: 'fvs' }),
+    ]) {
+      const clause = header.indexOf('On Codex a registered role does not set the child\'s sandbox');
+      assert.ok(clause > header.indexOf('Selection-capability gate (before manifest confirmation'));
+      assert.ok(clause < header.indexOf('Typed mapping (only when the exact requested FVS role is registered'));
+      assert.match(header, /never its `sandbox_mode`, so the child runs in the parent session's sandbox/);
+      assert.match(header, /never call a child read-only when the parent session can write/);
+    }
+  });
+
   it('checks visible per-child controls and fails closed on unconfirmed settings', () => {
     const header = getCodexSkillAdapterHeader('fvs-fc-plan');
     assert.match(header, /Selection-capability gate \(before manifest confirmation, child dispatch, or artifact writes\)/);
