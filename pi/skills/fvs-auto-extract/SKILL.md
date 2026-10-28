@@ -57,7 +57,7 @@ owner or the scripts have not decided.
 - [ ] Stops with an actionable message when `ao` is not on PATH or no setup state is recorded.
 - [ ] Stops on a legacy or mixed extraction mode; the command never migrates.
 - [ ] Extraction runs through `/fvs:aeneas-extract`, unchanged.
-- [ ] `record-extraction` runs after every extraction attempt, success or failure, with the copy and the build's real exit status; its derived status is reported as is.
+- [ ] `record-extraction` runs after every extraction attempt, success or failure, with the copy, the build's real exit status and the shared extractor's final oracle verdict; a refused or unknown oracle is never recorded as success.
 - [ ] Every boundary has an externals record; recorded boundaries are resubmitted, never dropped.
 - [ ] Regeneration instructions are written from the recorded state.
 - [ ] The report keeps extraction, restored source, evidence and remaining obligations apart and says extraction success is not a proof.

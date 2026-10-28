@@ -18,8 +18,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 - The auto track's milestone 1 commands, coordinated by Agent Orchestrator (they need its `ao`
   CLI): `/fvs:auto-init` runs the compatibility profile and records your source revision,
-  configuration, initial scope and limits (2 hours per node and 3 workers by default, plus a total
-  wall-clock cap you name) in `.formalising/auto-fv/state.json`, and offers once to write the
+  configuration, initial scope and limits (3 workers by default plus a total wall-clock cap you name;
+  per-node hours are recorded but not enforced, as there is no arbitrary per-node proof timeout) in
+  `.formalising/auto-fv/state.json`, and offers once to write the
   project roadmap; `/fvs:auto-extract` extracts that revision through `/fvs:aeneas-extract` in
   translation-patch mode and records the result, an externals record with one entry per opaque,
   external, handwritten or semantic-patch boundary, and regeneration instructions;
@@ -30,13 +31,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - `scripts/fvs-auto.mjs` gains the state operations behind those commands (`init-state`,
   `read-state`, `record-roadmap`, `record-extraction`, `record-externals`). Writes are atomic and a
   malformed file is reported, never overwritten. The extraction result is derived from the build
-  exit status and the patch engine's checks, so a failed extraction is never recorded as success,
+  exit status, the shared extractor's final success-oracle verdict and the patch engine's checks, so
+  a failed extraction, including a clean build the oracle refused, is never recorded as success,
   and a successful one is recorded as not a proof. A recorded boundary is never dropped. No
   boundary can be marked correspondence-proved yet: that needs checked correspondence evidence,
   which this release cannot validate, so a receipt path, a hash, a ratification packet or a review
   link is refused.
-- The patch-mode run-end summary of `/fvs:aeneas-extract` names the copy of the last cycle and that
-  cycle's build exit status.
+- The patch-mode run-end summary of `/fvs:aeneas-extract` names the copy of the last cycle, that
+  cycle's build exit status and the final success-oracle verdict (complete, refused or unknown).
 
 ### Changed
 

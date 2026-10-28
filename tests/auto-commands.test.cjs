@@ -275,6 +275,16 @@ describe('auto-init setup state', () => {
 });
 
 describe('auto-init roadmap offer', () => {
+  it('a fresh init reports the roadmap offer as pending in its own result', () => {
+    const root = project();
+    const created = init(root);
+    assert.equal(created.code, 'created');
+    assert.deepEqual(created.pendingDecisions, ['roadmap']);
+    assert.match(created.nextAction, /\/fvs:auto-extract/);
+    auto.recordRoadmap({ projectRoot: root, decision: 'declined' });
+    assert.deepEqual(init(root).pendingDecisions, [], 'an unchanged rerun after a decline offers nothing');
+  });
+
   it('a decline is recorded once and is not a pending decision on rerun', () => {
     const root = project();
     init(root);
@@ -319,8 +329,9 @@ function prepared(root, patches = ['lib-double']) {
   return { out, status: result.status };
 }
 
-function record(root, out, buildExitCode) {
-  return run(() => auto.recordExtraction({ projectRoot: root, out, buildExitCode }));
+// `oracle` is the shared extractor's final success-oracle verdict from its run-end summary.
+function record(root, out, buildExitCode, oracle = 'complete', oracleReason = undefined) {
+  return run(() => auto.recordExtraction({ projectRoot: root, out, buildExitCode, oracle, oracleReason }));
 }
 
 describe('auto-extract extraction record', () => {
@@ -334,7 +345,7 @@ describe('auto-extract extraction record', () => {
     const { extraction } = JSON.parse(fs.readFileSync(stateFile(root), 'utf8'));
     assert.equal(extraction.status, 'succeeded');
     assert.deepEqual(extraction.reasons, []);
-    assert.deepEqual(extraction.declared, { buildExitCode: 0 });
+    assert.deepEqual(extraction.declared, { buildExitCode: 0, oracle: 'complete' });
     assert.equal(extraction.inputs.mode, 'translation-patches');
     assert.equal(extraction.inputs.sourceCommit, git(root, 'rev-parse', 'HEAD'));
     assert.deepEqual(extraction.inputs.patches.map((patch) => patch.file), ['lib-double.patch']);
@@ -351,6 +362,39 @@ describe('auto-extract extraction record', () => {
     const { extraction } = JSON.parse(fs.readFileSync(stateFile(root), 'utf8'));
     assert.equal(extraction.status, 'failed');
     assert.match(extraction.reasons.join('\n'), /build exited 1/);
+  });
+
+  it('a green build whose shared success oracle refused completion is recorded as failure', () => {
+    const root = project();
+    init(root);
+    const { out } = prepared(root);
+    for (const [oracle, reason, pattern] of [
+      ['refused', 'lib-double.patch is Category B without a ratification bound to its sha256', /refused.*ratification bound/],
+      ['refused', 'diff-to-record check failed: series lists lib-double.patch without a Classification: line', /diff-to-record/],
+      ['unknown', undefined, /did not report|unknown/],
+    ]) {
+      const result = record(root, out, 0, oracle, reason);
+      assert.equal(result.code, 'extraction-failed', oracle);
+      const { extraction } = JSON.parse(fs.readFileSync(stateFile(root), 'utf8'));
+      assert.equal(extraction.status, 'failed');
+      assert.equal(extraction.declared.buildExitCode, 0, 'the real build exit is kept apart from the verdict');
+      assert.equal(extraction.declared.oracle, oracle);
+      assert.match(extraction.reasons.join('\n'), pattern);
+      assert.match(auto.readState({ projectRoot: root }).nextAction, /\/fvs:auto-extract/);
+    }
+  });
+
+  it('an absent or unrecognised oracle verdict records nothing', () => {
+    const root = project();
+    init(root);
+    const { out } = prepared(root);
+    const missing = cli('record-extraction', '--project-root', root, '--out', out, '--build-exit-code', '0');
+    assert.equal(missing.status, 2);
+    assert.match(missing.stderr, /--oracle is required/);
+    const bogus = cli('record-extraction', '--project-root', root, '--out', out, '--build-exit-code', '0', '--oracle', 'passed');
+    assert.equal(bogus.status, 2);
+    assert.match(bogus.stderr, /--oracle must be complete, refused or unknown/);
+    assert.equal(JSON.parse(fs.readFileSync(stateFile(root), 'utf8')).extraction, null);
   });
 
   it('an engine refusal (a partial copy from a stale patch) is never recorded as success', () => {
@@ -403,7 +447,7 @@ describe('auto-extract extraction record', () => {
     const root = project();
     init(root);
     const { out } = prepared(root);
-    const result = cli('record-extraction', '--project-root', root, '--out', out, '--build-exit-code', '0', '--status', 'succeeded');
+    const result = cli('record-extraction', '--project-root', root, '--out', out, '--build-exit-code', '0', '--oracle', 'complete', '--status', 'succeeded');
     assert.equal(result.status, 2);
     assert.match(result.stderr, /unknown argument "--status"/);
     assert.equal(JSON.parse(fs.readFileSync(stateFile(root), 'utf8')).extraction, null);
@@ -413,6 +457,51 @@ describe('auto-extract extraction record', () => {
     const root = project();
     const { out } = prepared(root);
     assert.equal(record(root, out, 0).code, 'no-state');
+  });
+});
+
+describe('stored extraction records', () => {
+  function recorded() {
+    const root = project();
+    init(root);
+    const { out } = prepared(root);
+    assert.equal(record(root, out, 0).code, 'recorded');
+    return root;
+  }
+
+  it('a contradictory or incomplete success record is malformed state, never a success', () => {
+    for (const [label, edit] of [
+      ['nonzero declared build exit', (x) => { x.declared.buildExitCode = 1; }],
+      ['refused oracle verdict', (x) => { x.declared.oracle = 'refused'; }],
+      ['missing oracle verdict', (x) => { delete x.declared.oracle; }],
+      ['missing inputs', (x) => { delete x.inputs; }],
+      ['null inputs', (x) => { x.inputs = null; }],
+      ['inputs without patches', (x) => { delete x.inputs.patches; }],
+      ['missing checks', (x) => { delete x.checks; }],
+      ['a refused required check', (x) => { x.checks['verify-restore'].ok = false; }],
+      ['missing note', (x) => { delete x.note; }],
+    ]) {
+      const root = recorded();
+      const state = JSON.parse(fs.readFileSync(stateFile(root), 'utf8'));
+      edit(state.extraction);
+      const bytes = `${JSON.stringify(state, null, 2)}\n`;
+      fs.writeFileSync(stateFile(root), bytes);
+      const result = cli('read-state', '--project-root', root);
+      assert.equal(result.status, 3, label);
+      assert.equal(result.json.code, 'malformed-state', label);
+      assert.match(result.json.nextStep, /move it aside/, label);
+      assert.equal(fs.readFileSync(stateFile(root), 'utf8'), bytes, `${label}: never rewritten`);
+    }
+  });
+
+  it('a failed record without manifest inputs stays valid', () => {
+    const root = project();
+    init(root);
+    const { out } = prepared(root, ['limits-halve']);
+    assert.equal(record(root, out, 0).code, 'extraction-failed');
+    const read = auto.readState({ projectRoot: root });
+    assert.equal(read.code, 'ok');
+    assert.equal(read.state.extraction.inputs, null);
   });
 });
 
@@ -573,6 +662,14 @@ describe('externals record', () => {
 // The command and workflow text calls the state operations above; these
 // checks keep the text and the script in step.
 describe('auto command and workflow text', () => {
+  it('the per-node hours are shown as inactive, not as a proof deadline', () => {
+    for (const relative of ['fv-skills/workflows/auto-init.md', 'commands/fvs/help.md']) {
+      const body = fs.readFileSync(path.join(ROOT, relative), 'utf8');
+      assert.match(body, /no arbitrary per-node proof timeout/, relative);
+      assert.match(body, /not enforced/, relative);
+    }
+  });
+
   const read = (relative) => fs.readFileSync(path.join(ROOT, relative), 'utf8');
   const members = ['auto-init', 'auto-extract', 'auto-top-specs', 'auto-execute'];
   const text = (name) => `${read(`commands/fvs/${name}.md`)}\n${read(`fv-skills/workflows/${name}.md`)}`;
@@ -615,7 +712,9 @@ describe('auto command and workflow text', () => {
   it('auto-extract hands off to the shared extractor and records every attempt through the script', () => {
     const body = text('auto-extract');
     assert.match(body, /\/fvs:aeneas-extract "\$CRATE_ROOT"/);
-    assert.match(body, /"\$AUTO" record-extraction --project-root \. --out "\$OUT" --build-exit-code "\$BUILD_STATUS"/);
+    assert.match(body, /"\$AUTO" record-extraction --project-root \. --out "\$OUT" --build-exit-code "\$BUILD_STATUS" --oracle "\$ORACLE"/);
+    assert.match(read('fv-skills/workflows/aeneas-extract.md'), /^Oracle: {16}\{complete \| refused: /m,
+      'the shared extractor reports its final success-oracle verdict');
     assert.match(body, /Record every attempt, success or failure/);
     assert.match(body, /"\$AUTO" record-externals --project-root \. --input "\$RECORDS"/);
     assert.match(body, /never migrate/i);
@@ -634,6 +733,7 @@ describe('auto command and workflow text', () => {
     assert.match(body, /record-roadmap --project-root \. --decision declined/);
     assert.match(body, /\/fvs:roadmap \.formalising\/auto-fv\/ROADMAP\.md/);
     assert.match(body, /A recorded decline is not asked again/);
+    assert.match(body, /`pendingDecisions` of the `init-state` result/, 'the offer reads the state after init, not the pre-init read');
     assert.match(body, /extraction does not wait for it/);
     assert.match(read('commands/fvs/roadmap.md'), /`\.formalising\/auto-fv\/ROADMAP\.md`; `\/fvs:auto-init`/,
       'the roadmap command documents the auto track location');

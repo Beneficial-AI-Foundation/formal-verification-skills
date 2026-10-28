@@ -31,7 +31,7 @@ function usage() {
     '       node fvs-auto.mjs init-state --input CHOICES.json [--project-root DIR] [--confirm-overwrite]',
     '       node fvs-auto.mjs read-state [--project-root DIR]',
     '       node fvs-auto.mjs record-roadmap --decision accepted|declined [--project-root DIR] [--confirm-overwrite]',
-    '       node fvs-auto.mjs record-extraction --out OUT --build-exit-code N [--project-root DIR]',
+    '       node fvs-auto.mjs record-extraction --out OUT --build-exit-code N --oracle complete|refused|unknown [--oracle-reason TEXT] [--project-root DIR]',
     '       node fvs-auto.mjs record-externals --input RECORDS.json [--project-root DIR]',
     '',
     'profile reports what this host and project can do for the FVS auto track,',
@@ -512,7 +512,12 @@ function profileCli(argv) {
 // ponytail: no lock; the coordinator is the only writer of this state.
 const STATE_DIR = path.join('.formalising', 'auto-fv');
 const ROADMAP_PATH = '.formalising/auto-fv/ROADMAP.md';
+// nodeHours is recorded owner metadata only: milestone 1 runs no proofs and enforces no per-node
+// limit, and the owner has since decided against arbitrary per-node proof timeouts.
 const DEFAULT_LIMITS = { nodeHours: 2, workers: 3 };
+// The shared extractor's final success-oracle verdict, as its run-end summary reports it.
+const ORACLE_VERDICTS = ['complete', 'refused', 'unknown'];
+const REQUIRED_CHECKS = ['status', 'verify-tree', 'verify-restore'];
 const BOUNDARY_KINDS = ['opaque', 'external', 'handwritten-model', 'semantic-patch'];
 const BOUNDARY_STATUSES = ['open', 'assumption-accepted', 'correspondence-proved', 'blocked'];
 const NOT_A_PROOF = 'Extraction success is not a proof: it shows only that the recorded source and translation patches extract and build; no specification is stated or proved by it.';
@@ -595,13 +600,54 @@ function stateErrors(state) {
     || roadmap.path !== (roadmap.decision === 'accepted' ? ROADMAP_PATH : null) || !isText(roadmap.decidedAt))) {
     errors.push('roadmap must be null or an accepted or declined decision with its path and time');
   }
-  if (extraction !== null && (!fields(errors, extraction, 'extraction', ['status', 'recordedAt', 'selected', 'reasons', 'declared', 'checks', 'inputs', 'note'])
-    || !['succeeded', 'failed'].includes(extraction.status)
-    || !Array.isArray(extraction.reasons) || !extraction.reasons.every(isText)
-    || (extraction.status === 'succeeded') !== (extraction.reasons.length === 0)
-    || !plainObject(extraction.selected) || !isText(extraction.selected.revision) || !isText(extraction.selected.configuration)
-    || !plainObject(extraction.declared) || !Number.isInteger(extraction.declared.buildExitCode))) {
-    errors.push('extraction must be null or a succeeded record without reasons or a failed record with them');
+  if (extraction !== null) errors.push(...extractionErrors(extraction));
+  return errors;
+}
+
+const EXTRACTION_FIELDS = ['status', 'recordedAt', 'selected', 'reasons', 'declared', 'checks', 'inputs', 'note'];
+
+function inputsValid(inputs) {
+  return plainObject(inputs) && isText(inputs.out) && /^[0-9a-f]{64}$/.test(inputs.manifestSha256 ?? '')
+    && isText(inputs.crateRoot) && isText(inputs.mode) && (inputs.sourceCommit === null || isText(inputs.sourceCommit))
+    && Array.isArray(inputs.patches)
+    && inputs.patches.every((patch) => plainObject(patch) && isText(patch.file) && /^[0-9a-f]{64}$/.test(patch.sha256 ?? ''));
+}
+
+// Structural checks only: a stored record is never re-verified by running tools. A success record must
+// carry everything that made it a success; a failed record keeps its reasons and may lack inputs.
+function extractionErrors(extraction) {
+  const errors = [];
+  if (!fields(errors, extraction, 'extraction', EXTRACTION_FIELDS)) return errors;
+  const missing = EXTRACTION_FIELDS.filter((key) => !(key in extraction));
+  if (missing.length > 0) return [`extraction lacks ${missing.join(', ')}`];
+  const { status, reasons, selected, declared, checks, inputs } = extraction;
+  if (!['succeeded', 'failed'].includes(status)) errors.push('extraction.status must be succeeded or failed');
+  if (!isText(extraction.recordedAt) || !isText(extraction.note)) errors.push('extraction.recordedAt and extraction.note must be strings');
+  if (!Array.isArray(reasons) || !reasons.every(isText)) errors.push('extraction.reasons must be an array of strings');
+  if (!plainObject(selected) || !isText(selected.revision) || !isText(selected.configuration)) {
+    errors.push('extraction.selected must hold the revision and configuration the record answers');
+  }
+  if (!plainObject(declared) || !Number.isInteger(declared.buildExitCode) || !ORACLE_VERDICTS.includes(declared.oracle)
+    || !(declared.oracleReason === undefined || isText(declared.oracleReason))) {
+    errors.push(`extraction.declared must hold an integer buildExitCode and an oracle verdict (${ORACLE_VERDICTS.join(', ')})`);
+  }
+  if (!plainObject(checks) || !REQUIRED_CHECKS.every((name) => plainObject(checks[name]) && typeof checks[name].ok === 'boolean')) {
+    errors.push(`extraction.checks must hold the ${REQUIRED_CHECKS.join(', ')} results`);
+  }
+  if (!(inputs === null || inputsValid(inputs))) errors.push('extraction.inputs must be null or the recorded extraction inputs');
+  if (errors.length > 0 || !Array.isArray(reasons)) return errors;
+  if (status === 'failed' && reasons.length === 0) errors.push('a failed extraction must record its reasons');
+  if (status === 'succeeded') {
+    const contradictions = [
+      reasons.length > 0 && 'it records failure reasons',
+      declared.buildExitCode !== 0 && `its build exited ${declared.buildExitCode}`,
+      declared.oracle !== 'complete' && `the shared success oracle reported ${declared.oracle}`,
+      REQUIRED_CHECKS.some((name) => !checks[name].ok) && 'a required patch engine check refused',
+      inputs === null && 'it has no extraction inputs',
+      inputs !== null && inputs.mode !== 'translation-patches' && `its copy was prepared in ${inputs.mode} mode`,
+      inputs !== null && inputs.sourceCommit === null && 'it has no source commit',
+    ].filter(Boolean);
+    if (contradictions.length > 0) errors.push(`extraction is recorded as succeeded although ${contradictions.join(', ')}`);
   }
   return errors;
 }
@@ -735,7 +781,7 @@ export function initState({ projectRoot, choices, confirmOverwrite = false, plat
   if (recorded) {
     const changes = choiceChanges(recorded.choices, requested);
     if (changes.length === 0) {
-      return { code: 'unchanged', message: 'the recorded setup state already holds these choices; nothing was written', state: recorded };
+      return { ...readState({ projectRoot: root }), code: 'unchanged', message: 'the recorded setup state already holds these choices; nothing was written' };
     }
     if (!confirmOverwrite) {
       refuse('confirmation-required', `the requested choices change recorded owner choices: ${changes.map((change) => change.field).join(', ')}`,
@@ -758,7 +804,8 @@ export function initState({ projectRoot, choices, confirmOverwrite = false, plat
     extraction: recorded?.extraction ?? null,
   };
   writeAtomic(statePath(root), state);
-  return { code: recorded ? 'updated' : 'created', message: `setup state written to ${statePath(root)}`, state };
+  // The refreshed view, so the caller sees the pending decisions of the state just written.
+  return { ...readState({ projectRoot: root }), code: recorded ? 'updated' : 'created', message: `setup state written to ${statePath(root)}` };
 }
 
 function nextAction(state) {
@@ -824,12 +871,14 @@ function resolveRevision(directory, revision) {
   return run.status === 0 ? run.stdout.trim() : null;
 }
 
-// The status is derived here, never taken from the caller: success needs a
-// zero build exit (the one declared input) and the patch engine's own status,
-// verify-tree and verify-restore checks on the copy Charon consumed, taken
+// The status is derived here, never taken from the caller: success needs a zero
+// build exit and the shared extractor's success oracle reporting complete (the two
+// declared inputs, which can only block success), and the patch engine's own
+// status, verify-tree and verify-restore checks on the copy Charon consumed, taken
 // from this project at the recorded revision without uncommitted changes.
-export function recordExtraction({ projectRoot, out, buildExitCode }) {
+export function recordExtraction({ projectRoot, out, buildExitCode, oracle, oracleReason }) {
   if (!Number.isInteger(buildExitCode)) refuse('usage', '--build-exit-code must be an integer');
+  if (!ORACLE_VERDICTS.includes(oracle)) refuse('usage', `--oracle must be ${ORACLE_VERDICTS.slice(0, -1).join(', ')} or ${ORACLE_VERDICTS.at(-1)}`);
   const root = projectDirectory(projectRoot);
   const state = requireState(root);
   const copy = path.resolve(out);
@@ -840,6 +889,8 @@ export function recordExtraction({ projectRoot, out, buildExitCode }) {
   };
   const reasons = [];
   if (buildExitCode !== 0) reasons.push(`the build exited ${buildExitCode}`);
+  if (oracle === 'refused') reasons.push(`the shared extractor's success oracle refused completion: ${oracleReason ?? 'no reason given'}`);
+  if (oracle === 'unknown') reasons.push(`the shared extractor did not report a complete success oracle (verdict unknown)${oracleReason ? `: ${oracleReason}` : ''}`);
   for (const [name, check] of Object.entries(checks)) {
     if (!check.ok) reasons.push(`the patch engine ${name} check refused (${check.code}): ${check.message}`);
   }
@@ -872,7 +923,7 @@ export function recordExtraction({ projectRoot, out, buildExitCode }) {
     // The source selection this record answers; a later confirmed change makes it history.
     selected: { ...state.choices.source },
     reasons,
-    declared: { buildExitCode },
+    declared: { buildExitCode, oracle, ...(oracleReason ? { oracleReason } : {}) },
     checks,
     inputs,
     note: NOT_A_PROOF,
@@ -909,7 +960,7 @@ function readInput(file) {
   }
 }
 
-function stateFlags(argv, values, switches = []) {
+function stateFlags(argv, values, switches = [], optional = []) {
   const flags = { 'project-root': '.' };
   const rest = [...argv];
   while (rest.length > 0) {
@@ -919,7 +970,7 @@ function stateFlags(argv, values, switches = []) {
       flags[key] = true;
       continue;
     }
-    if (key === flag || ![...values, 'project-root'].includes(key)) refuse('usage', `unknown argument ${JSON.stringify(flag)}`);
+    if (key === flag || ![...values, ...optional, 'project-root'].includes(key)) refuse('usage', `unknown argument ${JSON.stringify(flag)}`);
     const value = rest.shift();
     if (!value || value.startsWith('--')) refuse('usage', `${flag} requires a value`);
     flags[key] = value;
@@ -939,9 +990,15 @@ const STATE_COMMANDS = {
     return recordRoadmap({ projectRoot: flags['project-root'], decision: flags.decision, confirmOverwrite: flags['confirm-overwrite'] === true });
   },
   'record-extraction': (argv) => {
-    const flags = stateFlags(argv, ['out', 'build-exit-code']);
+    const flags = stateFlags(argv, ['out', 'build-exit-code', 'oracle'], [], ['oracle-reason']);
     if (!/^-?\d+$/.test(flags['build-exit-code'])) refuse('usage', '--build-exit-code must be an integer');
-    return recordExtraction({ projectRoot: flags['project-root'], out: flags.out, buildExitCode: Number(flags['build-exit-code']) });
+    return recordExtraction({
+      projectRoot: flags['project-root'],
+      out: flags.out,
+      buildExitCode: Number(flags['build-exit-code']),
+      oracle: flags.oracle,
+      oracleReason: flags['oracle-reason'],
+    });
   },
   'record-externals': (argv) => {
     const flags = stateFlags(argv, ['input']);

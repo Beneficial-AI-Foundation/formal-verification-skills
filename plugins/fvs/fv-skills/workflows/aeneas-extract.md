@@ -707,6 +707,7 @@ FVS >> EXTRACTION RUN COMPLETE
 
 Target:                {target} ({SHAPE}), mode translation-patches
 Copy:                  {the OUT of the last cycle}; build exit {that cycle's real exit status, or none when it stopped before the build}
+Oracle:                {complete | refused: <the failing oracle clauses> | unknown: <why the oracle did not run>} (complete only when every success-oracle clause above holds)
 Extraction:            {clean build | escalated | stopped: <engine code>} ({K} patches in series)
 Restored source:       {verify-restore ok | refused: <message>}
 Evidence:              tree check {ok | refused}; B patches {N} ratified and bound to their hashes; diff-to-record check {ok | failed}

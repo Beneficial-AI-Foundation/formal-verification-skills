@@ -108,8 +108,8 @@ the recorded state, the next action and any pending decision, and is safe to rer
 
 **`/fvs:auto-init`**
 Run the compatibility profile and record the source revision and configuration, the bounded initial
-scope and the limits (2 h per node and 3 workers by default, plus a total wall-clock cap the owner
-names). An unchanged rerun writes nothing; a changed choice needs the owner's confirmation. Offers once
+scope and the limits (3 workers by default plus a total wall-clock cap the owner names; per-node hours
+are recorded but not enforced, as there is no arbitrary per-node proof timeout). An unchanged rerun writes nothing; a changed choice needs the owner's confirmation. Offers once
 to write the project roadmap with `/fvs:roadmap .formalising/auto-fv/ROADMAP.md`; the offer never blocks
 extraction.
 

@@ -55,8 +55,10 @@ Ask with AskUserQuestion, one question per choice, starting from the recorded va
 - **Configuration**: the cargo features, target and extraction options that define the build.
 - **Initial scope**: the bounded part of the crate to start with (a module or a short list of
   functions), not the whole crate.
-- **Limits**: hours of proof budget per node (default 2), concurrent workers (default 3) and one
-  total wall-clock cap in hours, which has no default: the owner names it.
+- **Limits**: concurrent workers (default 3) and one total wall-clock cap in hours, which has no
+  default: the owner names it. The per-node hours (`nodeHours`, default 2) are recorded metadata only
+  and not enforced: milestone 1 runs no proofs, and the owner has decided there is
+  no arbitrary per-node proof timeout. Keep the default unless the owner wants to note another value.
 
 Write the answers to a temporary file outside the project and run `init-state`:
 
@@ -88,8 +90,10 @@ Read the `code` field:
 
 ## Step 6: Offer the project roadmap
 
-Make this offer only while `pendingDecisions` (from `read-state`) contains `roadmap`, or when the
-owner asks for it. A recorded decline is not asked again.
+Make this offer only while `roadmap` is in the `pendingDecisions` of the `init-state` result from
+Step 5 (the state just written), or when the owner asks for it. When Step 2 kept the recorded setup
+without running `init-state`, use the `pendingDecisions` of that `read-state` instead. Never use the
+pre-init `no-state` result: it has no pending decisions. A recorded decline is not asked again.
 
 Ask: "Write the project roadmap now? It records the claims, scope, external boundaries and
 milestones of this verification project in `.formalising/auto-fv/ROADMAP.md`. It is optional and
@@ -110,7 +114,7 @@ Run `read-state` again and print:
 ```
 FVS >> AUTO-INIT
 
-State:            revision {revision} ({configuration}); scope {scope}; limits {nodeHours} h per node, {workers} workers, {wallClockHours} h total; extraction {not run | succeeded | failed}
+State:            revision {revision} ({configuration}); scope {scope}; limits {workers} workers, {wallClockHours} h total (per-node hours {nodeHours} recorded, not enforced); extraction {not run | succeeded | failed}
 Next action:      {nextAction}
 Pending decision: {pendingDecisions, or none}
 ```

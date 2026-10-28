@@ -49,20 +49,26 @@ node "$PATCH_ENGINE" check --project-root "$CRATE_ROOT" --format json
 
 Run `/fvs:aeneas-extract "$CRATE_ROOT"` with the recorded configuration (features, target and
 extraction options) and scope. It keeps all of its own pre-flight, gates, human ratification and
-success oracle; nothing here relaxes them. Take two facts from its run-end summary's `Copy:` line:
-`OUT`, the copy of the last cycle, and `BUILD_STATUS`, that cycle's real exit status (`255` when the
-run stopped before the build).
+success oracle; nothing here relaxes them. Take three facts from its run-end summary: from the `Copy:`
+line, `OUT`, the copy of the last cycle, and `BUILD_STATUS`, that cycle's real exit status (`255` when
+the run stopped before the build); from the `Oracle:` line, `ORACLE`, the final success-oracle verdict
+(`complete`, `refused` or `unknown`), and its reason. A green build is not a complete extraction: an
+oracle refusal after a clean build (an unratified Category-B patch, a failed diff-to-record check) is
+`refused`. When the summary has no `Oracle:` line, or the run stopped before the oracle ran, pass
+`unknown`; never pass `complete` unless the summary says so.
 
 ## Step 4: Record the extraction
 
 Record every attempt, success or failure:
 
 ```bash
-node "$AUTO" record-extraction --project-root . --out "$OUT" --build-exit-code "$BUILD_STATUS"
+node "$AUTO" record-extraction --project-root . --out "$OUT" --build-exit-code "$BUILD_STATUS" --oracle "$ORACLE" --oracle-reason "<the oracle's reason, when refused or unknown>"
 ```
 
-- `recorded`: the script found a zero build exit, a prepared copy whose tree and restored source
-  pass the engine's checks, the recorded revision and no uncommitted input changes.
+- `recorded`: the script found a zero build exit, a `complete` oracle verdict, a prepared copy whose
+  tree and restored source pass the engine's checks, the recorded revision and no uncommitted input
+  changes. The two declared inputs (build exit and oracle verdict) can only block success, never
+  create it.
 - `extraction-failed`: the attempt is recorded as failed with its `reasons`. Report them as the
   state; never retry by editing the record.
 - `no-state` or `malformed-state`: print `message` and `nextStep` and stop.
