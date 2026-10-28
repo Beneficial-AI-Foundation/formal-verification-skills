@@ -805,7 +805,12 @@ export function readProvenance(projectRoot) {
     problems.push('lean-toolchain is missing');
   }
 
-  const pinMatches = (short) => /^[0-9a-f]{7,40}$/.test(short) && provenance.aeneasRev.startsWith(short);
+  // Aeneas release builds report their release tag (nightly-YYYY.MM.DD-<short commit>) as aeneas_version;
+  // the commit suffix is what has to match the lake-manifest pin.
+  const pinMatches = (pin) => {
+    const short = /^nightly-\d{4}\.\d{2}\.\d{2}-([0-9a-f]{7,40})$/.exec(pin)?.[1] ?? pin;
+    return /^[0-9a-f]{7,40}$/.test(short) && provenance.aeneasRev.startsWith(short);
+  };
   if (provenance.aeneasRev && provenance.aeneasVersion && !pinMatches(provenance.aeneasVersion)) {
     problems.push(`conflict: translation.json aeneas_version ${provenance.aeneasVersion} does not match lake-manifest.json aeneas ${provenance.aeneasRev}`);
   }

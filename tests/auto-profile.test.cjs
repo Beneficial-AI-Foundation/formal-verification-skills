@@ -244,6 +244,27 @@ describe('fvs-auto profile verdicts', () => {
       /^conflict: translation\.json aeneas_version deadbeef does not match lake-manifest\.json aeneas 6e167c9b/);
   });
 
+  // Aeneas release builds report their release tag (nightly-YYYY.MM.DD-<short commit>) as aeneas_version.
+  it('accepts a release-tag aeneas_version whose commit suffix matches the lake-manifest pin', async () => {
+    const project = copyFixture('tested', {
+      files: { 'Lean/translation.json': translation({ aeneas_version: 'nightly-2026.09.30-6e167c9', charon_version: '0.1.225' }) },
+    });
+    const probe = item(await profileOf(project), 'probe');
+    const problems = probe.evidence.resolver.provenance.problems;
+    assert.deepEqual(problems.filter((problem) => problem.startsWith('conflict:')), []);
+    assert.doesNotMatch(probe.reason, /conflict/);
+  });
+
+  it('still reports a release-tag aeneas_version for another commit as a conflict', async () => {
+    const project = copyFixture('tested', {
+      files: { 'Lean/translation.json': translation({ aeneas_version: 'nightly-2026.09.30-deadbee', charon_version: '0.1.225' }) },
+    });
+    const probe = item(await profileOf(project), 'probe');
+    assert.equal(probe.verdict, 'incompatible');
+    assert.match(probe.reason,
+      /^conflict: translation\.json aeneas_version nightly-2026\.09\.30-deadbee does not match lake-manifest\.json aeneas 6e167c9b/);
+  });
+
   it('reports an extracted but untested pilot tuple as unverified with the qualification route', async () => {
     const probe = item(await profileOf(extractedPilot()), 'probe');
     assert.equal(probe.verdict, 'available-but-unverified');

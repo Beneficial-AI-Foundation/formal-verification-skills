@@ -117,6 +117,12 @@ node "$AUTO" record-externals --project-root . --input "$RECORDS"
 
 ## Step 6: Write the regeneration instructions
 
+First make sure the project root has an `aeneas-config.yml` recording `aeneas.commit` (the pinned Aeneas
+commit), `crate.dir` (the crate root, relative to the project) and `aeneas_args.dest` (the directory Aeneas
+wrote `translation.json` to). The resolver and probe-aeneas read those three keys; without them the profile
+reports the extraction's provenance as unknown even though `translation.json` exists. Create or update
+it only with the owner's agreement, and rerun the profile afterwards.
+
 After a recorded success, write `.formalising/auto-fv/regenerate.md` from `read-state`: the crate
 root, the recorded revision and its commit (`state.extraction.inputs.sourceCommit`), the
 configuration, the ordered patches with their sha256 (`state.extraction.inputs.patches`), the

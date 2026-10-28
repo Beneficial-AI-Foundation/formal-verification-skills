@@ -37,6 +37,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   boundary can be marked correspondence-proved yet: that needs checked correspondence evidence,
   which this release cannot validate, so a receipt path, a hash, a ratification packet or a review
   link is refused.
+- The compatibility profile no longer reports an extraction made with an Aeneas release as conflicting
+  with its own lake-manifest pin: Aeneas releases report their release tag (`nightly-YYYY.MM.DD-<commit>`)
+  as `aeneas_version`, and the resolver now compares that tag's commit suffix with the pinned commit. A
+  different commit is still a conflict. `/fvs:auto-extract` now explains the `aeneas-config.yml` keys the
+  resolver reads to find the extraction metadata.
 - The patch-mode run-end summary of `/fvs:aeneas-extract` names the copy of the last cycle, that
   cycle's build exit status and the final success-oracle verdict (complete, refused or unknown).
 

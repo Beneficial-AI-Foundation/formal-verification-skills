@@ -750,6 +750,8 @@ describe('auto command and workflow text', () => {
     assert.match(body, /never migrate/i);
     assert.match(body, /Extraction success is not a proof/);
     assert.match(body, /`correspondence-proved` is refused in this milestone/);
+    assert.match(body, /`aeneas-config\.yml` recording `aeneas\.commit`[\s\S]*`crate\.dir`[\s\S]*`aeneas_args\.dest`/,
+      'auto-extract tells the owner how the resolver finds the extraction metadata');
     assert.doesNotMatch(body, /correspondenceReceipt/, 'no text offers a path and hash as correspondence evidence');
     assert.match(read('fv-skills/workflows/aeneas-extract.md'), /^Copy: {18}\{the OUT of the last cycle\}; build exit/m,
       'the shared extractor reports the copy and the build status the handoff records');
