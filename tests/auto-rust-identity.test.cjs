@@ -436,6 +436,48 @@ describe('Rust identity record: claims stay bounded by the evidence', () => {
     assert.ok(sum.missingGenerated.includes('m1demo.sum_to_loop.body'), 'sum_to_loop still depends on the dropped body');
   });
 
+  it('reports missing Lean or functions.json corroboration for a family instead of reading it as no dependencies', () => {
+    const cases = {
+      'empty probe-lean data': [{ 'lean.json': (l) => ({ ...l, data: {} }) }, 'lean-atom:m1demo.sum_to_loop.body'],
+      'dropped family atom': [{ 'lean.json': (l) => { delete l.data['probe:m1demo.sum_to_loop.body']; return l; } }, 'lean-atom:m1demo.sum_to_loop.body'],
+      'absent dependency list': [{ 'lean.json': (l) => { delete l.data['probe:m1demo.sum_to_loop'].dependencies; return l; } }, 'lean-dependencies:m1demo.sum_to_loop'],
+      'empty functions.json': [{ 'functions.json': () => ({ functions: [] }) }, 'functions-record:m1demo.sum_to'],
+    };
+    for (const [label, [mutation, expected]] of Object.entries(cases)) {
+      const { status, result } = record(inputs(mutation));
+      const sum = item(result, 'm1demo::sum_to');
+      assert.equal(sum.correspondence, 'incomplete', label);
+      assert.ok(sum.missingGenerated.includes(expected), `${label}: ${sum.missingGenerated}`);
+      assert.equal(result.code, 'partial', label);
+      assert.equal(status, 6, label);
+    }
+  });
+
+  it('validates at the exported buildRecord boundary, not only in the CLI', async () => {
+    const { buildRecord } = await import(require('node:url').pathToFileURL(SCRIPT).href);
+    const load = (name) => ({ json: read(name), sha256: sha256(path.join(RUN1, name)) });
+    const valid = () => ({
+      sourceCommit: COMMIT, translation: load('translation.json'), manifest: load('manifest.json'), rust: load('rust.json'),
+      mappings: load('translations.json'), lean: load('lean.json'), functions: load('functions.json'), state: null, configSha256: null,
+    });
+    assert.equal(buildRecord(valid()).status, 'partial', 'the valid recorded run still builds');
+    const cases = {
+      'string def_ids on both sides': (i) => {
+        i.translation.json.functions = i.translation.json.functions.map((f) => ({ ...f, def_id: String(f.def_id) }));
+        for (const atom of Object.values(i.rust.json.data)) if (atom['charon-def-id'] !== undefined) atom['charon-def-id'] = String(atom['charon-def-id']);
+      },
+      'foreign probe-rust envelope': (i) => { i.rust.json.schema = 'probe-lean/extract'; },
+      'unprepared manifest': (i) => { delete i.manifest.json.status; },
+      'missing lean input': (i) => { delete i.lean; },
+      'short source commit': (i) => { i.sourceCommit = 'fac7cf2'; },
+    };
+    for (const [label, mutate] of Object.entries(cases)) {
+      const input = valid();
+      mutate(input);
+      assert.throws(() => buildRecord(input), (error) => error.code === 'invalid-input', label);
+    }
+  });
+
   it('requires the Lean evidence the family check uses', () => {
     const dir = inputs();
     fs.rmSync(path.join(dir, 'lean.json'));

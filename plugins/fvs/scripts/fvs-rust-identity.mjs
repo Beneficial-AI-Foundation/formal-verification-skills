@@ -86,8 +86,14 @@ const isId = (value) => Number.isInteger(value) && value >= 0;
 
 // Refuses an input whose envelope or identity fields are not the qualified shape,
 // so a missing or mistyped field can never take part in a match.
-function validate({ translation, manifest, rust, mappings, lean, functions }) {
+function validate({ translation, manifest, rust, mappings, lean, functions, state, sourceCommit }) {
   const bad = (label, message) => refuse('invalid-input', `${label}: ${message}`);
+  for (const [label, value] of Object.entries({ translation, rust, mappings, lean, functions })) {
+    if (!isObject(value) || !('json' in value)) bad(label, 'is required as { json, sha256 }');
+  }
+  if (manifest !== null && manifest !== undefined && !isObject(manifest)) bad('manifest', 'must be { json, sha256 } or null');
+  if (state !== null && state !== undefined && !isObject(state?.json)) bad('state', 'must be { json, sha256 } or null');
+  if (typeof sourceCommit !== 'string' || !/^[0-9a-f]{40}$/.test(sourceCommit)) bad('sourceCommit', 'must be a full 40-character commit');
   const t = translation.json;
   if (!isObject(t) || !Array.isArray(t.functions) || typeof t.crate !== 'string') bad('translation.json', 'needs a crate string and a functions array');
   if (t.charon_version !== undefined && typeof t.charon_version !== 'string') bad('translation.json', 'charon_version must be a string');
@@ -158,6 +164,15 @@ function spanAgreement(atomSpan, source) {
 function missingFamilyMembers(family, primary, functions, leanAtom) {
   const names = new Set(family.map((f) => f.lean_name));
   const missing = new Set();
+  // Each member needs its own corroboration: a probe-lean atom with a dependency
+  // list and a functions.json record. Absent evidence is reported, never read as
+  // "no dependencies".
+  for (const f of family) {
+    const atom = leanAtom(f.lean_name);
+    if (!atom) missing.add(`lean-atom:${f.lean_name}`);
+    else if (!Array.isArray(atom.dependencies) || atom.dependencies.some((d) => typeof d !== 'string')) missing.add(`lean-dependencies:${f.lean_name}`);
+    if (!functions.json.functions.some((r) => r.lean_name === f.lean_name)) missing.add(`functions-record:${f.lean_name}`);
+  }
   const loops = new Map();
   for (const f of family.filter((g) => g.loop !== undefined)) {
     if (f.parent_lean_name !== primary.lean_name) missing.add(`parent-of:${f.lean_name}`);
@@ -171,7 +186,8 @@ function missingFamilyMembers(family, primary, functions, leanAtom) {
   }
   const helperPrefix = `probe:${primary.lean_name}_loop`;
   for (const f of family) {
-    for (const dep of leanAtom(f.lean_name)?.dependencies ?? []) {
+    const deps = leanAtom(f.lean_name)?.dependencies;
+    for (const dep of Array.isArray(deps) ? deps : []) {
       if (dep.startsWith(helperPrefix) && !names.has(dep.slice('probe:'.length))) missing.add(dep.slice('probe:'.length));
     }
   }
@@ -187,7 +203,10 @@ function correspondenceOf(reasons) {
   return 'exact';
 }
 
+// The public entry point: validates its input, then builds the record. Throws a
+// Refusal with code `invalid-input` for any input the qualified tools would not emit.
 export function buildRecord(input) {
+  validate(input);
   const { translation, manifest, rust, mappings, lean, functions, state, sourceCommit } = input;
   const t = translation.json;
   const blockers = [];
@@ -425,7 +444,6 @@ function record(flags) {
     state: flags.state ? readInput(flags.state, 'state') : null,
     configSha256: flags.config ? sha256File(flags.config) : null,
   };
-  validate(inputs);
   const rec = buildRecord(inputs);
   if (flags.out) writeAtomic(flags.out, `${JSON.stringify(rec, null, 2)}\n`);
   const counts = {};
