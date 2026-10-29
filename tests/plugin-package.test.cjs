@@ -136,6 +136,7 @@ describe('published FVS plugin package', () => {
         'fvs-codex-think.mjs',
         'fvs-extract-patches.mjs',
         'fvs-kb-query.py',
+        'fvs-lean-graph.mjs',
         'fvs-lean-style-check.mjs',
         'fvs-model-external.mjs',
         'fvs-model-review.mjs',
