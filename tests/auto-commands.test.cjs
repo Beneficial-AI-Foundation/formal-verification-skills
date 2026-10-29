@@ -334,6 +334,60 @@ function record(root, out, buildExitCode, oracle = 'complete', oracleReason = un
   return run(() => auto.recordExtraction({ projectRoot: root, out, buildExitCode, oracle, oracleReason }));
 }
 
+describe('auto-extract extraction record: recorded extraction attempt', () => {
+  const { fakeTools, engine, writeSpec } = require('./helpers/fake-extraction-tools.cjs');
+
+  // A completed attempt (fake Charon and Aeneas) on a prepared copy of the project.
+  function attempted(root) {
+    const tools = fakeTools(root, temporaryDirectory('fvs-auto-tools-'));
+    const { out, status } = prepared(root, []);
+    assert.equal(status, 0);
+    const recorded = engine(tools, ['attempt', '--out', out, '--spec', writeSpec(path.join(tools.scratch, 'spec.json'))]);
+    assert.equal(recorded.status, 0, recorded.stdout);
+    for (const step of ['charon', 'aeneas', 'publish']) assert.equal(engine(tools, ['run', '--out', out, '--step', step]).status, 0, step);
+    return out;
+  }
+
+  it('attaches the re-validated attempt to a successful extraction record, and the state still reads', () => {
+    const root = project();
+    init(root);
+    const out = attempted(root);
+    const result = record(root, out, 0);
+    assert.equal(result.code, 'recorded', JSON.stringify(result));
+    const { extraction } = JSON.parse(fs.readFileSync(stateFile(root), 'utf8'));
+    assert.equal(extraction.run.supported, true);
+    assert.equal(extraction.run.manifestSha256, extraction.inputs.manifestSha256);
+    assert.equal(extraction.run.translation.projectPath, path.join(root, 'Demo', 'translation.json'));
+    assert.equal(cli('read-state', '--project-root', root).json.code, 'ok');
+  });
+
+  it('records the extraction as failed when the attempt no longer checks out', () => {
+    const root = project();
+    init(root);
+    const out = attempted(root);
+    fs.appendFileSync(path.join(root, 'Demo', 'Demo.lean'), '-- edited after publication\n');
+    const result = record(root, out, 0);
+    assert.equal(result.code, 'extraction-failed');
+    const { extraction } = JSON.parse(fs.readFileSync(stateFile(root), 'utf8'));
+    assert.equal(extraction.status, 'failed');
+    assert.match(extraction.reasons.join('\n'), /recorded extraction attempt does not check out/);
+    assert.equal('run' in extraction, false);
+  });
+
+  it('leaves a copy extracted without the recorder with no run, and refuses a malformed stored run', () => {
+    const root = project();
+    init(root);
+    const { out } = prepared(root);
+    assert.equal(record(root, out, 0).code, 'recorded');
+    const file = stateFile(root);
+    const state = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.equal('run' in state.extraction, false);
+    state.extraction.run = { supported: true };
+    fs.writeFileSync(file, JSON.stringify(state));
+    assert.notEqual(cli('read-state', '--project-root', root).json.code, 'ok');
+  });
+});
+
 describe('auto-extract extraction record', () => {
   it('a clean build of a verified copy is recorded as success with its inputs, and as not a proof', () => {
     const root = project();

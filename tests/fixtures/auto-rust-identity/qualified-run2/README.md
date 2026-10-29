@@ -5,3 +5,6 @@ receipts as `../qualified-run1`) after one commit (`bfe6580e`) that adds a type-
 and its caller `pick_u32` to the run 1 crate (`lib.rs.txt`). Under the same Charon version (0.1.274) the
 added functions renumber existing def_ids: for example the trait-impl method `score` is def_id 22 in run 1
 and 24 here. `npm test` reads these files; it does not run Charon, Aeneas, Lean or the probes.
+
+`m1demo.llbc.gz` is that run's Charon LLBC, gzipped with `gzip -9 -n`. Its uncompressed sha256 equals the output
+hash in that run's Charon receipt (771ccbfd...).

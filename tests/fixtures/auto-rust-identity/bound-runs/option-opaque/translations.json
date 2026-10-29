@@ -1,0 +1,66 @@
+{
+  "mappings": [
+    {
+      "confidence": "exact",
+      "from": "probe:m1demo/0.1.0/impl<Meter>#[u8][`From<Meter>`]from()",
+      "method": "charon-def-id",
+      "to": "probe:m1demo.U8.Insts.CoreConvertFromMeter.from"
+    },
+    {
+      "confidence": "exact",
+      "from": "probe:m1demo/0.1.0/impl<u32>#[Meter][Score]score()",
+      "method": "charon-def-id",
+      "to": "probe:m1demo.Meter.Insts.M1demoScore.score"
+    },
+    {
+      "confidence": "exact",
+      "from": "probe:m1demo/0.1.0/impl<u8>#[Meter][`From<u8>`]from()",
+      "method": "charon-def-id",
+      "to": "probe:m1demo.Meter.Insts.CoreConvertFromU8.from"
+    },
+    {
+      "confidence": "exact",
+      "from": "probe:m1demo/0.1.0/left/helper()",
+      "method": "charon-def-id",
+      "to": "probe:m1demo.left.helper"
+    },
+    {
+      "confidence": "exact",
+      "from": "probe:m1demo/0.1.0/mode()",
+      "method": "charon-def-id",
+      "to": "probe:m1demo.mode"
+    },
+    {
+      "confidence": "exact",
+      "from": "probe:m1demo/0.1.0/right/helper()",
+      "method": "charon-def-id",
+      "to": "probe:m1demo.right.helper"
+    },
+    {
+      "confidence": "exact",
+      "from": "probe:m1demo/0.1.0/sum_to()",
+      "method": "charon-def-id",
+      "to": "probe:m1demo.sum_to"
+    }
+  ],
+  "schema": "probe/mappings",
+  "schema-version": "3.0",
+  "sources": {
+    "from": {
+      "package": "m1demo",
+      "package-version": "0.1.0",
+      "schema": "probe-rust/extract"
+    },
+    "to": {
+      "package": "m1demo",
+      "package-version": "8d4406a",
+      "schema": "probe-lean/extract"
+    }
+  },
+  "timestamp": "2026-10-29T18:52:42Z",
+  "tool": {
+    "command": "translate",
+    "name": "probe-aeneas",
+    "version": "0.20.0"
+  }
+}

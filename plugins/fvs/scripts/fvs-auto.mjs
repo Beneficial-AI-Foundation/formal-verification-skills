@@ -615,9 +615,23 @@ function inputsValid(inputs) {
 
 // Structural checks only: a stored record is never re-verified by running tools. A success record must
 // carry everything that made it a success; a failed record keeps its reasons and may lack inputs.
+const SHA256 = /^[0-9a-f]{64}$/;
+
+// The recorded extraction attempt the patch engine re-validated (attempt-status);
+// absent for an extraction that did not run through the attempt recorder.
+function runValid(run) {
+  return plainObject(run) && SHA256.test(run.attemptSha256 ?? '') && SHA256.test(run.manifestSha256 ?? '')
+    && SHA256.test(run.configSha256 ?? '') && plainObject(run.config) && typeof run.supported === 'boolean'
+    && Array.isArray(run.residuals) && plainObject(run.stages) && isText(run.trust)
+    && plainObject(run.llbc) && isText(run.llbc.path) && SHA256.test(run.llbc.sha256 ?? '')
+    && plainObject(run.translation) && isText(run.translation.projectPath) && SHA256.test(run.translation.sha256 ?? '')
+    && Array.isArray(run.publication);
+}
+
 function extractionErrors(extraction) {
   const errors = [];
-  if (!fields(errors, extraction, 'extraction', EXTRACTION_FIELDS)) return errors;
+  if (!fields(errors, extraction, 'extraction', [...EXTRACTION_FIELDS, 'run'])) return errors;
+  if ('run' in extraction && !runValid(extraction.run)) errors.push('extraction.run must be the re-validated extraction attempt');
   const missing = EXTRACTION_FIELDS.filter((key) => !(key in extraction));
   if (missing.length > 0) return [`extraction lacks ${missing.join(', ')}`];
   const { status, reasons, selected, declared, checks, inputs } = extraction;
@@ -856,14 +870,19 @@ export function recordRoadmap({ projectRoot, decision, confirmOverwrite = false 
   return { code: 'recorded', message: `roadmap offer recorded as ${decision}`, state };
 }
 
-function engineCheck(command, out) {
+function engineResult(command, out) {
   const run = spawnSync(process.execPath, [ENGINE, command, '--out', out], { encoding: 'utf8' });
   try {
-    const { ok, code, message } = JSON.parse(run.stdout);
-    return { ok: ok === true, code, message };
+    const result = JSON.parse(run.stdout);
+    return { ...result, ok: result.ok === true };
   } catch {
     return { ok: false, code: 'internal', message: firstLine(run.stderr) || `the engine exited ${run.status}` };
   }
+}
+
+function engineCheck(command, out) {
+  const { ok, code, message } = engineResult(command, out);
+  return { ok, code, message };
 }
 
 function resolveRevision(directory, revision) {
@@ -920,6 +939,15 @@ export function recordExtraction({ projectRoot, out, buildExitCode, oracle, orac
       patches: manifest.patches.map(({ file, sha256: hash }) => ({ file, sha256: hash })),
     };
   }
+  // An attempt recorded by the patch engine is attached only after the engine
+  // re-validates its whole chain against the current files.
+  let run;
+  if (fs.existsSync(path.join(copy, 'attempt.json'))) {
+    const status = engineResult('attempt-status', copy);
+    if (!status.ok) reasons.push(`the recorded extraction attempt does not check out (${status.code}): ${status.message}`);
+    else if (!runValid(status.run) || status.run.manifestSha256 !== inputs?.manifestSha256) reasons.push('the recorded extraction attempt is not bound to this manifest');
+    else run = status.run;
+  }
   const extraction = {
     status: reasons.length === 0 ? 'succeeded' : 'failed',
     recordedAt: now(),
@@ -929,6 +957,7 @@ export function recordExtraction({ projectRoot, out, buildExitCode, oracle, orac
     declared: { buildExitCode, oracle, ...(reason ? { oracleReason: reason } : {}) },
     checks,
     inputs,
+    ...(run ? { run } : {}),
     note: NOT_A_PROOF,
   };
   state.extraction = extraction;

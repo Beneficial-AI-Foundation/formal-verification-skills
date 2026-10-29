@@ -13,13 +13,17 @@ import { fileURLToPath } from 'node:url';
 // outputs of the pinned tools (probe-rust `extract --translation`, probe-aeneas
 // `translate`, optionally probe-lean `extract` and probe-aeneas's functions.json);
 // it never runs them. A mapping counts as exact only when probe-aeneas made it by
-// its charon-def-id join and the def_id, span and Lean target all agree.
+// its charon-def-id join and the def_id, span and Lean target all agree. The
+// record is bound to one extraction only when the state carries an attempt the
+// patch engine recorded and re-validated, and the given LLBC and translation.json
+// are that attempt's outputs and agree with each other and the manifest.
 
-const EXIT = { usage: 2, internal: 2, 'invalid-input': 5, partial: 6, blocked: 7, unbound: 8 };
+const EXIT = { ok: 0, usage: 2, internal: 2, 'invalid-input': 5, partial: 6, blocked: 7, unbound: 8 };
 const DEF_ID_METHOD = 'charon-def-id';
 const CONFLICT = new Set(['span-mismatch', 'mapping-target-differs']);
 const AMBIGUOUS = new Set(['duplicate-charon-def-id', 'lean-target-claimed-twice', 'span-missing', 'span-path-unsupported', 'conflicting-mappings']);
-const UNSUPPORTED = new Set(['recursion', 'non-loop-split', 'no-primary']);
+const UNSUPPORTED = new Set(['recursion', 'non-loop-split', 'no-primary', 'type-generic']);
+const UNBOUND_WITHOUT_ATTEMPT = ['translation-linkage-triangulated', 'extraction-configuration-not-bound'];
 
 class Refusal extends Error {
   constructor(code, message) {
@@ -36,7 +40,7 @@ function usage() {
   process.stdout.write([
     'Usage: node fvs-rust-identity.mjs record --source-commit SHA --translation FILE --manifest FILE',
     '         --rust FILE --mappings FILE --lean FILE --functions FILE [--config FILE]',
-    '         [--state FILE] [--out FILE] [--format json|text]',
+    '         [--state FILE] [--llbc FILE] [--out FILE] [--format json|text]',
     '',
     '--translation  Aeneas translation.json (-emit-json); its functions[] def_ids are the keys',
     '--manifest     fvs-extract-patches manifest.json of the same extraction',
@@ -44,13 +48,16 @@ function usage() {
     '--mappings     probe-aeneas `translate` output (each mapping names its method)',
     '--lean, --functions  probe-lean extract output and probe-aeneas functions.json: kept verbatim',
     '               and used to check that each Lean family is complete',
-    '--config       extraction configuration file whose sha256 is recorded',
-    '--state        FVS auto state; its recorded manifest sha256 and source commit must agree',
+    '--config       a configuration file whose sha256 is recorded as the caller\'s; it binds nothing',
+    '--state        FVS auto state; its recorded manifest sha256 and source commit must agree, and',
+    '               its recorded extraction attempt (extraction.run) is what can bind the record',
+    '--llbc         Charon\'s LLBC from that attempt: its hash, options, embedded sources and',
+    '               fun_decls are checked against the attempt, the manifest and translation.json',
     '',
-    'Exit: 8 unbound (every function maps exactly, but no input binds translation.json and the',
-    'extraction configuration to the manifest, so same-extraction identity is not claimed),',
-    '6 partial (some functions not exact), 7 blocked (provenance or correspondence conflict;',
-    'no function is claimed), 5 invalid input, 2 usage. No outcome exits 0 yet.',
+    'Exit: 0 complete (bound to the recorded attempt and every function exact), 8 unbound',
+    '(every function exact, but no validated recorded attempt binds the inputs), 6 partial',
+    '(some functions not exact), 7 blocked (provenance or correspondence conflict; no function',
+    'is claimed), 5 invalid input, 2 usage.',
     '',
   ].join('\n'));
 }
@@ -83,10 +90,12 @@ function sha256File(file) {
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isLine = (value) => Number.isInteger(value) && value >= 1;
 const isId = (value) => Number.isInteger(value) && value >= 0;
+const isSha = (value) => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+const sha256Text = (text) => crypto.createHash('sha256').update(text).digest('hex');
 
 // Refuses an input whose envelope or identity fields are not the qualified shape,
 // so a missing or mistyped field can never take part in a match.
-function validate({ translation, manifest, rust, mappings, lean, functions, state, sourceCommit }) {
+function validate({ translation, manifest, rust, mappings, lean, functions, state, llbc, sourceCommit }) {
   const bad = (label, message) => refuse('invalid-input', `${label}: ${message}`);
   for (const [label, value] of Object.entries({ translation, rust, mappings, lean, functions })) {
     if (!isObject(value) || !('json' in value)) bad(label, 'is required as { json, sha256 }');
@@ -134,6 +143,20 @@ function validate({ translation, manifest, rust, mappings, lean, functions, stat
   if (!isObject(lean.json) || lean.json.schema !== 'probe-lean/extract' || !isObject(lean.json.data)) bad('probe-lean output', 'needs schema probe-lean/extract with a data object');
   if (!isObject(functions.json) || !Array.isArray(functions.json.functions) || functions.json.functions.some((f) => !isObject(f) || typeof f.lean_name !== 'string')) {
     bad('functions.json', 'needs a functions array of records with lean_name');
+  }
+  const run = state ? (state.json.extraction ?? state.json.state?.extraction)?.run : undefined;
+  if (run !== undefined && !(isObject(run) && isSha(run.manifestSha256) && isSha(run.configSha256) && isObject(run.config)
+    && typeof run.supported === 'boolean' && Array.isArray(run.residuals) && isObject(run.llbc) && typeof run.llbc.path === 'string'
+    && isSha(run.llbc.sha256) && isObject(run.translation) && isSha(run.translation.sha256)
+    && Array.isArray(run.publication) && run.publication.every((entry) => isObject(entry) && typeof entry.projectPath === 'string' && isSha(entry.sha256)))) {
+    bad('state', 'extraction.run is not a recorded extraction attempt');
+  }
+  if (llbc !== null && llbc !== undefined) {
+    const l = llbc.json;
+    if (!isObject(llbc) || !isObject(l) || typeof l.charon_version !== 'string' || !isObject(l.translated) || !isObject(l.translated.options)
+      || !Array.isArray(l.translated.files) || !Array.isArray(l.translated.fun_decls)) {
+      bad('llbc', 'needs charon_version and translated.options, files and fun_decls');
+    }
   }
 }
 
@@ -204,11 +227,71 @@ function correspondenceOf(reasons) {
   return 'exact';
 }
 
+const spanData = (span) => {
+  const data = span?.Untagged?.data ?? span?.data ?? span;
+  return isObject(data) && isId(data.file_id) && isObject(data.beg) && isObject(data.end) ? data : null;
+};
+
+const isGeneric = (decl) => ['types', 'const_generics'].some((key) => Array.isArray(decl?.generics?.[key]) && decl.generics[key].length > 0);
+
+// Same-extraction binding. The state's extraction.run is the attempt the patch
+// engine recorded (controlled environment, supported configuration, ordered
+// stages, fresh outputs) and re-validated before record-extraction stored it.
+// The given files must be that attempt's outputs, and the LLBC must agree with
+// the manifest's source and with translation.json by content. A disagreement
+// blocks; a missing or unsupported attempt leaves the record unbound.
+function bindRun({ state, manifest, translation, llbc, t }) {
+  const decls = new Map();
+  for (const decl of llbc?.json.translated.fun_decls ?? []) if (isObject(decl) && isId(decl.def_id)) decls.set(decl.def_id, decl);
+  const extraction = state ? state.json.extraction ?? state.json.state?.extraction : null;
+  const run = extraction?.run;
+  if (!run) return { binding: { status: 'unbound', reasons: UNBOUND_WITHOUT_ATTEMPT }, blocks: [], decls };
+  const reasons = [];
+  const blocks = [];
+  const block = (code, message) => blocks.push({ code, message });
+  if (extraction.status !== 'succeeded') reasons.push('extraction-not-succeeded');
+  if (!run.supported || run.residuals.length > 0) reasons.push('unsupported-configuration');
+  if (!llbc) reasons.push('no-llbc');
+  if (run.manifestSha256 !== manifest?.sha256) block('run-manifest-mismatch', 'the recorded attempt was prepared from a different manifest');
+  if (run.translation.sha256 !== translation.sha256) block('run-translation-mismatch', 'translation.json is not the one the recorded attempt published');
+  if (sha256Text(JSON.stringify(run.config)) !== run.configSha256) block('run-config-mismatch', 'the recorded attempt configuration does not match its hash');
+  if (llbc) {
+    const { translated } = llbc.json;
+    if (run.llbc.sha256 !== llbc.sha256) block('run-llbc-mismatch', 'the LLBC is not the one the recorded attempt produced');
+    if (llbc.json.charon_version !== t.charon_version) block('llbc-charon-version-mismatch', `LLBC charon_version ${llbc.json.charon_version} differs from translation.json ${t.charon_version}`);
+    if (translated.options.dest_file !== run.llbc.path) block('llbc-dest-mismatch', 'the LLBC names another output path than the recorded attempt');
+    const files = new Map(translated.files.filter(isObject).map((file) => [file.id, file]));
+    const finalFiles = manifest?.json.final?.files ?? {};
+    for (const file of files.values()) {
+      if (file.crate_name !== t.crate || typeof file.contents !== 'string' || typeof file.name?.Local !== 'string') continue;
+      if (finalFiles[file.name.Local]?.sha256 !== sha256Text(file.contents)) block('llbc-source-mismatch', `the LLBC's ${file.name.Local} is not the manifest's prepared source`);
+    }
+    for (const f of t.functions.filter((fn) => fn.is_local)) {
+      const decl = decls.get(f.def_id);
+      const span = spanData(decl?.item_meta?.span);
+      const file = span ? files.get(span.file_id)?.name?.Local : undefined;
+      const linesDiffer = f.loop === undefined && (span?.beg.line !== f.source.begin_line || span?.end.line !== f.source.end_line);
+      if (!decl || file !== f.source.file || linesDiffer) block('llbc-function-mismatch', `def_id ${f.def_id} (${f.lean_name}) does not match the LLBC's fun_decls by file and span`);
+    }
+  }
+  const bound = reasons.length === 0 && blocks.length === 0;
+  return {
+    binding: bound
+      // Lean bodies are bound only through these published-file hashes: the probe
+      // outputs carry identity facts, not file hashes, so a consumer reading the
+      // generated Lean must check it against generatedLean.
+      ? { status: 'bound', reasons: [], trust: run.trust, configSha256: run.configSha256, generatedLean: run.publication.map(({ projectPath, sha256 }) => ({ projectPath, sha256 })) }
+      : { status: 'unbound', reasons: reasons.length > 0 ? reasons : ['inputs-disagree-with-attempt'], residuals: run.residuals },
+    blocks,
+    decls,
+  };
+}
+
 // The public entry point: validates its input, then builds the record. Throws a
 // Refusal with code `invalid-input` for any input the qualified tools would not emit.
 export function buildRecord(input) {
   validate(input);
-  const { translation, manifest, rust, mappings, lean, functions, state, sourceCommit } = input;
+  const { translation, manifest, rust, mappings, lean, functions, state, llbc, sourceCommit } = input;
   const t = translation.json;
   const blockers = [];
   const block = (code, message) => blockers.push({ code, message });
@@ -228,19 +311,21 @@ export function buildRecord(input) {
     mappingsSha256: mappings.sha256,
     leanSha256: lean?.sha256 ?? null,
     functionsSha256: functions?.sha256 ?? null,
-    configSha256: input.configSha256 ?? null,
+    llbcSha256: llbc?.sha256 ?? null,
+    configSha256: null,
+    callerConfigSha256: input.configSha256 ?? null,
     probeRustVersion: rust.json.tool?.version ?? null,
     probeAeneasVersion: mappings.json.tool?.version ?? null,
     linkage: 'triangulated',
-    // A capability limit, not a gate: no pinned tool carries a type-parameter field.
-    gaps: ['type-genericity-not-exposed'],
+    // A capability limit, not a gate: without the LLBC no input carries type parameters.
+    gaps: llbc ? [] : ['type-genericity-not-exposed'],
   };
-  // Same-extraction identity needs translation.json and the configuration that
-  // produced the LLBC bound to the manifest. No input records either: the manifest
-  // binds only the source, translation.json is tied to it by agreeing commits,
-  // crate, Charon version and spans, and configSha256 is the caller's word. Until an
-  // interface binds them, a fully matched record is `unbound`, never complete.
-  const binding = { status: 'unbound', reasons: ['translation-linkage-triangulated', 'extraction-configuration-not-bound'] };
+  const { binding, blocks: bindingBlocks, decls } = bindRun({ state, manifest, translation, llbc, t });
+  if (binding.status === 'bound') {
+    provenance.configSha256 = binding.configSha256;
+    provenance.generatedLean = binding.generatedLean;
+    provenance.linkage = 'recorded-attempt';
+  }
 
   if (!manifest) block('missing-manifest', 'no patch-engine manifest: the extraction inputs are unbound');
   if (!t.charon_version) block('missing-charon-version', 'translation.json records no charon_version, so def_ids have no provenance');
@@ -266,6 +351,7 @@ export function buildRecord(input) {
       block('charon-version-mismatch', `${name} carries charon-version ${JSON.stringify(atom['charon-version'])}, translation.json ${JSON.stringify(t.charon_version)}`);
     }
   }
+  for (const { code, message } of bindingBlocks) block(code, message);
   if (localFunctions.length === 0) block('empty-discovery', 'translation.json lists no local functions');
   if (atoms.length === 0) block('empty-discovery', `probe-rust lists no atoms of package ${JSON.stringify(pkg)}`);
 
@@ -327,6 +413,7 @@ export function buildRecord(input) {
     if (primaries.length > 1) reasons.push('non-loop-split');
     if (primaries.length === 0) reasons.push('no-primary');
     if (family.some((f) => f.is_rec === true)) reasons.push('recursion');
+    if (isGeneric(decls.get(defId))) reasons.push('type-generic');
     const missingGenerated = primary ? missingFamilyMembers(family, primary, functions, leanAtom) : [];
     if (missingGenerated.length > 0) reasons.push('family-incomplete');
     const candidates = keyed.get(defId) ?? [];
@@ -403,12 +490,12 @@ export function buildRecord(input) {
   }
   const allExact = record.items.every((entry) => entry.correspondence === 'exact')
     && record.unkeyedRustAtoms.length === 0 && record.orphanRustAtoms.length === 0;
-  record.status = blockers.length > 0 ? 'blocked' : allExact ? binding.status : 'partial';
+  record.status = blockers.length > 0 ? 'blocked' : !allExact ? 'partial' : binding.status === 'bound' ? 'complete' : 'unbound';
   return record;
 }
 
 function parseFlags(argv) {
-  const known = ['source-commit', 'translation', 'manifest', 'rust', 'mappings', 'lean', 'functions', 'config', 'state', 'out', 'format'];
+  const known = ['source-commit', 'translation', 'manifest', 'rust', 'mappings', 'lean', 'functions', 'config', 'state', 'llbc', 'out', 'format'];
   const flags = {};
   const rest = [...argv];
   while (rest.length > 0) {
@@ -443,6 +530,7 @@ function record(flags) {
     lean: readInput(flags.lean, 'probe-lean output'),
     functions: readInput(flags.functions, 'functions.json'),
     state: flags.state ? readInput(flags.state, 'state') : null,
+    llbc: flags.llbc ? readInput(flags.llbc, 'llbc') : null,
     configSha256: flags.config ? sha256File(flags.config) : null,
   };
   const rec = buildRecord(inputs);
@@ -453,7 +541,7 @@ function record(flags) {
   const message = rec.status === 'blocked'
     ? rec.blockers.map((b) => b.code).join(', ')
     : `${tally}; ${rec.unkeyedRustAtoms.length} unkeyed, ${rec.orphanRustAtoms.length} orphan Rust atom(s); same-extraction binding: ${rec.binding.status}`;
-  return { code: rec.status, message, record: rec };
+  return { code: rec.status === 'complete' ? 'ok' : rec.status, message, record: rec };
 }
 
 function main(argv) {
@@ -468,7 +556,7 @@ function main(argv) {
     const flags = parseFlags(argv.slice(1));
     format = flags.format ?? 'json';
     const outcome = record(flags);
-    result = { ok: false, command: 'record', ...outcome };
+    result = { ok: outcome.code === 'ok', command: 'record', ...outcome };
   } catch (error) {
     result = error instanceof Refusal
       ? { ok: false, code: error.code, command: argv[0], message: error.message }
@@ -483,7 +571,7 @@ function main(argv) {
   } else {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   }
-  if (!['partial', 'blocked', 'unbound'].includes(result.code)) process.stderr.write(`FVS >> ${result.code}: ${result.message}\n`);
+  if (!['ok', 'partial', 'blocked', 'unbound'].includes(result.code)) process.stderr.write(`FVS >> ${result.code}: ${result.message}\n`);
   process.exitCode = EXIT[result.code];
 }
 

@@ -223,14 +223,33 @@ set -o pipefail
 OUT="$(mktemp -d "${TMPDIR:-/tmp}/fvs-extract.XXXXXX")/copy"
 node "$PATCH_ENGINE" prepare --project-root "$CRATE_ROOT" --out "$OUT" || exit 1   # records the manifest; refusal -> STOP
 node "$PATCH_ENGINE" verify-tree --out "$OUT" || exit 1                  # before Charon: the copy is the recorded post-patch tree
-( cd "$OUT/tree" && <the project's Charon command> --dest-file "$OUT/<crate>.llbc" ) 2>&1 | tee "$OUT/charon.log"
-test ${PIPESTATUS[0]} -eq 0 || echo "charon-layer failure"               # read the TOOL's status, not the pipe's
+# One recorded attempt. $EXTRACT_SPEC (JSON: release, crate, publishDir, charonArgs, cargoArgs) states the
+# project's usual invocation in the supported form; the engine refuses anything else before recording.
+node "$PATCH_ENGINE" attempt --out "$OUT" --spec "$EXTRACT_SPEC" || exit 1
+# Charon runs in "$OUT/tree" with --dest-file "$OUT/<crate>.llbc", under the controlled environment.
+node "$PATCH_ENGINE" run --out "$OUT" --step charon; CHARON_STATUS=$?   # 9 = Charon failed -> CLASSIFY
 node "$PATCH_ENGINE" verify-tree --out "$OUT" || exit 1                  # after Charon: the tree it consumed is still the recorded one
-# Aeneas on "$OUT/<crate>.llbc" with the project's usual options, then its split and tweaks steps
+# Aeneas on the recorded LLBC into a fresh "$OUT/aeneas-dest"; then the publication into publishDir.
+node "$PATCH_ENGINE" run --out "$OUT" --step aeneas; AENEAS_STATUS=$?   # 9 = Aeneas failed -> CLASSIFY
+node "$PATCH_ENGINE" run --out "$OUT" --step publish || exit 1           # refusal leaves publishDir unchanged -> STOP
 node "$PATCH_ENGINE" verify-restore --out "$OUT" || exit 1               # the original sources still match the recorded start
 LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build 2>&1 | tee build.log
 test ${PIPESTATUS[0]} -eq 0 || echo "lean-layer failure"                 # read the TOOL's status, not the pipe's
 ```
+
+The recorded attempt is what lets `/fvs:auto-extract`'s extraction record, and the Rust identity
+record built from it, claim that the artifacts came from this attempt under its recorded supported
+configuration. `run` executes each stage once, in order, under an environment it builds itself
+(`HOME`, `RUSTUP_HOME`, `CARGO_HOME`, its own `PATH`, the release's pinned `RUSTUP_TOOLCHAIN`). It
+records the tool hashes, the exact arguments and every cargo configuration file by hash. An
+influential or unknown variable in the caller's environment, or a present cargo configuration file,
+leaves the attempt unsupported; it is recorded by name only and never by value. A failed or
+interrupted stage ends the attempt: prepare a new copy to retry. Publication writes only into
+`publishDir`, which must be empty or hold only files an earlier publication owns, unmodified; it never
+overwrites a maintained file and never deletes. When the project's invocation is outside the
+supported contract (`attempt` refuses with `invalid-input`), run the project's own Charon command in
+`"$OUT/tree"` with `--dest-file "$OUT/<crate>.llbc"` and Aeneas as before. That extraction can still
+be recorded, but it carries no recorded attempt and stays unbound.
 
 Send Charon's `.llbc` file and logs outside `"$OUT/tree"` (`--dest-file` as above; without it
 Charon writes into its working directory). Only cargo's `target/` directory may appear in the copy

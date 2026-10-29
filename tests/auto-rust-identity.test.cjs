@@ -141,7 +141,8 @@ describe('Rust identity record: recorded qualification run (positive)', () => {
     const first = record(dir, ['--config', config]);
     const second = record(dir, ['--config', config]);
     assert.equal(first.stdout, second.stdout);
-    assert.equal(first.result.record.provenance.configSha256, sha256(config));
+    assert.equal(first.result.record.provenance.callerConfigSha256, sha256(config));
+    assert.equal(first.result.record.provenance.configSha256, null, 'a caller file binds nothing');
   });
 
   it('writes the record atomically with --out', () => {
@@ -355,7 +356,7 @@ describe('Rust identity record: claims stay bounded by the evidence', () => {
     });
     const first = record(dir, ['--config', a]).result;
     const second = record(dir, ['--config', b]).result;
-    assert.notEqual(first.record.provenance.configSha256, second.record.provenance.configSha256);
+    assert.notEqual(first.record.provenance.callerConfigSha256, second.record.provenance.callerConfigSha256);
     for (const run of [first, second]) {
       assert.equal(run.code, 'unbound');
       assert.ok(run.record.binding.reasons.includes('extraction-configuration-not-bound'));
@@ -486,6 +487,133 @@ describe('Rust identity record: claims stay bounded by the evidence', () => {
       '--manifest', path.join(dir, 'manifest.json'), '--rust', path.join(dir, 'rust.json'), '--mappings', path.join(dir, 'translations.json'),
       '--functions', path.join(dir, 'functions.json')], { encoding: 'utf8' });
     assert.equal(run.status, 2);
+  });
+});
+
+describe('Rust identity record: binding to a recorded extraction attempt', () => {
+  const zlib = require('node:zlib');
+  const BOUND = path.join(__dirname, 'fixtures', 'auto-rust-identity', 'bound-runs');
+  const COMMIT_B = '8d4406a8be358e1e177a01a8759c9cf46d411618';
+  const scratch = () => {
+    const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'fvs-rust-identity-bound-'));
+    temporaryDirectories.push(dir);
+    return dir;
+  };
+  const llbcFile = (run, dir = scratch()) => {
+    const file = path.join(dir, `${run}.llbc`);
+    fs.writeFileSync(file, zlib.gunzipSync(fs.readFileSync(path.join(BOUND, run, 'm1demo.llbc.gz'))));
+    return file;
+  };
+  // STATE, LLBC, TRANSLATION and PROBES name recorded runs; overrides replace a file path.
+  function bound({ state = 'positive-a', llbc = state, translation = state, probes = 'positive-a', manifest = state, extra = [], files = {} } = {}) {
+    const at = (run, name) => files[name] ?? path.join(BOUND, run, name);
+    const args = [SCRIPT, 'record', '--source-commit', COMMIT_B, '--translation', at(translation, 'translation.json'),
+      '--manifest', at(manifest, 'manifest.json'), '--rust', at(probes, 'rust.json'), '--mappings', at(probes, 'translations.json'),
+      '--lean', at(probes, 'lean.json'), '--functions', at(probes, 'functions.json'), '--state', at(state, 'state.json'), ...extra];
+    if (llbc !== null) args.push('--llbc', files.llbc ?? llbcFile(llbc));
+    const run = spawnSync(process.execPath, args, { encoding: 'utf8' });
+    return { status: run.status, result: JSON.parse(run.stdout) };
+  }
+
+  it('is complete (exit 0) when every input is the recorded attempt\'s output and every function is exact', () => {
+    const { status, result } = bound();
+    assert.equal(result.code, 'ok');
+    assert.equal(status, 0);
+    assert.equal(result.ok, true);
+    const { record: rec } = result;
+    assert.equal(rec.status, 'complete');
+    assert.equal(rec.binding.status, 'bound');
+    assert.equal(rec.binding.trust, 'local-host-and-reviewed-scripts');
+    const state = JSON.parse(fs.readFileSync(path.join(BOUND, 'positive-a', 'state.json'), 'utf8'));
+    assert.equal(rec.provenance.configSha256, state.extraction.run.configSha256);
+    assert.equal(rec.provenance.linkage, 'recorded-attempt');
+    assert.deepEqual(rec.provenance.gaps, []);
+    assert.deepEqual(rec.provenance.generatedLean.map((entry) => path.basename(entry.projectPath)).sort(), ['M1demo.lean', 'translation.json']);
+    assert.ok(rec.items.every((entry) => entry.correspondence === 'exact'));
+    assert.equal(bound({ state: 'positive-b' }).status, 0, 'the second fresh attempt binds on its own outputs');
+  });
+
+  it('gives the same configuration hash to both positive attempts and a different one to each changed configuration', () => {
+    const config = (run) => JSON.parse(fs.readFileSync(path.join(BOUND, run, 'state.json'), 'utf8')).extraction.run.configSha256;
+    assert.equal(config('positive-a'), config('positive-b'));
+    for (const run of ['feature-alt', 'option-opaque', 'cargo-config']) assert.notEqual(config(run), config('positive-a'), run);
+  });
+
+  it('blocks the body-only feature run mixed with the positive: identical translation.json, different LLBC', () => {
+    const translation = (run) => fs.readFileSync(path.join(BOUND, run, 'translation.json'));
+    assert.deepEqual(translation('feature-alt'), translation('positive-a'), 'the content view cannot tell the two apart');
+    for (const mix of [{ state: 'positive-a', llbc: 'feature-alt', translation: 'feature-alt' }, { state: 'feature-alt', llbc: 'positive-a', translation: 'positive-a' }]) {
+      const { status, result } = bound(mix);
+      assert.equal(status, 7, JSON.stringify(mix));
+      assert.ok(result.record.blockers.some((b) => b.code === 'run-llbc-mismatch'), JSON.stringify(mix));
+    }
+    assert.equal(bound({ state: 'feature-alt' }).status, 0, 'the feature run binds on its own outputs');
+  });
+
+  it('blocks another attempt\'s LLBC with the same configuration, and a translation.json from another configuration', () => {
+    assert.ok(bound({ state: 'positive-a', llbc: 'positive-b', translation: 'positive-b' }).result.record.blockers.some((b) => b.code === 'run-llbc-mismatch'));
+    const option = bound({ state: 'positive-a', translation: 'option-opaque', probes: 'option-opaque' });
+    assert.equal(option.status, 7);
+    assert.ok(option.result.record.blockers.some((b) => b.code === 'run-translation-mismatch'));
+    assert.equal(bound({ state: 'option-opaque', probes: 'option-opaque' }).status, 0, 'the option run binds on its own outputs');
+  });
+
+  it('stays unbound (exit 8) for the attempt with a cargo configuration file, although every tool succeeded', () => {
+    const { status, result } = bound({ state: 'cargo-config' });
+    assert.equal(status, 8);
+    assert.equal(result.record.binding.status, 'unbound');
+    assert.deepEqual(result.record.binding.reasons, ['unsupported-configuration']);
+    assert.deepEqual(result.record.binding.residuals.map((r) => r.class), ['cargo-config']);
+  });
+
+  it('stays unbound without the LLBC, and records a caller config file as the caller\'s only', () => {
+    const { status, result } = bound({ llbc: null });
+    assert.equal(status, 8);
+    assert.deepEqual(result.record.binding.reasons, ['no-llbc']);
+    assert.deepEqual(result.record.provenance.gaps, ['type-genericity-not-exposed']);
+  });
+
+  it('blocks a tampered recorded configuration and LLBC content that disagrees with the manifest or translation.json', () => {
+    const dir = scratch();
+    const state = JSON.parse(fs.readFileSync(path.join(BOUND, 'positive-a', 'state.json'), 'utf8'));
+    const write = (name, value) => { const file = path.join(dir, name); fs.writeFileSync(file, typeof value === 'string' ? value : JSON.stringify(value)); return file; };
+    const tampered = structuredClone(state);
+    tampered.extraction.run.config.charon.argv.push('--extra');
+    assert.ok(bound({ files: { 'state.json': write('config.json', tampered) } }).result.record.blockers.some((b) => b.code === 'run-config-mismatch'));
+    // Labelled mutation: an LLBC edited and the recorded hash updated to match it,
+    // so only the content checks can catch it.
+    const llbc = JSON.parse(fs.readFileSync(llbcFile('positive-a', dir), 'utf8'));
+    const withLlbc = (mutate, name) => {
+      const copy = structuredClone(llbc);
+      mutate(copy);
+      const text = JSON.stringify(copy);
+      const next = structuredClone(state);
+      next.extraction.run.llbc.sha256 = crypto.createHash('sha256').update(text).digest('hex');
+      return bound({ files: { llbc: write(`${name}.llbc`, text), 'state.json': write(`${name}-state.json`, next) } }).result.record.blockers.map((b) => b.code);
+    };
+    assert.ok(withLlbc((l) => { l.translated.files.find((f) => f.crate_name === 'm1demo' && f.contents).contents += '\n// edited'; }, 'source').includes('llbc-source-mismatch'));
+    assert.ok(withLlbc((l) => { const d = l.translated.fun_decls.find((f) => f && f.def_id === 25) ?? l.translated.fun_decls.filter(Boolean).at(-1); d.item_meta.span.Untagged.data.beg.line += 1; }, 'span').includes('llbc-function-mismatch'));
+    assert.ok(withLlbc((l) => { l.charon_version = '0.1.273'; }, 'version').includes('llbc-charon-version-mismatch'));
+    const unsupported = structuredClone(state);
+    unsupported.extraction.run.supported = false;
+    assert.deepEqual(bound({ files: { 'state.json': write('unsupported.json', unsupported) } }).result.record.binding.reasons, ['unsupported-configuration']);
+  });
+
+  it('flags a type-generic function from the LLBC as unsupported (recorded run 2 and its receipted LLBC)', () => {
+    const RUN2 = path.join(__dirname, 'fixtures', 'auto-rust-identity', 'qualified-run2');
+    const dir = scratch();
+    const llbc = path.join(dir, 'run2.llbc');
+    fs.writeFileSync(llbc, zlib.gunzipSync(fs.readFileSync(path.join(RUN2, 'm1demo.llbc.gz'))));
+    const args = [SCRIPT, 'record', '--source-commit', 'bfe6580e83e22febdeb028576952c74812b353ca', '--llbc', llbc];
+    for (const [flag, name] of [['--translation', 'translation.json'], ['--manifest', 'manifest.json'], ['--rust', 'rust.json'],
+      ['--mappings', 'translations.json'], ['--lean', 'lean.json'], ['--functions', 'functions.json']]) args.push(flag, path.join(RUN2, name));
+    const result = JSON.parse(spawnSync(process.execPath, args, { encoding: 'utf8' }).stdout);
+    const pick = item(result, 'm1demo::pick');
+    assert.equal(pick.correspondence, 'unsupported');
+    assert.ok(pick.reasons.includes('type-generic'));
+    assert.equal(item(result, 'm1demo::pick_u32').correspondence, 'exact', 'its monomorphic caller is not generic');
+    assert.deepEqual(result.record.provenance.gaps, []);
+    assert.equal(result.record.binding.status, 'unbound', 'run 2 was not recorded through the attempt');
   });
 });
 

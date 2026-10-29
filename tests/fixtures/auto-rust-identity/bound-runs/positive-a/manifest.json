@@ -1,0 +1,51 @@
+{
+  "schema": "fvs-extract-patches/manifest",
+  "version": 1,
+  "status": "prepared",
+  "projectRoot": "/private/tmp/fvs39-b/proj",
+  "tree": "/private/tmp/fvs39-b/copies/positive-a-copy/tree",
+  "mode": "translation-patches",
+  "source": {
+    "inputs": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "src"
+    ],
+    "commit": "8d4406a8be358e1e177a01a8759c9cf46d411618",
+    "dirty": [],
+    "files": {
+      "Cargo.toml": {
+        "sha256": "b209f01028e61966ba55bb51615feb17f0c32ab48d8c40902d34c64917afcf21",
+        "mode": "644"
+      },
+      "Cargo.lock": {
+        "sha256": "102df45695c27cf4ec75f4ab5e1dd03d72967262ba8253b44b09f3b0204e315f",
+        "mode": "644"
+      },
+      "src/lib.rs": {
+        "sha256": "80a2ceef95f53e05eb1b8eedfc5b6eb366878aca7f21296ac97bf1c39cf50965",
+        "mode": "644"
+      }
+    }
+  },
+  "touched": [],
+  "patches": [],
+  "failure": null,
+  "final": {
+    "touchedSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "files": {
+      "Cargo.lock": {
+        "sha256": "102df45695c27cf4ec75f4ab5e1dd03d72967262ba8253b44b09f3b0204e315f",
+        "mode": "644"
+      },
+      "Cargo.toml": {
+        "sha256": "b209f01028e61966ba55bb51615feb17f0c32ab48d8c40902d34c64917afcf21",
+        "mode": "644"
+      },
+      "src/lib.rs": {
+        "sha256": "80a2ceef95f53e05eb1b8eedfc5b6eb366878aca7f21296ac97bf1c39cf50965",
+        "mode": "644"
+      }
+    }
+  }
+}

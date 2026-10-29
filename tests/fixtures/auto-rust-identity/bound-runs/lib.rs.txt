@@ -1,0 +1,51 @@
+//! Ticket 10 binding qualification fixture (written for FVS; not a real target).
+
+pub struct Meter(pub u32);
+
+pub trait Score {
+    fn score(&self) -> u32;
+}
+
+impl Score for Meter {
+    fn score(&self) -> u32 {
+        self.0
+    }
+}
+
+impl From<u8> for Meter {
+    fn from(x: u8) -> Self {
+        Meter(x as u32)
+    }
+}
+
+impl From<Meter> for u8 {
+    fn from(m: Meter) -> u8 {
+        if m.0 > 255 { 255 } else { m.0 as u8 }
+    }
+}
+
+pub mod left {
+    pub fn helper(x: u32) -> u32 {
+        x
+    }
+}
+
+pub mod right {
+    pub fn helper(x: u32) -> u32 {
+        if x > 0 { x - 1 } else { 0 }
+    }
+}
+
+pub fn sum_to(n: u32) -> u32 {
+    let mut i = 0;
+    let mut acc = 0;
+    while i < n {
+        acc = acc + i;
+        i = i + 1;
+    }
+    acc
+}
+
+pub fn mode() -> u32 {
+    if cfg!(feature = "alt") { 2 } else { 1 }
+}

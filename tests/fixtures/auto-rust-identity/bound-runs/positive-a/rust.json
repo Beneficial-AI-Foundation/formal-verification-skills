@@ -1,0 +1,198 @@
+{
+  "schema": "probe-rust/extract",
+  "schema-version": "3.0",
+  "tool": {
+    "name": "probe-rust",
+    "version": "0.11.0",
+    "command": "extract"
+  },
+  "source": {
+    "repo": "",
+    "commit": "8d4406a8be358e1e177a01a8759c9cf46d411618",
+    "language": "rust",
+    "package": "m1demo",
+    "package-version": "0.1.0"
+  },
+  "timestamp": "2026-10-29T18:47:34Z",
+  "data": {
+    "probe:core/https://github.com/rust-lang/rust/library/core/cmp/impls/impl#[u32][`PartialOrd<Self>`]gt()": {
+      "display-name": "gt",
+      "dependencies": [],
+      "code-module": "/github.com/rust-lang/rust/library/core/cmp/impls",
+      "code-path": "",
+      "code-text": {
+        "lines-start": 0,
+        "lines-end": 0
+      },
+      "kind": "exec",
+      "language": "rust",
+      "untracked": false
+    },
+    "probe:core/https://github.com/rust-lang/rust/library/core/cmp/impls/impl#[u32][`PartialOrd<Self>`]lt()": {
+      "display-name": "lt",
+      "dependencies": [],
+      "code-module": "/github.com/rust-lang/rust/library/core/cmp/impls",
+      "code-path": "",
+      "code-text": {
+        "lines-start": 0,
+        "lines-end": 0
+      },
+      "kind": "exec",
+      "language": "rust",
+      "untracked": false
+    },
+    "probe:core/https://github.com/rust-lang/rust/library/core/ops/arith/impl#[u32][`Add<Self>`]add()": {
+      "display-name": "add",
+      "dependencies": [],
+      "code-module": "/github.com/rust-lang/rust/library/core/ops/arith",
+      "code-path": "",
+      "code-text": {
+        "lines-start": 0,
+        "lines-end": 0
+      },
+      "kind": "exec",
+      "language": "rust",
+      "untracked": false
+    },
+    "probe:core/https://github.com/rust-lang/rust/library/core/ops/arith/impl#[u32][`Sub<Self>`]sub()": {
+      "display-name": "sub",
+      "dependencies": [],
+      "code-module": "/github.com/rust-lang/rust/library/core/ops/arith",
+      "code-path": "",
+      "code-text": {
+        "lines-start": 0,
+        "lines-end": 0
+      },
+      "kind": "exec",
+      "language": "rust",
+      "untracked": false
+    },
+    "probe:m1demo/0.1.0/impl<Meter>#[u8][`From<Meter>`]from()": {
+      "display-name": "u8::from",
+      "dependencies": [
+        "probe:core/https://github.com/rust-lang/rust/library/core/cmp/impls/impl#[u32][`PartialOrd<Self>`]gt()"
+      ],
+      "code-module": "",
+      "code-path": "src/lib.rs",
+      "code-text": {
+        "lines-start": 22,
+        "lines-end": 24
+      },
+      "kind": "exec",
+      "language": "rust",
+      "rust-qualified-name": "m1demo::u8::from",
+      "untracked": false,
+      "is-public": false,
+      "charon-def-id": 24,
+      "charon-version": "0.1.274"
+    },
+    "probe:m1demo/0.1.0/impl<u32>#[Meter][Score]score()": {
+      "display-name": "Meter::score",
+      "dependencies": [],
+      "code-module": "",
+      "code-path": "src/lib.rs",
+      "code-text": {
+        "lines-start": 10,
+        "lines-end": 12
+      },
+      "kind": "exec",
+      "language": "rust",
+      "rust-qualified-name": "m1demo::Meter::score",
+      "untracked": false,
+      "is-public": false,
+      "charon-def-id": 22,
+      "charon-version": "0.1.274"
+    },
+    "probe:m1demo/0.1.0/impl<u8>#[Meter][`From<u8>`]from()": {
+      "display-name": "Meter::from",
+      "dependencies": [],
+      "code-module": "",
+      "code-path": "src/lib.rs",
+      "code-text": {
+        "lines-start": 16,
+        "lines-end": 18
+      },
+      "kind": "exec",
+      "language": "rust",
+      "rust-qualified-name": "m1demo::Meter::from",
+      "untracked": false,
+      "is-public": false,
+      "charon-def-id": 23,
+      "charon-version": "0.1.274"
+    },
+    "probe:m1demo/0.1.0/left/helper()": {
+      "display-name": "helper",
+      "dependencies": [],
+      "code-module": "left",
+      "code-path": "src/lib.rs",
+      "code-text": {
+        "lines-start": 28,
+        "lines-end": 30
+      },
+      "kind": "exec",
+      "language": "rust",
+      "rust-qualified-name": "m1demo::left::helper",
+      "untracked": false,
+      "is-public": true,
+      "charon-def-id": 25,
+      "charon-version": "0.1.274"
+    },
+    "probe:m1demo/0.1.0/mode()": {
+      "display-name": "mode",
+      "dependencies": [],
+      "code-module": "",
+      "code-path": "src/lib.rs",
+      "code-text": {
+        "lines-start": 49,
+        "lines-end": 51
+      },
+      "kind": "exec",
+      "language": "rust",
+      "rust-qualified-name": "m1demo::mode",
+      "untracked": false,
+      "is-public": true,
+      "charon-def-id": 20,
+      "charon-version": "0.1.274"
+    },
+    "probe:m1demo/0.1.0/right/helper()": {
+      "display-name": "helper",
+      "dependencies": [
+        "probe:core/https://github.com/rust-lang/rust/library/core/cmp/impls/impl#[u32][`PartialOrd<Self>`]gt()",
+        "probe:core/https://github.com/rust-lang/rust/library/core/ops/arith/impl#[u32][`Sub<Self>`]sub()"
+      ],
+      "code-module": "right",
+      "code-path": "src/lib.rs",
+      "code-text": {
+        "lines-start": 34,
+        "lines-end": 36
+      },
+      "kind": "exec",
+      "language": "rust",
+      "rust-qualified-name": "m1demo::right::helper",
+      "untracked": false,
+      "is-public": true,
+      "charon-def-id": 26,
+      "charon-version": "0.1.274"
+    },
+    "probe:m1demo/0.1.0/sum_to()": {
+      "display-name": "sum_to",
+      "dependencies": [
+        "probe:core/https://github.com/rust-lang/rust/library/core/cmp/impls/impl#[u32][`PartialOrd<Self>`]lt()",
+        "probe:core/https://github.com/rust-lang/rust/library/core/ops/arith/impl#[u32][`Add<Self>`]add()"
+      ],
+      "code-module": "",
+      "code-path": "src/lib.rs",
+      "code-text": {
+        "lines-start": 39,
+        "lines-end": 47
+      },
+      "kind": "exec",
+      "language": "rust",
+      "rust-qualified-name": "m1demo::sum_to",
+      "untracked": false,
+      "is-public": true,
+      "charon-def-id": 19,
+      "charon-version": "0.1.274"
+    }
+  }
+}
