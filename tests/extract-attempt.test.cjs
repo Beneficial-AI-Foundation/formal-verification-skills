@@ -374,6 +374,36 @@ describe('extraction attempt: the recorded attempt is the executed attempt', () 
     }
   });
 
+  it('fails Charon when its LLBC relabels or alters a prepared source, even with the label removed', () => {
+    for (const [behaviour, pattern] of [[{ llbcRelabel: true }, /is not the prepared source/], [{ llbcRelabel: 'other_crate' }, /is not the prepared source/],
+      [{ llbcAlterContents: true }, /is not the prepared source/], [{ llbcRelabelOnly: 'other_crate' }, /labels src\/lib\.rs with crate/]]) {
+      const ws = workspace(behaviour);
+      const { out } = attempted(ws);
+      const charon = step(ws, out, 'charon');
+      assert.equal(charon.status, 9, JSON.stringify(behaviour));
+      assert.match(charon.result.message, pattern, JSON.stringify(behaviour));
+    }
+  });
+
+  it('fails Aeneas when translation.json leaves a local function without a Lean file, or names no Lean file at all', () => {
+    const cases = {
+      'local function without lean_file': { translationFunctions: [{ def_id: 0, is_local: true }], aeneasFiles: [] },
+      'one of two local functions without lean_file': { translationFunctions: [{ def_id: 0, is_local: true, lean_file: 'Demo.lean' }, { def_id: 1, is_local: true }], aeneasFiles: ['Demo.lean'] },
+      'non-string lean_file': { translationFunctions: [{ def_id: 0, is_local: true, lean_file: 7 }], aeneasFiles: [] },
+      'path outside the output': { translationFunctions: [{ def_id: 0, is_local: true, lean_file: '../Demo.lean' }], aeneasFiles: [] },
+      'metadata only': { translationFunctions: [], aeneasFiles: [] },
+    };
+    for (const [label, behaviour] of Object.entries(cases)) {
+      const ws = workspace();
+      const { out } = attempted(ws);
+      assert.equal(step(ws, out, 'charon').status, 0, label);
+      ws.behaviour(behaviour);
+      const aeneas = step(ws, out, 'aeneas');
+      assert.equal(aeneas.status, 9, label);
+      assert.match(aeneas.result.message, /lean_file|names no generated Lean file/, label);
+    }
+  });
+
   it('fails Aeneas on an empty directory left in its output', () => {
     const ws = workspace({ aeneasFiles: ['Demo.lean'] });
     const { out } = attempted(ws);

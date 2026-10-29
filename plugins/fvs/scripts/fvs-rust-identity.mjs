@@ -91,6 +91,10 @@ const isObject = (value) => value !== null && typeof value === 'object' && !Arra
 const isLine = (value) => Number.isInteger(value) && value >= 1;
 const isId = (value) => Number.isInteger(value) && value >= 0;
 const isSha = (value) => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+// A generated Lean file named by translation.json: a non-empty relative .lean path inside -dest.
+const isLeanPath = (value) => typeof value === 'string' && value.endsWith('.lean') && !path.posix.isAbsolute(value)
+  && path.posix.normalize(value) === value && !value.split('/').includes('..');
+const TRANSLATION_SECTIONS = ['functions', 'types', 'globals', 'trait_decls', 'trait_impls'];
 const sha256Text = (text) => crypto.createHash('sha256').update(text).digest('hex');
 
 // Refuses an input whose envelope or identity fields are not the qualified shape,
@@ -111,13 +115,20 @@ function validate({ translation, manifest, rust, mappings, lean, functions, stat
     if (!isObject(f) || !isId(f.def_id) || typeof f.lean_name !== 'string' || f.lean_name === '' || typeof f.is_local !== 'boolean') {
       bad('translation.json', `${where} needs an integer def_id, a lean_name and a boolean is_local`);
     }
+    if (f.lean_file !== undefined && !isLeanPath(f.lean_file)) bad('translation.json', `${where} has a lean_file that is not a relative .lean path`);
     if (!f.is_local) continue;
+    if (f.lean_file === undefined) bad('translation.json', `${where} names no lean_file, so its generated Lean output is unknown`);
     const s = f.source;
     if (typeof f.is_rec !== 'boolean' || !isObject(s) || typeof s.file !== 'string' || !isLine(s.begin_line) || !isLine(s.end_line) || s.end_line < s.begin_line) {
       bad('translation.json', `${where} needs a boolean is_rec and a source with file and ordered line bounds`);
     }
     if (f.loop !== undefined && (!isObject(f.loop) || !isId(f.loop.id) || typeof f.loop.is_body !== 'boolean' || typeof f.parent_lean_name !== 'string')) {
       bad('translation.json', `${where} has a malformed loop entry`);
+    }
+  }
+  for (const key of TRANSLATION_SECTIONS.filter((section) => section !== 'functions')) {
+    for (const entry of Array.isArray(t[key]) ? t[key] : []) {
+      if (entry?.lean_file !== undefined && !isLeanPath(entry.lean_file)) bad('translation.json', `a ${key} entry has a lean_file that is not a relative .lean path`);
     }
   }
   if (manifest) {
@@ -272,8 +283,9 @@ function bindRun({ state, manifest, translation, llbc, t }) {
   const blocks = [];
   const block = (code, message) => blocks.push({ code, message });
   // The published set must be exactly translation.json and every Lean file it names.
-  const leanFiles = [...new Set(['functions', 'types', 'globals', 'trait_decls', 'trait_impls']
-    .flatMap((key) => (Array.isArray(t[key]) ? t[key] : []).map((entry) => entry?.lean_file)).filter((file) => typeof file === 'string'))];
+  // validate() has required a relative .lean path for every local function and for any lean_file given elsewhere.
+  const leanFiles = [...new Set(TRANSLATION_SECTIONS
+    .flatMap((key) => (Array.isArray(t[key]) ? t[key] : []).map((entry) => entry?.lean_file)).filter((file) => file !== undefined))];
   const publishedDir = path.dirname(run.translation.projectPath);
   const expected = [run.translation.projectPath, ...leanFiles.map((file) => path.join(publishedDir, file))].sort();
   if (JSON.stringify(run.publication.map((entry) => entry.projectPath).sort()) !== JSON.stringify(expected)) {
@@ -292,8 +304,16 @@ function bindRun({ state, manifest, translation, llbc, t }) {
     if (translated.options.dest_file !== run.llbc.path) block('llbc-dest-mismatch', 'the LLBC names another output path than the recorded attempt');
     const files = new Map(translated.files.filter(isObject).map((file) => [file.id, file]));
     const finalFiles = manifest?.json.final?.files ?? {};
-    for (const file of files.values()) {
-      if (file.crate_name !== t.crate || typeof file.contents !== 'string' || typeof file.name?.Local !== 'string') continue;
+    // Every source a local function is declared in, whatever its crate label, plus every file labelled
+    // with the crate, must carry the manifest's prepared contents.
+    const referenced = new Set(t.functions.filter((fn) => fn.is_local).map((fn) => spanData(decls.get(fn.def_id)?.item_meta?.span)?.file_id).filter((id) => id !== undefined));
+    for (const [id, file] of files) {
+      if (!referenced.has(id) && file.crate_name !== t.crate) continue;
+      if (referenced.has(id) && file.crate_name !== t.crate) block('llbc-source-label-mismatch', `the LLBC labels the source of a local function (file ${id}) with crate ${JSON.stringify(file.crate_name)}, not ${JSON.stringify(t.crate)}`);
+      if (typeof file.contents !== 'string' || typeof file.name?.Local !== 'string') {
+        if (referenced.has(id)) block('llbc-source-missing', `the LLBC holds no contents or name for file ${id}`);
+        continue;
+      }
       if (finalFiles[file.name.Local]?.sha256 !== sha256Text(file.contents)) block('llbc-source-mismatch', `the LLBC's ${file.name.Local} is not the manifest's prepared source`);
     }
     for (const f of t.functions.filter((fn) => fn.is_local)) {

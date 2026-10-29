@@ -35,6 +35,9 @@ const llbc = { charon_version: '0.1.274', translated: { crate_name: 'demo', opti
   fun_decls: [{ def_id: 0, generics: { types: [], const_generics: [] } }] } };
 if (b.llbcDuplicateFile) llbc.translated.files.push({ ...llbc.translated.files[0] });
 if (b.llbcNoContents) delete llbc.translated.files[0].contents;
+if (b.llbcRelabel) { llbc.translated.files[0].crate_name = b.llbcRelabel === true ? undefined : b.llbcRelabel; llbc.translated.files[0].contents += '// altered\\n'; }
+if (b.llbcAlterContents) llbc.translated.files[0].contents += '// altered\\n';
+if (b.llbcRelabelOnly) llbc.translated.files[0].crate_name = b.llbcRelabelOnly;
 if (b.charonWriteLlbc !== false) fs.writeFileSync(dest, JSON.stringify(llbc));
 if (b.charonSignal) process.kill(process.pid, 'SIGKILL');
 process.exit(b.charonExit ?? 0);`);
@@ -44,7 +47,7 @@ if (args[0] === '-version') { console.log('aeneas fake'); process.exit(0); }
 fs.writeFileSync(path.join(path.dirname(process.argv[1]), 'seen-aeneas.json'), JSON.stringify({ env: process.env, args }));
 const dest = args[args.indexOf('-dest') + 1];
 if (b.aeneasTouchLlbc) fs.appendFileSync(args[args.length - 1], ' ');
-fs.writeFileSync(path.join(dest, 'translation.json'), JSON.stringify({ crate: 'demo', functions: [{ def_id: 0, lean_file: 'Demo.lean' }] }));
+fs.writeFileSync(path.join(dest, 'translation.json'), JSON.stringify({ crate: 'demo', functions: b.translationFunctions ?? [{ def_id: 0, lean_file: 'Demo.lean' }] }));
 if (b.aeneasMkdir) fs.mkdirSync(path.join(dest, b.aeneasMkdir));
 for (const file of b.aeneasFiles ?? ['Demo.lean']) fs.writeFileSync(path.join(dest, file), b.lean ?? 'def one := 1\\n');
 process.exit(b.aeneasExit ?? 0);`);

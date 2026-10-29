@@ -1030,7 +1030,7 @@ function loadChain(out, through) {
       refuse('attempt-refused', `stage ${stage} already has a ${present.join(' and ')} record; a retry needs a new prepared copy`);
     }
   });
-  return { attempt: record, invocation, attemptSha256: sha256(attemptBytes), prevSha256, manifestSha256, stages };
+  return { attempt: record, invocation, manifest, attemptSha256: sha256(attemptBytes), prevSha256, manifestSha256, stages };
 }
 
 // Every entry under a directory with its type: files with hash and mode, links
@@ -1064,7 +1064,7 @@ function exactlyFiles(entries, files) {
 }
 
 // Structural problems in Charon's LLBC that the identity record relies on.
-function llbcProblems(file, invocation) {
+function llbcProblems(file, invocation, sources) {
   let llbc;
   try {
     llbc = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -1084,6 +1084,13 @@ function llbcProblems(file, invocation) {
   if (defIds.some((id) => !Number.isInteger(id)) || new Set(defIds).size !== defIds.length) problems.push('the LLBC fun_decls def_ids are not unique integers');
   if (files.some((entry) => entry?.crate_name === invocation.crate && typeof entry?.name?.Local === 'string' && typeof entry.contents !== 'string')) {
     problems.push('a local source file in the LLBC has no contents');
+  }
+  // Every entry naming a source of the prepared copy must carry its exact contents and the crate label.
+  for (const entry of files) {
+    const name = entry?.name?.Local;
+    if (typeof name !== 'string' || !Object.hasOwn(sources, name)) continue;
+    if (entry.crate_name !== invocation.crate) problems.push(`the LLBC labels ${name} with crate ${JSON.stringify(entry.crate_name)}, not ${JSON.stringify(invocation.crate)}`);
+    if (typeof entry.contents !== 'string' || sha256(entry.contents) !== sources[name]?.sha256) problems.push(`the LLBC's ${name} is not the prepared source`);
   }
   return problems;
 }
@@ -1142,16 +1149,26 @@ function runCharon(chain) {
   }
   const llbc = fileState(inv.llbc);
   if (!llbc?.sha256) reasons.push(`Charon produced no LLBC file at ${inv.llbc}`);
-  else if (reasons.length === 0) reasons.push(...llbcProblems(inv.llbc, inv));
+  else if (reasons.length === 0) reasons.push(...llbcProblems(inv.llbc, inv, chain.manifest.final.files));
   return settle(files, { ...stageBase(chain, 'charon'), run, logSha256: fileState(log).sha256, llbcSha256: llbc?.sha256 ?? null }, reasons);
 }
 
+// The Lean files translation.json names. Every local function must name one, and
+// every name must be a relative .lean path; otherwise the output set is unknown.
 function translationLeanFiles(file) {
   const translation = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const isLeanPath = (value) => typeof value === 'string' && value.endsWith('.lean') && !path.posix.isAbsolute(value)
+    && path.posix.normalize(value) === value && !value.split('/').includes('..');
   const names = new Set();
   for (const key of ['functions', 'types', 'globals', 'trait_decls', 'trait_impls']) {
-    for (const entry of Array.isArray(translation[key]) ? translation[key] : []) if (typeof entry?.lean_file === 'string') names.add(entry.lean_file);
+    for (const entry of Array.isArray(translation[key]) ? translation[key] : []) {
+      const local = key === 'functions' && entry?.is_local === true;
+      if (entry?.lean_file === undefined && !local) continue;
+      if (!isLeanPath(entry?.lean_file)) throw new Error(`a ${key} entry${local ? ' for a local function' : ''} names no relative .lean path as its lean_file`);
+      names.add(entry.lean_file);
+    }
   }
+  if (names.size === 0) throw new Error('translation.json names no generated Lean file');
   return [...names].sort();
 }
 

@@ -664,6 +664,81 @@ describe('Rust identity record: binding to a recorded extraction attempt', () =>
     assert.ok(missing.result.record.blockers.some((b) => b.code === 'llbc-source-missing'));
   });
 
+  it('refuses a translation.json whose local functions name no valid Lean file, even with matching recorded hashes', async () => {
+    const dir = scratch();
+    const { buildRecord } = await import(require('node:url').pathToFileURL(SCRIPT).href);
+    const state = JSON.parse(fs.readFileSync(path.join(BOUND, 'positive-a', 'state.json'), 'utf8'));
+    const translation = JSON.parse(fs.readFileSync(path.join(BOUND, 'positive-a', 'translation.json'), 'utf8'));
+    const llbc = llbcFile('positive-a', dir);
+    const cases = {
+      'one local lean_file absent': (t) => { delete t.functions.find((f) => f.is_local).lean_file; },
+      'non-string lean_file': (t) => { t.functions.find((f) => f.is_local).lean_file = 7; },
+      'lean_file outside the output': (t) => { t.functions.find((f) => f.is_local).lean_file = '../M1demo.lean'; },
+      'metadata only (every lean_file removed)': (t) => { for (const key of ['functions', 'types', 'globals', 'trait_decls', 'trait_impls']) for (const e of t[key] ?? []) delete e.lean_file; },
+    };
+    for (const [label, edit] of Object.entries(cases)) {
+      const next = structuredClone(translation);
+      edit(next);
+      const text = JSON.stringify(next);
+      const tFile = path.join(dir, `${label.replace(/\W+/g, '-')}-translation.json`);
+      fs.writeFileSync(tFile, text);
+      // Labelled mutation: the recorded attempt is made to agree with the edited
+      // translation.json and a translation-only publication, so only the shape check can refuse it.
+      const s = structuredClone(state);
+      const sha = crypto.createHash('sha256').update(text).digest('hex');
+      s.extraction.run.translation.sha256 = sha;
+      s.extraction.run.publication = [{ ...s.extraction.run.translation }];
+      const sFile = path.join(dir, `${label.replace(/\W+/g, '-')}-state.json`);
+      fs.writeFileSync(sFile, JSON.stringify(s));
+      const { status, result } = bound({ files: { 'translation.json': tFile, 'state.json': sFile, llbc } });
+      assert.equal(result.code, 'invalid-input', label);
+      assert.equal(status, 5, label);
+      const load = (file) => ({ json: JSON.parse(fs.readFileSync(file, 'utf8')), sha256: sha256(file) });
+      const input = {
+        sourceCommit: COMMIT_B, translation: load(tFile), manifest: load(path.join(BOUND, 'positive-a', 'manifest.json')),
+        rust: load(path.join(BOUND, 'positive-a', 'rust.json')), mappings: load(path.join(BOUND, 'positive-a', 'translations.json')),
+        lean: load(path.join(BOUND, 'positive-a', 'lean.json')), functions: load(path.join(BOUND, 'positive-a', 'functions.json')),
+        state: load(sFile), llbc: load(llbc), configSha256: null,
+      };
+      assert.throws(() => buildRecord(input), (error) => error.code === 'invalid-input', `${label} (exported builder)`);
+    }
+  });
+
+  it('compares every referenced source with the manifest whatever its crate label', async () => {
+    const dir = scratch();
+    const { buildRecord } = await import(require('node:url').pathToFileURL(SCRIPT).href);
+    const state = JSON.parse(fs.readFileSync(path.join(BOUND, 'positive-a', 'state.json'), 'utf8'));
+    const llbc = JSON.parse(fs.readFileSync(llbcFile('positive-a', dir), 'utf8'));
+    for (const [label, relabel] of [['label removed', undefined], ['wrong label', 'other_crate']]) {
+      const copy = structuredClone(llbc);
+      const source = copy.translated.files.find((f) => f.crate_name === 'm1demo' && typeof f.contents === 'string');
+      if (relabel === undefined) delete source.crate_name; else source.crate_name = relabel;
+      source.contents += '\n// altered after the attempt\n';
+      const text = JSON.stringify(copy);
+      const lFile = path.join(dir, `${label.replace(/\W+/g, '-')}.llbc`);
+      fs.writeFileSync(lFile, text);
+      // Labelled mutation: the recorded LLBC digest is updated to match, so only the content check can catch it.
+      const s = structuredClone(state);
+      s.extraction.run.llbc.sha256 = crypto.createHash('sha256').update(text).digest('hex');
+      const sFile = path.join(dir, `${label.replace(/\W+/g, '-')}-state.json`);
+      fs.writeFileSync(sFile, JSON.stringify(s));
+      const { status, result } = bound({ files: { llbc: lFile, 'state.json': sFile } });
+      assert.equal(status, 7, label);
+      const codes = result.record.blockers.map((b) => b.code);
+      assert.ok(codes.includes('llbc-source-mismatch'), `${label}: ${codes}`);
+      assert.ok(codes.includes('llbc-source-label-mismatch'), `${label}: ${codes}`);
+      const load = (file) => ({ json: JSON.parse(fs.readFileSync(file, 'utf8')), sha256: sha256(file) });
+      const record = buildRecord({
+        sourceCommit: COMMIT_B, translation: load(path.join(BOUND, 'positive-a', 'translation.json')), manifest: load(path.join(BOUND, 'positive-a', 'manifest.json')),
+        rust: load(path.join(BOUND, 'positive-a', 'rust.json')), mappings: load(path.join(BOUND, 'positive-a', 'translations.json')),
+        lean: load(path.join(BOUND, 'positive-a', 'lean.json')), functions: load(path.join(BOUND, 'positive-a', 'functions.json')),
+        state: load(sFile), llbc: load(lFile), configSha256: null,
+      });
+      assert.equal(record.status, 'blocked', `${label} (exported builder)`);
+      assert.ok(record.blockers.some((b) => b.code === 'llbc-source-mismatch'), `${label} (exported builder)`);
+    }
+  });
+
   it('flags a type-generic function from the LLBC as unsupported (recorded run 2 and its receipted LLBC)', () => {
     const RUN2 = path.join(__dirname, 'fixtures', 'auto-rust-identity', 'qualified-run2');
     const dir = scratch();
