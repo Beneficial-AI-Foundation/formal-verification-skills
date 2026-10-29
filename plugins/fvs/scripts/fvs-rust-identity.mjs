@@ -145,19 +145,41 @@ function validate({ translation, manifest, rust, mappings, lean, functions, stat
     bad('functions.json', 'needs a functions array of records with lean_name');
   }
   const run = state ? (state.json.extraction ?? state.json.state?.extraction)?.run : undefined;
-  if (run !== undefined && !(isObject(run) && isSha(run.manifestSha256) && isSha(run.configSha256) && isObject(run.config)
-    && typeof run.supported === 'boolean' && Array.isArray(run.residuals) && isObject(run.llbc) && typeof run.llbc.path === 'string'
-    && isSha(run.llbc.sha256) && isObject(run.translation) && isSha(run.translation.sha256)
-    && Array.isArray(run.publication) && run.publication.every((entry) => isObject(entry) && typeof entry.projectPath === 'string' && isSha(entry.sha256)))) {
-    bad('state', 'extraction.run is not a recorded extraction attempt');
-  }
+  if (run !== undefined && !runShapeValid(run)) bad('state', 'extraction.run is not a complete recorded extraction attempt (stages, trust, attempt hash, translation and a non-empty unique publication)');
   if (llbc !== null && llbc !== undefined) {
     const l = llbc.json;
     if (!isObject(llbc) || !isObject(l) || typeof l.charon_version !== 'string' || !isObject(l.translated) || !isObject(l.translated.options)
       || !Array.isArray(l.translated.files) || !Array.isArray(l.translated.fun_decls)) {
       bad('llbc', 'needs charon_version and translated.options, files and fun_decls');
     }
+    const ids = l.translated.files.map((file) => file?.id);
+    if (ids.some((id) => !isId(id)) || new Set(ids).size !== ids.length) bad('llbc', 'file ids must be unique integers');
+    const decls = l.translated.fun_decls.filter((decl) => decl !== null);
+    const defIds = decls.map((decl) => decl?.def_id);
+    if (defIds.some((id) => !isId(id)) || new Set(defIds).size !== defIds.length) bad('llbc', 'fun_decls def_ids must be unique integers');
+    const local = new Set(t.functions.filter((f) => f.is_local).map((f) => f.def_id));
+    for (const decl of decls) {
+      const g = decl.generics;
+      if (local.has(decl.def_id) && !(isObject(g) && Array.isArray(g.types) && Array.isArray(g.const_generics))) {
+        bad('llbc', `fun_decl ${decl.def_id} has no well-formed generics (types and const_generics lists)`);
+      }
+    }
   }
+}
+
+const RUN_STAGES = ['charon', 'aeneas', 'publish'];
+
+function runShapeValid(run) {
+  if (!(isObject(run) && isSha(run.attemptSha256) && isSha(run.manifestSha256) && isSha(run.configSha256) && isObject(run.config)
+    && typeof run.supported === 'boolean' && Array.isArray(run.residuals) && run.trust === 'local-host-and-reviewed-scripts'
+    && isObject(run.stages) && Object.keys(run.stages).join() === RUN_STAGES.join() && RUN_STAGES.every((stage) => isSha(run.stages[stage]))
+    && isObject(run.llbc) && typeof run.llbc.path === 'string' && isSha(run.llbc.sha256)
+    && isObject(run.translation) && typeof run.translation.attemptPath === 'string' && typeof run.translation.projectPath === 'string' && isSha(run.translation.sha256)
+    && Array.isArray(run.publication) && run.publication.length > 0)) return false;
+  const entryValid = (entry) => isObject(entry) && typeof entry.attemptPath === 'string' && typeof entry.projectPath === 'string' && isSha(entry.sha256);
+  if (!run.publication.every(entryValid)) return false;
+  for (const key of ['attemptPath', 'projectPath']) if (new Set(run.publication.map((entry) => entry[key])).size !== run.publication.length) return false;
+  return run.publication.some((entry) => entry.attemptPath === run.translation.attemptPath && entry.projectPath === run.translation.projectPath && entry.sha256 === run.translation.sha256);
 }
 
 const spanOf = (atom) => {
@@ -249,6 +271,14 @@ function bindRun({ state, manifest, translation, llbc, t }) {
   const reasons = [];
   const blocks = [];
   const block = (code, message) => blocks.push({ code, message });
+  // The published set must be exactly translation.json and every Lean file it names.
+  const leanFiles = [...new Set(['functions', 'types', 'globals', 'trait_decls', 'trait_impls']
+    .flatMap((key) => (Array.isArray(t[key]) ? t[key] : []).map((entry) => entry?.lean_file)).filter((file) => typeof file === 'string'))];
+  const publishedDir = path.dirname(run.translation.projectPath);
+  const expected = [run.translation.projectPath, ...leanFiles.map((file) => path.join(publishedDir, file))].sort();
+  if (JSON.stringify(run.publication.map((entry) => entry.projectPath).sort()) !== JSON.stringify(expected)) {
+    block('run-publication-mismatch', 'the recorded publication is not exactly translation.json and the Lean files it names');
+  }
   if (extraction.status !== 'succeeded') reasons.push('extraction-not-succeeded');
   if (!run.supported || run.residuals.length > 0) reasons.push('unsupported-configuration');
   if (!llbc) reasons.push('no-llbc');
@@ -269,6 +299,7 @@ function bindRun({ state, manifest, translation, llbc, t }) {
     for (const f of t.functions.filter((fn) => fn.is_local)) {
       const decl = decls.get(f.def_id);
       const span = spanData(decl?.item_meta?.span);
+      if (span && typeof files.get(span.file_id)?.contents !== 'string') block('llbc-source-missing', `the LLBC holds no contents for the source of def_id ${f.def_id}`);
       const file = span ? files.get(span.file_id)?.name?.Local : undefined;
       const linesDiffer = f.loop === undefined && (span?.beg.line !== f.source.begin_line || span?.end.line !== f.source.end_line);
       if (!decl || file !== f.source.file || linesDiffer) block('llbc-function-mismatch', `def_id ${f.def_id} (${f.lean_name}) does not match the LLBC's fun_decls by file and span`);

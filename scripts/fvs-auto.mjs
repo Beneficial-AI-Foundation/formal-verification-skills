@@ -619,13 +619,24 @@ const SHA256 = /^[0-9a-f]{64}$/;
 
 // The recorded extraction attempt the patch engine re-validated (attempt-status);
 // absent for an extraction that did not run through the attempt recorder.
+const ATTEMPT_STAGES = ['charon', 'aeneas', 'publish'];
+
+function publicationValid(publication, translation) {
+  if (!Array.isArray(publication) || publication.length === 0) return false;
+  const entryValid = (entry) => plainObject(entry) && isText(entry.attemptPath) && isText(entry.projectPath) && SHA256.test(entry.sha256 ?? '');
+  if (!publication.every(entryValid)) return false;
+  for (const key of ['attemptPath', 'projectPath']) if (new Set(publication.map((entry) => entry[key])).size !== publication.length) return false;
+  return publication.some((entry) => entry.attemptPath === translation.attemptPath && entry.projectPath === translation.projectPath && entry.sha256 === translation.sha256);
+}
+
 function runValid(run) {
   return plainObject(run) && SHA256.test(run.attemptSha256 ?? '') && SHA256.test(run.manifestSha256 ?? '')
     && SHA256.test(run.configSha256 ?? '') && plainObject(run.config) && typeof run.supported === 'boolean'
-    && Array.isArray(run.residuals) && plainObject(run.stages) && isText(run.trust)
+    && Array.isArray(run.residuals) && run.trust === 'local-host-and-reviewed-scripts'
+    && plainObject(run.stages) && Object.keys(run.stages).join() === ATTEMPT_STAGES.join() && ATTEMPT_STAGES.every((stage) => SHA256.test(run.stages[stage] ?? ''))
     && plainObject(run.llbc) && isText(run.llbc.path) && SHA256.test(run.llbc.sha256 ?? '')
-    && plainObject(run.translation) && isText(run.translation.projectPath) && SHA256.test(run.translation.sha256 ?? '')
-    && Array.isArray(run.publication);
+    && plainObject(run.translation) && isText(run.translation.attemptPath) && isText(run.translation.projectPath) && SHA256.test(run.translation.sha256 ?? '')
+    && publicationValid(run.publication, run.translation);
 }
 
 function extractionErrors(extraction) {

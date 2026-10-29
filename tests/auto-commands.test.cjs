@@ -386,6 +386,23 @@ describe('auto-extract extraction record: recorded extraction attempt', () => {
     fs.writeFileSync(file, JSON.stringify(state));
     assert.notEqual(cli('read-state', '--project-root', root).json.code, 'ok');
   });
+
+  it('refuses a stored run with an empty publication or missing stage identities', () => {
+    const root = project();
+    init(root);
+    const out = attempted(root);
+    assert.equal(record(root, out, 0).code, 'recorded');
+    const file = stateFile(root);
+    const saved = fs.readFileSync(file, 'utf8');
+    for (const edit of [(run) => { run.publication = []; }, (run) => { run.stages = {}; }, (run) => { delete run.attemptSha256; }, (run) => { run.trust = 'x'; }]) {
+      const state = JSON.parse(saved);
+      edit(state.extraction.run);
+      fs.writeFileSync(file, JSON.stringify(state));
+      assert.notEqual(cli('read-state', '--project-root', root).json.code, 'ok');
+    }
+    fs.writeFileSync(file, saved);
+    assert.equal(cli('read-state', '--project-root', root).json.code, 'ok');
+  });
 });
 
 describe('auto-extract extraction record', () => {

@@ -243,7 +243,9 @@ configuration. `run` executes each stage once, in order, under an environment it
 (`HOME`, `RUSTUP_HOME`, `CARGO_HOME`, its own `PATH`, the release's pinned `RUSTUP_TOOLCHAIN`). It
 records the tool hashes, the exact arguments and every cargo configuration file by hash. An
 influential or unknown variable in the caller's environment, or a present cargo configuration file,
-leaves the attempt unsupported; it is recorded by name only and never by value. A failed or
+leaves the attempt unsupported; it is recorded by name only and never by value. Every stage and the
+final check derive the invocation again and re-read the cargo configuration files and the toolchain
+identity; any difference from the recorded attempt refuses the stage. A failed or
 interrupted stage ends the attempt: prepare a new copy to retry. Publication writes only into
 `publishDir`, which must be empty or hold only files an earlier publication owns, unmodified; it never
 overwrites a maintained file and never deletes. When the project's invocation is outside the

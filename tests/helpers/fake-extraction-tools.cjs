@@ -29,7 +29,13 @@ function fakeTools(project, scratch, behaviour = {}) {
 if (args[0] === 'version') { console.log('0.1.274 (fake)'); process.exit(0); }
 fs.writeFileSync(path.join(path.dirname(process.argv[1]), 'seen-charon.json'), JSON.stringify({ env: process.env, args, cwd: process.cwd() }));
 if (b.charonTouchTree) fs.writeFileSync(path.join(process.cwd(), 'src', 'extra.rs'), '');
-if (b.charonWriteLlbc !== false) fs.writeFileSync(args[args.indexOf('--dest-file') + 1], JSON.stringify({ charon_version: '0.1.274', args }));
+const dest = args[args.indexOf('--dest-file') + 1];
+const llbc = { charon_version: '0.1.274', translated: { crate_name: 'demo', options: { dest_file: dest, args },
+  files: [{ id: 0, name: { Local: 'src/lib.rs' }, crate_name: 'demo', contents: fs.readFileSync(path.join(process.cwd(), 'src', 'lib.rs'), 'utf8') }],
+  fun_decls: [{ def_id: 0, generics: { types: [], const_generics: [] } }] } };
+if (b.llbcDuplicateFile) llbc.translated.files.push({ ...llbc.translated.files[0] });
+if (b.llbcNoContents) delete llbc.translated.files[0].contents;
+if (b.charonWriteLlbc !== false) fs.writeFileSync(dest, JSON.stringify(llbc));
 if (b.charonSignal) process.kill(process.pid, 'SIGKILL');
 process.exit(b.charonExit ?? 0);`);
   script(path.join(release, 'charon-driver'), 'process.exit(0);');
@@ -39,6 +45,7 @@ fs.writeFileSync(path.join(path.dirname(process.argv[1]), 'seen-aeneas.json'), J
 const dest = args[args.indexOf('-dest') + 1];
 if (b.aeneasTouchLlbc) fs.appendFileSync(args[args.length - 1], ' ');
 fs.writeFileSync(path.join(dest, 'translation.json'), JSON.stringify({ crate: 'demo', functions: [{ def_id: 0, lean_file: 'Demo.lean' }] }));
+if (b.aeneasMkdir) fs.mkdirSync(path.join(dest, b.aeneasMkdir));
 for (const file of b.aeneasFiles ?? ['Demo.lean']) fs.writeFileSync(path.join(dest, file), b.lean ?? 'def one := 1\\n');
 process.exit(b.aeneasExit ?? 0);`);
   const cargoHome = path.join(scratch, 'cargo-home');

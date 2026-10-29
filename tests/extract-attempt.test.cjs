@@ -73,15 +73,17 @@ function snapshot(dir) {
     for (const name of fs.readdirSync(path.join(dir, relative)).sort()) {
       const child = path.join(relative, name);
       const stat = fs.lstatSync(path.join(dir, child));
-      if (stat.isDirectory()) visit(child);
-      else files[child] = stat.isSymbolicLink() ? `link:${fs.readlinkSync(path.join(dir, child))}` : sha256(path.join(dir, child));
+      if (stat.isDirectory()) {
+        files[child] = 'directory';
+        visit(child);
+      } else files[child] = stat.isSymbolicLink() ? `link:${fs.readlinkSync(path.join(dir, child))}` : sha256(path.join(dir, child));
     }
   })('');
   return files;
 }
 
 function everyFileText(dir) {
-  return Object.keys(snapshot(dir) ?? {}).map((file) => fs.readFileSync(path.join(dir, file), 'utf8')).join('\n');
+  return Object.entries(snapshot(dir) ?? {}).filter(([, kind]) => kind !== 'directory').map(([file]) => fs.readFileSync(path.join(dir, file), 'utf8')).join('\n');
 }
 
 describe('extraction attempt: supported positive', () => {
@@ -299,6 +301,88 @@ describe('extraction attempt: stage protocol', () => {
   });
 });
 
+describe('extraction attempt: the recorded attempt is the executed attempt', () => {
+  const editAttempt = (out, edit) => {
+    const file = path.join(out, 'attempt.json');
+    const record = JSON.parse(fs.readFileSync(file, 'utf8'));
+    edit(record);
+    fs.writeFileSync(file, JSON.stringify(record, null, 2));
+  };
+
+  it('refuses a cargo configuration file that appears, changes or disappears after the attempt is recorded', () => {
+    for (const label of ['appears before Charon', 'appears before attempt-status', 'cargo home config appears', 'changes', 'disappears']) {
+      const ws = workspace();
+      const parent = path.join(ws.root, 'copies', 'drift');
+      fs.mkdirSync(path.join(parent, '.cargo'), { recursive: true });
+      const config = path.join(parent, '.cargo', 'config.toml');
+      if (label === 'changes' || label === 'disappears') fs.writeFileSync(config, '[build]\nrustflags = ["--cfg", "a"]\n');
+      const out = prepared(ws, parent);
+      assert.equal(engine(ws, ['attempt', '--out', out, '--spec', spec(ws)]).status, 0, label);
+      if (label === 'appears before attempt-status') {
+        for (const name of ['charon', 'aeneas', 'publish']) assert.equal(step(ws, out, name).status, 0, label);
+        fs.writeFileSync(config, '[build]\nrustflags = ["--cfg", "b"]\n');
+        assert.equal(engine(ws, ['attempt-status', '--out', out]).status, 8, label);
+        continue;
+      }
+      if (label === 'appears before Charon') fs.writeFileSync(config, '[build]\nrustflags = ["--cfg", "b"]\n');
+      if (label === 'cargo home config appears') fs.writeFileSync(path.join(ws.cargoHome, 'config.toml'), '[build]\nrustflags = ["--cfg", "b"]\n');
+      if (label === 'changes') fs.writeFileSync(config, '[build]\nrustflags = ["--cfg", "changed"]\n');
+      if (label === 'disappears') fs.rmSync(config);
+      const charon = step(ws, out, 'charon');
+      assert.equal(charon.status, 8, label);
+      assert.match(charon.result.message, /cargo configuration file appeared, changed or disappeared/, label);
+      assert.equal(fs.existsSync(path.join(ws.release, 'seen-charon.json')), false, `${label}: Charon never ran`);
+    }
+  });
+
+  it('refuses a toolchain identity that changed after the attempt was recorded', () => {
+    const ws = workspace();
+    const { out } = attempted(ws);
+    fs.writeFileSync(path.join(ws.cargoHome, 'bin', 'rustc'), `#!${process.execPath}\nconsole.log('rustc 1.101.0-nightly (other)');\n`, { mode: 0o755 });
+    const charon = step(ws, out, 'charon');
+    assert.equal(charon.status, 8);
+    assert.match(charon.result.message, /toolchain identity changed/);
+  });
+
+  it('refuses edited execution fields before the first stage, even with the stored configuration untouched', () => {
+    const edits = {
+      'Charon argv gains a feature': (r) => r.charon.argv.push('--features', 'alt'),
+      'environment gains RUSTFLAGS': (r) => { r.env.RUSTFLAGS = '-C opt-level=3'; },
+      'Charon working directory moved': (r) => { r.charon.cwd = r.projectRoot; },
+      'Aeneas destination moved': (r) => { r.aeneas.argv[4] = path.join(r.projectRoot, 'Demo'); },
+      'tool path swapped': (r) => { r.tools.charon.path = r.tools.aeneas.path; },
+      'spec gains a supported option': (r) => { r.spec.cargoArgs = [...r.spec.cargoArgs, '--features', 'alt']; },
+      'supported flag forced on': (r) => { r.residuals = [{ name: 'RUSTFLAGS', class: 'influential' }]; },
+    };
+    for (const [label, edit] of Object.entries(edits)) {
+      const ws = workspace();
+      const { out } = attempted(ws);
+      editAttempt(out, edit);
+      const charon = step(ws, out, 'charon');
+      assert.equal(charon.status, 8, label);
+      assert.equal(fs.existsSync(path.join(ws.release, 'seen-charon.json')), false, `${label}: refused before spawning`);
+    }
+  });
+
+  it('fails Charon when its LLBC is malformed: duplicate file ids or a local source without contents', () => {
+    for (const behaviour of [{ llbcDuplicateFile: true }, { llbcNoContents: true }]) {
+      const ws = workspace(behaviour);
+      const { out } = attempted(ws);
+      const charon = step(ws, out, 'charon');
+      assert.equal(charon.status, 9, JSON.stringify(behaviour));
+      assert.match(charon.result.message, /file ids are not unique|has no contents/);
+    }
+  });
+
+  it('fails Aeneas on an empty directory left in its output', () => {
+    const ws = workspace({ aeneasFiles: ['Demo.lean'] });
+    const { out } = attempted(ws);
+    assert.equal(step(ws, out, 'charon').status, 0);
+    ws.behaviour({ aeneasFiles: ['Demo.lean'], aeneasMkdir: 'Stray' });
+    assert.equal(step(ws, out, 'aeneas').status, 9);
+  });
+});
+
 describe('extraction attempt: publication preflight never mutates the destination on refusal', () => {
   function upToPublish(ws) {
     const { out } = attempted(ws);
@@ -310,7 +394,10 @@ describe('extraction attempt: publication preflight never mutates the destinatio
   const cases = {
     'maintained file with an output basename': [(dir) => fs.writeFileSync(path.join(dir, 'Demo.lean'), '-- maintained\n'), 'unowned'],
     'unowned extra file (mixed namespace)': [(dir) => fs.writeFileSync(path.join(dir, 'Spec.lean'), '-- a spec\n'), 'unowned'],
-    'leftover pending marker': [(dir) => fs.writeFileSync(path.join(dir, '.fvs-publication.pending.json'), '[]'), undefined],
+    'leftover pending marker': [(dir) => fs.writeFileSync(path.join(dir, '.fvs-publication.pending.json'), '[]'), 'pending'],
+    'empty directory where a later output goes': [(dir) => fs.mkdirSync(path.join(dir, 'translation.json')), 'occupied'],
+    'directory at the ownership record path': [(dir) => fs.mkdirSync(path.join(dir, '.fvs-publication.json')), 'occupied'],
+    'unowned empty directory': [(dir) => fs.mkdirSync(path.join(dir, 'Scratch')), 'unowned'],
   };
   for (const [label, [arrange, reason]] of Object.entries(cases)) {
     it(`refuses a ${label}`, () => {

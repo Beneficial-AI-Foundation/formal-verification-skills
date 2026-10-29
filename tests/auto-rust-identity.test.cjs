@@ -599,6 +599,71 @@ describe('Rust identity record: binding to a recorded extraction attempt', () =>
     assert.deepEqual(bound({ files: { 'state.json': write('unsupported.json', unsupported) } }).result.record.binding.reasons, ['unsupported-configuration']);
   });
 
+  it('refuses an incomplete recorded attempt and a truncated publication, through the CLI and the exported builder', async () => {
+    const dir = scratch();
+    const state = JSON.parse(fs.readFileSync(path.join(BOUND, 'positive-a', 'state.json'), 'utf8'));
+    const write = (name, value) => { const file = path.join(dir, name); fs.writeFileSync(file, JSON.stringify(value)); return file; };
+    const edits = {
+      'empty publication': (run) => { run.publication = []; },
+      'missing stages': (run) => { delete run.stages; },
+      'two stages only': (run) => { delete run.stages.publish; },
+      'missing attempt hash': (run) => { delete run.attemptSha256; },
+      'unknown trust': (run) => { run.trust = 'anything'; },
+      'duplicate publication entry': (run) => { run.publication.push({ ...run.publication[0] }); },
+      'publication without translation.json': (run) => { run.publication = run.publication.filter((entry) => !entry.projectPath.endsWith('translation.json')); },
+    };
+    const { buildRecord } = await import(require('node:url').pathToFileURL(SCRIPT).href);
+    const load = (file) => ({ json: JSON.parse(fs.readFileSync(file, 'utf8')), sha256: sha256(file) });
+    const llbc = llbcFile('positive-a', dir);
+    for (const [label, edit] of Object.entries(edits)) {
+      const next = structuredClone(state);
+      edit(next.extraction.run);
+      const file = write(`${label.replace(/\W+/g, '-')}.json`, next);
+      const { status, result } = bound({ files: { 'state.json': file, llbc } });
+      assert.equal(result.code, 'invalid-input', label);
+      assert.equal(status, 5, label);
+      const input = {
+        sourceCommit: COMMIT_B, translation: load(path.join(BOUND, 'positive-a', 'translation.json')), manifest: load(path.join(BOUND, 'positive-a', 'manifest.json')),
+        rust: load(path.join(BOUND, 'positive-a', 'rust.json')), mappings: load(path.join(BOUND, 'positive-a', 'translations.json')),
+        lean: load(path.join(BOUND, 'positive-a', 'lean.json')), functions: load(path.join(BOUND, 'positive-a', 'functions.json')),
+        state: load(file), llbc: load(llbc), configSha256: null,
+      };
+      assert.throws(() => buildRecord(input), (error) => error.code === 'invalid-input', `${label} (exported builder)`);
+    }
+    // A publication missing a Lean file translation.json names, with translation.json kept.
+    const truncated = structuredClone(state);
+    truncated.extraction.run.publication = truncated.extraction.run.publication.filter((entry) => entry.projectPath.endsWith('translation.json'));
+    const blocked = bound({ files: { 'state.json': write('truncated.json', truncated), llbc } });
+    assert.equal(blocked.status, 7);
+    assert.ok(blocked.result.record.blockers.some((b) => b.code === 'run-publication-mismatch'));
+  });
+
+  it('refuses a malformed LLBC: duplicate ids or generics that are not lists; blocks a local source without contents', () => {
+    const dir = scratch();
+    const state = JSON.parse(fs.readFileSync(path.join(BOUND, 'positive-a', 'state.json'), 'utf8'));
+    const llbc = JSON.parse(fs.readFileSync(llbcFile('positive-a', dir), 'utf8'));
+    const local = new Set(JSON.parse(fs.readFileSync(path.join(BOUND, 'positive-a', 'translation.json'), 'utf8')).functions.map((f) => f.def_id));
+    const run = (mutate, name) => {
+      const copy = structuredClone(llbc);
+      mutate(copy);
+      const text = JSON.stringify(copy);
+      const next = structuredClone(state);
+      next.extraction.run.llbc.sha256 = crypto.createHash('sha256').update(text).digest('hex');
+      const llbcPath = path.join(dir, `${name}.llbc`);
+      fs.writeFileSync(llbcPath, text);
+      const statePath = path.join(dir, `${name}-state.json`);
+      fs.writeFileSync(statePath, JSON.stringify(next));
+      return bound({ files: { llbc: llbcPath, 'state.json': statePath } });
+    };
+    assert.equal(run((l) => { l.translated.files.push({ ...l.translated.files.find(Boolean) }); }, 'dup-file').result.code, 'invalid-input');
+    assert.equal(run((l) => { const d = l.translated.fun_decls.find((f) => f && local.has(f.def_id)); l.translated.fun_decls.push(structuredClone(d)); }, 'dup-decl').result.code, 'invalid-input');
+    assert.equal(run((l) => { const d = l.translated.fun_decls.find((f) => f && local.has(f.def_id)); delete d.generics; }, 'no-generics').result.code, 'invalid-input');
+    assert.equal(run((l) => { const d = l.translated.fun_decls.find((f) => f && local.has(f.def_id)); d.generics.types = 'T'; }, 'bad-generics').result.code, 'invalid-input');
+    const missing = run((l) => { delete l.translated.files.find((f) => f.crate_name === 'm1demo' && f.contents).contents; }, 'no-contents');
+    assert.equal(missing.status, 7);
+    assert.ok(missing.result.record.blockers.some((b) => b.code === 'llbc-source-missing'));
+  });
+
   it('flags a type-generic function from the LLBC as unsupported (recorded run 2 and its receipted LLBC)', () => {
     const RUN2 = path.join(__dirname, 'fixtures', 'auto-rust-identity', 'qualified-run2');
     const dir = scratch();

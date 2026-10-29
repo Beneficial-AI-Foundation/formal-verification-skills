@@ -855,20 +855,26 @@ function canonicalConfig(value, out, projectRoot) {
   return JSON.parse(JSON.stringify(value), (key, item) => (typeof item === 'string' ? item.split(out).join('$OUT').split(projectRoot).join('$PROJECT') : item));
 }
 
-function attempt(flags) {
-  const out = path.resolve(flags.out);
-  const manifestFile = path.join(out, MANIFEST);
-  if (!fs.existsSync(manifestFile)) refuse('usage', `no manifest at ${manifestFile}`);
-  const manifestBytes = fs.readFileSync(manifestFile);
-  const manifest = JSON.parse(manifestBytes);
-  if (manifest.status !== 'prepared' || !manifest.final || manifest.mode !== 'translation-patches') {
-    refuse('partial', 'an attempt needs a prepared translation-patch copy');
-  }
-  if (lexists(path.join(out, ATTEMPT))) refuse('attempt-refused', 'this copy already has an attempt; prepare a new copy to retry');
-  const spec = readJson(path.resolve(flags.spec));
-  const known = ['release', 'crate', 'publishDir', 'charonArgs', 'cargoArgs', 'aeneasArgs'];
+const SPEC_FIELDS = ['release', 'crate', 'publishDir', 'charonArgs', 'cargoArgs', 'aeneasArgs'];
+const INVOCATION_FIELDS = ['spec', 'crate', 'llbc', 'aeneasDest', 'publishDir', 'projectRoot', 'tree', 'release', 'tools', 'env', 'charon', 'aeneas'];
+const TRUST = 'local-host-and-reviewed-scripts';
+
+function homesOf(env) {
+  const home = env.HOME;
+  return {
+    HOME: home,
+    RUSTUP_HOME: env.RUSTUP_HOME ?? (typeof home === 'string' ? path.join(home, '.rustup') : undefined),
+    CARGO_HOME: env.CARGO_HOME ?? (typeof home === 'string' ? path.join(home, '.cargo') : undefined),
+  };
+}
+
+// The one execution representation of an attempt, derived from the validated
+// spec, the prepared manifest, the release and the three home paths. Recording
+// stores it; every stage derives it again, refuses any difference from the
+// record, and executes only the derived form.
+function deriveInvocation(out, manifest, spec, homes) {
   if (spec === null || typeof spec !== 'object' || Array.isArray(spec)) refuse('invalid-input', 'the spec must be a JSON object');
-  const unknown = Object.keys(spec).filter((key) => !known.includes(key));
+  const unknown = Object.keys(spec).filter((key) => !SPEC_FIELDS.includes(key));
   if (unknown.length > 0) refuse('invalid-input', `the spec has unsupported fields: ${unknown.join(', ')}`);
   if (typeof spec.crate !== 'string' || !/^[A-Za-z0-9_-]+$/.test(spec.crate)) refuse('invalid-input', 'spec.crate must be a crate name');
   const { projectRoot } = manifest;
@@ -878,57 +884,88 @@ function attempt(flags) {
   }
   refuseLinkedDirectory(projectRoot, publishRelative);
   if (typeof spec.release !== 'string') refuse('invalid-input', 'spec.release must name the Aeneas/Charon release directory');
-  const release = releaseTools(path.resolve(projectRoot, spec.release));
   const charonArgs = checkArgs('charonArgs', spec.charonArgs ?? [], new Set(), CHARON_VALUED);
   const cargoArgs = checkArgs('cargoArgs', spec.cargoArgs ?? [], CARGO_FLAGS, CARGO_VALUED);
   checkArgs('aeneasArgs', spec.aeneasArgs ?? [], new Set(), {});
+  const release = releaseTools(path.resolve(projectRoot, spec.release));
+  for (const name of ['HOME', 'RUSTUP_HOME', 'CARGO_HOME']) {
+    if (typeof homes[name] !== 'string' || !path.isAbsolute(homes[name])) refuse('invalid-input', `${name} must be an absolute path`);
+  }
+  const env = { HOME: homes.HOME, RUSTUP_HOME: homes.RUSTUP_HOME, CARGO_HOME: homes.CARGO_HOME, PATH: `${path.join(homes.CARGO_HOME, 'bin')}:/usr/bin:/bin`, RUSTUP_TOOLCHAIN: release.tools.rustToolchain.channel };
   const llbc = path.join(out, `${spec.crate}.llbc`);
   const aeneasDest = path.join(out, 'aeneas-dest');
-  const { channel } = release.tools.rustToolchain;
-  const env = controlledEnv(process.env, channel);
-  const residuals = callerResiduals(process.env, channel);
-  const cargoConfig = cargoConfigFiles(manifest.tree, env.CARGO_HOME);
-  for (const file of cargoConfig.filter((entry) => entry.present)) residuals.push({ name: file.path, class: 'cargo-config' });
-  const credentials = ['credentials', 'credentials.toml'].map((name) => ({ path: path.join(env.CARGO_HOME, name), present: lexists(path.join(env.CARGO_HOME, name)) }));
-  const identity = {
-    charonVersion: firstOutput(release.tools.charon.path, ['version'], env, out),
-    aeneasVersion: firstOutput(release.tools.aeneas.path, ['-version'], env, out),
-    rustc: firstOutput('rustc', ['-vV'], env, out),
-    cargo: firstOutput('cargo', ['-V'], env, out),
-  };
-  for (const [name, value] of Object.entries(identity)) if (value === null) residuals.push({ name, class: 'toolchain-unresolved' });
-  const charon = { argv: ['cargo', '--preset=aeneas', '--dest-file', llbc, ...charonArgs, ...(cargoArgs.length > 0 ? ['--', ...cargoArgs] : [])], cwd: manifest.tree };
-  const aeneas = { argv: ['-backend', 'lean', '-emit-json', '-dest', aeneasDest, llbc], cwd: projectRoot };
-  const config = canonicalConfig({
-    tools: Object.fromEntries(Object.entries(release.tools).map(([key, tool]) => [key, { sha256: tool.sha256, ...(tool.channel ? { channel: tool.channel } : {}) }])),
-    identity,
-    env,
-    charon,
-    aeneas,
-    cargoConfig: cargoConfig.filter((entry) => entry.present).map(({ path: file, sha256: hash }) => ({ path: file, sha256: hash })),
-  }, out, projectRoot);
-  const record = {
-    schema: 'fvs-extract-patches/attempt',
-    version: 1,
-    out,
-    manifestSha256: sha256(manifestBytes),
-    projectRoot,
-    tree: manifest.tree,
+  return {
+    spec: { release: spec.release, crate: spec.crate, publishDir: publishRelative, charonArgs, cargoArgs, aeneasArgs: [] },
     crate: spec.crate,
     llbc,
     aeneasDest,
     publishDir: path.join(projectRoot, publishRelative),
+    projectRoot,
+    tree: manifest.tree,
     release: release.root,
     tools: release.tools,
-    identity,
     env,
-    charon,
-    aeneas,
+    charon: { argv: ['cargo', '--preset=aeneas', '--dest-file', llbc, ...charonArgs, ...(cargoArgs.length > 0 ? ['--', ...cargoArgs] : [])], cwd: manifest.tree },
+    aeneas: { argv: ['-backend', 'lean', '-emit-json', '-dest', aeneasDest, llbc], cwd: projectRoot },
+  };
+}
+
+function identityOf(invocation, out) {
+  const { env, tools } = invocation;
+  return {
+    charonVersion: firstOutput(tools.charon.path, ['version'], env, out),
+    aeneasVersion: firstOutput(tools.aeneas.path, ['-version'], env, out),
+    rustc: firstOutput('rustc', ['-vV'], env, out),
+    cargo: firstOutput('cargo', ['-V'], env, out),
+  };
+}
+
+function configOf(invocation, identity, cargoConfig, out) {
+  return canonicalConfig({
+    tools: Object.fromEntries(Object.entries(invocation.tools).map(([key, tool]) => [key, { sha256: tool.sha256, ...(tool.channel ? { channel: tool.channel } : {}) }])),
+    identity,
+    env: invocation.env,
+    charon: invocation.charon,
+    aeneas: invocation.aeneas,
+    cargoConfig: cargoConfig.filter((entry) => entry.present).map(({ path: file, sha256: hash }) => ({ path: file, sha256: hash })),
+  }, out, invocation.projectRoot);
+}
+
+function preparedManifest(out) {
+  const manifestFile = path.join(out, MANIFEST);
+  if (!fs.existsSync(manifestFile)) refuse('usage', `no manifest at ${manifestFile}`);
+  const bytes = fs.readFileSync(manifestFile);
+  const manifest = JSON.parse(bytes);
+  if (manifest.status !== 'prepared' || !manifest.final || manifest.mode !== 'translation-patches') {
+    refuse('partial', 'an attempt needs a prepared translation-patch copy');
+  }
+  return { manifest, manifestSha256: sha256(bytes) };
+}
+
+function attempt(flags) {
+  const out = path.resolve(flags.out);
+  const { manifest, manifestSha256 } = preparedManifest(out);
+  if (lexists(path.join(out, ATTEMPT))) refuse('attempt-refused', 'this copy already has an attempt; prepare a new copy to retry');
+  const invocation = deriveInvocation(out, manifest, readJson(path.resolve(flags.spec)), homesOf(process.env));
+  const residuals = callerResiduals(process.env, invocation.env.RUSTUP_TOOLCHAIN);
+  const cargoConfig = cargoConfigFiles(manifest.tree, invocation.env.CARGO_HOME);
+  for (const file of cargoConfig.filter((entry) => entry.present)) residuals.push({ name: file.path, class: 'cargo-config' });
+  const credentials = ['credentials', 'credentials.toml'].map((name) => ({ path: path.join(invocation.env.CARGO_HOME, name), present: lexists(path.join(invocation.env.CARGO_HOME, name)) }));
+  const identity = identityOf(invocation, out);
+  for (const [name, value] of Object.entries(identity)) if (value === null) residuals.push({ name, class: 'toolchain-unresolved' });
+  const config = configOf(invocation, identity, cargoConfig, out);
+  const record = {
+    schema: 'fvs-extract-patches/attempt',
+    version: 2,
+    out,
+    manifestSha256,
+    ...invocation,
+    identity,
     cargoConfig,
     credentials,
     residuals,
     supported: residuals.length === 0,
-    trust: 'local-host-and-reviewed-scripts',
+    trust: TRUST,
     config,
     configSha256: sha256(JSON.stringify(config)),
   };
@@ -944,17 +981,37 @@ function stagePaths(out, stage) {
   return { pending: `${base}.pending.json`, completed: `${base}.completed.json`, failed: `${base}.failed.json` };
 }
 
-// The attempt and every stage before `through` must be completed and chained
-// (each record names the previous record's hash and the manifest's); stages from
-// `through` on must have no record at all, so nothing is retried or reordered.
+// The attempt as it would execute now must be the attempt as recorded: the
+// invocation derived again from the spec, the tool hashes, the cargo
+// configuration lookup set (present and absent files) and the toolchain
+// identity. Then every stage before `through` must be completed and chained
+// (each record names the previous record's hash and the manifest's), and the
+// stages from `through` on must have no record at all.
 function loadChain(out, through) {
   const attemptFile = path.join(out, ATTEMPT);
   if (!fs.existsSync(attemptFile)) refuse('attempt-refused', `no ${ATTEMPT} in ${out}; record the attempt first`);
   const attemptBytes = fs.readFileSync(attemptFile);
   const record = JSON.parse(attemptBytes);
-  const manifestSha256 = sha256(fs.readFileSync(path.join(out, MANIFEST)));
+  if (record?.schema !== 'fvs-extract-patches/attempt' || record.version !== 2 || record.out !== out || record.trust !== TRUST) {
+    refuse('attempt-refused', `${attemptFile} is not this copy's version 2 attempt record`);
+  }
+  const { manifest, manifestSha256 } = preparedManifest(out);
   if (record.manifestSha256 !== manifestSha256) refuse('attempt-refused', 'the manifest changed after the attempt was recorded');
-  if (sha256(JSON.stringify(record.config)) !== record.configSha256) refuse('attempt-refused', 'the attempt configuration does not match its recorded hash');
+  const invocation = deriveInvocation(out, manifest, record.spec, homesOf(record.env ?? {}));
+  const differing = INVOCATION_FIELDS.filter((field) => !sameState(invocation[field], record[field]));
+  if (differing.length > 0) refuse('attempt-refused', `the recorded ${differing.join(', ')} differ from what the attempt would execute (or a tool changed since it was recorded)`);
+  const cargoConfig = cargoConfigFiles(manifest.tree, invocation.env.CARGO_HOME);
+  if (!sameState(cargoConfig, record.cargoConfig)) refuse('attempt-refused', 'a cargo configuration file appeared, changed or disappeared since the attempt was recorded');
+  const identity = identityOf(invocation, out);
+  if (!sameState(identity, record.identity)) refuse('attempt-refused', 'the toolchain identity changed since the attempt was recorded');
+  const config = configOf(invocation, identity, cargoConfig, out);
+  if (!sameState(config, record.config) || sha256(JSON.stringify(config)) !== record.configSha256) refuse('attempt-refused', 'the attempt configuration does not match what it would execute');
+  const owed = [
+    ...cargoConfig.filter((entry) => entry.present).map((entry) => entry.path),
+    ...Object.entries(identity).filter(([, value]) => value === null).map(([name]) => name),
+  ];
+  const listed = new Set((Array.isArray(record.residuals) ? record.residuals : []).map((entry) => entry?.name));
+  if (owed.some((name) => !listed.has(name)) || record.supported !== (listed.size === 0)) refuse('attempt-refused', 'the attempt\'s supported flag does not follow from its residuals');
   let prevSha256 = sha256(attemptBytes);
   const stages = {};
   ATTEMPT_STAGES.forEach((stage, index) => {
@@ -973,30 +1030,63 @@ function loadChain(out, through) {
       refuse('attempt-refused', `stage ${stage} already has a ${present.join(' and ')} record; a retry needs a new prepared copy`);
     }
   });
-  return { attempt: record, attemptSha256: sha256(attemptBytes), prevSha256, manifestSha256, stages };
+  return { attempt: record, invocation, attemptSha256: sha256(attemptBytes), prevSha256, manifestSha256, stages };
 }
 
-function recheckTools(record) {
-  for (const [key, tool] of Object.entries(record.tools)) {
-    if (fileState(tool.path)?.sha256 !== tool.sha256) refuse('attempt-refused', `${key} at ${tool.path} changed since the attempt was recorded`);
-  }
-}
-
-// Every file under a directory (links recorded as links), keyed by relative path.
-function filesUnder(root) {
-  const files = {};
+// Every entry under a directory with its type: files with hash and mode, links
+// as links, directories as directories, anything else as other.
+function entriesUnder(root) {
+  const entries = {};
   (function visit(relative) {
     for (const name of fs.readdirSync(path.join(root, relative)).sort()) {
       const child = relative ? `${relative}/${name}` : name;
       const stat = fs.lstatSync(path.join(root, child));
-      if (stat.isDirectory()) visit(child);
-      else files[child] = fileState(path.join(root, child));
+      if (stat.isDirectory()) {
+        entries[child] = { type: 'directory' };
+        visit(child);
+      } else {
+        entries[child] = fileState(path.join(root, child));
+      }
     }
   })('');
-  return files;
+  return entries;
 }
 
-const hashes = (files) => Object.fromEntries(Object.entries(files).map(([file, state]) => [file, state?.sha256 ?? null]));
+const ancestors = (file) => file.split('/').slice(0, -1).map((_, index, parts) => parts.slice(0, index + 1).join('/'));
+const fileHashes = (entries) => Object.fromEntries(Object.entries(entries).filter(([, state]) => state?.sha256 !== undefined).map(([file, state]) => [file, state.sha256]));
+
+// The entries are exactly the given files plus the directories that hold them.
+function exactlyFiles(entries, files) {
+  const dirs = new Set(Object.keys(files).flatMap(ancestors));
+  const sorted = (map) => Object.entries(map).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return sameState(sorted(fileHashes(entries)), sorted(files))
+    && Object.entries(entries).every(([entry, state]) => state?.sha256 !== undefined || (state?.type === 'directory' && dirs.has(entry)));
+}
+
+// Structural problems in Charon's LLBC that the identity record relies on.
+function llbcProblems(file, invocation) {
+  let llbc;
+  try {
+    llbc = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (error) {
+    return [`the LLBC is not readable JSON: ${error.message}`];
+  }
+  const translated = llbc?.translated;
+  const problems = [];
+  if (typeof llbc?.charon_version !== 'string') problems.push('the LLBC records no charon_version');
+  if (translated?.options?.dest_file !== invocation.llbc) problems.push('the LLBC names another output path');
+  const files = Array.isArray(translated?.files) ? translated.files : null;
+  const decls = Array.isArray(translated?.fun_decls) ? translated.fun_decls.filter((decl) => decl !== null) : null;
+  if (!files || !decls) return [...problems, 'the LLBC has no files or fun_decls list'];
+  const ids = files.map((entry) => entry?.id);
+  if (ids.some((id) => !Number.isInteger(id)) || new Set(ids).size !== ids.length) problems.push('the LLBC file ids are not unique integers');
+  const defIds = decls.map((decl) => decl?.def_id);
+  if (defIds.some((id) => !Number.isInteger(id)) || new Set(defIds).size !== defIds.length) problems.push('the LLBC fun_decls def_ids are not unique integers');
+  if (files.some((entry) => entry?.crate_name === invocation.crate && typeof entry?.name?.Local === 'string' && typeof entry.contents !== 'string')) {
+    problems.push('a local source file in the LLBC has no contents');
+  }
+  return problems;
+}
 
 function beginStage(chain, stage) {
   const files = stagePaths(chain.attempt.out, stage);
@@ -1037,21 +1127,22 @@ function stageBase(chain, stage) {
 }
 
 function runCharon(chain) {
-  const { attempt: record } = chain;
-  recheckTools(record);
-  if (lexists(record.llbc)) refuse('attempt-refused', `${record.llbc} already exists; the LLBC must be produced by this attempt`);
-  verifyTree({ out: record.out });
+  const inv = chain.invocation;
+  const { out } = chain.attempt;
+  if (lexists(inv.llbc)) refuse('attempt-refused', `${inv.llbc} already exists; the LLBC must be produced by this attempt`);
+  verifyTree({ out });
   const files = beginStage(chain, 'charon');
-  const log = path.join(record.out, 'charon.log');
-  const run = runTool(record.tools.charon.path, record.charon.argv, record.charon.cwd, record.env, log);
+  const log = path.join(out, 'charon.log');
+  const run = runTool(inv.tools.charon.path, inv.charon.argv, inv.charon.cwd, inv.env, log);
   const reasons = toolReasons('Charon', run);
   try {
-    verifyTree({ out: record.out });
+    verifyTree({ out });
   } catch (error) {
     reasons.push(`verify-tree after Charon: ${error.message}`);
   }
-  const llbc = fileState(record.llbc);
-  if (!llbc?.sha256) reasons.push(`Charon produced no LLBC file at ${record.llbc}`);
+  const llbc = fileState(inv.llbc);
+  if (!llbc?.sha256) reasons.push(`Charon produced no LLBC file at ${inv.llbc}`);
+  else if (reasons.length === 0) reasons.push(...llbcProblems(inv.llbc, inv));
   return settle(files, { ...stageBase(chain, 'charon'), run, logSha256: fileState(log).sha256, llbcSha256: llbc?.sha256 ?? null }, reasons);
 }
 
@@ -1065,91 +1156,107 @@ function translationLeanFiles(file) {
 }
 
 function runAeneas(chain) {
-  const { attempt: record } = chain;
+  const inv = chain.invocation;
+  const { out } = chain.attempt;
   const charon = chain.stages.charon.record;
-  recheckTools(record);
-  if (fileState(record.llbc)?.sha256 !== charon.llbcSha256) refuse('attempt-refused', 'the LLBC differs from the one the Charon stage recorded');
+  if (fileState(inv.llbc)?.sha256 !== charon.llbcSha256) refuse('attempt-refused', 'the LLBC differs from the one the Charon stage recorded');
   try {
-    fs.mkdirSync(record.aeneasDest);
+    fs.mkdirSync(inv.aeneasDest);
   } catch {
-    refuse('attempt-refused', `${record.aeneasDest} already exists; Aeneas writes only into a fresh empty directory`);
+    refuse('attempt-refused', `${inv.aeneasDest} already exists; Aeneas writes only into a fresh empty directory`);
   }
   const files = beginStage(chain, 'aeneas');
-  const log = path.join(record.out, 'aeneas.log');
-  const run = runTool(record.tools.aeneas.path, record.aeneas.argv, record.aeneas.cwd, record.env, log);
+  const log = path.join(out, 'aeneas.log');
+  const run = runTool(inv.tools.aeneas.path, inv.aeneas.argv, inv.aeneas.cwd, inv.env, log);
   const reasons = toolReasons('Aeneas', run);
-  if (fileState(record.llbc)?.sha256 !== charon.llbcSha256) reasons.push('the LLBC changed while Aeneas ran');
-  const produced = filesUnder(record.aeneasDest);
-  const links = Object.keys(produced).filter((file) => produced[file]?.link !== undefined);
-  if (links.length > 0) reasons.push(`Aeneas output holds links: ${links.join(', ')}`);
+  if (fileState(inv.llbc)?.sha256 !== charon.llbcSha256) reasons.push('the LLBC changed while Aeneas ran');
+  const entries = entriesUnder(inv.aeneasDest);
+  const outputs = fileHashes(entries);
   let translationSha256 = null;
-  if (!produced['translation.json']?.sha256) {
+  if (!outputs['translation.json']) {
     reasons.push('Aeneas produced no translation.json');
   } else {
-    translationSha256 = produced['translation.json'].sha256;
+    translationSha256 = outputs['translation.json'];
     try {
-      const named = translationLeanFiles(path.join(record.aeneasDest, 'translation.json'));
-      const missing = named.filter((file) => !produced[file]);
-      const extra = Object.keys(produced).filter((file) => file !== 'translation.json' && !named.includes(file));
+      const named = translationLeanFiles(path.join(inv.aeneasDest, 'translation.json'));
+      const missing = named.filter((file) => !outputs[file]);
       if (missing.length > 0) reasons.push(`files translation.json names are missing: ${missing.join(', ')}`);
-      if (extra.length > 0) reasons.push(`files outside the expected output set: ${extra.join(', ')}`);
+      const expected = Object.fromEntries(['translation.json', ...named].filter((file) => outputs[file]).map((file) => [file, outputs[file]]));
+      if (!exactlyFiles(entries, expected)) {
+        const extra = Object.keys(entries).filter((entry) => !Object.hasOwn(expected, entry) && !Object.keys(expected).flatMap(ancestors).includes(entry));
+        reasons.push(`entries outside the expected output set: ${extra.join(', ')}`);
+      }
     } catch (error) {
       reasons.push(`translation.json is unreadable: ${error.message}`);
     }
   }
-  return settle(files, { ...stageBase(chain, 'aeneas'), run, logSha256: fileState(log).sha256, llbcSha256: charon.llbcSha256, outputs: hashes(produced), translationSha256 }, reasons);
+  return settle(files, { ...stageBase(chain, 'aeneas'), run, logSha256: fileState(log).sha256, llbcSha256: charon.llbcSha256, outputs, translationSha256 }, reasons);
 }
 
-// The whole publication, checked before any write: the destination may hold only
-// files an earlier publication owns, unmodified, all of which this attempt
-// produces again. Publication never deletes or overwrites anything else.
-function publicationPlan(record, outputs) {
-  const { publishDir, projectRoot } = record;
+// The whole publication, checked before any write: every entry in the
+// destination, with its type, against the outputs and the control files. The
+// destination may hold only files an earlier publication owns, unmodified, the
+// directories that hold them, and the ownership record; this attempt must
+// produce every owned file again. Publication never deletes or overwrites
+// anything else.
+function publicationPlan(inv, outputs) {
+  const { publishDir, projectRoot } = inv;
   refuseLinkedDirectory(projectRoot, path.relative(projectRoot, publishDir));
   const stat = fs.lstatSync(publishDir, { throwIfNoEntry: false });
-  if (stat && !stat.isDirectory()) refuse('publication-refused', `${publishDir} is not a directory`);
-  const existing = stat ? filesUnder(publishDir) : {};
-  if (existing[PUBLICATION_PENDING]) refuse('publication-refused', `a pending publication marker exists in ${publishDir}; an earlier publication did not finish and needs a human`);
+  if (stat && !stat.isDirectory()) refuse('publication-refused', `${publishDir} is not a directory`, { reason: 'occupied' });
+  const existing = stat ? entriesUnder(publishDir) : {};
+  const produced = Object.keys(outputs).sort();
+  const reserved = [OWNERSHIP, PUBLICATION_PENDING];
+  const reject = (message, details) => refuse('publication-refused', message, details);
+  if (Object.hasOwn(existing, PUBLICATION_PENDING)) reject(`a pending publication marker exists in ${publishDir}; an earlier publication did not finish and needs a human`, { reason: 'pending' });
+  for (const file of produced) if (reserved.includes(file) || file.split('/').some((part) => reserved.includes(part))) reject(`${file} collides with a publication control file`, { path: file, reason: 'reserved' });
   let owned = {};
-  if (existing[OWNERSHIP]) {
+  if (Object.hasOwn(existing, OWNERSHIP)) {
+    if (existing[OWNERSHIP]?.sha256 === undefined) reject(`${OWNERSHIP} in ${publishDir} is not a regular file`, { path: OWNERSHIP, reason: 'occupied' });
     try {
       owned = JSON.parse(fs.readFileSync(path.join(publishDir, OWNERSHIP), 'utf8')).files;
     } catch {
-      refuse('publication-refused', `${OWNERSHIP} in ${publishDir} is unreadable`);
+      reject(`${OWNERSHIP} in ${publishDir} is unreadable`, { path: OWNERSHIP, reason: 'unreadable' });
     }
-    if (owned === null || typeof owned !== 'object' || Array.isArray(owned)) refuse('publication-refused', `${OWNERSHIP} in ${publishDir} records no files`);
+    if (owned === null || typeof owned !== 'object' || Array.isArray(owned)) reject(`${OWNERSHIP} in ${publishDir} records no files`, { path: OWNERSHIP, reason: 'unreadable' });
   }
-  const produced = Object.keys(outputs).sort();
-  for (const [file, state] of Object.entries(existing)) {
-    if (file === OWNERSHIP) continue;
-    if (!Object.hasOwn(owned, file)) refuse('publication-refused', `${file} in ${publishDir} is not owned by an earlier publication; publication never overwrites it`, { path: file, reason: 'unowned' });
-    if (state?.sha256 !== owned[file]) refuse('publication-refused', `${file} in ${publishDir} changed since it was published`, { path: file, reason: 'modified' });
+  const holders = new Set(produced.flatMap(ancestors));
+  for (const [entry, state] of Object.entries(existing)) {
+    if (entry === OWNERSHIP) continue;
+    if (state?.type === 'directory') {
+      if (!holders.has(entry)) reject(`${entry} in ${publishDir} is a directory no output needs; publication never touches it`, { path: entry, reason: produced.includes(entry) ? 'occupied' : 'unowned' });
+      continue;
+    }
+    if (state?.sha256 === undefined) reject(`${entry} in ${publishDir} is not a regular file`, { path: entry, reason: 'occupied' });
+    if (holders.has(entry)) reject(`${entry} in ${publishDir} is a file where an output needs a directory`, { path: entry, reason: 'occupied' });
+    if (!Object.hasOwn(owned, entry)) reject(`${entry} in ${publishDir} is not owned by an earlier publication; publication never overwrites it`, { path: entry, reason: 'unowned' });
+    if (state.sha256 !== owned[entry]) reject(`${entry} in ${publishDir} changed since it was published`, { path: entry, reason: 'modified' });
   }
   for (const file of Object.keys(owned)) {
-    if (!existing[file]) refuse('publication-refused', `${file} is recorded as published but is missing from ${publishDir}`, { path: file, reason: 'missing-owned' });
-    if (!produced.includes(file)) refuse('publication-refused', `${file} was published earlier but this attempt does not produce it; publication never deletes, remove it explicitly`, { path: file, reason: 'stale' });
+    if (!existing[file]) reject(`${file} is recorded as published but is missing from ${publishDir}`, { path: file, reason: 'missing-owned' });
+    if (!produced.includes(file)) reject(`${file} was published earlier but this attempt does not produce it; publication never deletes, remove it explicitly`, { path: file, reason: 'stale' });
   }
   const folded = new Map();
-  for (const file of [...produced, ...Object.keys(existing).filter((name) => name !== OWNERSHIP)]) {
-    const key = file.toLowerCase();
-    if (folded.has(key) && folded.get(key) !== file) refuse('publication-refused', `${file} and ${folded.get(key)} differ only in case`, { reason: 'case-collision' });
-    folded.set(key, file);
+  for (const entry of [...new Set([...produced, ...holders, ...reserved, ...Object.keys(existing)])]) {
+    const key = entry.toLowerCase();
+    if (folded.has(key) && folded.get(key) !== entry) reject(`${entry} and ${folded.get(key)} differ only in case`, { reason: 'case-collision' });
+    folded.set(key, entry);
   }
-  for (const file of produced) refuseLinkedDirectory(projectRoot, path.relative(projectRoot, path.dirname(path.join(publishDir, file))));
-  return produced.map((file) => ({ attemptPath: path.join(record.aeneasDest, file), projectPath: path.join(publishDir, file), sha256: outputs[file] }));
+  return produced.map((file) => ({ attemptPath: path.join(inv.aeneasDest, file), projectPath: path.join(publishDir, file), sha256: outputs[file] }));
 }
 
 function runPublish(chain) {
-  const { attempt: record } = chain;
+  const inv = chain.invocation;
+  const { out } = chain.attempt;
   const aeneas = chain.stages.aeneas.record;
-  if (!sameState(hashes(filesUnder(record.aeneasDest)), aeneas.outputs)) refuse('attempt-refused', 'the Aeneas outputs changed after the Aeneas stage recorded them');
-  const plan = publicationPlan(record, aeneas.outputs);
+  if (!exactlyFiles(entriesUnder(inv.aeneasDest), aeneas.outputs)) refuse('attempt-refused', 'the Aeneas outputs changed after the Aeneas stage recorded them');
+  const plan = publicationPlan(inv, aeneas.outputs);
   const files = beginStage(chain, 'publish');
   const reasons = [];
   let ownershipSha256 = null;
   try {
-    fs.mkdirSync(record.publishDir, { recursive: true });
-    fs.writeFileSync(path.join(record.publishDir, PUBLICATION_PENDING), `${JSON.stringify(plan, null, 2)}\n`, { flag: 'wx' });
+    fs.mkdirSync(inv.publishDir, { recursive: true });
+    fs.writeFileSync(path.join(inv.publishDir, PUBLICATION_PENDING), `${JSON.stringify(plan, null, 2)}\n`, { flag: 'wx' });
     for (const entry of plan) {
       fs.mkdirSync(path.dirname(entry.projectPath), { recursive: true });
       const temporary = `${entry.projectPath}.fvs-tmp-${process.pid}`;
@@ -1158,13 +1265,13 @@ function runPublish(chain) {
       if (fileState(entry.projectPath)?.sha256 !== entry.sha256) reasons.push(`${entry.projectPath} differs from the attempt output after copying`);
     }
     if (reasons.length === 0) {
-      const ownership = { schema: 'fvs-extract-patches/publication', version: 1, attempt: record.out, files: Object.fromEntries(plan.map((entry) => [path.relative(record.publishDir, entry.projectPath), entry.sha256])) };
-      const target = path.join(record.publishDir, OWNERSHIP);
+      const ownership = { schema: 'fvs-extract-patches/publication', version: 1, attempt: out, files: Object.fromEntries(plan.map((entry) => [path.relative(inv.publishDir, entry.projectPath), entry.sha256])) };
+      const target = path.join(inv.publishDir, OWNERSHIP);
       const temporary = `${target}.fvs-tmp-${process.pid}`;
       fs.writeFileSync(temporary, `${JSON.stringify(ownership, null, 2)}\n`, { flag: 'wx' });
       fs.renameSync(temporary, target);
       ownershipSha256 = fileState(target).sha256;
-      fs.unlinkSync(path.join(record.publishDir, PUBLICATION_PENDING));
+      fs.unlinkSync(path.join(inv.publishDir, PUBLICATION_PENDING));
     }
   } catch (error) {
     reasons.push(error.message);
@@ -1179,19 +1286,22 @@ function run(flags) {
   return STAGE_RUNNERS[flags.step](loadChain(path.resolve(flags.out), ATTEMPT_STAGES.indexOf(flags.step)));
 }
 
-// The completed chain, re-validated with the current tool, LLBC, Aeneas-output
-// and published-file hashes; the summary record-extraction stores.
+// The completed chain, re-validated with the current invocation, cargo
+// configuration, toolchain identity, LLBC, Aeneas-output and published-file
+// hashes; the summary record-extraction stores.
 function attemptStatus(flags) {
   const chain = loadChain(path.resolve(flags.out), ATTEMPT_STAGES.length);
-  const { attempt: record, stages } = chain;
-  recheckTools(record);
-  if (fileState(record.llbc)?.sha256 !== stages.charon.record.llbcSha256) refuse('attempt-refused', 'the LLBC changed after the Charon stage');
-  if (!sameState(hashes(filesUnder(record.aeneasDest)), stages.aeneas.record.outputs)) refuse('attempt-refused', 'the Aeneas outputs changed after the Aeneas stage');
-  for (const entry of stages.publish.record.mapping) {
+  const { attempt: record, invocation: inv, stages } = chain;
+  if (fileState(inv.llbc)?.sha256 !== stages.charon.record.llbcSha256) refuse('attempt-refused', 'the LLBC changed after the Charon stage');
+  if (!exactlyFiles(entriesUnder(inv.aeneasDest), stages.aeneas.record.outputs)) refuse('attempt-refused', 'the Aeneas outputs changed after the Aeneas stage');
+  const { mapping } = stages.publish.record;
+  if (!Array.isArray(mapping) || mapping.length === 0) refuse('attempt-refused', 'the publication record maps no files');
+  for (const entry of mapping) {
     if (fileState(entry.projectPath)?.sha256 !== entry.sha256) refuse('attempt-refused', `${entry.projectPath} changed after publication`);
   }
-  if (fileState(path.join(record.publishDir, OWNERSHIP))?.sha256 !== stages.publish.record.ownershipSha256) refuse('attempt-refused', 'the publication ownership record changed');
-  const translation = stages.publish.record.mapping.find((entry) => entry.attemptPath === path.join(record.aeneasDest, 'translation.json'));
+  if (fileState(path.join(inv.publishDir, OWNERSHIP))?.sha256 !== stages.publish.record.ownershipSha256) refuse('attempt-refused', 'the publication ownership record changed');
+  const translation = mapping.find((entry) => entry.attemptPath === path.join(inv.aeneasDest, 'translation.json'));
+  if (!translation) refuse('attempt-refused', 'the publication record does not map translation.json');
   return {
     message: `attempt complete (${record.supported ? 'supported configuration' : 'unsupported configuration'})`,
     run: {
@@ -1203,9 +1313,9 @@ function attemptStatus(flags) {
       trust: record.trust,
       config: record.config,
       configSha256: record.configSha256,
-      llbc: { path: record.llbc, sha256: stages.charon.record.llbcSha256 },
+      llbc: { path: inv.llbc, sha256: stages.charon.record.llbcSha256 },
       translation,
-      publication: stages.publish.record.mapping,
+      publication: mapping,
     },
   };
 }
