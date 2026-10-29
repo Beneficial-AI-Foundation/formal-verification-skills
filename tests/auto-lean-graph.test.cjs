@@ -227,6 +227,12 @@ describe('derived: missing or contradictory fields are never zero dependencies',
     }
   });
 
+  it('a declaration kind no fixture has qualified blocks', () => {
+    const record = derived({ edit: (data) => { data[FITS].kind = 'opaque'; } });
+    assert.deepEqual(codes(record), ['unqualified-kind']);
+    assert.deepEqual(record.closures[THEOREM].blockers, [{ code: 'graph-incomplete' }]);
+  });
+
   it('a duplicate declaration key is refused, not resolved last-wins', () => {
     const text = read(BOUND, 'lean.json');
     const doubled = text.replace('"probe:m1demo.double":', '"probe:m1demo.double": {"kind": "def"},\n "probe:m1demo.double":');
@@ -295,9 +301,15 @@ describe('derived: completeness needs the requested scope, not one atom or a cac
     assert.deepEqual(codes(record), ['modules-outside-scope']);
   });
 
-  it('a requested module without its .ilean in the run blocks', () => {
+  it('a requested module whose .ilean the run never produced blocks', () => {
+    const projectRoot = projectCopy((directory) => fs.rmSync(path.join(directory, '.lake/build/lib/lean/M1demo/Spec.ilean')));
+    const record = derived({ projectRoot, receipt: (r) => { r.inputs.files = projectInputs(projectRoot); } });
+    assert.deepEqual(codes(record), ['missing-ilean', 'atom-outside-scope']);
+  });
+
+  it('a recorded receipt that no longer lists a module .ilean on disk blocks', () => {
     const record = derived({ receipt: (r) => { delete r.inputs.files['.lake/build/lib/lean/M1demo/Spec.ilean']; } });
-    assert.ok(codes(record).includes('inputs-changed'));
+    assert.deepEqual(codes(record), ['inputs-changed']);
   });
 });
 

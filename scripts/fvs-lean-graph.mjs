@@ -15,6 +15,9 @@ const RECEIPT_SCHEMA = 'fvs/lean-probe-run';
 const MANIFEST_SCHEMA = 'fvs-extract-patches/manifest';
 const DEPENDENCY_FIELDS = ['type-dependencies', 'term-dependencies', 'type-dependencies-external',
   'term-dependencies-external', 'dependencies'];
+// The declaration kinds a recorded fixture has qualified; closure traversal is
+// defined for these only.
+const QUALIFIED_KINDS = ['def', 'theorem'];
 // Lake writes each module's .ilean, listing the declarations Lean elaborated in
 // it, under this directory of the project's own build.
 const ILEAN_DIR = '.lake/build/lib/lean';
@@ -229,6 +232,9 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
         atom[field].some((dep) => typeof dep !== 'string' || !/^probe:./.test(dep))),
     ].filter(Boolean);
     if (problems.length > 0) block('malformed-atom', `${id} has missing or ill-typed ${problems.join(', ')}`, { declaration: id });
+    else if (!QUALIFIED_KINDS.includes(atom.kind)) {
+      block('unqualified-kind', `${id} has kind ${JSON.stringify(atom.kind)}; only ${QUALIFIED_KINDS.join(' and ')} are qualified for closure traversal`, { declaration: id });
+    }
     // JSON.parse keeps only the last of duplicate keys; a key is a string followed by a colon.
     const keys = extractText.match(new RegExp(`${JSON.stringify(id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*:`, 'g'));
     if ((keys ?? []).length > 1) block('duplicate-declaration', `${id} appears ${keys?.length} times in the extract; JSON parsing keeps only one`, { declaration: id });
