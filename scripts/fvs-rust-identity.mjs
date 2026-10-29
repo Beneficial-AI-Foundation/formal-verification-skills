@@ -188,7 +188,8 @@ function missingFamilyMembers(family, primary, functions, leanAtom) {
   for (const f of family) {
     const deps = leanAtom(f.lean_name)?.dependencies;
     for (const dep of Array.isArray(deps) ? deps : []) {
-      if (dep.startsWith(helperPrefix) && !names.has(dep.slice('probe:'.length))) missing.add(dep.slice('probe:'.length));
+      // A non-string entry is already reported as lean-dependencies above.
+      if (typeof dep === 'string' && dep.startsWith(helperPrefix) && !names.has(dep.slice('probe:'.length))) missing.add(dep.slice('probe:'.length));
     }
   }
   return [...missing].sort();

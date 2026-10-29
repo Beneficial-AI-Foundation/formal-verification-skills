@@ -441,6 +441,7 @@ describe('Rust identity record: claims stay bounded by the evidence', () => {
       'empty probe-lean data': [{ 'lean.json': (l) => ({ ...l, data: {} }) }, 'lean-atom:m1demo.sum_to_loop.body'],
       'dropped family atom': [{ 'lean.json': (l) => { delete l.data['probe:m1demo.sum_to_loop.body']; return l; } }, 'lean-atom:m1demo.sum_to_loop.body'],
       'absent dependency list': [{ 'lean.json': (l) => { delete l.data['probe:m1demo.sum_to_loop'].dependencies; return l; } }, 'lean-dependencies:m1demo.sum_to_loop'],
+      'non-string dependency entry': [{ 'lean.json': (l) => { l.data['probe:m1demo.sum_to_loop'].dependencies = [null]; return l; } }, 'lean-dependencies:m1demo.sum_to_loop'],
       'empty functions.json': [{ 'functions.json': () => ({ functions: [] }) }, 'functions-record:m1demo.sum_to'],
     };
     for (const [label, [mutation, expected]] of Object.entries(cases)) {
