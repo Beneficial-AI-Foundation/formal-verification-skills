@@ -1,0 +1,11 @@
+probe-lean built with Lean 4.31.0, target project uses v4.31.0
+Build cache is up-to-date, skipping lake build...
+Getting project modules...
+Failed to get LEAN_PATH:
+info: aeneas: cloning https://github.com/AeneasVerif/aeneas.git
+info: stderr:
+Cloning into '/private/tmp/fvs44-qual.JqbS5W/neg-noaeneas/.lake/packages/aeneas'...
+fatal: unable to access 'https://github.com/AeneasVerif/aeneas.git/': Could not resolve host: github.com
+error: external command 'git' exited with code 128
+
+EXIT=1

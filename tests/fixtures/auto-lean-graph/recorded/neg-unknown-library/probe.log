@@ -1,0 +1,8 @@
+probe-lean built with Lean 4.31.0, target project uses v4.31.0
+Build cache is up-to-date, skipping lake build...
+Getting project modules...
+Warning: --library NoSuchLib matched no built module (it is not a module-name root).
+Error: every project module was filtered out by --library/--module.
+  3 module(s) were built but none matched the requested filter.
+  Available top-level module roots: M1demo
+EXIT=1

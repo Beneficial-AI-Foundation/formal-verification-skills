@@ -1,0 +1,11 @@
+{"tool": {"version": "0.14.0", "name": "probe-lean", "command": "extract"},
+ "timestamp": "2026-10-29T13:26:50Z",
+ "source":
+ {"repo": "",
+  "package-version": "4ffe78c",
+  "package": "m1demo",
+  "language": "lean",
+  "commit": "4ffe78c729d21ec27392bab176f8db9412ebe760"},
+ "schema-version": "3.0",
+ "schema": "probe-lean/extract",
+ "data": {}}
