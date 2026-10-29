@@ -14,7 +14,9 @@ throwaway copies of the milestone 1 demo extraction (`m1demo`, Aeneas nightly-20
 
 | Run | Project change | Flags | Tool exit |
 |---|---|---|---|
-| `positive-theorem` | adds `M1demo/Spec.lean` (commit eef73c8f) | none | 0 |
+| `positive-bound` | adds `M1demo/Spec.lean` (commit eef73c8f); `lake build M1demo` first | `--library M1demo` | 0 |
+| `neg-default-targets-cache-hit` | `defaultTargets = ["Other"]`, warm stale `M1demo` cache; `lake build` first | none | 0 |
+| `positive-theorem` | as `positive-bound`, no receipt | none | 0 |
 | `neg-default-targets` | `defaultTargets = ["Other"]`, stale `M1demo` build cache kept | none | 0 |
 | `neg-default-targets-fresh` | as above, `.lake/build` removed | none | 0 |
 | `neg-module-filter` | as positive | `--module M1demo.Spec` | 0 |
@@ -22,8 +24,16 @@ throwaway copies of the milestone 1 demo extraction (`m1demo`, Aeneas nightly-20
 | `neg-unknown-library` | as positive | `--library NoSuchLib` | 1, no output |
 | `neg-missing-aeneas-package` | `.lake/packages/aeneas` removed | none | 1, no output |
 
-`project/` holds the demo's real `aeneas-config.yml`, `lake-manifest.json`, `lean-toolchain` and
-`M1demo/translation.json` (sha256 `bb20ee96...`), shared by every run.
+The first two runs also have `receipt.json` (`fvs/lean-probe-run` version 1), written by the capture at run
+time: both argv vectors, exit codes, probe binary hash and version, the Lean project commit, the sha256 of
+every project input (Lean sources, Lake configuration, `translation.json` and the project's `.ilean` files,
+taken after the probe finished) and of the extract and log.
 
-Derived cases (truncated extract, truncated log, dropped declarations, unqualified versions) are edits of the
-recorded positive made inside `tests/auto-lean-graph.test.cjs`; there are no derived fixture files.
+`project/` is the `positive-bound` project's bound inputs, byte-identical to its receipt (Lean sources,
+`lakefile.toml`, `lake-manifest.json`, `lean-toolchain`, `M1demo/translation.json` sha256 `bb20ee96...`, and
+the three `.lake/build/lib/lean/**/*.ilean` files), plus the demo's `aeneas-config.yml`, which locates
+`translation.json`. `extraction/manifest.json` is the real `fvs-extract-patches/manifest` of the demo's
+recorded extraction (sha256 `02b41307...`, source commit 8c8955e1, no patches).
+
+Derived cases are edits of `positive-bound` made inside `tests/auto-lean-graph.test.cjs`; there are no
+derived fixture files.

@@ -1,0 +1,18 @@
+probe-lean built with Lean 4.31.0, target project uses v4.31.0
+Build cache is up-to-date, skipping lake build...
+Getting project modules...
+Analyzing 3 modules...
+=== Step 1/3: Atomize ===
+Importing 3 modules...
+Extracting declarations...
+Found 9 declarations
+Auxiliary fold: recovered 0 dependency edge(s) (4 expansions, 60 edges scanned, 0 cycle suppression(s), cache 4 entr(ies) / 0 name(s))
+Found 9 atoms
+=== Step 2/3: Verify ===
+Found 0 sorry warnings
+Verified: 9/9 declarations
+=== Step 3/3: Merge ===
+=== Enrich ===
+Transitively verified: 9 | Locally verified: 0 | Not verified: 0
+Wrote 9 unified atoms to /tmp/fvs44-qual.JqbS5W/out-r2/positive-bound/lean.json
+EXIT=0
