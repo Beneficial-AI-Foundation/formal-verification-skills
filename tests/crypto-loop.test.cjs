@@ -795,3 +795,22 @@ for (const absPath of [STAGE_FILES.cmdEval, STAGE_FILES.wfEval,
     });
   });
 }
+
+// Eval wall time must be a measured clock value with explicit absent/failed semantics.
+for (const key of ['cmdEval', 'wfEval']) {
+  whenExists(STAGE_FILES[key], `Crypto eval: measured thinker wall time in ${rel(STAGE_FILES[key])}`, content => {
+    it('persists a measured Thinker wall time line or an explicit reason it was not measured', () => {
+      assert.match(content, /`Thinker wall time: <N> s \(measured: shell clock around in-runtime dispatch\)`/);
+      assert.match(content, /`Thinker wall time: <N> ms \(measured: --codex helper process\)`/);
+      assert.match(content, /`Thinker wall time: not measured \(<reason>\)`/);
+    });
+    it('brackets in-runtime dispatch with the shell clock and reuses the helper durationMs', () => {
+      assert.match(content, /date -u \+%s > "\$ROOT\/sources\/\.eval-dispatch-started"/);
+      assert.match(content, /envelope's `durationMs`/);
+    });
+    it('keeps failed or timed-out thinker runs out of EVAL_nN and never estimates from telemetry', () => {
+      assert.match(content, /failed or timed-out thinker run persists no EVAL_nN/);
+      assert.match(content, /never derive it from model, token or reasoning telemetry/);
+    });
+  });
+}

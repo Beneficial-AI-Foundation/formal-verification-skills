@@ -201,6 +201,15 @@ prompt. Optional Codex receives that identical text in its existing context JSON
 Check the actual corrected prose and every outstanding finding; never infer closure from hashes or
 build success. Reuse corrected build evidence; do not add proof probes or retry the correction pass.
 
+Measure the thinker's wall time; never derive it from model, token or reasoning telemetry. Immediately
+before an in-runtime dispatch run `date -u +%s > "$ROOT/sources/.eval-dispatch-started"`; immediately
+after it returns run `echo $(( $(date -u +%s) - $(cat "$ROOT/sources/.eval-dispatch-started") ))`. With
+`--codex`, use the envelope's `durationMs` (the helper's measured process time). Persist exactly one
+line next to `Stage settings:` in EVAL_nN: `Thinker wall time: <N> s (measured: shell clock around in-runtime dispatch)`,
+`Thinker wall time: <N> ms (measured: --codex helper process)`, or `Thinker wall time: not measured (<reason>)`
+when the marker or field is absent. A failed or timed-out thinker run persists no EVAL_nN; report its
+measured time and outcome in the run output only. The value is a timing record, not a speed claim.
+
 ```
 Task(
   subagent_type="fvs-crypto-thinker",
