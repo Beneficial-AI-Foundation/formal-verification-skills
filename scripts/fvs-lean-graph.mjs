@@ -43,6 +43,12 @@ function usage() {
     '--manifest is the fvs-extract-patches manifest of the extraction. Prints the',
     'record as JSON. Exit 0 only when the record is complete; 1 when it is',
     'incomplete or unsupported; 2 on usage errors.',
+    '',
+    'Exit 0 and state "complete" claim only that this Lean graph record of the',
+    'bound run is complete. They never claim that the graph is bound to the Rust',
+    'extraction (binding.status, reported separately, is "unbound" today) or that',
+    'a join with the Rust identity record may proceed: a consumer needs a complete',
+    'state AND a bound binding with agreeing provenance on both records.',
   ].join('\n') + '\n');
 }
 
@@ -116,6 +122,27 @@ export function projectInputs(root) {
 
 function flagValues(argv, names) {
   return argv.flatMap((item, index) => (names.includes(item) ? [argv[index + 1]] : []));
+}
+
+// Keys repeated within one JSON object, compared after decoding escapes (so
+// "probe:x" and "\u0070robe:x" are the same key). Runs only on text JSON.parse
+// accepted, so tracking strings and nesting is enough.
+export function duplicateKeys(text) {
+  const duplicates = new Set();
+  const objects = [];
+  let previous = null;
+  for (const [token] of text.matchAll(/"(?:[^"\\]|\\.)*"|[{}[\]:]/g)) {
+    if (token === '{') objects.push(new Set());
+    else if (token === '[') objects.push(null);
+    else if (token === '}' || token === ']') objects.pop();
+    else if (token === ':') {
+      const key = JSON.parse(previous);
+      if (objects.at(-1).has(key)) duplicates.add(key);
+      objects.at(-1).add(key);
+    }
+    previous = token;
+  }
+  return sorted(duplicates);
 }
 
 function translationNames(file) {
@@ -235,9 +262,12 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
     else if (!QUALIFIED_KINDS.includes(atom.kind)) {
       block('unqualified-kind', `${id} has kind ${JSON.stringify(atom.kind)}; only ${QUALIFIED_KINDS.join(' and ')} are qualified for closure traversal`, { declaration: id });
     }
-    // JSON.parse keeps only the last of duplicate keys; a key is a string followed by a colon.
-    const keys = extractText.match(new RegExp(`${JSON.stringify(id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*:`, 'g'));
-    if ((keys ?? []).length > 1) block('duplicate-declaration', `${id} appears ${keys?.length} times in the extract; JSON parsing keeps only one`, { declaration: id });
+  }
+  // JSON.parse keeps only the last of duplicate keys, so a repeated key anywhere
+  // (a declaration or one of its fields) makes the parsed extract ambiguous.
+  for (const key of duplicateKeys(extractText)) {
+    if (has(data, key)) block('duplicate-declaration', `${key} appears more than once in data; JSON parsing keeps only the last`, { declaration: key });
+    else block('duplicate-key', `key ${JSON.stringify(key)} appears more than once in one object of the extract`);
   }
   if (blockers.some((item) => item.code === 'malformed-atom')) return finish();
 
@@ -348,7 +378,8 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
     }
   }
   // The same-extraction claim, kept apart from the graph's state: nothing yet
-  // records translation.json against the patch manifest.
+  // records translation.json against the patch manifest. A complete state never
+  // implies this claim; joining with the Rust record needs both.
   record.binding.reasons = [
     'translation-not-bound-to-manifest',
     record.provenance.manifestSha256 === null && 'no-manifest',

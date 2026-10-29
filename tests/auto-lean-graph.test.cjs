@@ -240,6 +240,30 @@ describe('derived: missing or contradictory fields are never zero dependencies',
     assert.deepEqual(codes(derived({ extractText: doubled })), ['duplicate-declaration']);
   });
 
+  it('a duplicate spelled with a JSON escape is the same declaration', () => {
+    const text = read(BOUND, 'lean.json');
+    const doubled = text.replace('"probe:m1demo.double":', '"probe:m1demo.double": {"kind": "def"},\n "\\u0070robe:m1demo.double":');
+    assert.equal(Object.keys(JSON.parse(doubled).data).length, 9, 'JSON.parse silently keeps one');
+    assert.deepEqual(codes(derived({ extractText: doubled })), ['duplicate-declaration']);
+  });
+
+  it('an escaped key that is not repeated, and colons or braces inside strings, are fine', () => {
+    const text = read(BOUND, 'lean.json');
+    const escaped = text.replace('"probe:m1demo.double":', '"\\u0070robe:m1demo.double":');
+    assert.notEqual(escaped, text);
+    const quoted = escaped.replace('"display-name": "double"', '"display-name": "double", "note": "a: {b} [c] \\" d:"');
+    const record = derived({ extractText: quoted });
+    assert.equal(record.state, 'complete');
+    assert.equal(record.declarations['probe:m1demo.double'].note, 'a: {b} [c] " d:');
+  });
+
+  it('a field repeated inside one declaration is refused', () => {
+    const text = read(BOUND, 'lean.json');
+    const doubled = text.replace('"display-name": "double"', '"display-name": "double", "type-dependencies": []');
+    assert.notEqual(doubled, text);
+    assert.deepEqual(codes(derived({ extractText: doubled })), ['duplicate-key']);
+  });
+
   it('dependencies disagreeing with type and term dependencies blocks', () => {
     const record = derived({ edit: (data) => { data[FITS].dependencies = []; } });
     assert.deepEqual(codes(record), ['dependency-fields-disagree']);
