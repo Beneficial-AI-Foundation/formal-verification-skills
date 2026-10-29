@@ -308,7 +308,7 @@ describe('Rust identity record: recorded run 2 (one source commit later, same Ch
     assert.equal(pick.correspondence, 'exact');
     assert.equal(pick.target, 'm1demo.pick');
     assert.equal(pick.defId, 21);
-    assert.deepEqual(result.record.provenance.gaps, ['type-genericity-not-exposed', 'extraction-configuration-not-bound']);
+    assert.deepEqual(result.record.provenance.gaps, ['type-genericity-not-exposed']);
   });
 
   it('blocks mixing the two runs: def_ids were renumbered by the source change', () => {
@@ -326,6 +326,123 @@ describe('Rust identity record: recorded run 2 (one source commit later, same Ch
       'translations.json': path.join(RUN1, 'translations.json'), 'lean.json': path.join(RUN1, 'lean.json') }, COMMIT);
     assert.equal(forged.code, 'blocked');
     assert.deepEqual(forged.record.blockers.map((b) => b.code), ['correspondence-conflict']);
+  });
+});
+
+describe('Rust identity record: claims stay bounded by the evidence', () => {
+  // Run 1 without its one unsupported (recursive) function, so every item maps exactly.
+  const withoutRecursion = {
+    'translation.json': (t) => ({ ...t, functions: t.functions.filter((f) => f.def_id !== 20) }),
+    'rust.json': (r) => { delete r.data['probe:m1demo/0.1.0/count_down()']; return r; },
+    'translations.json': (m) => ({ ...m, mappings: m.mappings.filter((x) => !x.from.includes('count_down')) }),
+  };
+
+  it('never reports a fully matched record as complete while translation linkage and configuration are unbound', () => {
+    const { status, result } = record(inputs(withoutRecursion));
+    assert.equal(result.code, 'unbound');
+    assert.equal(status, 8);
+    assert.equal(result.ok, false);
+    assert.ok(result.record.items.every((entry) => entry.correspondence === 'exact'));
+    assert.deepEqual(result.record.binding, { status: 'unbound', reasons: ['translation-linkage-triangulated', 'extraction-configuration-not-bound'] });
+  });
+
+  it('cannot tell two configurations apart: unchanged commit, version and spans stay unbound under either', () => {
+    const dir = inputs(withoutRecursion);
+    const [a, b] = ['a.yml', 'b.yml'].map((name, i) => {
+      const file = path.join(dir, name);
+      fs.writeFileSync(file, `charon:\n  cargo_args: [${i ? '"--features", "alt"' : ''}]\n`);
+      return file;
+    });
+    const first = record(dir, ['--config', a]).result;
+    const second = record(dir, ['--config', b]).result;
+    assert.notEqual(first.record.provenance.configSha256, second.record.provenance.configSha256);
+    for (const run of [first, second]) {
+      assert.equal(run.code, 'unbound');
+      assert.ok(run.record.binding.reasons.includes('extraction-configuration-not-bound'));
+    }
+  });
+
+  it('does not match spans whose line bounds are missing on both sides', () => {
+    const noLines = {
+      'translation.json': (t) => ({ ...t, functions: t.functions.map((f) => (f.def_id === 25 ? { ...f, source: { file: f.source.file } } : f)) }),
+    };
+    assert.equal(record(inputs(noLines)).result.code, 'invalid-input', 'a translation source without line bounds is refused');
+    const atomLines = rustAtoms((atom, name) => { if (name.includes('left')) atom['code-text'] = {}; });
+    const left = item(record(inputs({ 'rust.json': atomLines })).result, 'm1demo::left::helper');
+    assert.equal(left.corroboration.span, 'missing');
+    assert.equal(left.correspondence, 'ambiguous');
+  });
+
+  it('refuses mistyped identity fields and foreign or unprepared envelopes', () => {
+    const cases = {
+      'string def_id in translation.json': { 'translation.json': (t) => ({ ...t, functions: t.functions.map((f) => (f.def_id === 25 ? { ...f, def_id: '25' } : f)) }) },
+      'missing is_rec on a local function': { 'translation.json': (t) => ({ ...t, functions: t.functions.map((f) => { const { is_rec: _drop, ...rest } = f; return f.def_id === 25 ? rest : f; }) }) },
+      'string charon-def-id in probe-rust': { 'rust.json': rustAtoms((atom, name) => { if (name.includes('left')) atom['charon-def-id'] = '25'; }) },
+      'another schema for probe-rust': { 'rust.json': (r) => ({ ...r, schema: 'probe-lean/extract' }) },
+      'array instead of an object': { 'rust.json': () => [] },
+      'mappings not from translate': { 'translations.json': (m) => ({ ...m, tool: { ...m.tool, command: 'extract' } }) },
+      'manifest without its prepared status': { 'manifest.json': (m) => ({ source: { commit: m.source.commit, dirty: [] } }) },
+      'functions.json without a functions array': { 'functions.json': () => ({}) },
+    };
+    for (const [label, mutation] of Object.entries(cases)) {
+      const { status, result } = record(inputs(mutation));
+      assert.equal(result.code, 'invalid-input', label);
+      assert.equal(status, 5, label);
+    }
+  });
+
+  it('does not take a differently rooted path as the same file', () => {
+    const other = rustAtoms((atom, name) => { if (name.includes('left')) atom['code-path'] = 'other-crate/src/lib.rs'; });
+    const { result } = record(inputs({ 'rust.json': other }));
+    assert.equal(item(result, 'm1demo::left::helper').corroboration.span, 'mismatch');
+    assert.equal(result.code, 'blocked');
+    const outside = rustAtoms((atom, name) => { if (name.includes('left')) atom['code-path'] = '../src/lib.rs'; });
+    const left = item(record(inputs({ 'rust.json': outside })).result, 'm1demo::left::helper');
+    assert.equal(left.corroboration.span, 'unsupported-path');
+    assert.equal(left.correspondence, 'ambiguous');
+  });
+
+  it('makes competing mappings for one Rust atom ambiguous in either order, and tolerates identical duplicates', () => {
+    const bad = { confidence: 'medium', from: 'probe:m1demo/0.1.0/left/helper()', method: 'file+display-name', to: 'probe:m1demo.right.helper' };
+    for (const order of ['bad-first', 'bad-last']) {
+      const competing = (m) => ({ ...m, mappings: order === 'bad-first' ? [bad, ...m.mappings] : [...m.mappings, bad] });
+      const left = item(record(inputs({ 'translations.json': competing })).result, 'm1demo::left::helper');
+      assert.equal(left.correspondence, 'ambiguous', order);
+      assert.deepEqual(left.reasons, ['conflicting-mappings'], order);
+      assert.equal(left.mappingCandidates.length, 2, order);
+    }
+    const identical = (m) => ({ ...m, mappings: [...m.mappings, m.mappings.find((x) => x.from.includes('left'))] });
+    assert.equal(item(record(inputs({ 'translations.json': identical })).result, 'm1demo::left::helper').correspondence, 'exact');
+  });
+
+  it('detects a loop body dropped from translation.json although the primary still maps exactly', () => {
+    const { result } = record(inputs({ 'translation.json': (t) => ({ ...t, functions: t.functions.filter((f) => f.lean_name !== 'm1demo.sum_to_loop.body') }) }));
+    const sum = item(result, 'm1demo::sum_to');
+    assert.equal(sum.correspondence, 'incomplete');
+    assert.ok(sum.reasons.includes('family-incomplete'));
+    assert.deepEqual(sum.missingGenerated, ['loop-0-pair', 'm1demo.sum_to_loop.body']);
+    assert.equal(sum.mapping.method, 'charon-def-id', 'the mapping itself is unchanged');
+    assert.equal(result.code, 'partial');
+    assert.deepEqual(result.record.orphanRustAtoms, []);
+  });
+
+  it('detects a lost family member through the Lean dependency even when functions.json omits it too', () => {
+    const { result } = record(inputs({
+      'translation.json': (t) => ({ ...t, functions: t.functions.filter((f) => f.lean_name !== 'm1demo.sum_to_loop.body').map((f) => (f.lean_name === 'm1demo.sum_to_loop' ? { ...f, loop: { ...f.loop, is_body: true } } : f)) }),
+      'functions.json': (j) => ({ functions: j.functions.filter((f) => f.lean_name !== 'm1demo.sum_to_loop.body') }),
+    }));
+    const sum = item(result, 'm1demo::sum_to');
+    assert.equal(sum.correspondence, 'incomplete');
+    assert.ok(sum.missingGenerated.includes('m1demo.sum_to_loop.body'), 'sum_to_loop still depends on the dropped body');
+  });
+
+  it('requires the Lean evidence the family check uses', () => {
+    const dir = inputs();
+    fs.rmSync(path.join(dir, 'lean.json'));
+    const run = spawnSync(process.execPath, [SCRIPT, 'record', '--source-commit', COMMIT, '--translation', path.join(dir, 'translation.json'),
+      '--manifest', path.join(dir, 'manifest.json'), '--rust', path.join(dir, 'rust.json'), '--mappings', path.join(dir, 'translations.json'),
+      '--functions', path.join(dir, 'functions.json')], { encoding: 'utf8' });
+    assert.equal(run.status, 2);
   });
 });
 
