@@ -156,7 +156,7 @@
   },
   "extraction": {
     "status": "succeeded",
-    "recordedAt": "2026-10-29T18:52:08.394Z",
+    "recordedAt": "2026-10-29T22:03:12.706Z",
     "selected": {
       "revision": "8d4406a8be358e1e177a01a8759c9cf46d411618",
       "configuration": "recorded extraction attempt; Charon cargo --preset=aeneas (release nightly-2026.09.30-0855ce1, Charon 0.1.274); Aeneas -backend lean -emit-json; Lean v4.31.0"
@@ -170,7 +170,7 @@
       "status": {
         "ok": true,
         "code": "ok",
-        "message": "prepared copy at /private/tmp/fvs39-b/copies/positive-b-copy/tree"
+        "message": "prepared copy at /private/tmp/fvs39-b2/copies/positive-b-copy/tree"
       },
       "verify-tree": {
         "ok": true,
@@ -184,21 +184,21 @@
       }
     },
     "inputs": {
-      "out": "/tmp/fvs39-b/copies/positive-b-copy",
-      "manifestSha256": "8baa43ec8f1f62b164cf9e33a72ecc6b7789ef0c355919ae35763724e811798e",
-      "crateRoot": "/private/tmp/fvs39-b/proj",
+      "out": "/tmp/fvs39-b2/copies/positive-b-copy",
+      "manifestSha256": "780eda5cc7acdb2a22e9aa98b3b41bdb5523e2fcd3a472f19d4d8b6bf1d0db04",
+      "crateRoot": "/private/tmp/fvs39-b2/proj",
       "mode": "translation-patches",
       "sourceCommit": "8d4406a8be358e1e177a01a8759c9cf46d411618",
       "patches": []
     },
     "run": {
-      "attemptSha256": "36d4dd6a0cd0b45326a6d321614aa0fc0d934dd0bef58ddc04631a20f1dbde36",
+      "attemptSha256": "1692f1713a38c40bd770a8173b4ef9ca3e823ec64b8ed5251bd74b6ce07f47f1",
       "stages": {
-        "charon": "20e37362cf010570707bce1b85641b920445bb773d94bd0737e05a0093bc199e",
-        "aeneas": "7455e7572a558236409a1f513e8d4b523db4773e8464432e9d8a609e70bbe941",
-        "publish": "7b8bc7b322ee6b8b7f0dbe1db1bedf443e82b22c182f3fc95e2f3d0f9a32ba41"
+        "charon": "fb4298c91a97d0826995bdccd7fcf47a97afc43cbfb0f14d9d3312ea7d094ff3",
+        "aeneas": "c92bf7ce5d5d2a6cefc9fe0041885c0184885f5ca928f0934bbf901852eb2857",
+        "publish": "c2674946420a47a38f5a5612bf5a780e510bb795a392dc814be27528b04bb2ff"
       },
-      "manifestSha256": "8baa43ec8f1f62b164cf9e33a72ecc6b7789ef0c355919ae35763724e811798e",
+      "manifestSha256": "780eda5cc7acdb2a22e9aa98b3b41bdb5523e2fcd3a472f19d4d8b6bf1d0db04",
       "supported": true,
       "residuals": [],
       "trust": "local-host-and-reviewed-scripts",
@@ -259,23 +259,23 @@
       },
       "configSha256": "1740df601d17e55a88a27d930b38548e0f626211855a6336576a620b5c85734d",
       "llbc": {
-        "path": "/tmp/fvs39-b/copies/positive-b-copy/m1demo.llbc",
-        "sha256": "ca175612b47020fa821403ffb44289ab4ecbf2aa9385bfbcb72e3def6a9b0101"
+        "path": "/tmp/fvs39-b2/copies/positive-b-copy/m1demo.llbc",
+        "sha256": "3f502471c1028ba79e44b1dac5b765f596d9f09e67e565b92fdf8526a2acdfc9"
       },
       "translation": {
-        "attemptPath": "/tmp/fvs39-b/copies/positive-b-copy/aeneas-dest/translation.json",
-        "projectPath": "/private/tmp/fvs39-b/proj/M1demo/translation.json",
+        "attemptPath": "/tmp/fvs39-b2/copies/positive-b-copy/aeneas-dest/translation.json",
+        "projectPath": "/private/tmp/fvs39-b2/proj/M1demo/translation.json",
         "sha256": "6b240a7bc7b8f99dff14818c5359bd2c59c142815e8f47a4db1aa52c833b7fe7"
       },
       "publication": [
         {
-          "attemptPath": "/tmp/fvs39-b/copies/positive-b-copy/aeneas-dest/M1demo.lean",
-          "projectPath": "/private/tmp/fvs39-b/proj/M1demo/M1demo.lean",
+          "attemptPath": "/tmp/fvs39-b2/copies/positive-b-copy/aeneas-dest/M1demo.lean",
+          "projectPath": "/private/tmp/fvs39-b2/proj/M1demo/M1demo.lean",
           "sha256": "66e88c8c44dabc333b9f59409f42cc13e69b32fd33cee5269d2fd4c06bc391c2"
         },
         {
-          "attemptPath": "/tmp/fvs39-b/copies/positive-b-copy/aeneas-dest/translation.json",
-          "projectPath": "/private/tmp/fvs39-b/proj/M1demo/translation.json",
+          "attemptPath": "/tmp/fvs39-b2/copies/positive-b-copy/aeneas-dest/translation.json",
+          "projectPath": "/private/tmp/fvs39-b2/proj/M1demo/translation.json",
           "sha256": "6b240a7bc7b8f99dff14818c5359bd2c59c142815e8f47a4db1aa52c833b7fe7"
         }
       ]

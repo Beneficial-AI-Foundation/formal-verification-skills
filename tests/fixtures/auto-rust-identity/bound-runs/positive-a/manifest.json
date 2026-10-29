@@ -2,8 +2,8 @@
   "schema": "fvs-extract-patches/manifest",
   "version": 1,
   "status": "prepared",
-  "projectRoot": "/private/tmp/fvs39-b/proj",
-  "tree": "/private/tmp/fvs39-b/copies/positive-a-copy/tree",
+  "projectRoot": "/private/tmp/fvs39-b2/proj",
+  "tree": "/private/tmp/fvs39-b2/copies/positive-a-copy/tree",
   "mode": "translation-patches",
   "source": {
     "inputs": [

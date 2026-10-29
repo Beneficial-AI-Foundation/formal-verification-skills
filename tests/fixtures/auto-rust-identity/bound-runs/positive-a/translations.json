@@ -57,7 +57,7 @@
       "schema": "probe-lean/extract"
     }
   },
-  "timestamp": "2026-10-29T18:47:38Z",
+  "timestamp": "2026-10-29T22:03:09Z",
   "tool": {
     "command": "translate",
     "name": "probe-aeneas",

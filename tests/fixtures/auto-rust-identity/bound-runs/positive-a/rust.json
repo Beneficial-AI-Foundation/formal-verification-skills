@@ -13,7 +13,7 @@
     "package": "m1demo",
     "package-version": "0.1.0"
   },
-  "timestamp": "2026-10-29T18:47:34Z",
+  "timestamp": "2026-10-29T22:03:01Z",
   "data": {
     "probe:core/https://github.com/rust-lang/rust/library/core/cmp/impls/impl#[u32][`PartialOrd<Self>`]gt()": {
       "display-name": "gt",

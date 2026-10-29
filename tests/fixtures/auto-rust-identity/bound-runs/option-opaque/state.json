@@ -156,7 +156,7 @@
   },
   "extraction": {
     "status": "succeeded",
-    "recordedAt": "2026-10-29T18:52:36.720Z",
+    "recordedAt": "2026-10-29T22:03:39.063Z",
     "selected": {
       "revision": "8d4406a8be358e1e177a01a8759c9cf46d411618",
       "configuration": "recorded extraction attempt; Charon cargo --preset=aeneas (release nightly-2026.09.30-0855ce1, Charon 0.1.274); Aeneas -backend lean -emit-json; Lean v4.31.0"
@@ -170,7 +170,7 @@
       "status": {
         "ok": true,
         "code": "ok",
-        "message": "prepared copy at /private/tmp/fvs39-b/copies/option-opaque-copy/tree"
+        "message": "prepared copy at /private/tmp/fvs39-b2/copies/option-opaque-copy/tree"
       },
       "verify-tree": {
         "ok": true,
@@ -184,21 +184,21 @@
       }
     },
     "inputs": {
-      "out": "/tmp/fvs39-b/copies/option-opaque-copy",
-      "manifestSha256": "065250a257edf73dd2bf66f13fd6e81e4822bb63de9b0c81159b713e2f0bdede",
-      "crateRoot": "/private/tmp/fvs39-b/proj",
+      "out": "/tmp/fvs39-b2/copies/option-opaque-copy",
+      "manifestSha256": "072d52dd7ba7745818603f07e64a8cff6e23d3194b6f44121b7708c28fdff46b",
+      "crateRoot": "/private/tmp/fvs39-b2/proj",
       "mode": "translation-patches",
       "sourceCommit": "8d4406a8be358e1e177a01a8759c9cf46d411618",
       "patches": []
     },
     "run": {
-      "attemptSha256": "deed5135dd595838a51e7bbbe5702cf145c1544d183e9099df5f1375165bedbb",
+      "attemptSha256": "e09a10273552f2acccf987524a1aee39eb89bea3e440d844ee58fcda1b99bbb8",
       "stages": {
-        "charon": "b944b8ffe95b122bf7c310f8df18f52b8905d01d894d2da48d9dfcd5be91e14f",
-        "aeneas": "764af90065b73666353d22d751922f7339dfa754d4a3e85657bb4e1a71f29fd0",
-        "publish": "7e0dc66d3cf5046643a71289e08a4177079094471a6a2594980ab927c383e97e"
+        "charon": "eb5a3f79e8162eb5a95904b24acaef0d4f23cd00e065013813ae4375a9ff3d6c",
+        "aeneas": "8f53ac2991def954a46f03a6a7c6c8b6a267bf91d55670fb89d9efaa54d314f2",
+        "publish": "4f11ea268159a9b23ca4b71212bdd8ae46d98854ba166416c7c3c87bcea2c987"
       },
-      "manifestSha256": "065250a257edf73dd2bf66f13fd6e81e4822bb63de9b0c81159b713e2f0bdede",
+      "manifestSha256": "072d52dd7ba7745818603f07e64a8cff6e23d3194b6f44121b7708c28fdff46b",
       "supported": true,
       "residuals": [],
       "trust": "local-host-and-reviewed-scripts",
@@ -261,23 +261,23 @@
       },
       "configSha256": "c8b6a50d3c0987004d2c318d4d0a01ee91766784c81da5ff43271ec692e9baad",
       "llbc": {
-        "path": "/tmp/fvs39-b/copies/option-opaque-copy/m1demo.llbc",
-        "sha256": "45dbe10f27dc24988c444eea7f20898bd63cb85007f3cbc1b3f1e2932541b931"
+        "path": "/tmp/fvs39-b2/copies/option-opaque-copy/m1demo.llbc",
+        "sha256": "1eb22ed057c373f04df5343e83757ad773663efadafeee451ba0e9555a23fb78"
       },
       "translation": {
-        "attemptPath": "/tmp/fvs39-b/copies/option-opaque-copy/aeneas-dest/translation.json",
-        "projectPath": "/private/tmp/fvs39-b/proj/M1demo/translation.json",
+        "attemptPath": "/tmp/fvs39-b2/copies/option-opaque-copy/aeneas-dest/translation.json",
+        "projectPath": "/private/tmp/fvs39-b2/proj/M1demo/translation.json",
         "sha256": "5f8411a60ddfbf70a998044f3acc0df8538076a790b02b2b4e5c91b69aa7b0ec"
       },
       "publication": [
         {
-          "attemptPath": "/tmp/fvs39-b/copies/option-opaque-copy/aeneas-dest/M1demo.lean",
-          "projectPath": "/private/tmp/fvs39-b/proj/M1demo/M1demo.lean",
+          "attemptPath": "/tmp/fvs39-b2/copies/option-opaque-copy/aeneas-dest/M1demo.lean",
+          "projectPath": "/private/tmp/fvs39-b2/proj/M1demo/M1demo.lean",
           "sha256": "55fbc258ab8965ae7111ac77e100a68a648260afee93296386261e5fdcd68cae"
         },
         {
-          "attemptPath": "/tmp/fvs39-b/copies/option-opaque-copy/aeneas-dest/translation.json",
-          "projectPath": "/private/tmp/fvs39-b/proj/M1demo/translation.json",
+          "attemptPath": "/tmp/fvs39-b2/copies/option-opaque-copy/aeneas-dest/translation.json",
+          "projectPath": "/private/tmp/fvs39-b2/proj/M1demo/translation.json",
           "sha256": "5f8411a60ddfbf70a998044f3acc0df8538076a790b02b2b4e5c91b69aa7b0ec"
         }
       ]

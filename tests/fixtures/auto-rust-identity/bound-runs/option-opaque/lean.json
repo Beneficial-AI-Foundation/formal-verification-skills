@@ -1,5 +1,5 @@
 {"tool": {"version": "0.14.0", "name": "probe-lean", "command": "extract"},
- "timestamp": "2026-10-29T18:52:42Z",
+ "timestamp": "2026-10-29T22:03:45Z",
  "source":
  {"repo": "",
   "package-version": "8d4406a",

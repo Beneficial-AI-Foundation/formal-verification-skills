@@ -2,8 +2,9 @@
 
 Recorded outputs, copied byte for byte (LLBC files gzipped with `gzip -9 -n`), of five offline runs on one
 fixture crate (`lib.rs.txt`, commit `8d4406a8`): a trait impl, two `From` impls, two `helper` functions, a
-`while` loop and `mode()`, whose body alone depends on the `alt` feature. Each run went through the patch
-engine's recorded attempt (prepare, attempt, charon, aeneas, publish) under the deny-network sandbox with
+`while` loop and `mode()`, whose body alone depends on the `alt` feature. The runs were made with the patch
+engine, auto state operations and parser of commit `815d5879` (each run's script hashes are kept with its
+receipts). Each run went through the patch engine's recorded attempt (prepare, attempt, charon, aeneas, publish) under the deny-network sandbox with
 only `HOME`, `RUSTUP_HOME`, `CARGO_HOME` and `PATH` set, then `lake build`, `record-extraction` (whose state
 is `state.json`) and the pinned probes. `npm test` reads these files; it does not run any tool.
 
