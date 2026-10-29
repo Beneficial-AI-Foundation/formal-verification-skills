@@ -143,6 +143,7 @@ describe('published FVS plugin package', () => {
         'fvs-probe-inventory.mjs',
         'fvs-probe-linux.mjs',
         'fvs-review-grounding.mjs',
+        'fvs-rust-identity.mjs',
         'fvs-spec-review.mjs',
       ].sort(),
     );

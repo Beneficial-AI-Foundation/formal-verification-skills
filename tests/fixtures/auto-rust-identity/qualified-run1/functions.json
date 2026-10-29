@@ -1,0 +1,100 @@
+{
+  "functions": [
+    {
+      "lean_name": "m1demo.Meter.Insts.CoreConvertFromU8",
+      "rust_name": "m1demo::{impl core::convert::From<u8> for m1demo::Meter}",
+      "source": "src/lib.rs",
+      "lines": "L15-L19",
+      "is_hidden": false,
+      "is_extraction_artifact": false
+    },
+    {
+      "lean_name": "m1demo.Meter.Insts.CoreConvertFromU8.from",
+      "rust_name": "m1demo::{impl core::convert::From<u8> for m1demo::Meter}::from",
+      "source": "src/lib.rs",
+      "lines": "L16-L18",
+      "is_hidden": false,
+      "is_extraction_artifact": false
+    },
+    {
+      "lean_name": "m1demo.Meter.Insts.M1demoScore",
+      "rust_name": "m1demo::{impl m1demo::Score for m1demo::Meter}",
+      "source": "src/lib.rs",
+      "lines": "L9-L13",
+      "is_hidden": false,
+      "is_extraction_artifact": false
+    },
+    {
+      "lean_name": "m1demo.Meter.Insts.M1demoScore.score",
+      "rust_name": "m1demo::{impl m1demo::Score for m1demo::Meter}::score",
+      "source": "src/lib.rs",
+      "lines": "L10-L12",
+      "is_hidden": false,
+      "is_extraction_artifact": false
+    },
+    {
+      "lean_name": "m1demo.U8.Insts.CoreConvertFromMeter",
+      "rust_name": "m1demo::{impl core::convert::From<m1demo::Meter> for u8}",
+      "source": "src/lib.rs",
+      "lines": "L21-L25",
+      "is_hidden": false,
+      "is_extraction_artifact": false
+    },
+    {
+      "lean_name": "m1demo.U8.Insts.CoreConvertFromMeter.from",
+      "rust_name": "m1demo::{impl core::convert::From<m1demo::Meter> for u8}::from",
+      "source": "src/lib.rs",
+      "lines": "L22-L24",
+      "is_hidden": false,
+      "is_extraction_artifact": false
+    },
+    {
+      "lean_name": "m1demo.count_down",
+      "rust_name": "m1demo::count_down",
+      "source": "src/lib.rs",
+      "lines": "L49-L51",
+      "is_hidden": false,
+      "is_extraction_artifact": false
+    },
+    {
+      "lean_name": "m1demo.left.helper",
+      "rust_name": "m1demo::left::helper",
+      "source": "src/lib.rs",
+      "lines": "L28-L30",
+      "is_hidden": false,
+      "is_extraction_artifact": false
+    },
+    {
+      "lean_name": "m1demo.right.helper",
+      "rust_name": "m1demo::right::helper",
+      "source": "src/lib.rs",
+      "lines": "L34-L36",
+      "is_hidden": false,
+      "is_extraction_artifact": false
+    },
+    {
+      "lean_name": "m1demo.sum_to",
+      "rust_name": "m1demo::sum_to",
+      "source": "src/lib.rs",
+      "lines": "L39-L47",
+      "is_hidden": false,
+      "is_extraction_artifact": false
+    },
+    {
+      "lean_name": "m1demo.sum_to_loop",
+      "rust_name": "m1demo::sum_to",
+      "source": "src/lib.rs",
+      "lines": "L42-L45",
+      "is_hidden": false,
+      "is_extraction_artifact": true
+    },
+    {
+      "lean_name": "m1demo.sum_to_loop.body",
+      "rust_name": "m1demo::sum_to",
+      "source": "src/lib.rs",
+      "lines": "L42-L45",
+      "is_hidden": false,
+      "is_extraction_artifact": true
+    }
+  ]
+}
