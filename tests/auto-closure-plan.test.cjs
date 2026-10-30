@@ -139,8 +139,31 @@ describe('closure plan: recursion stays unqualified', () => {
     assert.equal(status, 6);
     assert.equal(result.record.nodes[19].eligibility, 'joint-plan-blocker');
     assert.equal(result.record.nodes[21].eligibility, 'joint-plan-blocker');
-    assert.deepEqual(result.record.nodes[19].cycle, [19, 21]);
+    assert.deepEqual(result.record.nodes[19].observedCycle, [19, 21]);
     assert.equal(root(result, 22).status, 'blocked', 'a consumer of the cycle is blocked');
+    assert.equal(root(result, 23).status, 'ready');
+  });
+});
+
+describe('closure plan: cycles are found before eligibility filtering', () => {
+  it('marks an eligible node in a cycle with a blocked node as a joint-plan blocker (labelled)', () => {
+    const cycle = (graph) => {
+      graph.edges.push({ from: 'probe:m1demo.helper', to: 'probe:m1demo.root_b', kind: 'term', resolution: 'local' });
+      return graph;
+    };
+    const blockedRootB = (identity) => {
+      const item = identity.items.find((entry) => entry.defId === 22);
+      item.correspondence = 'fallback-only';
+      item.reasons = ['mapping-method-not-def-id'];
+      identity.status = 'partial';
+      return identity;
+    };
+    const { status, result } = plan('positive', { graph: cycle, identity: blockedRootB });
+    assert.equal(status, 6);
+    assert.equal(result.record.nodes[22].eligibility, 'blocked-upstream', 'the blocked placeholder keeps its upstream eligibility');
+    assert.equal(result.record.nodes[19].eligibility, 'joint-plan-blocker', 'an exact-only subgraph would hide this cycle');
+    assert.deepEqual(result.record.nodes[19].observedCycle, [19, 22]);
+    assert.equal(root(result, 21).status, 'blocked');
     assert.equal(root(result, 23).status, 'ready');
   });
 });

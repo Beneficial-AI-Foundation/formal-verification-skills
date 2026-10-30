@@ -194,7 +194,9 @@ export function buildPlan({ identity, graph, roots, failed = [], llbc = null }) 
       node.reasons.push(...node.unmappedDependencies.map((id) => `depends on ${id}, which no ticket 10 item owns`));
     }
   }
-  // Cycles between nodes (strongly connected components of size > 1) are joint-plan blockers.
+  // Cycles between nodes (strongly connected components of size > 1) are joint-plan blockers. They are
+  // found over every node, blocked ones included, before any eligibility filtering, so a cycle through a
+  // blocked node is not hidden. observedCycle is observed graph topology, not a recursion classification.
   const order = [];
   const index = new Map();
   const low = new Map();
@@ -225,7 +227,7 @@ export function buildPlan({ identity, graph, roots, failed = [], llbc = null }) 
       if (component.length > 1) {
         for (const memberId of component) {
           const node = nodes.get(memberId);
-          node.cycle = sortedNumbers(component);
+          node.observedCycle = sortedNumbers(component);
           if (node.eligibility === 'eligible') node.eligibility = 'joint-plan-blocker';
           node.reasons.push(`in a dependency cycle with ${sortedNumbers(component).filter((other) => other !== memberId).join(', ')}`);
         }
