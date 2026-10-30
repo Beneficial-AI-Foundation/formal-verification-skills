@@ -1,0 +1,2292 @@
+{
+ "schema": "fvs/lean-constants",
+ "version": 1,
+ "inputs": {
+  "files": {
+   ".formalising/auto-fv/state.json": "8e09803cfaaed9b49d824d33664969dc5e7dd9f503187bae335883986c06cf1f",
+   ".lake/build/lib/lean/M1demo.ilean": "dc2af0b3f028b6ae072bffec1128b18e6529a5512d13dfe42527930a243dbb0d",
+   ".lake/build/lib/lean/M1demo/M1demo.ilean": "cfa971f5b469697bc18eb2d29b3c66f3d02aa518fc98ebc89c401055e4ba5e21",
+   ".lake/build/lib/lean/Specs.ilean": "547136db6839ba2b84bb121274cd08e78a01d83d00b973dd55fa6a1cd59125d4",
+   ".lake/build/lib/lean/Specs/Double.ilean": "251e4cb94bf2718d6bce366e163aebf34bce5804b3ca2a9387ae44b92776710d",
+   ".lake/build/lib/lean/Specs/Kinds.ilean": "e0d0babc2c0d627d34dffae134a56a1a09b2a22457753ffd531fbb984cbc24ae",
+   "M1demo.lean": "998cff4e0c58a30f8c5a5e42eaff4d401ca9d7b2d0290738e0f3cd91b9e4aae8",
+   "M1demo/M1demo.lean": "f48d08c313569c0993edeeb9524a9ee008e9253b4e8ceed95d890f98c97300a9",
+   "M1demo/translation.json": "bb20ee964531c310e47f3bc466e5e1ac5aefe25cfa0f2df04cd4bd5644265093",
+   "Specs.lean": "c59abfc507854355e6aa24b6747371f25dab0e75036155340df8f86be6a80ed5",
+   "Specs/Double.lean": "4935ea0b71757a2f0ed632a3705dac7bbc566ddc432b81a3c0c311df8676b8b1",
+   "Specs/Kinds.lean": "a9c6728938ccfea100d3294ee6d40b62a09bbc37d43a6cb960570f0a3aae891b",
+   "lake-manifest.json": "52e67b1cb09003b8831ffc387dc362eba1c00de85a4dfd3f9e52e95378c63d72",
+   "lakefile.toml": "906e1ae68b5b77124c81c01b063b4ab2757e97f762ac11add2d4da9d2e1cca56",
+   "lean-toolchain": "efac0b94923b2d8b6840cd35be9177ad0fc5ab2332f4f4311c98712cee92fdee"
+  }
+ },
+ "project": [
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Shift.mk._flat_ctor",
+   "owners": [],
+   "type": [
+    "m1demo.kinds.Shift"
+   ],
+   "value": [
+    "m1demo.kinds.Shift.mk"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.shiftPt",
+   "owners": [],
+   "type": [
+    "m1demo.kinds.Shift",
+    "m1demo.kinds.Pt"
+   ],
+   "value": [
+    "m1demo.kinds.Shift.mk",
+    "m1demo.kinds.Pt"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Shift.mk.noConfusion",
+   "owners": [],
+   "type": [
+    "Eq",
+    "m1demo.kinds.Shift",
+    "m1demo.kinds.Shift.mk",
+    "HEq"
+   ],
+   "value": [
+    "Eq",
+    "m1demo.kinds.Shift",
+    "m1demo.kinds.Shift.mk",
+    "HEq",
+    "id",
+    "m1demo.kinds.Shift.noConfusion",
+    "Eq.refl",
+    "heq_of_eq"
+   ]
+  },
+  {
+   "kind": "inductive",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Pt",
+   "owners": [],
+   "type": [],
+   "value": []
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Wrap.pt",
+   "owners": [],
+   "type": [
+    "m1demo.kinds.Wrap",
+    "m1demo.kinds.Pt"
+   ],
+   "value": [
+    "m1demo.kinds.Wrap"
+   ]
+  },
+  {
+   "kind": "ctor",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Wrap.mk",
+   "owners": [
+    "m1demo.kinds.Wrap"
+   ],
+   "type": [
+    "m1demo.kinds.Pt",
+    "m1demo.kinds.Wrap"
+   ],
+   "value": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.meter_v",
+   "owners": [],
+   "type": [
+    "m1demo.kinds.Meter",
+    "Eq",
+    "Aeneas.Std.U32",
+    "m1demo.kinds.Meter.v"
+   ],
+   "value": [
+    "m1demo.kinds.Meter",
+    "rfl",
+    "Aeneas.Std.U32",
+    "m1demo.kinds.Meter.v"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Pt.casesOn",
+   "owners": [
+    "m1demo.kinds.Pt"
+   ],
+   "type": [
+    "m1demo.kinds.Pt",
+    "Nat",
+    "m1demo.kinds.Pt.mk"
+   ],
+   "value": [
+    "m1demo.kinds.Pt",
+    "Nat",
+    "m1demo.kinds.Pt.mk",
+    "m1demo.kinds.Pt.rec"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Pt.mk.sizeOf_spec",
+   "owners": [],
+   "type": [
+    "Nat",
+    "Eq",
+    "SizeOf.sizeOf",
+    "m1demo.kinds.Pt",
+    "m1demo.kinds.Pt._sizeOf_inst",
+    "m1demo.kinds.Pt.mk",
+    "HAdd.hAdd",
+    "instHAdd",
+    "instAddNat",
+    "OfNat.ofNat",
+    "instOfNatNat",
+    "instSizeOfNat"
+   ],
+   "value": [
+    "Nat",
+    "Eq.refl",
+    "HAdd.hAdd",
+    "instHAdd",
+    "instAddNat",
+    "OfNat.ofNat",
+    "instOfNatNat",
+    "SizeOf.sizeOf",
+    "instSizeOfNat"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.idT",
+   "owners": [],
+   "type": [],
+   "value": []
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Meter.recOn",
+   "owners": [
+    "m1demo.kinds.Meter"
+   ],
+   "type": [
+    "m1demo.kinds.Meter",
+    "Aeneas.Std.U32",
+    "m1demo.kinds.Meter.mk"
+   ],
+   "value": [
+    "m1demo.kinds.Meter",
+    "Aeneas.Std.U32",
+    "m1demo.kinds.Meter.mk",
+    "m1demo.kinds.Meter.rec"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.double_spec._simp_1_11",
+   "owners": [],
+   "type": [
+    "Eq",
+    "Aeneas.Std.WP.imp",
+    "Exists"
+   ],
+   "value": [
+    "propext",
+    "Aeneas.Std.WP.imp",
+    "Exists",
+    "Aeneas.Std.WP.imp_exists_iff"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Wrap.mk._flat_ctor",
+   "owners": [],
+   "type": [
+    "m1demo.kinds.Pt",
+    "m1demo.kinds.Wrap"
+   ],
+   "value": [
+    "m1demo.kinds.Pt",
+    "m1demo.kinds.Wrap.mk"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Shift.recOn",
+   "owners": [
+    "m1demo.kinds.Shift"
+   ],
+   "type": [
+    "m1demo.kinds.Shift",
+    "m1demo.kinds.Shift.mk"
+   ],
+   "value": [
+    "m1demo.kinds.Shift",
+    "m1demo.kinds.Shift.mk",
+    "m1demo.kinds.Shift.rec"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Meter.casesOn",
+   "owners": [
+    "m1demo.kinds.Meter"
+   ],
+   "type": [
+    "m1demo.kinds.Meter",
+    "Aeneas.Std.U32",
+    "m1demo.kinds.Meter.mk"
+   ],
+   "value": [
+    "m1demo.kinds.Meter",
+    "Aeneas.Std.U32",
+    "m1demo.kinds.Meter.mk",
+    "m1demo.kinds.Meter.rec"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Pt.mk.noConfusion",
+   "owners": [],
+   "type": [
+    "Nat",
+    "Eq",
+    "m1demo.kinds.Pt",
+    "m1demo.kinds.Pt.mk"
+   ],
+   "value": [
+    "Nat",
+    "Eq",
+    "m1demo.kinds.Pt",
+    "m1demo.kinds.Pt.mk",
+    "id",
+    "m1demo.kinds.Pt.noConfusion"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Wrap.casesOn",
+   "owners": [
+    "m1demo.kinds.Wrap"
+   ],
+   "type": [
+    "m1demo.kinds.Wrap",
+    "m1demo.kinds.Pt",
+    "m1demo.kinds.Wrap.mk"
+   ],
+   "value": [
+    "m1demo.kinds.Wrap",
+    "m1demo.kinds.Pt",
+    "m1demo.kinds.Wrap.mk",
+    "m1demo.kinds.Wrap.rec"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Wrap.ctorIdx",
+   "owners": [],
+   "type": [
+    "m1demo.kinds.Wrap",
+    "Nat"
+   ],
+   "value": [
+    "m1demo.kinds.Wrap"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Pt.noConfusion",
+   "owners": [
+    "m1demo.kinds.Pt"
+   ],
+   "type": [
+    "m1demo.kinds.Pt",
+    "Eq",
+    "m1demo.kinds.Pt.noConfusionType"
+   ],
+   "value": [
+    "m1demo.kinds.Pt",
+    "Eq",
+    "Eq.ndrec",
+    "m1demo.kinds.Pt.noConfusionType",
+    "m1demo.kinds.Pt.casesOn",
+    "Nat",
+    "Eq.refl"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.clamp",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.U32",
+    "Aeneas.Std.Result"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "ite",
+    "Aeneas.Std.Result",
+    "GT.gt",
+    "Aeneas.Std.instLTUScalar",
+    "Aeneas.Std.UScalarTy.U32",
+    "Aeneas.Std.UScalar.decLt",
+    "Aeneas.Std.Result.ok"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Pt.mk.inj",
+   "owners": [],
+   "type": [
+    "Nat",
+    "Eq",
+    "m1demo.kinds.Pt",
+    "m1demo.kinds.Pt.mk",
+    "And"
+   ],
+   "value": [
+    "Nat",
+    "Eq",
+    "m1demo.kinds.Pt",
+    "m1demo.kinds.Pt.mk",
+    "m1demo.kinds.Pt.mk.noConfusion",
+    "And",
+    "And.intro"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.shiftNat",
+   "owners": [],
+   "type": [
+    "m1demo.kinds.Shift",
+    "Nat"
+   ],
+   "value": [
+    "m1demo.kinds.Shift.mk",
+    "Nat",
+    "HAdd.hAdd",
+    "instHAdd",
+    "instAddNat",
+    "OfNat.ofNat",
+    "instOfNatNat"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.wrap_x",
+   "owners": [],
+   "type": [
+    "m1demo.kinds.Wrap",
+    "Eq",
+    "Nat",
+    "m1demo.kinds.Pt.x",
+    "m1demo.kinds.Wrap.pt"
+   ],
+   "value": [
+    "m1demo.kinds.Wrap",
+    "rfl",
+    "Nat",
+    "m1demo.kinds.Pt.x",
+    "m1demo.kinds.Wrap.pt"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.sum_to._proof_1",
+   "owners": [],
+   "type": [
+    "LE.le",
+    "Nat",
+    "instLENat",
+    "OfNat.ofNat",
+    "instOfNatNat",
+    "Aeneas.Std.UScalar.cMax",
+    "Aeneas.Std.UScalarTy.U32"
+   ],
+   "value": [
+    "of_decide_eq_true",
+    "LE.le",
+    "Nat",
+    "instLENat",
+    "OfNat.ofNat",
+    "instOfNatNat",
+    "Aeneas.Std.UScalar.cMax",
+    "Aeneas.Std.UScalarTy.U32",
+    "Nat.decLe",
+    "id",
+    "Eq",
+    "Bool",
+    "Decidable.decide",
+    "Bool.true",
+    "Eq.refl"
+   ]
+  },
+  {
+   "kind": "ctor",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Shift.mk",
+   "owners": [
+    "m1demo.kinds.Shift"
+   ],
+   "type": [
+    "m1demo.kinds.Shift"
+   ],
+   "value": []
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Meter.mk.noConfusion",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.U32",
+    "Eq",
+    "m1demo.kinds.Meter",
+    "m1demo.kinds.Meter.mk"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "Eq",
+    "m1demo.kinds.Meter",
+    "m1demo.kinds.Meter.mk",
+    "id",
+    "m1demo.kinds.Meter.noConfusion"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.doubleNat",
+   "owners": [],
+   "type": [
+    "Nat"
+   ],
+   "value": [
+    "Nat",
+    "HAdd.hAdd",
+    "instHAdd",
+    "instAddNat"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Wrap.mk.injEq",
+   "owners": [],
+   "type": [
+    "m1demo.kinds.Pt",
+    "Eq",
+    "m1demo.kinds.Wrap",
+    "m1demo.kinds.Wrap.mk"
+   ],
+   "value": [
+    "m1demo.kinds.Pt",
+    "Eq.propIntro",
+    "Eq",
+    "m1demo.kinds.Wrap",
+    "m1demo.kinds.Wrap.mk",
+    "m1demo.kinds.Wrap.mk.inj",
+    "Eq.ndrec",
+    "Eq.refl"
+   ]
+  },
+  {
+   "kind": "ctor",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Pt.mk",
+   "owners": [
+    "m1demo.kinds.Pt"
+   ],
+   "type": [
+    "Nat",
+    "m1demo.kinds.Pt"
+   ],
+   "value": []
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.DoubleFits",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.U32"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "LE.le",
+    "Nat",
+    "instLENat",
+    "m1demo.spec.doubleNat",
+    "Aeneas.Std.UScalar.val",
+    "Aeneas.Std.UScalarTy.U32",
+    "Aeneas.Std.U32.max"
+   ]
+  },
+  {
+   "kind": "ctor",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Meter.mk",
+   "owners": [
+    "m1demo.kinds.Meter"
+   ],
+   "type": [
+    "Aeneas.Std.U32",
+    "m1demo.kinds.Meter"
+   ],
+   "value": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.double_spec._simp_1_12",
+   "owners": [],
+   "type": [
+    "Eq",
+    "And"
+   ],
+   "value": [
+    "propext",
+    "And",
+    "and_imp"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.double_spec._simp_1_6",
+   "owners": [],
+   "type": [
+    "Eq",
+    "Unit"
+   ],
+   "value": [
+    "propext",
+    "Unit",
+    "Aeneas.Std.WP.forall_unit"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Shift.casesOn",
+   "owners": [
+    "m1demo.kinds.Shift"
+   ],
+   "type": [
+    "m1demo.kinds.Shift",
+    "m1demo.kinds.Shift.mk"
+   ],
+   "value": [
+    "m1demo.kinds.Shift",
+    "m1demo.kinds.Shift.mk",
+    "m1demo.kinds.Shift.rec"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.double_spec",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.U32",
+    "m1demo.spec.DoubleFits",
+    "Aeneas.Std.WP.spec",
+    "m1demo.double",
+    "Eq",
+    "Nat",
+    "Aeneas.Std.UScalar.val",
+    "Aeneas.Std.UScalarTy.U32",
+    "m1demo.spec.doubleNat"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "m1demo.spec.DoubleFits",
+    "id",
+    "Aeneas.Std.WP.spec",
+    "m1demo.double",
+    "Eq",
+    "Nat",
+    "Aeneas.Std.UScalar.val",
+    "Aeneas.Std.UScalarTy.U32",
+    "m1demo.spec.doubleNat",
+    "Aeneas.Std.WP.spec_mono",
+    "Aeneas.Std.UScalar",
+    "HAdd.hAdd",
+    "Aeneas.Std.Result",
+    "Aeneas.Std.instHAddUScalarResult",
+    "instHAdd",
+    "instAddNat",
+    "Aeneas.Std.U32.add_spec",
+    "Eq.mp",
+    "LE.le",
+    "instLENat",
+    "Aeneas.Std.U32.max",
+    "congrArg",
+    "m1demo.spec.doubleNat_eq",
+    "m1demo.spec.DoubleFits.eq_1",
+    "Eq.mpr",
+    "Aeneas.Std.WP.qimp",
+    "Aeneas.Std.WP.imp",
+    "m1demo.spec.double_spec._simp_1_9"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.twice",
+   "owners": [],
+   "type": [
+    "Nat"
+   ],
+   "value": [
+    "Nat",
+    "HAdd.hAdd",
+    "instHAdd",
+    "instAddNat"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Meter.v",
+   "owners": [],
+   "type": [
+    "m1demo.kinds.Meter",
+    "Aeneas.Std.U32"
+   ],
+   "value": [
+    "m1demo.kinds.Meter"
+   ]
+  },
+  {
+   "kind": "inductive",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Shift",
+   "owners": [],
+   "type": [],
+   "value": []
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Pt.noConfusionType",
+   "owners": [],
+   "type": [
+    "m1demo.kinds.Pt"
+   ],
+   "value": [
+    "m1demo.kinds.Pt",
+    "m1demo.kinds.Pt.casesOn",
+    "Nat",
+    "Eq"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Meter._sizeOf_inst",
+   "owners": [],
+   "type": [
+    "SizeOf",
+    "m1demo.kinds.Meter"
+   ],
+   "value": [
+    "SizeOf.mk",
+    "m1demo.kinds.Meter",
+    "m1demo.kinds.Meter._sizeOf_1"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.sum_to_loop.body._proof_1",
+   "owners": [],
+   "type": [
+    "LE.le",
+    "Nat",
+    "instLENat",
+    "OfNat.ofNat",
+    "instOfNatNat",
+    "Aeneas.Std.UScalar.cMax",
+    "Aeneas.Std.UScalarTy.U32"
+   ],
+   "value": [
+    "of_decide_eq_true",
+    "LE.le",
+    "Nat",
+    "instLENat",
+    "OfNat.ofNat",
+    "instOfNatNat",
+    "Aeneas.Std.UScalar.cMax",
+    "Aeneas.Std.UScalarTy.U32",
+    "Nat.decLe",
+    "id",
+    "Eq",
+    "Bool",
+    "Decidable.decide",
+    "Bool.true",
+    "Eq.refl"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Pt._sizeOf_inst",
+   "owners": [],
+   "type": [
+    "SizeOf",
+    "m1demo.kinds.Pt"
+   ],
+   "value": [
+    "SizeOf.mk",
+    "m1demo.kinds.Pt",
+    "m1demo.kinds.Pt._sizeOf_1"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.double_spec._simp_1_8",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.Result",
+    "Eq",
+    "Aeneas.Std.WP.qimp_spec",
+    "Aeneas.Std.WP.imp",
+    "Aeneas.Std.WP.spec"
+   ],
+   "value": [
+    "Aeneas.Std.Result",
+    "propext",
+    "Aeneas.Std.WP.qimp_spec",
+    "Aeneas.Std.WP.imp",
+    "Aeneas.Std.WP.spec",
+    "Aeneas.Std.WP.qimp_spec_iff"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.sum_to",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.U32",
+    "Aeneas.Std.Result"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "m1demo.sum_to_loop",
+    "Aeneas.Std.U32.ofNat",
+    "OfNat.ofNat",
+    "Nat",
+    "instOfNatNat",
+    "m1demo.sum_to._proof_1"
+   ]
+  },
+  {
+   "kind": "inductive",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Wrap",
+   "owners": [],
+   "type": [],
+   "value": []
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Pt.mk._flat_ctor",
+   "owners": [],
+   "type": [
+    "Nat",
+    "m1demo.kinds.Pt"
+   ],
+   "value": [
+    "Nat",
+    "m1demo.kinds.Pt.mk"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.double_spec._simp_1_10",
+   "owners": [],
+   "type": [
+    "Eq",
+    "Aeneas.Std.WP.imp",
+    "And"
+   ],
+   "value": [
+    "propext",
+    "Aeneas.Std.WP.imp",
+    "And",
+    "Aeneas.Std.WP.imp_and_iff"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Meter.noConfusion",
+   "owners": [
+    "m1demo.kinds.Meter"
+   ],
+   "type": [
+    "m1demo.kinds.Meter",
+    "Eq",
+    "m1demo.kinds.Meter.noConfusionType"
+   ],
+   "value": [
+    "m1demo.kinds.Meter",
+    "Eq",
+    "Eq.ndrec",
+    "m1demo.kinds.Meter.noConfusionType",
+    "m1demo.kinds.Meter.casesOn",
+    "Aeneas.Std.U32",
+    "Eq.refl"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.sum_to_loop.eq_1",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.U32",
+    "Eq",
+    "Aeneas.Std.Result",
+    "m1demo.sum_to_loop",
+    "Aeneas.Std.loop",
+    "Prod",
+    "m1demo.sum_to_loop.match_1",
+    "Aeneas.Std.ControlFlow",
+    "m1demo.sum_to_loop.body",
+    "Prod.mk"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "Eq.refl",
+    "Aeneas.Std.Result",
+    "m1demo.sum_to_loop"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Wrap._sizeOf_inst",
+   "owners": [],
+   "type": [
+    "SizeOf",
+    "m1demo.kinds.Wrap"
+   ],
+   "value": [
+    "SizeOf.mk",
+    "m1demo.kinds.Wrap",
+    "m1demo.kinds.Wrap._sizeOf_1"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Meter.ctorIdx",
+   "owners": [],
+   "type": [
+    "m1demo.kinds.Meter",
+    "Nat"
+   ],
+   "value": [
+    "m1demo.kinds.Meter"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.sum_to_loop.body",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.U32",
+    "Aeneas.Std.Result",
+    "Aeneas.Std.ControlFlow",
+    "Prod"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "ite",
+    "Aeneas.Std.Result",
+    "Aeneas.Std.ControlFlow",
+    "Prod",
+    "LT.lt",
+    "Aeneas.Std.instLTUScalar",
+    "Aeneas.Std.UScalarTy.U32",
+    "Aeneas.Std.UScalar.decLt",
+    "Aeneas.Std.bind",
+    "Aeneas.Std.UScalar",
+    "HAdd.hAdd",
+    "Aeneas.Std.instHAddUScalarResult",
+    "Aeneas.Std.U32.ofNat",
+    "OfNat.ofNat",
+    "Nat",
+    "instOfNatNat",
+    "m1demo.sum_to_loop.body._proof_1",
+    "Aeneas.Std.Result.ok",
+    "Aeneas.Std.ControlFlow.cont",
+    "Prod.mk",
+    "Aeneas.Std.ControlFlow.done"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.twice_eq",
+   "owners": [],
+   "type": [
+    "Nat",
+    "Eq",
+    "m1demo.kinds.twice",
+    "HAdd.hAdd",
+    "instHAdd",
+    "instAddNat"
+   ],
+   "value": [
+    "Nat",
+    "rfl",
+    "m1demo.kinds.twice"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Pt._sizeOf_1",
+   "owners": [],
+   "type": [
+    "m1demo.kinds.Pt",
+    "Nat"
+   ],
+   "value": [
+    "m1demo.kinds.Pt",
+    "m1demo.kinds.Pt.rec",
+    "Nat",
+    "HAdd.hAdd",
+    "instHAdd",
+    "instAddNat",
+    "OfNat.ofNat",
+    "instOfNatNat",
+    "SizeOf.sizeOf",
+    "instSizeOfNat"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.double_spec._simp_1_7",
+   "owners": [],
+   "type": [
+    "Eq",
+    "True"
+   ],
+   "value": [
+    "propext",
+    "True",
+    "true_imp_iff"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.double_spec._simp_1_13",
+   "owners": [],
+   "type": [
+    "Eq",
+    "Exists"
+   ],
+   "value": [
+    "propext",
+    "Exists",
+    "exists_imp"
+   ]
+  },
+  {
+   "kind": "inductive",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Meter",
+   "owners": [],
+   "type": [],
+   "value": []
+  },
+  {
+   "kind": "def",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.sum_to_loop",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.U32",
+    "Aeneas.Std.Result"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "Aeneas.Std.loop",
+    "Prod",
+    "m1demo.sum_to_loop.match_1",
+    "Aeneas.Std.Result",
+    "Aeneas.Std.ControlFlow",
+    "m1demo.sum_to_loop.body",
+    "Prod.mk"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.double_spec._simp_1_4",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.Result",
+    "Eq",
+    "Aeneas.Std.WP.qimp_spec",
+    "Exists"
+   ],
+   "value": [
+    "Aeneas.Std.Result",
+    "propext",
+    "Aeneas.Std.WP.qimp_spec",
+    "Exists",
+    "Aeneas.Std.WP.qimp_spec_exists"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Wrap.noConfusion",
+   "owners": [
+    "m1demo.kinds.Wrap"
+   ],
+   "type": [
+    "m1demo.kinds.Wrap",
+    "Eq",
+    "m1demo.kinds.Wrap.noConfusionType"
+   ],
+   "value": [
+    "m1demo.kinds.Wrap",
+    "Eq",
+    "Eq.ndrec",
+    "m1demo.kinds.Wrap.noConfusionType",
+    "m1demo.kinds.Wrap.casesOn",
+    "m1demo.kinds.Pt",
+    "Eq.refl"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Wrap.mk.noConfusion",
+   "owners": [],
+   "type": [
+    "m1demo.kinds.Pt",
+    "Eq",
+    "m1demo.kinds.Wrap",
+    "m1demo.kinds.Wrap.mk"
+   ],
+   "value": [
+    "m1demo.kinds.Pt",
+    "Eq",
+    "m1demo.kinds.Wrap",
+    "m1demo.kinds.Wrap.mk",
+    "id",
+    "m1demo.kinds.Wrap.noConfusion"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Pt.recOn",
+   "owners": [
+    "m1demo.kinds.Pt"
+   ],
+   "type": [
+    "m1demo.kinds.Pt",
+    "Nat",
+    "m1demo.kinds.Pt.mk"
+   ],
+   "value": [
+    "m1demo.kinds.Pt",
+    "Nat",
+    "m1demo.kinds.Pt.mk",
+    "m1demo.kinds.Pt.rec"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Meter.mk.injEq",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.U32",
+    "Eq",
+    "m1demo.kinds.Meter",
+    "m1demo.kinds.Meter.mk"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "Eq.propIntro",
+    "Eq",
+    "m1demo.kinds.Meter",
+    "m1demo.kinds.Meter.mk",
+    "m1demo.kinds.Meter.mk.inj",
+    "Eq.ndrec",
+    "Eq.refl"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Wrap.mk.sizeOf_spec",
+   "owners": [],
+   "type": [
+    "m1demo.kinds.Pt",
+    "Eq",
+    "Nat",
+    "SizeOf.sizeOf",
+    "m1demo.kinds.Wrap",
+    "m1demo.kinds.Wrap._sizeOf_inst",
+    "m1demo.kinds.Wrap.mk",
+    "HAdd.hAdd",
+    "instHAdd",
+    "instAddNat",
+    "OfNat.ofNat",
+    "instOfNatNat",
+    "m1demo.kinds.Pt._sizeOf_inst"
+   ],
+   "value": [
+    "m1demo.kinds.Pt",
+    "Eq.refl",
+    "Nat",
+    "HAdd.hAdd",
+    "instHAdd",
+    "instAddNat",
+    "OfNat.ofNat",
+    "instOfNatNat",
+    "SizeOf.sizeOf",
+    "m1demo.kinds.Pt._sizeOf_inst"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.sum_to_loop.body.eq_1",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.U32",
+    "Eq",
+    "Aeneas.Std.Result",
+    "Aeneas.Std.ControlFlow",
+    "Prod",
+    "m1demo.sum_to_loop.body",
+    "ite",
+    "LT.lt",
+    "Aeneas.Std.instLTUScalar",
+    "Aeneas.Std.UScalarTy.U32",
+    "Aeneas.Std.UScalar.decLt",
+    "Aeneas.Std.bind",
+    "Aeneas.Std.UScalar",
+    "HAdd.hAdd",
+    "Aeneas.Std.instHAddUScalarResult",
+    "Aeneas.Std.U32.ofNat",
+    "OfNat.ofNat",
+    "Nat",
+    "instOfNatNat",
+    "m1demo.sum_to_loop.body._proof_1",
+    "Aeneas.Std.Result.ok",
+    "Aeneas.Std.ControlFlow.cont",
+    "Prod.mk",
+    "Aeneas.Std.ControlFlow.done"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "Eq.refl",
+    "Aeneas.Std.Result",
+    "Aeneas.Std.ControlFlow",
+    "Prod",
+    "m1demo.sum_to_loop.body"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Shift.ctorIdx",
+   "owners": [],
+   "type": [
+    "m1demo.kinds.Shift",
+    "Nat"
+   ],
+   "value": [
+    "m1demo.kinds.Shift"
+   ]
+  },
+  {
+   "kind": "recursor",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Pt.rec",
+   "owners": [
+    "m1demo.kinds.Pt"
+   ],
+   "type": [
+    "m1demo.kinds.Pt",
+    "Nat",
+    "m1demo.kinds.Pt.mk"
+   ],
+   "value": []
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Wrap._sizeOf_1",
+   "owners": [],
+   "type": [
+    "m1demo.kinds.Wrap",
+    "Nat"
+   ],
+   "value": [
+    "m1demo.kinds.Wrap",
+    "m1demo.kinds.Wrap.rec",
+    "Nat",
+    "m1demo.kinds.Pt",
+    "HAdd.hAdd",
+    "instHAdd",
+    "instAddNat",
+    "OfNat.ofNat",
+    "instOfNatNat",
+    "SizeOf.sizeOf",
+    "m1demo.kinds.Pt._sizeOf_inst"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Pt.x",
+   "owners": [],
+   "type": [
+    "m1demo.kinds.Pt",
+    "Nat"
+   ],
+   "value": [
+    "m1demo.kinds.Pt"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Shift.shift",
+   "owners": [],
+   "type": [
+    "m1demo.kinds.Shift"
+   ],
+   "value": [
+    "m1demo.kinds.Shift"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Wrap.mk.inj",
+   "owners": [],
+   "type": [
+    "m1demo.kinds.Pt",
+    "Eq",
+    "m1demo.kinds.Wrap",
+    "m1demo.kinds.Wrap.mk"
+   ],
+   "value": [
+    "m1demo.kinds.Pt",
+    "Eq",
+    "m1demo.kinds.Wrap",
+    "m1demo.kinds.Wrap.mk",
+    "m1demo.kinds.Wrap.mk.noConfusion"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.DoubleFits.eq_1",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.U32",
+    "Eq",
+    "m1demo.spec.DoubleFits",
+    "LE.le",
+    "Nat",
+    "instLENat",
+    "m1demo.spec.doubleNat",
+    "Aeneas.Std.UScalar.val",
+    "Aeneas.Std.UScalarTy.U32",
+    "Aeneas.Std.U32.max"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "Eq.refl",
+    "m1demo.spec.DoubleFits"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.double",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.U32",
+    "Aeneas.Std.Result"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "HAdd.hAdd",
+    "Aeneas.Std.Result",
+    "Aeneas.Std.UScalar",
+    "Aeneas.Std.UScalarTy.U32",
+    "Aeneas.Std.instHAddUScalarResult"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Shift.noConfusion",
+   "owners": [
+    "m1demo.kinds.Shift"
+   ],
+   "type": [
+    "m1demo.kinds.Shift",
+    "Eq",
+    "HEq",
+    "m1demo.kinds.Shift.noConfusionType"
+   ],
+   "value": [
+    "m1demo.kinds.Shift",
+    "Eq",
+    "HEq",
+    "Eq.ndrec",
+    "m1demo.kinds.Shift.noConfusionType",
+    "m1demo.kinds.Shift.casesOn",
+    "HEq.refl",
+    "eq_of_heq"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Pt.y",
+   "owners": [],
+   "type": [
+    "m1demo.kinds.Pt",
+    "Nat"
+   ],
+   "value": [
+    "m1demo.kinds.Pt"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.double_spec._simp_1_2",
+   "owners": [],
+   "type": [
+    "Unit",
+    "Aeneas.Std.Result",
+    "Eq",
+    "Aeneas.Std.WP.qimp_spec",
+    "Unit.unit",
+    "Aeneas.Std.WP.spec"
+   ],
+   "value": [
+    "Unit",
+    "Aeneas.Std.Result",
+    "propext",
+    "Aeneas.Std.WP.qimp_spec",
+    "Unit.unit",
+    "Aeneas.Std.WP.spec",
+    "Aeneas.Std.WP.qimp_spec_unit"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.twiceTwice",
+   "owners": [],
+   "type": [
+    "Nat"
+   ],
+   "value": [
+    "Nat",
+    "m1demo.kinds.twice"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.selfImp",
+   "owners": [],
+   "type": [],
+   "value": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.double_spec._simp_1_9",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.WP.Post",
+    "Eq",
+    "Aeneas.Std.WP.qimp",
+    "Aeneas.Std.WP.imp"
+   ],
+   "value": [
+    "Aeneas.Std.WP.Post",
+    "propext",
+    "Aeneas.Std.WP.qimp",
+    "Aeneas.Std.WP.imp",
+    "Aeneas.Std.WP.qimp_iff"
+   ]
+  },
+  {
+   "kind": "recursor",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Wrap.rec",
+   "owners": [
+    "m1demo.kinds.Wrap"
+   ],
+   "type": [
+    "m1demo.kinds.Wrap",
+    "m1demo.kinds.Pt",
+    "m1demo.kinds.Wrap.mk"
+   ],
+   "value": []
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Shift.noConfusionType",
+   "owners": [],
+   "type": [
+    "m1demo.kinds.Shift"
+   ],
+   "value": [
+    "m1demo.kinds.Shift",
+    "m1demo.kinds.Shift.casesOn",
+    "HEq"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Wrap.recOn",
+   "owners": [
+    "m1demo.kinds.Wrap"
+   ],
+   "type": [
+    "m1demo.kinds.Wrap",
+    "m1demo.kinds.Pt",
+    "m1demo.kinds.Wrap.mk"
+   ],
+   "value": [
+    "m1demo.kinds.Wrap",
+    "m1demo.kinds.Pt",
+    "m1demo.kinds.Wrap.mk",
+    "m1demo.kinds.Wrap.rec"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Pt.ctorIdx",
+   "owners": [],
+   "type": [
+    "m1demo.kinds.Pt",
+    "Nat"
+   ],
+   "value": [
+    "m1demo.kinds.Pt"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.sum_to_loop.match_1",
+   "owners": [],
+   "type": [
+    "Prod",
+    "Aeneas.Std.U32",
+    "Prod.mk"
+   ],
+   "value": [
+    "Prod",
+    "Aeneas.Std.U32",
+    "Prod.mk",
+    "Prod.casesOn"
+   ]
+  },
+  {
+   "kind": "recursor",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Shift.rec",
+   "owners": [
+    "m1demo.kinds.Shift"
+   ],
+   "type": [
+    "m1demo.kinds.Shift",
+    "m1demo.kinds.Shift.mk"
+   ],
+   "value": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.double_spec._simp_1_5",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.WP.Post",
+    "Eq",
+    "Aeneas.Std.WP.qimp",
+    "Exists"
+   ],
+   "value": [
+    "Aeneas.Std.WP.Post",
+    "propext",
+    "Aeneas.Std.WP.qimp",
+    "Exists",
+    "Aeneas.Std.WP.qimp_exists"
+   ]
+  },
+  {
+   "kind": "recursor",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Meter.rec",
+   "owners": [
+    "m1demo.kinds.Meter"
+   ],
+   "type": [
+    "m1demo.kinds.Meter",
+    "Aeneas.Std.U32",
+    "m1demo.kinds.Meter.mk"
+   ],
+   "value": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Meter.mk.sizeOf_spec",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.U32",
+    "Eq",
+    "Nat",
+    "SizeOf.sizeOf",
+    "m1demo.kinds.Meter",
+    "m1demo.kinds.Meter._sizeOf_inst",
+    "m1demo.kinds.Meter.mk",
+    "HAdd.hAdd",
+    "instHAdd",
+    "instAddNat",
+    "OfNat.ofNat",
+    "instOfNatNat",
+    "Aeneas.Std.UScalar._sizeOf_inst",
+    "Aeneas.Std.UScalarTy.U32"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "Eq.refl",
+    "Nat",
+    "HAdd.hAdd",
+    "instHAdd",
+    "instAddNat",
+    "OfNat.ofNat",
+    "instOfNatNat",
+    "SizeOf.sizeOf",
+    "Aeneas.Std.UScalar._sizeOf_inst",
+    "Aeneas.Std.UScalarTy.U32"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.double_spec._simp_1_3",
+   "owners": [],
+   "type": [
+    "Unit",
+    "Eq",
+    "Aeneas.Std.WP.qimp",
+    "Unit.unit"
+   ],
+   "value": [
+    "Unit",
+    "propext",
+    "Aeneas.Std.WP.qimp",
+    "Unit.unit",
+    "Aeneas.Std.WP.qimp_unit"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.doubleNat_eq",
+   "owners": [],
+   "type": [
+    "Nat",
+    "Eq",
+    "m1demo.spec.doubleNat",
+    "HAdd.hAdd",
+    "instHAdd",
+    "instAddNat"
+   ],
+   "value": [
+    "Nat",
+    "rfl",
+    "m1demo.spec.doubleNat"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Pt.mk.injEq",
+   "owners": [],
+   "type": [
+    "Nat",
+    "Eq",
+    "m1demo.kinds.Pt",
+    "m1demo.kinds.Pt.mk",
+    "And"
+   ],
+   "value": [
+    "Nat",
+    "Eq.propIntro",
+    "Eq",
+    "m1demo.kinds.Pt",
+    "m1demo.kinds.Pt.mk",
+    "And",
+    "m1demo.kinds.Pt.mk.inj",
+    "Lean.injEq_helper",
+    "Eq.ndrec",
+    "Eq.refl"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Wrap.noConfusionType",
+   "owners": [],
+   "type": [
+    "m1demo.kinds.Wrap"
+   ],
+   "value": [
+    "m1demo.kinds.Wrap",
+    "m1demo.kinds.Wrap.casesOn",
+    "m1demo.kinds.Pt",
+    "Eq"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Meter.mk.inj",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.U32",
+    "Eq",
+    "m1demo.kinds.Meter",
+    "m1demo.kinds.Meter.mk"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "Eq",
+    "m1demo.kinds.Meter",
+    "m1demo.kinds.Meter.mk",
+    "m1demo.kinds.Meter.mk.noConfusion"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Meter.noConfusionType",
+   "owners": [],
+   "type": [
+    "m1demo.kinds.Meter"
+   ],
+   "value": [
+    "m1demo.kinds.Meter",
+    "m1demo.kinds.Meter.casesOn",
+    "Aeneas.Std.U32",
+    "Eq"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Meter._sizeOf_1",
+   "owners": [],
+   "type": [
+    "m1demo.kinds.Meter",
+    "Nat"
+   ],
+   "value": [
+    "m1demo.kinds.Meter",
+    "m1demo.kinds.Meter.rec",
+    "Nat",
+    "Aeneas.Std.U32",
+    "HAdd.hAdd",
+    "instHAdd",
+    "instAddNat",
+    "OfNat.ofNat",
+    "instOfNatNat",
+    "SizeOf.sizeOf",
+    "Aeneas.Std.UScalar._sizeOf_inst",
+    "Aeneas.Std.UScalarTy.U32"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Kinds",
+   "name": "m1demo.kinds.Meter.mk._flat_ctor",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.U32",
+    "m1demo.kinds.Meter"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "m1demo.kinds.Meter.mk"
+   ]
+  }
+ ],
+ "referenced": [
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.imp",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Core",
+   "name": "Eq.mpr",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "Unit.unit",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.Primitives",
+   "name": "Aeneas.Std.bind",
+   "owners": []
+  },
+  {
+   "kind": "inductive",
+   "module": "Aeneas.Std.Primitives",
+   "name": "Aeneas.Std.ControlFlow",
+   "owners": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Init.Prelude",
+   "name": "of_decide_eq_true",
+   "owners": []
+  },
+  {
+   "kind": "ctor",
+   "module": "Aeneas.Std.Primitives",
+   "name": "Aeneas.Std.ControlFlow.cont",
+   "owners": [
+    "Aeneas.Std.ControlFlow"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Init.Core",
+   "name": "Eq.propIntro",
+   "owners": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.qimp_spec_exists",
+   "owners": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Init.Prelude",
+   "name": "congrArg",
+   "owners": []
+  },
+  {
+   "kind": "ctor",
+   "module": "Aeneas.Std.Primitives",
+   "name": "Aeneas.Std.ControlFlow.done",
+   "owners": [
+    "Aeneas.Std.ControlFlow"
+   ]
+  },
+  {
+   "kind": "ctor",
+   "module": "Init.Prelude",
+   "name": "HEq.refl",
+   "owners": [
+    "HEq"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Init.SimpLemmas",
+   "name": "and_imp",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.qimp",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.Scalar.Core",
+   "name": "Aeneas.Std.UScalar._sizeOf_inst",
+   "owners": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Init.Core",
+   "name": "Lean.injEq_helper",
+   "owners": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.qimp_exists",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.Scalar.Core",
+   "name": "Aeneas.Std.U32.ofNat",
+   "owners": []
+  },
+  {
+   "kind": "inductive",
+   "module": "Init.Core",
+   "name": "Exists",
+   "owners": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.spec_mono",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Core",
+   "name": "Eq.mp",
+   "owners": []
+  },
+  {
+   "kind": "ctor",
+   "module": "Aeneas.Std.Scalar.Core",
+   "name": "Aeneas.Std.UScalarTy.U32",
+   "owners": [
+    "Aeneas.Std.UScalarTy"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.qimp_spec_unit",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "id",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.Scalar.Core",
+   "name": "Aeneas.Std.U32",
+   "owners": []
+  },
+  {
+   "kind": "ctor",
+   "module": "Init.Prelude",
+   "name": "Prod.mk",
+   "owners": [
+    "Prod"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "instOfNatNat",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.Scalar.Core",
+   "name": "Aeneas.Std.U32.max",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "LE.le",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "instLENat",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.qimp_spec_iff",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.Scalar.Core",
+   "name": "Aeneas.Std.instLTUScalar",
+   "owners": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.imp_exists_iff",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.Primitives",
+   "name": "Aeneas.Std.Result.ok",
+   "owners": []
+  },
+  {
+   "kind": "ctor",
+   "module": "Init.Prelude",
+   "name": "Bool.true",
+   "owners": [
+    "Bool"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Init.Core",
+   "name": "true_imp_iff",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "GT.gt",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.Scalar.Ops.Add",
+   "name": "Aeneas.Std.instHAddUScalarResult",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "instHAdd",
+   "owners": []
+  },
+  {
+   "kind": "inductive",
+   "module": "Init.Prelude",
+   "name": "And",
+   "owners": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Init.Prelude",
+   "name": "heq_of_eq",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "Unit",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.Scalar.Core",
+   "name": "Aeneas.Std.UScalar.decLt",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "HAdd.hAdd",
+   "owners": []
+  },
+  {
+   "kind": "inductive",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.spec",
+   "owners": []
+  },
+  {
+   "kind": "ctor",
+   "module": "Init.SizeOf",
+   "name": "SizeOf.mk",
+   "owners": [
+    "SizeOf"
+   ]
+  },
+  {
+   "kind": "inductive",
+   "module": "Init.Prelude",
+   "name": "Nat",
+   "owners": []
+  },
+  {
+   "kind": "ctor",
+   "module": "Init.Prelude",
+   "name": "And.intro",
+   "owners": [
+    "And"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "LT.lt",
+   "owners": []
+  },
+  {
+   "kind": "inductive",
+   "module": "Init.Prelude",
+   "name": "True",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.Primitives",
+   "name": "Aeneas.Std.Result",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.SizeOf",
+   "name": "SizeOf.sizeOf",
+   "owners": []
+  },
+  {
+   "kind": "axiom",
+   "module": "Init.Core",
+   "name": "propext",
+   "owners": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.qimp_iff",
+   "owners": []
+  },
+  {
+   "kind": "inductive",
+   "module": "Init.Prelude",
+   "name": "Bool",
+   "owners": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Init.Prelude",
+   "name": "eq_of_heq",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "Eq.ndrec",
+   "owners": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Aeneas.Std.Scalar.Ops.Add",
+   "name": "Aeneas.Std.U32.add_spec",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "instAddNat",
+   "owners": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.imp_and_iff",
+   "owners": []
+  },
+  {
+   "kind": "ctor",
+   "module": "Init.Prelude",
+   "name": "Eq.refl",
+   "owners": [
+    "Eq"
+   ]
+  },
+  {
+   "kind": "inductive",
+   "module": "Init.Prelude",
+   "name": "HEq",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.SizeOf",
+   "name": "instSizeOfNat",
+   "owners": []
+  },
+  {
+   "kind": "inductive",
+   "module": "Init.SizeOf",
+   "name": "SizeOf",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.Primitives",
+   "name": "Aeneas.Std.loop",
+   "owners": []
+  },
+  {
+   "kind": "inductive",
+   "module": "Init.Prelude",
+   "name": "Prod",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "Prod.casesOn",
+   "owners": [
+    "Prod"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "OfNat.ofNat",
+   "owners": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Init.PropLemmas",
+   "name": "exists_imp",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "Decidable.decide",
+   "owners": []
+  },
+  {
+   "kind": "inductive",
+   "module": "Init.Prelude",
+   "name": "Eq",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.Scalar.Core",
+   "name": "Aeneas.Std.UScalar.val",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "Nat.decLe",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.Post",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "rfl",
+   "owners": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.forall_unit",
+   "owners": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.qimp_unit",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.Scalar.Core",
+   "name": "Aeneas.Std.UScalar.cMax",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.qimp_spec",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "ite",
+   "owners": []
+  },
+  {
+   "kind": "inductive",
+   "module": "Aeneas.Std.Scalar.Core",
+   "name": "Aeneas.Std.UScalar",
+   "owners": []
+  }
+ ]
+}

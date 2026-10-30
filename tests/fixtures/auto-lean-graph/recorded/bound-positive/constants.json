@@ -1,0 +1,1043 @@
+{
+ "schema": "fvs/lean-constants",
+ "version": 1,
+ "inputs": {
+  "files": {
+   ".formalising/auto-fv/state.json": "8e09803cfaaed9b49d824d33664969dc5e7dd9f503187bae335883986c06cf1f",
+   ".lake/build/lib/lean/M1demo.ilean": "dc2af0b3f028b6ae072bffec1128b18e6529a5512d13dfe42527930a243dbb0d",
+   ".lake/build/lib/lean/M1demo/M1demo.ilean": "cfa971f5b469697bc18eb2d29b3c66f3d02aa518fc98ebc89c401055e4ba5e21",
+   ".lake/build/lib/lean/Specs.ilean": "6d62c1a6b0e82469206c634ed96646b14a62edcfb3e771938741951a30b50bcf",
+   ".lake/build/lib/lean/Specs/Double.ilean": "251e4cb94bf2718d6bce366e163aebf34bce5804b3ca2a9387ae44b92776710d",
+   "M1demo.lean": "998cff4e0c58a30f8c5a5e42eaff4d401ca9d7b2d0290738e0f3cd91b9e4aae8",
+   "M1demo/M1demo.lean": "f48d08c313569c0993edeeb9524a9ee008e9253b4e8ceed95d890f98c97300a9",
+   "M1demo/translation.json": "bb20ee964531c310e47f3bc466e5e1ac5aefe25cfa0f2df04cd4bd5644265093",
+   "Specs.lean": "328f9a8d031090809933e45f0a7601ff5ad5eed5e0c498f164e52f72ce5c07e9",
+   "Specs/Double.lean": "4935ea0b71757a2f0ed632a3705dac7bbc566ddc432b81a3c0c311df8676b8b1",
+   "lake-manifest.json": "52e67b1cb09003b8831ffc387dc362eba1c00de85a4dfd3f9e52e95378c63d72",
+   "lakefile.toml": "906e1ae68b5b77124c81c01b063b4ab2757e97f762ac11add2d4da9d2e1cca56",
+   "lean-toolchain": "efac0b94923b2d8b6840cd35be9177ad0fc5ab2332f4f4311c98712cee92fdee"
+  }
+ },
+ "project": [
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.double_spec._simp_1_11",
+   "owners": [],
+   "type": [
+    "Eq",
+    "Aeneas.Std.WP.imp",
+    "Exists"
+   ],
+   "value": [
+    "propext",
+    "Aeneas.Std.WP.imp",
+    "Exists",
+    "Aeneas.Std.WP.imp_exists_iff"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.clamp",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.U32",
+    "Aeneas.Std.Result"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "ite",
+    "Aeneas.Std.Result",
+    "GT.gt",
+    "Aeneas.Std.instLTUScalar",
+    "Aeneas.Std.UScalarTy.U32",
+    "Aeneas.Std.UScalar.decLt",
+    "Aeneas.Std.Result.ok"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.sum_to._proof_1",
+   "owners": [],
+   "type": [
+    "LE.le",
+    "Nat",
+    "instLENat",
+    "OfNat.ofNat",
+    "instOfNatNat",
+    "Aeneas.Std.UScalar.cMax",
+    "Aeneas.Std.UScalarTy.U32"
+   ],
+   "value": [
+    "of_decide_eq_true",
+    "LE.le",
+    "Nat",
+    "instLENat",
+    "OfNat.ofNat",
+    "instOfNatNat",
+    "Aeneas.Std.UScalar.cMax",
+    "Aeneas.Std.UScalarTy.U32",
+    "Nat.decLe",
+    "id",
+    "Eq",
+    "Bool",
+    "Decidable.decide",
+    "Bool.true",
+    "Eq.refl"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.doubleNat",
+   "owners": [],
+   "type": [
+    "Nat"
+   ],
+   "value": [
+    "Nat",
+    "HAdd.hAdd",
+    "instHAdd",
+    "instAddNat"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.DoubleFits",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.U32"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "LE.le",
+    "Nat",
+    "instLENat",
+    "m1demo.spec.doubleNat",
+    "Aeneas.Std.UScalar.val",
+    "Aeneas.Std.UScalarTy.U32",
+    "Aeneas.Std.U32.max"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.double_spec._simp_1_12",
+   "owners": [],
+   "type": [
+    "Eq",
+    "And"
+   ],
+   "value": [
+    "propext",
+    "And",
+    "and_imp"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.double_spec._simp_1_6",
+   "owners": [],
+   "type": [
+    "Eq",
+    "Unit"
+   ],
+   "value": [
+    "propext",
+    "Unit",
+    "Aeneas.Std.WP.forall_unit"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.double_spec",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.U32",
+    "m1demo.spec.DoubleFits",
+    "Aeneas.Std.WP.spec",
+    "m1demo.double",
+    "Eq",
+    "Nat",
+    "Aeneas.Std.UScalar.val",
+    "Aeneas.Std.UScalarTy.U32",
+    "m1demo.spec.doubleNat"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "m1demo.spec.DoubleFits",
+    "id",
+    "Aeneas.Std.WP.spec",
+    "m1demo.double",
+    "Eq",
+    "Nat",
+    "Aeneas.Std.UScalar.val",
+    "Aeneas.Std.UScalarTy.U32",
+    "m1demo.spec.doubleNat",
+    "Aeneas.Std.WP.spec_mono",
+    "Aeneas.Std.UScalar",
+    "HAdd.hAdd",
+    "Aeneas.Std.Result",
+    "Aeneas.Std.instHAddUScalarResult",
+    "instHAdd",
+    "instAddNat",
+    "Aeneas.Std.U32.add_spec",
+    "Eq.mp",
+    "LE.le",
+    "instLENat",
+    "Aeneas.Std.U32.max",
+    "congrArg",
+    "m1demo.spec.doubleNat_eq",
+    "m1demo.spec.DoubleFits.eq_1",
+    "Eq.mpr",
+    "Aeneas.Std.WP.qimp",
+    "Aeneas.Std.WP.imp",
+    "m1demo.spec.double_spec._simp_1_9"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.sum_to_loop.body._proof_1",
+   "owners": [],
+   "type": [
+    "LE.le",
+    "Nat",
+    "instLENat",
+    "OfNat.ofNat",
+    "instOfNatNat",
+    "Aeneas.Std.UScalar.cMax",
+    "Aeneas.Std.UScalarTy.U32"
+   ],
+   "value": [
+    "of_decide_eq_true",
+    "LE.le",
+    "Nat",
+    "instLENat",
+    "OfNat.ofNat",
+    "instOfNatNat",
+    "Aeneas.Std.UScalar.cMax",
+    "Aeneas.Std.UScalarTy.U32",
+    "Nat.decLe",
+    "id",
+    "Eq",
+    "Bool",
+    "Decidable.decide",
+    "Bool.true",
+    "Eq.refl"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.double_spec._simp_1_8",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.Result",
+    "Eq",
+    "Aeneas.Std.WP.qimp_spec",
+    "Aeneas.Std.WP.imp",
+    "Aeneas.Std.WP.spec"
+   ],
+   "value": [
+    "Aeneas.Std.Result",
+    "propext",
+    "Aeneas.Std.WP.qimp_spec",
+    "Aeneas.Std.WP.imp",
+    "Aeneas.Std.WP.spec",
+    "Aeneas.Std.WP.qimp_spec_iff"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.sum_to",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.U32",
+    "Aeneas.Std.Result"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "m1demo.sum_to_loop",
+    "Aeneas.Std.U32.ofNat",
+    "OfNat.ofNat",
+    "Nat",
+    "instOfNatNat",
+    "m1demo.sum_to._proof_1"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.double_spec._simp_1_10",
+   "owners": [],
+   "type": [
+    "Eq",
+    "Aeneas.Std.WP.imp",
+    "And"
+   ],
+   "value": [
+    "propext",
+    "Aeneas.Std.WP.imp",
+    "And",
+    "Aeneas.Std.WP.imp_and_iff"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.sum_to_loop.eq_1",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.U32",
+    "Eq",
+    "Aeneas.Std.Result",
+    "m1demo.sum_to_loop",
+    "Aeneas.Std.loop",
+    "Prod",
+    "m1demo.sum_to_loop.match_1",
+    "Aeneas.Std.ControlFlow",
+    "m1demo.sum_to_loop.body",
+    "Prod.mk"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "Eq.refl",
+    "Aeneas.Std.Result",
+    "m1demo.sum_to_loop"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.sum_to_loop.body",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.U32",
+    "Aeneas.Std.Result",
+    "Aeneas.Std.ControlFlow",
+    "Prod"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "ite",
+    "Aeneas.Std.Result",
+    "Aeneas.Std.ControlFlow",
+    "Prod",
+    "LT.lt",
+    "Aeneas.Std.instLTUScalar",
+    "Aeneas.Std.UScalarTy.U32",
+    "Aeneas.Std.UScalar.decLt",
+    "Aeneas.Std.bind",
+    "Aeneas.Std.UScalar",
+    "HAdd.hAdd",
+    "Aeneas.Std.instHAddUScalarResult",
+    "Aeneas.Std.U32.ofNat",
+    "OfNat.ofNat",
+    "Nat",
+    "instOfNatNat",
+    "m1demo.sum_to_loop.body._proof_1",
+    "Aeneas.Std.Result.ok",
+    "Aeneas.Std.ControlFlow.cont",
+    "Prod.mk",
+    "Aeneas.Std.ControlFlow.done"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.double_spec._simp_1_7",
+   "owners": [],
+   "type": [
+    "Eq",
+    "True"
+   ],
+   "value": [
+    "propext",
+    "True",
+    "true_imp_iff"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.double_spec._simp_1_13",
+   "owners": [],
+   "type": [
+    "Eq",
+    "Exists"
+   ],
+   "value": [
+    "propext",
+    "Exists",
+    "exists_imp"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.sum_to_loop",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.U32",
+    "Aeneas.Std.Result"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "Aeneas.Std.loop",
+    "Prod",
+    "m1demo.sum_to_loop.match_1",
+    "Aeneas.Std.Result",
+    "Aeneas.Std.ControlFlow",
+    "m1demo.sum_to_loop.body",
+    "Prod.mk"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.double_spec._simp_1_4",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.Result",
+    "Eq",
+    "Aeneas.Std.WP.qimp_spec",
+    "Exists"
+   ],
+   "value": [
+    "Aeneas.Std.Result",
+    "propext",
+    "Aeneas.Std.WP.qimp_spec",
+    "Exists",
+    "Aeneas.Std.WP.qimp_spec_exists"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.sum_to_loop.body.eq_1",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.U32",
+    "Eq",
+    "Aeneas.Std.Result",
+    "Aeneas.Std.ControlFlow",
+    "Prod",
+    "m1demo.sum_to_loop.body",
+    "ite",
+    "LT.lt",
+    "Aeneas.Std.instLTUScalar",
+    "Aeneas.Std.UScalarTy.U32",
+    "Aeneas.Std.UScalar.decLt",
+    "Aeneas.Std.bind",
+    "Aeneas.Std.UScalar",
+    "HAdd.hAdd",
+    "Aeneas.Std.instHAddUScalarResult",
+    "Aeneas.Std.U32.ofNat",
+    "OfNat.ofNat",
+    "Nat",
+    "instOfNatNat",
+    "m1demo.sum_to_loop.body._proof_1",
+    "Aeneas.Std.Result.ok",
+    "Aeneas.Std.ControlFlow.cont",
+    "Prod.mk",
+    "Aeneas.Std.ControlFlow.done"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "Eq.refl",
+    "Aeneas.Std.Result",
+    "Aeneas.Std.ControlFlow",
+    "Prod",
+    "m1demo.sum_to_loop.body"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.DoubleFits.eq_1",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.U32",
+    "Eq",
+    "m1demo.spec.DoubleFits",
+    "LE.le",
+    "Nat",
+    "instLENat",
+    "m1demo.spec.doubleNat",
+    "Aeneas.Std.UScalar.val",
+    "Aeneas.Std.UScalarTy.U32",
+    "Aeneas.Std.U32.max"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "Eq.refl",
+    "m1demo.spec.DoubleFits"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.double",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.U32",
+    "Aeneas.Std.Result"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "HAdd.hAdd",
+    "Aeneas.Std.Result",
+    "Aeneas.Std.UScalar",
+    "Aeneas.Std.UScalarTy.U32",
+    "Aeneas.Std.instHAddUScalarResult"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.double_spec._simp_1_2",
+   "owners": [],
+   "type": [
+    "Unit",
+    "Aeneas.Std.Result",
+    "Eq",
+    "Aeneas.Std.WP.qimp_spec",
+    "Unit.unit",
+    "Aeneas.Std.WP.spec"
+   ],
+   "value": [
+    "Unit",
+    "Aeneas.Std.Result",
+    "propext",
+    "Aeneas.Std.WP.qimp_spec",
+    "Unit.unit",
+    "Aeneas.Std.WP.spec",
+    "Aeneas.Std.WP.qimp_spec_unit"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.double_spec._simp_1_9",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.WP.Post",
+    "Eq",
+    "Aeneas.Std.WP.qimp",
+    "Aeneas.Std.WP.imp"
+   ],
+   "value": [
+    "Aeneas.Std.WP.Post",
+    "propext",
+    "Aeneas.Std.WP.qimp",
+    "Aeneas.Std.WP.imp",
+    "Aeneas.Std.WP.qimp_iff"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.sum_to_loop.match_1",
+   "owners": [],
+   "type": [
+    "Prod",
+    "Aeneas.Std.U32",
+    "Prod.mk"
+   ],
+   "value": [
+    "Prod",
+    "Aeneas.Std.U32",
+    "Prod.mk",
+    "Prod.casesOn"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.double_spec._simp_1_5",
+   "owners": [],
+   "type": [
+    "Aeneas.Std.WP.Post",
+    "Eq",
+    "Aeneas.Std.WP.qimp",
+    "Exists"
+   ],
+   "value": [
+    "Aeneas.Std.WP.Post",
+    "propext",
+    "Aeneas.Std.WP.qimp",
+    "Exists",
+    "Aeneas.Std.WP.qimp_exists"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.double_spec._simp_1_3",
+   "owners": [],
+   "type": [
+    "Unit",
+    "Eq",
+    "Aeneas.Std.WP.qimp",
+    "Unit.unit"
+   ],
+   "value": [
+    "Unit",
+    "propext",
+    "Aeneas.Std.WP.qimp",
+    "Unit.unit",
+    "Aeneas.Std.WP.qimp_unit"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Specs.Double",
+   "name": "m1demo.spec.doubleNat_eq",
+   "owners": [],
+   "type": [
+    "Nat",
+    "Eq",
+    "m1demo.spec.doubleNat",
+    "HAdd.hAdd",
+    "instHAdd",
+    "instAddNat"
+   ],
+   "value": [
+    "Nat",
+    "rfl",
+    "m1demo.spec.doubleNat"
+   ]
+  }
+ ],
+ "referenced": [
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.imp",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Core",
+   "name": "Eq.mpr",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "Unit.unit",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.Primitives",
+   "name": "Aeneas.Std.bind",
+   "owners": []
+  },
+  {
+   "kind": "inductive",
+   "module": "Aeneas.Std.Primitives",
+   "name": "Aeneas.Std.ControlFlow",
+   "owners": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Init.Prelude",
+   "name": "of_decide_eq_true",
+   "owners": []
+  },
+  {
+   "kind": "ctor",
+   "module": "Aeneas.Std.Primitives",
+   "name": "Aeneas.Std.ControlFlow.cont",
+   "owners": [
+    "Aeneas.Std.ControlFlow"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.qimp_spec_exists",
+   "owners": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Init.Prelude",
+   "name": "congrArg",
+   "owners": []
+  },
+  {
+   "kind": "ctor",
+   "module": "Aeneas.Std.Primitives",
+   "name": "Aeneas.Std.ControlFlow.done",
+   "owners": [
+    "Aeneas.Std.ControlFlow"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Init.SimpLemmas",
+   "name": "and_imp",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.qimp",
+   "owners": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.qimp_exists",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.Scalar.Core",
+   "name": "Aeneas.Std.U32.ofNat",
+   "owners": []
+  },
+  {
+   "kind": "inductive",
+   "module": "Init.Core",
+   "name": "Exists",
+   "owners": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.spec_mono",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Core",
+   "name": "Eq.mp",
+   "owners": []
+  },
+  {
+   "kind": "ctor",
+   "module": "Aeneas.Std.Scalar.Core",
+   "name": "Aeneas.Std.UScalarTy.U32",
+   "owners": [
+    "Aeneas.Std.UScalarTy"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.qimp_spec_unit",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "id",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.Scalar.Core",
+   "name": "Aeneas.Std.U32",
+   "owners": []
+  },
+  {
+   "kind": "ctor",
+   "module": "Init.Prelude",
+   "name": "Prod.mk",
+   "owners": [
+    "Prod"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "instOfNatNat",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.Scalar.Core",
+   "name": "Aeneas.Std.U32.max",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "LE.le",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "instLENat",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.qimp_spec_iff",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.Scalar.Core",
+   "name": "Aeneas.Std.instLTUScalar",
+   "owners": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.imp_exists_iff",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.Primitives",
+   "name": "Aeneas.Std.Result.ok",
+   "owners": []
+  },
+  {
+   "kind": "ctor",
+   "module": "Init.Prelude",
+   "name": "Bool.true",
+   "owners": [
+    "Bool"
+   ]
+  },
+  {
+   "kind": "theorem",
+   "module": "Init.Core",
+   "name": "true_imp_iff",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "GT.gt",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.Scalar.Ops.Add",
+   "name": "Aeneas.Std.instHAddUScalarResult",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "instHAdd",
+   "owners": []
+  },
+  {
+   "kind": "inductive",
+   "module": "Init.Prelude",
+   "name": "And",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "Unit",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.Scalar.Core",
+   "name": "Aeneas.Std.UScalar.decLt",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "HAdd.hAdd",
+   "owners": []
+  },
+  {
+   "kind": "inductive",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.spec",
+   "owners": []
+  },
+  {
+   "kind": "inductive",
+   "module": "Init.Prelude",
+   "name": "Nat",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "LT.lt",
+   "owners": []
+  },
+  {
+   "kind": "inductive",
+   "module": "Init.Prelude",
+   "name": "True",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.Primitives",
+   "name": "Aeneas.Std.Result",
+   "owners": []
+  },
+  {
+   "kind": "axiom",
+   "module": "Init.Core",
+   "name": "propext",
+   "owners": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.qimp_iff",
+   "owners": []
+  },
+  {
+   "kind": "inductive",
+   "module": "Init.Prelude",
+   "name": "Bool",
+   "owners": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Aeneas.Std.Scalar.Ops.Add",
+   "name": "Aeneas.Std.U32.add_spec",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "instAddNat",
+   "owners": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.imp_and_iff",
+   "owners": []
+  },
+  {
+   "kind": "ctor",
+   "module": "Init.Prelude",
+   "name": "Eq.refl",
+   "owners": [
+    "Eq"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.Primitives",
+   "name": "Aeneas.Std.loop",
+   "owners": []
+  },
+  {
+   "kind": "inductive",
+   "module": "Init.Prelude",
+   "name": "Prod",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "Prod.casesOn",
+   "owners": [
+    "Prod"
+   ]
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "OfNat.ofNat",
+   "owners": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Init.PropLemmas",
+   "name": "exists_imp",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "Decidable.decide",
+   "owners": []
+  },
+  {
+   "kind": "inductive",
+   "module": "Init.Prelude",
+   "name": "Eq",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.Scalar.Core",
+   "name": "Aeneas.Std.UScalar.val",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "Nat.decLe",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.Post",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "rfl",
+   "owners": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.forall_unit",
+   "owners": []
+  },
+  {
+   "kind": "theorem",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.qimp_unit",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.Scalar.Core",
+   "name": "Aeneas.Std.UScalar.cMax",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Aeneas.Std.WP",
+   "name": "Aeneas.Std.WP.qimp_spec",
+   "owners": []
+  },
+  {
+   "kind": "def",
+   "module": "Init.Prelude",
+   "name": "ite",
+   "owners": []
+  },
+  {
+   "kind": "inductive",
+   "module": "Aeneas.Std.Scalar.Core",
+   "name": "Aeneas.Std.UScalar",
+   "owners": []
+  }
+ ]
+}

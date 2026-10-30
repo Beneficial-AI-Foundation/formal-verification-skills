@@ -14,6 +14,7 @@ import { readProvenance } from './fvs-probe-inventory.mjs';
 const QUALIFIED = { schema: 'probe-lean/extract', schemaVersion: '3.0', tool: 'probe-lean', version: '0.14.0' };
 const RECEIPT_SCHEMA = 'fvs/lean-probe-run';
 const MANIFEST_SCHEMA = 'fvs-extract-patches/manifest';
+const CONSTANTS_SCHEMA = 'fvs/lean-constants';
 const LOCAL_FIELDS = ['type-dependencies', 'term-dependencies', 'dependencies'];
 // probe-lean 0.14.0 omits an external list when it would be empty and never
 // emits it empty; local lists are always emitted. Qualified against Lean's own
@@ -41,7 +42,7 @@ function usage() {
   process.stdout.write([
     'Usage: node fvs-lean-graph.mjs LEAN.json --library NAME[,NAME...]',
     '  --log PROBE_LEAN_LOG --receipt RUN_RECEIPT.json --project-root DIR',
-    '  [--manifest PATCH_MANIFEST.json]',
+    '  [--manifest PATCH_MANIFEST.json] [--constants LEAN_CONSTANTS.json]',
     '',
     'Builds the Lean declaration and dependency record from a probe-lean 0.14.0',
     '`extract` output. --library names the Lean module roots that must have been',
@@ -49,7 +50,10 @@ function usage() {
     'every project module must fall under one of them). --log is the captured',
     'probe-lean output and --receipt the fvs/lean-probe-run record written by the',
     'run that produced both; --project-root is the Lean project that run used.',
-    '--manifest is the fvs-extract-patches manifest of the extraction. Prints the',
+    '--manifest is the fvs-extract-patches manifest of the extraction. --constants',
+    'is the fvs/lean-constants record of the same project, Lean\'s own list of the',
+    'constants each declaration\'s type and value mention; without it the reported',
+    'dependencies are not shown to be complete. Prints the',
     'record as JSON. Exit 0 only when the record is complete; 1 when it is',
     'incomplete or unsupported; 2 on usage errors.',
     '',
@@ -67,7 +71,7 @@ function fatal(message) {
 }
 
 function parseArgs(argv) {
-  const args = { extract: null, libraries: [], log: null, receipt: null, projectRoot: null, manifest: null };
+  const args = { extract: null, libraries: [], log: null, receipt: null, projectRoot: null, manifest: null, constants: null };
   const rest = [...argv];
   if (rest[0] && !rest[0].startsWith('--')) args.extract = rest.shift();
   while (rest.length > 0) {
@@ -79,6 +83,7 @@ function parseArgs(argv) {
     else if (flag === '--receipt') args.receipt = value;
     else if (flag === '--project-root') args.projectRoot = value;
     else if (flag === '--manifest') args.manifest = value;
+    else if (flag === '--constants') args.constants = value;
     else fatal(`unknown argument ${JSON.stringify(flag)}`);
   }
   if (!args.extract) fatal('a probe-lean extract JSON path is required');
@@ -258,7 +263,7 @@ export function validManifest(manifest) {
 // A dependency list of a validated atom; an absent external list is empty.
 const deps = (atom, field) => atom[field] ?? [];
 
-function closureOf(root, data, inScope, projectionsOf) {
+function closureOf(root, data, inScope, projectionsOf, unreported) {
   const declarations = new Set();
   const external = new Set(deps(data[root], 'type-dependencies-external'));
   const queue = [...data[root]['type-dependencies']];
@@ -278,11 +283,91 @@ function closureOf(root, data, inScope, projectionsOf) {
   // Only the edges this closure follows can block it.
   const blockers = [...declarations].filter((id) => !has(data, id))
     .concat([...external].filter((id) => inScope.has(id)))
-    .sort().map((id) => ({ code: 'unresolved-edge', dependency: id }));
+    .sort().map((id) => ({ code: 'unresolved-edge', dependency: id }))
+    .concat([root, ...declarations].filter((id) => unreported.has(id)).sort()
+      .map((id) => ({ code: 'dependency-not-reported', declaration: id })));
   return { rule: CLOSURE_RULE, declarations: sorted(declarations), external: sorted(external), blockers };
 }
 
-export function buildLeanGraph({ extractText, logText = null, receiptText = null, libraries, projectRoot = null, manifestText = null }) {
+// Dependency fidelity: Lean's own record of the constants each declaration's
+// type and value mention must be covered by what probe-lean reported for it.
+// A type constant must be reported in the type lists (a theorem's closure reads
+// only those); a value constant in any list. Three representations, each
+// recorded: a constructor, recursor, auxiliary recursor or noConfusion is
+// covered by its inductive, which declares it; a generated project theorem (no
+// source definition) is a proof, irrelevant to the meaning of the value that
+// uses it; any other generated project constant is folded into its user, as
+// probe-lean folds auxiliaries, and must be covered in turn.
+function checkFidelity({ constants, data, ids, defined, block }) {
+  const info = new Map();
+  const project = new Set();
+  for (const [part, entries] of [['project', constants.project], ['referenced', constants.referenced]]) {
+    for (const entry of entries) {
+      info.set(entry.name, entry);
+      if (part === 'project') project.add(entry.name);
+    }
+  }
+  const atoms = new Set(ids.map((id) => id.slice('probe:'.length)));
+  const represented = [];
+  const unreported = new Set();
+  for (const id of ids) {
+    const name = id.slice('probe:'.length);
+    const own = info.get(name);
+    if (!own || !project.has(name)) {
+      block('constants-missing-declaration', `the Lean constants record has no entry for ${id}`, { declaration: id });
+      unreported.add(id);
+      continue;
+    }
+    const names = (fields) => new Set(fields.flatMap((field) => deps(data[id], field)).map((dep) => dep.slice('probe:'.length)));
+    const typeReported = names(['type-dependencies', 'type-dependencies-external']);
+    const anyReported = names(['type-dependencies', 'type-dependencies-external', 'term-dependencies', 'term-dependencies-external']);
+    const missing = [];
+    for (const [list, reported] of [['type', typeReported], ['value', anyReported]]) {
+      const covers = (constant, stack) => {
+        if (constant === name || reported.has(constant)) return true;
+        const entry = info.get(constant);
+        if (!entry) return false;
+        if (entry.owners.length > 0 && entry.owners.every((owner) => owner === name || reported.has(owner))) {
+          represented.push({ declaration: id, list, constant, rule: 'by-inductive', via: entry.owners });
+          return true;
+        }
+        if (project.has(constant) && !defined.has(constant) && !atoms.has(constant) && !stack.includes(constant)) {
+          if (entry.kind === 'theorem') {
+            represented.push({ declaration: id, list, constant, rule: 'proof-irrelevant' });
+            return true;
+          }
+          if ([...entry.type, ...entry.value].every((used) => covers(used, [...stack, constant]))) {
+            represented.push({ declaration: id, list, constant, rule: 'auxiliary-fold' });
+            return true;
+          }
+        }
+        return false;
+      };
+      for (const constant of own[list]) if (!covers(constant, [])) missing.push(`${constant} (${list})`);
+    }
+    if (missing.length > 0) {
+      unreported.add(id);
+      block('dependency-not-reported', `${id}: Lean records ${sorted(missing).join(', ')}, which probe-lean does not report`, { declaration: id });
+    }
+  }
+  const seen = new Set();
+  return {
+    represented: represented.filter((item) => {
+      const key = JSON.stringify(item);
+      return !seen.has(key) && seen.add(key);
+    }),
+    unreported,
+  };
+}
+
+const constantsShapeValid = (constants) => plainObject(constants) && constants.schema === CONSTANTS_SCHEMA && constants.version === 1 &&
+  plainObject(constants.inputs) && plainObject(constants.inputs.files) &&
+  ['project', 'referenced'].every((part) => Array.isArray(constants[part]) && constants[part].every((entry) => plainObject(entry) &&
+    isText(entry.name) && isText(entry.kind) && Array.isArray(entry.owners) && entry.owners.every(isText) &&
+    (part === 'referenced' || ['type', 'value'].every((list) => Array.isArray(entry[list]) && entry[list].every(isText))))) &&
+  new Set([...constants.project, ...constants.referenced].map((entry) => entry.name)).size === constants.project.length + constants.referenced.length;
+
+export function buildLeanGraph({ extractText, logText = null, receiptText = null, libraries, projectRoot = null, manifestText = null, constantsText = null }) {
   const blockers = [];
   const block = (code, reason, extra = {}) => blockers.push({ code, reason, ...extra });
   const requested = sorted(libraries);
@@ -298,6 +383,7 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
     run: null,
     provenance: { sourceCommit: null, leanProjectCommit: null, translationSha256: null, charonVersion: null, aeneasVersion: null, manifestSha256: null, llbcSha256: null, configSha256: null },
     binding: { status: 'unbound', reasons: [] },
+    fidelity: { status: 'unverified', represented: [] },
     completeness: { libraries: requested, log: readLog(logText), atomCount: null, modules: null, expectedDeclarations: null, missingDeclarations: [] },
     declarations: {},
     edges: [],
@@ -437,7 +523,13 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
       // decls omits some declarations (a def or theorem whose type has no
       // constants, projections); every declaration made in the module is a
       // reference key {c: {m: module, n}} with a definition position.
-      const defined = Object.entries(plainObject(parsed.references) ? parsed.references : {}).flatMap(([key, value]) => {
+      // Without that map the module's declarations are not established; a
+      // present empty map (an import-only module) is fine.
+      const references = plainObject(parsed.references) ? parsed.references : null;
+      if (references === null) {
+        block('ilean-references-missing', `${ilean} has no references map, so the declarations module ${name} defines are not established`);
+      }
+      const defined = Object.entries(references ?? {}).flatMap(([key, value]) => {
         const target = parseJson(key)?.c;
         return plainObject(target) && target.m === name && isText(target.n) && value?.definition != null ? [target.n] : [];
       });
@@ -553,12 +645,31 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
     const targets = record.edges.filter((edge) => edge.from === from && edge.resolution === 'unresolved').map((edge) => edge.to);
     block('unresolved-edge', `${from} depends on ${sorted(targets).join(', ')}, which the extract does not resolve as a local declaration`, { declaration: from });
   }
+  // Fidelity is checked only for a run the receipt binds; otherwise the record
+  // is already incomplete.
+  let unreported = new Set();
+  if (files) {
+    const constants = constantsText === null ? null : parseJson(constantsText);
+    if (constantsText === null) {
+      block('fidelity-unverified', 'no Lean constants record: the reported dependencies are not shown to cover the constants Lean records');
+    } else if (!constantsShapeValid(constants)) {
+      block('invalid-constants', `the constants record is not a ${CONSTANTS_SCHEMA} version 1 record`);
+    } else if (!sameSet(Object.entries(constants.inputs.files).map(([file, hash]) => `${file} ${hash}`),
+      Object.entries(files).map(([file, hash]) => `${file} ${hash}`))) {
+      block('fidelity-unbound', 'the constants record was not taken from the project files this run recorded');
+    } else {
+      const defined = new Set([...expected].map((id) => id.slice('probe:'.length)));
+      const fidelity = checkFidelity({ constants, data, ids, defined, block });
+      unreported = fidelity.unreported;
+      record.fidelity = { status: unreported.size === 0 ? 'verified' : 'incomplete', represented: fidelity.represented };
+    }
+  }
   const projectionsOf = new Map();
   for (const id of ids.filter((name) => data[name].kind === 'projection')) {
     for (const target of data[id]['type-dependencies']) projectionsOf.set(target, [...(projectionsOf.get(target) ?? []), id]);
   }
   for (const id of ids.filter((name) => data[name].kind === 'theorem')) {
-    record.closures[id] = closureOf(id, data, inScope, projectionsOf);
+    record.closures[id] = closureOf(id, data, inScope, projectionsOf, unreported);
   }
   return finish();
 }
@@ -578,6 +689,7 @@ function main(argv) {
       libraries: args.libraries,
       projectRoot: args.projectRoot,
       manifestText: text(args.manifest),
+      constantsText: text(args.constants),
     });
     process.stdout.write(`${JSON.stringify(record, null, 2)}\n`);
     if (record.state !== 'complete') {

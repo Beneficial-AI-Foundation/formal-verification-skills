@@ -71,6 +71,18 @@ with `lake env lean` on a small metaprogram (in the qualification evidence): eve
 constants its type and value (theorem proofs included) mention. It is the ground truth the omitted-list contract is
 checked against.
 
+## Lean constants records
+
+`recorded/positive-bound/constants.json`, `recorded/bound-positive/constants.json` and
+`recorded/sparse-structures/constants.json` are `fvs/lean-constants` version 1 records taken from those runs'
+projects, unchanged since their probe runs, with `lake env lean` on a small metaprogram (in the qualification
+evidence) under the same sandbox and allowlist. Each lists every project declaration's kind and the constants its
+type and value mention (theorem proofs included), and for every constant those mention its kind and owning
+inductive (a constructor's inductive, a recursor's `all`, or the inductive of an auxiliary recursor or noConfusion
+construction, checked with Lean's own name constructors). `inputs.files` re-hashes exactly the files the run's
+receipt names, which binds the record to that run's project state (sources and `.ilean` files, not the `.olean`
+build). The other runs have no constants record.
+
 `seeded/feature-alt-M1demo.lean` is a mutation seed, not output of this project: the published `M1demo.lean`
 (sha256 `3f55027e...`) of a separately recorded `--features alt` attempt on another fixture crate, whose
 `translation.json` equals that attempt's positive. A test places it over `bound-project`'s published file to show

@@ -24,6 +24,9 @@ const recorded = (run, file) => path.join(FIXTURES, 'recorded', run, file);
 const read = (run, file) => fs.readFileSync(recorded(run, file), 'utf8');
 const sha256 = (text) => crypto.createHash('sha256').update(text).digest('hex');
 const BOUND = 'positive-bound';
+// A derived run's constants record: the recorded one, re-bound to the files the
+// derived receipt names (the edits these tests make do not change declarations).
+const rebound = (run, files) => JSON.stringify({ ...JSON.parse(read(run, 'constants.json')), inputs: { files } });
 const THEOREM = 'probe:m1demo.spec.double_spec';
 const FITS = 'probe:m1demo.spec.DoubleFits';
 const temporaryDirectories = [];
@@ -46,6 +49,7 @@ function graph(overrides = {}) {
     libraries: ['M1demo'],
     projectRoot: PROJECT,
     manifestText: fs.readFileSync(MANIFEST, 'utf8'),
+    constantsText: read(BOUND, 'constants.json'),
     ...overrides,
   });
 }
@@ -60,7 +64,8 @@ function derived({ edit = () => {}, extractText = null, log = (text) => text, re
   const signed = JSON.parse(read(BOUND, 'receipt.json'));
   signed.outputs = { extractSha256: sha256(text), logSha256: sha256(logText) };
   receipt(signed);
-  return graph({ extractText: text, logText, receiptText: JSON.stringify(signed), projectRoot });
+  return graph({ extractText: text, logText, receiptText: JSON.stringify(signed), projectRoot,
+    constantsText: rebound(BOUND, signed.inputs.files) });
 }
 
 const wrote = (count) => (text) => text.replace('Wrote 9 ', `Wrote ${count} `);
@@ -85,7 +90,8 @@ const local = (record, kind, from) => record.edges
 describe('recorded positive: a bound run of a proved theorem over an extracted definition', () => {
   it('is complete, exits 0, and records provenance with the binding kept separate', () => {
     const result = cli([recorded(BOUND, 'lean.json'), '--library', 'M1demo', '--log', recorded(BOUND, 'probe.log'),
-      '--receipt', recorded(BOUND, 'receipt.json'), '--project-root', PROJECT, '--manifest', MANIFEST]);
+      '--receipt', recorded(BOUND, 'receipt.json'), '--project-root', PROJECT, '--manifest', MANIFEST,
+      '--constants', recorded(BOUND, 'constants.json')]);
     assert.equal(result.status, 0, result.stderr);
     const record = JSON.parse(result.stdout);
     assert.equal(record.state, 'complete');
@@ -443,6 +449,7 @@ describe('binding to the recorded extraction attempt', () => {
       libraries: LIBS,
       projectRoot: overrides.projectRoot ?? boundProject(),
       manifestText: fs.readFileSync(ATTEMPT_MANIFEST, 'utf8'),
+      constantsText: run === 'bound-positive' ? read('bound-positive', 'constants.json') : null,
       ...overrides,
     });
   }
@@ -468,7 +475,8 @@ describe('binding to the recorded extraction attempt', () => {
     }
     if (resign) receipt.inputs.files = projectInputs(root);
     editReceipt(receipt);
-    return boundGraph('bound-positive', { projectRoot: root, extractText, receiptText: JSON.stringify(receipt), ...overrides });
+    return boundGraph('bound-positive', { projectRoot: root, extractText, receiptText: JSON.stringify(receipt),
+      constantsText: rebound('bound-positive', receipt.inputs.files), ...overrides });
   }
   const binding = (record) => [record.binding.status, ...record.binding.reasons];
 
@@ -477,7 +485,7 @@ describe('binding to the recorded extraction attempt', () => {
     assert.deepEqual(projectInputs(root), JSON.parse(read('bound-positive', 'receipt.json')).inputs.files);
     const result = cli([recorded('bound-positive', 'lean.json'), '--library', LIBS.join(','),
       '--log', recorded('bound-positive', 'probe.log'), '--receipt', recorded('bound-positive', 'receipt.json'),
-      '--project-root', root, '--manifest', ATTEMPT_MANIFEST]);
+      '--project-root', root, '--manifest', ATTEMPT_MANIFEST, '--constants', recorded('bound-positive', 'constants.json')]);
     assert.equal(result.status, 0, result.stderr);
     const record = JSON.parse(result.stdout);
     assert.equal(record.state, 'complete');
@@ -498,7 +506,8 @@ describe('binding to the recorded extraction attempt', () => {
     const root = boundProject();
     fs.copyFileSync(recorded('bound-mutated-body', 'M1demo.lean'), path.join(root, 'M1demo', 'M1demo.lean'));
     const record = boundGraph('bound-mutated-body', { projectRoot: root });
-    assert.deepEqual(codes(record), ['generated-lean-differs-from-attempt']);
+    // No Lean constants record was taken for this run.
+    assert.deepEqual(codes(record), ['generated-lean-differs-from-attempt', 'fidelity-unverified']);
     assert.deepEqual(binding(record), ['unbound', 'inputs-disagree-with-attempt']);
     assert.equal(record.provenance.llbcSha256, null);
   });
@@ -593,7 +602,8 @@ describe('binding to the recorded extraction attempt', () => {
     const file = path.join(root, 'failed-receipt.json');
     fs.writeFileSync(file, JSON.stringify(receipt));
     const result = cli([recorded('bound-positive', 'lean.json'), '--library', LIBS.join(','),
-      '--log', recorded('bound-positive', 'probe.log'), '--receipt', file, '--project-root', root, '--manifest', ATTEMPT_MANIFEST]);
+      '--log', recorded('bound-positive', 'probe.log'), '--receipt', file, '--project-root', root, '--manifest', ATTEMPT_MANIFEST,
+      '--constants', recorded('bound-positive', 'constants.json')]);
     assert.equal(result.status, 1);
     const record = JSON.parse(result.stdout);
     assert.deepEqual(codes(record), ['run-failed']);
@@ -668,6 +678,7 @@ describe('omitted external lists and the structure and projection kinds', () => 
       libraries: LIBS,
       projectRoot: kindsProject(run),
       manifestText: fs.readFileSync(ATTEMPT_MANIFEST, 'utf8'),
+      constantsText: run === A ? read(A, 'constants.json') : null,
       ...overrides,
     });
   }
@@ -709,7 +720,8 @@ describe('omitted external lists and the structure and projection kinds', () => 
   it('recorded run A: structures, projections and instances give a complete, bound graph', () => {
     const root = kindsProject(A);
     const result = cli([recorded(A, 'lean.json'), '--library', LIBS.join(','), '--log', recorded(A, 'probe.log'),
-      '--receipt', recorded(A, 'receipt.json'), '--project-root', root, '--manifest', ATTEMPT_MANIFEST]);
+      '--receipt', recorded(A, 'receipt.json'), '--project-root', root, '--manifest', ATTEMPT_MANIFEST,
+      '--constants', recorded(A, 'constants.json')]);
     assert.equal(result.status, 0, result.stderr);
     const record = JSON.parse(result.stdout);
     assert.equal(record.state, 'complete');
@@ -737,7 +749,7 @@ describe('omitted external lists and the structure and projection kinds', () => 
   it('recorded run B: an inductive type stays unqualified, and its constructors are missing', () => {
     const record = kindsGraph(B);
     assert.equal(record.state, 'incomplete');
-    assert.deepEqual(codes(record), ['unqualified-kind', 'missing-declarations', 'unresolved-edge']);
+    assert.deepEqual(codes(record), ['unqualified-kind', 'missing-declarations', 'unresolved-edge', 'fidelity-unverified']);
     assert.deepEqual(record.completeness.missingDeclarations, [K('Color.green'), K('Color.red')]);
     assert.equal(record.blockers[0].declaration, K('Color'));
   });
@@ -756,7 +768,86 @@ describe('omitted external lists and the structure and projection kinds', () => 
     const envelope = JSON.parse(read(A, 'lean.json'));
     delete envelope.data[K('twice')]['type-dependencies-external'];
     const record = kindsGraph(A, { extractText: JSON.stringify(envelope) });
-    assert.deepEqual(codes(record), ['run-mismatch']);
+    // The receipt catches the edit, and the fidelity gate independently finds Nat unreported.
+    assert.deepEqual(codes(record), ['run-mismatch', 'dependency-not-reported']);
     assert.deepEqual([record.binding.status, ...record.binding.reasons], ['unbound', 'run-receipt-disagrees']);
+  });
+});
+
+describe('dependency fidelity against the Lean constants record', () => {
+  const editConstants = (change) => {
+    const constants = JSON.parse(read(BOUND, 'constants.json'));
+    change(constants);
+    return JSON.stringify(constants);
+  };
+  const entry = (constants, name) => constants.project.find((item) => item.name === name);
+  const listed = (record, item) => record.fidelity.represented.some((represented) =>
+    Object.entries(item).every(([key, value]) => JSON.stringify(represented[key]) === JSON.stringify(value)));
+
+  it('recorded positive: verified, with every representation listed', () => {
+    const record = graph();
+    assert.equal(record.state, 'complete');
+    assert.equal(record.fidelity.status, 'verified');
+    for (const item of [
+      { declaration: 'probe:m1demo.sum_to_loop', list: 'value', constant: 'Prod.mk', rule: 'by-inductive', via: ['Prod'] },
+      { declaration: 'probe:m1demo.sum_to_loop', constant: 'Prod.casesOn', rule: 'by-inductive', via: ['Prod'] },
+      { declaration: 'probe:m1demo.sum_to_loop.body', constant: 'Prod.mk', rule: 'by-inductive', via: ['Prod'] },
+      { declaration: 'probe:m1demo.sum_to_loop', constant: 'm1demo.sum_to_loop.match_1', rule: 'auxiliary-fold' },
+      { declaration: 'probe:m1demo.sum_to', constant: 'm1demo.sum_to._proof_1', rule: 'proof-irrelevant' },
+    ]) assert.ok(listed(record, item), JSON.stringify(item));
+  });
+
+  it('the known Prod.mk omission cannot pass once its inductive is not reported', () => {
+    const record = derived({ edit: (data) => {
+      const atom = data['probe:m1demo.sum_to_loop'];
+      atom['term-dependencies-external'] = atom['term-dependencies-external'].filter((dep) => dep !== 'probe:Prod');
+    } });
+    assert.equal(record.state, 'incomplete');
+    assert.deepEqual(codes(record), ['dependency-not-reported']);
+    assert.equal(record.blockers[0].declaration, 'probe:m1demo.sum_to_loop');
+    assert.match(record.blockers[0].reason, /Prod\.mk \(value\)/);
+    assert.equal(record.fidelity.status, 'incomplete');
+  });
+
+  it('an unreported constructor or external constant blocks and taints every closure that reaches it', () => {
+    for (const constant of ['Prod.mk', 'Nat.add']) {
+      const record = graph({ constantsText: editConstants((constants) => { entry(constants, 'm1demo.spec.doubleNat').value.push(constant); }) });
+      assert.deepEqual(codes(record), ['dependency-not-reported'], constant);
+      assert.equal(record.blockers[0].declaration, 'probe:m1demo.spec.doubleNat');
+      assert.deepEqual(record.closures[THEOREM].blockers,
+        [{ code: 'graph-incomplete' }, { code: 'dependency-not-reported', declaration: 'probe:m1demo.spec.doubleNat' }]);
+    }
+  });
+
+  it('a type constant must be reported in the type lists', () => {
+    const record = graph({ constantsText: editConstants((constants) => { entry(constants, 'm1demo.spec.double_spec').type.push('Aeneas.Std.U32.add_spec'); }) });
+    assert.deepEqual(codes(record), ['dependency-not-reported']);
+    assert.match(record.blockers[0].reason, /U32\.add_spec \(type\)/);
+  });
+
+  it('a missing, malformed, unbound or partial constants record establishes nothing', () => {
+    assert.deepEqual(codes(graph({ constantsText: null })), ['fidelity-unverified']);
+    assert.deepEqual(codes(graph({ constantsText: '{"schema":"fvs/lean-constants","version":1}' })), ['invalid-constants']);
+    assert.deepEqual(codes(graph({ constantsText: editConstants((constants) => { constants.referenced.push({ ...constants.referenced[0] }); }) })), ['invalid-constants']);
+    assert.deepEqual(codes(graph({ constantsText: editConstants((constants) => { constants.inputs.files['M1demo.lean'] = '0'.repeat(64); }) })), ['fidelity-unbound']);
+    assert.deepEqual(codes(graph({ constantsText: editConstants((constants) => { constants.project = constants.project.filter((item) => item.name !== 'm1demo.clamp'); }) })),
+      ['constants-missing-declaration']);
+  });
+
+  it('an .ilean without a references map is not coverage evidence; an empty map is', () => {
+    for (const references of [undefined, [], 'x']) {
+      const projectRoot = projectCopy((directory) => {
+        const file = path.join(directory, '.lake', 'build', 'lib', 'lean', 'M1demo', 'Spec.ilean');
+        const ilean = JSON.parse(fs.readFileSync(file, 'utf8'));
+        if (references === undefined) delete ilean.references;
+        else ilean.references = references;
+        fs.writeFileSync(file, JSON.stringify(ilean));
+      });
+      const record = derived({ projectRoot, receipt: (r) => { r.inputs.files = projectInputs(projectRoot); } });
+      assert.deepEqual(codes(record), ['ilean-references-missing'], JSON.stringify(references));
+    }
+    const root = JSON.parse(fs.readFileSync(path.join(PROJECT, '.lake', 'build', 'lib', 'lean', 'M1demo.ilean'), 'utf8'));
+    assert.deepEqual(root.references, {});
+    assert.equal(graph().state, 'complete');
   });
 });
