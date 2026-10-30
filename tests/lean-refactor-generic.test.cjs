@@ -57,12 +57,14 @@ const { spawnSync } = require('node:child_process');
 const blocks = file => [...fs.readFileSync(path.join(ROOT, file), 'utf8').matchAll(/```bash\n([\s\S]*?)```/g)].map(m => m[1]);
 const block = (file, needle) => blocks(file).find(b => b.includes(needle));
 
-function project({ mathlib = false, behaviour = {} } = {}) {
+function project({ mathlib = false, behaviour = {}, manifest = null, lakefile = null } = {}) {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-refactor-gate-')));
   const bin = path.join(dir, 'bin'); fs.mkdirSync(bin);
-  fs.writeFileSync(path.join(dir, 'lakefile.toml'), 'name = "demo"\n');
+  const [lakeName, lakeText] = lakefile ?? ['lakefile.toml', 'name = "demo"\n'];
+  fs.writeFileSync(path.join(dir, lakeName), lakeText);
   fs.writeFileSync(path.join(dir, 'lean-toolchain'), 'leanprover/lean4:v4.31.0\n');
-  if (mathlib) fs.writeFileSync(path.join(dir, 'lake-manifest.json'), '{"packages": [{"name": "mathlib"}]}\n');
+  const m = manifest ?? (mathlib ? { name: 'demo', packages: [{ name: 'mathlib' }] } : null);
+  if (m) fs.writeFileSync(path.join(dir, 'lake-manifest.json'), JSON.stringify(m) + '\n');
   fs.writeFileSync(path.join(bin, 'lake'), [
     '#!/bin/sh', 'echo "$*" >> "$FAKE_LAKE_LOG"', 'key=$(echo "$*" | tr " /." "___")',
     'case "$key" in', ...Object.entries(behaviour).map(([k, [out, code]]) => `  ${k}) echo "${out}"; exit ${code};;`),
@@ -86,6 +88,15 @@ for (const file of SOURCES) {
     assert.equal(ok.status, 0); assert.match(ok.calls, /^exe cache get$/m);
     const failed = run(project({ mathlib: true, behaviour: { exe_cache_get: ['offline', 7] } }), cache);
     assert.equal(failed.status, 7); assert.match(failed.stderr, /Lake cache preflight failed/);
+    // Exact identity only: similar names or a library target called mathlib are not the Mathlib package.
+    const lookalike = run(project({ lakefile: ['lakefile.lean', 'import Lake\nopen Lake DSL\npackage mathlib_utils\n'],
+      manifest: { name: 'mathlib_utils', packages: [{ name: 'mathlib_utils' }] } }), cache);
+    assert.equal(lookalike.status, 0); assert.equal(lookalike.calls, ''); assert.match(lookalike.stdout, /not applicable/);
+    const libTarget = run(project({ lakefile: ['lakefile.toml', 'name = "demo"\n\n[[lean_lib]]\nname = "mathlib"\n'],
+      manifest: { name: 'demo', packages: [] } }), cache);
+    assert.equal(libTarget.status, 0); assert.equal(libTarget.calls, ''); assert.match(libTarget.stdout, /not applicable/);
+    const root = run(project({ manifest: { name: 'mathlib', packages: [{ name: 'batteries' }] } }), cache);
+    assert.equal(root.status, 0); assert.match(root.calls, /^exe cache get$/m);
   });
 
   it(`${file}: the selected-file gate keeps the real status and covers files outside the default build`, () => {

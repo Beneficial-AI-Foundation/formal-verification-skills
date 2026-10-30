@@ -31,8 +31,8 @@ LAKE_BUILD_GUIDE=$(cat ~/.claude/fv-skills/references/lake-build.md) || exit 1
 
 <step name="cache_preflight">
 Run the cache preflight from the validated Lean project root before the baseline build when the
-project provides Mathlib's `cache` executable (Mathlib is a dependency in `lake-manifest.json`, or
-the project is Mathlib). An applicable preflight that fails stops the workflow. A project without
+project provides Mathlib's `cache` executable: `lake-manifest.json` names Mathlib as the root package
+or as a dependency. An applicable preflight that fails stops the workflow. A project without
 that executable skips the preflight; never install dependencies or change pins to create one:
 
 ```bash
@@ -40,8 +40,9 @@ if { [ ! -f lakefile.lean ] && [ ! -f lakefile.toml ]; } || [ ! -f lean-toolchai
   echo "FVS >> ERROR: run from the Lean project root" >&2
   exit 1
 fi
-if grep -q '"name": *"mathlib"' lake-manifest.json 2>/dev/null ||
-   grep -qE '^[[:space:]]*(name[[:space:]]*=[[:space:]]*"mathlib"|package[[:space:]]+mathlib)' lakefile.toml lakefile.lean 2>/dev/null; then
+# Exact identity: the root package or a recorded dependency is named mathlib in lake-manifest.json.
+if node -e 'const m = JSON.parse(require("fs").readFileSync("lake-manifest.json", "utf8"));
+  process.exit(m.name === "mathlib" || (m.packages || []).some(p => p.name === "mathlib") ? 0 : 1)' 2>/dev/null; then
   LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake exe cache get
   CACHE_STATUS=$?
   if [ "$CACHE_STATUS" -ne 0 ]; then
