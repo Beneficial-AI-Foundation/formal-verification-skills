@@ -172,8 +172,11 @@ function publishedRelative(root, file) {
 // from the given patch manifest. Paths are matched relative to the project the
 // attempt published into, so a copy of that project still binds by content. Absent or unsupported evidence leaves the
 // binding unbound; evidence that disagrees blocks the record.
-function bindAttempt({ projectRoot, files, manifest, translationRelative, entries, data, block }) {
+function bindAttempt({ projectRoot, files, runConsistent, manifest, translationRelative, entries, data, block }) {
   if (!files) return { status: 'unbound', reasons: ['run-not-bound'] };
+  // Matching input files are not enough: the receipt must also vouch for this
+  // extract, log, Lean commit, scope and a successful run.
+  if (!runConsistent) return { status: 'unbound', reasons: ['run-receipt-disagrees'] };
   let loaded;
   try {
     loaded = readState({ projectRoot });
@@ -204,6 +207,12 @@ function bindAttempt({ projectRoot, files, manifest, translationRelative, entrie
     disagree('attempt-translation-mismatch', 'the analysed translation.json is not the one the recorded attempt published');
   }
   const published = run.publication.map((entry) => ({ ...entry, relative: publishedRelative(root, entry.projectPath) }));
+  // Distinct recorded strings naming one file (a/./b, a//b) are aliases, refused
+  // rather than collapsed, so each published file appears once.
+  const repeated = (values) => sorted(values.filter((value, index) => values.indexOf(value) !== index));
+  const aliases = [...repeated(published.map((entry) => entry.relative).filter((value) => value !== null)),
+    ...repeated(published.map((entry) => path.posix.normalize(entry.attemptPath)))];
+  if (aliases.length > 0) disagree('attempt-publication-alias', `the recorded publication names the same file more than once: ${aliases.join(', ')}`);
   const differing = published.filter((entry) => entry.relative === null || files[entry.relative] !== entry.sha256)
     .map((entry) => entry.relative ?? entry.projectPath);
   if (differing.length > 0) disagree('generated-lean-differs-from-attempt', `the analysed project does not hold the published bytes of ${differing.join(', ')}`);
@@ -349,6 +358,7 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
   // project root still holds, and a scope covering the requested libraries.
   let files = null;
   const receipt = receiptText === null ? null : parseJson(receiptText);
+  const runChecksFrom = blockers.length;
   const leanCommit = envelope.source?.commit;
   record.provenance.leanProjectCommit = isCommit(leanCommit) ? leanCommit : null;
   if (!isCommit(leanCommit)) block('invalid-lean-commit', `the extract's source.commit ${JSON.stringify(leanCommit)} is not a full commit`);
@@ -388,6 +398,7 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
       else files = receipt.inputs.files;
     }
   }
+  const runConsistent = files !== null && blockers.length === runChecksFrom;
 
   // Scope: the run's modules and the declarations Lean recorded in their .ilean
   // files. Every project module must lie under a requested library, so any
@@ -460,7 +471,7 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
   // The same-extraction claim, kept apart from the graph's state. A complete
   // state never implies it; joining with the Rust record needs both.
   if (projectRoot) {
-    const { llbcSha256, ...binding } = bindAttempt({ projectRoot, files, manifest, translationRelative, entries, data, block });
+    const { llbcSha256, ...binding } = bindAttempt({ projectRoot, files, runConsistent, manifest, translationRelative, entries, data, block });
     record.binding = binding;
     if (binding.status === 'bound') {
       record.provenance.llbcSha256 = llbcSha256;

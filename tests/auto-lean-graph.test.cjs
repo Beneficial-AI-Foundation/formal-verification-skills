@@ -449,7 +449,7 @@ describe('binding to the recorded extraction attempt', () => {
 
   // A copy of the bound project with its state or files edited, and the
   // receipt re-signed over the edited inputs (or left stale when asked).
-  function edited({ state = null, project = () => {}, resign = true, extract = null, ...overrides } = {}) {
+  function edited({ state = null, project = () => {}, resign = true, extract = null, receipt: editReceipt = () => {}, ...overrides } = {}) {
     const root = boundProject();
     if (state) {
       const file = path.join(root, STATE);
@@ -467,6 +467,7 @@ describe('binding to the recorded extraction attempt', () => {
       receipt.outputs.extractSha256 = sha256(extractText);
     }
     if (resign) receipt.inputs.files = projectInputs(root);
+    editReceipt(receipt);
     return boundGraph('bound-positive', { projectRoot: root, extractText, receiptText: JSON.stringify(receipt), ...overrides });
   }
   const binding = (record) => [record.binding.status, ...record.binding.reasons];
@@ -563,6 +564,69 @@ describe('binding to the recorded extraction attempt', () => {
       assert.deepEqual(codes(record), ['malformed-state']);
       assert.equal(record.binding.status, 'unbound');
     }
+  });
+
+  it('a receipt that fails its own checks never binds, even when the project files match', () => {
+    const cases = [
+      [{ extractText: JSON.stringify(JSON.parse(read('bound-positive', 'lean.json'))) }, 'run-mismatch'],
+      [{ logText: `${read('bound-positive', 'probe.log')}\n` }, 'run-mismatch'],
+      [{ receipt: (r) => { r.probe.exitCode = 1; } }, 'run-failed'],
+      [{ receipt: (r) => { r.lakeBuild.exitCode = 2; } }, 'run-failed'],
+      [{ receipt: (r) => { r.inputs.leanProjectCommit = 'f'.repeat(40); } }, 'run-mismatch'],
+      [{ receipt: (r) => { r.probe.argv.push('--module', 'Specs.Double'); } }, 'scope-not-requested'],
+    ];
+    for (const [edit, code] of cases) {
+      const record = edited(edit);
+      assert.equal(record.state, 'incomplete', code);
+      assert.deepEqual(codes(record), [code]);
+      assert.deepEqual(binding(record), ['unbound', 'run-receipt-disagrees']);
+      assert.equal(record.binding.generatedLean, undefined);
+      assert.equal(record.provenance.llbcSha256, null);
+      assert.equal(record.provenance.configSha256, null);
+    }
+  });
+
+  it('the CLI reports a failed recorded run as incomplete and unbound', () => {
+    const root = boundProject();
+    const receipt = JSON.parse(read('bound-positive', 'receipt.json'));
+    receipt.probe.exitCode = 1;
+    const file = path.join(root, 'failed-receipt.json');
+    fs.writeFileSync(file, JSON.stringify(receipt));
+    const result = cli([recorded('bound-positive', 'lean.json'), '--library', LIBS.join(','),
+      '--log', recorded('bound-positive', 'probe.log'), '--receipt', file, '--project-root', root, '--manifest', ATTEMPT_MANIFEST]);
+    assert.equal(result.status, 1);
+    const record = JSON.parse(result.stdout);
+    assert.deepEqual(codes(record), ['run-failed']);
+    assert.deepEqual(binding(record), ['unbound', 'run-receipt-disagrees']);
+  });
+
+  it('publication entries that alias after normalisation are refused, not collapsed', () => {
+    // Labelled state mutation: a second M1demo.lean entry spelled with /./ in both recorded paths.
+    const record = edited({ state: (s, run) => {
+      const lean = run.publication.find((entry) => entry.projectPath.endsWith('/M1demo.lean'));
+      const alias = (file) => file.replace(/\/M1demo\.lean$/, '/./M1demo.lean');
+      run.publication.push({ ...lean, attemptPath: alias(lean.attemptPath), projectPath: alias(lean.projectPath) });
+    } });
+    assert.deepEqual(codes(record), ['attempt-publication-alias']);
+    assert.deepEqual(binding(record), ['unbound', 'inputs-disagree-with-attempt']);
+  });
+
+  it('an alias in only the project path or only the attempt path is refused too', () => {
+    const lean = (run) => run.publication.find((entry) => entry.projectPath.endsWith('/M1demo.lean'));
+    const projectOnly = edited({ state: (s, run) => {
+      const entry = lean(run);
+      run.publication.push({ ...entry, attemptPath: entry.attemptPath.replace(/M1demo\.lean$/, 'Copy.lean'),
+        projectPath: entry.projectPath.replace(/\/M1demo\.lean$/, '//M1demo.lean') });
+    } });
+    assert.deepEqual(codes(projectOnly), ['attempt-publication-alias']);
+    const attemptOnly = edited({ state: (s, run) => {
+      const entry = lean(run);
+      const specs = path.posix.join(s.extraction.inputs.crateRoot, 'Specs.lean');
+      run.publication.push({ attemptPath: entry.attemptPath.replace(/\/M1demo\.lean$/, '/./M1demo.lean'), projectPath: specs,
+        sha256: projectInputs(PUBLISHED)['Specs.lean'] });
+    } });
+    assert.ok(codes(attemptOnly).includes('attempt-publication-alias'));
+    assert.deepEqual(binding(attemptOnly), ['unbound', 'inputs-disagree-with-attempt']);
   });
 
   it('a state changed after the probe run is stale, not adopted', () => {
