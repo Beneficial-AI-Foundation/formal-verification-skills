@@ -22,6 +22,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Codex: the adapter no longer implies that a role's `sandbox_mode` is enforced. Codex children run
   in the parent session's sandbox; the effective sandbox is reported as the parent's, and a child is
   never called read-only when the parent can write.
+- Loop commands that delegate a sub-agent per pass or round (lean-refactor, lean-verify, aeneas-extract,
+  lean-specify repair passes, lean-formalise researcher re-dispatch, model-external revision rounds, and
+  crypto-plan, crypto-followup and crypto-eval re-authoring or recheck) now state one uniform rule for
+  Claude Code and Codex: a fresh child per pass with current inputs, no inline substitution by the parent,
+  and a stop when a dispatch fails or ends in a terminal error, while valid results keep their routing.
+  lean-refactor no longer starts another pass after a refactorer `## ERROR`. This is an instruction
+  contract; it is not host enforcement of each pass (#114).
 
 ### Added
 

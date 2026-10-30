@@ -321,6 +321,14 @@ both to the next reviewer packet with repeated `--history` flags. At round three
 latest artifacts and the exact `/fvs:crypto-review <topic> nN --target plan` resume command; never
 auto-approve or start execution. Failed, cancelled, pending, and unverified states also stop.
 
+**Fresh child per pass:** every pass or round of this loop that delegates work dispatches a new
+child of the role named here, with the current inputs and the confirmed settings; the parent never
+performs that role's work itself. Wait for the child's terminal result through the runtime's normal
+wait or notification; a spawn acknowledgement or progress message is not a result. If the dispatch
+fails, the child cannot be confirmed, or it ends in a terminal error, stop and report the affected
+pass. Valid results such as a failed build, NOVEL, REJECT, REVISE or FOLLOWUP still route as this
+step describes, and parent-owned baseline, build, revert and report steps stay with the parent.
+
 ## Step 6: Run-end banner + next command
 
 ```

@@ -55,7 +55,7 @@ Execute mode fallback:
 ## C. Task() -> spawn_agent Mapping
 FVS workflows use `Task(...)` (Claude Code syntax). Translate to Codex collaboration tools:
 
-**Delegation authorization:** Invoking this skill is the user's explicit request for the sub-agent delegation this workflow specifies. Each `Task(...)` dispatch in the workflow body is a skill instruction to spawn a sub-agent with `spawn_agent` when the workflow reaches that step; do not wait for the user to ask for sub-agents again, and do not perform a delegated role inline in this session. If `spawn_agent` is not visible, discover it with `tool_search` first. If sub-agents remain unavailable or disabled, stop before that dispatch, tell the user why, and offer only the workflow's documented alternatives (such as a documented `--codex` runner).
+**Delegation authorization:** Invoking this skill is the user's explicit request for the sub-agent delegation this workflow specifies. Each `Task(...)` dispatch in the workflow body, including every pass of a loop, is a skill instruction to spawn a sub-agent with `spawn_agent` when the workflow reaches that step; do not wait for the user to ask for sub-agents again, and do not perform a delegated role inline in this session. If `spawn_agent` is not visible, discover it with `tool_search` first. If sub-agents remain unavailable or disabled, stop before that dispatch, tell the user why, and offer only the workflow's documented alternatives (such as a documented `--codex` runner).
 
 **Schema detection (required first step):** Inspect the visible `spawn_agent` schema. It may have `agent_type` or be generic (no `agent_type`); inspect `model` and `reasoning_effort` fields independently rather than assuming either exists. An available `agent_type` field does not establish that a particular FVS role is registered.
 
@@ -194,6 +194,14 @@ Repeat EXTRACT -> CLASSIFY -> DISPATCH -> DOCUMENT until clean or escalated, enf
 loop bounds (per-blocker attempt-cap 3, per-run cycle hard-cap ~25, bisection variant-budget
 ~12, no-progress key `sha256(layer || signature)` -- a same-key recurrence after an applied
 fix escalates immediately).
+
+**Fresh child per pass:** every pass or round of this loop that delegates work dispatches a new
+child of the role named here, with the current inputs and the confirmed settings; the parent never
+performs that role's work itself. Wait for the child's terminal result through the runtime's normal
+wait or notification; a spawn acknowledgement or progress message is not a result. If the dispatch
+fails, the child cannot be confirmed, or it ends in a terminal error, stop and report the affected
+pass. Valid results such as a failed build, NOVEL, REJECT, REVISE or FOLLOWUP still route as this
+step describes, and parent-owned baseline, build, revert and report steps stay with the parent.
 
 - **EXTRACT:** run extraction and build under `set -o pipefail` + `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`;
   read the tool's real exit status via `${PIPESTATUS[0]}`, never the tail of a piped log.

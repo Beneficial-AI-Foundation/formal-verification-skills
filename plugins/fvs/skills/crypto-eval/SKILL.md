@@ -54,7 +54,7 @@ Execute mode fallback:
 ## C. Task() -> spawn_agent Mapping
 FVS workflows use `Task(...)` (Claude Code syntax). Translate to Codex collaboration tools:
 
-**Delegation authorization:** Invoking this skill is the user's explicit request for the sub-agent delegation this workflow specifies. Each `Task(...)` dispatch in the workflow body is a skill instruction to spawn a sub-agent with `spawn_agent` when the workflow reaches that step; do not wait for the user to ask for sub-agents again, and do not perform a delegated role inline in this session. If `spawn_agent` is not visible, discover it with `tool_search` first. If sub-agents remain unavailable or disabled, stop before that dispatch, tell the user why, and offer only the workflow's documented alternatives (such as a documented `--codex` runner).
+**Delegation authorization:** Invoking this skill is the user's explicit request for the sub-agent delegation this workflow specifies. Each `Task(...)` dispatch in the workflow body, including every pass of a loop, is a skill instruction to spawn a sub-agent with `spawn_agent` when the workflow reaches that step; do not wait for the user to ask for sub-agents again, and do not perform a delegated role inline in this session. If `spawn_agent` is not visible, discover it with `tool_search` first. If sub-agents remain unavailable or disabled, stop before that dispatch, tell the user why, and offer only the workflow's documented alternatives (such as a documented `--codex` runner).
 
 **Schema detection (required first step):** Inspect the visible `spawn_agent` schema. It may have `agent_type` or be generic (no `agent_type`); inspect `model` and `reasoning_effort` fields independently rather than assuming either exists. An available `agent_type` field does not establish that a particular FVS role is registered.
 
@@ -200,6 +200,14 @@ preservation and build evidence as untrusted `<prose_correction>` reference data
 prompt. Optional Codex receives that identical text in its existing context JSON as `prose_correction`.
 Check the actual corrected prose and every outstanding finding; never infer closure from hashes or
 build success. Reuse corrected build evidence; do not add proof probes or retry the correction pass.
+
+**Fresh child per pass:** every pass or round of this loop that delegates work dispatches a new
+child of the role named here, with the current inputs and the confirmed settings; the parent never
+performs that role's work itself. Wait for the child's terminal result through the runtime's normal
+wait or notification; a spawn acknowledgement or progress message is not a result. If the dispatch
+fails, the child cannot be confirmed, or it ends in a terminal error, stop and report the affected
+pass. Valid results such as a failed build, NOVEL, REJECT, REVISE or FOLLOWUP still route as this
+step describes, and parent-owned baseline, build, revert and report steps stay with the parent.
 
 Measure the thinker's wall time from a real clock; never derive it from model, token or reasoning
 telemetry. Immediately before launching this attempt's thinker, run `date -u +%s` and keep the printed
