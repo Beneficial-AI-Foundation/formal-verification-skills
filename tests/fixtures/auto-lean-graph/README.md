@@ -99,12 +99,19 @@ exercise the verified path; it is not evidence.
 `oracle-v2/` is a real paired capture of an owned fixture crate: `Pair` (a structure), a private `helper` over its
 fields, and two public roots that call it (`root_sum`, `root_twice`). The crate was extracted through the patch
 engine's recorded attempt with the demo's local Aeneas/Charon release, and given a separate `Specs` library with one
-`rfl` theorem per root. Then probe-lean and the Lean constants extractor (version 2) ran over one discovered import
-inventory: the resolved compiled data parts of every imported module, 3916 modules and 11742 files, identical at
-discovery, before and after each run. `oracle-v2/project/` holds the receipt-bound project files (state in
-`oracle-v2/run/state.json`); `oracle-v2/run/` holds the probe extract, log and receipt (with `inputs.imports`), the
-`fvs/lean-constants` version 2 record, its `fvs/lean-constants-run` success receipt and the attempt manifest. The
-tests' negatives are labelled edits of this record, re-signed in its run receipt unless the test is about that.
+`rfl` theorem per root and one private theorem (`helper_self`, so Lean's private names are exercised). Then probe-lean
+0.24.0 and the Lean constants extractor ran over one discovered import inventory: the resolved compiled data parts of
+every imported module, 3916 modules and 11742 files, identical at discovery, before and after each run.
+`oracle-v2/project/` holds the receipt-bound project files (state in `oracle-v2/run/state.json`); `oracle-v2/run/`
+holds:
+- the probe extract, log and receipt (with `inputs.imports`);
+- the `fvs/lean-constants` version 2 record (with `isClass`/`isInstance` per node and the module of every non-project
+  lane target in `referenced`) and its `fvs/lean-constants-run` success receipt (actual `argv` and `cwd`);
+- `imports.json.gz`, the gzipped full import manifest whose uncompressed sha256 is the recorded inventory digest;
+- the attempt manifest.
+
+The tests' negatives are labelled edits of this capture, re-signed in its run receipt (and, for the import manifest,
+in the record and both receipts) unless the test is about that.
 
 `seeded/feature-alt-M1demo.lean` is a mutation seed, not output of this project: the published `M1demo.lean`
 (sha256 `3f55027e...`) of a separately recorded `--features alt` attempt on another fixture crate, whose

@@ -1006,10 +1006,11 @@ describe('dependency fidelity against the Lean constants record', () => {
 });
 
 describe('oracle lanes: constants version 2 as the dependency authority', () => {
-  // Real paired capture of the two-roots-one-helper fixture (probe-lean and the
-  // Lean constants extractor over one discovered import inventory).
+  // Real paired capture of the two-roots-one-helper fixture (probe-lean 0.24.0 and
+  // the Lean constants extractor over one discovered import inventory).
   const V2 = path.join(FIXTURES, 'oracle-v2');
   const run = (file) => fs.readFileSync(path.join(V2, 'run', file), 'utf8');
+  const IMPORTS = require('node:zlib').gunzipSync(fs.readFileSync(path.join(V2, 'run', 'imports.json.gz'))).toString('utf8');
   const STATE = '.formalising/auto-fv/state.json';
   const LIBS = ['M1demo', 'Specs'];
   const N = (name) => `probe:m1demo.${name}`;
@@ -1046,16 +1047,18 @@ describe('oracle lanes: constants version 2 as the dependency authority', () => 
     receipt(probe);
     return buildLeanGraph({
       extractText, logText, receiptText: JSON.stringify(probe), libraries: LIBS, projectRoot: v2Project(),
-      manifestText: run('attempt-manifest.json'), constantsText, constantsRunText: JSON.stringify(runReceipt), ...overrides,
+      manifestText: run('attempt-manifest.json'), constantsText, constantsRunText: JSON.stringify(runReceipt), importsText: IMPORTS, ...overrides,
     });
   }
   const has = (record, code) => codes(record).includes(code);
 
   it('recorded paired run: complete, bound and verified, with authoritative lanes for every node', () => {
     const root = v2Project();
+    const imports = path.join(root, 'imports.json');
+    fs.writeFileSync(imports, IMPORTS);
     const result = cli([path.join(V2, 'run', 'lean.json'), '--library', LIBS.join(','), '--log', path.join(V2, 'run', 'probe.log'),
       '--receipt', path.join(V2, 'run', 'receipt.json'), '--project-root', root, '--manifest', path.join(V2, 'run', 'attempt-manifest.json'),
-      '--constants', path.join(V2, 'run', 'constants.json'), '--constants-receipt', path.join(V2, 'run', 'constants-run.json')]);
+      '--constants', path.join(V2, 'run', 'constants.json'), '--constants-receipt', path.join(V2, 'run', 'constants-run.json'), '--imports', imports]);
     assert.equal(result.status, 0, result.stderr);
     const record = JSON.parse(result.stdout);
     assert.equal(record.schemaVersion, 2);
@@ -1117,8 +1120,13 @@ describe('oracle lanes: constants version 2 as the dependency authority', () => 
 
   it('kernel and probe-lean kinds must agree', () => {
     assert.ok(has(v2Graph({ constants: (c, n) => { n['m1demo.Pair.a'].isProjection = false; } }), 'kind-mismatch'));
-    assert.ok(has(v2Graph({ constants: (c, n) => { n['m1demo.Pair'].isStructure = false; } }), 'kind-mismatch'));
+    assert.ok(has(v2Graph({ constants: (c, n) => { n['m1demo.Pair'].isStructure = false; delete n['m1demo.Pair'].fields; } }), 'kind-mismatch'));
     assert.ok(has(v2Graph({ constants: (c, n) => { n['m1demo.helper'].kind = 'theorem'; } }), 'kind-mismatch'));
+    // probe-lean 0.24 class and instance labels need Lean's own registries to agree.
+    assert.ok(has(v2Graph({ extract: (data) => { data[N('Pair')].kind = 'class'; } }), 'kind-mismatch'));
+    assert.ok(!has(v2Graph({ extract: (data) => { data[N('Pair')].kind = 'class'; }, constants: (c, n) => { n['m1demo.Pair'].isClass = true; } }), 'kind-mismatch'));
+    assert.ok(has(v2Graph({ extract: (data) => { data[N('helper')].kind = 'instance'; } }), 'kind-mismatch'));
+    assert.ok(!has(v2Graph({ extract: (data) => { data[N('helper')].kind = 'instance'; }, constants: (c, n) => { n['m1demo.helper'].isInstance = true; } }), 'kind-mismatch'));
   });
 
   it('lanes: a swapped or omitted dependency is refused, an endpoint must exist', () => {
@@ -1162,9 +1170,101 @@ describe('oracle lanes: constants version 2 as the dependency authority', () => 
     assert.ok(has(v2Graph({ constantsRun: (r) => { r.producer = { ...r.producer, harnessSha256: '3'.repeat(64) }; } }), 'constants-run-invalid'));
     assert.ok(has(v2Graph({ constants: (c) => { c.nodes.push({ ...c.nodes[0] }); } }), 'invalid-constants'));
     const truncated = run('constants.json').slice(0, 200);
-    assert.ok(has(v2Graph({ overrides: { constantsText: truncated } }), 'invalid-constants'));
+    // Unreadable, so no version 2 record backs the 0.24.0 extract.
+    assert.deepEqual(codes(v2Graph({ overrides: { constantsText: truncated } })), ['unqualified-interface']);
+    // probe-lean 0.24.0 is qualified only beside a version 2 record.
     const v3 = v2Graph({ constants: (c) => { c.version = 3; } });
     assert.equal(v3.schemaVersion, 1);
-    assert.ok(has(v3, 'invalid-constants'));
+    assert.deepEqual([v3.state, codes(v3)], ['unsupported', ['unqualified-interface']]);
+    assert.equal(v2Graph({ overrides: { constantsText: null } }).state, 'unsupported');
+    assert.ok(has(v2Graph({ receipt: (r) => { r.probe.version = '0.14.0'; } }), 'run-mismatch'));
+    assert.deepEqual([v2Graph().tool.version, v2Graph().state], ['0.24.0', 'complete']);
+  });
+
+  it('every dependency view comes from the oracle lanes, externals included', () => {
+    const record = v2Graph();
+    assert.equal(record.state, 'complete');
+    const externals = [...new Set(record.edges.filter((edge) => edge.resolution === 'external').map((edge) => edge.to))].sort();
+    assert.deepEqual(record.external, externals);
+    // Lean-only boundary constants probe-lean never lists.
+    for (const name of ['And.intro', 'SizeOf.sizeOf', 'Eq.ndrec']) assert.ok(record.external.includes(`probe:${name}`), name);
+    // A private declaration keeps Lean's raw name on both sides.
+    const priv = 'probe:_private.Specs.Roots.0.m1demo.roots.helper_self';
+    assert.deepEqual([record.nodes[priv].probeAtom, record.nodes[priv].kind], [true, 'theorem']);
+    // Without accepted lanes no probe-derived edges or closures are emitted.
+    const refused = v2Graph({ overrides: { constantsRunText: null } });
+    assert.deepEqual([refused.edges, refused.external, refused.closures], [[], [], {}]);
+  });
+
+  it('a missing project constant never becomes an external leaf', () => {
+    const proof = 'm1demo.root_twice._proof_1';
+    // Gone from the nodes, so its reference is unclassified (probe-lean omits it too).
+    const gone = v2Graph({ constants: (c) => { c.nodes = c.nodes.filter((node) => node.name !== proof); } });
+    assert.ok(has(gone, 'unclassified-reference'));
+    assert.ok(gone.edges.some((edge) => edge.to === `probe:${proof}` && edge.resolution === 'unresolved'));
+    assert.ok(!gone.external.includes(`probe:${proof}`));
+    // Declared as a reference from a project module, or from no module: still a gap.
+    for (const module of ['M1demo.M1demo', 'Specs.Other', null]) {
+      const moved = v2Graph({ constants: (c) => { c.nodes = c.nodes.filter((node) => node.name !== proof); c.referenced.push({ name: proof, module }); } });
+      assert.ok(has(moved, 'missing-project-node'), String(module));
+    }
+    // An external reference with no classification, and a classification no lane uses.
+    assert.ok(has(v2Graph({ constants: (c) => { c.referenced = c.referenced.filter((entry) => entry.name !== 'And.intro'); } }), 'unclassified-reference'));
+    assert.ok(has(v2Graph({ constants: (c) => { c.referenced.push({ name: 'Unused.constant', module: 'Init.Prelude' }); } }), 'unclassified-reference'));
+  });
+
+  it('the record namespace and kind-specific metadata are required, missing is not empty', () => {
+    for (const [label, edit] of [
+      ['schema', (c) => { c.schema = 'other/constants'; }],
+      ['fields', (c, n) => { delete n['m1demo.Pair'].fields; }],
+      ['ctors', (c, n) => { n['m1demo.Pair'].family.ctors = 'm1demo.Pair.mk'; }],
+      ['recursors', (c, n) => { delete n['m1demo.Pair'].family.recursors; }],
+      ['ctor family', (c, n) => { delete n['m1demo.Pair.mk'].family; }],
+      ['recursor family', (c, n) => { n['m1demo.Pair.rec'].family.inductives = []; }],
+      ['family on a def', (c, n) => { n['m1demo.helper'].family = { ctors: [] }; }],
+      ['isClass', (c, n) => { delete n['m1demo.helper'].isClass; }],
+      ['referenced', (c) => { delete c.referenced; }],
+      ['referenced module', (c) => { delete c.referenced[0].module; }],
+      ['referenced node', (c) => { c.referenced.push({ name: 'm1demo.helper', module: 'M1demo.M1demo' }); }],
+    ]) assert.ok(has(v2Graph({ constants: edit }), 'invalid-constants'), label);
+    // An explicitly empty field list is still well formed.
+    assert.ok(!has(v2Graph({ constants: (c, n) => { n['m1demo.Pair'].fields = []; } }), 'invalid-constants'));
+  });
+
+  it('the analysed modules must resolve to the recorded compiled bytes in the import manifest', () => {
+    // Re-sign an edited manifest consistently in the record, both receipts and the run.
+    const resigned = (edit) => {
+      const manifest = JSON.parse(IMPORTS);
+      edit(manifest.modules);
+      const text = JSON.stringify(manifest);
+      const summary = { digest: sha256(text), modules: Object.keys(manifest.modules).length,
+        files: Object.values(manifest.modules).reduce((count, entry) => count + Object.keys(entry.parts).length, 0) };
+      return v2Graph({ constants: (c) => { c.inputs.imports = summary; }, receipt: (r) => { r.inputs.imports = summary; },
+        constantsRun: (r) => { r.inventoryBefore = r.inventoryAfter = summary.digest; }, overrides: { importsText: text } });
+    };
+    assert.equal(resigned(() => {}).state, 'complete');
+    // Lean resolved a project module from somewhere else.
+    assert.ok(has(resigned((m) => { m['Specs.Roots'].olean = '/elsewhere/Specs/Roots.olean'; }), 'import-project-mismatch'));
+    // Lean resolved other bytes, or another part set, than the project build recorded.
+    assert.ok(has(resigned((m) => { m['Specs.Roots'].parts['.olean'] = '5'.repeat(64); }), 'import-project-mismatch'));
+    assert.ok(has(resigned((m) => { delete m['M1demo.M1demo'].parts['.private']; }), 'import-project-mismatch'));
+    // The analysed modules from two project roots.
+    assert.ok(has(resigned((m) => { m.Specs.olean = m.Specs.olean.replace('roots-r9', 'roots-other'); }), 'import-project-mismatch'));
+    // A missing analysed module.
+    assert.ok(has(resigned((m) => { delete m.Specs; }), 'import-project-mismatch'));
+    // No manifest, other bytes, or counts the record misdescribes.
+    assert.ok(has(v2Graph({ overrides: { importsText: null } }), 'import-project-mismatch'));
+    assert.ok(has(v2Graph({ overrides: { importsText: `${IMPORTS} ` } }), 'import-project-mismatch'));
+    const miscounted = { ...JSON.parse(run('constants.json')).inputs.imports, modules: 3915 };
+    assert.ok(has(v2Graph({ constants: (c) => { c.inputs.imports = miscounted; }, receipt: (r) => { r.inputs.imports = miscounted; } }), 'import-project-mismatch'));
+  });
+
+  it('the run receipt records the actual extractor invocation', () => {
+    for (const edit of [
+      (r) => { r.argv = ['lake', 'env', 'lean']; },
+      (r) => { r.argv = ['/usr/bin/lean', 'env', 'lean', '/w/LeanConstants.lean']; },
+      (r) => { r.argv[3] = '/w/LeanConstants.txt'; },
+      (r) => { delete r.cwd; },
+    ]) assert.ok(has(v2Graph({ constantsRun: edit }), 'constants-run-invalid'));
   });
 });

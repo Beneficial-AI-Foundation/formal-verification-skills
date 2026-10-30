@@ -12,6 +12,10 @@ import { readProvenance } from './fvs-probe-inventory.mjs';
 // The only interface qualified so far: probe-lean 0.14.0 `extract` (Lean 4.31.0
 // build), Schema 3.0. Anything else is reported unsupported, never projected.
 const QUALIFIED = { schema: 'probe-lean/extract', schemaVersion: '3.0', tool: 'probe-lean', version: '0.14.0' };
+// probe-lean 0.24.0 is accepted only as metadata beside a version 2 constants
+// record, which is then the dependency authority; its own dependency arrays
+// match 0.14.0's on the qualification fixtures.
+const ORACLE_PROBE_VERSIONS = ['0.14.0', '0.24.0'];
 const RECEIPT_SCHEMA = 'fvs/lean-probe-run';
 const MANIFEST_SCHEMA = 'fvs-extract-patches/manifest';
 const CONSTANTS_SCHEMA = 'fvs/lean-constants';
@@ -43,7 +47,7 @@ function usage() {
     'Usage: node fvs-lean-graph.mjs LEAN.json --library NAME[,NAME...]',
     '  --log PROBE_LEAN_LOG --receipt RUN_RECEIPT.json --project-root DIR',
     '  [--manifest PATCH_MANIFEST.json] [--constants LEAN_CONSTANTS.json]',
-    '  [--constants-receipt LEAN_CONSTANTS_RUN.json]',
+    '  [--constants-receipt LEAN_CONSTANTS_RUN.json] [--imports IMPORTS.json]',
     '',
     'Builds the Lean declaration and dependency record from a probe-lean 0.14.0',
     '`extract` output. --library names the Lean module roots that must have been',
@@ -55,8 +59,9 @@ function usage() {
     'is the fvs/lean-constants record of the same project, Lean\'s own list of the',
     'constants each declaration\'s type and value mention; without it the reported',
     'dependencies are not shown to be complete. A version 2 record (with its',
-    '--constants-receipt from the same paired run) makes Lean\'s type and value',
-    'lanes the dependency authority: the output is schemaVersion 2, capability',
+    '--constants-receipt and the --imports manifest from the same paired run)',
+    'makes Lean\'s type and value lanes the dependency authority (probe-lean',
+    '0.14.0 or 0.24.0 then supplies metadata): the output is schemaVersion 2, capability',
     'oracle-lanes, with nodes, edges and trust taken from it. Prints the',
     'record as JSON. Exit 0 only when the record is complete; 1 when it is',
     'incomplete or unsupported; 2 on usage errors.',
@@ -75,7 +80,7 @@ function fatal(message) {
 }
 
 function parseArgs(argv) {
-  const args = { extract: null, libraries: [], log: null, receipt: null, projectRoot: null, manifest: null, constants: null, constantsReceipt: null };
+  const args = { extract: null, libraries: [], log: null, receipt: null, projectRoot: null, manifest: null, constants: null, constantsReceipt: null, imports: null };
   const rest = [...argv];
   if (rest[0] && !rest[0].startsWith('--')) args.extract = rest.shift();
   while (rest.length > 0) {
@@ -89,6 +94,7 @@ function parseArgs(argv) {
     else if (flag === '--manifest') args.manifest = value;
     else if (flag === '--constants') args.constants = value;
     else if (flag === '--constants-receipt') args.constantsReceipt = value;
+    else if (flag === '--imports') args.imports = value;
     else fatal(`unknown argument ${JSON.stringify(flag)}`);
   }
   if (!args.extract) fatal('a probe-lean extract JSON path is required');
@@ -463,6 +469,9 @@ const PROBE_KINDS = {
   projection: (node) => node.kind === 'def' && node.isProjection,
   theorem: (node) => node.kind === 'theorem',
   structure: (node) => node.kind === 'inductive' && node.isStructure,
+  // probe-lean 0.24 labels from Lean's registries.
+  class: (node) => node.kind === 'inductive' && node.isStructure && node.isClass === true,
+  instance: (node) => node.kind === 'def' && !node.isProjection && node.isInstance === true,
 };
 const ORACLE_CLOSURE_RULE = 'root: type lane; theorem: type lane; other kinds: type + value lanes; structure: + its fields\' projections and constructors';
 
@@ -472,6 +481,7 @@ const textList = (value) => Array.isArray(value) && value.every(isText);
 
 function oracleShapeProblems(constants) {
   const problems = [];
+  if (constants.schema !== CONSTANTS_SCHEMA) problems.push(`schema must be ${CONSTANTS_SCHEMA}`);
   const producer = constants.producer;
   if (!plainObject(producer) || !isText(producer.toolchain) ||
       !['leanSha256', 'lakeSha256', 'extractorSha256', 'discoverySha256', 'harnessSha256'].every((key) => SHA256.test(producer[key] ?? ''))) {
@@ -487,14 +497,34 @@ function oracleShapeProblems(constants) {
       typeof node.hasDeclarationRange === 'boolean' && typeof node.isStructure === 'boolean' && typeof node.isProjection === 'boolean' &&
       textList(node.type) && textList(node.value) &&
       (node.axioms === undefined || textList(node.axioms)) &&
-      (node.family === undefined || plainObject(node.family)) &&
-      (node.fields === undefined || (Array.isArray(node.fields) && node.fields.every((field) => plainObject(field) && isText(field.field) &&
-        (field.projection === null || isText(field.projection)))));
+      typeof node.isClass === 'boolean' && typeof node.isInstance === 'boolean' &&
+      familyValid(node) &&
+      // A structure must state its fields (an empty list only when Lean has none).
+      (node.isStructure ? Array.isArray(node.fields) : node.fields === undefined) &&
+      (node.fields === undefined || node.fields.every((field) => plainObject(field) && isText(field.field) &&
+        (field.projection === null || isText(field.projection))));
     if (!ok) problems.push(`node ${JSON.stringify(node?.name)} is malformed`);
     else if (names.has(node.name)) problems.push(`node ${node.name} appears twice`);
     else names.add(node.name);
   }
+  if (!Array.isArray(constants.referenced) || !constants.referenced.every((entry) => plainObject(entry) && isText(entry.name) &&
+      (entry.module === null || isText(entry.module)))) {
+    problems.push('referenced must list every non-project lane target with its module');
+  } else if (new Set(constants.referenced.map((entry) => entry.name)).size !== constants.referenced.length ||
+      constants.referenced.some((entry) => names.has(entry.name))) {
+    problems.push('referenced names must be unique and distinct from nodes');
+  }
   return problems;
+}
+
+// Kernel family links, required by kind: an inductive lists its constructors
+// and recursors, a constructor its inductive, a recursor its inductives.
+function familyValid(node) {
+  const family = node.family;
+  if (node.kind === 'inductive') return plainObject(family) && textList(family.ctors) && textList(family.recursors);
+  if (node.kind === 'ctor') return plainObject(family) && isText(family.inductive);
+  if (node.kind === 'recursor') return plainObject(family) && textList(family.inductives) && family.inductives.length > 0;
+  return family === undefined;
 }
 
 function constantsRunProblems(run, constantsText, constants) {
@@ -506,7 +536,41 @@ function constantsRunProblems(run, constantsText, constants) {
     (run.inventoryBefore !== run.inventoryAfter || run.inventoryBefore !== constants.inputs?.imports?.digest) &&
       'the import inventory changed during the oracle run or differs from the record',
     JSON.stringify(run.producer) !== JSON.stringify(constants.producer) && 'the receipt names another producer',
+    !(Array.isArray(run.argv) && path.basename(String(run.argv[0])) === 'lake' && run.argv[1] === 'env' && run.argv[2] === 'lean' &&
+      isText(run.argv[3]) && run.argv[3].endsWith('.lean') && run.argv.length === 4) && 'the receipt does not record the extractor invocation (lake env lean FILE)',
+    !isText(run.cwd) && 'the receipt does not record the working directory',
   ].filter(Boolean);
+}
+
+// The full import manifest the run discovered: its digest and counts must be
+// the record's, and each analysed module's compiled parts must be the bytes Lean
+// resolved for it, from a project build directory.
+function importProblems(importsText, summary, compiled, modules) {
+  if (importsText === null) return ['no import manifest'];
+  if (sha256(importsText) !== summary.digest) return ['the import manifest is not the one the record summarises'];
+  const manifest = parseJson(importsText);
+  if (!plainObject(manifest) || !plainObject(manifest.modules)) return ['the import manifest is malformed'];
+  const entries = Object.entries(manifest.modules);
+  const files = entries.reduce((count, [, entry]) => count + Object.keys(entry?.parts ?? {}).length, 0);
+  if (entries.length !== summary.modules || files !== summary.files) return ['the import manifest counts differ from the record'];
+  const problems = [];
+  const roots = new Set();
+  const suffixes = { '.olean': '.olean', '.server': '.olean.server', '.private': '.olean.private' };
+  for (const module of modules) {
+    const entry = manifest.modules[module];
+    const relative = `${ILEAN_DIR}/${module.replaceAll('.', '/')}`;
+    if (!plainObject(entry) || !isText(entry.olean) || !plainObject(entry.parts) || !entry.olean.endsWith(`/${relative}.olean`)) {
+      problems.push(`${module} does not resolve to ${relative}.olean`);
+      continue;
+    }
+    roots.add(entry.olean.slice(0, -(`/${relative}.olean`).length));
+    const resolved = Object.entries(entry.parts).map(([part, hash]) => `${relative}${suffixes[part] ?? part} ${hash}`);
+    const recorded = Object.entries(compiled).filter(([file]) => Object.values(suffixes).some((suffix) => file === `${relative}${suffix}`))
+      .map(([file, hash]) => `${file} ${hash}`);
+    if (!sameSet(resolved, recorded)) problems.push(`the compiled parts Lean resolved for ${module} are not the recorded ones`);
+  }
+  if (roots.size > 1) problems.push(`the analysed modules resolve to more than one project root: ${[...roots].join(', ')}`);
+  return problems;
 }
 
 // Tarjan's strongly connected components over node names.
@@ -550,9 +614,17 @@ function components(names, successors) {
   return result;
 }
 
-function oracleLanes({ constants, data, ids, defined, modules, issue }) {
+function oracleLanes({ constants, data, ids, defined, modules, libraries, issue }) {
   const idOf = (name) => `probe:${name}`;
   const byName = new Map(constants.nodes.map((node) => [node.name, node]));
+  // A lane target that is no node is external only when Lean places it in a
+  // module outside the project; a project constant without a node is a gap.
+  const referenced = new Map(constants.referenced.map((entry) => [entry.name, entry.module]));
+  const projectModule = (module) => module === null || modules.includes(module) || libraries.includes(module.split('.')[0]);
+  const targets = new Set(constants.nodes.flatMap((node) => [...node.type, ...node.value]).filter((name) => !byName.has(name)));
+  for (const name of referenced.keys()) {
+    if (!targets.has(name)) issue('unclassified-reference', `${name} is listed as referenced but no lane mentions it`);
+  }
   const atoms = new Set(ids.map((id) => id.slice('probe:'.length)));
   const isSource = (node) => defined.has(node.name);
   const supportedStructure = (name) => {
@@ -603,7 +675,14 @@ function oracleLanes({ constants, data, ids, defined, modules, issue }) {
   for (const node of constants.nodes) {
     for (const [lane, kind] of [['type', 'type'], ['value', 'term']]) {
       for (const target of node[lane]) {
-        const resolution = byName.has(target) ? (atoms.has(target) ? 'local' : 'generated') : 'external';
+        let resolution = byName.has(target) ? (atoms.has(target) ? 'local' : 'generated') : 'external';
+        if (resolution === 'external' && !referenced.has(target)) {
+          resolution = 'unresolved';
+          issue('unclassified-reference', `${node.name} mentions ${target}, which is neither a node nor a classified reference`, node.name);
+        } else if (resolution === 'external' && projectModule(referenced.get(target))) {
+          resolution = 'unresolved';
+          issue('missing-project-node', `${node.name} mentions ${target} of project module ${referenced.get(target)}, which has no node`, node.name);
+        }
         edges.push({ from: idOf(node.name), to: idOf(target), kind, resolution });
         if (resolution !== 'external') successors.set(node.name, [...(successors.get(node.name) ?? []), target]);
       }
@@ -680,7 +759,7 @@ function oracleClosure(root, byName, flagged) {
   return { rule: ORACLE_CLOSURE_RULE, declarations: sorted(declarations).map((name) => `probe:${name}`), external: sorted(external).map((name) => `probe:${name}`), blockers };
 }
 
-export function buildLeanGraph({ extractText, logText = null, receiptText = null, libraries, projectRoot = null, manifestText = null, constantsText = null, constantsRunText = null }) {
+export function buildLeanGraph({ extractText, logText = null, receiptText = null, libraries, projectRoot = null, manifestText = null, constantsText = null, constantsRunText = null, importsText = null }) {
   const blockers = [];
   const block = (code, reason, extra = {}) => blockers.push({ code, reason, ...extra });
   const requested = sorted(libraries);
@@ -726,15 +805,17 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
   record.tool = envelope.tool ?? null;
   record.source = envelope.source ?? null;
   record.timestamp = envelope.timestamp ?? null;
+  const constants = constantsText === null ? null : parseJson(constantsText);
+  const probeVersions = plainObject(constants) && constants.version === 2 ? ORACLE_PROBE_VERSIONS : [QUALIFIED.version];
   const mismatch = [
     envelope.schema !== QUALIFIED.schema && `schema ${JSON.stringify(envelope.schema)}`,
     envelope['schema-version'] !== QUALIFIED.schemaVersion && `schema-version ${JSON.stringify(envelope['schema-version'])}`,
     (envelope.tool?.name !== QUALIFIED.tool || envelope.tool?.command !== 'extract') && `tool ${JSON.stringify(envelope.tool?.name)} ${JSON.stringify(envelope.tool?.command)}`,
-    envelope.tool?.version !== QUALIFIED.version && `version ${JSON.stringify(envelope.tool?.version)}`,
+    !probeVersions.includes(envelope.tool?.version) && `version ${JSON.stringify(envelope.tool?.version)}`,
   ].filter(Boolean);
   if (mismatch.length > 0) {
     record.state = 'unsupported';
-    block('unqualified-interface', `only probe-lean ${QUALIFIED.version} extract Schema ${QUALIFIED.schemaVersion} is qualified; got ${mismatch.join(', ')}`);
+    block('unqualified-interface', `only probe-lean ${probeVersions.join(' or ')} extract Schema ${QUALIFIED.schemaVersion} is qualified${probeVersions.length > 1 ? ' with a version 2 constants record' : ''}; got ${mismatch.join(', ')}`);
     return finish();
   }
   const data = envelope.data;
@@ -806,7 +887,7 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
     if (receipt.probe.exitCode !== 0 || receipt.lakeBuild.exitCode !== 0) {
       block('run-failed', `the recorded run exited with lake build ${receipt.lakeBuild.exitCode}, probe-lean ${receipt.probe.exitCode}`);
     }
-    if (receipt.probe.version !== QUALIFIED.version) block('run-mismatch', `the receipt names probe-lean ${JSON.stringify(receipt.probe.version)}`);
+    if (receipt.probe.version !== envelope.tool?.version) block('run-mismatch', `the receipt names probe-lean ${JSON.stringify(receipt.probe.version)}`);
     const probeArgv = receipt.probe.argv;
     const scoped = flagValues(probeArgv, ['--library', '-l']).flatMap((value) => String(value).split(',')).filter(Boolean);
     if (probeArgv[1] !== 'extract' || flagValues(probeArgv, ['--module', '-m']).length > 0 || !sameSet(scoped, requested) ||
@@ -979,7 +1060,6 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
   // Fidelity is checked only for a run the receipt binds; otherwise the record
   // is already incomplete.
   let unreported = new Set();
-  const constants = constantsText === null ? null : parseJson(constantsText);
   let oracle = null;
   if (plainObject(constants) && constants.version === 2) {
     record.schemaVersion = 2;
@@ -1000,6 +1080,8 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
       block('fidelity-unbound', 'the probe run and the oracle did not record the same import inventory');
     } else if (compiledProblems(receiptCompiled, Object.keys(record.completeness.modules ?? {}), projectRoot).length > 0) {
       block('compiled-inventory-incomplete', `the recorded compiled modules do not cover the analysed modules: ${compiledProblems(receiptCompiled, Object.keys(record.completeness.modules ?? {}), projectRoot).join(', ')}`);
+    } else if (importProblems(importsText, receiptImports, receiptCompiled, Object.keys(record.completeness.modules ?? {})).length > 0) {
+      block('import-project-mismatch', importProblems(importsText, receiptImports, receiptCompiled, Object.keys(record.completeness.modules ?? {})).join('; '));
     } else {
       const flagged = new Set();
       const issue = (code, reason, node) => {
@@ -1007,9 +1089,10 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
         block(code, reason, node ? { declaration: `probe:${node}` } : {});
       };
       const defined = new Set([...expected].map((id) => id.slice('probe:'.length)));
-      oracle = { ...oracleLanes({ constants, data, ids, defined, modules: Object.keys(record.completeness.modules ?? {}), issue }), flagged };
+      oracle = { ...oracleLanes({ constants, data, ids, defined, modules: Object.keys(record.completeness.modules ?? {}), libraries: requested, issue }), flagged };
       record.nodes = oracle.nodes;
       record.edges = oracle.edges;
+      record.external = sorted(oracle.edges.filter((edge) => edge.resolution === 'external').map((edge) => edge.to));
       record.trust = oracle.trust;
       record.fidelity = { status: 'incomplete', obligations: [], probeUnderReport: oracle.probeUnderReport };
     }
@@ -1036,6 +1119,12 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
       unreported = fidelity.unreported;
       record.fidelity = { status: unreported.size === 0 ? 'verified' : 'incomplete', represented: fidelity.represented, obligations: fidelity.obligations };
     }
+  }
+  if (record.schemaVersion === 2 && !oracle) {
+    // Version 2 dependency views come only from accepted lanes; never fall back to the probe's.
+    record.edges = [];
+    record.external = [];
+    return finish();
   }
   const projectionsOf = new Map();
   for (const id of ids.filter((name) => data[name].kind === 'projection')) {
@@ -1066,6 +1155,7 @@ function main(argv) {
       manifestText: text(args.manifest),
       constantsText: text(args.constants),
       constantsRunText: text(args.constantsReceipt),
+      importsText: text(args.imports),
     });
     process.stdout.write(`${JSON.stringify(record, null, 2)}\n`);
     if (record.state !== 'complete') {

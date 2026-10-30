@@ -1,7 +1,7 @@
 {
   "schema": "fvs/lean-probe-run",
   "version": 1,
-  "projectRoot": "/tmp/fvs44-qual.JqbS5W/roots",
+  "projectRoot": "/tmp/fvs44-qual.JqbS5W/roots-r9",
   "libraries": [
     "M1demo",
     "Specs"
@@ -17,17 +17,17 @@
   },
   "probe": {
     "argv": [
-      "/Users/ada/.fvs/tools/swvf-qualification/home/.local/bin/probe-lean-v4.31.0",
+      "/Users/ada/.fvs/tools/swvf-qualification-latest/probe-lean-0.24.0-lean-v4.31.0-darwin-arm64/bin/probe-lean",
       "extract",
-      "/tmp/fvs44-qual.JqbS5W/roots",
+      "/tmp/fvs44-qual.JqbS5W/roots-r9",
       "-o",
-      "/tmp/fvs44-qual.JqbS5W/paired/roots-paired-2/lean.json",
+      "/tmp/fvs44-qual.JqbS5W/paired2.Ut2d20/lean.json",
       "--library",
       "M1demo,Specs"
     ],
     "exitCode": 0,
-    "sha256": "fd31d965a9d12cd5a95080c810d3441a8d38e380f25eee37c85b9444ceec283d",
-    "version": "0.14.0"
+    "sha256": "ac2998e713a49275ba08a3cefbf50db9b30faddbd5f45ac87259028d3248a101",
+    "version": "0.24.0"
   },
   "inputs": {
     "leanProjectCommit": "2359861154ccd5180021702637cad43e6f562ec6",
@@ -36,12 +36,12 @@
       ".lake/build/lib/lean/M1demo.ilean": "dc2af0b3f028b6ae072bffec1128b18e6529a5512d13dfe42527930a243dbb0d",
       ".lake/build/lib/lean/M1demo/M1demo.ilean": "2627821a65fb27035b9fd704ed67b523c8a73ea82802eeb49af9862a29f440fe",
       ".lake/build/lib/lean/Specs.ilean": "da73d7d98b14c2a331891ab71d95805f32a4a7d5e0c3c706f510948e37e9df34",
-      ".lake/build/lib/lean/Specs/Roots.ilean": "8cd3be42488268230bf51b88c4922dfdccf80aadde167bca549f03e8f2b01f91",
+      ".lake/build/lib/lean/Specs/Roots.ilean": "6754bbaa45bd2d8f9d4430e133ef59e6e6b03ba0589c15a5e994bf3e745f007c",
       "M1demo.lean": "998cff4e0c58a30f8c5a5e42eaff4d401ca9d7b2d0290738e0f3cd91b9e4aae8",
       "M1demo/M1demo.lean": "b175dd0075fbc05a7cff69d4da6167b774074e5f50d268391d77891f143a03b6",
       "M1demo/translation.json": "790221e29e2af42eddc06f5c8cfe160cd6f78729980bee8dc20a568c3092e933",
       "Specs.lean": "e59daefb8d70d3e72252042ffc55bea38fc9fe54e359f7ea5073843d2b22a80e",
-      "Specs/Roots.lean": "43d0dfaff243573f739d3dc8514e1224c1e1214c1985d68dcae3a1978cc404b9",
+      "Specs/Roots.lean": "61e0e40490342eedae1365ffa9dd480b49df5f21d61dcf0b333bb6bca87fb04a",
       "lake-manifest.json": "52e67b1cb09003b8831ffc387dc362eba1c00de85a4dfd3f9e52e95378c63d72",
       "lakefile.toml": "906e1ae68b5b77124c81c01b063b4ab2757e97f762ac11add2d4da9d2e1cca56",
       "lean-toolchain": "efac0b94923b2d8b6840cd35be9177ad0fc5ab2332f4f4311c98712cee92fdee"
@@ -57,17 +57,17 @@
       ".lake/build/lib/lean/M1demo/M1demo.olean.server.hash": "b16bef74d45e363c466c1caff8cbc32464fb33538b73ac731da09f7d4aefc199",
       ".lake/build/lib/lean/Specs.olean": "2737075b5e96b9dd23f055713907f8918990aca44d1e021eacc9c2b8a43e5abe",
       ".lake/build/lib/lean/Specs.olean.hash": "a0a42e38a10ca38d497cc50faea7f8fc94f485f2f586dddaf634e38ba20cdba5",
-      ".lake/build/lib/lean/Specs/Roots.olean": "59d23f62555d14220c98a8b9fa7ab1e5b1c876d54d61c720047d9490b430fce9",
-      ".lake/build/lib/lean/Specs/Roots.olean.hash": "368f934f698d2dda604e51554ea360b52e5a38c33e9a1826caa3f508fe84767b"
+      ".lake/build/lib/lean/Specs/Roots.olean": "b0f51166457401ce9a16e76fa6b711010b66fe106906fa97b0fc08b22bef24e6",
+      ".lake/build/lib/lean/Specs/Roots.olean.hash": "820ec7a01b75a26979ef2f09740947d5027ba8a2a9552bc4216189f907ec997a"
     },
     "imports": {
-      "digest": "36951d96a396d49da29610f48a9c31fab6385514a09dce9e76cbcb1ae5d0d858",
+      "digest": "9f8123c1c99927c36d1c87de21ee772eaa1fe806789f26bb8e1d8dd5f603e078",
       "modules": 3916,
       "files": 11742
     }
   },
   "outputs": {
-    "extractSha256": "adae634827836959e22191eb924aa940c21248145b49758b079ba3cfbbead6ce",
-    "logSha256": "5aaac030a7458c5745046440961afb2d54cfa2ab13efee0b54e7db7a57a0fc72"
+    "extractSha256": "7994c7dcbfa339b7abc3fba446b982063bc7da0c821fb0c1dc8d89e437982cd2",
+    "logSha256": "4d16245f0e5eb1432c77f875a4550d4fcb883248da05b326a6ced1c5100f6b27"
   }
 }

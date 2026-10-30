@@ -3,6 +3,9 @@ open Aeneas Aeneas.Std Result
 
 namespace m1demo.roots
 
+/-- A private restatement, so private declaration names are exercised. -/
+private theorem helper_self (p : m1demo.Pair) : m1demo.helper p = m1demo.helper p := rfl
+
 /-- `root_sum` is the shared helper. -/
 theorem root_sum_eq (p : m1demo.Pair) : m1demo.root_sum p = m1demo.helper p := rfl
 
