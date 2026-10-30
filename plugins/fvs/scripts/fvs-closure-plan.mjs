@@ -17,13 +17,22 @@ import { fileURLToPath } from 'node:url';
 // is computed per node, and a requested root is ready only when its whole
 // closure is. Recursive items are reported as recursion-unqualified: no
 // recursion rule is qualified yet, and the LLBC recursion group is exposed for
-// information only.
+// information only. A ticket 21 record of schema version 2 (oracle lanes) is
+// planned from its nodes lanes: generated nodes are passed through as
+// dependency evidence and are never given a def_id, an owner or a task.
 
 const EXIT = { ok: 0, usage: 2, internal: 2, 'invalid-input': 5, partial: 6, blocked: 7 };
 const COMMIT_FIELDS = ['sourceCommit', 'leanProjectCommit'];
 const DIGEST_FIELDS = ['translationSha256', 'manifestSha256', 'llbcSha256', 'configSha256'];
 const VERSION_FIELDS = ['charonVersion', 'aeneasVersion'];
 const PROVENANCE = [...COMMIT_FIELDS, 'translationSha256', ...VERSION_FIELDS, 'manifestSha256', 'llbcSha256', 'configSha256'];
+// Ticket 21 schema version 2 (capability oracle-lanes): every project constant
+// is a node with authoritative type and value lanes; generated nodes (no probe
+// atom) are dependency evidence only. Kernel kinds as the producer names them.
+const ORACLE_CAPABILITY = 'oracle-lanes';
+const NODE_KINDS = ['def', 'theorem', 'opaque', 'axiom', 'inductive', 'ctor', 'recursor', 'quot'];
+const THEOREM_KINDS = ['theorem'];
+const DEFINITION_CLOSURE_RULE = 'from the root item\'s generated family over the nodes lanes: a theorem node follows its type lane only; any other node follows its type and value lanes';
 const OWNERSHIP_RULE = 'each node is scheduled once; a node in several requested closures is owned by the lowest-numbered requested root (by def_id) that reaches it; ownership is bookkeeping, not readiness';
 
 class Refusal extends Error {
@@ -91,14 +100,28 @@ function validate({ identity, graph, roots, failed, llbc }) {
   }
   if (new Set(i.items.map((item) => item.defId)).size !== i.items.length) bad('identity', 'def_ids are not unique');
   const g = graph.json;
-  if (!isObject(g) || g.schema !== 'fvs/lean-graph' || g.schemaVersion !== 1 || !['complete', 'incomplete', 'unsupported'].includes(g.state)
+  if (!isObject(g) || g.schema !== 'fvs/lean-graph'
+    || !((g.schemaVersion === 1 && g.capability === undefined) || (g.schemaVersion === 2 && g.capability === ORACLE_CAPABILITY))
+    || !['complete', 'incomplete', 'unsupported'].includes(g.state)
     || !isObject(g.provenance) || !isObject(g.binding) || !['bound', 'unbound'].includes(g.binding.status) || !Array.isArray(g.binding.reasons ?? [])
     || !isObject(g.declarations) || !Array.isArray(g.edges) || !Array.isArray(g.blockers)) {
-    bad('graph', 'is not a fvs/lean-graph schemaVersion 1 record');
+    bad('graph', 'is not a fvs/lean-graph record of schemaVersion 1, or of schemaVersion 2 with capability oracle-lanes');
   }
+  const oracle = g.schemaVersion === 2;
+  if (oracle) {
+    if (!isObject(g.nodes)) bad('graph', 'a schemaVersion 2 record needs a nodes object');
+    for (const [id, node] of Object.entries(g.nodes)) {
+      if (!isObject(node) || !NODE_KINDS.includes(node.kind) || typeof node.source !== 'boolean' || typeof node.probeAtom !== 'boolean'
+        || ['type', 'value'].some((lane) => !Array.isArray(node[lane]) || node[lane].some((to) => !isText(to)) || new Set(node[lane]).size !== node[lane].length)) {
+        bad('graph', `node ${JSON.stringify(id)} is malformed (kind, source, probeAtom, or a type or value lane)`);
+      }
+    }
+    if (g.trust !== undefined && !isObject(g.trust)) bad('graph', 'trust is malformed');
+  }
+  const resolutions = oracle ? ['local', 'generated', 'external'] : ['local', 'external', 'unresolved'];
   for (const edge of g.edges) {
     if (!isObject(edge) || !isText(edge.from) || !isText(edge.to) || !['type', 'term'].includes(edge.kind)
-      || !['local', 'external', 'unresolved'].includes(edge.resolution)) bad('graph', 'an edge is malformed');
+      || !resolutions.includes(edge.resolution)) bad('graph', 'an edge is malformed');
   }
   if (g.fidelity !== undefined && !(isObject(g.fidelity) && isText(g.fidelity.status))) bad('graph', 'fidelity is malformed');
   if (llbc && !Array.isArray(llbc.json?.translated?.ordered_decls)) bad('llbc', 'has no translated.ordered_decls list');
@@ -118,6 +141,21 @@ function declaredEdges(g) {
       if (!Array.isArray(local) || !Array.isArray(external) || [...local, ...external].some((to) => !isText(to))) return null;
       for (const to of local) edges.push({ from, to, kind, resolution: Object.hasOwn(g.declarations, to) ? 'local' : 'unresolved' });
       for (const to of external) edges.push({ from, to, kind, resolution: 'external' });
+    }
+  }
+  return edges;
+}
+
+// Schema version 2: the edges the nodes lanes imply, one per lane entry. A
+// target is local when it is a probe-atom node, generated when it is a node
+// without a probe atom, and external when it is not a node.
+function laneEdges(g) {
+  const edges = [];
+  for (const [from, node] of Object.entries(g.nodes)) {
+    for (const [lane, kind] of [['type', 'type'], ['value', 'term']]) {
+      for (const to of node[lane]) {
+        edges.push({ from, to, kind, resolution: !Object.hasOwn(g.nodes, to) ? 'external' : g.nodes[to].probeAtom ? 'local' : 'generated' });
+      }
     }
   }
   return edges;
@@ -148,8 +186,10 @@ function admissibility(i, g, llbc) {
   if (g.fidelity === undefined) block('graph-fidelity-not-verified', 'the ticket 21 record carries no fidelity result (a pre-fidelity graph record), so its dependencies are unverified');
   else if (g.fidelity.status !== 'verified') block('graph-fidelity-not-verified', `the ticket 21 record's dependency fidelity is ${g.fidelity.status}`);
   else if (!Array.isArray(g.fidelity.obligations) || g.fidelity.obligations.length > 0) block('graph-fidelity-contradiction', 'the ticket 21 record claims verified fidelity without an empty obligations list');
-  // The graph's edge list must be its declarations' dependency lists, exactly.
-  const declared = declaredEdges(g);
+  // The graph's edge list must be its declarations' dependency lists (version 1)
+  // or its nodes lanes (version 2), exactly.
+  const oracle = g.schemaVersion === 2;
+  const declared = oracle ? laneEdges(g) : declaredEdges(g);
   if (declared === null) block('graph-declarations-malformed', 'a declaration lacks well-formed dependency lists');
   else {
     const want = declared.map(edgeKey).sort();
@@ -159,6 +199,19 @@ function admissibility(i, g, llbc) {
     // A declaration of this graph is in scope: listing it as external would hide a local dependency.
     const hidden = declared.filter((edge) => edge.resolution === 'external' && Object.hasOwn(g.declarations, edge.to));
     if (hidden.length > 0) block('graph-contradiction', `declared in the graph but listed as external: ${[...new Set(hidden.map((edge) => edge.to))].sort().join(', ')}`);
+  }
+  if (oracle) {
+    // The raw probe atoms are exactly the probe-atom nodes.
+    const probeNodes = Object.keys(g.nodes).filter((id) => g.nodes[id].probeAtom).sort();
+    if (JSON.stringify(probeNodes) !== JSON.stringify(Object.keys(g.declarations).sort())) {
+      block('graph-contradiction', 'the probe declarations are not exactly the nodes marked probeAtom');
+    }
+    // Kernel constants are added in dependency order, so their lanes cannot form a
+    // cycle; a cycle or self-reference is a producer contradiction.
+    const adjacency = new Map(Object.keys(g.nodes).map((id) => [id, []]));
+    for (const edge of declared) if (edge.resolution !== 'external') adjacency.get(edge.from).push(edge.to);
+    const cyclic = components(adjacency).filter((c) => c.length > 1 || adjacency.get(c[0]).includes(c[0]));
+    for (const component of cyclic) block('graph-contradiction', `the nodes lanes form a cycle: ${component.join(', ')}`);
   }
   // Provenance: well-formed on both sides, and equal.
   for (const field of PROVENANCE) {
@@ -243,6 +296,22 @@ function components(adjacency) {
   return found;
 }
 
+// The semantic definition closure over the nodes lanes, in Lean ids (source and
+// generated nodes): a theorem contributes its statement (type lane) only.
+function definitionClosure(g, starts) {
+  const seen = new Set();
+  const queue = starts.filter((id) => Object.hasOwn(g.nodes, id));
+  while (queue.length > 0) {
+    const id = queue.shift();
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const node = g.nodes[id];
+    const lanes = THEOREM_KINDS.includes(node.kind) ? node.type : [...node.type, ...node.value];
+    queue.push(...lanes.filter((to) => Object.hasOwn(g.nodes, to)));
+  }
+  return [...seen].sort();
+}
+
 export function buildPlan({ identity, graph, roots, failed = [], llbc = null }) {
   const { i, g } = validate({ identity, graph, roots, failed, llbc });
   const requested = sortedNumbers(roots);
@@ -254,11 +323,16 @@ export function buildPlan({ identity, graph, roots, failed = [], llbc = null }) 
     inputs: { identitySha256: identity.sha256, graphSha256: graph.sha256, llbcSha256: llbc?.sha256 ?? null },
     selection: { requestedRoots: requested, failed: sortedNumbers(failed) },
     provenance: Object.fromEntries(PROVENANCE.map((field) => [field, i.provenance[field] ?? null])),
-    qualification: { graphFidelity: g.fidelity === undefined ? 'not-supplied (a pre-fidelity graph record)' : g.fidelity.status },
+    qualification: {
+      graphFidelity: g.fidelity === undefined ? 'not-supplied (a pre-fidelity graph record)' : g.fidelity.status,
+      ...(g.schemaVersion === 2 ? { graphSchemaVersion: 2, graphCapability: g.capability } : {}),
+    },
     admissibility: { status: blockers.length === 0 ? 'admissible' : 'blocked', blockers },
     upstream: { identityStatus: i.status, identityBlockers: i.blockers, graphState: g.state, graphBlockers: g.blockers },
     ownership: { rule: OWNERSHIP_RULE },
-    edgeOrientation: 'consumer -> dependency, from the graph\'s declared dependency lists',
+    edgeOrientation: g.schemaVersion === 2
+      ? 'consumer -> dependency, from the graph\'s nodes lanes (type and value); generated nodes are passed through, never scheduled'
+      : 'consumer -> dependency, from the graph\'s declared dependency lists',
     nodes: {},
     observedCycles: [],
     roots: [],
@@ -320,19 +394,46 @@ export function buildPlan({ identity, graph, roots, failed = [], llbc = null }) 
       node.reasons.push(`${id} is also claimed by ${claimants.filter((other) => other !== defId).join(', ')}`);
     }
   }
-  const localEdges = declared.filter((edge) => edge.resolution === 'local');
-  // Dependencies between nodes, folded within a family; a local dependency no
-  // single node owns is kept visible.
-  for (const edge of localEdges) {
-    const fromId = owner.get(edge.from);
-    if (fromId === undefined) continue;
-    const from = nodes.get(fromId);
-    const toId = owner.get(edge.to);
-    if (toId === undefined) {
-      if (!from.unmappedDependencies.includes(edge.to)) from.unmappedDependencies.push(edge.to);
-    } else if (toId !== fromId && !from.dependsOn.includes(toId)) {
-      from.dependsOn.push(toId);
+  // Lean-level adjacency over the graph's own constants, both lanes. In version
+  // 2 a node without a probe atom is generated (a matcher, proof, constructor
+  // or recursor): it has no Rust def_id, owner or task and is only passed through.
+  const oracle = g.schemaVersion === 2;
+  const generated = (id) => oracle && !g.nodes[id].probeAtom;
+  const adjacency = new Map(Object.keys(oracle ? g.nodes : g.declarations).map((id) => [id, []]));
+  for (const edge of declared) if (edge.resolution === 'local' || edge.resolution === 'generated') adjacency.get(edge.from).push(edge.to);
+  // Dependencies between nodes, folded within a family and followed through
+  // generated nodes; a probe atom no single node owns is kept visible as
+  // unmapped (never taken for a generated node).
+  for (const node of nodes.values()) {
+    const passed = new Set();
+    const paths = {};
+    for (const start of node.declarations) {
+      if (owner.get(start) !== node.defId) continue;
+      const previous = new Map([[start, null]]);
+      const queue = [start];
+      while (queue.length > 0) {
+        const id = queue.shift();
+        for (const to of adjacency.get(id) ?? []) {
+          if (previous.has(to)) continue;
+          previous.set(to, id);
+          if (generated(to)) {
+            passed.add(to);
+            queue.push(to);
+            continue;
+          }
+          const toId = owner.get(to);
+          if (toId === undefined) {
+            if (!node.unmappedDependencies.includes(to)) node.unmappedDependencies.push(to);
+          } else if (toId !== node.defId && !node.dependsOn.includes(toId)) {
+            node.dependsOn.push(toId);
+            const path = [to];
+            for (let at = id; at !== null; at = previous.get(at)) path.unshift(at);
+            if (path.length > 2) paths[toId] = path;
+          }
+        }
+      }
     }
+    if (oracle) Object.assign(node, { generatedDependencies: [...passed].sort(), dependencyPaths: paths });
   }
   for (const node of nodes.values()) {
     node.dependsOn = sortedNumbers(node.dependsOn);
@@ -346,8 +447,6 @@ export function buildPlan({ identity, graph, roots, failed = [], llbc = null }) 
   // filtering, projected onto scheduling nodes. A cycle entirely inside one
   // family is observed but is not a scheduling cycle. observedCycles is graph
   // topology, not a recursion classification.
-  const adjacency = new Map(Object.keys(g.declarations).map((id) => [id, []]));
-  for (const edge of localEdges) adjacency.get(edge.from).push(edge.to);
   for (const component of components(adjacency).filter((c) => c.length > 1)) {
     const mapped = sortedNumbers(new Set(component.map((id) => owner.get(id)).filter((id) => id !== undefined)));
     const unmapped = component.filter((id) => !owner.has(id));
@@ -401,12 +500,14 @@ export function buildPlan({ identity, graph, roots, failed = [], llbc = null }) 
       status: blocking.length === 0 ? 'ready' : 'blocked',
       closure,
       blockers: blocking.map((id) => ({ code: nodes.get(id).eligibility, node: id, reasons: [...nodes.get(id).upstream.reasons, ...nodes.get(id).reasons] })),
+      ...(oracle ? { definitionClosure: definitionClosure(g, nodes.get(root).declarations) } : {}),
     });
   }
   for (const node of nodes.values()) {
     const sharedBy = record.roots.filter((root) => root.closure?.includes(node.defId)).map((root) => root.defId);
     record.nodes[node.defId] = { ...node, sharedBy, ownerRoot: ownerRoot.get(node.defId) ?? null };
   }
+  if (oracle) record.definitionClosureRule = DEFINITION_CLOSURE_RULE;
   record.status = record.roots.every((root) => root.status === 'ready') ? 'ready' : 'partial';
   return record;
 }

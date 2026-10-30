@@ -392,3 +392,152 @@ describe('closure plan: identity gaps stay visible (labelled mutations)', () => 
     }
   });
 });
+
+// SYNTHETIC schema 2 (capability oracle-lanes) records, converted from the recorded
+// positive: no real schema 2 record exists yet. Each probe atom becomes a probe-atom
+// node whose lanes are its probe lists; edges are re-derived from the lanes.
+const relane = (g) => {
+  g.edges = [];
+  for (const [from, node] of Object.entries(g.nodes)) {
+    for (const [lane, kind] of [['type', 'type'], ['value', 'term']]) {
+      for (const to of node[lane]) {
+        g.edges.push({ from, to, kind, resolution: !Object.hasOwn(g.nodes, to) ? 'external' : g.nodes[to].probeAtom ? 'local' : 'generated' });
+      }
+    }
+  }
+  return g;
+};
+const oracle = (edit = (g) => g) => (g) => {
+  const nodes = {};
+  for (const [id, d] of Object.entries(g.declarations)) {
+    nodes[id] = {
+      kind: d.kind,
+      source: true,
+      probeAtom: true,
+      type: [...new Set([...d['type-dependencies'], ...(d['type-dependencies-external'] ?? [])])],
+      value: [...new Set([...d['term-dependencies'], ...(d['term-dependencies-external'] ?? [])])],
+    };
+  }
+  return relane(edit({ ...verified(g), schemaVersion: 2, capability: 'oracle-lanes', nodes, trust: {} }));
+};
+const generatedNode = (kind, type, value) => ({ kind, source: false, probeAtom: false, type, value });
+const probeAtom = (g, id) => {
+  g.declarations[id] = { ...g.declarations['probe:m1demo.independent'], 'type-dependencies': [], 'term-dependencies': [] };
+  g.nodes[id] = { kind: 'def', source: true, probeAtom: true, type: [], value: [] };
+};
+// root_a reaches helper only through a generated matcher.
+const viaMatcher = (g) => {
+  const rootA = g.nodes['probe:m1demo.root_a'];
+  rootA.value = rootA.value.filter((to) => to !== 'probe:m1demo.helper').concat('probe:m1demo.root_a.match_1');
+  g.nodes['probe:m1demo.root_a.match_1'] = generatedNode('def', [], ['probe:m1demo.helper']);
+  return g;
+};
+
+describe('closure plan: schema 2 oracle lanes (SYNTHETIC records)', () => {
+  it('plans a converted record like its version 1 source, with v2-only fields', () => {
+    const { status, result } = plan('positive', { graph: oracle() });
+    assert.equal(status, 0, JSON.stringify(result.record?.admissibility));
+    const rec = result.record;
+    assert.deepEqual(rec.qualification, { graphFidelity: 'verified', graphSchemaVersion: 2, graphCapability: 'oracle-lanes' });
+    assert.deepEqual([21, 22, 23].map((id) => root(result, id).closure), [[19, 21], [19, 20, 22], [23]]);
+    assert.deepEqual(rec.nodes[21].generatedDependencies, []);
+    assert.ok(root(result, 21).definitionClosure.includes('probe:m1demo.helper'));
+    assert.match(rec.definitionClosureRule, /theorem node follows its type lane only/);
+  });
+
+  it('follows a generated matcher to the source helper, keeps the path, and propagates the helper\'s failure', () => {
+    const { status, result } = plan('positive', { graph: oracle(viaMatcher) });
+    assert.equal(status, 0);
+    assert.deepEqual(root(result, 21).closure, [19, 21]);
+    assert.deepEqual(result.record.nodes[21].generatedDependencies, ['probe:m1demo.root_a.match_1']);
+    assert.deepEqual(result.record.nodes[21].dependencyPaths, { 19: ['probe:m1demo.root_a', 'probe:m1demo.root_a.match_1', 'probe:m1demo.helper'] });
+    assert.ok(!Object.hasOwn(result.record.nodes, 'probe:m1demo.root_a.match_1'), 'a generated node is never a scheduling node');
+    const failed = plan('positive', { graph: oracle(viaMatcher), failed: [19] });
+    assert.equal(failed.status, 6);
+    assert.equal(root(failed.result, 21).status, 'blocked');
+    assert.equal(failed.result.record.nodes[21].eligibility, 'blocked-by-dependency');
+  });
+
+  it('schedules through both lanes of a theorem but keeps only its statement in the definition closure', () => {
+    const withTheorem = (g) => {
+      g.nodes['probe:m1demo.helper_spec'] = generatedNode('theorem', ['probe:m1demo.helper'], ['probe:m1demo.independent']);
+      g.nodes['probe:m1demo.root_b'].value.push('probe:m1demo.helper_spec');
+      return g;
+    };
+    const { result } = plan('positive', { graph: oracle(withTheorem) });
+    assert.deepEqual(root(result, 22).closure, [19, 20, 22, 23], 'the proof lane counts for scheduling and failure');
+    const definitions = root(result, 22).definitionClosure;
+    assert.ok(definitions.includes('probe:m1demo.helper_spec') && definitions.includes('probe:m1demo.helper'));
+    assert.ok(!definitions.includes('probe:m1demo.independent'), 'a theorem contributes its statement only');
+  });
+
+  it('keeps a probe atom no item owns as unmapped, even when reached through a generated node', () => {
+    const toExtra = (g) => {
+      probeAtom(g, 'probe:m1demo.extra');
+      g.nodes['probe:m1demo.root_a.match_1'] = generatedNode('def', [], ['probe:m1demo.extra']);
+      g.nodes['probe:m1demo.root_a'].value.push('probe:m1demo.root_a.match_1');
+      return g;
+    };
+    const { result } = plan('positive', { graph: oracle(toExtra) });
+    assert.equal(result.record.nodes[21].eligibility, 'blocked-unmapped-dependency');
+    assert.deepEqual(result.record.nodes[21].unmappedDependencies, ['probe:m1demo.extra']);
+  });
+
+  it('never maps a ticket 10 family member onto a generated node', () => {
+    const claim = (i) => { i.items.find((x) => x.defId === 21).generated.push({ leanName: 'm1demo.root_a.match_1' }); return i; };
+    const { result } = plan('positive', { graph: oracle(viaMatcher), identity: claim });
+    assert.equal(result.record.nodes[21].eligibility, 'blocked-unmatched');
+    assert.equal(root(result, 23).status, 'ready');
+  });
+
+  it('blocks inventory, edge, cycle and fidelity contradictions', () => {
+    const blockedV2 = (edit, code, after = (g) => g) => {
+      const { status, result } = plan('positive', { graph: (g) => after(oracle(edit)(g)) });
+      assert.equal(status, 7, code);
+      assert.ok(result.record.admissibility.blockers.some((b) => b.code === code), `${code}: ${JSON.stringify(result.record.admissibility.blockers)}`);
+    };
+    blockedV2((g) => { g.nodes['probe:m1demo.loose'] = { kind: 'def', source: true, probeAtom: true, type: [], value: [] }; return g; }, 'graph-contradiction');
+    blockedV2((g) => { g.nodes['probe:m1demo.helper'].probeAtom = false; return g; }, 'graph-contradiction');
+    blockedV2((g) => g, 'graph-edges-inconsistent', (g) => { g.edges = g.edges.map((e) => (e.to === 'probe:m1demo.helper' ? { ...e, resolution: 'external' } : e)); return g; });
+    blockedV2((g) => g, 'graph-edges-inconsistent', (g) => { g.edges.pop(); return g; });
+    blockedV2((g) => g, 'graph-edges-inconsistent', (g) => { g.edges.push(g.edges[0]); return g; });
+    const cycle = (g) => {
+      g.nodes['probe:m1demo.g1'] = generatedNode('def', [], ['probe:m1demo.g2']);
+      g.nodes['probe:m1demo.g2'] = generatedNode('def', [], ['probe:m1demo.g1']);
+      g.nodes['probe:m1demo.root_a'].value.push('probe:m1demo.g1');
+      return g;
+    };
+    blockedV2(cycle, 'graph-contradiction');
+    blockedV2((g) => { g.nodes['probe:m1demo.g1'] = generatedNode('def', [], ['probe:m1demo.g1']); return g; }, 'graph-contradiction');
+    blockedV2((g) => { delete g.fidelity; return g; }, 'graph-fidelity-not-verified');
+    blockedV2((g) => { g.fidelity.obligations = [{ declaration: 'probe:m1demo.helper', obligation: 'axiom-boundary' }]; return g; }, 'graph-fidelity-contradiction');
+  });
+
+  it('refuses unknown versions, capabilities, resolutions and malformed nodes as invalid input', () => {
+    for (const [label, edit] of [
+      ['schemaVersion 2 without capability', (g) => { delete g.capability; return g; }],
+      ['another capability', (g) => ({ ...g, capability: 'lanes-v9' })],
+      ['schemaVersion 3', (g) => ({ ...g, schemaVersion: 3 })],
+      ['no nodes', (g) => { delete g.nodes; return g; }],
+      ['unresolved in version 2', (g) => { g.edges[0].resolution = 'unresolved'; return g; }],
+      ['unknown node kind', (g) => { g.nodes['probe:m1demo.helper'].kind = 'macro'; return g; }],
+      ['missing probeAtom', (g) => { delete g.nodes['probe:m1demo.helper'].probeAtom; return g; }],
+      ['repeated lane entry', (g) => { const n = g.nodes['probe:m1demo.root_a']; n.value.push(n.value[0]); return g; }],
+      ['malformed trust', (g) => ({ ...g, trust: [] })],
+    ]) {
+      assert.equal(plan('positive', { graph: (g) => edit(oracle()(g)) }).result.code, 'invalid-input', label);
+    }
+    assert.equal(plan('positive', { graph: (g) => ({ ...g, capability: 'oracle-lanes' }) }).result.code, 'invalid-input', 'a capability on version 1');
+  });
+
+  it('plans a schema 2 record through the exported builder', async () => {
+    const { buildPlan } = await import(require('node:url').pathToFileURL(SCRIPT).href);
+    const load = (name) => { const text = fs.readFileSync(path.join(FIXTURES, 'positive', name), 'utf8'); return { json: JSON.parse(text), sha256: sha(text) }; };
+    const graph = load('graph-record.json');
+    graph.json = oracle(viaMatcher)(graph.json);
+    const record = buildPlan({ identity: load('identity-record.json'), graph, roots: [21], failed: [] });
+    assert.equal(record.status, 'ready');
+    assert.deepEqual(record.nodes[21].generatedDependencies, ['probe:m1demo.root_a.match_1']);
+    assert.ok(record.roots[0].definitionClosure.includes('probe:m1demo.root_a.match_1'));
+  });
+});
