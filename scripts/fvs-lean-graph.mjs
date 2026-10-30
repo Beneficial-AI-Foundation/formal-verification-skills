@@ -292,12 +292,12 @@ function closureOf(root, data, inScope, projectionsOf, unreported) {
 // Dependency fidelity: Lean's own record of the constants each declaration's
 // type and value mention must be covered by what probe-lean reported for it.
 // A type constant must be reported in the type lists (a theorem's closure reads
-// only those); a value constant in any list. Three representations, each
-// recorded: a constructor, recursor, auxiliary recursor or noConfusion is
-// covered by its inductive, which declares it; a generated project theorem (no
-// source definition) is a proof, irrelevant to the meaning of the value that
-// uses it; any other generated project constant is folded into its user, as
-// probe-lean folds auxiliaries, and must be covered in turn.
+// only those); a value constant in any list. Constructors, recursors and other
+// generated eliminators must be reported themselves. A generated project
+// constant (no source definition) is folded into its user, as probe-lean folds
+// auxiliaries: a generated definition through its type and value, a generated
+// theorem through its statement only. That theorem's proof is not audited
+// here, so it stays an explicit obligation that blocks the record.
 function checkFidelity({ constants, data, ids, defined, block }) {
   const info = new Map();
   const project = new Set();
@@ -309,6 +309,7 @@ function checkFidelity({ constants, data, ids, defined, block }) {
   }
   const atoms = new Set(ids.map((id) => id.slice('probe:'.length)));
   const represented = [];
+  const obligations = [];
   const unreported = new Set();
   for (const id of ids) {
     const name = id.slice('probe:'.length);
@@ -327,21 +328,14 @@ function checkFidelity({ constants, data, ids, defined, block }) {
         if (constant === name || reported.has(constant)) return true;
         const entry = info.get(constant);
         if (!entry) return false;
-        if (entry.owners.length > 0 && entry.owners.every((owner) => owner === name || reported.has(owner))) {
-          represented.push({ declaration: id, list, constant, rule: 'by-inductive', via: entry.owners });
-          return true;
-        }
-        if (project.has(constant) && !defined.has(constant) && !atoms.has(constant) && !stack.includes(constant)) {
-          if (entry.kind === 'theorem') {
-            represented.push({ declaration: id, list, constant, rule: 'proof-irrelevant' });
-            return true;
-          }
-          if ([...entry.type, ...entry.value].every((used) => covers(used, [...stack, constant]))) {
-            represented.push({ declaration: id, list, constant, rule: 'auxiliary-fold' });
-            return true;
-          }
-        }
-        return false;
+        if (!project.has(constant) || defined.has(constant) || atoms.has(constant) || stack.includes(constant)) return false;
+        const theorem = entry.kind === 'theorem';
+        if (theorem) obligations.push({ declaration: id, constant, obligation: 'proof-dependencies-unaudited' });
+        // every, not some: each use is checked so all missing constants are reported.
+        const folded = (theorem ? entry.type : [...entry.type, ...entry.value]).map((used) => covers(used, [...stack, constant]));
+        if (!folded.every(Boolean)) return false;
+        represented.push({ declaration: id, list, constant, rule: theorem ? 'statement-fold' : 'auxiliary-fold' });
+        return true;
       };
       for (const constant of own[list]) if (!covers(constant, [])) missing.push(`${constant} (${list})`);
     }
@@ -350,18 +344,27 @@ function checkFidelity({ constants, data, ids, defined, block }) {
       block('dependency-not-reported', `${id}: Lean records ${sorted(missing).join(', ')}, which probe-lean does not report`, { declaration: id });
     }
   }
-  const seen = new Set();
-  return {
-    represented: represented.filter((item) => {
+  const unique = (items) => {
+    const seen = new Set();
+    return items.filter((item) => {
       const key = JSON.stringify(item);
       return !seen.has(key) && seen.add(key);
-    }),
-    unreported,
+    });
   };
+  const open = unique(obligations);
+  for (const id of sorted(open.map((item) => item.declaration))) {
+    unreported.add(id);
+    const constants = sorted(open.filter((item) => item.declaration === id).map((item) => item.constant));
+    block('proof-dependencies-unaudited', `${id} uses generated proofs ${constants.join(', ')} whose dependencies are not audited here`, { declaration: id });
+  }
+  return { represented: unique(represented), obligations: open, unreported };
 }
+
+const hashMap = (value) => plainObject(value) && Object.values(value).every((hash) => /^[0-9a-f]{64}$/.test(hash));
 
 const constantsShapeValid = (constants) => plainObject(constants) && constants.schema === CONSTANTS_SCHEMA && constants.version === 1 &&
   plainObject(constants.inputs) && plainObject(constants.inputs.files) &&
+  (constants.inputs.compiled === undefined || hashMap(constants.inputs.compiled)) &&
   ['project', 'referenced'].every((part) => Array.isArray(constants[part]) && constants[part].every((entry) => plainObject(entry) &&
     isText(entry.name) && isText(entry.kind) && Array.isArray(entry.owners) && entry.owners.every(isText) &&
     (part === 'referenced' || ['type', 'value'].every((list) => Array.isArray(entry[list]) && entry[list].every(isText))))) &&
@@ -383,7 +386,7 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
     run: null,
     provenance: { sourceCommit: null, leanProjectCommit: null, translationSha256: null, charonVersion: null, aeneasVersion: null, manifestSha256: null, llbcSha256: null, configSha256: null },
     binding: { status: 'unbound', reasons: [] },
-    fidelity: { status: 'unverified', represented: [] },
+    fidelity: { status: 'unverified', represented: [], obligations: [] },
     completeness: { libraries: requested, log: readLog(logText), atomCount: null, modules: null, expectedDeclarations: null, missingDeclarations: [] },
     declarations: {},
     edges: [],
@@ -458,6 +461,7 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
   // The run: the receipt must name this extract, this log and the inputs the
   // project root still holds, and a scope covering the requested libraries.
   let files = null;
+  let receiptCompiled = null;
   const receipt = receiptText === null ? null : parseJson(receiptText);
   const runChecksFrom = blockers.length;
   const leanCommit = envelope.source?.commit;
@@ -472,6 +476,12 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
     block('invalid-receipt', `the receipt is not a ${RECEIPT_SCHEMA} version 1 record`);
   } else {
     record.run = { libraries: receipt.libraries, probe: receipt.probe, lakeBuild: receipt.lakeBuild, outputs: receipt.outputs };
+    // Optional: the compiled project modules the run used (sha256 by path).
+    if (receipt.inputs.compiled !== undefined && !hashMap(receipt.inputs.compiled)) {
+      block('invalid-receipt', 'the receipt\'s inputs.compiled must map paths to sha256 digests');
+    } else {
+      receiptCompiled = receipt.inputs.compiled ?? null;
+    }
     if (receipt.probe.exitCode !== 0 || receipt.lakeBuild.exitCode !== 0) {
       block('run-failed', `the recorded run exited with lake build ${receipt.lakeBuild.exitCode}, probe-lean ${receipt.probe.exitCode}`);
     }
@@ -657,11 +667,18 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
     } else if (!sameSet(Object.entries(constants.inputs.files).map(([file, hash]) => `${file} ${hash}`),
       Object.entries(files).map(([file, hash]) => `${file} ${hash}`))) {
       block('fidelity-unbound', 'the constants record was not taken from the project files this run recorded');
+    } else if (!hashMap(receiptCompiled) || !hashMap(constants.inputs.compiled)) {
+      // The constants come from compiled modules; sources and .ilean files do not
+      // identify those, so both records must name the same compiled bytes.
+      block('fidelity-unverified', 'compiled-environment-not-bound: the run receipt and the constants record must both record the project\'s compiled modules');
+    } else if (Object.keys(receiptCompiled).length === 0 || !sameSet(Object.entries(constants.inputs.compiled).map(([file, hash]) => `${file} ${hash}`),
+      Object.entries(receiptCompiled).map(([file, hash]) => `${file} ${hash}`))) {
+      block('fidelity-unbound', 'the constants record was not taken from the compiled modules this run recorded');
     } else {
       const defined = new Set([...expected].map((id) => id.slice('probe:'.length)));
       const fidelity = checkFidelity({ constants, data, ids, defined, block });
       unreported = fidelity.unreported;
-      record.fidelity = { status: unreported.size === 0 ? 'verified' : 'incomplete', represented: fidelity.represented };
+      record.fidelity = { status: unreported.size === 0 ? 'verified' : 'incomplete', represented: fidelity.represented, obligations: fidelity.obligations };
     }
   }
   const projectionsOf = new Map();

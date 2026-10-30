@@ -83,19 +83,23 @@ function cli(args) {
 }
 
 const codes = (record) => record.blockers.map((item) => item.code);
+// A receipt-bound run whose constants record does not bind the compiled modules
+// (every recorded run before the compiled-module receipts) ends with this blocker.
+const withUnverified = (list) => [...list, 'fidelity-unverified'];
 const local = (record, kind, from) => record.edges
   .filter((edge) => edge.from === from && edge.kind === kind && edge.resolution === 'local')
   .map((edge) => edge.to).sort();
 
 describe('recorded positive: a bound run of a proved theorem over an extracted definition', () => {
-  it('is complete, exits 0, and records provenance with the binding kept separate', () => {
+  it('is structurally complete and records provenance, but without compiled-module binding its fidelity is unverified', () => {
     const result = cli([recorded(BOUND, 'lean.json'), '--library', 'M1demo', '--log', recorded(BOUND, 'probe.log'),
       '--receipt', recorded(BOUND, 'receipt.json'), '--project-root', PROJECT, '--manifest', MANIFEST,
       '--constants', recorded(BOUND, 'constants.json')]);
-    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.status, 1, result.stderr);
     const record = JSON.parse(result.stdout);
-    assert.equal(record.state, 'complete');
-    assert.deepEqual(record.blockers, []);
+    assert.equal(record.state, 'incomplete');
+    assert.deepEqual(codes(record), ['fidelity-unverified']);
+    assert.match(record.blockers[0].reason, /compiled-environment-not-bound/);
     assert.deepEqual(record.provenance, {
       sourceCommit: '8c8955e1193744a42ee464d56893c87d8a172826',
       leanProjectCommit: 'eef73c8fedf3fbcb640c35467b52b63ca6b7c1bd',
@@ -132,7 +136,7 @@ describe('recorded positive: a bound run of a proved theorem over an extracted d
 
   it('computes the semantic-definition closure from the statement, not the proof', () => {
     const closure = graph().closures[THEOREM];
-    assert.equal(closure.state, 'complete');
+    assert.deepEqual(closure.blockers, [{ code: 'graph-incomplete' }]);
     assert.deepEqual(closure.declarations, ['probe:m1demo.double', FITS, 'probe:m1demo.spec.doubleNat']);
     for (const name of ['probe:Aeneas.Std.WP.spec', 'probe:Aeneas.Std.U32.max', 'probe:Aeneas.Std.instHAddUScalarResult']) {
       assert.ok(closure.external.includes(name), name);
@@ -151,9 +155,9 @@ describe('recorded positive: a bound run of a proved theorem over an extracted d
     assert.ok(record.anomalies.every((item) => item.code === 'aeneas-generated-false-for-translation-declaration'));
   });
 
-  it('without a patch manifest the graph stays complete and the binding says why', () => {
+  it('without a patch manifest no new blocker appears and the binding says why', () => {
     const record = graph({ manifestText: null });
-    assert.equal(record.state, 'complete');
+    assert.deepEqual(codes(record), ['fidelity-unverified']);
     assert.equal(record.provenance.sourceCommit, null);
     assert.equal(record.provenance.manifestSha256, null);
     assert.deepEqual(record.binding.reasons, ['no-state', 'no-manifest']);
@@ -237,7 +241,7 @@ describe('derived: missing or contradictory fields are never zero dependencies',
 
   it('a declaration kind no fixture has qualified blocks', () => {
     const record = derived({ edit: (data) => { data[FITS].kind = 'opaque'; } });
-    assert.deepEqual(codes(record), ['unqualified-kind']);
+    assert.deepEqual(codes(record), withUnverified(['unqualified-kind']));
     assert.deepEqual(record.closures[THEOREM].blockers, [{ code: 'graph-incomplete' }]);
   });
 
@@ -245,14 +249,14 @@ describe('derived: missing or contradictory fields are never zero dependencies',
     const text = read(BOUND, 'lean.json');
     const doubled = text.replace('"probe:m1demo.double":', '"probe:m1demo.double": {"kind": "def"},\n "probe:m1demo.double":');
     assert.notEqual(doubled, text);
-    assert.deepEqual(codes(derived({ extractText: doubled })), ['duplicate-declaration']);
+    assert.deepEqual(codes(derived({ extractText: doubled })), withUnverified(['duplicate-declaration']));
   });
 
   it('a duplicate spelled with a JSON escape is the same declaration', () => {
     const text = read(BOUND, 'lean.json');
     const doubled = text.replace('"probe:m1demo.double":', '"probe:m1demo.double": {"kind": "def"},\n "\\u0070robe:m1demo.double":');
     assert.equal(Object.keys(JSON.parse(doubled).data).length, 9, 'JSON.parse silently keeps one');
-    assert.deepEqual(codes(derived({ extractText: doubled })), ['duplicate-declaration']);
+    assert.deepEqual(codes(derived({ extractText: doubled })), withUnverified(['duplicate-declaration']));
   });
 
   it('an escaped key that is not repeated, and colons or braces inside strings, are fine', () => {
@@ -261,7 +265,7 @@ describe('derived: missing or contradictory fields are never zero dependencies',
     assert.notEqual(escaped, text);
     const quoted = escaped.replace('"display-name": "double"', '"display-name": "double", "note": "a: {b} [c] \\" d:"');
     const record = derived({ extractText: quoted });
-    assert.equal(record.state, 'complete');
+    assert.deepEqual(codes(record), withUnverified([]));
     assert.equal(record.declarations['probe:m1demo.double'].note, 'a: {b} [c] " d:');
   });
 
@@ -269,12 +273,12 @@ describe('derived: missing or contradictory fields are never zero dependencies',
     const text = read(BOUND, 'lean.json');
     const doubled = text.replace('"display-name": "double"', '"display-name": "double", "type-dependencies": []');
     assert.notEqual(doubled, text);
-    assert.deepEqual(codes(derived({ extractText: doubled })), ['duplicate-key']);
+    assert.deepEqual(codes(derived({ extractText: doubled })), withUnverified(['duplicate-key']));
   });
 
   it('dependencies disagreeing with type and term dependencies blocks', () => {
     const record = derived({ edit: (data) => { data[FITS].dependencies = []; } });
-    assert.deepEqual(codes(record), ['dependency-fields-disagree']);
+    assert.deepEqual(codes(record), withUnverified(['dependency-fields-disagree']));
   });
 });
 
@@ -285,7 +289,7 @@ describe('derived: in-project declarations labelled external are unresolved', ()
       atom['type-dependencies'] = atom['type-dependencies'].filter((id) => id !== FITS);
       atom['type-dependencies-external'].push(FITS);
     } });
-    assert.deepEqual(codes(record), ['unresolved-edge']);
+    assert.deepEqual(codes(record), withUnverified(['unresolved-edge']));
     assert.ok(!record.external.includes(FITS));
     assert.deepEqual(record.closures[THEOREM].blockers, [{ code: 'graph-incomplete' }, { code: 'unresolved-edge', dependency: FITS }]);
   });
@@ -306,7 +310,7 @@ describe('derived: in-project declarations labelled external are unresolved', ()
       log: wrote(8),
     });
     assert.deepEqual(record.completeness.missingDeclarations, [FITS]);
-    assert.deepEqual(codes(record), ['missing-declarations', 'unresolved-edge']);
+    assert.deepEqual(codes(record), withUnverified(['missing-declarations', 'unresolved-edge']));
   });
 });
 
@@ -316,27 +320,27 @@ describe('derived: completeness needs the requested scope, not one atom or a cac
       edit: (data) => { for (const id of Object.keys(data)) if (data[id]['code-module'] === 'M1demo.Spec') delete data[id]; },
       log: wrote(5),
     });
-    assert.deepEqual(codes(record), ['missing-declarations']);
+    assert.deepEqual(codes(record), withUnverified(['missing-declarations']));
     assert.equal(record.completeness.missingDeclarations.length, 4);
     assert.deepEqual(record.closures, {});
   });
 
   it('a run filtered by --module, or whose lake build missed the library, is refused', () => {
-    assert.deepEqual(codes(derived({ receipt: (r) => r.probe.argv.push('--module', 'M1demo.Spec') })), ['scope-not-requested']);
-    assert.deepEqual(codes(derived({ receipt: (r) => { r.lakeBuild.argv = ['lake', 'build']; } })), ['scope-not-requested']);
-    assert.deepEqual(codes(derived({ receipt: (r) => { r.lakeBuild.exitCode = 1; } })), ['run-failed']);
+    assert.deepEqual(codes(derived({ receipt: (r) => r.probe.argv.push('--module', 'M1demo.Spec') })), withUnverified(['scope-not-requested']));
+    assert.deepEqual(codes(derived({ receipt: (r) => { r.lakeBuild.argv = ['lake', 'build']; } })), withUnverified(['scope-not-requested']));
+    assert.deepEqual(codes(derived({ receipt: (r) => { r.lakeBuild.exitCode = 1; } })), withUnverified(['run-failed']));
   });
 
   it('a project module outside the requested libraries blocks', () => {
     const projectRoot = projectCopy((directory) => fs.writeFileSync(path.join(directory, 'Other.lean'), 'def other : Nat := 1\n'));
     const record = derived({ projectRoot, receipt: (r) => { r.inputs.files = projectInputs(projectRoot); } });
-    assert.deepEqual(codes(record), ['modules-outside-scope']);
+    assert.deepEqual(codes(record), withUnverified(['modules-outside-scope']));
   });
 
   it('a requested module whose .ilean the run never produced blocks', () => {
     const projectRoot = projectCopy((directory) => fs.rmSync(path.join(directory, '.lake/build/lib/lean/M1demo/Spec.ilean')));
     const record = derived({ projectRoot, receipt: (r) => { r.inputs.files = projectInputs(projectRoot); } });
-    assert.deepEqual(codes(record), ['missing-ilean', 'atom-outside-scope']);
+    assert.deepEqual(codes(record), withUnverified(['missing-ilean', 'atom-outside-scope']));
   });
 
   it('a recorded receipt that no longer lists a module .ilean on disk blocks', () => {
@@ -348,8 +352,8 @@ describe('derived: completeness needs the requested scope, not one atom or a cac
 describe('derived: provenance binds the extract, log and inputs to one run', () => {
   it('an older extract and log cannot adopt the bound run', () => {
     const stale = graph({ extractText: read('positive-theorem', 'lean.json'), logText: read('positive-theorem', 'probe.log') });
-    assert.deepEqual(codes(stale), ['run-mismatch', 'run-mismatch']);
-    assert.deepEqual(codes(graph({ logText: read('positive-theorem', 'probe.log') })), ['run-mismatch']);
+    assert.deepEqual(codes(stale), withUnverified(['run-mismatch', 'run-mismatch']));
+    assert.deepEqual(codes(graph({ logText: read('positive-theorem', 'probe.log') })), withUnverified(['run-mismatch']));
   });
 
   it('a changed translation.json is not adopted', () => {
@@ -365,23 +369,23 @@ describe('derived: provenance binds the extract, log and inputs to one run', () 
 
   it('an invalid Lean project commit blocks', () => {
     const record = derived({ edit: (data, envelope) => { envelope.source.commit = 'eef73c8'; }, receipt: (r) => { r.inputs.leanProjectCommit = 'eef73c8'; } });
-    assert.deepEqual(codes(record), ['invalid-lean-commit']);
+    assert.deepEqual(codes(record), withUnverified(['invalid-lean-commit']));
   });
 
   it('a receipt for another commit, or no receipt at all, blocks', () => {
-    assert.deepEqual(codes(derived({ receipt: (r) => { r.inputs.leanProjectCommit = '8c8955e1193744a42ee464d56893c87d8a172826'; } })), ['run-mismatch']);
+    assert.deepEqual(codes(derived({ receipt: (r) => { r.inputs.leanProjectCommit = '8c8955e1193744a42ee464d56893c87d8a172826'; } })), withUnverified(['run-mismatch']));
     assert.deepEqual(codes(graph({ receiptText: null })), ['unbound-run']);
     assert.deepEqual(codes(graph({ receiptText: '{"schema":"fvs/lean-probe-run"}' })), ['invalid-receipt']);
   });
 
   it('a manifest of the wrong kind is refused, not hashed', () => {
     const record = graph({ manifestText: fs.readFileSync(path.join(PROJECT, 'lake-manifest.json'), 'utf8') });
-    assert.deepEqual(codes(record), ['invalid-manifest']);
+    assert.deepEqual(codes(record), withUnverified(['invalid-manifest']));
     assert.equal(record.provenance.manifestSha256, null);
     assert.equal(record.provenance.sourceCommit, null);
     const dirty = JSON.parse(fs.readFileSync(MANIFEST, 'utf8'));
     dirty.source.dirty = ['src/lib.rs'];
-    assert.deepEqual(codes(graph({ manifestText: JSON.stringify(dirty) })), ['invalid-manifest']);
+    assert.deepEqual(codes(graph({ manifestText: JSON.stringify(dirty) })), withUnverified(['invalid-manifest']));
   });
 });
 
@@ -394,13 +398,13 @@ describe('derived: other edits of the bound positive', () => {
   });
 
   it('a truncated log or a disagreeing atom count is incomplete', () => {
-    assert.deepEqual(codes(derived({ log: (text) => text.replace(/^Wrote .*$/m, '') })), ['log-incomplete']);
-    assert.deepEqual(codes(derived({ log: wrote(10) })), ['atom-count-mismatch']);
+    assert.deepEqual(codes(derived({ log: (text) => text.replace(/^Wrote .*$/m, '') })), withUnverified(['log-incomplete']));
+    assert.deepEqual(codes(derived({ log: wrote(10) })), withUnverified(['atom-count-mismatch']));
   });
 
   it('a dropped proof-only lemma does not enter the closure, but still blocks the graph', () => {
     const record = derived({ edit: (data) => { delete data['probe:m1demo.spec.doubleNat_eq']; }, log: wrote(8) });
-    assert.deepEqual(codes(record), ['missing-declarations', 'unresolved-edge']);
+    assert.deepEqual(codes(record), withUnverified(['missing-declarations', 'unresolved-edge']));
     assert.deepEqual(record.closures[THEOREM].blockers, [{ code: 'graph-incomplete' }]);
   });
 
@@ -486,9 +490,9 @@ describe('binding to the recorded extraction attempt', () => {
     const result = cli([recorded('bound-positive', 'lean.json'), '--library', LIBS.join(','),
       '--log', recorded('bound-positive', 'probe.log'), '--receipt', recorded('bound-positive', 'receipt.json'),
       '--project-root', root, '--manifest', ATTEMPT_MANIFEST, '--constants', recorded('bound-positive', 'constants.json')]);
-    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.status, 1, result.stderr);
     const record = JSON.parse(result.stdout);
-    assert.equal(record.state, 'complete');
+    assert.deepEqual(codes(record), ['fidelity-unverified']);
     const run = JSON.parse(read('bound-positive', 'state.json')).extraction.run;
     assert.equal(record.binding.status, 'bound');
     assert.equal(record.binding.trust, 'local-host-and-reviewed-scripts');
@@ -517,7 +521,7 @@ describe('binding to the recorded extraction attempt', () => {
     // positive, different Lean bytes), placed over this project's published file.
     const record = edited({ project: (root) => fs.copyFileSync(path.join(FIXTURES, 'seeded', 'feature-alt-M1demo.lean'),
       path.join(root, 'M1demo', 'M1demo.lean')) });
-    assert.deepEqual(codes(record), ['generated-lean-differs-from-attempt']);
+    assert.deepEqual(codes(record), withUnverified(['generated-lean-differs-from-attempt']));
     assert.deepEqual(binding(record), ['unbound', 'inputs-disagree-with-attempt']);
   });
 
@@ -528,7 +532,7 @@ describe('binding to the recorded extraction attempt', () => {
     assert.deepEqual(binding(boundGraph('bound-positive', { projectRoot: link })), ['bound']);
   });
 
-  it('absent or unsupported evidence leaves the complete graph unbound', () => {
+  it('absent or unsupported evidence leaves the binding unbound without adding a graph blocker', () => {
     const cases = [
       [{ project: (root) => fs.rmSync(path.join(root, STATE)) }, ['unbound', 'no-state']],
       [{ state: (s) => { delete s.extraction.run; } }, ['unbound', 'no-extraction-attempt']],
@@ -539,7 +543,7 @@ describe('binding to the recorded extraction attempt', () => {
     ];
     for (const [edit, expected] of cases) {
       const record = edited(edit);
-      assert.equal(record.state, 'complete', JSON.stringify(expected));
+      assert.deepEqual(codes(record), withUnverified([]), JSON.stringify(expected));
       assert.deepEqual(binding(record), expected);
       assert.equal(record.provenance.llbcSha256, null);
     }
@@ -562,7 +566,7 @@ describe('binding to the recorded extraction attempt', () => {
     ];
     for (const [edit, expected] of cases) {
       const record = edited(edit);
-      assert.deepEqual(codes(record), expected);
+      assert.deepEqual(codes(record), withUnverified(expected));
       assert.deepEqual(binding(record), ['unbound', 'inputs-disagree-with-attempt']);
     }
   });
@@ -570,7 +574,7 @@ describe('binding to the recorded extraction attempt', () => {
   it('a malformed or empty recorded publication is refused by the state validator', () => {
     for (const state of [(s, run) => { run.publication = []; }, (s, run) => { delete run.translation; }, (s, run) => { run.llbc = 'x'; }]) {
       const record = edited({ state });
-      assert.deepEqual(codes(record), ['malformed-state']);
+      assert.deepEqual(codes(record), withUnverified(['malformed-state']));
       assert.equal(record.binding.status, 'unbound');
     }
   });
@@ -587,7 +591,7 @@ describe('binding to the recorded extraction attempt', () => {
     for (const [edit, code] of cases) {
       const record = edited(edit);
       assert.equal(record.state, 'incomplete', code);
-      assert.deepEqual(codes(record), [code]);
+      assert.deepEqual(codes(record), withUnverified([code]));
       assert.deepEqual(binding(record), ['unbound', 'run-receipt-disagrees']);
       assert.equal(record.binding.generatedLean, undefined);
       assert.equal(record.provenance.llbcSha256, null);
@@ -606,7 +610,7 @@ describe('binding to the recorded extraction attempt', () => {
       '--constants', recorded('bound-positive', 'constants.json')]);
     assert.equal(result.status, 1);
     const record = JSON.parse(result.stdout);
-    assert.deepEqual(codes(record), ['run-failed']);
+    assert.deepEqual(codes(record), withUnverified(['run-failed']));
     assert.deepEqual(binding(record), ['unbound', 'run-receipt-disagrees']);
   });
 
@@ -617,7 +621,7 @@ describe('binding to the recorded extraction attempt', () => {
       const alias = (file) => file.replace(/\/M1demo\.lean$/, '/./M1demo.lean');
       run.publication.push({ ...lean, attemptPath: alias(lean.attemptPath), projectPath: alias(lean.projectPath) });
     } });
-    assert.deepEqual(codes(record), ['attempt-publication-alias']);
+    assert.deepEqual(codes(record), withUnverified(['attempt-publication-alias']));
     assert.deepEqual(binding(record), ['unbound', 'inputs-disagree-with-attempt']);
   });
 
@@ -628,7 +632,7 @@ describe('binding to the recorded extraction attempt', () => {
       run.publication.push({ ...entry, attemptPath: entry.attemptPath.replace(/M1demo\.lean$/, 'Copy.lean'),
         projectPath: entry.projectPath.replace(/\/M1demo\.lean$/, '//M1demo.lean') });
     } });
-    assert.deepEqual(codes(projectOnly), ['attempt-publication-alias']);
+    assert.deepEqual(codes(projectOnly), withUnverified(['attempt-publication-alias']));
     const attemptOnly = edited({ state: (s, run) => {
       const entry = lean(run);
       const specs = path.posix.join(s.extraction.inputs.crateRoot, 'Specs.lean');
@@ -717,14 +721,14 @@ describe('omitted external lists and the structure and projection kinds', () => 
     }
   });
 
-  it('recorded run A: structures, projections and instances give a complete, bound graph', () => {
+  it('recorded run A: structures, projections and instances give a structurally complete, bound graph', () => {
     const root = kindsProject(A);
     const result = cli([recorded(A, 'lean.json'), '--library', LIBS.join(','), '--log', recorded(A, 'probe.log'),
       '--receipt', recorded(A, 'receipt.json'), '--project-root', root, '--manifest', ATTEMPT_MANIFEST,
       '--constants', recorded(A, 'constants.json')]);
-    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.status, 1, result.stderr);
     const record = JSON.parse(result.stdout);
-    assert.equal(record.state, 'complete');
+    assert.deepEqual(codes(record), ['fidelity-unverified']);
     assert.equal(record.binding.status, 'bound');
     assert.deepEqual(record.closures[K('wrap_x')].declarations, [K('Pt'), K('Pt.x'), K('Pt.y'), K('Wrap'), K('Wrap.pt')]);
     assert.deepEqual(record.closures[K('wrap_x')].external, ['probe:Eq', 'probe:Nat']);
@@ -742,7 +746,7 @@ describe('omitted external lists and the structure and projection kinds', () => 
     const record = kindsGraph(A);
     for (const name of ['idT', 'selfImp', 'Pt.x', 'Wrap.pt']) assert.ok(record.completeness.modules['Specs.Kinds'].includes(`m1demo.kinds.${name}`), name);
     const dropped = kindsDerived((data) => { delete data[K('idT')]; }, (text) => text.replace('Wrote 27 ', 'Wrote 26 '));
-    assert.deepEqual(codes(dropped), ['missing-declarations']);
+    assert.deepEqual(codes(dropped), withUnverified(['missing-declarations']));
     assert.deepEqual(dropped.completeness.missingDeclarations, [K('idT')]);
   });
 
@@ -761,76 +765,150 @@ describe('omitted external lists and the structure and projection kinds', () => 
   });
 
   it('an omitted list on an unqualified kind is not accepted', () => {
-    assert.deepEqual(codes(kindsDerived((data) => { data[K('Pt')].kind = 'inductive'; })), ['unqualified-kind']);
+    assert.deepEqual(codes(kindsDerived((data) => { data[K('Pt')].kind = 'inductive'; })), withUnverified(['unqualified-kind']));
   });
 
   it('an external list dropped after the run is caught by the receipt, never read as empty', () => {
     const envelope = JSON.parse(read(A, 'lean.json'));
     delete envelope.data[K('twice')]['type-dependencies-external'];
     const record = kindsGraph(A, { extractText: JSON.stringify(envelope) });
-    // The receipt catches the edit, and the fidelity gate independently finds Nat unreported.
-    assert.deepEqual(codes(record), ['run-mismatch', 'dependency-not-reported']);
+    // The receipt catches the edit (run A's receipt has no compiled modules, so fidelity is not reached).
+    assert.deepEqual(codes(record), withUnverified(['run-mismatch']));
     assert.deepEqual([record.binding.status, ...record.binding.reasons], ['unbound', 'run-receipt-disagrees']);
   });
 });
 
 describe('dependency fidelity against the Lean constants record', () => {
-  const editConstants = (change) => {
-    const constants = JSON.parse(read(BOUND, 'constants.json'));
-    change(constants);
-    return JSON.stringify(constants);
-  };
-  const entry = (constants, name) => constants.project.find((item) => item.name === name);
-  const listed = (record, item) => record.fidelity.represented.some((represented) =>
-    Object.entries(item).every(([key, value]) => JSON.stringify(represented[key]) === JSON.stringify(value)));
+  // The compiled-module-bound run: probe-lean and the Lean constants oracle on
+  // run A's project, both recording the same compiled modules.
+  const RUN = 'compiled-run';
+  const KINDS = path.join(FIXTURES, 'kinds-project');
+  const ATTEMPT_MANIFEST = path.join(FIXTURES, 'extraction', 'attempt-manifest.json');
+  const STATE = '.formalising/auto-fv/state.json';
+  const id = (name) => `probe:${name}`;
 
-  it('recorded positive: verified, with every representation listed', () => {
-    const record = graph();
+  function project() {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-lean-fidelity-'));
+    temporaryDirectories.push(root);
+    fs.cpSync(KINDS, root, { recursive: true });
+    fs.mkdirSync(path.join(root, path.dirname(STATE)), { recursive: true });
+    fs.copyFileSync(recorded('bound-positive', 'state.json'), path.join(root, STATE));
+    return root;
+  }
+  const constants = () => JSON.parse(read(RUN, 'constants.json'));
+  // Synthetic, not evidence: a constants record whose project entries say
+  // exactly what probe-lean reported, so the verified path can be exercised.
+  function synthetic() {
+    const record = constants();
+    const data = JSON.parse(read(RUN, 'lean.json')).data;
+    for (const entry of record.project) {
+      const atom = data[id(entry.name)];
+      if (!atom) continue;
+      const names = (fields) => [...new Set(fields.flatMap((field) => atom[field] ?? []).map((dep) => dep.slice('probe:'.length)))];
+      entry.type = names(['type-dependencies', 'type-dependencies-external']);
+      entry.value = names(['term-dependencies', 'term-dependencies-external']);
+    }
+    return record;
+  }
+  function fidelityGraph(edit = null, overrides = {}) {
+    const record = edit === 'real' ? constants() : synthetic();
+    if (typeof edit === 'function') edit(record);
+    return buildLeanGraph({
+      extractText: read(RUN, 'lean.json'),
+      logText: read(RUN, 'probe.log'),
+      receiptText: read(RUN, 'receipt.json'),
+      libraries: ['M1demo', 'Specs'],
+      projectRoot: project(),
+      manifestText: fs.readFileSync(ATTEMPT_MANIFEST, 'utf8'),
+      constantsText: JSON.stringify(record),
+      ...overrides,
+    });
+  }
+  const entry = (record, name) => record.project.find((item) => item.name === name);
+  const blocked = (record, code) => record.blockers.filter((item) => item.code === code).map((item) => item.declaration).sort();
+
+  it('recorded compiled-bound run: probe-lean under-reports, so the graph is incomplete', () => {
+    const run = JSON.parse(read(RUN, 'receipt.json'));
+    assert.deepEqual(JSON.parse(read(RUN, 'constants.json')).inputs.compiled, run.inputs.compiled);
+    const record = fidelityGraph('real');
+    assert.equal(record.state, 'incomplete');
+    assert.equal(record.fidelity.status, 'incomplete');
+    assert.deepEqual(blocked(record, 'dependency-not-reported'),
+      [id('m1demo.spec.double_spec'), id('m1demo.sum_to'), id('m1demo.sum_to_loop'), id('m1demo.sum_to_loop.body')]);
+    assert.deepEqual(blocked(record, 'proof-dependencies-unaudited'),
+      [id('m1demo.spec.double_spec'), id('m1demo.sum_to'), id('m1demo.sum_to_loop.body')]);
+    assert.equal(record.blockers.length, 7);
+    assert.ok(record.closures[id('m1demo.spec.double_spec')].blockers.some((item) => item.code === 'dependency-not-reported'));
+  });
+
+  it('a constructor is not excused by its inductive being reported', () => {
+    const record = fidelityGraph('real');
+    const loop = record.declarations[id('m1demo.sum_to_loop')];
+    assert.ok(loop['term-dependencies-external'].includes('probe:Prod'));
+    const reason = record.blockers.find((item) => item.declaration === id('m1demo.sum_to_loop')).reason;
+    assert.match(reason, /Prod\.mk \(value\)/);
+    assert.ok(!record.fidelity.represented.some((item) => item.constant === 'Prod.mk'));
+  });
+
+  it('a generated theorem is folded through its statement and its proof stays an open obligation', () => {
+    const record = fidelityGraph('real');
+    assert.ok(record.fidelity.represented.some((item) => item.declaration === id('m1demo.spec.double_spec') &&
+      item.constant === 'm1demo.spec.DoubleFits.eq_1' && item.rule === 'statement-fold'));
+    assert.ok(record.fidelity.obligations.some((item) => item.declaration === id('m1demo.spec.double_spec') &&
+      item.constant === 'm1demo.spec.DoubleFits.eq_1' && item.obligation === 'proof-dependencies-unaudited'));
+    // The simp lemma's proof uses propext; the proof is not audited, so it stays an obligation.
+    assert.ok(entry(constants(), 'm1demo.spec.double_spec._simp_1_9').value.includes('propext'));
+    assert.ok(record.fidelity.obligations.some((item) => item.constant === 'm1demo.spec.double_spec._simp_1_9'));
+    // An unreported statement constant of a generated theorem is a coverage failure, not waived:
+    // in the real record DoubleFits.eq_1 folds; with Nat.add in its statement it no longer does.
+    assert.ok(!record.blockers.find((item) => item.declaration === id('m1demo.spec.double_spec') &&
+      item.code === 'dependency-not-reported').reason.includes('DoubleFits.eq_1'));
+    const real = constants();
+    entry(real, 'm1demo.spec.DoubleFits.eq_1').type.push('Nat.add');
+    const statement = fidelityGraph(null, { constantsText: JSON.stringify(real) });
+    assert.match(statement.blockers.find((item) => item.code === 'dependency-not-reported' &&
+      item.declaration === id('m1demo.spec.double_spec')).reason, /DoubleFits\.eq_1 \(value\)/);
+  });
+
+  it('synthetic: a constants record that agrees with the reported lists is verified', () => {
+    const record = fidelityGraph();
     assert.equal(record.state, 'complete');
     assert.equal(record.fidelity.status, 'verified');
-    for (const item of [
-      { declaration: 'probe:m1demo.sum_to_loop', list: 'value', constant: 'Prod.mk', rule: 'by-inductive', via: ['Prod'] },
-      { declaration: 'probe:m1demo.sum_to_loop', constant: 'Prod.casesOn', rule: 'by-inductive', via: ['Prod'] },
-      { declaration: 'probe:m1demo.sum_to_loop.body', constant: 'Prod.mk', rule: 'by-inductive', via: ['Prod'] },
-      { declaration: 'probe:m1demo.sum_to_loop', constant: 'm1demo.sum_to_loop.match_1', rule: 'auxiliary-fold' },
-      { declaration: 'probe:m1demo.sum_to', constant: 'm1demo.sum_to._proof_1', rule: 'proof-irrelevant' },
-    ]) assert.ok(listed(record, item), JSON.stringify(item));
+    assert.deepEqual(record.fidelity.obligations, []);
   });
 
-  it('the known Prod.mk omission cannot pass once its inductive is not reported', () => {
-    const record = derived({ edit: (data) => {
-      const atom = data['probe:m1demo.sum_to_loop'];
-      atom['term-dependencies-external'] = atom['term-dependencies-external'].filter((dep) => dep !== 'probe:Prod');
-    } });
-    assert.equal(record.state, 'incomplete');
-    assert.deepEqual(codes(record), ['dependency-not-reported']);
-    assert.equal(record.blockers[0].declaration, 'probe:m1demo.sum_to_loop');
-    assert.match(record.blockers[0].reason, /Prod\.mk \(value\)/);
-    assert.equal(record.fidelity.status, 'incomplete');
-  });
-
-  it('an unreported constructor or external constant blocks and taints every closure that reaches it', () => {
-    for (const constant of ['Prod.mk', 'Nat.add']) {
-      const record = graph({ constantsText: editConstants((constants) => { entry(constants, 'm1demo.spec.doubleNat').value.push(constant); }) });
+  it('an unreported constant, constructor or type-lane constant blocks and taints closures', () => {
+    for (const [constant, list] of [['Nat.add', 'value'], ['Prod.mk', 'value'], ['Aeneas.Std.U32.max', 'type']]) {
+      const record = fidelityGraph((record2) => { entry(record2, 'm1demo.kinds.Pt.x')[list].push(constant); });
       assert.deepEqual(codes(record), ['dependency-not-reported'], constant);
-      assert.equal(record.blockers[0].declaration, 'probe:m1demo.spec.doubleNat');
-      assert.deepEqual(record.closures[THEOREM].blockers,
-        [{ code: 'graph-incomplete' }, { code: 'dependency-not-reported', declaration: 'probe:m1demo.spec.doubleNat' }]);
+      assert.equal(record.blockers[0].declaration, id('m1demo.kinds.Pt.x'));
+      assert.ok(record.closures[id('m1demo.kinds.wrap_x')].blockers.some((item) => item.code === 'dependency-not-reported'));
     }
+    const termOnly = fidelityGraph((record2) => { entry(record2, 'm1demo.spec.double_spec').type.push('Aeneas.Std.U32.add_spec'); });
+    assert.match(termOnly.blockers[0].reason, /U32\.add_spec \(type\)/);
   });
 
-  it('a type constant must be reported in the type lists', () => {
-    const record = graph({ constantsText: editConstants((constants) => { entry(constants, 'm1demo.spec.double_spec').type.push('Aeneas.Std.U32.add_spec'); }) });
-    assert.deepEqual(codes(record), ['dependency-not-reported']);
-    assert.match(record.blockers[0].reason, /U32\.add_spec \(type\)/);
+  it('the compiled modules must be recorded by both and be the same', () => {
+    assert.match(fidelityGraph((record2) => { delete record2.inputs.compiled; }).blockers[0].reason, /compiled-environment-not-bound/);
+    const receipt = JSON.parse(read(RUN, 'receipt.json'));
+    delete receipt.inputs.compiled;
+    assert.deepEqual(codes(fidelityGraph(null, { receiptText: JSON.stringify(receipt) })), ['fidelity-unverified']);
+    const stale = fidelityGraph((record2) => {
+      const file = Object.keys(record2.inputs.compiled).find((name) => name.endsWith('M1demo/M1demo.olean'));
+      record2.inputs.compiled[file] = '0'.repeat(64);
+    });
+    assert.deepEqual(codes(stale), ['fidelity-unbound']);
+    const bad = JSON.parse(read(RUN, 'receipt.json'));
+    bad.inputs.compiled = { x: 'not-a-digest' };
+    assert.ok(codes(fidelityGraph(null, { receiptText: JSON.stringify(bad) })).includes('invalid-receipt'));
   });
 
   it('a missing, malformed, unbound or partial constants record establishes nothing', () => {
-    assert.deepEqual(codes(graph({ constantsText: null })), ['fidelity-unverified']);
-    assert.deepEqual(codes(graph({ constantsText: '{"schema":"fvs/lean-constants","version":1}' })), ['invalid-constants']);
-    assert.deepEqual(codes(graph({ constantsText: editConstants((constants) => { constants.referenced.push({ ...constants.referenced[0] }); }) })), ['invalid-constants']);
-    assert.deepEqual(codes(graph({ constantsText: editConstants((constants) => { constants.inputs.files['M1demo.lean'] = '0'.repeat(64); }) })), ['fidelity-unbound']);
-    assert.deepEqual(codes(graph({ constantsText: editConstants((constants) => { constants.project = constants.project.filter((item) => item.name !== 'm1demo.clamp'); }) })),
+    assert.deepEqual(codes(fidelityGraph(null, { constantsText: null })), ['fidelity-unverified']);
+    assert.deepEqual(codes(fidelityGraph(null, { constantsText: '{"schema":"fvs/lean-constants","version":1}' })), ['invalid-constants']);
+    assert.deepEqual(codes(fidelityGraph((record2) => { record2.referenced.push({ ...record2.referenced[0] }); })), ['invalid-constants']);
+    assert.deepEqual(codes(fidelityGraph((record2) => { record2.inputs.files['M1demo.lean'] = '0'.repeat(64); })), ['fidelity-unbound']);
+    assert.deepEqual(codes(fidelityGraph((record2) => { record2.project = record2.project.filter((item) => item.name !== 'm1demo.clamp'); })),
       ['constants-missing-declaration']);
   });
 
@@ -844,10 +922,10 @@ describe('dependency fidelity against the Lean constants record', () => {
         fs.writeFileSync(file, JSON.stringify(ilean));
       });
       const record = derived({ projectRoot, receipt: (r) => { r.inputs.files = projectInputs(projectRoot); } });
-      assert.deepEqual(codes(record), ['ilean-references-missing'], JSON.stringify(references));
+      assert.deepEqual(codes(record), withUnverified(['ilean-references-missing']), JSON.stringify(references));
     }
     const root = JSON.parse(fs.readFileSync(path.join(PROJECT, '.lake', 'build', 'lib', 'lean', 'M1demo.ilean'), 'utf8'));
     assert.deepEqual(root.references, {});
-    assert.equal(graph().state, 'complete');
+    assert.deepEqual(codes(graph()), ['fidelity-unverified']);
   });
 });
