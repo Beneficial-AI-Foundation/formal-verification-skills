@@ -112,7 +112,8 @@ The 3-lens analysis pattern:
 
 Steps:
 1. Read the target spec file and identify all theorem proofs (not sorry -- these should be complete)
-2. Read the corresponding function body from Funs.lean for structural context
+2. In an Aeneas project, read the corresponding function body from Funs.lean for structural context;
+   otherwise use the file's own definitions and imports
 3. Search for similar proved theorems in the project to identify reuse patterns
 4. For each theorem proof, apply the 3-lens analysis
 5. Return structured findings with per-theorem simplification recommendations
@@ -169,7 +170,9 @@ Return structured findings with:
 Handle missing files without failing:
 
 - **CODEMAP.md not found:** Report "CODEMAP.md does not exist at .formalising/CODEMAP.md. Recommend running `/fvs:map-code` first." Continue gathering what context is available.
-- **Funs.lean not found:** Report the searched paths. This is a critical missing file -- include in findings as a blocker.
+- **Funs.lean not found:** Report the searched paths. This is a critical missing file -- include in findings as a blocker. Exception: in
+  lean-refactor mode for a project that does not use Aeneas extraction, its absence is expected and
+  not a blocker; modes that need Aeneas extraction keep it as a blocker.
 - **No stubs directory:** Report ".formalising/stubs/ directory not found." This is non-blocking -- stubs are optional context.
 - **No Specs/ directory:** Report "No existing specs found." This is expected for new projects.
 - **No Rust source:** Report "Rust source not provided or not found." Continue with Lean-only analysis.

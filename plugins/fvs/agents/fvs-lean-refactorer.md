@@ -89,7 +89,7 @@ After applying a refactoring:
 **Tier:** {1|2|3|4}
 **Lines:** {before} -> {after}
 
-Verify: LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build
+Verify: the file gate from your prompt, then LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build
 ```
 
 When no further refactoring is possible:
@@ -119,6 +119,10 @@ When something goes wrong:
 - NEVER write changes without explaining the specific heuristic being applied
 - If a change breaks the build, REVERT and return ERROR with the build output
 - Use `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` for all build checks, NEVER plain `lake build`
+- Verify with the file gate in `<file_gate>`: it covers the target file and its imports, while a
+  default `lake build` may not include the file. Keep the real exit status (`set -o pipefail`).
+- New helpers stay local: a `have` or local lemma for one proof, a `private` lemma for reuse in the
+  file. Never add a public declaration; describe it in your return so the parent can ask the user.
 - After a failed refactoring attempt, do not retry the same heuristic
 - Prefer conservative changes -- when in doubt, leave it alone
 - Do NOT use @-references. All reference knowledge is inlined by the parent command.

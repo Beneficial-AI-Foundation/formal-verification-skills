@@ -20,7 +20,7 @@ it('targets any compiling Lean file and routes broken or unfinished files to lea
 
 it('keeps statements, signatures, attributes, definitions and axiom policy unchanged', () => {
   for (const file of SOURCES) {
-    assert.match(flat(file), /Keep every theorem, lemma and definition statement, signature and attribute, the meaning of definitions, and the axiom and `sorry` policy unchanged; a needed statement change is reported, not applied/);
+    assert.match(flat(file), /Keep every theorem, lemma and definition statement, signature and attribute, the meaning of definitions, and the axiom and `sorry` policy unchanged; if a statement seems to need changing, tell the user and leave it as is/);
   }
   const agent = flat('agents/fvs-lean-refactorer.md');
   assert.match(agent, /NEVER change theorem, lemma or definition statements, signatures or attributes/);
@@ -49,4 +49,82 @@ it('keeps new helpers local by default', () => {
 
 it('keeps the existing positional argument and flags', () => {
   assert.match(flat('commands/fvs/lean-refactor.md'), /argument-hint: "<lean_file_path> \[--theorem name\] \[--mode safe\|balanced\|aggressive\] \[--max-passes N\] \[--report-only\]"/);
+});
+
+// Executes the shipped preflight and file-gate snippets against a fake `lake` (no Lean, no network).
+const os = require('node:os');
+const { spawnSync } = require('node:child_process');
+const blocks = file => [...fs.readFileSync(path.join(ROOT, file), 'utf8').matchAll(/```bash\n([\s\S]*?)```/g)].map(m => m[1]);
+const block = (file, needle) => blocks(file).find(b => b.includes(needle));
+
+function project({ mathlib = false, behaviour = {} } = {}) {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-refactor-gate-')));
+  const bin = path.join(dir, 'bin'); fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(dir, 'lakefile.toml'), 'name = "demo"\n');
+  fs.writeFileSync(path.join(dir, 'lean-toolchain'), 'leanprover/lean4:v4.31.0\n');
+  if (mathlib) fs.writeFileSync(path.join(dir, 'lake-manifest.json'), '{"packages": [{"name": "mathlib"}]}\n');
+  fs.writeFileSync(path.join(bin, 'lake'), [
+    '#!/bin/sh', 'echo "$*" >> "$FAKE_LAKE_LOG"', 'key=$(echo "$*" | tr " /." "___")',
+    'case "$key" in', ...Object.entries(behaviour).map(([k, [out, code]]) => `  ${k}) echo "${out}"; exit ${code};;`),
+    '  *) exit 0;;', 'esac', ''].join('\n'));
+  fs.chmodSync(path.join(bin, 'lake'), 0o755);
+  return dir;
+}
+function run(dir, script) {
+  const log = path.join(dir, 'lake.log');
+  const r = spawnSync('bash', ['-c', `SPEC_PATH=Extra/Broken.lean\n${script}\necho "STATUS ${'$'}{FILE_GATE_STATUS:-} ${'$'}{PROJECT_STATUS:-}"`],
+    { cwd: dir, encoding: 'utf8', env: { ...process.env, PATH: path.join(dir, 'bin') + path.delimiter + process.env.PATH, FAKE_LAKE_LOG: log } });
+  return { ...r, calls: fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '' };
+}
+
+for (const file of SOURCES) {
+  it(`${file}: cache preflight is skipped without a cache executable and stops on a real cache failure`, () => {
+    const cache = block(file, 'lake exe cache get');
+    const plain = run(project(), cache);
+    assert.equal(plain.status, 0); assert.match(plain.stdout, /Cache preflight not applicable/); assert.equal(plain.calls, '');
+    const ok = run(project({ mathlib: true }), cache);
+    assert.equal(ok.status, 0); assert.match(ok.calls, /^exe cache get$/m);
+    const failed = run(project({ mathlib: true, behaviour: { exe_cache_get: ['offline', 7] } }), cache);
+    assert.equal(failed.status, 7); assert.match(failed.stderr, /Lake cache preflight failed/);
+  });
+
+  it(`${file}: the selected-file gate keeps the real status and covers files outside the default build`, () => {
+    const moduleGate = block(file, 'lake build "$SPEC_PATH"');
+    const directGate = block(file, 'lake env lean "$SPEC_PATH"');
+    const good = run(project(), moduleGate);
+    assert.match(good.stdout, /STATUS 0/); assert.match(good.calls, /^build Extra\/Broken\.lean$/m);
+    const broken = run(project({ behaviour: { build_Extra_Broken_lean: ['error: Broken.lean:3: type mismatch', 1] } }), moduleGate);
+    assert.match(broken.stdout, /STATUS 1 /, 'tail must not mask the build failure');
+    // A file outside every library: Lake does not know it as a module, the default build is green,
+    // and only the direct check sees the error.
+    const outside = { build_Extra_Broken_lean: ['error: unknown target', 1], env_lean_Extra_Broken_lean: ['error: unsolved goals', 1] };
+    assert.match(run(project({ behaviour: outside }), moduleGate).stdout, /unknown target/);
+    const fallback = run(project({ behaviour: outside }), directGate);
+    assert.match(fallback.stdout, /STATUS 1 0/, 'a green default build cannot hide the selected file');
+    const scoped = run(project({ behaviour: { build_Extra_Broken_lean: ['error: unknown target', 1] } }), directGate);
+    assert.match(scoped.stdout, /STATUS 0 0/, 'a correct proof outside default targets passes');
+  });
+
+  it(`${file}: every pass reruns the recorded file gate and the session ends with a project build`, () => {
+    const text = flat(file);
+    assert.match(text, /Run the recorded FILE_GATE with `set -o pipefail` and use its captured status/);
+    assert.match(text, /After the last theorem, run the project build once/);
+    assert.doesNotMatch(text, /lake build 2>&1 \| tail -20/);
+  });
+
+  it(`${file}: the refactorer prompt carries the file gate and the helper and preservation rules`, () => {
+    const text = flat(file);
+    assert.match(text, /<file_gate>\$FILE_GATE<\/file_gate>/);
+    assert.match(text, /never add a public declaration, describe it in your return instead/);
+    assert.match(text, /Aeneas-specific material in the inlined references .* applies only if this is an Aeneas project/);
+  });
+}
+
+it('child roles state the file gate, helper boundary and conditional Funs.lean handling', () => {
+  const refactorer = flat('agents/fvs-lean-refactorer.md');
+  assert.match(refactorer, /Verify with the file gate in `<file_gate>`/);
+  assert.match(refactorer, /Never add a public declaration; describe it in your return so the parent can ask the user/);
+  const researcher = flat('agents/fvs-researcher.md');
+  assert.match(researcher, /2\. In an Aeneas project, read the corresponding function body from Funs\.lean/);
+  assert.match(researcher, /in lean-refactor mode for a project that does not use Aeneas extraction, its absence is expected and not a blocker/);
 });

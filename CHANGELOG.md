@@ -36,6 +36,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   measured process time, or the parent's clock from launch to the thinker's terminal response, or
   `not measured (<reason>)`. Failed or timed-out runs still persist no eval. This is timing
   instrumentation only, with no change to decisions or reviewer policy (#115).
+- `/fvs:lean-refactor` works on any Lean file whose proofs already compile, an FVS spec or an ordinary
+  Lean project file. Aeneas conventions apply only in Aeneas-extracted projects. Files with `sorry` or
+  build errors go to `/fvs:lean-verify`; statements, signatures, attributes, definition meaning and the
+  axiom policy stay unchanged, and new helpers stay as local as possible. A selected-file gate checks
+  the chosen file with its imports at baseline and after every change (a default build may skip it),
+  with real exit status, and the Mathlib cache preflight runs only in projects that provide it. The
+  argument label is now
+  `<lean_file_path>`; flags are unchanged. Credit: ideas from `/lean4:refactor` in Cameron Freer's
+  lean4-skills (MIT, commit `83582df`), paraphrased.
+- The protocol-prose guidance used by existing authoring calls adds a light plain-English wording pass
+  after the exposition, guided by ASD-STE100 Simplified Technical English (Issue 9) but not
+  STE-compliant. It freezes quotations, citations, code, Lean names, commands and formulas, keeps the
+  mathematical register and house style, treats sentence lengths as soft guidance, and preserves
+  every claim, quantifier and hedge. It adds no agent or review step.
 
 ## [2.3.9] - 2026-10-27
 

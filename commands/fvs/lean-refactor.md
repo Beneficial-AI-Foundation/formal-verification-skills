@@ -20,7 +20,8 @@ This command sits after `/fvs:lean-verify` in the verification lifecycle. The in
 ordinary Lean project file. Refactor complete proofs only. If the file has `sorry` or does not build,
 stop and route it to `/fvs:lean-verify`; never promise to refactor a broken file. Keep every theorem,
 lemma and definition statement, signature and attribute, the meaning of definitions, and the axiom and
-`sorry` policy unchanged; a needed statement change is reported, not applied. Aeneas conventions
+`sorry` policy unchanged; if a statement seems to need changing, tell the user and leave it as is.
+Aeneas conventions
 (`Funs.lean`, `Specs/`, `@[step]`, `unfold + step`) apply only when the project uses Aeneas extraction.
 New helpers stay as local as possible: a `have` or local lemma for one proof, a `private` lemma for
 reuse inside the file, and a public declaration only with the user's approval.
@@ -85,19 +86,26 @@ Wait for valid path.
 
 ## Step 1a: Warm the project cache
 
-Run the mandatory cache preflight from the validated Lean project root before the baseline build.
-A failure stops the workflow:
+Run the cache preflight from the validated Lean project root before the baseline build when the
+project provides Mathlib's `cache` executable (Mathlib is a dependency in `lake-manifest.json`, or
+the project is Mathlib). An applicable preflight that fails stops the workflow. A project without
+that executable skips the preflight; never install dependencies or change pins to create one:
 
 ```bash
 if { [ ! -f lakefile.lean ] && [ ! -f lakefile.toml ]; } || [ ! -f lean-toolchain ]; then
   echo "FVS >> ERROR: run from the Lean project root" >&2
   exit 1
 fi
-LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake exe cache get
-CACHE_STATUS=$?
-if [ "$CACHE_STATUS" -ne 0 ]; then
-  echo "FVS >> ERROR: Lake cache preflight failed; stopping workflow" >&2
-  exit "$CACHE_STATUS"
+if grep -q '"name": *"mathlib"' lake-manifest.json 2>/dev/null ||
+   grep -qE '^[[:space:]]*(name[[:space:]]*=[[:space:]]*"mathlib"|package[[:space:]]+mathlib)' lakefile.toml lakefile.lean 2>/dev/null; then
+  LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake exe cache get
+  CACHE_STATUS=$?
+  if [ "$CACHE_STATUS" -ne 0 ]; then
+    echo "FVS >> ERROR: Lake cache preflight failed; stopping workflow" >&2
+    exit "$CACHE_STATUS"
+  fi
+else
+  echo "FVS >> Cache preflight not applicable: no Mathlib cache executable in this project"
 fi
 ```
 
@@ -113,12 +121,30 @@ echo "Sorry count: $SORRY_COUNT"
 
 If sorry found: direct to `/fvs:lean-verify $SPEC_PATH`. STOP.
 
+**Selected-file gate.** A default `lake build` may not include this file, so check the file itself
+with its imports, and keep the real exit status (the displayed tail is not the result):
+
 ```bash
-# Build check
-LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build 2>&1 | tail -20
+set -o pipefail
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build "$SPEC_PATH" 2>&1 | tail -40
+FILE_GATE_STATUS=${PIPESTATUS[0]}
 ```
 
-If build fails: report error and STOP.
+This builds the file as a workspace module. If Lake reports an unknown target or module because the
+file is outside every package library, build the project for its imports and check the file
+directly; that pair is then the file gate:
+
+```bash
+set -o pipefail
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build 2>&1 | tail -40
+PROJECT_STATUS=${PIPESTATUS[0]}
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake env lean "$SPEC_PATH" 2>&1 | tail -40
+FILE_GATE_STATUS=${PIPESTATUS[0]}
+```
+
+Record the gate that applies as `FILE_GATE` and run it again after every change. If
+`FILE_GATE_STATUS` or `PROJECT_STATUS` is non-zero, report the errors, route to `/fvs:lean-verify`,
+and STOP.
 
 **Gather baseline metrics:**
 
@@ -183,6 +209,9 @@ $TACTIC_USAGE_CONTENT
 $PROOF_STRATEGIES_CONTENT
 </proof_strategies>
 
+Aeneas-specific material in the inlined references (`step`, `scalar_tac`, `unfold + step`, Funs.lean)
+applies only if this is an Aeneas project; otherwise analyse the file as ordinary Lean.
+
 Tasks:
 1. Read the spec file and identify all theorem proofs (not sorry)
 2. In an Aeneas project, read the corresponding function body from Funs.lean for structural context;
@@ -237,14 +266,19 @@ $LAKE_BUILD_GUIDE
     <mode>{MODE}</mode>
     <pass>{PASS+1} of {MAX_PASSES}</pass>
     <previous_feedback>{build errors from last pass, if any}</previous_feedback>
+    <file_gate>$FILE_GATE</file_gate>
 
     Apply ONE refactoring from the highest applicable tier within the mode ceiling.
+    Keep statements, signatures, attributes, definition meaning and the axiom and `sorry` policy
+    unchanged. New helpers: a `have` or local lemma for one proof, a `private` lemma for reuse in this
+    file; never add a public declaration, describe it in your return instead. Aeneas conventions
+    apply only in an Aeneas project. Verify with the file gate above.
     Write via Write tool. User approves inline."
   )
 
   ROUTE ON RETURN:
     ## REFACTORED:
-      Run: LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build
+      Run the recorded FILE_GATE with `set -o pipefail` and use its captured status
       If build passes: record change, PASS += 1, continue
       If build fails: REVERT the change (re-write previous content), store error as feedback, PASS += 1
     ## NO_CHANGE:
@@ -254,6 +288,9 @@ $LAKE_BUILD_GUIDE
 
 END WHILE
 ```
+
+After the last theorem, run the project build once (`set -o pipefail; LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`) and use its real status; if it fails,
+revert this session's changes and report the errors.
 
 Move to next theorem after max passes or NO_CHANGE.
 
@@ -311,7 +348,7 @@ Try --mode aggressive for more aggressive refactoring.
 
 <success_criteria>
 - [ ] Spec file located and zero sorry confirmed
-- [ ] Baseline build check passes with LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build
+- [ ] Baseline selected-file gate (FILE_GATE) passes with its real exit status; builds use LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build
 - [ ] Config read and models resolved for fvs-researcher and fvs-lean-refactorer
 - [ ] Research subagent dispatched with inlined lean-refactoring, tactic-usage, proof-strategies
 - [ ] 3-lens analysis returned with per-theorem recommendations
