@@ -1,0 +1,655 @@
+{
+  "schema": "fvs-rust-identity/record",
+  "version": 1,
+  "status": "complete",
+  "provenance": {
+    "sourceCommit": "101a27d6c697bbd4bdee42318c59b835f0b6d85c",
+    "manifestSha256": "affa40a68623eb29ec40eb0f2aae5b0a95f57a0fa54306f78a64f6a399f674ab",
+    "translationSha256": "09dd6da5b667aef7c9d3f200a0956003ddac124b1936490514eda60932a3fbb1",
+    "charonVersion": "0.1.274",
+    "aeneasVersion": "nightly-2026.09.30-0855ce1",
+    "crate": "m1demo",
+    "rustSha256": "ebd217479808680967a923f30f42a3e728e660f37f32be293b06eaddb68ad94b",
+    "mappingsSha256": "7b1c4b7d5a4c60934d25052608cbd294d8f567eb8956e29602cd08f5efb2a885",
+    "leanSha256": "d65ec10a67ac35bfd3d4d98977395e0865d183a5bf3460ceac17b7bab3fa0476",
+    "functionsSha256": "fd076fbc06c47db54c6b2dd8a224ca7732f7330acafbb3079d2e4fe85cd9df47",
+    "leanProjectCommit": "101a27d6c697bbd4bdee42318c59b835f0b6d85c",
+    "llbcSha256": "64b4824f0f0f534ab28a985bddd371b951d2bca39b14f8d3635dd23e9941498f",
+    "configSha256": "1740df601d17e55a88a27d930b38548e0f626211855a6336576a620b5c85734d",
+    "callerConfigSha256": null,
+    "probeRustVersion": "0.11.0",
+    "probeAeneasVersion": "0.20.0",
+    "linkage": "recorded-attempt",
+    "gaps": [],
+    "generatedLean": [
+      {
+        "projectPath": "/private/tmp/fvs39-c1/proj/M1demo/M1demo.lean",
+        "sha256": "4de437dcf3351ee15567aa3b536e72e0fb04831691da82165d485d11ac95b39d"
+      },
+      {
+        "projectPath": "/private/tmp/fvs39-c1/proj/M1demo/translation.json",
+        "sha256": "09dd6da5b667aef7c9d3f200a0956003ddac124b1936490514eda60932a3fbb1"
+      }
+    ]
+  },
+  "binding": {
+    "status": "bound",
+    "reasons": [],
+    "trust": "local-host-and-reviewed-scripts",
+    "configSha256": "1740df601d17e55a88a27d930b38548e0f626211855a6336576a620b5c85734d",
+    "generatedLean": [
+      {
+        "projectPath": "/private/tmp/fvs39-c1/proj/M1demo/M1demo.lean",
+        "sha256": "4de437dcf3351ee15567aa3b536e72e0fb04831691da82165d485d11ac95b39d"
+      },
+      {
+        "projectPath": "/private/tmp/fvs39-c1/proj/M1demo/translation.json",
+        "sha256": "09dd6da5b667aef7c9d3f200a0956003ddac124b1936490514eda60932a3fbb1"
+      }
+    ]
+  },
+  "blockers": [],
+  "items": [
+    {
+      "defId": 19,
+      "rustName": "m1demo::helper",
+      "source": {
+        "file": "src/lib.rs",
+        "begin_line": 3,
+        "end_line": 5
+      },
+      "target": "m1demo.helper",
+      "opaque": false,
+      "generated": [
+        {
+          "leanName": "m1demo.helper",
+          "loop": null,
+          "parentLeanName": null,
+          "isRec": false,
+          "isOpaque": false,
+          "dependencies": [],
+          "lean": {
+            "verification-status": "transitively-verified",
+            "type-dependencies-external": [
+              "probe:Aeneas.Std.Result",
+              "probe:Aeneas.Std.U32"
+            ],
+            "type-dependencies": [],
+            "term-dependencies-external": [
+              "probe:Aeneas.Std.Result",
+              "probe:Aeneas.Std.Result.ok",
+              "probe:Aeneas.Std.U32",
+              "probe:Aeneas.Std.U32.ofNat",
+              "probe:Aeneas.Std.UScalar.decLt",
+              "probe:Aeneas.Std.UScalarTy.U32",
+              "probe:Aeneas.Std.instLTUScalar",
+              "probe:GT.gt",
+              "probe:Nat",
+              "probe:OfNat.ofNat",
+              "probe:instOfNatNat",
+              "probe:ite"
+            ],
+            "term-dependencies": [],
+            "rust-source": "src/lib.rs",
+            "language": "lean",
+            "kind": "def",
+            "is-relevant": true,
+            "is-primary-spec": false,
+            "is-lean-generated": false,
+            "is-in-package": true,
+            "is-ignored": false,
+            "is-hidden": false,
+            "is-aeneas-generated": false,
+            "display-name": "helper",
+            "dependencies": [],
+            "codomain-last-arg-is-bool": false,
+            "codomain-is-prop": false,
+            "codomain-head": "Aeneas.Std.Result",
+            "code-text": {
+              "lines-start": 22,
+              "lines-end": 28
+            },
+            "code-path": "M1demo/M1demo.lean",
+            "code-module": "M1demo.M1demo"
+          },
+          "functionsRecord": {
+            "lean_name": "m1demo.helper",
+            "rust_name": "m1demo::helper",
+            "source": "src/lib.rs",
+            "lines": "L3-L5",
+            "is_hidden": false,
+            "is_extraction_artifact": false
+          }
+        }
+      ],
+      "missingGenerated": [],
+      "rustAtom": "probe:m1demo/0.1.0/helper()",
+      "rustQualifiedName": "m1demo::helper",
+      "candidates": [
+        "probe:m1demo/0.1.0/helper()"
+      ],
+      "mapping": {
+        "confidence": "exact",
+        "from": "probe:m1demo/0.1.0/helper()",
+        "method": "charon-def-id",
+        "to": "probe:m1demo.helper"
+      },
+      "corroboration": {
+        "span": "match",
+        "name": "equal"
+      },
+      "correspondence": "exact",
+      "reasons": []
+    },
+    {
+      "defId": 20,
+      "rustName": "m1demo::sum_to",
+      "source": {
+        "file": "src/lib.rs",
+        "begin_line": 7,
+        "end_line": 15
+      },
+      "target": "m1demo.sum_to",
+      "opaque": false,
+      "generated": [
+        {
+          "leanName": "m1demo.sum_to_loop.body",
+          "loop": {
+            "id": 0,
+            "pos": [
+              0
+            ],
+            "is_body": true
+          },
+          "parentLeanName": "m1demo.sum_to",
+          "isRec": false,
+          "isOpaque": false,
+          "dependencies": [],
+          "lean": {
+            "verification-status": "transitively-verified",
+            "type-dependencies-external": [
+              "probe:Aeneas.Std.ControlFlow",
+              "probe:Aeneas.Std.Result",
+              "probe:Aeneas.Std.U32",
+              "probe:Prod"
+            ],
+            "type-dependencies": [],
+            "term-dependencies-external": [
+              "probe:Aeneas.Std.ControlFlow",
+              "probe:Aeneas.Std.ControlFlow.cont",
+              "probe:Aeneas.Std.ControlFlow.done",
+              "probe:Aeneas.Std.Result",
+              "probe:Aeneas.Std.Result.ok",
+              "probe:Aeneas.Std.U32",
+              "probe:Aeneas.Std.U32.ofNat",
+              "probe:Aeneas.Std.UScalar",
+              "probe:Aeneas.Std.UScalar.decLt",
+              "probe:Aeneas.Std.UScalarTy.U32",
+              "probe:Aeneas.Std.bind",
+              "probe:Aeneas.Std.instHAddUScalarResult",
+              "probe:Aeneas.Std.instLTUScalar",
+              "probe:HAdd.hAdd",
+              "probe:LT.lt",
+              "probe:Nat",
+              "probe:OfNat.ofNat",
+              "probe:Prod",
+              "probe:instOfNatNat",
+              "probe:ite"
+            ],
+            "term-dependencies": [],
+            "rust-source": "src/lib.rs",
+            "language": "lean",
+            "kind": "def",
+            "is-relevant": true,
+            "is-primary-spec": false,
+            "is-lean-generated": false,
+            "is-in-package": true,
+            "is-ignored": false,
+            "is-hidden": false,
+            "is-aeneas-generated": false,
+            "display-name": "body",
+            "dependencies": [],
+            "codomain-last-arg-is-bool": false,
+            "codomain-is-prop": false,
+            "codomain-head": "Aeneas.Std.Result",
+            "code-text": {
+              "lines-start": 30,
+              "lines-end": 42
+            },
+            "code-path": "M1demo/M1demo.lean",
+            "code-module": "M1demo.M1demo",
+            "attributes": [
+              "rust_loop_body"
+            ]
+          },
+          "functionsRecord": {
+            "lean_name": "m1demo.sum_to_loop.body",
+            "rust_name": "m1demo::sum_to",
+            "source": "src/lib.rs",
+            "lines": "L10-L13",
+            "is_hidden": false,
+            "is_extraction_artifact": true
+          }
+        },
+        {
+          "leanName": "m1demo.sum_to_loop",
+          "loop": {
+            "id": 0,
+            "pos": [
+              0
+            ],
+            "is_body": false
+          },
+          "parentLeanName": "m1demo.sum_to",
+          "isRec": false,
+          "isOpaque": false,
+          "dependencies": [
+            "probe:m1demo.sum_to_loop.body"
+          ],
+          "lean": {
+            "verification-status": "transitively-verified",
+            "type-dependencies-external": [
+              "probe:Aeneas.Std.Result",
+              "probe:Aeneas.Std.U32"
+            ],
+            "type-dependencies": [],
+            "term-dependencies-external": [
+              "probe:Aeneas.Std.ControlFlow",
+              "probe:Aeneas.Std.Result",
+              "probe:Aeneas.Std.U32",
+              "probe:Aeneas.Std.loop",
+              "probe:Prod"
+            ],
+            "term-dependencies": [
+              "probe:m1demo.sum_to_loop.body"
+            ],
+            "rust-source": "src/lib.rs",
+            "language": "lean",
+            "kind": "def",
+            "is-relevant": true,
+            "is-primary-spec": false,
+            "is-lean-generated": false,
+            "is-in-package": true,
+            "is-ignored": false,
+            "is-hidden": false,
+            "is-aeneas-generated": false,
+            "display-name": "sum_to_loop",
+            "dependencies": [
+              "probe:m1demo.sum_to_loop.body"
+            ],
+            "codomain-last-arg-is-bool": false,
+            "codomain-is-prop": false,
+            "codomain-head": "Aeneas.Std.Result",
+            "code-text": {
+              "lines-start": 44,
+              "lines-end": 52
+            },
+            "code-path": "M1demo/M1demo.lean",
+            "code-module": "M1demo.M1demo",
+            "attributes": [
+              "rust_loop"
+            ]
+          },
+          "functionsRecord": {
+            "lean_name": "m1demo.sum_to_loop",
+            "rust_name": "m1demo::sum_to",
+            "source": "src/lib.rs",
+            "lines": "L10-L13",
+            "is_hidden": false,
+            "is_extraction_artifact": true
+          }
+        },
+        {
+          "leanName": "m1demo.sum_to",
+          "loop": null,
+          "parentLeanName": null,
+          "isRec": false,
+          "isOpaque": false,
+          "dependencies": [
+            "probe:m1demo.sum_to_loop"
+          ],
+          "lean": {
+            "verification-status": "transitively-verified",
+            "type-dependencies-external": [
+              "probe:Aeneas.Std.Result",
+              "probe:Aeneas.Std.U32"
+            ],
+            "type-dependencies": [],
+            "term-dependencies-external": [
+              "probe:Aeneas.Std.U32",
+              "probe:Aeneas.Std.U32.ofNat",
+              "probe:Nat",
+              "probe:OfNat.ofNat",
+              "probe:instOfNatNat"
+            ],
+            "term-dependencies": [
+              "probe:m1demo.sum_to_loop"
+            ],
+            "rust-source": "src/lib.rs",
+            "language": "lean",
+            "kind": "def",
+            "is-relevant": true,
+            "is-primary-spec": false,
+            "is-lean-generated": false,
+            "is-in-package": true,
+            "is-ignored": false,
+            "is-hidden": false,
+            "is-aeneas-generated": false,
+            "display-name": "sum_to",
+            "dependencies": [
+              "probe:m1demo.sum_to_loop"
+            ],
+            "codomain-last-arg-is-bool": false,
+            "codomain-is-prop": false,
+            "codomain-head": "Aeneas.Std.Result",
+            "code-text": {
+              "lines-start": 54,
+              "lines-end": 59
+            },
+            "code-path": "M1demo/M1demo.lean",
+            "code-module": "M1demo.M1demo",
+            "attributes": [
+              "reducible"
+            ]
+          },
+          "functionsRecord": {
+            "lean_name": "m1demo.sum_to",
+            "rust_name": "m1demo::sum_to",
+            "source": "src/lib.rs",
+            "lines": "L7-L15",
+            "is_hidden": false,
+            "is_extraction_artifact": false
+          }
+        }
+      ],
+      "missingGenerated": [],
+      "rustAtom": "probe:m1demo/0.1.0/sum_to()",
+      "rustQualifiedName": "m1demo::sum_to",
+      "candidates": [
+        "probe:m1demo/0.1.0/sum_to()"
+      ],
+      "mapping": {
+        "confidence": "exact",
+        "from": "probe:m1demo/0.1.0/sum_to()",
+        "method": "charon-def-id",
+        "to": "probe:m1demo.sum_to"
+      },
+      "corroboration": {
+        "span": "match",
+        "name": "equal"
+      },
+      "correspondence": "exact",
+      "reasons": []
+    },
+    {
+      "defId": 21,
+      "rustName": "m1demo::root_a",
+      "source": {
+        "file": "src/lib.rs",
+        "begin_line": 17,
+        "end_line": 19
+      },
+      "target": "m1demo.root_a",
+      "opaque": false,
+      "generated": [
+        {
+          "leanName": "m1demo.root_a",
+          "loop": null,
+          "parentLeanName": null,
+          "isRec": false,
+          "isOpaque": false,
+          "dependencies": [
+            "probe:m1demo.helper"
+          ],
+          "lean": {
+            "verification-status": "transitively-verified",
+            "type-dependencies-external": [
+              "probe:Aeneas.Std.Result",
+              "probe:Aeneas.Std.U32"
+            ],
+            "type-dependencies": [],
+            "term-dependencies-external": [
+              "probe:Aeneas.Std.U32"
+            ],
+            "term-dependencies": [
+              "probe:m1demo.helper"
+            ],
+            "rust-source": "src/lib.rs",
+            "language": "lean",
+            "kind": "def",
+            "is-relevant": true,
+            "is-primary-spec": false,
+            "is-lean-generated": false,
+            "is-in-package": true,
+            "is-ignored": false,
+            "is-hidden": false,
+            "is-aeneas-generated": false,
+            "display-name": "root_a",
+            "dependencies": [
+              "probe:m1demo.helper"
+            ],
+            "codomain-last-arg-is-bool": false,
+            "codomain-is-prop": false,
+            "codomain-head": "Aeneas.Std.Result",
+            "code-text": {
+              "lines-start": 61,
+              "lines-end": 65
+            },
+            "code-path": "M1demo/M1demo.lean",
+            "code-module": "M1demo.M1demo"
+          },
+          "functionsRecord": {
+            "lean_name": "m1demo.root_a",
+            "rust_name": "m1demo::root_a",
+            "source": "src/lib.rs",
+            "lines": "L17-L19",
+            "is_hidden": false,
+            "is_extraction_artifact": false
+          }
+        }
+      ],
+      "missingGenerated": [],
+      "rustAtom": "probe:m1demo/0.1.0/root_a()",
+      "rustQualifiedName": "m1demo::root_a",
+      "candidates": [
+        "probe:m1demo/0.1.0/root_a()"
+      ],
+      "mapping": {
+        "confidence": "exact",
+        "from": "probe:m1demo/0.1.0/root_a()",
+        "method": "charon-def-id",
+        "to": "probe:m1demo.root_a"
+      },
+      "corroboration": {
+        "span": "match",
+        "name": "equal"
+      },
+      "correspondence": "exact",
+      "reasons": []
+    },
+    {
+      "defId": 22,
+      "rustName": "m1demo::root_b",
+      "source": {
+        "file": "src/lib.rs",
+        "begin_line": 21,
+        "end_line": 23
+      },
+      "target": "m1demo.root_b",
+      "opaque": false,
+      "generated": [
+        {
+          "leanName": "m1demo.root_b",
+          "loop": null,
+          "parentLeanName": null,
+          "isRec": false,
+          "isOpaque": false,
+          "dependencies": [
+            "probe:m1demo.helper",
+            "probe:m1demo.sum_to"
+          ],
+          "lean": {
+            "verification-status": "transitively-verified",
+            "type-dependencies-external": [
+              "probe:Aeneas.Std.Result",
+              "probe:Aeneas.Std.U32"
+            ],
+            "type-dependencies": [],
+            "term-dependencies-external": [
+              "probe:Aeneas.Std.Result",
+              "probe:Aeneas.Std.U32",
+              "probe:Aeneas.Std.U32.ofNat",
+              "probe:Aeneas.Std.UScalar.decLt",
+              "probe:Aeneas.Std.UScalarTy.U32",
+              "probe:Aeneas.Std.instLTUScalar",
+              "probe:GT.gt",
+              "probe:Nat",
+              "probe:OfNat.ofNat",
+              "probe:instOfNatNat",
+              "probe:ite"
+            ],
+            "term-dependencies": [
+              "probe:m1demo.helper",
+              "probe:m1demo.sum_to"
+            ],
+            "rust-source": "src/lib.rs",
+            "language": "lean",
+            "kind": "def",
+            "is-relevant": true,
+            "is-primary-spec": false,
+            "is-lean-generated": false,
+            "is-in-package": true,
+            "is-ignored": false,
+            "is-hidden": false,
+            "is-aeneas-generated": false,
+            "display-name": "root_b",
+            "dependencies": [
+              "probe:m1demo.helper",
+              "probe:m1demo.sum_to"
+            ],
+            "codomain-last-arg-is-bool": false,
+            "codomain-is-prop": false,
+            "codomain-head": "Aeneas.Std.Result",
+            "code-text": {
+              "lines-start": 67,
+              "lines-end": 73
+            },
+            "code-path": "M1demo/M1demo.lean",
+            "code-module": "M1demo.M1demo"
+          },
+          "functionsRecord": {
+            "lean_name": "m1demo.root_b",
+            "rust_name": "m1demo::root_b",
+            "source": "src/lib.rs",
+            "lines": "L21-L23",
+            "is_hidden": false,
+            "is_extraction_artifact": false
+          }
+        }
+      ],
+      "missingGenerated": [],
+      "rustAtom": "probe:m1demo/0.1.0/root_b()",
+      "rustQualifiedName": "m1demo::root_b",
+      "candidates": [
+        "probe:m1demo/0.1.0/root_b()"
+      ],
+      "mapping": {
+        "confidence": "exact",
+        "from": "probe:m1demo/0.1.0/root_b()",
+        "method": "charon-def-id",
+        "to": "probe:m1demo.root_b"
+      },
+      "corroboration": {
+        "span": "match",
+        "name": "equal"
+      },
+      "correspondence": "exact",
+      "reasons": []
+    },
+    {
+      "defId": 23,
+      "rustName": "m1demo::independent",
+      "source": {
+        "file": "src/lib.rs",
+        "begin_line": 25,
+        "end_line": 27
+      },
+      "target": "m1demo.independent",
+      "opaque": false,
+      "generated": [
+        {
+          "leanName": "m1demo.independent",
+          "loop": null,
+          "parentLeanName": null,
+          "isRec": false,
+          "isOpaque": false,
+          "dependencies": [],
+          "lean": {
+            "verification-status": "transitively-verified",
+            "type-dependencies-external": [
+              "probe:Aeneas.Std.Result",
+              "probe:Aeneas.Std.U32"
+            ],
+            "type-dependencies": [],
+            "term-dependencies-external": [
+              "probe:Aeneas.Std.Result.ok",
+              "probe:Aeneas.Std.U32"
+            ],
+            "term-dependencies": [],
+            "rust-source": "src/lib.rs",
+            "language": "lean",
+            "kind": "def",
+            "is-relevant": true,
+            "is-primary-spec": false,
+            "is-lean-generated": false,
+            "is-in-package": true,
+            "is-ignored": false,
+            "is-hidden": false,
+            "is-aeneas-generated": false,
+            "display-name": "independent",
+            "dependencies": [],
+            "codomain-last-arg-is-bool": false,
+            "codomain-is-prop": false,
+            "codomain-head": "Aeneas.Std.Result",
+            "code-text": {
+              "lines-start": 75,
+              "lines-end": 79
+            },
+            "code-path": "M1demo/M1demo.lean",
+            "code-module": "M1demo.M1demo"
+          },
+          "functionsRecord": {
+            "lean_name": "m1demo.independent",
+            "rust_name": "m1demo::independent",
+            "source": "src/lib.rs",
+            "lines": "L25-L27",
+            "is_hidden": false,
+            "is_extraction_artifact": false
+          }
+        }
+      ],
+      "missingGenerated": [],
+      "rustAtom": "probe:m1demo/0.1.0/independent()",
+      "rustQualifiedName": "m1demo::independent",
+      "candidates": [
+        "probe:m1demo/0.1.0/independent()"
+      ],
+      "mapping": {
+        "confidence": "exact",
+        "from": "probe:m1demo/0.1.0/independent()",
+        "method": "charon-def-id",
+        "to": "probe:m1demo.independent"
+      },
+      "corroboration": {
+        "span": "match",
+        "name": "equal"
+      },
+      "correspondence": "exact",
+      "reasons": []
+    }
+  ],
+  "unkeyedRustAtoms": [],
+  "orphanRustAtoms": [],
+  "externals": [],
+  "outOfScope": []
+}

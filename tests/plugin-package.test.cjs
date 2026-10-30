@@ -133,6 +133,7 @@ describe('published FVS plugin package', () => {
       filesUnder(path.join(PLUGIN_ROOT, 'scripts')),
       [
         'fvs-auto.mjs',
+        'fvs-closure-plan.mjs',
         'fvs-codex-think.mjs',
         'fvs-extract-patches.mjs',
         'fvs-kb-query.py',

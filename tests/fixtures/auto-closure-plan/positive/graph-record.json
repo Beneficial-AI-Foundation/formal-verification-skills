@@ -1,0 +1,939 @@
+{
+  "schema": "fvs/lean-graph",
+  "schemaVersion": 1,
+  "state": "complete",
+  "blockers": [],
+  "qualifiedInterface": {
+    "schema": "probe-lean/extract",
+    "schemaVersion": "3.0",
+    "tool": "probe-lean",
+    "version": "0.14.0"
+  },
+  "tool": {
+    "version": "0.14.0",
+    "name": "probe-lean",
+    "command": "extract"
+  },
+  "source": {
+    "repo": "",
+    "package-version": "101a27d",
+    "package": "m1demo",
+    "language": "lean",
+    "commit": "101a27d6c697bbd4bdee42318c59b835f0b6d85c"
+  },
+  "timestamp": "2026-10-30T12:27:59Z",
+  "run": {
+    "libraries": [
+      "M1demo"
+    ],
+    "probe": {
+      "argv": [
+        "/Users/ada/.fvs/tools/swvf-qualification/home/.local/bin/probe-lean-v4.31.0",
+        "extract",
+        "/tmp/fvs39-c1/proj",
+        "--library",
+        "M1demo",
+        "-o",
+        "/tmp/fvs39-c1/runs/positive/lean.json"
+      ],
+      "exitCode": 0,
+      "sha256": "fd31d965a9d12cd5a95080c810d3441a8d38e380f25eee37c85b9444ceec283d",
+      "version": "0.14.0"
+    },
+    "lakeBuild": {
+      "argv": [
+        "lake",
+        "build",
+        "M1demo"
+      ],
+      "exitCode": 0
+    },
+    "outputs": {
+      "extractSha256": "d65ec10a67ac35bfd3d4d98977395e0865d183a5bf3460ceac17b7bab3fa0476",
+      "logSha256": "09c6c724b4efecc17436e05a73f92418b973b2283b6c9842826e3e22af676cfe"
+    }
+  },
+  "provenance": {
+    "sourceCommit": "101a27d6c697bbd4bdee42318c59b835f0b6d85c",
+    "leanProjectCommit": "101a27d6c697bbd4bdee42318c59b835f0b6d85c",
+    "translationSha256": "09dd6da5b667aef7c9d3f200a0956003ddac124b1936490514eda60932a3fbb1",
+    "charonVersion": "0.1.274",
+    "aeneasVersion": "nightly-2026.09.30-0855ce1",
+    "manifestSha256": "affa40a68623eb29ec40eb0f2aae5b0a95f57a0fa54306f78a64f6a399f674ab",
+    "llbcSha256": "64b4824f0f0f534ab28a985bddd371b951d2bca39b14f8d3635dd23e9941498f",
+    "configSha256": "1740df601d17e55a88a27d930b38548e0f626211855a6336576a620b5c85734d"
+  },
+  "binding": {
+    "status": "bound",
+    "reasons": [],
+    "trust": "local-host-and-reviewed-scripts",
+    "configSha256": "1740df601d17e55a88a27d930b38548e0f626211855a6336576a620b5c85734d",
+    "generatedLean": [
+      {
+        "projectPath": "/private/tmp/fvs39-c1/proj/M1demo/M1demo.lean",
+        "sha256": "4de437dcf3351ee15567aa3b536e72e0fb04831691da82165d485d11ac95b39d"
+      },
+      {
+        "projectPath": "/private/tmp/fvs39-c1/proj/M1demo/translation.json",
+        "sha256": "09dd6da5b667aef7c9d3f200a0956003ddac124b1936490514eda60932a3fbb1"
+      }
+    ]
+  },
+  "completeness": {
+    "libraries": [
+      "M1demo"
+    ],
+    "log": {
+      "builtLibraries": [
+        "M1demo"
+      ],
+      "buildSkipped": false,
+      "writtenAtoms": 7
+    },
+    "atomCount": 7,
+    "modules": {
+      "M1demo.M1demo": [
+        "m1demo.helper",
+        "m1demo.independent",
+        "m1demo.root_a",
+        "m1demo.root_b",
+        "m1demo.sum_to",
+        "m1demo.sum_to_loop",
+        "m1demo.sum_to_loop.body"
+      ],
+      "M1demo": []
+    },
+    "expectedDeclarations": 7,
+    "missingDeclarations": []
+  },
+  "declarations": {
+    "probe:m1demo.sum_to_loop.body": {
+      "verification-status": "transitively-verified",
+      "type-dependencies-external": [
+        "probe:Aeneas.Std.ControlFlow",
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32",
+        "probe:Prod"
+      ],
+      "type-dependencies": [],
+      "term-dependencies-external": [
+        "probe:Aeneas.Std.ControlFlow",
+        "probe:Aeneas.Std.ControlFlow.cont",
+        "probe:Aeneas.Std.ControlFlow.done",
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.Result.ok",
+        "probe:Aeneas.Std.U32",
+        "probe:Aeneas.Std.U32.ofNat",
+        "probe:Aeneas.Std.UScalar",
+        "probe:Aeneas.Std.UScalar.decLt",
+        "probe:Aeneas.Std.UScalarTy.U32",
+        "probe:Aeneas.Std.bind",
+        "probe:Aeneas.Std.instHAddUScalarResult",
+        "probe:Aeneas.Std.instLTUScalar",
+        "probe:HAdd.hAdd",
+        "probe:LT.lt",
+        "probe:Nat",
+        "probe:OfNat.ofNat",
+        "probe:Prod",
+        "probe:instOfNatNat",
+        "probe:ite"
+      ],
+      "term-dependencies": [],
+      "rust-source": "src/lib.rs",
+      "language": "lean",
+      "kind": "def",
+      "is-relevant": true,
+      "is-primary-spec": false,
+      "is-lean-generated": false,
+      "is-in-package": true,
+      "is-ignored": false,
+      "is-hidden": false,
+      "is-aeneas-generated": false,
+      "display-name": "body",
+      "dependencies": [],
+      "codomain-last-arg-is-bool": false,
+      "codomain-is-prop": false,
+      "codomain-head": "Aeneas.Std.Result",
+      "code-text": {
+        "lines-start": 30,
+        "lines-end": 42
+      },
+      "code-path": "M1demo/M1demo.lean",
+      "code-module": "M1demo.M1demo",
+      "attributes": [
+        "rust_loop_body"
+      ]
+    },
+    "probe:m1demo.sum_to_loop": {
+      "verification-status": "transitively-verified",
+      "type-dependencies-external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32"
+      ],
+      "type-dependencies": [],
+      "term-dependencies-external": [
+        "probe:Aeneas.Std.ControlFlow",
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32",
+        "probe:Aeneas.Std.loop",
+        "probe:Prod"
+      ],
+      "term-dependencies": [
+        "probe:m1demo.sum_to_loop.body"
+      ],
+      "rust-source": "src/lib.rs",
+      "language": "lean",
+      "kind": "def",
+      "is-relevant": true,
+      "is-primary-spec": false,
+      "is-lean-generated": false,
+      "is-in-package": true,
+      "is-ignored": false,
+      "is-hidden": false,
+      "is-aeneas-generated": false,
+      "display-name": "sum_to_loop",
+      "dependencies": [
+        "probe:m1demo.sum_to_loop.body"
+      ],
+      "codomain-last-arg-is-bool": false,
+      "codomain-is-prop": false,
+      "codomain-head": "Aeneas.Std.Result",
+      "code-text": {
+        "lines-start": 44,
+        "lines-end": 52
+      },
+      "code-path": "M1demo/M1demo.lean",
+      "code-module": "M1demo.M1demo",
+      "attributes": [
+        "rust_loop"
+      ]
+    },
+    "probe:m1demo.sum_to": {
+      "verification-status": "transitively-verified",
+      "type-dependencies-external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32"
+      ],
+      "type-dependencies": [],
+      "term-dependencies-external": [
+        "probe:Aeneas.Std.U32",
+        "probe:Aeneas.Std.U32.ofNat",
+        "probe:Nat",
+        "probe:OfNat.ofNat",
+        "probe:instOfNatNat"
+      ],
+      "term-dependencies": [
+        "probe:m1demo.sum_to_loop"
+      ],
+      "rust-source": "src/lib.rs",
+      "language": "lean",
+      "kind": "def",
+      "is-relevant": true,
+      "is-primary-spec": false,
+      "is-lean-generated": false,
+      "is-in-package": true,
+      "is-ignored": false,
+      "is-hidden": false,
+      "is-aeneas-generated": false,
+      "display-name": "sum_to",
+      "dependencies": [
+        "probe:m1demo.sum_to_loop"
+      ],
+      "codomain-last-arg-is-bool": false,
+      "codomain-is-prop": false,
+      "codomain-head": "Aeneas.Std.Result",
+      "code-text": {
+        "lines-start": 54,
+        "lines-end": 59
+      },
+      "code-path": "M1demo/M1demo.lean",
+      "code-module": "M1demo.M1demo",
+      "attributes": [
+        "reducible"
+      ]
+    },
+    "probe:m1demo.root_b": {
+      "verification-status": "transitively-verified",
+      "type-dependencies-external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32"
+      ],
+      "type-dependencies": [],
+      "term-dependencies-external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32",
+        "probe:Aeneas.Std.U32.ofNat",
+        "probe:Aeneas.Std.UScalar.decLt",
+        "probe:Aeneas.Std.UScalarTy.U32",
+        "probe:Aeneas.Std.instLTUScalar",
+        "probe:GT.gt",
+        "probe:Nat",
+        "probe:OfNat.ofNat",
+        "probe:instOfNatNat",
+        "probe:ite"
+      ],
+      "term-dependencies": [
+        "probe:m1demo.helper",
+        "probe:m1demo.sum_to"
+      ],
+      "rust-source": "src/lib.rs",
+      "language": "lean",
+      "kind": "def",
+      "is-relevant": true,
+      "is-primary-spec": false,
+      "is-lean-generated": false,
+      "is-in-package": true,
+      "is-ignored": false,
+      "is-hidden": false,
+      "is-aeneas-generated": false,
+      "display-name": "root_b",
+      "dependencies": [
+        "probe:m1demo.helper",
+        "probe:m1demo.sum_to"
+      ],
+      "codomain-last-arg-is-bool": false,
+      "codomain-is-prop": false,
+      "codomain-head": "Aeneas.Std.Result",
+      "code-text": {
+        "lines-start": 67,
+        "lines-end": 73
+      },
+      "code-path": "M1demo/M1demo.lean",
+      "code-module": "M1demo.M1demo"
+    },
+    "probe:m1demo.root_a": {
+      "verification-status": "transitively-verified",
+      "type-dependencies-external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32"
+      ],
+      "type-dependencies": [],
+      "term-dependencies-external": [
+        "probe:Aeneas.Std.U32"
+      ],
+      "term-dependencies": [
+        "probe:m1demo.helper"
+      ],
+      "rust-source": "src/lib.rs",
+      "language": "lean",
+      "kind": "def",
+      "is-relevant": true,
+      "is-primary-spec": false,
+      "is-lean-generated": false,
+      "is-in-package": true,
+      "is-ignored": false,
+      "is-hidden": false,
+      "is-aeneas-generated": false,
+      "display-name": "root_a",
+      "dependencies": [
+        "probe:m1demo.helper"
+      ],
+      "codomain-last-arg-is-bool": false,
+      "codomain-is-prop": false,
+      "codomain-head": "Aeneas.Std.Result",
+      "code-text": {
+        "lines-start": 61,
+        "lines-end": 65
+      },
+      "code-path": "M1demo/M1demo.lean",
+      "code-module": "M1demo.M1demo"
+    },
+    "probe:m1demo.independent": {
+      "verification-status": "transitively-verified",
+      "type-dependencies-external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32"
+      ],
+      "type-dependencies": [],
+      "term-dependencies-external": [
+        "probe:Aeneas.Std.Result.ok",
+        "probe:Aeneas.Std.U32"
+      ],
+      "term-dependencies": [],
+      "rust-source": "src/lib.rs",
+      "language": "lean",
+      "kind": "def",
+      "is-relevant": true,
+      "is-primary-spec": false,
+      "is-lean-generated": false,
+      "is-in-package": true,
+      "is-ignored": false,
+      "is-hidden": false,
+      "is-aeneas-generated": false,
+      "display-name": "independent",
+      "dependencies": [],
+      "codomain-last-arg-is-bool": false,
+      "codomain-is-prop": false,
+      "codomain-head": "Aeneas.Std.Result",
+      "code-text": {
+        "lines-start": 75,
+        "lines-end": 79
+      },
+      "code-path": "M1demo/M1demo.lean",
+      "code-module": "M1demo.M1demo"
+    },
+    "probe:m1demo.helper": {
+      "verification-status": "transitively-verified",
+      "type-dependencies-external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32"
+      ],
+      "type-dependencies": [],
+      "term-dependencies-external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.Result.ok",
+        "probe:Aeneas.Std.U32",
+        "probe:Aeneas.Std.U32.ofNat",
+        "probe:Aeneas.Std.UScalar.decLt",
+        "probe:Aeneas.Std.UScalarTy.U32",
+        "probe:Aeneas.Std.instLTUScalar",
+        "probe:GT.gt",
+        "probe:Nat",
+        "probe:OfNat.ofNat",
+        "probe:instOfNatNat",
+        "probe:ite"
+      ],
+      "term-dependencies": [],
+      "rust-source": "src/lib.rs",
+      "language": "lean",
+      "kind": "def",
+      "is-relevant": true,
+      "is-primary-spec": false,
+      "is-lean-generated": false,
+      "is-in-package": true,
+      "is-ignored": false,
+      "is-hidden": false,
+      "is-aeneas-generated": false,
+      "display-name": "helper",
+      "dependencies": [],
+      "codomain-last-arg-is-bool": false,
+      "codomain-is-prop": false,
+      "codomain-head": "Aeneas.Std.Result",
+      "code-text": {
+        "lines-start": 22,
+        "lines-end": 28
+      },
+      "code-path": "M1demo/M1demo.lean",
+      "code-module": "M1demo.M1demo"
+    }
+  },
+  "edges": [
+    {
+      "from": "probe:m1demo.helper",
+      "to": "probe:Aeneas.Std.Result",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.helper",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.helper",
+      "to": "probe:Aeneas.Std.Result",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.helper",
+      "to": "probe:Aeneas.Std.Result.ok",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.helper",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.helper",
+      "to": "probe:Aeneas.Std.U32.ofNat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.helper",
+      "to": "probe:Aeneas.Std.UScalar.decLt",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.helper",
+      "to": "probe:Aeneas.Std.UScalarTy.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.helper",
+      "to": "probe:Aeneas.Std.instLTUScalar",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.helper",
+      "to": "probe:GT.gt",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.helper",
+      "to": "probe:Nat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.helper",
+      "to": "probe:OfNat.ofNat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.helper",
+      "to": "probe:instOfNatNat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.helper",
+      "to": "probe:ite",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.independent",
+      "to": "probe:Aeneas.Std.Result",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.independent",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.independent",
+      "to": "probe:Aeneas.Std.Result.ok",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.independent",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_a",
+      "to": "probe:Aeneas.Std.Result",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_a",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_a",
+      "to": "probe:m1demo.helper",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.root_a",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_b",
+      "to": "probe:Aeneas.Std.Result",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_b",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_b",
+      "to": "probe:m1demo.helper",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.root_b",
+      "to": "probe:m1demo.sum_to",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.root_b",
+      "to": "probe:Aeneas.Std.Result",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_b",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_b",
+      "to": "probe:Aeneas.Std.U32.ofNat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_b",
+      "to": "probe:Aeneas.Std.UScalar.decLt",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_b",
+      "to": "probe:Aeneas.Std.UScalarTy.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_b",
+      "to": "probe:Aeneas.Std.instLTUScalar",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_b",
+      "to": "probe:GT.gt",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_b",
+      "to": "probe:Nat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_b",
+      "to": "probe:OfNat.ofNat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_b",
+      "to": "probe:instOfNatNat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_b",
+      "to": "probe:ite",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to",
+      "to": "probe:Aeneas.Std.Result",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to",
+      "to": "probe:m1demo.sum_to_loop",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.sum_to",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to",
+      "to": "probe:Aeneas.Std.U32.ofNat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to",
+      "to": "probe:Nat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to",
+      "to": "probe:OfNat.ofNat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to",
+      "to": "probe:instOfNatNat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop",
+      "to": "probe:Aeneas.Std.Result",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop",
+      "to": "probe:m1demo.sum_to_loop.body",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop",
+      "to": "probe:Aeneas.Std.ControlFlow",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop",
+      "to": "probe:Aeneas.Std.Result",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop",
+      "to": "probe:Aeneas.Std.loop",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop",
+      "to": "probe:Prod",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop.body",
+      "to": "probe:Aeneas.Std.ControlFlow",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop.body",
+      "to": "probe:Aeneas.Std.Result",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop.body",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop.body",
+      "to": "probe:Prod",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop.body",
+      "to": "probe:Aeneas.Std.ControlFlow",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop.body",
+      "to": "probe:Aeneas.Std.ControlFlow.cont",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop.body",
+      "to": "probe:Aeneas.Std.ControlFlow.done",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop.body",
+      "to": "probe:Aeneas.Std.Result",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop.body",
+      "to": "probe:Aeneas.Std.Result.ok",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop.body",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop.body",
+      "to": "probe:Aeneas.Std.U32.ofNat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop.body",
+      "to": "probe:Aeneas.Std.UScalar",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop.body",
+      "to": "probe:Aeneas.Std.UScalar.decLt",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop.body",
+      "to": "probe:Aeneas.Std.UScalarTy.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop.body",
+      "to": "probe:Aeneas.Std.bind",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop.body",
+      "to": "probe:Aeneas.Std.instHAddUScalarResult",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop.body",
+      "to": "probe:Aeneas.Std.instLTUScalar",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop.body",
+      "to": "probe:HAdd.hAdd",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop.body",
+      "to": "probe:LT.lt",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop.body",
+      "to": "probe:Nat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop.body",
+      "to": "probe:OfNat.ofNat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop.body",
+      "to": "probe:Prod",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop.body",
+      "to": "probe:instOfNatNat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.sum_to_loop.body",
+      "to": "probe:ite",
+      "kind": "term",
+      "resolution": "external"
+    }
+  ],
+  "external": [
+    "probe:Aeneas.Std.ControlFlow",
+    "probe:Aeneas.Std.ControlFlow.cont",
+    "probe:Aeneas.Std.ControlFlow.done",
+    "probe:Aeneas.Std.Result",
+    "probe:Aeneas.Std.Result.ok",
+    "probe:Aeneas.Std.U32",
+    "probe:Aeneas.Std.U32.ofNat",
+    "probe:Aeneas.Std.UScalar",
+    "probe:Aeneas.Std.UScalar.decLt",
+    "probe:Aeneas.Std.UScalarTy.U32",
+    "probe:Aeneas.Std.bind",
+    "probe:Aeneas.Std.instHAddUScalarResult",
+    "probe:Aeneas.Std.instLTUScalar",
+    "probe:Aeneas.Std.loop",
+    "probe:GT.gt",
+    "probe:HAdd.hAdd",
+    "probe:LT.lt",
+    "probe:Nat",
+    "probe:OfNat.ofNat",
+    "probe:Prod",
+    "probe:instOfNatNat",
+    "probe:ite"
+  ],
+  "anomalies": [
+    {
+      "code": "aeneas-generated-false-for-translation-declaration",
+      "declaration": "probe:m1demo.helper"
+    },
+    {
+      "code": "aeneas-generated-false-for-translation-declaration",
+      "declaration": "probe:m1demo.independent"
+    },
+    {
+      "code": "aeneas-generated-false-for-translation-declaration",
+      "declaration": "probe:m1demo.root_a"
+    },
+    {
+      "code": "aeneas-generated-false-for-translation-declaration",
+      "declaration": "probe:m1demo.root_b"
+    },
+    {
+      "code": "aeneas-generated-false-for-translation-declaration",
+      "declaration": "probe:m1demo.sum_to"
+    },
+    {
+      "code": "aeneas-generated-false-for-translation-declaration",
+      "declaration": "probe:m1demo.sum_to_loop"
+    },
+    {
+      "code": "aeneas-generated-false-for-translation-declaration",
+      "declaration": "probe:m1demo.sum_to_loop.body"
+    }
+  ],
+  "closures": {}
+}

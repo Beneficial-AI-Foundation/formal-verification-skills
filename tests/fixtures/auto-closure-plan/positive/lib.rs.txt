@@ -1,0 +1,27 @@
+//! Ticket 13 closure fixture (written for FVS; not a real target).
+
+pub fn helper(x: u32) -> u32 {
+    if x > 100 { 100 } else { x }
+}
+
+pub fn sum_to(n: u32) -> u32 {
+    let mut i = 0;
+    let mut acc = 0;
+    while i < n {
+        acc = acc + i;
+        i = i + 1;
+    }
+    acc
+}
+
+pub fn root_a(x: u32) -> u32 {
+    helper(x)
+}
+
+pub fn root_b(x: u32) -> u32 {
+    if x > 7 { helper(x) } else { sum_to(x) }
+}
+
+pub fn independent(x: u32) -> u32 {
+    x
+}

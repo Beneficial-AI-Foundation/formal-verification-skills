@@ -1,0 +1,25 @@
+//! Ticket 13 recursion fixture (written for FVS; not a real target).
+
+pub fn count_down(n: u32) -> u32 {
+    if n == 0 { 0 } else { count_down(n - 1) }
+}
+
+pub fn is_even(n: u32) -> bool {
+    if n == 0 { true } else { is_odd(n - 1) }
+}
+
+pub fn is_odd(n: u32) -> bool {
+    if n == 0 { false } else { is_even(n - 1) }
+}
+
+pub fn root_self(n: u32) -> u32 {
+    count_down(n)
+}
+
+pub fn root_mutual(n: u32) -> bool {
+    is_even(n)
+}
+
+pub fn root_plain(x: u32) -> u32 {
+    x
+}

@@ -1,0 +1,302 @@
+{
+  "schema": "fvs/lean-graph",
+  "schemaVersion": 1,
+  "state": "incomplete",
+  "blockers": [
+    {
+      "code": "malformed-atom",
+      "reason": "probe:m1demo.is_even has missing or ill-typed term-dependencies-external",
+      "declaration": "probe:m1demo.is_even"
+    },
+    {
+      "code": "malformed-atom",
+      "reason": "probe:m1demo.is_odd has missing or ill-typed term-dependencies-external",
+      "declaration": "probe:m1demo.is_odd"
+    }
+  ],
+  "qualifiedInterface": {
+    "schema": "probe-lean/extract",
+    "schemaVersion": "3.0",
+    "tool": "probe-lean",
+    "version": "0.14.0"
+  },
+  "tool": {
+    "version": "0.14.0",
+    "name": "probe-lean",
+    "command": "extract"
+  },
+  "source": {
+    "repo": "",
+    "package-version": "62d3273",
+    "package": "m1demo",
+    "language": "lean",
+    "commit": "62d327373f72461474cdd072e84cd8f621b2d8d0"
+  },
+  "timestamp": "2026-10-30T13:52:07Z",
+  "run": null,
+  "provenance": {
+    "sourceCommit": null,
+    "leanProjectCommit": null,
+    "translationSha256": null,
+    "charonVersion": null,
+    "aeneasVersion": null,
+    "manifestSha256": null,
+    "llbcSha256": null,
+    "configSha256": null
+  },
+  "binding": {
+    "status": "unbound",
+    "reasons": []
+  },
+  "completeness": {
+    "libraries": [
+      "M1demo"
+    ],
+    "log": {
+      "builtLibraries": [
+        "M1demo"
+      ],
+      "buildSkipped": false,
+      "writtenAtoms": 6
+    },
+    "atomCount": 6,
+    "modules": null,
+    "expectedDeclarations": null,
+    "missingDeclarations": []
+  },
+  "declarations": {
+    "probe:m1demo.root_self": {
+      "verification-status": "transitively-verified",
+      "type-dependencies-external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32"
+      ],
+      "type-dependencies": [],
+      "term-dependencies-external": [
+        "probe:Aeneas.Std.U32"
+      ],
+      "term-dependencies": [
+        "probe:m1demo.count_down"
+      ],
+      "rust-source": "src/lib.rs",
+      "language": "lean",
+      "kind": "def",
+      "is-relevant": true,
+      "is-primary-spec": false,
+      "is-lean-generated": false,
+      "is-in-package": true,
+      "is-ignored": false,
+      "is-hidden": false,
+      "is-aeneas-generated": false,
+      "display-name": "root_self",
+      "dependencies": [
+        "probe:m1demo.count_down"
+      ],
+      "codomain-last-arg-is-bool": false,
+      "codomain-is-prop": false,
+      "codomain-head": "Aeneas.Std.Result",
+      "code-text": {
+        "lines-start": 56,
+        "lines-end": 60
+      },
+      "code-path": "M1demo/M1demo.lean",
+      "code-module": "M1demo.M1demo"
+    },
+    "probe:m1demo.root_plain": {
+      "verification-status": "transitively-verified",
+      "type-dependencies-external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32"
+      ],
+      "type-dependencies": [],
+      "term-dependencies-external": [
+        "probe:Aeneas.Std.Result.ok",
+        "probe:Aeneas.Std.U32"
+      ],
+      "term-dependencies": [],
+      "rust-source": "src/lib.rs",
+      "language": "lean",
+      "kind": "def",
+      "is-relevant": true,
+      "is-primary-spec": false,
+      "is-lean-generated": false,
+      "is-in-package": true,
+      "is-ignored": false,
+      "is-hidden": false,
+      "is-aeneas-generated": false,
+      "display-name": "root_plain",
+      "dependencies": [],
+      "codomain-last-arg-is-bool": false,
+      "codomain-is-prop": false,
+      "codomain-head": "Aeneas.Std.Result",
+      "code-text": {
+        "lines-start": 68,
+        "lines-end": 72
+      },
+      "code-path": "M1demo/M1demo.lean",
+      "code-module": "M1demo.M1demo"
+    },
+    "probe:m1demo.root_mutual": {
+      "verification-status": "transitively-verified",
+      "type-dependencies-external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32",
+        "probe:Bool"
+      ],
+      "type-dependencies": [],
+      "term-dependencies-external": [
+        "probe:Aeneas.Std.U32"
+      ],
+      "term-dependencies": [
+        "probe:m1demo.is_even"
+      ],
+      "rust-source": "src/lib.rs",
+      "language": "lean",
+      "kind": "def",
+      "is-relevant": true,
+      "is-primary-spec": false,
+      "is-lean-generated": false,
+      "is-in-package": true,
+      "is-ignored": false,
+      "is-hidden": false,
+      "is-aeneas-generated": false,
+      "display-name": "root_mutual",
+      "dependencies": [
+        "probe:m1demo.is_even"
+      ],
+      "codomain-last-arg-is-bool": true,
+      "codomain-is-prop": false,
+      "codomain-head": "Aeneas.Std.Result",
+      "code-text": {
+        "lines-start": 62,
+        "lines-end": 66
+      },
+      "code-path": "M1demo/M1demo.lean",
+      "code-module": "M1demo.M1demo"
+    },
+    "probe:m1demo.is_odd": {
+      "verification-status": "transitively-verified",
+      "type-dependencies-external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32",
+        "probe:Bool"
+      ],
+      "type-dependencies": [],
+      "term-dependencies": [
+        "probe:m1demo.is_even.mutual"
+      ],
+      "rust-source": "src/lib.rs",
+      "language": "lean",
+      "kind": "def",
+      "is-relevant": true,
+      "is-primary-spec": false,
+      "is-lean-generated": false,
+      "is-in-package": true,
+      "is-ignored": false,
+      "is-hidden": false,
+      "is-aeneas-generated": false,
+      "display-name": "is_odd",
+      "dependencies": [
+        "probe:m1demo.is_even.mutual"
+      ],
+      "codomain-last-arg-is-bool": true,
+      "codomain-is-prop": false,
+      "codomain-head": "Aeneas.Std.Result",
+      "code-text": {
+        "lines-start": 44,
+        "lines-end": 52
+      },
+      "code-path": "M1demo/M1demo.lean",
+      "code-module": "M1demo.M1demo"
+    },
+    "probe:m1demo.is_even": {
+      "verification-status": "transitively-verified",
+      "type-dependencies-external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32",
+        "probe:Bool"
+      ],
+      "type-dependencies": [],
+      "term-dependencies": [
+        "probe:m1demo.is_even.mutual"
+      ],
+      "rust-source": "src/lib.rs",
+      "language": "lean",
+      "kind": "def",
+      "is-relevant": true,
+      "is-primary-spec": false,
+      "is-lean-generated": false,
+      "is-in-package": true,
+      "is-ignored": false,
+      "is-hidden": false,
+      "is-aeneas-generated": false,
+      "display-name": "is_even",
+      "dependencies": [
+        "probe:m1demo.is_even.mutual"
+      ],
+      "codomain-last-arg-is-bool": true,
+      "codomain-is-prop": false,
+      "codomain-head": "Aeneas.Std.Result",
+      "code-text": {
+        "lines-start": 34,
+        "lines-end": 42
+      },
+      "code-path": "M1demo/M1demo.lean",
+      "code-module": "M1demo.M1demo"
+    },
+    "probe:m1demo.count_down": {
+      "verification-status": "transitively-verified",
+      "type-dependencies-external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32"
+      ],
+      "type-dependencies": [],
+      "term-dependencies-external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.Result.ok",
+        "probe:Aeneas.Std.U32",
+        "probe:Aeneas.Std.U32.ofNat",
+        "probe:Aeneas.Std.UScalar",
+        "probe:Aeneas.Std.UScalarTy.U32",
+        "probe:Aeneas.Std.bind",
+        "probe:Aeneas.Std.instCCPOResult",
+        "probe:Aeneas.Std.instDecidableEqUScalar_1",
+        "probe:Aeneas.Std.instHSubUScalarResult",
+        "probe:Eq",
+        "probe:HSub.hSub",
+        "probe:Lean.Order.fix",
+        "probe:Lean.Order.instCCPOPi",
+        "probe:Nat",
+        "probe:OfNat.ofNat",
+        "probe:instOfNatNat",
+        "probe:ite"
+      ],
+      "term-dependencies": [],
+      "rust-source": "src/lib.rs",
+      "language": "lean",
+      "kind": "def",
+      "is-relevant": true,
+      "is-primary-spec": false,
+      "is-lean-generated": false,
+      "is-in-package": true,
+      "is-ignored": false,
+      "is-hidden": false,
+      "is-aeneas-generated": false,
+      "display-name": "count_down",
+      "dependencies": [],
+      "codomain-last-arg-is-bool": false,
+      "codomain-is-prop": false,
+      "codomain-head": "Aeneas.Std.Result",
+      "code-text": {
+        "lines-start": 22,
+        "lines-end": 30
+      },
+      "code-path": "M1demo/M1demo.lean",
+      "code-module": "M1demo.M1demo"
+    }
+  },
+  "edges": [],
+  "external": [],
+  "anomalies": [],
+  "closures": {}
+}
