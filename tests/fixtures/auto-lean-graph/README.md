@@ -94,6 +94,18 @@ generated matchers or generated proofs in six declarations' values.
 The tests' "synthetic" constants record (built in the test file from the reported lists) exists only to
 exercise the verified path; it is not evidence.
 
+## Oracle lanes (constants version 2)
+
+`oracle-v2/` is a real paired capture of an owned fixture crate: `Pair` (a structure), a private `helper` over its
+fields, and two public roots that call it (`root_sum`, `root_twice`). The crate was extracted through the patch
+engine's recorded attempt with the demo's local Aeneas/Charon release, and given a separate `Specs` library with one
+`rfl` theorem per root. Then probe-lean and the Lean constants extractor (version 2) ran over one discovered import
+inventory: the resolved compiled data parts of every imported module, 3916 modules and 11742 files, identical at
+discovery, before and after each run. `oracle-v2/project/` holds the receipt-bound project files (state in
+`oracle-v2/run/state.json`); `oracle-v2/run/` holds the probe extract, log and receipt (with `inputs.imports`), the
+`fvs/lean-constants` version 2 record, its `fvs/lean-constants-run` success receipt and the attempt manifest. The
+tests' negatives are labelled edits of this record, re-signed in its run receipt unless the test is about that.
+
 `seeded/feature-alt-M1demo.lean` is a mutation seed, not output of this project: the published `M1demo.lean`
 (sha256 `3f55027e...`) of a separately recorded `--features alt` attempt on another fixture crate, whose
 `translation.json` equals that attempt's positive. A test places it over `bound-project`'s published file to show

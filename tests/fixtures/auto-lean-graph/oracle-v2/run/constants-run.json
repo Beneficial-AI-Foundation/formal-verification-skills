@@ -1,0 +1,23 @@
+{
+ "schema": "fvs/lean-constants-run",
+ "version": 1,
+ "exitCode": 0,
+ "argv": [
+  "lake",
+  "env",
+  "lean",
+  "LeanConstantsV2.lean"
+ ],
+ "inventoryBefore": "36951d96a396d49da29610f48a9c31fab6385514a09dce9e76cbcb1ae5d0d858",
+ "inventoryAfter": "36951d96a396d49da29610f48a9c31fab6385514a09dce9e76cbcb1ae5d0d858",
+ "producer": {
+  "toolchain": "leanprover/lean4:v4.31.0",
+  "leanSha256": "1b370cfcbf44e80d1b004ab1b1ab9a4c73951f9f7c242140bcff9bc577576554",
+  "lakeSha256": "58261a1a2fa1a362376c71e02ca854a093e71cc5e6ea64b287a931cb2565273d",
+  "extractorSha256": "8f5c7593f9fa0a1aa59418f5376b905dafd9b37c75a3b72890556e93540e6cf1",
+  "discoverySha256": "c6cd32c7dfe84153e5d59e0bb4d10382cf05fdcbe3d27f5244c424750b1ce995",
+  "harnessSha256": "2beba0a03c7abd9cd312c3f198a2f99351aa1ed86bc0dc7b4641c5cfce451a4a"
+ },
+ "outputSha256": "80e83a9db44fd12d1487cefb40400c07bbc3d6f7629ef5c8a1c1571bf650b025",
+ "outputBytes": 13895
+}

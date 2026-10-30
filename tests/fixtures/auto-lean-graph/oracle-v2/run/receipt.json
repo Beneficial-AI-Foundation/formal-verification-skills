@@ -1,0 +1,73 @@
+{
+  "schema": "fvs/lean-probe-run",
+  "version": 1,
+  "projectRoot": "/tmp/fvs44-qual.JqbS5W/roots",
+  "libraries": [
+    "M1demo",
+    "Specs"
+  ],
+  "lakeBuild": {
+    "argv": [
+      "/Users/ada/.elan/bin/lake",
+      "build",
+      "M1demo",
+      "Specs"
+    ],
+    "exitCode": 0
+  },
+  "probe": {
+    "argv": [
+      "/Users/ada/.fvs/tools/swvf-qualification/home/.local/bin/probe-lean-v4.31.0",
+      "extract",
+      "/tmp/fvs44-qual.JqbS5W/roots",
+      "-o",
+      "/tmp/fvs44-qual.JqbS5W/paired/roots-paired-2/lean.json",
+      "--library",
+      "M1demo,Specs"
+    ],
+    "exitCode": 0,
+    "sha256": "fd31d965a9d12cd5a95080c810d3441a8d38e380f25eee37c85b9444ceec283d",
+    "version": "0.14.0"
+  },
+  "inputs": {
+    "leanProjectCommit": "2359861154ccd5180021702637cad43e6f562ec6",
+    "files": {
+      ".formalising/auto-fv/state.json": "d4b86a9381901f15c7a646f6b8526ad0a53c6bf0e06977cf63988a743b641f8b",
+      ".lake/build/lib/lean/M1demo.ilean": "dc2af0b3f028b6ae072bffec1128b18e6529a5512d13dfe42527930a243dbb0d",
+      ".lake/build/lib/lean/M1demo/M1demo.ilean": "2627821a65fb27035b9fd704ed67b523c8a73ea82802eeb49af9862a29f440fe",
+      ".lake/build/lib/lean/Specs.ilean": "da73d7d98b14c2a331891ab71d95805f32a4a7d5e0c3c706f510948e37e9df34",
+      ".lake/build/lib/lean/Specs/Roots.ilean": "8cd3be42488268230bf51b88c4922dfdccf80aadde167bca549f03e8f2b01f91",
+      "M1demo.lean": "998cff4e0c58a30f8c5a5e42eaff4d401ca9d7b2d0290738e0f3cd91b9e4aae8",
+      "M1demo/M1demo.lean": "b175dd0075fbc05a7cff69d4da6167b774074e5f50d268391d77891f143a03b6",
+      "M1demo/translation.json": "790221e29e2af42eddc06f5c8cfe160cd6f78729980bee8dc20a568c3092e933",
+      "Specs.lean": "e59daefb8d70d3e72252042ffc55bea38fc9fe54e359f7ea5073843d2b22a80e",
+      "Specs/Roots.lean": "43d0dfaff243573f739d3dc8514e1224c1e1214c1985d68dcae3a1978cc404b9",
+      "lake-manifest.json": "52e67b1cb09003b8831ffc387dc362eba1c00de85a4dfd3f9e52e95378c63d72",
+      "lakefile.toml": "906e1ae68b5b77124c81c01b063b4ab2757e97f762ac11add2d4da9d2e1cca56",
+      "lean-toolchain": "efac0b94923b2d8b6840cd35be9177ad0fc5ab2332f4f4311c98712cee92fdee"
+    },
+    "compiled": {
+      ".lake/build/lib/lean/M1demo.olean": "d7380399171121cff6da716409159b3ac65aec88cbfb5fe2041015c9dc92f2b1",
+      ".lake/build/lib/lean/M1demo.olean.hash": "c993d115bf052cf15a007db6f229fdd0fa68187e957292112b8608b4d8c1ac6d",
+      ".lake/build/lib/lean/M1demo/M1demo.olean": "7bd7745dcbf61db41230a821e4b86f20363c06d39bc5aff995cb2aad17522ac9",
+      ".lake/build/lib/lean/M1demo/M1demo.olean.hash": "ceeaad657c6b289cf1715a8bb7b7e5b3d6c3157bf8575e395fcb5a21d81c1f94",
+      ".lake/build/lib/lean/M1demo/M1demo.olean.private": "b5eebf525481424793a49f90aa454739f58fd1acd24fbdfc40f9d3b6b4daaddb",
+      ".lake/build/lib/lean/M1demo/M1demo.olean.private.hash": "b0b0ec18e75b89297ab8b6b5a2de3918b2f52cd132795a545524ad7eb23b8298",
+      ".lake/build/lib/lean/M1demo/M1demo.olean.server": "9f17391dfec4cae4b2138aac0a24d021773b01c17a5cd897e33286e219a00132",
+      ".lake/build/lib/lean/M1demo/M1demo.olean.server.hash": "b16bef74d45e363c466c1caff8cbc32464fb33538b73ac731da09f7d4aefc199",
+      ".lake/build/lib/lean/Specs.olean": "2737075b5e96b9dd23f055713907f8918990aca44d1e021eacc9c2b8a43e5abe",
+      ".lake/build/lib/lean/Specs.olean.hash": "a0a42e38a10ca38d497cc50faea7f8fc94f485f2f586dddaf634e38ba20cdba5",
+      ".lake/build/lib/lean/Specs/Roots.olean": "59d23f62555d14220c98a8b9fa7ab1e5b1c876d54d61c720047d9490b430fce9",
+      ".lake/build/lib/lean/Specs/Roots.olean.hash": "368f934f698d2dda604e51554ea360b52e5a38c33e9a1826caa3f508fe84767b"
+    },
+    "imports": {
+      "digest": "36951d96a396d49da29610f48a9c31fab6385514a09dce9e76cbcb1ae5d0d858",
+      "modules": 3916,
+      "files": 11742
+    }
+  },
+  "outputs": {
+    "extractSha256": "adae634827836959e22191eb924aa940c21248145b49758b079ba3cfbbead6ce",
+    "logSha256": "5aaac030a7458c5745046440961afb2d54cfa2ab13efee0b54e7db7a57a0fc72"
+  }
+}

@@ -43,6 +43,7 @@ function usage() {
     'Usage: node fvs-lean-graph.mjs LEAN.json --library NAME[,NAME...]',
     '  --log PROBE_LEAN_LOG --receipt RUN_RECEIPT.json --project-root DIR',
     '  [--manifest PATCH_MANIFEST.json] [--constants LEAN_CONSTANTS.json]',
+    '  [--constants-receipt LEAN_CONSTANTS_RUN.json]',
     '',
     'Builds the Lean declaration and dependency record from a probe-lean 0.14.0',
     '`extract` output. --library names the Lean module roots that must have been',
@@ -53,7 +54,10 @@ function usage() {
     '--manifest is the fvs-extract-patches manifest of the extraction. --constants',
     'is the fvs/lean-constants record of the same project, Lean\'s own list of the',
     'constants each declaration\'s type and value mention; without it the reported',
-    'dependencies are not shown to be complete. Prints the',
+    'dependencies are not shown to be complete. A version 2 record (with its',
+    '--constants-receipt from the same paired run) makes Lean\'s type and value',
+    'lanes the dependency authority: the output is schemaVersion 2, capability',
+    'oracle-lanes, with nodes, edges and trust taken from it. Prints the',
     'record as JSON. Exit 0 only when the record is complete; 1 when it is',
     'incomplete or unsupported; 2 on usage errors.',
     '',
@@ -71,7 +75,7 @@ function fatal(message) {
 }
 
 function parseArgs(argv) {
-  const args = { extract: null, libraries: [], log: null, receipt: null, projectRoot: null, manifest: null, constants: null };
+  const args = { extract: null, libraries: [], log: null, receipt: null, projectRoot: null, manifest: null, constants: null, constantsReceipt: null };
   const rest = [...argv];
   if (rest[0] && !rest[0].startsWith('--')) args.extract = rest.shift();
   while (rest.length > 0) {
@@ -84,6 +88,7 @@ function parseArgs(argv) {
     else if (flag === '--project-root') args.projectRoot = value;
     else if (flag === '--manifest') args.manifest = value;
     else if (flag === '--constants') args.constants = value;
+    else if (flag === '--constants-receipt') args.constantsReceipt = value;
     else fatal(`unknown argument ${JSON.stringify(flag)}`);
   }
   if (!args.extract) fatal('a probe-lean extract JSON path is required');
@@ -445,7 +450,237 @@ const constantsShapeValid = (constants) => plainObject(constants) && constants.s
     (part === 'referenced' || ['type', 'value'].every((list) => Array.isArray(entry[list]) && entry[list].every(isText))))) &&
   new Set([...constants.project, ...constants.referenced].map((entry) => entry.name)).size === constants.project.length + constants.referenced.length;
 
-export function buildLeanGraph({ extractText, logText = null, receiptText = null, libraries, projectRoot = null, manifestText = null, constantsText = null }) {
+// Version 2 constants records (oracle lanes): Lean's own type and value
+// constants for every project constant are the dependency authority, and
+// probe-lean's declarations stay metadata that is cross-checked against them.
+const CONSTANTS_RUN_SCHEMA = 'fvs/lean-constants-run';
+const AXIOM_POLICY = ['propext', 'Classical.choice', 'Quot.sound'];
+const AXIOM_KINDS = ['def', 'theorem', 'opaque'];
+const SHA256 = /^[0-9a-f]{64}$/;
+// How each probe-lean label must look in Lean's kernel facts.
+const PROBE_KINDS = {
+  def: (node) => node.kind === 'def' && !node.isProjection,
+  projection: (node) => node.kind === 'def' && node.isProjection,
+  theorem: (node) => node.kind === 'theorem',
+  structure: (node) => node.kind === 'inductive' && node.isStructure,
+};
+const ORACLE_CLOSURE_RULE = 'root: type lane; theorem: type lane; other kinds: type + value lanes; structure: + its fields\' projections and constructors';
+
+const importsValid = (value) => plainObject(value) && SHA256.test(value.digest ?? '') &&
+  Number.isInteger(value.modules) && value.modules > 0 && Number.isInteger(value.files) && value.files > 0;
+const textList = (value) => Array.isArray(value) && value.every(isText);
+
+function oracleShapeProblems(constants) {
+  const problems = [];
+  const producer = constants.producer;
+  if (!plainObject(producer) || !isText(producer.toolchain) ||
+      !['leanSha256', 'lakeSha256', 'extractorSha256', 'discoverySha256', 'harnessSha256'].every((key) => SHA256.test(producer[key] ?? ''))) {
+    problems.push('producer must name the toolchain and the lean, lake, extractor, discovery and harness digests');
+  }
+  if (!plainObject(constants.inputs) || !hashMap(constants.inputs.files) || !hashMap(constants.inputs.compiled) || !importsValid(constants.inputs.imports)) {
+    problems.push('inputs must hold files, compiled and the import inventory summary');
+  }
+  if (!Array.isArray(constants.nodes) || constants.nodes.length === 0) return [...problems, 'nodes must be a non-empty list'];
+  const names = new Set();
+  for (const node of constants.nodes) {
+    const ok = plainObject(node) && isText(node.name) && isText(node.module) && isText(node.kind) &&
+      typeof node.hasDeclarationRange === 'boolean' && typeof node.isStructure === 'boolean' && typeof node.isProjection === 'boolean' &&
+      textList(node.type) && textList(node.value) &&
+      (node.axioms === undefined || textList(node.axioms)) &&
+      (node.family === undefined || plainObject(node.family)) &&
+      (node.fields === undefined || (Array.isArray(node.fields) && node.fields.every((field) => plainObject(field) && isText(field.field) &&
+        (field.projection === null || isText(field.projection)))));
+    if (!ok) problems.push(`node ${JSON.stringify(node?.name)} is malformed`);
+    else if (names.has(node.name)) problems.push(`node ${node.name} appears twice`);
+    else names.add(node.name);
+  }
+  return problems;
+}
+
+function constantsRunProblems(run, constantsText, constants) {
+  if (!plainObject(run) || run.schema !== CONSTANTS_RUN_SCHEMA || run.version !== 1) return [`not a ${CONSTANTS_RUN_SCHEMA} version 1 receipt`];
+  return [
+    run.exitCode !== 0 && `the oracle exited ${JSON.stringify(run.exitCode)}`,
+    run.outputSha256 !== sha256(constantsText) && 'the record is not the output the receipt names',
+    run.outputBytes !== Buffer.byteLength(constantsText) && 'the record length differs from the receipt',
+    (run.inventoryBefore !== run.inventoryAfter || run.inventoryBefore !== constants.inputs?.imports?.digest) &&
+      'the import inventory changed during the oracle run or differs from the record',
+    JSON.stringify(run.producer) !== JSON.stringify(constants.producer) && 'the receipt names another producer',
+  ].filter(Boolean);
+}
+
+// Tarjan's strongly connected components over node names.
+function components(names, successors) {
+  const index = new Map();
+  const low = new Map();
+  const stack = [];
+  const onStack = new Set();
+  const result = [];
+  let next = 0;
+  const visit = (root) => {
+    const work = [[root, 0]];
+    index.set(root, next); low.set(root, next); next += 1; stack.push(root); onStack.add(root);
+    while (work.length > 0) {
+      const frame = work[work.length - 1];
+      const [node, i] = frame;
+      const out = successors.get(node) ?? [];
+      if (i < out.length) {
+        frame[1] += 1;
+        const target = out[i];
+        if (!index.has(target)) {
+          index.set(target, next); low.set(target, next); next += 1; stack.push(target); onStack.add(target);
+          work.push([target, 0]);
+        } else if (onStack.has(target)) low.set(node, Math.min(low.get(node), index.get(target)));
+        continue;
+      }
+      work.pop();
+      if (work.length > 0) {
+        const parent = work[work.length - 1][0];
+        low.set(parent, Math.min(low.get(parent), low.get(node)));
+      }
+      if (low.get(node) === index.get(node)) {
+        const component = [];
+        let member;
+        do { member = stack.pop(); onStack.delete(member); component.push(member); } while (member !== node);
+        result.push(component);
+      }
+    }
+  };
+  for (const name of names) if (!index.has(name)) visit(name);
+  return result;
+}
+
+function oracleLanes({ constants, data, ids, defined, modules, issue }) {
+  const idOf = (name) => `probe:${name}`;
+  const byName = new Map(constants.nodes.map((node) => [node.name, node]));
+  const atoms = new Set(ids.map((id) => id.slice('probe:'.length)));
+  const isSource = (node) => defined.has(node.name);
+  const supportedStructure = (name) => {
+    const node = byName.get(name);
+    return Boolean(node) && node.kind === 'inductive' && node.isStructure && isSource(node) && atoms.has(name);
+  };
+  for (const node of constants.nodes) {
+    if (!modules.includes(node.module)) issue('node-outside-inventory', `${node.name} is in ${node.module}, not an analysed module`, node.name);
+    if (isSource(node) && !atoms.has(node.name)) issue('unmapped-source-node', `${node.name} is defined in source but is no probe-lean declaration`, node.name);
+  }
+  for (const id of ids) {
+    const name = id.slice('probe:'.length);
+    const node = byName.get(name);
+    if (!node) { issue('probe-atom-without-node', `${id} has no node in the constants record`, name); continue; }
+    if (!isSource(node)) issue('source-mismatch', `${id} is a probe-lean declaration but no .ilean defines it`, name);
+    const label = data[id].kind;
+    if (!PROBE_KINDS[label]?.(node)) issue('kind-mismatch', `${id} is labelled ${label} but Lean has ${node.kind}${node.isStructure ? ' (structure)' : ''}${node.isProjection ? ' (projection)' : ''}`, name);
+  }
+  for (const node of constants.nodes) {
+    if (!isSource(node)) {
+      const owners = node.kind === 'ctor' ? [node.family?.inductive] : node.kind === 'recursor' ? (node.family?.inductives ?? []) : [];
+      const qualified = ['def', 'theorem'].includes(node.kind) ||
+        (['ctor', 'recursor'].includes(node.kind) && owners.length > 0 && owners.every(supportedStructure));
+      if (!qualified) issue('unsupported-generated-kind', `generated ${node.name} has kind ${node.kind}${owners.length ? ` of ${owners.join(', ')}` : ''}, which is not qualified`, node.name);
+    }
+    if (node.kind === 'inductive' && node.isStructure) {
+      const ctors = node.family?.ctors;
+      const recursors = node.family?.recursors;
+      const bad = [
+        !textList(ctors) || ctors.length === 0 ? 'no constructors' : null,
+        ...(textList(ctors) ? ctors.filter((ctor) => byName.get(ctor)?.kind !== 'ctor' || byName.get(ctor).family?.inductive !== node.name).map((ctor) => `constructor ${ctor}`) : []),
+        ...(textList(recursors) ? recursors.filter((r) => byName.get(r)?.kind !== 'recursor' || !(byName.get(r).family?.inductives ?? []).includes(node.name)).map((r) => `recursor ${r}`) : ['no recursor list']),
+        ...(node.fields ?? []).filter((field) => !field.projection || !byName.get(field.projection)?.isProjection).map((field) => `field ${field.field}`),
+      ].filter(Boolean);
+      if (bad.length > 0) issue('invalid-structure-family', `structure ${node.name}: ${bad.join(', ')}`, node.name);
+    }
+    if (AXIOM_KINDS.includes(node.kind)) {
+      if (!Array.isArray(node.axioms)) issue('axioms-missing', `${node.name} has no axiom set`, node.name);
+      else {
+        const outside = node.axioms.filter((axiom) => !AXIOM_POLICY.includes(axiom));
+        if (outside.length > 0) issue('non-policy-axiom', `${node.name} depends on ${sorted(outside).join(', ')}, outside ${AXIOM_POLICY.join(', ')}`, node.name);
+      }
+    }
+  }
+  // Edges: exactly one per lane entry.
+  const edges = [];
+  const successors = new Map();
+  for (const node of constants.nodes) {
+    for (const [lane, kind] of [['type', 'type'], ['value', 'term']]) {
+      for (const target of node[lane]) {
+        const resolution = byName.has(target) ? (atoms.has(target) ? 'local' : 'generated') : 'external';
+        edges.push({ from: idOf(node.name), to: idOf(target), kind, resolution });
+        if (resolution !== 'external') successors.set(node.name, [...(successors.get(node.name) ?? []), target]);
+      }
+    }
+  }
+  // probe-lean against the lanes, lane for lane.
+  const probeUnderReport = [];
+  for (const id of ids) {
+    const name = id.slice('probe:'.length);
+    const node = byName.get(name);
+    if (!node) continue;
+    for (const [lane, fields] of [['type', ['type-dependencies', 'type-dependencies-external']], ['value', ['term-dependencies', 'term-dependencies-external']]]) {
+      const reported = new Set(fields.flatMap((field) => deps(data[id], field)).map((dep) => dep.slice('probe:'.length)));
+      const authoritative = new Set(node[lane]);
+      const missing = [...reported].filter((dep) => !authoritative.has(dep));
+      if (missing.length > 0) issue('probe-dependency-not-in-lane', `${id}: probe-lean reports ${sorted(missing).join(', ')} in its ${lane} lists, absent from Lean's ${lane} lane`, name);
+      const extra = [...authoritative].filter((dep) => !reported.has(dep));
+      if (extra.length > 0) probeUnderReport.push({ declaration: id, lane, constants: sorted(extra) });
+    }
+  }
+  // Generated-only cycles reachable from a source node block: nothing defines them.
+  const reachable = new Set();
+  const queue = constants.nodes.filter(isSource).map((node) => node.name);
+  while (queue.length > 0) {
+    const name = queue.shift();
+    if (reachable.has(name)) continue;
+    reachable.add(name);
+    queue.push(...(successors.get(name) ?? []));
+  }
+  for (const component of components(constants.nodes.map((node) => node.name), successors)) {
+    const cyclic = component.length > 1 || (successors.get(component[0]) ?? []).includes(component[0]);
+    if (cyclic && component.every((name) => !isSource(byName.get(name))) && component.some((name) => reachable.has(name))) {
+      issue('generated-cycle', `generated constants ${sorted(component).join(', ')} form a cycle`, component[0]);
+    }
+  }
+  const nodes = {};
+  const trust = {};
+  for (const node of [...constants.nodes].sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    nodes[idOf(node.name)] = {
+      kind: node.kind,
+      source: isSource(node),
+      probeAtom: atoms.has(node.name),
+      type: node.type.map(idOf),
+      value: node.value.map(idOf),
+      ...(node.isStructure ? { structure: true } : {}),
+      ...(node.isProjection ? { projection: true } : {}),
+      ...(node.family ? { family: node.family } : {}),
+      ...(node.fields ? { fields: node.fields } : {}),
+      ...(node.axioms ? { axioms: node.axioms } : {}),
+    };
+    if (node.axioms) trust[idOf(node.name)] = node.axioms;
+  }
+  return { nodes, edges, trust, probeUnderReport, byName };
+}
+
+function oracleClosure(root, byName, flagged) {
+  const declarations = new Set();
+  const external = new Set();
+  const queue = [...byName.get(root).type];
+  while (queue.length > 0) {
+    const name = queue.shift();
+    if (name === root || declarations.has(name) || external.has(name)) continue;
+    const node = byName.get(name);
+    if (!node) { external.add(name); continue; }
+    declarations.add(name);
+    queue.push(...node.type);
+    if (node.kind !== 'theorem') queue.push(...node.value);
+    if (node.kind === 'inductive' && node.isStructure) {
+      queue.push(...(node.fields ?? []).map((field) => field.projection).filter(Boolean), ...(node.family?.ctors ?? []));
+    }
+  }
+  const blockers = [root, ...declarations].filter((name) => flagged.has(name)).sort()
+    .map((name) => ({ code: 'dependency-blocked', declaration: `probe:${name}` }));
+  return { rule: ORACLE_CLOSURE_RULE, declarations: sorted(declarations).map((name) => `probe:${name}`), external: sorted(external).map((name) => `probe:${name}`), blockers };
+}
+
+export function buildLeanGraph({ extractText, logText = null, receiptText = null, libraries, projectRoot = null, manifestText = null, constantsText = null, constantsRunText = null }) {
   const blockers = [];
   const block = (code, reason, extra = {}) => blockers.push({ code, reason, ...extra });
   const requested = sorted(libraries);
@@ -471,6 +706,11 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
   };
   const finish = () => {
     record.state = record.state ?? (blockers.length === 0 ? 'complete' : 'incomplete');
+    // Version 2: every blocking issue is a fidelity obligation; verified only when there is none.
+    if (record.schemaVersion === 2) {
+      record.fidelity.obligations = blockers.map(({ code, reason, declaration }) => ({ code, reason, ...(declaration ? { declaration } : {}) }));
+      record.fidelity.status = blockers.length === 0 ? 'verified' : 'incomplete';
+    }
     for (const closure of Object.values(record.closures)) {
       if (blockers.length > 0) closure.blockers.unshift({ code: 'graph-incomplete' });
       closure.state = closure.blockers.length === 0 ? 'complete' : 'incomplete';
@@ -537,6 +777,7 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
   // project root still holds, and a scope covering the requested libraries.
   let files = null;
   let receiptCompiled = null;
+  let receiptImports = null;
   const receipt = receiptText === null ? null : parseJson(receiptText);
   const runChecksFrom = blockers.length;
   const leanCommit = envelope.source?.commit;
@@ -557,6 +798,11 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
     } else {
       receiptCompiled = receipt.inputs.compiled ?? null;
     }
+    if (receipt.inputs.imports !== undefined && !importsValid(receipt.inputs.imports)) {
+      block('invalid-receipt', 'the receipt\'s inputs.imports must summarise the import inventory (digest, modules, files)');
+    } else {
+      receiptImports = receipt.inputs.imports ?? null;
+    }
     if (receipt.probe.exitCode !== 0 || receipt.lakeBuild.exitCode !== 0) {
       block('run-failed', `the recorded run exited with lake build ${receipt.lakeBuild.exitCode}, probe-lean ${receipt.probe.exitCode}`);
     }
@@ -568,7 +814,7 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
       block('scope-not-requested', `the recorded probe-lean run was not scoped to exactly --library ${requested.join(',')} without --module`);
     }
     const lakeArgv = receipt.lakeBuild.argv;
-    if (lakeArgv[0] !== 'lake' || lakeArgv[1] !== 'build' || requested.some((library) => !lakeArgv.slice(2).includes(library))) {
+    if (path.basename(String(lakeArgv[0])) !== 'lake' || lakeArgv[1] !== 'build' || requested.some((library) => !lakeArgv.slice(2).includes(library))) {
       block('scope-not-requested', `the recorded lake build did not build ${requested.join(', ')}`);
     }
     if (receipt.outputs.extractSha256 !== sha256(extractText)) block('run-mismatch', 'the extract is not the output the receipt records');
@@ -733,8 +979,41 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
   // Fidelity is checked only for a run the receipt binds; otherwise the record
   // is already incomplete.
   let unreported = new Set();
-  if (files) {
-    const constants = constantsText === null ? null : parseJson(constantsText);
+  const constants = constantsText === null ? null : parseJson(constantsText);
+  let oracle = null;
+  if (plainObject(constants) && constants.version === 2) {
+    record.schemaVersion = 2;
+    record.capability = 'oracle-lanes';
+  }
+  if (files && record.schemaVersion === 2) {
+    const shape = oracleShapeProblems(constants);
+    const run = constantsRunText === null ? null : parseJson(constantsRunText);
+    const runProblems = shape.length > 0 ? [] : constantsRunProblems(run, constantsText, constants);
+    const pairs = (map) => Object.entries(map ?? {}).map(([file, hash]) => `${file} ${hash}`);
+    if (shape.length > 0) block('invalid-constants', `the constants record is not a usable version 2 record: ${shape.join('; ')}`);
+    else if (constantsRunText === null) block('constants-run-missing', 'no constants run receipt: the record is not tied to a successful oracle run');
+    else if (runProblems.length > 0) block('constants-run-invalid', runProblems.join('; '));
+    else if (!sameSet(pairs(constants.inputs.files), pairs(files))) block('fidelity-unbound', 'the constants record was not taken from the project files this run recorded');
+    else if (!hashMap(receiptCompiled) || Object.keys(receiptCompiled).length === 0 || !sameSet(pairs(constants.inputs.compiled), pairs(receiptCompiled))) {
+      block('fidelity-unbound', 'the constants record was not taken from the compiled modules this run recorded');
+    } else if (!importsValid(receiptImports) || JSON.stringify(receiptImports) !== JSON.stringify(constants.inputs.imports)) {
+      block('fidelity-unbound', 'the probe run and the oracle did not record the same import inventory');
+    } else if (compiledProblems(receiptCompiled, Object.keys(record.completeness.modules ?? {}), projectRoot).length > 0) {
+      block('compiled-inventory-incomplete', `the recorded compiled modules do not cover the analysed modules: ${compiledProblems(receiptCompiled, Object.keys(record.completeness.modules ?? {}), projectRoot).join(', ')}`);
+    } else {
+      const flagged = new Set();
+      const issue = (code, reason, node) => {
+        if (node) flagged.add(node);
+        block(code, reason, node ? { declaration: `probe:${node}` } : {});
+      };
+      const defined = new Set([...expected].map((id) => id.slice('probe:'.length)));
+      oracle = { ...oracleLanes({ constants, data, ids, defined, modules: Object.keys(record.completeness.modules ?? {}), issue }), flagged };
+      record.nodes = oracle.nodes;
+      record.edges = oracle.edges;
+      record.trust = oracle.trust;
+      record.fidelity = { status: 'incomplete', obligations: [], probeUnderReport: oracle.probeUnderReport };
+    }
+  } else if (files) {
     if (constantsText === null) {
       block('fidelity-unverified', 'no Lean constants record: the reported dependencies are not shown to cover the constants Lean records');
     } else if (!constantsShapeValid(constants)) {
@@ -763,7 +1042,9 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
     for (const target of data[id]['type-dependencies']) projectionsOf.set(target, [...(projectionsOf.get(target) ?? []), id]);
   }
   for (const id of ids.filter((name) => data[name].kind === 'theorem')) {
-    record.closures[id] = closureOf(id, data, inScope, projectionsOf, unreported);
+    record.closures[id] = oracle && oracle.byName.has(id.slice('probe:'.length))
+      ? oracleClosure(id.slice('probe:'.length), oracle.byName, oracle.flagged)
+      : closureOf(id, data, inScope, projectionsOf, unreported);
   }
   return finish();
 }
@@ -784,6 +1065,7 @@ function main(argv) {
       projectRoot: args.projectRoot,
       manifestText: text(args.manifest),
       constantsText: text(args.constants),
+      constantsRunText: text(args.constantsReceipt),
     });
     process.stdout.write(`${JSON.stringify(record, null, 2)}\n`);
     if (record.state !== 'complete') {

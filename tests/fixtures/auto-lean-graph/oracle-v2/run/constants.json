@@ -1,0 +1,614 @@
+{
+ "schema": "fvs/lean-constants",
+ "version": 2,
+ "producer": {
+  "toolchain": "leanprover/lean4:v4.31.0",
+  "leanSha256": "1b370cfcbf44e80d1b004ab1b1ab9a4c73951f9f7c242140bcff9bc577576554",
+  "lakeSha256": "58261a1a2fa1a362376c71e02ca854a093e71cc5e6ea64b287a931cb2565273d",
+  "extractorSha256": "8f5c7593f9fa0a1aa59418f5376b905dafd9b37c75a3b72890556e93540e6cf1",
+  "discoverySha256": "c6cd32c7dfe84153e5d59e0bb4d10382cf05fdcbe3d27f5244c424750b1ce995",
+  "harnessSha256": "2beba0a03c7abd9cd312c3f198a2f99351aa1ed86bc0dc7b4641c5cfce451a4a"
+ },
+ "inputs": {
+  "files": {
+   ".formalising/auto-fv/state.json": "d4b86a9381901f15c7a646f6b8526ad0a53c6bf0e06977cf63988a743b641f8b",
+   ".lake/build/lib/lean/M1demo.ilean": "dc2af0b3f028b6ae072bffec1128b18e6529a5512d13dfe42527930a243dbb0d",
+   ".lake/build/lib/lean/M1demo/M1demo.ilean": "2627821a65fb27035b9fd704ed67b523c8a73ea82802eeb49af9862a29f440fe",
+   ".lake/build/lib/lean/Specs.ilean": "da73d7d98b14c2a331891ab71d95805f32a4a7d5e0c3c706f510948e37e9df34",
+   ".lake/build/lib/lean/Specs/Roots.ilean": "8cd3be42488268230bf51b88c4922dfdccf80aadde167bca549f03e8f2b01f91",
+   "M1demo.lean": "998cff4e0c58a30f8c5a5e42eaff4d401ca9d7b2d0290738e0f3cd91b9e4aae8",
+   "M1demo/M1demo.lean": "b175dd0075fbc05a7cff69d4da6167b774074e5f50d268391d77891f143a03b6",
+   "M1demo/translation.json": "790221e29e2af42eddc06f5c8cfe160cd6f78729980bee8dc20a568c3092e933",
+   "Specs.lean": "e59daefb8d70d3e72252042ffc55bea38fc9fe54e359f7ea5073843d2b22a80e",
+   "Specs/Roots.lean": "43d0dfaff243573f739d3dc8514e1224c1e1214c1985d68dcae3a1978cc404b9",
+   "lake-manifest.json": "52e67b1cb09003b8831ffc387dc362eba1c00de85a4dfd3f9e52e95378c63d72",
+   "lakefile.toml": "906e1ae68b5b77124c81c01b063b4ab2757e97f762ac11add2d4da9d2e1cca56",
+   "lean-toolchain": "efac0b94923b2d8b6840cd35be9177ad0fc5ab2332f4f4311c98712cee92fdee"
+  },
+  "compiled": {
+   ".lake/build/lib/lean/M1demo.olean": "d7380399171121cff6da716409159b3ac65aec88cbfb5fe2041015c9dc92f2b1",
+   ".lake/build/lib/lean/M1demo.olean.hash": "c993d115bf052cf15a007db6f229fdd0fa68187e957292112b8608b4d8c1ac6d",
+   ".lake/build/lib/lean/M1demo/M1demo.olean": "7bd7745dcbf61db41230a821e4b86f20363c06d39bc5aff995cb2aad17522ac9",
+   ".lake/build/lib/lean/M1demo/M1demo.olean.hash": "ceeaad657c6b289cf1715a8bb7b7e5b3d6c3157bf8575e395fcb5a21d81c1f94",
+   ".lake/build/lib/lean/M1demo/M1demo.olean.private": "b5eebf525481424793a49f90aa454739f58fd1acd24fbdfc40f9d3b6b4daaddb",
+   ".lake/build/lib/lean/M1demo/M1demo.olean.private.hash": "b0b0ec18e75b89297ab8b6b5a2de3918b2f52cd132795a545524ad7eb23b8298",
+   ".lake/build/lib/lean/M1demo/M1demo.olean.server": "9f17391dfec4cae4b2138aac0a24d021773b01c17a5cd897e33286e219a00132",
+   ".lake/build/lib/lean/M1demo/M1demo.olean.server.hash": "b16bef74d45e363c466c1caff8cbc32464fb33538b73ac731da09f7d4aefc199",
+   ".lake/build/lib/lean/Specs.olean": "2737075b5e96b9dd23f055713907f8918990aca44d1e021eacc9c2b8a43e5abe",
+   ".lake/build/lib/lean/Specs.olean.hash": "a0a42e38a10ca38d497cc50faea7f8fc94f485f2f586dddaf634e38ba20cdba5",
+   ".lake/build/lib/lean/Specs/Roots.olean": "59d23f62555d14220c98a8b9fa7ab1e5b1c876d54d61c720047d9490b430fce9",
+   ".lake/build/lib/lean/Specs/Roots.olean.hash": "368f934f698d2dda604e51554ea360b52e5a38c33e9a1826caa3f508fe84767b"
+  },
+  "imports": {
+   "digest": "36951d96a396d49da29610f48a9c31fab6385514a09dce9e76cbcb1ae5d0d858",
+   "modules": 3916,
+   "files": 11742
+  }
+ },
+ "nodes": [
+  {
+   "axioms": [],
+   "hasDeclarationRange": true,
+   "isProjection": false,
+   "isStructure": false,
+   "kind": "def",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.Pair.casesOn",
+   "type": [
+    "m1demo.Pair",
+    "Aeneas.Std.U32",
+    "m1demo.Pair.mk"
+   ],
+   "value": [
+    "m1demo.Pair",
+    "Aeneas.Std.U32",
+    "m1demo.Pair.mk",
+    "m1demo.Pair.rec"
+   ]
+  },
+  {
+   "family": {
+    "ctors": [
+     "m1demo.Pair.mk"
+    ],
+    "recursors": [
+     "m1demo.Pair.rec"
+    ]
+   },
+   "fields": [
+    {
+     "field": "a",
+     "projection": "m1demo.Pair.a"
+    },
+    {
+     "field": "b",
+     "projection": "m1demo.Pair.b"
+    }
+   ],
+   "hasDeclarationRange": true,
+   "isProjection": false,
+   "isStructure": true,
+   "kind": "inductive",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.Pair",
+   "type": [],
+   "value": []
+  },
+  {
+   "axioms": [
+    "propext",
+    "Classical.choice",
+    "Quot.sound"
+   ],
+   "hasDeclarationRange": true,
+   "isProjection": false,
+   "isStructure": false,
+   "kind": "theorem",
+   "module": "Specs.Roots",
+   "name": "m1demo.roots.root_twice_eq",
+   "type": [
+    "m1demo.Pair",
+    "Eq",
+    "Aeneas.Std.Result",
+    "Aeneas.Std.U32",
+    "m1demo.root_twice",
+    "Aeneas.Std.bind",
+    "Aeneas.Std.UScalar",
+    "Aeneas.Std.UScalarTy.U32",
+    "m1demo.helper",
+    "HMul.hMul",
+    "Aeneas.Std.instHMulUScalarResult",
+    "Aeneas.Std.U32.ofNat",
+    "OfNat.ofNat",
+    "Nat",
+    "instOfNatNat",
+    "of_decide_eq_true",
+    "LE.le",
+    "instLENat",
+    "Aeneas.Std.UScalar.cMax",
+    "Nat.decLe",
+    "id",
+    "Bool",
+    "Decidable.decide",
+    "Bool.true",
+    "Eq.refl"
+   ],
+   "value": [
+    "m1demo.Pair",
+    "rfl",
+    "Aeneas.Std.Result",
+    "Aeneas.Std.U32",
+    "m1demo.root_twice"
+   ]
+  },
+  {
+   "axioms": [
+    "propext",
+    "Quot.sound"
+   ],
+   "hasDeclarationRange": true,
+   "isProjection": false,
+   "isStructure": false,
+   "kind": "def",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.helper",
+   "type": [
+    "m1demo.Pair",
+    "Aeneas.Std.Result",
+    "Aeneas.Std.U32"
+   ],
+   "value": [
+    "m1demo.Pair",
+    "HAdd.hAdd",
+    "Aeneas.Std.U32",
+    "Aeneas.Std.Result",
+    "Aeneas.Std.UScalar",
+    "Aeneas.Std.UScalarTy.U32",
+    "Aeneas.Std.instHAddUScalarResult",
+    "m1demo.Pair.a",
+    "m1demo.Pair.b"
+   ]
+  },
+  {
+   "axioms": [
+    "propext",
+    "Classical.choice",
+    "Quot.sound"
+   ],
+   "hasDeclarationRange": true,
+   "isProjection": false,
+   "isStructure": false,
+   "kind": "def",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.root_twice",
+   "type": [
+    "m1demo.Pair",
+    "Aeneas.Std.Result",
+    "Aeneas.Std.U32"
+   ],
+   "value": [
+    "m1demo.Pair",
+    "Aeneas.Std.bind",
+    "Aeneas.Std.U32",
+    "Aeneas.Std.UScalar",
+    "Aeneas.Std.UScalarTy.U32",
+    "m1demo.helper",
+    "HMul.hMul",
+    "Aeneas.Std.Result",
+    "Aeneas.Std.instHMulUScalarResult",
+    "Aeneas.Std.U32.ofNat",
+    "OfNat.ofNat",
+    "Nat",
+    "instOfNatNat",
+    "m1demo.root_twice._proof_1"
+   ]
+  },
+  {
+   "axioms": [
+    "propext",
+    "Quot.sound"
+   ],
+   "hasDeclarationRange": true,
+   "isProjection": false,
+   "isStructure": false,
+   "kind": "def",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.root_sum",
+   "type": [
+    "m1demo.Pair",
+    "Aeneas.Std.Result",
+    "Aeneas.Std.U32"
+   ],
+   "value": [
+    "m1demo.Pair",
+    "m1demo.helper"
+   ]
+  },
+  {
+   "family": {
+    "inductive": "m1demo.Pair"
+   },
+   "hasDeclarationRange": true,
+   "isProjection": false,
+   "isStructure": false,
+   "kind": "ctor",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.Pair.mk",
+   "type": [
+    "Aeneas.Std.U32",
+    "m1demo.Pair"
+   ],
+   "value": []
+  },
+  {
+   "axioms": [],
+   "hasDeclarationRange": true,
+   "isProjection": true,
+   "isStructure": false,
+   "kind": "def",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.Pair.b",
+   "type": [
+    "m1demo.Pair",
+    "Aeneas.Std.U32"
+   ],
+   "value": [
+    "m1demo.Pair"
+   ]
+  },
+  {
+   "axioms": [],
+   "hasDeclarationRange": true,
+   "isProjection": true,
+   "isStructure": false,
+   "kind": "def",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.Pair.a",
+   "type": [
+    "m1demo.Pair",
+    "Aeneas.Std.U32"
+   ],
+   "value": [
+    "m1demo.Pair"
+   ]
+  },
+  {
+   "axioms": [],
+   "hasDeclarationRange": true,
+   "isProjection": false,
+   "isStructure": false,
+   "kind": "def",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.Pair.noConfusion",
+   "type": [
+    "m1demo.Pair",
+    "Eq",
+    "m1demo.Pair.noConfusionType"
+   ],
+   "value": [
+    "m1demo.Pair",
+    "Eq",
+    "Eq.ndrec",
+    "m1demo.Pair.noConfusionType",
+    "m1demo.Pair.casesOn",
+    "Aeneas.Std.U32",
+    "Eq.refl"
+   ]
+  },
+  {
+   "axioms": [],
+   "hasDeclarationRange": false,
+   "isProjection": false,
+   "isStructure": false,
+   "kind": "def",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.Pair.mk._flat_ctor",
+   "type": [
+    "Aeneas.Std.U32",
+    "m1demo.Pair"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "m1demo.Pair.mk"
+   ]
+  },
+  {
+   "axioms": [
+    "propext"
+   ],
+   "hasDeclarationRange": false,
+   "isProjection": false,
+   "isStructure": false,
+   "kind": "theorem",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.root_twice._proof_1",
+   "type": [
+    "LE.le",
+    "Nat",
+    "instLENat",
+    "OfNat.ofNat",
+    "instOfNatNat",
+    "Aeneas.Std.UScalar.cMax",
+    "Aeneas.Std.UScalarTy.U32"
+   ],
+   "value": [
+    "of_decide_eq_true",
+    "LE.le",
+    "Nat",
+    "instLENat",
+    "OfNat.ofNat",
+    "instOfNatNat",
+    "Aeneas.Std.UScalar.cMax",
+    "Aeneas.Std.UScalarTy.U32",
+    "Nat.decLe",
+    "id",
+    "Eq",
+    "Bool",
+    "Decidable.decide",
+    "Bool.true",
+    "Eq.refl"
+   ]
+  },
+  {
+   "axioms": [],
+   "hasDeclarationRange": false,
+   "isProjection": false,
+   "isStructure": false,
+   "kind": "def",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.Pair._sizeOf_inst",
+   "type": [
+    "SizeOf",
+    "m1demo.Pair"
+   ],
+   "value": [
+    "SizeOf.mk",
+    "m1demo.Pair",
+    "m1demo.Pair._sizeOf_1"
+   ]
+  },
+  {
+   "axioms": [],
+   "hasDeclarationRange": false,
+   "isProjection": false,
+   "isStructure": false,
+   "kind": "theorem",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.Pair.mk.sizeOf_spec",
+   "type": [
+    "Aeneas.Std.U32",
+    "Eq",
+    "Nat",
+    "SizeOf.sizeOf",
+    "m1demo.Pair",
+    "m1demo.Pair._sizeOf_inst",
+    "m1demo.Pair.mk",
+    "HAdd.hAdd",
+    "instHAdd",
+    "instAddNat",
+    "OfNat.ofNat",
+    "instOfNatNat",
+    "Aeneas.Std.UScalar._sizeOf_inst",
+    "Aeneas.Std.UScalarTy.U32"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "Eq.refl",
+    "Nat",
+    "HAdd.hAdd",
+    "instHAdd",
+    "instAddNat",
+    "OfNat.ofNat",
+    "instOfNatNat",
+    "SizeOf.sizeOf",
+    "Aeneas.Std.UScalar._sizeOf_inst",
+    "Aeneas.Std.UScalarTy.U32"
+   ]
+  },
+  {
+   "axioms": [
+    "propext",
+    "Quot.sound"
+   ],
+   "hasDeclarationRange": true,
+   "isProjection": false,
+   "isStructure": false,
+   "kind": "theorem",
+   "module": "Specs.Roots",
+   "name": "m1demo.roots.root_sum_eq",
+   "type": [
+    "m1demo.Pair",
+    "Eq",
+    "Aeneas.Std.Result",
+    "Aeneas.Std.U32",
+    "m1demo.root_sum",
+    "m1demo.helper"
+   ],
+   "value": [
+    "m1demo.Pair",
+    "rfl",
+    "Aeneas.Std.Result",
+    "Aeneas.Std.U32",
+    "m1demo.root_sum"
+   ]
+  },
+  {
+   "axioms": [],
+   "hasDeclarationRange": false,
+   "isProjection": false,
+   "isStructure": false,
+   "kind": "def",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.Pair.noConfusionType",
+   "type": [
+    "m1demo.Pair"
+   ],
+   "value": [
+    "m1demo.Pair",
+    "m1demo.Pair.casesOn",
+    "Aeneas.Std.U32",
+    "Eq"
+   ]
+  },
+  {
+   "axioms": [
+    "propext"
+   ],
+   "hasDeclarationRange": false,
+   "isProjection": false,
+   "isStructure": false,
+   "kind": "theorem",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.Pair.mk.injEq",
+   "type": [
+    "Aeneas.Std.U32",
+    "Eq",
+    "m1demo.Pair",
+    "m1demo.Pair.mk",
+    "And"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "Eq.propIntro",
+    "Eq",
+    "m1demo.Pair",
+    "m1demo.Pair.mk",
+    "And",
+    "m1demo.Pair.mk.inj",
+    "Lean.injEq_helper",
+    "Eq.ndrec",
+    "Eq.refl"
+   ]
+  },
+  {
+   "axioms": [],
+   "hasDeclarationRange": false,
+   "isProjection": false,
+   "isStructure": false,
+   "kind": "def",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.Pair._sizeOf_1",
+   "type": [
+    "m1demo.Pair",
+    "Nat"
+   ],
+   "value": [
+    "m1demo.Pair",
+    "m1demo.Pair.rec",
+    "Nat",
+    "Aeneas.Std.U32",
+    "HAdd.hAdd",
+    "instHAdd",
+    "instAddNat",
+    "OfNat.ofNat",
+    "instOfNatNat",
+    "SizeOf.sizeOf",
+    "Aeneas.Std.UScalar._sizeOf_inst",
+    "Aeneas.Std.UScalarTy.U32"
+   ]
+  },
+  {
+   "axioms": [],
+   "hasDeclarationRange": false,
+   "isProjection": false,
+   "isStructure": false,
+   "kind": "def",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.Pair.ctorIdx",
+   "type": [
+    "m1demo.Pair",
+    "Nat"
+   ],
+   "value": [
+    "m1demo.Pair"
+   ]
+  },
+  {
+   "family": {
+    "inductives": [
+     "m1demo.Pair"
+    ]
+   },
+   "hasDeclarationRange": true,
+   "isProjection": false,
+   "isStructure": false,
+   "kind": "recursor",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.Pair.rec",
+   "type": [
+    "m1demo.Pair",
+    "Aeneas.Std.U32",
+    "m1demo.Pair.mk"
+   ],
+   "value": []
+  },
+  {
+   "axioms": [],
+   "hasDeclarationRange": true,
+   "isProjection": false,
+   "isStructure": false,
+   "kind": "def",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.Pair.recOn",
+   "type": [
+    "m1demo.Pair",
+    "Aeneas.Std.U32",
+    "m1demo.Pair.mk"
+   ],
+   "value": [
+    "m1demo.Pair",
+    "Aeneas.Std.U32",
+    "m1demo.Pair.mk",
+    "m1demo.Pair.rec"
+   ]
+  },
+  {
+   "axioms": [],
+   "hasDeclarationRange": true,
+   "isProjection": false,
+   "isStructure": false,
+   "kind": "def",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.Pair.mk.noConfusion",
+   "type": [
+    "Aeneas.Std.U32",
+    "Eq",
+    "m1demo.Pair",
+    "m1demo.Pair.mk"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "Eq",
+    "m1demo.Pair",
+    "m1demo.Pair.mk",
+    "id",
+    "m1demo.Pair.noConfusion"
+   ]
+  },
+  {
+   "axioms": [],
+   "hasDeclarationRange": false,
+   "isProjection": false,
+   "isStructure": false,
+   "kind": "theorem",
+   "module": "M1demo.M1demo",
+   "name": "m1demo.Pair.mk.inj",
+   "type": [
+    "Aeneas.Std.U32",
+    "Eq",
+    "m1demo.Pair",
+    "m1demo.Pair.mk",
+    "And"
+   ],
+   "value": [
+    "Aeneas.Std.U32",
+    "Eq",
+    "m1demo.Pair",
+    "m1demo.Pair.mk",
+    "m1demo.Pair.mk.noConfusion",
+    "And",
+    "And.intro"
+   ]
+  }
+ ]
+}

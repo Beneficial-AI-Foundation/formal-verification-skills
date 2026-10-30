@@ -1004,3 +1004,167 @@ describe('dependency fidelity against the Lean constants record', () => {
     assert.deepEqual(codes(graph()), ['fidelity-unverified']);
   });
 });
+
+describe('oracle lanes: constants version 2 as the dependency authority', () => {
+  // Real paired capture of the two-roots-one-helper fixture (probe-lean and the
+  // Lean constants extractor over one discovered import inventory).
+  const V2 = path.join(FIXTURES, 'oracle-v2');
+  const run = (file) => fs.readFileSync(path.join(V2, 'run', file), 'utf8');
+  const STATE = '.formalising/auto-fv/state.json';
+  const LIBS = ['M1demo', 'Specs'];
+  const N = (name) => `probe:m1demo.${name}`;
+
+  function v2Project(edit = () => {}) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-lean-v2-'));
+    temporaryDirectories.push(root);
+    fs.cpSync(path.join(V2, 'project'), root, { recursive: true });
+    fs.mkdirSync(path.join(root, path.dirname(STATE)), { recursive: true });
+    fs.copyFileSync(path.join(V2, 'run', 'state.json'), path.join(root, STATE));
+    edit(root);
+    return root;
+  }
+
+  // Derived runs: edit the record, its run receipt, the probe receipt or the
+  // extract; the run receipt is re-signed over the edited record unless asked not to.
+  function v2Graph({ constants = () => {}, constantsRun = () => {}, receipt = () => {}, extract = null, log = (text) => text,
+    resign = true, overrides = {} } = {}) {
+    const record = JSON.parse(run('constants.json'));
+    constants(record, Object.fromEntries(record.nodes.map((node) => [node.name, node])));
+    const constantsText = JSON.stringify(record);
+    const runReceipt = JSON.parse(run('constants-run.json'));
+    if (resign) Object.assign(runReceipt, { outputSha256: sha256(constantsText), outputBytes: Buffer.byteLength(constantsText) });
+    constantsRun(runReceipt);
+    const probe = JSON.parse(run('receipt.json'));
+    let extractText = run('lean.json');
+    let logText = log(run('probe.log'));
+    if (extract) {
+      const envelope = JSON.parse(extractText);
+      extract(envelope.data);
+      extractText = JSON.stringify(envelope);
+    }
+    probe.outputs = { extractSha256: sha256(extractText), logSha256: sha256(logText) };
+    receipt(probe);
+    return buildLeanGraph({
+      extractText, logText, receiptText: JSON.stringify(probe), libraries: LIBS, projectRoot: v2Project(),
+      manifestText: run('attempt-manifest.json'), constantsText, constantsRunText: JSON.stringify(runReceipt), ...overrides,
+    });
+  }
+  const has = (record, code) => codes(record).includes(code);
+
+  it('recorded paired run: complete, bound and verified, with authoritative lanes for every node', () => {
+    const root = v2Project();
+    const result = cli([path.join(V2, 'run', 'lean.json'), '--library', LIBS.join(','), '--log', path.join(V2, 'run', 'probe.log'),
+      '--receipt', path.join(V2, 'run', 'receipt.json'), '--project-root', root, '--manifest', path.join(V2, 'run', 'attempt-manifest.json'),
+      '--constants', path.join(V2, 'run', 'constants.json'), '--constants-receipt', path.join(V2, 'run', 'constants-run.json')]);
+    assert.equal(result.status, 0, result.stderr);
+    const record = JSON.parse(result.stdout);
+    assert.equal(record.schemaVersion, 2);
+    assert.equal(record.capability, 'oracle-lanes');
+    assert.equal(record.state, 'complete');
+    assert.equal(record.binding.status, 'bound');
+    assert.deepEqual([record.fidelity.status, record.fidelity.obligations], ['verified', []]);
+    // declarations are exactly the probe-atom nodes; generated nodes have no probe identity.
+    assert.deepEqual(Object.keys(record.declarations).sort(), Object.keys(record.nodes).filter((id) => record.nodes[id].probeAtom).sort());
+    assert.ok(Object.values(record.nodes).some((node) => !node.probeAtom));
+    // One edge per lane entry, resolved by node membership.
+    const lanes = Object.entries(record.nodes).flatMap(([from, node]) => [
+      ...node.type.map((to) => `${from} ${to} type`), ...node.value.map((to) => `${from} ${to} term`)]).sort();
+    assert.deepEqual(record.edges.map((edge) => `${edge.from} ${edge.to} ${edge.kind}`).sort(), lanes);
+    for (const edge of record.edges) {
+      const target = record.nodes[edge.to];
+      assert.equal(edge.resolution, !target ? 'external' : target.probeAtom ? 'local' : 'generated', JSON.stringify(edge));
+    }
+    for (const theorem of ['roots.root_sum_eq', 'roots.root_twice_eq']) {
+      const closure = record.closures[N(theorem)];
+      assert.deepEqual(closure.blockers, []);
+      for (const member of ['helper', 'Pair', 'Pair.a', 'Pair.b', 'Pair.mk']) assert.ok(closure.declarations.includes(N(member)), `${theorem} ${member}`);
+    }
+    assert.deepEqual(record.nodes[N('Pair')].fields.map((field) => field.projection), ['m1demo.Pair.a', 'm1demo.Pair.b']);
+    assert.ok(record.fidelity.probeUnderReport.some((item) => item.declaration === N('root_twice') && item.constants.includes('m1demo.root_twice._proof_1')));
+    assert.deepEqual(record.trust[N('helper')], ['propext', 'Quot.sound']);
+  });
+
+  it('artifact drift and failed capture: nothing unbound or partial is accepted', () => {
+    assert.ok(has(v2Graph({ constantsRun: (r) => { r.inventoryAfter = '0'.repeat(64); } }), 'constants-run-invalid'));
+    assert.ok(has(v2Graph({ constantsRun: (r) => { r.exitCode = 1; } }), 'constants-run-invalid'));
+    assert.ok(has(v2Graph({ constants: (c) => { c.nodes[0].kind = c.nodes[0].kind; c.producer.extractorSha256 = '1'.repeat(64); }, constantsRun: () => {} , resign: true }), 'constants-run-invalid'));
+    assert.ok(has(v2Graph({ resign: false, constants: (c) => { c.nodes.reverse(); } }), 'constants-run-invalid'));
+    // Only the digest is stale (length re-signed): the exact-bytes check alone refuses it.
+    assert.ok(has(v2Graph({ constantsRun: (r) => { r.outputSha256 = '4'.repeat(64); } }), 'constants-run-invalid'));
+    assert.ok(has(v2Graph({ overrides: { constantsRunText: null } }), 'constants-run-missing'));
+    // Stale compiled module: the record names other bytes than the probe run.
+    assert.ok(has(v2Graph({ constants: (c) => { const file = Object.keys(c.inputs.compiled)[0]; c.inputs.compiled[file] = '0'.repeat(64); } }), 'fidelity-unbound'));
+    // A different import inventory between the probe and the oracle.
+    assert.ok(has(v2Graph({ constants: (c) => { c.inputs.imports.digest = '2'.repeat(64); }, constantsRun: (r) => { r.inventoryBefore = r.inventoryAfter = '2'.repeat(64); } }), 'fidelity-unbound'));
+    // A missing module-system companion in both maps.
+    const companion = '.lake/build/lib/lean/M1demo/M1demo.olean.private';
+    assert.ok(has(v2Graph({ constants: (c) => { delete c.inputs.compiled[companion]; }, receipt: (r) => { delete r.inputs.compiled[companion]; } }), 'compiled-inventory-incomplete'));
+  });
+
+  it('coverage: nodes outside the analysed modules and definitions without axiom sets block', () => {
+    assert.ok(has(v2Graph({ constants: (c, n) => { n['m1demo.helper'].module = 'Elsewhere'; } }), 'node-outside-inventory'));
+    for (const name of ['m1demo.helper', 'm1demo.root_twice._proof_1']) {
+      assert.ok(has(v2Graph({ constants: (c, n) => { delete n[name].axioms; } }), 'axioms-missing'), name);
+    }
+  });
+
+  it('probe-lean and the oracle must cover each other; a source node is never treated as generated', () => {
+    assert.ok(has(v2Graph({ constants: (c) => { c.nodes = c.nodes.filter((node) => node.name !== 'm1demo.root_sum'); } }), 'probe-atom-without-node'));
+    const unmapped = v2Graph({ extract: (data) => { delete data[N('root_sum')]; }, log: (text) => text.replace(/Wrote (\d+) /, (m, k) => `Wrote ${Number(k) - 1} `) });
+    assert.ok(has(unmapped, 'unmapped-source-node'));
+    assert.ok(!Object.hasOwn(unmapped.nodes ?? {}, N('root_sum')) || unmapped.nodes[N('root_sum')].probeAtom === false);
+  });
+
+  it('kernel and probe-lean kinds must agree', () => {
+    assert.ok(has(v2Graph({ constants: (c, n) => { n['m1demo.Pair.a'].isProjection = false; } }), 'kind-mismatch'));
+    assert.ok(has(v2Graph({ constants: (c, n) => { n['m1demo.Pair'].isStructure = false; } }), 'kind-mismatch'));
+    assert.ok(has(v2Graph({ constants: (c, n) => { n['m1demo.helper'].kind = 'theorem'; } }), 'kind-mismatch'));
+  });
+
+  it('lanes: a swapped or omitted dependency is refused, an endpoint must exist', () => {
+    // helper's type lane holds Pair; moving it to the value lane is a lane swap.
+    assert.ok(has(v2Graph({ constants: (c, n) => { const node = n['m1demo.helper']; node.type = node.type.filter((x) => x !== 'm1demo.Pair'); node.value.push('m1demo.Pair'); } }),
+      'probe-dependency-not-in-lane'));
+    // An external constant probe-lean reports, omitted from the oracle lane.
+    assert.ok(has(v2Graph({ constants: (c, n) => { const node = n['m1demo.helper']; node.type = node.type.filter((x) => x !== 'Aeneas.Std.U32'); } }),
+      'probe-dependency-not-in-lane'));
+    // A missing generated endpoint: the constructor node is gone.
+    assert.ok(has(v2Graph({ constants: (c) => { c.nodes = c.nodes.filter((node) => node.name !== 'm1demo.Pair.mk'); } }), 'invalid-structure-family'));
+  });
+
+  it('trust: non-policy axioms block on a definition and on a generated proof; malformed sets are refused', () => {
+    for (const name of ['m1demo.helper', 'm1demo.root_twice._proof_1']) {
+      const record = v2Graph({ constants: (c, n) => { n[name].axioms.push('sorryAx'); } });
+      assert.ok(has(record, 'non-policy-axiom'), name);
+      assert.equal(record.fidelity.status, 'incomplete');
+      assert.ok(record.fidelity.obligations.some((item) => item.code === 'non-policy-axiom'));
+    }
+    assert.ok(has(v2Graph({ constants: (c, n) => { n['m1demo.helper'].axioms = 'propext'; } }), 'invalid-constants'));
+    // The obligation reaches the consumers' closures.
+    const tainted = v2Graph({ constants: (c, n) => { n['m1demo.helper'].axioms.push('sorryAx'); } });
+    assert.ok(tainted.closures[N('roots.root_sum_eq')].blockers.some((item) => item.declaration === N('helper')));
+  });
+
+  it('families and kinds: unqualified generated kinds, broken families and generated-only cycles block', () => {
+    assert.ok(has(v2Graph({ constants: (c, n) => { n['m1demo.Pair.ctorIdx'].kind = 'mystery'; } }), 'unsupported-generated-kind'));
+    assert.ok(has(v2Graph({ constants: (c, n) => { n['m1demo.Pair.ctorIdx'].kind = 'axiom'; } }), 'unsupported-generated-kind'));
+    assert.ok(has(v2Graph({ constants: (c, n) => { n['m1demo.Pair.mk'].family.inductive = 'm1demo.Other'; } }), 'unsupported-generated-kind'));
+    assert.ok(has(v2Graph({ constants: (c, n) => { n['m1demo.Pair'].fields[0].projection = 'm1demo.Pair.missing'; } }), 'invalid-structure-family'));
+    const loop = (n) => { n['m1demo.Pair.casesOn'].value.push('m1demo.Pair.recOn'); n['m1demo.Pair.recOn'].value.push('m1demo.Pair.casesOn'); };
+    // Unreachable from any source declaration: not part of any claim, so not blocking.
+    assert.ok(!has(v2Graph({ constants: (c, n) => loop(n) }), 'generated-cycle'));
+    // Reached through a source definition's value lane: blocks.
+    const reached = v2Graph({ constants: (c, n) => { loop(n); n['m1demo.root_sum'].value.push('m1demo.Pair.casesOn'); } });
+    assert.ok(has(reached, 'generated-cycle'));
+  });
+
+  it('identity and versions: other producers, other versions and malformed output are refused', () => {
+    assert.ok(has(v2Graph({ constantsRun: (r) => { r.producer = { ...r.producer, harnessSha256: '3'.repeat(64) }; } }), 'constants-run-invalid'));
+    assert.ok(has(v2Graph({ constants: (c) => { c.nodes.push({ ...c.nodes[0] }); } }), 'invalid-constants'));
+    const truncated = run('constants.json').slice(0, 200);
+    assert.ok(has(v2Graph({ overrides: { constantsText: truncated } }), 'invalid-constants'));
+    const v3 = v2Graph({ constants: (c) => { c.version = 3; } });
+    assert.equal(v3.schemaVersion, 1);
+    assert.ok(has(v3, 'invalid-constants'));
+  });
+});

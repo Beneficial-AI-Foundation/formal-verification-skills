@@ -1,0 +1,283 @@
+{
+  "schema": "fvs/auto-state",
+  "schemaVersion": 1,
+  "profiledAt": "2026-10-30T17:16:33.511Z",
+  "profile": {
+    "schema": "fvs/auto-profile",
+    "schemaVersion": 1,
+    "projectRoot": "/private/tmp/fvs44-qual.JqbS5W/roots",
+    "platform": "aarch64-apple-darwin",
+    "items": [
+      {
+        "id": "host",
+        "verdict": "available-but-unverified",
+        "reason": "aarch64-apple-darwin has recorded confined-run evidence only for the probe-aeneas inventory operation (aeneas-6e167c9b-charon-0.1.225-lean-v4.31.0); no other auto-track operation is validated on any host",
+        "nextStep": "None for the host; the probe item states what is tested for this project.",
+        "evidence": {
+          "os": "darwin",
+          "arch": "arm64",
+          "target": "aarch64-apple-darwin"
+        }
+      },
+      {
+        "id": "ao",
+        "verdict": "available-but-unverified",
+        "reason": "ao is on PATH at /Applications/Agent Orchestrator.app/Contents/Resources/daemon/ao; FVS records no tested Agent Orchestrator version",
+        "nextStep": "None required now.",
+        "evidence": {
+          "path": "/Applications/Agent Orchestrator.app/Contents/Resources/daemon/ao"
+        }
+      },
+      {
+        "id": "rust",
+        "verdict": "available-but-unverified",
+        "reason": "rustc is on PATH but rustc -vV failed in the crate directory: sandbox-exec: sandbox_apply: Operation not permitted",
+        "nextStep": "Run rustc -vV in the crate directory and fix the reported error (a pinned toolchain may need rustup toolchain install).",
+        "evidence": {
+          "rustup": "/Users/ada/.cargo/bin/rustup",
+          "cargo": "/Users/ada/.cargo/bin/cargo",
+          "rustc": "/Users/ada/.cargo/bin/rustc",
+          "toolchainFile": "rust-toolchain",
+          "toolchainPin": "nightly-2026-09-17",
+          "version": null,
+          "hostTarget": null
+        }
+      },
+      {
+        "id": "lean",
+        "verdict": "available-but-unverified",
+        "reason": "lake is on PATH but lake --version failed in the project: sandbox-exec: sandbox_apply: Operation not permitted",
+        "nextStep": "Run lake --version in the project root; elan may first need to install leanprover/lean4:v4.31.0.",
+        "evidence": {
+          "toolchain": "leanprover/lean4:v4.31.0",
+          "lakefile": "lakefile.toml",
+          "lake": "/Users/ada/.elan/bin/lake",
+          "lakeVersion": null
+        }
+      },
+      {
+        "id": "aeneas",
+        "verdict": "available-but-unverified",
+        "reason": "no tested tuple matches the installed toolchain: differs from aeneas-6e167c9b-charon-0.1.225-lean-v4.31.0 (Aeneas 0855ce1b8ed3958512b6c19de6bf3035b7acb552 vs 6e167c9b63a4dafd66d0e0edd9d94669f957ff7b, Charon unknown vs 0.1.225)",
+        "nextStep": "None required to extract; results with this tuple stay unverified until a confined run is recorded for it.",
+        "evidence": {
+          "lakefile": {
+            "file": "lakefile.toml",
+            "required": true,
+            "rev": "nightly-2026.09.30-0855ce1"
+          },
+          "manifest": {
+            "rev": "0855ce1b8ed3958512b6c19de6bf3035b7acb552",
+            "inputRev": "nightly-2026.09.30-0855ce1"
+          },
+          "aeneasConfigCommit": "0855ce1b8ed3958512b6c19de6bf3035b7acb552",
+          "releases": [
+            {
+              "tag": "nightly-2026.09.30-0855ce1",
+              "platform": "darwin-arm64",
+              "forHost": true,
+              "aeneas": "/private/tmp/fvs44-qual.JqbS5W/roots/.aeneas/releases/nightly-2026.09.30-0855ce1/darwin-arm64/aeneas",
+              "charon": "/private/tmp/fvs44-qual.JqbS5W/roots/.aeneas/releases/nightly-2026.09.30-0855ce1/darwin-arm64/charon"
+            }
+          ],
+          "aeneas": "/private/tmp/fvs44-qual.JqbS5W/roots/.aeneas/releases/nightly-2026.09.30-0855ce1/darwin-arm64/aeneas",
+          "charon": {
+            "path": "/private/tmp/fvs44-qual.JqbS5W/roots/.aeneas/releases/nightly-2026.09.30-0855ce1/darwin-arm64/charon",
+            "version": null,
+            "output": "sandbox-exec: sandbox_apply: Operation not permitted"
+          }
+        }
+      },
+      {
+        "id": "probe",
+        "verdict": "missing",
+        "reason": "probe-aeneas is not installed, and no tested tuple matches this extraction: differs from aeneas-6e167c9b-charon-0.1.225-lean-v4.31.0 (Aeneas 0855ce1b8ed3958512b6c19de6bf3035b7acb552 vs 6e167c9b63a4dafd66d0e0edd9d94669f957ff7b, Charon 0.1.274 vs 0.1.225)",
+        "nextStep": "Install probe-aeneas v0.20.0 by hand from https://github.com/Beneficial-AI-Foundation/probe-aeneas/releases/download/v0.20.0/ (FVS installs it only for a tested tuple), then qualify this tuple: run probe-aeneas v0.20.0 confined against this project with its own Aeneas, Charon and Lean, record the envelope, helper versions and platform, and add the tuple to TESTED_TUPLES in a reviewed PR citing that evidence.",
+        "evidence": {
+          "resolver": {
+            "schema": "fvs/probe-resolve",
+            "schemaVersion": 1,
+            "status": "incompatible",
+            "reasons": [
+              "no tested probe-aeneas tuple matches this project (aeneas-6e167c9b-charon-0.1.225-lean-v4.31.0: aeneas 0855ce1b8ed3958512b6c19de6bf3035b7acb552 != 6e167c9b63a4dafd66d0e0edd9d94669f957ff7b; charon 0.1.274 != 0.1.225)"
+            ],
+            "platform": "aarch64-apple-darwin",
+            "platformSupported": true,
+            "provenance": {
+              "projectRoot": "/private/tmp/fvs44-qual.JqbS5W/roots",
+              "rustProject": "/private/tmp/fvs44-qual.JqbS5W/roots",
+              "translationJson": "/private/tmp/fvs44-qual.JqbS5W/roots/M1demo/translation.json",
+              "translationSha256": "790221e29e2af42eddc06f5c8cfe160cd6f78729980bee8dc20a568c3092e933",
+              "aeneasVersion": "nightly-2026.09.30-0855ce1",
+              "charonVersion": "0.1.274",
+              "aeneasRev": "0855ce1b8ed3958512b6c19de6bf3035b7acb552",
+              "aeneasConfigCommit": "0855ce1b8ed3958512b6c19de6bf3035b7acb552",
+              "leanToolchain": "leanprover/lean4:v4.31.0",
+              "problems": []
+            },
+            "tuple": null,
+            "probe": null,
+            "helpers": {},
+            "install": {
+              "available": false
+            },
+            "choices": [
+              "setup",
+              "continue-without-graph",
+              "cancel"
+            ],
+            "manual": [
+              "No probe-aeneas release is known to be compatible with this Aeneas/Charon/Lean combination; FVS will not select one by date. Continue without a graph, or ask the probe-aeneas maintainers for a compatible release."
+            ]
+          },
+          "generatedLean": null
+        }
+      }
+    ]
+  },
+  "choices": {
+    "source": {
+      "revision": "2359861154ccd5180021702637cad43e6f562ec6",
+      "configuration": "default features; Charon cargo --preset=aeneas --sysroot default (release nightly-2026.09.30-0855ce1, Charon 0.1.274); Aeneas -backend lean -emit-json; Lean v4.31.0"
+    },
+    "scope": "whole fixture crate (Pair, helper, root_sum, root_twice): ticket 21 oracle-lanes qualification only",
+    "limits": {
+      "nodeHours": 2,
+      "workers": 1,
+      "wallClockHours": 2
+    }
+  },
+  "roadmap": {
+    "decision": "declined",
+    "path": null,
+    "decidedAt": "2026-10-28T17:59:02.486Z"
+  },
+  "extraction": {
+    "status": "succeeded",
+    "recordedAt": "2026-10-30T17:16:43.012Z",
+    "selected": {
+      "revision": "2359861154ccd5180021702637cad43e6f562ec6",
+      "configuration": "default features; Charon cargo --preset=aeneas --sysroot default (release nightly-2026.09.30-0855ce1, Charon 0.1.274); Aeneas -backend lean -emit-json; Lean v4.31.0"
+    },
+    "reasons": [],
+    "declared": {
+      "buildExitCode": 0,
+      "oracle": "complete"
+    },
+    "checks": {
+      "status": {
+        "ok": true,
+        "code": "ok",
+        "message": "prepared copy at /private/tmp/fvs44-qual.JqbS5W/roots-attempt/tree"
+      },
+      "verify-tree": {
+        "ok": true,
+        "code": "ok",
+        "message": "the extraction copy matches the recorded tree (3 file(s))"
+      },
+      "verify-restore": {
+        "ok": true,
+        "code": "ok",
+        "message": "0 touched source file(s) match the recorded start"
+      }
+    },
+    "inputs": {
+      "out": "/tmp/fvs44-qual.JqbS5W/roots-attempt",
+      "manifestSha256": "e6067d4d80eff1324ec0122c3efa6c7d2cf7bf48477ba1897525fbf6c38f74d9",
+      "crateRoot": "/private/tmp/fvs44-qual.JqbS5W/roots",
+      "mode": "translation-patches",
+      "sourceCommit": "2359861154ccd5180021702637cad43e6f562ec6",
+      "patches": []
+    },
+    "run": {
+      "attemptSha256": "5dcfe2ded33080f1e5bc92f4d61ce55654f0260480b97bfe3295b7a468d71dbb",
+      "stages": {
+        "charon": "2cdb79b4bea45e2a050f58c81218dfdaab395d7dc9c64165c6b633f1117f5401",
+        "aeneas": "54efc14a91e7c59810afd6e7d6856116a00bfc24bf9fcf4114934178f0a50cd4",
+        "publish": "267671fb21caeb45e2aeee0b1dee66dc422cacf44f81e8bdfbe48e6644155583"
+      },
+      "manifestSha256": "e6067d4d80eff1324ec0122c3efa6c7d2cf7bf48477ba1897525fbf6c38f74d9",
+      "supported": true,
+      "residuals": [],
+      "trust": "local-host-and-reviewed-scripts",
+      "config": {
+        "tools": {
+          "charon": {
+            "sha256": "bc3f3d2ee9b2736ed711760f70d83a01313772ec837307d46023f6fe19edb9a2"
+          },
+          "charonDriver": {
+            "sha256": "c08963732960fb40950e0aa499516d741026d341479b5e31f63386044f18ed77"
+          },
+          "aeneas": {
+            "sha256": "5ebddb2c3e6ef596df6e9dd1f99fc09252f6b486ab03de36a0a1d0c0c592ed1c"
+          },
+          "rustToolchain": {
+            "sha256": "60d242314032dfb524f52d9c31397a64dcf6697cdb20a08c29c004fef4059306",
+            "channel": "nightly-2026-09-17"
+          }
+        },
+        "identity": {
+          "charonVersion": "0.1.274 (e435e5f341863a49a7e85d2fee9988bc0c687c82)",
+          "aeneasVersion": "aeneas nightly-2026.09.30-0855ce1",
+          "rustc": "rustc 1.100.0-nightly (923c95cdf 2026-09-16)\nbinary: rustc\ncommit-hash: 923c95cdf5ba65cea505aa2ea829f578e1506ed8\ncommit-date: 2026-09-16\nhost: aarch64-apple-darwin\nrelease: 1.100.0-nightly\nLLVM version: 23.1.1",
+          "cargo": "cargo 1.100.0-nightly (495c385d0 2026-09-16)"
+        },
+        "env": {
+          "HOME": "/Users/ada",
+          "RUSTUP_HOME": "/Users/ada/.rustup",
+          "CARGO_HOME": "/Users/ada/.cargo",
+          "PATH": "/Users/ada/.cargo/bin:/usr/bin:/bin",
+          "RUSTUP_TOOLCHAIN": "nightly-2026-09-17"
+        },
+        "charon": {
+          "argv": [
+            "cargo",
+            "--preset=aeneas",
+            "--dest-file",
+            "$OUT/m1demo.llbc",
+            "--sysroot",
+            "default",
+            "--",
+            "--locked"
+          ],
+          "cwd": "/private$OUT/tree"
+        },
+        "aeneas": {
+          "argv": [
+            "-backend",
+            "lean",
+            "-emit-json",
+            "-dest",
+            "$OUT/aeneas-dest",
+            "$OUT/m1demo.llbc"
+          ],
+          "cwd": "$PROJECT"
+        },
+        "cargoConfig": []
+      },
+      "configSha256": "1740df601d17e55a88a27d930b38548e0f626211855a6336576a620b5c85734d",
+      "llbc": {
+        "path": "/tmp/fvs44-qual.JqbS5W/roots-attempt/m1demo.llbc",
+        "sha256": "5cbcefb346f8d34aa68730573cbda0266add5e52a12ab237c0913fc7b4c04323"
+      },
+      "translation": {
+        "attemptPath": "/tmp/fvs44-qual.JqbS5W/roots-attempt/aeneas-dest/translation.json",
+        "projectPath": "/private/tmp/fvs44-qual.JqbS5W/roots/M1demo/translation.json",
+        "sha256": "790221e29e2af42eddc06f5c8cfe160cd6f78729980bee8dc20a568c3092e933"
+      },
+      "publication": [
+        {
+          "attemptPath": "/tmp/fvs44-qual.JqbS5W/roots-attempt/aeneas-dest/M1demo.lean",
+          "projectPath": "/private/tmp/fvs44-qual.JqbS5W/roots/M1demo/M1demo.lean",
+          "sha256": "b175dd0075fbc05a7cff69d4da6167b774074e5f50d268391d77891f143a03b6"
+        },
+        {
+          "attemptPath": "/tmp/fvs44-qual.JqbS5W/roots-attempt/aeneas-dest/translation.json",
+          "projectPath": "/private/tmp/fvs44-qual.JqbS5W/roots/M1demo/translation.json",
+          "sha256": "790221e29e2af42eddc06f5c8cfe160cd6f78729980bee8dc20a568c3092e933"
+        }
+      ]
+    },
+    "note": "Extraction success is not a proof: it shows only that the recorded source and translation patches extract and build; no specification is stated or proved by it."
+  }
+}

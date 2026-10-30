@@ -1,0 +1,59 @@
+{
+  "aeneas_version": "nightly-2026.09.30-0855ce1",
+  "charon_version": "0.1.274",
+  "crate": "m1demo",
+  "functions": [
+    {
+      "def_id": 19,
+      "lean_name": "m1demo.helper",
+      "lean_file": "M1demo.lean",
+      "rust_name": "m1demo::helper",
+      "is_local": true,
+      "source": { "file": "src/lib.rs", "begin_line": 8, "end_line": 10 },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 20,
+      "lean_name": "m1demo.root_sum",
+      "lean_file": "M1demo.lean",
+      "rust_name": "m1demo::root_sum",
+      "is_local": true,
+      "source": { "file": "src/lib.rs", "begin_line": 12, "end_line": 14 },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 21,
+      "lean_name": "m1demo.root_twice",
+      "lean_file": "M1demo.lean",
+      "rust_name": "m1demo::root_twice",
+      "is_local": true,
+      "source": { "file": "src/lib.rs", "begin_line": 16, "end_line": 18 },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    }
+  ],
+  "types": [
+    {
+      "def_id": 5,
+      "lean_name": "m1demo.Pair",
+      "lean_file": "M1demo.lean",
+      "rust_name": "m1demo::Pair",
+      "is_local": true,
+      "source": { "file": "src/lib.rs", "begin_line": 3, "end_line": 6 }
+    }
+  ],
+  "globals": [],
+  "trait_decls": [],
+  "trait_impls": []
+}
