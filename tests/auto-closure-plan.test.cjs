@@ -483,11 +483,11 @@ describe('closure plan: schema 2 oracle lanes (SYNTHETIC records)', () => {
     assert.deepEqual(result.record.nodes[21].unmappedDependencies, ['probe:m1demo.extra']);
   });
 
-  it('never maps a ticket 10 family member onto a generated node', () => {
+  it('never maps a ticket 10 family member onto a generated node: the records contradict each other', () => {
     const claim = (i) => { i.items.find((x) => x.defId === 21).generated.push({ leanName: 'm1demo.root_a.match_1' }); return i; };
-    const { result } = plan('positive', { graph: oracle(viaMatcher), identity: claim });
-    assert.equal(result.record.nodes[21].eligibility, 'blocked-unmatched');
-    assert.equal(root(result, 23).status, 'ready');
+    const { status, result } = plan('positive', { graph: oracle(viaMatcher), identity: claim });
+    assert.equal(status, 7);
+    assert.deepEqual(result.record.admissibility.blockers.map((b) => b.code), ['identity-graph-contradiction']);
   });
 
   it('blocks inventory, edge, cycle and fidelity contradictions', () => {
@@ -501,16 +501,84 @@ describe('closure plan: schema 2 oracle lanes (SYNTHETIC records)', () => {
     blockedV2((g) => g, 'graph-edges-inconsistent', (g) => { g.edges = g.edges.map((e) => (e.to === 'probe:m1demo.helper' ? { ...e, resolution: 'external' } : e)); return g; });
     blockedV2((g) => g, 'graph-edges-inconsistent', (g) => { g.edges.pop(); return g; });
     blockedV2((g) => g, 'graph-edges-inconsistent', (g) => { g.edges.push(g.edges[0]); return g; });
-    const cycle = (g) => {
+    blockedV2((g) => { g.nodes['probe:m1demo.loose'] = { kind: 'def', source: true, probeAtom: false, type: [], value: [] }; return g; }, 'graph-contradiction');
+    blockedV2((g) => { g.nodes['probe:m1demo.helper'].source = false; return g; }, 'graph-contradiction');
+    blockedV2((g) => { delete g.fidelity; return g; }, 'graph-fidelity-not-verified');
+    blockedV2((g) => { g.fidelity.obligations = [{ declaration: 'probe:m1demo.helper', obligation: 'axiom-boundary' }]; return g; }, 'graph-fidelity-contradiction');
+  });
+
+  it('blocks only the roots that reach a cycle of passed-through nodes, and records an unreachable one', () => {
+    const reachable = (g) => {
       g.nodes['probe:m1demo.g1'] = generatedNode('def', [], ['probe:m1demo.g2']);
       g.nodes['probe:m1demo.g2'] = generatedNode('def', [], ['probe:m1demo.g1']);
       g.nodes['probe:m1demo.root_a'].value.push('probe:m1demo.g1');
       return g;
     };
-    blockedV2(cycle, 'graph-contradiction');
-    blockedV2((g) => { g.nodes['probe:m1demo.g1'] = generatedNode('def', [], ['probe:m1demo.g1']); return g; }, 'graph-contradiction');
-    blockedV2((g) => { delete g.fidelity; return g; }, 'graph-fidelity-not-verified');
-    blockedV2((g) => { g.fidelity.obligations = [{ declaration: 'probe:m1demo.helper', obligation: 'axiom-boundary' }]; return g; }, 'graph-fidelity-contradiction');
+    const { status, result } = plan('positive', { graph: oracle(reachable) });
+    assert.equal(status, 6);
+    assert.equal(result.record.nodes[21].eligibility, 'blocked-generated-cycle');
+    assert.deepEqual([21, 22, 23].map((id) => root(result, id).status), ['blocked', 'ready', 'ready']);
+    assert.ok(result.record.observedCycles.some((c) => c.passedThrough?.join() === 'probe:m1demo.g1,probe:m1demo.g2'));
+    const unreachable = plan('positive', { graph: oracle((g) => { g.nodes['probe:m1demo.g9'] = generatedNode('def', [], ['probe:m1demo.g9']); return g; }) });
+    assert.equal(unreachable.status, 0, 'a cycle no root reaches blocks nothing');
+    assert.ok(unreachable.result.record.observedCycles.some((c) => c.declarations.join() === 'probe:m1demo.g9'));
+  });
+
+  it('refuses a ticket 10 helper the graph holds as generated or external, with or without its failure', () => {
+    const reclassified = (g) => {
+      delete g.declarations['probe:m1demo.helper'];
+      Object.assign(g.nodes['probe:m1demo.helper'], { source: false, probeAtom: false });
+      return g;
+    };
+    const removed = (g) => { delete g.declarations['probe:m1demo.helper']; delete g.nodes['probe:m1demo.helper']; return g; };
+    const v1External = (g) => {
+      delete g.declarations['probe:m1demo.helper'];
+      for (const atom of Object.values(g.declarations)) {
+        if (!atom['term-dependencies'].includes('probe:m1demo.helper')) continue;
+        atom['term-dependencies'] = atom['term-dependencies'].filter((to) => to !== 'probe:m1demo.helper');
+        atom['term-dependencies-external'] = [...atom['term-dependencies-external'], 'probe:m1demo.helper'];
+      }
+      g.edges = g.edges.filter((e) => e.from !== 'probe:m1demo.helper')
+        .map((e) => (e.to === 'probe:m1demo.helper' ? { ...e, resolution: 'external' } : e));
+      return g;
+    };
+    for (const [label, graph] of [['v2 generated', oracle(reclassified)], ['v2 external', oracle(removed)], ['v1 external', v1External]]) {
+      for (const failed of [null, [19]]) {
+        const { status, result } = plan('positive', { graph, failed });
+        assert.equal(status, 7, `${label} ${failed}`);
+        assert.deepEqual(result.record.admissibility.blockers.map((b) => b.code), ['identity-graph-contradiction'], `${label} ${failed}`);
+        assert.match(result.record.admissibility.blockers[0].message, /probe:m1demo\.helper/);
+        assert.equal(root(result, 21).closure, null, `${label}: root 21 never loses helper 19`);
+      }
+    }
+  });
+
+  it('passes through an unowned structure and its projection, and closes a structure over its fields and constructors', () => {
+    const withPair = (g) => {
+      probeAtom(g, 'probe:m1demo.Pair');
+      probeAtom(g, 'probe:m1demo.Pair.a');
+      Object.assign(g.nodes['probe:m1demo.Pair'], {
+        kind: 'inductive', structure: true, family: { ctors: ['m1demo.Pair.mk'], recursors: ['m1demo.Pair.rec'] }, fields: [{ field: 'a', projection: 'm1demo.Pair.a' }],
+      });
+      Object.assign(g.nodes['probe:m1demo.Pair.a'], { projection: true, type: ['probe:m1demo.Pair'], value: ['probe:m1demo.Pair'] });
+      g.nodes['probe:m1demo.Pair.mk'] = { ...generatedNode('ctor', ['probe:m1demo.Pair'], []), family: { inductive: 'm1demo.Pair' } };
+      g.nodes['probe:m1demo.Pair.rec'] = { ...generatedNode('recursor', ['probe:m1demo.Pair', 'probe:m1demo.Pair.mk'], []), family: { inductives: ['m1demo.Pair'] } };
+      g.nodes['probe:m1demo.root_b'].type.push('probe:m1demo.Pair');
+      g.nodes['probe:m1demo.root_a'].value.push('probe:m1demo.Pair.a');
+      return g;
+    };
+    const { status, result } = plan('positive', { graph: oracle(withPair) });
+    assert.equal(status, 0, JSON.stringify(result.record?.admissibility));
+    assert.deepEqual(result.record.nodes[21].typeDependencies, ['probe:m1demo.Pair', 'probe:m1demo.Pair.a']);
+    assert.deepEqual(result.record.nodes[22].typeDependencies, ['probe:m1demo.Pair']);
+    const definitions = root(result, 22).definitionClosure;
+    for (const member of ['probe:m1demo.Pair', 'probe:m1demo.Pair.a', 'probe:m1demo.Pair.mk']) assert.ok(definitions.includes(member), member);
+    assert.ok(!definitions.includes('probe:m1demo.Pair.rec'), 'recursors are not structure members');
+    const noCtor = plan('positive', { graph: oracle((g) => { withPair(g); g.nodes['probe:m1demo.Pair'].family.ctors = []; return g; }) });
+    assert.deepEqual(noCtor.result.record.admissibility.blockers.map((b) => b.code), ['graph-contradiction']);
+    const claimProjection = (i) => { i.items.find((x) => x.defId === 23).generated.push({ leanName: 'm1demo.Pair.a' }); return i; };
+    const claimed = plan('positive', { graph: oracle(withPair), identity: claimProjection });
+    assert.deepEqual(claimed.result.record.admissibility.blockers.map((b) => b.code), ['identity-graph-contradiction']);
   });
 
   it('refuses unknown versions, capabilities, resolutions and malformed nodes as invalid input', () => {
@@ -521,6 +589,9 @@ describe('closure plan: schema 2 oracle lanes (SYNTHETIC records)', () => {
       ['no nodes', (g) => { delete g.nodes; return g; }],
       ['unresolved in version 2', (g) => { g.edges[0].resolution = 'unresolved'; return g; }],
       ['unknown node kind', (g) => { g.nodes['probe:m1demo.helper'].kind = 'macro'; return g; }],
+      ['a kind the producer does not qualify', (g) => { g.nodes['probe:m1demo.helper'].kind = 'opaque'; return g; }],
+      ['an inductive that is not a structure', (g) => { g.nodes['probe:m1demo.helper'].kind = 'inductive'; return g; }],
+      ['a projection that is not a definition', (g) => { Object.assign(g.nodes['probe:m1demo.helper'], { kind: 'theorem', projection: true }); return g; }],
       ['missing probeAtom', (g) => { delete g.nodes['probe:m1demo.helper'].probeAtom; return g; }],
       ['repeated lane entry', (g) => { const n = g.nodes['probe:m1demo.root_a']; n.value.push(n.value[0]); return g; }],
       ['malformed trust', (g) => ({ ...g, trust: [] })],

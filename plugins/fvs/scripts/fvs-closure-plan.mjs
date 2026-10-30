@@ -30,9 +30,15 @@ const PROVENANCE = [...COMMIT_FIELDS, 'translationSha256', ...VERSION_FIELDS, 'm
 // is a node with authoritative type and value lanes; generated nodes (no probe
 // atom) are dependency evidence only. Kernel kinds as the producer names them.
 const ORACLE_CAPABILITY = 'oracle-lanes';
-const NODE_KINDS = ['def', 'theorem', 'opaque', 'axiom', 'inductive', 'ctor', 'recursor', 'quot'];
+// The kinds the producer qualifies: definitions, theorems, structures (an
+// inductive with structure: true), and the constructors and recursors of a
+// structure. Projections are definitions with projection: true.
+const NODE_KINDS = ['def', 'theorem', 'inductive', 'ctor', 'recursor'];
 const THEOREM_KINDS = ['theorem'];
-const DEFINITION_CLOSURE_RULE = 'from the root item\'s generated family over the nodes lanes: a theorem node follows its type lane only; any other node follows its type and value lanes';
+const DEFINITION_CLOSURE_RULE = 'from the root item\'s generated family over the nodes lanes: a theorem node follows its type lane only; any other node follows its type and value lanes; a structure adds its fields\' projections and its constructors';
+const leanId = (name) => `probe:${name}`;
+// Kernel type-level constants: a structure, its projections, constructors and recursors.
+const typeLevel = (node) => ['inductive', 'ctor', 'recursor'].includes(node.kind) || node.projection === true;
 const OWNERSHIP_RULE = 'each node is scheduled once; a node in several requested closures is owned by the lowest-numbered requested root (by def_id) that reaches it; ownership is bookkeeping, not readiness';
 
 class Refusal extends Error {
@@ -112,8 +118,12 @@ function validate({ identity, graph, roots, failed, llbc }) {
     if (!isObject(g.nodes)) bad('graph', 'a schemaVersion 2 record needs a nodes object');
     for (const [id, node] of Object.entries(g.nodes)) {
       if (!isObject(node) || !NODE_KINDS.includes(node.kind) || typeof node.source !== 'boolean' || typeof node.probeAtom !== 'boolean'
-        || ['type', 'value'].some((lane) => !Array.isArray(node[lane]) || node[lane].some((to) => !isText(to)) || new Set(node[lane]).size !== node[lane].length)) {
-        bad('graph', `node ${JSON.stringify(id)} is malformed (kind, source, probeAtom, or a type or value lane)`);
+        || ['type', 'value'].some((lane) => !Array.isArray(node[lane]) || node[lane].some((to) => !isText(to)) || new Set(node[lane]).size !== node[lane].length)
+        || ![undefined, true].includes(node.structure) || ![undefined, true].includes(node.projection) || (node.kind === 'inductive') !== (node.structure === true)
+        || (node.projection === true && node.kind !== 'def')
+        || (node.family !== undefined && !isObject(node.family))
+        || (node.fields !== undefined && !(Array.isArray(node.fields) && node.fields.every((f) => isObject(f) && isText(f.field) && (f.projection === null || isText(f.projection)))))) {
+        bad('graph', `node ${JSON.stringify(id)} is malformed (kind, source, probeAtom, structure, projection, family, fields, or a type or value lane)`);
       }
     }
     if (g.trust !== undefined && !isObject(g.trust)) bad('graph', 'trust is malformed');
@@ -201,18 +211,37 @@ function admissibility(i, g, llbc) {
     if (hidden.length > 0) block('graph-contradiction', `declared in the graph but listed as external: ${[...new Set(hidden.map((edge) => edge.to))].sort().join(', ')}`);
   }
   if (oracle) {
-    // The raw probe atoms are exactly the probe-atom nodes.
+    // The raw probe atoms are exactly the probe-atom nodes, and a node is a probe
+    // atom exactly when it is defined in source.
     const probeNodes = Object.keys(g.nodes).filter((id) => g.nodes[id].probeAtom).sort();
     if (JSON.stringify(probeNodes) !== JSON.stringify(Object.keys(g.declarations).sort())) {
       block('graph-contradiction', 'the probe declarations are not exactly the nodes marked probeAtom');
     }
-    // Kernel constants are added in dependency order, so their lanes cannot form a
-    // cycle; a cycle or self-reference is a producer contradiction.
-    const adjacency = new Map(Object.keys(g.nodes).map((id) => [id, []]));
-    for (const edge of declared) if (edge.resolution !== 'external') adjacency.get(edge.from).push(edge.to);
-    const cyclic = components(adjacency).filter((c) => c.length > 1 || adjacency.get(c[0]).includes(c[0]));
-    for (const component of cyclic) block('graph-contradiction', `the nodes lanes form a cycle: ${component.join(', ')}`);
+    const split = Object.keys(g.nodes).filter((id) => g.nodes[id].source !== g.nodes[id].probeAtom).sort();
+    if (split.length > 0) block('graph-contradiction', `source and probeAtom disagree for ${split.join(', ')}`);
+    // A structure's family and fields name existing constructors, recursors and
+    // projections; a constructor or recursor belongs to a structure.
+    const node = (name) => (isText(name) ? g.nodes[leanId(name)] : undefined);
+    const malformed = [];
+    for (const [id, n] of Object.entries(g.nodes)) {
+      const name = id.slice('probe:'.length);
+      if (n.kind === 'inductive') {
+        const { ctors, recursors } = n.family ?? {};
+        if (!Array.isArray(ctors) || ctors.length === 0 || ctors.some((c) => node(c)?.kind !== 'ctor' || node(c).family?.inductive !== name)
+          || !Array.isArray(recursors) || recursors.some((r) => node(r)?.kind !== 'recursor' || !(node(r).family?.inductives ?? []).includes(name))
+          || (n.fields ?? []).some((f) => node(f.projection)?.projection !== true)) malformed.push(id);
+      } else if (n.kind === 'ctor' && node(n.family?.inductive)?.kind !== 'inductive') malformed.push(id);
+      else if (n.kind === 'recursor' && !(Array.isArray(n.family?.inductives) && n.family.inductives.length > 0 && n.family.inductives.every((s) => node(s)?.kind === 'inductive'))) malformed.push(id);
+    }
+    if (malformed.length > 0) block('graph-contradiction', `structure family or fields do not resolve for ${malformed.join(', ')}`);
   }
+  // Across the records: a ticket 10 generated family member is a source
+  // definition of this extraction, so the graph may not hold it as a generated,
+  // type-level or external constant, which would hide the Rust item from its consumers.
+  const claimed = new Set(i.items.flatMap((item) => item.generated.map((member) => leanId(member.leanName))));
+  const hiddenItems = [...claimed].filter((id) => (oracle && Object.hasOwn(g.nodes, id) && (!g.nodes[id].probeAtom || typeLevel(g.nodes[id])))
+    || (!Object.hasOwn(g.declarations, id) && (declared ?? []).some((edge) => edge.resolution === 'external' && edge.to === id))).sort();
+  if (hiddenItems.length > 0) block('identity-graph-contradiction', `ticket 10 family members held by the graph as generated, type-level or external constants: ${hiddenItems.join(', ')}`);
   // Provenance: well-formed on both sides, and equal.
   for (const field of PROVENANCE) {
     const [a, b] = [i.provenance[field], g.provenance[field]];
@@ -307,7 +336,9 @@ function definitionClosure(g, starts) {
     seen.add(id);
     const node = g.nodes[id];
     const lanes = THEOREM_KINDS.includes(node.kind) ? node.type : [...node.type, ...node.value];
-    queue.push(...lanes.filter((to) => Object.hasOwn(g.nodes, to)));
+    // A structure's lanes record only its type; its fields and constructors carry its meaning.
+    const members = node.kind === 'inductive' ? [...(node.fields ?? []).map((f) => f.projection), ...(node.family?.ctors ?? [])].filter(isText).map(leanId) : [];
+    queue.push(...[...lanes, ...members].filter((to) => Object.hasOwn(g.nodes, to)));
   }
   return [...seen].sort();
 }
@@ -399,8 +430,16 @@ export function buildPlan({ identity, graph, roots, failed = [], llbc = null }) 
   // or recursor): it has no Rust def_id, owner or task and is only passed through.
   const oracle = g.schemaVersion === 2;
   const generated = (id) => oracle && !g.nodes[id].probeAtom;
+  // A type-level probe atom no item owns (a structure or its projection: ticket
+  // 10 records functions only) is passed through like a generated node.
+  const passThrough = (id) => generated(id) || (oracle && typeLevel(g.nodes[id]) && !owner.has(id));
   const adjacency = new Map(Object.keys(oracle ? g.nodes : g.declarations).map((id) => [id, []]));
   for (const edge of declared) if (edge.resolution === 'local' || edge.resolution === 'generated') adjacency.get(edge.from).push(edge.to);
+  // Version 2 cycles over every node, both lanes, before any filtering: a
+  // passed-through node in a cycle blocks every node whose traversal reaches it.
+  const cyclicPassed = new Set();
+  const cycles = oracle ? components(adjacency).filter((c) => c.length > 1 || adjacency.get(c[0]).includes(c[0])) : [];
+  for (const component of cycles) for (const id of component) if (passThrough(id)) cyclicPassed.add(id);
   // Dependencies between nodes, folded within a family and followed through
   // generated nodes; a probe atom no single node owns is kept visible as
   // unmapped (never taken for a generated node).
@@ -416,7 +455,7 @@ export function buildPlan({ identity, graph, roots, failed = [], llbc = null }) 
         for (const to of adjacency.get(id) ?? []) {
           if (previous.has(to)) continue;
           previous.set(to, id);
-          if (generated(to)) {
+          if (passThrough(to)) {
             passed.add(to);
             queue.push(to);
             continue;
@@ -433,7 +472,18 @@ export function buildPlan({ identity, graph, roots, failed = [], llbc = null }) 
         }
       }
     }
-    if (oracle) Object.assign(node, { generatedDependencies: [...passed].sort(), dependencyPaths: paths });
+    if (oracle) {
+      Object.assign(node, {
+        generatedDependencies: [...passed].filter(generated).sort(),
+        typeDependencies: [...passed].filter((id) => !generated(id)).sort(),
+        dependencyPaths: paths,
+      });
+      const inCycle = [...passed].filter((id) => cyclicPassed.has(id)).sort();
+      if (inCycle.length > 0 && node.eligibility === 'eligible') {
+        node.eligibility = 'blocked-generated-cycle';
+        node.reasons.push(`reaches ${inCycle.join(', ')}, which ${inCycle.length === 1 ? 'is' : 'are'} in a dependency cycle no item owns`);
+      }
+    }
   }
   for (const node of nodes.values()) {
     node.dependsOn = sortedNumbers(node.dependsOn);
@@ -447,11 +497,16 @@ export function buildPlan({ identity, graph, roots, failed = [], llbc = null }) 
   // filtering, projected onto scheduling nodes. A cycle entirely inside one
   // family is observed but is not a scheduling cycle. observedCycles is graph
   // topology, not a recursion classification.
-  for (const component of components(adjacency).filter((c) => c.length > 1)) {
+  for (const component of oracle ? cycles : components(adjacency).filter((c) => c.length > 1)) {
     const mapped = sortedNumbers(new Set(component.map((id) => owner.get(id)).filter((id) => id !== undefined)));
     const unmapped = component.filter((id) => !owner.has(id));
+    // A single owned node's self-reference is not a scheduling cycle (recursion
+    // stays ticket 10's classification); an unowned self-reference is.
     const scheduling = mapped.length > 1 || unmapped.length > 0;
-    record.observedCycles.push({ declarations: component, nodes: mapped, unmappedDeclarations: unmapped, schedulingCycle: scheduling });
+    record.observedCycles.push({
+      declarations: component, nodes: mapped, unmappedDeclarations: unmapped, schedulingCycle: scheduling,
+      ...(oracle ? { passedThrough: component.filter((id) => cyclicPassed.has(id)) } : {}),
+    });
     if (!scheduling) continue;
     for (const defId of mapped) {
       const node = nodes.get(defId);
