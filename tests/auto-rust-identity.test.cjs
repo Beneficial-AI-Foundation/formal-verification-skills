@@ -807,6 +807,40 @@ describe('Rust identity record: binding to a recorded extraction attempt', () =>
     });
     assert.equal(buildRecord(input(path.join(SPEC, 'lean-receipt.json'))).status, 'complete', 'exported builder: positive');
     assert.equal(buildRecord(input(null)).status, 'blocked', 'exported builder: no receipt');
+
+    // Matching malformed identities: both Lean commits changed together and the receipt's extract hash
+    // updated to the edited lean.json, so only the full-commit check can refuse them.
+    for (const bogus of ['', 'not-a-commit', LEAN_COMMIT.slice(0, 12)]) {
+      const leanEdited = read('lean.json');
+      leanEdited.source.commit = bogus;
+      const leanText = JSON.stringify(leanEdited);
+      const leanFile = write(`lean-${bogus.length}.json`, leanText);
+      const receiptFile = variant((r) => {
+        r.inputs.leanProjectCommit = bogus;
+        r.outputs.extractSha256 = crypto.createHash('sha256').update(leanText).digest('hex');
+      });
+      const { status, result } = run({ 'lean.json': leanFile }, receiptFile);
+      assert.equal(result.code, 'invalid-input', JSON.stringify(bogus));
+      assert.equal(status, 5, JSON.stringify(bogus));
+      const api = input(receiptFile);
+      api.lean = load(leanFile);
+      assert.throws(() => buildRecord(api), (error) => error.code === 'invalid-input', `exported builder: ${JSON.stringify(bogus)}`);
+    }
+    // Each commit is validated on its own: a malformed one is refused, not merely mismatched.
+    const leanBogus = read('lean.json');
+    leanBogus.source.commit = 'not-a-commit';
+    const leanBogusText = JSON.stringify(leanBogus);
+    const onlyLean = run({ 'lean.json': write('lean-only-bogus.json', leanBogusText) },
+      variant((r) => { r.outputs.extractSha256 = crypto.createHash('sha256').update(leanBogusText).digest('hex'); }));
+    assert.equal(onlyLean.result.code, 'invalid-input', 'malformed probe-lean commit with a valid receipt commit');
+    const onlyReceipt = run({}, variant((r) => { r.inputs.leanProjectCommit = 'not-a-commit'; }));
+    assert.equal(onlyReceipt.result.code, 'invalid-input', 'malformed receipt commit with a valid probe-lean commit');
+    // The exported builder's receipt wrapper must carry a valid sha256 of its bytes.
+    for (const [label, edit] of [['missing digest', (w) => { delete w.sha256; }], ['malformed digest', (w) => { w.sha256 = 'not-a-sha'; }]]) {
+      const api = input(path.join(SPEC, 'lean-receipt.json'));
+      edit(api.leanReceipt);
+      assert.throws(() => buildRecord(api), (error) => error.code === 'invalid-input', `exported builder: ${label}`);
+    }
   });
 
   it('flags a type-generic function from the LLBC as unsupported (recorded run 2 and its receipted LLBC)', () => {

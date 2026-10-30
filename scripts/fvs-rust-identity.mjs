@@ -94,6 +94,7 @@ const isObject = (value) => value !== null && typeof value === 'object' && !Arra
 const isLine = (value) => Number.isInteger(value) && value >= 1;
 const isId = (value) => Number.isInteger(value) && value >= 0;
 const isSha = (value) => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+const isCommit = (value) => typeof value === 'string' && /^[0-9a-f]{40}$/.test(value);
 // A generated Lean file named by translation.json: a non-empty relative .lean path inside -dest.
 const isLeanPath = (value) => typeof value === 'string' && value.endsWith('.lean') && !path.posix.isAbsolute(value)
   && path.posix.normalize(value) === value && !value.split('/').includes('..');
@@ -160,11 +161,13 @@ function validate({ translation, manifest, rust, mappings, lean, functions, stat
   }
   const run = state ? (state.json.extraction ?? state.json.state?.extraction)?.run : undefined;
   if (run !== undefined && !runShapeValid(run)) bad('state', 'extraction.run is not a complete recorded extraction attempt (stages, trust, attempt hash, translation and a non-empty unique publication)');
+  if (!isCommit(lean.json.source?.commit)) bad('probe-lean output', 'source.commit must be a full 40-character commit');
   if (leanReceipt !== null && leanReceipt !== undefined) {
     const r = leanReceipt.json;
-    if (!isObject(leanReceipt) || !isObject(r) || r.schema !== 'fvs/lean-probe-run' || r.version !== 1 || typeof r.projectRoot !== 'string'
+    if (!isObject(leanReceipt) || !isSha(leanReceipt.sha256)) bad('lean receipt', 'is required as { json, sha256 } with the sha256 of its bytes');
+    if (!isObject(r) || r.schema !== 'fvs/lean-probe-run' || r.version !== 1 || typeof r.projectRoot !== 'string'
       || !isObject(r.probe) || !Number.isInteger(r.probe.exitCode) || !isObject(r.lakeBuild) || !Number.isInteger(r.lakeBuild.exitCode)
-      || !isObject(r.inputs) || typeof r.inputs.leanProjectCommit !== 'string' || !isObject(r.inputs.files)
+      || !isObject(r.inputs) || !isCommit(r.inputs.leanProjectCommit) || !isObject(r.inputs.files)
       || Object.values(r.inputs.files).some((hash) => !isSha(hash)) || !isObject(r.outputs) || !isSha(r.outputs.extractSha256)) {
       bad('lean receipt', 'is not a fvs/lean-probe-run version 1 record (project root, exit codes, Lean project commit, file hashes, extract hash)');
     }
