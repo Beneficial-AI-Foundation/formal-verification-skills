@@ -552,7 +552,15 @@ function importProblems(importsText, summary, compiled, modules, referenced) {
   const manifest = parseJson(importsText);
   if (!plainObject(manifest) || !plainObject(manifest.modules)) return ['the import manifest is malformed'];
   const entries = Object.entries(manifest.modules);
-  const files = entries.reduce((count, [, entry]) => count + Object.keys(entry?.parts ?? {}).length, 0);
+  // Every row, project or not: an absolute .olean path for the module's name, the data body and only the
+  // module-system companions, each with a sha256.
+  const malformed = entries.filter(([module, entry]) => !(plainObject(entry) && sameSet(Object.keys(entry), ['olean', 'parts']) &&
+    isText(entry.olean) && entry.olean.startsWith('/') && entry.olean.endsWith(`/${module.replaceAll('.', '/')}.olean`) &&
+    plainObject(entry.parts) && has(entry.parts, '.olean') &&
+    Object.entries(entry.parts).every(([part, hash]) => ['.olean', '.server', '.private'].includes(part) && typeof hash === 'string' && SHA256.test(hash))))
+    .map(([module]) => module);
+  if (malformed.length > 0) return [`malformed import manifest rows: ${malformed.slice(0, 5).join(', ')}${malformed.length > 5 ? ` and ${malformed.length - 5} more` : ''}`];
+  const files = entries.reduce((count, [, entry]) => count + Object.keys(entry.parts).length, 0);
   if (entries.length !== summary.modules || files !== summary.files) return ['the import manifest counts differ from the record'];
   const problems = [];
   const roots = new Set();
@@ -634,12 +642,16 @@ function oracleLanes({ constants, data, ids, defined, modules, libraries, issue 
     const node = byName.get(name);
     return Boolean(node) && node.kind === 'inductive' && node.isStructure && isSource(node) && atoms.has(name);
   };
+  const fieldProjections = new Set(constants.nodes.filter((node) => node.kind === 'inductive' && node.isStructure)
+    .flatMap((node) => node.fields.map((field) => field.projection)));
   for (const node of constants.nodes) {
     if (!modules.includes(node.module)) issue('node-outside-inventory', `${node.name} is in ${node.module}, not an analysed module`, node.name);
     if (isSource(node) && !atoms.has(node.name)) issue('unmapped-source-node', `${node.name} is defined in source but is no probe-lean declaration`, node.name);
     // Only definition projections are qualified. Lean compiles a Prop-valued field's projection as a theorem, which
     // probe-lean 0.14.0 labels theorem and 0.24.0 labels projection; it blocks under both.
     if (node.isProjection && node.kind !== 'def') issue('unsupported-projection', `${node.name} is a projection of kind ${node.kind}, which is not qualified`, node.name);
+    // The inverse of the field check below: a structure's field list cannot leave out a projection Lean recorded.
+    if (node.isProjection && !fieldProjections.has(node.name)) issue('invalid-structure-family', `projection ${node.name} is in no structure's fields`, node.name);
   }
   for (const id of ids) {
     const name = id.slice('probe:'.length);

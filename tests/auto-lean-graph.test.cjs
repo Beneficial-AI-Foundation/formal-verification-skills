@@ -1057,7 +1057,7 @@ describe('oracle lanes: constants version 2 as the dependency authority', () => 
     edit(manifest.modules);
     const text = JSON.stringify(manifest);
     const summary = { digest: sha256(text), modules: Object.keys(manifest.modules).length,
-      files: Object.values(manifest.modules).reduce((count, entry) => count + Object.keys(entry.parts).length, 0) };
+      files: Object.values(manifest.modules).reduce((count, entry) => count + Object.keys(entry?.parts ?? {}).length, 0) };
     return v2Graph({ constants: (c, n) => { c.inputs.imports = summary; constants(c, n); }, receipt: (r) => { r.inputs.imports = summary; },
       constantsRun: (r) => { r.inventoryBefore = r.inventoryAfter = summary.digest; }, overrides: { importsText: text } });
   };
@@ -1250,8 +1250,18 @@ describe('oracle lanes: constants version 2 as the dependency authority', () => 
       ['referenced module', (c) => { delete c.referenced[0].module; }],
       ['referenced node', (c) => { c.referenced.push({ name: 'm1demo.helper', module: 'M1demo.M1demo' }); }],
     ]) assert.ok(has(v2Graph({ constants: edit }), 'invalid-constants'), label);
-    // An explicitly empty field list is still well formed.
-    assert.ok(!has(v2Graph({ constants: (c, n) => { n['m1demo.Pair'].fields = []; } }), 'invalid-constants'));
+    // An explicitly empty field list is well formed, but it cannot leave out projections Lean recorded.
+    const omitted = v2Graph({ constants: (c, n) => { n['m1demo.Pair'].fields = []; } });
+    assert.ok(!has(omitted, 'invalid-constants'));
+    assert.ok(has(omitted, 'invalid-structure-family'));
+    assert.ok(omitted.blockers.some((item) => item.declaration === N('Pair.a')));
+    assert.notEqual(omitted.state, 'complete');
+    // Synthetic positive: a structure whose field list is empty and that has no projection nodes is complete.
+    const empty = v2Graph({
+      constants: (c, n) => { n['m1demo.Pair'].fields = []; for (const name of ['m1demo.Pair.a', 'm1demo.Pair.b']) n[name].isProjection = false; },
+      extract: (data) => { for (const id of [N('Pair.a'), N('Pair.b')]) data[id].kind = 'def'; },
+    });
+    assert.deepEqual([empty.state, codes(empty)], ['complete', []]);
   });
 
   it('the analysed modules must resolve to the recorded compiled bytes in the import manifest', () => {
@@ -1265,6 +1275,22 @@ describe('oracle lanes: constants version 2 as the dependency authority', () => 
     assert.ok(has(resigned((m) => { m.Specs.olean = m.Specs.olean.replace('roots-r9', 'roots-other'); }), 'import-project-mismatch'));
     // A missing analysed module.
     assert.ok(has(resigned((m) => { delete m.Specs; }), 'import-project-mismatch'));
+    // Foreign rows are validated too, with every digest and count re-signed: Init.Prelude holds Eq, Nat and
+    // other referenced constants, so a broken row must not let them pass as external.
+    for (const [label, edit] of [
+      ['parts not an object (count kept)', (m) => { m['Init.Prelude'].parts = 'abc'; }],
+      ['null row', (m) => { m['Init.Prelude'] = null; }],
+      ['no data body', (m) => { delete m['Init.Prelude'].parts['.olean']; }],
+      ['invalid digest', (m) => { m['Init.Prelude'].parts['.olean'] = 'xyz'; }],
+      ['unknown part', (m) => { m['Init.Prelude'].parts['.ilean'] = '7'.repeat(64); }],
+      ['path of another module', (m) => { m['Init.Prelude'].olean = m['Init.Core'].olean; }],
+      ['relative path', (m) => { m['Init.Prelude'].olean = 'Init/Prelude.olean'; }],
+      ['extra key', (m) => { m['Init.Prelude'].note = 'x'; }],
+    ]) {
+      const record = resigned(edit);
+      assert.ok(has(record, 'import-project-mismatch'), label);
+      assert.notEqual(record.state, 'complete', label);
+    }
     // No manifest, other bytes, or counts the record misdescribes.
     assert.ok(has(v2Graph({ overrides: { importsText: null } }), 'import-project-mismatch'));
     assert.ok(has(v2Graph({ overrides: { importsText: `${IMPORTS} ` } }), 'import-project-mismatch'));
