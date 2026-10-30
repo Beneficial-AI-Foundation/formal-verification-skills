@@ -12,9 +12,18 @@ description: Refactor, simplify, and decompose verified Lean proofs while preser
 </pi_package_runtime>
 
 <objective>
-Orchestrate proof refactoring for a verified Lean spec using three-phase subagent dispatch (baseline -> research -> iterative refactor). Dispatches fvs-researcher for 3-lens analysis, then iteratively dispatches fvs-lean-refactorer to apply tiered heuristics ONE CHANGE AT A TIME, verifying compilation after each.
+Orchestrate proof refactoring for a verified Lean file (an FVS spec or an ordinary Lean file) using three-phase subagent dispatch (baseline -> research -> iterative refactor). Dispatches fvs-researcher for 3-lens analysis, then iteratively dispatches fvs-lean-refactorer to apply tiered heuristics ONE CHANGE AT A TIME, verifying compilation after each.
 
-This command sits after `/fvs:lean-verify` in the verification lifecycle. The input spec must compile with zero sorry. The output is the same spec with shorter, cleaner, more maintainable proofs.
+This command sits after `/fvs:lean-verify` in the verification lifecycle. The input file must compile with zero sorry. The output is the same file with shorter, cleaner, more maintainable proofs.
+
+**Scope and safety.** The target is any Lean file whose proofs already compile: an FVS spec or an
+ordinary Lean project file. Refactor complete proofs only. If the file has `sorry` or does not build,
+stop and route it to `/fvs:lean-verify`; never promise to refactor a broken file. Keep every theorem,
+lemma and definition statement, signature and attribute, the meaning of definitions, and the axiom and
+`sorry` policy unchanged; a needed statement change is reported, not applied. Aeneas conventions
+(`Funs.lean`, `Specs/`, `@[step]`, `unfold + step`) apply only when the project uses Aeneas extraction.
+New helpers stay as local as possible: a `have` or local lemma for one proof, a `private` lemma for
+reuse inside the file, and a public declaration only with the user's approval.
 
 Output: Refactored spec file with before/after metrics, or NO_CHANGE report if proofs are already clean.
 </objective>
@@ -66,10 +75,10 @@ fi
 [ -f "$SPEC_PATH" ] && echo "Spec found" || echo "Spec not found"
 ```
 
-If not found: list available specs and suggest `/fvs:lean-specify`.
+If not found: list Lean files in the project (in an Aeneas project, also suggest `/fvs:lean-specify`).
 
 ```bash
-find Specs/ -name "*.lean" 2>/dev/null
+find . -name "*.lean" -not -path "./.lake/*" 2>/dev/null | head -40
 ```
 
 Wait for valid path.
@@ -176,7 +185,8 @@ $PROOF_STRATEGIES_CONTENT
 
 Tasks:
 1. Read the spec file and identify all theorem proofs (not sorry)
-2. Read the corresponding function body from Funs.lean for structural context
+2. In an Aeneas project, read the corresponding function body from Funs.lean for structural context;
+   otherwise use the file's own definitions and imports
 3. Search for similar proved theorems in the project to identify reuse patterns
 4. For each theorem proof, apply the 3-lens analysis (reuse, quality, efficiency)
 5. Return structured findings with per-theorem refactoring recommendations

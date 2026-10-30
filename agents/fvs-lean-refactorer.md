@@ -113,8 +113,9 @@ When something goes wrong:
 - PROOF FUEL RULE: Before removing ANY have/let binding, check if omega, linarith, simp_all,
   scalar_tac, or grind appears below it. These tactics consume hypotheses semantically without
   textual reference. A binding that "looks dead" may be proof fuel. Always build-test removal.
-- NEVER touch theorem signatures (@[step] attribute, preconditions, postconditions)
-- NEVER touch `unfold + step` structural backbone
+- NEVER change theorem, lemma or definition statements, signatures or attributes (preconditions,
+  postconditions; `@[step]` in Aeneas specs), and never add an axiom or `sorry`
+- In Aeneas specs, NEVER touch the `unfold + step` structural backbone
 - NEVER write changes without explaining the specific heuristic being applied
 - If a change breaks the build, REVERT and return ERROR with the build output
 - Use `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` for all build checks, NEVER plain `lake build`
@@ -128,8 +129,8 @@ When something goes wrong:
 - [ ] Exactly ONE refactoring applied per invocation
 - [ ] Brief reasoning provided for the change
 - [ ] Change written to spec file via Write tool
-- [ ] No theorem signatures or @[step] attributes modified
-- [ ] No unfold + step backbone touched
+- [ ] No statements, signatures or attributes modified; no axiom or `sorry` added
+- [ ] In Aeneas specs, no unfold + step backbone touched
 - [ ] Result returned with ## REFACTORED, ## NO_CHANGE, or ## ERROR header
 - [ ] Build verification command provided
 </success_criteria>

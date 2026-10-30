@@ -239,5 +239,8 @@ architecture follows [GSD Core](https://github.com/open-gsd/gsd-core). We also u
 [probe-aeneas](https://github.com/Beneficial-AI-Foundation/probe-aeneas) and recommend
 [lean-lsp-mcp](https://github.com/oOo0oOo/lean-lsp-mcp). The Lake reference credits its source talk.
 [Jin Xing Lim](https://github.com/jinxinglim) proposed independent crypto-plan review and its reviewer prompt.
+The ordinary-Lean scope, compiled-proofs-only rule and helper-locality defaults of `/fvs:lean-refactor`
+draw on `/lean4:refactor` from [lean4-skills](https://github.com/cameronfreer/lean4-skills) by Cameron Freer
+and the Lean 4 Theorem Proving Skill Contributors (MIT, commit `83582df`); FVS paraphrases these ideas and copies no text.
 
 MIT. See [LICENSE](LICENSE).

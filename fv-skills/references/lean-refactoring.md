@@ -1,6 +1,7 @@
 <overview>
 
-Tiered proof refactoring for Aeneas-generated Lean 4 specifications. Purpose is cleanup
+Tiered proof refactoring for Lean 4 proofs: FVS specifications and ordinary Lean files alike. Aeneas
+sections below apply only to Aeneas-extracted projects. Purpose is cleanup
 AFTER verification -- the input proof must compile with zero sorry. Three modes control
 how aggressively refactorings are applied:
 
@@ -261,6 +262,8 @@ ambient lemma set may have changed.
 
 ## Aeneas-Specific Policy
 
+Applies only when the project uses Aeneas extraction.
+
 **NEVER refactor:**
 - `unfold + step` sequences -- these are the structural backbone of Aeneas proofs
 - `step` steps that correspond to distinct monadic bind points -- merging them loses
@@ -317,6 +320,8 @@ in higher layers.
 ---
 
 ## Repo-Specific Lessons (Aeneas/Ristretto)
+
+Applies only to Aeneas-extracted projects.
 
 Hard-won lessons from real proof cleanup work:
 

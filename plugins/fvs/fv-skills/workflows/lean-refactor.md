@@ -1,5 +1,5 @@
 <purpose>
-Orchestrate proof refactoring for a Lean spec file using three-phase dispatch:
+Orchestrate proof refactoring for a Lean file (an FVS spec or an ordinary Lean file) using three-phase dispatch:
 baseline check, research (3-lens analysis), iterative refactoring passes.
 
 Takes a verified spec file (zero sorry, compiles clean) and applies tiered heuristics
@@ -7,7 +7,16 @@ to reduce proof verbosity while preserving correctness. Every change is verified
 a build check. The refactorer agent makes ONE change per invocation, and the workflow
 loops until no more changes are possible or max passes are reached.
 
-Output: Refactored spec file with before/after metrics, or NO_CHANGE if already clean.
+Output: Refactored file with before/after metrics, or NO_CHANGE if already clean.
+
+**Scope and safety.** The target is any Lean file whose proofs already compile: an FVS spec or an
+ordinary Lean project file. Refactor complete proofs only. If the file has `sorry` or does not build,
+stop and route it to `/fvs:lean-verify`; never promise to refactor a broken file. Keep every theorem,
+lemma and definition statement, signature and attribute, the meaning of definitions, and the axiom and
+`sorry` policy unchanged; a needed statement change is reported, not applied. Aeneas conventions
+(`Funs.lean`, `Specs/`, `@[step]`, `unfold + step`) apply only when the project uses Aeneas extraction.
+New helpers stay as local as possible: a `have` or local lemma for one proof, a `private` lemma for
+reuse inside the file, and a public declaration only with the user's approval.
 </purpose>
 
 <process>
@@ -46,12 +55,12 @@ Validate the spec file exists AND compiles with zero sorry.
 
 **If not found:**
 ```
-Spec file not found: $SPEC_PATH
+Lean file not found: $SPEC_PATH
 
-Available specs:
-$(find Specs/ -name "*.lean" 2>/dev/null)
+Lean files in this project:
+$(find . -name "*.lean" -not -path "./.lake/*" 2>/dev/null | head -40)
 
-Generate one first: /fvs:lean-specify function_name
+(In an Aeneas project, generate a spec first: /fvs:lean-specify function_name)
 ```
 
 **Check for sorry:**
@@ -129,7 +138,8 @@ $PROOF_STRATEGIES_CONTENT
 
 Tasks:
 1. Read the spec file and identify all theorem proofs (not sorry)
-2. Read the corresponding function body from Funs.lean for structural context
+2. In an Aeneas project, read the corresponding function body from Funs.lean for structural context;
+   otherwise use the file's own definitions and imports
 3. Search for similar proved theorems in the project to identify reuse patterns
 4. For each theorem proof, apply the 3-lens analysis (reuse, quality, efficiency)
 4b. Classify theorems into refactoring layers: pure math -> representation -> bridge -> top-level specs. Recommend processing order from safest (pure math) to riskiest (top-level).
