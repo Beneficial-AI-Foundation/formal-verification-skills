@@ -370,10 +370,45 @@ function checkFidelity({ constants, data, ids, defined, block }) {
 // Kernel kinds a generated constant may be folded through (see checkFidelity).
 const FOLDABLE_KINDS = ['def', 'theorem'];
 
+// Whether a Lean 4.31 source opens with the `module` header token. Mirrors the
+// parser's header path (Lean.Parser.Module.parseHeader): leading whitespace,
+// `--` line comments and nested block comments are skipped; a doc comment
+// (`/--`, `/-!`) ends the header. Returns null when unsure (a tab, a carriage
+// return or an unterminated comment, which Lean rejects).
+export function moduleHeader(source) {
+  let i = 0;
+  while (i < source.length) {
+    const c = source[i];
+    if (c === '\t' || c === '\r') return null;
+    if (/\s/.test(c)) { i += 1; continue; }
+    if (source.startsWith('--', i)) {
+      const end = source.indexOf('\n', i);
+      if (end < 0) return false;
+      i = end + 1;
+      continue;
+    }
+    if (source.startsWith('/-', i) && !source.startsWith('/--', i) && !source.startsWith('/-!', i)) {
+      let depth = 1;
+      i += 2;
+      while (depth > 0) {
+        if (i >= source.length) return null;
+        if (source.startsWith('/-', i)) { depth += 1; i += 2; }
+        else if (source.startsWith('-/', i)) { depth -= 1; i += 2; }
+        else i += 1;
+      }
+      continue;
+    }
+    break;
+  }
+  // The keyword, not an identifier that starts with it.
+  return source.startsWith('module', i) && !/^[\p{L}\p{N}_'!?.]/u.test(source.slice(i + 6, i + 7));
+}
+
 // The compiled inventory must hold each analysed module's compiled body and
-// its companions, and nothing else but their .hash sidecars: a module declared
-// with `module` compiles to .olean, .olean.private and .olean.server, any
-// other module to .olean. Returns the problems found.
+// the companions its header requires: a module declared with `module`
+// compiles to .olean, .olean.private and .olean.server, any other module to
+// .olean. Besides those, only the optional companions of analysed modules and
+// .hash sidecars may appear. Returns the problems found.
 function compiledProblems(compiled, modules, projectRoot) {
   const problems = [];
   const allowed = new Set();
@@ -385,7 +420,9 @@ function compiledProblems(compiled, modules, projectRoot) {
     } catch {
       problems.push(`no source for module ${name}`);
     }
-    const required = /^module\s*$/m.test(source) ? ['.olean', '.olean.private', '.olean.server'] : ['.olean'];
+    const mode = moduleHeader(source);
+    if (mode === null) problems.push(`the header of module ${name} could not be classified`);
+    const required = mode === false ? ['.olean'] : ['.olean', '.olean.private', '.olean.server'];
     for (const suffix of ['.olean', '.olean.private', '.olean.server']) {
       allowed.add(`${base}${suffix}`);
       allowed.add(`${base}${suffix}.hash`);

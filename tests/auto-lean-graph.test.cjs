@@ -34,8 +34,9 @@ const temporaryDirectories = [];
 let buildLeanGraph;
 let readLog;
 let projectInputs;
+let moduleHeader;
 before(async () => {
-  ({ buildLeanGraph, readLog, projectInputs } = await import(pathToFileURL(SCRIPT).href));
+  ({ buildLeanGraph, readLog, projectInputs, moduleHeader } = await import(pathToFileURL(SCRIPT).href));
 });
 after(() => {
   for (const directory of temporaryDirectories) fs.rmSync(directory, { recursive: true, force: true });
@@ -939,6 +940,42 @@ describe('dependency fidelity against the Lean constants record', () => {
     const bad = JSON.parse(read(RUN, 'receipt.json'));
     bad.inputs.compiled = { x: 'not-a-digest' };
     assert.ok(codes(fidelityGraph(null, { receiptText: JSON.stringify(bad) })).includes('invalid-receipt'));
+  });
+
+  it('the module header is read as Lean 4.31 reads it, and an unclassifiable one fails closed', () => {
+    for (const [source, expected] of [
+      ['module\n', true], ['  module -- the header\n', true], ['\n\nmodule\n', true], ['-- note\nmodule\n', true],
+      ['/- a /- nested -/ comment -/ module\n', true], ['module--c\n', true],
+      ['/-- doc -/\nmodule\n', false], ['modules\n', false], ['/-\nmodule\n-/\ndef x := 1\n', false],
+      ['-- module\nimport Foo\n', false], ['import M1demo.M1demo\n', false],
+      ['\tmodule\n', null], ['/- unterminated', null],
+    ]) assert.equal(moduleHeader(source), expected, JSON.stringify(source));
+  });
+
+  it('a module header in any accepted form requires the companions, even when both maps agree', () => {
+    // Labelled source mutation of run A's Specs/Kinds.lean; both maps still list only its .olean.
+    const withHeader = (header) => {
+      const root = project();
+      const file = path.join(root, 'Specs', 'Kinds.lean');
+      fs.writeFileSync(file, header + fs.readFileSync(file, 'utf8'));
+      const receipt = JSON.parse(read(RUN, 'receipt.json'));
+      receipt.inputs.files = projectInputs(root);
+      const record = synthetic();
+      record.inputs.files = receipt.inputs.files;
+      return buildLeanGraph({
+        extractText: read(RUN, 'lean.json'), logText: read(RUN, 'probe.log'), receiptText: JSON.stringify(receipt),
+        libraries: ['M1demo', 'Specs'], projectRoot: root, manifestText: fs.readFileSync(ATTEMPT_MANIFEST, 'utf8'),
+        constantsText: JSON.stringify(record),
+      });
+    };
+    for (const header of ['  module -- leading space and a comment\n', '-- generated\nmodule\n', '/- a note -/ module\n']) {
+      const record = withHeader(header);
+      assert.deepEqual(codes(record), ['compiled-inventory-incomplete'], JSON.stringify(header));
+      assert.match(record.blockers[0].reason, /Specs\/Kinds\.olean\.private/);
+    }
+    // A commented-out module word is not a header: .olean alone is enough.
+    for (const header of ['-- module\n', '/-\nmodule\n-/\n']) assert.deepEqual(codes(withHeader(header)), [], JSON.stringify(header));
+    assert.match(withHeader('/- never closed\n').blockers[0].reason, /could not be classified/);
   });
 
   it('a missing, malformed, unbound or partial constants record establishes nothing', () => {
