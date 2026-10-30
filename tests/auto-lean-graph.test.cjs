@@ -833,11 +833,12 @@ describe('dependency fidelity against the Lean constants record', () => {
     const record = fidelityGraph('real');
     assert.equal(record.state, 'incomplete');
     assert.equal(record.fidelity.status, 'incomplete');
-    assert.deepEqual(blocked(record, 'dependency-not-reported'),
-      [id('m1demo.spec.double_spec'), id('m1demo.sum_to'), id('m1demo.sum_to_loop'), id('m1demo.sum_to_loop.body')]);
+    // Generated constructors (Prod.mk, and Shift.mk in both instances) are not folded.
+    assert.deepEqual(blocked(record, 'dependency-not-reported'), [id('m1demo.kinds.shiftNat'), id('m1demo.kinds.shiftPt'),
+      id('m1demo.spec.double_spec'), id('m1demo.sum_to'), id('m1demo.sum_to_loop'), id('m1demo.sum_to_loop.body')]);
     assert.deepEqual(blocked(record, 'proof-dependencies-unaudited'),
       [id('m1demo.spec.double_spec'), id('m1demo.sum_to'), id('m1demo.sum_to_loop.body')]);
-    assert.equal(record.blockers.length, 7);
+    assert.equal(record.blockers.length, 9);
     assert.ok(record.closures[id('m1demo.spec.double_spec')].blockers.some((item) => item.code === 'dependency-not-reported'));
   });
 
@@ -846,7 +847,7 @@ describe('dependency fidelity against the Lean constants record', () => {
     const loop = record.declarations[id('m1demo.sum_to_loop')];
     assert.ok(loop['term-dependencies-external'].includes('probe:Prod'));
     const reason = record.blockers.find((item) => item.declaration === id('m1demo.sum_to_loop')).reason;
-    assert.match(reason, /Prod\.mk \(value\)/);
+    assert.match(reason, /Prod\.mk \(value, ctor\)/);
     assert.ok(!record.fidelity.represented.some((item) => item.constant === 'Prod.mk'));
   });
 
@@ -867,7 +868,7 @@ describe('dependency fidelity against the Lean constants record', () => {
     entry(real, 'm1demo.spec.DoubleFits.eq_1').type.push('Nat.add');
     const statement = fidelityGraph(null, { constantsText: JSON.stringify(real) });
     assert.match(statement.blockers.find((item) => item.code === 'dependency-not-reported' &&
-      item.declaration === id('m1demo.spec.double_spec')).reason, /DoubleFits\.eq_1 \(value\)/);
+      item.declaration === id('m1demo.spec.double_spec')).reason, /DoubleFits\.eq_1 \(value, theorem\)/);
   });
 
   it('synthetic: a constants record that agrees with the reported lists is verified', () => {
@@ -885,7 +886,44 @@ describe('dependency fidelity against the Lean constants record', () => {
       assert.ok(record.closures[id('m1demo.kinds.wrap_x')].blockers.some((item) => item.code === 'dependency-not-reported'));
     }
     const termOnly = fidelityGraph((record2) => { entry(record2, 'm1demo.spec.double_spec').type.push('Aeneas.Std.U32.add_spec'); });
-    assert.match(termOnly.blockers[0].reason, /U32\.add_spec \(type\)/);
+    assert.match(termOnly.blockers[0].reason, /U32\.add_spec \(type, theorem\)/);
+  });
+
+  it('a generated axiom is a trust boundary and an unqualified kind is not folded', () => {
+    const generated = (kind) => fidelityGraph((record2) => {
+      record2.project.push({ name: 'm1demo.kinds.generated_1', module: 'Specs.Kinds', kind, owners: [], type: ['Nat'], value: [] });
+      entry(record2, 'm1demo.kinds.Pt.x').value.push('m1demo.kinds.generated_1');
+    });
+    const axiom = generated('axiom');
+    assert.deepEqual(codes(axiom), ['dependency-not-reported', 'axiom-boundary']);
+    assert.deepEqual(axiom.fidelity.obligations, [{ declaration: id('m1demo.kinds.Pt.x'), constant: 'm1demo.kinds.generated_1', obligation: 'axiom-boundary' }]);
+    assert.ok(!axiom.fidelity.represented.some((item) => item.constant === 'm1demo.kinds.generated_1'));
+    for (const kind of ['opaque', 'ctor', 'recursor', 'mystery']) {
+      const record = generated(kind);
+      assert.deepEqual(codes(record), ['dependency-not-reported'], kind);
+      assert.match(record.blockers[0].reason, new RegExp(`generated_1 \\(value, ${kind}\\)`));
+    }
+    // A generated definition of the same shape folds.
+    assert.deepEqual(codes(generated('def')), []);
+  });
+
+  it('the compiled inventory must cover every analysed module with its companions, and nothing else', () => {
+    const both = (edit) => {
+      const receipt = JSON.parse(read(RUN, 'receipt.json'));
+      edit(receipt.inputs.compiled);
+      return fidelityGraph((record2) => { record2.inputs.compiled = receipt.inputs.compiled; }, { receiptText: JSON.stringify(receipt) });
+    };
+    const kinds = '.lake/build/lib/lean/Specs/Kinds';
+    for (const [label, edit] of [
+      ['a module missing from both', (map) => { delete map[`${kinds}.olean`]; delete map[`${kinds}.olean.hash`]; }],
+      ['a module-system companion missing from both', (map) => { delete map['.lake/build/lib/lean/M1demo/M1demo.olean.private']; }],
+      ['only a sidecar hash', (map) => { for (const file of Object.keys(map)) if (file !== '.lake/build/lib/lean/M1demo.olean.hash') delete map[file]; }],
+      ['an unrelated module', (map) => { map['.lake/build/lib/lean/Other.olean'] = '0'.repeat(64); }],
+      ['an aliased path', (map) => { map['.lake/build/lib/lean/./Specs.olean'] = map['.lake/build/lib/lean/Specs.olean']; }],
+    ]) {
+      const record = both(edit);
+      assert.deepEqual(codes(record), ['compiled-inventory-incomplete'], label);
+    }
   });
 
   it('the compiled modules must be recorded by both and be the same', () => {

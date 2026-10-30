@@ -294,10 +294,11 @@ function closureOf(root, data, inScope, projectionsOf, unreported) {
 // A type constant must be reported in the type lists (a theorem's closure reads
 // only those); a value constant in any list. Constructors, recursors and other
 // generated eliminators must be reported themselves. A generated project
-// constant (no source definition) is folded into its user, as probe-lean folds
-// auxiliaries: a generated definition through its type and value, a generated
-// theorem through its statement only. That theorem's proof is not audited
-// here, so it stays an explicit obligation that blocks the record.
+// constant (no source definition) of a qualified kind is folded into its user,
+// as probe-lean folds auxiliaries: a definition through its type and value, a
+// theorem through its statement only. That theorem's proof is not audited here,
+// so it stays an explicit obligation that blocks the record. A generated axiom
+// is a trust boundary, never folded; any other kind is not covered.
 function checkFidelity({ constants, data, ids, defined, block }) {
   const info = new Map();
   const project = new Set();
@@ -329,6 +330,8 @@ function checkFidelity({ constants, data, ids, defined, block }) {
         const entry = info.get(constant);
         if (!entry) return false;
         if (!project.has(constant) || defined.has(constant) || atoms.has(constant) || stack.includes(constant)) return false;
+        if (entry.kind === 'axiom') obligations.push({ declaration: id, constant, obligation: 'axiom-boundary' });
+        if (!FOLDABLE_KINDS.includes(entry.kind)) return false;
         const theorem = entry.kind === 'theorem';
         if (theorem) obligations.push({ declaration: id, constant, obligation: 'proof-dependencies-unaudited' });
         // every, not some: each use is checked so all missing constants are reported.
@@ -337,7 +340,7 @@ function checkFidelity({ constants, data, ids, defined, block }) {
         represented.push({ declaration: id, list, constant, rule: theorem ? 'statement-fold' : 'auxiliary-fold' });
         return true;
       };
-      for (const constant of own[list]) if (!covers(constant, [])) missing.push(`${constant} (${list})`);
+      for (const constant of own[list]) if (!covers(constant, [])) missing.push(`${constant} (${list}, ${info.get(constant)?.kind ?? 'not in the record'})`);
     }
     if (missing.length > 0) {
       unreported.add(id);
@@ -352,12 +355,47 @@ function checkFidelity({ constants, data, ids, defined, block }) {
     });
   };
   const open = unique(obligations);
-  for (const id of sorted(open.map((item) => item.declaration))) {
-    unreported.add(id);
-    const constants = sorted(open.filter((item) => item.declaration === id).map((item) => item.constant));
-    block('proof-dependencies-unaudited', `${id} uses generated proofs ${constants.join(', ')} whose dependencies are not audited here`, { declaration: id });
+  for (const [obligation, code, what] of [['proof-dependencies-unaudited', 'proof-dependencies-unaudited', 'generated proofs'],
+    ['axiom-boundary', 'axiom-boundary', 'generated axioms']]) {
+    const of = open.filter((item) => item.obligation === obligation);
+    for (const id of sorted(of.map((item) => item.declaration))) {
+      unreported.add(id);
+      const constants = sorted(of.filter((item) => item.declaration === id).map((item) => item.constant));
+      block(code, `${id} uses ${what} ${constants.join(', ')}, which are not audited here`, { declaration: id });
+    }
   }
   return { represented: unique(represented), obligations: open, unreported };
+}
+
+// Kernel kinds a generated constant may be folded through (see checkFidelity).
+const FOLDABLE_KINDS = ['def', 'theorem'];
+
+// The compiled inventory must hold each analysed module's compiled body and
+// its companions, and nothing else but their .hash sidecars: a module declared
+// with `module` compiles to .olean, .olean.private and .olean.server, any
+// other module to .olean. Returns the problems found.
+function compiledProblems(compiled, modules, projectRoot) {
+  const problems = [];
+  const allowed = new Set();
+  for (const name of modules) {
+    const base = `${ILEAN_DIR}/${name.replaceAll('.', '/')}`;
+    let source = '';
+    try {
+      source = fs.readFileSync(path.join(projectRoot, `${name.replaceAll('.', '/')}.lean`), 'utf8');
+    } catch {
+      problems.push(`no source for module ${name}`);
+    }
+    const required = /^module\s*$/m.test(source) ? ['.olean', '.olean.private', '.olean.server'] : ['.olean'];
+    for (const suffix of ['.olean', '.olean.private', '.olean.server']) {
+      allowed.add(`${base}${suffix}`);
+      allowed.add(`${base}${suffix}.hash`);
+    }
+    for (const suffix of required) if (!has(compiled, `${base}${suffix}`)) problems.push(`missing ${base}${suffix}`);
+  }
+  for (const file of Object.keys(compiled)) {
+    if (path.posix.normalize(file) !== file || !allowed.has(file)) problems.push(`unexpected ${file}`);
+  }
+  return problems;
 }
 
 const hashMap = (value) => plainObject(value) && Object.values(value).every((hash) => /^[0-9a-f]{64}$/.test(hash));
@@ -674,6 +712,8 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
     } else if (Object.keys(receiptCompiled).length === 0 || !sameSet(Object.entries(constants.inputs.compiled).map(([file, hash]) => `${file} ${hash}`),
       Object.entries(receiptCompiled).map(([file, hash]) => `${file} ${hash}`))) {
       block('fidelity-unbound', 'the constants record was not taken from the compiled modules this run recorded');
+    } else if (compiledProblems(receiptCompiled, Object.keys(record.completeness.modules ?? {}), projectRoot).length > 0) {
+      block('compiled-inventory-incomplete', `the recorded compiled modules do not cover the analysed modules: ${compiledProblems(receiptCompiled, Object.keys(record.completeness.modules ?? {}), projectRoot).join(', ')}`);
     } else {
       const defined = new Set([...expected].map((id) => id.slice('probe:'.length)));
       const fidelity = checkFidelity({ constants, data, ids, defined, block });

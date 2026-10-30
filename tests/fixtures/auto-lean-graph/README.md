@@ -87,8 +87,10 @@ observations.
 `recorded/compiled-run/` is the one fidelity-bound run: probe-lean on `kinds-project` (run A's state) whose
 receipt also records `inputs.compiled`, the sha256 of every compiled module file in the project's own
 `.lake/build/lib/lean`, and `constants.json`, the oracle on the same project, which hashed those files before and
-after its `lake env lean` run and records the same map. Its honest result is incomplete: probe-lean does not
-report constructors, generated matchers or the constants of generated proofs in four declarations' values.
+after its `lake env lean` run and records the same map. That map holds every analysed module's compiled body
+(`.olean`, plus `.olean.private` and `.olean.server` for a module declared with `module`) and their `.hash`
+sidecars. Its honest result is incomplete: probe-lean does not report constructors (`Prod.mk`, `Shift.mk`),
+generated matchers or generated proofs in six declarations' values.
 The tests' "synthetic" constants record (built in the test file from the reported lists) exists only to
 exercise the verified path; it is not evidence.
 
