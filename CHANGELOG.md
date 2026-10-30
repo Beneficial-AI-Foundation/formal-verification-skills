@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.3.10] - 2026-10-30
+
+### Fixed
+
+- Codex: crypto and other FVS commands now dispatch their sub-agents without a manual request. Codex
+  only spawns sub-agents when the user or a skill explicitly asks; the Codex skill adapter now states
+  that invoking an FVS skill is that request, discovers a deferred `spawn_agent` tool first, and stops
+  with an explanation instead of silently doing a delegated role inline when sub-agents are
+  unavailable (#114).
+- Codex: FVS sub-agents start with fresh context on both spawn schemas. The adapter passes
+  `fork_turns: "none"` (MultiAgentV2, used by most current models) or `fork_context: false` (V1)
+  instead of an unconditional `fork_context: false` that V2 rejects or treats as a full-history fork,
+  which also refused the confirmed model and effort (#114).
+- Codex: the adapter no longer implies that a role's `sandbox_mode` is enforced. Codex children run
+  in the parent session's sandbox; the effective sandbox is reported as the parent's, and a child is
+  never called read-only when the parent can write.
+
+### Added
+
+- `/fvs:crypto-eval` records a measured `Thinker wall time` in each eval: the `--codex` helper's
+  measured process time, or the parent's clock from launch to the thinker's terminal response, or
+  `not measured (<reason>)`. Failed or timed-out runs still persist no eval. This is timing
+  instrumentation only, with no change to decisions or reviewer policy (#115).
+
 ## [2.3.9] - 2026-10-27
 
 ### Added
