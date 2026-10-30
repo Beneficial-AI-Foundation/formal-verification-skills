@@ -37,6 +37,18 @@ const NODE_KINDS = ['def', 'theorem', 'inductive', 'ctor', 'recursor'];
 const THEOREM_KINDS = ['theorem'];
 const DEFINITION_CLOSURE_RULE = 'from the root item\'s generated family over the nodes lanes: a theorem node follows its type lane only; any other node follows its type and value lanes; a structure adds its fields\' projections and its constructors';
 const leanId = (name) => `probe:${name}`;
+// Axiom evidence: the producer records the axiom set of every definition and
+// theorem node (and trust repeats it); any axiom outside this policy is an obligation.
+const AXIOM_KINDS = ['def', 'theorem'];
+const AXIOM_POLICY = ['propext', 'Classical.choice', 'Quot.sound'];
+// How each probe declaration label must look as a node (the producer's rule).
+const PROBE_LABELS = {
+  def: (node) => node.kind === 'def' && node.projection !== true,
+  projection: (node) => node.kind === 'def' && node.projection === true,
+  theorem: (node) => node.kind === 'theorem',
+  structure: (node) => node.kind === 'inductive',
+};
+const textList = (value) => Array.isArray(value) && value.every(isText) && new Set(value).size === value.length;
 // Kernel type-level constants: a structure, its projections, constructors and recursors.
 const typeLevel = (node) => ['inductive', 'ctor', 'recursor'].includes(node.kind) || node.projection === true;
 const OWNERSHIP_RULE = 'each node is scheduled once; a node in several requested closures is owned by the lowest-numbered requested root (by def_id) that reaches it; ownership is bookkeeping, not readiness';
@@ -121,12 +133,16 @@ function validate({ identity, graph, roots, failed, llbc }) {
         || ['type', 'value'].some((lane) => !Array.isArray(node[lane]) || node[lane].some((to) => !isText(to)) || new Set(node[lane]).size !== node[lane].length)
         || ![undefined, true].includes(node.structure) || ![undefined, true].includes(node.projection) || (node.kind === 'inductive') !== (node.structure === true)
         || (node.projection === true && node.kind !== 'def')
-        || (node.family !== undefined && !isObject(node.family))
-        || (node.fields !== undefined && !(Array.isArray(node.fields) && node.fields.every((f) => isObject(f) && isText(f.field) && (f.projection === null || isText(f.projection)))))) {
-        bad('graph', `node ${JSON.stringify(id)} is malformed (kind, source, probeAtom, structure, projection, family, fields, or a type or value lane)`);
+        || (node.kind === 'inductive' && !(isObject(node.family) && textList(node.family.ctors) && textList(node.family.recursors)
+          && Array.isArray(node.fields) && node.fields.every((f) => isObject(f) && isText(f.field) && (f.projection === null || isText(f.projection)))))
+        || (node.kind === 'ctor' && !(isObject(node.family) && isText(node.family.inductive)))
+        || (node.kind === 'recursor' && !(isObject(node.family) && textList(node.family.inductives)))
+        || (!['inductive', 'ctor', 'recursor'].includes(node.kind) && (node.family !== undefined || node.fields !== undefined))
+        || (node.axioms !== undefined && !textList(node.axioms))) {
+        bad('graph', `node ${JSON.stringify(id)} is malformed (kind, source, probeAtom, structure, projection, family, fields, axioms, or a type or value lane)`);
       }
     }
-    if (g.trust !== undefined && !isObject(g.trust)) bad('graph', 'trust is malformed');
+    if (!isObject(g.trust) || Object.values(g.trust).some((axioms) => !textList(axioms))) bad('graph', 'a schemaVersion 2 record needs trust: per-node axiom lists');
   }
   const resolutions = oracle ? ['local', 'generated', 'external'] : ['local', 'external', 'unresolved'];
   for (const edge of g.edges) {
@@ -229,11 +245,24 @@ function admissibility(i, g, llbc) {
         const { ctors, recursors } = n.family ?? {};
         if (!Array.isArray(ctors) || ctors.length === 0 || ctors.some((c) => node(c)?.kind !== 'ctor' || node(c).family?.inductive !== name)
           || !Array.isArray(recursors) || recursors.some((r) => node(r)?.kind !== 'recursor' || !(node(r).family?.inductives ?? []).includes(name))
-          || (n.fields ?? []).some((f) => node(f.projection)?.projection !== true)) malformed.push(id);
+          || n.fields.some((f) => node(f.projection)?.projection !== true)) malformed.push(id);
       } else if (n.kind === 'ctor' && node(n.family?.inductive)?.kind !== 'inductive') malformed.push(id);
       else if (n.kind === 'recursor' && !(Array.isArray(n.family?.inductives) && n.family.inductives.length > 0 && n.family.inductives.every((s) => node(s)?.kind === 'inductive'))) malformed.push(id);
     }
     if (malformed.length > 0) block('graph-contradiction', `structure family or fields do not resolve for ${malformed.join(', ')}`);
+    // Each probe atom's label agrees with its node, and a projection is a field of a structure.
+    const mislabelled = Object.keys(g.declarations).filter((id) => Object.hasOwn(g.nodes, id) && !PROBE_LABELS[g.declarations[id]?.kind]?.(g.nodes[id])).sort();
+    if (mislabelled.length > 0) block('graph-contradiction', `probe declaration labels disagree with their nodes for ${mislabelled.join(', ')}`);
+    const fieldOf = new Set(Object.values(g.nodes).filter((n) => n.kind === 'inductive').flatMap((n) => n.fields.map((f) => f.projection)).filter(isText).map(leanId));
+    const orphans = Object.keys(g.nodes).filter((id) => g.nodes[id].projection === true && !fieldOf.has(id)).sort();
+    if (orphans.length > 0) block('graph-contradiction', `projections that are no structure's field: ${orphans.join(', ')}`);
+    // Axiom evidence: present exactly on definitions and theorems, repeated in trust.
+    const evidence = Object.keys(g.nodes).filter((id) => (g.nodes[id].axioms !== undefined) !== AXIOM_KINDS.includes(g.nodes[id].kind)
+      || JSON.stringify(g.trust[id]) !== JSON.stringify(g.nodes[id].axioms));
+    const strayTrust = Object.keys(g.trust).filter((id) => !Object.hasOwn(g.nodes, id));
+    if (evidence.length + strayTrust.length > 0) block('graph-trust-contradiction', `axiom evidence is missing, misplaced or disagrees with trust for ${[...evidence, ...strayTrust].sort().join(', ')}`);
+    const outside = Object.keys(g.nodes).filter((id) => (g.nodes[id].axioms ?? []).some((axiom) => !AXIOM_POLICY.includes(axiom))).sort();
+    if (outside.length > 0 && g.fidelity?.status === 'verified') block('graph-fidelity-contradiction', `verified fidelity with axioms outside ${AXIOM_POLICY.join(', ')} in ${outside.join(', ')}`);
   }
   // Across the records: a ticket 10 generated family member is a source
   // definition of this extraction, so the graph may not hold it as a generated,
@@ -337,7 +366,7 @@ function definitionClosure(g, starts) {
     const node = g.nodes[id];
     const lanes = THEOREM_KINDS.includes(node.kind) ? node.type : [...node.type, ...node.value];
     // A structure's lanes record only its type; its fields and constructors carry its meaning.
-    const members = node.kind === 'inductive' ? [...(node.fields ?? []).map((f) => f.projection), ...(node.family?.ctors ?? [])].filter(isText).map(leanId) : [];
+    const members = node.kind === 'inductive' ? [...node.fields.map((f) => f.projection), ...node.family.ctors].filter(isText).map(leanId) : [];
     queue.push(...[...lanes, ...members].filter((to) => Object.hasOwn(g.nodes, to)));
   }
   return [...seen].sort();
@@ -452,7 +481,11 @@ export function buildPlan({ identity, graph, roots, failed = [], llbc = null }) 
       const queue = [start];
       while (queue.length > 0) {
         const id = queue.shift();
-        for (const to of adjacency.get(id) ?? []) {
+        // A structure's fields and constructors carry its meaning, so they are
+        // requirements of whoever reaches it (not lane edges: no cycle analysis).
+        const members = oracle && g.nodes[id]?.kind === 'inductive'
+          ? [...g.nodes[id].fields.map((f) => f.projection), ...g.nodes[id].family.ctors].filter(isText).map(leanId).filter((m) => Object.hasOwn(g.nodes, m)) : [];
+        for (const to of [...(adjacency.get(id) ?? []), ...members]) {
           if (previous.has(to)) continue;
           previous.set(to, id);
           if (passThrough(to)) {

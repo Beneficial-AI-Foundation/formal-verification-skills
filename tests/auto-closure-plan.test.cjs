@@ -394,9 +394,11 @@ describe('closure plan: identity gaps stay visible (labelled mutations)', () => 
 });
 
 // SYNTHETIC schema 2 (capability oracle-lanes) records, converted from the recorded
-// positive: no real schema 2 record exists yet. Each probe atom becomes a probe-atom
-// node whose lanes are its probe lists; edges are re-derived from the lanes.
+// positive: no reviewed real schema 2 record exists yet. Each probe atom becomes a
+// probe-atom node whose lanes are its probe lists; edges and trust (the per-node axiom
+// evidence) are re-derived from the nodes, as the producer emits them.
 const relane = (g) => {
+  g.trust = Object.fromEntries(Object.entries(g.nodes).filter(([, node]) => node.axioms !== undefined).map(([id, node]) => [id, node.axioms]));
   g.edges = [];
   for (const [from, node] of Object.entries(g.nodes)) {
     for (const [lane, kind] of [['type', 'type'], ['value', 'term']]) {
@@ -416,14 +418,15 @@ const oracle = (edit = (g) => g) => (g) => {
       probeAtom: true,
       type: [...new Set([...d['type-dependencies'], ...(d['type-dependencies-external'] ?? [])])],
       value: [...new Set([...d['term-dependencies'], ...(d['term-dependencies-external'] ?? [])])],
+      axioms: ['propext', 'Quot.sound'],
     };
   }
   return relane(edit({ ...verified(g), schemaVersion: 2, capability: 'oracle-lanes', nodes, trust: {} }));
 };
-const generatedNode = (kind, type, value) => ({ kind, source: false, probeAtom: false, type, value });
-const probeAtom = (g, id) => {
-  g.declarations[id] = { ...g.declarations['probe:m1demo.independent'], 'type-dependencies': [], 'term-dependencies': [] };
-  g.nodes[id] = { kind: 'def', source: true, probeAtom: true, type: [], value: [] };
+const generatedNode = (kind, type, value) => ({ kind, source: false, probeAtom: false, type, value, ...(['def', 'theorem'].includes(kind) ? { axioms: [] } : {}) });
+const probeAtom = (g, id, label = 'def') => {
+  g.declarations[id] = { ...g.declarations['probe:m1demo.independent'], kind: label, 'type-dependencies': [], 'term-dependencies': [] };
+  g.nodes[id] = { kind: 'def', source: true, probeAtom: true, type: [], value: [], axioms: [] };
 };
 // root_a reaches helper only through a generated matcher.
 const viaMatcher = (g) => {
@@ -555,11 +558,12 @@ describe('closure plan: schema 2 oracle lanes (SYNTHETIC records)', () => {
 
   it('passes through an unowned structure and its projection, and closes a structure over its fields and constructors', () => {
     const withPair = (g) => {
-      probeAtom(g, 'probe:m1demo.Pair');
-      probeAtom(g, 'probe:m1demo.Pair.a');
+      probeAtom(g, 'probe:m1demo.Pair', 'structure');
+      probeAtom(g, 'probe:m1demo.Pair.a', 'projection');
       Object.assign(g.nodes['probe:m1demo.Pair'], {
         kind: 'inductive', structure: true, family: { ctors: ['m1demo.Pair.mk'], recursors: ['m1demo.Pair.rec'] }, fields: [{ field: 'a', projection: 'm1demo.Pair.a' }],
       });
+      delete g.nodes['probe:m1demo.Pair'].axioms;
       Object.assign(g.nodes['probe:m1demo.Pair.a'], { projection: true, type: ['probe:m1demo.Pair'], value: ['probe:m1demo.Pair'] });
       g.nodes['probe:m1demo.Pair.mk'] = { ...generatedNode('ctor', ['probe:m1demo.Pair'], []), family: { inductive: 'm1demo.Pair' } };
       g.nodes['probe:m1demo.Pair.rec'] = { ...generatedNode('recursor', ['probe:m1demo.Pair', 'probe:m1demo.Pair.mk'], []), family: { inductives: ['m1demo.Pair'] } };
@@ -570,7 +574,8 @@ describe('closure plan: schema 2 oracle lanes (SYNTHETIC records)', () => {
     const { status, result } = plan('positive', { graph: oracle(withPair) });
     assert.equal(status, 0, JSON.stringify(result.record?.admissibility));
     assert.deepEqual(result.record.nodes[21].typeDependencies, ['probe:m1demo.Pair', 'probe:m1demo.Pair.a']);
-    assert.deepEqual(result.record.nodes[22].typeDependencies, ['probe:m1demo.Pair']);
+    assert.deepEqual(result.record.nodes[22].typeDependencies, ['probe:m1demo.Pair', 'probe:m1demo.Pair.a'], 'reaching a structure reaches its fields');
+    assert.ok(result.record.nodes[22].generatedDependencies.includes('probe:m1demo.Pair.mk'), 'and its constructors');
     const definitions = root(result, 22).definitionClosure;
     for (const member of ['probe:m1demo.Pair', 'probe:m1demo.Pair.a', 'probe:m1demo.Pair.mk']) assert.ok(definitions.includes(member), member);
     assert.ok(!definitions.includes('probe:m1demo.Pair.rec'), 'recursors are not structure members');
@@ -579,6 +584,78 @@ describe('closure plan: schema 2 oracle lanes (SYNTHETIC records)', () => {
     const claimProjection = (i) => { i.items.find((x) => x.defId === 23).generated.push({ leanName: 'm1demo.Pair.a' }); return i; };
     const claimed = plan('positive', { graph: oracle(withPair), identity: claimProjection });
     assert.deepEqual(claimed.result.record.admissibility.blockers.map((b) => b.code), ['identity-graph-contradiction']);
+  });
+
+  // A second structure, named only by the independent root (23) in its type lane.
+  const withBox = (memberType = []) => (g) => {
+    probeAtom(g, 'probe:m1demo.Box', 'structure');
+    probeAtom(g, 'probe:m1demo.Box.v', 'projection');
+    Object.assign(g.nodes['probe:m1demo.Box'], { kind: 'inductive', structure: true, family: { ctors: ['m1demo.Box.mk'], recursors: ['m1demo.Box.rec'] }, fields: [{ field: 'v', projection: 'm1demo.Box.v' }] });
+    delete g.nodes['probe:m1demo.Box'].axioms;
+    Object.assign(g.nodes['probe:m1demo.Box.v'], { projection: true, type: ['probe:m1demo.Box'], value: ['probe:m1demo.Box'] });
+    g.nodes['probe:m1demo.Box.mk'] = { ...generatedNode('ctor', ['probe:m1demo.Box', ...memberType], []), family: { inductive: 'm1demo.Box' } };
+    g.nodes['probe:m1demo.Box.rec'] = { ...generatedNode('recursor', ['probe:m1demo.Box', 'probe:m1demo.Box.mk'], []), family: { inductives: ['m1demo.Box'] } };
+    g.nodes['probe:m1demo.independent'].type.push('probe:m1demo.Box');
+    return g;
+  };
+
+  it('schedules what a structure\'s members require for a root that only names the structure', () => {
+    const viaMember = oracle(withBox(['probe:m1demo.helper']));
+    const { status, result } = plan('positive', { graph: viaMember });
+    assert.equal(status, 0);
+    assert.deepEqual(root(result, 23).closure, [19, 23], 'Box has empty lanes; its constructor needs helper');
+    const failed = plan('positive', { graph: viaMember, failed: [19] });
+    assert.equal(root(failed.result, 23).status, 'blocked', 'the helper\'s failure reaches the root through the member');
+    const unmapped = plan('positive', { graph: oracle((g) => { probeAtom(g, 'probe:m1demo.extra'); return withBox(['probe:m1demo.extra'])(g); }) });
+    assert.equal(unmapped.status, 6);
+    assert.equal(unmapped.result.record.nodes[23].eligibility, 'blocked-unmapped-dependency');
+    assert.deepEqual([21, 22].map((id) => root(unmapped.result, id).status), ['ready', 'ready'], 'roots that do not reach Box stay ready');
+    assert.deepEqual(unmapped.result.record.observedCycles, [], 'structure membership adds no cycle');
+  });
+
+  it('does not let a projection flag alone make an unowned function pass through, and requires typed structure metadata', () => {
+    const toExtra = (g) => { probeAtom(g, 'probe:m1demo.extra'); g.nodes['probe:m1demo.root_a'].value.push('probe:m1demo.extra'); return g; };
+    assert.equal(plan('positive', { graph: oracle(toExtra) }).result.record.nodes[21].eligibility, 'blocked-unmapped-dependency');
+    const flagged = plan('positive', { graph: oracle((g) => { toExtra(g); g.nodes['probe:m1demo.extra'].projection = true; return g; }) });
+    assert.equal(flagged.status, 7);
+    assert.deepEqual([...new Set(flagged.result.record.admissibility.blockers.map((b) => b.code))], ['graph-contradiction']);
+    assert.match(JSON.stringify(flagged.result.record.admissibility.blockers), /labels disagree.*probe:m1demo\.extra/);
+    assert.match(JSON.stringify(flagged.result.record.admissibility.blockers), /no structure's field: probe:m1demo\.extra/);
+    const orphan = plan('positive', { graph: oracle((g) => { withBox()(g); g.nodes['probe:m1demo.Box'].fields = []; return g; }) });
+    assert.deepEqual(orphan.result.record.admissibility.blockers.map((b) => b.code), ['graph-contradiction']);
+    assert.match(orphan.result.record.admissibility.blockers[0].message, /no structure's field: probe:m1demo\.Box\.v/);
+    for (const [label, edit] of [
+      ['missing fields', (g) => { delete g.nodes['probe:m1demo.Box'].fields; }],
+      ['constructors not a list', (g) => { g.nodes['probe:m1demo.Box'].family.ctors = 'm1demo.Box.mk'; }],
+      ['malformed field entry', (g) => { g.nodes['probe:m1demo.Box'].fields = [{ field: 3, projection: 'm1demo.Box.v' }]; }],
+      ['constructor without family', (g) => { delete g.nodes['probe:m1demo.Box.mk'].family; }],
+      ['family on a definition', (g) => { g.nodes['probe:m1demo.helper'].family = {}; }],
+      ['an inductive without the structure flag', (g) => { delete g.nodes['probe:m1demo.Box'].structure; }],
+    ]) {
+      assert.equal(plan('positive', { graph: oracle((g) => { withBox()(g); edit(g); return g; }) }).result.code, 'invalid-input', label);
+    }
+  });
+
+  it('requires coherent axiom evidence and refuses verified fidelity over a non-policy axiom', () => {
+    const sole = (graph, code, label) => {
+      const { status, result } = plan('positive', { graph });
+      assert.equal(status, 7, label);
+      assert.deepEqual(result.record.admissibility.blockers.map((b) => b.code), [code], label);
+    };
+    sole(oracle((g) => { delete g.nodes['probe:m1demo.helper'].axioms; return g; }), 'graph-trust-contradiction', 'missing axioms on a definition');
+    sole((g) => { const r = oracle()(g); r.trust['probe:m1demo.helper'] = ['propext']; return r; }, 'graph-trust-contradiction', 'trust disagrees with the node');
+    sole((g) => { const r = oracle()(g); delete r.trust['probe:m1demo.helper']; return r; }, 'graph-trust-contradiction', 'trust entry missing');
+    sole((g) => { const r = oracle()(g); r.trust['probe:m1demo.ghost'] = []; return r; }, 'graph-trust-contradiction', 'trust for no node');
+    sole(oracle((g) => { withBox()(g); g.nodes['probe:m1demo.Box'].axioms = []; return g; }), 'graph-trust-contradiction', 'axioms on a structure');
+    sole(oracle((g) => { g.nodes['probe:m1demo.helper'].axioms = ['propext', 'sorryAx']; return g; }), 'graph-fidelity-contradiction', 'sorryAx under verified fidelity');
+    assert.equal(plan('positive', { graph: oracle((g) => { g.nodes['probe:m1demo.helper'].axioms = ['propext', 'Classical.choice', 'Quot.sound']; return g; }) }).status, 0, 'policy axioms only');
+    for (const [label, edit] of [
+      ['no trust', (r) => { delete r.trust; }],
+      ['malformed axioms', (r) => { r.nodes['probe:m1demo.helper'].axioms = 'propext'; }],
+      ['repeated axiom', (r) => { r.nodes['probe:m1demo.helper'].axioms = ['propext', 'propext']; }],
+    ]) {
+      assert.equal(plan('positive', { graph: (g) => { const r = oracle()(g); edit(r); return r; } }).result.code, 'invalid-input', label);
+    }
   });
 
   it('refuses unknown versions, capabilities, resolutions and malformed nodes as invalid input', () => {
