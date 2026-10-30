@@ -97,10 +97,12 @@ describe('recorded positive: a bound run of a proved theorem over an extracted d
       charonVersion: '0.1.274',
       aeneasVersion: 'nightly-2026.09.30-0855ce1',
       manifestSha256: '02b41307fa63ec30eecd79a9bb6fad390416aa170993b5d13a1dd0648978ad89',
+      llbcSha256: null,
+      configSha256: null,
     });
     assert.deepEqual(record.binding, {
       status: 'unbound',
-      reasons: ['translation-not-bound-to-manifest', 'lean-project-commit-differs-from-source-commit'],
+      reasons: ['no-state'],
     });
     assert.deepEqual(Object.keys(record.completeness.modules), ['M1demo', 'M1demo.M1demo', 'M1demo.Spec']);
     assert.equal(record.completeness.expectedDeclarations, 9);
@@ -148,7 +150,7 @@ describe('recorded positive: a bound run of a proved theorem over an extracted d
     assert.equal(record.state, 'complete');
     assert.equal(record.provenance.sourceCommit, null);
     assert.equal(record.provenance.manifestSha256, null);
-    assert.deepEqual(record.binding.reasons, ['translation-not-bound-to-manifest', 'no-manifest']);
+    assert.deepEqual(record.binding.reasons, ['no-state', 'no-manifest']);
   });
 });
 
@@ -412,5 +414,160 @@ describe('derived: other edits of the bound positive', () => {
     const result = cli([recorded(BOUND, 'lean.json')]);
     assert.equal(result.status, 2);
     assert.match(result.stderr, /--library is required/);
+  });
+});
+
+describe('binding to the recorded extraction attempt', () => {
+  const PUBLISHED = path.join(FIXTURES, 'bound-project');
+  const ATTEMPT_MANIFEST = path.join(FIXTURES, 'extraction', 'attempt-manifest.json');
+  const STATE = '.formalising/auto-fv/state.json';
+  const LIBS = ['M1demo', 'Specs'];
+
+  // The bound project as the run saw it: the fixture files plus the recorded
+  // state, which lives beside the run because .formalising/ paths are kept out
+  // of the repository.
+  function boundProject() {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-lean-binding-'));
+    temporaryDirectories.push(root);
+    fs.cpSync(PUBLISHED, root, { recursive: true });
+    fs.mkdirSync(path.join(root, path.dirname(STATE)), { recursive: true });
+    fs.copyFileSync(recorded('bound-positive', 'state.json'), path.join(root, STATE));
+    return root;
+  }
+
+  function boundGraph(run = 'bound-positive', overrides = {}) {
+    return buildLeanGraph({
+      extractText: read(run, 'lean.json'),
+      logText: read(run, 'probe.log'),
+      receiptText: read(run, 'receipt.json'),
+      libraries: LIBS,
+      projectRoot: overrides.projectRoot ?? boundProject(),
+      manifestText: fs.readFileSync(ATTEMPT_MANIFEST, 'utf8'),
+      ...overrides,
+    });
+  }
+
+  // A copy of the bound project with its state or files edited, and the
+  // receipt re-signed over the edited inputs (or left stale when asked).
+  function edited({ state = null, project = () => {}, resign = true, extract = null, ...overrides } = {}) {
+    const root = boundProject();
+    if (state) {
+      const file = path.join(root, STATE);
+      const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+      state(parsed, parsed.extraction.run);
+      fs.writeFileSync(file, `${JSON.stringify(parsed, null, 2)}\n`);
+    }
+    project(root);
+    const receipt = JSON.parse(read('bound-positive', 'receipt.json'));
+    let extractText = read('bound-positive', 'lean.json');
+    if (extract) {
+      const envelope = JSON.parse(extractText);
+      extract(envelope.data);
+      extractText = JSON.stringify(envelope);
+      receipt.outputs.extractSha256 = sha256(extractText);
+    }
+    if (resign) receipt.inputs.files = projectInputs(root);
+    return boundGraph('bound-positive', { projectRoot: root, extractText, receiptText: JSON.stringify(receipt), ...overrides });
+  }
+  const binding = (record) => [record.binding.status, ...record.binding.reasons];
+
+  it('recorded positive: the analysed generated Lean is the published output, so the record is bound', () => {
+    const root = boundProject();
+    assert.deepEqual(projectInputs(root), JSON.parse(read('bound-positive', 'receipt.json')).inputs.files);
+    const result = cli([recorded('bound-positive', 'lean.json'), '--library', LIBS.join(','),
+      '--log', recorded('bound-positive', 'probe.log'), '--receipt', recorded('bound-positive', 'receipt.json'),
+      '--project-root', root, '--manifest', ATTEMPT_MANIFEST]);
+    assert.equal(result.status, 0, result.stderr);
+    const record = JSON.parse(result.stdout);
+    assert.equal(record.state, 'complete');
+    const run = JSON.parse(read('bound-positive', 'state.json')).extraction.run;
+    assert.equal(record.binding.status, 'bound');
+    assert.equal(record.binding.trust, 'local-host-and-reviewed-scripts');
+    assert.equal(record.binding.configSha256, run.configSha256);
+    assert.deepEqual(record.binding.generatedLean, run.publication.map(({ projectPath, sha256: hash }) => ({ projectPath, sha256: hash })));
+    assert.equal(record.provenance.llbcSha256, run.llbc.sha256);
+    assert.equal(record.provenance.configSha256, run.configSha256);
+    assert.equal(record.provenance.translationSha256, run.translation.sha256);
+    assert.equal(record.provenance.sourceCommit, record.provenance.leanProjectCommit);
+    assert.deepEqual(Object.keys(record.completeness.modules), ['M1demo', 'M1demo.M1demo', 'Specs', 'Specs.Double']);
+    assert.deepEqual(record.closures[THEOREM].declarations, ['probe:m1demo.double', FITS, 'probe:m1demo.spec.doubleNat']);
+  });
+
+  it('recorded negative: a hand-edited published body (tools exit 0) blocks', () => {
+    const root = boundProject();
+    fs.copyFileSync(recorded('bound-mutated-body', 'M1demo.lean'), path.join(root, 'M1demo', 'M1demo.lean'));
+    const record = boundGraph('bound-mutated-body', { projectRoot: root });
+    assert.deepEqual(codes(record), ['generated-lean-differs-from-attempt']);
+    assert.deepEqual(binding(record), ['unbound', 'inputs-disagree-with-attempt']);
+    assert.equal(record.provenance.llbcSha256, null);
+  });
+
+  it('seeded mutation: another configuration\'s Lean body under this attempt\'s state blocks', () => {
+    // The published M1demo.lean of a recorded --features alt attempt (same translation.json as its
+    // positive, different Lean bytes), placed over this project's published file.
+    const record = edited({ project: (root) => fs.copyFileSync(path.join(FIXTURES, 'seeded', 'feature-alt-M1demo.lean'),
+      path.join(root, 'M1demo', 'M1demo.lean')) });
+    assert.deepEqual(codes(record), ['generated-lean-differs-from-attempt']);
+    assert.deepEqual(binding(record), ['unbound', 'inputs-disagree-with-attempt']);
+  });
+
+  it('a copy reached through a symbolic link still binds by content', () => {
+    const link = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-lean-alias-')), 'project');
+    temporaryDirectories.push(path.dirname(link));
+    fs.symlinkSync(boundProject(), link);
+    assert.deepEqual(binding(boundGraph('bound-positive', { projectRoot: link })), ['bound']);
+  });
+
+  it('absent or unsupported evidence leaves the complete graph unbound', () => {
+    const cases = [
+      [{ project: (root) => fs.rmSync(path.join(root, STATE)) }, ['unbound', 'no-state']],
+      [{ state: (s) => { delete s.extraction.run; } }, ['unbound', 'no-extraction-attempt']],
+      [{ state: (s, run) => { run.supported = false; } }, ['unbound', 'unsupported-configuration']],
+      [{ state: (s) => { s.extraction.status = 'failed'; s.extraction.reasons = ['the build failed']; } }, ['unbound', 'extraction-not-succeeded']],
+      [{ state: (s, run) => { run.residuals = ['.cargo/config.toml']; } }, ['unbound', 'unsupported-configuration']],
+      [{ manifestText: null }, ['unbound', 'no-manifest']],
+    ];
+    for (const [edit, expected] of cases) {
+      const record = edited(edit);
+      assert.equal(record.state, 'complete', JSON.stringify(expected));
+      assert.deepEqual(binding(record), expected);
+      assert.equal(record.provenance.llbcSha256, null);
+    }
+    assert.deepEqual(binding(boundGraph('bound-positive', { receiptText: null })), ['unbound', 'run-not-bound']);
+  });
+
+  it('evidence that disagrees with the attempt blocks', () => {
+    const cases = [
+      [{ manifestText: fs.readFileSync(MANIFEST, 'utf8') }, ['attempt-manifest-mismatch']],
+      [{ state: (s, run) => { run.config.extra = true; } }, ['attempt-config-mismatch']],
+      [{ state: (s, run) => { run.publication = run.publication.filter((entry) => entry.projectPath === run.translation.projectPath); } },
+        ['attempt-publication-mismatch', 'generated-declaration-outside-publication']],
+      [{ state: (s, run) => { run.publication.push({ ...run.publication[0], attemptPath: '/x/Extra.lean', projectPath: path.posix.join(path.posix.dirname(run.translation.projectPath), 'Extra.lean') }); } },
+        ['generated-lean-differs-from-attempt', 'attempt-publication-mismatch']],
+      [{ state: (s, run) => { for (const entry of [run.translation, ...run.publication]) if (entry.projectPath.endsWith('translation.json')) entry.sha256 = '0'.repeat(64); } },
+        ['attempt-translation-mismatch', 'generated-lean-differs-from-attempt']],
+      [{ state: (s) => { s.extraction.inputs.crateRoot = '/elsewhere'; } },
+        ['attempt-translation-mismatch', 'generated-lean-differs-from-attempt', 'attempt-publication-mismatch', 'generated-declaration-outside-publication']],
+      [{ extract: (data) => { data['probe:m1demo.clamp']['code-path'] = 'Specs/Double.lean'; } }, ['generated-declaration-outside-publication']],
+    ];
+    for (const [edit, expected] of cases) {
+      const record = edited(edit);
+      assert.deepEqual(codes(record), expected);
+      assert.deepEqual(binding(record), ['unbound', 'inputs-disagree-with-attempt']);
+    }
+  });
+
+  it('a malformed or empty recorded publication is refused by the state validator', () => {
+    for (const state of [(s, run) => { run.publication = []; }, (s, run) => { delete run.translation; }, (s, run) => { run.llbc = 'x'; }]) {
+      const record = edited({ state });
+      assert.deepEqual(codes(record), ['malformed-state']);
+      assert.equal(record.binding.status, 'unbound');
+    }
+  });
+
+  it('a state changed after the probe run is stale, not adopted', () => {
+    const record = edited({ state: (s, run) => { run.supported = false; }, resign: false });
+    assert.deepEqual(codes(record), ['inputs-changed']);
+    assert.deepEqual(binding(record), ['unbound', 'run-not-bound']);
   });
 });

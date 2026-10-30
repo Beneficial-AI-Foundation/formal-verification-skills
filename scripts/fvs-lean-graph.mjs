@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { readState } from './fvs-auto.mjs';
 import { readProvenance } from './fvs-probe-inventory.mjs';
 
 // The only interface qualified so far: probe-lean 0.14.0 `extract` (Lean 4.31.0
@@ -21,6 +22,8 @@ const QUALIFIED_KINDS = ['def', 'theorem'];
 // Lake writes each module's .ilean, listing the declarations Lean elaborated in
 // it, under this directory of the project's own build.
 const ILEAN_DIR = '.lake/build/lib/lean';
+// The auto-track state holding the recorded extraction attempt (extraction.run).
+const STATE_FILE = '.formalising/auto-fv/state.json';
 
 // Semantic-definition closure of a theorem: the declarations its statement
 // means. Start from the theorem's type-dependencies; through a definition follow
@@ -45,10 +48,11 @@ function usage() {
     'incomplete or unsupported; 2 on usage errors.',
     '',
     'Exit 0 and state "complete" claim only that this Lean graph record of the',
-    'bound run is complete. They never claim that the graph is bound to the Rust',
-    'extraction (binding.status, reported separately, is "unbound" today) or that',
-    'a join with the Rust identity record may proceed: a consumer needs a complete',
-    'state AND a bound binding with agreeing provenance on both records.',
+    'bound run is complete. binding.status, reported separately, is "bound" only',
+    'when the generated Lean the graph analysed is byte for byte what the recorded',
+    'extraction attempt in the project state published. Neither claims that a join',
+    'with the Rust identity record may proceed: a consumer needs a complete state',
+    'AND bound bindings with agreeing provenance on both records.',
   ].join('\n') + '\n');
 }
 
@@ -98,7 +102,7 @@ export function readLog(text) {
 }
 
 // The project files a run receipt binds: Lean sources, Lake configuration,
-// translation.json and the project's own .ilean files.
+// translation.json, the auto-track state and the project's own .ilean files.
 export function projectInputs(root) {
   const files = {};
   const walk = (directory, relative, ileanOnly) => {
@@ -115,6 +119,7 @@ export function projectInputs(root) {
     }
   };
   walk(root, '', false);
+  if (fs.existsSync(path.join(root, STATE_FILE))) files[STATE_FILE] = sha256(fs.readFileSync(path.join(root, STATE_FILE)));
   const ileans = path.join(root, ILEAN_DIR);
   if (fs.existsSync(ileans)) walk(ileans, ILEAN_DIR, true);
   return files;
@@ -145,13 +150,82 @@ export function duplicateKeys(text) {
   return sorted(duplicates);
 }
 
-function translationNames(file) {
+function translationEntries(file) {
   const translation = JSON.parse(fs.readFileSync(file, 'utf8'));
-  return sorted(['functions', 'types', 'globals', 'trait_decls', 'trait_impls']
-    .flatMap((section) => (Array.isArray(translation[section]) ? translation[section] : []))
-    .map((entry) => entry?.lean_name)
-    .filter(isText)
-    .map((name) => `probe:${name}`));
+  return ['functions', 'types', 'globals', 'trait_decls', 'trait_impls']
+    .flatMap((section) => (Array.isArray(translation[section]) ? translation[section] : []));
+}
+
+const translationNames = (entries) => sorted(entries.map((entry) => entry?.lean_name).filter(isText).map((name) => `probe:${name}`));
+
+// The path of a published file relative to the project the attempt published
+// into, both as the patch engine recorded them; null outside it. Comparing the
+// engine's own paths keeps the check independent of where the project is now.
+function publishedRelative(root, file) {
+  const relative = typeof root === 'string' && typeof file === 'string' ? path.posix.relative(root, file) : '';
+  return !relative || relative.startsWith('..') || path.posix.isAbsolute(relative) ? null : relative;
+}
+
+// The same-extraction binding: the recorded extraction attempt in the project
+// state (fvs-auto readState validates it) must have published exactly the
+// translation.json and generated Lean files this run analysed, byte for byte,
+// from the given patch manifest. Paths are matched relative to the project the
+// attempt published into, so a copy of that project still binds by content. Absent or unsupported evidence leaves the
+// binding unbound; evidence that disagrees blocks the record.
+function bindAttempt({ projectRoot, files, manifest, translationRelative, entries, data, block }) {
+  if (!files) return { status: 'unbound', reasons: ['run-not-bound'] };
+  let loaded;
+  try {
+    loaded = readState({ projectRoot });
+  } catch (error) {
+    block('malformed-state', `the project state does not validate: ${error.message}`);
+    return { status: 'unbound', reasons: ['inputs-disagree-with-attempt'] };
+  }
+  const extraction = loaded.state?.extraction ?? null;
+  const run = extraction?.run;
+  const reasons = [
+    !loaded.state && 'no-state',
+    loaded.state && !run && 'no-extraction-attempt',
+    run && extraction.status !== 'succeeded' && 'extraction-not-succeeded',
+    run && (!run.supported || run.residuals.length > 0) && 'unsupported-configuration',
+    !manifest && 'no-manifest',
+  ].filter(Boolean);
+  if (!run) return { status: 'unbound', reasons };
+  let disagreed = false;
+  const disagree = (code, reason) => { disagreed = true; block(code, reason); };
+  if (manifest && (manifest.sha256 !== run.manifestSha256 || manifest.sha256 !== extraction.inputs?.manifestSha256 ||
+      manifest.json.source.commit !== extraction.inputs?.sourceCommit)) {
+    disagree('attempt-manifest-mismatch', 'the recorded extraction attempt was not prepared from this patch manifest');
+  }
+  if (sha256(JSON.stringify(run.config)) !== run.configSha256) disagree('attempt-config-mismatch', 'the recorded attempt configuration does not match its hash');
+  const root = extraction.inputs?.crateRoot;
+  if (publishedRelative(root, run.translation.projectPath) !== translationRelative ||
+      run.translation.sha256 !== files[translationRelative]) {
+    disagree('attempt-translation-mismatch', 'the analysed translation.json is not the one the recorded attempt published');
+  }
+  const published = run.publication.map((entry) => ({ ...entry, relative: publishedRelative(root, entry.projectPath) }));
+  const differing = published.filter((entry) => entry.relative === null || files[entry.relative] !== entry.sha256)
+    .map((entry) => entry.relative ?? entry.projectPath);
+  if (differing.length > 0) disagree('generated-lean-differs-from-attempt', `the analysed project does not hold the published bytes of ${differing.join(', ')}`);
+  // The publication is exactly translation.json and every Lean file it names.
+  const translationDir = translationRelative ? path.posix.dirname(translationRelative) : '.';
+  const named = entries.map((entry) => entry?.lean_file).filter(isText).map((file) => path.posix.join(translationDir, file));
+  if (!sameSet(published.map((entry) => entry.relative), [translationRelative, ...named])) {
+    disagree('attempt-publication-mismatch', 'the recorded publication is not exactly translation.json and the Lean files it names');
+  }
+  const publishedLean = new Set(published.map((entry) => entry.relative));
+  const outside = translationNames(entries).filter((id) => has(data, id) && !publishedLean.has(data[id]['code-path']));
+  if (outside.length > 0) disagree('generated-declaration-outside-publication', `generated declarations not read from a published file: ${outside.join(', ')}`);
+  if (disagreed) return { status: 'unbound', reasons: ['inputs-disagree-with-attempt'] };
+  if (reasons.length > 0) return { status: 'unbound', reasons };
+  return {
+    status: 'bound',
+    reasons: [],
+    trust: run.trust,
+    configSha256: run.configSha256,
+    llbcSha256: run.llbc.sha256,
+    generatedLean: published.map(({ projectPath, sha256: hash }) => ({ projectPath, sha256: hash })),
+  };
 }
 
 export function validManifest(manifest) {
@@ -200,7 +274,7 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
     source: null,
     timestamp: null,
     run: null,
-    provenance: { sourceCommit: null, leanProjectCommit: null, translationSha256: null, charonVersion: null, aeneasVersion: null, manifestSha256: null },
+    provenance: { sourceCommit: null, leanProjectCommit: null, translationSha256: null, charonVersion: null, aeneasVersion: null, manifestSha256: null, llbcSha256: null, configSha256: null },
     binding: { status: 'unbound', reasons: [] },
     completeness: { libraries: requested, log: readLog(logText), atomCount: null, modules: null, expectedDeclarations: null, missingDeclarations: [] },
     declarations: {},
@@ -345,12 +419,16 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
   // Provenance. The translation hash is the one the run recorded; the current
   // file is read only when it still has that hash.
   let translation = new Set();
+  let entries = [];
+  let translationRelative = null;
   if (projectRoot) {
     const found = readProvenance(projectRoot);
     for (const problem of found.problems) block('provenance', problem);
     if (found.translationJson) {
-      translation = new Set(translationNames(found.translationJson));
+      entries = translationEntries(found.translationJson);
+      translation = new Set(translationNames(entries));
       const relative = path.relative(projectRoot, found.translationJson).split(path.sep).join('/');
+      translationRelative = relative;
       if (files && has(files, relative)) {
         record.provenance.translationSha256 = files[relative];
         record.provenance.charonVersion = found.charonVersion;
@@ -368,24 +446,29 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
     block('missing-declarations', `declarations listed by translation.json or a requested module's .ilean are not in the extract: ${record.completeness.missingDeclarations.join(', ')}`);
   }
 
+  let manifest = null;
   if (manifestText !== null) {
-    const manifest = parseJson(manifestText);
-    const problems = validManifest(manifest);
+    const parsed = parseJson(manifestText);
+    const problems = validManifest(parsed);
     if (problems.length > 0) block('invalid-manifest', `not a usable ${MANIFEST_SCHEMA}: ${problems.join('; ')}`);
     else {
-      record.provenance.manifestSha256 = sha256(manifestText);
-      record.provenance.sourceCommit = manifest.source.commit;
+      manifest = { json: parsed, sha256: sha256(manifestText) };
+      record.provenance.manifestSha256 = manifest.sha256;
+      record.provenance.sourceCommit = parsed.source.commit;
     }
   }
-  // The same-extraction claim, kept apart from the graph's state: nothing yet
-  // records translation.json against the patch manifest. A complete state never
-  // implies this claim; joining with the Rust record needs both.
-  record.binding.reasons = [
-    'translation-not-bound-to-manifest',
-    record.provenance.manifestSha256 === null && 'no-manifest',
-    record.provenance.sourceCommit !== null && record.provenance.leanProjectCommit !== record.provenance.sourceCommit &&
-      'lean-project-commit-differs-from-source-commit',
-  ].filter(Boolean);
+  // The same-extraction claim, kept apart from the graph's state. A complete
+  // state never implies it; joining with the Rust record needs both.
+  if (projectRoot) {
+    const { llbcSha256, ...binding } = bindAttempt({ projectRoot, files, manifest, translationRelative, entries, data, block });
+    record.binding = binding;
+    if (binding.status === 'bound') {
+      record.provenance.llbcSha256 = llbcSha256;
+      record.provenance.configSha256 = binding.configSha256;
+    }
+  } else {
+    record.binding.reasons = ['run-not-bound'];
+  }
 
   const log = record.completeness.log;
   if (log === null) {

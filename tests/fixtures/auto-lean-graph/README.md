@@ -35,5 +35,29 @@ the three `.lake/build/lib/lean/**/*.ilean` files), plus the demo's `aeneas-conf
 `translation.json`. `extraction/manifest.json` is the real `fvs-extract-patches/manifest` of the demo's
 recorded extraction (sha256 `02b41307...`, source commit 8c8955e1, no patches).
 
-Derived cases are edits of `positive-bound` made inside `tests/auto-lean-graph.test.cjs`; there are no
+## Bound to a recorded extraction attempt
+
+`bound-project/` is a second throwaway copy of the demo (commit 8c8955e1), extracted afresh through the patch
+engine's recorded attempt (prepare, attempt, charon, aeneas, publish, `lake build`, `record-extraction`) with the
+demo's local Aeneas nightly-2026.09.30-0855ce1 / Charon 0.1.274 release, under the deny-network sandbox. A
+separate `Specs` library (`Specs.lean`, `Specs/Double.lean`: the same proved `double_spec`) lies outside the
+publish directory `M1demo/` and is uncommitted, so the Lean project commit equals the Rust source commit. The
+directory holds the files the run receipt binds, byte-identical: the published `M1demo/M1demo.lean` and
+`M1demo/translation.json`, the Lean sources, Lake configuration and four `.ilean` files, plus
+`aeneas-config.yml`. The run's `.formalising/auto-fv/state.json` (whose `extraction.run` records the attempt) is
+kept as `recorded/bound-positive/state.json`, because `.formalising/` paths are excluded from the repository;
+the tests copy the project to a temporary directory and put the state back in place.
+`extraction/attempt-manifest.json` is that attempt's patch manifest.
+
+| Run | Project | Flags | Tool exit |
+|---|---|---|---|
+| `bound-positive` | `bound-project`; `lake build M1demo Specs` first | `--library M1demo,Specs` | 0 |
+| `bound-mutated-body` | as above with the published `clamp` body hand-edited (`recorded/bound-mutated-body/M1demo.lean`) | `--library M1demo,Specs` | 0 |
+
+`seeded/feature-alt-M1demo.lean` is a mutation seed, not output of this project: the published `M1demo.lean`
+(sha256 `3f55027e...`) of a separately recorded `--features alt` attempt on another fixture crate, whose
+`translation.json` equals that attempt's positive. A test places it over `bound-project`'s published file to show
+that different Lean bytes under this attempt's state block.
+
+Derived cases are edits of `positive-bound` or `bound-positive` made inside `tests/auto-lean-graph.test.cjs`; there are no
 derived fixture files.
