@@ -1051,6 +1051,16 @@ describe('oracle lanes: constants version 2 as the dependency authority', () => 
     });
   }
   const has = (record, code) => codes(record).includes(code);
+  // Re-sign an edited import manifest consistently in the record, both receipts and the run.
+  const resigned = (edit, constants = () => {}) => {
+    const manifest = JSON.parse(IMPORTS);
+    edit(manifest.modules);
+    const text = JSON.stringify(manifest);
+    const summary = { digest: sha256(text), modules: Object.keys(manifest.modules).length,
+      files: Object.values(manifest.modules).reduce((count, entry) => count + Object.keys(entry.parts).length, 0) };
+    return v2Graph({ constants: (c, n) => { c.inputs.imports = summary; constants(c, n); }, receipt: (r) => { r.inputs.imports = summary; },
+      constantsRun: (r) => { r.inventoryBefore = r.inventoryAfter = summary.digest; }, overrides: { importsText: text } });
+  };
 
   it('recorded paired run: complete, bound and verified, with authoritative lanes for every node', () => {
     const root = v2Project();
@@ -1204,13 +1214,20 @@ describe('oracle lanes: constants version 2 as the dependency authority', () => 
     assert.ok(gone.edges.some((edge) => edge.to === `probe:${proof}` && edge.resolution === 'unresolved'));
     assert.ok(!gone.external.includes(`probe:${proof}`));
     // Declared as a reference from a project module, or from no module: still a gap.
-    for (const module of ['M1demo.M1demo', 'Specs.Other', null]) {
+    for (const module of ['M1demo.M1demo', 'Specs', null]) {
       const moved = v2Graph({ constants: (c) => { c.nodes = c.nodes.filter((node) => node.name !== proof); c.referenced.push({ name: proof, module }); } });
       assert.ok(has(moved, 'missing-project-node'), String(module));
     }
     // An external reference with no classification, and a classification no lane uses.
     assert.ok(has(v2Graph({ constants: (c) => { c.referenced = c.referenced.filter((entry) => entry.name !== 'And.intro'); } }), 'unclassified-reference'));
     assert.ok(has(v2Graph({ constants: (c) => { c.referenced.push({ name: 'Unused.constant', module: 'Init.Prelude' }); } }), 'unclassified-reference'));
+    // A dropped project constant placed in a module Lean never loaded is not external either.
+    // A loaded project module the probe did not analyse is still the project's.
+    const extra = resigned((m) => { m['Specs.Extra'] = { olean: m.Specs.olean.replace('Specs.olean', 'Specs/Extra.olean'), parts: { '.olean': '6'.repeat(64) } }; },
+      (c) => { c.nodes = c.nodes.filter((node) => node.name !== proof); c.referenced.push({ name: proof, module: 'Specs.Extra' }); });
+    assert.ok(has(extra, 'missing-project-node'));
+    const forged = v2Graph({ constants: (c) => { c.nodes = c.nodes.filter((node) => node.name !== proof); c.referenced.push({ name: proof, module: 'Forged.Module' }); } });
+    assert.ok(has(forged, 'import-project-mismatch'));
   });
 
   it('the record namespace and kind-specific metadata are required, missing is not empty', () => {
@@ -1232,16 +1249,6 @@ describe('oracle lanes: constants version 2 as the dependency authority', () => 
   });
 
   it('the analysed modules must resolve to the recorded compiled bytes in the import manifest', () => {
-    // Re-sign an edited manifest consistently in the record, both receipts and the run.
-    const resigned = (edit) => {
-      const manifest = JSON.parse(IMPORTS);
-      edit(manifest.modules);
-      const text = JSON.stringify(manifest);
-      const summary = { digest: sha256(text), modules: Object.keys(manifest.modules).length,
-        files: Object.values(manifest.modules).reduce((count, entry) => count + Object.keys(entry.parts).length, 0) };
-      return v2Graph({ constants: (c) => { c.inputs.imports = summary; }, receipt: (r) => { r.inputs.imports = summary; },
-        constantsRun: (r) => { r.inventoryBefore = r.inventoryAfter = summary.digest; }, overrides: { importsText: text } });
-    };
     assert.equal(resigned(() => {}).state, 'complete');
     // Lean resolved a project module from somewhere else.
     assert.ok(has(resigned((m) => { m['Specs.Roots'].olean = '/elsewhere/Specs/Roots.olean'; }), 'import-project-mismatch'));

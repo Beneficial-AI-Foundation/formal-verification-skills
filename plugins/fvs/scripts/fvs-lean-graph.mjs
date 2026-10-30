@@ -543,9 +543,10 @@ function constantsRunProblems(run, constantsText, constants) {
 }
 
 // The full import manifest the run discovered: its digest and counts must be
-// the record's, and each analysed module's compiled parts must be the bytes Lean
-// resolved for it, from a project build directory.
-function importProblems(importsText, summary, compiled, modules) {
+// the record's, each analysed module's compiled parts must be the bytes Lean
+// resolved for it, from a project build directory, and every module a
+// referenced constant is placed in must be one Lean loaded.
+function importProblems(importsText, summary, compiled, modules, referenced) {
   if (importsText === null) return ['no import manifest'];
   if (sha256(importsText) !== summary.digest) return ['the import manifest is not the one the record summarises'];
   const manifest = parseJson(importsText);
@@ -570,6 +571,8 @@ function importProblems(importsText, summary, compiled, modules) {
     if (!sameSet(resolved, recorded)) problems.push(`the compiled parts Lean resolved for ${module} are not the recorded ones`);
   }
   if (roots.size > 1) problems.push(`the analysed modules resolve to more than one project root: ${[...roots].join(', ')}`);
+  const unloaded = sorted(referenced.filter((entry) => entry.module !== null && !has(manifest.modules, entry.module)).map((entry) => entry.module));
+  if (unloaded.length > 0) problems.push(`referenced constants are placed in modules Lean did not load: ${unloaded.join(', ')}`);
   return problems;
 }
 
@@ -1070,6 +1073,7 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
     const run = constantsRunText === null ? null : parseJson(constantsRunText);
     const runProblems = shape.length > 0 ? [] : constantsRunProblems(run, constantsText, constants);
     const pairs = (map) => Object.entries(map ?? {}).map(([file, hash]) => `${file} ${hash}`);
+    let importIssues;
     if (shape.length > 0) block('invalid-constants', `the constants record is not a usable version 2 record: ${shape.join('; ')}`);
     else if (constantsRunText === null) block('constants-run-missing', 'no constants run receipt: the record is not tied to a successful oracle run');
     else if (runProblems.length > 0) block('constants-run-invalid', runProblems.join('; '));
@@ -1080,8 +1084,8 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
       block('fidelity-unbound', 'the probe run and the oracle did not record the same import inventory');
     } else if (compiledProblems(receiptCompiled, Object.keys(record.completeness.modules ?? {}), projectRoot).length > 0) {
       block('compiled-inventory-incomplete', `the recorded compiled modules do not cover the analysed modules: ${compiledProblems(receiptCompiled, Object.keys(record.completeness.modules ?? {}), projectRoot).join(', ')}`);
-    } else if (importProblems(importsText, receiptImports, receiptCompiled, Object.keys(record.completeness.modules ?? {})).length > 0) {
-      block('import-project-mismatch', importProblems(importsText, receiptImports, receiptCompiled, Object.keys(record.completeness.modules ?? {})).join('; '));
+    } else if ((importIssues = importProblems(importsText, receiptImports, receiptCompiled, Object.keys(record.completeness.modules ?? {}), constants.referenced)).length > 0) {
+      block('import-project-mismatch', importIssues.join('; '));
     } else {
       const flagged = new Set();
       const issue = (code, reason, node) => {
