@@ -12,8 +12,8 @@ import { fileURLToPath } from 'node:url';
 // roots. It only reads those records (and, optionally, the attempt's LLBC); it
 // runs nothing. Three decisions stay separate: the raw upstream results are
 // kept verbatim; cross-record admissibility (valid, consistent, bound records
-// with agreeing provenance and published files, and a complete graph) gates any
-// closure claim and is never salvaged by dropping nodes; scheduling eligibility
+// with agreeing provenance and published files, and a complete graph with
+// verified dependency fidelity and no open obligations) gates any closure claim and is never salvaged by dropping nodes; scheduling eligibility
 // is computed per node, and a requested root is ready only when its whole
 // closure is. Recursive items are reported as recursion-unqualified: no
 // recursion rule is qualified yet, and the LLBC recursion group is exposed for
@@ -91,8 +91,8 @@ function validate({ identity, graph, roots, failed, llbc }) {
   }
   if (new Set(i.items.map((item) => item.defId)).size !== i.items.length) bad('identity', 'def_ids are not unique');
   const g = graph.json;
-  if (!isObject(g) || g.schema !== 'fvs/lean-graph' || g.schemaVersion !== 1 || !['complete', 'incomplete'].includes(g.state)
-    || !isObject(g.provenance) || !isObject(g.binding) || !['bound', 'unbound'].includes(g.binding.status)
+  if (!isObject(g) || g.schema !== 'fvs/lean-graph' || g.schemaVersion !== 1 || !['complete', 'incomplete', 'unsupported'].includes(g.state)
+    || !isObject(g.provenance) || !isObject(g.binding) || !['bound', 'unbound'].includes(g.binding.status) || !Array.isArray(g.binding.reasons ?? [])
     || !isObject(g.declarations) || !Array.isArray(g.edges) || !Array.isArray(g.blockers)) {
     bad('graph', 'is not a fvs/lean-graph schemaVersion 1 record');
   }
@@ -139,9 +139,15 @@ function admissibility(i, g, llbc) {
   else if (i.blockers.length > 0) block('identity-contradiction', `the ticket 10 record is ${i.status} but lists blockers`);
   else if (i.status === 'complete' && nonExact) block('identity-contradiction', 'the ticket 10 record is complete but holds non-exact items');
   if (g.binding.status !== 'bound') block('graph-unbound', 'the ticket 21 record is not bound to a recorded extraction attempt');
-  if (g.state !== 'complete') block('graph-incomplete', `the ticket 21 record is ${g.state}; an incomplete graph cannot support a closure claim`);
+  else if ((g.binding.reasons ?? []).length > 0) block('graph-contradiction', 'the ticket 21 record is bound but lists binding reasons');
+  if (g.state === 'unsupported') block('graph-unsupported', 'the ticket 21 producer reported this input unsupported; it gives no graph to plan from');
+  else if (g.state !== 'complete') block('graph-incomplete', `the ticket 21 record is ${g.state}; an incomplete graph cannot support a closure claim`);
   else if (g.blockers.length > 0) block('graph-contradiction', 'the ticket 21 record is complete but lists blockers');
-  if (g.fidelity !== undefined && g.fidelity.status !== 'verified') block('graph-fidelity-not-verified', `the ticket 21 record's dependency fidelity is ${g.fidelity.status}`);
+  // A graph record without a fidelity field predates ticket 21's fidelity check: its dependencies are not
+  // shown to cover what Lean records, so it is treated as unverified.
+  if (g.fidelity === undefined) block('graph-fidelity-not-verified', 'the ticket 21 record carries no fidelity result (a pre-fidelity graph record), so its dependencies are unverified');
+  else if (g.fidelity.status !== 'verified') block('graph-fidelity-not-verified', `the ticket 21 record's dependency fidelity is ${g.fidelity.status}`);
+  else if (!Array.isArray(g.fidelity.obligations) || g.fidelity.obligations.length > 0) block('graph-fidelity-contradiction', 'the ticket 21 record claims verified fidelity without an empty obligations list');
   // The graph's edge list must be its declarations' dependency lists, exactly.
   const declared = declaredEdges(g);
   if (declared === null) block('graph-declarations-malformed', 'a declaration lacks well-formed dependency lists');
@@ -150,6 +156,9 @@ function admissibility(i, g, llbc) {
     const have = g.edges.map(edgeKey).sort();
     if (JSON.stringify(want) !== JSON.stringify(have)) block('graph-edges-inconsistent', 'the edge list does not match the declarations\' dependency lists (endpoints, kinds or resolutions)');
     if (g.state === 'complete' && declared.some((edge) => edge.resolution === 'unresolved')) block('graph-contradiction', 'the ticket 21 record is complete but has unresolved dependencies');
+    // A declaration of this graph is in scope: listing it as external would hide a local dependency.
+    const hidden = declared.filter((edge) => edge.resolution === 'external' && Object.hasOwn(g.declarations, edge.to));
+    if (hidden.length > 0) block('graph-contradiction', `declared in the graph but listed as external: ${[...new Set(hidden.map((edge) => edge.to))].sort().join(', ')}`);
   }
   // Provenance: well-formed on both sides, and equal.
   for (const field of PROVENANCE) {
@@ -245,7 +254,7 @@ export function buildPlan({ identity, graph, roots, failed = [], llbc = null }) 
     inputs: { identitySha256: identity.sha256, graphSha256: graph.sha256, llbcSha256: llbc?.sha256 ?? null },
     selection: { requestedRoots: requested, failed: sortedNumbers(failed) },
     provenance: Object.fromEntries(PROVENANCE.map((field) => [field, i.provenance[field] ?? null])),
-    qualification: { graphFidelity: g.fidelity === undefined ? 'not-supplied (a graph record without a fidelity field)' : g.fidelity.status },
+    qualification: { graphFidelity: g.fidelity === undefined ? 'not-supplied (a pre-fidelity graph record)' : g.fidelity.status },
     admissibility: { status: blockers.length === 0 ? 'admissible' : 'blocked', blockers },
     upstream: { identityStatus: i.status, identityBlockers: i.blockers, graphState: g.state, graphBlockers: g.blockers },
     ownership: { rule: OWNERSHIP_RULE },
@@ -269,6 +278,10 @@ export function buildPlan({ identity, graph, roots, failed = [], llbc = null }) 
     let eligibility = 'eligible';
     if (item.correspondence !== 'exact') {
       eligibility = item.reasons.includes('recursion') ? 'recursion-unqualified' : 'blocked-upstream';
+    } else if (item.reasons.length > 0) {
+      // Ticket 10 gives exact correspondence only to an item with no reasons.
+      eligibility = 'blocked-upstream-contradiction';
+      reasons.push('the item is labelled exact but carries ticket 10 reasons');
     } else if (declarations.length === 0 || new Set(declarations).size !== declarations.length || !item.target
       || !item.generated.some((member) => member.leanName === item.target)) {
       eligibility = 'blocked-family-invalid';

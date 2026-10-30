@@ -34,11 +34,14 @@ const sha = (text) => crypto.createHash('sha256').update(text).digest('hex');
 const llbcText = (run) => zlib.gunzipSync(fs.readFileSync(path.join(FIXTURES, run, 'm1demo.llbc.gz'))).toString('utf8');
 
 // Writes the (possibly mutated) records of RUN and plans ROOTS; returns { status, result }.
-function plan(run, { identity = (x) => x, graph = (x) => x, llbc = null, roots = [21, 22, 23], failed = null } = {}) {
+// The recorded positive graph predates ticket 21's fidelity check, so the algorithm cases add a
+// verified fidelity result to it (labelled mutation); rawGraph keeps the recorded bytes' meaning.
+const verified = (g) => ({ ...g, fidelity: { status: 'verified', represented: [], obligations: [] } });
+function plan(run, { identity = (x) => x, graph = (x) => x, llbc = null, roots = [21, 22, 23], failed = null, rawGraph = false } = {}) {
   const dir = scratch();
   const write = (name, value) => { const file = path.join(dir, name); fs.writeFileSync(file, typeof value === 'string' ? value : JSON.stringify(value)); return file; };
   const args = [SCRIPT, 'plan', '--identity', write('identity.json', identity(read(run, 'identity-record.json'))),
-    '--graph', write('graph.json', graph(read(run, 'graph-record.json'))), '--roots', roots.join(',')];
+    '--graph', write('graph.json', graph(rawGraph || run !== 'positive' ? read(run, 'graph-record.json') : verified(read(run, 'graph-record.json')))), '--roots', roots.join(',')];
   if (failed) args.push('--failed', failed.join(','));
   if (llbc) args.push('--llbc', write('m1demo.llbc', llbc));
   const out = spawnSync(process.execPath, args, { encoding: 'utf8' });
@@ -67,7 +70,7 @@ describe('closure plan: recorded positive (two roots, one shared helper, a loop,
     assert.equal(result.code, 'ok');
     const rec = result.record;
     assert.equal(rec.admissibility.status, 'admissible');
-    assert.match(rec.qualification.graphFidelity, /not-supplied/, 'a pre-fidelity graph record is labelled as such');
+    assert.equal(rec.qualification.graphFidelity, 'verified', 'labelled mutation: verified fidelity supplied');
     assert.deepEqual(rec.selection, { requestedRoots: [21, 22, 23], failed: [] });
     assert.deepEqual(root(result, 21).closure, [19, 21]);
     assert.deepEqual(root(result, 22).closure, [19, 20, 22]);
@@ -81,13 +84,27 @@ describe('closure plan: recorded positive (two roots, one shared helper, a loop,
     assert.deepEqual(rec.observedCycles, []);
   });
 
-  it('accepts a graph record whose supplied fidelity is verified, and blocks any other fidelity status', () => {
-    const verified = plan('positive', { graph: (g) => ({ ...g, fidelity: { status: 'verified', represented: [] } }) });
-    assert.equal(verified.status, 0);
-    assert.equal(verified.result.record.qualification.graphFidelity, 'verified');
+  it('blocks the recorded positive as it is: a pre-fidelity graph record has unverified dependencies', () => {
+    const { status, result } = plan('positive', { rawGraph: true });
+    assert.equal(status, 7);
+    assert.ok(result.record.admissibility.blockers.some((b) => b.code === 'graph-fidelity-not-verified'));
+    assert.match(result.record.qualification.graphFidelity, /not-supplied/);
+    assert.ok(result.record.roots.every((r) => r.status === 'blocked' && r.closure === null));
+  });
+
+  it('accepts verified fidelity with no open obligations, and blocks any other status or a verified claim with obligations', () => {
+    const ok = plan('positive', { graph: (g) => ({ ...g, fidelity: { status: 'verified', represented: [], obligations: [] } }) });
+    assert.equal(ok.status, 0);
+    assert.equal(ok.result.record.qualification.graphFidelity, 'verified');
     for (const status of ['unverified', 'incomplete']) {
-      const { result } = plan('positive', { graph: (g) => ({ ...g, fidelity: { status, represented: [] } }) });
+      const { result } = plan('positive', { graph: (g) => ({ ...g, fidelity: { status, represented: [], obligations: [] } }) });
       assert.ok(result.record.admissibility.blockers.some((b) => b.code === 'graph-fidelity-not-verified'), status);
+    }
+    const open = [{ declaration: 'probe:m1demo.root_a', constant: 'm1demo.helper', obligation: 'proof-dependencies-unaudited' }];
+    for (const [label, fidelity] of [['open obligation', { status: 'verified', represented: [], obligations: open }], ['no obligations list', { status: 'verified', represented: [] }]]) {
+      const { status, result } = plan('positive', { graph: (g) => ({ ...g, fidelity }) });
+      assert.equal(status, 7, label);
+      assert.deepEqual(result.record.admissibility.blockers.map((b) => b.code), ['graph-fidelity-contradiction'], label);
     }
   });
 
@@ -231,6 +248,11 @@ describe('closure plan: admissibility negatives (labelled mutations)', () => {
     blocked({ identity: (i) => { i.items[0].correspondence = 'ambiguous'; return i; } }, 'identity-contradiction');
     blocked({ graph: (g) => { g.state = 'incomplete'; return g; } }, 'graph-incomplete');
     blocked({ graph: (g) => { g.blockers = [{ code: 'x' }]; return g; } }, 'graph-contradiction');
+    blocked({ graph: (g) => { g.binding.reasons = ['run-not-bound']; return g; } }, 'graph-contradiction');
+  });
+
+  it('keeps an upstream unsupported graph as a non-admissible diagnostic, not malformed input', () => {
+    blocked({ graph: (g) => ({ ...g, state: 'unsupported', declarations: {}, edges: [], blockers: [{ code: 'unsupported-probe-schema' }] }) }, 'graph-unsupported');
   });
 
   it('blocks different, missing, malformed or repeated published Lean files, and an LLBC that is not the attempt\'s', () => {
@@ -256,6 +278,24 @@ describe('closure plan: admissibility negatives (labelled mutations)', () => {
     blocked({ graph: unresolved }, 'graph-contradiction');
     blocked({ graph: (g) => { delete g.declarations['probe:m1demo.root_a']['term-dependencies']; return g; } }, 'graph-declarations-malformed');
   });
+
+  it('refuses a declared helper relabelled external in both the declaration and the edge list (verified fidelity, so only this check fires)', () => {
+    const hide = (g) => {
+      const atom = g.declarations['probe:m1demo.root_a'];
+      assert.ok(atom['term-dependencies'].includes('probe:m1demo.helper'));
+      atom['term-dependencies'] = atom['term-dependencies'].filter((to) => to !== 'probe:m1demo.helper');
+      atom['term-dependencies-external'] = [...(atom['term-dependencies-external'] ?? []), 'probe:m1demo.helper'];
+      g.edges = g.edges.map((e) => (e.from === 'probe:m1demo.root_a' && e.to === 'probe:m1demo.helper' ? { ...e, resolution: 'external' } : e));
+      return g;
+    };
+    for (const failed of [null, [19]]) {
+      const { status, result } = plan('positive', { graph: hide, failed });
+      assert.equal(status, 7, `failed ${failed}`);
+      assert.deepEqual(result.record.admissibility.blockers.map((b) => b.code), ['graph-contradiction'], `failed ${failed}`);
+      assert.match(result.record.admissibility.blockers[0].message, /probe:m1demo\.helper/);
+      assert.equal(root(result, 21).closure, null, 'root 21 never loses helper 19 and stays ready');
+    }
+  });
 });
 
 describe('closure plan: identity gaps stay visible (labelled mutations)', () => {
@@ -279,6 +319,16 @@ describe('closure plan: identity gaps stay visible (labelled mutations)', () => 
     assert.equal(result.record.nodes[19].eligibility, 'blocked-ambiguous-ownership');
     assert.equal(result.record.nodes[21].eligibility, 'blocked-ambiguous-ownership');
     assert.equal(root(result, 22).status, 'blocked', 'a consumer of the ambiguous helper is blocked');
+    assert.equal(root(result, 23).status, 'ready');
+  });
+
+  it('does not schedule an item labelled exact that carries ticket 10 reasons, keeping its raw fields', () => {
+    const exactButRecursive = (i) => { i.items.find((x) => x.defId === 19).reasons = ['recursion']; return i; };
+    const { status, result } = plan('positive', { identity: exactButRecursive });
+    assert.equal(status, 6);
+    assert.equal(result.record.nodes[19].eligibility, 'blocked-upstream-contradiction');
+    assert.deepEqual(result.record.nodes[19].upstream, { correspondence: 'exact', reasons: ['recursion'] });
+    assert.equal(root(result, 21).status, 'blocked');
     assert.equal(root(result, 23).status, 'ready');
   });
 
@@ -314,7 +364,18 @@ describe('closure plan: identity gaps stay visible (labelled mutations)', () => 
     const { buildPlan } = await import(require('node:url').pathToFileURL(SCRIPT).href);
     const load = (name) => { const text = fs.readFileSync(path.join(FIXTURES, 'positive', name), 'utf8'); return { json: JSON.parse(text), sha256: sha(text) }; };
     const valid = () => ({ identity: load('identity-record.json'), graph: load('graph-record.json'), roots: [21, 22], failed: [] });
-    assert.equal(buildPlan(valid()).status, 'ready');
+    assert.equal(buildPlan(valid()).status, 'blocked', 'the recorded pre-fidelity graph is not admissible');
+    const withFidelity = valid();
+    withFidelity.graph = { json: verified(withFidelity.graph.json), sha256: withFidelity.graph.sha256 };
+    assert.equal(buildPlan(withFidelity).status, 'ready', 'labelled mutation: verified fidelity');
+    const boundWithReasons = valid();
+    boundWithReasons.graph = { json: verified({ ...boundWithReasons.graph.json, binding: { ...boundWithReasons.graph.json.binding, reasons: ['x'] } }), sha256: boundWithReasons.graph.sha256 };
+    assert.ok(buildPlan(boundWithReasons).admissibility.blockers.some((b) => b.code === 'graph-contradiction'), 'bound graph with binding reasons');
+    const exactWithReason = { ...withFidelity, identity: load('identity-record.json') };
+    exactWithReason.identity.json.items.find((x) => x.defId === 19).reasons = ['recursion'];
+    const contradictory = buildPlan(exactWithReason);
+    assert.equal(contradictory.nodes[19].eligibility, 'blocked-upstream-contradiction');
+    assert.equal(contradictory.roots.find((r) => r.defId === 21).status, 'blocked');
     for (const [label, edit] of [
       ['identity without a digest', (x) => { delete x.identity.sha256; }],
       ['graph with a malformed digest', (x) => { x.graph.sha256 = 'nope'; }],
