@@ -1132,6 +1132,12 @@ describe('oracle lanes: constants version 2 as the dependency authority', () => 
     assert.ok(has(v2Graph({ constants: (c, n) => { n['m1demo.Pair.a'].isProjection = false; } }), 'kind-mismatch'));
     assert.ok(has(v2Graph({ constants: (c, n) => { n['m1demo.Pair'].isStructure = false; delete n['m1demo.Pair'].fields; } }), 'kind-mismatch'));
     assert.ok(has(v2Graph({ constants: (c, n) => { n['m1demo.helper'].kind = 'theorem'; } }), 'kind-mismatch'));
+    // A theorem projection (a Prop-valued field) blocks whatever probe-lean calls it, source or generated.
+    for (const name of ['m1demo.roots.root_sum_eq', 'm1demo.root_twice._proof_1']) {
+      assert.ok(has(v2Graph({ constants: (c, n) => { n[name].isProjection = true; } }), 'unsupported-projection'), name);
+    }
+    assert.ok(has(v2Graph({ constants: (c, n) => { n['m1demo.roots.root_sum_eq'].isProjection = true; }, extract: (data) => { data[N('roots.root_sum_eq')].kind = 'projection'; } }),
+      'unsupported-projection'));
     // probe-lean 0.24 class and instance labels need Lean's own registries to agree.
     assert.ok(has(v2Graph({ extract: (data) => { data[N('Pair')].kind = 'class'; } }), 'kind-mismatch'));
     assert.ok(!has(v2Graph({ extract: (data) => { data[N('Pair')].kind = 'class'; }, constants: (c, n) => { n['m1demo.Pair'].isClass = true; } }), 'kind-mismatch'));

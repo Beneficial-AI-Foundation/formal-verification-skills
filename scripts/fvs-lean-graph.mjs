@@ -637,6 +637,9 @@ function oracleLanes({ constants, data, ids, defined, modules, libraries, issue 
   for (const node of constants.nodes) {
     if (!modules.includes(node.module)) issue('node-outside-inventory', `${node.name} is in ${node.module}, not an analysed module`, node.name);
     if (isSource(node) && !atoms.has(node.name)) issue('unmapped-source-node', `${node.name} is defined in source but is no probe-lean declaration`, node.name);
+    // Only definition projections are qualified. Lean compiles a Prop-valued field's projection as a theorem, which
+    // probe-lean 0.14.0 labels theorem and 0.24.0 labels projection; it blocks under both.
+    if (node.isProjection && node.kind !== 'def') issue('unsupported-projection', `${node.name} is a projection of kind ${node.kind}, which is not qualified`, node.name);
   }
   for (const id of ids) {
     const name = id.slice('probe:'.length);
