@@ -1,0 +1,56 @@
+{
+  "schema": "fvs/lean-probe-run",
+  "version": 1,
+  "projectRoot": "/tmp/fvs44-qual.JqbS5W/sparse",
+  "libraries": [
+    "M1demo",
+    "Specs"
+  ],
+  "lakeBuild": {
+    "argv": [
+      "lake",
+      "build",
+      "M1demo",
+      "Specs"
+    ],
+    "exitCode": 0
+  },
+  "probe": {
+    "argv": [
+      "/Users/ada/.fvs/tools/swvf-qualification/home/.local/bin/probe-lean-v4.31.0",
+      "extract",
+      "/tmp/fvs44-qual.JqbS5W/sparse",
+      "-o",
+      "/tmp/fvs44-qual.JqbS5W/out-r4/sparse-structures/lean.json",
+      "--library",
+      "M1demo,Specs"
+    ],
+    "exitCode": 0,
+    "sha256": "fd31d965a9d12cd5a95080c810d3441a8d38e380f25eee37c85b9444ceec283d",
+    "version": "0.14.0"
+  },
+  "inputs": {
+    "leanProjectCommit": "8c8955e1193744a42ee464d56893c87d8a172826",
+    "files": {
+      ".formalising/auto-fv/state.json": "8e09803cfaaed9b49d824d33664969dc5e7dd9f503187bae335883986c06cf1f",
+      ".lake/build/lib/lean/M1demo.ilean": "dc2af0b3f028b6ae072bffec1128b18e6529a5512d13dfe42527930a243dbb0d",
+      ".lake/build/lib/lean/M1demo/M1demo.ilean": "cfa971f5b469697bc18eb2d29b3c66f3d02aa518fc98ebc89c401055e4ba5e21",
+      ".lake/build/lib/lean/Specs.ilean": "547136db6839ba2b84bb121274cd08e78a01d83d00b973dd55fa6a1cd59125d4",
+      ".lake/build/lib/lean/Specs/Double.ilean": "251e4cb94bf2718d6bce366e163aebf34bce5804b3ca2a9387ae44b92776710d",
+      ".lake/build/lib/lean/Specs/Kinds.ilean": "e0d0babc2c0d627d34dffae134a56a1a09b2a22457753ffd531fbb984cbc24ae",
+      "M1demo.lean": "998cff4e0c58a30f8c5a5e42eaff4d401ca9d7b2d0290738e0f3cd91b9e4aae8",
+      "M1demo/M1demo.lean": "f48d08c313569c0993edeeb9524a9ee008e9253b4e8ceed95d890f98c97300a9",
+      "M1demo/translation.json": "bb20ee964531c310e47f3bc466e5e1ac5aefe25cfa0f2df04cd4bd5644265093",
+      "Specs.lean": "c59abfc507854355e6aa24b6747371f25dab0e75036155340df8f86be6a80ed5",
+      "Specs/Double.lean": "4935ea0b71757a2f0ed632a3705dac7bbc566ddc432b81a3c0c311df8676b8b1",
+      "Specs/Kinds.lean": "a9c6728938ccfea100d3294ee6d40b62a09bbc37d43a6cb960570f0a3aae891b",
+      "lake-manifest.json": "52e67b1cb09003b8831ffc387dc362eba1c00de85a4dfd3f9e52e95378c63d72",
+      "lakefile.toml": "906e1ae68b5b77124c81c01b063b4ab2757e97f762ac11add2d4da9d2e1cca56",
+      "lean-toolchain": "efac0b94923b2d8b6840cd35be9177ad0fc5ab2332f4f4311c98712cee92fdee"
+    }
+  },
+  "outputs": {
+    "extractSha256": "21c9486d13d5f8c5fe18da15c5dbb002d3eb4c097b5a572086c272aa33e465e8",
+    "logSha256": "b2d09a78608924462f06563cb6b0a508f6d12b397596fcf9ade078e124458476"
+  }
+}

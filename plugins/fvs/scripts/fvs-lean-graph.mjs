@@ -14,11 +14,17 @@ import { readProvenance } from './fvs-probe-inventory.mjs';
 const QUALIFIED = { schema: 'probe-lean/extract', schemaVersion: '3.0', tool: 'probe-lean', version: '0.14.0' };
 const RECEIPT_SCHEMA = 'fvs/lean-probe-run';
 const MANIFEST_SCHEMA = 'fvs-extract-patches/manifest';
-const DEPENDENCY_FIELDS = ['type-dependencies', 'term-dependencies', 'type-dependencies-external',
-  'term-dependencies-external', 'dependencies'];
+const LOCAL_FIELDS = ['type-dependencies', 'term-dependencies', 'dependencies'];
+// probe-lean 0.14.0 omits an external list when it would be empty and never
+// emits it empty; local lists are always emitted. Qualified against Lean's own
+// record of each declaration's type and value constants for every qualified
+// kind (54 of 54 lists, two fixture states). So an absent external list means
+// no external dependency; a present one must be a non-empty list.
+const EXTERNAL_FIELDS = ['type-dependencies-external', 'term-dependencies-external'];
 // The declaration kinds a recorded fixture has qualified; closure traversal is
-// defined for these only.
-const QUALIFIED_KINDS = ['def', 'theorem'];
+// defined for these only. Instances are emitted as def. Inductive types are not
+// qualified: their constructors are never emitted as declarations.
+const QUALIFIED_KINDS = ['def', 'theorem', 'structure', 'projection'];
 // Lake writes each module's .ilean, listing the declarations Lean elaborated in
 // it, under this directory of the project's own build.
 const ILEAN_DIR = '.lake/build/lib/lean';
@@ -249,9 +255,12 @@ export function validManifest(manifest) {
   return problems;
 }
 
-function closureOf(root, data, inScope) {
+// A dependency list of a validated atom; an absent external list is empty.
+const deps = (atom, field) => atom[field] ?? [];
+
+function closureOf(root, data, inScope, projectionsOf) {
   const declarations = new Set();
-  const external = new Set(data[root]['type-dependencies-external']);
+  const external = new Set(deps(data[root], 'type-dependencies-external'));
   const queue = [...data[root]['type-dependencies']];
   while (queue.length > 0) {
     const id = queue.shift();
@@ -260,7 +269,11 @@ function closureOf(root, data, inScope) {
     if (!has(data, id)) continue;
     const fields = data[id].kind === 'theorem' ? ['type-dependencies'] : ['type-dependencies', 'term-dependencies'];
     for (const field of fields) queue.push(...data[id][field]);
-    for (const field of fields) data[id][`${field}-external`].forEach((dep) => external.add(dep));
+    for (const field of fields) deps(data[id], `${field}-external`).forEach((dep) => external.add(dep));
+    // A structure's own lists record only its type; its fields live on the
+    // projections that take it. Following every projection that depends on it
+    // can over-include another structure's projection: conservative.
+    if (data[id].kind === 'structure') queue.push(...(projectionsOf.get(id) ?? []));
   }
   // Only the edges this closure follows can block it.
   const blockers = [...declarations].filter((id) => !has(data, id))
@@ -338,12 +351,14 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
       !/^probe:./.test(id) && 'the declaration id is not a probe: name',
       !isText(atom.kind) && 'kind',
       !isText(atom['code-module']) && 'code-module',
-      ...DEPENDENCY_FIELDS.filter((field) => !Array.isArray(atom[field]) ||
+      ...LOCAL_FIELDS.filter((field) => !Array.isArray(atom[field]) ||
         atom[field].some((dep) => typeof dep !== 'string' || !/^probe:./.test(dep))),
+      ...EXTERNAL_FIELDS.filter((field) => has(atom, field) && (!Array.isArray(atom[field]) || atom[field].length === 0 ||
+        atom[field].some((dep) => typeof dep !== 'string' || !/^probe:./.test(dep)))),
     ].filter(Boolean);
     if (problems.length > 0) block('malformed-atom', `${id} has missing or ill-typed ${problems.join(', ')}`, { declaration: id });
     else if (!QUALIFIED_KINDS.includes(atom.kind)) {
-      block('unqualified-kind', `${id} has kind ${JSON.stringify(atom.kind)}; only ${QUALIFIED_KINDS.join(' and ')} are qualified for closure traversal`, { declaration: id });
+      block('unqualified-kind', `${id} has kind ${JSON.stringify(atom.kind)}; only ${QUALIFIED_KINDS.join(', ')} are qualified for closure traversal`, { declaration: id });
     }
   }
   // JSON.parse keeps only the last of duplicate keys, so a repeated key anywhere
@@ -419,8 +434,15 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
         block('missing-ilean', `module ${name} has no matching ${ilean} in the recorded run`);
         continue;
       }
-      record.completeness.modules[name] = sorted(Object.keys(parsed.decls));
-      for (const decl of Object.keys(parsed.decls)) expected.add(`probe:${decl}`);
+      // decls omits some declarations (a def or theorem whose type has no
+      // constants, projections); every declaration made in the module is a
+      // reference key {c: {m: module, n}} with a definition position.
+      const defined = Object.entries(plainObject(parsed.references) ? parsed.references : {}).flatMap(([key, value]) => {
+        const target = parseJson(key)?.c;
+        return plainObject(target) && target.m === name && isText(target.n) && value?.definition != null ? [target.n] : [];
+      });
+      record.completeness.modules[name] = sorted([...Object.keys(parsed.decls), ...defined]);
+      for (const decl of record.completeness.modules[name]) expected.add(`probe:${decl}`);
     }
     record.completeness.expectedDeclarations = expected.size;
     const extra = ids.filter((id) => !expected.has(id));
@@ -512,7 +534,7 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
         if (resolution === 'unresolved') unresolvedFrom.add(from);
         record.edges.push({ from, to, kind, resolution });
       }
-      for (const to of atom[`${kind}-dependencies-external`]) {
+      for (const to of deps(atom, `${kind}-dependencies-external`)) {
         const resolution = inScope.has(to) ? 'unresolved' : 'external';
         if (resolution === 'unresolved') unresolvedFrom.add(from);
         else external.add(to);
@@ -531,8 +553,12 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
     const targets = record.edges.filter((edge) => edge.from === from && edge.resolution === 'unresolved').map((edge) => edge.to);
     block('unresolved-edge', `${from} depends on ${sorted(targets).join(', ')}, which the extract does not resolve as a local declaration`, { declaration: from });
   }
+  const projectionsOf = new Map();
+  for (const id of ids.filter((name) => data[name].kind === 'projection')) {
+    for (const target of data[id]['type-dependencies']) projectionsOf.set(target, [...(projectionsOf.get(target) ?? []), id]);
+  }
   for (const id of ids.filter((name) => data[name].kind === 'theorem')) {
-    record.closures[id] = closureOf(id, data, inScope);
+    record.closures[id] = closureOf(id, data, inScope, projectionsOf);
   }
   return finish();
 }

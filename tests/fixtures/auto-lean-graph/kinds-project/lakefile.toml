@@ -1,0 +1,14 @@
+name = "m1demo"
+defaultTargets = ["M1demo", "Specs"]
+
+[[require]]
+name = "aeneas"
+git = "https://github.com/AeneasVerif/aeneas.git"
+subDir = "backends/lean"
+rev = "nightly-2026.09.30-0855ce1"
+
+[[lean_lib]]
+name = "M1demo"
+
+[[lean_lib]]
+name = "Specs"

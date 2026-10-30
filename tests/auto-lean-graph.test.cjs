@@ -635,3 +635,128 @@ describe('binding to the recorded extraction attempt', () => {
     assert.deepEqual(binding(record), ['unbound', 'run-not-bound']);
   });
 });
+
+describe('omitted external lists and the structure and projection kinds', () => {
+  const KINDS = path.join(FIXTURES, 'kinds-project');
+  const ATTEMPT_MANIFEST = path.join(FIXTURES, 'extraction', 'attempt-manifest.json');
+  const STATE = '.formalising/auto-fv/state.json';
+  const LIBS = ['M1demo', 'Specs'];
+  const A = 'sparse-structures';
+  const B = 'sparse-kinds';
+  const K = (name) => `probe:m1demo.kinds.${name}`;
+
+  // Run A's project, or run B's (the same project with B's Kinds module), with
+  // the recorded state put back in place.
+  function kindsProject(run = A) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-lean-kinds-'));
+    temporaryDirectories.push(root);
+    fs.cpSync(KINDS, root, { recursive: true });
+    fs.mkdirSync(path.join(root, path.dirname(STATE)), { recursive: true });
+    fs.copyFileSync(recorded('bound-positive', 'state.json'), path.join(root, STATE));
+    if (run === B) {
+      fs.copyFileSync(recorded(B, 'Kinds.lean'), path.join(root, 'Specs', 'Kinds.lean'));
+      fs.copyFileSync(recorded(B, 'Kinds.ilean'), path.join(root, '.lake', 'build', 'lib', 'lean', 'Specs', 'Kinds.ilean'));
+    }
+    return root;
+  }
+
+  function kindsGraph(run = A, overrides = {}) {
+    return buildLeanGraph({
+      extractText: read(run, 'lean.json'),
+      logText: read(run, 'probe.log'),
+      receiptText: read(run, 'receipt.json'),
+      libraries: LIBS,
+      projectRoot: kindsProject(run),
+      manifestText: fs.readFileSync(ATTEMPT_MANIFEST, 'utf8'),
+      ...overrides,
+    });
+  }
+
+  // An edit of run A's extract (and log), with the receipt re-signed over it.
+  function kindsDerived(edit, log = (text) => text) {
+    const envelope = JSON.parse(read(A, 'lean.json'));
+    edit(envelope.data);
+    const extractText = JSON.stringify(envelope);
+    const logText = log(read(A, 'probe.log'));
+    const receipt = JSON.parse(read(A, 'receipt.json'));
+    receipt.outputs = { extractSha256: sha256(extractText), logSha256: sha256(logText) };
+    return kindsGraph(A, { extractText, logText, receiptText: JSON.stringify(receipt) });
+  }
+
+  it('recorded qualification: an external list is omitted exactly when Lean records no external constant', () => {
+    for (const run of [A, B]) {
+      const lean = JSON.parse(read(run, 'lean-constants.json').trim().split('\n').at(-1));
+      const project = new Set(lean.map((entry) => entry.name));
+      const byName = new Map(lean.map((entry) => [entry.name, entry]));
+      const data = JSON.parse(read(run, 'lean.json')).data;
+      let lists = 0;
+      for (const [id, atom] of Object.entries(data)) {
+        const truth = byName.get(id.slice('probe:'.length));
+        assert.ok(truth, id);
+        assert.ok(truth.kind !== 'theorem' || truth.hasValue, `${id}: Lean ground truth must include the proof`);
+        for (const [field, source] of [['type-dependencies-external', 'type'], ['term-dependencies-external', 'value']]) {
+          const external = truth[source].filter((name) => !project.has(name));
+          assert.equal(Object.hasOwn(atom, field), external.length > 0, `${run} ${id} ${field}`);
+          if (Object.hasOwn(atom, field)) assert.ok(atom[field].length > 0);
+          lists += 1;
+        }
+        for (const field of ['type-dependencies', 'term-dependencies', 'dependencies']) assert.ok(Array.isArray(atom[field]), `${id} ${field}`);
+      }
+      assert.equal(lists, 54);
+    }
+  });
+
+  it('recorded run A: structures, projections and instances give a complete, bound graph', () => {
+    const root = kindsProject(A);
+    const result = cli([recorded(A, 'lean.json'), '--library', LIBS.join(','), '--log', recorded(A, 'probe.log'),
+      '--receipt', recorded(A, 'receipt.json'), '--project-root', root, '--manifest', ATTEMPT_MANIFEST]);
+    assert.equal(result.status, 0, result.stderr);
+    const record = JSON.parse(result.stdout);
+    assert.equal(record.state, 'complete');
+    assert.equal(record.binding.status, 'bound');
+    assert.deepEqual(record.closures[K('wrap_x')].declarations, [K('Pt'), K('Pt.x'), K('Pt.y'), K('Wrap'), K('Wrap.pt')]);
+    assert.deepEqual(record.closures[K('wrap_x')].external, ['probe:Eq', 'probe:Nat']);
+    assert.deepEqual(record.closures[K('meter_v')].declarations, [K('Meter'), K('Meter.v')]);
+    assert.deepEqual(record.closures[K('meter_v')].external, ['probe:Aeneas.Std.U32', 'probe:Eq']);
+    assert.deepEqual(record.closures[K('selfImp')].declarations, []);
+    assert.equal(record.declarations[K('shiftPt')].kind, 'def');
+    // Raw atoms stay verbatim: the omitted lists are not filled in.
+    assert.ok(!Object.hasOwn(record.declarations[K('idT')], 'type-dependencies-external'));
+    assert.ok(!Object.hasOwn(record.declarations[K('Pt')], 'term-dependencies-external'));
+    assert.ok(!record.edges.some((edge) => edge.from === K('idT')));
+  });
+
+  it('coverage counts every declaration the module defines, not only the .ilean decls list', () => {
+    const record = kindsGraph(A);
+    for (const name of ['idT', 'selfImp', 'Pt.x', 'Wrap.pt']) assert.ok(record.completeness.modules['Specs.Kinds'].includes(`m1demo.kinds.${name}`), name);
+    const dropped = kindsDerived((data) => { delete data[K('idT')]; }, (text) => text.replace('Wrote 27 ', 'Wrote 26 '));
+    assert.deepEqual(codes(dropped), ['missing-declarations']);
+    assert.deepEqual(dropped.completeness.missingDeclarations, [K('idT')]);
+  });
+
+  it('recorded run B: an inductive type stays unqualified, and its constructors are missing', () => {
+    const record = kindsGraph(B);
+    assert.equal(record.state, 'incomplete');
+    assert.deepEqual(codes(record), ['unqualified-kind', 'missing-declarations', 'unresolved-edge']);
+    assert.deepEqual(record.completeness.missingDeclarations, [K('Color.green'), K('Color.red')]);
+    assert.equal(record.blockers[0].declaration, K('Color'));
+  });
+
+  it('a present empty external list or an absent local list is malformed', () => {
+    assert.deepEqual(codes(kindsDerived((data) => { data[K('Pt.x')]['term-dependencies-external'] = []; })), ['malformed-atom']);
+    assert.deepEqual(codes(kindsDerived((data) => { delete data[K('idT')]['type-dependencies']; })), ['malformed-atom']);
+    assert.deepEqual(codes(kindsDerived((data) => { data[K('twice')]['type-dependencies-external'] = 'probe:Nat'; })), ['malformed-atom']);
+  });
+
+  it('an omitted list on an unqualified kind is not accepted', () => {
+    assert.deepEqual(codes(kindsDerived((data) => { data[K('Pt')].kind = 'inductive'; })), ['unqualified-kind']);
+  });
+
+  it('an external list dropped after the run is caught by the receipt, never read as empty', () => {
+    const envelope = JSON.parse(read(A, 'lean.json'));
+    delete envelope.data[K('twice')]['type-dependencies-external'];
+    const record = kindsGraph(A, { extractText: JSON.stringify(envelope) });
+    assert.deepEqual(codes(record), ['run-mismatch']);
+    assert.deepEqual([record.binding.status, ...record.binding.reasons], ['unbound', 'run-receipt-disagrees']);
+  });
+});

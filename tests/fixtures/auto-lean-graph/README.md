@@ -54,6 +54,23 @@ the tests copy the project to a temporary directory and put the state back in pl
 | `bound-positive` | `bound-project`; `lake build M1demo Specs` first | `--library M1demo,Specs` | 0 |
 | `bound-mutated-body` | as above with the published `clamp` body hand-edited (`recorded/bound-mutated-body/M1demo.lean`) | `--library M1demo,Specs` | 0 |
 
+## Omitted external lists, structures and projections
+
+`kinds-project/` is `bound-project` with a third spec module, `Specs/Kinds.lean`: a def and a theorem with no
+external constant, defs and a theorem with external constants, structures with external and only-local fields
+(one holding an Aeneas `U32`), a class with two instances, and theorems whose statements reach structures only
+through projections. It holds run A's receipt-bound files (the state is again `recorded/bound-positive/state.json`).
+
+| Run | Project | Flags | Tool exit |
+|---|---|---|---|
+| `sparse-structures` (run A) | `kinds-project`; `lake build M1demo Specs` first | `--library M1demo,Specs` | 0 |
+| `sparse-kinds` (run B) | the same project with an inductive `Color` and a match on it instead of the two structure theorems (`recorded/sparse-kinds/Kinds.lean` and its `Kinds.ilean`) | `--library M1demo,Specs` | 0 |
+
+Each run's `lean-constants.json` is Lean's own record of the project declarations, captured from the built project
+with `lake env lean` on a small metaprogram (in the qualification evidence): every declaration's kind and the
+constants its type and value (theorem proofs included) mention. It is the ground truth the omitted-list contract is
+checked against.
+
 `seeded/feature-alt-M1demo.lean` is a mutation seed, not output of this project: the published `M1demo.lean`
 (sha256 `3f55027e...`) of a separately recorded `--features alt` attempt on another fixture crate, whose
 `translation.json` equals that attempt's positive. A test places it over `bound-project`'s published file to show

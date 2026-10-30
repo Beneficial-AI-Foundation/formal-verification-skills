@@ -1,0 +1,7 @@
+# Tells probe-aeneas and the FVS resolver where this extraction lives.
+aeneas:
+  commit: "0855ce1b8ed3958512b6c19de6bf3035b7acb552"
+crate:
+  dir: "."
+aeneas_args:
+  dest: "M1demo"

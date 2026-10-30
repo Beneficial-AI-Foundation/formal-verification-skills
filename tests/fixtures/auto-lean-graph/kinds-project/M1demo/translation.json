@@ -1,0 +1,80 @@
+{
+  "aeneas_version": "nightly-2026.09.30-0855ce1",
+  "charon_version": "0.1.274",
+  "crate": "m1demo",
+  "functions": [
+    {
+      "def_id": 19,
+      "lean_name": "m1demo.double",
+      "lean_file": "M1demo.lean",
+      "rust_name": "m1demo::double",
+      "is_local": true,
+      "source": { "file": "src/lib.rs", "begin_line": 3, "end_line": 5 },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 20,
+      "lean_name": "m1demo.clamp",
+      "lean_file": "M1demo.lean",
+      "rust_name": "m1demo::clamp",
+      "is_local": true,
+      "source": { "file": "src/lib.rs", "begin_line": 7, "end_line": 9 },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 21,
+      "lean_name": "m1demo.sum_to_loop.body",
+      "lean_file": "M1demo.lean",
+      "rust_name": "m1demo::sum_to",
+      "is_local": true,
+      "source": { "file": "src/lib.rs", "begin_line": 14, "end_line": 17 },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": true },
+      "parent_lean_name": "m1demo.sum_to"
+    },
+    {
+      "def_id": 21,
+      "lean_name": "m1demo.sum_to_loop",
+      "lean_file": "M1demo.lean",
+      "rust_name": "m1demo::sum_to",
+      "is_local": true,
+      "source": { "file": "src/lib.rs", "begin_line": 14, "end_line": 17 },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "m1demo.sum_to"
+    },
+    {
+      "def_id": 21,
+      "lean_name": "m1demo.sum_to",
+      "lean_file": "M1demo.lean",
+      "rust_name": "m1demo::sum_to",
+      "is_local": true,
+      "source": { "file": "src/lib.rs", "begin_line": 11, "end_line": 19 },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": true
+    }
+  ],
+  "types": [],
+  "globals": [],
+  "trait_decls": [],
+  "trait_impls": []
+}
