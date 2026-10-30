@@ -40,7 +40,7 @@ function usage() {
   process.stdout.write([
     'Usage: node fvs-rust-identity.mjs record --source-commit SHA --translation FILE --manifest FILE',
     '         --rust FILE --mappings FILE --lean FILE --functions FILE [--config FILE]',
-    '         [--state FILE] [--llbc FILE] [--out FILE] [--format json|text]',
+    '         [--state FILE] [--llbc FILE] [--lean-receipt FILE] [--out FILE] [--format json|text]',
     '',
     '--translation  Aeneas translation.json (-emit-json); its functions[] def_ids are the keys',
     '--manifest     fvs-extract-patches manifest.json of the same extraction',
@@ -51,6 +51,9 @@ function usage() {
     '--config       a configuration file whose sha256 is recorded as the caller\'s; it binds nothing',
     '--state        FVS auto state; its recorded manifest sha256 and source commit must agree, and',
     '               its recorded extraction attempt (extraction.run) is what can bind the record',
+    '--lean-receipt the ticket 21 probe-lean run receipt (fvs/lean-probe-run v1). Only with it may',
+    '               probe-lean\'s commit differ from the Rust source commit, and only when the record is',
+    '               bound and the receipt analysed every published Lean file at its recorded hash',
     '--llbc         Charon\'s LLBC from that attempt: its hash, options, embedded sources and',
     '               fun_decls are checked against the attempt, the manifest and translation.json',
     '',
@@ -99,7 +102,7 @@ const sha256Text = (text) => crypto.createHash('sha256').update(text).digest('he
 
 // Refuses an input whose envelope or identity fields are not the qualified shape,
 // so a missing or mistyped field can never take part in a match.
-function validate({ translation, manifest, rust, mappings, lean, functions, state, llbc, sourceCommit }) {
+function validate({ translation, manifest, rust, mappings, lean, functions, state, llbc, leanReceipt, sourceCommit }) {
   const bad = (label, message) => refuse('invalid-input', `${label}: ${message}`);
   for (const [label, value] of Object.entries({ translation, rust, mappings, lean, functions })) {
     if (!isObject(value) || !('json' in value)) bad(label, 'is required as { json, sha256 }');
@@ -157,6 +160,15 @@ function validate({ translation, manifest, rust, mappings, lean, functions, stat
   }
   const run = state ? (state.json.extraction ?? state.json.state?.extraction)?.run : undefined;
   if (run !== undefined && !runShapeValid(run)) bad('state', 'extraction.run is not a complete recorded extraction attempt (stages, trust, attempt hash, translation and a non-empty unique publication)');
+  if (leanReceipt !== null && leanReceipt !== undefined) {
+    const r = leanReceipt.json;
+    if (!isObject(leanReceipt) || !isObject(r) || r.schema !== 'fvs/lean-probe-run' || r.version !== 1 || typeof r.projectRoot !== 'string'
+      || !isObject(r.probe) || !Number.isInteger(r.probe.exitCode) || !isObject(r.lakeBuild) || !Number.isInteger(r.lakeBuild.exitCode)
+      || !isObject(r.inputs) || typeof r.inputs.leanProjectCommit !== 'string' || !isObject(r.inputs.files)
+      || Object.values(r.inputs.files).some((hash) => !isSha(hash)) || !isObject(r.outputs) || !isSha(r.outputs.extractSha256)) {
+      bad('lean receipt', 'is not a fvs/lean-probe-run version 1 record (project root, exit codes, Lean project commit, file hashes, extract hash)');
+    }
+  }
   if (llbc !== null && llbc !== undefined) {
     const l = llbc.json;
     if (!isObject(llbc) || !isObject(l) || typeof l.charon_version !== 'string' || !isObject(l.translated) || !isObject(l.translated.options)
@@ -338,11 +350,35 @@ function bindRun({ state, manifest, translation, llbc, t }) {
   };
 }
 
+// A Lean project may move on from the Rust source commit (for example a committed
+// specification module). That is accepted only when the record is bound to the
+// recorded attempt and the ticket 21 run receipt shows probe-lean analysed this
+// lean.json at that commit, with every published generated file byte-identical to
+// what the attempt published (paths relative to the crate root the engine recorded).
+// Returns what is missing; empty means covered.
+function leanCommitGaps({ binding, state, lean, leanReceipt }) {
+  if (binding.status !== 'bound') return ['the record is bound to a recorded extraction attempt'];
+  if (!leanReceipt) return ['a ticket 21 run receipt (--lean-receipt) covers the published Lean files'];
+  const r = leanReceipt.json;
+  const extraction = state.json.extraction ?? state.json.state?.extraction;
+  const gaps = [];
+  if (r.inputs.leanProjectCommit !== lean.json.source?.commit) gaps.push(`the receipt records the same Lean project commit (it records ${r.inputs.leanProjectCommit})`);
+  if (r.outputs.extractSha256 !== lean.sha256) gaps.push('the receipt records this probe-lean output');
+  if (r.probe.exitCode !== 0 || r.lakeBuild.exitCode !== 0) gaps.push('the receipted lake build and probe-lean run succeeded');
+  const root = extraction?.inputs?.crateRoot;
+  for (const entry of extraction?.run?.publication ?? []) {
+    const relative = typeof root === 'string' ? path.relative(root, entry.projectPath) : '..';
+    if (relative.startsWith('..') || path.isAbsolute(relative)) gaps.push(`${entry.projectPath} lies under the recorded crate root`);
+    else if (r.inputs.files[relative] !== entry.sha256) gaps.push(`the receipt analysed ${relative} at its published hash`);
+  }
+  return gaps;
+}
+
 // The public entry point: validates its input, then builds the record. Throws a
 // Refusal with code `invalid-input` for any input the qualified tools would not emit.
 export function buildRecord(input) {
   validate(input);
-  const { translation, manifest, rust, mappings, lean, functions, state, llbc, sourceCommit } = input;
+  const { translation, manifest, rust, mappings, lean, functions, state, llbc, leanReceipt, sourceCommit } = input;
   const t = translation.json;
   const blockers = [];
   const block = (code, message) => blockers.push({ code, message });
@@ -362,6 +398,7 @@ export function buildRecord(input) {
     mappingsSha256: mappings.sha256,
     leanSha256: lean?.sha256 ?? null,
     functionsSha256: functions?.sha256 ?? null,
+    leanProjectCommit: typeof lean.json.source?.commit === 'string' ? lean.json.source.commit : null,
     llbcSha256: llbc?.sha256 ?? null,
     configSha256: null,
     callerConfigSha256: input.configSha256 ?? null,
@@ -386,7 +423,11 @@ export function buildRecord(input) {
     if (Array.isArray(m.dirty) && m.dirty.length > 0) block('dirty-source', `manifest records uncommitted source changes: ${m.dirty.join(', ')}`);
   }
   if (rust.json.source?.commit !== sourceCommit) block('source-commit-mismatch', `probe-rust source commit ${rust.json.source?.commit} differs from ${sourceCommit}`);
-  if (lean && lean.json.source?.commit !== sourceCommit) block('source-commit-mismatch', `probe-lean source commit ${lean.json.source?.commit} differs from ${sourceCommit}`);
+  if (lean.json.source?.commit !== sourceCommit) {
+    const gaps = leanCommitGaps({ binding, state, lean, leanReceipt });
+    if (gaps.length > 0) block('source-commit-mismatch', `probe-lean source commit ${lean.json.source?.commit} differs from ${sourceCommit}, and that is accepted only when ${gaps.join('; ')}`);
+    else provenance.leanReceiptSha256 = leanReceipt.sha256;
+  }
   if (t.crate !== pkg) block('crate-mismatch', `translation.json crate ${JSON.stringify(t.crate)} is not the probed package ${JSON.stringify(pkg)}`);
   if (state) {
     const recorded = state.json.extraction ?? state.json.state?.extraction;
@@ -546,7 +587,7 @@ export function buildRecord(input) {
 }
 
 function parseFlags(argv) {
-  const known = ['source-commit', 'translation', 'manifest', 'rust', 'mappings', 'lean', 'functions', 'config', 'state', 'llbc', 'out', 'format'];
+  const known = ['source-commit', 'translation', 'manifest', 'rust', 'mappings', 'lean', 'functions', 'config', 'state', 'llbc', 'lean-receipt', 'out', 'format'];
   const flags = {};
   const rest = [...argv];
   while (rest.length > 0) {
@@ -582,6 +623,7 @@ function record(flags) {
     functions: readInput(flags.functions, 'functions.json'),
     state: flags.state ? readInput(flags.state, 'state') : null,
     llbc: flags.llbc ? readInput(flags.llbc, 'llbc') : null,
+    leanReceipt: flags['lean-receipt'] ? readInput(flags['lean-receipt'], 'lean receipt') : null,
     configSha256: flags.config ? sha256File(flags.config) : null,
   };
   const rec = buildRecord(inputs);

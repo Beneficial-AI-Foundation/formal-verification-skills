@@ -1,0 +1,4 @@
+import M1demo.M1demo
+
+/-- A specification module committed after extraction. -/
+def m1demoSpecMarker : Nat := 1

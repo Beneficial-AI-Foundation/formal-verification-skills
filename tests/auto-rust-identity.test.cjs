@@ -739,6 +739,76 @@ describe('Rust identity record: binding to a recorded extraction attempt', () =>
     }
   });
 
+  it('records the Lean project commit and needs no receipt when it equals the Rust source commit', () => {
+    const { status, result } = bound();
+    assert.equal(status, 0);
+    assert.equal(result.record.provenance.leanProjectCommit, result.record.provenance.sourceCommit);
+  });
+
+  it('accepts a later Lean project commit only with a bound record and a receipt covering the published Lean', async () => {
+    const SPEC = path.join(__dirname, 'fixtures', 'auto-rust-identity', 'spec-commit');
+    const RUST_COMMIT = '8d4406a8be358e1e177a01a8759c9cf46d411618';
+    const LEAN_COMMIT = '9640d99bc02fa0efdfe1a91fea5e6d0c02bae0df';
+    const dir = scratch();
+    const llbc = path.join(dir, 'spec.llbc');
+    fs.writeFileSync(llbc, zlib.gunzipSync(fs.readFileSync(path.join(SPEC, 'm1demo.llbc.gz'))));
+    const write = (name, value) => { const file = path.join(dir, name); fs.writeFileSync(file, typeof value === 'string' ? value : JSON.stringify(value)); return file; };
+    const read = (name) => JSON.parse(fs.readFileSync(path.join(SPEC, name), 'utf8'));
+    const run = (files = {}, receipt = path.join(SPEC, 'lean-receipt.json')) => {
+      const at = (name) => files[name] ?? path.join(SPEC, name);
+      const args = [SCRIPT, 'record', '--source-commit', RUST_COMMIT, '--translation', at('translation.json'), '--manifest', at('manifest.json'),
+        '--rust', at('rust.json'), '--mappings', at('translations.json'), '--lean', at('lean.json'), '--functions', at('functions.json'),
+        '--state', at('state.json'), '--llbc', llbc];
+      if (receipt !== null) args.push('--lean-receipt', receipt);
+      const out = spawnSync(process.execPath, args, { encoding: 'utf8' });
+      return { status: out.status, result: JSON.parse(out.stdout) };
+    };
+    const mismatch = (result) => result.record.blockers.some((b) => b.code === 'source-commit-mismatch');
+
+    // Recorded positive: Rust source commit 8d4406a8, specification commit 9640d99b, receipt covering the publication.
+    const positive = run();
+    assert.equal(positive.status, 0, JSON.stringify(positive.result.record?.blockers));
+    assert.equal(positive.result.record.binding.status, 'bound');
+    assert.equal(positive.result.record.provenance.sourceCommit, RUST_COMMIT);
+    assert.equal(positive.result.record.provenance.leanProjectCommit, LEAN_COMMIT);
+    assert.equal(positive.result.record.provenance.leanReceiptSha256, sha256(path.join(SPEC, 'lean-receipt.json')));
+
+    assert.ok(mismatch(run({}, null).result), 'no receipt: still blocked');
+    // Labelled mutations of the recorded receipt and inputs.
+    const receipt = read('lean-receipt.json');
+    const variant = (edit) => { const r = structuredClone(receipt); edit(r); return write(`receipt-${Math.random().toString(16).slice(2)}.json`, r); };
+    for (const [label, edit] of Object.entries({
+      'receipt names another Lean commit': (r) => { r.inputs.leanProjectCommit = RUST_COMMIT; },
+      'receipt records another probe-lean output': (r) => { r.outputs.extractSha256 = '0'.repeat(64); },
+      'changed generated body': (r) => { r.inputs.files['M1demo/M1demo.lean'] = 'f'.repeat(64); },
+      'published file missing from the receipt': (r) => { delete r.inputs.files['M1demo/translation.json']; },
+      'failed receipted run': (r) => { r.probe.exitCode = 1; },
+    })) {
+      const { status, result } = run({}, variant(edit));
+      assert.equal(status, 7, label);
+      assert.ok(mismatch(result), label);
+    }
+    const unbound = structuredClone(read('state.json'));
+    unbound.extraction.run.supported = false;
+    assert.ok(mismatch(run({ 'state.json': write('unbound-state.json', unbound) }).result), 'unbound record: still blocked');
+    const rust = read('rust.json');
+    rust.source.commit = LEAN_COMMIT;
+    assert.ok(mismatch(run({ 'rust.json': write('rust-at-lean-commit.json', rust) }).result), 'probe-rust at another commit: still blocked');
+    const malformed = run({}, variant((r) => { delete r.inputs.files; }));
+    assert.equal(malformed.result.code, 'invalid-input');
+
+    const { buildRecord } = await import(require('node:url').pathToFileURL(SCRIPT).href);
+    const load = (file) => ({ json: JSON.parse(fs.readFileSync(file, 'utf8')), sha256: sha256(file) });
+    const input = (receiptFile) => ({
+      sourceCommit: RUST_COMMIT, translation: load(path.join(SPEC, 'translation.json')), manifest: load(path.join(SPEC, 'manifest.json')),
+      rust: load(path.join(SPEC, 'rust.json')), mappings: load(path.join(SPEC, 'translations.json')), lean: load(path.join(SPEC, 'lean.json')),
+      functions: load(path.join(SPEC, 'functions.json')), state: load(path.join(SPEC, 'state.json')), llbc: load(llbc),
+      leanReceipt: receiptFile ? load(receiptFile) : null, configSha256: null,
+    });
+    assert.equal(buildRecord(input(path.join(SPEC, 'lean-receipt.json'))).status, 'complete', 'exported builder: positive');
+    assert.equal(buildRecord(input(null)).status, 'blocked', 'exported builder: no receipt');
+  });
+
   it('flags a type-generic function from the LLBC as unsupported (recorded run 2 and its receipted LLBC)', () => {
     const RUN2 = path.join(__dirname, 'fixtures', 'auto-rust-identity', 'qualified-run2');
     const dir = scratch();

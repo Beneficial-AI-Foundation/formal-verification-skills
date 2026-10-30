@@ -1,0 +1,51 @@
+{
+  "schema": "fvs/lean-probe-run",
+  "version": 1,
+  "projectRoot": "/tmp/fvs39-b4/proj",
+  "libraries": [
+    "M1demo",
+    "M1demoSpec"
+  ],
+  "lakeBuild": {
+    "argv": [
+      "lake",
+      "build",
+      "M1demo",
+      "M1demoSpec"
+    ],
+    "exitCode": 0
+  },
+  "probe": {
+    "argv": [
+      "/Users/ada/.fvs/tools/swvf-qualification/home/.local/bin/probe-lean-v4.31.0",
+      "extract",
+      "/tmp/fvs39-b4/proj",
+      "--library",
+      "M1demo,M1demoSpec",
+      "-o",
+      "/tmp/fvs39-b4/runs/spec-commit/lean.json"
+    ],
+    "exitCode": 0,
+    "sha256": "fd31d965a9d12cd5a95080c810d3441a8d38e380f25eee37c85b9444ceec283d",
+    "version": "0.14.0"
+  },
+  "inputs": {
+    "leanProjectCommit": "9640d99bc02fa0efdfe1a91fea5e6d0c02bae0df",
+    "files": {
+      "M1demo/M1demo.lean": "66e88c8c44dabc333b9f59409f42cc13e69b32fd33cee5269d2fd4c06bc391c2",
+      "M1demo/translation.json": "6b240a7bc7b8f99dff14818c5359bd2c59c142815e8f47a4db1aa52c833b7fe7",
+      "M1demo.lean": "998cff4e0c58a30f8c5a5e42eaff4d401ca9d7b2d0290738e0f3cd91b9e4aae8",
+      "M1demoSpec.lean": "124d152e1167dc438224cc39a9fb9de776f80a3322ab5a1d70772a4af555c17b",
+      "lake-manifest.json": "52e67b1cb09003b8831ffc387dc362eba1c00de85a4dfd3f9e52e95378c63d72",
+      "lakefile.toml": "885e32576826683f625bf03b060cc64e63e6e3c291c8a239ab25dfb299a90b7f",
+      "lean-toolchain": "efac0b94923b2d8b6840cd35be9177ad0fc5ab2332f4f4311c98712cee92fdee",
+      ".lake/build/lib/lean/M1demo/M1demo.ilean": "d06afa651cce5753f0dceee6d379949ff577ad57d83a00afda41fadb6f87e4ed",
+      ".lake/build/lib/lean/M1demo.ilean": "dc2af0b3f028b6ae072bffec1128b18e6529a5512d13dfe42527930a243dbb0d",
+      ".lake/build/lib/lean/M1demoSpec.ilean": "f0b68cc79ec5f2c5bbc2fa387f0d3df2c788bdd4d35d7cc1a63daa178e4a19dd"
+    }
+  },
+  "outputs": {
+    "extractSha256": "2b87e2c04a9c2b385906b585dd5cd8724cc06e2eeeb6f7d07bfc6c575d00c618",
+    "logSha256": "215c9d802369498addb7a89f89db41f50829b11aa79e58dad641582f90182148"
+  }
+}
