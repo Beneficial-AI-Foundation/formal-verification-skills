@@ -111,3 +111,41 @@ it('refuses project modules that shadow the pinned checker toolchain before exec
   assert.equal(run.status, 6, run.stdout + run.stderr); assert.match(JSON.parse(run.stdout).message, /project module shadows the pinned toolchain/);
   assert.equal(fs.existsSync(out), false);
 });
+
+it('immutable Git inventory disables lazy fetching in the actual subprocess and its receipt', async () => {
+  const { sourceInventory } = await import('../scripts/fvs-checker-auto.mjs');
+  const cp = require('node:child_process'), { syncBuiltinESMExports } = require('node:module');
+  const dir = fs.realpathSync(scratch()), repo = path.join(dir, 'repo'), out = path.join(dir, 'out'); fs.mkdirSync(repo); fs.mkdirSync(out);
+  const git = (...args) => {
+    const run = spawnSync('/usr/bin/git', args, { cwd: repo, encoding: 'utf8', env: { PATH: '/usr/bin:/bin', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0', GIT_NO_LAZY_FETCH: '1' } });
+    assert.equal(run.status, 0, run.stdout + run.stderr); return run.stdout.trim();
+  };
+  git('init', '-b', 'fixture'); fs.writeFileSync(path.join(repo, 'Tracked.lean'), '-- local object inventory fixture\n'); git('add', 'Tracked.lean');
+  git('-c', 'user.name=Local checker fixture', '-c', 'user.email=fixture@localhost', '-c', 'commit.gpgsign=false', 'commit', '-m', 'test(checker): provide local inventory input');
+  const source = { kind: 'git', root: repo, commit: git('rev-parse', 'HEAD'), expectedTree: git('rev-parse', 'HEAD^{tree}') };
+  const original = cp.spawnSync; let observed, result;
+  cp.spawnSync = (command, args, options) => {
+    assert.equal(command, '/usr/bin/git'); assert.ok(args.includes('ls-tree'));
+    assert.equal(options.env.GIT_NO_LAZY_FETCH, '1', 'missing objects must never start a promisor fetch');
+    observed = { ...options.env }; return original(command, args, options);
+  };
+  syncBuiltinESMExports();
+  try { result = sourceInventory(source, Date.now() + 10000, out, 'inventory'); }
+  finally { cp.spawnSync = original; syncBuiltinESMExports(); }
+  assert.ok(observed); assert.deepEqual(result.files, ['Tracked.lean']);
+  const inventory = JSON.parse(fs.readFileSync(result.evidence.file));
+  const attempt = JSON.parse(fs.readFileSync(inventory.attempt.file));
+  assert.deepEqual(attempt.env, observed); assert.equal(attempt.exit, 0);
+});
+
+it('declared overlay modules use normalized omitted, dot and subdirectory roots', async () => {
+  const { overlayModule } = await import('../scripts/fvs-checker-auto.mjs');
+  assert.equal(overlayModule('Specs/Proof.lean'), 'Specs.Proof');
+  assert.equal(overlayModule('Specs/Proof.lean', '.'), 'Specs.Proof');
+  assert.equal(overlayModule('lean/Specs/Proof.lean', 'lean'), 'Specs.Proof');
+  assert.equal(overlayModule('Specs/Proof.lean', 'lean'), null);
+  assert.equal(overlayModule('lean-other/Specs/Proof.lean', 'lean'), null);
+  assert.equal(overlayModule('lean/../Escape.lean', 'lean'), null);
+  assert.equal(overlayModule('./Specs/Proof.lean', '.'), null);
+  assert.equal(overlayModule('Specs/Proof.lean', '/absolute'), null);
+});

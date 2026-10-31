@@ -127,17 +127,18 @@ function checkedProcess(lean, args, cwd, deadlineMs, searchPaths, label) {
   return { run, receipt };
 }
 
-function sourceInventory(source, deadlineMs, out, label) {
+export function sourceInventory(source, deadlineMs, out, label) {
   closed(source, ['kind', 'root', 'commit', 'expectedTree'], 'immutable source');
   if (source.kind !== 'git' || !path.isAbsolute(source.root ?? '') || !isCommit(source.commit) || !isCommit(source.expectedTree)) refuse('invalid-input', 'immutable context/candidate source is required');
   beforeDeadline({ deadlineMs });
   const git = '/usr/bin/git', toolSha256 = hash(git);
   const argv = [git, '--no-optional-locks', '--no-replace-objects', '-C', source.root, 'ls-tree', '-rz', '--full-tree', source.expectedTree];
+  const env = { PATH: '/usr/bin:/bin', LANG: 'C', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0', GIT_NO_LAZY_FETCH: '1' };
   const run = spawnSync(git, argv.slice(1), { cwd: out, timeout: Math.max(1, deadlineMs - Date.now()), maxBuffer: 16 * 1024 * 1024,
-    env: { PATH: '/usr/bin:/bin', LANG: 'C', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' } });
+    env });
   fs.writeFileSync(path.join(out, `${label}.stdout`), run.stdout ?? '', { flag: 'wx' });
   fs.writeFileSync(path.join(out, `${label}.stderr`), run.stderr ?? '', { flag: 'wx' });
-  const attempt = save(out, `${label}-attempt.json`, { argv, cwd: out, toolSha256, exit: run.status, signal: run.signal, error: run.error?.code ?? null,
+  const attempt = save(out, `${label}-attempt.json`, { argv, cwd: out, env, toolSha256, exit: run.status, signal: run.signal, error: run.error?.code ?? null,
     stdoutSha256: sha(run.stdout ?? ''), stderrSha256: sha(run.stderr ?? '') });
   if (hash(git) !== toolSha256) refuse('stale-input', 'Git changed during immutable source inventory');
   if (run.error?.code === 'ETIMEDOUT') refuse('timeout', 'immutable source inventory timed out');
@@ -151,8 +152,9 @@ function sourceInventory(source, deadlineMs, out, label) {
   return { files, evidence: save(out, `${label}.json`, { source, files, attempt }) };
 }
 
-function overlayModule(file, sourceRoot = '') {
-  const prefix = sourceRoot ? `${sourceRoot}/` : '';
+export function overlayModule(file, sourceRoot = '') {
+  if (!relative(file) || (sourceRoot !== '' && sourceRoot !== '.' && !relative(sourceRoot))) return null;
+  const prefix = sourceRoot && sourceRoot !== '.' ? `${sourceRoot}/` : '';
   if (!file.startsWith(prefix) || !file.endsWith('.lean') || file === 'lakefile.lean') return null;
   const name = file.slice(prefix.length, -5).replaceAll('/', '.');
   return moduleName(name) ? name : null;
