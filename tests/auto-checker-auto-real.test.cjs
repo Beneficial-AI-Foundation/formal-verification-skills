@@ -153,7 +153,8 @@ describe('genuine paired auto lifecycle (FVS_REAL_AUTO=1)', { skip: process.env.
   it('refuses stale store heads, altered integrated trees, and expired requests without publication', async () => {
     const before = store().headSha256;
     let run = await invoke('accept', acceptance(20, '0'.repeat(64)), 'stale-store'); refused(run, 7, /expected head/);
-    run = await invoke('accept', { ...acceptance(20), source: { ...context.source, expectedTree: '0'.repeat(40) } }, 'wrong-tree'); refused(run, 4, /tree identity mismatch/);
+    run = await invoke('accept', { ...acceptance(20), source: { ...context.source, expectedTree: '0'.repeat(40) } }, 'wrong-tree'); refused(run, 5, /immutable source inventory failed/);
+    assert.equal(fs.existsSync(path.join(run.out, 'integrated/candidate-build')), false);
     run = await invoke('accept', { ...acceptance(20), source: context.nonCurrentSource }, 'non-current-integration'); refused(run, 7, /not the current target HEAD/);
     run = await invoke('check', { source: context.source, nodes: [20], deadlineMs: 1 }, 'expired'); refused(run, 8);
     assert.equal(store().headSha256, before); assert.equal(store().records.length, 1);
@@ -204,7 +205,12 @@ describe('genuine paired auto lifecycle (FVS_REAL_AUTO=1)', { skip: process.env.
     fs.writeFileSync(path.join(root, 'semantic-revision.stdout'), revision.stdout ?? '', { flag: 'wx' }); fs.writeFileSync(path.join(root, 'semantic-revision.stderr'), revision.stderr ?? '', { flag: 'wx' });
     operations.push(save(path.join(root, 'semantic-revision.attempt.json'), { argv: [process.execPath, ...argv], exit: revision.status, signal: revision.signal,
       stdoutSha256: hash(path.join(root, 'semantic-revision.stdout')), stderrSha256: hash(path.join(root, 'semantic-revision.stderr')) }));
-    assert.equal(revision.status, 0, revision.stdout + revision.stderr); assert.equal(JSON.parse(revision.stdout).record.state, 'needs-semantic-review');
+    assert.equal(revision.status, 6, revision.stdout + revision.stderr);
+    const revised = JSON.parse(revision.stdout).record;
+    assert.equal(revised.state, 'needs-semantic-review');
+    assert.equal(revised.changeClass, 'semantic');
+    assert.deepEqual(revised.invalidates, [{ defId: 19, effect: 'recheck-required' },
+      { defId: 20, effect: 'needs-semantic-review' }, { defId: 21, effect: 'needs-semantic-review' }]);
     const run = await invoke('check', { baseline: context.invalidatableBaseline, source: context.source, nodes: [20] }, 'stale-semantic-context');
     refused(run, 7, /registry/); assert.equal(store().headSha256, head);
   });
