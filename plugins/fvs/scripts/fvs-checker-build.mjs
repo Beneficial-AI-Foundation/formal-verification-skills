@@ -112,17 +112,22 @@ export async function buildCheckerSnapshot(input) {
   const digest = (file, aliases = false, checked = false) => {
     tick();
     if (!checked) absolute(file);
-    const stat = fs.lstatSync(file);
-    if (!stat.isFile() || (!aliases && stat.nlink !== 1)) fail('non-regular or aliased input/output file');
-    const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
     try {
       const before = fs.fstatSync(fd);
+      if (!before.isFile() || (!aliases && before.nlink !== 1)) fail('non-regular or aliased input/output file');
       const sha = crypto.createHash('sha256');
-      let count;
-      while ((count = fs.readSync(fd, readBuffer, 0, readBuffer.length, null)) > 0) { tick(); sha.update(readBuffer.subarray(0, count)); }
+      let remaining = before.size;
+      while (remaining > 0) {
+        tick();
+        const count = fs.readSync(fd, readBuffer, 0, Math.min(readBuffer.length, remaining), null);
+        if (!count) fail('file changed while hashing');
+        sha.update(readBuffer.subarray(0, count)); remaining -= count;
+      }
       const after = fs.fstatSync(fd);
+      tick();
       if (before.ino !== after.ino || before.dev !== after.dev || before.size !== after.size ||
-          before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) fail('file changed while hashing');
+          before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs || (!aliases && after.nlink !== 1)) fail('file changed while hashing');
       return { sha256: sha.digest('hex'), size: after.size };
     } finally { fs.closeSync(fd); }
   };
@@ -231,9 +236,17 @@ export async function buildCheckerSnapshot(input) {
     for (const dir of ['source', 'receipts', 'tmp', 'home', 'output']) fs.mkdirSync(path.join(root, dir), { mode: 0o700 });
     Object.assign(result, { root, projectRoot: path.join(root, 'source'), buildRoot: path.join(root, 'source', '.lake', 'build') });
     const project = result.projectRoot;
+    const copyDirectories = new Set([project]);
+    const copyDirectory = (directory) => {
+      if (!copyDirectories.has(directory)) {
+        fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+        copyDirectories.add(directory);
+      }
+    };
     const copy = (from, to) => {
+      tick();
       absolute(from);
-      fs.mkdirSync(path.dirname(to), { recursive: true, mode: 0o700 });
+      copyDirectory(path.dirname(to));
       fs.copyFileSync(from, to, fs.constants.COPYFILE_EXCL | fs.constants.COPYFILE_FICLONE);
       fs.chmodSync(to, fs.statSync(from).mode & 0o777);
     };
@@ -271,7 +284,7 @@ export async function buildCheckerSnapshot(input) {
         const bytes = await git('cat-file', 'blob', oid);
         if (gitHash('blob', bytes, oid.length) !== oid) fail('git export blob identity mismatch');
         const dest = path.join(project, file);
-        fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
+        copyDirectory(path.dirname(dest));
         fs.writeFileSync(dest, bytes, { flag: 'wx', mode: mode === '100755' ? 0o700 : 0o600 });
         sourceFiles[file] = digest(dest);
       }
@@ -322,7 +335,7 @@ export async function buildCheckerSnapshot(input) {
       for (const [file, identity] of Object.entries(dependencyFiles)) {
         const destination = path.join(ownedDependencies, file);
         if (identity.symlink !== undefined) {
-          fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
+          copyDirectory(path.dirname(destination));
           fs.symlinkSync(identity.symlink, destination);
         } else copy(path.join(request.dependencies.root, file), destination);
       }
@@ -382,8 +395,10 @@ export async function buildCheckerSnapshot(input) {
     const externalImports = new Set();
     const externalFiles = {};
     const externalFile = (file) => {
+      tick();
+      if (Object.hasOwn(externalFiles, file)) return;
       absolute(file);
-      const identity = digest(file, within(toolRoot, file));
+      const identity = digest(file, within(toolRoot, file), true);
       const expected = within(runtimeDir, file) ? runtimeFiles[path.relative(runtimeDir, file)] :
         ownedDependencies && within(ownedDependencies, file) ? dependencyFiles[path.relative(ownedDependencies, file)] : null;
       if (!expected || expected.symlink !== undefined || !equal(identity, expected)) fail('resolved external input is not in the frozen snapshot');
@@ -428,8 +443,8 @@ export async function buildCheckerSnapshot(input) {
         for (const [name, arts] of Object.entries(setup.importArts)) {
           if (!NAME.test(name) || !Array.isArray(arts) || !arts.length || new Set(arts).size !== arts.length) fail('malformed resolved import artifacts');
           for (const file of arts) {
-            absolute(file);
             if (within(libRoot, file)) {
+              absolute(file);
               if (!projectNames.has(name) || file !== path.join(libRoot, `${name.split('.').join('/')}.olean`) &&
                   ![`.olean.server`, `.olean.private`, `.ir`].some((suffix) => file === path.join(libRoot, `${name.split('.').join('/')}${suffix}`))) fail('project import artifact mismatch');
               if (!outputFiles[path.relative(result.buildRoot, file)]?.size) fail('missing project import artifact');
@@ -460,6 +475,8 @@ export async function buildCheckerSnapshot(input) {
     checkInputs();
     if (!equal(tree(result.buildRoot), outputFiles)) fail('compiled outputs changed during validation');
     if (ownedDependencies && !equal(tree(ownedDependencies, false, true), ownedAfter)) fail('owned dependency files changed during validation');
+    // Reuse checks only within this phase; full inventories above rehash every byte.
+    for (const file of Object.keys(externalFiles)) { tick(); absolute(file); }
     const externalInventory = {};
     for (const directory of [...externalPaths].sort()) {
       absolute(directory);

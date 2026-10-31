@@ -102,6 +102,103 @@ describe('real checker core (FVS_REAL_CHECKER=1)', { skip: process.env.FVS_REAL_
     assert.equal(result.schema, 'fvs-checker/standalone-result'); assert.equal(result.authority, 'audit-only');
     assert.equal(result.audit.status, 'kernel-checked'); assert.deepEqual(result.audit.targets, ['target']);
   });
+  it('reconciles unused metaprogram theorems with the standalone module inventory', async (t) => {
+    for (const [label, value] of [['valid', 'mkConst ``True.intro'], ['invalid', 'mkNatLit 0'],
+      ['sorry', 'mkApp2 (mkConst ``sorryAx [Level.zero]) (mkConst ``True) (mkConst ``Bool.false)']]) await t.test(label, () => {
+      const dir = scratch(), project = path.join(dir, 'project'); fs.mkdirSync(project);
+      const source = `import Lean\nopen Lean Elab Command\nset_option debug.skipKernelTC true in\nrun_cmd do\n  liftCoreM <| addDecl (.thmDecl { name := \`Fixture.unlisted, levelParams := [], type := mkConst \`\`True, value := ${value} })\ntheorem target : True := True.intro\n`;
+      fs.writeFileSync(path.join(project, 'Fixture.lean'), source);
+      const request = path.join(dir, 'freeze.json'), out = path.join(dir, 'baseline');
+      fs.writeFileSync(request, JSON.stringify({ schema: 'fvs-checker/freeze-request', version: 1, purpose: 'standalone', runId: 'unlisted-' + label,
+        projectRoot: project, specFile: 'Fixture.lean', lean: { path: LEAN, sha256: hash(LEAN) }, deadlineMs: Date.now() + STANDALONE_MS,
+        externalSearchPaths: [], externalImports: ['Lean'] }));
+      const run = spawnSync(process.execPath, [SCRIPT, 'freeze', '--request', request, '--out', out], { encoding: 'utf8', timeout: STANDALONE_TIMEOUT });
+      assert.equal(run.status, 6, run.stdout + run.stderr); assert.match(response(run.stdout).message, /unsupported unlisted project theorem Fixture.unlisted/);
+      assert.equal(fs.existsSync(path.join(out, 'frozen.json')), false);
+    });
+  });
+  it('covers private normal and generated proof dependencies and refuses an omitted new theorem', () => {
+    const dir = scratch(), project = path.join(dir, 'project'); fs.mkdirSync(project);
+    const source = 'import Lean\nopen Lean Meta Elab Tactic\nprivate theorem normal : True := True.intro\ntheorem target : True := by\n  run_tac addDecl (.thmDecl { name := `target.generated, levelParams := [], type := mkConst ``True, value := mkConst ``True.intro })\n  exact target.generated\n';
+    fs.writeFileSync(path.join(project, 'Fixture.lean'), source);
+    const request = path.join(dir, 'freeze.json'), out = path.join(dir, 'baseline');
+    fs.writeFileSync(request, JSON.stringify({ schema: 'fvs-checker/freeze-request', version: 1, purpose: 'standalone', runId: 'covered-generated',
+      projectRoot: project, specFile: 'Fixture.lean', lean: { path: LEAN, sha256: hash(LEAN) }, deadlineMs: Date.now() + STANDALONE_MS,
+      externalSearchPaths: [], externalImports: ['Lean'] }));
+    let run = spawnSync(process.execPath, [SCRIPT, 'freeze', '--request', request, '--out', out], { encoding: 'utf8', timeout: STANDALONE_TIMEOUT });
+    assert.equal(run.status, 0, run.stdout + run.stderr); const baseline = response(run.stdout).baseline;
+    const check = (label, expected, diagnostic) => {
+      const file = path.join(dir, label + '.json');
+      fs.writeFileSync(file, JSON.stringify({ schema: 'fvs-checker/check-request', version: 1, purpose: 'standalone', runId: label,
+        projectRoot: project, baseline, deadlineMs: Date.now() + STANDALONE_MS }));
+      const run = spawnSync(process.execPath, [SCRIPT, 'check', '--request', file, '--out', path.join(dir, label)], { encoding: 'utf8', timeout: STANDALONE_TIMEOUT });
+      assert.equal(run.status, expected, run.stdout + run.stderr);
+      if (diagnostic) assert.match(response(run.stdout).message, diagnostic);
+      return response(run.stdout);
+    };
+    const passed = check('covered', 0);
+    assert.ok(passed.audit.replayed.includes('target.generated')); assert.ok(passed.audit.replayed.some((n) => n.endsWith('.normal')));
+    fs.writeFileSync(path.join(project, 'Fixture.lean'), source.replace('  exact target.generated', '  run_tac addDecl (.thmDecl { name := `target.omitted, levelParams := [], type := mkConst ``True, value := mkConst ``True.intro })\n  exact target.generated'));
+    check('omitted', 6, /unsupported unlisted project theorem target.omitted/);
+  });
+  it('compares original implementation meaning independently of a new proof module', async (t) => {
+    const dir = scratch();
+    const original = compile(path.join(dir, 'original'), 'import Lean\ndef Model.implementation (n : Nat) : Nat := n\n', 'Implementation');
+    const fresh = path.join(dir, 'fresh');
+    const implementation = compile(fresh, 'import Lean\ndef Model.implementation (n : Nat) : Nat := n\n', 'Implementation');
+    fs.writeFileSync(path.join(fresh, 'NewProof.lean'), 'import Implementation\ntheorem NewProof.target (n : Nat) : Model.implementation n = n := rfl\n');
+    const compileProof = spawnSync(LEAN, ['-o', 'NewProof.olean', 'NewProof.lean'], { cwd: fresh, encoding: 'utf8', timeout: 30000,
+      env: { PATH: path.dirname(LEAN) + ':/usr/bin:/bin', LEAN_PATH: fresh } });
+    assert.equal(compileProof.status, 0, compileProof.stdout + compileProof.stderr);
+    const modules = [{ name: 'Implementation', parts: [implementation] }, { name: 'NewProof', parts: [path.join(fresh, 'NewProof.olean')] }];
+    const base = { schema: 'fvs-checker/kernel-request', version: 1, runId: 'original-meaning-no-proof', lean: { path: LEAN, sha256: hash(LEAN) },
+      deadlineMs: Date.now() + 60000, externalSearchPaths: [], externalImports: ['Lean'], modules,
+      referenceModules: [{ name: 'Implementation', parts: [original] }], targets: [], meaningRoots: ['Model.implementation'], meaningOnly: true };
+    const request = path.join(dir, 'meaning.json'); fs.writeFileSync(request, JSON.stringify(base));
+    const runner = path.join(dir, 'baseline-engine.mjs');
+    fs.writeFileSync(runner, `import {runKernelAudit} from ${JSON.stringify(require('node:url').pathToFileURL(SCRIPT).href)};\ntry { const r=runKernelAudit({request:process.argv[2],out:process.argv[3]},{baseline:true}); console.log(JSON.stringify({evidence:r.evidence,authority:r.authority})); } catch(e) { console.log(JSON.stringify({code:e.code,message:e.message})); process.exitCode=4; }\n`);
+    let run = spawnSync(process.execPath, [runner, request, path.join(dir, 'meaning')], { encoding: 'utf8', timeout: 65000 });
+    assert.equal(run.status, 0, run.stdout + run.stderr); assert.ok(response(run.stdout).audit.meaning.includes('Model.implementation'));
+    assert.deepEqual(response(run.stdout).audit.targets, []);
+    const { expectedWitness } = await import(require('node:url').pathToFileURL(path.resolve(__dirname, '../scripts/fvs-checker-auto.mjs')).href);
+    const expected = expectedWitness({ runId: 'new-overlay', deadlineMs: Date.now() + 60000 }, { lean: base.lean, projectRoot: fresh, modules,
+      externalSearchPaths: [], externalImports: ['Lean'] }, [{ node: 1, statement: '∀ (n : Nat), Model.implementation n = n', contextFile: 'NewProof.lean' }],
+      path.join(dir, 'expected'), { HELPER: path.resolve(__dirname, '../scripts/FvsKernelAudit.lean') });
+    for (const [label, name, module, exit, reason] of [['fresh', 'NewProof.target', 'NewProof', 0],
+      ['wrong-module', 'NewProof.target', 'Implementation', 4, /proof module mapping mismatch/],
+      ['missing-target', 'NewProof.missing', 'NewProof', 4, /missing or ambiguous declaration/]]) await t.test(label, () => {
+      const file = path.join(dir, label + '.json');
+      fs.writeFileSync(file, JSON.stringify({ ...base, runId: label, meaningOnly: undefined, deadlineMs: Date.now() + 60000,
+        referenceModules: [...modules, expected.module], targets: [{ name, module, expectedName: 'FvsCheckerExpected.expected_1' }] }));
+      const run = spawnSync(process.execPath, [SCRIPT, 'audit', '--request', file, '--out', path.join(dir, 'audit-' + label)], { encoding: 'utf8', timeout: 65000 });
+      assert.equal(run.status, exit, run.stdout + run.stderr);
+      if (reason) assert.match(response(run.stdout).message, reason);
+      else assert.equal(response(run.stdout).audit.status, 'kernel-checked');
+    });
+    const changed = compile(path.join(dir, 'changed'), 'import Lean\ndef Model.implementation (n : Nat) : Nat := n + 0\n', 'Implementation');
+    const altered = path.join(dir, 'changed.json'); fs.writeFileSync(altered, JSON.stringify({ ...base, deadlineMs: Date.now() + 60000,
+      modules: [{ name: 'Implementation', parts: [changed] }, modules[1]] }));
+    run = spawnSync(process.execPath, [runner, altered, path.join(dir, 'changed-meaning')], { encoding: 'utf8', timeout: 65000 });
+    assert.equal(run.status, 4, run.stdout + run.stderr); assert.match(response(run.stdout).message, /semantic definition identity mismatch Model.implementation/);
+  });
+  it('requires explicitly closed auto propositions before exact type comparison', async () => {
+    const dir = scratch(), project = path.join(dir, 'project');
+    const compiled = compile(project, 'import Lean\ntheorem target {α : Type} (p : α) : p = p := rfl\n');
+    const { expectedWitness } = await import(require('node:url').pathToFileURL(path.resolve(__dirname, '../scripts/fvs-checker-auto.mjs')).href);
+    const helper = path.resolve(__dirname, '../scripts/FvsKernelAudit.lean');
+    const build = { lean: { path: LEAN, sha256: hash(LEAN) }, projectRoot: project,
+      modules: [{ name: 'Fixture', parts: [compiled] }], externalSearchPaths: [], externalImports: ['Lean'] };
+    const targets = [{ node: 1, name: 'target', contextFile: 'Fixture.lean', statement: '∀ {α : Type} (p : α), p = p' }];
+    const expected = expectedWitness({ runId: 'explicit-positive', deadlineMs: Date.now() + 60000 }, build, targets, path.join(dir, 'explicit'), { HELPER: helper });
+    const request = path.join(dir, 'request.json');
+    fs.writeFileSync(request, JSON.stringify({ schema: 'fvs-checker/kernel-request', version: 1, runId: 'explicit-type', lean: build.lean,
+      deadlineMs: Date.now() + 60000, externalSearchPaths: [], externalImports: ['Lean'], modules: build.modules,
+      referenceModules: [...build.modules, expected.module], targets: [{ name: 'target', expectedName: 'FvsCheckerExpected.expected_1' }], meaningRoots: [] }));
+    const run = spawnSync(process.execPath, [SCRIPT, 'audit', '--request', request, '--out', path.join(dir, 'audit')], { encoding: 'utf8', timeout: 65000 });
+    assert.equal(run.status, 0, run.stdout + run.stderr);
+    assert.throws(() => expectedWitness({ runId: 'undeclared-alpha', deadlineMs: Date.now() + 60000 }, build,
+      [{ ...targets[0], statement: '∀ (p : α), p = p' }], path.join(dir, 'undeclared'), { HELPER: helper }), /Unknown identifier.*α/s);
+  });
   it('uses exact binder/type identity and preserves private and instance meaning', async (t) => {
     const cases = [
       ['binder-name', 'theorem target (n : Nat) : n = n := rfl', 'theorem target (m : Nat) : m = m := rfl', /statement identity mismatch/],

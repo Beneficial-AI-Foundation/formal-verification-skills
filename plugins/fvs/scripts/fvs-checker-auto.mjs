@@ -132,14 +132,14 @@ function targetsOf(job, context, records, build) {
   return job.targets.map((target) => {
     closed(target, ['node', 'module', 'name', 'contextFile'], 'proof mapping');
     if (!Number.isSafeInteger(target.node) || !moduleName(target.module) || typeof target.name !== 'string' || !relative(target.contextFile)
-      || !context.graph.json.completeness.modules[target.module]?.includes(target.name) || !build.modules.some((m) => m.name === target.module)) refuse('invalid-input', 'proof mapping is absent from the actual graph/module inventory');
+      || !target.name || !build.modules.some((m) => m.name === target.module)) refuse('invalid-input', 'proof mapping is absent from the fresh module inventory');
     const record = records[target.node], definitions = record.contract.specDefinitions;
     if (!definitions.some((d) => d.file === target.contextFile && d.sha256 === hash(path.join(build.projectRoot, target.contextFile)))) refuse('stale-input', 'expected context is not sealed by the reviewed contract');
     return { ...target, expectedName: `FvsCheckerExpected.expected_${target.node}`, statement: record.contract.statement };
   });
 }
 
-function expectedWitness(job, build, targets, out, engine) {
+export function expectedWitness(job, build, targets, out, engine) {
   fs.mkdirSync(out);
   const projectRoots = build.modules.map((m) => {
     const suffix = `${m.name.split('.').join('/')}.olean`;
@@ -161,7 +161,7 @@ function expectedWitness(job, build, targets, out, engine) {
       opens.add(name);
     }
   }
-  const source = [...build.modules.map((m) => `import ${m.name}`), ...(opens.size ? [`open ${[...opens].join(' ')}`] : []), 'namespace FvsCheckerExpected',
+  const source = [...build.modules.map((m) => `import ${m.name}`), 'set_option autoImplicit false', ...(opens.size ? [`open ${[...opens].join(' ')}`] : []), 'namespace FvsCheckerExpected',
     ...targets.map((t) => `theorem expected_${t.node} : (${t.statement}) := by sorry`), 'end FvsCheckerExpected', ''].join('\n');
   const file = path.join(out, 'FvsCheckerExpected.lean'); fs.writeFileSync(file, source, { flag: 'wx' });
   const base = path.join(out, 'FvsCheckerExpected');
@@ -174,7 +174,7 @@ function kernelRequest(job, build, references, targets, context, nodes = targets
   return { schema: 'fvs-checker/kernel-request', version: 1, runId: job.runId, deadlineMs: job.deadlineMs, lean: build.lean,
     externalSearchPaths: build.externalSearchPaths, externalImports: build.externalImports,
     modules: build.modules.map(({ name, parts }) => ({ name, parts })), referenceModules: references.map(({ name, parts }) => ({ name, parts })),
-    targets: selected.map(({ name, expectedName }) => ({ name, expectedName })),
+    targets: selected.map(({ name, expectedName, module }) => ({ name, expectedName, module })),
     meaningRoots: [...new Set(selected.flatMap((t) => definitionClosure(context.graph.json, context.view.nodes.get(t.node).declarations)
       .filter((name) => context.graph.json.nodes[name]).map((name) => name.replace(/^probe:/, ''))))] };
 }
@@ -224,8 +224,8 @@ async function freezeAuto(job, out, engine) {
   for (const file of job.overlayFiles) if (Object.values(records).some((r) => r.contract.specDefinitions.some((d) => d.file === file))) refuse('invalid-input', 'a reviewed meaning file cannot also be a mutable proof overlay');
   const targets = targetsOf(job, context, records, build);
   originalExternalParts(job, context, build);
-  const original = kernelRequest({ ...job, runId: `${job.runId}-extraction-meaning` }, build, originalProjectModules(job, context),
-    targets.map((t) => ({ ...t, expectedName: t.name })), context);
+  const original = { ...kernelRequest({ ...job, runId: `${job.runId}-extraction-meaning` }, build, originalProjectModules(job, context), targets, context),
+    targets: [], meaningOnly: true };
   const originalRequest = save(out, 'extraction-meaning-request.json', original);
   const extractionMeaning = engine.runKernelAudit({ request: originalRequest.file, out: path.join(out, 'extraction-meaning-check') }, { baseline: true });
   engine.verifyBuildImports(build, extractionMeaning.attempt.imports, job.deadlineMs);

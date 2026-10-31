@@ -29,6 +29,15 @@ describe('genuine paired auto lifecycle (FVS_REAL_AUTO=1)', { skip: process.env.
     assert.deepEqual(frozen.targets.map((t) => t.node).sort((a, b) => a - b), [19, 20, 21]);
     assert.equal(frozen.extractionSourceCommit, '2359861154ccd5180021702637cad43e6f562ec6');
     assert.equal(context.source.commit, 'c1dca808811357a10839287cf12a5316a130c95d');
+    assert.equal(context.overlaySource.commit, invalidatable.fixtureSource.commit);
+    assert.notEqual(context.overlaySource.commit, context.source.commit);
+    assert.deepEqual(frozen.overlayFiles, []);
+    assert.deepEqual(invalidatable.overlayFiles, ['Specs/CheckerOverlay.lean']);
+    const originalGraph = read(read(invalidatable.input).extraction.graph);
+    const added = invalidatable.targets.find((t) => t.node === 20);
+    assert.equal(added.module, 'Specs.CheckerOverlay');
+    assert.equal(added.name, 'FvsOverlay.root_sum_eq');
+    assert.equal(originalGraph.completeness.modules[added.module], undefined);
     assert.equal(context.source.expectedTree, frozen.fixtureSource.tree);
     assert.equal(context.nonCurrentSource.commit, context.source.commit); assert.equal(context.nonCurrentSource.expectedTree, context.source.expectedTree);
     assert.notEqual(context.nonCurrentSource.root, context.source.root);
@@ -81,6 +90,14 @@ describe('genuine paired auto lifecycle (FVS_REAL_AUTO=1)', { skip: process.env.
     assert.equal(provisional.acceptedReceipt, undefined); assert.equal(store().headSha256, null);
     assert.deepEqual([...provisional.audit.targets].sort(), frozen.targets.map((t) => t.name).sort());
     assert.equal(provisional.extractionSourceCommit, frozen.extractionSourceCommit);
+  });
+  it('checks the post-discovery proof overlay against the same original extraction and reviewed contract', async () => {
+    const run = await invoke('check', { baseline: context.invalidatableBaseline, source: context.overlaySource, nodes: [19, 20, 21] }, 'new-proof-overlay');
+    assert.equal(run.exit, 0, JSON.stringify(run.result));
+    assert.equal(run.result.status, 'provisional');
+    assert.ok(run.result.audit.targets.includes('FvsOverlay.root_sum_eq'));
+    assert.equal(run.result.extractionSourceCommit, frozen.extractionSourceCommit);
+    assert.equal(store().headSha256, null);
   });
   it('refuses a root before its real helper receipt, and refuses worker PASS evidence', async () => {
     let run = await invoke('accept', acceptance(20), 'missing-helper'); refused(run, 7, /helper 19/); assert.equal(store().headSha256, null);

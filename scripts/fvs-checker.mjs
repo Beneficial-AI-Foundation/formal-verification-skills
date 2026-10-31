@@ -213,7 +213,8 @@ export async function freeze({ request, out }) {
   const kernelJob = { schema: 'fvs-checker/kernel-request', version: 1, runId: `${job.runId}-meaning`, lean: job.lean, deadlineMs: job.deadlineMs,
     externalSearchPaths: built.externalSearchPaths, externalImports: built.externalImports,
     modules: built.modules.map(({ name, parts }) => ({ name, parts })), referenceModules: built.modules.map(({ name, parts }) => ({ name, parts })), targets,
-    meaningRoots: declarations.filter((d) => !['theorem', 'lemma', 'axiom'].includes(d.kind)).map((d) => d.name) };
+    meaningRoots: declarations.filter((d) => !['theorem', 'lemma', 'axiom'].includes(d.kind)).map((d) => d.name),
+    theoremInventory: { module: mod, names: targets.map((t) => t.name) } };
   const kernelRequest = path.join(root, 'meaning-request.json'); fs.writeFileSync(kernelRequest, `${JSON.stringify(kernelJob)}\n`, { flag: 'wx' });
   let meaning;
   try { meaning = runKernelAudit({ request: kernelRequest, out: path.join(root, 'meaning-check') }, { baseline: true }); }
@@ -313,7 +314,8 @@ export async function check({ request, out }) {
   const kernelJob = { schema: 'fvs-checker/kernel-request', version: 1, runId: job.runId, lean: frozen.lean, deadlineMs: job.deadlineMs,
     externalSearchPaths: built.externalSearchPaths, externalImports: built.externalImports, modules: built.modules.map(({ name, parts }) => ({ name, parts })),
     referenceModules: frozen.modules.map((m) => ({ name: m.name, parts: m.parts.map(bundleFile) })), targets: frozen.targets, meaningRoots: frozen.meaningRoots,
-    auxiliaryRoots: added.map((d) => d.name) };
+    auxiliaryRoots: added.map((d) => d.name),
+    theoremInventory: { module: frozen.module, names: declarations.filter((d) => ['theorem', 'lemma'].includes(d.kind)).map((d) => d.name) } };
   const kernelRequest = path.join(root, 'kernel-request.json'); fs.writeFileSync(kernelRequest, `${JSON.stringify(kernelJob)}\n`, { flag: 'wx' });
   const result = runKernelAudit({ request: kernelRequest, out: path.join(root, 'kernel-check') });
   verifyBuildImports(built, result.attempt.imports, job.deadlineMs);
@@ -325,7 +327,7 @@ export async function check({ request, out }) {
 
 export function runKernelAudit({ request, out }, { baseline = false } = {}) {
   const job = readJson(request);
-  const keys = ['schema', 'version', 'runId', 'lean', 'deadlineMs', 'externalSearchPaths', 'externalImports', 'modules', 'referenceModules', 'targets', 'meaningRoots', 'auxiliaryRoots', 'proofIdentityRoots'];
+  const keys = ['schema', 'version', 'runId', 'lean', 'deadlineMs', 'externalSearchPaths', 'externalImports', 'modules', 'referenceModules', 'targets', 'meaningRoots', 'auxiliaryRoots', 'proofIdentityRoots', 'meaningOnly', 'theoremInventory'];
   const modulesValid = (list) => Array.isArray(list) && list.length > 0 && new Set(list.map((m) => m?.name)).size === list.length
     && list.every((m) => object(m) && typeof m.name === 'string' && /^[A-Za-z_][A-Za-z0-9_']*(\.[A-Za-z_][A-Za-z0-9_']*)*$/.test(m.name)
       && textList(m.parts) && [1, 3].includes(m.parts.length) && m.parts.every(path.isAbsolute)
@@ -334,10 +336,15 @@ export function runKernelAudit({ request, out }, { baseline = false } = {}) {
     || typeof job.runId !== 'string' || !job.runId || !object(job.lean) || !path.isAbsolute(job.lean.path ?? '')
     || !/^[0-9a-f]{64}$/.test(job.lean.sha256 ?? '') || !Number.isSafeInteger(job.deadlineMs)
     || !textList(job.externalImports) || !Array.isArray(job.externalSearchPaths) || !job.externalSearchPaths.every((p) => typeof p === 'string' && path.isAbsolute(p))
-    || !modulesValid(job.modules) || !modulesValid(job.referenceModules) || !Array.isArray(job.targets) || !job.targets.length
-    || job.targets.some((t) => !object(t) || typeof t.name !== 'string' || typeof t.expectedName !== 'string')
+    || !modulesValid(job.modules) || !modulesValid(job.referenceModules) || !Array.isArray(job.targets)
+    || (!job.targets.length && !(baseline && job.meaningOnly === true && job.meaningRoots?.length))
+    || (job.meaningOnly !== undefined && !(baseline && job.meaningOnly === true && job.targets.length === 0))
+    || job.targets.some((t) => !object(t) || typeof t.name !== 'string' || typeof t.expectedName !== 'string' || (t.module !== undefined && !moduleName(t.module)))
     || new Set(job.targets.map((t) => t.name)).size !== job.targets.length || !Array.isArray(job.meaningRoots) || !job.meaningRoots.every((s) => typeof s === 'string')
     || (job.auxiliaryRoots !== undefined && (!textList(job.auxiliaryRoots) || new Set(job.auxiliaryRoots).size !== job.auxiliaryRoots.length))
+    || (job.theoremInventory !== undefined && (!object(job.theoremInventory) || !moduleName(job.theoremInventory.module)
+      || !job.modules.some((m) => m.name === job.theoremInventory.module) || !textList(job.theoremInventory.names)
+      || new Set(job.theoremInventory.names).size !== job.theoremInventory.names.length))
     || (job.proofIdentityRoots !== undefined && (!textList(job.proofIdentityRoots) || !job.proofIdentityRoots.length || job.proofIdentityRoots.some((n) => !job.targets.some((t) => t.name === n))))) {
     refuse('invalid-input', 'expected a complete controller-owned fvs-checker/kernel-request version 1');
   }

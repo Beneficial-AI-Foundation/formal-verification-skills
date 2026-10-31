@@ -39,10 +39,12 @@ def string (j : Json) : IO String := requireJson j.getStr?
 def array (j : Json) : IO (Array Json) := requireJson j.getArr?
 def strings (j : Json) : IO (Array String) := do (← array j).mapM string
 
-def loadConstants (modules : Array Json) : IO (Constants × Array CompactedRegion) := do
+def loadConstants (modules : Array Json) : IO (Constants × Array CompactedRegion × Std.HashMap Name String) := do
   let mut constants : Constants := {}
   let mut regions := #[]
+  let mut origins := {}
   for module in modules do
+    let origin ← string (← field module "name")
     let parts ← strings (← field module "parts")
     unless parts.size == 1 || (parts.size == 3 && parts[1]! == parts[0]! ++ ".server" && parts[2]! == parts[0]! ++ ".private") do
       throw <| IO.userError "unsupported module-data layout"
@@ -63,7 +65,8 @@ def loadConstants (modules : Array Json) : IO (Constants × Array CompactedRegio
       unless name == info.name && !constants.contains name do
         throw <| IO.userError "duplicate or inconsistent project declaration"
       constants := constants.insert name info
-  return (constants, regions)
+      origins := origins.insert name origin
+  return (constants, regions, origins)
 
 def named (source : Constants) (spelling : String) : IO Name := do
   let names := source.toList.filterMap fun (name, _) => if name.toString == spelling then some name else none
@@ -155,23 +158,21 @@ opaque enableWitnessInitializers : IO Unit
 -- type/context facts only; this environment never supplies checked proofs.
 def witness (j : Json) : IO Json := do
   let moduleRows ← array (← field j "referenceModules")
-  let (_, sourceRegions) ← loadConstants moduleRows
+  let (source, sourceRegions, origins) ← loadConstants moduleRows
   let wanted ← moduleRows.mapM fun row => do pure (← string (← field row "name")).toName
   enableWitnessInitializers
   let imports := (#[`Lean, `Lean.Replay] ++ wanted).toList.eraseDups.toArray
   let env ← importModules (imports.map fun n => { module := n }) {} 0 (loadExts := true)
   let mut facts := #[]
   let mut declarations := #[]
-  for (name, info) in env.constants.toList do
-    let owned := (env.getModuleIdxFor? name).any fun idx => wanted.contains env.header.moduleNames[idx.toNat]!
-    if owned then
-      declarations := declarations.push <| Json.mkObj [("name", toJson name), ("kind", toJson (kindOf info)),
-        ("levelParams", toJson info.levelParams), ("type", toJson (repr info.type).pretty)]
-      if info matches .inductInfo _ then
-        let isStruct := isStructure env name
-        let fields := if isStruct then (getStructureFields env name).map (fun f =>
-          Json.mkObj [("name", toJson f), ("projection", toJson (getProjFnForField? env name f))]) else #[]
-        facts := facts.push <| Json.mkObj [("name", toJson name), ("structure", toJson isStruct), ("fields", Json.arr fields)]
+  for (name, info) in source.toList do
+    declarations := declarations.push <| Json.mkObj [("name", toJson name), ("kind", toJson (kindOf info)),
+      ("module", toJson origins[name]!), ("levelParams", toJson info.levelParams), ("type", toJson (repr info.type).pretty)]
+    if info matches .inductInfo _ then
+      let isStruct := isStructure env name
+      let fields := if isStruct then (getStructureFields env name).map (fun f =>
+        Json.mkObj [("name", toJson f), ("projection", toJson (getProjFnForField? env name f))]) else #[]
+      facts := facts.push <| Json.mkObj [("name", toJson name), ("structure", toJson isStruct), ("fields", Json.arr fields)]
   return Json.mkObj [("schema", toJson "fvs-type-witness/structures"), ("version", toJson (1 : Nat)),
     ("runId", ← field j "runId"), ("facts", Json.arr facts), ("declarations", Json.arr declarations),
     ("imports", ← importInventory env wanted), ("regions", toJson sourceRegions.size)]
@@ -213,8 +214,8 @@ def validateTerms (j : Json) : IO Json := do
 
 def audit (j : Json) (baseline := false) : IO Json := do
   let runId ← string (← field j "runId")
-  let (candidate, candidateRegions) ← loadConstants (← array (← field j "modules"))
-  let (reference, referenceRegions) ← loadConstants (← array (← field j "referenceModules"))
+  let (candidate, candidateRegions, origins) ← loadConstants (← array (← field j "modules"))
+  let (reference, referenceRegions, _) ← loadConstants (← array (← field j "referenceModules"))
   let families ← familyFacts j reference
   let imports ← (#["Lean", "Lean.Replay"] ++ (← strings (← field j "externalImports"))).toList.eraseDups.toArray.mapM fun s => do
     pure ({ module := s.toName } : Import)
@@ -229,12 +230,18 @@ def audit (j : Json) (baseline := false) : IO Json := do
     let expected ← named reference (← string (← field target "expectedName"))
     let a := candidate[actual]!
     let e := reference[expected]!
+    if let .ok module := target.getObjVal? "module" then
+      unless origins[actual]? == some (← string module) do
+        throw <| IO.userError s!"proof module mapping mismatch {actual}"
     unless a matches .thmInfo _ do throw <| IO.userError s!"target is not a theorem {actual}"
+    if e.type.hasMVar || e.type.hasFVar || e.type.hasLooseBVars then
+      throw <| IO.userError s!"unsupported nonclosed expected proposition {expected}"
     unless e.levelParams == a.levelParams && Expr.equal e.type a.type do
       throw <| IO.userError s!"statement identity mismatch {actual}"
     actualRoots := actual :: actualRoots
     meaningSeeds := e.type.getUsedConstantsAsSet.toList ++ meaningSeeds
-  unless !actualRoots.isEmpty do throw <| IO.userError "missing selected targets"
+  let meaningOnly := baseline && (j.getObjVal? "meaningOnly").toOption == some (toJson true)
+  unless !actualRoots.isEmpty || meaningOnly do throw <| IO.userError "missing selected targets"
   for root in (← strings (← field j "meaningRoots")) do
     meaningSeeds := (← named reference root) :: meaningSeeds
   let semantic ← closure env reference meaningSeeds true families
@@ -254,6 +261,15 @@ def audit (j : Json) (baseline := false) : IO Json := do
         throw <| IO.userError s!"invalid new proof auxiliary {name}"
       auxiliaryRoots := name :: auxiliaryRoots
   let required ← closure env candidate ((if baseline then [] else actualRoots ++ auxiliaryRoots) ++ semantic.toList) false families
+  if let .ok inventory := j.getObjVal? "theoremInventory" then
+    let module ← string (← field inventory "module")
+    let declared ← strings (← field inventory "names")
+    -- Actual proof edges justify auxiliaries; source ranges or name suffixes do not.
+    let covered ← closure env candidate (actualRoots ++ auxiliaryRoots ++ semantic.toList) false families
+    for (name, info) in candidate.toList do
+      if origins[name]? == some module && (info matches .thmInfo _) &&
+          !declared.contains name.toString && !covered.contains name then
+        throw <| IO.userError s!"unsupported unlisted project theorem {name}"
   if let .ok rows := j.getObjVal? "proofIdentityRoots" then
     let roots ← (← strings rows).toList.mapM (named candidate)
     let proofClosure ← closure env candidate roots false families
