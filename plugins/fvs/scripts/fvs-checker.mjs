@@ -75,7 +75,7 @@ function projectFiles(root) {
 
 // Source tokens are used only for the explicitly supported declaration-header
 // profile; Lean and fresh .ilean data supply types, identities and source spans.
-function tokens(source, keepComments = false) {
+export function tokens(source, keepComments = false) {
   const out = []; let i = 0;
   while (i < source.length) {
     if (/\s/.test(source[i])) { i++; continue; }

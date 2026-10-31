@@ -16,7 +16,7 @@ after(() => { for (const dir of temporary) process.stdout.write(`Retained workin
 function scratch() { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-checker-real-')); temporary.push(dir); return dir; }
 function compile(root, source, module = 'Fixture') {
   fs.mkdirSync(root); fs.writeFileSync(path.join(root, `${module}.lean`), source);
-  const run = spawnSync(LEAN, ['-o', `${module}.olean`, `${module}.lean`], { cwd: root, encoding: 'utf8', timeout: 30000 });
+  const run = spawnSync(LEAN, ['-o', `${module}.olean`, '-i', `${module}.ilean`, `${module}.lean`], { cwd: root, encoding: 'utf8', timeout: 30000 });
   assert.equal(run.status, 0, run.stdout + run.stderr); return path.join(root, `${module}.olean`);
 }
 const hash = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
@@ -147,10 +147,10 @@ describe('real checker core (FVS_REAL_CHECKER=1)', { skip: process.env.FVS_REAL_
     const fresh = path.join(dir, 'fresh');
     const implementation = compile(fresh, 'import Lean\ndef Model.implementation (n : Nat) : Nat := n\n', 'Implementation');
     fs.writeFileSync(path.join(fresh, 'NewProof.lean'), 'import Implementation\ntheorem NewProof.target (n : Nat) : Model.implementation n = n := rfl\n');
-    const compileProof = spawnSync(LEAN, ['-o', 'NewProof.olean', 'NewProof.lean'], { cwd: fresh, encoding: 'utf8', timeout: 30000,
+    const compileProof = spawnSync(LEAN, ['-o', 'NewProof.olean', '-i', 'NewProof.ilean', 'NewProof.lean'], { cwd: fresh, encoding: 'utf8', timeout: 30000,
       env: { PATH: path.dirname(LEAN) + ':/usr/bin:/bin', LEAN_PATH: fresh } });
     assert.equal(compileProof.status, 0, compileProof.stdout + compileProof.stderr);
-    const modules = [{ name: 'Implementation', parts: [implementation] }, { name: 'NewProof', parts: [path.join(fresh, 'NewProof.olean')] }];
+    const modules = [{ name: 'Implementation', source: 'Implementation.lean', ilean: path.join(fresh, 'Implementation.ilean'), parts: [implementation] }, { name: 'NewProof', source: 'NewProof.lean', ilean: path.join(fresh, 'NewProof.ilean'), parts: [path.join(fresh, 'NewProof.olean')] }];
     const base = { schema: 'fvs-checker/kernel-request', version: 1, runId: 'original-meaning-no-proof', lean: { path: LEAN, sha256: hash(LEAN) },
       deadlineMs: Date.now() + 60000, externalSearchPaths: [], externalImports: ['Lean'], modules,
       referenceModules: [{ name: 'Implementation', parts: [original] }], targets: [], meaningRoots: ['Model.implementation'], meaningOnly: true };
@@ -162,14 +162,14 @@ describe('real checker core (FVS_REAL_CHECKER=1)', { skip: process.env.FVS_REAL_
     assert.deepEqual(response(run.stdout).audit.targets, []);
     const { expectedWitness } = await import(require('node:url').pathToFileURL(path.resolve(__dirname, '../scripts/fvs-checker-auto.mjs')).href);
     const expected = expectedWitness({ runId: 'new-overlay', deadlineMs: Date.now() + 60000 }, { lean: base.lean, projectRoot: fresh, modules,
-      externalSearchPaths: [], externalImports: ['Lean'] }, [{ node: 1, statement: '∀ (n : Nat), Model.implementation n = n', contextFile: 'NewProof.lean' }],
+      externalSearchPaths: [], externalImports: ['Lean'] }, [{ node: 1, statement: '∀ (n : Nat), Model.implementation n = n', contextFile: 'Implementation.lean' }],
       path.join(dir, 'expected'), { HELPER: path.resolve(__dirname, '../scripts/FvsKernelAudit.lean') });
     for (const [label, name, module, exit, reason] of [['fresh', 'NewProof.target', 'NewProof', 0],
       ['wrong-module', 'NewProof.target', 'Implementation', 4, /proof module mapping mismatch/],
       ['missing-target', 'NewProof.missing', 'NewProof', 4, /missing or ambiguous declaration/]]) await t.test(label, () => {
       const file = path.join(dir, label + '.json');
       fs.writeFileSync(file, JSON.stringify({ ...base, runId: label, meaningOnly: undefined, deadlineMs: Date.now() + 60000,
-        referenceModules: [...modules, expected.module], targets: [{ name, module, expectedName: 'FvsCheckerExpected.expected_1' }] }));
+        referenceModules: [...modules, ...expected.modules], targets: [{ name, module, expectedName: 'FvsCheckerExpected.expected_1' }] }));
       const run = spawnSync(process.execPath, [SCRIPT, 'audit', '--request', file, '--out', path.join(dir, 'audit-' + label)], { encoding: 'utf8', timeout: 65000 });
       assert.equal(run.status, exit, run.stdout + run.stderr);
       if (reason) assert.match(response(run.stdout).message, reason);
@@ -187,17 +187,85 @@ describe('real checker core (FVS_REAL_CHECKER=1)', { skip: process.env.FVS_REAL_
     const { expectedWitness } = await import(require('node:url').pathToFileURL(path.resolve(__dirname, '../scripts/fvs-checker-auto.mjs')).href);
     const helper = path.resolve(__dirname, '../scripts/FvsKernelAudit.lean');
     const build = { lean: { path: LEAN, sha256: hash(LEAN) }, projectRoot: project,
-      modules: [{ name: 'Fixture', parts: [compiled] }], externalSearchPaths: [], externalImports: ['Lean'] };
+      modules: [{ name: 'Fixture', source: 'Fixture.lean', ilean: path.join(project, 'Fixture.ilean'), parts: [compiled] }], externalSearchPaths: [], externalImports: ['Lean'] };
     const targets = [{ node: 1, name: 'target', contextFile: 'Fixture.lean', statement: '∀ {α : Type} (p : α), p = p' }];
     const expected = expectedWitness({ runId: 'explicit-positive', deadlineMs: Date.now() + 60000 }, build, targets, path.join(dir, 'explicit'), { HELPER: helper });
     const request = path.join(dir, 'request.json');
     fs.writeFileSync(request, JSON.stringify({ schema: 'fvs-checker/kernel-request', version: 1, runId: 'explicit-type', lean: build.lean,
       deadlineMs: Date.now() + 60000, externalSearchPaths: [], externalImports: ['Lean'], modules: build.modules,
-      referenceModules: [...build.modules, expected.module], targets: [{ name: 'target', expectedName: 'FvsCheckerExpected.expected_1' }], meaningRoots: [] }));
+      referenceModules: [...build.modules, ...expected.modules], targets: [{ name: 'target', expectedName: 'FvsCheckerExpected.expected_1' }], meaningRoots: [] }));
     const run = spawnSync(process.execPath, [SCRIPT, 'audit', '--request', request, '--out', path.join(dir, 'audit')], { encoding: 'utf8', timeout: 65000 });
     assert.equal(run.status, 0, run.stdout + run.stderr);
     assert.throws(() => expectedWitness({ runId: 'undeclared-alpha', deadlineMs: Date.now() + 60000 }, build,
       [{ ...targets[0], statement: '∀ (p : α), p = p' }], path.join(dir, 'undeclared'), { HELPER: helper }), /Unknown identifier.*α/s);
+  });
+  it('seals each reviewed context against proof-overlay compiler extensions', async (t) => {
+    const dir = scratch(), project = path.join(dir, 'project'); fs.mkdirSync(project);
+    const modules = [];
+    const add = (name, source) => {
+      fs.writeFileSync(path.join(project, name + '.lean'), source);
+      const run = spawnSync(LEAN, ['-o', name + '.olean', '-i', name + '.ilean', name + '.lean'], { cwd: project, encoding: 'utf8', timeout: 30000,
+        env: { PATH: path.dirname(LEAN) + ':/usr/bin:/bin', LEAN_PATH: project } });
+      fs.writeFileSync(path.join(dir, name + '.stdout'), run.stdout); fs.writeFileSync(path.join(dir, name + '.stderr'), run.stderr);
+      assert.equal(run.status, 0, run.stdout + run.stderr);
+      const module = { name, source: name + '.lean', ilean: path.join(project, name + '.ilean'), parts: [path.join(project, name + '.olean')] };
+      modules.push(module); return module;
+    };
+    add('Context', 'import Lean\ndef Model.implementation (n : Nat) : Nat := n\n');
+    add('Overlay', 'import Context\nmacro_rules | `($x = $y) => `(True)\ntheorem Overlay.bad : (1 : Nat) = 0 := True.intro\ntheorem Overlay.good : Eq (1 : Nat) 1 := rfl\n');
+    add('Direct', 'import Overlay\n'); add('Bridge', 'import Overlay\n'); add('Transitive', 'import Bridge\n');
+    add('NestedOpen', 'import Context\nnamespace Inner\nopen Nat\nend Inner\n');
+    add('ScopedOpen', 'import Context\nopen scoped Nat\n');
+    const { expectedWitness, verifyContextBindings } = await import(require('node:url').pathToFileURL(path.resolve(__dirname, '../scripts/fvs-checker-auto.mjs')).href);
+    const engine = { HELPER: path.resolve(__dirname, '../scripts/FvsKernelAudit.lean') };
+    const build = { lean: { path: LEAN, sha256: hash(LEAN) }, projectRoot: project, modules, externalSearchPaths: [], externalImports: ['Lean'] };
+    const target = { node: 1, contextFile: 'Context.lean', statement: '(1 : Nat) = 0' };
+    const job = (label) => ({ runId: label, deadlineMs: Date.now() + 60000, overlayFiles: ['Overlay.lean'] });
+    const expected = expectedWitness(job('malicious'), build, [target], path.join(dir, 'expected'), engine);
+    assert.equal(fs.readFileSync(expected.sources[0].file, 'utf8').includes('import Overlay'), false);
+    assert.deepEqual(expected.contexts[0].projectImports.map((m) => m.name), ['Context']);
+    const audit = (label, witness, targets, exit) => {
+      const request = path.join(dir, label + '.json');
+      fs.writeFileSync(request, JSON.stringify({ schema: 'fvs-checker/kernel-request', version: 1, runId: label, lean: build.lean,
+        deadlineMs: Date.now() + 60000, externalSearchPaths: [], externalImports: ['Lean'], modules,
+        referenceModules: [...modules, ...witness.modules], targets, meaningRoots: ['Model.implementation'] }));
+      const run = spawnSync(process.execPath, [SCRIPT, 'audit', '--request', request, '--out', path.join(dir, 'audit-' + label)], { encoding: 'utf8', timeout: 65000 });
+      assert.equal(run.status, exit, run.stdout + run.stderr); return response(run.stdout);
+    };
+    const rejected = audit('raw-false', expected, [{ name: 'Overlay.bad', module: 'Overlay', expectedName: 'FvsCheckerExpected.expected_1' }], 4);
+    assert.match(rejected.message, /statement identity mismatch Overlay.bad/);
+    const witness = JSON.parse(fs.readFileSync(path.join(dir, 'audit-raw-false/verified-witness.stdout.log')));
+    const frozenType = witness.declarations.find((d) => d.name === 'FvsCheckerExpected.expected_1').type;
+    assert.match(frozenType, /`Eq/); assert.notEqual(frozenType, 'Lean.Expr.const `True []');
+    const positive = expectedWitness(job('positive'), build, [{ ...target, statement: '(1 : Nat) = 1' }], path.join(dir, 'positive'), engine);
+    assert.equal(audit('unchanged-context', positive, [{ name: 'Overlay.good', module: 'Overlay', expectedName: 'FvsCheckerExpected.expected_1' }], 0).audit.status, 'kernel-checked');
+    for (const context of ['Direct', 'Transitive']) await t.test(context + ' overlay dependency', () => {
+      assert.throws(() => expectedWitness(job(context), build, [{ ...target, contextFile: context + '.lean' }], path.join(dir, context), engine),
+        (e) => e.code === 'unsupported' && /imports a mutable proof overlay/.test(e.message));
+    });
+    for (const context of ['NestedOpen', 'ScopedOpen']) await t.test(context + ' refuses guessing', () => {
+      assert.throws(() => expectedWitness(job(context), build, [{ ...target, contextFile: context + '.lean' }], path.join(dir, context), engine),
+        (e) => e.code === 'unsupported' && /lexical or scoped/.test(e.message));
+    });
+    const directTarget = { ...target, contextFile: 'Direct.lean' };
+    const direct = expectedWitness({ ...job('reviewed-imports'), overlayFiles: [] }, build, [directTarget], path.join(dir, 'reviewed-imports'), engine);
+    const originalFiles = { 'Context.lean': hash(path.join(project, 'Context.lean')) };
+    const records = { 1: { contract: { specDefinitions: [{ file: 'Direct.lean', sha256: hash(path.join(project, 'Direct.lean')) }] } } };
+    assert.throws(() => verifyContextBindings(direct, [directTarget], originalFiles, records, project), /absent from this reviewed contract/);
+    records[1].contract.specDefinitions.push({ file: 'Overlay.lean', sha256: hash(path.join(project, 'Overlay.lean')) });
+    verifyContextBindings(direct, [directTarget], originalFiles, records, project);
+    records[1].contract.specDefinitions.at(-1).sha256 = '0'.repeat(64);
+    assert.throws(() => verifyContextBindings(direct, [directTarget], originalFiles, records, project), /context import source changed/);
+    const independent = [{ ...target, statement: '(1 : Nat) = 1' }, { node: 2, contextFile: 'Overlay.lean', statement: '(1 : Nat) = 0' }];
+    let first;
+    for (const [label, selected] of [['forward', independent], ['reverse', [...independent].reverse()]]) {
+      const separate = expectedWitness({ ...job(label), overlayFiles: [] }, build, selected, path.join(dir, label), engine);
+      assert.equal(separate.modules.length, 2);
+      const result = audit(label, separate, [{ name: 'Overlay.good', module: 'Overlay', expectedName: 'FvsCheckerExpected.expected_1' },
+        { name: 'Overlay.bad', module: 'Overlay', expectedName: 'FvsCheckerExpected.expected_2' }], 0);
+      const types = result.witness.declarations.filter((d) => d.name.startsWith('FvsCheckerExpected.')).map((d) => [d.name, d.type]).sort();
+      if (first) assert.deepEqual(types, first); else first = types;
+    }
   });
   it('uses exact binder/type identity and preserves private and instance meaning', async (t) => {
     const cases = [

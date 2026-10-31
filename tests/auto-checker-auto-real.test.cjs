@@ -29,7 +29,8 @@ describe('genuine paired auto lifecycle (FVS_REAL_AUTO=1)', { skip: process.env.
     assert.deepEqual(frozen.targets.map((t) => t.node).sort((a, b) => a - b), [19, 20, 21]);
     assert.equal(frozen.extractionSourceCommit, '2359861154ccd5180021702637cad43e6f562ec6');
     assert.equal(context.source.commit, 'c1dca808811357a10839287cf12a5316a130c95d');
-    assert.equal(context.overlaySource.commit, invalidatable.fixtureSource.commit);
+    assert.equal(invalidatable.fixtureSource.commit, context.source.commit, 'expectations come from pristine context');
+    assert.notEqual(context.overlaySource.commit, invalidatable.fixtureSource.commit);
     assert.notEqual(context.overlaySource.commit, context.source.commit);
     assert.deepEqual(frozen.overlayFiles, []);
     assert.deepEqual(invalidatable.overlayFiles, ['Specs/CheckerOverlay.lean']);
@@ -83,6 +84,15 @@ describe('genuine paired auto lifecycle (FVS_REAL_AUTO=1)', { skip: process.env.
     source: context.source, store: { root: context.storeRoot, expectedHeadSha256 } });
   function refused(run, exit, message) { assert.equal(run.exit, exit, JSON.stringify(run.result)); assert.equal(run.result.status, 'unverified'); if (message) assert.match(run.result.message, message); }
 
+  it('refuses a mutable overlay in the freeze baseline before compiling any project code', async () => {
+    const original = read(invalidatable.input);
+    const { schema, version, purpose, runId, deadlineMs, ...fields } = original;
+    const run = await invoke('freeze', { ...fields, baseline: { ...original.baseline, source: context.overlaySource } }, 'overlay-in-pristine');
+    refused(run, 6, /pristine context commit/);
+    assert.equal(fs.existsSync(path.join(run.out, 'baseline-build')), false);
+    assert.equal(fs.existsSync(path.join(run.out, 'frozen.json')), false);
+    assert.equal(store().headSha256, null);
+  });
   it('checks the genuine immutable candidate provisionally without releasing a consumer', async () => {
     const run = await invoke('check', { source: context.source, nodes: [19, 20, 21] }, 'provisional');
     assert.equal(run.exit, 0, JSON.stringify(run.result)); provisional = run.result;
@@ -90,6 +100,27 @@ describe('genuine paired auto lifecycle (FVS_REAL_AUTO=1)', { skip: process.env.
     assert.equal(provisional.acceptedReceipt, undefined); assert.equal(store().headSha256, null);
     assert.deepEqual([...provisional.audit.targets].sort(), frozen.targets.map((t) => t.name).sort());
     assert.equal(provisional.extractionSourceCommit, frozen.extractionSourceCommit);
+  });
+  it('refuses an absent future proof while preserving its independently frozen context', async () => {
+    const run = await invoke('check', { baseline: context.invalidatableBaseline, source: context.source, nodes: [20] }, 'missing-future-proof');
+    refused(run, 4, /missing or ambiguous declaration FvsOverlay.root_sum_eq/);
+    assert.equal(store().headSha256, null);
+  });
+  it('refuses altered expected compiled parts and context IR in fresh input copies', async () => {
+    for (const kind of ['expected-part', 'context-ir']) {
+      const copy = JSON.parse(JSON.stringify(frozen));
+      const original = kind === 'expected-part' ? copy.expected.modules[0].parts[0] : Object.keys(copy.compiled).find((p) => p.endsWith('.ir'));
+      assert.ok(original, 'the genuine freeze must retain the required compiled input');
+      const dir = path.join(root, kind); fs.mkdirSync(dir);
+      const file = path.join(dir, path.basename(original)); fs.writeFileSync(file, Buffer.concat([fs.readFileSync(original), Buffer.from('altered')]), { flag: 'wx' });
+      copy.compiled[file] = copy.compiled[original]; delete copy.compiled[original];
+      for (const module of copy.references) module.parts = module.parts.map((p) => p === original ? file : p);
+      for (const module of copy.expected.modules) module.parts = module.parts.map((p) => p === original ? file : p);
+      const baseline = save(path.join(root, kind + '.baseline.json'), copy);
+      const run = await invoke('check', { baseline, source: context.source, nodes: [19] }, kind);
+      refused(run, 7, /frozen input changed/); assert.equal(store().headSha256, null);
+      assert.equal(fs.existsSync(path.join(run.out, 'candidate-build')), false);
+    }
   });
   it('checks the post-discovery proof overlay against the same original extraction and reviewed contract', async () => {
     const run = await invoke('check', { baseline: context.invalidatableBaseline, source: context.overlaySource, nodes: [19, 20, 21] }, 'new-proof-overlay');

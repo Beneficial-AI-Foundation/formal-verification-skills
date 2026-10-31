@@ -9,6 +9,7 @@ import { buildRecord } from './fvs-rust-identity.mjs';
 import { buildLeanGraph, duplicateKeys } from './fvs-lean-graph.mjs';
 import { buildPlan, definitionClosure } from './fvs-closure-plan.mjs';
 import { canonical, validatePlan, readChain, registryStatus } from './fvs-contract-registry.mjs';
+import { tokens } from './fvs-checker.mjs';
 
 const sha = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
 const hash = (file) => sha(fs.readFileSync(file));
@@ -96,7 +97,7 @@ function registryContext(job, context, specRoot, { ignoreLock = false } = {}) {
 
 const engineFiles = ['fvs-auto.mjs', 'fvs-checker.mjs', 'FvsKernelAudit.lean', 'fvs-checker-auto.mjs', 'fvs-checker-build.mjs', 'fvs-rust-identity.mjs', 'fvs-lean-graph.mjs', 'fvs-closure-plan.mjs', 'fvs-contract-registry.mjs', 'fvs-probe-inventory.mjs', 'fvs-probe-linux.mjs', 'fvs-extract-patches.mjs'];
 function engineIdentity() {
-  return Object.fromEntries([process.execPath, ...engineFiles.map((f) => fileURLToPath(new URL(f, import.meta.url)))].map((file) => [file, hash(file)]));
+  return Object.fromEntries([process.execPath, '/usr/bin/git', ...engineFiles.map((f) => fileURLToPath(new URL(f, import.meta.url)))].map((file) => [file, hash(file)]));
 }
 function verifyFiles(files) {
   for (const [file, digest] of Object.entries(files)) if (hash(file) !== digest) refuse('stale-input', `frozen input changed: ${file}`);
@@ -126,17 +127,62 @@ function checkedProcess(lean, args, cwd, deadlineMs, searchPaths, label) {
   return { run, receipt };
 }
 
+function sourceInventory(source, deadlineMs, out, label) {
+  closed(source, ['kind', 'root', 'commit', 'expectedTree'], 'immutable source');
+  if (source.kind !== 'git' || !path.isAbsolute(source.root ?? '') || !isCommit(source.commit) || !isCommit(source.expectedTree)) refuse('invalid-input', 'immutable context/candidate source is required');
+  beforeDeadline({ deadlineMs });
+  const git = '/usr/bin/git', toolSha256 = hash(git);
+  const argv = [git, '--no-optional-locks', '--no-replace-objects', '-C', source.root, 'ls-tree', '-rz', '--full-tree', source.expectedTree];
+  const run = spawnSync(git, argv.slice(1), { cwd: out, timeout: Math.max(1, deadlineMs - Date.now()), maxBuffer: 16 * 1024 * 1024,
+    env: { PATH: '/usr/bin:/bin', LANG: 'C', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' } });
+  fs.writeFileSync(path.join(out, `${label}.stdout`), run.stdout ?? '', { flag: 'wx' });
+  fs.writeFileSync(path.join(out, `${label}.stderr`), run.stderr ?? '', { flag: 'wx' });
+  const attempt = save(out, `${label}-attempt.json`, { argv, cwd: out, toolSha256, exit: run.status, signal: run.signal, error: run.error?.code ?? null,
+    stdoutSha256: sha(run.stdout ?? ''), stderrSha256: sha(run.stderr ?? '') });
+  if (hash(git) !== toolSha256) refuse('stale-input', 'Git changed during immutable source inventory');
+  if (run.error?.code === 'ETIMEDOUT') refuse('timeout', 'immutable source inventory timed out');
+  if (run.status !== 0 || run.signal || run.error) refuse('invalid-input', 'immutable source inventory failed');
+  const files = [];
+  for (const row of run.stdout.toString('utf8').split('\0').filter(Boolean)) {
+    const match = /^(100644|100755) blob ([0-9a-f]{40})\t(.+)$/.exec(row);
+    if (!match || !relative(match[3]) || files.includes(match[3])) refuse('unsupported', 'unsupported immutable source entry');
+    files.push(match[3]);
+  }
+  return { files, evidence: save(out, `${label}.json`, { source, files, attempt }) };
+}
+
+function overlayModule(file, sourceRoot = '') {
+  const prefix = sourceRoot ? `${sourceRoot}/` : '';
+  if (!file.startsWith(prefix) || !file.endsWith('.lean') || file === 'lakefile.lean') return null;
+  const name = file.slice(prefix.length, -5).replaceAll('/', '.');
+  return moduleName(name) ? name : null;
+}
+
 function targetsOf(job, context, records, build) {
   if (!Array.isArray(job.targets) || !job.targets.length || new Set(job.targets.map((t) => t?.node)).size !== job.targets.length
     || canonical(job.targets.map((t) => t.node).sort((a, b) => a - b)) !== canonical([...context.view.union].sort((a, b) => a - b))) refuse('invalid-input', 'exact selected proof-node coverage is required');
   return job.targets.map((target) => {
     closed(target, ['node', 'module', 'name', 'contextFile'], 'proof mapping');
     if (!Number.isSafeInteger(target.node) || !moduleName(target.module) || typeof target.name !== 'string' || !relative(target.contextFile)
-      || !target.name || !build.modules.some((m) => m.name === target.module)) refuse('invalid-input', 'proof mapping is absent from the fresh module inventory');
+      || !target.name || (!build.modules.some((m) => m.name === target.module)
+        && !job.overlayFiles.some((file) => overlayModule(file, job.baseline.sourceRoot) === target.module))) refuse('invalid-input', 'future proof mapping requires an exact declared overlay module');
     const record = records[target.node], definitions = record.contract.specDefinitions;
     if (!definitions.some((d) => d.file === target.contextFile && d.sha256 === hash(path.join(build.projectRoot, target.contextFile)))) refuse('stale-input', 'expected context is not sealed by the reviewed contract');
     return { ...target, expectedName: `FvsCheckerExpected.expected_${target.node}`, statement: record.contract.statement };
   });
+}
+
+export function verifyContextBindings(expected, targets, originalFiles, records, projectRoot) {
+  for (const target of targets) {
+    const imports = expected.contexts.find((c) => c.contextFile === target.contextFile)?.projectImports;
+    if (!Array.isArray(imports)) refuse('invalid-input', 'missing reviewed context import closure');
+    for (const module of imports) {
+      if (!relative(module.source)) refuse('unsupported', 'unsealed context source');
+      const digest = originalFiles[module.source] ?? records[target.node].contract.specDefinitions.find((d) => d.file === module.source)?.sha256;
+      if (!isSha(digest)) refuse('unsupported', 'context import source is absent from this reviewed contract');
+      if (hash(path.join(projectRoot, module.source)) !== digest) refuse('stale-input', 'reviewed context import source changed');
+    }
+  }
 }
 
 export function expectedWitness(job, build, targets, out, engine) {
@@ -147,26 +193,60 @@ export function expectedWitness(job, build, targets, out, engine) {
     return m.parts[0].slice(0, -suffix.length - 1);
   });
   const paths = [...new Set([...projectRoots, ...build.externalSearchPaths])];
-  const termsRequest = save(out, 'terms-request.json', { runId: `${job.runId}-terms`, referenceModules: build.modules, terms: targets.map((t) => t.statement) });
-  const parsed = checkedProcess(build.lean, ['--run', engine.HELPER, 'validate-terms', termsRequest.file], out, job.deadlineMs, paths, 'parse-terms');
-  const result = json(Buffer.from(parsed.run.stdout));
-  if (result.schema !== 'fvs-checker/parsed-terms' || result.runId !== `${job.runId}-terms`) refuse('audit-failed', 'foreign term parser result');
-  // This profile accepts the reviewed file's explicit global opens; namespace
-  // resolution in the closed proposition must be explicit, never guessed.
-  const opens = new Set();
-  for (const target of targets) {
-    const text = fs.readFileSync(path.join(build.projectRoot, target.contextFile), 'utf8');
-    for (const match of text.matchAll(/^open ([^\n]+)$/gm)) for (const name of match[1].trim().split(/\s+/)) {
-      if (!moduleName(name)) refuse('unsupported', 'unsupported reviewed open context');
-      opens.add(name);
+  const modules = [], sources = [], receipts = [], contexts = [], targetModules = {};
+  const byName = new Map(build.modules.map((m) => [m.name, m]));
+  const overlays = new Set((job.overlayFiles ?? []).map((f) => overlayModule(f, job.baseline?.sourceRoot)).filter(Boolean));
+  const groups = [...new Set(targets.map((t) => t.contextFile))].sort();
+  for (const [index, contextFile] of groups.entries()) {
+    const selected = targets.filter((t) => t.contextFile === contextFile);
+    const owners = build.modules.filter((m) => m.source === contextFile);
+    if (owners.length !== 1) refuse('unsupported', 'reviewed context must map to one pristine compiled module');
+    const context = owners[0], closure = new Set(), pending = [context.name], bindings = [];
+    while (pending.length) {
+      const name = pending.pop();
+      if (overlays.has(name)) refuse('unsupported', 'reviewed context imports a mutable proof overlay');
+      if (closure.has(name)) continue;
+      closure.add(name);
+      const module = byName.get(name);
+      if (!module) continue;
+      if (!path.isAbsolute(module.ilean ?? '')) refuse('unsupported', 'reviewed context lacks compiler import metadata');
+      if (!fs.existsSync(module.ilean)) refuse('stale-input', 'reviewed compiler import metadata is unavailable');
+      const metadata = json(fs.readFileSync(module.ilean));
+      if (metadata.version !== 5 || metadata.module !== name || !Array.isArray(metadata.directImports)
+        || metadata.directImports.some((row) => !Array.isArray(row) || !moduleName(row[0]))) refuse('unsupported', 'unsupported reviewed context import inventory');
+      pending.push(...metadata.directImports.map((row) => row[0]));
+      const ir = module.parts[0].replace(/\.olean$/, '.ir');
+      bindings.push({ name, source: module.source, inputs: Object.fromEntries([...module.parts, module.ilean,
+        ...(fs.existsSync(ir) ? [ir] : [])].map((file) => [file, hash(file)])) });
     }
+    const opens = new Set();
+    const text = fs.readFileSync(path.join(build.projectRoot, contextFile), 'utf8');
+    let scoped = false;
+    for (const token of tokens(text)) {
+      if (['namespace', 'section', 'end', 'variable', 'universe'].includes(token.text)) scoped = true;
+      if (token.text !== 'open') continue;
+      const start = text.lastIndexOf('\n', token.start) + 1;
+      const end = text.indexOf('\n', token.end);
+      const names = text.slice(token.end, end < 0 ? text.length : end).trim().split(/\s+/);
+      if (scoped || text.slice(start, token.start).trim() || names.some((n) => !moduleName(n) || ['scoped', 'in', 'hiding', 'renaming'].includes(n))) refuse('unsupported', 'unsupported lexical or scoped reviewed open context');
+      for (const name of names) opens.add(name);
+    }
+    const name = groups.length === 1 ? 'FvsCheckerExpected' : `FvsCheckerExpected${index}`;
+    const termsRequest = save(out, `terms-request-${index}.json`, { runId: `${job.runId}-terms-${index}`, referenceModules: [context], terms: selected.map((t) => t.statement) });
+    const parsed = checkedProcess(build.lean, ['--run', engine.HELPER, 'validate-terms', termsRequest.file], out, job.deadlineMs, paths, `parse-terms-${index}`);
+    const result = json(Buffer.from(parsed.run.stdout));
+    if (result.schema !== 'fvs-checker/parsed-terms' || result.runId !== `${job.runId}-terms-${index}`) refuse('audit-failed', 'foreign term parser result');
+    const source = [`import ${context.name}`, 'set_option autoImplicit false', ...(opens.size ? [`open ${[...opens].join(' ')}`] : []), 'namespace FvsCheckerExpected',
+      ...selected.map((t) => `theorem expected_${t.node} : (${t.statement}) := by sorry`), 'end FvsCheckerExpected', ''].join('\n');
+    const file = path.join(out, `${name}.lean`); fs.writeFileSync(file, source, { flag: 'wx' });
+    const base = path.join(out, name);
+    const compiled = checkedProcess(build.lean, ['-o', `${base}.olean`, '-i', `${base}.ilean`, file], out, job.deadlineMs, paths, `compile-expectations-${index}`);
+    modules.push({ name, parts: [`${base}.olean`] }); sources.push({ file, sha256: hash(file) }); receipts.push(parsed.receipt, compiled.receipt);
+    contexts.push({ contextFile, module: context.name, projectImports: bindings });
+    for (const target of selected) targetModules[target.node] = name;
+    for (const binding of bindings) verifyFiles(binding.inputs);
   }
-  const source = [...build.modules.map((m) => `import ${m.name}`), 'set_option autoImplicit false', ...(opens.size ? [`open ${[...opens].join(' ')}`] : []), 'namespace FvsCheckerExpected',
-    ...targets.map((t) => `theorem expected_${t.node} : (${t.statement}) := by sorry`), 'end FvsCheckerExpected', ''].join('\n');
-  const file = path.join(out, 'FvsCheckerExpected.lean'); fs.writeFileSync(file, source, { flag: 'wx' });
-  const base = path.join(out, 'FvsCheckerExpected');
-  const compiled = checkedProcess(build.lean, ['-o', `${base}.olean`, '-i', `${base}.ilean`, file], out, job.deadlineMs, paths, 'compile-expectations');
-  return { module: { name: 'FvsCheckerExpected', parts: [`${base}.olean`] }, source: { file, sha256: hash(file) }, receipts: [parsed.receipt, compiled.receipt] };
+  return { modules, sources, receipts, contexts, targetModules };
 }
 
 function kernelRequest(job, build, references, targets, context, nodes = targets.map((t) => t.node)) {
@@ -216,6 +296,10 @@ async function freezeAuto(job, out, engine) {
   exclusive(out);
   const requestInput = captureInput(job, out, engine);
   const checker = engineIdentity();
+  const pristine = sourceInventory(job.baseline.source, job.deadlineMs, out, 'pristine-source');
+  if (pristine.files.some((file) => job.overlayFiles.includes(file))) refuse('unsupported', 'freeze requires a pristine context commit with mutable proof overlays absent');
+  const reviewed = new Set(Object.values(records).flatMap((r) => r.contract.specDefinitions.map((d) => d.file)));
+  if (pristine.files.some((file) => file.endsWith('.lean') && !Object.hasOwn(context.constants.inputs.files, file) && !reviewed.has(file))) refuse('unsupported', 'pristine context contains unreviewed Lean source');
   const build = await buildSnapshot({ ...job.baseline, deadlineMs: job.deadlineMs }, job.baseline.source, path.join(out, 'baseline-build'), `${job.runId}-build`);
   const files = sourceHashes(build);
   for (const [rel, digest] of Object.entries(context.constants.inputs.files)) if (!rel.startsWith('.lake/') && files[rel] !== digest) refuse('stale-input', `baseline differs from original extraction context: ${rel}`);
@@ -230,19 +314,21 @@ async function freezeAuto(job, out, engine) {
   const extractionMeaning = engine.runKernelAudit({ request: originalRequest.file, out: path.join(out, 'extraction-meaning-check') }, { baseline: true });
   engine.verifyBuildImports(build, extractionMeaning.attempt.imports, job.deadlineMs);
   const expected = expectedWitness(job, build, targets, path.join(out, 'expectations'), engine);
-  const references = [...build.modules, expected.module];
-  const kernel = kernelRequest(job, build, references, targets, context);
+  verifyContextBindings(expected, targets, context.constants.inputs.files, records, build.projectRoot);
+  const references = [...build.modules, ...expected.modules];
+  const anchors = targets.map((t) => ({ ...t, name: t.expectedName, module: expected.targetModules[t.node] }));
+  const kernel = kernelRequest(job, { ...build, modules: references }, references, anchors, context);
   const request = save(out, 'meaning-request.json', kernel);
   const meaning = engine.runKernelAudit({ request: request.file, out: path.join(out, 'meaning-check') }, { baseline: true });
   engine.verifyBuildImports(build, meaning.attempt.imports, job.deadlineMs);
-  const compiled = { ...buildFiles(build), ...Object.fromEntries([...expected.module.parts, expected.source.file,
-    ...['.ilean', '.ir'].map((suffix) => expected.module.parts[0].replace(/\.olean$/, suffix)).filter((f) => fs.existsSync(f))].map((f) => [f, hash(f)])) };
+  const compiled = { ...buildFiles(build), ...Object.fromEntries([...expected.sources.map((s) => s.file), ...expected.modules.flatMap((m) => [...m.parts,
+    ...['.ilean', '.ir'].map((suffix) => m.parts[0].replace(/\.olean$/, suffix)).filter((f) => fs.existsSync(f))])].map((f) => [f, hash(f)])) };
   const imports = Object.fromEntries(meaning.attempt.imports.filter((m) => !m.project).flatMap((m) => m.parts.map((p) => [p.file, p.sha256])));
   const input = save(out, 'freeze-request.json', job);
   verifyFiles(checker); verifyFiles(compiled); verifyFiles(imports);
   extractionContext(job.extraction); registryContext(job, context, build.projectRoot); beforeDeadline(job);
   const frozen = { schema: 'fvs-checker/auto-baseline', version: 1, purpose: 'auto', authority: 'expectations-only', runId: job.runId,
-    input, ...requestInput, checker, extractionSourceCommit: context.identity.json.provenance.sourceCommit, fixtureSource: build.source,
+    input, ...requestInput, contextInventory: pristine.evidence, checker, extractionSourceCommit: context.identity.json.provenance.sourceCommit, fixtureSource: build.source,
     registry: job.registry, records, targets, overlayFiles: job.overlayFiles, build, references, compiled, imports, runtimes: meaning.attempt.runtimes,
     expected, extractionMeaningCheck: extractionMeaning.evidence, extractionMeaning: extractionMeaning.audit,
     meaningCheck: meaning.evidence, meaning: meaning.audit };
@@ -261,6 +347,7 @@ function frozenContext(ref, { ignoreRegistryLock = false } = {}) {
       || evidence.audit.targetProofsChecked !== false) refuse('stale-input', 'frozen meaning evidence does not match its retained checker result');
   }
   const job = bound(frozen.input).json, context = extractionContext(job.extraction);
+  if (canonical(bound(frozen.contextInventory).json.source) !== canonical(job.baseline.source)) refuse('stale-input', 'frozen pristine context inventory changed');
   if (canonical(frozen.registry) !== canonical(job.registry) || canonical(frozen.fixtureSource) !== canonical(frozen.build.source)
     || frozen.extractionSourceCommit !== context.identity.json.provenance.sourceCommit || frozen.runId !== job.runId
     || frozen.build.source.commit !== job.baseline.source.commit || frozen.build.source.tree !== job.baseline.source.expectedTree) refuse('stale-input', 'frozen source/registry tuple is inconsistent');
@@ -409,7 +496,10 @@ async function checkAuto(job, out, engine) {
   if (job.source.kind !== 'git' || !isCommit(job.source.commit) || !isCommit(job.source.expectedTree)) refuse('invalid-input', 'candidate commit and exact tree are required');
   exclusive(out);
   const requestInput = captureInput(job, out, engine);
-  const build = await buildSnapshot({ ...original.baseline, deadlineMs: job.deadlineMs }, job.source, path.join(out, 'candidate-build'), `${job.runId}-build`);
+  const candidateInventory = sourceInventory(job.source, job.deadlineMs, out, 'candidate-source');
+  const proofModules = frozen.overlayFiles.filter((file) => candidateInventory.files.includes(file)).map((file) => overlayModule(file, original.baseline.sourceRoot)).filter(Boolean);
+  const libraries = [...new Set([...(original.baseline.libraries ?? []), ...proofModules])];
+  const build = await buildSnapshot({ ...original.baseline, ...(libraries.length ? { libraries } : {}), deadlineMs: job.deadlineMs }, job.source, path.join(out, 'candidate-build'), `${job.runId}-build`);
   const files = sourceHashes(build), baseline = sourceHashes(frozen.build);
   for (const [rel, digest] of Object.entries(baseline)) if (!frozen.overlayFiles.includes(rel) && files[rel] !== digest) refuse('stale-input', `protected baseline input changed: ${rel}`);
   for (const rel of Object.keys(files)) if (!Object.hasOwn(baseline, rel) && !frozen.overlayFiles.includes(rel)) refuse('stale-input', `unrecorded candidate source: ${rel}`);
