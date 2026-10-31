@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { buildRecord } from './fvs-rust-identity.mjs';
 import { buildLeanGraph, duplicateKeys } from './fvs-lean-graph.mjs';
-import { buildPlan } from './fvs-closure-plan.mjs';
+import { buildPlan, definitionClosure } from './fvs-closure-plan.mjs';
 import { canonical, validatePlan, readChain, registryStatus } from './fvs-contract-registry.mjs';
 
 const sha = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
@@ -175,14 +175,43 @@ function kernelRequest(job, build, references, targets, context, nodes = targets
     externalSearchPaths: build.externalSearchPaths, externalImports: build.externalImports,
     modules: build.modules.map(({ name, parts }) => ({ name, parts })), referenceModules: references.map(({ name, parts }) => ({ name, parts })),
     targets: selected.map(({ name, expectedName }) => ({ name, expectedName })),
-    meaningRoots: [...new Set(selected.flatMap((t) => context.view.nodes.get(t.node).declarations.map((name) => name.replace(/^probe:/, ''))))] };
+    meaningRoots: [...new Set(selected.flatMap((t) => definitionClosure(context.graph.json, context.view.nodes.get(t.node).declarations)
+      .filter((name) => context.graph.json.nodes[name]).map((name) => name.replace(/^probe:/, ''))))] };
+}
+
+function originalProjectModules(job, context) {
+  const root = job.extraction.lean.projectRoot, compiled = context.constants.inputs.compiled;
+  return Object.keys(context.graph.json.completeness.modules).map((name) => {
+    if (!moduleName(name)) refuse('unsupported', 'unsupported original module layout');
+    const base = `.lake/build/lib/lean/${name.replaceAll('.', '/')}.olean`;
+    const parts = Object.hasOwn(compiled, `${base}.private`) || Object.hasOwn(compiled, `${base}.server`) ? [base, `${base}.server`, `${base}.private`] : [base];
+    for (const rel of parts) if (!isSha(compiled[rel]) || hash(path.join(root, rel)) !== compiled[rel]) refuse('stale-input', `original compiled reference is unavailable: ${rel}`);
+    return { name, parts: parts.map((rel) => path.join(root, rel)) };
+  });
+}
+
+function originalExternalParts(job, context, build) {
+  const original = bound(job.extraction.lean.imports).json.modules, project = new Set(Object.keys(context.graph.json.completeness.modules));
+  for (const [name, module] of Object.entries(original)) {
+    if (project.has(name)) continue;
+    beforeDeadline(job);
+    if (!moduleName(name) || !object(module.parts)) refuse('unsupported', 'unsupported original dependency inventory');
+    const base = build.externalSearchPaths.map((dir) => path.join(dir, `${name.replaceAll('.', '/')}.olean`)).find((file) => fs.existsSync(file));
+    if (!base) refuse('stale-input', `missing original external module ${name}`);
+    for (const [suffix, digest] of Object.entries(module.parts)) {
+      if (!['.olean', '.server', '.private'].includes(suffix) || !isSha(digest)) refuse('unsupported', 'unsupported original import part');
+      const file = suffix === '.olean' ? base : base + suffix;
+      if (!fs.existsSync(file) || hash(file) !== digest) refuse('stale-input', `external module changed since extraction: ${name}${suffix}`);
+    }
+  }
 }
 
 async function freezeAuto(job, out, engine) {
   closed(job, ['schema', 'version', 'purpose', 'runId', 'deadlineMs', 'extraction', 'registry', 'baseline', 'targets', 'overlayFiles'], 'auto freeze request');
   if (!Array.isArray(job.overlayFiles) || !job.overlayFiles.every(relative) || new Set(job.overlayFiles).size !== job.overlayFiles.length) refuse('invalid-input', 'explicit proof overlay file list is required');
   const context = extractionContext(job.extraction);
-  if (job.baseline?.source?.kind !== 'git' || !isCommit(job.baseline.source.commit)) refuse('invalid-input', 'auto baseline must name an immutable fixture commit');
+  if (job.baseline?.source?.kind !== 'git' || !isCommit(job.baseline.source.commit) || !isCommit(job.baseline.source.expectedTree)) refuse('invalid-input', 'auto baseline must name an immutable fixture commit and tree');
+  if (job.baseline.lean?.sha256 !== context.constants.producer.leanSha256 || job.baseline.lake?.sha256 !== context.constants.producer.lakeSha256) refuse('stale-input', 'checker toolchain differs from the bound extraction toolchain');
   const records = registryContext(job, context, job.baseline.source.root);
   exclusive(out);
   const requestInput = captureInput(job, out, engine);
@@ -194,11 +223,18 @@ async function freezeAuto(job, out, engine) {
   if (canonical(records) !== canonical(frozenRecords)) refuse('stale-input', 'registry changed while materializing the baseline');
   for (const file of job.overlayFiles) if (Object.values(records).some((r) => r.contract.specDefinitions.some((d) => d.file === file))) refuse('invalid-input', 'a reviewed meaning file cannot also be a mutable proof overlay');
   const targets = targetsOf(job, context, records, build);
+  originalExternalParts(job, context, build);
+  const original = kernelRequest({ ...job, runId: `${job.runId}-extraction-meaning` }, build, originalProjectModules(job, context),
+    targets.map((t) => ({ ...t, expectedName: t.name })), context);
+  const originalRequest = save(out, 'extraction-meaning-request.json', original);
+  const extractionMeaning = engine.runKernelAudit({ request: originalRequest.file, out: path.join(out, 'extraction-meaning-check') }, { baseline: true });
+  engine.verifyBuildImports(build, extractionMeaning.attempt.imports, job.deadlineMs);
   const expected = expectedWitness(job, build, targets, path.join(out, 'expectations'), engine);
   const references = [...build.modules, expected.module];
   const kernel = kernelRequest(job, build, references, targets, context);
   const request = save(out, 'meaning-request.json', kernel);
   const meaning = engine.runKernelAudit({ request: request.file, out: path.join(out, 'meaning-check') }, { baseline: true });
+  engine.verifyBuildImports(build, meaning.attempt.imports, job.deadlineMs);
   const compiled = { ...buildFiles(build), ...Object.fromEntries([...expected.module.parts, expected.source.file,
     ...['.ilean', '.ir'].map((suffix) => expected.module.parts[0].replace(/\.olean$/, suffix)).filter((f) => fs.existsSync(f))].map((f) => [f, hash(f)])) };
   const imports = Object.fromEntries(meaning.attempt.imports.filter((m) => !m.project).flatMap((m) => m.parts.map((p) => [p.file, p.sha256])));
@@ -208,7 +244,8 @@ async function freezeAuto(job, out, engine) {
   const frozen = { schema: 'fvs-checker/auto-baseline', version: 1, purpose: 'auto', authority: 'expectations-only', runId: job.runId,
     input, ...requestInput, checker, extractionSourceCommit: context.identity.json.provenance.sourceCommit, fixtureSource: build.source,
     registry: job.registry, records, targets, overlayFiles: job.overlayFiles, build, references, compiled, imports, runtimes: meaning.attempt.runtimes,
-    expected, meaningCheck: meaning.evidence, meaning: meaning.audit };
+    expected, extractionMeaningCheck: extractionMeaning.evidence, extractionMeaning: extractionMeaning.audit,
+    meaningCheck: meaning.evidence, meaning: meaning.audit };
   const baseline = save(out, 'frozen.json', frozen);
   return { code: 'ok', schema: 'fvs-checker/freeze-result', purpose: 'auto', authority: 'expectations-only', baseline, targetProofsChecked: false };
 }
@@ -216,8 +253,17 @@ async function freezeAuto(job, out, engine) {
 function frozenContext(ref, { ignoreRegistryLock = false } = {}) {
   const frozen = bound(ref).json;
   if (frozen.schema !== 'fvs-checker/auto-baseline' || frozen.version !== 1 || frozen.purpose !== 'auto' || frozen.authority !== 'expectations-only'
-    || frozen.meaning?.status !== 'meaning-checked' || frozen.meaning?.targetProofsChecked !== false) refuse('invalid-input', 'auto check requires an extraction-bound expectation bundle');
+    || frozen.meaning?.status !== 'meaning-checked' || frozen.meaning?.targetProofsChecked !== false
+    || frozen.extractionMeaning?.status !== 'meaning-checked' || frozen.extractionMeaning?.targetProofsChecked !== false) refuse('invalid-input', 'auto check requires an extraction-bound expectation bundle');
+  for (const [ref, declared] of [[frozen.extractionMeaningCheck, frozen.extractionMeaning], [frozen.meaningCheck, frozen.meaning]]) {
+    const evidence = bound(ref).json;
+    if (evidence.authority !== 'audit-only' || canonical(evidence.audit) !== canonical(declared) || evidence.audit?.schema !== 'fvs-kernel-baseline/result'
+      || evidence.audit.targetProofsChecked !== false) refuse('stale-input', 'frozen meaning evidence does not match its retained checker result');
+  }
   const job = bound(frozen.input).json, context = extractionContext(job.extraction);
+  if (canonical(frozen.registry) !== canonical(job.registry) || canonical(frozen.fixtureSource) !== canonical(frozen.build.source)
+    || frozen.extractionSourceCommit !== context.identity.json.provenance.sourceCommit || frozen.runId !== job.runId
+    || frozen.build.source.commit !== job.baseline.source.commit || frozen.build.source.tree !== job.baseline.source.expectedTree) refuse('stale-input', 'frozen source/registry tuple is inconsistent');
   bound(frozen.controllerInput); bound(frozen.adapterInput);
   if (canonical(engineIdentity()) !== canonical(frozen.checker)) refuse('stale-input', 'checker/policy identity changed since freeze');
   verifyFiles(frozen.compiled); verifyFiles(frozen.imports); verifyFiles(frozen.runtimes);
@@ -247,6 +293,7 @@ function checkEvidence(ref, frozenSha256) {
     || canonical(result.audit) !== canonical(kernel.audit) || result.build.source.commit !== result.source.commit
     || result.build.source.tree !== result.source.tree) refuse('stale-input', 'candidate evidence lost exact source/target coverage');
   verifyFiles(kernel.attempt.inputs);
+  verifyFiles(Object.fromEntries(kernel.attempt.imports.flatMap((m) => m.parts.map((p) => [p.file, p.sha256]))));
   for (const row of kernel.attempt.snapshots.modules) if (hash(row.file) !== row.sha256) refuse('stale-input', 'accepted kernel input snapshot changed');
   for (const name of ['helper', 'runner']) {
     const file = kernel.attempt.snapshots[name], source = name === 'helper' ? 'FvsKernelAudit.lean' : 'fvs-checker.mjs';
@@ -262,6 +309,25 @@ function dependenciesOf(context, node) {
   visit(node); return [...found].sort((a, b) => a - b);
 }
 
+function checkBuildEvidence(result, engine, deadlineMs) {
+  engine.verifyBuildImports(result.build, bound(result.kernelCheck).json.attempt.imports, deadlineMs);
+}
+
+function integrationHead(source, out, label, deadlineMs) {
+  closed(source, ['kind', 'root', 'commit', 'expectedTree'], 'integrated source');
+  if (source.kind !== 'git' || !path.isAbsolute(source.root ?? '') || !isCommit(source.commit) || !isCommit(source.expectedTree)) refuse('invalid-input', 'exact integrated git source is required');
+  const git = '/usr/bin/git', toolSha256 = hash(git), argv = ['rev-parse', '--verify', 'HEAD'];
+  const env = { PATH: '/usr/bin:/bin', LANG: 'C', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_OPTIONAL_LOCKS: '0',
+    GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1', GIT_TERMINAL_PROMPT: '0' };
+  const run = spawnSync(git, argv, { cwd: source.root, env, encoding: 'utf8', timeout: Math.max(1, deadlineMs - Date.now()), maxBuffer: 1024 * 1024 });
+  const receipt = save(out, `${label}.json`, { argv: [git, ...argv], cwd: source.root, env, toolSha256, exit: run.status, signal: run.signal,
+    error: run.error?.code ?? null, stdout: run.stdout ?? '', stderr: run.stderr ?? '' });
+  if (hash(git) !== toolSha256) refuse('stale-input', 'git tool changed during integrated-head validation');
+  if (run.error?.code === 'ETIMEDOUT') refuse('timeout', 'integrated-head validation timed out');
+  if (run.status !== 0 || run.signal || run.error || run.stdout.trim() !== source.commit) refuse('stale-input', 'the intended integrated commit is not the current target HEAD');
+  return receipt;
+}
+
 async function acceptAuto(job, out, engine) {
   closed(job, ['schema', 'version', 'purpose', 'runId', 'deadlineMs', 'baseline', 'candidateCheck', 'source', 'node', 'store'], 'auto accept request');
   const { frozen, context } = frozenContext(job.baseline);
@@ -269,17 +335,20 @@ async function acceptAuto(job, out, engine) {
   closed(job.store, ['root', 'expectedHeadSha256'], 'accepted store');
   if (!path.isAbsolute(job.store.root ?? '') || !(job.store.expectedHeadSha256 === null || isSha(job.store.expectedHeadSha256))) refuse('invalid-input', 'explicit accepted-store head is required');
   const candidate = checkEvidence(job.candidateCheck, job.baseline.sha256);
+  checkBuildEvidence(candidate, engine, job.deadlineMs);
   if (!candidate.nodes.includes(job.node)) refuse('invalid-input', 'candidate check omits the selected node');
   const previous = readAcceptedStore(job.store.root);
   if (previous.headSha256 !== job.store.expectedHeadSha256) refuse('stale-input', 'accepted-store expected head is stale');
+  if (previous.records.some(({ record }) => record.runId === job.runId)) refuse('stale-input', 'publication run identity has already been used');
   const dependencies = dependenciesOf(context, job.node).map((node) => {
     const accepted = previous.heads.get(node);
     if (!accepted || accepted.record.frozenSha256 !== job.baseline.sha256 || accepted.record.registryHeadSha256 !== frozen.registry.headSha256) refuse('stale-input', `helper ${node} lacks a current accepted receipt`);
-    checkEvidence(accepted.record.integratedCheck, job.baseline.sha256);
+    checkBuildEvidence(checkEvidence(accepted.record.integratedCheck, job.baseline.sha256), engine, job.deadlineMs);
     return { node, sha256: accepted.sha256 };
   });
   exclusive(out);
   const requestInput = captureInput(job, out, engine);
+  const headBefore = integrationHead(job.source, out, 'integration-head-before', job.deadlineMs);
   const integrated = await checkAuto({ schema: 'fvs-checker/check-request', version: 1, purpose: 'auto', runId: `${job.runId}-integrated`, deadlineMs: job.deadlineMs,
     baseline: job.baseline, source: job.source, nodes: [job.node, ...dependencies.map((d) => d.node)] }, path.join(out, 'integrated'), engine);
   const reuseChecks = [];
@@ -305,13 +374,18 @@ async function acceptAuto(job, out, engine) {
     frozenContext(job.baseline, { ignoreRegistryLock: true });
     const current = readAcceptedStore(job.store.root, { ignoreLock: true });
     if (current.headSha256 !== job.store.expectedHeadSha256) refuse('stale-input', 'accepted-store head changed during integrated checking');
+    if (current.records.some(({ record }) => record.runId === job.runId)) refuse('stale-input', 'publication run identity has already been used');
     for (const dep of dependencies) if (current.heads.get(dep.node)?.sha256 !== dep.sha256) refuse('stale-input', 'accepted helper changed during integrated checking');
-    checkEvidence(job.candidateCheck, job.baseline.sha256); checkEvidence(integrated.evidence, job.baseline.sha256); beforeDeadline(job);
+    checkBuildEvidence(checkEvidence(job.candidateCheck, job.baseline.sha256), engine, job.deadlineMs);
+    checkBuildEvidence(checkEvidence(integrated.evidence, job.baseline.sha256), engine, job.deadlineMs);
+    for (const dep of dependencies) checkBuildEvidence(checkEvidence(current.heads.get(dep.node).record.integratedCheck, job.baseline.sha256), engine, job.deadlineMs);
+    const headAtPublication = integrationHead(job.source, out, 'integration-head-publication', job.deadlineMs);
+    beforeDeadline(job);
     const record = { schema: 'fvs-checker/accepted-event', version: 1, authority: 'canonical-checker', seq: current.records.length, prev: current.headSha256,
       runId: job.runId, node: job.node, frozenSha256: job.baseline.sha256, baseline: job.baseline, registryHeadSha256: frozen.registry.headSha256,
       contract: frozen.records[job.node].sha256, candidate: candidate.source, integrated: integrated.source,
       extractionSourceCommit: frozen.extractionSourceCommit, dependencies, candidateCheck: job.candidateCheck, integratedCheck: integrated.evidence,
-      helperIdentityChecks: reuseChecks, ...requestInput, assumptions: frozen.records[job.node].contract.assumptions,
+      helperIdentityChecks: reuseChecks, integratedHeadChecks: [headBefore, headAtPublication], ...requestInput, assumptions: frozen.records[job.node].contract.assumptions,
       policy: { axioms: ['propext', 'Classical.choice', 'Quot.sound'], projectReplay: 'all-required', expectedIdentity: 'Expr.equal' }, durability: 'process-crash-consistent' };
     const bytes = Buffer.from(`${JSON.stringify(record, null, 2)}\n`), digest = sha(bytes), temporary = path.join(job.store.root, `.tmp-${process.pid}-${digest}`);
     const fd = fs.openSync(temporary, 'wx'); writing = true;
@@ -342,6 +416,7 @@ async function checkAuto(job, out, engine) {
   const kernel = kernelRequest(job, build, frozen.references, frozen.targets, context, job.nodes);
   const request = save(out, 'kernel-request.json', kernel);
   const checked = engine.runKernelAudit({ request: request.file, out: path.join(out, 'kernel-check') });
+  engine.verifyBuildImports(build, checked.attempt.imports, job.deadlineMs);
   const observed = Object.fromEntries(checked.attempt.imports.filter((m) => !m.project).flatMap((m) => m.parts.map((p) => [p.file, p.sha256])));
   // A builder may use an owned dependency copy at a different path. Bind names,
   // ordered parts and bytes, rather than accepting a caller's dependency label.
@@ -356,6 +431,8 @@ async function checkAuto(job, out, engine) {
   return { ...result, evidence: save(out, 'result.json', result) };
 }
 
+// This reads immutable history. accept additionally validates the current
+// freeze/registry context and the source/compiler snapshots before publication.
 export function readAcceptedStore(root, { ignoreLock = false } = {}) {
   if (!fs.existsSync(root)) return { records: [], heads: new Map(), headSha256: null };
   if ((!ignoreLock && fs.existsSync(path.join(root, 'lock'))) || fs.readdirSync(root).some((n) => n.startsWith('.tmp-'))) refuse('stale-input', 'accepted store is pending');
@@ -373,6 +450,11 @@ export function readAcceptedStore(root, { ignoreLock = false } = {}) {
     if (record.baseline.sha256 !== record.frozenSha256 || frozen.schema !== 'fvs-checker/auto-baseline' || frozen.purpose !== 'auto'
       || frozen.registry.headSha256 !== record.registryHeadSha256 || frozen.records[record.node]?.sha256 !== record.contract
       || canonical(record.policy) !== canonical({ axioms: ['propext', 'Classical.choice', 'Quot.sound'], projectReplay: 'all-required', expectedIdentity: 'Expr.equal' })) refuse('stale-input', 'accepted record has foreign contract/policy bindings');
+    if (!Array.isArray(record.integratedHeadChecks) || record.integratedHeadChecks.length !== 2) refuse('stale-input', 'accepted record lacks integrated-head checks');
+    for (const ref of record.integratedHeadChecks) {
+      const head = bound(ref).json;
+      if (head.exit !== 0 || head.signal || head.error || head.stdout?.trim() !== record.integrated.commit || !isSha(head.toolSha256)) refuse('stale-input', 'accepted record has foreign integrated-head evidence');
+    }
     for (const ref of [record.candidateCheck, record.integratedCheck]) {
       const checked = checkEvidence(ref, record.frozenSha256);
       if (checked.schema !== 'fvs-checker/auto-check' || checked.status !== 'provisional' || checked.frozenSha256 !== record.frozenSha256

@@ -265,7 +265,7 @@ describe('real checker core (FVS_REAL_CHECKER=1)', { skip: process.env.FVS_REAL_
   });
   it('freezes a compiling contextual standalone spec before its sorry proof is edited', async (t) => {
     const dir = scratch(), project = path.join(dir, 'project'); fs.mkdirSync(project);
-    const source = 'import Lean\nnamespace Demo\nsection\nvariable {α : Type}\ntheorem reflexive [Inhabited α] (x : α) : x = x := by sorry\nend\nend Demo\n';
+    const source = 'import Lean\nnamespace Demo\nuniverse u\nsection\nvariable {α : Type u}\ntheorem reflexive [Inhabited α] (x : α) : x = x := by sorry\nend\nend Demo\n';
     fs.writeFileSync(path.join(project, 'Fixture.lean'), source);
     fs.writeFileSync(path.join(project, 'lean-toolchain'), 'leanprover/lean4:v4.31.0\n');
     const request = path.join(dir, 'freeze.json'), out = path.join(dir, 'baseline');

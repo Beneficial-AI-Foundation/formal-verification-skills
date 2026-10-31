@@ -467,7 +467,7 @@ export async function buildCheckerSnapshot(input) {
       externalInventory[directory] = { kind: directory === path.join(toolRoot, 'lib', 'lean') ? 'toolchain' : 'dependency' };
     }
     result.inventories.outputs = save('outputs.json', { root: result.buildRoot, files: outputFiles, externalRoots: externalInventory, externalFiles, declaredSearchPaths, missingSearchPaths });
-    Object.assign(result, { modules, externalSearchPaths: [...externalPaths].sort(), externalImports: [...externalImports].sort(), status: 'built' });
+    Object.assign(result, { modules, externalSearchPaths: [...externalPaths], externalImports: [...externalImports].sort(), status: 'built' });
     save('result.json', result);
     return result;
   } catch (error) {

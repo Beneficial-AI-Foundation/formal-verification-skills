@@ -145,6 +145,42 @@ async function standaloneBuild({ job, root, sourceRoot, files, profile = null, b
 
 const externalIdentity = (imports) => imports.filter((m) => !m.project).map((m) => [m.name, m.parts.map((p) => p.sha256)]).sort(([a], [b]) => a.localeCompare(b));
 
+// Bind observations to the compiler's actual imports, not merely to a set of
+// directories containing plausible modules with the same names.
+export function verifyBuildImports(build, imports, deadlineMs = Infinity) {
+  const sealed = (ref) => {
+    if (!object(ref) || !path.isAbsolute(ref.file ?? '') || !/^[0-9a-f]{64}$/.test(ref.sha256 ?? '')) refuse('invalid-input', 'missing bound build inventory');
+    const bytes = fs.readFileSync(ref.file);
+    if (sha(bytes) !== ref.sha256) refuse('stale-input', 'build inventory changed');
+    try { return JSON.parse(bytes); } catch { return refuse('invalid-input', 'malformed build inventory'); }
+  };
+  const outputs = sealed(build.inventories.outputs), runtime = sealed(build.lean.runtime), deps = sealed(build.dependencies.before), source = sealed(build.inventories.source);
+  if (!object(outputs.externalFiles) || !object(outputs.externalRoots) || !object(runtime.files) || !object(deps)) refuse('invalid-input', 'incomplete compiler dependency inventories');
+  if (!object(outputs.files) || outputs.root !== build.buildRoot || JSON.stringify(source) !== JSON.stringify(build.source)) refuse('invalid-input', 'inconsistent source/output build inventory');
+  for (const [root, files] of [[build.projectRoot, source.files], [build.buildRoot, outputs.files]]) {
+    if (!path.isAbsolute(root ?? '') || !object(files)) refuse('invalid-input', 'incomplete build snapshot');
+    for (const [rel, expected] of Object.entries(files)) {
+      if (Date.now() >= deadlineMs) refuse('timeout', 'build snapshot validation deadline is exhausted');
+      if (!relativeFile(rel) || !object(expected)) refuse('invalid-input', 'malformed build snapshot entry');
+      const file = path.join(root, rel), stat = fs.lstatSync(file);
+      if (!stat.isFile() || stat.nlink !== 1 || fs.realpathSync(file) !== file || stat.size !== expected.size || sha(fs.readFileSync(file)) !== expected.sha256) refuse('stale-input', `source/compiler output changed: ${rel}`);
+    }
+  }
+  const owned = build.dependencies.owned?.root;
+  const inside = (root, file) => typeof root === 'string' && file.startsWith(`${root}${path.sep}`);
+  for (const module of imports.filter((m) => !m.project)) {
+    if (Date.now() >= deadlineMs) refuse('timeout', 'dependency validation deadline is exhausted');
+    const headers = [...new Set(Object.keys(outputs.externalRoots).map((root) => path.join(root, `${module.name.replaceAll('.', '/')}.olean`))
+      .filter((file) => Object.hasOwn(outputs.externalFiles, file)))];
+    if (headers.length > 1 || (headers.length === 1 && headers[0] !== module.parts[0]?.file)) refuse('stale-input', `witness/compiler import origin mismatch: ${module.name}`);
+    for (const part of module.parts) {
+      const expected = outputs.externalFiles[part.file] ?? (inside(runtime.root, part.file) ? runtime.files[path.relative(runtime.root, part.file)]
+        : inside(owned, part.file) ? deps[path.relative(owned, part.file)] : null);
+      if (!expected || expected.symlink !== undefined || expected.sha256 !== part.sha256 || sha(fs.readFileSync(part.file)) !== part.sha256) refuse('stale-input', `unbound compiler dependency part: ${module.name} ${part.file}`);
+    }
+  }
+}
+
 export async function freeze({ request, out }) {
   const job = readJson(request);
   const keys = ['schema', 'version', 'purpose', 'runId', 'projectRoot', 'specFile', 'lean', 'deadlineMs', 'externalSearchPaths', 'externalImports', 'build'];
@@ -182,6 +218,7 @@ export async function freeze({ request, out }) {
   let meaning;
   try { meaning = runKernelAudit({ request: kernelRequest, out: path.join(root, 'meaning-check') }, { baseline: true }); }
   catch (e) { refuse('baseline-unavailable', `pre-edit meaning/type baseline is unavailable: ${e.message}`); }
+  verifyBuildImports(built, meaning.attempt.imports, job.deadlineMs);
   const actualKinds = new Map(meaning.witness.declarations.map((d) => [d.name, d.kind]));
   for (const d of declarations) if (['theorem', 'lemma'].includes(d.kind) !== (actualKinds.get(d.name) === 'theorem')) {
     refuse('baseline-unavailable', `ambiguous source-to-theorem inventory ${d.name}`);
@@ -279,6 +316,7 @@ export async function check({ request, out }) {
     auxiliaryRoots: added.map((d) => d.name) };
   const kernelRequest = path.join(root, 'kernel-request.json'); fs.writeFileSync(kernelRequest, `${JSON.stringify(kernelJob)}\n`, { flag: 'wx' });
   const result = runKernelAudit({ request: kernelRequest, out: path.join(root, 'kernel-check') });
+  verifyBuildImports(built, result.attempt.imports, job.deadlineMs);
   verifyExternal();
   if (JSON.stringify(externalIdentity(result.attempt.imports)) !== JSON.stringify(frozen.externalIdentity) || JSON.stringify(result.attempt.runtimes) !== JSON.stringify(frozen.runtimeBindings)) refuse('stale-input', 'resolved library/runtime inventory changed since pre-edit capture');
   if (JSON.stringify(projectFiles(job.projectRoot)) !== JSON.stringify(files)) refuse('stale-input', 'project changed during candidate audit');
@@ -304,6 +342,9 @@ export function runKernelAudit({ request, out }, { baseline = false } = {}) {
     refuse('invalid-input', 'expected a complete controller-owned fvs-checker/kernel-request version 1');
   }
   if (job.deadlineMs <= Date.now()) refuse('timeout', 'the validation deadline is exhausted');
+  const standardRoot = path.join(path.dirname(path.dirname(fs.realpathSync(job.lean.path))), 'lib/lean');
+  for (const module of [...job.modules, ...job.referenceModules]) if (fs.existsSync(path.join(standardRoot, `${module.name.replaceAll('.', '/')}.olean`))) refuse('unsupported', `project module shadows the pinned toolchain: ${module.name}`);
+  const trustedPaths = [...new Set([standardRoot, ...job.externalSearchPaths])];
   const irFiles = [...job.modules, ...job.referenceModules].map((m) => m.parts[0].replace(/\.olean$/, '.ir')).filter((p) => fs.existsSync(p));
   const runtimes = nativeRuntimeFiles(job.lean.path);
   const paths = [...new Set([path.resolve(request), job.lean.path, process.execPath, SCRIPT, HELPER, ...job.modules.flatMap((m) => m.parts), ...job.referenceModules.flatMap((m) => m.parts), ...irFiles, ...runtimes])];
@@ -338,7 +379,7 @@ export function runKernelAudit({ request, out }, { baseline = false } = {}) {
   const baseEnv = { PATH: `${path.dirname(job.lean.path)}:/usr/bin:/bin`, LANG: 'C', TMPDIR: path.resolve(out) };
   const witnessArgv = ['--run', snapshots.helper, 'witness', path.resolve(sealed)];
   const witness = spawnSync(job.lean.path, witnessArgv, { cwd: path.resolve(out), encoding: 'utf8', timeout: Math.max(1, job.deadlineMs - Date.now()), maxBuffer: 16 * 1024 * 1024,
-    env: { ...baseEnv, LEAN_PATH: [...sealedJob.referenceModules.map((m) => m.searchRoot), ...job.externalSearchPaths].join(path.delimiter) } });
+    env: { ...baseEnv, LEAN_PATH: [...new Set([standardRoot, ...sealedJob.referenceModules.map((m) => m.searchRoot), ...trustedPaths])].join(path.delimiter) } });
   fs.writeFileSync(path.join(out, 'witness.stdout.log'), witness.stdout ?? '', { flag: 'wx' });
   fs.writeFileSync(path.join(out, 'witness.stderr.log'), witness.stderr ?? '', { flag: 'wx' });
   const witnessReceipt = { argv: [job.lean.path, ...witnessArgv], exit: witness.status, signal: witness.signal, error: witness.error?.code ?? null,
@@ -353,7 +394,7 @@ export function runKernelAudit({ request, out }, { baseline = false } = {}) {
   // Discovery is not authoritative metadata: repeat after binding every resolved
   // part, then use only that second process's type/context observations.
   const verifiedWitness = spawnSync(job.lean.path, witnessArgv, { cwd: path.resolve(out), encoding: 'utf8', timeout: Math.max(1, job.deadlineMs - Date.now()), maxBuffer: 16 * 1024 * 1024,
-    env: { ...baseEnv, LEAN_PATH: [...new Set([...sealedJob.referenceModules.map((m) => m.searchRoot), ...job.externalSearchPaths])].join(path.delimiter) } });
+    env: { ...baseEnv, LEAN_PATH: [...new Set([standardRoot, ...sealedJob.referenceModules.map((m) => m.searchRoot), ...trustedPaths])].join(path.delimiter) } });
   fs.writeFileSync(path.join(out, 'verified-witness.stdout.log'), verifiedWitness.stdout ?? '', { flag: 'wx' });
   fs.writeFileSync(path.join(out, 'verified-witness.stderr.log'), verifiedWitness.stderr ?? '', { flag: 'wx' });
   const verifiedWitnessReceipt = { argv: [job.lean.path, ...witnessArgv], exit: verifiedWitness.status, signal: verifiedWitness.signal, error: verifiedWitness.error?.code ?? null,
@@ -371,7 +412,7 @@ export function runKernelAudit({ request, out }, { baseline = false } = {}) {
   fs.writeFileSync(auditRequest, `${JSON.stringify({ ...sealedJob, structureFacts: facts.facts })}\n`, { flag: 'wx' });
   const argv = ['--run', snapshots.helper, baseline ? 'baseline' : 'audit', path.resolve(auditRequest)];
   const run = spawnSync(job.lean.path, argv, { cwd: path.resolve(out), encoding: 'utf8', timeout: Math.max(1, job.deadlineMs - Date.now()), maxBuffer: 16 * 1024 * 1024,
-    env: { ...baseEnv, LEAN_PATH: job.externalSearchPaths.join(path.delimiter) } });
+    env: { ...baseEnv, LEAN_PATH: trustedPaths.join(path.delimiter) } });
   fs.writeFileSync(path.join(out, 'stdout.log'), run.stdout ?? '', { flag: 'wx' });
   fs.writeFileSync(path.join(out, 'stderr.log'), run.stderr ?? '', { flag: 'wx' });
   const attempt = { schema: 'fvs-checker/kernel-attempt', version: 1, authority: 'audit-only', bindingLevel: 'resolved-inputs', runId: job.runId,
@@ -415,7 +456,7 @@ export async function runCommand(argv) {
   if (!flags.request || !flags.out) refuse('usage', '--request and --out are required');
   if (readJson(flags.request)?.purpose === 'auto' || command === 'accept') {
     const { runAuto } = await import('./fvs-checker-auto.mjs');
-    return runAuto(command, flags, { runKernelAudit, HELPER, SCRIPT });
+    return runAuto(command, flags, { runKernelAudit, verifyBuildImports, HELPER, SCRIPT });
   }
   return command === 'audit' ? runKernelAudit(flags) : command === 'freeze' ? freeze(flags) : check(flags);
 }
