@@ -1,0 +1,200 @@
+{
+  "schema": "fvs-closure-plan/record",
+  "version": 1,
+  "status": "ready",
+  "inputs": {
+    "identitySha256": "c6f6e312ee3e0b9f03b29e71e550e34ee3fd9ae3f26a9999985a0008bea42bfb",
+    "graphSha256": "d653bfda8a94ebbead3b9ae74bf49c9766502d3d5342850bdfcae5390bbeacbd",
+    "llbcSha256": "5cbcefb346f8d34aa68730573cbda0266add5e52a12ab237c0913fc7b4c04323"
+  },
+  "selection": {
+    "requestedRoots": [
+      20,
+      21
+    ],
+    "failed": []
+  },
+  "provenance": {
+    "sourceCommit": "2359861154ccd5180021702637cad43e6f562ec6",
+    "leanProjectCommit": "2359861154ccd5180021702637cad43e6f562ec6",
+    "translationSha256": "790221e29e2af42eddc06f5c8cfe160cd6f78729980bee8dc20a568c3092e933",
+    "charonVersion": "0.1.274",
+    "aeneasVersion": "nightly-2026.09.30-0855ce1",
+    "manifestSha256": "e6067d4d80eff1324ec0122c3efa6c7d2cf7bf48477ba1897525fbf6c38f74d9",
+    "llbcSha256": "5cbcefb346f8d34aa68730573cbda0266add5e52a12ab237c0913fc7b4c04323",
+    "configSha256": "1740df601d17e55a88a27d930b38548e0f626211855a6336576a620b5c85734d"
+  },
+  "qualification": {
+    "graphFidelity": "verified",
+    "graphSchemaVersion": 2,
+    "graphCapability": "oracle-lanes"
+  },
+  "admissibility": {
+    "status": "admissible",
+    "blockers": []
+  },
+  "upstream": {
+    "identityStatus": "complete",
+    "identityBlockers": [],
+    "graphState": "complete",
+    "graphBlockers": []
+  },
+  "ownership": {
+    "rule": "each node is scheduled once; a node in several requested closures is owned by the lowest-numbered requested root (by def_id) that reaches it; ownership is bookkeeping, not readiness"
+  },
+  "edgeOrientation": "consumer -> dependency, from the graph's nodes lanes (type and value); generated nodes are passed through, never scheduled",
+  "nodes": {
+    "19": {
+      "defId": 19,
+      "rustName": "m1demo::helper",
+      "target": "m1demo.helper",
+      "declarations": [
+        "probe:m1demo.helper"
+      ],
+      "upstream": {
+        "correspondence": "exact",
+        "reasons": []
+      },
+      "recursionGroup": {
+        "kind": "NonRec",
+        "members": [
+          19
+        ]
+      },
+      "eligibility": "eligible",
+      "reasons": [],
+      "dependsOn": [],
+      "unmappedDependencies": [],
+      "generatedDependencies": [
+        "probe:m1demo.Pair.mk"
+      ],
+      "typeDependencies": [
+        "probe:m1demo.Pair",
+        "probe:m1demo.Pair.a",
+        "probe:m1demo.Pair.b"
+      ],
+      "dependencyPaths": {},
+      "sharedBy": [
+        20,
+        21
+      ],
+      "ownerRoot": 20
+    },
+    "20": {
+      "defId": 20,
+      "rustName": "m1demo::root_sum",
+      "target": "m1demo.root_sum",
+      "declarations": [
+        "probe:m1demo.root_sum"
+      ],
+      "upstream": {
+        "correspondence": "exact",
+        "reasons": []
+      },
+      "recursionGroup": {
+        "kind": "NonRec",
+        "members": [
+          20
+        ]
+      },
+      "eligibility": "eligible",
+      "reasons": [],
+      "dependsOn": [
+        19
+      ],
+      "unmappedDependencies": [],
+      "generatedDependencies": [
+        "probe:m1demo.Pair.mk"
+      ],
+      "typeDependencies": [
+        "probe:m1demo.Pair",
+        "probe:m1demo.Pair.a",
+        "probe:m1demo.Pair.b"
+      ],
+      "dependencyPaths": {},
+      "sharedBy": [
+        20
+      ],
+      "ownerRoot": 20
+    },
+    "21": {
+      "defId": 21,
+      "rustName": "m1demo::root_twice",
+      "target": "m1demo.root_twice",
+      "declarations": [
+        "probe:m1demo.root_twice"
+      ],
+      "upstream": {
+        "correspondence": "exact",
+        "reasons": []
+      },
+      "recursionGroup": {
+        "kind": "NonRec",
+        "members": [
+          21
+        ]
+      },
+      "eligibility": "eligible",
+      "reasons": [],
+      "dependsOn": [
+        19
+      ],
+      "unmappedDependencies": [],
+      "generatedDependencies": [
+        "probe:m1demo.Pair.mk",
+        "probe:m1demo.root_twice._proof_1"
+      ],
+      "typeDependencies": [
+        "probe:m1demo.Pair",
+        "probe:m1demo.Pair.a",
+        "probe:m1demo.Pair.b"
+      ],
+      "dependencyPaths": {},
+      "sharedBy": [
+        21
+      ],
+      "ownerRoot": 21
+    }
+  },
+  "observedCycles": [],
+  "roots": [
+    {
+      "defId": 20,
+      "rustName": "m1demo::root_sum",
+      "status": "ready",
+      "closure": [
+        19,
+        20
+      ],
+      "blockers": [],
+      "definitionClosure": [
+        "probe:m1demo.Pair",
+        "probe:m1demo.Pair.a",
+        "probe:m1demo.Pair.b",
+        "probe:m1demo.Pair.mk",
+        "probe:m1demo.helper",
+        "probe:m1demo.root_sum"
+      ]
+    },
+    {
+      "defId": 21,
+      "rustName": "m1demo::root_twice",
+      "status": "ready",
+      "closure": [
+        19,
+        21
+      ],
+      "blockers": [],
+      "definitionClosure": [
+        "probe:m1demo.Pair",
+        "probe:m1demo.Pair.a",
+        "probe:m1demo.Pair.b",
+        "probe:m1demo.Pair.mk",
+        "probe:m1demo.helper",
+        "probe:m1demo.root_twice",
+        "probe:m1demo.root_twice._proof_1"
+      ]
+    }
+  ],
+  "definitionClosureRule": "from the root item's generated family over the nodes lanes: a theorem node follows its type lane only; any other node follows its type and value lanes; a structure adds its fields' projections and its constructors"
+}

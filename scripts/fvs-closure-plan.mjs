@@ -356,7 +356,7 @@ function components(adjacency) {
 
 // The semantic definition closure over the nodes lanes, in Lean ids (source and
 // generated nodes): a theorem contributes its statement (type lane) only.
-function definitionClosure(g, starts) {
+export function definitionClosure(g, starts) {
   const seen = new Set();
   const queue = starts.filter((id) => Object.hasOwn(g.nodes, id));
   while (queue.length > 0) {

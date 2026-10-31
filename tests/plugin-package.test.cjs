@@ -134,6 +134,7 @@ describe('published FVS plugin package', () => {
       [
         'fvs-auto.mjs',
         'fvs-closure-plan.mjs',
+        'fvs-contract-registry.mjs',
         'fvs-codex-think.mjs',
         'fvs-extract-patches.mjs',
         'fvs-kb-query.py',

@@ -1,0 +1,2675 @@
+{
+  "schema": "fvs/lean-graph",
+  "schemaVersion": 2,
+  "state": "complete",
+  "blockers": [],
+  "qualifiedInterface": {
+    "schema": "probe-lean/extract",
+    "schemaVersion": "3.0",
+    "tool": "probe-lean",
+    "version": "0.14.0"
+  },
+  "tool": {
+    "version": "0.24.0",
+    "name": "probe-lean",
+    "command": "extract"
+  },
+  "source": {
+    "repo": "",
+    "package-version": "2359861",
+    "package": "m1demo",
+    "language": "lean",
+    "commit": "2359861154ccd5180021702637cad43e6f562ec6"
+  },
+  "timestamp": "2026-10-30T21:48:58Z",
+  "run": {
+    "libraries": [
+      "M1demo",
+      "Specs"
+    ],
+    "probe": {
+      "argv": [
+        "/Users/ada/.fvs/tools/swvf-qualification-latest/probe-lean-0.24.0-lean-v4.31.0-darwin-arm64/bin/probe-lean",
+        "extract",
+        "/tmp/fvs44-qual.JqbS5W/roots-r9",
+        "-o",
+        "/tmp/fvs44-qual.JqbS5W/paired2.R3OzTO/lean.json",
+        "--library",
+        "M1demo,Specs"
+      ],
+      "exitCode": 0,
+      "sha256": "ac2998e713a49275ba08a3cefbf50db9b30faddbd5f45ac87259028d3248a101",
+      "version": "0.24.0"
+    },
+    "lakeBuild": {
+      "argv": [
+        "/Users/ada/.elan/bin/lake",
+        "build",
+        "M1demo",
+        "Specs"
+      ],
+      "exitCode": 0
+    },
+    "outputs": {
+      "extractSha256": "5acb989bf3dc2fdf9339f5cd2c31155c3f6b211444b026b7e2e334289b1c8b2f",
+      "logSha256": "af556baf7c503741ce43079a6cca9310fffe25d2f493045f545b1a88f8549052"
+    }
+  },
+  "provenance": {
+    "sourceCommit": "2359861154ccd5180021702637cad43e6f562ec6",
+    "leanProjectCommit": "2359861154ccd5180021702637cad43e6f562ec6",
+    "translationSha256": "790221e29e2af42eddc06f5c8cfe160cd6f78729980bee8dc20a568c3092e933",
+    "charonVersion": "0.1.274",
+    "aeneasVersion": "nightly-2026.09.30-0855ce1",
+    "manifestSha256": "e6067d4d80eff1324ec0122c3efa6c7d2cf7bf48477ba1897525fbf6c38f74d9",
+    "llbcSha256": "5cbcefb346f8d34aa68730573cbda0266add5e52a12ab237c0913fc7b4c04323",
+    "configSha256": "1740df601d17e55a88a27d930b38548e0f626211855a6336576a620b5c85734d"
+  },
+  "binding": {
+    "status": "bound",
+    "reasons": [],
+    "trust": "local-host-and-reviewed-scripts",
+    "configSha256": "1740df601d17e55a88a27d930b38548e0f626211855a6336576a620b5c85734d",
+    "generatedLean": [
+      {
+        "projectPath": "/private/tmp/fvs44-qual.JqbS5W/roots/M1demo/M1demo.lean",
+        "sha256": "b175dd0075fbc05a7cff69d4da6167b774074e5f50d268391d77891f143a03b6"
+      },
+      {
+        "projectPath": "/private/tmp/fvs44-qual.JqbS5W/roots/M1demo/translation.json",
+        "sha256": "790221e29e2af42eddc06f5c8cfe160cd6f78729980bee8dc20a568c3092e933"
+      }
+    ]
+  },
+  "fidelity": {
+    "status": "verified",
+    "obligations": [],
+    "probeUnderReport": [
+      {
+        "declaration": "probe:m1demo.root_twice",
+        "lane": "value",
+        "constants": [
+          "m1demo.root_twice._proof_1"
+        ]
+      }
+    ]
+  },
+  "completeness": {
+    "libraries": [
+      "M1demo",
+      "Specs"
+    ],
+    "log": {
+      "builtLibraries": null,
+      "buildSkipped": false,
+      "writtenAtoms": 9
+    },
+    "atomCount": 9,
+    "modules": {
+      "M1demo": [],
+      "M1demo.M1demo": [
+        "m1demo.Pair",
+        "m1demo.Pair.a",
+        "m1demo.Pair.b",
+        "m1demo.helper",
+        "m1demo.root_sum",
+        "m1demo.root_twice"
+      ],
+      "Specs": [],
+      "Specs.Roots": [
+        "_private.Specs.Roots.0.m1demo.roots.helper_self",
+        "m1demo.roots.root_sum_eq",
+        "m1demo.roots.root_twice_eq"
+      ]
+    },
+    "expectedDeclarations": 9,
+    "missingDeclarations": []
+  },
+  "declarations": {
+    "probe:m1demo.roots.root_twice_eq": {
+      "verification-status": "transitively-verified",
+      "type-dependencies-external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32",
+        "probe:Aeneas.Std.U32.ofNat",
+        "probe:Aeneas.Std.UScalar",
+        "probe:Aeneas.Std.UScalar.cMax",
+        "probe:Aeneas.Std.UScalarTy.U32",
+        "probe:Aeneas.Std.bind",
+        "probe:Aeneas.Std.instHMulUScalarResult",
+        "probe:Bool",
+        "probe:Bool.true",
+        "probe:Decidable.decide",
+        "probe:Eq",
+        "probe:Eq.refl",
+        "probe:HMul.hMul",
+        "probe:LE.le",
+        "probe:Nat",
+        "probe:Nat.decLe",
+        "probe:OfNat.ofNat",
+        "probe:id",
+        "probe:instLENat",
+        "probe:instOfNatNat",
+        "probe:of_decide_eq_true"
+      ],
+      "type-dependencies": [
+        "probe:m1demo.Pair",
+        "probe:m1demo.helper",
+        "probe:m1demo.root_twice"
+      ],
+      "term-dependencies-external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32",
+        "probe:rfl"
+      ],
+      "term-dependencies": [
+        "probe:m1demo.Pair",
+        "probe:m1demo.root_twice"
+      ],
+      "rust-source": null,
+      "language": "lean",
+      "kind": "theorem",
+      "is-relevant": true,
+      "is-protected": false,
+      "is-primary-spec": false,
+      "is-lean-generated": false,
+      "is-in-package": true,
+      "is-ignored": false,
+      "is-hidden": false,
+      "is-aeneas-generated": false,
+      "display-name": "root_twice_eq",
+      "dependencies": [
+        "probe:m1demo.Pair",
+        "probe:m1demo.helper",
+        "probe:m1demo.root_twice"
+      ],
+      "codomain-last-arg-is-bool": false,
+      "codomain-is-prop": false,
+      "codomain-head": "Eq",
+      "code-text": {
+        "lines-start": 12,
+        "lines-end": 14
+      },
+      "code-path": "Specs/Roots.lean",
+      "code-module": "Specs.Roots",
+      "assumptions": []
+    },
+    "probe:m1demo.roots.root_sum_eq": {
+      "verification-status": "transitively-verified",
+      "type-dependencies-external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32",
+        "probe:Eq"
+      ],
+      "type-dependencies": [
+        "probe:m1demo.Pair",
+        "probe:m1demo.helper",
+        "probe:m1demo.root_sum"
+      ],
+      "term-dependencies-external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32",
+        "probe:rfl"
+      ],
+      "term-dependencies": [
+        "probe:m1demo.Pair",
+        "probe:m1demo.root_sum"
+      ],
+      "rust-source": null,
+      "language": "lean",
+      "kind": "theorem",
+      "is-relevant": true,
+      "is-protected": false,
+      "is-primary-spec": false,
+      "is-lean-generated": false,
+      "is-in-package": true,
+      "is-ignored": false,
+      "is-hidden": false,
+      "is-aeneas-generated": false,
+      "display-name": "root_sum_eq",
+      "dependencies": [
+        "probe:m1demo.Pair",
+        "probe:m1demo.helper",
+        "probe:m1demo.root_sum"
+      ],
+      "codomain-last-arg-is-bool": false,
+      "codomain-is-prop": false,
+      "codomain-head": "Eq",
+      "code-text": {
+        "lines-start": 9,
+        "lines-end": 10
+      },
+      "code-path": "Specs/Roots.lean",
+      "code-module": "Specs.Roots",
+      "assumptions": []
+    },
+    "probe:m1demo.root_twice": {
+      "verification-status": "transitively-verified",
+      "type-dependencies-external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32"
+      ],
+      "type-dependencies": [
+        "probe:m1demo.Pair"
+      ],
+      "term-dependencies-external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32",
+        "probe:Aeneas.Std.U32.ofNat",
+        "probe:Aeneas.Std.UScalar",
+        "probe:Aeneas.Std.UScalarTy.U32",
+        "probe:Aeneas.Std.bind",
+        "probe:Aeneas.Std.instHMulUScalarResult",
+        "probe:HMul.hMul",
+        "probe:Nat",
+        "probe:OfNat.ofNat",
+        "probe:instOfNatNat"
+      ],
+      "term-dependencies": [
+        "probe:m1demo.Pair",
+        "probe:m1demo.helper"
+      ],
+      "specs": [
+        "probe:m1demo.roots.root_twice_eq"
+      ],
+      "rust-source": "src/lib.rs",
+      "primary-spec": "probe:m1demo.roots.root_twice_eq",
+      "language": "lean",
+      "kind": "def",
+      "is-relevant": true,
+      "is-protected": false,
+      "is-primary-spec": false,
+      "is-lean-generated": false,
+      "is-in-package": true,
+      "is-ignored": false,
+      "is-hidden": false,
+      "is-aeneas-generated": false,
+      "display-name": "root_twice",
+      "dependencies": [
+        "probe:m1demo.Pair",
+        "probe:m1demo.helper"
+      ],
+      "codomain-last-arg-is-bool": false,
+      "codomain-is-prop": false,
+      "codomain-head": "Aeneas.Std.Result",
+      "code-text": {
+        "lines-start": 40,
+        "lines-end": 45
+      },
+      "code-path": "M1demo/M1demo.lean",
+      "code-module": "M1demo.M1demo",
+      "assumptions": []
+    },
+    "probe:m1demo.root_sum": {
+      "verification-status": "transitively-verified",
+      "type-dependencies-external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32"
+      ],
+      "type-dependencies": [
+        "probe:m1demo.Pair"
+      ],
+      "term-dependencies": [
+        "probe:m1demo.Pair",
+        "probe:m1demo.helper"
+      ],
+      "specs": [
+        "probe:m1demo.roots.root_sum_eq"
+      ],
+      "rust-source": "src/lib.rs",
+      "primary-spec": "probe:m1demo.roots.root_sum_eq",
+      "language": "lean",
+      "kind": "def",
+      "is-relevant": true,
+      "is-protected": false,
+      "is-primary-spec": false,
+      "is-lean-generated": false,
+      "is-in-package": true,
+      "is-ignored": false,
+      "is-hidden": false,
+      "is-aeneas-generated": false,
+      "display-name": "root_sum",
+      "dependencies": [
+        "probe:m1demo.Pair",
+        "probe:m1demo.helper"
+      ],
+      "codomain-last-arg-is-bool": false,
+      "codomain-is-prop": false,
+      "codomain-head": "Aeneas.Std.Result",
+      "code-text": {
+        "lines-start": 34,
+        "lines-end": 38
+      },
+      "code-path": "M1demo/M1demo.lean",
+      "code-module": "M1demo.M1demo",
+      "assumptions": []
+    },
+    "probe:m1demo.helper": {
+      "verification-status": "transitively-verified",
+      "type-dependencies-external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32"
+      ],
+      "type-dependencies": [
+        "probe:m1demo.Pair"
+      ],
+      "term-dependencies-external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32",
+        "probe:Aeneas.Std.UScalar",
+        "probe:Aeneas.Std.UScalarTy.U32",
+        "probe:Aeneas.Std.instHAddUScalarResult",
+        "probe:HAdd.hAdd"
+      ],
+      "term-dependencies": [
+        "probe:m1demo.Pair",
+        "probe:m1demo.Pair.a",
+        "probe:m1demo.Pair.b"
+      ],
+      "specs": [
+        "probe:_private.Specs.Roots.0.m1demo.roots.helper_self",
+        "probe:m1demo.roots.root_sum_eq",
+        "probe:m1demo.roots.root_twice_eq"
+      ],
+      "rust-source": "src/lib.rs",
+      "language": "lean",
+      "kind": "def",
+      "is-relevant": true,
+      "is-protected": false,
+      "is-primary-spec": false,
+      "is-lean-generated": false,
+      "is-in-package": true,
+      "is-ignored": false,
+      "is-hidden": false,
+      "is-aeneas-generated": false,
+      "display-name": "helper",
+      "dependencies": [
+        "probe:m1demo.Pair",
+        "probe:m1demo.Pair.a",
+        "probe:m1demo.Pair.b"
+      ],
+      "codomain-last-arg-is-bool": false,
+      "codomain-is-prop": false,
+      "codomain-head": "Aeneas.Std.Result",
+      "code-text": {
+        "lines-start": 29,
+        "lines-end": 32
+      },
+      "code-path": "M1demo/M1demo.lean",
+      "code-module": "M1demo.M1demo",
+      "assumptions": []
+    },
+    "probe:m1demo.Pair.b": {
+      "verification-status": "transitively-verified",
+      "type-dependencies-external": [
+        "probe:Aeneas.Std.U32"
+      ],
+      "type-dependencies": [
+        "probe:m1demo.Pair"
+      ],
+      "term-dependencies": [
+        "probe:m1demo.Pair"
+      ],
+      "rust-source": null,
+      "language": "lean",
+      "kind": "projection",
+      "is-relevant": true,
+      "is-protected": false,
+      "is-primary-spec": false,
+      "is-lean-generated": true,
+      "is-in-package": true,
+      "is-ignored": false,
+      "is-hidden": true,
+      "is-aeneas-generated": false,
+      "display-name": "b",
+      "dependencies": [
+        "probe:m1demo.Pair"
+      ],
+      "codomain-last-arg-is-bool": false,
+      "codomain-is-prop": false,
+      "codomain-head": "Aeneas.Std.U32",
+      "code-text": {
+        "lines-start": 27,
+        "lines-end": 27
+      },
+      "code-path": "M1demo/M1demo.lean",
+      "code-module": "M1demo.M1demo",
+      "assumptions": []
+    },
+    "probe:m1demo.Pair.a": {
+      "verification-status": "transitively-verified",
+      "type-dependencies-external": [
+        "probe:Aeneas.Std.U32"
+      ],
+      "type-dependencies": [
+        "probe:m1demo.Pair"
+      ],
+      "term-dependencies": [
+        "probe:m1demo.Pair"
+      ],
+      "rust-source": null,
+      "language": "lean",
+      "kind": "projection",
+      "is-relevant": true,
+      "is-protected": false,
+      "is-primary-spec": false,
+      "is-lean-generated": true,
+      "is-in-package": true,
+      "is-ignored": false,
+      "is-hidden": true,
+      "is-aeneas-generated": false,
+      "display-name": "a",
+      "dependencies": [
+        "probe:m1demo.Pair"
+      ],
+      "codomain-last-arg-is-bool": false,
+      "codomain-is-prop": false,
+      "codomain-head": "Aeneas.Std.U32",
+      "code-text": {
+        "lines-start": 26,
+        "lines-end": 26
+      },
+      "code-path": "M1demo/M1demo.lean",
+      "code-module": "M1demo.M1demo",
+      "assumptions": []
+    },
+    "probe:m1demo.Pair": {
+      "verification-status": "transitively-verified",
+      "type-dependencies": [],
+      "term-dependencies": [],
+      "rust-source": "src/lib.rs",
+      "language": "lean",
+      "kind": "structure",
+      "is-relevant": true,
+      "is-protected": false,
+      "is-primary-spec": false,
+      "is-lean-generated": false,
+      "is-in-package": true,
+      "is-ignored": false,
+      "is-hidden": false,
+      "is-aeneas-generated": false,
+      "display-name": "Pair",
+      "dependencies": [],
+      "codomain-last-arg-is-bool": false,
+      "codomain-is-prop": false,
+      "code-text": {
+        "lines-start": 22,
+        "lines-end": 27
+      },
+      "code-path": "M1demo/M1demo.lean",
+      "code-module": "M1demo.M1demo",
+      "assumptions": []
+    },
+    "probe:_private.Specs.Roots.0.m1demo.roots.helper_self": {
+      "verification-status": "transitively-verified",
+      "type-dependencies-external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32",
+        "probe:Eq"
+      ],
+      "type-dependencies": [
+        "probe:m1demo.Pair",
+        "probe:m1demo.helper"
+      ],
+      "term-dependencies-external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32",
+        "probe:rfl"
+      ],
+      "term-dependencies": [
+        "probe:m1demo.Pair",
+        "probe:m1demo.helper"
+      ],
+      "rust-source": null,
+      "language": "lean",
+      "kind": "theorem",
+      "is-relevant": true,
+      "is-protected": false,
+      "is-primary-spec": false,
+      "is-lean-generated": false,
+      "is-in-package": true,
+      "is-ignored": false,
+      "is-hidden": false,
+      "is-aeneas-generated": false,
+      "display-name": "helper_self",
+      "dependencies": [
+        "probe:m1demo.Pair",
+        "probe:m1demo.helper"
+      ],
+      "codomain-last-arg-is-bool": false,
+      "codomain-is-prop": false,
+      "codomain-head": "Eq",
+      "code-text": {
+        "lines-start": 6,
+        "lines-end": 7
+      },
+      "code-path": "Specs/Roots.lean",
+      "code-module": "Specs.Roots",
+      "assumptions": []
+    }
+  },
+  "edges": [
+    {
+      "from": "probe:m1demo.Pair.casesOn",
+      "to": "probe:m1demo.Pair",
+      "kind": "type",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair.casesOn",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.casesOn",
+      "to": "probe:m1demo.Pair.mk",
+      "kind": "type",
+      "resolution": "generated"
+    },
+    {
+      "from": "probe:m1demo.Pair.casesOn",
+      "to": "probe:m1demo.Pair",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair.casesOn",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.casesOn",
+      "to": "probe:m1demo.Pair.mk",
+      "kind": "term",
+      "resolution": "generated"
+    },
+    {
+      "from": "probe:m1demo.Pair.casesOn",
+      "to": "probe:m1demo.Pair.rec",
+      "kind": "term",
+      "resolution": "generated"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:m1demo.Pair",
+      "kind": "type",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:Eq",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:Aeneas.Std.Result",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:m1demo.root_twice",
+      "kind": "type",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:Aeneas.Std.bind",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:Aeneas.Std.UScalar",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:Aeneas.Std.UScalarTy.U32",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:m1demo.helper",
+      "kind": "type",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:HMul.hMul",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:Aeneas.Std.instHMulUScalarResult",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:Aeneas.Std.U32.ofNat",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:OfNat.ofNat",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:Nat",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:instOfNatNat",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:of_decide_eq_true",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:LE.le",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:instLENat",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:Aeneas.Std.UScalar.cMax",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:Nat.decLe",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:id",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:Bool",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:Decidable.decide",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:Bool.true",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:Eq.refl",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:m1demo.Pair",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:rfl",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:Aeneas.Std.Result",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_twice_eq",
+      "to": "probe:m1demo.root_twice",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:_private.Specs.Roots.0.m1demo.roots.helper_self",
+      "to": "probe:m1demo.Pair",
+      "kind": "type",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:_private.Specs.Roots.0.m1demo.roots.helper_self",
+      "to": "probe:Eq",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:_private.Specs.Roots.0.m1demo.roots.helper_self",
+      "to": "probe:Aeneas.Std.Result",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:_private.Specs.Roots.0.m1demo.roots.helper_self",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:_private.Specs.Roots.0.m1demo.roots.helper_self",
+      "to": "probe:m1demo.helper",
+      "kind": "type",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:_private.Specs.Roots.0.m1demo.roots.helper_self",
+      "to": "probe:m1demo.Pair",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:_private.Specs.Roots.0.m1demo.roots.helper_self",
+      "to": "probe:rfl",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:_private.Specs.Roots.0.m1demo.roots.helper_self",
+      "to": "probe:Aeneas.Std.Result",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:_private.Specs.Roots.0.m1demo.roots.helper_self",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:_private.Specs.Roots.0.m1demo.roots.helper_self",
+      "to": "probe:m1demo.helper",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.helper",
+      "to": "probe:m1demo.Pair",
+      "kind": "type",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.helper",
+      "to": "probe:Aeneas.Std.Result",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.helper",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.helper",
+      "to": "probe:m1demo.Pair",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.helper",
+      "to": "probe:HAdd.hAdd",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.helper",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.helper",
+      "to": "probe:Aeneas.Std.Result",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.helper",
+      "to": "probe:Aeneas.Std.UScalar",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.helper",
+      "to": "probe:Aeneas.Std.UScalarTy.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.helper",
+      "to": "probe:Aeneas.Std.instHAddUScalarResult",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.helper",
+      "to": "probe:m1demo.Pair.a",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.helper",
+      "to": "probe:m1demo.Pair.b",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.root_twice",
+      "to": "probe:m1demo.Pair",
+      "kind": "type",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.root_twice",
+      "to": "probe:Aeneas.Std.Result",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice",
+      "to": "probe:m1demo.Pair",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.root_twice",
+      "to": "probe:Aeneas.Std.bind",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice",
+      "to": "probe:Aeneas.Std.UScalar",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice",
+      "to": "probe:Aeneas.Std.UScalarTy.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice",
+      "to": "probe:m1demo.helper",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.root_twice",
+      "to": "probe:HMul.hMul",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice",
+      "to": "probe:Aeneas.Std.Result",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice",
+      "to": "probe:Aeneas.Std.instHMulUScalarResult",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice",
+      "to": "probe:Aeneas.Std.U32.ofNat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice",
+      "to": "probe:OfNat.ofNat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice",
+      "to": "probe:Nat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice",
+      "to": "probe:instOfNatNat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice",
+      "to": "probe:m1demo.root_twice._proof_1",
+      "kind": "term",
+      "resolution": "generated"
+    },
+    {
+      "from": "probe:m1demo.root_sum",
+      "to": "probe:m1demo.Pair",
+      "kind": "type",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.root_sum",
+      "to": "probe:Aeneas.Std.Result",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_sum",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_sum",
+      "to": "probe:m1demo.Pair",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.root_sum",
+      "to": "probe:m1demo.helper",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk",
+      "to": "probe:m1demo.Pair",
+      "kind": "type",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair.b",
+      "to": "probe:m1demo.Pair",
+      "kind": "type",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair.b",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.b",
+      "to": "probe:m1demo.Pair",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair.a",
+      "to": "probe:m1demo.Pair",
+      "kind": "type",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair.a",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.a",
+      "to": "probe:m1demo.Pair",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair.noConfusion",
+      "to": "probe:m1demo.Pair",
+      "kind": "type",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair.noConfusion",
+      "to": "probe:Eq",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.noConfusion",
+      "to": "probe:m1demo.Pair.noConfusionType",
+      "kind": "type",
+      "resolution": "generated"
+    },
+    {
+      "from": "probe:m1demo.Pair.noConfusion",
+      "to": "probe:m1demo.Pair",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair.noConfusion",
+      "to": "probe:Eq",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.noConfusion",
+      "to": "probe:Eq.ndrec",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.noConfusion",
+      "to": "probe:m1demo.Pair.noConfusionType",
+      "kind": "term",
+      "resolution": "generated"
+    },
+    {
+      "from": "probe:m1demo.Pair.noConfusion",
+      "to": "probe:m1demo.Pair.casesOn",
+      "kind": "term",
+      "resolution": "generated"
+    },
+    {
+      "from": "probe:m1demo.Pair.noConfusion",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.noConfusion",
+      "to": "probe:Eq.refl",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk._flat_ctor",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk._flat_ctor",
+      "to": "probe:m1demo.Pair",
+      "kind": "type",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk._flat_ctor",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk._flat_ctor",
+      "to": "probe:m1demo.Pair.mk",
+      "kind": "term",
+      "resolution": "generated"
+    },
+    {
+      "from": "probe:m1demo.root_twice._proof_1",
+      "to": "probe:LE.le",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice._proof_1",
+      "to": "probe:Nat",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice._proof_1",
+      "to": "probe:instLENat",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice._proof_1",
+      "to": "probe:OfNat.ofNat",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice._proof_1",
+      "to": "probe:instOfNatNat",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice._proof_1",
+      "to": "probe:Aeneas.Std.UScalar.cMax",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice._proof_1",
+      "to": "probe:Aeneas.Std.UScalarTy.U32",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice._proof_1",
+      "to": "probe:of_decide_eq_true",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice._proof_1",
+      "to": "probe:LE.le",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice._proof_1",
+      "to": "probe:Nat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice._proof_1",
+      "to": "probe:instLENat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice._proof_1",
+      "to": "probe:OfNat.ofNat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice._proof_1",
+      "to": "probe:instOfNatNat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice._proof_1",
+      "to": "probe:Aeneas.Std.UScalar.cMax",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice._proof_1",
+      "to": "probe:Aeneas.Std.UScalarTy.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice._proof_1",
+      "to": "probe:Nat.decLe",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice._proof_1",
+      "to": "probe:id",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice._proof_1",
+      "to": "probe:Eq",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice._proof_1",
+      "to": "probe:Bool",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice._proof_1",
+      "to": "probe:Decidable.decide",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice._proof_1",
+      "to": "probe:Bool.true",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.root_twice._proof_1",
+      "to": "probe:Eq.refl",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair._sizeOf_inst",
+      "to": "probe:SizeOf",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair._sizeOf_inst",
+      "to": "probe:m1demo.Pair",
+      "kind": "type",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair._sizeOf_inst",
+      "to": "probe:SizeOf.mk",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair._sizeOf_inst",
+      "to": "probe:m1demo.Pair",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair._sizeOf_inst",
+      "to": "probe:m1demo.Pair._sizeOf_1",
+      "kind": "term",
+      "resolution": "generated"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.sizeOf_spec",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.sizeOf_spec",
+      "to": "probe:Eq",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.sizeOf_spec",
+      "to": "probe:Nat",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.sizeOf_spec",
+      "to": "probe:SizeOf.sizeOf",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.sizeOf_spec",
+      "to": "probe:m1demo.Pair",
+      "kind": "type",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.sizeOf_spec",
+      "to": "probe:m1demo.Pair._sizeOf_inst",
+      "kind": "type",
+      "resolution": "generated"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.sizeOf_spec",
+      "to": "probe:m1demo.Pair.mk",
+      "kind": "type",
+      "resolution": "generated"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.sizeOf_spec",
+      "to": "probe:HAdd.hAdd",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.sizeOf_spec",
+      "to": "probe:instHAdd",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.sizeOf_spec",
+      "to": "probe:instAddNat",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.sizeOf_spec",
+      "to": "probe:OfNat.ofNat",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.sizeOf_spec",
+      "to": "probe:instOfNatNat",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.sizeOf_spec",
+      "to": "probe:Aeneas.Std.UScalar._sizeOf_inst",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.sizeOf_spec",
+      "to": "probe:Aeneas.Std.UScalarTy.U32",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.sizeOf_spec",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.sizeOf_spec",
+      "to": "probe:Eq.refl",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.sizeOf_spec",
+      "to": "probe:Nat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.sizeOf_spec",
+      "to": "probe:HAdd.hAdd",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.sizeOf_spec",
+      "to": "probe:instHAdd",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.sizeOf_spec",
+      "to": "probe:instAddNat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.sizeOf_spec",
+      "to": "probe:OfNat.ofNat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.sizeOf_spec",
+      "to": "probe:instOfNatNat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.sizeOf_spec",
+      "to": "probe:SizeOf.sizeOf",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.sizeOf_spec",
+      "to": "probe:Aeneas.Std.UScalar._sizeOf_inst",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.sizeOf_spec",
+      "to": "probe:Aeneas.Std.UScalarTy.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_sum_eq",
+      "to": "probe:m1demo.Pair",
+      "kind": "type",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.roots.root_sum_eq",
+      "to": "probe:Eq",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_sum_eq",
+      "to": "probe:Aeneas.Std.Result",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_sum_eq",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_sum_eq",
+      "to": "probe:m1demo.root_sum",
+      "kind": "type",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.roots.root_sum_eq",
+      "to": "probe:m1demo.helper",
+      "kind": "type",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.roots.root_sum_eq",
+      "to": "probe:m1demo.Pair",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.roots.root_sum_eq",
+      "to": "probe:rfl",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_sum_eq",
+      "to": "probe:Aeneas.Std.Result",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_sum_eq",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.roots.root_sum_eq",
+      "to": "probe:m1demo.root_sum",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair.noConfusionType",
+      "to": "probe:m1demo.Pair",
+      "kind": "type",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair.noConfusionType",
+      "to": "probe:m1demo.Pair",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair.noConfusionType",
+      "to": "probe:m1demo.Pair.casesOn",
+      "kind": "term",
+      "resolution": "generated"
+    },
+    {
+      "from": "probe:m1demo.Pair.noConfusionType",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.noConfusionType",
+      "to": "probe:Eq",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.injEq",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.injEq",
+      "to": "probe:Eq",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.injEq",
+      "to": "probe:m1demo.Pair",
+      "kind": "type",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.injEq",
+      "to": "probe:m1demo.Pair.mk",
+      "kind": "type",
+      "resolution": "generated"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.injEq",
+      "to": "probe:And",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.injEq",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.injEq",
+      "to": "probe:Eq.propIntro",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.injEq",
+      "to": "probe:Eq",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.injEq",
+      "to": "probe:m1demo.Pair",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.injEq",
+      "to": "probe:m1demo.Pair.mk",
+      "kind": "term",
+      "resolution": "generated"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.injEq",
+      "to": "probe:And",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.injEq",
+      "to": "probe:m1demo.Pair.mk.inj",
+      "kind": "term",
+      "resolution": "generated"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.injEq",
+      "to": "probe:Lean.injEq_helper",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.injEq",
+      "to": "probe:Eq.ndrec",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.injEq",
+      "to": "probe:Eq.refl",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair._sizeOf_1",
+      "to": "probe:m1demo.Pair",
+      "kind": "type",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair._sizeOf_1",
+      "to": "probe:Nat",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair._sizeOf_1",
+      "to": "probe:m1demo.Pair",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair._sizeOf_1",
+      "to": "probe:m1demo.Pair.rec",
+      "kind": "term",
+      "resolution": "generated"
+    },
+    {
+      "from": "probe:m1demo.Pair._sizeOf_1",
+      "to": "probe:Nat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair._sizeOf_1",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair._sizeOf_1",
+      "to": "probe:HAdd.hAdd",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair._sizeOf_1",
+      "to": "probe:instHAdd",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair._sizeOf_1",
+      "to": "probe:instAddNat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair._sizeOf_1",
+      "to": "probe:OfNat.ofNat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair._sizeOf_1",
+      "to": "probe:instOfNatNat",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair._sizeOf_1",
+      "to": "probe:SizeOf.sizeOf",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair._sizeOf_1",
+      "to": "probe:Aeneas.Std.UScalar._sizeOf_inst",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair._sizeOf_1",
+      "to": "probe:Aeneas.Std.UScalarTy.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.ctorIdx",
+      "to": "probe:m1demo.Pair",
+      "kind": "type",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair.ctorIdx",
+      "to": "probe:Nat",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.ctorIdx",
+      "to": "probe:m1demo.Pair",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair.rec",
+      "to": "probe:m1demo.Pair",
+      "kind": "type",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair.rec",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.rec",
+      "to": "probe:m1demo.Pair.mk",
+      "kind": "type",
+      "resolution": "generated"
+    },
+    {
+      "from": "probe:m1demo.Pair.recOn",
+      "to": "probe:m1demo.Pair",
+      "kind": "type",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair.recOn",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.recOn",
+      "to": "probe:m1demo.Pair.mk",
+      "kind": "type",
+      "resolution": "generated"
+    },
+    {
+      "from": "probe:m1demo.Pair.recOn",
+      "to": "probe:m1demo.Pair",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair.recOn",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.recOn",
+      "to": "probe:m1demo.Pair.mk",
+      "kind": "term",
+      "resolution": "generated"
+    },
+    {
+      "from": "probe:m1demo.Pair.recOn",
+      "to": "probe:m1demo.Pair.rec",
+      "kind": "term",
+      "resolution": "generated"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.noConfusion",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.noConfusion",
+      "to": "probe:Eq",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.noConfusion",
+      "to": "probe:m1demo.Pair",
+      "kind": "type",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.noConfusion",
+      "to": "probe:m1demo.Pair.mk",
+      "kind": "type",
+      "resolution": "generated"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.noConfusion",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.noConfusion",
+      "to": "probe:Eq",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.noConfusion",
+      "to": "probe:m1demo.Pair",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.noConfusion",
+      "to": "probe:m1demo.Pair.mk",
+      "kind": "term",
+      "resolution": "generated"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.noConfusion",
+      "to": "probe:id",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.noConfusion",
+      "to": "probe:m1demo.Pair.noConfusion",
+      "kind": "term",
+      "resolution": "generated"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.inj",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.inj",
+      "to": "probe:Eq",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.inj",
+      "to": "probe:m1demo.Pair",
+      "kind": "type",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.inj",
+      "to": "probe:m1demo.Pair.mk",
+      "kind": "type",
+      "resolution": "generated"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.inj",
+      "to": "probe:And",
+      "kind": "type",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.inj",
+      "to": "probe:Aeneas.Std.U32",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.inj",
+      "to": "probe:Eq",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.inj",
+      "to": "probe:m1demo.Pair",
+      "kind": "term",
+      "resolution": "local"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.inj",
+      "to": "probe:m1demo.Pair.mk",
+      "kind": "term",
+      "resolution": "generated"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.inj",
+      "to": "probe:m1demo.Pair.mk.noConfusion",
+      "kind": "term",
+      "resolution": "generated"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.inj",
+      "to": "probe:And",
+      "kind": "term",
+      "resolution": "external"
+    },
+    {
+      "from": "probe:m1demo.Pair.mk.inj",
+      "to": "probe:And.intro",
+      "kind": "term",
+      "resolution": "external"
+    }
+  ],
+  "external": [
+    "probe:Aeneas.Std.Result",
+    "probe:Aeneas.Std.U32",
+    "probe:Aeneas.Std.U32.ofNat",
+    "probe:Aeneas.Std.UScalar",
+    "probe:Aeneas.Std.UScalar._sizeOf_inst",
+    "probe:Aeneas.Std.UScalar.cMax",
+    "probe:Aeneas.Std.UScalarTy.U32",
+    "probe:Aeneas.Std.bind",
+    "probe:Aeneas.Std.instHAddUScalarResult",
+    "probe:Aeneas.Std.instHMulUScalarResult",
+    "probe:And",
+    "probe:And.intro",
+    "probe:Bool",
+    "probe:Bool.true",
+    "probe:Decidable.decide",
+    "probe:Eq",
+    "probe:Eq.ndrec",
+    "probe:Eq.propIntro",
+    "probe:Eq.refl",
+    "probe:HAdd.hAdd",
+    "probe:HMul.hMul",
+    "probe:LE.le",
+    "probe:Lean.injEq_helper",
+    "probe:Nat",
+    "probe:Nat.decLe",
+    "probe:OfNat.ofNat",
+    "probe:SizeOf",
+    "probe:SizeOf.mk",
+    "probe:SizeOf.sizeOf",
+    "probe:id",
+    "probe:instAddNat",
+    "probe:instHAdd",
+    "probe:instLENat",
+    "probe:instOfNatNat",
+    "probe:of_decide_eq_true",
+    "probe:rfl"
+  ],
+  "anomalies": [
+    {
+      "code": "aeneas-generated-false-for-translation-declaration",
+      "declaration": "probe:m1demo.Pair"
+    },
+    {
+      "code": "aeneas-generated-false-for-translation-declaration",
+      "declaration": "probe:m1demo.helper"
+    },
+    {
+      "code": "aeneas-generated-false-for-translation-declaration",
+      "declaration": "probe:m1demo.root_sum"
+    },
+    {
+      "code": "aeneas-generated-false-for-translation-declaration",
+      "declaration": "probe:m1demo.root_twice"
+    }
+  ],
+  "closures": {
+    "probe:_private.Specs.Roots.0.m1demo.roots.helper_self": {
+      "rule": "root: type lane; theorem: type lane; other kinds: type + value lanes; structure: + its fields' projections and constructors",
+      "declarations": [
+        "probe:m1demo.Pair",
+        "probe:m1demo.Pair.a",
+        "probe:m1demo.Pair.b",
+        "probe:m1demo.Pair.mk",
+        "probe:m1demo.helper"
+      ],
+      "external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32",
+        "probe:Aeneas.Std.UScalar",
+        "probe:Aeneas.Std.UScalarTy.U32",
+        "probe:Aeneas.Std.instHAddUScalarResult",
+        "probe:Eq",
+        "probe:HAdd.hAdd"
+      ],
+      "blockers": [],
+      "state": "complete"
+    },
+    "probe:m1demo.roots.root_sum_eq": {
+      "rule": "root: type lane; theorem: type lane; other kinds: type + value lanes; structure: + its fields' projections and constructors",
+      "declarations": [
+        "probe:m1demo.Pair",
+        "probe:m1demo.Pair.a",
+        "probe:m1demo.Pair.b",
+        "probe:m1demo.Pair.mk",
+        "probe:m1demo.helper",
+        "probe:m1demo.root_sum"
+      ],
+      "external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32",
+        "probe:Aeneas.Std.UScalar",
+        "probe:Aeneas.Std.UScalarTy.U32",
+        "probe:Aeneas.Std.instHAddUScalarResult",
+        "probe:Eq",
+        "probe:HAdd.hAdd"
+      ],
+      "blockers": [],
+      "state": "complete"
+    },
+    "probe:m1demo.roots.root_twice_eq": {
+      "rule": "root: type lane; theorem: type lane; other kinds: type + value lanes; structure: + its fields' projections and constructors",
+      "declarations": [
+        "probe:m1demo.Pair",
+        "probe:m1demo.Pair.a",
+        "probe:m1demo.Pair.b",
+        "probe:m1demo.Pair.mk",
+        "probe:m1demo.helper",
+        "probe:m1demo.root_twice",
+        "probe:m1demo.root_twice._proof_1"
+      ],
+      "external": [
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32",
+        "probe:Aeneas.Std.U32.ofNat",
+        "probe:Aeneas.Std.UScalar",
+        "probe:Aeneas.Std.UScalar.cMax",
+        "probe:Aeneas.Std.UScalarTy.U32",
+        "probe:Aeneas.Std.bind",
+        "probe:Aeneas.Std.instHAddUScalarResult",
+        "probe:Aeneas.Std.instHMulUScalarResult",
+        "probe:Bool",
+        "probe:Bool.true",
+        "probe:Decidable.decide",
+        "probe:Eq",
+        "probe:Eq.refl",
+        "probe:HAdd.hAdd",
+        "probe:HMul.hMul",
+        "probe:LE.le",
+        "probe:Nat",
+        "probe:Nat.decLe",
+        "probe:OfNat.ofNat",
+        "probe:id",
+        "probe:instLENat",
+        "probe:instOfNatNat",
+        "probe:of_decide_eq_true"
+      ],
+      "blockers": [],
+      "state": "complete"
+    }
+  },
+  "capability": "oracle-lanes",
+  "nodes": {
+    "probe:_private.Specs.Roots.0.m1demo.roots.helper_self": {
+      "kind": "theorem",
+      "source": true,
+      "probeAtom": true,
+      "type": [
+        "probe:m1demo.Pair",
+        "probe:Eq",
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32",
+        "probe:m1demo.helper"
+      ],
+      "value": [
+        "probe:m1demo.Pair",
+        "probe:rfl",
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32",
+        "probe:m1demo.helper"
+      ],
+      "axioms": [
+        "propext",
+        "Quot.sound"
+      ]
+    },
+    "probe:m1demo.Pair": {
+      "kind": "inductive",
+      "source": true,
+      "probeAtom": true,
+      "type": [],
+      "value": [],
+      "structure": true,
+      "family": {
+        "ctors": [
+          "m1demo.Pair.mk"
+        ],
+        "recursors": [
+          "m1demo.Pair.rec"
+        ]
+      },
+      "fields": [
+        {
+          "field": "a",
+          "projection": "m1demo.Pair.a"
+        },
+        {
+          "field": "b",
+          "projection": "m1demo.Pair.b"
+        }
+      ]
+    },
+    "probe:m1demo.Pair._sizeOf_1": {
+      "kind": "def",
+      "source": false,
+      "probeAtom": false,
+      "type": [
+        "probe:m1demo.Pair",
+        "probe:Nat"
+      ],
+      "value": [
+        "probe:m1demo.Pair",
+        "probe:m1demo.Pair.rec",
+        "probe:Nat",
+        "probe:Aeneas.Std.U32",
+        "probe:HAdd.hAdd",
+        "probe:instHAdd",
+        "probe:instAddNat",
+        "probe:OfNat.ofNat",
+        "probe:instOfNatNat",
+        "probe:SizeOf.sizeOf",
+        "probe:Aeneas.Std.UScalar._sizeOf_inst",
+        "probe:Aeneas.Std.UScalarTy.U32"
+      ],
+      "axioms": []
+    },
+    "probe:m1demo.Pair._sizeOf_inst": {
+      "kind": "def",
+      "source": false,
+      "probeAtom": false,
+      "type": [
+        "probe:SizeOf",
+        "probe:m1demo.Pair"
+      ],
+      "value": [
+        "probe:SizeOf.mk",
+        "probe:m1demo.Pair",
+        "probe:m1demo.Pair._sizeOf_1"
+      ],
+      "axioms": []
+    },
+    "probe:m1demo.Pair.a": {
+      "kind": "def",
+      "source": true,
+      "probeAtom": true,
+      "type": [
+        "probe:m1demo.Pair",
+        "probe:Aeneas.Std.U32"
+      ],
+      "value": [
+        "probe:m1demo.Pair"
+      ],
+      "projection": true,
+      "axioms": []
+    },
+    "probe:m1demo.Pair.b": {
+      "kind": "def",
+      "source": true,
+      "probeAtom": true,
+      "type": [
+        "probe:m1demo.Pair",
+        "probe:Aeneas.Std.U32"
+      ],
+      "value": [
+        "probe:m1demo.Pair"
+      ],
+      "projection": true,
+      "axioms": []
+    },
+    "probe:m1demo.Pair.casesOn": {
+      "kind": "def",
+      "source": false,
+      "probeAtom": false,
+      "type": [
+        "probe:m1demo.Pair",
+        "probe:Aeneas.Std.U32",
+        "probe:m1demo.Pair.mk"
+      ],
+      "value": [
+        "probe:m1demo.Pair",
+        "probe:Aeneas.Std.U32",
+        "probe:m1demo.Pair.mk",
+        "probe:m1demo.Pair.rec"
+      ],
+      "axioms": []
+    },
+    "probe:m1demo.Pair.ctorIdx": {
+      "kind": "def",
+      "source": false,
+      "probeAtom": false,
+      "type": [
+        "probe:m1demo.Pair",
+        "probe:Nat"
+      ],
+      "value": [
+        "probe:m1demo.Pair"
+      ],
+      "axioms": []
+    },
+    "probe:m1demo.Pair.mk": {
+      "kind": "ctor",
+      "source": false,
+      "probeAtom": false,
+      "type": [
+        "probe:Aeneas.Std.U32",
+        "probe:m1demo.Pair"
+      ],
+      "value": [],
+      "family": {
+        "inductive": "m1demo.Pair"
+      }
+    },
+    "probe:m1demo.Pair.mk._flat_ctor": {
+      "kind": "def",
+      "source": false,
+      "probeAtom": false,
+      "type": [
+        "probe:Aeneas.Std.U32",
+        "probe:m1demo.Pair"
+      ],
+      "value": [
+        "probe:Aeneas.Std.U32",
+        "probe:m1demo.Pair.mk"
+      ],
+      "axioms": []
+    },
+    "probe:m1demo.Pair.mk.inj": {
+      "kind": "theorem",
+      "source": false,
+      "probeAtom": false,
+      "type": [
+        "probe:Aeneas.Std.U32",
+        "probe:Eq",
+        "probe:m1demo.Pair",
+        "probe:m1demo.Pair.mk",
+        "probe:And"
+      ],
+      "value": [
+        "probe:Aeneas.Std.U32",
+        "probe:Eq",
+        "probe:m1demo.Pair",
+        "probe:m1demo.Pair.mk",
+        "probe:m1demo.Pair.mk.noConfusion",
+        "probe:And",
+        "probe:And.intro"
+      ],
+      "axioms": []
+    },
+    "probe:m1demo.Pair.mk.injEq": {
+      "kind": "theorem",
+      "source": false,
+      "probeAtom": false,
+      "type": [
+        "probe:Aeneas.Std.U32",
+        "probe:Eq",
+        "probe:m1demo.Pair",
+        "probe:m1demo.Pair.mk",
+        "probe:And"
+      ],
+      "value": [
+        "probe:Aeneas.Std.U32",
+        "probe:Eq.propIntro",
+        "probe:Eq",
+        "probe:m1demo.Pair",
+        "probe:m1demo.Pair.mk",
+        "probe:And",
+        "probe:m1demo.Pair.mk.inj",
+        "probe:Lean.injEq_helper",
+        "probe:Eq.ndrec",
+        "probe:Eq.refl"
+      ],
+      "axioms": [
+        "propext"
+      ]
+    },
+    "probe:m1demo.Pair.mk.noConfusion": {
+      "kind": "def",
+      "source": false,
+      "probeAtom": false,
+      "type": [
+        "probe:Aeneas.Std.U32",
+        "probe:Eq",
+        "probe:m1demo.Pair",
+        "probe:m1demo.Pair.mk"
+      ],
+      "value": [
+        "probe:Aeneas.Std.U32",
+        "probe:Eq",
+        "probe:m1demo.Pair",
+        "probe:m1demo.Pair.mk",
+        "probe:id",
+        "probe:m1demo.Pair.noConfusion"
+      ],
+      "axioms": []
+    },
+    "probe:m1demo.Pair.mk.sizeOf_spec": {
+      "kind": "theorem",
+      "source": false,
+      "probeAtom": false,
+      "type": [
+        "probe:Aeneas.Std.U32",
+        "probe:Eq",
+        "probe:Nat",
+        "probe:SizeOf.sizeOf",
+        "probe:m1demo.Pair",
+        "probe:m1demo.Pair._sizeOf_inst",
+        "probe:m1demo.Pair.mk",
+        "probe:HAdd.hAdd",
+        "probe:instHAdd",
+        "probe:instAddNat",
+        "probe:OfNat.ofNat",
+        "probe:instOfNatNat",
+        "probe:Aeneas.Std.UScalar._sizeOf_inst",
+        "probe:Aeneas.Std.UScalarTy.U32"
+      ],
+      "value": [
+        "probe:Aeneas.Std.U32",
+        "probe:Eq.refl",
+        "probe:Nat",
+        "probe:HAdd.hAdd",
+        "probe:instHAdd",
+        "probe:instAddNat",
+        "probe:OfNat.ofNat",
+        "probe:instOfNatNat",
+        "probe:SizeOf.sizeOf",
+        "probe:Aeneas.Std.UScalar._sizeOf_inst",
+        "probe:Aeneas.Std.UScalarTy.U32"
+      ],
+      "axioms": []
+    },
+    "probe:m1demo.Pair.noConfusion": {
+      "kind": "def",
+      "source": false,
+      "probeAtom": false,
+      "type": [
+        "probe:m1demo.Pair",
+        "probe:Eq",
+        "probe:m1demo.Pair.noConfusionType"
+      ],
+      "value": [
+        "probe:m1demo.Pair",
+        "probe:Eq",
+        "probe:Eq.ndrec",
+        "probe:m1demo.Pair.noConfusionType",
+        "probe:m1demo.Pair.casesOn",
+        "probe:Aeneas.Std.U32",
+        "probe:Eq.refl"
+      ],
+      "axioms": []
+    },
+    "probe:m1demo.Pair.noConfusionType": {
+      "kind": "def",
+      "source": false,
+      "probeAtom": false,
+      "type": [
+        "probe:m1demo.Pair"
+      ],
+      "value": [
+        "probe:m1demo.Pair",
+        "probe:m1demo.Pair.casesOn",
+        "probe:Aeneas.Std.U32",
+        "probe:Eq"
+      ],
+      "axioms": []
+    },
+    "probe:m1demo.Pair.rec": {
+      "kind": "recursor",
+      "source": false,
+      "probeAtom": false,
+      "type": [
+        "probe:m1demo.Pair",
+        "probe:Aeneas.Std.U32",
+        "probe:m1demo.Pair.mk"
+      ],
+      "value": [],
+      "family": {
+        "inductives": [
+          "m1demo.Pair"
+        ]
+      }
+    },
+    "probe:m1demo.Pair.recOn": {
+      "kind": "def",
+      "source": false,
+      "probeAtom": false,
+      "type": [
+        "probe:m1demo.Pair",
+        "probe:Aeneas.Std.U32",
+        "probe:m1demo.Pair.mk"
+      ],
+      "value": [
+        "probe:m1demo.Pair",
+        "probe:Aeneas.Std.U32",
+        "probe:m1demo.Pair.mk",
+        "probe:m1demo.Pair.rec"
+      ],
+      "axioms": []
+    },
+    "probe:m1demo.helper": {
+      "kind": "def",
+      "source": true,
+      "probeAtom": true,
+      "type": [
+        "probe:m1demo.Pair",
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32"
+      ],
+      "value": [
+        "probe:m1demo.Pair",
+        "probe:HAdd.hAdd",
+        "probe:Aeneas.Std.U32",
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.UScalar",
+        "probe:Aeneas.Std.UScalarTy.U32",
+        "probe:Aeneas.Std.instHAddUScalarResult",
+        "probe:m1demo.Pair.a",
+        "probe:m1demo.Pair.b"
+      ],
+      "axioms": [
+        "propext",
+        "Quot.sound"
+      ]
+    },
+    "probe:m1demo.root_sum": {
+      "kind": "def",
+      "source": true,
+      "probeAtom": true,
+      "type": [
+        "probe:m1demo.Pair",
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32"
+      ],
+      "value": [
+        "probe:m1demo.Pair",
+        "probe:m1demo.helper"
+      ],
+      "axioms": [
+        "propext",
+        "Quot.sound"
+      ]
+    },
+    "probe:m1demo.root_twice": {
+      "kind": "def",
+      "source": true,
+      "probeAtom": true,
+      "type": [
+        "probe:m1demo.Pair",
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32"
+      ],
+      "value": [
+        "probe:m1demo.Pair",
+        "probe:Aeneas.Std.bind",
+        "probe:Aeneas.Std.U32",
+        "probe:Aeneas.Std.UScalar",
+        "probe:Aeneas.Std.UScalarTy.U32",
+        "probe:m1demo.helper",
+        "probe:HMul.hMul",
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.instHMulUScalarResult",
+        "probe:Aeneas.Std.U32.ofNat",
+        "probe:OfNat.ofNat",
+        "probe:Nat",
+        "probe:instOfNatNat",
+        "probe:m1demo.root_twice._proof_1"
+      ],
+      "axioms": [
+        "propext",
+        "Classical.choice",
+        "Quot.sound"
+      ]
+    },
+    "probe:m1demo.root_twice._proof_1": {
+      "kind": "theorem",
+      "source": false,
+      "probeAtom": false,
+      "type": [
+        "probe:LE.le",
+        "probe:Nat",
+        "probe:instLENat",
+        "probe:OfNat.ofNat",
+        "probe:instOfNatNat",
+        "probe:Aeneas.Std.UScalar.cMax",
+        "probe:Aeneas.Std.UScalarTy.U32"
+      ],
+      "value": [
+        "probe:of_decide_eq_true",
+        "probe:LE.le",
+        "probe:Nat",
+        "probe:instLENat",
+        "probe:OfNat.ofNat",
+        "probe:instOfNatNat",
+        "probe:Aeneas.Std.UScalar.cMax",
+        "probe:Aeneas.Std.UScalarTy.U32",
+        "probe:Nat.decLe",
+        "probe:id",
+        "probe:Eq",
+        "probe:Bool",
+        "probe:Decidable.decide",
+        "probe:Bool.true",
+        "probe:Eq.refl"
+      ],
+      "axioms": [
+        "propext"
+      ]
+    },
+    "probe:m1demo.roots.root_sum_eq": {
+      "kind": "theorem",
+      "source": true,
+      "probeAtom": true,
+      "type": [
+        "probe:m1demo.Pair",
+        "probe:Eq",
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32",
+        "probe:m1demo.root_sum",
+        "probe:m1demo.helper"
+      ],
+      "value": [
+        "probe:m1demo.Pair",
+        "probe:rfl",
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32",
+        "probe:m1demo.root_sum"
+      ],
+      "axioms": [
+        "propext",
+        "Quot.sound"
+      ]
+    },
+    "probe:m1demo.roots.root_twice_eq": {
+      "kind": "theorem",
+      "source": true,
+      "probeAtom": true,
+      "type": [
+        "probe:m1demo.Pair",
+        "probe:Eq",
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32",
+        "probe:m1demo.root_twice",
+        "probe:Aeneas.Std.bind",
+        "probe:Aeneas.Std.UScalar",
+        "probe:Aeneas.Std.UScalarTy.U32",
+        "probe:m1demo.helper",
+        "probe:HMul.hMul",
+        "probe:Aeneas.Std.instHMulUScalarResult",
+        "probe:Aeneas.Std.U32.ofNat",
+        "probe:OfNat.ofNat",
+        "probe:Nat",
+        "probe:instOfNatNat",
+        "probe:of_decide_eq_true",
+        "probe:LE.le",
+        "probe:instLENat",
+        "probe:Aeneas.Std.UScalar.cMax",
+        "probe:Nat.decLe",
+        "probe:id",
+        "probe:Bool",
+        "probe:Decidable.decide",
+        "probe:Bool.true",
+        "probe:Eq.refl"
+      ],
+      "value": [
+        "probe:m1demo.Pair",
+        "probe:rfl",
+        "probe:Aeneas.Std.Result",
+        "probe:Aeneas.Std.U32",
+        "probe:m1demo.root_twice"
+      ],
+      "axioms": [
+        "propext",
+        "Classical.choice",
+        "Quot.sound"
+      ]
+    }
+  },
+  "trust": {
+    "probe:_private.Specs.Roots.0.m1demo.roots.helper_self": [
+      "propext",
+      "Quot.sound"
+    ],
+    "probe:m1demo.Pair._sizeOf_1": [],
+    "probe:m1demo.Pair._sizeOf_inst": [],
+    "probe:m1demo.Pair.a": [],
+    "probe:m1demo.Pair.b": [],
+    "probe:m1demo.Pair.casesOn": [],
+    "probe:m1demo.Pair.ctorIdx": [],
+    "probe:m1demo.Pair.mk._flat_ctor": [],
+    "probe:m1demo.Pair.mk.inj": [],
+    "probe:m1demo.Pair.mk.injEq": [
+      "propext"
+    ],
+    "probe:m1demo.Pair.mk.noConfusion": [],
+    "probe:m1demo.Pair.mk.sizeOf_spec": [],
+    "probe:m1demo.Pair.noConfusion": [],
+    "probe:m1demo.Pair.noConfusionType": [],
+    "probe:m1demo.Pair.recOn": [],
+    "probe:m1demo.helper": [
+      "propext",
+      "Quot.sound"
+    ],
+    "probe:m1demo.root_sum": [
+      "propext",
+      "Quot.sound"
+    ],
+    "probe:m1demo.root_twice": [
+      "propext",
+      "Classical.choice",
+      "Quot.sound"
+    ],
+    "probe:m1demo.root_twice._proof_1": [
+      "propext"
+    ],
+    "probe:m1demo.roots.root_sum_eq": [
+      "propext",
+      "Quot.sound"
+    ],
+    "probe:m1demo.roots.root_twice_eq": [
+      "propext",
+      "Classical.choice",
+      "Quot.sound"
+    ]
+  }
+}

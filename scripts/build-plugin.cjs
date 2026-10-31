@@ -28,6 +28,7 @@ const MARKETPLACE_ID = 'beneficial-ai-foundation';
 const SCRIPT_FILES = [
   'fvs-auto.mjs',
   'fvs-closure-plan.mjs',
+  'fvs-contract-registry.mjs',
   'fvs-codex-think.mjs',
   'fvs-extract-patches.mjs',
   'fvs-kb-query.py',
