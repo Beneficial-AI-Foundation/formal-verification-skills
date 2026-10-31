@@ -79,6 +79,30 @@ function commitFixture(f) {
   return git(f.source, 'rev-parse', 'HEAD');
 }
 
+function duplicateImportFixture(count, wrongOrigin = false) {
+  const names = ['Sample', ...Array.from({ length: count - 1 }, (_, i) => `Sample.Part${i}`)];
+  const entry = '.lake/packages/Dep/.lake/build/lib/lean';
+  const sources = Object.fromEntries(names.map(name => [name.replaceAll('.', '/') + '.lean', 'module\npublic theorem checked : True := True.intro\n']));
+  const behavior = `process.on('exit',()=>{for(const [index,name]of ${JSON.stringify(names)}.entries()){
+    const rel=name.replaceAll('.','/');const dir=path.join(process.cwd(),'.lake/build');
+    const stem=path.join(dir,'lib/lean',rel);const setup=path.join(dir,'ir',rel+'.setup.json');
+    fs.mkdirSync(path.dirname(stem),{recursive:true});fs.mkdirSync(path.dirname(setup),{recursive:true});
+    for(const suffix of ['olean','olean.server','olean.private','ir'])fs.writeFileSync(stem+'.'+suffix,'project '+suffix);
+    const imported=${wrongOrigin}&&index===1?'Wrong.Module':'Shared.Module';
+    const artifact=path.join(process.cwd(),${JSON.stringify(entry)},'Shared/Module.olean');
+    fs.writeFileSync(stem+'.ilean',JSON.stringify({module:name,directImports:[[imported,false,false,false]]}));
+    fs.writeFileSync(setup,JSON.stringify({name,isModule:true,plugins:[],dynlibs:[],importArts:{[imported]:[artifact]}}));
+  }});`;
+  const f = fixture(behavior, sources, [entry]);
+  const deps = path.join(f.root, 'deps');
+  const directory = path.join(deps, 'Dep/.lake/build/lib/lean/Shared');
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(path.join(directory, 'Module.olean'), Buffer.alloc(64 * 1024, 37));
+  fs.writeFileSync(path.join(deps, 'Dep/empty.txt'), '');
+  f.request.dependencies = { root: deps };
+  return { ...f, artifact: path.join(f.request.out, 'source', entry, 'Shared/Module.olean'), originalArtifact: path.join(directory, 'Module.olean') };
+}
+
 test('closed requests reject caller verdicts, path aliases, duplicates and worktree auto inputs', async () => {
   for (const change of [
     (r) => { r.pass = true; },
@@ -210,12 +234,13 @@ if (process.platform === 'darwin') {
   });
 
   test('symlinks, hardlink aliases and output/source overlap refuse without destructive cleanup', async () => {
-    for (const mode of ['symlink', 'hardlink', 'overlap', 'protected-toolchain', 'existing']) {
+    for (const mode of ['symlink', 'hardlink', 'directory', 'overlap', 'protected-toolchain', 'existing']) {
       const f = fixture();
       if (mode === 'symlink') {
         fs.renameSync(path.join(f.source, 'Sample.lean'), path.join(f.root, 'saved'));
         fs.symlinkSync('../saved', path.join(f.source, 'Sample.lean'));
       } else if (mode === 'hardlink') fs.linkSync(path.join(f.source, 'Sample.lean'), path.join(f.root, 'alias'));
+      else if (mode === 'directory') { fs.unlinkSync(path.join(f.source, 'Sample.lean')); fs.mkdirSync(path.join(f.source, 'Sample.lean')); }
       else if (mode === 'overlap') f.request.out = path.join(f.source, 'nested-output');
       else if (mode === 'protected-toolchain') f.request.out = path.join(f.root, 'toolchain', 'nested-output');
       else { fs.mkdirSync(f.request.out); fs.writeFileSync(path.join(f.request.out, 'keep'), 'untouched'); }
@@ -337,6 +362,69 @@ if (process.platform === 'darwin') {
     const outputs = json(result.inventories.outputs.file);
     assert.equal(outputs.externalFiles[selected].sha256, sha256('frozen Zeta module'));
     assert.equal(outputs.externalFiles[path.join(expected[2], 'Shared/Module.olean')], undefined);
+  });
+
+  test('duplicate imports across project modules do not multiply frozen artifact reads', async (t) => {
+    const reads = [];
+    const directories = [];
+    for (const count of [1, 12]) {
+      const f = duplicateImportFixture(count);
+      const originalOpen = fs.openSync;
+      const originalMkdir = fs.mkdirSync;
+      let opened = 0;
+      let created = 0;
+      fs.openSync = (file, ...args) => {
+        if (file === f.artifact) opened++;
+        return originalOpen(file, ...args);
+      };
+      fs.mkdirSync = (directory, ...args) => {
+        if (directory === path.join(f.request.out, 'source/Sample')) created++;
+        return originalMkdir(directory, ...args);
+      };
+      let result;
+      try { result = await build(f.request); } finally { fs.openSync = originalOpen; fs.mkdirSync = originalMkdir; }
+      assert.equal(result.status, 'built', result.reason);
+      assert.equal(result.modules.length, count);
+      assert.ok(json(result.inventories.outputs.file).externalFiles[f.artifact]);
+      assert.equal(json(result.dependencies.before.file)['Dep/empty.txt'].sha256, sha256(''));
+      reads.push(opened);
+      directories.push(created);
+      t.diagnostic(JSON.stringify({ modules: count, artifactReads: opened, copyParentMkdirCalls: created }));
+    }
+    assert.ok(reads[0] >= 2, 'the artifact must remain subject to independent inventory passes');
+    assert.equal(reads[1], reads[0], 'repeating an import must not add artifact reads');
+    assert.equal(directories[1], 1, 'one owned copy parent must be created once');
+  });
+
+  test('deduplicated artifact validation still checks every module origin', async () => {
+    const f = duplicateImportFixture(2, true);
+    const result = await build(f.request);
+    assert.equal(result.status, 'unverified');
+    assert.match(result.reason, /resolved import layout/);
+    assert.equal(result.proofChecked, false);
+  });
+
+  test('final inventories reject late byte, symlink and hardlink drift after a reused import', async () => {
+    for (const change of ['bytes', 'symlink', 'hardlink']) {
+      const f = duplicateImportFixture(2);
+      const originalRead = fs.readFileSync;
+      let changed = false;
+      fs.readFileSync = (file, ...args) => {
+        if (!changed && file === path.join(f.request.out, 'source/.lake/build/ir/Sample/Part0.setup.json')) {
+          changed = true;
+          if (change === 'bytes') fs.appendFileSync(f.artifact, 'changed');
+          else if (change === 'hardlink') fs.linkSync(f.artifact, path.join(f.root, 'alias'));
+          else { fs.unlinkSync(f.artifact); fs.symlinkSync(f.originalArtifact, f.artifact); }
+        }
+        return originalRead(file, ...args);
+      };
+      let result;
+      try { result = await build(f.request); } finally { fs.readFileSync = originalRead; }
+      assert.ok(changed);
+      assert.equal(result.status, 'unverified');
+      assert.match(result.reason, /changed|aliased|symlink/);
+      assert.equal(fs.existsSync(path.join(f.request.out, 'receipts/result.json')), false);
+    }
   });
 
   test('missing dependency search entries never supply unresolved direct or importArts modules', async () => {
