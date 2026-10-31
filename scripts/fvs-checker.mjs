@@ -482,4 +482,5 @@ export async function checkerCli(argv) {
 }
 let direct = false;
 try { direct = fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url)); } catch {}
-if (direct) await checkerCli(process.argv.slice(2));
+// Finish module loading before the auto adapter imports the shared lexer.
+if (direct) checkerCli(process.argv.slice(2));
