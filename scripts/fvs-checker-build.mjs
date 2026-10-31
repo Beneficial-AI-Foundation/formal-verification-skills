@@ -30,7 +30,7 @@ function relative(value, dot = false) {
   return value;
 }
 
-function absolute(value, exists = true) {
+function absolute(value, exists = true, allowMissingTail = false) {
   if (typeof value !== 'string' || !path.isAbsolute(value) || path.normalize(value) !== value || /[\u0000-\u001f\u007f]/.test(value)) {
     fail('expected a canonical absolute path');
   }
@@ -40,6 +40,7 @@ function absolute(value, exists = true) {
     current = path.join(current, part);
     const stat = fs.lstatSync(current, { throwIfNoEntry: false });
     if (!stat) {
+      if (allowMissingTail) return value;
       if (exists || current !== value) fail('path does not exist');
     } else if (stat.isSymbolicLink()) fail('symlink path is unsupported');
   }
@@ -345,12 +346,21 @@ export async function buildCheckerSnapshot(input) {
       fs.mkdirSync(path.dirname(stem), { recursive: true });
       await run([request.lean.path, '--root', sourceRoot, '-o', `${stem}.olean`, '-i', `${stem}.ilean`, path.join(project, moduleSources[0].source)], project, true);
     }
-    const searchPaths = configured ? (await run([request.lake.path, 'env', '/usr/bin/printenv', 'LEAN_PATH'], project, true)).toString().trim().split(path.delimiter).filter(Boolean) : [];
-    searchPaths.push(path.join(toolRoot, 'lib', 'lean'));
-    for (const directory of searchPaths) {
-      absolute(directory);
+    const declaredSearchPaths = configured ? (await run([request.lake.path, 'env', '/usr/bin/printenv', 'LEAN_PATH'], project, true)).toString().trim().split(path.delimiter).filter(Boolean) : [];
+    declaredSearchPaths.push(path.join(toolRoot, 'lib', 'lean'));
+    const searchPaths = [];
+    const missingSearchPaths = [];
+    for (const directory of declaredSearchPaths) {
+      const ownedDependency = ownedDependencies && within(ownedDependencies, directory);
       if (directory !== path.join(result.buildRoot, 'lib', 'lean') && directory !== path.join(toolRoot, 'lib', 'lean') &&
-          !(ownedDependencies && within(ownedDependencies, directory))) fail('search path escapes frozen project/dependencies/toolchain');
+          !ownedDependency) fail('search path escapes frozen project/dependencies/toolchain');
+      // Lake lists unused dependencies too; absent build directories are not import evidence.
+      absolute(directory, true, Boolean(ownedDependency));
+      const stat = fs.lstatSync(directory, { throwIfNoEntry: false });
+      if (!stat) { missingSearchPaths.push(directory); continue; }
+      absolute(directory);
+      if (!stat.isDirectory()) fail('search path is not a directory');
+      searchPaths.push(directory);
     }
     checkInputs();
     const depsAfter = request.dependencies ? tree(request.dependencies.root, false, true) : {};
@@ -456,7 +466,7 @@ export async function buildCheckerSnapshot(input) {
       if (within(project, directory) && !(ownedDependencies && within(ownedDependencies, directory))) fail('project build cannot be an external search root');
       externalInventory[directory] = { kind: directory === path.join(toolRoot, 'lib', 'lean') ? 'toolchain' : 'dependency' };
     }
-    result.inventories.outputs = save('outputs.json', { root: result.buildRoot, files: outputFiles, externalRoots: externalInventory, externalFiles });
+    result.inventories.outputs = save('outputs.json', { root: result.buildRoot, files: outputFiles, externalRoots: externalInventory, externalFiles, declaredSearchPaths, missingSearchPaths });
     Object.assign(result, { modules, externalSearchPaths: [...externalPaths].sort(), externalImports: [...externalImports].sort(), status: 'built' });
     save('result.json', result);
     return result;

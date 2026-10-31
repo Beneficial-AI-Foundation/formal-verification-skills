@@ -20,7 +20,7 @@ after(() => {
   for (const root of roots) fs.rmSync(root, { recursive: true, force: true });
 });
 
-function fixture(behavior = '', sources = null) {
+function fixture(behavior = '', sources = null, searchEntries = []) {
   const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'fvs-checker-build-test-'));
   roots.push(root);
   const source = path.join(root, 'original');
@@ -45,7 +45,7 @@ const path = require('node:path');
 if (process.argv.includes('--version')) {
   console.log(path.basename(process.argv[1]) === 'lake' ? 'Lake version fixture (Lean version 4.31.0)' : 'Lean (version 4.31.0, fixture)');
 } else if (process.argv.includes('env')) {
-  console.log(path.join(process.cwd(),'.lake/build/lib/lean')+':'+path.join(path.dirname(path.dirname(process.argv[1])),'lib/lean'));
+  console.log([path.join(process.cwd(),'.lake/build/lib/lean'),path.join(path.dirname(path.dirname(process.argv[1])),'lib/lean'),...${JSON.stringify(searchEntries)}.map(dir=>path.resolve(process.cwd(),dir))].join(':'));
 } else {
   ${behavior}
   const lib = path.join(process.cwd(), '.lake/build/lib/lean');
@@ -294,6 +294,58 @@ if (process.platform === 'darwin') {
       const f = fixture(`process.on('exit',()=>{ const dir=path.join(process.cwd(),'.lake/build'); const sf=path.join(dir,'ir/Sample.setup.json'); const fi=path.join(dir,'lib/lean/Sample.ilean'); const s=JSON.parse(fs.readFileSync(sf)); const i=JSON.parse(fs.readFileSync(fi)); ${change} fs.writeFileSync(sf,JSON.stringify(s)); fs.writeFileSync(fi,JSON.stringify(i)); });`);
       const result = await build(f.request);
       assert.notEqual(result.status, 'built'); assert.match(result.reason, /external input|external import/);
+    }
+  });
+
+  test('unused missing dependency search directories are receipted and omitted from resolved roots', async () => {
+    const entry = '.lake/packages/Cli/.lake/build/lib/lean';
+    const f = fixture('', null, [entry]);
+    const deps = path.join(f.root, 'deps'); fs.mkdirSync(path.join(deps, 'Cli'), { recursive: true });
+    fs.writeFileSync(path.join(deps, 'Cli', 'frozen.txt'), 'unused frozen dependency');
+    f.request.dependencies = { root: deps };
+    const result = await build(f.request);
+    assert.equal(result.status, 'built', result.reason);
+    const missing = path.join(result.projectRoot, entry);
+    assert.equal(fs.existsSync(missing), false);
+    assert.equal(result.externalSearchPaths.includes(missing), false);
+    assert.ok(result.externalSearchPaths.every(dir => fs.statSync(dir).isDirectory()));
+    const outputs = json(result.inventories.outputs.file);
+    assert.ok(outputs.declaredSearchPaths.includes(missing));
+    assert.deepEqual(outputs.missingSearchPaths, [missing]);
+    const envReceipt = json(result.receipts.find(receipt => receipt.argv.includes('env')).file);
+    assert.ok(fs.readFileSync(envReceipt.stdout.file, 'utf8').trim().split(':').includes(missing));
+    assert.deepEqual(result.dependencies.changed, []);
+  });
+
+  test('missing dependency search entries never supply unresolved direct or importArts modules', async () => {
+    const entry = '.lake/packages/Cli/.lake/build/lib/lean';
+    for (const explicit of [false, true]) {
+      const behavior = `process.on('exit',()=>{const dir=path.join(process.cwd(),'.lake/build');const fi=path.join(dir,'lib/lean/Sample.ilean');const i=JSON.parse(fs.readFileSync(fi));i.directImports=[['Missing.Module',false,false,false]];fs.writeFileSync(fi,JSON.stringify(i));${explicit ? `const sf=path.join(dir,'ir/Sample.setup.json');const s=JSON.parse(fs.readFileSync(sf));s.importArts={'Missing.Module':[path.join(process.cwd(),${JSON.stringify(entry)},'Missing/Module.olean')]};fs.writeFileSync(sf,JSON.stringify(s));` : ''}});`;
+      const f = fixture(behavior, null, [entry]);
+      const deps = path.join(f.root, 'deps'); fs.mkdirSync(path.join(deps, 'Cli'), { recursive: true });
+      fs.writeFileSync(path.join(deps, 'Cli', 'frozen.txt'), 'unused frozen dependency');
+      f.request.dependencies = { root: deps };
+      const result = await build(f.request);
+      assert.equal(result.status, 'unverified');
+      assert.match(result.reason, explicit ? /path does not exist/ : /missing or unresolved external import/);
+      assert.equal(result.proofChecked, false);
+      assert.ok(result.receipts.every(receipt => receipt.exit === 0));
+      assert.equal(fs.existsSync(path.join(f.request.out, 'receipts/result.json')), false);
+    }
+  });
+
+  test('missing search entries still reject symlink prefixes and roots outside the frozen snapshot', async () => {
+    const entry = '.lake/packages/Cli/.lake/build/lib/lean';
+    for (const symlink of [false, true]) {
+      const f = fixture(symlink ? "fs.symlinkSync('../Other','.lake/packages/Cli/.lake');" : '', null, [symlink ? entry : '../outside/missing']);
+      const deps = path.join(f.root, 'deps'); fs.mkdirSync(path.join(deps, 'Cli'), { recursive: true });
+      fs.mkdirSync(path.join(deps, 'Other'));
+      fs.writeFileSync(path.join(deps, 'Cli', 'frozen.txt'), 'unused frozen dependency');
+      fs.writeFileSync(path.join(deps, 'Other', 'frozen.txt'), 'other frozen dependency');
+      f.request.dependencies = { root: deps };
+      const result = await build(f.request);
+      assert.equal(result.status, 'unverified');
+      assert.match(result.reason, symlink ? /symlink path/ : /search path escapes/);
     }
   });
 } else {
