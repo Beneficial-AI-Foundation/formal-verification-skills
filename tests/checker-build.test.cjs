@@ -317,6 +317,28 @@ if (process.platform === 'darwin') {
     assert.deepEqual(result.dependencies.changed, []);
   });
 
+  test('returned search roots preserve declared precedence for same-name frozen dependency modules', async () => {
+    const entries = ['Zeta', 'Alpha'].map(name => `.lake/packages/${name}/.lake/build/lib/lean`);
+    const behavior = "process.on('exit',()=>{const file=path.join(process.cwd(),'.lake/build/lib/lean/Sample.ilean');const i=JSON.parse(fs.readFileSync(file));i.directImports=[['Shared.Module',false,false,false]];fs.writeFileSync(file,JSON.stringify(i));});";
+    const f = fixture(behavior, null, entries);
+    const deps = path.join(f.root, 'deps');
+    for (const name of ['Zeta', 'Alpha']) {
+      const dir = path.join(deps, name, '.lake/build/lib/lean/Shared');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'Module.olean'), `frozen ${name} module`);
+    }
+    f.request.dependencies = { root: deps };
+    const result = await build(f.request);
+    assert.equal(result.status, 'built', result.reason);
+    const expected = [path.join(f.root, 'toolchain/lib/lean'), ...entries.map(entry => path.join(result.projectRoot, entry))];
+    assert.deepEqual(result.externalSearchPaths, expected);
+    const selected = result.externalSearchPaths.map(dir => path.join(dir, 'Shared/Module.olean')).find(file => fs.existsSync(file));
+    assert.equal(selected, path.join(expected[1], 'Shared/Module.olean'));
+    const outputs = json(result.inventories.outputs.file);
+    assert.equal(outputs.externalFiles[selected].sha256, sha256('frozen Zeta module'));
+    assert.equal(outputs.externalFiles[path.join(expected[2], 'Shared/Module.olean')], undefined);
+  });
+
   test('missing dependency search entries never supply unresolved direct or importArts modules', async () => {
     const entry = '.lake/packages/Cli/.lake/build/lib/lean';
     for (const explicit of [false, true]) {
