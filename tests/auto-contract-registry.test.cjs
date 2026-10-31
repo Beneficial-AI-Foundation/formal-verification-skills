@@ -36,7 +36,8 @@ function review(f, c, patch = {}) {
   const candidate = api.candidateOf(c, api.contextOf(plan, graph, view, c.node));
   const id = ++serial;
   const evidence = write(path.join(f.dir, `review-${id}.md`), `Labelled test evidence for candidate ${candidate}; run ${id}.\n`);
-  return { candidateSha256: candidate, verdict: 'pass', reviewer: { session: 'fixture-reviewer', harness: 'fixture', model: 'none', runId: `review-run-${id}` }, evidence: { file: evidence, sha256: sha(fs.readFileSync(evidence)) }, ...patch };
+  return { candidateSha256: candidate, registryHeadSha256: api.readChain(f.registry).records.at(-1)?.sha ?? null,
+    verdict: 'pass', reviewer: { session: 'fixture-reviewer', harness: 'fixture', model: 'none', runId: `review-run-${id}` }, evidence: { file: evidence, sha256: sha(fs.readFileSync(evidence)) }, ...patch };
 }
 function args(f, command, c, r, previous) {
   const argv = [SCRIPT, command, '--plan', f.plan, '--graph', f.graph, '--registry', f.registry, '--spec-root', f.specRoot];
@@ -57,6 +58,27 @@ function register(f, node, patch) {
 }
 function mutatePlan(f, change) { const p = wrapped(f.plan).json; change(p); write(f.plan, p); }
 function mutateGraph(f, change) { const g = wrapped(f.graph).json; change(g); write(f.graph, g); mutatePlan(f, (p) => { p.inputs.graphSha256 = sha(fs.readFileSync(f.graph)); }); }
+function graphEdges(g) {
+  g.edges = Object.entries(g.nodes).flatMap(([from, n]) => [['type', 'type'], ['value', 'term']].flatMap(([lane, kind]) => n[lane].map((to) => ({ from, to, kind,
+    resolution: !Object.hasOwn(g.nodes, to) ? 'external' : g.nodes[to].probeAtom ? 'local' : 'generated' }))));
+}
+function disjoint(f) {
+  // Labelled graph AND plan mutation: these roots really have no helper dependency.
+  mutateGraph(f, (g) => { for (const id of ['probe:m1demo.root_sum', 'probe:m1demo.root_twice']) { g.nodes[id].type = []; g.nodes[id].value = []; } graphEdges(g); });
+  mutatePlan(f, (p) => {
+    for (const id of [20, 21]) {
+      Object.assign(p.nodes[id], { dependsOn: [], generatedDependencies: [], typeDependencies: [], dependencyPaths: {} });
+      Object.assign(p.roots.find((r) => r.defId === id), { closure: [id], definitionClosure: [...p.nodes[id].declarations] });
+    }
+    p.nodes[19].sharedBy = []; p.nodes[19].ownerRoot = null;
+  });
+}
+function blockedHelper(f, eligibility) {
+  mutatePlan(f, (p) => {
+    p.nodes[19].eligibility = eligibility; p.selection.failed = eligibility === 'failed' ? [19] : []; p.status = 'partial';
+    p.roots.forEach((r) => { r.status = 'blocked'; p.nodes[r.defId].eligibility = 'blocked-by-dependency'; });
+  });
+}
 function state(f) { const out = run(f, 'status'); assert.equal(out.exit, 0, out.result.message); return out.result.nodes; }
 function appendChild(argv) {
   return new Promise((resolve, reject) => {
@@ -154,10 +176,41 @@ describe('contract registry: revisions and semantic invalidation', () => {
     assert.equal(run(f, 'revise', c, oldReview, noReview.result.recordSha256).exit, 7);
     assert.equal(run(f, 'revise', c, review(f, c), noReview.result.recordSha256).result.record.state, 'recheck-required');
   });
+  for (const existingRoot of [true, false]) it(`rejects an unused pre-helper-change review for ${existingRoot ? 'an existing root' : 'first root registration'}`, () => {
+    const f = setup(), helper = register(f, 19), c = contract(f, 20, { implementationDependencies: ['probe:m1demo.helper'] });
+    const root = existingRoot ? run(f, 'register', c, review(f, c)) : null;
+    const delayed = review(f, c); // Valid, distinct and not yet recorded anywhere.
+    const changed = contract(f, 19, { statement: 'True' });
+    assert.equal(run(f, 'revise', changed, review(f, changed), helper.recordSha256).exit, 0);
+    const command = existingRoot ? 'revise' : 'register', previous = root?.result.recordSha256;
+    assert.match(run(f, command, c, delayed, previous).result.message, /registry head is stale/);
+    if (existingRoot) assert.equal(state(f)[20].state, 'needs-semantic-review');
+    const fresh = run(f, command, c, review(f, c), previous);
+    assert.equal(fresh.result.record.state, existingRoot ? 'recheck-required' : 'machine-reviewed-provisional');
+  });
+  it('conservatively rejects an unused review after an unrelated append; a fresh packet succeeds', () => {
+    const f = setup(); register(f, 19); const c = contract(f, 20), delayed = review(f, c);
+    register(f, 21);
+    assert.match(run(f, 'register', c, delayed).result.message, /registry head is stale/);
+    assert.equal(run(f, 'register', c, review(f, c)).exit, 0);
+  });
+  it('checks the review context under the lock after a concurrent helper commit', async () => {
+    const f = setup(), helper = register(f, 19), c = contract(f, 20, { implementationDependencies: ['probe:m1demo.helper'] });
+    const root = run(f, 'register', c, review(f, c)), delayed = review(f, c), changed = contract(f, 19, { statement: 'True' });
+    const barrier = path.join(f.dir, 'helper-committed');
+    const hook = write(path.join(f.dir, 'wait-for-helper.mjs'), `import fs from 'node:fs';
+const mkdir=fs.mkdirSync; fs.mkdirSync=function(file,...rest){ if(String(file).endsWith('/lock')) { let n=0; while(!fs.existsSync(${JSON.stringify(barrier)})) { if(++n>200)throw new Error('helper barrier timed out'); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,50); } } return mkdir.call(this,file,...rest); };\n`);
+    const pending = appendChild(['--import', hook, ...args(f, 'revise', c, delayed, root.result.recordSha256)]);
+    try {
+      assert.equal((await appendChild(args(f, 'revise', changed, review(f, changed), helper.recordSha256))).exit, 0);
+    } finally { write(barrier, 'committed'); }
+    const refused = await pending; assert.equal(refused.exit, 7); assert.match(refused.result.message, /registry head is stale/);
+    assert.equal(state(f)[20].state, 'needs-semantic-review');
+    assert.equal(run(f, 'revise', c, review(f, c), root.result.recordSha256).result.record.state, 'recheck-required');
+  });
   it('a shared definition revision reaches disjoint roots; semantic review wins over recheck', () => {
     const f = setup();
-    // Labelled plan mutation: make roots disjoint to isolate spec-definition sharing.
-    mutatePlan(f, (p) => { for (const id of [20, 21]) { p.nodes[id].dependsOn = []; p.roots.find((r) => r.defId === id).closure = [id]; } p.nodes[19].sharedBy = []; p.nodes[19].ownerRoot = null; });
+    disjoint(f);
     const first = register(f, 20); register(f, 21);
     fs.appendFileSync(path.join(f.specRoot, 'Defs.lean'), '-- changed bytes\n');
     const c = contract(f, 20); const out = run(f, 'revise', c, review(f, c), first.recordSha256);
@@ -213,22 +266,61 @@ describe('contract registry: sole-reason input refusals and current status', () 
   ]) it(`refuses graph ${label} even when its bytes match the plan hash`, () => { const f = setup(); mutateGraph(f, change); assert.equal(run(f, 'register', contract(f), null).exit, 7); });
   it('refuses unknown and out-of-scope eligible nodes', () => {
     const f = setup(); assert.equal(run(f, 'register', contract(f, 999), null).exit, 7);
-    mutatePlan(f, (p) => { p.nodes[20].dependsOn = []; p.nodes[21].dependsOn = []; p.roots.forEach((r) => { r.closure = [r.defId]; }); p.nodes[19].sharedBy = []; p.nodes[19].ownerRoot = null; });
+    disjoint(f);
     assert.match(run(f, 'register', contract(f), null).result.message, /outside/);
   });
   for (const eligibility of ['recursion-unqualified', 'failed', 'unknown']) it(`refuses ${eligibility} without an unrelated consistency defect`, () => {
-    const f = setup(); mutatePlan(f, (p) => { p.nodes[19].eligibility = eligibility; p.status = 'partial'; p.roots.forEach((r) => { r.status = 'blocked'; }); });
+    const f = setup(); blockedHelper(f, eligibility);
     assert.match(run(f, 'register', contract(f), null).result.message, /unsupported/);
   });
   it('reports current eligibility/scope changes as stale and unchanged semantic context as recheck', () => {
     const f = setup(); register(f, 19);
     fs.appendFileSync(f.plan, '\n'); assert.equal(state(f)[19].state, 'recheck-required');
-    mutatePlan(f, (p) => { p.nodes[19].eligibility = 'failed'; p.status = 'partial'; p.roots.forEach((r) => { r.status = 'blocked'; }); });
+    blockedHelper(f, 'failed');
     assert.equal(state(f)[19].state, 'stale');
   });
   it('reports a changed plan binding as stale, even with unchanged spec bytes', () => {
     const f = setup(); register(f, 19); mutatePlan(f, (p) => { p.inputs.identitySha256 = 'f'.repeat(64); });
     assert.equal(state(f)[19].state, 'stale');
+  });
+  it('rejects coordinated dependency, closure, sharing and owner deletion against an unchanged graph', () => {
+    const f = setup(); register(f, 19); register(f, 20); register(f, 21);
+    mutatePlan(f, (p) => {
+      p.selection.requestedRoots = [19, 20, 21];
+      p.roots = [19, 20, 21].map((id) => ({ defId: id, rustName: p.nodes[id].rustName, status: 'ready', closure: [id], blockers: [] }));
+      for (const id of [19, 20, 21]) Object.assign(p.nodes[id], { dependsOn: [], sharedBy: [id], ownerRoot: id });
+    });
+    const out = run(f, 'revise', contract(f, 19, { role: 'root' }), null, state(f)[19].head);
+    assert.equal(out.exit, 7); assert.match(out.result.message, /bound graph's scheduling expansion/);
+    const status = run(f, 'status'); assert.equal(status.result.consistent, false);
+    assert.ok(Object.values(status.result.nodes).every((n) => n.state === 'stale'));
+  });
+  it('uses both scheduling lanes, generated pass-through and structure-member expansion', () => {
+    for (const mode of ['type', 'generated', 'structure']) {
+      const f = setup();
+      mutateGraph(f, (g) => {
+        const root = g.nodes['probe:m1demo.root_sum'];
+        if (mode === 'type') { root.value = root.value.filter((id) => id !== 'probe:m1demo.helper'); root.type.push('probe:m1demo.helper'); }
+        if (mode === 'generated') {
+          root.value = root.value.map((id) => id === 'probe:m1demo.helper' ? 'probe:fixture.generated' : id);
+          g.nodes['probe:fixture.generated'] = { kind: 'def', source: false, probeAtom: false, type: [], value: ['probe:m1demo.helper'], axioms: [] };
+          g.trust['probe:fixture.generated'] = [];
+        }
+        if (mode === 'structure') g.nodes['probe:m1demo.Pair.a'].value.push('probe:m1demo.root_sum');
+        graphEdges(g);
+      });
+      if (mode === 'structure') assert.match(run(f, 'register', contract(f), null).result.message, /scheduling expansion/);
+      else {
+        assert.equal(run(f, 'register', contract(f), null).exit, 6);
+        mutatePlan(f, (p) => { p.nodes[20].dependsOn = []; p.roots[0].closure = [20]; p.nodes[19].sharedBy = [21]; p.nodes[19].ownerRoot = 21; });
+        assert.match(run(f, 'register', contract(f, 20), null).result.message, /scheduling expansion/);
+      }
+    }
+  });
+  it('rejects eligibility that omits failure propagation from the bound graph', () => {
+    const f = setup(); blockedHelper(f, 'failed');
+    mutatePlan(f, (p) => { p.nodes[20].eligibility = 'eligible'; });
+    assert.match(run(f, 'register', contract(f, 20), null).result.message, /graph\/failure expansion/);
   });
 });
 

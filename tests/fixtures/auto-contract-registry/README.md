@@ -24,3 +24,13 @@ The registry tests read these recorded inputs. Contracts, definition files,
 reviews and mutations created by the tests are labelled synthetic test data.
 The tests run no probes, compilers, Lean proofs or model providers. Provisional
 review state and declared independence do not constitute proof acceptance.
+
+Review packets also carry `registryHeadSha256`, obtained from `status` before
+review. The writer compares it under the append lock. This is deliberately
+conservative: any append, including an unrelated node, requires a new review
+packet. Missing review cannot clear an unresolved semantic-review requirement.
+The context is declared metadata, with no provider attestation or proof claim.
+
+Synthetic disjoint-root tests mutate the authoritative graph lanes and edge set
+as well as the plan. Coordinated deletion from the plan alone is inconsistent
+with graph-derived scheduling and must be refused.

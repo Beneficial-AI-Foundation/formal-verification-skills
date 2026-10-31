@@ -372,75 +372,17 @@ export function definitionClosure(g, starts) {
   return [...seen].sort();
 }
 
-export function buildPlan({ identity, graph, roots, failed = [], llbc = null }) {
-  const { i, g } = validate({ identity, graph, roots, failed, llbc });
-  const requested = sortedNumbers(roots);
-  const { blockers, declared } = admissibility(i, g, llbc);
-  const record = {
-    schema: 'fvs-closure-plan/record',
-    version: 1,
-    status: 'blocked',
-    inputs: { identitySha256: identity.sha256, graphSha256: graph.sha256, llbcSha256: llbc?.sha256 ?? null },
-    selection: { requestedRoots: requested, failed: sortedNumbers(failed) },
-    provenance: Object.fromEntries(PROVENANCE.map((field) => [field, i.provenance[field] ?? null])),
-    qualification: {
-      graphFidelity: g.fidelity === undefined ? 'not-supplied (a pre-fidelity graph record)' : g.fidelity.status,
-      ...(g.schemaVersion === 2 ? { graphSchemaVersion: 2, graphCapability: g.capability } : {}),
-    },
-    admissibility: { status: blockers.length === 0 ? 'admissible' : 'blocked', blockers },
-    upstream: { identityStatus: i.status, identityBlockers: i.blockers, graphState: g.state, graphBlockers: g.blockers },
-    ownership: { rule: OWNERSHIP_RULE },
-    edgeOrientation: g.schemaVersion === 2
-      ? 'consumer -> dependency, from the graph\'s nodes lanes (type and value); generated nodes are passed through, never scheduled'
-      : 'consumer -> dependency, from the graph\'s declared dependency lists',
-    nodes: {},
-    observedCycles: [],
-    roots: [],
-  };
-  if (blockers.length > 0) {
-    record.roots = requested.map((defId) => ({ defId, status: 'blocked', closure: null, blockers: [{ code: 'not-admissible', message: 'the two records are not admissible together' }] }));
-    return record;
-  }
-
-  // Nodes: one per ticket 10 item; its Lean family is every generated definition.
-  const groups = recursionGroups(llbc);
-  const nodes = new Map();
+// Expand scheduling through both graph lanes and structure members. Callers supply
+// validated families; this also propagates cycles, unmapped dependencies and failures.
+export function expandSchedulingDependencies(g, nodes, failed = []) {
   const claims = new Map();
-  for (const item of i.items) {
-    const declarations = item.generated.map((member) => `probe:${member.leanName}`);
-    const reasons = [];
-    let eligibility = 'eligible';
-    if (item.correspondence !== 'exact') {
-      eligibility = item.reasons.includes('recursion') ? 'recursion-unqualified' : 'blocked-upstream';
-    } else if (item.reasons.length > 0) {
-      // Ticket 10 gives exact correspondence only to an item with no reasons.
-      eligibility = 'blocked-upstream-contradiction';
-      reasons.push('the item is labelled exact but carries ticket 10 reasons');
-    } else if (declarations.length === 0 || new Set(declarations).size !== declarations.length || !item.target
-      || !item.generated.some((member) => member.leanName === item.target)) {
-      eligibility = 'blocked-family-invalid';
-      reasons.push('the exact item\'s generated family is empty, repeated, or does not contain its target');
-    } else {
-      const missing = declarations.filter((id) => !Object.hasOwn(g.declarations, id));
-      if (missing.length > 0) {
-        eligibility = 'blocked-unmatched';
-        reasons.push(...missing.map((id) => `${id} is not in the Lean graph`));
-      }
-    }
-    nodes.set(item.defId, {
-      defId: item.defId,
-      rustName: item.rustName ?? null,
-      target: item.target,
-      declarations,
-      upstream: { correspondence: item.correspondence, reasons: item.reasons },
-      recursionGroup: groups.get(item.defId) ?? null,
-      eligibility,
-      reasons,
-      dependsOn: [],
-      unmappedDependencies: [],
-    });
-    for (const id of new Set(declarations)) claims.set(id, [...(claims.get(id) ?? []), item.defId]);
+  for (const node of nodes.values()) {
+    node.dependsOn = [];
+    node.unmappedDependencies = [];
+    for (const id of new Set(node.declarations)) claims.set(id, [...(claims.get(id) ?? []), node.defId]);
   }
+  const declared = g.schemaVersion === 2 ? laneEdges(g) : declaredEdges(g);
+  const observedCycles = [];
   // A declaration claimed by more than one item belongs to none of them alone.
   const owner = new Map();
   for (const [id, claimants] of claims) {
@@ -536,7 +478,7 @@ export function buildPlan({ identity, graph, roots, failed = [], llbc = null }) 
     // A single owned node's self-reference is not a scheduling cycle (recursion
     // stays ticket 10's classification); an unowned self-reference is.
     const scheduling = mapped.length > 1 || unmapped.length > 0;
-    record.observedCycles.push({
+    observedCycles.push({
       declarations: component, nodes: mapped, unmappedDeclarations: unmapped, schedulingCycle: scheduling,
       ...(oracle ? { passedThrough: component.filter((id) => cyclicPassed.has(id)) } : {}),
     });
@@ -572,6 +514,80 @@ export function buildPlan({ identity, graph, roots, failed = [], llbc = null }) 
       node.reasons.push(`depends on ${below.join(', ')}, which ${below.length === 1 ? 'is' : 'are'} not eligible`);
     }
   }
+
+  return { observedCycles, closureOf };
+}
+
+export function buildPlan({ identity, graph, roots, failed = [], llbc = null }) {
+  const { i, g } = validate({ identity, graph, roots, failed, llbc });
+  const requested = sortedNumbers(roots);
+  const { blockers } = admissibility(i, g, llbc);
+  const record = {
+    schema: 'fvs-closure-plan/record',
+    version: 1,
+    status: 'blocked',
+    inputs: { identitySha256: identity.sha256, graphSha256: graph.sha256, llbcSha256: llbc?.sha256 ?? null },
+    selection: { requestedRoots: requested, failed: sortedNumbers(failed) },
+    provenance: Object.fromEntries(PROVENANCE.map((field) => [field, i.provenance[field] ?? null])),
+    qualification: {
+      graphFidelity: g.fidelity === undefined ? 'not-supplied (a pre-fidelity graph record)' : g.fidelity.status,
+      ...(g.schemaVersion === 2 ? { graphSchemaVersion: 2, graphCapability: g.capability } : {}),
+    },
+    admissibility: { status: blockers.length === 0 ? 'admissible' : 'blocked', blockers },
+    upstream: { identityStatus: i.status, identityBlockers: i.blockers, graphState: g.state, graphBlockers: g.blockers },
+    ownership: { rule: OWNERSHIP_RULE },
+    edgeOrientation: g.schemaVersion === 2
+      ? 'consumer -> dependency, from the graph\'s nodes lanes (type and value); generated nodes are passed through, never scheduled'
+      : 'consumer -> dependency, from the graph\'s declared dependency lists',
+    nodes: {},
+    observedCycles: [],
+    roots: [],
+  };
+  if (blockers.length > 0) {
+    record.roots = requested.map((defId) => ({ defId, status: 'blocked', closure: null, blockers: [{ code: 'not-admissible', message: 'the two records are not admissible together' }] }));
+    return record;
+  }
+
+  // Nodes: one per ticket 10 item; its Lean family is every generated definition.
+  const groups = recursionGroups(llbc);
+  const nodes = new Map();
+  for (const item of i.items) {
+    const declarations = item.generated.map((member) => `probe:${member.leanName}`);
+    const reasons = [];
+    let eligibility = 'eligible';
+    if (item.correspondence !== 'exact') {
+      eligibility = item.reasons.includes('recursion') ? 'recursion-unqualified' : 'blocked-upstream';
+    } else if (item.reasons.length > 0) {
+      // Ticket 10 gives exact correspondence only to an item with no reasons.
+      eligibility = 'blocked-upstream-contradiction';
+      reasons.push('the item is labelled exact but carries ticket 10 reasons');
+    } else if (declarations.length === 0 || new Set(declarations).size !== declarations.length || !item.target
+      || !item.generated.some((member) => member.leanName === item.target)) {
+      eligibility = 'blocked-family-invalid';
+      reasons.push('the exact item\'s generated family is empty, repeated, or does not contain its target');
+    } else {
+      const missing = declarations.filter((id) => !Object.hasOwn(g.declarations, id));
+      if (missing.length > 0) {
+        eligibility = 'blocked-unmatched';
+        reasons.push(...missing.map((id) => `${id} is not in the Lean graph`));
+      }
+    }
+    nodes.set(item.defId, {
+      defId: item.defId,
+      rustName: item.rustName ?? null,
+      target: item.target,
+      declarations,
+      upstream: { correspondence: item.correspondence, reasons: item.reasons },
+      recursionGroup: groups.get(item.defId) ?? null,
+      eligibility,
+      reasons,
+      dependsOn: [],
+      unmappedDependencies: [],
+    });
+  }
+  const { observedCycles, closureOf } = expandSchedulingDependencies(g, nodes, failed);
+  record.observedCycles = observedCycles;
+  const oracle = g.schemaVersion === 2;
 
   const ownerRoot = new Map();
   for (const root of requested) {

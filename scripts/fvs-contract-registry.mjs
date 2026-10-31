@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { definitionClosure } from './fvs-closure-plan.mjs';
+import { definitionClosure, expandSchedulingDependencies } from './fvs-closure-plan.mjs';
 
 // Contract registry for the nodes of a qualified closure plan (schema 2,
 // oracle lanes). It records machine-reviewed contracts and the invalidation
@@ -58,6 +58,7 @@ function usage() {
     '',
     'register and revise append one record for a node of an admissible closure plan (schema 2,',
     'verified fidelity) whose graph is --graph; status reports every node\'s current state.',
+    'Reviews carry registryHeadSha256 from status; any intervening append makes that packet stale.',
     'Exit: 0 recorded as machine-reviewed-provisional (or status read); 6 recorded but not provisional;',
     '7 refused (inconsistent plan, unsupported node, contract or review); 8 registry pending, busy or',
     'corrupt; 5 invalid input; 2 usage.',
@@ -153,18 +154,23 @@ export function validatePlan(plan, graph) {
   const requested = p.selection?.requestedRoots;
   if (!idList(requested) || requested.length === 0 || requested.some((id) => !nodes.has(id))) bad('the plan selects no known roots');
   if (!Array.isArray(p.roots) || JSON.stringify(sorted(p.roots.map((r) => r?.defId))) !== JSON.stringify(sorted(requested ?? []))) bad('the plan\'s roots are not its selection');
+  if (!idList(p.selection?.failed) || p.selection.failed.some((id) => !nodes.has(id))) bad('the plan has malformed failed-node seeds');
+  const claimed = new Map();
+  for (const node of nodes.values()) for (const member of node.declarations) {
+    if (g.nodes[member]?.probeAtom !== true) bad(`node ${node.defId}'s family member ${member} is not a probe atom of the graph`);
+    if (claimed.has(member)) bad(`${member} is claimed by nodes ${claimed.get(member)} and ${node.defId}`);
+    claimed.set(member, node.defId);
+  }
   if (problems.length > 0) return { problems };
-  const closureOf = (start) => {
-    const seen = new Set();
-    const queue = [start];
-    while (queue.length > 0) {
-      const id = queue.shift();
-      if (seen.has(id)) continue;
-      seen.add(id);
-      queue.push(...nodes.get(id).dependsOn);
-    }
-    return seen;
-  };
+  const expanded = new Map([...nodes].map(([id, node]) => [id, { ...node, reasons: [] }]));
+  const scheduling = expandSchedulingDependencies(g, expanded, p.selection.failed);
+  for (const [id, node] of nodes) {
+    const actual = expanded.get(id);
+    if (canonical(sorted(node.dependsOn)) !== canonical(sorted(actual.dependsOn))) bad(`node ${id}'s dependsOn disagrees with the bound graph's scheduling expansion`);
+    if (node.eligibility === 'eligible' && actual.eligibility !== 'eligible') bad(`node ${id} is eligible despite graph/failure expansion: ${actual.eligibility}`);
+    if ((node.eligibility === 'failed') !== p.selection.failed.includes(id)) bad(`node ${id}'s failed state disagrees with the failed-node seeds`);
+  }
+  const closureOf = (start) => new Set(scheduling.closureOf(start));
   const roots = new Map(requested.map((id) => [id, closureOf(id)]));
   for (const root of p.roots) {
     if (!['ready', 'blocked'].includes(root.status) || !idList(root.closure)) { bad(`root ${root.defId} is malformed`); continue; }
@@ -175,16 +181,10 @@ export function validatePlan(plan, graph) {
   }
   if (p.status === 'ready' && p.roots.some((r) => r.status !== 'ready')) bad('ready plan has a blocked root');
   if (p.status === 'partial' && p.roots.every((r) => r.status === 'ready')) bad('partial plan has only ready roots');
-  const claimed = new Map();
   for (const node of nodes.values()) {
     const sharedBy = sorted(requested.filter((root) => roots.get(root).has(node.defId)));
     if (JSON.stringify(sorted(node.sharedBy ?? [])) !== JSON.stringify(sharedBy)) bad(`node ${node.defId}'s sharedBy is not the roots that reach it`);
     if ((node.ownerRoot ?? null) !== (sharedBy.length > 0 ? Math.min(...sharedBy) : null)) bad(`node ${node.defId}'s ownerRoot is not the lowest root that reaches it`);
-    for (const member of node.declarations) {
-      if (g.nodes[member]?.probeAtom !== true) bad(`node ${node.defId}'s family member ${member} is not a probe atom of the graph`);
-      if (claimed.has(member)) bad(`${member} is claimed by nodes ${claimed.get(member)} and ${node.defId}`);
-      claimed.set(member, node.defId);
-    }
   }
   const union = new Set([...roots.values()].flatMap((closure) => [...closure]));
   const consumers = new Map([...nodes.keys()].map((id) => [id, []]));
@@ -291,11 +291,15 @@ export function candidateOf(contract, context) {
 
 function reviewProblems(review, reviewFile, contract, candidate, chain) {
   const r = review;
-  if (!isObject(r) || !isSha(r.candidateSha256) || !['pass', 'changes-requested'].includes(r.verdict) || !personValid(r.reviewer) || !isObject(r.evidence) || !isText(r.evidence.file) || !isSha(r.evidence.sha256)) {
-    return ['the review is not { candidateSha256, verdict, reviewer, evidence: { file, sha256 } }'];
+  if (!isObject(r) || !isSha(r.candidateSha256) || !Object.hasOwn(r, 'registryHeadSha256') || !(r.registryHeadSha256 === null || isSha(r.registryHeadSha256))
+    || !['pass', 'changes-requested'].includes(r.verdict) || !personValid(r.reviewer) || !isObject(r.evidence) || !isText(r.evidence.file) || !isSha(r.evidence.sha256)) {
+    return ['the review is not { candidateSha256, registryHeadSha256, verdict, reviewer, evidence: { file, sha256 } }'];
   }
   const problems = [];
   if (r.candidateSha256 !== candidate) problems.push('the review is for another candidate');
+  // A conservative review basis: any intervening append, even an unrelated one,
+  // requires a new review packet. This is context binding, not attestation.
+  if (r.registryHeadSha256 !== (chain.records.at(-1)?.sha ?? null)) problems.push('the review registry head is stale; prepare a review against the current registry context');
   if (r.reviewer.session === contract.author?.session || r.reviewer.runId === contract.author?.runId) problems.push('the reviewer\'s session or run is the author\'s (independence is declared by distinct session and run)');
   const evidence = path.resolve(path.dirname(path.resolve(reviewFile)), r.evidence.file);
   let actual = null;
@@ -340,7 +344,8 @@ export function readChain(registry, { ignoreLock = false } = {}) {
       || !Number.isSafeInteger(record.defId) || !isObject(record.contract) || !isObject(record.binding) || !isSha(record.candidateSha256)
       || !Object.hasOwn(RANK, record.state) || !Array.isArray(record.invalidates)
       || record.invalidates.some((e) => !isObject(e) || !Number.isSafeInteger(e.defId) || !Object.hasOwn(RANK, e.effect))
-      || !(record.review === null || (personValid(record.review?.reviewer) && isSha(record.review?.evidence?.sha256)))) {
+      || !(record.review === null || (personValid(record.review?.reviewer) && isSha(record.review?.evidence?.sha256)
+        && Object.hasOwn(record.review, 'registryHeadSha256') && record.review.registryHeadSha256 === record.prev))) {
       refuse('corrupt', `records/${name} breaks the chain (hash, sequence or previous record)`);
     }
     const head = chain.heads.get(record.defId);
@@ -531,7 +536,8 @@ function status(flags) {
     }
   }
   for (const entry of Object.values(nodes)) delete entry.changedSpecs;
-  return { code: 'ok', message: consistent ? 'registry status' : `registry status against an inconsistent plan: ${view.problems.join('; ')}`, consistent, nodes };
+  return { code: 'ok', message: consistent ? 'registry status' : `registry status against an inconsistent plan: ${view.problems.join('; ')}`,
+    registryHeadSha256: chain.records.at(-1)?.sha ?? null, consistent, nodes };
 }
 
 const COMMANDS = {
