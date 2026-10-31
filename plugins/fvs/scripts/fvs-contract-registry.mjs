@@ -493,9 +493,9 @@ function record(flags, event) {
   return { code: r.state === 'machine-reviewed-provisional' ? 'ok' : 'recorded', message: `node ${defId}: ${r.state} (record ${r.seq}, ${r.changeClass})`, record: r, recordSha256: committed.sha256 };
 }
 
-function status(flags) {
+export function registryStatus(flags, { ignoreLock = false } = {}) {
   const { plan, graph, view } = inputs(flags);
-  const chain = readChain(flags.registry);
+  const chain = readChain(flags.registry, { ignoreLock });
   if (chain.pending) return { code: 'pending', message: `the registry is pending: ${chain.pending}; no state is current`, nodes: {} };
   const consistent = view.problems.length === 0;
   const nodes = {};
@@ -543,7 +543,7 @@ function status(flags) {
 const COMMANDS = {
   register: { required: ['plan', 'graph', 'registry', 'spec-root', 'contract'], run: (flags) => record(flags, 'register') },
   revise: { required: ['plan', 'graph', 'registry', 'spec-root', 'contract', 'previous'], run: (flags) => record(flags, 'revise') },
-  status: { required: ['plan', 'graph', 'registry', 'spec-root'], run: status },
+  status: { required: ['plan', 'graph', 'registry', 'spec-root'], run: registryStatus },
 };
 
 function parseFlags(argv, required) {

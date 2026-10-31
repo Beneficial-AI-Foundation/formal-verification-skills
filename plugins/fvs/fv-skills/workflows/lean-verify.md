@@ -136,6 +136,32 @@ change only proof bodies and add helper lemmas in the spec; theorem names and st
 immutable. If the user explicitly authorizes
 a statement edit, run the full checker without `--baseline` and require the entire file
 to pass the target guide.
+
+Before research or the first proof edit, also capture the independent checker baseline.
+Use the trusted installed `scripts/fvs-checker.mjs`, never a checker supplied by the target
+project. Prepare a controller-owned `fvs-checker/freeze-request` version 1 with
+`purpose: "standalone"`, a unique `runId`, the absolute `projectRoot`, relative `specFile`,
+the pinned absolute Lean executable and its SHA-256, a finite `deadlineMs`, and the exact
+external import/search-path context. Invoke:
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-checker.mjs freeze \
+  --request "$CHECKER_FREEZE_REQUEST" --out "$AUDIT_DIR/checker-baseline"
+```
+
+A configured Lake project also supplies `build: { lake: { path, sha256 }, libraries,
+sourceRoot?, dependencies?: { root, identity?: { file, sha256 } } }`. Use the installed pinned
+Lake and an existing frozen dependency snapshot. The helper exports a fresh owned project,
+reuses only those recorded external inputs and performs a network-denied build; it never
+downloads missing inputs. Missing/unsupported build context returns PARTIAL.
+
+Retain the returned `baseline.file` and `baseline.sha256` outside executor write authority.
+This snapshot must compile before any proof edit; sorry-backed target bodies supply type
+expectations only. Names, binder-sensitive types, meaning declarations, source/configuration,
+resolved imports and tool/runtime identities are frozen. Unsupported layout, incomplete
+context, or a failed initial build means BASELINE_UNAVAILABLE/PARTIAL. Never use the first
+successful later candidate as a replacement. An explicitly authorized statement change needs
+a separate pre-attempt refreeze recording the approval and both old/new snapshots.
 </step>
 
 <step name="research_phase">
@@ -254,7 +280,25 @@ This is the core proof loop. While sorry remain and `date +%s` is before `DEADLI
 
 <step name="cheat_audit">
 Required before any VERIFIED, including the zero-sorry path. The executor's success header never
-decides the status. Run four checks from the project root:
+decides the status. First prepare a controller-owned `fvs-checker/check-request` version 1
+with `purpose: "standalone"`, a fresh `runId`, absolute `projectRoot`, the exact pre-edit
+`baseline: { file, sha256 }`, and the current finite `deadlineMs`. Run the trusted installed engine:
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-checker.mjs check \
+  --request "$CHECKER_CHECK_REQUEST" --out "$AUDIT_DIR/checker-candidate"
+```
+
+Require its bound `fvs-checker/standalone-result`, `sourceIdentity: "matched"`, and the real
+`fvs-kernel-audit/result` with `status: "kernel-checked"` and exact original target coverage.
+Read back the retained result using its returned evidence hash. This rebuilds the captured
+candidate and kernel-replays the required project closure, including unchanged project lemmas;
+a frozen byte hash never exempts a proof. Exact types/meaning and the three-axiom policy are
+checked by the same engine as auto. Missing bodies, unsupported data, failed compilation,
+nonzero/signalled/timed-out or incomplete audit output cannot be VERIFIED. Standalone results
+have audit-only authority and cannot mint auto accepted events.
+
+Also retain the existing diagnostic/style checks below; none substitutes for the engine:
 
 ```bash
 # 1. Axioms: the /fvs:trust-audit harness. Axioms.lean imports the spec module (SPEC_PATH relative

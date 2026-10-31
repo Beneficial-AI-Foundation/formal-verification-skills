@@ -193,6 +193,18 @@ Ordinary proof-attempt mode MUST NOT edit theorem names or theorem statements. I
 explicitly requests such an edit, apply the full target guide to that declaration and require a
 full-file style check without the baseline exemption.
 
+Before research or the first proof edit, capture the independent pre-edit checker baseline
+as specified in the workflow's `load_target_style_and_baseline` step. Use the trusted installed
+`~/.claude/scripts/fvs-checker.mjs freeze` with a controller-owned
+`fvs-checker/freeze-request` version 1, `purpose: "standalone"`, the original source/context,
+pinned Lean executable/hash and a finite deadline. Preserve the returned baseline file/hash
+outside executor write authority. The initial snapshot must compile; its sorry proofs supply
+types only. Unsupported/incomplete/broken baseline means BASELINE_UNAVAILABLE/PARTIAL, and
+must never be replaced by a later successful proof candidate. An authorized statement edit
+requires a separately recorded pre-attempt refreeze bound to the approval and old/new snapshots.
+For configured projects, include the workflow's pinned `build` profile (Lake executable/hash,
+declared libraries, source root and existing frozen dependencies); missing inputs are not acquired.
+
 ## Step 4: Read Reference Files for Inlining
 
 Read the reference files that MUST be inlined into Task() prompts because @-references do not cross Task boundaries:
@@ -409,8 +421,25 @@ If the deadline passed without VERIFIED, ask the user once: extend the budget wi
 
 ## Step 7a: Cheat Audit (required before VERIFIED)
 
-The executor's success header never decides the status. Before any VERIFIED, the command itself
-runs four checks from the project root:
+The executor's success header never decides the status. Before any VERIFIED, including a
+zero-sorry spec, run the shared independent engine first:
+
+```bash
+node ~/.claude/scripts/fvs-checker.mjs check \
+  --request "$CHECKER_CHECK_REQUEST" --out "$AUDIT_DIR/checker-candidate"
+```
+
+The controller-owned `fvs-checker/check-request` version 1 binds `purpose: "standalone"`,
+the exact pre-edit `baseline: { file, sha256 }`, original absolute project root, a fresh run
+identity and finite deadline. Read back the retained evidence by its returned hash and require
+`fvs-checker/standalone-result`, `sourceIdentity: "matched"`, exact original target coverage,
+and `fvs-kernel-audit/result` with `status: "kernel-checked"`. It freshly rebuilds and replays
+the required project proofs, including unchanged lemmas, checks binder-sensitive type/meaning
+identity and follows actual proof bodies for forbidden axioms. Worker reports, baseline byte
+equality, missing bodies/output or failed/timed-out tools cannot satisfy this gate. This result
+is audit-only and cannot become an auto accepted event by relabelling it.
+
+Also run these four diagnostic checks from the project root:
 
 1. **Axioms.** Write `$AUDIT_DIR/Axioms.lean` containing `import <spec module>` followed by one
    `#print axioms <fully qualified name>` per theorem and lemma declared in the spec. Derive the

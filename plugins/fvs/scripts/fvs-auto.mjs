@@ -33,6 +33,7 @@ function usage() {
     '       node fvs-auto.mjs record-roadmap --decision accepted|declined [--project-root DIR] [--confirm-overwrite]',
     '       node fvs-auto.mjs record-extraction --out OUT --build-exit-code N --oracle complete|refused|unknown [--oracle-reason TEXT] [--project-root DIR]',
     '       node fvs-auto.mjs record-externals --input RECORDS.json [--project-root DIR]',
+    '       node fvs-auto.mjs freeze|check|accept --request FILE --out EXCLUSIVE_DIR',
     '',
     'profile reports what this host and project can do for the FVS auto track,',
     'one verdict per item: supported-and-tested, available-but-unverified,',
@@ -46,6 +47,8 @@ function usage() {
     'overwritten. They print one JSON result. Exit codes: 0 ok; 1 refused',
     '(confirmation required, blocked profile, failed extraction, record loss,',
     'invalid input, no state); 2 usage or internal error; 3 malformed state.',
+    'freeze/check/accept use the shared independent checker and its bound request schemas.',
+    'Provisional registry readiness and standalone audits do not authorize auto acceptance.',
   ].join('\n') + '\n');
 }
 
@@ -1066,7 +1069,7 @@ function stateMain(command, argv) {
 
 const SUBCOMMANDS = { profile: profileCli };
 
-function main(argv) {
+async function main(argv) {
   if (argv.length === 0 || argv.includes('--help') || argv.includes('-h')) {
     usage();
     return;
@@ -1074,6 +1077,10 @@ function main(argv) {
   if (Object.prototype.hasOwnProperty.call(STATE_COMMANDS, argv[0])) {
     stateMain(argv[0], argv.slice(1));
     return;
+  }
+  if (['freeze', 'check', 'accept'].includes(argv[0])) {
+    const { checkerCli } = await import('./fvs-checker.mjs');
+    return checkerCli(argv);
   }
   try {
     if (!Object.prototype.hasOwnProperty.call(SUBCOMMANDS, argv[0])) {
@@ -1095,4 +1102,7 @@ function invokedDirectly() {
   }
 }
 
-if (invokedDirectly()) main(process.argv.slice(2));
+if (invokedDirectly()) main(process.argv.slice(2)).catch((error) => {
+  process.stderr.write(`FVS_AUTO_ERROR: ${error.message}\n`);
+  process.exitCode = 2;
+});
