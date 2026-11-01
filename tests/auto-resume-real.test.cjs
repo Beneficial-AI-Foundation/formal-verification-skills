@@ -30,6 +30,14 @@ test('genuine installed-Beads primary/linked wired resumes (AO protocol fixture)
   save(out, 'init-command', { argv: [bd, '--sandbox', 'init', '--backend', 'dolt', '--skip-agents', '--skip-hooks', '--non-interactive', '--prefix', 'resume-fixture'], cwd: x.root,
     exitCode: init.status, signal: init.signal, error: init.error?.code ?? null, toolSha256: bdSha, stdout: f.ref(path.join(out, 'init.stdout')), stderr: f.ref(path.join(out, 'init.stderr')) });
   assert.equal(init.status, 0, String(init.stderr));
+  // Native1.3.1 creates this setup file. Commit its known bytes BEFORE selecting
+  // the initial integration snapshot; a dirty-source partial is correct behavior.
+  const setupStatus = f.git(x.root, 'status', '--porcelain=v1', '--untracked-files=all');
+  assert.equal(setupStatus, '?? .gitignore', 'only the known native fixture setup file is pending');
+  const setupFile = f.ref(path.join(x.root, '.gitignore')), setupParent = f.git(x.root, 'rev-parse', 'HEAD');
+  f.git(x.root, 'add', '--', '.gitignore'); f.git(x.root, 'commit', '-qm', 'fixture: record native backend setup');
+  assert.equal(f.git(x.root, 'status', '--porcelain=v1', '--untracked-files=all'), '');
+  cases.push({ name: 'native-setup-source-snapshot', setupFile, setupParent, commit: f.git(x.root, 'rev-parse', 'HEAD'), tree: f.git(x.root, 'rev-parse', 'HEAD^{tree}') });
   const where = command(['-C', x.root, '--sandbox', '--readonly', 'where', '--json']);
   const registration = auto.recordMemory({ projectRoot: x.root, registration: { backend: 'beads', canonicalRoot: x.root, storeDir: path.join(x.root, '.beads'), databasePath: where.database_path, bdPath: bd } });
   cases.push({ name: 'native-registration', inspection: registration.inspection, binding: registration.state.memoryBindings.at(-1) });
