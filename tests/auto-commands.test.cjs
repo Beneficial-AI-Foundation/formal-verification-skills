@@ -364,11 +364,15 @@ describe('auto-extract extraction record: recorded extraction attempt', () => {
       '## Decisions\n```fvs-auto-agreement\n' + JSON.stringify(agreement) + '\n```\n');
     auto.recordAgreement({ projectRoot: root, agreement });
     const history = auto.readState({ projectRoot: root }).state.agreements;
+    const { fakeStore } = require('./helpers/memory-fixture.cjs');
+    auto.recordMemory({ projectRoot: root, registration: fakeStore(root) });
+    const memoryBindings = auto.readState({ projectRoot: root }).state.memoryBindings;
     const out = attempted(root);
     const result = record(root, out, 0);
     assert.equal(result.code, 'recorded', JSON.stringify(result));
     const preserved = auto.readState({ projectRoot: root }).state;
     assert.deepEqual(preserved.agreements, history, 'record-extraction preserves the optional agreement history');
+    assert.deepEqual(preserved.memoryBindings, memoryBindings, 'record-extraction preserves the optional memory registration');
     assert.equal(preserved.choicesGeneration, 0);
     assert.equal(auto.readState({ projectRoot: root, requireAgreement: true }).agreement.status, 'stored-context-current');
     const { extraction } = JSON.parse(fs.readFileSync(stateFile(root), 'utf8'));

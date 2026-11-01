@@ -25,7 +25,7 @@ confirmation; routine progress does not reopen setup. Public-API selection remai
 pending separately permitted visibility landing.
 
 Output: recorded setup/agreement and the available continuation or exact refusal. This bounded
-slice launches no workers, extracts/proves nothing and does not implement target memory20, full
+slice launches no workers or proofs. Its configured project-memory bootstrap does not complete
 resume16 or orchestration22. Later provisional cycles stay autonomous within the agreement and
 final PR acceptance stays human.
 </objective>
@@ -33,6 +33,7 @@ final PR acceptance stays human.
 <execution_context>
 @../../../fv-skills/workflows/auto-init.md
 @../../../fv-skills/references/auto-setup.md
+@../../../fv-skills/references/auto-memory.md
 @../../../fv-skills/references/ui-brand.md
 </execution_context>
 
@@ -69,6 +70,8 @@ Applicable existing explicit responses are reused without another question; comp
 - [ ] Missing/stale agreement stops the M2 route; legacy M1 offer/extraction records keep their meaning.
 - [ ] Actual retained payload and current roadmap fence bind approval; status-only logs do not re-grill.
 - [ ] Stored-context-current is distinguished from the mandatory semantic applicability check.
+- [ ] The configured memory route uses a primary store and fresh caller request/actual prime bytes on start/resume.
+- [ ] Worker prime is read-only; missing real stores are never initialized or migrated automatically.
 - [ ] No public-API classifier, implicit grant, per-round human approval or worker dispatch is introduced.
 - [ ] The report carries the State, Next action and Pending decision lines.
 </success_criteria>

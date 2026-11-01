@@ -30,7 +30,8 @@ node "$AUTO" read-state --project-root .
 - `ok`: inspect `state.choices`, extraction history and the latest `state.agreements`, if present.
   Do not ask Keep/Change or repeat an interview when the applicable agreement is current. Reuse actual
   existing owner responses/grants rather than asking for them again. Check Step 5 first; if it passes,
-  proceed to the report without writing or questioning. Missing/stale agreement blocks continuation;
+  proceed to Step6 memory bootstrap and then Step7 report without re-interviewing. Every start/resume
+  needs a fresh caller request/prime; never reuse an old memory-ready result. Missing/stale agreement blocks continuation;
   resolve only the affected setup through Steps 3–5. When the owner requests a material change,
   show only the affected choices and use those steps.
 - `malformed-state` or `malformed-externals`: print `message` and `nextStep` verbatim and stop.
@@ -69,8 +70,8 @@ Record only missing owner choices, using the current applicable evidence for kno
 no arbitrary per-node proof timeout. Existing resource and
 spending limits are never raised or reset automatically. The initial owner scope/execution agreement
 is the setup human gate. Later provisional specify/review/revise cycles are autonomous within it;
-there is no per-round human contract approval. Final PR acceptance remains human. No worker dispatch,
-project-memory bootstrap or autonomous transition is implemented by this slice.
+there is no per-round human contract approval. Final PR acceptance remains human. No worker dispatch
+or autonomous transition is implemented by this slice; Step6 only bootstraps configured project memory.
 
 Write the known/answered choices to a temporary file outside the project:
 
@@ -192,7 +193,37 @@ contract/proof revisions and ordinary progress within the agreement do not cause
 Never refresh approval from candidate-generated contracts. Record declared uncertainties and report
 outside/unresolved discovered roots before any later dispatch; never silently add them or reduce scope.
 
-## Step 6: Report the available continuation
+## Step 6: Bootstrap the configured project memory
+
+Follow `auto-memory.md` after Step5's stored-context AND semantic applicability checks. Use the recorded
+canonical primary control root and existing store, never worker-cwd discovery or FVS's development store.
+Register it through the state operation when needed; do not initialize/migrate a missing real store:
+
+```bash
+node "$AUTO" record-memory --project-root "$PRIMARY" --input "$REGISTRATION"
+```
+
+The caller owns a fresh UUID, actual target project/session/resume identity and expected canonical
+binding/context. Prepare and retain its current request before invoking a route. The coordinator uses:
+
+```bash
+node "$AUTO" refresh-memory --project-root "$PRIMARY" --request "$REQUEST" --out "$MEMORY_OUT"
+```
+
+Workers on start/resume use a separate fresh `worker-readonly` request and the read-only route:
+
+```bash
+node "$AUTO" prime-memory --project-root "$PRIMARY" --request "$REQUEST" --out "$MEMORY_OUT"
+```
+
+This route rejects refresh selectors. Verify actual request-bound prime bytes through `verifyMemoryBootstrap` against the
+caller's independently held request, then read/inject the text; status/hash alone or a returned request
+is insufficient. Missing/stale/malformed/foreign store/context, partial output, wrong identity or drift
+stops readiness with its actual reason. No automatic setup, task queue, worker launch or receipt/proof
+authority is introduced. Current target IDs come from caller context, never a new owner policy interview;
+if the necessary invocation context is unavailable, report that missing input and stop continuation.
+
+## Step 7: Report the available continuation
 
 Use the refreshed post-init/post-record state, not the pre-init `no-state` result. Print:
 
@@ -201,11 +232,12 @@ FVS >> AUTO-INIT
 
 State:            revision {revision} ({configuration}); scope {scope}; limits {workers} workers, {wallClockHours} h total (per-node hours {nodeHours} recorded, not enforced); extraction {not run | succeeded | failed}; agreement {missing | stale | stored-context-current, semantic check passed}
 Next action:      {existing extraction continuation; later integrations unavailable}
+Memory:           {unregistered | missing | stale | blocked/partial reason | memory-primed for current caller request}
 Pending decision: {only affected missing initial decisions, or none}
 ```
 
 Report the script's actual refusal/next step when blocked. Successful agreement storage is ticket12
-slice readiness only: target-project memory20, full reconciliation16 and orchestration22 remain
+slice readiness only. The configured20 adapter can report current memory-primed; full reconciliation16 and orchestration22 remain
 unimplemented dependencies. The legacy `nextAction` string may name the existing extraction or M2
 placeholder; it is not a new transition engine. Do not launch stage workers or claim the pipeline or
 project proof accepted. Local FVS-development Beads is not target-project memory.

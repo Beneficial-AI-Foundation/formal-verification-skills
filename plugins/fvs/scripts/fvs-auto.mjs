@@ -19,6 +19,11 @@ import {
   which,
 } from './fvs-probe-inventory.mjs';
 
+import {
+  MemoryError, memoryBindingsErrors, bindingIdentity, inspectMemoryRegistration, memoryJson,
+  prepareMemoryBootstrapRequest, runMemoryBootstrap, consumeMemoryBootstrap,
+} from './fvs-project-memory.mjs';
+
 const GREEN = 'supported-and-tested';
 
 function fatal(message) {
@@ -31,6 +36,9 @@ function usage() {
     '       node fvs-auto.mjs init-state --input CHOICES.json [--project-root DIR] [--confirm-overwrite]',
     '       node fvs-auto.mjs read-state [--project-root DIR] [--require-agreement]',
     '       node fvs-auto.mjs record-agreement --input AGREEMENT.json [--project-root DIR] [--confirm-overwrite]',
+    '       node fvs-auto.mjs record-memory --input REGISTRATION.json [--project-root PRIMARY] [--confirm-overwrite]',
+    '       node fvs-auto.mjs prime-memory --request REQUEST.json --out EXCLUSIVE_DIR [--project-root PRIMARY]',
+    '       node fvs-auto.mjs refresh-memory --request REQUEST.json --out EXCLUSIVE_DIR [--project-root PRIMARY]',
     '       node fvs-auto.mjs record-roadmap --decision accepted|declined [--project-root DIR] [--confirm-overwrite]',
     '       node fvs-auto.mjs record-extraction --out OUT --build-exit-code N --oracle complete|refused|unknown [--oracle-reason TEXT] [--project-root DIR]',
     '       node fvs-auto.mjs record-externals --input RECORDS.json [--project-root DIR]',
@@ -592,7 +600,7 @@ function normalizeChoices(input) {
 
 function stateErrors(state) {
   const errors = [];
-  if (!fields(errors, state, 'state', ['schema', 'schemaVersion', 'profiledAt', 'profile', 'choices', 'roadmap', 'extraction', 'choicesGeneration', 'agreements'])) return errors;
+  if (!fields(errors, state, 'state', ['schema', 'schemaVersion', 'profiledAt', 'profile', 'choices', 'roadmap', 'extraction', 'choicesGeneration', 'agreements', 'memoryBindings'])) return errors;
   if (state.schema !== 'fvs/auto-state' || state.schemaVersion !== 1) errors.push('schema must be fvs/auto-state version 1');
   if (!plainObject(state.profile) || state.profile.schema !== 'fvs/auto-profile' || !Array.isArray(state.profile.items)) {
     errors.push('profile must be a recorded fvs/auto-profile result');
@@ -606,6 +614,7 @@ function stateErrors(state) {
   }
   if (extraction !== null) errors.push(...extractionErrors(extraction));
   errors.push(...agreementStateErrors(state));
+  errors.push(...memoryBindingsErrors(state.memoryBindings));
   return errors;
 }
 
@@ -1040,6 +1049,7 @@ export function initState({ projectRoot, choices, confirmOverwrite = false, plat
     choices: requested,
     roadmap: recorded?.roadmap ?? null,
     extraction: recorded?.extraction ?? null,
+    ...(recorded?.memoryBindings ? { memoryBindings: recorded.memoryBindings } : {}),
     ...('choicesGeneration' in (recorded ?? {}) ? {
       choicesGeneration: recorded.choicesGeneration + 1,
       agreements: recorded.agreements,
@@ -1083,6 +1093,62 @@ export function readState({ projectRoot, requireAgreement = false }) {
     nextAction: nextAction(state),
     ...(requireAgreement ? { agreement: requireStoredAgreement(root, state) } : {}),
   };
+}
+
+function memoryOperation(fn) {
+  try { return fn(); }
+  catch (error) {
+    if (error instanceof Refusal) throw error;
+    refuse(error instanceof MemoryError ? error.code : 'memory-unverified', error.message, error.details ?? {});
+  }
+}
+function memoryCanonical(root) {
+  const view = readState({ projectRoot: root, requireAgreement: true });
+  return { view, envelope: agreementEnvelope(view.agreement.agreement) };
+}
+export function recordMemory({ projectRoot, registration, confirmOverwrite = false }) {
+  return memoryOperation(() => {
+    const root = projectDirectory(projectRoot), state = memoryCanonical(root).view.state;
+    const observed = inspectMemoryRegistration({ projectRoot: root, registration });
+    if (memoryJson(requireState(root)) !== memoryJson(state)) refuse('state-changed', 'canonical state changed during store inspection; registration not written');
+    const previous = state.memoryBindings?.at(-1);
+    if (previous && memoryJson(bindingIdentity(previous)) === memoryJson(bindingIdentity(observed.binding))) {
+      return { code: 'unchanged', message: 'the existing memory registration already matches; no state written', state, inspection: observed.out };
+    }
+    if (previous && !confirmOverwrite) refuse('confirmation-required', 'memory registration changes the recorded project/store/tool identity', {
+      nextStep: 'Confirm the actual replacement before --confirm-overwrite; old bindings are retained.', inspection: observed.out,
+    });
+    const bindingRevision = previous ? previous.bindingRevision + 1 : 0;
+    if (!Number.isSafeInteger(bindingRevision)) refuse('generation-exhausted', 'memory binding revision cannot advance safely');
+    state.memoryBindings ??= [];
+    state.memoryBindings.push({ ...observed.binding, bindingRevision, recordedAt: now() });
+    writeAtomic(statePath(root), state);
+    return { code: 'recorded', message: 'existing primary project memory registered; no store created or workers launched', state, inspection: observed.out };
+  });
+}
+export function prepareMemoryRequest({ projectRoot, attemptId, operation, phase, target }) {
+  return memoryOperation(() => {
+    const root = projectDirectory(projectRoot);
+    return prepareMemoryBootstrapRequest({ loadCanonical: () => memoryCanonical(root), attemptId, operation, phase, target });
+  });
+}
+function memoryBootstrap(options, operation) {
+  return memoryOperation(() => {
+    const errors = [];
+    if (!fields(errors, options, 'memory operation', ['projectRoot', 'request', 'requestBytes', 'out', 'callerRoot']) || errors.length) refuse('invalid-input', errors.join('; '));
+    if (!isText(options.out)) refuse('usage', 'an exclusive --out directory is required');
+    const root = projectDirectory(options.projectRoot);
+    return runMemoryBootstrap({ ...options, projectRoot: root, callerRoot: options.callerRoot ?? process.cwd(), operation,
+      loadCanonical: () => memoryCanonical(root), validateEnvelope: agreementErrors });
+  });
+}
+export const primeMemory = (options) => memoryBootstrap(options, 'worker-readonly');
+export const refreshMemory = (options) => memoryBootstrap(options, 'coordinator-refresh');
+export function verifyMemoryBootstrap({ projectRoot, request, out }) {
+  return memoryOperation(() => {
+    const root = projectDirectory(projectRoot);
+    return consumeMemoryBootstrap({ request, out, loadCanonical: () => memoryCanonical(root) });
+  });
 }
 
 export function recordRoadmap({ projectRoot, decision, confirmOverwrite = false }) {
@@ -1255,6 +1321,18 @@ const STATE_COMMANDS = {
     const flags = stateFlags(argv, ['input'], ['confirm-overwrite']);
     return recordAgreement({ projectRoot: flags['project-root'], agreement: readInput(flags.input), confirmOverwrite: flags['confirm-overwrite'] === true });
   },
+  'record-memory': (argv) => {
+    const flags = stateFlags(argv, ['input'], ['confirm-overwrite']);
+    return recordMemory({ projectRoot: flags['project-root'], registration: readInput(flags.input), confirmOverwrite: flags['confirm-overwrite'] === true });
+  },
+  ...Object.fromEntries([['prime-memory', primeMemory], ['refresh-memory', refreshMemory]].map(([command, run]) => [command, (argv) => {
+    const flags = stateFlags(argv, ['request', 'out']);
+    const requestBytes = fs.readFileSync(flags.request);
+    let request;
+    try { request = JSON.parse(requestBytes.toString('utf8')); }
+    catch (e) { refuse('invalid-input', 'cannot parse bootstrap request: ' + e.message); }
+    return run({ projectRoot: flags['project-root'], request, requestBytes, out: flags.out });
+  }])),
   'record-roadmap': (argv) => {
     const flags = stateFlags(argv, ['decision'], ['confirm-overwrite']);
     return recordRoadmap({ projectRoot: flags['project-root'], decision: flags.decision, confirmOverwrite: flags['confirm-overwrite'] === true });
