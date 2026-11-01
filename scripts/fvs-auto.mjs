@@ -29,7 +29,8 @@ function usage() {
   process.stdout.write([
     'Usage: node fvs-auto.mjs profile [--project-root DIR] [--format json|text]',
     '       node fvs-auto.mjs init-state --input CHOICES.json [--project-root DIR] [--confirm-overwrite]',
-    '       node fvs-auto.mjs read-state [--project-root DIR]',
+    '       node fvs-auto.mjs read-state [--project-root DIR] [--require-agreement]',
+    '       node fvs-auto.mjs record-agreement --input AGREEMENT.json [--project-root DIR] [--confirm-overwrite]',
     '       node fvs-auto.mjs record-roadmap --decision accepted|declined [--project-root DIR] [--confirm-overwrite]',
     '       node fvs-auto.mjs record-extraction --out OUT --build-exit-code N --oracle complete|refused|unknown [--oracle-reason TEXT] [--project-root DIR]',
     '       node fvs-auto.mjs record-externals --input RECORDS.json [--project-root DIR]',
@@ -42,7 +43,7 @@ function usage() {
     '',
     'The state subcommands keep the milestone 1 auto-track state under',
     '.formalising/auto-fv/ in the project root: state.json (profile, owner choices,',
-    'roadmap decision, extraction record) and externals.json (one record per',
+    'roadmap offer, extraction, optional M2 agreement) and externals.json (one record per',
     'boundary). Every write is atomic; malformed files are reported, never',
     'overwritten. They print one JSON result. Exit codes: 0 ok; 1 refused',
     '(confirmation required, blocked profile, failed extraction, record loss,',
@@ -510,7 +511,7 @@ function profileCli(argv) {
   return 0;
 }
 
-// Milestone 1 auto-track state: setup choices, the roadmap decision, the
+// Auto-track state: M1 setup choices/offer/extraction plus an optional M2 agreement; the
 // extraction record (state.json) and the externals record (externals.json).
 // ponytail: no lock; the coordinator is the only writer of this state.
 const STATE_DIR = path.join('.formalising', 'auto-fv');
@@ -591,7 +592,7 @@ function normalizeChoices(input) {
 
 function stateErrors(state) {
   const errors = [];
-  if (!fields(errors, state, 'state', ['schema', 'schemaVersion', 'profiledAt', 'profile', 'choices', 'roadmap', 'extraction'])) return errors;
+  if (!fields(errors, state, 'state', ['schema', 'schemaVersion', 'profiledAt', 'profile', 'choices', 'roadmap', 'extraction', 'choicesGeneration', 'agreements'])) return errors;
   if (state.schema !== 'fvs/auto-state' || state.schemaVersion !== 1) errors.push('schema must be fvs/auto-state version 1');
   if (!plainObject(state.profile) || state.profile.schema !== 'fvs/auto-profile' || !Array.isArray(state.profile.items)) {
     errors.push('profile must be a recorded fvs/auto-profile result');
@@ -604,6 +605,7 @@ function stateErrors(state) {
     errors.push('roadmap must be null or an accepted or declined decision with its path and time');
   }
   if (extraction !== null) errors.push(...extractionErrors(extraction));
+  errors.push(...agreementStateErrors(state));
   return errors;
 }
 
@@ -623,6 +625,157 @@ const SHA256 = /^[0-9a-f]{64}$/;
 // The recorded extraction attempt the patch engine re-validated (attempt-status);
 // absent for an extraction that did not run through the attempt recorder.
 const ATTEMPT_STAGES = ['charon', 'aeneas', 'publish'];
+
+
+// The optional M2 extension records declared owner evidence, not authentication or proof acceptance.
+// Approval covers canonical JSON content; roadmap status logs and record timestamps are not approval.
+const AGREEMENT_FIELDS = ['schema', 'schemaVersion', 'mode', 'payload', 'ownerEvidence', 'approvedPayloadSha256'];
+const PAYLOAD_FIELDS = ['choicesGeneration', 'choices', 'contextVersion', 'boundaries', 'conventions', 'layout',
+  'claims', 'trust', 'acceptance', 'ownerReserved', 'execution', 'draftPr'];
+const generationValid = (value) => Number.isSafeInteger(value) && value >= 0;
+const textList = (value) => Array.isArray(value) && value.every(isText);
+const canonicalJson = (value) => JSON.stringify(value, function (_key, item) {
+  return plainObject(item) ? Object.fromEntries(Object.keys(item).sort().map((key) => [key, item[key]])) : item;
+});
+const approvalContent = ({ schema, schemaVersion, mode, payload }) => ({ schema, schemaVersion, mode, payload });
+const agreementEnvelope = (record) => Object.fromEntries(AGREEMENT_FIELDS.map((key) => [key, record[key]]));
+
+// Also used to prepare the exact payload presented to the owner. Computing a digest grants nothing.
+export const agreementPayloadSha256 = (agreement) => sha256(canonicalJson(approvalContent(agreement)));
+
+function agreementErrors(value, stored = false) {
+  const errors = [];
+  if (!fields(errors, value, 'agreement', [...AGREEMENT_FIELDS, ...(stored ? ['contextSha256', 'recordedAt'] : [])])) return errors;
+  if (value.schema !== 'fvs/auto-agreement' || value.schemaVersion !== 1) errors.push('agreement must be fvs/auto-agreement version 1');
+  if (value.mode !== 'nonpublic-intent') errors.push('agreement.mode must be nonpublic-intent; public-api is unsupported pending separately permitted visibility landing');
+  const p = value.payload;
+  if (fields(errors, p, 'agreement.payload', PAYLOAD_FIELDS)) {
+    if (!generationValid(p.choicesGeneration)) errors.push('agreement.payload.choicesGeneration must be a nonnegative safe integer');
+    if (!Number.isSafeInteger(p.contextVersion) || p.contextVersion < 1) errors.push('agreement.payload.contextVersion must be a positive safe integer');
+    errors.push(...choiceErrors(p.choices));
+    if (!['single-crate', 'monorepo'].includes(p.layout)) errors.push('agreement.payload.layout must be single-crate or monorepo');
+    for (const key of ['boundaries', 'conventions', 'claims', 'trust', 'acceptance', 'ownerReserved']) {
+      if (!textList(p[key]) || (['claims', 'trust', 'acceptance', 'ownerReserved'].includes(key) && p[key].length === 0)) {
+        errors.push('agreement.payload.' + key + ' must be an explicit list of nonempty strings' + (['boundaries', 'conventions'].includes(key) ? '' : ' with at least one entry'));
+      }
+    }
+    if (p.execution !== null) {
+      if (fields(errors, p.execution, 'agreement.payload.execution', ['actions', 'reference'])
+        && (!textList(p.execution.actions) || p.execution.actions.length === 0 || !isText(p.execution.reference))) {
+        errors.push('execution must be null or explicit actions and their evidence reference');
+      }
+    }
+    if (p.draftPr !== null) {
+      if (fields(errors, p.draftPr, 'agreement.payload.draftPr', ['destination', 'reference'])
+        && (!isText(p.draftPr.destination) || !isText(p.draftPr.reference))) {
+        errors.push('draftPr must be null or an explicit destination and its evidence reference');
+      }
+    }
+  }
+  if (fields(errors, value.ownerEvidence, 'agreement.ownerEvidence', ['reference', 'response'])
+    && (!isText(value.ownerEvidence.reference) || !isText(value.ownerEvidence.response))) {
+    errors.push('ownerEvidence must retain the actual response text and its reference; authenticity is declared workflow evidence');
+  }
+  if (!SHA256.test(value.approvedPayloadSha256 ?? '') || value.approvedPayloadSha256 !== agreementPayloadSha256(value)) {
+    errors.push('approvedPayloadSha256 does not match the actual retained canonical approval content');
+  }
+  if (stored) {
+    if (!isText(value.recordedAt)) errors.push('agreement.recordedAt must be a nonempty string');
+    if (value.contextSha256 !== sha256(canonicalJson(agreementEnvelope(value)))) errors.push('agreement.contextSha256 does not match its retained context and owner evidence');
+  }
+  return errors;
+}
+
+function agreementStateErrors(state) {
+  const errors = [];
+  if (!('choicesGeneration' in state) && !('agreements' in state)) return errors; // Legacy, no write-on-read.
+  if (!generationValid(state.choicesGeneration) || !Array.isArray(state.agreements)) return ['choicesGeneration and agreements must be present together as a safe generation and an array'];
+  let previousVersion = 0;
+  let previousGeneration = 0;
+  for (const record of state.agreements) {
+    const recordErrors = agreementErrors(record, true);
+    errors.push(...recordErrors);
+    if (recordErrors.length) continue;
+    if (record.payload.contextVersion <= previousVersion || record.payload.choicesGeneration < previousGeneration
+      || record.payload.choicesGeneration > state.choicesGeneration) errors.push('agreement history versions/generations must advance monotonically within the current generation');
+    previousVersion = record.payload.contextVersion;
+    previousGeneration = record.payload.choicesGeneration;
+  }
+  return errors;
+}
+
+function validateAgreement(value, code) {
+  if (plainObject(value) && value.mode !== 'nonpublic-intent') {
+    refuse('unsupported-agreement-mode', 'only nonpublic-intent is supported; public-API selection remains held on separately permitted ticket11 landing');
+  }
+  const errors = agreementErrors(value);
+  if (errors.length) refuse(code, 'invalid agreement: ' + errors.join('; '), { errors });
+}
+
+function currentAgreementContext(root) {
+  const file = path.join(root, ROADMAP_PATH);
+  let text;
+  try {
+    const relative = path.relative(root, fs.realpathSync(file));
+    if (!fs.lstatSync(file).isFile() || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('not a regular in-project roadmap');
+    text = fs.readFileSync(file, 'utf8');
+  } catch (error) {
+    refuse('agreement-context-missing', 'cannot read the canonical agreement context: ' + error.message, { file });
+  }
+  const openings = [...text.matchAll(/^```fvs-auto-agreement[ \t]*\r?$/gm)];
+  const fences = [...text.matchAll(/^```fvs-auto-agreement[ \t]*\r?\n([\s\S]*?)^```[ \t]*\r?$/gm)];
+  if (openings.length !== 1 || fences.length !== 1) refuse('invalid-agreement-context', 'the roadmap must contain exactly one complete current fvs-auto-agreement fence', { file });
+  const section = [...text.slice(0, fences[0].index).matchAll(/^## ([^\r\n]+)$/gm)].at(-1)?.[1];
+  if (!/^Decisions(?:\s|$)/.test(section ?? '')) refuse('invalid-agreement-context', 'the current agreement fence must be in the roadmap Decisions section', { file });
+  let agreement;
+  try { agreement = JSON.parse(fences[0][1]); }
+  catch (error) { refuse('invalid-agreement-context', 'the current agreement fence is not JSON: ' + error.message, { file }); }
+  validateAgreement(agreement, 'invalid-agreement-context');
+  return { agreement, contextSha256: sha256(canonicalJson(agreement)) };
+}
+
+function checkAgreementChoices(state, agreement) {
+  const changes = choiceChanges(agreement.payload.choices, state.choices);
+  if (agreement.payload.choicesGeneration !== (state.choicesGeneration ?? 0) || changes.length) {
+    refuse('stale-agreement', 'the agreement does not cover the current choices generation; an explicitly approved successor is required', { changes, choicesGeneration: state.choicesGeneration ?? 0 });
+  }
+}
+
+// Narrow stored-content gate only. Auto-init must additionally check effective canonical intent.
+function requireStoredAgreement(root, state) {
+  const record = state.agreements?.at(-1);
+  if (!record) refuse('agreement-required', 'record the initial owner agreement before the M2 route; roadmap offer acceptance is not agreement');
+  checkAgreementChoices(state, record);
+  const current = currentAgreementContext(root);
+  if (current.contextSha256 !== record.contextSha256) {
+    refuse('stale-agreement-context', 'the actual current roadmap context or retained owner evidence differs from the recorded agreement', { recordedContextVersion: record.payload.contextVersion, currentContextVersion: current.agreement.payload.contextVersion });
+  }
+  return { status: 'stored-context-current', contextSha256: record.contextSha256, agreement: record,
+    semanticCheckRequired: 'Read the actual owner response, applicable roadmap sections and non-superseded Decisions before reporting semantic applicability; this stored-content gate does not authenticate a human or classify prose.' };
+}
+
+export function recordAgreement({ projectRoot, agreement, confirmOverwrite = false }) {
+  const root = projectDirectory(projectRoot);
+  const state = requireState(root);
+  validateAgreement(agreement, 'invalid-input');
+  const current = currentAgreementContext(root);
+  if (canonicalJson(agreement) !== canonicalJson(current.agreement)) refuse('agreement-context-mismatch', 'the submitted agreement is not the actual current canonical roadmap envelope');
+  checkAgreementChoices(state, agreement);
+  const previous = state.agreements?.at(-1);
+  if (previous?.contextSha256 === current.contextSha256) return { code: 'unchanged', message: 'this agreement is already recorded; nothing was written', state };
+  if (previous) {
+    if (agreement.payload.contextVersion <= previous.payload.contextVersion) refuse('stale-agreement-context', 'a successor must use a greater contextVersion than the previous agreement');
+    if (!confirmOverwrite) refuse('confirmation-required', 'a successor agreement changes recorded owner-approved content', {
+      changes: [{ field: 'agreement.contextVersion', recorded: previous.payload.contextVersion, requested: agreement.payload.contextVersion }],
+      nextStep: 'Read the actual owner confirmation of the exact successor payload before using --confirm-overwrite.',
+    });
+  }
+  state.choicesGeneration ??= 0;
+  state.agreements ??= [];
+  state.agreements.push({ ...agreement, contextSha256: current.contextSha256, recordedAt: now() });
+  writeAtomic(statePath(root), state);
+  return { code: 'recorded', message: 'initial-scope agreement recorded; no workers or publication authorized by inference', state };
+}
 
 function publicationValid(publication, translation) {
   if (!Array.isArray(publication) || publication.length === 0) return false;
@@ -830,7 +983,12 @@ export function initState({ projectRoot, choices, confirmOverwrite = false, plat
     choices: requested,
     roadmap: recorded?.roadmap ?? null,
     extraction: recorded?.extraction ?? null,
+    ...('choicesGeneration' in (recorded ?? {}) ? {
+      choicesGeneration: recorded.choicesGeneration + 1,
+      agreements: recorded.agreements,
+    } : {}),
   };
+  if ('choicesGeneration' in state && !generationValid(state.choicesGeneration)) refuse('generation-exhausted', 'choices generation cannot advance safely; no state was written');
   writeAtomic(statePath(root), state);
   // The refreshed view, so the caller sees the pending decisions of the state just written.
   return { ...readState({ projectRoot: root }), code: recorded ? 'updated' : 'created', message: `setup state written to ${statePath(root)}` };
@@ -848,10 +1006,11 @@ function nextAction(state) {
   return 'Run /fvs:auto-extract to extract the selected revision.';
 }
 
-export function readState({ projectRoot }) {
+export function readState({ projectRoot, requireAgreement = false }) {
   const root = projectDirectory(projectRoot);
   const state = loadState(root);
   if (!state) {
+    if (requireAgreement) refuse('agreement-required', 'no recorded setup or initial agreement; run /fvs:auto-init');
     return { code: 'no-state', message: `no auto-track state in ${statePath(root)}`, nextAction: 'Run /fvs:auto-init to record the setup state.', pendingDecisions: [] };
   }
   const records = loadExternals(root)?.records ?? [];
@@ -863,8 +1022,9 @@ export function readState({ projectRoot }) {
     state,
     roadmapPresent: state.roadmap?.path ? fs.existsSync(path.join(root, state.roadmap.path)) : false,
     externals,
-    pendingDecisions: state.roadmap ? [] : ['roadmap'],
+    pendingDecisions: requireAgreement || state.roadmap ? [] : ['roadmap'],
     nextAction: nextAction(state),
+    ...(requireAgreement ? { agreement: requireStoredAgreement(root, state) } : {}),
   };
 }
 
@@ -1030,7 +1190,14 @@ const STATE_COMMANDS = {
     const flags = stateFlags(argv, ['input'], ['confirm-overwrite']);
     return initState({ projectRoot: flags['project-root'], choices: readInput(flags.input), confirmOverwrite: flags['confirm-overwrite'] === true });
   },
-  'read-state': (argv) => readState({ projectRoot: stateFlags(argv, [])['project-root'] }),
+  'read-state': (argv) => {
+    const flags = stateFlags(argv, [], ['require-agreement']);
+    return readState({ projectRoot: flags['project-root'], requireAgreement: flags['require-agreement'] === true });
+  },
+  'record-agreement': (argv) => {
+    const flags = stateFlags(argv, ['input'], ['confirm-overwrite']);
+    return recordAgreement({ projectRoot: flags['project-root'], agreement: readInput(flags.input), confirmOverwrite: flags['confirm-overwrite'] === true });
+  },
   'record-roadmap': (argv) => {
     const flags = stateFlags(argv, ['decision'], ['confirm-overwrite']);
     return recordRoadmap({ projectRoot: flags['project-root'], decision: flags.decision, confirmOverwrite: flags['confirm-overwrite'] === true });

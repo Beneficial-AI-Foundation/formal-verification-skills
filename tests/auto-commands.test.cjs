@@ -351,9 +351,26 @@ describe('auto-extract extraction record: recorded extraction attempt', () => {
   it('attaches the re-validated attempt to a successful extraction record, and the state still reads', () => {
     const root = project();
     init(root);
+    const agreement = {
+      schema: 'fvs/auto-agreement', schemaVersion: 1, mode: 'nonpublic-intent',
+      payload: { choicesGeneration: 0, choices: auto.readState({ projectRoot: root }).state.choices,
+        contextVersion: 1, boundaries: [], conventions: [], layout: 'single-crate', claims: ['fixture'],
+        trust: ['fixture policy'], acceptance: ['fixture evidence'], ownerReserved: ['human final decision'],
+        execution: null, draftPr: null },
+      ownerEvidence: { reference: 'fixture:response', response: 'Fixture initial agreement only' },
+    };
+    agreement.approvedPayloadSha256 = auto.agreementPayloadSha256(agreement);
+    fs.writeFileSync(path.join(root, '.formalising/auto-fv/ROADMAP.md'),
+      '## Decisions\n```fvs-auto-agreement\n' + JSON.stringify(agreement) + '\n```\n');
+    auto.recordAgreement({ projectRoot: root, agreement });
+    const history = auto.readState({ projectRoot: root }).state.agreements;
     const out = attempted(root);
     const result = record(root, out, 0);
     assert.equal(result.code, 'recorded', JSON.stringify(result));
+    const preserved = auto.readState({ projectRoot: root }).state;
+    assert.deepEqual(preserved.agreements, history, 'record-extraction preserves the optional agreement history');
+    assert.equal(preserved.choicesGeneration, 0);
+    assert.equal(auto.readState({ projectRoot: root, requireAgreement: true }).agreement.status, 'stored-context-current');
     const { extraction } = JSON.parse(fs.readFileSync(stateFile(root), 'utf8'));
     assert.equal(extraction.run.supported, true);
     assert.equal(extraction.run.manifestSha256, extraction.inputs.manifestSha256);
@@ -828,18 +845,25 @@ describe('auto command and workflow text', () => {
       'the shared extractor reports the copy and the build status the handoff records');
   });
 
-  it('auto-init writes only through init-state and offers the roadmap once, optionally', () => {
+  it('auto-init reuses current evidence and gates M2 on stored AND semantic agreement checks', () => {
     const body = text('auto-init');
     assert.match(body, /"\$AUTO" init-state --project-root \. --input "\$CHOICES"/);
-    assert.match(body, /Only on an explicit yes rerun the same command with\s+`--confirm-overwrite`/);
-    assert.match(body, /record-roadmap --project-root \. --decision accepted/);
-    assert.match(body, /record-roadmap --project-root \. --decision declined/);
-    assert.match(body, /\/fvs:roadmap \.formalising\/auto-fv\/ROADMAP\.md/);
+    assert.match(body, /Only on an explicit yes rerun\s+the same command with `--confirm-overwrite`/);
+    assert.match(body, /"\$AUTO" record-agreement --project-root \. --input "\$AGREEMENT"/);
+    assert.match(body, /"\$AUTO" read-state --project-root \. --require-agreement/);
+    assert.match(body, /Do not ask Keep\/Change/);
     assert.match(body, /A recorded decline is not asked again/);
-    assert.match(body, /`pendingDecisions` of the `init-state` result/, 'the offer reads the state after init, not the pre-init read');
-    assert.match(body, /extraction does not wait for it/);
-    assert.match(read('commands/fvs/roadmap.md'), /`\.formalising\/auto-fv\/ROADMAP\.md`; `\/fvs:auto-init`/,
-      'the roadmap command documents the auto track location');
-    assert.match(read('fv-skills/workflows/roadmap.md'), /\*\.md\) FILE=\$ROADMAP_PATH/, 'an explicit .md path is accepted as is');
+    assert.match(body, /actual referenced owner response/);
+    assert.match(body, /conflicting\/missing\/superseding canonical statement stops/);
+    assert.match(body, /stored-context-current/);
+    assert.match(body, /Routine Status log appends outside the fence/);
+    assert.match(body, /there is no per-round human contract approval/);
+    assert.match(body, /Final PR acceptance remains human/);
+    assert.match(body, /public-api[\s\S]*unsupported pending separately permitted ticket11/);
+    assert.match(body, /No worker dispatch/);
+    assert.match(body, /full reconciliation16 and orchestration22 remain/);
+    assert.match(read('commands/fvs/roadmap.md'), /`\.formalising\/auto-fv\/ROADMAP\.md`; `\/fvs:auto-init`/);
+    assert.match(read('fv-skills/workflows/roadmap.md'), /\*\.md\) FILE=\$ROADMAP_PATH/);
+    assert.match(read('fv-skills/workflows/roadmap.md'), /Generic roadmaps outside auto-init require no machine envelope/);
   });
 });

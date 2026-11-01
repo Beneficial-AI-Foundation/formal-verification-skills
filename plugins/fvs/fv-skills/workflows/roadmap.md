@@ -297,6 +297,13 @@ field that needed it; mark dependent milestones `blocked (needs U<n>)`. An inves
 may be resolved from cited evidence within authorized writes; an owner-choice UNKNOWN needs the
 owner's actual answer. Unknowns never become approved claims just because a document was saved.
 
+For the auto-init invocation only, follow `auto-init.md`'s versioned nonpublic agreement envelope
+inside the existing Decisions section. Retain the actual approved payload and owner response, not
+only a hash/reference. A current `fvs-auto-agreement` fence is unique; historical entries use ordinary
+JSON fences. Generic roadmaps outside auto-init require no machine envelope. The state operation's
+stored-context-current result does not replace reading effective intent and non-superseded decisions.
+Routine Status updates and autonomous provisional contract/proof cycles do not re-open initial setup.
+
 ## 6. Write the roadmap
 
 Fill the template below. Budgets and limits are recorded when relevant, not required as numbers in
