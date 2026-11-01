@@ -41,9 +41,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   build errors go to `/fvs:lean-verify`; statements, signatures, attributes, definition meaning and the
   axiom policy stay unchanged, and new helpers stay as local as possible. A selected-file gate checks
   the chosen file with its imports at baseline and after every change (a default build may skip it),
-  with real exit status, and the Mathlib cache preflight runs only in projects that provide it. The
-  argument label is now
-  `<lean_file_path>`; flags are unchanged. Credit: ideas from `/lean4:refactor` in Cameron Freer's
+  with real exit status. Outside configured library roots, `lake lean` rebuilds the actual imports,
+  including non-default libraries, before each direct check. The Mathlib cache preflight runs only
+  in projects that provide it. The argument label is now `<lean_file_path>`; flags are unchanged.
+  Credit: ideas from `/lean4:refactor` in Cameron Freer's
   lean4-skills (MIT, commit `83582df`), paraphrased.
 - The protocol-prose guidance used by existing authoring calls adds a light plain-English wording pass
   after the exposition, guided by ASD-STE100 Simplified Technical English (Issue 9) but not

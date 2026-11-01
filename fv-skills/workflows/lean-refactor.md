@@ -89,20 +89,21 @@ FILE_GATE_STATUS=${PIPESTATUS[0]}
 ```
 
 This builds the file as a workspace module. If Lake reports an unknown target or module because the
-file is outside every package library, build the project for its imports and check the file
-directly; that pair is then the file gate:
+file is outside every package library, use Lake's import-building direct check instead. `lake lean`
+builds the file's actual imported modules, including non-default libraries, before checking the file;
+`lake env lean` alone does not build them. Keep this import preparation in `FILE_GATE` on every pass.
+If the pinned Lake does not support `lake lean`, stop and report the unsupported gate instead of
+substituting a default-only build or a raw direct check.
+[Lake's implementation](https://github.com/leanprover/lean4/blob/v4.31.0/src/lake/Lake/Build/Module.lean#L1358-L1396).
 
 ```bash
 set -o pipefail
-LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build 2>&1 | tail -40
-PROJECT_STATUS=${PIPESTATUS[0]}
-LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake env lean "$SPEC_PATH" 2>&1 | tail -40
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake lean "$SPEC_PATH" 2>&1 | tail -40
 FILE_GATE_STATUS=${PIPESTATUS[0]}
 ```
 
 Record the gate that applies as `FILE_GATE` and run it again after every change. If
-`FILE_GATE_STATUS` or `PROJECT_STATUS` is non-zero, report the errors, route to `/fvs:lean-verify`,
-and STOP.
+`FILE_GATE_STATUS` is non-zero, report the errors, route to `/fvs:lean-verify`, and STOP.
 
 **Parse flags:**
 - `--theorem name` -- scope to a single theorem (default: all theorems in file)
