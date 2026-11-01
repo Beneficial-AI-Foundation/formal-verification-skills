@@ -88,6 +88,17 @@ test('genuine local Beads1.3.1 primary/linked bootstrap and refusal qualificatio
   const cli = spawnSync(process.execPath, [path.join(f.ROOT, 'scripts/fvs-auto.mjs'), 'prime-memory', '--project-root', primary, '--request', requestFile, '--out', f.output(primary), '--refresh'], { cwd: linked, env: process.env, encoding: 'utf8' });
   fs.writeFileSync(path.join(out, 'worker-refresh-cli.stdout'), cli.stdout); fs.writeFileSync(path.join(out, 'worker-refresh-cli.stderr'), cli.stderr);
   assert.equal(cli.status, 2); assert.equal(JSON.parse(cli.stdout).code, 'usage'); record({ case: 'worker-refresh-cli', exitCode: cli.status, code: JSON.parse(cli.stdout).code });
+  // Change only the backend's logical selector: same container/project_id must still refuse.
+  const metadataFile = path.join(primary, '.beads/metadata.json'), metadataBytes = fs.readFileSync(metadataFile);
+  fs.writeFileSync(path.join(out, 'metadata-before-selector-case.json'), metadataBytes);
+  const selected = JSON.parse(metadataBytes); selected.dolt_database += '_other';
+  fs.writeFileSync(metadataFile, JSON.stringify(selected));
+  const wrongSelector = negative('logical-database-selector-drift', 'memory-store-mismatch', () => observe(f.request(auto, primary)));
+  assert.equal(wrongSelector.details.result.receipts.length, 0, 'refuse before a backend command can target the other logical database');
+  negative('logical-selector-drift-before-consumption', 'memory-store-mismatch', () => auto.verifyMemoryBootstrap({ projectRoot: primary, request: b, out: second.out }));
+  fs.writeFileSync(path.join(out, 'metadata-selector-mutation.json'), fs.readFileSync(metadataFile));
+  fs.writeFileSync(metadataFile, metadataBytes); // Explicit fixture restoration, never product migration.
+  assert.equal(value(), canonicalValue);
   const malformed = '{"schema":"not-project-context"}'; raw([...prefix, 'remember', '--key', 'fvs-auto-project-context', malformed], primary);
   negative('malformed-owned-context', 'memory-content-invalid', () => auto.refreshMemory({ projectRoot: primary, callerRoot: primary, request: f.request(auto, primary, 'coordinator-refresh'), out: f.output(primary) }));
   assert.equal(value(), malformed);

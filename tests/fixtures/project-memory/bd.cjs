@@ -14,6 +14,15 @@ if (cmd === 'version') console.log('bd version ' + (c.version ?? '1.3.1') + ' (f
 else if (cmd === 'where') emit({ schema_version: 1, path: c.wherePath ?? store, database_path: c.databasePath ?? path.join(store, 'embeddeddolt'), prefix: 'fixture' });
 else if (cmd === 'info') emit({ schema_version: 1, mode: c.mode ?? 'direct', database_path: c.databasePath ?? path.join(store, 'embeddeddolt') });
 else if (cmd === 'memories') {
+  if (c.driftStateOnRead) {
+    const file = path.join(root, '.formalising/auto-fv/state.json'), s = JSON.parse(fs.readFileSync(file));
+    s.choicesGeneration++; fs.writeFileSync(file, JSON.stringify(s));
+  }
+  if (c.driftSelectorOnRead) {
+    const file = path.join(store, 'metadata.json'), m = JSON.parse(fs.readFileSync(file));
+    m.dolt_database = 'other_db'; fs.writeFileSync(file, JSON.stringify(m));
+  }
+
   if (c.badJson) process.stdout.write('{broken');
   else emit({ schema_version: 1, ...(fs.existsSync(path.join(store, 'context.txt')) ? { 'fvs-auto-project-context': fs.readFileSync(path.join(store, 'context.txt'), 'utf8') } : {}) });
 } else if (cmd === 'remember') {

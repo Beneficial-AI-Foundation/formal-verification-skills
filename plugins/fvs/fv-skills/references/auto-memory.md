@@ -19,7 +19,7 @@ the setup human gate; later provisional cycles are autonomous within it and fina
 Use the canonical control root in the **primary** checkout, also for every linked worker. A Lean control
 subdirectory of a monorepo is supported. Inspect actual metadata/tool paths; do not guess a database path
 from its name. The adapter checks Git common identity, canonical store/database paths, embedded/direct
-mode, backend project_id and registered executable/version/bytes. Worker-local stores and redirects
+mode, backend project_id, logical database name/existing .dolt directory and registered executable/version/bytes. Worker-local stores and redirects
 refuse. Beads may check metadata files into Git, so a linked checkout can contain those files; that does
 not permit initialization of a second backing database. All actual calls still select the primary.
 

@@ -10,20 +10,21 @@ export const MEMORY_LIMITS = Object.freeze({ timeoutMs: 10000, maxBytes: 1024 * 
 export const memoryJson = (v) => JSON.stringify(v, (_k, x) => object(x) ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, x[k]])) : x);
 export const memoryHash = (v) => hash(memoryJson(v));
 const hash = (v) => crypto.createHash('sha256').update(v).digest('hex');
-const object = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const object = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
+  && [Object.prototype, null].includes(Object.getPrototypeOf(v));
 const text = (v) => typeof v === 'string' && v.trim() !== '';
 const integer = (v) => Number.isSafeInteger(v) && v >= 0;
 const SHA = /^[0-9a-f]{64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const BINDING_KEYS = ['schema', 'schemaVersion', 'backend', 'bindingRevision', 'canonicalRoot', 'gitCommonDir', 'storeDir',
-  'databasePath', 'backendProjectId', 'contextKey', 'bdPath', 'bdVersion', 'bdSha256', 'recordedAt'];
+  'databasePath', 'databaseName', 'backendProjectId', 'contextKey', 'bdPath', 'bdVersion', 'bdSha256', 'recordedAt'];
 
 export class MemoryError extends Error {
   constructor(code, message, details = {}) { super(message); this.code = code; this.details = details; }
 }
 const stop = (code, message, details) => { throw new MemoryError(code, message, details); };
 function closed(v, keys, label, code = 'invalid-input') {
-  if (!object(v) || Object.keys(v).some((k) => !keys.includes(k)) || keys.some((k) => !(k in v))) stop(code, label + ' must have exactly: ' + keys.join(', '));
+  if (!object(v) || Object.keys(v).some((k) => !keys.includes(k)) || keys.some((k) => !Object.prototype.hasOwnProperty.call(v, k))) stop(code, label + ' must have exactly: ' + keys.join(', '));
 }
 function absolute(v) { return text(v) && path.isAbsolute(v) && path.normalize(v) === v; }
 function inside(root, file) { const r = path.relative(root, file); return !r || (!r.startsWith('..' + path.sep) && r !== '..' && !path.isAbsolute(r)); }
@@ -60,6 +61,7 @@ export function memoryBindingsErrors(records) {
       if (b.schema !== 'fvs/auto-memory-binding' || b.schemaVersion !== 1 || b.backend !== 'beads'
         || b.contextKey !== MEMORY_KEY || !integer(b.bindingRevision) || b.bindingRevision <= previous
         || !['canonicalRoot', 'gitCommonDir', 'storeDir', 'databasePath', 'bdPath'].every((k) => absolute(b[k]))
+        || !text(b.databaseName) || path.basename(b.databaseName) !== b.databaseName || ['.', '..'].includes(b.databaseName)
         || !text(b.backendProjectId) || !text(b.bdVersion) || !SHA.test(b.bdSha256) || !text(b.recordedAt)) stop('invalid-input', 'invalid closed/versioned memory binding');
       previous = b.bindingRevision;
     } catch (e) { errors.push(e.message); }
@@ -125,11 +127,17 @@ function metadata(b) {
   const metadataFile = path.join(b.storeDir, 'metadata.json');
   if (!fs.existsSync(metadataFile)) stop('memory-store-missing', 'existing store metadata is missing: ' + metadataFile);
   const m = jsonBytes(readBytes(metadataFile));
-  if (m.backend !== 'dolt' || m.database !== 'dolt' || m.dolt_mode !== 'embedded' || !text(m.project_id)) stop('memory-backend-unsupported', 'only existing embedded/direct Beads metadata with project_id is supported');
+  if (m.backend !== 'dolt' || m.database !== 'dolt' || m.dolt_mode !== 'embedded' || !text(m.project_id) || !text(m.dolt_database)
+    || path.basename(m.dolt_database) !== m.dolt_database || ['.', '..'].includes(m.dolt_database)) stop('memory-backend-unsupported', 'only existing embedded/direct Beads metadata with project_id is supported');
+  if (b.databaseName && b.databaseName !== m.dolt_database) stop('memory-store-mismatch', 'registered logical database selector changed');
   if (b.backendProjectId && b.backendProjectId !== m.project_id) stop('memory-store-mismatch', 'backend project identity changed');
   if (b.databasePath) {
     realDirectory(b.databasePath);
     if (!inside(b.storeDir, b.databasePath) || b.databasePath === b.storeDir) stop('memory-store-mismatch', 'database must be inside the registered store');
+    if (b.databaseName) {
+      realDirectory(path.join(b.databasePath, b.databaseName));
+      realDirectory(path.join(b.databasePath, b.databaseName, '.dolt'));
+    }
   }
   return m;
 }
@@ -147,7 +155,8 @@ function inspect(b, r, callerRoot = b.canonicalRoot) {
   if (where.schema_version !== 1 || where.path !== b.storeDir || !absolute(where.database_path)) stop('memory-store-mismatch', 'actual backend store location differs from registration');
   realDirectory(where.database_path);
   if (!inside(b.storeDir, where.database_path) || where.database_path === b.storeDir || (b.databasePath && b.databasePath !== where.database_path)) stop('memory-store-mismatch', 'actual database differs from the registered in-store database');
-  const actual = { ...b, databasePath: where.database_path };
+  const actual = { ...b, databasePath: where.database_path, databaseName: m.dolt_database, backendProjectId: m.project_id };
+  metadata(actual); // Pin both the container and its existing logical database before querying it.
   const info = jsonBytes(r.run(b.bdPath, [...prefix(actual), 'info', '--json'], b.canonicalRoot, expected));
   if (info.schema_version !== 1 || info.mode !== 'direct' || info.database_path !== actual.databasePath) stop('memory-backend-unsupported', 'backend is not the registered direct embedded profile');
   metadata(actual);
@@ -165,7 +174,7 @@ export function inspectMemoryRegistration({ projectRoot, registration }) {
   try {
     const actual = inspect(registration, r);
     return { binding: { schema: 'fvs/auto-memory-binding', schemaVersion: 1, backend: 'beads', canonicalRoot: projectRoot,
-      gitCommonDir: actual.gitCommonDir, storeDir: actual.storeDir, databasePath: actual.databasePath, backendProjectId: actual.backendProjectId,
+      gitCommonDir: actual.gitCommonDir, storeDir: actual.storeDir, databasePath: actual.databasePath, databaseName: actual.databaseName, backendProjectId: actual.backendProjectId,
       contextKey: MEMORY_KEY, bdPath: actual.bdPath, bdVersion: actual.bdVersion, bdSha256: actual.bdSha256 }, out, receipts: r.receipts };
   } catch (e) { writeJson(path.join(out, 'failure.json'), { code: e.code ?? 'memory-unverified', message: e.message, receipts: r.receipts }); throw e; }
 }
@@ -246,6 +255,7 @@ export function runMemoryBootstrap({ projectRoot, callerRoot, request, requestBy
     }
     if (value !== wanted) {
       if (operation !== 'coordinator-refresh') stop(value === null ? 'memory-content-missing' : 'memory-content-stale', 'coordinator refresh is required; worker route cannot call remember');
+      metadata(b); expectedCurrent(request, current(loadCanonical)); // Do not refresh after an intervening binding/context drift.
       attemptedWrite = true;
       r.run(b.bdPath, [...prefix(b, false), 'remember', '--key', MEMORY_KEY, wanted], b.canonicalRoot, b.bdSha256);
       value = readKey(b, r);
@@ -270,6 +280,8 @@ export function runMemoryBootstrap({ projectRoot, callerRoot, request, requestBy
 // Fake16/22 seam: the consumer supplies its OWN current request/output, never a result-chosen request.
 export function consumeMemoryBootstrap({ request, out, loadCanonical }) {
   validateRequest(request); const canonical = current(loadCanonical); expectedCurrent(request, canonical);
+  metadata(canonical.binding);
+  if (hash(readBytes(canonical.binding.bdPath)) !== canonical.binding.bdSha256) stop('memory-tool-changed', 'registered backend changed before bootstrap consumption');
   const root = fs.realpathSync(out), result = jsonBytes(readBytes(path.join(root, 'result.json'), root));
   closed(result, ['schema', 'schemaVersion', 'status', 'route', 'request', 'requestSha256', 'requestInputSha256', 'observed', 'context', 'prime', 'receipts', 'trust', 'reason'], 'bootstrap result', 'memory-result-invalid');
   if (result.schema !== 'fvs/auto-memory-bootstrap-result' || result.schemaVersion !== 1 || result.status !== 'memory-primed'

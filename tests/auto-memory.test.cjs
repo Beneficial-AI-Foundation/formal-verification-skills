@@ -146,6 +146,13 @@ describe('fresh project-memory bootstrap', () => {
       assert.deepEqual(bytes(root), before); assert.equal(context(root), null); assert.equal(f.calls(root).length, n);
     }
   });
+  it('rejects inherited or custom-serialized target identities instead of omitting them from the request hash', () => {
+    const { root } = fixture(), q = f.request(auto, root), n = f.calls(root).length, before = bytes(root);
+    const inherited = { ...q, target: Object.create(q.target) };
+    const custom = { ...q, target: Object.assign(Object.create({ toJSON() { return {}; } }), q.target) };
+    for (const request of [inherited, custom]) refuses('invalid-input', () => invoke(root, request));
+    assert.equal(f.calls(root).length, n); assert.deepEqual(bytes(root), before); assert.equal(context(root), null);
+  });
   it('requires the actual prime invocation and request-bound outputs, not a self-consistent ready envelope', () => {
     const { root } = seeded(), q = f.request(auto, root), observed = invoke(root, q);
     for (const kind of ['missing-prime-invocation', 'forged-prime-file', 'wrong-receipt-attempt']) {
@@ -173,6 +180,23 @@ describe('fresh project-memory bootstrap', () => {
     f.control(root, { databasePath: path.join(root, '.beads') });
     refuses('memory-store-mismatch', () => invoke(root, f.request(auto, root))); assert.equal(context(root), value); assert.deepEqual(bytes(root), before);
   });
+  it('pins the logical database even if its container and project id stay unchanged', () => {
+    const { root } = seeded(), metadata = path.join(root, '.beads/metadata.json'), m = JSON.parse(fs.readFileSync(metadata));
+    assert.equal(stored(root).memoryBindings[0].databaseName, m.dolt_database);
+    fs.mkdirSync(path.join(root, '.beads/embeddeddolt/other_db/.dolt'), { recursive: true });
+    m.dolt_database = 'other_db'; fs.writeFileSync(metadata, JSON.stringify(m));
+    const before = bytes(root), value = context(root), n = f.calls(root).length;
+    for (const route of ['worker', 'coordinator']) refuses('memory-store-mismatch', () => invoke(root, f.request(auto, root, route === 'worker' ? 'worker-readonly' : 'coordinator-refresh'), route));
+    assert.equal(f.calls(root).length, n); assert.deepEqual(bytes(root), before); assert.equal(context(root), value);
+  });
+  for (const [mode, code] of [[{ driftStateOnRead: true }, 'stale-agreement'], [{ driftSelectorOnRead: true }, 'memory-store-mismatch']]) {
+    it('rechecks canonical/store identity before remember after an intervening query drift: ' + code, () => {
+      const { root } = fixture(); f.control(root, mode);
+      const failure = refuses(code, () => invoke(root, f.request(auto, root, 'coordinator-refresh'), 'coordinator'));
+      assert.equal(failure.details.result.status, 'blocked'); assert.equal(context(root), null);
+      assert.equal(f.calls(root).some((c) => c.cmd === 'remember'), false);
+    });
+  }
   it('actual CLI start observations retain request bytes and independent current-request consumption', () => {
     const { root } = seeded(), q = f.request(auto, root, 'worker-readonly', { phase: 'start', target: { projectId: 'fixture-project', sessionId: 'new-worker', resumeId: null } });
     const file = path.join(root, 'request.json'); const raw = JSON.stringify(q, null, 1) + '\n'; fs.writeFileSync(file, raw);
@@ -233,8 +257,15 @@ describe('fresh project-memory bootstrap', () => {
     fs.writeFileSync(path.join(result.out, 'prime.txt'), 'altered actual output');
     refuses('memory-evidence-invalid', () => auto.verifyMemoryBootstrap({ projectRoot: root, request: q, out: result.out }));
     fs.appendFileSync(registration.bdPath, '\n// byte drift');
+    refuses('memory-tool-changed', () => auto.verifyMemoryBootstrap({ projectRoot: root, request: q, out: result.out }));
     refuses('memory-tool-changed', () => invoke(root, f.request(auto, root)));
     assert.deepEqual(bytes(root), before);
+  });
+  it('rejects a logical selector change between a valid observation and consumption', () => {
+    const { root } = seeded(), q = f.request(auto, root), observed = invoke(root, q);
+    const file = path.join(root, '.beads/metadata.json'), m = JSON.parse(fs.readFileSync(file)); m.dolt_database = 'other_db';
+    fs.writeFileSync(file, JSON.stringify(m));
+    refuses('memory-store-mismatch', () => auto.verifyMemoryBootstrap({ projectRoot: root, request: q, out: observed.out }));
   });
   it('rejects wrong actual database profile and a different Git caller', () => {
     const { root } = seeded(); f.control(root, { mode: 'server' });

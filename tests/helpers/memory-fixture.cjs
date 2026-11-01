@@ -33,7 +33,8 @@ function createProject(auto, base = fs.realpathSync(os.tmpdir())) {
 }
 function fakeStore(root) {
   const store = path.join(root, '.beads'); fs.mkdirSync(store); fs.mkdirSync(path.join(store, 'embeddeddolt'));
-  fs.writeFileSync(path.join(store, 'metadata.json'), JSON.stringify({ backend: 'dolt', database: 'dolt', dolt_mode: 'embedded', project_id: crypto.randomUUID() }));
+  fs.mkdirSync(path.join(store, 'embeddeddolt/fixture_db/.dolt'), { recursive: true });
+  fs.writeFileSync(path.join(store, 'metadata.json'), JSON.stringify({ backend: 'dolt', database: 'dolt', dolt_mode: 'embedded', dolt_database: 'fixture_db', project_id: crypto.randomUUID() }));
   const bd = path.join(root, 'fixture-bd.cjs');
   fs.writeFileSync(bd, '#!' + process.execPath + '\n' + fs.readFileSync(path.join(ROOT, 'tests/fixtures/project-memory/bd.cjs'), 'utf8')); fs.chmodSync(bd, 0o755);
   return { backend: 'beads', canonicalRoot: root, storeDir: store, bdPath: bd };
