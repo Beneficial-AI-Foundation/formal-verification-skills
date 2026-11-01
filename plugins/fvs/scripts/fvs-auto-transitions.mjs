@@ -320,8 +320,9 @@ export function transitionValidators({ tools, git, inspectBaseline = inspectAuto
     },
     verifyPreparation(a, before, actual, evidence) {
       const w = actual.worker?.worktree, old = before.worker?.worktree;
+      const observeGit = this.observeGit ?? git;
       if (!w || !old || w.path !== old.path || w.gitDir !== old.gitDir || w.gitCommonDir !== old.gitCommonDir || w.branchRef !== old.branchRef || w.dirty || old.dirty
-        || git(w.path, ['merge-base', '--is-ancestor', old.commit, w.commit], false, true) !== 0) stop('transition-preparation-unverified', 'FF/association source checks failed');
+        || observeGit(w.path, ['merge-base', '--is-ancestor', old.commit, w.commit], false, true) !== 0) stop('transition-preparation-unverified', 'FF/association source checks failed');
       if (!same(evidence.command.argv, ['/usr/bin/git', '-C', old.path, '-c', 'core.hooksPath=/dev/null', 'merge', '--ff-only', a.target.candidate.commit])) stop('transition-command-unverified', 'not the exact owned FF argv');
       const actor = { projectId: actual.fixed.projectId, sessionId: actual.worker.sessionId, reservationId: actual.worker.reservationId,
         assignmentId: actual.worker.assignmentId, worktree: old, profile: actual.worker.profile };
@@ -476,10 +477,35 @@ export function assessTransition({ actionRef, q, view, canonical, run, actual, r
     const packet = readWorkPacket(a.target.packet);
     if (!actual.worker || !same(packet.actor, { projectId: actual.fixed.projectId, ...actual.worker })) stop('transition-release-mismatch', 'prepared actor/source/profile differs');
     releaseHistory(a, packet, view);
+    validateReleasePreparation(a, packet, view, services);
+    services.verifyProofLaunch(readTransitionAction(packet.launch), actual);
     proofInvocation(readTransitionAction(packet.launch), now);
   }
   if (a.kind === 'construct' && (actual.baseline !== null || actual.store?.headSha256 != null || actual.registry?.headSha256 != null)) stop('transition-initial-state-unverified', 'initial construction cannot infer current proof from missing input');
   return { status: 'next-action-eligible', action: a.kind, executable: false, selected };
+}
+
+export function validateReleasePreparation(a, packet, view, services) {
+  const launched = view.state.history.find((r) => r.event.position === 'before' && same(r.event.intent.request ?? null, packet.launch));
+  if (!launched || launched.sha256 !== packet.beforeEventSha256 || launched.event.intent.reservationId !== packet.actor.reservationId) stop('transition-preparation-required', 'release has no exact retained launch');
+  // Every resume retains the first release's startup barrier. Its own conclusive
+  // source/artifact link is checked separately by releaseHistory.
+  const previous = view.state.history.filter((r) => r.event.position === 'before' && r.event.intent.request).map((r) => ({ row: r, action: readTransitionAction(r.event.intent.request) }))
+    .filter(({ action }) => action.kind === 'release' && readWorkPacket(action.target.packet).actor.reservationId === packet.actor.reservationId);
+  const initial = previous[0], first = initial?.action ?? a, firstPacket = initial ? readWorkPacket(first.target.packet) : packet;
+  const prepared = [...view.state.history].reverse().find((r) => {
+    if (r.event.position !== 'after' || r.event.outcome !== 'succeeded' || !r.event.intent.request || (initial && r.event.seq >= initial.row.event.seq)) return false;
+    const p = readTransitionAction(r.event.intent.request), o = readRuntimeObservation(r.event);
+    return p.kind === 'prepare-input' && same(p.target.launch, firstPacket.launch) && p.target.sessionId === firstPacket.actor.sessionId
+      && same(o.transition?.snapshot, first.before) && o.transition?.admissibility.status === 'facts-recorded-partial';
+  });
+  if (!prepared) stop('transition-preparation-required', 'first release requires its exact successful startup/preparation and prepared source');
+  const prior = readTransitionAction(prepared.event.intent.request), before = view.state.history.find((r) => r.sha256 === prepared.event.beforeEventSha256), observation = readRuntimeObservation(prepared.event);
+  if (!before || prior.target.candidate.commit !== firstPacket.actor.worktree.commit || prior.target.candidate.expectedTree !== firstPacket.actor.worktree.tree) stop('transition-preparation-required', 'preparation belongs to another candidate/actor');
+  const ref = observation.transition.admissibility.completion;
+  if (!prepared.event.effect.evidence.some((r) => same(r, ref))) stop('transition-preparation-required', 'preparation completion was not retained');
+  const evidence = completionFor(prior, ref, before, view.state.history.filter((r) => r.sha256 !== prepared.sha256));
+  services.verifyPreparation(prior, prior.before, observation.transition.snapshot, evidence);
 }
 
 function releaseHistory(a, packet, view) {
@@ -497,6 +523,7 @@ function releaseHistory(a, packet, view) {
     || !['completed', 'partial', 'failed'].includes(c.outcome) || c.controllerSessionId !== view.state.run.coordinatorSessionId || !Array.isArray(c.artifacts) || !c.artifacts.length
     || marker.schema !== 'fvs/auto-execution-start' || marker.schemaVersion !== 1 || marker.runId !== a.runId || marker.status !== 'execution-uncertain' || c.marker.file !== readWorkPacket(old.action.target.packet).startMarker || !same(marker.packet, c.packet) || marker.actor.reservationId !== packet.actor.reservationId
     || !readRuntimeObservation(recorded.event).associations.some((r) => r.value.sessionId === packet.actor.sessionId && r.value.reservationId === packet.actor.reservationId && r.value.assignmentId === packet.actor.assignmentId && r.value.worktree.commit === c.sourceAfter?.commit && r.value.worktree.tree === c.sourceAfter?.tree)) stop('transition-release-uncertain', 'resume requires independently recorded exact terminal work/marker/artifact evidence');
+  if (packet.actor.worktree.commit !== c.sourceAfter.commit || packet.actor.worktree.tree !== c.sourceAfter.tree) stop('transition-release-uncertain', 'resume source is not the recorded conclusive worker result');
   for (const ref of c.artifacts) transitionBound(ref, false);
 }
 
@@ -571,6 +598,7 @@ export function readWorkPacket(ref) {
 // One atomic immutable marker is both the start acknowledgement and the
 // uncertainty boundary. A crash after it cannot be interpreted as no execution.
 export function acknowledgeStart({ packet, actor, expectedMemoryRequest, marker }, services) {
+  const clock = services.now ?? Date.now, began = clock();
   const p = readWorkPacket(packet); actor = transitionData(actor); actorValid(actor);
   if (!same(p.actor, actor) || !same(p.memoryRequest, expectedMemoryRequest)) stop('transition-packet-actor-mismatch', 'not the exact released actor/source/current prime');
   if (services.beforeForAction(p.launch) !== p.beforeEventSha256) stop('transition-packet-actor-mismatch', 'packet lost its actual launch-before binding');
@@ -583,9 +611,21 @@ export function acknowledgeStart({ packet, actor, expectedMemoryRequest, marker 
     if (!same(boundIdentity, identity) || !same(memoryEvidence, workerMemoryEvidence(memoryEvidence?.out, expectedMemoryRequest))) stop('transition-marker-conflict', 'different packet/actor or changed evidence owns start marker');
     return { status: 'already-started-uncertain', marker: { file: marker, sha256: hash(transitionBytes(marker)) }, mayStart: false };
   }
-  services.verifyReleasedPacket(packet);
+  const context = services.verifyReleasedPacket(packet), originalClock = context?.clock;
+  if (!originalClock || originalClock.runId !== p.runId || !Number.isSafeInteger(originalClock.lastObservedAtMs) || !Number.isSafeInteger(originalClock.observedAtMs)) stop('transition-start-context-required', 'actual current run clock is required');
+  let floor = Math.max(began, originalClock.lastObservedAtMs, originalClock.observedAtMs);
+  const fence = () => {
+    const current = services.currentClock?.() ?? originalClock, now = clock();
+    if (current.runId !== p.runId || current.startedAtMs !== originalClock.startedAtMs || current.deadlineMs !== originalClock.deadlineMs) stop('transition-packet-context-stale', 'original run/accounting changed during start');
+    floor = Math.max(floor, current.lastObservedAtMs);
+    if (now < floor || now < current.startedAtMs) stop('transition-clock-rollback', 'start clock moved behind authoritative observed accounting');
+    if (now >= current.deadlineMs) stop('transition-budget-exhausted', 'original limit expired before start permission');
+    floor = now; proofInvocation(readTransitionAction(p.launch), now);
+  };
+  fence();
   services.verifyMemory({ request: expectedMemoryRequest, out: services.memoryOut, callerRoot: actor.worktree.path });
   if (!same(services.observeActor(actor), actor) || actor.worktree.dirty !== false) stop('transition-packet-source-drift', 'prepared input/actor changed');
+  fence();
   const prefix = '.' + path.basename(marker) + '.start-';
   proofInvocation(readTransitionAction(p.launch));
   const value = { ...identity, memoryEvidence: workerMemoryEvidence(services.memoryOut, expectedMemoryRequest) };
@@ -594,20 +634,26 @@ export function acknowledgeStart({ packet, actor, expectedMemoryRequest, marker 
   const fd = fs.openSync(temporary, 'wx', 0o600);
   try { fs.writeFileSync(fd, JSON.stringify(value, null, 2) + '\n'); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
   services.beforeMarkerCommit?.();
+  const commitFence = () => { try { fence(); } catch (error) { stop('transition-start-uncertain', 'clock/context changed at the allocated start boundary; no permission', { reason: error.code, marker, temporary }); } };
+  commitFence();
   try { fs.linkSync(temporary, marker); } catch (e) {
     if (e.code === 'EEXIST') stop('transition-marker-uncertain', 'competing start; no work may execute');
     throw e;
   }
   const dir = fs.openSync(path.dirname(marker), 'r'); try { fs.fsyncSync(dir); } finally { fs.closeSync(dir); }
+  services.afterMarkerCommit?.(); commitFence();
   // The temp hardlink is retained evidence; never infer completion from it.
   return { status: 'new-start-acknowledged', marker: { file: marker, sha256: hash(transitionBytes(marker)) }, mayStart: true };
 }
 
-export function validateReleasedContext({ actionRef, packet, canonical, actual }, services) {
+export function validateReleasedContext({ actionRef, packet, canonical, actual, view }, services) {
   const a = readTransitionAction(actionRef), p = readWorkPacket(packet);
   authorize(a, canonical);
   if (a.kind !== 'release' || !same(a.target.packet, packet) || a.target.sessionId !== p.actor.sessionId || !same(a.before, actual) || Date.now() >= actual.fixed.deadlineMs) stop('transition-packet-context-stale', 'released packet is not the exact current authorized source/registry/store/profile context');
   services.verifyTarget(a, actual);
+  releaseHistory(a, p, view);
+  validateReleasePreparation(a, p, view, services);
+  services.verifyProofLaunch(readTransitionAction(p.launch), actual);
   proofInvocation(readTransitionAction(p.launch));
 }
 

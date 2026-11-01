@@ -77,7 +77,8 @@ function fixture(native = false) {
     const s = x.startup();
     s.request = auto.prepareMemoryRequest({ projectRoot: x.root, attemptId: f.uuid(), phase: 'resume', operation: 'worker-readonly', target: { projectId: s.actor.projectId, sessionId: s.actor.sessionId, resumeId: f.uuid() } });
     s.memoryOut = x.out(); auto.primeMemory({ projectRoot: x.root, callerRoot: x.root, request: s.request, out: s.memoryOut }); s.services.memoryOut = s.memoryOut;
-    s.services.verifyReleasedPacket = () => {}; // Unit boundary only; integration uses the fixed production reader.
+    s.services.currentClock = () => { const v = auto.readRuntimeState({ projectRoot: x.root }); return { runId: v.state.run.runId, startedAtMs: v.state.run.startedAtMs, deadlineMs: v.state.run.deadlineMs, lastObservedAtMs: v.lastObservedAtMs }; };
+    s.services.verifyReleasedPacket = () => ({ clock: { ...s.services.currentClock(), observedAtMs: Date.now() } }); // Unit boundary; integration uses the fixed reader.
     const ref = f.json(x.owned, 'packet', { schema: 'fvs/auto-work-packet', schemaVersion: 1, runId: x.runId, actionSha256: memory.memoryHash(s.action.a), launch: s.action.actionRef, beforeEventSha256: s.services.beforeForAction(), challenge: f.uuid(), actor: s.actor,
       deliveryHandle: 'release-' + f.uuid(), memoryRequest: s.request, procedure: 'lean-verify/controller-direct', inputs: [s.action.a.target.invocation], resumeOf: null, startMarker: path.join(x.owned, 'start-' + f.uuid() + '.json') });
     return { ...s, packet: ref, marker: t.readWorkPacket(ref).startMarker };
@@ -295,6 +296,24 @@ describe('bounded transition authority and current facts', () => {
   });
 });
 describe('actor startup and exactly-once packet start', () => {
+  for (const phase of ['memory', 'actor', 'rollback', 'before-link', 'after-link']) it('non-proof start enforces the final original clock fence: ' + phase, () => {
+    const x = fixture(), s = x.packet(), body = t.readWorkPacket(s.packet), launch = structuredClone(s.action.a);
+    launch.stage = 'specification'; launch.target.selectionStage = 'fc_spec'; launch.target.invocation = null;
+    const launchRef = f.json(x.owned, 'non-proof-launch', launch);
+    const packet = f.json(x.owned, 'non-proof-clock-packet', { ...body, launch: launchRef, actionSha256: memory.memoryHash(launch), procedure: 'lean-specify/controller-direct', inputs: [] });
+    const run = s.services.currentClock(); let now = run.deadlineMs - 10, calls = 0;
+    const services = { ...s.services, now: () => now, verifyReleasedPacket: () => ({ clock: { ...run, observedAtMs: now } }) };
+    const memoryCheck = services.verifyMemory, actorCheck = services.observeActor;
+    if (phase === 'memory') services.verifyMemory = (o) => { const r = memoryCheck(o); now = run.deadlineMs + 1; return r; };
+    if (phase === 'actor' || phase === 'rollback') services.observeActor = (a) => { const r = actorCheck(a); now = phase === 'rollback' ? now - 100 : run.deadlineMs + 1; return r; };
+    if (phase === 'before-link') services.beforeMarkerCommit = () => { now = run.deadlineMs + 1; };
+    if (phase === 'after-link') services.afterMarkerCommit = () => { now = run.deadlineMs + 1; };
+    const options = { packet, actor: s.actor, expectedMemoryRequest: s.request, marker: s.marker };
+    reject(phase === 'rollback' ? 'transition-clock-rollback' : phase.endsWith('link') ? 'transition-start-uncertain' : 'transition-budget-exhausted', () => { const r = t.acknowledgeStart(options, services); if (r.mayStart) calls++; });
+    assert.equal(calls, 0); assert.equal(fs.existsSync(s.marker), phase === 'after-link');
+    if (phase === 'after-link') assert.equal(t.acknowledgeStart(options, services).mayStart, false, 'created marker is uncertainty, never a second permission');
+    if (phase === 'before-link') assert.ok(fs.readdirSync(x.owned).some((n) => n.startsWith('.' + path.basename(s.marker) + '.start-')));
+  });
   it('fresh independent worker prime and exact actor challenge acknowledge startup', () => {
     const x = fixture(), s = x.startup();
     assert.equal(t.verifyStartup({ actionRef: s.action.actionRef, acknowledgement: s.acknowledgement, actor: s.actor, expectedMemoryRequest: s.request }, s.services).status, 'startup-acknowledged');
@@ -404,7 +423,7 @@ describe('completed action evidence and bounded staleness', () => {
     reject('transition-extra-drift', () => x.invoke(q, 'checkpoint')); assert.equal(auto.readRuntimeState({ projectRoot: x.root }).fileSha256, old);
   });
 });
-function lifecycle(x) {
+function lifecycle(x, { noOp = false, crashPublication = false, stalePreparation = false } = {}) {
   const canonicalBefore = f.sha(fs.readFileSync(f.stateFile(x.root)));
     effectDouble(x); const l = stageLaunch(x), value = t.transitionBound(l.assignment);
     const actor = { projectId: 'fixture-project', sessionId: l.result.session.id, reservationId: value.reservationId, assignmentId: value.assignmentId, worktree: { ...value.worktree, dirty: false }, profile: value.rulesProfile };
@@ -415,7 +434,7 @@ function lifecycle(x) {
     assert.equal(auto.verifyWorkerStartup({ projectRoot: x.root, ao: l.item.q.ao, actionRef: l.item.actionRef, acknowledgement: startupAck, actor, expectedMemoryRequest: startupRequest, out: x.out() }).status, 'startup-acknowledged');
     const request = x.request; x.request = (extra = {}) => request({ associations: [l.assignment], ...extra });
     const staging = path.join(x.owned, 'prepared-context'); f.git(x.root, 'worktree', 'add', '-q', '-b', 'prepared-context', staging);
-    fs.writeFileSync(path.join(staging, 'Context.lean'), 'def Context := Nat\n'); f.git(staging, 'add', 'Context.lean'); f.git(staging, 'commit', '-qm', 'fixture prepared context');
+    if (!noOp) { fs.writeFileSync(path.join(staging, 'Context.lean'), 'def Context := Nat\n'); f.git(staging, 'add', 'Context.lean'); f.git(staging, 'commit', '-qm', 'fixture prepared context'); }
     const wrongActor = { ...actor, worktree: { ...actor.worktree, path: staging, gitDir: fs.realpathSync(path.resolve(staging, f.git(staging, 'rev-parse', '--git-dir'))) } };
     const otherPrime = x.out(); auto.primeMemory({ projectRoot: x.root, callerRoot: staging, request: startupRequest, out: otherPrime });
     const wrongAck = f.json(x.owned, 'wrong-actor-path-ack', { ...t.transitionBound(startupAck), actor: wrongActor, memoryOut: otherPrime, memoryEvidence: t.workerMemoryEvidence(otherPrime, startupRequest) }), heldActorHead = auto.readRuntimeState({ projectRoot: x.root }).headSha256;
@@ -440,6 +459,17 @@ function lifecycle(x) {
     const packet = f.json(x.owned, 'work', { schema: 'fvs/auto-work-packet', schemaVersion: 1, runId: x.runId, actionSha256: memory.memoryHash(l.item.a), launch: l.item.actionRef, beforeEventSha256: l.before.result.recordedEventSha256,
       challenge: f.uuid(), actor: nextActor, deliveryHandle: 'release-' + f.uuid(), memoryRequest: primeRequest, procedure: 'lean-specify/controller-direct', inputs: [x.profile], resumeOf: null, startMarker: path.join(x.owned, 'worker-start.json') });
     q = x.request(); const releaseSnapshot = { ...after.result.observation.transition.snapshot, worker: { ...after.result.observation.transition.snapshot.worker, worktree: nextActor.worktree } };
+    if (stalePreparation) {
+      f.git(l.worktree, 'commit', '--allow-empty', '-qm', 'fixture stale prepared candidate');
+      const changed = x.associate(actor.sessionId, l.worktree, l.item.intent, l.before.result.recordedEventSha256, { rulesProfile: value.rulesProfile }), changedActor = { ...actor, worktree: { ...t.transitionBound(changed).worktree, dirty: false } };
+      x.request = (extra = {}) => request({ associations: [changed], ...extra });
+      const body = { ...t.readWorkPacket(packet), actor: changedActor }, changedPacket = f.json(x.owned, 'stale-prepared-packet', body), snapshot = { ...releaseSnapshot, worker: { ...releaseSnapshot.worker, worktree: changedActor.worktree } };
+      const bad = x.action('release', { sessionId: actor.sessionId, association: changed, packet: changedPacket, handle: body.deliveryHandle }, { before: snapshot, stage: 'integration' }), original = fs.readFileSync(path.join(x.root, '.formalising/auto-fv/resume/state.json'));
+      reject('transition-preparation-required', () => x.invoke(bad.q, 'checkpoint'));
+      assert.deepEqual(fs.readFileSync(path.join(x.root, '.formalising/auto-fv/resume/state.json')), original); assert.equal(fs.existsSync(body.startMarker), false);
+      assert.equal(fs.readFileSync(x.log, 'utf8').split('\n').filter(Boolean).map(JSON.parse).filter((a) => a[0] === 'send').length, 0);
+      return { scope: 'stale actor/candidate cannot reuse an earlier preparation, even at the same tree', runId: x.runId };
+    }
     const release = x.action('release', { sessionId: actor.sessionId, association: updated, packet, handle: t.readWorkPacket(packet).deliveryHandle }, { before: releaseSnapshot, stage: 'integration' });
     const rb = x.invoke(release.q, 'checkpoint'), sent = auto.executeTransition({ projectRoot: x.root, request: release.q, beforeOut: rb.out, producerOut: x.out(), evidenceDir: x.out() });
     assert.equal(sent.status, 'command-completed');
@@ -450,30 +480,52 @@ function lifecycle(x) {
     assert.equal(auto.readRuntimeState({ projectRoot: x.root }).headSha256, headBeforeReplacement);
     reject('transition-effect-uncertain', () => auto.executeTransition({ projectRoot: x.root, request: release.q, beforeOut: rb.out, producerOut: x.out(), evidenceDir: x.out() }));
     const freshOut = x.out(); auto.primeMemory({ projectRoot: x.root, callerRoot: l.worktree, request: primeRequest, out: freshOut });
+    const startOptions = { projectRoot: x.root, ao: release.q.ao, packet, actor: nextActor, expectedMemoryRequest: primeRequest, memoryOut: freshOut, marker: t.readWorkPacket(packet).startMarker };
+    reject('transition-release-not-published', () => auto.acknowledgeWorkPacket({ ...startOptions, out: x.out() }));
+    assert.equal(fs.existsSync(startOptions.marker), false, 'received packet cannot start before delivery publication');
+    const sendResult = JSON.parse(t.transitionBound(t.transitionBound(sent.command).stdout, false));
+    const deliveredRequest = x.request({ transition: x.after(rb, { sessionId: null, association: null, evidence: [controllerCompletion(x, release, rb, sent.command, sendResult)], resolution: null }) });
+    if (crashPublication) {
+      const stateFile = path.join(x.root, '.formalising/auto-fv/resume/state.json'), original = fs.readFileSync(stateFile);
+      const services = { loadCanonical: x.canonical, refreshMemory: auto.refreshMemory, verifyMemory: auto.verifyMemoryBootstrap, inspectAcceptance() { throw new Error('not used'); },
+        transitions: t.transitionValidators({ tools: { auto: f.ref(path.join(f.ROOT, 'scripts/fvs-auto.mjs')), registry: f.ref(path.join(f.ROOT, 'scripts/fvs-contract-registry.mjs')), ao: release.q.ao.tool }, git() { throw new Error('not used'); } }), beforeRename() { throw new Error('simulated delivery publication crash'); } };
+      assert.throws(() => resume.runResume('checkpoint', { projectRoot: x.root, request: deliveredRequest, out: x.out() }, services), /simulated delivery publication crash/);
+      assert.deepEqual(fs.readFileSync(stateFile), original); assert.ok(fs.existsSync(path.join(path.dirname(stateFile), 'lock')));
+      reject('resume-pending', () => auto.acknowledgeWorkPacket({ ...startOptions, out: x.out() }));
+      assert.equal(fs.existsSync(startOptions.marker), false); assert.equal(fs.readFileSync(x.log, 'utf8').split('\n').filter(Boolean).map(JSON.parse).filter((a) => a[0] === 'send').length, 1);
+      return { scope: 'delivery after publication crash: old complete runtime/pending evidence retained, no start or duplicate send', runId: x.runId };
+    }
+    const delivered = x.invoke(deliveredRequest, 'checkpoint');
     const ack = auto.acknowledgeWorkPacket({ projectRoot: x.root, ao: release.q.ao, packet, actor: nextActor, expectedMemoryRequest: primeRequest, memoryOut: freshOut, marker: t.readWorkPacket(packet).startMarker, out: x.out() });
     assert.equal(ack.mayStart, true);
+    fs.writeFileSync(path.join(l.worktree, 'Authored.lean'), 'def Authored := Nat\n'); f.git(l.worktree, 'add', 'Authored.lean'); f.git(l.worktree, 'commit', '-qm', 'fixture immediate authorized progress');
+    const progressed = x.associate(actor.sessionId, l.worktree, l.item.intent, l.before.result.recordedEventSha256, { rulesProfile: value.rulesProfile });
+    const progressActor = { ...actor, worktree: { ...t.transitionBound(progressed).worktree, dirty: false } };
+    x.request = (extra = {}) => request({ associations: [progressed], ...extra });
     assert.equal(auto.acknowledgeWorkPacket({ projectRoot: x.root, ao: release.q.ao, packet, actor: nextActor, expectedMemoryRequest: primeRequest, memoryOut: freshOut, marker: t.readWorkPacket(packet).startMarker, out: x.out() }).mayStart, false);
-    const sendResult = JSON.parse(t.transitionBound(t.transitionBound(sent.command).stdout, false));
-    x.invoke(x.request({ transition: x.after(rb, { sessionId: null, association: null, evidence: [controllerCompletion(x, release, rb, sent.command, sendResult)], resolution: null }) }), 'checkpoint');
+    const publishedHead = auto.readRuntimeState({ projectRoot: x.root }).headSha256;
+    assert.equal(x.invoke(deliveredRequest, 'checkpoint').result.code, 'already-recorded');
+    assert.equal(auto.readRuntimeState({ projectRoot: x.root }).headSha256, publishedHead, 'immediate progress cannot invalidate/re-publish the already completed delivery');
     assert.equal(fs.readFileSync(x.log, 'utf8').split('\n').filter(Boolean).map(JSON.parse).filter((a) => a[0] === 'send').length, 1);
     const terminal = f.json(x.owned, 'conclusive-partial', { schema: 'fvs/auto-work-completion', schemaVersion: 1, runId: x.runId, packet, marker: ack.marker,
-      sourceAfter: { commit: nextActor.worktree.commit, tree: nextActor.worktree.tree }, outcome: 'partial', artifacts: [f.json(x.owned, 'partial-artifact', { status: 'partial', note: 'Protocol fixture, no proof authority' })], controllerSessionId: 'coordinator' });
+      sourceAfter: { commit: progressActor.worktree.commit, tree: progressActor.worktree.tree }, outcome: 'partial', artifacts: [f.json(x.owned, 'partial-artifact', { status: 'partial', note: 'Protocol fixture, no proof authority' })], controllerSessionId: 'coordinator' });
     const resumeRequest = auto.prepareMemoryRequest({ projectRoot: x.root, attemptId: f.uuid(), phase: 'resume', operation: 'worker-readonly', target: { projectId: actor.projectId, sessionId: actor.sessionId, resumeId: f.uuid() } });
-    const resumeBody = { ...t.readWorkPacket(packet), resumeOf: terminal, memoryRequest: resumeRequest, challenge: f.uuid(), deliveryHandle: 'resume-' + f.uuid(), startMarker: path.join(x.owned, 'resumed-worker-start.json') };
+    const resumeBody = { ...t.readWorkPacket(packet), actor: progressActor, resumeOf: terminal, memoryRequest: resumeRequest, challenge: f.uuid(), deliveryHandle: 'resume-' + f.uuid(), startMarker: path.join(x.owned, 'resumed-worker-start.json') };
+    const progressSnapshot = { ...releaseSnapshot, worker: { ...releaseSnapshot.worker, worktree: progressActor.worktree } };
     const resumedPacket = f.json(x.owned, 'linked-resume-packet', resumeBody);
-    const unrecorded = x.action('release', { sessionId: actor.sessionId, association: updated, packet: resumedPacket, handle: resumeBody.deliveryHandle }, { before: releaseSnapshot, stage: 'integration' });
+    const unrecorded = x.action('release', { sessionId: actor.sessionId, association: progressed, packet: resumedPacket, handle: resumeBody.deliveryHandle }, { before: progressSnapshot, stage: 'integration' });
     reject('transition-release-uncertain', () => x.invoke(unrecorded.q, 'checkpoint'));
     const terminalIntent = x.local([], 'reconcile'), terminalBefore = x.invoke(x.request({ transition: x.before(terminalIntent) }), 'checkpoint');
     x.invoke(x.request({ transition: x.after(terminalBefore, { sessionId: null, association: null, evidence: [terminal], resolution: null }) }), 'checkpoint');
-    const resumed = x.action('release', { sessionId: actor.sessionId, association: updated, packet: resumedPacket, handle: resumeBody.deliveryHandle }, { before: releaseSnapshot, stage: 'integration' });
+    const resumed = x.action('release', { sessionId: actor.sessionId, association: progressed, packet: resumedPacket, handle: resumeBody.deliveryHandle }, { before: progressSnapshot, stage: 'integration' });
     const resumedBefore = x.invoke(resumed.q, 'checkpoint'), resumedSent = auto.executeTransition({ projectRoot: x.root, request: resumed.q, beforeOut: resumedBefore.out, producerOut: x.out(), evidenceDir: x.out() });
     const resumedPrime = x.out(); auto.primeMemory({ projectRoot: x.root, callerRoot: l.worktree, request: resumeRequest, out: resumedPrime });
-    const resumedAck = auto.acknowledgeWorkPacket({ projectRoot: x.root, ao: resumed.q.ao, packet: resumedPacket, actor: nextActor, expectedMemoryRequest: resumeRequest, memoryOut: resumedPrime, marker: resumeBody.startMarker, out: x.out() });
-    assert.equal(resumedAck.mayStart, true, 'one explicitly linked invocation after a recorded conclusive partial');
     const resumedResult = JSON.parse(t.transitionBound(t.transitionBound(resumedSent.command).stdout, false));
     x.invoke(x.request({ transition: x.after(resumedBefore, { sessionId: null, association: null, evidence: [controllerCompletion(x, resumed, resumedBefore, resumedSent.command, resumedResult)], resolution: null }) }), 'checkpoint');
+    const resumedAck = auto.acknowledgeWorkPacket({ projectRoot: x.root, ao: resumed.q.ao, packet: resumedPacket, actor: progressActor, expectedMemoryRequest: resumeRequest, memoryOut: resumedPrime, marker: resumeBody.startMarker, out: x.out() });
+    assert.equal(resumedAck.mayStart, true, 'one explicitly linked invocation after a recorded conclusive partial');
     assert.equal(fs.readFileSync(x.log, 'utf8').split('\n').filter(Boolean).map(JSON.parse).filter((a) => a[0] === 'send').length, 2, 'two different handles only across the conclusive linked resume, never a retry');
-    const termination = x.action('terminate', { sessionId: actor.sessionId, association: updated }, { before: releaseSnapshot, stage: 'integration' }), tb = x.invoke(termination.q, 'checkpoint');
+    const termination = x.action('terminate', { sessionId: actor.sessionId, association: progressed }, { before: progressSnapshot, stage: 'integration' }), tb = x.invoke(termination.q, 'checkpoint');
     const killed = auto.executeTransition({ projectRoot: x.root, request: termination.q, beforeOut: tb.out, producerOut: x.out(), evidenceDir: x.out() });
     syncRows(x); const killedResult = JSON.parse(t.transitionBound(t.transitionBound(killed.command).stdout, false));
     x.invoke(x.request({ transition: x.after(tb, { sessionId: null, association: null, evidence: [controllerCompletion(x, termination, tb, killed.command, killedResult)], resolution: null }) }), 'checkpoint');
@@ -487,6 +539,23 @@ function lifecycle(x) {
   return { scope: "genuine Beads when explicitly enabled; AO remains a protocol double; no provider/proof/target authority", runId: x.runId, initialLaunch: l.item.actionRef, startupAck, packet, startAck: ack, linkedResume: resumedPacket, resumedStartAck: resumedAck, runtime: f.ref(path.join(x.root, ".formalising/auto-fv/resume/state.json")), canonicalStateUnchanged: true };
 }
 describe('stock command adapter with owned AO lifecycle double', () => {
+  it('first release and worker consumption reject a valid launch/current packet without startup/preparation', () => {
+    const x = fixture(); effectDouble(x); const l = stageLaunch(x), a = t.transitionBound(l.assignment), snapshot = l.after.result.observation.transition.snapshot;
+    const actor = { projectId: a.projectId, sessionId: a.sessionId, reservationId: a.reservationId, assignmentId: a.assignmentId, worktree: { ...a.worktree, dirty: false }, profile: a.rulesProfile };
+    const primeRequest = auto.prepareMemoryRequest({ projectRoot: x.root, attemptId: f.uuid(), phase: 'resume', operation: 'worker-readonly', target: { projectId: a.projectId, sessionId: a.sessionId, resumeId: f.uuid() } }), memoryOut = x.out();
+    auto.primeMemory({ projectRoot: x.root, callerRoot: l.worktree, request: primeRequest, out: memoryOut });
+    const packet = f.json(x.owned, 'shortened-first-release', { schema: 'fvs/auto-work-packet', schemaVersion: 1, runId: x.runId, actionSha256: memory.memoryHash(l.item.a), launch: l.item.actionRef, beforeEventSha256: l.before.result.recordedEventSha256,
+      actor, challenge: f.uuid(), deliveryHandle: 'shortened-' + f.uuid(), memoryRequest: primeRequest, procedure: 'lean-specify/controller-direct', inputs: [x.profile], resumeOf: null, startMarker: path.join(x.owned, 'forbidden-start.json') });
+    const request = x.request; x.request = (extra = {}) => request({ associations: [l.assignment], ...extra });
+    const release = x.action('release', { sessionId: actor.sessionId, association: l.assignment, packet, handle: t.readWorkPacket(packet).deliveryHandle }, { before: snapshot, stage: 'integration' });
+    const original = fs.readFileSync(path.join(x.root, '.formalising/auto-fv/resume/state.json'));
+    reject('transition-preparation-required', () => x.invoke(release.q, 'checkpoint'));
+    const validators = t.transitionValidators({ tools: {}, git() { throw new Error('must not reach Git'); } });
+    reject('transition-preparation-required', () => t.validateReleasedContext({ actionRef: release.actionRef, packet, canonical: x.canonical(), actual: snapshot, view: auto.readRuntimeState({ projectRoot: x.root }) }, validators));
+    reject('resume-pair-conflict', () => auto.acknowledgeWorkPacket({ projectRoot: x.root, ao: release.q.ao, packet, actor, expectedMemoryRequest: primeRequest, memoryOut, marker: t.readWorkPacket(packet).startMarker, out: x.out() }));
+    assert.deepEqual(fs.readFileSync(path.join(x.root, '.formalising/auto-fv/resume/state.json')), original); assert.equal(fs.existsSync(t.readWorkPacket(packet).startMarker), false);
+    assert.equal(fs.readFileSync(x.log, 'utf8').split('\n').filter(Boolean).map(JSON.parse).filter((r) => r[0] === 'send').length, 0);
+  });
   it('a missing unresolved actor association cannot use22 eligibility to dispatch despite spare capacity', () => {
     const x = fixture(); effectDouble(x); stageLaunch(x);
     syncRows(x); x.rows.find((r) => r.id === 'stage-worker').isTerminated = true; x.writeControl();
@@ -505,6 +574,9 @@ describe('stock command adapter with owned AO lifecycle double', () => {
     assert.equal(oldCalls, 1); assert.equal(calls, 1);
   });
   it('startup/FF/one release, conclusive partial resume and owned termination', () => { lifecycle(fixture()); });
+  it('already-correct worker source still uses an explicit validated no-op preparation', () => { lifecycle(fixture(), { noOp: true }); });
+  it('crash during delivery publication retains uncertainty and cannot start or resend work', () => { lifecycle(fixture(), { crashPublication: true }); });
+  it('first release refuses an old preparation for a stale actor/candidate even at the same tree', () => { lifecycle(fixture(), { stalePreparation: true }); });
   it('genuine installed Beads primary/linked actor transition lane (AO double)', { skip: process.env.FVS_TRANSITIONS_NATIVE !== '1' }, () => { const x = fixture(true); f.json(x.owned, 'native-qualification', lifecycle(x)); });
 });
 describe('simulation-authority checker control trace (not Lean/proof qualification)', () => {

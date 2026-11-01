@@ -573,6 +573,8 @@ export function verifyReleasedPacketContext({ projectRoot, ao, packet, memoryReq
   })());
   if (!before || !run || ao.projectId !== run.aoProjectId || ao.stateHome !== run.aoStateHome) stop('resume-pair-conflict', 'no retained release-before for this packet/controller');
   const a = readTransitionAction(before.event.intent.request), canonical = services.loadCanonical();
+  const delivered = view.state.history.find((row) => row.event.position === 'after' && row.event.beforeEventSha256 === before.sha256 && row.event.outcome === 'succeeded' && same(row.event.intent, before.event.intent));
+  if (!delivered) stop('transition-release-not-published', 'wait for the exact successful delivery after-event; recover the original handle, never resend');
   if (canonical.view.state.choicesGeneration !== run.choicesGeneration || canonical.view.agreement.contextSha256 !== run.agreementContextSha256) stop('resume-context-stale', 'packet canonical agreement changed');
   ownOutput(out, projectRoot);
   const q = { ao, attemptId: memoryRequest.attemptId, inputs: readRuntimeObservation(before.event).inputs, memoryRequest, source: { root: a.before.source.root }, associations: [], transition: null };
@@ -581,9 +583,15 @@ export function verifyReleasedPacketContext({ projectRoot, ao, packet, memoryReq
   if (!known.has(p.actor.sessionId) || rows.some((s) => s.kind === 'worker' && !s.isTerminated && !known.has(s.id))) stop('resume-association-invalid', 'packet actor or another current worker lacks an active controller assignment');
   const source = git(a.before.source.root, r), associated = association(a.target.association, run);
   const ts = { ...services.transitions, profileObservation: redactAOProfile(r.run(ao.tool.file, ['project', 'get', run.aoProjectId, '--json'], projectRoot, true, redactAOProfile)),
+    beforeForAction(ref) { const row = view.state.history.find((row) => row.event.position === 'before' && same(row.event.intent.request ?? null, ref)); if (!row) stop('resume-pair-conflict', 'missing retained launch-before'); return row.sha256; },
+    observeGit(root, args, binary = false, status = false) { const b = r.run('/usr/bin/git', ['-C', root, ...args], root); return status ? 0 : binary ? b : b.toString('utf8'); },
     verifyAssociation(a) { reservedAssociation(a, view, run, { live: true }); },
     observeWorktree(expected) { const g = git(expected.path, r); return { path: g.root, gitDir: g.gitDir, gitCommonDir: g.gitCommonDir, branchRef: g.branchRef, commit: g.commit, tree: g.tree, dirty: g.dirty }; } };
   const actual = transitionSnapshot({ q, run, canonical, action: a, observation: { identity: { source }, associations: [{ reference: a.target.association, value: associated }] } }, ts);
-  validateReleasedContext({ actionRef: before.event.intent.request, packet, canonical, actual }, ts);
-  return { status: 'released-context-current', releaseBeforeEventSha256: before.sha256, receipts: r.refs, executable: false };
+  validateReleasedContext({ actionRef: before.event.intent.request, packet, canonical, actual, view }, ts);
+  const current = readRuntime(projectRoot), observedAtMs = Date.now();
+  if (!same(current.state.run, run) || observedAtMs < current.lastObservedAtMs) stop('resume-clock-rollback', 'run/clock changed during packet observations');
+  if (observedAtMs >= run.deadlineMs) stop('transition-budget-exhausted', 'original limit expired during packet observations');
+  return { status: 'released-context-current', releaseBeforeEventSha256: before.sha256, deliveryAfterEventSha256: delivered.sha256, receipts: r.refs, executable: false,
+    clock: { runId: run.runId, startedAtMs: run.startedAtMs, deadlineMs: run.deadlineMs, lastObservedAtMs: current.lastObservedAtMs, observedAtMs } };
 }

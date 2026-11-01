@@ -1224,6 +1224,7 @@ function workerTransition(operation, options) {
     if (!path.isAbsolute(out) || path.dirname(out) !== fs.realpathSync(path.dirname(out)) || out === projectDirectory(projectRoot) || out.startsWith(projectDirectory(projectRoot) + path.sep)) refuse('transition-invalid-input', 'canonical exclusive output outside the protected project required');
     fs.mkdirSync(out, { mode: 0o700 }); const requestInput = transitionSave(path.join(out, 'request.json'), data);
     const root = projectDirectory(projectRoot), services = { memoryOut,
+      currentClock() { const v = readRuntime(root), run = v.state?.run; if (!run) refuse('resume-context-stale', 'original run missing'); return { runId: run.runId, startedAtMs: run.startedAtMs, deadlineMs: run.deadlineMs, lastObservedAtMs: v.lastObservedAtMs }; },
       beforeForAction(ref) {
         const r = readRuntime(root).state?.history.find((r) => r.event.position === 'before' && memoryJson(r.event.intent.request ?? null) === memoryJson(ref));
         if (!r) refuse('resume-pair-conflict', 'no exact retained launch-before event'); return r.sha256;

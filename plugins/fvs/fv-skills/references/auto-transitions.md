@@ -123,6 +123,16 @@ launch/action/before, actual actor/prepared source, new challenge, **new separat
 request, direct procedure, bound input refs, nullable explicit resume link and canonical start-marker
 path. Then use stock `ao send --steer --client-message-id`. Unknown delivery recovers **that handle**
 with `--recover-only`; delivery proves no execution. Never send/spawn again under a different handle.
+First release always derives its exact successful preparation/startup chain from16 history, even
+with a current cache or `basis:null`. A no-op FF still records this barrier. Worker consumption
+independently restores the same prerequisite; resume also retains that original chain and its
+separate conclusive source/artifact link.
+
+The coordinator publishes the successful delivery after-event before worker start permission.
+`transition-release-not-published` means wait/read-only recheck of this exact packet and original
+handle within the remaining deadline, not another send or an owner question. A publication crash
+leaves pending evidence and no start. After start is granted, legitimate worker progress cannot
+race an unfinished delivery publication; its source/artifacts use the subsequent work outcome.
 
 The worker independently primes its new request, validates the exact packet, current release/context
 and actor/source, then calls `acknowledgeWorkPacket`. This atomically publishes a durable actor/packet/
@@ -131,6 +141,10 @@ the assigned procedure; a saved result is not reusable permission. Duplicate pac
 the existing acknowledgement with `mayStart:false`. A crash/competing marker leaves uncertainty;
 there is no inferred nonexecution. Continue only from a conclusive terminal/PARTIAL result with a new
 explicitly linked resume within remaining budget. Uncertain prior execution cannot be resumed twice.
+Every role rechecks the original run deadline and latest recorded wall-clock floor after expensive
+reads and at marker publication/permission return. Proof-invocation limits are additional. Expiry or
+rollback after marker allocation preserves uncertainty and grants no work; an existing marker is
+never evidence of nonexecution.
 
 A later release for that assignment requires `resumeOf` pointing to a conclusive
 `fvs/auto-work-completion` version1 already retained in a succeeded16 after-event: exact run,
