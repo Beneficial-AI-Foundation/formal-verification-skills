@@ -139,6 +139,30 @@ describe('runtime checkpoint/current reconciliation', () => {
     assert.equal(result.code, 'partial'); assert.equal(result.observation.acceptance.status, 'unverified'); assert.equal(result.observation.acceptance.acceptedBaseline, null);
     assert.equal(inspected, 0); assert.deepEqual(auto.readRuntimeState({ projectRoot: x.root }).state.run, original);
   });
+  it('inspection crossing the cap commits the same semantic partial while retaining both raw diagnostics', () => {
+    const x = make(); x.invoke(); const original = auto.readRuntimeState({ projectRoot: x.root }), q = x.request(), out = x.out();
+    q.inputs.acceptedStore = { root: path.join(x.owned, 'store'), expectedHeadSha256: null };
+    let now = original.lastObservedAtMs + 1, inspected = 0;
+    const result = resume.runResume('state', { projectRoot: x.root, request: q, out }, services(x, { now: () => now, inspectAcceptance() {
+      inspected++; now = original.state.run.deadlineMs + 1; throw Object.assign(new Error('retained inspector deadline diagnostic'), { code: 'timeout' });
+    } }));
+    assert.equal(inspected, 1); assert.equal(result.code, 'partial'); assert.equal(result.observation.acceptance.status, 'unverified');
+    assert.equal(result.observation.acceptance.acceptedBaseline, null); assert.equal(result.observation.acceptance.reason, 'original-limit-exhausted');
+    assert.deepEqual(result.observation.acceptance.diagnostic, { code: 'timeout', message: 'retained inspector deadline diagnostic' });
+    const fence = JSON.parse(fs.readFileSync(path.join(out, 'fence/observation.json')));
+    assert.equal(fence.acceptance.diagnostic.code, 'original-limit-exhausted'); assert.ok(result.observation.reasons.includes('original-limit-exhausted'));
+    const current = auto.readRuntimeState({ projectRoot: x.root }); assert.deepEqual(current.state.run, original.state.run);
+    assert.deepEqual(current.state.history.slice(0, original.state.history.length), original.state.history);
+  });
+  it('budget diagnostic normalization cannot hide actual source/context drift', () => {
+    const x = make(); x.invoke(); const original = auto.readRuntimeState({ projectRoot: x.root }), before = stateBytes(x), q = x.request();
+    q.inputs.acceptedStore = { root: path.join(x.owned, 'store'), expectedHeadSha256: null }; let now = original.lastObservedAtMs + 1;
+    refuses('resume-context-stale', () => resume.runResume('state', { projectRoot: x.root, request: q, out: x.out() }, services(x, { now: () => now, inspectAcceptance() {
+      fs.appendFileSync(path.join(x.root, 'README.md'), '\nactual owned negative source drift\n'); now = original.state.run.deadlineMs + 1;
+      throw Object.assign(new Error('timeout during real context drift'), { code: 'timeout' });
+    } })));
+    assert.deepEqual(stateBytes(x), before); assert.deepEqual(auto.readRuntimeState({ projectRoot: x.root }).state.run, original.state.run);
+  });
 });
 
 describe('paired effects, reservations and serial capacity', () => {

@@ -327,12 +327,12 @@ function observe(root, q, services, out, previous, now, memory = null, unanchore
   for (const s of ao) if (s.id !== run.coordinatorSessionId && !s.isTerminated && !seen.has(s.id)) reasons.push('unclassified-ao-session:' + s.id);
   let acceptance = { status: 'not-established', acceptedBaseline: null, nodes: [], storeHeadSha256: null };
   if (q.inputs.acceptedStore !== null) {
-    if (now >= run.deadlineMs) acceptance = { status: 'unverified', reason: 'original-limit-exhausted', acceptedBaseline: null, nodes: [], storeHeadSha256: null };
+    if (now >= run.deadlineMs) acceptance = { status: 'unverified', reason: 'original-limit-exhausted', diagnostic: { code: 'original-limit-exhausted', message: 'currentness inspection skipped after the original deadline' }, acceptedBaseline: null, nodes: [], storeHeadSha256: null };
     else {
       try { acceptance = services.inspectAcceptance({ baseline: q.inputs.baseline, store: q.inputs.acceptedStore, source: q.source, deadlineMs: run.deadlineMs, out: path.join(out, 'acceptance') }); }
       catch (e) {
         if (e.code !== 'timeout') throw e;
-        acceptance = { status: 'unverified', reason: 'inspection-deadline-exhausted', acceptedBaseline: null, nodes: [], storeHeadSha256: null };
+        acceptance = { status: 'unverified', reason: 'original-limit-exhausted', diagnostic: { code: e.code, message: e.message }, acceptedBaseline: null, nodes: [], storeHeadSha256: null };
         reasons.push('original-limit-exhausted');
       }
     }
@@ -357,7 +357,15 @@ function event(state, q, transition, observation, now) {
     ...transition, observation };
   const result = { event: row, sha256: memoryHash(row) }; state.history.push(result); return result;
 }
-function stableObservation(o) { return { identity: o.identity, inputs: o.inputs, ao: o.ao, associations: o.associations, acceptance: o.acceptance, reasons: o.reasons }; }
+function stableObservation(o) {
+  // Timeout-before-cap and skipped-after-cap are the same unavailable budget
+  // state. Preserve raw diagnostics in each observation; compare every other
+  // context/head/acceptance field, and never normalize current proof evidence.
+  const budgetPartial = o.acceptance.status === 'unverified' && o.acceptance.reason === 'original-limit-exhausted' && o.reasons.includes('original-limit-exhausted');
+  return { identity: o.identity, inputs: o.inputs, ao: o.ao, associations: o.associations,
+    acceptance: budgetPartial ? { ...o.acceptance, diagnostic: null } : o.acceptance,
+    reasons: budgetPartial ? [...o.reasons].sort() : o.reasons };
+}
 function commit(root, q, state, expected, services, fence) {
   const dir = runtimeDir(root, true), lock = path.join(dir, 'lock');
   try { fs.mkdirSync(lock); } catch { stop('resume-pending', 'another checkpoint holds the runtime fence'); }
@@ -425,6 +433,7 @@ export function runResume(operation, options, services) {
       const fenceAtMs = services.now?.() ?? Date.now();
       if (fenceAtMs < now) stop('resume-clock-rollback', 'clock moved backwards at the observation fence');
       const checked = observe(root, q, services, fenceOut, run, fenceAtMs, observation.memory, !previous.state);
+      save(fenceOut, 'observation.json', checked.observation);
       if (!same(stableObservation(checked.observation), stableObservation(observation))) stop('resume-context-stale', 'AO/Git/receipt/context changed before checkpoint');
       validateRequest(q); // Rehash caller-bound inputs at the publication fence.
       const endedAtMs = services.now?.() ?? Date.now();
