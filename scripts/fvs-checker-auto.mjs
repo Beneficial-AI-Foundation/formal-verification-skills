@@ -95,7 +95,7 @@ function registryContext(job, context, specRoot, { ignoreLock = false } = {}) {
   return records;
 }
 
-const engineFiles = ['fvs-auto.mjs', 'fvs-checker.mjs', 'FvsKernelAudit.lean', 'fvs-checker-auto.mjs', 'fvs-checker-build.mjs', 'fvs-rust-identity.mjs', 'fvs-lean-graph.mjs', 'fvs-closure-plan.mjs', 'fvs-contract-registry.mjs', 'fvs-probe-inventory.mjs', 'fvs-probe-linux.mjs', 'fvs-extract-patches.mjs'];
+const engineFiles = ['fvs-auto.mjs', 'fvs-auto-resume.mjs', 'fvs-auto-transitions.mjs', 'fvs-project-memory.mjs', 'fvs-checker.mjs', 'FvsKernelAudit.lean', 'fvs-checker-auto.mjs', 'fvs-checker-build.mjs', 'fvs-rust-identity.mjs', 'fvs-lean-graph.mjs', 'fvs-closure-plan.mjs', 'fvs-contract-registry.mjs', 'fvs-probe-inventory.mjs', 'fvs-probe-linux.mjs', 'fvs-extract-patches.mjs'];
 function engineIdentity() {
   return Object.fromEntries([process.execPath, '/usr/bin/git', ...engineFiles.map((f) => fileURLToPath(new URL(f, import.meta.url)))].map((file) => [file, hash(file)]));
 }
@@ -338,7 +338,7 @@ async function freezeAuto(job, out, engine) {
   return { code: 'ok', schema: 'fvs-checker/freeze-result', purpose: 'auto', authority: 'expectations-only', baseline, targetProofsChecked: false };
 }
 
-function frozenContext(ref, { ignoreRegistryLock = false } = {}) {
+function frozenArtifacts(ref) {
   const frozen = bound(ref).json;
   if (frozen.schema !== 'fvs-checker/auto-baseline' || frozen.version !== 1 || frozen.purpose !== 'auto' || frozen.authority !== 'expectations-only'
     || frozen.meaning?.status !== 'meaning-checked' || frozen.meaning?.targetProofsChecked !== false
@@ -356,9 +356,32 @@ function frozenContext(ref, { ignoreRegistryLock = false } = {}) {
   bound(frozen.controllerInput); bound(frozen.adapterInput);
   if (canonical(engineIdentity()) !== canonical(frozen.checker)) refuse('stale-input', 'checker/policy identity changed since freeze');
   verifyFiles(frozen.compiled); verifyFiles(frozen.imports); verifyFiles(frozen.runtimes);
+  return { frozen, job, context };
+}
+function frozenContext(ref, { ignoreRegistryLock = false } = {}) {
+  const { frozen, job, context } = frozenArtifacts(ref);
   const records = registryContext(job, context, frozen.build.projectRoot, { ignoreLock: ignoreRegistryLock });
   if (canonical(records) !== canonical(frozen.records)) refuse('stale-input', 'contract records changed since freeze');
   return { frozen, job, context };
+}
+
+// Facts only: valid immutable artifacts do not imply current registry readiness
+// or accepted proof.22 uses this while a completed transition needs rechecking.
+export function inspectAutoBaselineArtifacts({ baseline, deadlineMs }) {
+  beforeDeadline({ deadlineMs });
+  const { frozen, job, context } = frozenArtifacts(baseline);
+  beforeDeadline({ deadlineMs });
+  return { status: 'artifacts-valid', authority: 'expectations-only', targetProofsChecked: false, baseline, registry: frozen.registry,
+    source: job.baseline.source, overlays: frozen.overlayFiles, nodes: [...context.view.union].sort((a, b) => a - b),
+    dependencies: Object.fromEntries([...context.view.union].map((node) => [node, context.view.nodes.get(node).dependsOn])),
+    inputs: { extraction: job.extraction.identity, graph: job.extraction.graph, plan: job.extraction.plan } };
+}
+export function inspectAutoProvisional({ evidence, baseline, source, nodes, deadlineMs }) {
+  beforeDeadline({ deadlineMs }); frozenContext(baseline);
+  const result = checkEvidence(evidence, baseline.sha256);
+  if (result.source.commit !== source.commit || result.source.tree !== source.expectedTree || !Array.isArray(nodes) || nodes.some((id) => !result.nodes.includes(id))) refuse('stale-input', 'provisional evidence is not for the requested current source/coverage');
+  checkBuildEvidence(result, { verifyBuildImports }, deadlineMs); beforeDeadline({ deadlineMs });
+  return { status: 'provisional', authority: 'provisional-only', evidence, baseline, source: result.source, nodes: result.nodes };
 }
 
 function checkEvidence(ref, frozenSha256) {

@@ -20,6 +20,7 @@ const fs = require('node:fs');
 if (process.env.HOME !== ${JSON.stringify(stateHome)}) process.exit(91);
 const args = process.argv.slice(2), c = JSON.parse(fs.readFileSync(${JSON.stringify(control)}));
 fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(args)+'\\n');
+if (args[0] === 'project' && args[1] === 'get' && c.project) { console.log(JSON.stringify({status:'ok',project:c.project})); return; }
 if (args[0] !== 'session' || !['ls','get'].includes(args[1])) process.exit(90);
 if (c.fail) process.exit(8);
 if (c.oversize) { process.stdout.write('x'.repeat(2*1024*1024)); return; }

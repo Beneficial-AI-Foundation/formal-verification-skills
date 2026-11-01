@@ -23,8 +23,9 @@ import {
   MemoryError, memoryOwnData, memoryDataSnapshot, memoryBindingsErrors, bindingIdentity, inspectMemoryRegistration, memoryJson,
   prepareMemoryBootstrapRequest, runMemoryBootstrap, consumeMemoryBootstrap,
 } from './fvs-project-memory.mjs';
-import { ResumeError, runResume, consumeResume, readRuntime, parseResumeRequest } from './fvs-auto-resume.mjs';
+import { ResumeError, runResume, consumeResume, consumeTransition, observeAssignedActor, verifyReleasedPacketContext, readRuntime, parseResumeRequest } from './fvs-auto-resume.mjs';
 import { inspectAutoAcceptance } from './fvs-checker-auto.mjs';
+import { TransitionError, transitionValidators, transitionBytes, transitionJson, transitionSave, nextTransitionFacts, performTransition, verifyStartup, acknowledgeStart } from './fvs-auto-transitions.mjs';
 
 const GREEN = 'supported-and-tested';
 
@@ -42,6 +43,7 @@ function usage() {
     '       node fvs-auto.mjs prime-memory --request REQUEST.json --out EXCLUSIVE_DIR [--project-root PRIMARY]',
     '       node fvs-auto.mjs refresh-memory --request REQUEST.json --out EXCLUSIVE_DIR [--project-root PRIMARY]',
     '       node fvs-auto.mjs checkpoint|state --request REQUEST.json --out EXCLUSIVE_DIR [--project-root PRIMARY]',
+    '       node fvs-auto.mjs next-transition|execute-transition|verify-transition|verify-startup|ack-work --input OPTIONS.json [--project-root PRIMARY]',
     '       node fvs-auto.mjs record-roadmap --decision accepted|declined [--project-root DIR] [--confirm-overwrite]',
     '       node fvs-auto.mjs record-extraction --out OUT --build-exit-code N --oracle complete|refused|unknown [--oracle-reason TEXT] [--project-root DIR]',
     '       node fvs-auto.mjs record-externals --input RECORDS.json [--project-root DIR]',
@@ -1102,7 +1104,7 @@ function memoryOperation(fn) {
   try { return fn(); }
   catch (error) {
     if (error instanceof Refusal) throw error;
-    refuse(error instanceof MemoryError || error instanceof ResumeError ? error.code : 'memory-unverified', error.message, error.details ?? {});
+    refuse(error instanceof MemoryError || error instanceof ResumeError || error instanceof TransitionError ? error.code : 'memory-unverified', error.message, error.details ?? {});
   }
 }
 function memoryCanonical(root) {
@@ -1165,8 +1167,15 @@ function resumeOperation(operation, options) {
     // The adapter takes descriptor-validated caller data. These services are
     // coordinator code, never callbacks/role attestations from a JSON request.
     const root = projectDirectory(options.projectRoot);
-    const services = { loadCanonical: () => memoryCanonical(root), refreshMemory, verifyMemory: verifyMemoryBootstrap, inspectAcceptance: inspectAutoAcceptance };
-    return operation === 'verify' ? consumeResume(options, services) : runResume(operation, options, services);
+    const boundTool = (name) => { const file = fs.realpathSync(fileURLToPath(new URL(name, import.meta.url))); return { file, sha256: sha256(transitionBytes(file)) }; };
+    const offlineGit = (cwd, args, buffer = false, status = false) => {
+      const p = spawnSync('/usr/bin/git', ['-C', cwd, ...args], { env: { PATH: '/usr/bin:/bin', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1', GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' }, timeout: 30000, maxBuffer: 16 * 1024 * 1024 });
+      if (p.error || p.signal || (!status && p.status !== 0)) refuse('transition-git-unverified', 'bounded offline Git observation failed');
+      return status ? p.status : buffer ? p.stdout : p.stdout.toString('utf8');
+    };
+    const services = { loadCanonical: () => memoryCanonical(root), refreshMemory, verifyMemory: verifyMemoryBootstrap, inspectAcceptance: inspectAutoAcceptance,
+      transitions: transitionValidators({ tools: { auto: boundTool('fvs-auto.mjs'), registry: boundTool('fvs-contract-registry.mjs'), ao: options.request.ao.tool }, git: offlineGit }) };
+    return operation === 'verify' ? consumeResume(options, services) : operation === 'verify-transition' ? consumeTransition(options, services) : runResume(operation, options, services);
   } catch (e) {
     if (e instanceof Refusal) throw e;
     refuse(e.code ?? 'resume-unverified', e.message, e.details ?? {});
@@ -1175,6 +1184,59 @@ function resumeOperation(operation, options) {
 export const checkpointState = (options) => resumeOperation('checkpoint', options);
 export const reconcileState = (options) => resumeOperation('state', options);
 export const verifyReconciliation = (options) => resumeOperation('verify', options);
+export const verifyTransition = (options) => resumeOperation('verify-transition', options);
+const transitionTools = () => Object.fromEntries(['auto', 'registry'].map((key) => {
+  const file = fs.realpathSync(fileURLToPath(new URL(key === 'auto' ? 'fvs-auto.mjs' : 'fvs-contract-registry.mjs', import.meta.url)));
+  return [key, { file, sha256: sha256(transitionBytes(file)) }];
+}));
+export function executeTransition(options) {
+  return memoryOperation(() => {
+    const data = JSON.parse(JSON.stringify(memoryDataSnapshot(options)));
+    if (Object.keys(data).length !== 5 || ['projectRoot', 'request', 'beforeOut', 'producerOut', 'evidenceDir'].some((k) => !Object.hasOwn(data, k))) refuse('transition-invalid-input', 'closed effect options required');
+    const { projectRoot, request, beforeOut, producerOut, evidenceDir } = data, root = projectDirectory(projectRoot);
+    const checked = verifyTransition({ projectRoot: root, request, out: beforeOut });
+    if (checked.position !== 'before') refuse('transition-before-required', 'facts/after observations are not execution permission');
+    const runtime = readRuntime(root), latest = runtime.state.history.at(-1);
+    if (latest.event.position !== 'before' || latest.event.intent.request.sha256 !== checked.action.sha256) refuse('transition-before-required', 'no exact current pending before');
+    return performTransition({ actionRef: checked.action, ao: request.ao.tool, tools: transitionTools(), producerOut, evidenceDir, beforeEventSha256: latest.sha256,
+      committedHeadSha256: checked.committedHeadSha256, runtimeRoot: path.join(root, '.formalising/auto-fv/resume'), deadlineMs: runtime.state.run.deadlineMs, lastObservedAtMs: runtime.lastObservedAtMs }, { head: () => readRuntime(root).headSha256 });
+  });
+}
+export function nextTransition(options) {
+  return memoryOperation(() => {
+    const data = JSON.parse(JSON.stringify(memoryDataSnapshot(options)));
+    if (Object.keys(data).length !== 3 || ['projectRoot', 'currentRequest', 'out'].some((k) => !Object.hasOwn(data, k))) refuse('transition-invalid-input', 'closed proposal options required');
+    const { projectRoot, currentRequest, out } = data, root = projectDirectory(projectRoot);
+    if (currentRequest.resume?.transition !== null) refuse('transition-invalid-input', 'next-transition cannot reserve or execute an action');
+    const reconciled = reconcileState({ projectRoot: root, request: currentRequest.resume, out });
+    if (reconciled.code === 'partial') return { status: 'partial', reasons: reconciled.observation.reasons, executable: false };
+    verifyReconciliation({ projectRoot: root, request: currentRequest.resume, out });
+    return nextTransitionFacts({ currentRequest, reconciled, runtime: readRuntime(root), canonical: memoryCanonical(root) });
+  });
+}
+export function verifyWorkerStartup(options) { return workerTransition('startup', options); }
+export function acknowledgeWorkPacket(options) { return workerTransition('start', options); }
+function workerTransition(operation, options) {
+  return memoryOperation(() => {
+    const data = JSON.parse(JSON.stringify(memoryDataSnapshot(options))), keys = ['projectRoot', 'ao', 'out', 'actor', 'expectedMemoryRequest', ...(operation === 'startup' ? ['actionRef', 'acknowledgement'] : ['memoryOut', 'packet', 'marker'])];
+    if (Object.keys(data).length !== keys.length || keys.some((k) => !Object.hasOwn(data, k))) refuse('transition-invalid-input', 'closed actor options required');
+    const { projectRoot, ao, out, actor, expectedMemoryRequest, memoryOut, ...rest } = data;
+    if (!path.isAbsolute(out) || path.dirname(out) !== fs.realpathSync(path.dirname(out)) || out === projectDirectory(projectRoot) || out.startsWith(projectDirectory(projectRoot) + path.sep)) refuse('transition-invalid-input', 'canonical exclusive output outside the protected project required');
+    fs.mkdirSync(out, { mode: 0o700 }); const requestInput = transitionSave(path.join(out, 'request.json'), data);
+    const root = projectDirectory(projectRoot), services = { memoryOut,
+      beforeForAction(ref) {
+        const r = readRuntime(root).state?.history.find((r) => r.event.position === 'before' && memoryJson(r.event.intent.request ?? null) === memoryJson(ref));
+        if (!r) refuse('resume-pair-conflict', 'no exact retained launch-before event'); return r.sha256;
+      },
+      verifyMemory: (o) => verifyMemoryBootstrap({ ...o, projectRoot: root }),
+      verifyReleasedPacket: (packet) => verifyReleasedPacketContext({ projectRoot: root, ao, packet, memoryRequest: expectedMemoryRequest, out: out + '-context' }, { loadCanonical: () => memoryCanonical(root), transitions: transitionValidators({ tools: { ...transitionTools(), ao: ao.tool }, git() { refuse('transition-unavailable', 'unexpected packet Git mutation'); } }) }),
+      observeActor: (a) => observeAssignedActor({ projectRoot: root, ao, actor: a, attemptId: expectedMemoryRequest.attemptId, out: out + '-actor' }) };
+    // Supplied role/profile data is controller provenance, not OS authentication.
+    const result = operation === 'startup' ? verifyStartup({ ...rest, actor, expectedMemoryRequest }, services)
+      : acknowledgeStart({ ...rest, actor, expectedMemoryRequest }, services);
+    transitionSave(path.join(out, 'result.json'), { ...result, requestInput }); return result;
+  });
+}
 export function readRuntimeState(options) {
   return memoryOperation(() => {
     const data = memoryDataSnapshot(options), errors = [];
@@ -1341,6 +1403,10 @@ function stateFlags(argv, values, switches = [], optional = []) {
 }
 
 const STATE_COMMANDS = {
+  ...Object.fromEntries([['next-transition', nextTransition], ['execute-transition', executeTransition], ['verify-transition', verifyTransition], ['verify-startup', verifyWorkerStartup], ['ack-work', acknowledgeWorkPacket]].map(([command, run]) => [command, (argv) => {
+    const flags = stateFlags(argv, ['input']);
+    return run({ ...transitionJson(fs.readFileSync(flags.input)), projectRoot: flags['project-root'] });
+  }])),
   ...Object.fromEntries([['checkpoint', checkpointState], ['state', reconcileState]].map(([command, run]) => [command, (argv) => {
     const flags = stateFlags(argv, ['request', 'out']);
     return run({ projectRoot: flags['project-root'], request: parseResumeRequest(fs.readFileSync(flags.request)), out: flags.out });

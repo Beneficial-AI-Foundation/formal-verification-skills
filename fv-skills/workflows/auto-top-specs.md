@@ -1,10 +1,19 @@
 <purpose>
-Explain the recorded auto-track state and stop. Selecting roots from the dependency graph,
-reviewing and freezing top-level specifications is milestone 2 functionality not yet available;
-this workflow does none of it, partially or otherwise, and writes nothing.
+For the configured AO orchestrator, advance nonpublic specification and fresh review through the
+bounded transition protocol. Otherwise explain the recorded state and stop without writes. Public
+API discovery is separately held; graph roots do not select scope automatically.
 </purpose>
 
 <process>
+
+## Opt-in AO controller continuation
+
+With the actual orchestrator's current controller request, execution grant and complete stage
+manifest, follow the author/fresh-review/registry portion of `fv-skills/references/auto-transitions.md`. Start without
+owner-supplied specs; ground selected nonpublic obligations in actual13 closure and agreed scope,
+never a public-name classifier. The controller resumes proof through auto-execute after readiness.
+Missing capability/context is partial; actual providers require the concrete19 setup/permission.
+Without this context retain the standalone read-only report below.
 
 ## Step 1: Require Agent Orchestrator
 

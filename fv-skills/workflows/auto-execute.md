@@ -1,10 +1,18 @@
 <purpose>
-Read the recorded auto-track state. For an agreed configured project, reconcile the current
-coordinator continuation through the bounded checkpoint adapter, then report and stop.22 dispatch
-and automatic stage sequencing remain unavailable; this invocation accepts no proof.
+For the configured AO orchestrator, continue the bounded transition protocol to authoritative17
+references. Otherwise reconcile the recorded state and report the standalone continuation. Worker
+reports establish no proof acceptance; trusted15 remains the sole publication authority.
 </purpose>
 
 <process>
+
+## Opt-in AO controller continuation
+
+For an actual orchestrator with a complete current controller request, execution grant and resolved
+stage manifest, follow `fv-skills/references/auto-transitions.md` through the bounded proposal/effect/checkpoint loop to
+the17 reference handoff. Reuse initial agreement; no routine per-round human gate or hidden provider
+children. Actual live provider execution requires the concrete19 setup/permission. Missing context
+stays partial. Otherwise use the standalone reconciliation/report path below; it dispatches nothing.
 
 ## Step 1: Require Agent Orchestrator
 

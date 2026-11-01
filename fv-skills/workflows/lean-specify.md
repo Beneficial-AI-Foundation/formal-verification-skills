@@ -13,6 +13,20 @@ Output: Specs/{path}/{FunctionName}.lean with @[step] theorem and sorry placehol
 
 <process>
 
+<controller_mode>
+For a verified `lean-specify/controller-direct`, `research-direct` or `author-direct` work packet,
+first follow the actor prime,
+current-context and exclusive start acknowledgement in `fv-skills/references/auto-transitions.md`. Use that packet's
+already resolved applicable manifest; perform the research and executor instructions sequentially
+in this assigned seat, with the same grounding/style/build gates. Research-direct performs only
+research and returns its bound inventory/context; author-direct consumes it and authors/validates
+the spec under `fc_spec`. Combine only identical role tuples. Use frozen offline dependencies
+instead of the standalone cache-download step. Return the immutable candidate/context/grounding
+references to the controller before automatic review; it launches the fresh independent reviewer
+through Other export/import. No nested subagents, provider fallback or routine owner questions.
+Absent a verified controller packet, all ordinary standalone steps below apply unchanged.
+</controller_mode>
+
 Load trusted shipped guidance from the installed FVS root before dispatch, never from consumer cwd:
 
 ```bash

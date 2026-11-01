@@ -20,6 +20,24 @@ cheat audit (VERIFIED), or a report of what remains (PARTIAL or STUCK).
 
 <process>
 
+<controller_mode>
+For a verified `lean-verify/controller-direct`, `plan-direct` or `prove-direct` packet,
+follow `fv-skills/references/auto-transitions.md` actor prime,
+current-context and exclusive start guards. Execute the existing research and proof instructions
+sequentially in this assigned seat under the supplied applicable manifest. Plan-direct returns only
+bound research/strategy; prove-direct consumes it and proves. Combine only identical role tuples.
+Keep the same bound invocation start/deadline across split roles; no nested provider or
+new model interview. Keep style/build/cheat-audit gates. Use pinned frozen offline dependencies
+instead of cache download. The controller's auto pristine B/14 statement/semantic identity is the
+fixed target: do not create a candidate-derived or standalone replacement expectation. The normal
+four-hour invocation cap is bounded by remaining original project time; a cap/three-review-round
+exit becomes PARTIAL with a linked resume, never a new total budget. Do not weaken statements.
+Return immutable candidate/audit/build references, including unresolved findings, and preserve
+controller receipts instead of standalone cleanup. Worker VERIFIED is candidate evidence only;
+the controller's trusted15 check/integrated serial acceptance alone can publish a proof receipt.
+Without this verified packet, the ordinary standalone pre-edit baseline and steps below apply.
+</controller_mode>
+
 Load trusted shipped guidance from the installed FVS root before dispatch, never from consumer cwd:
 
 ```bash

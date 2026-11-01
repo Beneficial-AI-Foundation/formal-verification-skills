@@ -18,7 +18,8 @@ command -v ao >/dev/null 2>&1 || {
 }
 ```
 
-Stop when this fails. This slice records agreement and routing; it launches no workers.
+Stop when this fails. Agreement storage alone launches no workers; the opt-in controller continuation
+below requires its actual current execution/invocation context.
 
 ## Step 2: Inspect existing state and evidence before asking anything
 
@@ -70,8 +71,8 @@ Record only missing owner choices, using the current applicable evidence for kno
 no arbitrary per-node proof timeout. Existing resource and
 spending limits are never raised or reset automatically. The initial owner scope/execution agreement
 is the setup human gate. Later provisional specify/review/revise cycles are autonomous within it;
-there is no per-round human contract approval. Final PR acceptance remains human. No worker dispatch
-or autonomous transition is implemented by this slice; Step6 only bootstraps configured project memory.
+there is no per-round human contract approval. Final PR acceptance remains human. Agreement storage
+does not dispatch; Step6 bootstraps memory and Step7 selects the configured controller continuation.
 
 Write the known/answered choices to a temporary file outside the project:
 
@@ -232,9 +233,16 @@ held request. Stop continuation on partial/missing/uncertain context with its ac
 all reservations and original budgets. Missing invocation context is a technical partial condition,
 not another scope interview. Legacy M1 reads and the standalone worker prime remain available.
 
-This adapter checkpoints and reconciles;22 still owns automatic stage sequencing/dispatch. Report
-observations without launching a worker. Continue only within actual existing grants when the later
-transition implementation is available.
+When the actual AO orchestrator has the complete current execution grant, stage manifest, controller
+request and original accounting, continue directly through `fv-skills/references/auto-transitions.md`. It owns the bounded
+proposal/before/effect/after loop through specification, fresh review, proof and serial independent
+checks to the17 reference handoff. Do not ask the owner to launch each stage. Fill operational inputs
+from actual state and existing decisions; a genuinely missing capability/input is partial. Initial
+scope agreement and final human PR decision remain the human gates. Actual live provider execution
+requires the separately concrete19 setup/permission; fixture qualification supplies no such grant.
+
+Without that complete opt-in context, report the available16 continuation below and stop. Do not
+infer dispatch permission from a stored agreement, remembered grant, partial result or worker verdict.
 
 ## Step 8: Report the available continuation
 
@@ -244,15 +252,16 @@ Use the refreshed post-init/post-record state, not the pre-init `no-state` resul
 FVS >> AUTO-INIT
 
 State:            revision {revision} ({configuration}); scope {scope}; limits {workers} workers, {wallClockHours} h total (per-node hours {nodeHours} recorded, not enforced); extraction {not run | succeeded | failed}; agreement {missing | stale | stored-context-current, semantic check passed}
-Next action:      {existing extraction continuation or reconciled/partial runtime reason;22 dispatch unavailable}
+Next action:      {opt-in controller proposal/partial reason, or existing standalone extraction/reconciliation continuation}
 Memory:           {unregistered | missing | stale | blocked/partial reason | memory-primed for current caller request}
 Pending decision: {only affected missing initial decisions, or none}
 ```
 
 Report the script's actual refusal/next step when blocked. Successful agreement storage is ticket12
 slice readiness only. The configured20 adapter reports current memory-primed;16 records checkpoints and
-current observations, while22 orchestration/dispatch remains unavailable. The legacy `nextAction` string may name the existing extraction or M2
-placeholder; it is not a new transition engine. Do not launch stage workers or claim the pipeline or
-project proof accepted. Local FVS-development Beads is not target-project memory.
+current observations, while the opt-in controller uses the separate current22 transition protocol.
+The legacy `nextAction` string may name an extraction or M2 placeholder; it is not executable authority.
+Report only actual current checker receipts and whole-scope gaps. Local FVS-development Beads is not
+target-project memory.
 
 </process>

@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { memoryDataSnapshot, memoryHash, MEMORY_LIMITS } from './fvs-project-memory.mjs';
 import { duplicateKeys } from './fvs-lean-graph.mjs';
+import { readTransitionAction, readWorkPacket, readRuntimeObservation, transitionSnapshot, assessTransition, validateReleasedContext, redactAOProfile } from './fvs-auto-transitions.mjs';
 
 const SHA = /^[0-9a-f]{64}$/, COMMIT = /^[0-9a-f]{40}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -33,7 +34,7 @@ function parse(bytes) {
 }
 export const parseResumeRequest = (bytes) => validateRequest(parse(bytes));
 function implementation() {
-  return Object.fromEntries(['fvs-auto-resume.mjs', 'fvs-auto.mjs', 'fvs-project-memory.mjs', 'fvs-checker-auto.mjs'].map((name) => {
+  return Object.fromEntries(['fvs-auto-resume.mjs', 'fvs-auto-transitions.mjs', 'fvs-auto.mjs', 'fvs-project-memory.mjs', 'fvs-checker-auto.mjs'].map((name) => {
     const file = fileURLToPath(new URL(name, import.meta.url)); return [file, hash(bytes(file))];
   }));
 }
@@ -85,7 +86,11 @@ function runValid(run) {
     || run.deadlineMs !== Math.floor(run.startedAtMs + run.limits.wallClockHours * 3600000)) stop('resume-history-invalid', 'invalid original limits/deadline');
 }
 function intentValid(t) {
-  closed(t, ['transitionId', 'reservationId', 'stage', 'nodes', 'owner', 'effect'], 'transition intent');
+  closed(t, ['transitionId', 'reservationId', 'stage', 'nodes', 'owner', 'effect', ...(Object.hasOwn(t, 'request') ? ['request'] : [])], 'transition intent');
+  if (Object.hasOwn(t, 'request')) {
+    const action = readTransitionAction(t.request);
+    if (action.transitionId !== t.transitionId || action.reservationId !== t.reservationId || action.stage !== t.stage || action.owner !== t.owner || !same(action.nodes, t.nodes)) stop('resume-invalid-input', 'bound action is not this exact intent');
+  }
   if (![t.transitionId, t.reservationId].every((v) => matches(v, UUID)) || !STAGES.includes(t.stage) || !text(t.owner)
     || !Array.isArray(t.nodes) || t.nodes.some((n, i) => !integer(n) || (i && n <= t.nodes[i - 1]))) stop('resume-invalid-input', 'invalid transition identity/nodes');
   const e = t.effect;
@@ -101,7 +106,7 @@ function intentValid(t) {
   } else stop('resume-invalid-input', 'unsupported effect discriminator');
 }
 function eventValid(e) {
-  closed(e, ['seq', 'prev', 'runSha256', 'observedAtMs', 'attemptId', 'position', 'intent', 'beforeEventSha256', 'outcome', 'effect', 'observation'], 'checkpoint event');
+  closed(e, ['seq', 'prev', 'runSha256', 'observedAtMs', 'attemptId', 'position', 'intent', 'beforeEventSha256', 'outcome', 'effect', 'observation', ...(Object.hasOwn(e, 'observationInput') ? ['observationInput'] : [])], 'checkpoint event');
   if (!integer(e.seq) || !(e.prev === null || matches(e.prev, SHA)) || !matches(e.runSha256, SHA) || !integer(e.observedAtMs) || !matches(e.attemptId, UUID)) stop('resume-history-invalid', 'invalid event binding');
   intentValid(e.intent);
   if (e.position === 'before') {
@@ -111,13 +116,15 @@ function eventValid(e) {
     closed(e.effect, ['sessionId', 'association', 'evidence', 'resolution'], 'actual effect');
     if (!(e.effect.sessionId === null || text(e.effect.sessionId)) || !Array.isArray(e.effect.evidence)) stop('resume-history-invalid', 'invalid actual effect');
   } else stop('resume-history-invalid', 'invalid event position');
-  closed(e.observation, ['identity', 'inputs', 'memory', 'ao', 'associations', 'acceptance', 'reasons', 'receipts'], 'observation');
+  const observation = readRuntimeObservation(e);
+  closed(observation, ['identity', 'inputs', 'memory', 'ao', 'associations', 'acceptance', 'reasons', 'receipts', ...(Object.hasOwn(observation, 'transition') ? ['transition'] : [])], 'observation');
+  return observation;
 }
 // Derive reservations from verified events, never a caller's stored status/count.
 function replay(history, run) {
   const transitions = new Map(), reservations = new Map(); let prev = null, time = run.startedAtMs;
   for (const [index, row] of history.entries()) {
-    closed(row, ['event', 'sha256'], 'history row'); const e = row.event; eventValid(e);
+    closed(row, ['event', 'sha256'], 'history row'); const e = row.event, observation = eventValid(e);
     if (row.sha256 !== memoryHash(e) || e.seq !== index || e.prev !== prev || e.runSha256 !== memoryHash(run) || e.observedAtMs < time) stop('resume-history-invalid', 'history chain/time mismatch');
     time = e.observedAtMs; prev = row.sha256;
     const id = e.intent.transitionId, rId = e.intent.reservationId, old = transitions.get(id);
@@ -126,7 +133,7 @@ function replay(history, run) {
       const resolving = e.intent.effect.kind === 'reservation-resolution' ? e.intent.effect.targetReservationId : null;
       for (const r of reservations.values()) if (r.state !== 'closed' && r.id !== resolving && e.intent.nodes.some((n) => r.intent.nodes.includes(n))) stop('resume-reservation-conflict', 'node already reserved');
       const held = [...reservations.values()].filter((r) => r.state !== 'closed' && r.intent.effect.kind === 'ao-launch');
-      const liveUnreserved = e.observation.associations.filter((a) => a.value.scopeRelation === 'run-assignment' && e.observation.ao.some((s) => s.id === a.value.sessionId && !s.isTerminated) && !held.some((r) => r.sessionId === a.value.sessionId));
+      const liveUnreserved = observation.associations.filter((a) => a.value.scopeRelation === 'run-assignment' && observation.ao.some((s) => s.id === a.value.sessionId && !s.isTerminated) && !held.some((r) => r.sessionId === a.value.sessionId));
       if (e.intent.effect.kind === 'ao-launch' && liveUnreserved.some((a) => a.value.nodes.some((n) => e.intent.nodes.includes(n)))) stop('resume-reservation-conflict', 'a live associated assignment already owns this node');
       const active = held.length + liveUnreserved.length;
       if (e.intent.effect.kind === 'ao-launch' && active >= run.limits.workers) stop('resume-capacity-exhausted', 'original worker capacity is reserved');
@@ -156,7 +163,7 @@ function replay(history, run) {
         } else if (resolution.reason === 'session-terminated') {
           const observed = proof.session;
           if (!target.sessionId || observed?.id !== target.sessionId || observed.projectId !== run.aoProjectId || observed.isTerminated !== true
-            || !e.observation.ao.some((s) => s.id === observed.id && s.isTerminated)) stop('resume-pair-conflict', 'missing current matched termination');
+            || !observation.ao.some((s) => s.id === observed.id && s.isTerminated)) stop('resume-pair-conflict', 'missing current matched termination');
         } else if (resolution.reason === 'local-completed') {
           closed(proof, ['schema', 'schemaVersion', 'runId', 'reservationId', 'transitionId', 'beforeEventSha256', 'stage', 'operation', 'controllerSessionId', 'effectInvoked', 'terminalOutcome', 'effectEvidence'], 'recovered local completion');
           if (target.intent.effect.kind !== 'local' || !['pending', 'uncertain'].includes(target.state)
@@ -223,7 +230,7 @@ function validateRequest(raw) {
 }
 function runner(out, q) {
   const refs = [];
-  function run(tool, args, cwd, ao = false) {
+  function run(tool, args, cwd, ao = false, redact = null) {
     const toolBefore = hash(bytes(tool));
     if (ao && toolBefore !== q.ao.tool.sha256) stop('resume-tool-changed', 'AO tool identity changed');
     const env = { PATH: '/usr/bin:/bin', ...(ao ? { HOME: q.ao.stateHome } : {}), LANG: 'C', LC_ALL: 'C', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1', GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', DISABLE_TELEMETRY: '1', DO_NOT_TRACK: '1' };
@@ -233,7 +240,8 @@ function runner(out, q) {
     const stream = (suffix, b) => { const file = path.join(out, 'receipts', n + suffix); fs.writeFileSync(file, b, { flag: 'wx' }); return { file, sha256: hash(b) }; };
     const receipt = save(out, 'receipts/' + n + '.json', { attemptId: q.attemptId, requestSha256: memoryHash(q), argv: [tool, ...args], cwd, env,
       startedAtMs, endedAtMs, toolBefore, toolAfter: hash(bytes(tool)), exitCode: p.status, signal: p.signal, error: p.error?.code ?? null,
-      stdout: stream('.stdout', stdout), stderr: stream('.stderr', stderr) });
+      ...(redact ? { rawStdoutSha256: hash(stdout), rawStderrSha256: hash(stderr), redaction: 'project config fingerprint only; no env/rules contents' } : {}),
+      stdout: stream('.stdout', redact ? Buffer.from(JSON.stringify(redact(stdout))) : stdout), stderr: stream('.stderr', redact ? Buffer.alloc(0) : stderr) });
     refs.push(receipt);
     if (p.error || p.status !== 0 || p.signal || hash(bytes(tool)) !== toolBefore) stop('resume-command-failed', 'bounded local metadata observation failed', { receipt });
     return stdout;
@@ -265,6 +273,16 @@ function association(ref, run) {
     for (const evidence of a.rulesProfile.evidence) boundBytes(evidence);
   }
   return a;
+}
+function reservedAssociation(a, view, run, { stage = null, live = false, pending = false } = {}) {
+  const r = view.reservations.get(a.reservationId);
+  if (!r || a.projectId !== run.aoProjectId || r.intent.effect.kind !== 'ao-launch' || r.intent.effect.assignmentId !== a.assignmentId || r.intent.owner !== a.owner || !same(r.intent.nodes, a.nodes)
+    || r.intent.effect.intendedBranchRef !== a.worktree.branchRef || (stage !== null && r.intent.stage !== stage)) stop('resume-association-invalid', 'actor/candidate lost its exact reserved assignment');
+  if (pending && r.state === 'pending' && r.sessionId === null && a.provenance.kind === 'controller-launch' && a.provenance.beforeEventSha256 === r.before) return;
+  if (r.sessionId !== a.sessionId || !(live ? r.state === 'active' : ['active', 'closed'].includes(r.state))) stop('resume-association-invalid', 'actor is not the conclusively associated reserved session');
+  const after = view.state.history.find((row) => row.sha256 === r.after), original = association(after.event.effect.association, run);
+  const fixed = (value) => ({ ...Object.fromEntries(['path', 'gitDir', 'gitCommonDir', 'branchRef'].map((key) => [key, value.worktree[key]])), profile: value.rulesProfile });
+  if (!same(fixed(a), fixed(original))) stop('resume-association-invalid', 'reserved actor path/commonGit/branch/profile changed');
 }
 function lifecycle(s, kind) {
   if (!s || !text(s.id) || !text(s.projectId) || !['worker', 'orchestrator'].includes(s[kind]) || typeof s.isTerminated !== 'boolean' || !text(s.status)) stop('resume-ao-invalid', 'unsupported AO lifecycle record');
@@ -302,7 +320,9 @@ function canonicalRun(root, q, canonical, identity, previous, now) {
   if (envelope.mode !== 'nonpublic-intent') stop('resume-context-stale', 'only the reviewed nonpublic route is supported');
   return run;
 }
-function observe(root, q, services, out, previous, now, memory = null, unanchored = !previous) {
+function observe(root, q, services, out, previous, now, memory = null, unanchored = !previous, history = null) {
+  const actionRef = q.transition?.intent?.request ?? null;
+  const action = actionRef === null ? null : readTransitionAction(actionRef);
   for (const key of ['extraction', 'graph', 'plan', 'baseline']) if (q.inputs[key] !== null) bound(q.inputs[key]);
   const r = runner(out, q), identity = git(root, r), canonical = services.loadCanonical();
   const run = canonicalRun(root, q, canonical, identity, previous, now);
@@ -325,15 +345,23 @@ function observe(root, q, services, out, previous, now, memory = null, unanchore
     associations.push({ reference: ref, value: a });
   }
   for (const s of ao) if (s.id !== run.coordinatorSessionId && !s.isTerminated && !seen.has(s.id)) reasons.push('unclassified-ao-session:' + s.id);
+  if (history) for (const reserved of history.reservations.values()) if (reserved.state !== 'closed' && reserved.intent.effect.kind === 'ao-launch' && reserved.sessionId
+    && !associations.some((a) => a.value.sessionId === reserved.sessionId && a.value.reservationId === reserved.id)) reasons.push('reserved-association-missing');
   let acceptance = { status: 'not-established', acceptedBaseline: null, nodes: [], storeHeadSha256: null };
   if (q.inputs.acceptedStore !== null) {
     if (now >= run.deadlineMs) acceptance = { status: 'unverified', reason: 'original-limit-exhausted', diagnostic: { code: 'original-limit-exhausted', message: 'currentness inspection skipped after the original deadline' }, acceptedBaseline: null, nodes: [], storeHeadSha256: null };
     else {
       try { acceptance = services.inspectAcceptance({ baseline: q.inputs.baseline, store: q.inputs.acceptedStore, source: q.source, deadlineMs: run.deadlineMs, out: path.join(out, 'acceptance') }); }
       catch (e) {
-        if (e.code !== 'timeout') throw e;
-        acceptance = { status: 'unverified', reason: 'original-limit-exhausted', diagnostic: { code: e.code, message: e.message }, acceptedBaseline: null, nodes: [], storeHeadSha256: null };
-        reasons.push('original-limit-exhausted');
+        if (e.code === 'timeout') {
+          acceptance = { status: 'unverified', reason: 'original-limit-exhausted', diagnostic: { code: e.code, message: e.message }, acceptedBaseline: null, nodes: [], storeHeadSha256: null };
+          reasons.push('original-limit-exhausted');
+        } else if (action && e.code === 'stale-input') {
+          // The row validator below must independently validate actual metadata,
+          // immutable artifacts and a completed explanation. No current proof.
+          acceptance = { status: 'unverified', reason: 'acceptance-recheck-required', diagnostic: { code: e.code, message: e.message }, acceptedBaseline: null, nodes: [], storeHeadSha256: null };
+          reasons.push('acceptance-unverified');
+        } else throw e;
       }
     }
   }
@@ -350,7 +378,40 @@ function observe(root, q, services, out, previous, now, memory = null, unanchore
   }
   const consumed = services.verifyMemory({ projectRoot: root, callerRoot: root, request: q.memoryRequest, out: memory.out });
   if (consumed.status !== 'memory-primed') stop('resume-memory-mismatch', 'actual current prime was not consumed');
-  return { run, observation: { identity: { primary: identity, source }, inputs: q.inputs, memory, ao, associations, acceptance, reasons: [...new Set(reasons)], receipts: r.refs } };
+  const observation = { identity: { primary: identity, source }, inputs: q.inputs, memory, ao, associations, acceptance, reasons: [...new Set(reasons)], receipts: r.refs };
+  if (action) {
+    if (!history || !services.transitions) stop('resume-transition-unavailable', 'bound22 transition services/history are required');
+    const transitionServices = { ...services.transitions,
+      profileObservation: redactAOProfile(r.run(q.ao.tool.file, ['project', 'get', run.aoProjectId, '--json'], root, true, redactAOProfile)),
+      observeSession: (id) => ao.find((s) => s.id === id),
+      verifyAssociation(a) { reservedAssociation(a, history, run, { live: true, pending: action.kind === 'launch' && q.transition.position === 'after' }); },
+      verifyCandidateAssignment(ref, stage) {
+        reservedAssociation(association(ref, run), history, run, { stage });
+      },
+      beforeForAction(ref) {
+        const row = history.state?.history.find((r) => r.event.position === 'before' && same(r.event.intent.request ?? null, ref));
+        if (!row) stop('resume-pair-conflict', 'startup requires the actual retained launch-before event');
+        return row.sha256;
+      },
+      verifyMemory: (o) => services.verifyMemory({ ...o, projectRoot: root }),
+      observeActor(actor) {
+        const s = ao.find((s) => s.id === actor.sessionId);
+        if (!s || s.kind !== 'worker' || s.isTerminated || actor.projectId !== run.aoProjectId) stop('resume-association-invalid', 'actor is not a current owned worker');
+        const g = git(actor.worktree.path, r);
+        return { ...actor, worktree: { path: g.root, gitDir: g.gitDir, gitCommonDir: g.gitCommonDir, branchRef: g.branchRef, commit: g.commit, tree: g.tree, dirty: g.dirty } };
+      },
+    };
+    const observed = transitionSnapshot({ q, run, canonical, observation, action }, {
+      ...transitionServices,
+      observeWorktree(expected) {
+        const g = git(expected.path, r);
+        return { path: g.root, gitDir: g.gitDir, gitCommonDir: g.gitCommonDir, branchRef: g.branchRef, commit: g.commit, tree: g.tree, dirty: g.dirty };
+      },
+    });
+    observation.transition = { snapshot: observed, admissibility: assessTransition({ actionRef, q, view: history, canonical, run, actual: observed, reasons: observation.reasons, now,
+      evidenceRefs: q.transition.effect?.evidence ?? [] }, transitionServices) };
+  }
+  return { run, observation };
 }
 function event(state, q, transition, observation, now) {
   const row = { seq: state.history.length, prev: state.history.at(-1)?.sha256 ?? null, runSha256: memoryHash(state.run), observedAtMs: now, attemptId: q.attemptId,
@@ -362,7 +423,7 @@ function stableObservation(o) {
   // state. Preserve raw diagnostics in each observation; compare every other
   // context/head/acceptance field, and never normalize current proof evidence.
   const budgetPartial = o.acceptance.status === 'unverified' && o.acceptance.reason === 'original-limit-exhausted' && o.reasons.includes('original-limit-exhausted');
-  return { identity: o.identity, inputs: o.inputs, ao: o.ao, associations: o.associations,
+  return { identity: o.identity, inputs: o.inputs, ao: o.ao, associations: o.associations, ...(Object.hasOwn(o, 'transition') ? { transition: o.transition } : {}),
     acceptance: budgetPartial ? { ...o.acceptance, diagnostic: null } : o.acceptance,
     reasons: budgetPartial ? [...o.reasons].sort() : o.reasons };
 }
@@ -375,7 +436,8 @@ function commit(root, q, state, expected, services, fence) {
     if (current.headSha256 !== q.expectedHeadSha256 || current.headSha256 !== expected) stop('resume-head-stale', 'runtime predecessor changed');
     fence();
     replay(state.history, state.run);
-    const b = Buffer.from(JSON.stringify(state, null, 2) + '\n');
+    // Retain every event/field under the same byte cap; whitespace is not history.
+    const b = Buffer.from(JSON.stringify(state) + '\n');
     if (b.length > MEMORY_LIMITS.maxBytes) stop('resume-history-invalid', 'runtime metadata limit reached; no compaction/reset');
     const tmp = path.join(dir, '.tmp-' + q.attemptId), fd = fs.openSync(tmp, 'wx'); writing = true;
     try { fs.writeFileSync(fd, b); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
@@ -408,19 +470,16 @@ export function runResume(operation, options, services) {
   try {
     const now = services.now?.() ?? Date.now();
     if (previous.lastObservedAtMs !== null && now < previous.lastObservedAtMs) stop('resume-clock-rollback', 'clock/accounting moved backwards');
-    const { run, observation } = observe(root, q, services, data.out, previous.state?.run, now);
+    const { run, observation } = observe(root, q, services, data.out, previous.state?.run, now, null, !previous.state, previous);
     if (!previous.state && observation.reasons.includes('prior-accounting-unknown')) {
       const result = { schema: 'fvs/auto-resume-result', schemaVersion: 1, code: 'partial', request: q, requestSha256: memoryHash(q), expectedPredecessorHeadSha256: q.expectedHeadSha256, committedHeadSha256: null, observation, effectExecutable: false, reason: 'prior accounting unknown; no execution anchor or runtime was created' };
       if (q.transition) stop('resume-partial', result.reason, { reasons: observation.reasons });
       save(data.out, 'result.json', result); return result;
     }
     const state = previous.state ? snapshot(previous.state) : { schema: 'fvs/auto-runtime', schemaVersion: 1, run, history: [] };
-    for (const r of previous.reservations.values()) if (r.state !== 'closed') {
-      if (r.intent.effect.kind === 'ao-launch' && r.sessionId && !observation.associations.some((a) => a.value.sessionId === r.sessionId && a.value.reservationId === r.id)) observation.reasons.push('reserved-association-missing');
-    }
     let recorded;
     if (q.transition) {
-      if (q.transition.position === 'before' && observation.reasons.length) stop('resume-partial', 'continuation is blocked by current observations', { reasons: observation.reasons });
+      if (q.transition.position === 'before' && observation.reasons.length && observation.transition?.admissibility.status !== 'next-action-eligible') stop('resume-partial', 'continuation is blocked by current observations', { reasons: observation.reasons });
       recorded = event(state, q, q.transition, observation, now);
     } else {
       const intent = { transitionId: q.attemptId, reservationId: q.attemptId, stage: 'reconcile', nodes: [], owner: run.coordinatorSessionId, effect: { kind: 'local', operation: 'reconcile' } };
@@ -432,7 +491,7 @@ export function runResume(operation, options, services) {
       const fenceOut = ownOutput(path.join(data.out, 'fence'), root);
       const fenceAtMs = services.now?.() ?? Date.now();
       if (fenceAtMs < now) stop('resume-clock-rollback', 'clock moved backwards at the observation fence');
-      const checked = observe(root, q, services, fenceOut, run, fenceAtMs, observation.memory, !previous.state);
+      const checked = observe(root, q, services, fenceOut, run, fenceAtMs, observation.memory, !previous.state, previous);
       save(fenceOut, 'observation.json', checked.observation);
       if (!same(stableObservation(checked.observation), stableObservation(observation))) stop('resume-context-stale', 'AO/Git/receipt/context changed before checkpoint');
       validateRequest(q); // Rehash caller-bound inputs at the publication fence.
@@ -442,12 +501,14 @@ export function runResume(operation, options, services) {
         if (q.transition?.position === 'before') stop('resume-partial', 'original limit expired before intent publication', { reasons: ['original-limit-exhausted'] });
         if (!observation.reasons.includes('original-limit-exhausted')) observation.reasons.push('original-limit-exhausted');
       }
+      const observationInput = q.transition?.intent.request ? save(data.out, 'observation.json', observation) : null;
       // Only this new suffix changes; predecessor history stays byte-identical.
       const rewritten = new Map();
       for (let i = previous.state?.history.length ?? 0; i < state.history.length; i++) {
         const row = state.history[i], oldSha = row.sha256;
         row.event.observedAtMs = endedAtMs; row.event.prev = state.history[i - 1]?.sha256 ?? null;
         row.event.beforeEventSha256 = rewritten.get(row.event.beforeEventSha256) ?? row.event.beforeEventSha256;
+        if (observationInput) { row.event.observation = null; row.event.observationInput = observationInput; }
         row.sha256 = memoryHash(row.event); rewritten.set(oldSha, row.sha256);
       }
     });
@@ -457,14 +518,16 @@ export function runResume(operation, options, services) {
     save(data.out, 'result.json', result); return result;
   } catch (e) { save(data.out, 'failure.json', { code: e.code ?? 'resume-unverified', message: e.message }); throw e; }
 }
-export function consumeResume(options, services) {
+export function consumeResume(options, services) { return consume(options, services, false); }
+export function consumeTransition(options, services) { return consume(options, services, true); }
+function consume(options, services, transition) {
   const data = snapshot(options); closed(data, ['projectRoot', 'request', 'out'], 'resume consumer');
   const q = validateRequest(data.request), root = directory(data.projectRoot), result = parse(bytes(path.join(data.out, 'result.json')));
-  if (result.schema !== 'fvs/auto-resume-result' || result.schemaVersion !== 1 || result.code !== 'reconciled' || result.requestSha256 !== memoryHash(q) || !same(result.request, q)
+  if (result.schema !== 'fvs/auto-resume-result' || result.schemaVersion !== 1 || !(result.code === 'reconciled' || (transition && ['partial', 'checkpointed'].includes(result.code))) || result.requestSha256 !== memoryHash(q) || !same(result.request, q)
     || result.expectedPredecessorHeadSha256 !== q.expectedHeadSha256 || !matches(result.committedHeadSha256, SHA)) stop('resume-result-mismatch', 'not this caller current reconciliation result');
   if (!same(bound(result.requestInput), q) || !same(result.implementation, implementation())) stop('resume-evidence-invalid', 'request or adapter implementation changed');
   const current = readRuntime(root), latest = current.state?.history.at(-1);
-  if (current.headSha256 !== result.committedHeadSha256 || current.fileSha256 !== result.runtimeFileSha256 || !same(latest.event.observation, result.observation)) stop('resume-head-stale', 'reconciliation committed head/bytes changed');
+  if (current.headSha256 !== result.committedHeadSha256 || current.fileSha256 !== result.runtimeFileSha256 || !same(readRuntimeObservation(latest.event), result.observation)) stop('resume-head-stale', 'reconciliation committed head/bytes changed');
   for (const ref of result.observation.receipts) {
     const receipt = bound(ref);
     if (receipt.requestSha256 !== memoryHash(q) || receipt.attemptId !== q.attemptId || receipt.exitCode !== 0 || receipt.signal || receipt.error || receipt.toolBefore !== receipt.toolAfter) stop('resume-evidence-invalid', 'invalid observation receipt');
@@ -473,10 +536,54 @@ export function consumeResume(options, services) {
   const out = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'fvs-resume-consume-')); fs.mkdirSync(path.join(out, 'receipts'));
   const now = services.now?.() ?? Date.now();
   if (now < current.lastObservedAtMs) stop('resume-clock-rollback', 'clock/accounting moved backwards');
-  const observed = observe(root, q, services, out, current.state.run, now, result.observation.memory);
+  const observed = observe(root, q, services, out, current.state.run, now, result.observation.memory, false, current);
   const finalHead = readRuntime(root).headSha256, endedAtMs = services.now?.() ?? Date.now();
   if (endedAtMs < now || endedAtMs < current.lastObservedAtMs) stop('resume-clock-rollback', 'clock moved backwards during consumption', { verificationEvidence: out });
-  if (endedAtMs >= current.state.run.deadlineMs) stop('resume-partial', 'original limit expired during consumption; preserve the resumable checkpoint', { reasons: ['original-limit-exhausted'], verificationEvidence: out });
-  if (observed.observation.reasons.length || !same(stableObservation(observed.observation), stableObservation(result.observation)) || finalHead !== result.committedHeadSha256) stop('resume-context-stale', 'current observation no longer matches the committed reconciliation');
+  if (endedAtMs >= current.state.run.deadlineMs && !(transition && q.transition?.position === 'after')) stop('resume-partial', 'original limit expired during consumption; preserve the resumable checkpoint', { reasons: ['original-limit-exhausted'], verificationEvidence: out });
+  if ((!transition && observed.observation.reasons.length) || !same(stableObservation(observed.observation), stableObservation(result.observation)) || finalHead !== result.committedHeadSha256) stop('resume-context-stale', 'current observation no longer matches the committed reconciliation');
+  if (transition) {
+    const row = observed.observation.transition?.admissibility;
+    if (!row || !q.transition?.intent.request || (q.transition.position === 'before' && row.status !== 'next-action-eligible')) stop('resume-partial', 'no independently current bounded transition');
+    return { code: 'transition-reconciled', committedHeadSha256: current.headSha256, observation: observed.observation, effectExecutable: false,
+      action: q.transition.intent.request, position: q.transition.position, verificationEvidence: out };
+  }
   return { code: 'reconciled', committedHeadSha256: current.headSha256, observation: observed.observation, semanticCheckRequired: result.semanticCheckRequired, effectExecutable: false, verificationEvidence: out };
+}
+
+// Startup/packet consumers supply their own current request; AO has no path
+// field, so the retained controller association is joined with actual Git.
+export function observeAssignedActor({ projectRoot, ao, actor, attemptId, out }) {
+  const view = readRuntime(projectRoot), run = view.state?.run;
+  if (!run || ao.projectId !== run.aoProjectId || ao.stateHome !== run.aoStateHome || actor.projectId !== run.aoProjectId) stop('resume-project-mismatch', 'actor must belong to the current controller run');
+  const reservation = view.reservations.get(actor.reservationId);
+  if (!reservation) stop('resume-association-invalid', 'actor has no retained reservation');
+  reservedAssociation({ ...actor, owner: reservation.intent.owner, nodes: reservation.intent.nodes, rulesProfile: actor.profile }, view, run, { live: true });
+  ownOutput(out, projectRoot);
+  const r = runner(out, { ao, attemptId }), rows = aoObserve({ ao }, run, r);
+  if (!rows.some((s) => s.id === actor.sessionId && s.kind === 'worker' && !s.isTerminated)) stop('resume-association-invalid', 'no fresh live same-project actor');
+  const g = git(actor.worktree.path, r);
+  if (g.gitCommonDir !== run.gitCommonDir || !g.worktrees.split('\n\n').some((s) => s.split('\n').includes('worktree ' + g.root) && s.split('\n').includes('branch ' + g.branchRef))) stop('resume-association-invalid', 'actor is not an actual registered worktree');
+  return { ...actor, worktree: { path: g.root, gitDir: g.gitDir, gitCommonDir: g.gitCommonDir, branchRef: g.branchRef, commit: g.commit, tree: g.tree, dirty: g.dirty } };
+}
+
+export function verifyReleasedPacketContext({ projectRoot, ao, packet, memoryRequest, out }, services) {
+  const view = readRuntime(projectRoot), run = view.state?.run, p = readWorkPacket(packet);
+  const before = view.state?.history.find((r) => r.event.position === 'before' && r.event.intent.request && (() => {
+    const a = readTransitionAction(r.event.intent.request); return a.kind === 'release' && same(a.target.packet, packet);
+  })());
+  if (!before || !run || ao.projectId !== run.aoProjectId || ao.stateHome !== run.aoStateHome) stop('resume-pair-conflict', 'no retained release-before for this packet/controller');
+  const a = readTransitionAction(before.event.intent.request), canonical = services.loadCanonical();
+  if (canonical.view.state.choicesGeneration !== run.choicesGeneration || canonical.view.agreement.contextSha256 !== run.agreementContextSha256) stop('resume-context-stale', 'packet canonical agreement changed');
+  ownOutput(out, projectRoot);
+  const q = { ao, attemptId: memoryRequest.attemptId, inputs: readRuntimeObservation(before.event).inputs, memoryRequest, source: { root: a.before.source.root }, associations: [], transition: null };
+  const r = runner(out, q), rows = aoObserve(q, run, r);
+  const known = new Set([...view.reservations.values()].filter((r) => r.state === 'active').map((r) => r.sessionId));
+  if (!known.has(p.actor.sessionId) || rows.some((s) => s.kind === 'worker' && !s.isTerminated && !known.has(s.id))) stop('resume-association-invalid', 'packet actor or another current worker lacks an active controller assignment');
+  const source = git(a.before.source.root, r), associated = association(a.target.association, run);
+  const ts = { ...services.transitions, profileObservation: redactAOProfile(r.run(ao.tool.file, ['project', 'get', run.aoProjectId, '--json'], projectRoot, true, redactAOProfile)),
+    verifyAssociation(a) { reservedAssociation(a, view, run, { live: true }); },
+    observeWorktree(expected) { const g = git(expected.path, r); return { path: g.root, gitDir: g.gitDir, gitCommonDir: g.gitCommonDir, branchRef: g.branchRef, commit: g.commit, tree: g.tree, dirty: g.dirty }; } };
+  const actual = transitionSnapshot({ q, run, canonical, action: a, observation: { identity: { source }, associations: [{ reference: a.target.association, value: associated }] } }, ts);
+  validateReleasedContext({ actionRef: before.event.intent.request, packet, canonical, actual }, ts);
+  return { status: 'released-context-current', releaseBeforeEventSha256: before.sha256, receipts: r.refs, executable: false };
 }

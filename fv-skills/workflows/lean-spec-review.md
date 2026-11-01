@@ -6,6 +6,15 @@ model, and effort; the orchestrator records the response and checks the findings
 
 <process>
 
+<controller_mode>
+For the verified controller review assignment, follow `fv-skills/references/auto-transitions.md` startup/prime/start
+guards. The controller prepares the existing `other` packet without provider execution, sends its
+complete prompt/context to this fresh read-only AO reviewer and imports the returned response with
+the existing validator. Keep actual session/model/effort provenance and Other/unverified labels
+honest. Review only the hashed packet, report missing evidence and return to the controller; do not
+launch a nested reviewer or replace the selected profile. Standalone selection below stays unchanged.
+</controller_mode>
+
 ## 1. Resolve the target and choose the reviewer
 
 Resolve the requested existing `.lean` spec, its function, Rust source, extracted Funs/Types,
