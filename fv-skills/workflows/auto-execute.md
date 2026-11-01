@@ -14,6 +14,14 @@ the17 reference handoff. Reuse initial agreement; no routine per-round human gat
 children. Actual live provider execution requires the concrete19 setup/permission. Missing context
 stays partial. Otherwise use the standalone reconciliation/report path below; it dispatches nothing.
 
+At an end-of-run or partial-results boundary, use `fv-skills/references/auto-review-bundle.md`
+to build and verify the17 local human-review artifact. Supply the independently held full scope
+inventory and current source/context references, including failed/unmapped items; the22 proposal
+alone is not complete coverage evidence. Capture pending/expired/unfinished reasons without restarting
+work. Bundle integrity, historical proof facts, fresh currentness and human approval are separate.
+This step writes no PR, checker receipt, registry, runtime or memory state. Human re-specification
+continues through18's separately implemented whole-scope path; it is not inferred from bundle verification.
+
 ## Step 1: Require Agent Orchestrator
 
 ```bash
