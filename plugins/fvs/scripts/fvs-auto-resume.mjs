@@ -157,6 +157,15 @@ function replay(history, run) {
           const observed = proof.session;
           if (!target.sessionId || observed?.id !== target.sessionId || observed.projectId !== run.aoProjectId || observed.isTerminated !== true
             || !e.observation.ao.some((s) => s.id === observed.id && s.isTerminated)) stop('resume-pair-conflict', 'missing current matched termination');
+        } else if (resolution.reason === 'local-completed') {
+          closed(proof, ['schema', 'schemaVersion', 'runId', 'reservationId', 'transitionId', 'beforeEventSha256', 'stage', 'operation', 'controllerSessionId', 'effectInvoked', 'terminalOutcome', 'effectEvidence'], 'recovered local completion');
+          if (target.intent.effect.kind !== 'local' || !['pending', 'uncertain'].includes(target.state)
+            || proof.schema !== 'fvs/auto-local-effect-completion' || proof.schemaVersion !== 1 || proof.runId !== run.runId || proof.reservationId !== target.id
+            || proof.transitionId !== target.intent.transitionId || proof.beforeEventSha256 !== target.before || proof.stage !== target.intent.stage || proof.operation !== target.intent.effect.operation
+            || proof.controllerSessionId !== run.coordinatorSessionId || proof.effectInvoked !== true || !['succeeded', 'failed'].includes(proof.terminalOutcome)
+            || !Array.isArray(proof.effectEvidence) || !proof.effectEvidence.length) stop('resume-pair-conflict', 'completion is not for this invoked local effect');
+          for (const ref of proof.effectEvidence) boundBytes(ref);
+          target.terminalOutcome = proof.terminalOutcome; // Execution closure only, never proof acceptance.
         } else stop('resume-pair-conflict', 'unsupported resolution evidence');
         target.state = 'closed'; old.state = 'closed';
       } else {
@@ -317,12 +326,24 @@ function observe(root, q, services, out, previous, now, memory = null, unanchore
   }
   for (const s of ao) if (s.id !== run.coordinatorSessionId && !s.isTerminated && !seen.has(s.id)) reasons.push('unclassified-ao-session:' + s.id);
   let acceptance = { status: 'not-established', acceptedBaseline: null, nodes: [], storeHeadSha256: null };
-  if (q.inputs.acceptedStore !== null) acceptance = services.inspectAcceptance({ baseline: q.inputs.baseline, store: q.inputs.acceptedStore, source: q.source, deadlineMs: run.deadlineMs, out: path.join(out, 'acceptance') });
+  if (q.inputs.acceptedStore !== null) {
+    if (now >= run.deadlineMs) acceptance = { status: 'unverified', reason: 'original-limit-exhausted', acceptedBaseline: null, nodes: [], storeHeadSha256: null };
+    else {
+      try { acceptance = services.inspectAcceptance({ baseline: q.inputs.baseline, store: q.inputs.acceptedStore, source: q.source, deadlineMs: run.deadlineMs, out: path.join(out, 'acceptance') }); }
+      catch (e) {
+        if (e.code !== 'timeout') throw e;
+        acceptance = { status: 'unverified', reason: 'inspection-deadline-exhausted', acceptedBaseline: null, nodes: [], storeHeadSha256: null };
+        reasons.push('original-limit-exhausted');
+      }
+    }
+  }
   else if (q.inputs.baseline !== null) reasons.push('accepted-store-required');
   if (acceptance.inputs) for (const key of ['extraction', 'graph', 'plan']) {
     if (q.inputs[key] !== null && !same(q.inputs[key], acceptance.inputs[key])) reasons.push('stage-context-mismatch:' + key);
   }
-  if (unanchored && q.priorAccounting === null && (acceptance.acceptedBaseline || ao.some((s) => s.kind === 'worker') || q.associations.length)) reasons.push('prior-accounting-unknown');
+  const earlierExecution = canonical.view.state.extraction !== null || ['extraction', 'graph', 'plan', 'baseline'].some((key) => q.inputs[key] !== null)
+    || q.inputs.acceptedStore?.expectedHeadSha256 != null || acceptance.acceptedBaseline || ao.some((s) => s.kind === 'worker') || q.associations.length;
+  if (unanchored && q.priorAccounting === null && earlierExecution) reasons.push('prior-accounting-unknown');
   if (memory === null) {
     services.refreshMemory({ projectRoot: root, callerRoot: root, request: q.memoryRequest, out: path.join(out, 'memory') });
     memory = { out: path.join(out, 'memory'), requestSha256: memoryHash(q.memoryRequest) };
@@ -444,6 +465,9 @@ export function consumeResume(options, services) {
   const now = services.now?.() ?? Date.now();
   if (now < current.lastObservedAtMs) stop('resume-clock-rollback', 'clock/accounting moved backwards');
   const observed = observe(root, q, services, out, current.state.run, now, result.observation.memory);
-  if (observed.observation.reasons.length || !same(stableObservation(observed.observation), stableObservation(result.observation)) || readRuntime(root).headSha256 !== result.committedHeadSha256) stop('resume-context-stale', 'current observation no longer matches the committed reconciliation');
+  const finalHead = readRuntime(root).headSha256, endedAtMs = services.now?.() ?? Date.now();
+  if (endedAtMs < now || endedAtMs < current.lastObservedAtMs) stop('resume-clock-rollback', 'clock moved backwards during consumption', { verificationEvidence: out });
+  if (endedAtMs >= current.state.run.deadlineMs) stop('resume-partial', 'original limit expired during consumption; preserve the resumable checkpoint', { reasons: ['original-limit-exhausted'], verificationEvidence: out });
+  if (observed.observation.reasons.length || !same(stableObservation(observed.observation), stableObservation(result.observation)) || finalHead !== result.committedHeadSha256) stop('resume-context-stale', 'current observation no longer matches the committed reconciliation');
   return { code: 'reconciled', committedHeadSha256: current.headSha256, observation: observed.observation, semanticCheckRequired: result.semanticCheckRequired, effectExecutable: false, verificationEvidence: out };
 }

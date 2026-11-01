@@ -40,6 +40,31 @@ describe('runtime checkpoint/current reconciliation', () => {
     assert.equal(auto.readRuntimeState({ projectRoot: x.root }).state, null); auto.readState({ projectRoot: x.root });
     assert.equal(fs.existsSync(file(x)), false); assert.deepEqual(fs.readFileSync(f.stateFile(x.root)), b);
   });
+  for (const status of ['failed', 'succeeded']) {
+    it('legacy ' + status + ' extraction cannot silently acquire a fresh clock with no live worker', () => {
+      const x = make(), s = JSON.parse(fs.readFileSync(f.stateFile(x.root)));
+      s.extraction = { status, recordedAt: 'legacy fixture execution', selected: s.choices.source,
+        reasons: status === 'failed' ? ['recorded synthetic failure'] : [], declared: { buildExitCode: status === 'failed' ? 1 : 0, oracle: status === 'failed' ? 'refused' : 'complete' },
+        checks: Object.fromEntries(['status', 'verify-tree', 'verify-restore'].map((k) => [k, { ok: status === 'succeeded' }])),
+        inputs: status === 'failed' ? null : { out: x.owned, manifestSha256: 'a'.repeat(64), crateRoot: x.root, mode: 'translation-patches', sourceCommit: f.git(x.root, 'rev-parse', 'HEAD'), patches: [] },
+        note: 'Protocol legacy execution pointer; not a genuine extraction claim.' };
+      fs.writeFileSync(f.stateFile(x.root), JSON.stringify(s)); const before = fs.readFileSync(f.stateFile(x.root));
+      const y = x.invoke(); assert.equal(y.result.code, 'partial'); assert.ok(y.result.observation.reasons.includes('prior-accounting-unknown'));
+      assert.equal(stateBytes(x), null); assert.deepEqual(fs.readFileSync(f.stateFile(x.root)), before);
+      const accounting = x.accounting(), original = JSON.parse(fs.readFileSync(accounting.file));
+      const recovered = x.invoke(x.request({ priorAccounting: accounting }));
+      assert.equal(recovered.result.code, 'reconciled');
+      const run = auto.readRuntimeState({ projectRoot: x.root }).state.run;
+      assert.equal(run.startedAtMs, original.startedAtMs); assert.equal(run.deadlineMs, Math.floor(original.startedAtMs + original.limits.wallClockHours * 3600000));
+      assert.deepEqual(fs.readFileSync(f.stateFile(x.root)), before);
+    });
+  }
+  it('pre-acceptance stage evidence of unknown run relation cannot imply zero earlier execution', () => {
+    for (const stage of ['extraction', 'graph', 'plan', 'baseline']) {
+      const x = make(), q = x.request(); q.inputs[stage] = f.json(x.owned, 'earlier-stage', { scope: 'protocol earlier-stage pointer, not genuine proof evidence' });
+      const y = x.invoke(q); assert.equal(y.result.code, 'partial'); assert.ok(y.result.observation.reasons.includes('prior-accounting-unknown')); assert.equal(stateBytes(x), null);
+    }
+  });
   it('a checkpoint and process restart preserve the original start/deadline and inactive nodeHours', () => {
     const x = make(), a = x.invoke(), prior = auto.readRuntimeState({ projectRoot: x.root }).state.run;
     const q = x.request(), input = f.json(x.owned, 'request', q), out = x.out();
@@ -97,6 +122,22 @@ describe('runtime checkpoint/current reconciliation', () => {
       refuses('resume-clock-rollback', () => resume.runResume('state', { projectRoot: x.root, request: x.request(), out: x.out() }, services(x, { now: () => times.shift() })));
       assert.deepEqual(stateBytes(x), b);
     }
+  });
+  it('consumer end fence catches cap expiry/rollback after observations, preserving the checkpoint', () => {
+    const x = make(), y = x.invoke(), current = auto.readRuntimeState({ projectRoot: x.root }), before = stateBytes(x);
+    for (const [end, code] of [[current.state.run.deadlineMs + 1, 'resume-partial'], [current.lastObservedAtMs + 9, 'resume-clock-rollback']]) {
+      const times = [current.lastObservedAtMs + 10, end];
+      refuses(code, () => resume.consumeResume({ projectRoot: x.root, request: y.q, out: y.out }, services(x, { now: () => times.shift() })));
+      assert.deepEqual(stateBytes(x), before);
+    }
+    assert.equal(resume.consumeResume({ projectRoot: x.root, request: y.q, out: y.out }, services(x, { now: () => current.lastObservedAtMs + 1 })).code, 'reconciled');
+  });
+  it('exhaustion checkpoints partial with unverified acceptance instead of demanding an expired inspection', () => {
+    const x = make(); x.invoke(); const original = auto.readRuntimeState({ projectRoot: x.root }).state.run, q = x.request();
+    q.inputs.acceptedStore = { root: path.join(x.owned, 'empty-store'), expectedHeadSha256: null }; let inspected = 0;
+    const result = resume.runResume('state', { projectRoot: x.root, request: q, out: x.out() }, services(x, { now: () => original.deadlineMs + 1, inspectAcceptance() { inspected++; throw Object.assign(new Error('expired'), { code: 'timeout' }); } }));
+    assert.equal(result.code, 'partial'); assert.equal(result.observation.acceptance.status, 'unverified'); assert.equal(result.observation.acceptance.acceptedBaseline, null);
+    assert.equal(inspected, 0); assert.deepEqual(auto.readRuntimeState({ projectRoot: x.root }).state.run, original);
   });
 });
 
@@ -177,6 +218,37 @@ describe('paired effects, reservations and serial capacity', () => {
     const replay = x.invoke(x.request({ transition: x.before(intent) }), 'checkpoint');
     assert.equal(replay.result.committedHeadSha256, null); assert.equal(replay.result.code, 'already-recorded'); assert.ok(first.result.recordedEventSha256);
   });
+  for (const terminalOutcome of ['succeeded', 'failed']) {
+    it('recovered ' + terminalOutcome + ' local completion closes execution uncertainty without proving anything', () => {
+      const x = make(), intent = x.local([19], 'check'), first = x.invoke(x.request({ transition: x.before(intent) }), 'checkpoint');
+      x.invoke(x.request({ transition: x.after(first, undefined, 'uncertain') }), 'checkpoint');
+      const unresolved = auto.readRuntimeState({ projectRoot: x.root }), prefix = JSON.stringify(unresolved.state.history);
+      const resolution = { ...x.local([], 'reconcile'), effect: { kind: 'reservation-resolution', targetReservationId: intent.reservationId } }, before = x.invoke(x.request({ transition: x.before(resolution) }), 'checkpoint');
+      const evidence = f.json(x.owned, 'terminal-command', { argv: ['fixture-checker'], exitCode: terminalOutcome === 'succeeded' ? 0 : 9 });
+      const proof = { schema: 'fvs/auto-local-effect-completion', schemaVersion: 1, runId: x.runId, reservationId: intent.reservationId, transitionId: intent.transitionId, beforeEventSha256: first.result.recordedEventSha256,
+        stage: intent.stage, operation: intent.effect.operation, controllerSessionId: 'coordinator', effectInvoked: true, terminalOutcome, effectEvidence: [evidence] };
+      const effect = (p) => ({ sessionId: null, association: null, evidence: [], resolution: { reason: 'local-completed', evidence: f.json(x.owned, 'completion', p) } });
+      for (const change of [(p) => p.operation = 'integration', (p) => p.reservationId = f.uuid(), (p) => p.beforeEventSha256 = '0'.repeat(64), (p) => p.effectEvidence = []]) {
+        const p = structuredClone(proof); change(p); const b = stateBytes(x);
+        refuses('resume-pair-conflict', () => x.invoke(x.request({ transition: x.after(before, effect(p)) }), 'checkpoint')); assert.deepEqual(stateBytes(x), b);
+      }
+      const changed = f.json(x.owned, 'changed-effect', { exitCode: 0 }); fs.appendFileSync(changed.file, '\n');
+      refuses('resume-evidence-invalid', () => x.invoke(x.request({ transition: x.after(before, effect({ ...proof, effectEvidence: [changed] })) }), 'checkpoint'));
+      x.invoke(x.request({ transition: x.after(before, effect(proof)) }), 'checkpoint');
+      const closed = auto.readRuntimeState({ projectRoot: x.root });
+      assert.equal(closed.reservations.get(intent.reservationId).state, 'closed'); assert.equal(closed.reservations.get(intent.reservationId).terminalOutcome, terminalOutcome);
+      assert.equal(JSON.stringify(closed.state.history.slice(0, unresolved.state.history.length)), prefix); assert.deepEqual(closed.state.run, unresolved.state.run);
+      assert.equal(fs.existsSync(path.join(x.owned, 'store')), false, 'completion is not a proof receipt');
+    });
+  }
+  it('a local-completed controller record cannot release a launch reservation', () => {
+    const x = make(), launch = x.launch(), first = x.invoke(x.request({ transition: x.before(launch) }), 'checkpoint');
+    const intent = { ...x.local([], 'reconcile'), effect: { kind: 'reservation-resolution', targetReservationId: launch.reservationId } }, before = x.invoke(x.request({ transition: x.before(intent) }), 'checkpoint');
+    const proof = f.json(x.owned, 'not-local', { schema: 'fvs/auto-local-effect-completion', schemaVersion: 1, runId: x.runId, reservationId: launch.reservationId, transitionId: launch.transitionId,
+      beforeEventSha256: first.result.recordedEventSha256, stage: launch.stage, operation: 'proof', controllerSessionId: 'coordinator', effectInvoked: true, terminalOutcome: 'succeeded', effectEvidence: [f.json(x.owned, 'effect', { exitCode: 0 })] });
+    const b = stateBytes(x); refuses('resume-pair-conflict', () => x.invoke(x.request({ transition: x.after(before, { sessionId: null, association: null, evidence: [], resolution: { reason: 'local-completed', evidence: proof } }) }), 'checkpoint'));
+    assert.deepEqual(stateBytes(x), b); assert.equal(auto.readRuntimeState({ projectRoot: x.root }).reservations.get(launch.reservationId).state, 'pending');
+  });
   it('two competing last-slot CLI intents cannot oversubscribe capacity', async () => {
     const x = make(); x.invoke();
     // This test uses the last free slot under the original limit3.
@@ -235,9 +307,9 @@ describe('actual AO shapes plus retained controller associations', () => {
     assert.ok(receipts.filter((r) => r.argv[0] === x.tool).every((r) => r.env.HOME === x.stateHome));
     assert.ok(receipts.filter((r) => r.argv[0] === '/usr/bin/git').every((r) => r.env.HOME === undefined));
   });
-  for (const [name, extra] of [['hidden inventory', { meta: { hiddenTerminatedCount: 1, hiddenOrchestratorCount: 0 } }], ['conflicting get', { details: [f.row('coordinator', 'orchestrator', { activity: 'active' })] }], ['duplicate ids', { rows: [f.row('coordinator', 'orchestrator'), f.row('coordinator', 'orchestrator')] }]]) {
+  for (const [name, extra, code] of [['hidden inventory', { meta: { hiddenTerminatedCount: 1, hiddenOrchestratorCount: 0 } }, 'resume-ao-invalid'], ['conflicting get', { details: [f.row('coordinator', 'orchestrator', { activity: 'active' })] }, 'resume-ao-conflict'], ['duplicate ids', { rows: [f.row('coordinator', 'orchestrator'), f.row('coordinator', 'orchestrator')] }, 'resume-ao-invalid'], ['oversize output', { oversize: true }, 'resume-command-failed'], ['unknown activity', { rows: [f.row('coordinator', 'orchestrator', { activity: 'unknown' })] }, 'resume-ao-invalid'], ['missing coordinator', { rows: [] }, 'resume-ao-invalid']]) {
     it(name + ' fails closed before memory write', () => {
-      const x = make(); x.writeControl(extra); assert.throws(() => x.invoke()); assert.equal(stateBytes(x), null); assert.equal(f.calls(x.root).some((c) => c.cmd === 'remember'), false);
+      const x = make(); x.writeControl(extra); refuses(code, () => x.invoke()); assert.equal(stateBytes(x), null); assert.equal(f.calls(x.root).some((c) => c.cmd === 'remember'), false);
     });
   }
   it('a malformed/changed controller reference cannot fabricate a session/path association', () => {

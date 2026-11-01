@@ -62,7 +62,15 @@ const observation = verifyReconciliation({ projectRoot: primary, request, out })
 The result binds the requested predecessor and the newly committed head separately. Consumption
 checks the committed head, current physical Git/AO identities, actual fresh memory bytes, current
 checker/contract/import/source identities and original limits again. A later checkpoint stales the
-earlier result. Worker reports, AO completion and Beads context establish no acceptance.
+earlier result. Consumption samples the clock again after observations and the final head check; expiry
+or rollback stops readiness without changing the original checkpoint/deadline. Exhausted reconciliation
+records partial with acceptance explicitly unverified when its inspection deadline is unavailable.
+Worker reports, AO completion and Beads context establish no acceptance.
+
+Every returned accepted node must match the requested integrated commit/tree, frozen/registry context
+and current dependency receipt heads. An unrelated later acceptance does not refresh old node proofs.
+Older trees or superseded helpers conservatively require15 recheck; the accepted-baseline summary must
+belong to the selected context. Inspection neither rebases nor publishes a receipt.
 
 ## Controller session association
 
@@ -117,7 +125,14 @@ Explicit resolution names the target reservation. Its successful after uses
 `effectInvoked:false`; `session-terminated` cites actual current matched AO get JSON and fresh
 `isTerminated:true`. Missing AO rows or a failed command alone release no capacity. These records
 retain workflow provenance rather than authenticating a host. Uncertain local effects also remain
-blocked until resolved.16 performs no launch or termination.
+blocked until resolved. An invoked local effect may use `local-completed` with a bound closed record:
+`{schema:"fvs/auto-local-effect-completion",schemaVersion:1,runId,reservationId,transitionId,
+beforeEventSha256,stage,operation,controllerSessionId,effectInvoked:true,terminalOutcome,
+effectEvidence:[...]}`. `terminalOutcome` is succeeded/failed; nonempty effectEvidence binds actual
+retained bytes. The run/reservation/before/action must exactly match a pending/uncertain **local**
+effect. The resolution appends history and closes only execution uncertainty; a failed operation stays
+failed, and even a successful completion grants no proof acceptance. Launch/local substitution refuses.
+16 performs no launch or termination.
 
 ## Runtime and limits
 
@@ -129,7 +144,9 @@ malformed/corrupt history, stale heads and pending lock/temp markers without rep
 
 Original scope, limits, run start/deadline and monotonic observations survive interruptions and restarts.
 `nodeHours` is inactive metadata. Unknown prior execution/accounting remains partial; it cannot be
-assigned zero. The supported accounting record is `fvs/auto-runtime-accounting` version1 with exact
+assigned zero. Existing successful/failed M1 extraction or supplied pre-acceptance stage/freeze
+evidence also requires carried accounting when its run relation is unknown; no live worker or accepted
+proof is not evidence of an unused budget. The supported accounting record is `fvs/auto-runtime-accounting` version1 with exact
 runId, startedAtMs, lastObservedAtMs and original limits. Preserve additional spending restrictions
 through workflow checks; unavailable accounting cannot authorize further spending. Exhaustion stops
 continuation with a resumable partial result, never a larger/reset cap or reduced scope. Local metadata

@@ -566,6 +566,24 @@ export function readAcceptedStore(root, { ignoreLock = false } = {}) {
   return { records, heads, headSha256: previous };
 }
 
+// Relational currentness AFTER immutable-history validation, not a receipt
+// producer. Kept narrow so C1/C2 and superseded-helper cases need no compiler.
+export function currentAcceptedRows(history, { selection, source, frozenSha256, registryHeadSha256 }) {
+  const latest = history.records.at(-1);
+  if (!latest || !selection.has(latest.record.node)) refuse('stale-input', 'latest accepted baseline is outside the requested selected context');
+  const rows = [...history.heads].filter(([node]) => selection.has(node)).map(([, row]) => row);
+  if (!rows.length || !rows.some((row) => row.sha256 === latest.sha256)) refuse('stale-input', 'accepted history has no selected baseline');
+  for (const row of rows) {
+    const record = row.record;
+    if (record.integrated.commit !== source.commit || record.integrated.tree !== source.expectedTree) refuse('stale-input', `node ${record.node} integrated source is older/different; fresh checker recheck required`);
+    if (record.frozenSha256 !== frozenSha256 || record.registryHeadSha256 !== registryHeadSha256) refuse('stale-input', `node ${record.node} has a foreign current context`);
+    for (const dep of record.dependencies) {
+      if (!selection.has(dep.node) || history.heads.get(dep.node)?.sha256 !== dep.sha256) refuse('stale-input', `node ${record.node} depends on a superseded helper receipt; fresh checker recheck required`);
+    }
+  }
+  return rows;
+}
+
 // Resume inspects currentness, never builds or publishes a proof. Historical
 // chain validity alone cannot clear a current freeze/registry/import mismatch.
 export function inspectAutoAcceptance({ baseline, store, source, deadlineMs, out }) {
@@ -581,15 +599,15 @@ export function inspectAutoAcceptance({ baseline, store, source, deadlineMs, out
   }
   if (baseline === null) refuse('stale-input', 'accepted history requires its exact current frozen context');
   const { frozen, context, job } = frozenContext(baseline);
+  const currentRows = currentAcceptedRows(history, { selection: context.view.union, source, frozenSha256: baseline.sha256, registryHeadSha256: frozen.registry.headSha256 });
   exclusive(out);
   integrationHead(source, out, 'inspection-head-before', deadlineMs);
   integrationHead(source, out, 'inspection-tree-before', deadlineMs, true);
   const latest = history.records.at(-1).record;
   if (latest.integrated.commit !== source.commit || latest.integrated.tree !== source.expectedTree) refuse('stale-input', 'accepted integrated source differs; a fresh checker recheck is required');
   const nodes = [];
-  for (const [node, row] of history.heads) {
-    const record = row.record;
-    if (!context.view.union.has(node)) continue;
+  for (const row of currentRows) {
+    const record = row.record, node = record.node;
     if (record.frozenSha256 !== baseline.sha256 || record.registryHeadSha256 !== frozen.registry.headSha256 || record.contract !== frozen.records[node]?.sha256) refuse('stale-input', 'accepted node is stale under the current freeze/registry');
     checkBuildEvidence(checkEvidence(record.integratedCheck, baseline.sha256), { verifyBuildImports }, deadlineMs);
     if (!Array.isArray(record.helperIdentityChecks) || record.helperIdentityChecks.length !== record.dependencies.length) refuse('stale-input', 'accepted helper identity evidence is missing');
