@@ -90,8 +90,11 @@ persistent generation when the M2 extension exists. Changing A→B→A cannot re
 Use exactly one current, unindented `fvs-auto-agreement` JSON fence in the roadmap's `## Decisions`
 section (a heading such as `## Decisions log` also works). No separate agreement/config store. Keep
 historical versions in state and distinctly referenced historical Decisions entries using ordinary
-JSON fences; never duplicate the current marker. Generic roadmap invocations outside auto-init do
-not require this auto-specific fence.
+JSON fences; never duplicate the current marker. The bounded reader recognizes active ATX Decisions
+headings and ignores complete fenced examples/standalone HTML comments. Unclosed/ambiguous markup,
+mixed comment/prose lines and other raw HTML blocks refuse; use ordinary prose or closed code examples.
+Only the documented active unindented triple-backtick tag establishes current context. LF/CRLF are
+supported. Generic roadmap invocations outside auto-init do not require this auto-specific fence.
 
 The closed envelope is:
 

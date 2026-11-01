@@ -219,6 +219,58 @@ describe('nonpublic initial agreement state', () => {
 });
 
 describe('actual current canonical agreement binding', () => {
+
+  const fenceText = (a) => '```fvs-auto-agreement\n' + JSON.stringify(a, null, 2) + '\n```\n';
+  const inactiveForms = {
+    'HTML comment': (a) => '## Decisions\n<!--\n' + fenceText(a) + '-->\n',
+    'longer backtick example and fake heading': (a) => '````markdown\n## Decisions\n' + fenceText(a) + '````\n',
+    'tilde example and fake heading': (a) => '~~~markdown\n## Decisions\n' + fenceText(a) + '~~~\n',
+    'commented fake heading preceding active wrong-section fence': (a) => '## Status\n<!--\n## Decisions\n-->\n' + fenceText(a),
+    'fenced fake heading preceding active wrong-section fence': (a) => '## Status\n````markdown\n## Decisions\n````\n' + fenceText(a),
+    'unclosed outer code': (a) => '````markdown\n## Decisions\n' + fenceText(a),
+    'unclosed comment': (a) => '## Decisions\n<!--\n' + fenceText(a),
+    'nested ambiguous comment': (a) => '<!--\n<!-- nested -->\n## Decisions\n' + fenceText(a) + '-->\n',
+    'unclosed status example after active context': (a) => '## Decisions\n' + fenceText(a) + '## Status\n~~~text\nexample\n',
+    'unclosed status comment after active context': (a) => '## Decisions\n' + fenceText(a) + '<!-- unfinished\n',
+    'ambiguous mixed comment': (a) => 'prose <!--\n## Decisions\n' + fenceText(a) + '-->\n',
+    'raw HTML example': (a) => '<pre>\n## Decisions\n' + fenceText(a) + '</pre>\n',
+    'setext section replacing Decisions': (a) => '## Decisions\nOther section\n=============\n' + fenceText(a),
+  };
+  for (const [name, render] of Object.entries(inactiveForms)) {
+    it('refuses record and gate without writes for ' + name, () => {
+      const { root, a } = approved(); const before = bytes(root);
+      fs.writeFileSync(roadmapPath(root), render(a));
+      refuses('invalid-agreement-context', () => gate(root));
+      refuses('invalid-agreement-context', () => record(root, a, true));
+      assert.deepEqual(bytes(root), before);
+      if (name === 'HTML comment') {
+        const input = path.join(root, 'input.json'); fs.writeFileSync(input, JSON.stringify(a));
+        for (const args of [['read-state', '--require-agreement'], ['record-agreement', '--input', input, '--confirm-overwrite']]) {
+          const r = cli(root, ...args); assert.equal(r.status, 1); assert.equal(r.json.code, 'invalid-agreement-context');
+          assert.deepEqual(bytes(root), before);
+        }
+      }
+    });
+  }
+  it('cannot create the first agreement from a commented example', () => {
+    const root = project(); const a = agreement(root); const before = bytes(root);
+    fs.writeFileSync(roadmapPath(root), inactiveForms['HTML comment'](a));
+    refuses('invalid-agreement-context', () => record(root, a));
+    assert.deepEqual(bytes(root), before); assert.equal('agreements' in state(root), false);
+  });
+  for (const eol of ['\n', '\r\n']) {
+    it('records/reuses active ' + (eol === '\n' ? 'LF' : 'CRLF') + ' context while ignoring harmless status examples', () => {
+      const root = project(); const a = agreement(root);
+      a.ownerEvidence.response += ' A literal <!-- marker --> and ``` inside JSON stay data.';
+      const fake = '## Decisions\n' + fenceText({ example: 'inert code/comment example, no current agreement' });
+      const text = '## Decisions log ##\n' + fenceText(a) + '## Status log\nRoutine prose.\n\n'
+        + '<!--\n' + fake + '-->\n' + '````markdown\n' + fake + '````\n' + '~~~~text\n' + fake + '~~~~\n';
+      fs.writeFileSync(roadmapPath(root), text.replace(/\n/g, eol)); record(root, a);
+      const before = bytes(root); assert.equal(gate(root).agreement.status, 'stored-context-current');
+      assert.equal(record(root, a).code, 'unchanged'); assert.deepEqual(bytes(root), before);
+    });
+  }
+
   it('accepts monorepo intent and keeps explicit execution and draft grants distinct', () => {
     const root = project(); const a = agreement(root); a.payload.layout = 'monorepo';
     a.payload.execution = { actions: ['fixture branch work'], reference: 'fixture:execution-grant' };

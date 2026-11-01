@@ -712,6 +712,67 @@ function validateAgreement(value, code) {
   if (errors.length) refuse(code, 'invalid agreement: ' + errors.join('; '), { errors });
 }
 
+// Bounded Markdown profile: active ATX sections, fenced blocks and standalone HTML comments.
+// Other raw/mixed HTML is ambiguous here and refuses; this is not a general Markdown renderer.
+function activeAgreementText(text, file) {
+  const invalid = (message) => refuse('invalid-agreement-context', message, { file });
+  const contexts = [];
+  let section = '', fence = null, comment = false, paragraph = false;
+  for (const line of text.split(/\r\n|\n|\r/)) {
+    if (fence) {
+      const close = /^ {0,3}(`+|~+)[ \t]*$/.exec(line);
+      if (close && close[1][0] === fence.marker && close[1].length >= fence.length) {
+        if (fence.current) contexts.push(fence);
+        fence = null;
+      } else if (fence.current) fence.lines.push(line);
+      continue; // Headings/comments inside code are inert, including JSON string contents.
+    }
+    if (comment || /^ {0,3}<!--/.test(line)) {
+      let rest = line;
+      while (true) {
+        if (!comment) { rest = rest.trimStart().slice(4); comment = true; }
+        const end = rest.indexOf('-->'), nested = rest.indexOf('<!--');
+        if (nested >= 0 && (end < 0 || nested < end)) invalid('nested HTML comments make the current context ambiguous');
+        if (end < 0) break;
+        comment = false;
+        rest = rest.slice(end + 3).trimStart();
+        if (!rest) break;
+        if (!rest.startsWith('<!--')) invalid('mixed HTML-comment/prose lines are unsupported in the canonical agreement context');
+      }
+      paragraph = false;
+      continue;
+    }
+    if (/^(?: {4}| {0,3}\t)/.test(line)) { paragraph = false; continue; } // Indented examples.
+    const opening = /^( {0,3})(`{3,}|~{3,})(.*)$/.exec(line);
+    if (opening) {
+      const info = opening[3].trim();
+      if (opening[2][0] === '`' && info.includes('`')) invalid('ambiguous backtick fence info');
+      const current = /^fvs-auto-agreement(?:\s|$)/.test(info);
+      if (current && (opening[1] || opening[2] !== '```' || info !== 'fvs-auto-agreement')) {
+        invalid('the active current agreement fence must use unindented triple backticks and the exact fvs-auto-agreement tag');
+      }
+      fence = { marker: opening[2][0], length: opening[2].length, current, section, lines: [] };
+      paragraph = false;
+      continue;
+    }
+    if (line.includes('<!--') || line.includes('-->') || /^ {0,3}<(?:\/?[A-Za-z][A-Za-z0-9-]*(?:[ \t/>])|[!?])/.test(line)) {
+      invalid('mixed comments or other raw HTML blocks make the canonical agreement context ambiguous');
+    }
+    const heading = /^ {0,3}(#{1,6})(?:[ \t]+(.*?)|)[ \t]*$/.exec(line);
+    if (heading) {
+      if (heading[1].length <= 2) section = heading[1].length === 2 ? (heading[2] ?? '').replace(/[ \t]+#+[ \t]*$/, '') : '';
+      paragraph = false;
+    } else if (paragraph && /^ {0,3}(?:=+|-+)[ \t]*$/.test(line)) {
+      section = ''; // A setext heading ends the old section; only documented ATX Decisions is supported.
+      paragraph = false;
+    } else paragraph = line.trim() !== '';
+  }
+  if (fence || comment) invalid('unclosed fenced block or HTML comment makes the canonical agreement context ambiguous');
+  if (contexts.length !== 1) invalid('the roadmap must contain exactly one active current fvs-auto-agreement fence');
+  if (!/^Decisions(?:\s|$)/.test(contexts[0].section)) invalid('the active current agreement fence must be in the roadmap Decisions section');
+  return contexts[0].lines.join('\n');
+}
+
 function currentAgreementContext(root) {
   const file = path.join(root, ROADMAP_PATH);
   let text;
@@ -722,13 +783,9 @@ function currentAgreementContext(root) {
   } catch (error) {
     refuse('agreement-context-missing', 'cannot read the canonical agreement context: ' + error.message, { file });
   }
-  const openings = [...text.matchAll(/^```fvs-auto-agreement[ \t]*\r?$/gm)];
-  const fences = [...text.matchAll(/^```fvs-auto-agreement[ \t]*\r?\n([\s\S]*?)^```[ \t]*\r?$/gm)];
-  if (openings.length !== 1 || fences.length !== 1) refuse('invalid-agreement-context', 'the roadmap must contain exactly one complete current fvs-auto-agreement fence', { file });
-  const section = [...text.slice(0, fences[0].index).matchAll(/^## ([^\r\n]+)$/gm)].at(-1)?.[1];
-  if (!/^Decisions(?:\s|$)/.test(section ?? '')) refuse('invalid-agreement-context', 'the current agreement fence must be in the roadmap Decisions section', { file });
+  const content = activeAgreementText(text, file);
   let agreement;
-  try { agreement = JSON.parse(fences[0][1]); }
+  try { agreement = JSON.parse(content); }
   catch (error) { refuse('invalid-agreement-context', 'the current agreement fence is not JSON: ' + error.message, { file }); }
   validateAgreement(agreement, 'invalid-agreement-context');
   return { agreement, contextSha256: sha256(canonicalJson(agreement)) };
