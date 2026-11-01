@@ -20,7 +20,7 @@ import {
 } from './fvs-probe-inventory.mjs';
 
 import {
-  MemoryError, memoryBindingsErrors, bindingIdentity, inspectMemoryRegistration, memoryJson,
+  MemoryError, memoryOwnData, memoryDataSnapshot, memoryBindingsErrors, bindingIdentity, inspectMemoryRegistration, memoryJson,
   prepareMemoryBootstrapRequest, runMemoryBootstrap, consumeMemoryBootstrap,
 } from './fvs-project-memory.mjs';
 
@@ -1106,8 +1106,9 @@ function memoryCanonical(root) {
   const view = readState({ projectRoot: root, requireAgreement: true });
   return { view, envelope: agreementEnvelope(view.agreement.agreement) };
 }
-export function recordMemory({ projectRoot, registration, confirmOverwrite = false }) {
+export function recordMemory(options) {
   return memoryOperation(() => {
+    const { projectRoot, registration, confirmOverwrite = false } = memoryDataSnapshot(options);
     const root = projectDirectory(projectRoot), state = memoryCanonical(root).view.state;
     const observed = inspectMemoryRegistration({ projectRoot: root, registration });
     if (memoryJson(requireState(root)) !== memoryJson(state)) refuse('state-changed', 'canonical state changed during store inspection; registration not written');
@@ -1126,14 +1127,17 @@ export function recordMemory({ projectRoot, registration, confirmOverwrite = fal
     return { code: 'recorded', message: 'existing primary project memory registered; no store created or workers launched', state, inspection: observed.out };
   });
 }
-export function prepareMemoryRequest({ projectRoot, attemptId, operation, phase, target }) {
+export function prepareMemoryRequest(options) {
   return memoryOperation(() => {
+    const { projectRoot, attemptId, operation, phase, target } = memoryDataSnapshot(options);
     const root = projectDirectory(projectRoot);
     return prepareMemoryBootstrapRequest({ loadCanonical: () => memoryCanonical(root), attemptId, operation, phase, target });
   });
 }
 function memoryBootstrap(options, operation) {
   return memoryOperation(() => {
+    options = memoryOwnData(options, 'memory operation');
+    options.request = memoryDataSnapshot(options.request);
     const errors = [];
     if (!fields(errors, options, 'memory operation', ['projectRoot', 'request', 'requestBytes', 'out', 'callerRoot']) || errors.length) refuse('invalid-input', errors.join('; '));
     if (!isText(options.out)) refuse('usage', 'an exclusive --out directory is required');
@@ -1144,10 +1148,11 @@ function memoryBootstrap(options, operation) {
 }
 export const primeMemory = (options) => memoryBootstrap(options, 'worker-readonly');
 export const refreshMemory = (options) => memoryBootstrap(options, 'coordinator-refresh');
-export function verifyMemoryBootstrap({ projectRoot, request, out }) {
+export function verifyMemoryBootstrap(options) {
   return memoryOperation(() => {
+    const { projectRoot, request, out, callerRoot = process.cwd() } = memoryDataSnapshot(options);
     const root = projectDirectory(projectRoot);
-    return consumeMemoryBootstrap({ request, out, loadCanonical: () => memoryCanonical(root) });
+    return consumeMemoryBootstrap({ request, out, callerRoot, loadCanonical: () => memoryCanonical(root) });
   });
 }
 

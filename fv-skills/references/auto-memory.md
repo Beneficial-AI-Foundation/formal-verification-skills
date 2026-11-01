@@ -103,15 +103,18 @@ primary/database selection, a credential-free environment and --sandbox; queries
 
 The narrow result is `memory-primed`. Keep request/argv/tool/output evidence and actual prime bytes bound
 to that request; an earlier ready flag or identical content hash is not a fresh observation. The caller
-must verify from its independently held request/output, then read/inject the returned text:
+must verify from its independently held request/output and intended caller worktree, then read/inject the returned text:
 
 ```javascript
 import { verifyMemoryBootstrap } from '<installed scripts>/fvs-auto.mjs';
-const current = verifyMemoryBootstrap({ projectRoot: primary, request, out: memoryOut });
+const current = verifyMemoryBootstrap({ projectRoot: primary, callerRoot: intendedWorktree, request, out: memoryOut });
 const actualWorkerContext = current.primeText; // Consume this actual text, not only its hash/status.
 ```
 
-Verification compares the entire current request/operation/phase/target/expectations, actual successful
+Request data must be plain own-key JSON: hidden properties, accessors, symbols, hooks, coercion objects
+and non-JSON values refuse without executing them. Hashing uses a stable validated snapshot.
+Verification rederives primary/common/caller Git identity before refresh/readiness/consumption and
+compares the entire current request/operation/phase/target/expectations, actual successful
 request-bound invocation evidence, and complete prime bytes. Wrong attempt/session/resume, stale
 binding/context, missing prime, nonzero/timeout/oversize/partial output or post-prime canonical drift
 never enables readiness. A write followed by a failed read/prime remains partial; preserve that outcome

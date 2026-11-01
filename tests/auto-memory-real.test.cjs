@@ -53,7 +53,7 @@ test('genuine local Beads1.3.1 primary/linked bootstrap and refusal qualificatio
   const seedRequest = f.request(auto, primary, 'coordinator-refresh');
   const seed = auto.refreshMemory({ projectRoot: primary, callerRoot: primary, request: seedRequest, out: f.output(primary) });
   const canonicalValue = value(); assert.equal(typeof canonicalValue, 'string');
-  const seedConsumed = auto.verifyMemoryBootstrap({ projectRoot: primary, request: seedRequest, out: seed.out });
+  const seedConsumed = auto.verifyMemoryBootstrap({ projectRoot: primary, callerRoot: primary, request: seedRequest, out: seed.out });
   assert.ok(seedConsumed.primeText.includes(canonicalValue)); record({ case: 'coordinator-seed-prime', request: seedRequest, out: seed.out, primeSha256: seed.result.prime.sha256 });
   const linked = path.join(out, 'linked-worker'); f.git(primary, 'worktree', 'add', '-qb', 'memory-worker', linked);
   // Init1.3.1 commits metadata to Git. Metadata checkout is not a second backing database.
@@ -72,13 +72,13 @@ test('genuine local Beads1.3.1 primary/linked bootstrap and refusal qualificatio
   const observe = (q) => auto.primeMemory({ projectRoot: primary, callerRoot: linked, request: q, out: f.output(primary) });
   const a = f.request(auto, primary), b = f.request(auto, primary);
   const first = observe(a), second = observe(b); assert.equal(first.result.prime.sha256, second.result.prime.sha256);
-  assert.equal(auto.verifyMemoryBootstrap({ projectRoot: primary, request: a, out: first.out }).status, 'memory-primed');
-  assert.equal(auto.verifyMemoryBootstrap({ projectRoot: primary, request: b, out: second.out }).status, 'memory-primed');
+  assert.equal(auto.verifyMemoryBootstrap({ projectRoot: primary, callerRoot: linked, request: a, out: first.out }).status, 'memory-primed');
+  assert.equal(auto.verifyMemoryBootstrap({ projectRoot: primary, callerRoot: linked, request: b, out: second.out }).status, 'memory-primed');
   assert.equal(fs.existsSync(linkedDatabase), false); assert.deepEqual(linkedMetadata(), metadataBefore); assert.equal(value(), canonicalValue);
   record({ case: 'two-unchanged-linked-resumes', requests: [a, b], outputs: [first.out, second.out], noLinkedDatabase: true, linkedMetadataUnchanged: metadataBefore });
-  negative('old-result-substitution', 'memory-result-mismatch', () => auto.verifyMemoryBootstrap({ projectRoot: primary, request: b, out: first.out }));
+  negative('old-result-substitution', 'memory-result-mismatch', () => auto.verifyMemoryBootstrap({ projectRoot: primary, callerRoot: linked, request: b, out: first.out }));
   for (const [name, change] of [['phase', (q) => { q.phase = 'start'; q.target.resumeId = null; }], ['session', (q) => { q.target.sessionId = 'other'; }], ['resume', (q) => { q.target.resumeId = 'other'; }]]) {
-    const q = structuredClone(b); change(q); negative('wrong-' + name, 'memory-result-mismatch', () => auto.verifyMemoryBootstrap({ projectRoot: primary, request: q, out: second.out }));
+    const q = structuredClone(b); change(q); negative('wrong-' + name, 'memory-result-mismatch', () => auto.verifyMemoryBootstrap({ projectRoot: primary, callerRoot: linked, request: q, out: second.out }));
   }
   const wrongContext = structuredClone(b); wrongContext.expected.memoryContextSha256 = '0'.repeat(64);
   negative('wrong-expected-context', 'memory-expectation-stale', () => observe(wrongContext));
@@ -96,7 +96,7 @@ test('genuine local Beads1.3.1 primary/linked bootstrap and refusal qualificatio
   fs.writeFileSync(metadataFile, JSON.stringify(selected));
   const wrongSelector = negative('logical-database-selector-drift', 'memory-store-mismatch', () => observe(f.request(auto, primary)));
   assert.equal(wrongSelector.details.result.receipts.length, 0, 'refuse before a backend command can target the other logical database');
-  negative('logical-selector-drift-before-consumption', 'memory-store-mismatch', () => auto.verifyMemoryBootstrap({ projectRoot: primary, request: b, out: second.out }));
+  negative('logical-selector-drift-before-consumption', 'memory-store-mismatch', () => auto.verifyMemoryBootstrap({ projectRoot: primary, callerRoot: linked, request: b, out: second.out }));
   fs.writeFileSync(path.join(out, 'metadata-selector-mutation.json'), fs.readFileSync(metadataFile));
   fs.writeFileSync(metadataFile, metadataBytes); // Explicit fixture restoration, never product migration.
   assert.equal(value(), canonicalValue);
@@ -110,7 +110,7 @@ test('genuine local Beads1.3.1 primary/linked bootstrap and refusal qualificatio
   negative('stale-worker-context', 'memory-content-stale', () => observe(f.request(auto, primary))); assert.equal(value(), staleValue);
   const refreshRequest = f.request(auto, primary, 'coordinator-refresh');
   const refreshed = auto.refreshMemory({ projectRoot: primary, callerRoot: primary, request: refreshRequest, out: f.output(primary) });
-  assert.equal(value(), canonicalValue); assert.equal(auto.verifyMemoryBootstrap({ projectRoot: primary, request: refreshRequest, out: refreshed.out }).status, 'memory-primed');
+  assert.equal(value(), canonicalValue); assert.equal(auto.verifyMemoryBootstrap({ projectRoot: primary, callerRoot: primary, request: refreshRequest, out: refreshed.out }).status, 'memory-primed');
   record({ case: 'coordinator-stale-refresh', out: refreshed.out, request: refreshRequest });
   const noStore = f.createProject(auto, out); const missingState = fs.readFileSync(f.stateFile(noStore));
   let noStoreError; try { auto.recordMemory({ projectRoot: noStore, registration: { backend: 'beads', canonicalRoot: noStore, storeDir: path.join(noStore, '.beads'), databasePath: path.join(noStore, '.beads/embeddeddolt'), bdPath: bd } }); } catch (e) { noStoreError = e; }
@@ -126,7 +126,7 @@ test('genuine local Beads1.3.1 primary/linked bootstrap and refusal qualificatio
   record({ case: 'metadata-only-clone-no-database-init', code: metadataOnlyError.code, project: noStore, databaseAbsent: true });
 
   const mutant = path.join(out, 'altered-prime-case'); fs.cpSync(first.out, mutant, { recursive: true }); fs.writeFileSync(path.join(mutant, 'prime.txt'), 'altered actual prime');
-  negative('altered-prime-bytes', 'memory-evidence-invalid', () => auto.verifyMemoryBootstrap({ projectRoot: primary, request: a, out: mutant }));
+  negative('altered-prime-bytes', 'memory-evidence-invalid', () => auto.verifyMemoryBootstrap({ projectRoot: primary, callerRoot: linked, request: a, out: mutant }));
   // Actual backend output-bound refusal: unrelated fixture memories exceed the fixed 1MiB capture.
   for (let i = 0; i < 280; i++) raw([...prefix, 'remember', '--key', 'fixture-padding-' + i, 'x'.repeat(4000)], primary);
   const bounded = negative('genuine-prime-output-bound', 'memory-command-failed', () => observe(f.request(auto, primary)));
@@ -136,6 +136,9 @@ test('genuine local Beads1.3.1 primary/linked bootstrap and refusal qualificatio
   assert.ok(last.stdout.bytes >= 1024 * 1024); assert.equal(bounded.details.result.prime, null);
   record({ case: 'genuine-prime-cap-cause', argv: last.argv, error: last.error, capturedBytes: last.stdout.bytes });
   assert.equal(value(), canonicalValue); assert.deepEqual(fs.readFileSync(f.stateFile(primary)), beforeState);
+  const gitHeld = path.join(primary, '.git-held'); fs.renameSync(path.join(primary, '.git'), gitHeld);
+  negative('actual-git-control-drift-before-consumption', 'memory-project-mismatch', () => auto.verifyMemoryBootstrap({ projectRoot: primary, callerRoot: linked, request: b, out: second.out }));
+  assert.ok(fs.existsSync(gitHeld));
   const summary = { scope: 'actual local Beads1.3.1 fixture only, not AO execution/proof acceptance', primary, linked, bd, bdSha256: bdSha,
     sourceRoot: f.ROOT, cases: fs.readFileSync(ledger, 'utf8').trim().split('\n').map(JSON.parse), stateUnchangedAfterBootstrap: true, noLinkedDatabase: true, linkedMetadataUnchanged: metadataBefore, allOutputsRetained: true };
   fs.writeFileSync(path.join(out, 'summary.json'), JSON.stringify(summary, null, 2)); console.log('FVS_MEMORY_REAL_EVIDENCE=' + out);

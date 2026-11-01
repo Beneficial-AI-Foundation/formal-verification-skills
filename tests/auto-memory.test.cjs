@@ -8,8 +8,8 @@ const { pathToFileURL } = require('node:url');
 const { spawnSync } = require('node:child_process');
 const f = require('./helpers/memory-fixture.cjs');
 const dirs = [];
-let auto;
-before(async () => { auto = await import(pathToFileURL(path.join(f.ROOT, 'scripts/fvs-auto.mjs')).href); });
+let auto, memory;
+before(async () => { memory = await import(pathToFileURL(path.join(f.ROOT, 'scripts/fvs-project-memory.mjs')).href); auto = await import(pathToFileURL(path.join(f.ROOT, 'scripts/fvs-auto.mjs')).href); });
 after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
 function project() { const root = f.createProject(auto); dirs.push(root); return root; }
 function fixture() { const root = project(), registration = f.fakeStore(root); auto.recordMemory({ projectRoot: root, registration }); return { root, registration }; }
@@ -51,6 +51,12 @@ describe('project memory registration', () => {
     assert.deepEqual(stored(root).memoryBindings, s.memoryBindings); assert.deepEqual(stored(root).choices.limits, s.choices.limits);
     assert.equal(stored(root).choicesGeneration, s.choicesGeneration);
   });
+  it('refuses registration if actual Git identity drifts during backend inspection', () => {
+    const root = project(), registration = f.fakeStore(root), before = bytes(root);
+    f.control(root, { driftGitOnInfo: true });
+    refuses('memory-project-mismatch', () => auto.recordMemory({ projectRoot: root, registration }));
+    assert.deepEqual(bytes(root), before); assert.equal('memoryBindings' in stored(root), false); assert.equal(context(root), null);
+  });
   it('confirms changed tool identity and appends rather than replacing bindings', () => {
     const { root, registration } = fixture(); const before = bytes(root);
     fs.appendFileSync(registration.bdPath, '\n// changed installed build\n');
@@ -82,7 +88,7 @@ describe('project memory registration', () => {
     const q = f.request(auto, root, 'coordinator-refresh'), observed = invoke(root, q, 'coordinator');
     assert.equal(observed.result.context.project.canonicalRoot, root);
     assert.equal(observed.result.context.project.gitCommonDir, path.join(primary, '.git'));
-    assert.equal(auto.verifyMemoryBootstrap({ projectRoot: root, request: q, out: observed.out }).status, 'memory-primed');
+    assert.equal(auto.verifyMemoryBootstrap({ projectRoot: root, callerRoot: root, request: q, out: observed.out }).status, 'memory-primed');
     assert.equal(fs.existsSync(path.join(primary, '.beads')), false);
   });
   it('refuses a worktree-local registration and an escaping store symlink', () => {
@@ -100,10 +106,10 @@ describe('project memory registration', () => {
 describe('fresh project-memory bootstrap', () => {
   it('coordinator seeds actual context, worker consumes actual prime and runtime observations do not rewrite state', () => {
     const { root, q, result } = seeded(); const before = bytes(root), value = context(root);
-    const c = auto.verifyMemoryBootstrap({ projectRoot: root, request: q, out: result.out });
+    const c = auto.verifyMemoryBootstrap({ projectRoot: root, callerRoot: root, request: q, out: result.out });
     assert.equal(c.status, 'memory-primed'); assert.ok(c.primeText.includes(value));
     const worker = f.request(auto, root), observation = invoke(root, worker);
-    assert.equal(auto.verifyMemoryBootstrap({ projectRoot: root, request: worker, out: observation.out }).status, 'memory-primed');
+    assert.equal(auto.verifyMemoryBootstrap({ projectRoot: root, callerRoot: root, request: worker, out: observation.out }).status, 'memory-primed');
     assert.deepEqual(bytes(root), before); assert.equal(context(root), value); assert.equal(stored(root).choicesGeneration, 0);
     assert.equal(f.calls(root).filter((c) => c.cmd === 'remember').length, 1);
     assert.equal(JSON.parse(value).authority, 'context-only'); assert.equal(JSON.parse(value).agreement.payload.execution, null);
@@ -113,10 +119,10 @@ describe('fresh project-memory bootstrap', () => {
     const { root } = seeded(), a = f.request(auto, root), b = f.request(auto, root);
     const first = invoke(root, a), second = invoke(root, b); assert.notEqual(a.attemptId, b.attemptId);
     assert.equal(first.result.prime.sha256, second.result.prime.sha256);
-    refuses('memory-result-mismatch', () => auto.verifyMemoryBootstrap({ projectRoot: root, request: b, out: first.out }));
-    assert.equal(auto.verifyMemoryBootstrap({ projectRoot: root, request: b, out: second.out }).status, 'memory-primed');
+    refuses('memory-result-mismatch', () => auto.verifyMemoryBootstrap({ projectRoot: root, callerRoot: root, request: b, out: first.out }));
+    assert.equal(auto.verifyMemoryBootstrap({ projectRoot: root, callerRoot: root, request: b, out: second.out }).status, 'memory-primed');
     const sameResumeNewAttempt = { ...b, attemptId: crypto.randomUUID() };
-    refuses('memory-result-mismatch', () => auto.verifyMemoryBootstrap({ projectRoot: root, request: sameResumeNewAttempt, out: second.out }));
+    refuses('memory-result-mismatch', () => auto.verifyMemoryBootstrap({ projectRoot: root, callerRoot: root, request: sameResumeNewAttempt, out: second.out }));
   });
   it('shares the canonical primary store with a linked worker and strips backend redirects', () => {
     const { root } = seeded(), linked = path.join(path.dirname(root), 'fvs-memory-linked-' + crypto.randomUUID()); dirs.push(linked);
@@ -125,7 +131,7 @@ describe('fresh project-memory bootstrap', () => {
     try { auto.primeMemory({ projectRoot: root, callerRoot: linked, request: q, out }); }
     finally { if (old === undefined) delete process.env.BEADS_DIR; else process.env.BEADS_DIR = old; }
     assert.equal(fs.existsSync(path.join(linked, '.beads')), false);
-    assert.ok(f.calls(root).every((c) => !c.redirected)); assert.equal(auto.verifyMemoryBootstrap({ projectRoot: root, request: q, out }).status, 'memory-primed');
+    assert.ok(f.calls(root).every((c) => !c.redirected)); assert.equal(auto.verifyMemoryBootstrap({ projectRoot: root, callerRoot: linked, request: q, out }).status, 'memory-primed');
   });
   it('readonly missing/stale content cannot reach remember; coordinator refreshes recognized stale data', () => {
     const { root } = fixture(), q = f.request(auto, root), before = bytes(root);
@@ -177,7 +183,7 @@ describe('fresh project-memory bootstrap', () => {
         ref.sha256 = crypto.createHash('sha256').update(fs.readFileSync(receiptPath)).digest('hex');
       }
       fs.writeFileSync(file, JSON.stringify(r));
-      refuses('memory-evidence-invalid', () => auto.verifyMemoryBootstrap({ projectRoot: root, request: q, out }));
+      refuses('memory-evidence-invalid', () => auto.verifyMemoryBootstrap({ projectRoot: root, callerRoot: root, request: q, out }));
     }
   });
   it('does not silently migrate changed backend project identity or database selection', () => {
@@ -205,12 +211,78 @@ describe('fresh project-memory bootstrap', () => {
       assert.equal(f.calls(root).some((c) => c.cmd === 'remember'), false);
     });
   }
+  for (const phase of ['read-before-write', 'prime-before-ready']) {
+    it('refuses actual primary Git-control drift at ' + phase, () => {
+      const data = phase === 'read-before-write' ? fixture() : seeded(), { root } = data;
+      f.control(root, phase === 'read-before-write' ? { driftGitOnRead: true } : { driftGitOnPrime: true });
+      const before = bytes(root), value = context(root), priorWrites = f.calls(root).filter((c) => c.cmd === 'remember').length;
+      const operation = phase === 'read-before-write' ? 'coordinator-refresh' : 'worker-readonly';
+      const failure = refuses('memory-project-mismatch', () => invoke(root, f.request(auto, root, operation), phase === 'read-before-write' ? 'coordinator' : 'worker'));
+      assert.equal(failure.details.result.status, 'blocked'); assert.equal(failure.details.result.prime, null);
+      assert.equal(context(root), value); assert.deepEqual(bytes(root), before);
+      assert.equal(f.calls(root).filter((c) => c.cmd === 'remember').length, priorWrites);
+      assert.ok(fs.existsSync(path.join(root, '.git-held'))); assert.equal(fs.existsSync(path.join(root, '.git')), false);
+    });
+  }
+  for (const kind of ['removed', 'redirected']) {
+    it('refuses consumption after primary Git metadata is ' + kind, () => {
+      const { root } = seeded(), q = f.request(auto, root), observed = invoke(root, q), before = bytes(root), value = context(root);
+      fs.renameSync(path.join(root, '.git'), path.join(root, '.git-held'));
+      if (kind === 'redirected') { const other = project(); fs.writeFileSync(path.join(root, '.git'), 'gitdir: ' + path.join(other, '.git') + '\n'); }
+      refuses('memory-project-mismatch', () => auto.verifyMemoryBootstrap({ projectRoot: root, callerRoot: root, request: q, out: observed.out }));
+      assert.equal(context(root), value); assert.deepEqual(bytes(root), before);
+    });
+  }
+  it('retains and rechecks the linked producer caller relationship at consumption', () => {
+    const { root } = seeded(), linked = path.join(path.dirname(root), 'fvs-memory-linked-' + crypto.randomUUID()); dirs.push(linked);
+    f.git(root, 'worktree', 'add', '-qb', 'consumer-linked', linked);
+    const q = f.request(auto, root), out = f.output(root);
+    auto.primeMemory({ projectRoot: root, callerRoot: linked, request: q, out });
+    assert.equal(auto.verifyMemoryBootstrap({ projectRoot: root, callerRoot: linked, request: q, out }).status, 'memory-primed');
+    fs.renameSync(path.join(linked, '.git'), path.join(linked, '.git-held'));
+    refuses('memory-project-mismatch', () => auto.verifyMemoryBootstrap({ projectRoot: root, callerRoot: linked, request: q, out }));
+  });
+  it('rejects hidden/accessor/coercion API identities without executing hooks or allocating output', () => {
+    const { root } = fixture(), good = f.request(auto, root), before = bytes(root), n = f.calls(root).length;
+    let executed = 0;
+    const variants = [];
+    let q = structuredClone(good); q.expected.memoryContextSha256 = '0'.repeat(64);
+    Object.defineProperty(q.expected, 'toJSON', { value() { executed++; return good.expected; } }); variants.push(q);
+    q = structuredClone(good); Object.defineProperty(q.target, 'toJSON', { value() { executed++; return good.target; } }); variants.push(q);
+    q = structuredClone(good); Object.defineProperty(q, 'attemptId', { enumerable: true, get() { executed++; return good.attemptId; } }); variants.push(q);
+    q = structuredClone(good); Object.defineProperty(q.expected, 'bindingSha256', { enumerable: true, get() { executed++; return good.expected.bindingSha256; } }); variants.push(q);
+    q = structuredClone(good); q.attemptId = { toString() { executed++; return good.attemptId; } }; variants.push(q);
+    q = structuredClone(good); q.expected.bindingSha256 = { toString() { executed++; return good.expected.bindingSha256; } }; variants.push(q);
+    q = structuredClone(good); q.target[Symbol('hidden')] = 'not-json'; variants.push(q);
+    q = structuredClone(good); q.attemptId = [good.attemptId]; variants.push(q);
+    q = structuredClone(good); q.expected.bindingSha256 = [good.expected.bindingSha256]; variants.push(q);
+    for (const value of [undefined, NaN, Infinity, 1n, () => 'not-data']) { q = structuredClone(good); q.expected.bindingSha256 = value; variants.push(q); }
+    for (const request of variants) {
+      const out = f.output(root, 'must-not-allocate');
+      refuses('invalid-input', () => auto.primeMemory({ projectRoot: root, callerRoot: root, request, out }));
+      assert.equal(fs.existsSync(out), false);
+    }
+    const options = { projectRoot: root, operation: 'worker-readonly', phase: 'resume', target: good.target };
+    Object.defineProperty(options, 'attemptId', { enumerable: true, get() { executed++; return good.attemptId; } });
+    refuses('invalid-input', () => auto.prepareMemoryRequest(options));
+    const direct = { loadCanonical() { executed++; throw new Error('must not run'); }, operation: 'worker-readonly', phase: 'resume', target: good.target };
+    Object.defineProperty(direct, 'attemptId', { enumerable: true, get() { executed++; return good.attemptId; } });
+    assert.throws(() => memory.prepareMemoryBootstrapRequest(direct), (e) => e.code === 'invalid-input');
+    assert.equal(executed, 0); assert.equal(f.calls(root).length, n); assert.equal(context(root), null); assert.deepEqual(bytes(root), before);
+  });
+  it('accepts ordinary parsed/null-prototype JSON and retains a stable validated snapshot', () => {
+    const { root } = seeded(), plain = JSON.parse(JSON.stringify(f.request(auto, root)));
+    const q = Object.assign(Object.create(null), plain); q.target = Object.assign(Object.create(null), plain.target); q.expected = Object.assign(Object.create(null), plain.expected);
+    const observed = invoke(root, q); const consumed = auto.verifyMemoryBootstrap({ projectRoot: root, callerRoot: root, request: q, out: observed.out });
+    assert.equal(consumed.status, 'memory-primed'); assert.ok(consumed.gitObservation.primary.gitCommonDir.endsWith('.git'));
+    assert.ok(consumed.gitEvidence.receipts.length > 0);
+  });
   it('actual CLI start observations retain request bytes and independent current-request consumption', () => {
     const { root } = seeded(), q = f.request(auto, root, 'worker-readonly', { phase: 'start', target: { projectId: 'fixture-project', sessionId: 'new-worker', resumeId: null } });
     const file = path.join(root, 'request.json'); const raw = JSON.stringify(q, null, 1) + '\n'; fs.writeFileSync(file, raw);
     const out = f.output(root); const r = cli(root, ['prime-memory', '--request', file, '--out', out]);
     assert.equal(r.status, 0, r.stderr); assert.equal(r.json.code, 'memory-primed'); assert.equal(fs.readFileSync(path.join(out, 'request.json'), 'utf8'), raw);
-    assert.equal(auto.verifyMemoryBootstrap({ projectRoot: root, request: q, out }).status, 'memory-primed');
+    assert.equal(auto.verifyMemoryBootstrap({ projectRoot: root, callerRoot: root, request: q, out }).status, 'memory-primed');
   });
   for (const [name, change, expected] of [
     ['binding revision', (q) => { q.expected.bindingRevision++; }, 'memory-expectation-stale'],
@@ -222,7 +294,7 @@ describe('fresh project-memory bootstrap', () => {
     ['resume', (q) => { q.target.resumeId = 'other'; }, 'memory-result-mismatch'],
   ]) it('refuses substituted wrong ' + name + ' against the consumer own request', () => {
     const { root } = seeded(), q = f.request(auto, root), observed = invoke(root, q), altered = structuredClone(q); change(altered);
-    refuses(expected, () => auto.verifyMemoryBootstrap({ projectRoot: root, request: altered, out: observed.out }));
+    refuses(expected, () => auto.verifyMemoryBootstrap({ projectRoot: root, callerRoot: root, request: altered, out: observed.out }));
     if (expected === 'memory-expectation-stale') {
       const value = context(root); refuses(expected, () => invoke(root, altered)); assert.equal(context(root), value);
     }
@@ -263,9 +335,9 @@ describe('fresh project-memory bootstrap', () => {
   it('refuses changed backend/tool/project and missing/mutated actual evidence', () => {
     const { root, registration } = seeded(), q = f.request(auto, root), result = invoke(root, q); const before = bytes(root);
     fs.writeFileSync(path.join(result.out, 'prime.txt'), 'altered actual output');
-    refuses('memory-evidence-invalid', () => auto.verifyMemoryBootstrap({ projectRoot: root, request: q, out: result.out }));
+    refuses('memory-evidence-invalid', () => auto.verifyMemoryBootstrap({ projectRoot: root, callerRoot: root, request: q, out: result.out }));
     fs.appendFileSync(registration.bdPath, '\n// byte drift');
-    refuses('memory-tool-changed', () => auto.verifyMemoryBootstrap({ projectRoot: root, request: q, out: result.out }));
+    refuses('memory-tool-changed', () => auto.verifyMemoryBootstrap({ projectRoot: root, callerRoot: root, request: q, out: result.out }));
     refuses('memory-tool-changed', () => invoke(root, f.request(auto, root)));
     assert.deepEqual(bytes(root), before);
   });
@@ -273,7 +345,7 @@ describe('fresh project-memory bootstrap', () => {
     const { root } = seeded(), q = f.request(auto, root), observed = invoke(root, q);
     const file = path.join(root, '.beads/metadata.json'), m = JSON.parse(fs.readFileSync(file)); m.dolt_database = 'other_db';
     fs.writeFileSync(file, JSON.stringify(m));
-    refuses('memory-store-mismatch', () => auto.verifyMemoryBootstrap({ projectRoot: root, request: q, out: observed.out }));
+    refuses('memory-store-mismatch', () => auto.verifyMemoryBootstrap({ projectRoot: root, callerRoot: root, request: q, out: observed.out }));
   });
   it('rejects wrong actual database profile and a different Git caller', () => {
     const { root } = seeded(); f.control(root, { mode: 'server' });

@@ -12,8 +12,12 @@ if (c.fail === cmd) { console.error('fixture failure ' + cmd); process.exit(9); 
 const emit = (v) => console.log(JSON.stringify(v));
 if (cmd === 'version') console.log('bd version ' + (c.version ?? '1.3.1') + ' (fixture)');
 else if (cmd === 'where') emit({ schema_version: 1, path: c.wherePath ?? store, database_path: c.databasePath ?? path.join(store, 'embeddeddolt'), prefix: 'fixture' });
-else if (cmd === 'info') emit({ schema_version: 1, mode: c.mode ?? 'direct', database_path: c.databasePath ?? path.join(store, 'embeddeddolt') });
+else if (cmd === 'info') {
+  emit({ schema_version: 1, mode: c.mode ?? 'direct', database_path: c.databasePath ?? path.join(store, 'embeddeddolt') });
+  if (c.driftGitOnInfo) fs.renameSync(path.join(root, '.git'), path.join(root, '.git-held'));
+}
 else if (cmd === 'memories') {
+  if (c.driftGitOnRead) fs.renameSync(path.join(root, '.git'), path.join(root, '.git-held'));
   if (c.driftStateOnRead) {
     const file = path.join(root, '.formalising/auto-fv/state.json'), s = JSON.parse(fs.readFileSync(file));
     s.choicesGeneration++; fs.writeFileSync(file, JSON.stringify(s));
@@ -32,6 +36,7 @@ else if (cmd === 'memories') {
   if (c.partialRemember) process.exit(6);
   console.log('fixture remembered');
 } else if (cmd === 'prime') {
+  if (c.driftGitOnPrime) fs.renameSync(path.join(root, '.git'), path.join(root, '.git-held'));
   if (c.driftState) {
     const f = path.join(root, '.formalising/auto-fv/state.json');
     const s = JSON.parse(fs.readFileSync(f)); s.choicesGeneration++; fs.writeFileSync(f, JSON.stringify(s));
