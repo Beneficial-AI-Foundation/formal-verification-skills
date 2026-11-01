@@ -1,0 +1,268 @@
+const { before, after, describe, it } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
+const { spawnSync, spawn } = require('node:child_process');
+const f = require('./helpers/resume-fixture.cjs');
+let auto, resume; const owned = [];
+before(async () => { auto = await import(pathToFileURL(path.join(f.ROOT, 'scripts/fvs-auto.mjs')).href); resume = await import(pathToFileURL(path.join(f.ROOT, 'scripts/fvs-auto-resume.mjs')).href); });
+after(() => { for (const p of owned) fs.rmSync(p, { recursive: true, force: true }); });
+const make = () => { const x = f.fixture(auto); owned.push(x.owned); return x; };
+const file = (x) => path.join(x.root, '.formalising/auto-fv/resume/state.json');
+const stateBytes = (x) => fs.existsSync(file(x)) ? fs.readFileSync(file(x)) : null;
+function refuses(code, fn) { assert.throws(fn, (e) => e.code === code, code); }
+function verify(x, y) { return auto.verifyReconciliation({ projectRoot: x.root, request: y.q, out: y.out }); }
+function services(x, overrides = {}) {
+  return { loadCanonical() { const view = auto.readState({ projectRoot: x.root, requireAgreement: true }); return { view, envelope: { mode: view.agreement.agreement.mode } }; },
+    refreshMemory: auto.refreshMemory, verifyMemory: auto.verifyMemoryBootstrap,
+    inspectAcceptance() { throw new Error('not used by this protocol fixture'); }, ...overrides };
+}
+
+describe('runtime checkpoint/current reconciliation', () => {
+  it('new observation commits paired history, consumes fresh prime, and validates its own committed head', () => {
+    const x = make(), original = fs.readFileSync(f.stateFile(x.root)), y = x.invoke();
+    assert.equal(y.result.code, 'reconciled'); assert.equal(y.result.expectedPredecessorHeadSha256, null); assert.equal(verify(x, y).code, 'reconciled');
+    assert.notEqual(y.result.committedHeadSha256, y.result.expectedPredecessorHeadSha256);
+    assert.equal(auto.readRuntimeState({ projectRoot: x.root }).state.history.length, 2);
+    assert.deepEqual(fs.readFileSync(f.stateFile(x.root)), original); assert.equal(y.result.observation.acceptance.acceptedBaseline, null);
+    assert.equal(y.result.effectExecutable, false);
+  });
+  it('two unchanged resumes have distinct request/result identity and stale old results cannot substitute', () => {
+    const x = make(), first = x.invoke(), second = x.invoke();
+    assert.equal(second.result.code, 'reconciled'); assert.equal(verify(x, second).code, 'reconciled');
+    refuses('resume-head-stale', () => verify(x, first));
+    refuses('resume-result-mismatch', () => auto.verifyReconciliation({ projectRoot: x.root, request: second.q, out: first.out }));
+    assert.notEqual(first.q.attemptId, second.q.attemptId); assert.notEqual(first.q.resumeId, second.q.resumeId);
+  });
+  it('reads legacy M1 without writes or a fabricated execution clock', () => {
+    const x = make(), b = fs.readFileSync(f.stateFile(x.root));
+    assert.equal(auto.readRuntimeState({ projectRoot: x.root }).state, null); auto.readState({ projectRoot: x.root });
+    assert.equal(fs.existsSync(file(x)), false); assert.deepEqual(fs.readFileSync(f.stateFile(x.root)), b);
+  });
+  it('a checkpoint and process restart preserve the original start/deadline and inactive nodeHours', () => {
+    const x = make(), a = x.invoke(), prior = auto.readRuntimeState({ projectRoot: x.root }).state.run;
+    const q = x.request(), input = f.json(x.owned, 'request', q), out = x.out();
+    const p = spawnSync(process.execPath, [path.join(f.ROOT, 'scripts/fvs-auto.mjs'), 'state', '--project-root', x.root, '--request', input.file, '--out', out], { encoding: 'utf8' });
+    assert.equal(p.status, 0, p.stderr); assert.equal(JSON.parse(p.stdout).code, 'reconciled');
+    const current = auto.readRuntimeState({ projectRoot: x.root }).state.run;
+    assert.deepEqual(current, prior); assert.equal(current.limits.nodeHours, 2); assert.equal(current.deadlineMs - current.startedAtMs, 40 * 3600000);
+    assert.equal(a.result.observation.identity.primary.commit, current ? q.source.commit : null);
+  });
+  it('absolute exhaustion is resumable partial, never resets start or silently reduces scope', () => {
+    const x = make(); x.invoke(); const prior = auto.readRuntimeState({ projectRoot: x.root }).state.run;
+    const q = x.request(), out = x.out();
+    const result = resume.runResume('state', { projectRoot: x.root, request: q, out }, services(x, { now: () => prior.deadlineMs + 1 }));
+    assert.equal(result.code, 'partial'); assert.ok(result.observation.reasons.includes('original-limit-exhausted'));
+    assert.deepEqual(auto.readRuntimeState({ projectRoot: x.root }).state.run, prior);
+    const intent = x.launch(), next = x.request({ transition: x.before(intent) }), before = stateBytes(x);
+    refuses('resume-partial', () => resume.runResume('checkpoint', { projectRoot: x.root, request: next, out: x.out() }, services(x, { now: () => prior.deadlineMs + 2 })));
+    assert.deepEqual(stateBytes(x), before);
+  });
+  it('clock rollback, stale canonical context, stale predecessor and changed observation refuse without overwriting history', () => {
+    const x = make(); x.invoke(); const runtime = auto.readRuntimeState({ projectRoot: x.root }), b = stateBytes(x);
+    refuses('resume-clock-rollback', () => resume.runResume('state', { projectRoot: x.root, request: x.request(), out: x.out() }, services(x, { now: () => runtime.lastObservedAtMs - 1 })));
+    refuses('resume-head-stale', () => x.invoke(x.request({ expectedHeadSha256: null })));
+    const q = x.request(); q.source.expectedTree = '0'.repeat(40);
+    assert.equal(x.invoke(q).result.code, 'partial');
+    assert.deepEqual(auto.readRuntimeState({ projectRoot: x.root }).state.run, runtime.state.run);
+    assert.ok(b.length > 0);
+  });
+  it('API hooks and duplicate CLI keys reject before backend/output allocation', () => {
+    const x = make(); let invoked = 0; const q = x.request(), out = x.out();
+    Object.defineProperty(q, 'toJSON', { value() { invoked++; return {}; } });
+    refuses('invalid-input', () => x.invoke(q, 'state', out)); assert.equal(invoked, 0); assert.equal(fs.existsSync(out), false); assert.equal(f.calls(x.root).filter((c) => c.cmd === 'remember').length, 0);
+    const hiddenRoot = {}; Object.defineProperty(hiddenRoot, 'projectRoot', { enumerable: true, get() { invoked++; return x.root; } });
+    refuses('invalid-input', () => auto.readRuntimeState(hiddenRoot)); assert.equal(invoked, 0);
+    const input = path.join(x.owned, 'duplicate.json'); fs.writeFileSync(input, '{"schema":1,"schema":2}');
+    const p = spawnSync(process.execPath, [path.join(f.ROOT, 'scripts/fvs-auto.mjs'), 'state', '--project-root', x.root, '--request', input, '--out', x.out()], { encoding: 'utf8' });
+    assert.equal(p.status, 1); assert.equal(JSON.parse(p.stdout).code, 'resume-invalid-input');
+  });
+  it('the final publication fence records its end time and cannot publish a new intent after the cap', () => {
+    const x = make(); x.invoke(); const view = auto.readRuntimeState({ projectRoot: x.root }), run = view.state.run, b = stateBytes(x);
+    const before = x.request({ transition: x.before(x.launch()) });
+    let times = [view.lastObservedAtMs + 1, view.lastObservedAtMs + 2, run.deadlineMs + 1];
+    refuses('resume-partial', () => resume.runResume('checkpoint', { projectRoot: x.root, request: before, out: x.out() }, services(x, { now: () => times.shift() })));
+    assert.deepEqual(stateBytes(x), b);
+    times = [view.lastObservedAtMs + 1, view.lastObservedAtMs + 2, run.deadlineMs + 1];
+    const result = resume.runResume('state', { projectRoot: x.root, request: x.request(), out: x.out() }, services(x, { now: () => times.shift() }));
+    const current = auto.readRuntimeState({ projectRoot: x.root });
+    assert.equal(result.code, 'partial'); assert.ok(result.observation.reasons.includes('original-limit-exhausted'));
+    assert.equal(current.lastObservedAtMs, run.deadlineMs + 1); assert.deepEqual(current.state.run, run);
+    assert.deepEqual(current.state.history.slice(0, view.state.history.length), view.state.history);
+  });
+  it('clock rollback inside the final fence leaves the prior complete runtime unchanged', () => {
+    const x = make(); x.invoke(); const v = auto.readRuntimeState({ projectRoot: x.root }), b = stateBytes(x);
+    for (const times of [[v.lastObservedAtMs + 10, v.lastObservedAtMs + 11, v.lastObservedAtMs + 9], [v.lastObservedAtMs + 10, v.lastObservedAtMs + 9, v.lastObservedAtMs + 11]]) {
+      refuses('resume-clock-rollback', () => resume.runResume('state', { projectRoot: x.root, request: x.request(), out: x.out() }, services(x, { now: () => times.shift() })));
+      assert.deepEqual(stateBytes(x), b);
+    }
+  });
+});
+
+describe('paired effects, reservations and serial capacity', () => {
+  it('exact before replay cannot become another fake launch opportunity', () => {
+    const x = make(), intent = x.launch(), first = x.invoke(x.request({ transition: x.before(intent) }), 'checkpoint'); let fakeSpawns = 0;
+    if (first.result.committedHeadSha256) fakeSpawns++;
+    const b = stateBytes(x), replay = x.invoke(x.request({ transition: x.before(intent) }), 'checkpoint');
+    if (replay.result.committedHeadSha256) fakeSpawns++;
+    assert.equal(fakeSpawns, 1); assert.equal(replay.result.code, 'uncertain'); assert.equal(replay.result.committedHeadSha256, null); assert.equal(replay.result.effectExecutable, false); assert.deepEqual(stateBytes(x), b);
+    assert.equal(auto.readRuntimeState({ projectRoot: x.root }).reservations.get(intent.reservationId).state, 'pending');
+    refuses('resume-context-stale', () => x.invoke(x.request({ runId: f.uuid(), transition: x.before(intent) }), 'checkpoint'));
+  });
+  it('orphan, changed-effect, wrong-reservation and conflicting after refuse', () => {
+    const x = make(), intent = x.local(), q = x.request({ transition: { position: 'after', intent, beforeEventSha256: '0'.repeat(64), outcome: 'succeeded', effect: { sessionId: null, association: null, evidence: [], resolution: null } } });
+    refuses('resume-pair-conflict', () => x.invoke(q, 'checkpoint')); assert.equal(stateBytes(x), null);
+    const before = x.invoke(x.request({ transition: x.before(intent) }), 'checkpoint');
+    for (const mutate of [(t) => t.intent.owner = 'different', (t) => t.intent.reservationId = f.uuid(), (t) => t.intent.effect.operation = 'review']) {
+      const t = structuredClone(x.after(before)); mutate(t);
+      assert.throws(() => x.invoke(x.request({ transition: t }), 'checkpoint'));
+    }
+    const after = x.invoke(x.request({ transition: x.after(before) }), 'checkpoint');
+    assert.equal(auto.readRuntimeState({ projectRoot: x.root }).reservations.get(intent.reservationId).state, 'closed');
+    const b = stateBytes(x); refuses('resume-pair-conflict', () => x.invoke(x.request({ transition: { ...x.after(before), outcome: 'uncertain' } }), 'checkpoint')); assert.deepEqual(stateBytes(x), b); assert.equal(after.result.code, 'checkpointed');
+  });
+  it('missing AO rows do not release pending launch capacity and local uncertainty stays blocked', () => {
+    const x = make(); const s = JSON.parse(fs.readFileSync(f.stateFile(x.root))); s.choices.limits.workers = 1;
+    // Re-record a coherent fixture agreement; this is setup, before the runtime exists.
+    const a = JSON.parse(fs.readFileSync(f.roadmapFile(x.root), 'utf8').split('```fvs-auto-agreement\n')[1].split('\n```')[0]);
+    a.payload.choices.limits.workers = 1; a.approvedPayloadSha256 = auto.agreementPayloadSha256(a); fs.writeFileSync(f.stateFile(x.root), JSON.stringify({ ...s, agreements: [], choicesGeneration: 0 }));
+    fs.writeFileSync(f.roadmapFile(x.root), '## Decisions\n```fvs-auto-agreement\n' + JSON.stringify(a) + '\n```\n'); auto.recordAgreement({ projectRoot: x.root, agreement: a });
+    const intent = x.launch(), first = x.invoke(x.request({ transition: x.before(intent) }), 'checkpoint');
+    x.invoke(x.request({ transition: x.after(first, { sessionId: null, association: null, evidence: [], resolution: null }, 'failed') }), 'checkpoint');
+    const b = stateBytes(x); refuses('resume-capacity-exhausted', () => x.invoke(x.request({ transition: x.before(x.launch([20])) }), 'checkpoint')); assert.deepEqual(stateBytes(x), b);
+    assert.equal(auto.readRuntimeState({ projectRoot: x.root }).reservations.get(intent.reservationId).state, 'uncertain');
+    const local = x.local([21]), l = x.invoke(x.request({ transition: x.before(local) }), 'checkpoint');
+    x.invoke(x.request({ transition: x.after(l, undefined, 'uncertain') }), 'checkpoint');
+    refuses('resume-reservation-conflict', () => x.invoke(x.request({ transition: x.before(x.local([21])) }), 'checkpoint'));
+  });
+  it('owned crash before rename keeps pending markers and old complete history, without repair', () => {
+    const x = make(); x.invoke(); const b = stateBytes(x), q = x.request();
+    assert.throws(() => resume.runResume('state', { projectRoot: x.root, request: q, out: x.out() }, services(x, { beforeRename() { throw new Error('fixture crash'); } })), /fixture crash/);
+    assert.deepEqual(stateBytes(x), b); refuses('resume-pending', () => auto.readRuntimeState({ projectRoot: x.root }));
+    const dir = path.dirname(file(x)); assert.ok(fs.existsSync(path.join(dir, 'lock'))); assert.ok(fs.readdirSync(dir).some((n) => n.startsWith('.tmp-')));
+  });
+  it('a retained before followed by fake spawn reconciles the actual session without ever spawning on replay', () => {
+    const x = make(), intent = x.launch(), first = x.invoke(x.request({ transition: x.before(intent) }), 'checkpoint');
+    const linked = path.join(x.owned, 'spawned-worktree'); let spawns = 0;
+    const fakeSpawn = () => { spawns++; f.git(x.root, 'worktree', 'add', '-qb', intent.effect.intendedBranchRef.slice('refs/heads/'.length), linked); x.rows.push(f.row('spawned')); x.writeControl(); };
+    fakeSpawn(); // Model process death before the matching after checkpoint.
+    const a = x.associate('spawned', linked, intent, first.result.recordedEventSha256), recovered = x.invoke(x.request({ associations: [a] }));
+    assert.equal(recovered.result.code, 'reconciled');
+    const replay = x.invoke(x.request({ associations: [a], transition: x.before(intent) }), 'checkpoint');
+    if (replay.result.committedHeadSha256) fakeSpawn();
+    assert.equal(spawns, 1); assert.equal(replay.result.code, 'uncertain');
+    const t = x.after(first, { sessionId: 'spawned', association: a, evidence: [], resolution: null });
+    const after = x.invoke(x.request({ transition: t }), 'checkpoint');
+    assert.equal(after.result.code, 'checkpointed');
+    const runtime = auto.readRuntimeState({ projectRoot: x.root });
+    assert.equal(runtime.reservations.get(intent.reservationId).state, 'active');
+    assert.equal(runtime.reservations.get(intent.reservationId).sessionId, 'spawned');
+    const y = x.invoke(x.request({ associations: [a] })); assert.equal(verify(x, y).code, 'reconciled');
+    // Idle/exited is still assigned, never an automatic slot release.
+    x.rows[1].activity = 'exited'; x.rows[1].status = 'exited'; x.writeControl();
+    const z = x.invoke(x.request({ associations: [a] }));
+    assert.equal(z.result.code, 'reconciled'); assert.equal(auto.readRuntimeState({ projectRoot: x.root }).reservations.get(intent.reservationId).state, 'active');
+  });
+  it('explicit not-invoked resolution closes only its exact held reservation; a failed return alone did not', () => {
+    const x = make(), intent = x.launch(), first = x.invoke(x.request({ transition: x.before(intent) }), 'checkpoint');
+    const resolution = { ...x.local([], 'reconcile'), effect: { kind: 'reservation-resolution', targetReservationId: intent.reservationId } };
+    const before = x.invoke(x.request({ transition: x.before(resolution) }), 'checkpoint');
+    const proof = (invoked) => f.json(x.owned, 'no-effect', { schema: 'fvs/auto-effect-not-invoked', schemaVersion: 1, runId: x.runId, reservationId: intent.reservationId, controllerSessionId: 'coordinator', effectInvoked: invoked });
+    const effect = (p) => ({ sessionId: null, association: null, evidence: [], resolution: { reason: 'not-invoked', evidence: p } });
+    const b = stateBytes(x);
+    refuses('resume-pair-conflict', () => x.invoke(x.request({ transition: x.after(before, effect(proof(true))) }), 'checkpoint')); assert.deepEqual(stateBytes(x), b);
+    x.invoke(x.request({ transition: x.after(before, effect(proof(false))) }), 'checkpoint');
+    assert.equal(auto.readRuntimeState({ projectRoot: x.root }).reservations.get(intent.reservationId).state, 'closed');
+    const replay = x.invoke(x.request({ transition: x.before(intent) }), 'checkpoint');
+    assert.equal(replay.result.committedHeadSha256, null); assert.equal(replay.result.code, 'already-recorded'); assert.ok(first.result.recordedEventSha256);
+  });
+  it('two competing last-slot CLI intents cannot oversubscribe capacity', async () => {
+    const x = make(); x.invoke();
+    // This test uses the last free slot under the original limit3.
+    for (const n of [19, 20]) x.invoke(x.request({ transition: x.before(x.launch([n])) }), 'checkpoint');
+    const head = auto.readRuntimeState({ projectRoot: x.root }).headSha256;
+    const requests = [21, 22].map((node) => x.request({ expectedHeadSha256: head, transition: x.before(x.launch([node])) }));
+    const run = (q) => new Promise((resolve, reject) => {
+      const input = f.json(x.owned, 'race-request', q);
+      const child = spawn(process.execPath, [path.join(f.ROOT, 'scripts/fvs-auto.mjs'), 'checkpoint', '--project-root', x.root, '--request', input.file, '--out', x.out()]);
+      let stdout = '', stderr = ''; child.stdout.on('data', (b) => stdout += b); child.stderr.on('data', (b) => stderr += b); child.on('error', reject);
+      child.on('close', (exit) => resolve({ exit, stdout, stderr, result: JSON.parse(stdout) }));
+    });
+    const results = await Promise.all(requests.map(run));
+    assert.equal(results.filter((r) => r.exit === 0).length, 1, JSON.stringify(results));
+    assert.ok(['resume-head-stale', 'resume-pending', 'resume-capacity-exhausted'].includes(results.find((r) => r.exit !== 0).result.code));
+    const held = [...auto.readRuntimeState({ projectRoot: x.root }).reservations.values()].filter((r) => r.intent.effect.kind === 'ao-launch' && r.state !== 'closed');
+    assert.equal(held.length, 3);
+  });
+});
+
+describe('actual AO shapes plus retained controller associations', () => {
+  it('unassigned same-project session stays partial, never inferred unrelated from stale branch/name', () => {
+    const x = make(); x.rows.push(f.row('other')); x.writeControl();
+    const y = x.invoke(); assert.equal(y.result.code, 'partial'); assert.ok(y.result.observation.reasons.includes('unclassified-ao-session:other')); assert.ok(y.result.observation.reasons.includes('prior-accounting-unknown'));
+    assert.equal(stateBytes(x), null, 'unknown prior execution must not establish a new clock');
+    assert.equal(y.result.observation.ao[0].kind, 'orchestrator'); assert.equal('worktreePath' in y.result.observation.ao[0], false);
+  });
+  it('fresh role/kind/activity shapes join to explicit controller/Git association despite stale AO branch hint', () => {
+    const x = make(), linked = path.join(x.owned, 'linked'); f.git(x.root, 'worktree', 'add', '-qb', 'worker', linked);
+    x.rows.push(f.row('worker')); x.writeControl();
+    const ref = x.associate('worker', linked), q = x.request({ associations: [ref], priorAccounting: x.accounting() }), y = x.invoke(q);
+    assert.equal(y.result.code, 'reconciled'); assert.equal(verify(x, y).code, 'reconciled');
+    assert.equal(y.result.observation.associations[0].value.worktree.path, linked);
+    const old = fs.readFileSync(f.stateFile(x.root)); f.git(linked, 'checkout', '-qb', 'reassigned');
+    refuses('resume-context-stale', () => verify(x, y)); assert.deepEqual(fs.readFileSync(f.stateFile(x.root)), old);
+  });
+  it('retained rules/profile bytes are labelled controller evidence and drift refuses, without AO attestation', () => {
+    const x = make(); x.rows.push(f.row('worker')); x.writeControl();
+    const rules = path.join(x.owned, 'retained-rules.md'); fs.writeFileSync(rules, '# Controller-observed fixture rules\n');
+    const a = x.associate('worker', x.root, x.local(), null, { rulesProfile: { provenance: 'retained-controller-observation', evidence: [f.ref(rules)] } });
+    const y = x.invoke(x.request({ associations: [a], priorAccounting: x.accounting() })); assert.equal(y.result.code, 'reconciled');
+    fs.appendFileSync(rules, 'changed'); refuses('resume-evidence-invalid', () => verify(x, y));
+  });
+  it('coordinator route cannot be selected by a worker lifecycle row', () => {
+    const x = make(); x.rows = [f.row('coordinator', 'worker')]; x.writeControl();
+    refuses('resume-route-mismatch', () => x.invoke()); assert.equal(f.calls(x.root).some((c) => c.cmd === 'remember'), false);
+  });
+  it('the local AO profile HOME is explicit/existing and cannot silently change within a run', () => {
+    const x = make(), q = x.request(), out = x.out(); q.ao.stateHome = path.join(x.owned, 'missing-home');
+    refuses('resume-ao-state-required', () => x.invoke(q, 'state', out)); assert.equal(fs.existsSync(out), false); assert.equal(fs.existsSync(q.ao.stateHome), false);
+    const y = x.invoke();
+    const other = path.join(x.owned, 'other-home'); fs.mkdirSync(path.join(other, '.ao'), { recursive: true });
+    const switched = x.request(); switched.ao.stateHome = other;
+    refuses('resume-context-stale', () => x.invoke(switched)); assert.equal(verify(x, y).code, 'reconciled');
+    const receipts = y.result.observation.receipts.map((r) => JSON.parse(fs.readFileSync(r.file)));
+    assert.ok(receipts.filter((r) => r.argv[0] === x.tool).every((r) => r.env.HOME === x.stateHome));
+    assert.ok(receipts.filter((r) => r.argv[0] === '/usr/bin/git').every((r) => r.env.HOME === undefined));
+  });
+  for (const [name, extra] of [['hidden inventory', { meta: { hiddenTerminatedCount: 1, hiddenOrchestratorCount: 0 } }], ['conflicting get', { details: [f.row('coordinator', 'orchestrator', { activity: 'active' })] }], ['duplicate ids', { rows: [f.row('coordinator', 'orchestrator'), f.row('coordinator', 'orchestrator')] }]]) {
+    it(name + ' fails closed before memory write', () => {
+      const x = make(); x.writeControl(extra); assert.throws(() => x.invoke()); assert.equal(stateBytes(x), null); assert.equal(f.calls(x.root).some((c) => c.cmd === 'remember'), false);
+    });
+  }
+  it('a malformed/changed controller reference cannot fabricate a session/path association', () => {
+    const x = make(); x.rows.push(f.row('worker')); x.writeControl();
+    const a = x.associate('worker'), before = fs.readFileSync(f.stateFile(x.root));
+    fs.appendFileSync(a.file, '\n');
+    refuses('resume-evidence-invalid', () => x.invoke(x.request({ associations: [a], priorAccounting: x.accounting() })));
+    assert.equal(stateBytes(x), null); assert.deepEqual(fs.readFileSync(f.stateFile(x.root)), before);
+  });
+  it('missing or old memory result and source/receipt drift cannot clear a current consumer gate', () => {
+    const x = make(), y = x.invoke();
+    const prime = path.join(y.result.observation.memory.out, 'prime.txt'); fs.appendFileSync(prime, 'changed');
+    refuses('memory-evidence-invalid', () => verify(x, y));
+    const z = x.invoke(); fs.appendFileSync(path.join(x.root, 'README.md'), 'dirty source');
+    refuses('resume-context-stale', () => verify(x, z));
+  });
+  it('hidden worker refresh selectors and wrong memory phase/session refuse before allocation', () => {
+    const x = make();
+    for (const change of [(q) => q.memoryRequest.operation = 'worker-readonly', (q) => q.memoryRequest.target.sessionId = 'worker', (q) => q.memoryRequest.phase = 'start']) {
+      const q = x.request(), out = x.out(); change(q); refuses('resume-memory-mismatch', () => x.invoke(q, 'state', out)); assert.equal(fs.existsSync(out), false);
+    }
+    assert.equal(f.calls(x.root).some((c) => c.cmd === 'remember'), false);
+  });
+  it('corrupt runtime bytes are never repaired or silently treated as a fresh run', () => {
+    const x = make(); x.invoke(); const s = JSON.parse(stateBytes(x)); s.history[0].event.prev = '0'.repeat(64); fs.writeFileSync(file(x), JSON.stringify(s));
+    const b = stateBytes(x); refuses('resume-history-invalid', () => auto.readRuntimeState({ projectRoot: x.root })); assert.deepEqual(stateBytes(x), b);
+  });
+});

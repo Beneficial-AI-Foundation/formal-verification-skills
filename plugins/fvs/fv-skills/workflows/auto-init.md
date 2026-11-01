@@ -30,7 +30,7 @@ node "$AUTO" read-state --project-root .
 - `ok`: inspect `state.choices`, extraction history and the latest `state.agreements`, if present.
   Do not ask Keep/Change or repeat an interview when the applicable agreement is current. Reuse actual
   existing owner responses/grants rather than asking for them again. Check Step 5 first; if it passes,
-  proceed to Step6 memory bootstrap and then Step7 report without re-interviewing. Every start/resume
+  proceed to Step6 memory bootstrap and then Step7 reconciliation and Step8 report without re-interviewing. Every start/resume
   needs a fresh caller request/prime; never reuse an old memory-ready result. Missing/stale agreement blocks continuation;
   resolve only the affected setup through Steps 3–5. When the owner requests a material change,
   show only the affected choices and use those steps.
@@ -204,7 +204,7 @@ node "$AUTO" record-memory --project-root "$PRIMARY" --input "$REGISTRATION"
 ```
 
 The caller owns a fresh UUID, actual target project/session/resume identity and expected canonical
-binding/context. Prepare and retain its current request before invoking a route. The coordinator uses:
+binding/context. Prepare and retain its current request before invoking a route. For a configured coordinator continuation, follow Step7/`auto-resume.md`; its `state` operation performs this fresh20 refresh and independent consumption. The standalone coordinator route remains:
 
 ```bash
 node "$AUTO" refresh-memory --project-root "$PRIMARY" --request "$REQUEST" --out "$MEMORY_OUT"
@@ -223,7 +223,20 @@ stops readiness with its actual reason. No automatic setup, task queue, worker l
 authority is introduced. Current target IDs come from caller context, never a new owner policy interview;
 if the necessary invocation context is unavailable, report that missing input and stop continuation.
 
-## Step 7: Report the available continuation
+## Step 7: Reconcile configured continuation
+
+For a current applicable agreement and registered memory, read `auto-resume.md`. Prepare the fresh
+caller-owned request from actual AO/controller associations, Git inputs, existing runtime head and
+accounting. Call `state`, then consume it with `verifyReconciliation` against that same independently
+held request. Stop continuation on partial/missing/uncertain context with its actual reason; preserve
+all reservations and original budgets. Missing invocation context is a technical partial condition,
+not another scope interview. Legacy M1 reads and the standalone worker prime remain available.
+
+This adapter checkpoints and reconciles;22 still owns automatic stage sequencing/dispatch. Report
+observations without launching a worker. Continue only within actual existing grants when the later
+transition implementation is available.
+
+## Step 8: Report the available continuation
 
 Use the refreshed post-init/post-record state, not the pre-init `no-state` result. Print:
 
@@ -231,14 +244,14 @@ Use the refreshed post-init/post-record state, not the pre-init `no-state` resul
 FVS >> AUTO-INIT
 
 State:            revision {revision} ({configuration}); scope {scope}; limits {workers} workers, {wallClockHours} h total (per-node hours {nodeHours} recorded, not enforced); extraction {not run | succeeded | failed}; agreement {missing | stale | stored-context-current, semantic check passed}
-Next action:      {existing extraction continuation; later integrations unavailable}
+Next action:      {existing extraction continuation or reconciled/partial runtime reason;22 dispatch unavailable}
 Memory:           {unregistered | missing | stale | blocked/partial reason | memory-primed for current caller request}
 Pending decision: {only affected missing initial decisions, or none}
 ```
 
 Report the script's actual refusal/next step when blocked. Successful agreement storage is ticket12
-slice readiness only. The configured20 adapter can report current memory-primed; full reconciliation16 and orchestration22 remain
-unimplemented dependencies. The legacy `nextAction` string may name the existing extraction or M2
+slice readiness only. The configured20 adapter reports current memory-primed;16 records checkpoints and
+current observations, while22 orchestration/dispatch remains unavailable. The legacy `nextAction` string may name the existing extraction or M2
 placeholder; it is not a new transition engine. Do not launch stage workers or claim the pipeline or
 project proof accepted. Local FVS-development Beads is not target-project memory.
 

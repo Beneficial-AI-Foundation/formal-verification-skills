@@ -368,6 +368,7 @@ describe('memory bootstrap workflow boundary', () => {
     assert.match(reference, /actualWorkerContext = current\.primeText/);
     assert.match(reference, /not OS\/provider authentication/);
     assert.match(reference, /No memory result[\s\S]*proves a theorem/);
-    assert.match(reference, /Those transition\/consumer integrations[\s\S]*not implemented by this adapter/);
+    assert.match(reference, /16 coordinator consumer[\s\S]*auto-resume\.md[\s\S]*22 dispatch wiring/);
+    assert.match(reference, /This memory adapter itself establishes neither/);
   });
 });

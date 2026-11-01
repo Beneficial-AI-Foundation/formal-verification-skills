@@ -1,7 +1,7 @@
 <purpose>
-Explain the recorded auto-track state and stop. Dispatching proof work to Agent Orchestrator
-workers, checking results and publishing accepted receipts is milestone 2 functionality not yet
-available; this workflow does none of it, partially or otherwise, and writes nothing.
+Read the recorded auto-track state. For an agreed configured project, reconcile the current
+coordinator continuation through the bounded checkpoint adapter, then report and stop.22 dispatch
+and automatic stage sequencing remain unavailable; this invocation accepts no proof.
 </purpose>
 
 <process>
@@ -26,19 +26,30 @@ node "$AUTO" read-state --project-root .
 On `malformed-state` or `malformed-externals`, use `message` as the state and `nextStep` as the next
 action. On `no-state`, use `message` and `nextAction`.
 
-## Step 3: Report and stop
+## Step 3: Reconcile an agreed configured continuation
+
+When current agreement, project memory and caller invocation context exist, follow `auto-resume.md`.
+Perform the mandatory canonical semantic applicability/actions check, prepare a fresh request and
+run `state` with exclusive output, then `verifyReconciliation` against the independently held request.
+Preserve partial reasons, reservations and original limits. The adapter may update only its runtime
+history and the owned20 context; a read-only M1 invocation still reports its recorded continuation.
+Missing agreement/store/association/accounting/context stops that affected route without setup,
+budget reset, guessed identities or a new scope interview. This is no dispatch/publication grant.
+
+## Step 4: Report and stop
 
 ```
 FVS >> AUTO-EXECUTE
 
-State:            {recorded choices, extraction status and externals counts, or the reason above}
+State:            {recorded choices/extraction/externals; current reconciliation or partial reasons}
 Next action:      {nextAction}
 Pending decision: {pendingDecisions, or none}
 
-Proof dispatch, checking and acceptance: milestone 2 functionality not yet available.
+Automatic stage sequencing/proof dispatch: milestone 2 functionality not yet available; no proof accepted by this invocation.
 See the "Auto track" section of the FVS README for what milestone 1 provides.
 ```
 
-Stop here. Do not dispatch workers, run proofs, check results or write receipts.
+Stop after the report. Checkpoint metadata and currentness inspection establish no new proof acceptance;
+keep provisional results and accepted checker receipts distinct.
 
 </process>

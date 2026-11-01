@@ -89,7 +89,9 @@ function officialStubScripts() {
   const resolver = fs.readFileSync(path.join(ROOT, 'scripts', 'fvs-probe-inventory.mjs'), 'utf8');
   assert.ok(resolver.includes(pinned), 'the shipped resolver pins the fixture digest');
   fs.writeFileSync(path.join(scripts, 'fvs-probe-inventory.mjs'), resolver.replace(pinned, stub));
-  for (const name of ['fvs-auto.mjs', 'fvs-project-memory.mjs', 'fvs-probe-linux.mjs']) {
+  // Keep the actual local module closure; importing the profile must never run
+  // the optional memory/resume/checker programs.
+  for (const name of fs.readdirSync(path.join(ROOT, 'scripts')).filter((n) => n.endsWith('.mjs') && n !== 'fvs-probe-inventory.mjs')) {
     fs.copyFileSync(path.join(ROOT, 'scripts', name), path.join(scripts, name));
   }
   return path.join(scripts, 'fvs-auto.mjs');

@@ -124,4 +124,5 @@ Runtime prime observations stay in their exclusive evidence directory, not auto-
 only explicit registration changes state. Refresh does not reset budgets or gratuitously alter proof-
 bound state bytes.16 must reconcile its canonical checkpoints/sessions/receipts and refresh this context;
 22 must invoke the fresh gate before dispatch, and workers prime again before verification actions.
-Those transition/consumer integrations and live stock-AO qualification are not implemented by this adapter.
+The16 coordinator consumer is documented in `auto-resume.md`;22 dispatch wiring and the live stock-AO
+qualification remain separate. This memory adapter itself establishes neither.

@@ -23,6 +23,8 @@ import {
   MemoryError, memoryOwnData, memoryDataSnapshot, memoryBindingsErrors, bindingIdentity, inspectMemoryRegistration, memoryJson,
   prepareMemoryBootstrapRequest, runMemoryBootstrap, consumeMemoryBootstrap,
 } from './fvs-project-memory.mjs';
+import { ResumeError, runResume, consumeResume, readRuntime, parseResumeRequest } from './fvs-auto-resume.mjs';
+import { inspectAutoAcceptance } from './fvs-checker-auto.mjs';
 
 const GREEN = 'supported-and-tested';
 
@@ -39,6 +41,7 @@ function usage() {
     '       node fvs-auto.mjs record-memory --input REGISTRATION.json [--project-root PRIMARY] [--confirm-overwrite]',
     '       node fvs-auto.mjs prime-memory --request REQUEST.json --out EXCLUSIVE_DIR [--project-root PRIMARY]',
     '       node fvs-auto.mjs refresh-memory --request REQUEST.json --out EXCLUSIVE_DIR [--project-root PRIMARY]',
+    '       node fvs-auto.mjs checkpoint|state --request REQUEST.json --out EXCLUSIVE_DIR [--project-root PRIMARY]',
     '       node fvs-auto.mjs record-roadmap --decision accepted|declined [--project-root DIR] [--confirm-overwrite]',
     '       node fvs-auto.mjs record-extraction --out OUT --build-exit-code N --oracle complete|refused|unknown [--oracle-reason TEXT] [--project-root DIR]',
     '       node fvs-auto.mjs record-externals --input RECORDS.json [--project-root DIR]',
@@ -1099,7 +1102,7 @@ function memoryOperation(fn) {
   try { return fn(); }
   catch (error) {
     if (error instanceof Refusal) throw error;
-    refuse(error instanceof MemoryError ? error.code : 'memory-unverified', error.message, error.details ?? {});
+    refuse(error instanceof MemoryError || error instanceof ResumeError ? error.code : 'memory-unverified', error.message, error.details ?? {});
   }
 }
 function memoryCanonical(root) {
@@ -1153,6 +1156,30 @@ export function verifyMemoryBootstrap(options) {
     const { projectRoot, request, out, callerRoot = process.cwd() } = memoryDataSnapshot(options);
     const root = projectDirectory(projectRoot);
     return consumeMemoryBootstrap({ request, out, callerRoot, loadCanonical: () => memoryCanonical(root) });
+  });
+}
+
+function resumeOperation(operation, options) {
+  try {
+    options = JSON.parse(JSON.stringify(memoryDataSnapshot(options)));
+    // The adapter takes descriptor-validated caller data. These services are
+    // coordinator code, never callbacks/role attestations from a JSON request.
+    const root = projectDirectory(options.projectRoot);
+    const services = { loadCanonical: () => memoryCanonical(root), refreshMemory, verifyMemory: verifyMemoryBootstrap, inspectAcceptance: inspectAutoAcceptance };
+    return operation === 'verify' ? consumeResume(options, services) : runResume(operation, options, services);
+  } catch (e) {
+    if (e instanceof Refusal) throw e;
+    refuse(e.code ?? 'resume-unverified', e.message, e.details ?? {});
+  }
+}
+export const checkpointState = (options) => resumeOperation('checkpoint', options);
+export const reconcileState = (options) => resumeOperation('state', options);
+export const verifyReconciliation = (options) => resumeOperation('verify', options);
+export function readRuntimeState(options) {
+  return memoryOperation(() => {
+    const data = memoryDataSnapshot(options), errors = [];
+    if (!fields(errors, data, 'runtime read', ['projectRoot']) || errors.length) refuse('invalid-input', errors.join('; '));
+    return readRuntime(projectDirectory(data.projectRoot));
   });
 }
 
@@ -1314,6 +1341,10 @@ function stateFlags(argv, values, switches = [], optional = []) {
 }
 
 const STATE_COMMANDS = {
+  ...Object.fromEntries([['checkpoint', checkpointState], ['state', reconcileState]].map(([command, run]) => [command, (argv) => {
+    const flags = stateFlags(argv, ['request', 'out']);
+    return run({ projectRoot: flags['project-root'], request: parseResumeRequest(fs.readFileSync(flags.request)), out: flags.out });
+  }])),
   'init-state': (argv) => {
     const flags = stateFlags(argv, ['input'], ['confirm-overwrite']);
     return initState({ projectRoot: flags['project-root'], choices: readInput(flags.input), confirmOverwrite: flags['confirm-overwrite'] === true });
@@ -1364,7 +1395,7 @@ function stateMain(command, argv) {
   try {
     result = { ok: true, command, ...STATE_COMMANDS[command](argv) };
   } catch (error) {
-    result = error instanceof Refusal
+    result = error instanceof Refusal || error instanceof ResumeError
       ? { ok: false, code: error.code, command, message: error.message, ...error.details }
       : { ok: false, code: 'internal', command, message: error.message };
   }

@@ -132,7 +132,7 @@ describe('published FVS plugin package', () => {
     assert.deepEqual(
       filesUnder(path.join(PLUGIN_ROOT, 'scripts')),
       [
-        'fvs-auto.mjs',
+        'fvs-auto.mjs', 'fvs-auto-resume.mjs',
         'fvs-closure-plan.mjs',
         'fvs-contract-registry.mjs',
         'fvs-checker.mjs',

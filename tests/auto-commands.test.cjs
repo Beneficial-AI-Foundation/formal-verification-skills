@@ -865,7 +865,8 @@ describe('auto command and workflow text', () => {
     assert.match(body, /Final PR acceptance remains human/);
     assert.match(body, /public-api[\s\S]*unsupported pending separately permitted ticket11/);
     assert.match(body, /No worker dispatch/);
-    assert.match(body, /full reconciliation16 and orchestration22 remain/);
+    assert.match(body, /16 records checkpoints and[\s\S]*22 orchestration\/dispatch remains unavailable/);
+    assert.match(body, /verifyReconciliation/);
     assert.match(read('commands/fvs/roadmap.md'), /`\.formalising\/auto-fv\/ROADMAP\.md`; `\/fvs:auto-init`/);
     assert.match(read('fv-skills/workflows/roadmap.md'), /\*\.md\) FILE=\$ROADMAP_PATH/);
     assert.match(read('fv-skills/workflows/roadmap.md'), /Generic roadmaps outside auto-init require no machine envelope/);

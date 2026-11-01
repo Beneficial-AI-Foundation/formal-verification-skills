@@ -1,6 +1,6 @@
 ---
 name: fvs-auto-execute
-description: Explain the recorded auto-track state; dispatching and accepting proof work is milestone 2 functionality
+description: Reconcile configured auto-track checkpoints and report state; automatic dispatch remains unavailable
 ---
 
 <pi_package_runtime>
@@ -12,9 +12,9 @@ description: Explain the recorded auto-track state; dispatching and accepting pr
 </pi_package_runtime>
 
 <objective>
-Explain the recorded auto-track state and stop: dispatching proof work to Agent Orchestrator
-workers and accepting checked results is milestone 2 functionality not yet available. Nothing is
-dispatched, checked, accepted or written.
+Read the recorded state, reconcile an agreed configured coordinator continuation and report it.
+The bounded adapter records runtime checkpoints/current observations; automatic dispatch and stage
+sequencing remain unavailable. This invocation accepts no proof.
 </objective>
 
 <execution_context>
@@ -30,5 +30,6 @@ Follow the auto-execute workflow. Finish with its report block, which always car
 <success_criteria>
 - [ ] Reports the recorded state read through `fvs-auto.mjs read-state`, or why it cannot.
 - [ ] Stops with "milestone 2 functionality not yet available" and the pointer to the README's auto track section.
-- [ ] Writes nothing, dispatches no worker and accepts no result.
+- [ ] Reconciles configured continuation through the current caller request, or reports the actual partial reason.
+- [ ] Preserves original scope/budgets/reservations, dispatches no worker and accepts no proof.
 </success_criteria>

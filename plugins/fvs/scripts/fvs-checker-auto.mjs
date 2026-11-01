@@ -9,7 +9,7 @@ import { buildRecord } from './fvs-rust-identity.mjs';
 import { buildLeanGraph, duplicateKeys } from './fvs-lean-graph.mjs';
 import { buildPlan, definitionClosure } from './fvs-closure-plan.mjs';
 import { canonical, validatePlan, readChain, registryStatus } from './fvs-contract-registry.mjs';
-import { tokens } from './fvs-checker.mjs';
+import { tokens, verifyBuildImports } from './fvs-checker.mjs';
 
 const sha = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
 const hash = (file) => sha(fs.readFileSync(file));
@@ -381,6 +381,12 @@ function checkEvidence(ref, frozenSha256) {
   if (wanted.some((name) => !name) || canonical([...kernel.audit.targets].sort()) !== canonical(wanted.sort())
     || canonical(result.audit) !== canonical(kernel.audit) || result.build.source.commit !== result.source.commit
     || result.build.source.tree !== result.source.tree) refuse('stale-input', 'candidate evidence lost exact source/target coverage');
+  checkKernelArtifacts(kernel);
+  return result;
+}
+
+// The same artifact checks serve ordinary evidence and retained helper identity audits.
+function checkKernelArtifacts(kernel) {
   verifyFiles(kernel.attempt.inputs);
   verifyFiles(Object.fromEntries(kernel.attempt.imports.flatMap((m) => m.parts.map((p) => [p.file, p.sha256]))));
   for (const row of kernel.attempt.snapshots.modules) if (hash(row.file) !== row.sha256) refuse('stale-input', 'accepted kernel input snapshot changed');
@@ -388,7 +394,6 @@ function checkEvidence(ref, frozenSha256) {
     const file = kernel.attempt.snapshots[name], source = name === 'helper' ? 'FvsKernelAudit.lean' : 'fvs-checker.mjs';
     if (hash(file) !== hash(fileURLToPath(new URL(source, import.meta.url)))) refuse('stale-input', 'captured checker evidence changed');
   }
-  return result;
 }
 
 function dependenciesOf(context, node) {
@@ -402,10 +407,10 @@ function checkBuildEvidence(result, engine, deadlineMs) {
   engine.verifyBuildImports(result.build, bound(result.kernelCheck).json.attempt.imports, deadlineMs);
 }
 
-function integrationHead(source, out, label, deadlineMs) {
+function integrationHead(source, out, label, deadlineMs, tree = false) {
   closed(source, ['kind', 'root', 'commit', 'expectedTree'], 'integrated source');
   if (source.kind !== 'git' || !path.isAbsolute(source.root ?? '') || !isCommit(source.commit) || !isCommit(source.expectedTree)) refuse('invalid-input', 'exact integrated git source is required');
-  const git = '/usr/bin/git', toolSha256 = hash(git), argv = ['rev-parse', '--verify', 'HEAD'];
+  const git = '/usr/bin/git', toolSha256 = hash(git), argv = ['rev-parse', '--verify', tree ? 'HEAD^{tree}' : 'HEAD'];
   const env = { PATH: '/usr/bin:/bin', LANG: 'C', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_OPTIONAL_LOCKS: '0',
     GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1', GIT_TERMINAL_PROMPT: '0' };
   const run = spawnSync(git, argv, { cwd: source.root, env, encoding: 'utf8', timeout: Math.max(1, deadlineMs - Date.now()), maxBuffer: 1024 * 1024 });
@@ -413,7 +418,7 @@ function integrationHead(source, out, label, deadlineMs) {
     error: run.error?.code ?? null, stdout: run.stdout ?? '', stderr: run.stderr ?? '' });
   if (hash(git) !== toolSha256) refuse('stale-input', 'git tool changed during integrated-head validation');
   if (run.error?.code === 'ETIMEDOUT') refuse('timeout', 'integrated-head validation timed out');
-  if (run.status !== 0 || run.signal || run.error || run.stdout.trim() !== source.commit) refuse('stale-input', 'the intended integrated commit is not the current target HEAD');
+  if (run.status !== 0 || run.signal || run.error || run.stdout.trim() !== (tree ? source.expectedTree : source.commit)) refuse('stale-input', 'the intended integrated commit is not the current target HEAD');
   return receipt;
 }
 
@@ -559,6 +564,52 @@ export function readAcceptedStore(root, { ignoreLock = false } = {}) {
   }
   if (!ignoreLock && fs.existsSync(path.join(root, 'lock'))) refuse('stale-input', 'accepted store lock appeared');
   return { records, heads, headSha256: previous };
+}
+
+// Resume inspects currentness, never builds or publishes a proof. Historical
+// chain validity alone cannot clear a current freeze/registry/import mismatch.
+export function inspectAutoAcceptance({ baseline, store, source, deadlineMs, out }) {
+  closed(store, ['root', 'expectedHeadSha256'], 'accepted store inspection');
+  if (!path.isAbsolute(store.root ?? '') || !(store.expectedHeadSha256 === null || isSha(store.expectedHeadSha256))) refuse('invalid-input', 'explicit accepted-store head is required');
+  beforeDeadline({ deadlineMs });
+  const history = readAcceptedStore(store.root);
+  if (history.headSha256 !== store.expectedHeadSha256) refuse('stale-input', 'accepted-store head changed');
+  if (!history.records.length) {
+    const current = baseline === null ? null : frozenContext(baseline);
+    return { status: 'not-established', acceptedBaseline: null, storeHeadSha256: null, nodes: [], registry: current?.frozen.registry ?? null,
+      inputs: current ? { extraction: current.job.extraction.identity, graph: current.job.extraction.graph, plan: current.job.extraction.plan } : null };
+  }
+  if (baseline === null) refuse('stale-input', 'accepted history requires its exact current frozen context');
+  const { frozen, context, job } = frozenContext(baseline);
+  exclusive(out);
+  integrationHead(source, out, 'inspection-head-before', deadlineMs);
+  integrationHead(source, out, 'inspection-tree-before', deadlineMs, true);
+  const latest = history.records.at(-1).record;
+  if (latest.integrated.commit !== source.commit || latest.integrated.tree !== source.expectedTree) refuse('stale-input', 'accepted integrated source differs; a fresh checker recheck is required');
+  const nodes = [];
+  for (const [node, row] of history.heads) {
+    const record = row.record;
+    if (!context.view.union.has(node)) continue;
+    if (record.frozenSha256 !== baseline.sha256 || record.registryHeadSha256 !== frozen.registry.headSha256 || record.contract !== frozen.records[node]?.sha256) refuse('stale-input', 'accepted node is stale under the current freeze/registry');
+    checkBuildEvidence(checkEvidence(record.integratedCheck, baseline.sha256), { verifyBuildImports }, deadlineMs);
+    if (!Array.isArray(record.helperIdentityChecks) || record.helperIdentityChecks.length !== record.dependencies.length) refuse('stale-input', 'accepted helper identity evidence is missing');
+    for (const [index, dependency] of record.dependencies.entries()) {
+      const kernel = bound(record.helperIdentityChecks[index]).json, target = frozen.targets.find((t) => t.node === dependency.node);
+      if (!target || kernel.authority !== 'audit-only' || kernel.audit?.status !== 'kernel-checked' || kernel.audit.targetProofsChecked !== true
+        || kernel.audit.runId !== `${record.runId}-reuse-${dependency.node}` || kernel.attempt?.runId !== kernel.audit.runId
+        || canonical(kernel.audit.targets) !== canonical([target.name])) refuse('stale-input', 'accepted helper identity evidence is foreign');
+      checkKernelArtifacts(kernel);
+      verifyBuildImports(checkEvidence(record.integratedCheck, baseline.sha256).build, kernel.attempt.imports, deadlineMs);
+    }
+    nodes.push({ node, receipt: { file: row.file, sha256: row.sha256 }, integrated: record.integrated });
+  }
+  frozenContext(baseline);
+  if (readAcceptedStore(store.root).headSha256 !== history.headSha256) refuse('stale-input', 'accepted store changed during inspection');
+  integrationHead(source, out, 'inspection-head-after', deadlineMs);
+  integrationHead(source, out, 'inspection-tree-after', deadlineMs, true);
+  beforeDeadline({ deadlineMs });
+  return { status: 'current', acceptedBaseline: latest.integrated, storeHeadSha256: history.headSha256, nodes: nodes.sort((a, b) => a.node - b.node), registry: frozen.registry,
+    inputs: { extraction: job.extraction.identity, graph: job.extraction.graph, plan: job.extraction.plan } };
 }
 
 export async function runAuto(command, { request, out }, engine) {
