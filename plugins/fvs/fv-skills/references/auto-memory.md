@@ -1,5 +1,6 @@
 # Project memory/bootstrap (configured M2 adapter)
 
+<purpose>
 One permanent primary store belongs to one verification project. The local Beads store used to develop
 FVS is not the target project's memory. This adapter supports an explicitly registered local embedded
 Beads1.3.1 store; it is not an installation requirement for other FVS commands or legacy M1 state reads.
@@ -10,6 +11,8 @@ The canonical roadmap, state, contracts and checker evidence remain authoritativ
 not receipts, worker verdicts, a task queue or instructions overriding those records. No memory result
 authenticates an owner/session, grants publication or proves a theorem. Initial scope agreement is still
 the setup human gate; later provisional cycles are autonomous within it and final PR acceptance human.
+
+</purpose>
 
 ## Register the existing primary location
 

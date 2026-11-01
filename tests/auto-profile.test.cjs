@@ -89,7 +89,7 @@ function officialStubScripts() {
   const resolver = fs.readFileSync(path.join(ROOT, 'scripts', 'fvs-probe-inventory.mjs'), 'utf8');
   assert.ok(resolver.includes(pinned), 'the shipped resolver pins the fixture digest');
   fs.writeFileSync(path.join(scripts, 'fvs-probe-inventory.mjs'), resolver.replace(pinned, stub));
-  for (const name of ['fvs-auto.mjs', 'fvs-probe-linux.mjs']) {
+  for (const name of ['fvs-auto.mjs', 'fvs-project-memory.mjs', 'fvs-probe-linux.mjs']) {
     fs.copyFileSync(path.join(ROOT, 'scripts', name), path.join(scripts, name));
   }
   return path.join(scripts, 'fvs-auto.mjs');

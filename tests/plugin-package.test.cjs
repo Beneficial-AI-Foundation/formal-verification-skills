@@ -148,6 +148,7 @@ describe('published FVS plugin package', () => {
         'fvs-model-review.mjs',
         'fvs-probe-inventory.mjs',
         'fvs-probe-linux.mjs',
+        'fvs-project-memory.mjs',
         'fvs-review-grounding.mjs',
         'fvs-rust-identity.mjs',
         'fvs-spec-review.mjs',
