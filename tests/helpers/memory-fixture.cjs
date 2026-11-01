@@ -37,7 +37,7 @@ function fakeStore(root) {
   fs.writeFileSync(path.join(store, 'metadata.json'), JSON.stringify({ backend: 'dolt', database: 'dolt', dolt_mode: 'embedded', dolt_database: 'fixture_db', project_id: crypto.randomUUID() }));
   const bd = path.join(root, 'fixture-bd.cjs');
   fs.writeFileSync(bd, '#!' + process.execPath + '\n' + fs.readFileSync(path.join(ROOT, 'tests/fixtures/project-memory/bd.cjs'), 'utf8')); fs.chmodSync(bd, 0o755);
-  return { backend: 'beads', canonicalRoot: root, storeDir: store, bdPath: bd };
+  return { backend: 'beads', canonicalRoot: root, storeDir: store, databasePath: path.join(store, 'embeddeddolt'), bdPath: bd };
 }
 function control(root, value) { fs.writeFileSync(path.join(root, '.beads/fixture-control.json'), JSON.stringify(value)); }
 function calls(root) { const f = path.join(root, '.fixture-bd-calls.jsonl'); return fs.existsSync(f) ? fs.readFileSync(f, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) : []; }

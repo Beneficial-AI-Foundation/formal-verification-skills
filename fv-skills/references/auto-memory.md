@@ -30,6 +30,7 @@ Keep this closed registration JSON in a temporary caller-owned file, with actual
   "backend": "beads",
   "canonicalRoot": "<absolute primary control root>",
   "storeDir": "<that root>/.beads",
+  "databasePath": "<inspected existing canonical database container>",
   "bdPath": "<resolved existing absolute Beads executable>"
 }
 ```
@@ -38,7 +39,9 @@ Keep this closed registration JSON in a temporary caller-owned file, with actual
 node "$AUTO" record-memory --project-root "$PRIMARY" --input "$REGISTRATION"
 ```
 
-This registers an existing store and appends a versioned binding to state. It creates no store, changes
+This registers an existing store and appends a versioned binding to state. The explicit database locator
+and initialized logical database are checked before any Beads command; backend where/info then confirm
+the selection. Metadata-only clones cannot be initialized through registration. It creates no store, changes
 no limits/generation and launches no worker. Identical registration is a no-write replay. Replacement
 requires actual confirmation and `--confirm-overwrite`; preserve old bindings. Never replace a wrong
 project/database merely to pass the gate. Missing metadata/database/tool or unknown mode is actionable

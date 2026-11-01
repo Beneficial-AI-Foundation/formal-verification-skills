@@ -32,7 +32,8 @@ test('genuine local Beads1.3.1 primary/linked bootstrap and refusal qualificatio
   const primary = f.createProject(auto, out);
   // Beads1.3.1 -C requires an existing store, so explicit fixture initialization uses cwd.
   raw(['--sandbox', 'init', '--backend', 'dolt', '--skip-agents', '--skip-hooks', '--non-interactive', '--prefix', 'memory-fixture'], primary);
-  const registration = { backend: 'beads', canonicalRoot: primary, storeDir: path.join(primary, '.beads'), bdPath: bd };
+  const discovered = JSON.parse(raw(['-C', primary, '--sandbox', '--readonly', 'where', '--json'], primary));
+  const registration = { backend: 'beads', canonicalRoot: primary, storeDir: path.join(primary, '.beads'), databasePath: discovered.database_path, bdPath: bd };
   const registered = auto.recordMemory({ projectRoot: primary, registration });
   record({ case: 'registered-primary', inspection: registered.inspection, binding: registered.state.memoryBindings.at(-1) });
   const binding = registered.state.memoryBindings.at(-1);
@@ -112,9 +113,18 @@ test('genuine local Beads1.3.1 primary/linked bootstrap and refusal qualificatio
   assert.equal(value(), canonicalValue); assert.equal(auto.verifyMemoryBootstrap({ projectRoot: primary, request: refreshRequest, out: refreshed.out }).status, 'memory-primed');
   record({ case: 'coordinator-stale-refresh', out: refreshed.out, request: refreshRequest });
   const noStore = f.createProject(auto, out); const missingState = fs.readFileSync(f.stateFile(noStore));
-  let noStoreError; try { auto.recordMemory({ projectRoot: noStore, registration: { backend: 'beads', canonicalRoot: noStore, storeDir: path.join(noStore, '.beads'), bdPath: bd } }); } catch (e) { noStoreError = e; }
+  let noStoreError; try { auto.recordMemory({ projectRoot: noStore, registration: { backend: 'beads', canonicalRoot: noStore, storeDir: path.join(noStore, '.beads'), databasePath: path.join(noStore, '.beads/embeddeddolt'), bdPath: bd } }); } catch (e) { noStoreError = e; }
   assert.equal(noStoreError.code, 'memory-store-missing'); assert.equal(fs.existsSync(path.join(noStore, '.beads')), false); assert.deepEqual(fs.readFileSync(f.stateFile(noStore)), missingState);
   record({ case: 'missing-store-no-auto-init', code: noStoreError.code, project: noStore, storeAbsent: true });
+  // A normal Git clone can carry Beads metadata but no backing database. Discovery must not create one.
+  fs.mkdirSync(path.join(noStore, '.beads'));
+  for (const name of ['metadata.json', 'config.yaml', 'README.md', '.gitignore']) fs.copyFileSync(path.join(primary, '.beads', name), path.join(noStore, '.beads', name));
+  let metadataOnlyError;
+  try { auto.recordMemory({ projectRoot: noStore, registration: { backend: 'beads', canonicalRoot: noStore, storeDir: path.join(noStore, '.beads'), databasePath: path.join(noStore, '.beads/embeddeddolt'), bdPath: bd } }); } catch (e) { metadataOnlyError = e; }
+  assert.equal(metadataOnlyError.code, 'memory-store-missing');
+  assert.equal(fs.existsSync(path.join(noStore, '.beads/embeddeddolt')), false); assert.deepEqual(fs.readFileSync(f.stateFile(noStore)), missingState);
+  record({ case: 'metadata-only-clone-no-database-init', code: metadataOnlyError.code, project: noStore, databaseAbsent: true });
+
   const mutant = path.join(out, 'altered-prime-case'); fs.cpSync(first.out, mutant, { recursive: true }); fs.writeFileSync(path.join(mutant, 'prime.txt'), 'altered actual prime');
   negative('altered-prime-bytes', 'memory-evidence-invalid', () => auto.verifyMemoryBootstrap({ projectRoot: primary, request: a, out: mutant }));
   // Actual backend output-bound refusal: unrelated fixture memories exceed the fixed 1MiB capture.

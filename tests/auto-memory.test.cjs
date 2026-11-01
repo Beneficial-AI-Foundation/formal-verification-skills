@@ -30,9 +30,17 @@ function cli(root, args) {
 describe('project memory registration', () => {
   it('never creates a missing store and leaves legacy state untouched', () => {
     const root = project(), before = bytes(root);
-    refuses('memory-store-missing', () => auto.recordMemory({ projectRoot: root, registration: { backend: 'beads', canonicalRoot: root, storeDir: path.join(root, '.beads'), bdPath: process.execPath } }));
+    refuses('memory-store-missing', () => auto.recordMemory({ projectRoot: root, registration: { backend: 'beads', canonicalRoot: root, storeDir: path.join(root, '.beads'), databasePath: path.join(root, '.beads/embeddeddolt'), bdPath: process.execPath } }));
     assert.deepEqual(bytes(root), before); assert.equal(fs.existsSync(path.join(root, '.beads')), false);
     assert.equal('memoryBindings' in stored(root), false);
+  });
+  it('does not turn a metadata-only clone into an initialized database', () => {
+    const root = project(), registration = f.fakeStore(root), db = path.join(root, '.beads/embeddeddolt');
+    fs.renameSync(db, path.join(root, 'retained-fixture-database'));
+    const before = bytes(root);
+    refuses('memory-store-missing', () => auto.recordMemory({ projectRoot: root, registration }));
+    assert.equal(fs.existsSync(db), false); assert.deepEqual(bytes(root), before);
+    assert.equal(f.calls(root).some((c) => ['remember', 'init'].includes(c.cmd)), false);
   });
   it('records actual identities once, preserves writer history/limits and reads without invoking backend', () => {
     const { root, registration } = fixture(); const before = bytes(root), s = stored(root), n = f.calls(root).length;
@@ -83,7 +91,7 @@ describe('project memory registration', () => {
     fs.cpSync(path.join(root, '.formalising'), path.join(linked, '.formalising'), { recursive: true });
     const local = f.fakeStore(linked);
     refuses('memory-not-primary', () => auto.recordMemory({ projectRoot: linked, registration: local }));
-    const other = project(), registration = { backend: 'beads', canonicalRoot: other, storeDir: path.join(other, '.beads'), bdPath: local.bdPath };
+    const other = project(), registration = { backend: 'beads', canonicalRoot: other, storeDir: path.join(other, '.beads'), databasePath: path.join(other, '.beads/embeddeddolt'), bdPath: local.bdPath };
     fs.symlinkSync(path.join(root, '.beads'), registration.storeDir);
     refuses('memory-store-missing', () => auto.recordMemory({ projectRoot: other, registration }));
   });

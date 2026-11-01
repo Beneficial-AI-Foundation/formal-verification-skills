@@ -134,10 +134,9 @@ function metadata(b) {
   if (b.databasePath) {
     realDirectory(b.databasePath);
     if (!inside(b.storeDir, b.databasePath) || b.databasePath === b.storeDir) stop('memory-store-mismatch', 'database must be inside the registered store');
-    if (b.databaseName) {
-      realDirectory(path.join(b.databasePath, b.databaseName));
-      realDirectory(path.join(b.databasePath, b.databaseName, '.dolt'));
-    }
+    const logicalName = b.databaseName ?? m.dolt_database;
+    realDirectory(path.join(b.databasePath, logicalName));
+    realDirectory(path.join(b.databasePath, logicalName, '.dolt'));
   }
   return m;
 }
@@ -164,8 +163,8 @@ function inspect(b, r, callerRoot = b.canonicalRoot) {
 }
 
 export function inspectMemoryRegistration({ projectRoot, registration }) {
-  closed(registration, ['backend', 'canonicalRoot', 'storeDir', 'bdPath'], 'memory registration');
-  if (registration.backend !== 'beads' || registration.canonicalRoot !== projectRoot || !['canonicalRoot', 'storeDir', 'bdPath'].every((k) => absolute(registration[k]))) stop('invalid-input', 'registration requires explicit canonical project/store/tool paths and backend beads');
+  closed(registration, ['backend', 'canonicalRoot', 'storeDir', 'databasePath', 'bdPath'], 'memory registration');
+  if (registration.backend !== 'beads' || registration.canonicalRoot !== projectRoot || !['canonicalRoot', 'storeDir', 'databasePath', 'bdPath'].every((k) => absolute(registration[k]))) stop('invalid-input', 'registration requires explicit existing canonical project/store/database/tool paths and backend beads');
   try {
     if (!fs.lstatSync(registration.bdPath).isFile() || fs.realpathSync(registration.bdPath) !== registration.bdPath || !(fs.statSync(registration.bdPath).mode & 0o111)) throw new Error('not an existing canonical executable');
   } catch (e) { stop('memory-tool-unavailable', 'backend executable unavailable: ' + registration.bdPath + ': ' + e.message); }
