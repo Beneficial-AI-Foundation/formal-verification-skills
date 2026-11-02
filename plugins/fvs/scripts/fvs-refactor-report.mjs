@@ -228,10 +228,23 @@ export function projectToolchainContext(root, state) {
     effectiveToolchain: selected, overrideReason: reason, unresolved: active.unresolved,
     resolution: tc.resolved_active.live?.Ok ? 'offline-resolved' : 'cached-offline',
     elanVersion: state.elan_version?.current, lean: executable('lean'), lake: executable('lake'),
-    environmentOverrides: Object.fromEntries(['ELAN_TOOLCHAIN', 'ELAN_HOME', 'LEAN_SYSROOT', 'LEAN_PATH',
-      'LEAN_SRC_PATH', 'LAKE_CONFIG', 'LAKE_OVERRIDE_LEAN'].filter(k => process.env[k] !== undefined)
+    environmentOverrides: Object.fromEntries(['ELAN_TOOLCHAIN', 'ELAN_HOME', 'LEAN', 'LEAN_SYSROOT', 'LEAN_PATH',
+      'LEAN_SRC_PATH', 'LAKE_CONFIG', 'LAKE_HOME', 'LAKE_OVERRIDE_LEAN'].filter(k => process.env[k] !== undefined)
       .map(k => [k, process.env[k]])),
     limits: 'Selection/identity only, not capability or dependency validation. Record actual versions/configuration and validate commands on this context before use. Never install or guess a replacement.' };
+}
+
+export function lakeCompilerIdentity(context, selected) {
+  if (context?.schema !== 'fvs-refactor/project-toolchain' || !context.lean?.path || !context.lean?.sha256) {
+    throw new Error('Resolved project context required for Lake compiler comparison');
+  }
+  selected = selected.trim();
+  if (!path.isAbsolute(selected)) throw new Error('Lake compiler selection unavailable; validate this pin explicitly, never infer from PATH');
+  const file = fs.realpathSync(selected); const sha256 = hash(fs.readFileSync(file));
+  if (file !== context.lean.path || sha256 !== context.lean.sha256) {
+    throw new Error('Lake-selected compiler differs from resolved project context; resolve the explicit override before continuing');
+  }
+  return { schema: 'fvs-refactor/lake-compiler', path: file, sha256 };
 }
 
 export function normaliseBoundaryMessages(query, raw, expected, definitionSlots = []) {
@@ -301,7 +314,9 @@ function main(args) {
     writeExclusive(args[3], contextHashes(args[1], JSON.parse(fs.readFileSync(args[2], 'utf8'))));
   } else if (args[0] === 'toolchain' && args.length === 4) {
     writeExclusive(args[3], projectToolchainContext(args[1], JSON.parse(fs.readFileSync(args[2], 'utf8'))));
-  } else throw new Error('Usage: capture ROOT FILES_JSON OUT | compare BASELINE ROOT FILES_JSON OUT | messages QUERY RAW EXPECTED_COUNT DEFINITION_SLOTS_JSON OUT | hashes ROOT FILES_JSON OUT | toolchain ROOT ELAN_STATE_JSON OUT');
+  } else if (args[0] === 'lake-compiler' && args.length === 4) {
+    writeExclusive(args[3], lakeCompilerIdentity(JSON.parse(fs.readFileSync(args[1], 'utf8')), fs.readFileSync(args[2], 'utf8')));
+  } else throw new Error('Usage: capture ROOT FILES_JSON OUT | compare BASELINE ROOT FILES_JSON OUT | messages QUERY RAW EXPECTED_COUNT DEFINITION_SLOTS_JSON OUT | hashes ROOT FILES_JSON OUT | toolchain ROOT ELAN_STATE_JSON OUT | lake-compiler CONTEXT_JSON SELECTED_PATH OUT');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

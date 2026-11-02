@@ -124,7 +124,11 @@ Keep the file pin, effective selection and override origin visible. If an ambien
 with the requested project pin, resolve that mismatch before edits; do not reset it or silently
 choose4.31. Record relevant configuration/environment overrides, actual `lean`/`lake` version output,
 absolute executable paths/hashes, dependency revisions, actual source roots and package Lean arguments.
-Validate the Lake-selected environment/compiler against this context too. Preserve local pins and
+Validate Lake's actual selected compiler against this context too. On the checked pins its exported
+`LEAN` value identifies that compiler; `command -v lean` does not, because Lake may put its own bin
+directory first even when an override selects a different Lean. Reject mismatches before cache/
+verification operations; do not reset or ignore the override. Unsupported selection inspection
+requires an explicit pin-specific route, never a PATH guess. Preserve local pins and
 lockfiles. Inspect local dependency availability before Lake loads configuration; do not authorize
 fetches/cache downloads implicitly. Use the existing task's network/confinement policy.
 
@@ -202,6 +206,8 @@ REFACTOR_REPORT_TOOL=~/.claude/scripts/fvs-refactor-report.mjs
   set -C
   cat "$BOUNDARY_QUERY" > "$BASELINE_DIR/query.lean" || exit 1
   cat "$TOOLCHAIN_DIR/toolchain.json" > "$BASELINE_DIR/toolchain.json" || exit 1
+  LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 "$PROJECT_LAKE" env /bin/sh -c 'test -n "$LEAN" && printf "%s\n" "$LEAN"' > "$BASELINE_DIR/lake-selected-lean.txt" || exit 1
+  node "$REFACTOR_REPORT_TOOL" lake-compiler "$BASELINE_DIR/toolchain.json" "$BASELINE_DIR/lake-selected-lean.txt" "$BASELINE_DIR/lake-compiler.json" || exit 1
   node "$REFACTOR_REPORT_TOOL" hashes "$PROJECT_ROOT" "$SCOPE_FILES" "$BASELINE_DIR/source-before.json" || exit 1
   node "$REFACTOR_REPORT_TOOL" capture "$PROJECT_ROOT" "$SCOPE_FILES" "$BASELINE_DIR/source.json" || exit 1
   node "$REFACTOR_REPORT_TOOL" hashes "$PROJECT_ROOT" "$CONTEXT_FILES" "$BASELINE_DIR/context.json" || exit 1
@@ -231,8 +237,11 @@ cmp -s "$BASELINE_DIR/query.lean" "$BOUNDARY_QUERY" || exit 1
   set -C
   "$ELAN_BIN" dump-state --no-net > "$FINAL_DIR/elan.json" || exit 1
   node "$REFACTOR_REPORT_TOOL" toolchain "$PROJECT_ROOT" "$FINAL_DIR/elan.json" "$FINAL_DIR/toolchain.json" || exit 1
+  LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 "$PROJECT_LAKE" env /bin/sh -c 'test -n "$LEAN" && printf "%s\n" "$LEAN"' > "$FINAL_DIR/lake-selected-lean.txt" || exit 1
+  node "$REFACTOR_REPORT_TOOL" lake-compiler "$FINAL_DIR/toolchain.json" "$FINAL_DIR/lake-selected-lean.txt" "$FINAL_DIR/lake-compiler.json" || exit 1
 ) || exit 1
 diff -u "$BASELINE_DIR/toolchain.json" "$FINAL_DIR/toolchain.json" || exit 1
+diff -u "$BASELINE_DIR/lake-compiler.json" "$FINAL_DIR/lake-compiler.json" || exit 1
 node "$REFACTOR_REPORT_TOOL" hashes "$PROJECT_ROOT" "$FINAL_SCOPE_FILES" "$FINAL_DIR/source-before.json" || exit 1
 (
   set -C
@@ -427,7 +436,9 @@ Dependency-free tests exercised installed Lean/Lake **4.25.2, 4.31.0 and 4.35.0*
 and isolated temporary profiles. Each ran the file/import gates, protected type/body/axiom and
 coverage-regression cases, reporting-helper limits, worked proof examples and timing-log recipe.
 Installed Elan4.2.3 tests covered file, environment and directory overrides, rejection of an
-uninstalled pin without installing, and unchanged pin/toolchain identities. These are bounded
+uninstalled pin without installing, unchanged pin/toolchain identities, and actual Lake sysroot
+overrides where PATH still points at the other installation. The mismatch is rejected before
+cache/proof work and selected compiler identity is rechecked in baseline/final captures. These are bounded
 fixtures, not a real consumer refactor, benchmark or universal compatibility claim.
 
 Older4.19 source documents import-building `lake lean`, but its build-target parser differs from

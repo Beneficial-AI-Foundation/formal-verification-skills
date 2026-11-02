@@ -135,6 +135,16 @@ it('resolves only the effective installed project override, never the global def
   fs.writeFileSync(path.join(root,'lean-toolchain'),'changed-pin\n');assert.notEqual(projectToolchainContext(root,state).pin.sha256,ctx.pin.sha256);
 });
 
+it('compares the actual Lake-selected compiler with the recorded path and binary hash',async()=>{
+  const {lakeCompilerIdentity}=await tool;const root=dir();const a=path.join(root,'lean-a');const b=path.join(root,'lean-b');
+  fs.writeFileSync(a,'compiler A');fs.writeFileSync(b,'compiler B');const sha=fs.readFileSync(a);
+  const context={schema:'fvs-refactor/project-toolchain',lean:{path:a,sha256:require('node:crypto').createHash('sha256').update(sha).digest('hex')}};
+  const first=lakeCompilerIdentity(context,a+'\n');assert.equal(first.path,a);assert.equal(first.sha256,context.lean.sha256);
+  assert.throws(()=>lakeCompilerIdentity(context,b),/Lake-selected compiler differs/);
+  assert.throws(()=>lakeCompilerIdentity(context,''),/selection unavailable/);
+  fs.appendFileSync(a,' changed');assert.throws(()=>lakeCompilerIdentity(context,a),/Lake-selected compiler differs/);
+});
+
 it('requires rendered definition bodies and refuses elided, opaque, missing or theorem-proof views',async()=>{
   const {normaliseBoundaryMessages}=await tool;const info=data=>JSON.stringify({severity:'information',data})+'\n';
   for(const text of ['opaque core : Nat','axiom core : Nat','constructor Core.mk : Core','def core : Nat','def core : Nat :=','def core : Nat := <not imported>','def core : Nat := ⋯']) {

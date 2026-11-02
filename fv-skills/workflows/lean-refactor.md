@@ -69,8 +69,8 @@ pin to make an example work. If no supported no-network resolver exists, validat
 existing installed setup explicitly; do not fall back to `elan show`/`which` or a guessed global.
 Record actual versions, relevant config/environment overrides and dependency identities. Check
 local dependency availability and the operation's existing network permission before Lake loads
-configuration; missing dependencies stop without fetching. Cache-first applies only within that
-permission. No toolchain/dependency/cache download is implied by this preflight.
+configuration; missing dependencies stop without fetching. Required context inspection precedes cache warming; cache stays before proof builds/dispatch.
+Cache-first applies only within that permission. No toolchain/dependency/cache download is implied by this preflight.
 
 Before editing, read the captured help and validate actual file targets, import preparation, JSON/
 printer/pp options, optional profiling and suggested tactics on this context. Use the documented
@@ -115,6 +115,13 @@ if grep -Eq '^[[:space:]]*--profile([[:space:]=]|$)' "$TOOLCHAIN_DIR/lean-help.t
   PROFILE_ARGS=(--profile)
 fi
 
+# Inspect actual selection before cache/proof operations; this metadata load needs local deps/permission.
+(
+  set -C
+  LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 "$PROJECT_LAKE" env /bin/sh -c 'test -n "$LEAN" && printf "%s\n" "$LEAN"' > "$TOOLCHAIN_DIR/lake-selected-lean.txt" || exit 1
+  node "$REFACTOR_REPORT_TOOL" lake-compiler "$TOOLCHAIN_DIR/toolchain.json" "$TOOLCHAIN_DIR/lake-selected-lean.txt" "$TOOLCHAIN_DIR/lake-compiler.json" || exit 1
+) || exit 1
+
 # Exact identity: the root package or a recorded dependency is named mathlib in lake-manifest.json.
 if node -e 'const m = JSON.parse(require("fs").readFileSync("lake-manifest.json", "utf8"));
   process.exit(m.name === "mathlib" || (m.packages || []).some(p => p.name === "mathlib") ? 0 : 1)' 2>/dev/null; then
@@ -127,12 +134,6 @@ if node -e 'const m = JSON.parse(require("fs").readFileSync("lake-manifest.json"
 else
   echo "FVS >> Cache preflight not applicable: no Mathlib cache executable in this project"
 fi
-# After cache permission/preflight, verify Lake's selected Lean is the resolved executable too.
-(
-  set -C
-  LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 "$PROJECT_LAKE" env /bin/sh -c 'command -v lean' > "$TOOLCHAIN_DIR/lake-lean-path.txt" || exit 1
-  node -e 'const fs = require("fs"); if (fs.realpathSync(process.argv[1]) !== fs.realpathSync(fs.readFileSync(process.argv[2], "utf8").trim())) throw Error("Lake environment compiler differs from resolved project context")' "$PROJECT_LEAN" "$TOOLCHAIN_DIR/lake-lean-path.txt" || exit 1
-) || exit 1
 ```
 
 Selected proofs must compile without admissions. A text scan is a lead to inspect, not proof that

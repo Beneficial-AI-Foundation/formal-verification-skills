@@ -43,7 +43,7 @@ describe('Lean build entrypoints are cache-first and fail closed', () => {
   });
 
   for (const file of ENTRYPOINTS) {
-    it(`${relative(file)} warms the cache before its first build-capable action`, () => {
+    it(`${relative(file)} warms the cache before proof builds or delegation after required context inspection`, () => {
       const source = fs.readFileSync(file, 'utf8');
       const cacheCommand=file.endsWith('lean-refactor.md')?`${THREAD_PREFIX}\"$PROJECT_LAKE\" exe cache get`:CACHE_COMMAND;
       const lines = source.split('\n');
