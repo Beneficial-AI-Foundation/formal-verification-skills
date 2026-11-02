@@ -561,7 +561,10 @@ export function verifyControllerTermination(options) {
     if (consumed.position !== 'after' || consumed.committedHeadSha256 !== q.committedHeadSha256) terminationBad('independent16 consumer did not confirm this actual after');
     const afterProcess = capture('process-after'), finalConsumer = verifyTransition({ projectRoot, request: x.rq, out: path.dirname(q.afterResult.file) });
     if (finalConsumer.position !== 'after' || finalConsumer.committedHeadSha256 !== q.committedHeadSha256) terminationBad('final full canonical consumer fence failed');
-    const final = terminationInputs(projectRoot, q), endedAtMs = failureClock(q, x.run, began);
+    const final = terminationInputs(projectRoot, q);
+    // These historical lifecycle identities are separate from15 proof currentness.
+    for (const ref of [...Object.values(q.expectedContext.code), ...Object.values(q.expectedContext.tools)]) bound(ref, false);
+    const endedAtMs = failureClock(q, x.run, began);
     if (final.runtime.fileSha256 !== x.runtime.fileSha256 || !same(final.facts, x.facts) || !same(product, implementation())) terminationBad('head, bytes, context or implementation changed during consumption');
     const value = { schema: 'fvs/auto-respec-controller-termination', schemaVersion: 1, request: q, requestSha256: memoryHash(q), requestInput: input,
       implementation: product, status: 'conclusive-known-lifecycle-termination', ...x.facts, committedHeadSha256: q.committedHeadSha256,

@@ -179,6 +179,12 @@ describe('known controller termination: execution closure only (protocol doubles
     assert.ok(fs.existsSync(path.join(lateOut, 'failure.json')));
     refused(v.request, () => api.consumeControllerTermination({ projectRoot: p.x.root, request: v.request, out: lateOut }));
   });
+  it('rechecks exact lifecycle and tool bytes after the slow consumer reads', () => {
+    const v = p.complete(), file = p.context.tools.lean.file, original = fs.readFileSync(file); let calls = 0;
+    processPatch = () => { if (++calls === 2) fs.writeFileSync(file, 'changed owned protocol tool'); };
+    try { refused(v.request, undefined, /bound bytes changed/); }
+    finally { f.write(path.join(p.x.owned, 'retained-late-tool-mutant'), fs.readFileSync(file)); fs.writeFileSync(file, original); processPatch = null; }
+  });
   it('does not let a late process read hide canonical drift or an exhausted deadline', () => {
     const rollback = p.complete(), now = Date.now;
     Date.now = () => now() - 60000;
