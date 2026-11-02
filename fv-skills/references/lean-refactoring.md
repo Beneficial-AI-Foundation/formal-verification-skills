@@ -201,7 +201,7 @@ lists the project's toolchain/configuration/manifest inputs. All paths below are
 Load the reporting helper from the trusted installed FVS root:
 
 ```bash
-REFACTOR_REPORT_TOOL=~/.claude/scripts/fvs-refactor-report.mjs
+REFACTOR_REPORT_TOOL="$HOME/.claude/scripts/fvs-refactor-report.mjs"
 (
   set -C
   cat "$BOUNDARY_QUERY" > "$BASELINE_DIR/query.lean" || exit 1

@@ -108,7 +108,7 @@ fi
 : "${ELAN_BIN:?trusted installed Elan executable required}"
 : "${TOOLCHAIN_DIR:?fresh owned toolchain evidence directory required}"
 PROJECT_ROOT=$(pwd -P) || exit 1
-REFACTOR_REPORT_TOOL=~/.claude/scripts/fvs-refactor-report.mjs
+REFACTOR_REPORT_TOOL="$HOME/.claude/scripts/fvs-refactor-report.mjs"
 (
   set -C
   "$ELAN_BIN" dump-state --no-net > "$TOOLCHAIN_DIR/elan.json" || exit 1

@@ -251,18 +251,18 @@ function getDirName(runtime) {
 }
 
 /**
- * Convert a pathPrefix (which uses absolute paths for global installs) to a
+ * Convert an installed resource prefix to an absolute shell path, optionally in
  * $HOME-relative form for replacing $HOME/.claude/ references in bash code blocks.
- * Preserves $HOME as a shell variable so paths remain portable across machines.
+ * Callers use these references inside double quotes. Local resources must not
+ * depend on the later shell cwd; escape literal shell characters in the suffix.
  */
 function toHomePrefix(pathPrefix) {
   const home = os.homedir().replace(/\\/g, '/');
-  const normalized = pathPrefix.replace(/\\/g, '/');
-  if (normalized.startsWith(home)) {
-    return '$HOME' + normalized.slice(home.length);
-  }
-  // For relative paths or paths not under $HOME, return as-is
-  return normalized;
+  const normalized = path.resolve(pathPrefix).replace(/\\/g, '/') + '/';
+  const underHome = normalized.startsWith(home + '/');
+  const literal = underHome ? normalized.slice(home.length) : normalized;
+  const escaped = literal.replace(/[\\"$`]/g, '\\$&');
+  return (underHome ? '$HOME' : '') + escaped;
 }
 
 /**

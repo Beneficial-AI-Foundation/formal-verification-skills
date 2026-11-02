@@ -34,7 +34,7 @@ Two output rules apply even when the repository has no guide:
 After every generated spec and after a verification edit, run:
 
 ```bash
-node ~/.claude/scripts/fvs-lean-style-check.mjs check "$SPEC_PATH" \
+node "$HOME/.claude/scripts/fvs-lean-style-check.mjs" check "$SPEC_PATH" \
   --root . --config .formalising/fvs-config.json
 ```
 
