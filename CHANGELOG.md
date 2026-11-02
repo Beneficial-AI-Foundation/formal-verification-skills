@@ -6,26 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
-### Changed
-
-- Lean refactoring resolves the effective installed project toolchain, including overrides, before
-  choosing version-sensitive targets, inspection and profiling commands. Unsupported capabilities
-  use explicit project/review routes; pins are never upgraded to match reference examples.
-
-- Lean refactoring proposes a protected boundary and editable file/module/project scope before
-  editing. It seeks net LoC reduction through reuse and shared lemmas, including new helper/import
-  costs, while preserving useful prose. Broader scope and new public interfaces require proposals.
-- Refactor acceptance records actual comparable build/elaboration samples and stops for an owner
-  trade-off on a repeatable material performance regression. Tactic tiers, fixed reduction targets
-  and unsupported speed guarantees are removed. Legacy mode flags remain explicit search hints
-  warned when explicitly supplied; defaults need no migration prompt. Pass ceilings remain budgets.
-- Parent-only serial compiler gates and a pristine printed-boundary comparison replace child builds.
-  Net-code-LoC reporting excludes comment deletion and known formatting-only packing; operator
-  counts are hints, not a hard acceptance limit or a complete Lean parser. Unsupported printed
-  coverage or interpolation metrics use explicit reviewed comparisons; helper limitations do not
-  block valid refactoring or waive compilation/axiom safeguards. Unavailable counts are not guessed.
-
-## [2.3.10] - 2026-10-30
+## [2.3.10] - 2026-11-02
 
 ### Fixed
 
@@ -62,7 +43,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   the chosen file with its imports at baseline and after every change (a default build may skip it),
   with real exit status. Outside configured library roots, `lake lean` rebuilds the actual imports,
   including non-default libraries, before each direct check. The Mathlib cache preflight runs only
-  in projects that provide it. The argument label is now `<lean_file_path>`; flags are unchanged.
+  in projects that provide it. The argument label is now `<lean_file_path>`. Existing flags remain
+  recognized; legacy mode mappings and pass budgets are described below.
   Credit: ideas from `/lean4:refactor` in Cameron Freer's
   lean4-skills (MIT, commit `83582df`), paraphrased.
 - The protocol-prose guidance used by existing authoring calls adds a light plain-English wording pass
@@ -70,6 +52,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   STE-compliant. It freezes quotations, citations, code, Lean names, commands and formulas, keeps the
   mathematical register and house style, treats sentence lengths as soft guidance, and preserves
   every claim, quantifier and hedge. It adds no agent or review step.
+
+### Changed
+
+- Lean refactoring resolves the effective installed project toolchain, including overrides, and
+  checks Lake's actual compiler path and binary hash before cache/proof work and at baseline/final
+  capture. Targets, inspection, tactics and profiling use the project's available capabilities;
+  unsupported capabilities use explicit project/review routes without upgrading a pin. Dependency-free
+  checks cover Lean/Lake 4.25.2, 4.31.0 and 4.35.0; this is not universal compatibility qualification.
+- Lean refactoring proposes a protected boundary and editable file/module/project scope before
+  editing. It seeks net LoC reduction through reuse and shared lemmas, including new helper/import
+  costs, while preserving useful prose. Broader scope and new public interfaces require proposals.
+- Refactor acceptance records actual comparable build/elaboration samples and stops for an owner
+  trade-off on a repeatable material performance regression. Tactic tiers, fixed reduction targets
+  and unsupported speed guarantees are removed. Legacy mode flags remain explicit search hints
+  warned when explicitly supplied; defaults need no migration prompt. Pass ceilings remain budgets.
+- Parent-only serial compiler gates and a pristine printed-boundary comparison replace child builds.
+  Net-code-LoC reporting excludes comment deletion and known formatting-only packing; operator
+  counts are hints, not a hard acceptance limit or a complete Lean parser. Unsupported printed
+  coverage or interpolation metrics use explicit reviewed comparisons; helper limitations do not
+  block valid refactoring or waive compilation/axiom safeguards. Unavailable counts are not guessed.
+  Printed comparisons support review; they are not kernel identity proofs.
 
 ## [2.3.9] - 2026-10-27
 
