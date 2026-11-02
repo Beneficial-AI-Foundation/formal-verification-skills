@@ -40,15 +40,15 @@ for (const runtime of ['claude', 'codex', 'opencode', 'antigravity']) {
   for (const scope of ['local', 'global', 'custom']) {
     test(`${runtime} ${scope}: emitted scripts resolve from root and nested cwd, with spaces and shell characters`, () => {
       const directory = path.join(temporary, `${runtime}-${scope}`);
-      const home = path.join(directory, 'home with spaces');
-      const project = path.join(directory, 'project with spaces $literal "quote" \'apostrophe\' `tick`');
+      const home = path.join(directory, 'home with spaces $& $\'');
+      const project = path.join(directory, 'project with spaces $literal "quote" \'apostrophe\' `tick` $& $\'');
       const nested = path.join(project, 'nested');
       for (const dir of [home, nested]) fs.mkdirSync(dir, { recursive: true });
       const env = envFor(home);
       const args = [path.join(ROOT, 'bin/install.js'), `--${runtime}`, scope === 'local' ? '--local' : '--global'];
       let config;
       if (scope === 'custom') {
-        config = path.join(directory, 'custom install $literal "quote" \'apostrophe\' `tick`');
+        config = path.join(directory, 'custom install $literal "quote" \'apostrophe\' `tick` $& $\'');
         args.push('--config-dir', config);
       } else if (scope === 'local') {
         config = path.join(project, runtime === 'antigravity' ? '.agents' : `.${runtime}`);
