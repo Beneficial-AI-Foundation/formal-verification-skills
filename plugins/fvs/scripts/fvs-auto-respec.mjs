@@ -238,7 +238,27 @@ function trace(q, x, initial, out) {
   return { effects, promotions, gitEvidence };
 }
 function implementation() {
-  return Object.fromEntries(['fvs-auto-respec.mjs', 'fvs-auto-bundle.mjs'].map(name => { const file = fileURLToPath(new URL(name, import.meta.url)); return [file, hash(bytes(file))]; }));
+  return Object.fromEntries([['respec', 'fvs-auto-respec.mjs'], ['bundle', 'fvs-auto-bundle.mjs']].map(([key, name]) => {
+    const file = fileURLToPath(new URL(name, import.meta.url)); return [key, { file, sha256: hash(bytes(file)) }];
+  }));
+}
+function memoryEvidence(q, x) {
+  const root = path.dirname(q.current.memory.result.file), r = x.mr;
+  const absolute = ref => { const file = path.resolve(root, ref.file); if (!inside(root, file)) fail('respec-evidence-invalid', 'bootstrap evidence escaped its original output'); const boundRef = { file, sha256: ref.sha256 }; bound(boundRef, false); return boundRef; };
+  const receipts = [];
+  for (const ref of r.receipts) { const receipt = absolute(ref), body = bound(receipt); receipts.push({ receipt, stdout: absolute(body.stdout), stderr: absolute(body.stderr) }); }
+  const binding = x.view.state.memoryBindings.at(-1);
+  return { request: q.current.memory.request, result: q.current.memory.result, prime: absolute(r.prime), receipts, bd: { file: binding.bdPath, sha256: binding.bdSha256 } };
+}
+function receiptFacts(refs, request) {
+  if (!Array.isArray(refs) || !refs.length) fail('respec-evidence-invalid', 'current consumer receipts missing');
+  return refs.map(ref => {
+    const r = bound(ref);
+    if (r.requestSha256 !== memoryHash(request) || r.attemptId !== request.attemptId || r.exitCode !== 0 || r.signal || r.error || r.toolBefore !== r.toolAfter) fail('respec-evidence-invalid', 'consumer receipt is not this current request');
+    bound(r.stdout, false); bound(r.stderr, false);
+    //16 compares normalized live observations; raw AO metadata may be volatile.
+    return { argv: r.argv, cwd: r.cwd, requestSha256: r.requestSha256, attemptId: r.attemptId, toolBefore: r.toolBefore, toolAfter: r.toolAfter };
+  });
 }
 function responseFor(q, item, heads) {
   if (item.response === null) return { itemId: item.itemId, status: 'pending', reason: 'feedback-response-not-recorded', contracts: [] };
@@ -263,10 +283,11 @@ function observe(q, x, out) {
   const began = Date.now(), reasons = [...x.validation.problems], run = x.runtime.state.run;
   const expired = began >= run.deadlineMs;
   if (began < x.runtime.lastObservedAtMs) fail('respec-clock-rollback', 'clock precedes current accounting');
-  let consumed = null, currentness = { status: 'unverified', reason: 'current-proof-not-established', nodes: [] };
+  let consumed = null, actualMemory = null, currentness = { status: 'unverified', reason: 'current-proof-not-established', nodes: [] };
   if (expired) reasons.push('original-limit-exhausted');
   else {
     verifyMemoryBootstrap({ projectRoot: x.b.projectRoot, callerRoot: x.b.projectRoot, request: x.mq, out: path.dirname(q.current.memory.result.file) });
+    actualMemory = memoryEvidence(q, x);
     consumed = (x.rq.transition === null ? verifyReconciliation : verifyTransition)({ projectRoot: x.b.projectRoot, request: x.rq, out: path.dirname(q.current.resume.result.file) });
     if (consumed.committedHeadSha256 !== x.runtime.headSha256) fail('respec-context-stale', 'consumer observed another runtime head');
     if (x.b.baseline && x.b.acceptedStore && !x.validation.problems.length) {
@@ -297,7 +318,7 @@ function observe(q, x, out) {
   fence(q, x);
   return { source: x.b.source, committedRuntimeHeadSha256: x.runtime.headSha256, runtimeFileSha256: x.runtime.fileSha256, originalRun: run,
     stageValidation: x.validation.problems, currentness, nodes, items, history, reasons: [...new Set(reasons)], beganAtMs: began, endedAtMs: ended,
-    currentConsumer: consumed === null ? null : { code: consumed.code, evidence: consumed.verificationEvidence }, semanticCheckRequired: 'Workflow must compare actual owner feedback with proposed contracts/applicability; no Boolean authentication or proof/dispatch authority.' };
+    memoryEvidence: actualMemory, currentConsumer: consumed === null ? null : { code: consumed.code, evidence: consumed.verificationEvidence, receipts: consumed.observation.receipts }, semanticCheckRequired: 'Workflow must compare actual owner feedback with proposed contracts/applicability; no Boolean authentication or proof/dispatch authority.' };
 }
 
 function statusOf(q, observation) {
@@ -326,6 +347,9 @@ export function verifyRespecResult(options) {
   if (!same(x.frame, result.frame)) fail('respec-frame-mismatch', 'saved revision frame differs');
   const verificationOut = path.join(fs.realpathSync(os.tmpdir()), 'fvs-respec-consume-' + crypto.randomUUID()); protect(verificationOut, q, x.prior); fs.mkdirSync(verificationOut);
   const observed = observe(q, x, verificationOut);
+  if ((observed.currentConsumer === null) !== (result.observation.currentConsumer === null)) fail('respec-evidence-invalid', 'saved consumer presence differs');
+  if (observed.currentConsumer !== null && (observed.currentConsumer.code !== result.observation.currentConsumer.code
+    || !same(receiptFacts(observed.currentConsumer.receipts, x.rq), receiptFacts(result.observation.currentConsumer.receipts, x.rq)))) fail('respec-evidence-invalid', 'current consumer invocation/output changed');
   for (const ref of result.observation.history.gitEvidence) { const r = bound(ref); if (r.requestSha256 !== memoryHash(q) || r.exitCode !== 0 || r.signal || r.error || r.toolSha256 !== hash(bytes('/usr/bin/git'))) fail('respec-evidence-invalid', 'historical Git observation is not this caller request/tool'); bound(r.stdout, false); bound(r.stderr, false); }
   const stable = o => { const { beganAtMs, endedAtMs, currentConsumer, ...rest } = o; const { gitEvidence, ...history } = rest.history; return { ...rest, history }; };
   if (!same(stable(observed), stable(result.observation))) fail('respec-context-stale', 'current revision observation changed');

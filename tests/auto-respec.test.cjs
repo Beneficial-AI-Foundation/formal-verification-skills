@@ -16,6 +16,8 @@ describe('same-pipeline feedback currentness (protocol only)', () => {
     const x = await fixture(), b = begin(x), before = f.ref(path.join(x.root, '.formalising/auto-fv/resume/state.json'));
     assert.equal(b.result.status, 'revision-proposed'); assert.equal(b.result.effectExecutable, false); assert.equal(b.result.humanReview, 'pending');
     assert.deepEqual(b.result.frame.scope.requestedRoots, [20, 21]); assert.deepEqual(b.result.observation.nodes.map(n => n.node), [19, 20, 21]);
+    assert.equal(b.result.implementation.respec.file, path.join(f.ROOT, 'scripts/fvs-auto-respec.mjs')); assert.equal(b.result.implementation.respec.sha256, f.ref(b.result.implementation.respec.file).sha256);
+    assert.ok(path.isAbsolute(b.result.observation.memoryEvidence.prime.file)); assert.ok(b.result.observation.memoryEvidence.receipts.every(r => path.isAbsolute(r.stdout.file) && path.isAbsolute(r.receipt.file)));
     const v = api.verifyRespecResult({ request: b.q, out: b.out }); assert.equal(v.status, 'revision-proposed'); assert.deepEqual(f.ref(before.file), before);
     assert.ok(v.observation.reasons.includes('whole-scope-currentness-unverified')); assert.ok(v.observation.nodes.every(n => n.proof === 'unverified'));
   });
@@ -61,6 +63,14 @@ describe('same-pipeline feedback currentness (protocol only)', () => {
     const x = await fixture(), b = begin(x), q = x.respecRequest('finish', b.evidence), out = x.output('fake-ready'); api.runRespec({ request: q, out });
     const result = read(path.join(out, 'result.json')); result.status = 'ready-for-final-human-review'; result.observation.reasons = []; fs.writeFileSync(path.join(out, 'result.json'), JSON.stringify(result));
     reject('respec-context-stale', () => api.verifyRespecResult({ request: q, out }));
+  });
+  it('omitted or tampered current consumer receipts do not pass independent verification', async () => {
+    const x = await fixture(), b = begin(x), result = read(path.join(b.out, 'result.json')); result.observation.currentConsumer.receipts = [];
+    fs.writeFileSync(path.join(b.out, 'result.json'), JSON.stringify(result)); reject('respec-evidence-invalid', () => api.verifyRespecResult({ request: b.q, out: b.out }));
+  });
+  it('retains raw AO evidence without treating irrelevant output metadata as semantic drift', async () => {
+    const x = await fixture(), b = begin(x); x.rows[0].debugRevision = 'unrelated metadata'; x.writeControl();
+    assert.equal(api.verifyRespecResult({ request: b.q, out: b.out }).status, 'revision-proposed');
   });
   it('rejects hidden/non-JSON hooks without executing them', async () => {
     const x = await fixture(), q = x.respecRequest(); let calls = 0; Object.defineProperty(q.ownerFeedback, 'toJSON', { value() { calls++; return {}; } });
