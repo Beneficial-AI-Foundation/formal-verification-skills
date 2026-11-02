@@ -327,8 +327,8 @@ function terminationContext(raw) {
   const c = data(raw);
   closed(c, ['schema', 'schemaVersion', 'lifecycle', 'trustScope', 'runId', 'beforeEventSha256', 'transitionId', 'reservationId', 'action', 'job',
     'caseRoot', 'evidenceRoot', 'producerOut', 'step', 'code', 'tools', 'sourceSnapshot', 'beforeRequest', 'beforeResult', 'marker',
-    'launch', 'outer', 'prepared', 'build', 'observer', 'canonicalObservations', 'innerProducer'], 'controller termination context');
-  if (c.schema !== 'fvs/auto-controller-termination-context' || c.schemaVersion !== 1 || c.lifecycle !== terminationProfile || c.trustScope !== terminationTrust
+    'launch', 'outer', 'prepared', 'controllerBefore', 'caseContext', 'candidateCheckOrigin', 'recoveryBefore', 'build', 'observer', 'canonicalObservations', 'innerProducer'], 'controller termination context');
+  if (c.schema !== 'fvs/auto-controller-termination-context' || c.schemaVersion !== 2 || c.lifecycle !== terminationProfile || c.trustScope !== terminationTrust
     || ![c.runId, c.transitionId, c.reservationId].every(uuid) || !sha(c.beforeEventSha256) || !/^\d{3}-[a-z0-9-]+$/.test(c.step)) terminationBad('unsupported lifecycle or independently expected identities');
   for (const key of ['caseRoot', 'evidenceRoot', 'producerOut']) canonicalPath(c[key]);
   closed(c.code, Object.keys(terminationCode), 'assessed source identities');
@@ -345,7 +345,7 @@ function terminationContext(raw) {
       || !sha(f.sha256) || !['100644', '100755'].includes(f.mode) || !Number.isSafeInteger(f.size) || f.size < 0) terminationBad('malformed or duplicate historical source identity');
     paths.add(f.path);
   }
-  for (const key of ['action', 'job', 'beforeRequest', 'beforeResult', 'marker', 'launch', 'outer', 'prepared', 'observer', 'canonicalObservations']) reference(c[key]);
+  for (const key of ['action', 'job', 'beforeRequest', 'beforeResult', 'marker', 'launch', 'outer', 'prepared', 'controllerBefore', 'caseContext', 'candidateCheckOrigin', 'recoveryBefore', 'observer', 'canonicalObservations']) reference(c[key]);
   closed(c.innerProducer, ['startedAtMs', 'endedAtMs', 'exitCode', 'signal', 'error', 'status'], 'unknown inner outcome');
   if (!same(c.innerProducer, { startedAtMs: null, endedAtMs: null, exitCode: null, signal: null, error: null, status: 'unknown' })) terminationBad('missing inner outcome must remain unknown');
   closed(c.build, ['root', 'source', 'runtime', 'dependenciesBefore', 'dependenciesAfter', 'ownedDependenciesAfter', 'libraries', 'children'], 'known finalization boundary');
@@ -354,6 +354,93 @@ function terminationContext(raw) {
   if (!Array.isArray(c.build.children) || c.build.children.length < 10 || c.build.children.length > 1000 || !Array.isArray(c.build.libraries)
     || !c.build.libraries.length || c.build.libraries.some(v => !text(v))) terminationBad('complete bounded configured child sequence required');
   c.build.children.forEach(reference); return c;
+}
+// Correspondence assertion only, never termination/currentness/closure authority.
+// The public verifier always uses the real bound reader; tests may supply copied metadata.
+export function assertKnownControllerPreparation(raw, read = bound) {
+  const { context: c, action: a, before, run, beforeRequest: bq, beforeResult: br, prepared: p, outer, history } = data(raw);
+  const eq = (x, y) => x !== undefined && y !== undefined && same(x, y);
+  const bad = message => terminationBad('assessed controller profile: ' + message);
+  const get = r => { reference(r); return read(r); };
+  const base = '/private/tmp/fvs45-ticket18-native-episode-0c4c1ino', step = '122-e1-accept-20-continuous';
+  const root = '/Users/ada/.ao/data/worktrees/formal-verification-skills/formal-verification-skills-45';
+  if (c.schema !== 'fvs/auto-controller-termination-context' || c.schemaVersion !== 2 || c.lifecycle !== terminationProfile || c.trustScope !== terminationTrust
+    || c.caseRoot !== base || c.step !== step || a.kind !== 'accept' || a.stage !== 'acceptance' || a.target.node !== 20 || a.nodes.length
+    || a.owner !== 'qualification-controller' || run.runId !== '386aca9c-66af-4a02-be70-6afff41a60d5' || c.runId !== run.runId
+    || run.startedAtMs !== 1793592237017 || run.deadlineMs !== 1793736237017) bad('unsupported case, step, target or original run');
+  if (outer.cwd !== root || outer.head !== '226e540c1e954c2f891f72edb9d86642a4e375f3' || outer.tree !== '0f6cd1105a38e23a64f6473fbcb9b2a4fcac40a9'
+    || c.sourceSnapshot.head !== outer.head || c.sourceSnapshot.tree !== outer.tree
+    || memoryHash(c.sourceSnapshot) !== '404af7b2293e645e0922a2fdc9b9c038711d73463cc180d7e38a6eb6a34bb889'
+    || c.code.controller.file !== '/private/tmp/fvs45-ticket18-continuous-proposal-v34.mjs'
+    || c.code.wrapper.file !== '/private/tmp/fvs45-ticket18-continuous-phase-proposal-v40.py'
+    || c.code.driver.file !== '/private/tmp/fvs45-ticket18-continuous-driver-proposal-v41.py') bad('unsupported wrapper/source invocation');
+  if (c.controllerBefore.file !== path.join(base, 'steps', step, 'before.json') || c.caseContext.file !== path.join(base, 'context.json')
+    || c.job.file !== path.join(base, 'steps', step, 'producer-request.json') || c.prepared.file !== path.join(c.evidenceRoot, 'prepared-inputs.json')) bad('durable controller input paths disagree');
+  closed(p, ['schema', 'version', 'status', 'runId', 'q', 'snapshot', 'runtimeFileSha256', 'closure', 'closureConsumed', 'proposalOrigin', 'beganAtMs', 'endedAtMs', 'authority'], 'controller preparation');
+  if (p.schema !== 'fvs/owned-continuous-input-preparation' || p.version !== 1 || p.status !== 'non-authoritative-inputs-only' || p.runId !== run.runId
+    || !p.q?.inputs || !p.q?.source || !p.q?.ao || !p.q?.memoryRequest?.expected || !p.snapshot?.fixed || !p.snapshot?.store || !p.snapshot?.source || !p.snapshot?.registry) bad('incomplete prepared request/snapshot');
+  const item = get(c.controllerBefore), cc = get(c.caseContext), job = get(c.job);
+  closed(item, ['q', 'action', 'actionRef', 'before', 'prepared', 'recoveryClosure', 'proposalOrigin'], 'controller before envelope');
+  if (item.before) closed(item.before, ['q', 'out', 'result', 'manifest'], 'recorded controller before invocation');
+  if (!item.before || !eq(item.actionRef, c.action) || !eq(item.action, a) || !eq(item.q, bq) || !eq(item.before.q, bq) || !eq(item.before.result, br)
+    || item.before.out !== path.dirname(c.beforeResult.file) || c.beforeRequest.file !== path.join(item.before.out, 'request.json')
+    || c.beforeResult.file !== path.join(item.before.out, 'result.json') || !eq(item.prepared, c.prepared)
+    || !eq(get(item.before.manifest), { q: bq, out: item.before.out, result: br })) bad('controller before envelope does not bind the actual before/action');
+  if (!cc.extraction || cc.schema !== 'fvs/owned-native-transition-qualification' || cc.schemaVersion !== 1 || cc.runId !== run.runId
+    || cc.root !== path.join(base, 'control') || cc.root !== run.canonicalRoot || cc.integration !== path.join(base, 'integration')
+    || cc.registry !== path.join(base, 'registry') || cc.registry !== a.before.registry.root || job.source.root !== cc.integration
+    || !eq(cc.authorization, a.authorization) || !eq(cc.profile, a.profile) || !eq(cc.accounting, p.q.priorAccounting)
+    || cc.projectId !== p.q.ao.projectId || cc.aoHome !== p.q.ao.stateHome || cc.aoTool !== p.q.ao.tool.file
+    || !eq(cc.extraction.identity, p.q.inputs.extraction) || !eq(cc.extraction.graph, p.q.inputs.graph) || !eq(cc.extraction.plan, p.q.inputs.plan)) bad('case context does not bind the prepared workflow');
+  const resetBefore = { ...bq, transition: null }, frozen = get(job.baseline);
+  if (!eq(p.q, resetBefore) || p.q.transition !== null || p.q.runId !== run.runId || p.q.expectedHeadSha256 !== before.event.prev
+    || !eq(p.q.source, job.source) || !eq(p.q.inputs.baseline, job.baseline) || !eq(p.q.inputs.acceptedStore, job.store)
+    || !eq(p.snapshot, a.before) || !eq(p.snapshot.baseline, job.baseline) || p.snapshot.source.root !== job.source.root
+    || p.snapshot.source.commit !== job.source.commit || p.snapshot.source.tree !== job.source.expectedTree || p.snapshot.worker !== null
+    || p.snapshot.store.root !== job.store.root || p.snapshot.store.headSha256 !== job.store.expectedHeadSha256
+    || !eq(frozen.overlayFiles, ['Specs/CheckerOverlayV1.lean']) || !eq(frozen.registry, { root: p.snapshot.registry.root, headSha256: p.snapshot.registry.headSha256 })
+    || !eq(p.snapshot.fixed.graph, p.q.inputs.graph) || !eq(p.snapshot.fixed.plan, p.q.inputs.plan)
+    || p.snapshot.fixed.memoryBindingSha256 !== p.q.memoryRequest.expected.bindingSha256) bad('prepared source/baseline/store/snapshot disagreement');
+  const origin = path.join(base, 'steps', '110-e1-accept-19', 'after.json');
+  if (p.proposalOrigin.file !== origin || !eq(item.proposalOrigin, { scope: 'NON-AUTHORITATIVE prior successful after snapshot; production before/execute/consume unchanged', file: p.proposalOrigin })) bad('unrelated prepared snapshot origin');
+  const prior = get(p.proposalOrigin), priorRow = history.find(r => r.sha256 === prior.afterEventSha256);
+  if (!priorRow || priorRow.event.outcome !== 'succeeded' || priorRow.event.beforeEventSha256 !== prior.beforeEventSha256
+    || !priorRow.event.effect.evidence.some(r => eq(r, prior.completion)) || prior.recorded.result.recordedEventSha256 !== prior.afterEventSha256
+    || !eq(prior.recorded.result.observation.transition.snapshot, p.snapshot)
+    || !eq(a.basis, { version: 2, beforeEventSha256: prior.beforeEventSha256, afterEventSha256: prior.afterEventSha256, completion: prior.completion, workCompletion: null })) bad('prepared prior snapshot/basis is not its retained successful row');
+  const check = get(c.candidateCheckOrigin);
+  if (c.candidateCheckOrigin.file !== path.join(base, 'steps', '100-e1-check', 'after.json') || !eq(job.candidateCheck, check.result)
+    || !job.runId.startsWith('owned18-' + step + '-') || !uuid(job.runId.slice(('owned18-' + step + '-').length))) bad('job is not the exact prepared acceptance request');
+  const closure = get(p.closure), consumed = get(p.closureConsumed), rq = get(closure.request), closedAfter = get(rq.afterResult), closedRequest = get(rq.afterRequest);
+  const failed = get(c.recoveryBefore), previous = history.find(r => r.sha256 === closure.head);
+  const oldImplementation = Object.fromEntries(['respec', 'bundle'].map(name => {
+    const rel = 'scripts/fvs-auto-' + name + '.mjs';
+    return [name, { file: path.join(root, rel), sha256: c.sourceSnapshot.files.find(row => row.path === rel)?.sha256 }];
+  }));
+  if (c.recoveryBefore.file !== path.join(base, 'steps', '121-e1-accept-20-recovery', 'before.json')
+    || closure.schema !== 'fvs/owned-respec-failure-closure' || closure.version !== 1
+    || rq.schema !== 'fvs/auto-respec-failure-request' || rq.schemaVersion !== 1
+    || rq.expectedBeforeEventSha256 !== 'b9116775d9678f3f0ca91b01c94b8f0235663dcaa56f1ea24fdd6624ac685f4a'
+    || rq.expectedCommand.sha256 !== 'eede7dd199db9f3fdeb4a139e1384ec7dc0a16dc001a705e0e6645a77a8c2248'
+    || !eq(rq.expectedAction, failed.actionRef) || !eq(item.recoveryClosure, { closure: p.closure, consumed: p.closureConsumed })
+    || !previous || previous.event.position !== 'after' || previous.event.outcome !== 'failed' || previous.event.beforeEventSha256 !== rq.expectedBeforeEventSha256
+    || !eq(previous.event.intent.request, rq.expectedAction) || previous.event.intent.reservationId !== failed.action.reservationId
+    || closure.head !== before.event.prev || closure.head !== p.q.expectedHeadSha256 || rq.committedHeadSha256 !== closure.head || rq.runId !== run.runId
+    || closedAfter.committedHeadSha256 !== closure.head || closedAfter.recordedEventSha256 !== closure.head
+    || !eq(closedAfter.request, closedRequest) || closedAfter.requestSha256 !== memoryHash(closedRequest)
+    || closedAfter.runtimeFileSha256 !== p.runtimeFileSha256 || consumed.runtimeFileSha256 !== p.runtimeFileSha256
+    || consumed.schema !== 'fvs/auto-respec-local-failure' || consumed.schemaVersion !== 1 || consumed.terminalOutcome !== 'failed'
+    || consumed.authority !== 'execution-closure-only; no tuple advance or successor'
+    || consumed.status !== 'conclusive-no-canonical-effect' || consumed.proofAuthority !== 'none' || consumed.effectExecutable !== false
+    || consumed.committedHeadSha256 !== closure.head || consumed.afterEventSha256 !== closure.head || consumed.runId !== run.runId
+    || consumed.reservationId !== failed.action.reservationId || !eq(consumed.action, rq.expectedAction) || !eq(consumed.implementation, oldImplementation)
+    || consumed.beforeEventSha256 !== rq.expectedBeforeEventSha256
+    || !eq(consumed.request, rq) || consumed.requestSha256 !== memoryHash(rq) || !eq(consumed.command, rq.expectedCommand)
+    || !eq(outer.immutableInputsBefore, [p.closure, c.prepared]) || !eq(outer.immutableInputsAfter, [p.closure, c.prepared])) bad('unrelated predecessor/runtime/closure');
+  if (![p.beganAtMs, p.endedAtMs, consumed.beganAtMs, consumed.endedAtMs].every(Number.isSafeInteger)
+    || p.beganAtMs < run.startedAtMs || p.endedAtMs < p.beganAtMs || consumed.beganAtMs < p.beganAtMs || consumed.endedAtMs > p.endedAtMs
+    || p.endedAtMs > outer.startedAtMs || outer.startedAtMs > before.event.observedAtMs
+    || job.deadlineMs < outer.absoluteDeadlineMs || job.deadlineMs > Math.min(before.event.observedAtMs + 600000, run.deadlineMs)) bad('recorded preparation/before/job ordering disagrees');
 }
 function terminationChildren(c, job, before, outer) {
   const source = bound(c.build.source), runtime = bound(c.build.runtime), beforeDeps = bound(c.build.dependenciesBefore), afterDeps = bound(c.build.dependenciesAfter), ownedDeps = bound(c.build.ownedDependenciesAfter);
@@ -437,7 +524,7 @@ function terminationChildren(c, job, before, outer) {
   return { count, firstStartedAtMs: children[0].startedAt, lastEndedAtMs: children.at(-1).endedAt, allTerminal: true,
     boundary: 'after final environment query, before synchronous build snapshot publication', pidLineage: 'not retrospectively reconstructed' };
 }
-function controllerTerminationFacts(c, a, before, after, observation, run, registryRows, storeRows) {
+function controllerTerminationFacts(c, a, before, after, observation, run, registryRows, storeRows, history) {
   const snapshot = failedLocalSnapshot(a, before, after, observation, run, registryRows, storeRows), job = bound(c.job), launch = bound(c.launch), outer = bound(c.outer);
   if (a.kind !== 'accept' || a.runId !== c.runId || c.runId !== run.runId || c.beforeEventSha256 !== before.sha256 || c.transitionId !== a.transitionId
     || c.reservationId !== a.reservationId || !same(c.action, before.event.intent.request) || !same(c.job, a.target.request)
@@ -462,6 +549,7 @@ function controllerTerminationFacts(c, a, before, after, observation, run, regis
   });
   if (!same(c.build.libraries, [...new Set([...(original.baseline.libraries ?? []), ...overlays])])) terminationBad('build libraries differ from frozen/proof inputs');
   const br = bound(c.beforeResult), bq = bound(c.beforeRequest), marker = bound(c.marker), prepared = bound(c.prepared);
+  assertKnownControllerPreparation({ context: c, action: a, before, run, beforeRequest: bq, beforeResult: br, prepared, outer, history });
   for (const file of ['command.json', 'run.json', 'after.json', 'continuous-timing.json']) {
     const root = file === 'command.json' ? path.join(c.caseRoot, 'steps', c.step, 'command') : path.join(c.caseRoot, 'steps', c.step);
     if (fs.existsSync(path.join(root, file))) terminationBad('ordinary outcome or later controller progress cannot use termination-only recovery');
@@ -536,7 +624,7 @@ function terminationInputs(projectRoot, q) {
   const registry = a.before.registry === null ? null : readChain(a.before.registry.root), store = a.before.store === null ? null : readAcceptedStore(a.before.store.root);
   if (registry?.pending || store?.pending || (registry?.records.at(-1)?.sha ?? null) !== (a.before.registry?.headSha256 ?? null)
     || (store?.headSha256 ?? null) !== (a.before.store?.headSha256 ?? null)) terminationBad('canonical producer prefix/head changed or is pending');
-  const facts = controllerTerminationFacts(q.expectedContext, a, before, after, readRuntimeObservation(after.event), run, registry?.records ?? [], store?.records ?? []);
+  const facts = controllerTerminationFacts(q.expectedContext, a, before, after, readRuntimeObservation(after.event), run, registry?.records ?? [], store?.records ?? [], runtime.state.history);
   return { runtime, run, rq, result, a, facts };
 }
 function terminationOutput(out, projectRoot, c, a) {
@@ -694,7 +782,7 @@ function trace(q, x, initial, out) {
       if (termination.length) {
         if (termination.length !== 1 || event.effect.evidence.length !== 1) terminationBad('mixed or ambiguous controller termination evidence');
         const context = terminationContext(bound(termination[0]));
-        failures.push(controllerTerminationFacts(context, a, before, row, observation, x.runtime.state.run, x.chain.records, x.store?.records ?? []));
+        failures.push(controllerTerminationFacts(context, a, before, row, observation, x.runtime.state.run, x.chain.records, x.store?.records ?? [], x.runtime.state.history));
       } else failures.push(conclusiveLocalFailure(a, before, row, observation, x.runtime.state.run, x.chain.records, x.store?.records ?? []));
       continue; // A failure grants no progress; a fresh before must justify any retry.
     }

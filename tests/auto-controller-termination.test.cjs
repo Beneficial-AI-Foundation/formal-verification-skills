@@ -1,5 +1,6 @@
-// Explicit protocol doubles for15 inspectors and OS process capture. Real16
-// request/after/consumer and17 capture/verification run; no Lean/producer runs.
+// Generic algorithm tests explicitly double18's exact-profile assertion,15
+// inspectors and PS. The separate auto-controller-profile tests use the REAL
+// profile assertion on copied retained metadata. No production applicability claim.
 const { before, after, describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -10,10 +11,19 @@ const { pathToFileURL } = require('node:url');
 const f = require('./helpers/termination-fixture.cjs');
 global.__terminationInspectors = new Map();
 const realChecker = pathToFileURL(path.join(f.ROOT, 'scripts/fvs-checker-auto.mjs')).href;
+const realRespec = pathToFileURL(path.join(f.ROOT, 'scripts/fvs-auto-respec.mjs')).href;
+let profileDoubleCalls = 0;
+global.__terminationProfileDouble = () => { profileDoubleCalls++; };
 const hooks = registerHooks({ resolve(specifier, context, next) {
   if (specifier.endsWith('/fvs-checker-auto.mjs') || specifier === './fvs-checker-auto.mjs') return { url: 'termination-protocol:checker', shortCircuit: true };
   return next(specifier, context);
 }, load(url, context, next) {
+  if (url === realRespec) {
+    const source = fs.readFileSync(path.join(f.ROOT, 'scripts/fvs-auto-respec.mjs'), 'utf8');
+    const call = 'assertKnownControllerPreparation({ context: c, action: a, before, run, beforeRequest: bq, beforeResult: br, prepared, outer, history });';
+    assert.equal(source.split(call).length, 2, 'one explicit test-only profile double seam');
+    return { format: 'module', shortCircuit: true, source: source.replace(call, 'globalThis.__terminationProfileDouble();') };
+  }
   if (url !== 'termination-protocol:checker') return next(url, context);
   return { format: 'module', shortCircuit: true, source: `export * from ${JSON.stringify(realChecker + '?original-protocol-reader')};
     import fs from 'node:fs';
@@ -21,7 +31,7 @@ const hooks = registerHooks({ resolve(specifier, context, next) {
     export function inspectAutoBaselineArtifacts({baseline}) { return {status:'artifacts-valid',authority:'expectations-only',targetProofsChecked:false,...facts(baseline)}; }
     export function inspectAutoAcceptance({baseline}) { const v=facts(baseline); return {status:'current',acceptedBaseline:baseline,nodes:[],storeHeadSha256:null,inputs:v.inputs}; }` };
 } });
-let auto, bundle, transitions, api, p, savedSpawn = cp.spawnSync, realNow = Date.now, offset = 0, processPatch = null;
+let auto, bundle, transitions, api, exactApi, p, savedSpawn = cp.spawnSync, realNow = Date.now, offset = 0, processPatch = null;
 const clock = { advance(time) { offset = Math.max(offset, time - realNow()); } };
 before(async () => {
   Date.now = () => realNow() + offset;
@@ -32,9 +42,10 @@ before(async () => {
   }; syncBuiltinESMExports();
   auto = await import('../scripts/fvs-auto.mjs'); bundle = await import('../scripts/fvs-auto-bundle.mjs');
   transitions = await import('../scripts/fvs-auto-transitions.mjs'); api = await import('../scripts/fvs-auto-respec.mjs');
+  exactApi = await import('../scripts/fvs-auto-respec.mjs?unmocked-profile');
   p = await f.fixture(auto, bundle, transitions, api, clock);
 });
-after(() => { cp.spawnSync = savedSpawn; syncBuiltinESMExports(); Date.now = realNow; hooks.deregister(); delete global.__terminationInspectors; });
+after(() => { cp.spawnSync = savedSpawn; syncBuiltinESMExports(); Date.now = realNow; hooks.deregister(); delete global.__terminationInspectors; delete global.__terminationProfileDouble; });
 const changeRef = (c, field, edit) => { const body = f.read(c[field].file); edit(body); c[field] = f.json(p.x.owned, field, body); };
 const verify = q => api.verifyControllerTermination({ projectRoot: p.x.root, request: q, out: p.x.output('termination') });
 const refused = (q, expression, reason) => {
@@ -42,16 +53,18 @@ const refused = (q, expression, reason) => {
   assert.throws(expression ?? (() => verify(q)), e => typeof e.code === 'string' && /respec|resume|transition|stale/.test(e.code) && (!reason || reason.test(e.message)), 'typed refusal');
   assert.deepEqual(f.ref(p.stateFile), state); assert.deepEqual(fs.readdirSync(p.store), before);
 };
-describe('known controller termination: execution closure only (protocol doubles)', () => {
+describe('controller termination algorithm: exact-profile/inspector/PS doubles', () => {
   it('retains SIGKILL/unknown producer, consumes the actual16 failed-after, and builds AND verifies a17 handoff', () => {
     const v = p.complete(), out = p.x.output('verified'), before = f.ref(p.stateFile);
     const result = api.verifyControllerTermination({ projectRoot: p.x.root, request: v.request, out });
+    assert.ok(profileDoubleCalls > 0, 'algorithm positive is explicitly NOT an applicability positive');
     assert.equal(result.status, 'conclusive-known-lifecycle-termination'); assert.equal(result.effectExecutable, false); assert.equal(result.proofAuthority, 'none');
     assert.equal(result.terminalOutcome, 'controller-terminated'); assert.equal(result.controller.signal, 9);
     assert.deepEqual(result.innerProducer, { startedAtMs: null, endedAtMs: null, exitCode: null, signal: null, error: null, status: 'unknown' });
     assert.match(result.trustScope, /no retrospective full PID lineage/); assert.ok(result.children.allTerminal); assert.equal(result.children.count, p.context.build.children.length);
     assert.equal(auto.readRuntimeState({ projectRoot: p.x.root }).reservations.get(p.action.reservationId).state, 'closed');
     assert.equal(api.consumeControllerTermination({ projectRoot: p.x.root, request: v.request, out }).afterEventSha256, result.afterEventSha256);
+    refused(v.request, () => exactApi.consumeControllerTermination({ projectRoot: p.x.root, request: v.request, out }), /unsupported case, step, target or original run/);
     assert.deepEqual(f.ref(p.stateFile), before); assert.deepEqual(fs.readdirSync(p.store), []);
     const beforeRuntime = f.read(p.context.canonicalObservations.file).runtimeBefore;
     const current = p.revisionRequest('finish', { request: p.initial.requestInput, result: p.initial.evidence });
@@ -65,14 +78,19 @@ describe('known controller termination: execution closure only (protocol doubles
       archive: f.write(path.join(p.x.owned, 'bundle-before-archive.json'), fs.readFileSync(beforeRuntime.file)), mode: 0o600 }];
     const handoff = f.json(p.x.owned, 'finish-handoff', { finish, executionClosure: result.evidence }), request = { ...current.current.bundle, handoff,
       historicalCaptures: captures, absenceReasons: { ...current.current.bundle.absenceReasons, handoff: null } };
+    const missingArchive = { ...request, historicalCaptures: captures.filter(c => c !== p.oldSourceCapture) };
+    assert.throws(() => bundle.buildReviewBundle(missingArchive, p.x.output('missing-old-code')), e => e.code === 'bundle-evidence-invalid');
     const built = bundle.buildReviewBundle(request, p.x.output('bundle'));
     const checked = bundle.verifyReviewBundle({ manifest: built.manifest, expectedContext: bundle.bundleExpectedContext(request), deadlineMs: Date.now() + 120000, out: p.x.output('verify-bundle') });
     assert.equal(checked.integrity.status, 'valid');
     const manifest = f.read(built.manifest.file);
+    const old = p.oldSourceCapture;
+    assert.deepEqual(manifest.copies.find(row => row.original === old.original.file && row.sha256 === old.original.sha256).historicalCapture, old);
+    assert.ok(manifest.copies.some(row => row.original === old.archive.file && row.sha256 === old.archive.sha256));
     for (const ref of [p.context.outer, p.context.marker, p.context.code.controller, v.request.terminationEvidence, result.evidence, finish.evidence, finish.publication]) assert.ok(manifest.copies.some(row => row.original === ref.file && row.sha256 === ref.sha256), 'retained input ' + ref.file);
   });
   const mutations = {
-    lifecycle: c => c.lifecycle = 'arbitrary-process', version: c => c.schemaVersion = 2, extra: c => c.unsupported = true,
+    lifecycle: c => c.lifecycle = 'arbitrary-process', version: c => c.schemaVersion = 3, extra: c => c.unsupported = true,
     wrongRun: c => c.runId = f.uuid(), wrongBefore: c => c.beforeEventSha256 = 'f'.repeat(64), wrongReservation: c => c.reservationId = f.uuid(),
     wrongTransition: c => c.transitionId = f.uuid(), wrongJob: c => c.job = c.prepared,
     code: c => c.code.controller = c.code.wrapper, tool: c => c.tools.lean = c.tools.lake,
@@ -98,6 +116,9 @@ describe('known controller termination: execution closure only (protocol doubles
     missingCanonicalClock: c => changeRef(c, 'canonicalObservations', r => delete r.startedAtMs),
   };
   for (const [name, change] of Object.entries(mutations)) it('refuses ' + name + ' without canonical writes', () => { const v = p.complete(change); refused(v.request); });
+  it('the unmocked public verifier rejects this generic node19/other-case fixture', () => {
+    const v = p.complete(); refused(v.request, () => exactApi.verifyControllerTermination({ projectRoot: p.x.root, request: v.request, out: p.x.output('unsupported-profile') }), /unsupported case, step, target or original run/);
+  });
   it('requires independently held expectations and current actual failed-after bytes/head', () => {
     const v = p.complete();
     for (const change of [q => q.expectedContext.step += '-other', q => q.expectedAction = p.context.job, q => q.expectedBeforeEventSha256 = 'f'.repeat(64), q => q.committedHeadSha256 = 'f'.repeat(64), q => q.attemptId = 'not-a-uuid']) {

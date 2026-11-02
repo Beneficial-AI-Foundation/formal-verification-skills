@@ -125,7 +125,7 @@ configured-build child sequence ending in the environment query, before build
 snapshot/kernel publication. The three controller sources are non-executable
 reference data; the helper does not execute them.
 
-The closed `fvs/auto-controller-termination-context` v1 binds caller-owned exact
+The closed `fvs/auto-controller-termination-context` v2 binds caller-owned exact
 run/before/action/reservation/job/output/marker/source/tool identities, actual
 outer launch/kill/wait and clocks, all child/output identities, complete canonical
 before/after observations and an independently captured process inventory. The
@@ -135,6 +135,30 @@ history remain unchanged. The trust claim is current quiescence of the known
 managed lifecycle on the trusted host, without retrospective full PID lineage
 or an inferred producer result. An unresolved possibility of surviving work
 refuses; it must not be replaced by an empty observer result.
+
+This initial profile is the exact retained A122 controller case at
+`/private/tmp/fvs45-ticket18-native-episode-0c4c1ino`, step
+`122-e1-accept-20-continuous`, node20, originalrun386 and original40h deadline.
+The pinned wrapper's ROOT45 cwd,226 source tuple and complete snapshot identity
+are fixed. This is not a generic parameterization of that case-specific program.
+Context v2 adds required `controllerBefore`, `caseContext`,
+`candidateCheckOrigin` and `recoveryBefore` refs. Its actual durable before
+envelope must bind the action, before request/result/out/manifest and prepared
+ref. Prepared source, baseline, store, full snapshot, predecessor/raw runtime,
+prior110 successful basis, check100 result and A121-specific consumed closure
+must correspond, including the recorded preparation/before/job ordering.
+The earlier closure establishes the starting predecessor only; it never closes
+A122 or renews proof. No missing timing or producer outcome is reconstructed.
+
+`assertKnownControllerPreparation` is only a correspondence assertion, returning
+no receipt or permission. The public verifier always uses its real bound reader.
+Separate tests check that exact assertion against copied retained metadata;
+generic failure-algorithm tests explicitly double the profile assertion and are
+not applicability positives. An unmocked consumer refuses their generic profile.
+When retaining prior closure implementation33965088 in17, supply the existing
+exact historical-capture mapping to its preserved non-executable source body.
+Both the original logical code identity and archive body remain required copies;
+keep the new executable identity separate. The6593/340a inspect pair is unchanged.
 
 Only a future actual16 paired **failed after** can close its reservation. Its
 exact request/result and committed head join the independently supplied complete

@@ -2,6 +2,7 @@
 // No producer/compiler runs and these objects never establish proof acceptance.
 const fs = require('node:fs');
 const path = require('node:path');
+const zlib = require('node:zlib');
 const { spawnSync } = require('node:child_process');
 const f = require('./respec-fixture.cjs');
 const read = file => JSON.parse(fs.readFileSync(file));
@@ -10,6 +11,10 @@ const sourceFiles = ['fvs-auto.mjs', 'fvs-auto-resume.mjs', 'fvs-auto-transition
 async function fixture(auto, bundle, transitions, api, clock) {
   const { memoryHash } = await import('../../scripts/fvs-project-memory.mjs');
   const x = await f.fixture(auto, bundle, transitions, process.env.FVS_RESPEC_QUAL_OUT ?? undefined);
+  const retained = JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(f.ROOT, 'tests/fixtures/auto-respec-controller/a122-profile.json.gz')))).archives.oldRespec;
+  const codeArchive = write(path.join(x.owned, 'prepared-closure-respec.source.txt'), retained.text);
+  if (codeArchive.sha256 !== retained.original.sha256) throw Error('historical preparation implementation changed');
+  const oldSourceCapture = { schema: 'fvs/auto-bundle-historical-input', schemaVersion: 1, original: retained.original, archive: codeArchive, mode: 0o644 };
   fs.writeFileSync(path.join(x.root, 'lean-toolchain'), 'leanprover/lean4:v4.31.0\n');
   fs.writeFileSync(path.join(x.root, 'lake-manifest.json'), '{"packages":[]}\n');
   f.git(x.root, 'add', '--', 'lean-toolchain', 'lake-manifest.json'); f.git(x.root, 'commit', '-qm', 'test(fixture): bind configured producer context');
@@ -44,6 +49,7 @@ async function fixture(auto, bundle, transitions, api, clock) {
       archive: write(path.join(x.owned, 'initial-runtime.json'), fs.readFileSync(initial.request.current.bundle.runtime.state.file)), mode: 0o600 },
     { schema: 'fvs/auto-bundle-historical-input', schemaVersion: 1, original: priorRuntime,
       archive: f.ref(path.join(path.dirname(initial.request.priorBundle.manifest.file), priorCopy.stored)), mode: priorCopy.mode },
+    oldSourceCapture,
   ];
   const q = x.request({ inputs }), intent = x.local([], 'acceptance'), step = '122-protocol-accept';
   const caseRoot = path.join(x.owned, 'protocol-case'), evidenceRoot = path.join(x.owned, 'protocol-outer'), producerOut = path.join(caseRoot, 'steps', step, 'producer');
@@ -66,7 +72,8 @@ async function fixture(auto, bundle, transitions, api, clock) {
   const sourceSnapshot = { head: f.git(f.ROOT, 'rev-parse', 'HEAD'), tree: f.git(f.ROOT, 'rev-parse', 'HEAD^{tree}'), files: sourceFiles.map(n => {
     const file = path.join(f.ROOT, 'scripts', n); return { path: 'scripts/' + n, sha256: f.ref(file).sha256, mode: '100644', size: fs.statSync(file).size };
   }) };
-  const prepared = f.json(evidenceRoot, 'prepared', { schema: 'fvs/owned-continuous-input-preparation', version: 1, runId: x.runId, status: 'non-authoritative-inputs-only', q: { expectedHeadSha256: q.expectedHeadSha256 }, closure: f.json(evidenceRoot, 'prior-closure', { authority: 'protocol-only' }) });
+  const prepared = f.json(evidenceRoot, 'prepared', { schema: 'fvs/owned-continuous-input-preparation', version: 1, runId: x.runId, status: 'non-authoritative-inputs-only', q: { expectedHeadSha256: q.expectedHeadSha256 },
+    closure: f.json(evidenceRoot, 'prior-closure', { authority: 'protocol-only', implementation: { respec: retained.original, bundle: f.ref(path.join(f.ROOT, 'scripts/fvs-auto-bundle.mjs')) } }) });
   const began = before.result.observation.observedAtMs ?? auto.readRuntimeState({ projectRoot: x.root }).lastObservedAtMs;
   const outerStart = Math.max(began, Date.now()), end = outerStart + 600098;
   clock.advance(end + 2000);
@@ -104,10 +111,12 @@ async function fixture(auto, bundle, transitions, api, clock) {
   const canonicalObservations = f.json(evidenceRoot, 'canonical', { schema: 'fvs/owned-a122-readonly-observations', version: 1, runId: x.runId, currentHead: before.result.recordedEventSha256,
     expectedBeforeEventSha256: before.result.recordedEventSha256, expectedAction: actionRef, snapshotBefore: snapshot, snapshotAfter: snapshot,
     runtimeBefore, runtimeCurrent: f.ref(stateFile), startedAtMs: end + 1, endedAtMs: end + 2, originalRunDeadlineMs: snapshot.fixed.deadlineMs });
-  const context = { schema: 'fvs/auto-controller-termination-context', schemaVersion: 1, lifecycle: 'configured-git-local-accept-finalization-v1',
+  const context = { schema: 'fvs/auto-controller-termination-context', schemaVersion: 2, lifecycle: 'configured-git-local-accept-finalization-v1',
     trustScope: 'trusted-host known managed lifecycle; no retrospective full PID lineage or inner producer outcome', runId: x.runId, beforeEventSha256: before.result.recordedEventSha256,
     transitionId: action.transitionId, reservationId: action.reservationId, action: actionRef, job: target.request, caseRoot, evidenceRoot, producerOut, step, code, tools, sourceSnapshot,
-    beforeRequest: f.ref(path.join(before.out, 'request.json')), beforeResult: f.ref(path.join(before.out, 'result.json')), marker, launch, outer, prepared, build, observer, canonicalObservations,
+    beforeRequest: f.ref(path.join(before.out, 'request.json')), beforeResult: f.ref(path.join(before.out, 'result.json')), marker, launch, outer, prepared,
+    controllerBefore: f.json(x.owned, 'profile-double-before', {}), caseContext: f.json(x.owned, 'profile-double-context', {}),
+    candidateCheckOrigin: f.json(x.owned, 'profile-double-check', {}), recoveryBefore: f.json(x.owned, 'profile-double-recovery', {}), build, observer, canonicalObservations,
     innerProducer: { startedAtMs: null, endedAtMs: null, exitCode: null, signal: null, error: null, status: 'unknown' } };
   // Branch an owned protocol fixture at its before bytes. This is never a live run.
   const complete = change => {
@@ -118,6 +127,6 @@ async function fixture(auto, bundle, transitions, api, clock) {
       afterRequest: f.ref(path.join(after.out, 'request.json')), afterResult: f.ref(path.join(after.out, 'result.json')), committedHeadSha256: after.result.committedHeadSha256, deadlineMs: Date.now() + 120000 };
     return { request, after, state: f.ref(stateFile) };
   };
-  return { x, context, complete, initial, initialQ, revisionRequest, historicalCaptures, before, action, actionRef, stateFile, store, write, read, memoryHash };
+  return { x, context, complete, initial, initialQ, revisionRequest, historicalCaptures, oldSourceCapture, before, action, actionRef, stateFile, store, write, read, memoryHash };
 }
 module.exports = { ...f, fixture, read, write };
