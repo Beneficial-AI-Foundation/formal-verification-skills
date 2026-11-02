@@ -82,6 +82,8 @@ Verification first resolves the immutable content-addressed captured bytes and r
 saved facts, `contract.lean` comments, `recall.md` and per-context/core source copies. This integrity
 evaluation uses no live inputs. A historical artifact remains integrity-valid after a real HEAD,
 registry or context change. Changed captured bytes, missing required copies or changed views fail.
+The JS `readReviewSnapshot({manifest,deadlineMs})` performs this captured-only evaluation without
+creating output or attempting live currentness;18 uses it before its separate current-context guards.
 
 Committed14/15 inventories are linked from captured bytes, sequence and predecessor hashes to the
 request's exact expected heads; saved record lists cannot omit a head or middle event. This is

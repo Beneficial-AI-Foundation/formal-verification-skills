@@ -1,0 +1,91 @@
+# Same-pipeline human re-specification
+
+<overview>
+
+After an end/partial17 artifact the owner can request changes to chosen contracts. Preserve the
+initial scope, feedback payload and original run accounting. Use the existing grounded specify,
+fresh review, proof, check and serial acceptance stages; no routine human gate at each round.
+The helper below validates correspondence and current observations. It creates no proof, dispatch,
+human approval or publication authority, and it runs no model or proof compiler.
+
+</overview>
+
+```text
+node <installed-scripts>/fvs-auto-respec.mjs inspect --request REQUEST.json --out NEW_INSPECTION
+node <installed-scripts>/fvs-auto-respec.mjs finish --request CURRENT.json --out NEW_RESULT
+node <installed-scripts>/fvs-auto-respec.mjs verify --request CURRENT.json --out EXISTING_RESULT
+```
+
+The JS operations are `runRespec({request,out})` and `verifyRespecResult({request,out})`. The consumer
+provides its independently held current request. Verification creates separate bounded evidence;
+it does not reuse a saved ready label. New outputs must be outside source, memory, registries,
+checker evidence and the prior bundle. Preserve failed outputs and old requests/receipts.
+
+## Exact request
+
+Use the closed `fvs/auto-respec-request` version1 object:
+
+| Field | Value |
+|---|---|
+| `schema`, `schemaVersion` | `fvs/auto-respec-request`,1 |
+| `revisionId`, `attemptId`, `operation` | Original revision UUIDv4, fresh current16/20 attempt UUIDv4, `inspect` or `finish` |
+| `ownerFeedback` | `{ownerReference,evidence:{file,sha256}}`; actual retained owner payload/reference, no Boolean authentication |
+| `priorBundle` | `{manifest,expectedContext}`; exact17 ref and independently held original captured context |
+| `current` | `{bundle,resume,memory,authorization,profile}` below |
+| `requestedItems` | Complete original requested items, each `{itemId,nodes,expectedRecords,feedback,evidence,response}` |
+| `inspectEvidence` | Null at inspect; `{request,result}` exact initial18 refs at finish |
+| `deadlineMs` | Future absolute inspection deadline, at most600s; proof-currentness work also stops at the original run deadline |
+
+`current.bundle` is the complete current17 build request, including actual source, agreement,
+extraction/graph/plan, full scopeInventory, registry/store heads, baseline/runtime and explicit absence
+reasons. Its deadline is no later than18's. `current.resume` is `{request,result,committedHeadSha256}`:
+the exact current16 request/result refs and independently expected committed head.16 phase is `resume`;
+the current request can be an ordinary reconciliation or a typed22 before/after observation. The fixed
+existing consumer verifies it. `current.memory` is `{request,result}` for that same attempt and16's
+actual consumed bootstrap output. `authorization` and `profile` are existing22 exact refs, resolved
+against current canonical agreement. No fallback model or new role setting.
+
+Each item has a unique `itemId`, explicit sorted node IDs, and `expectedRecords` entries
+`{node,recordSha256,candidateSha256}` for those original node versions. `feedback` and nonempty evidence
+refs record the workflow's owner-request correspondence. They are not a language classifier.
+`response` is null until there is an actual prepared response. A response ref names the closed
+`fvs/auto-respec-response` version1 object with `revisionId,itemId,ownerFeedbackSha256,priorCandidates,
+contracts,correspondenceEvidence` (plus schema/version). The candidates equal the original item versions;
+contracts use the same node-version shape but must name actual current14 records. Correspondence refs
+retain the specification/review rationale. The workflow must independently read the feedback and assess
+that rationale against the revised contracts; a byte-bound response does not establish human approval.
+
+## Guard the existing pipeline
+
+1. Inspect the prior17 captured bytes using `readReviewSnapshot`; captured integrity is independent of
+   live currentness and never launches a compiler/backend/AO call. Separately supply current12 applicability,
+   fresh20 prime and16 Git/AO/accounting reconciliation. Maintain one primary project store. Missing,
+   stale, unsupported, uncertain or expired context stays partial; never infer zero prior spending.
+2. Keep the initial feedback, prior bundle, whole selected/applicability ledger, run identity and limits
+   fixed. Prepare new caller requests at each boundary; retain initial inspect refs. Existing22 paired
+   effects/reservations/current heads explain source, registry, frozen and accepted-store advances.
+   Partial facts are not permission to dispatch. Actual stock-AO/provider execution still needs19's setup.
+3. Specify and obtain fresh independent review where14's actual candidate/definition/type context changes.
+   Revisions invalidate the changed node plus consumers; stale unused review packets cannot clear semantic
+   review. Proof-only changes recheck and do not waive an existing semantic requirement. Preserve shared
+   ownership and the full13 scope; never replace it with only an affected subplan.
+4. For a later freeze, a prior overlay can become protected only when its exact whole-file bytes/Git
+   tree match the previously current integrated15 proof, its descriptor is added to the applicable contract,
+   and14 records a fresh semantic review/candidate with actual invalidation. Explicitly build that module.
+   The new overlay remains absent from the current integration context; the old one is no longer mutable.
+   Original extraction files stay unchanged. Expected terms still come from their fixed reviewed context,
+   whose compiled import closure excludes prior and mutable proof modules. Promotion is no kernel-replay
+   exemption. Use the approved versioned sequence, not source deletion, reset or a different freeze root.
+5. Reuse unchanged proof text as candidate bytes, then obtain every current15 receipt required by the
+   new global frozen/registry/source/helper tuple. Accept bottom-up and serially. Historical receipts and
+   worker/model/provisional verdicts are not current acceptance. Never clear an old store or reset clocks.
+6. Finish and independently verify over all original requested roots, failed items, helpers and scope
+   applicability. An unfinished feedback item stays pending even if some proofs pass. Every required
+   current proof and response must be present before `ready-for-final-human-review`. That status remains
+   machine readiness only, with actual human review pending. On exhaustion keep explicit full-scope partial
+   reasons; a separate bounded17 diagnostic snapshot may be written without starting new proof work.
+
+Build a NEW17 review artifact from the complete current context and retain all prior artifacts. Human
+approval must reference the exact resulting contracts/bundle and actual response. Another requested
+revision uses the same path. Changed scope/limits/context that16 cannot reconcile stays partial rather
+than silently rebinding the original run. No PR is created, published or merged by this helper.

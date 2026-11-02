@@ -366,6 +366,8 @@ function completionFor(a, ref, before, history) {
   if (history.some((r) => r.event.position === 'after' && r.event.beforeEventSha256 !== before.sha256 && r.event.effect.evidence.some((e) => same(e, ref)))) stop('transition-completion-replayed', 'completion already belongs to another transition');
   return { completion: c, command: cmd, result, actionRef: before.event.intent.request, beforeEvent: before.event };
 }
+// Read-only consumers reuse the exact protocol validators, never a verdict flag.
+export { completionFor as readTransitionCompletion, authorize as verifyTransitionAuthorization };
 function validateDelta(a, before, actual, evidence, services) {
   snapshotValid(actual);
   const stages = ['extraction', 'graph', 'plan'];

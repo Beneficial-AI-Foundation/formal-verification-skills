@@ -557,15 +557,11 @@ export function buildReviewBundle(raw, out) {
   return { status: 'review-bundle-written', authority: 'no-proof-or-dispatch-authority', humanReview: 'pending', proofCoverage: views.facts.proofCoverage, manifest: published };
 }
 
-export function verifyReviewBundle(raw) {
-  const options = data(raw); closed(options, ['manifest', 'expectedContext', 'deadlineMs', 'out'], 'bundle verification'); reference(options.manifest); deadline(options.deadlineMs); expectedShape(options.expectedContext);
+export function readReviewSnapshot(raw) {
+  const options = data(raw); closed(options, ['manifest', 'deadlineMs'], 'snapshot verification'); reference(options.manifest); deadline(options.deadlineMs);
   if (options.deadlineMs > Date.now() + BUNDLE_LIMITS.deadlineMs) fail('bundle-invalid-input', 'inspection exceeds existing600s bound');
   const manifest = bound(options.manifest), root = path.dirname(options.manifest.file);
   if (path.basename(options.manifest.file) !== 'manifest.json' || manifest.schema !== 'fvs/auto-review-bundle' || manifest.schemaVersion !== 1 || manifest.authority !== 'human-review-artifact-only' || manifest.humanReview !== 'pending') fail('bundle-integrity-invalid', 'unsupported review manifest');
-  const capturedRequest = manifest.snapshot.request;
-  protectOutput(options.out, { ...capturedRequest, ...options.expectedContext }, [root, capturedRequest.projectRoot, capturedRequest.source.root, capturedRequest.registry.root,
-    capturedRequest.acceptedStore?.root, capturedRequest.runtime?.root, capturedRequest.baseline && path.dirname(capturedRequest.baseline.file),
-    ...manifest.copies.filter(r => r.role === 'evidence').map(r => path.dirname(r.original))].filter(Boolean));
   const captured = new Map();
   if (!Array.isArray(manifest.copies) || !Array.isArray(manifest.indexOnly) || manifest.copies.length + manifest.indexOnly.length > BUNDLE_LIMITS.entries) fail('bundle-size-limit', 'captured index exceeds supported bound');
   for (const row of manifest.copies) {
@@ -605,7 +601,6 @@ export function verifyReviewBundle(raw) {
   if (q.baseline) requireCopy(q.baseline);
   if (q.handoff) requireCopy(q.handoff);
   inventories.accepted.forEach(r => requireCopy(r));
-  protectOutput(options.out, { ...capturedRequest, ...options.expectedContext }, [root, ...derivedEvidenceRoots]);
   const regenerated = render(manifest.snapshot, get);
   if (!same(sortedSources(derivedSources), manifest.sources) || !same(manifest.snapshot.sourceViews, manifest.sources)) fail('bundle-integrity-invalid', 'saved source-view inventory is incomplete');
   if (!same(regenerated.facts, manifest.facts)) fail('bundle-integrity-invalid', 'saved facts differ from captured records');
@@ -615,6 +610,16 @@ export function verifyReviewBundle(raw) {
   for (const row of manifest.sources) {
     if (row.view !== sourceView(row.original, row.sha256) || hash(bytes(path.join(root, row.view))) !== row.sha256 || !captured.has(row.original + '\0' + row.sha256)) fail('bundle-integrity-invalid', 'context/source view changed');
   }
+  return { body: manifest, root, protectedRoots: [...derivedEvidenceRoots], integrity: { status: 'valid', level: 'captured-data-and-view-integrity-only' } };
+}
+
+export function verifyReviewBundle(raw) {
+  const options = data(raw); closed(options, ['manifest', 'expectedContext', 'deadlineMs', 'out'], 'bundle verification'); expectedShape(options.expectedContext);
+  const verified = readReviewSnapshot({ manifest: options.manifest, deadlineMs: options.deadlineMs });
+  const manifest = verified.body, root = verified.root, capturedRequest = manifest.snapshot.request;
+  protectOutput(options.out, { ...capturedRequest, ...options.expectedContext }, [root, capturedRequest.projectRoot, capturedRequest.source.root, capturedRequest.registry.root,
+    capturedRequest.acceptedStore?.root, capturedRequest.runtime?.root, capturedRequest.baseline && path.dirname(capturedRequest.baseline.file), ...verified.protectedRoots,
+    ...manifest.copies.filter(r => r.role === 'evidence').map(r => path.dirname(r.original))].filter(Boolean));
   fs.mkdirSync(options.out, { mode: 0o700 });
   const contextMatches = same(options.expectedContext, manifest.snapshot.context);
   let fresh = contextMatches ? freshCurrentness(options.expectedContext, options.deadlineMs, path.join(options.out, 'current-inspection'), manifest.facts.union !== null)

@@ -52,7 +52,7 @@ function fixture(auto, parent = fs.realpathSync(os.tmpdir()), existing = null) {
       absenceReasons: { baseline: 'not-frozen', acceptedStore: 'no canonical proof in this protocol fixture', runtime: 'not-started', handoff: 'not-dispatched' }, deadlineMs: Date.now() + 120000, ...patch };
   };
   x.out = prefix => path.join(owned, prefix + '-' + uuid());
-  x.register = async (q, node = 19, patch = {}) => {
+  x.register = async (q, node = 19, patch = {}, event = 'register') => {
     const api = await import('../../scripts/fvs-contract-registry.mjs');
     const wrapped = r => ({ json: JSON.parse(fs.readFileSync(r.file)), sha256: r.sha256 });
     const plan = wrapped(q.plan), graph = wrapped(q.graph), view = api.validatePlan(plan, graph);
@@ -68,7 +68,8 @@ function fixture(auto, parent = fs.realpathSync(os.tmpdir()), existing = null) {
     const review = { candidateSha256: candidate, registryHeadSha256: api.readChain(x.registry).records.at(-1)?.sha ?? null, verdict: 'pass',
       reviewer: { session: 'fixture-reviewer', harness: 'fixture', model: 'none', runId: uuid() }, evidence: ref(evidence) };
     const c = write(owned, 'contract', contract), r = write(owned, 'review', review);
-    const result = spawnSync(process.execPath, [path.join(memory.ROOT, 'scripts/fvs-contract-registry.mjs'), 'register', '--plan', q.plan.file, '--graph', q.graph.file, '--registry', x.registry, '--spec-root', root, '--contract', c.file, '--review', r.file], { encoding: 'utf8' });
+    const previous = api.readChain(x.registry).heads.get(node)?.sha;
+    const result = spawnSync(process.execPath, [path.join(memory.ROOT, 'scripts/fvs-contract-registry.mjs'), event, '--plan', q.plan.file, '--graph', q.graph.file, '--registry', x.registry, '--spec-root', root, '--contract', c.file, '--review', r.file, ...(event === 'revise' ? ['--previous', previous] : [])], { encoding: 'utf8' });
     if (result.status !== 0) throw Error(result.stdout + result.stderr);
     return JSON.parse(result.stdout);
   };

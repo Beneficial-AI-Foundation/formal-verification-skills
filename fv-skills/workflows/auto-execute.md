@@ -20,7 +20,15 @@ inventory and current source/context references, including failed/unmapped items
 alone is not complete coverage evidence. Capture pending/expired/unfinished reasons without restarting
 work. Bundle integrity, historical proof facts, fresh currentness and human approval are separate.
 This step writes no PR, checker receipt, registry, runtime or memory state. Human re-specification
-continues through18's separately implemented whole-scope path; it is not inferred from bundle verification.
+continues through the bounded route in `fv-skills/references/auto-respec.md`; it is not inferred from bundle verification.
+
+For an actual owner request X/Y/Z, retain that payload and the original complete scope/inspect frame.
+Use fresh16/20 caller requests at each boundary and independently consume the18 result before preparing
+or releasing revision work. The result creates no dispatch grant: existing22 startup, paired effects,
+current heads and recovery rules still apply. Run grounded specify/fresh review,14 invalidation, proof
+and trusted15 checks automatically within the original limits. Keep old receipts as history; unchanged
+proof text needs whatever fresh current-context checks15 requires. Finish with whole-scope checks and
+a NEW17 artifact, listing unfinished items. Human review remains at the end; actual providers still need19.
 
 ## Step 1: Require Agent Orchestrator
 

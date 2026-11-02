@@ -284,6 +284,9 @@ function reservedAssociation(a, view, run, { stage = null, live = false, pending
   const fixed = (value) => ({ ...Object.fromEntries(['path', 'gitDir', 'gitCommonDir', 'branchRef'].map((key) => [key, value.worktree[key]])), profile: value.rulesProfile });
   if (!same(fixed(a), fixed(original))) stop('resume-association-invalid', 'reserved actor path/commonGit/branch/profile changed');
 }
+export function readRuntimeAssignment(ref, view, run, stage) {
+  const value = association(ref, run); reservedAssociation(value, view, run, { stage }); return value;
+}
 function lifecycle(s, kind) {
   if (!s || !text(s.id) || !text(s.projectId) || !['worker', 'orchestrator'].includes(s[kind]) || typeof s.isTerminated !== 'boolean' || !text(s.status)) stop('resume-ao-invalid', 'unsupported AO lifecycle record');
   const activity = kind === 'role' ? s.activity : s.activity?.state;

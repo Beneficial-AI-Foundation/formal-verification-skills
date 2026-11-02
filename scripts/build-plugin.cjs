@@ -30,6 +30,7 @@ const SCRIPT_FILES = [
   'fvs-auto-resume.mjs',
   'fvs-auto-transitions.mjs',
   'fvs-auto-bundle.mjs',
+  'fvs-auto-respec.mjs',
   'fvs-project-memory.mjs',
   'fvs-checker.mjs',
   'fvs-checker-auto.mjs',
