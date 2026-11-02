@@ -247,8 +247,21 @@ if (process.platform === 'darwin') {
       const f = duplicateImportFixture(1), needle = "} else if (process.argv.includes('env')) {";
       const source = fs.readFileSync(f.request.lake.path, 'utf8'); assert.equal(source.split(needle).length, 2);
       fs.writeFileSync(f.request.lake.path, source.replace(needle, needle + (timeout ? ' setInterval(()=>{},1000);' : ' process.exit(7);')));
-      f.request.lake = tool(f.request.lake.path); if (timeout) f.request.deadlineMs = Date.now() + 1500;
-      const result = await build(f.request); assert.equal(result.status, 'unverified');
+      f.request.lake = tool(f.request.lake.path);
+      const now = Date.now, spawn = childProcess.spawn; let offset = 0;
+      if (timeout) {
+        // Expire at the intended last child, regardless of full-suite scheduling.
+        Date.now = () => now() + offset;
+        childProcess.spawn = function(file, args, ...rest) {
+          if (args.includes('env')) offset = f.request.deadlineMs - now() - 100;
+          return spawn.call(this, file, args, ...rest);
+        };
+        syncBuiltinESMExports();
+      }
+      let result;
+      try { result = await build(f.request); }
+      finally { Date.now = now; childProcess.spawn = spawn; syncBuiltinESMExports(); }
+      assert.equal(result.status, 'unverified');
       assert.equal(result.receipts.length, 4); assert.equal(result.receipts.at(-1).timedOut, timeout);
       if (!timeout) assert.equal(result.receipts.at(-1).exit, 7);
       assert.equal(fs.existsSync(path.join(f.request.out, 'receipts/dependencies-after.json')), false);
