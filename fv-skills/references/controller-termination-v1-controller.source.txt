@@ -1,0 +1,157 @@
+// Disposable execution controller. AO is a protocol double; Git, Beads and the
+// installed independent Lean checker are real. This file is not product code.
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+const ROOT = '/Users/ada/.ao/data/worktrees/formal-verification-skills/formal-verification-skills-45';
+const auto = await import(pathToFileURL(path.join(ROOT, 'scripts/fvs-auto.mjs')));
+const t = await import(pathToFileURL(path.join(ROOT, 'scripts/fvs-auto-transitions.mjs')));
+const memory = await import(pathToFileURL(path.join(ROOT, 'scripts/fvs-project-memory.mjs')));
+const registryAPI = await import(pathToFileURL(path.join(ROOT, 'scripts/fvs-contract-registry.mjs')));
+const checker = await import(pathToFileURL(path.join(ROOT, 'scripts/fvs-checker-auto.mjs')));
+const respec = await import(pathToFileURL(path.join(ROOT, 'scripts/fvs-auto-respec.mjs')));
+
+const [mode, base, step, evidenceRoot, closureFile, closureSha256, preparedSha256] = process.argv.slice(2);
+assert.ok(['prepare','before-run','after'].includes(mode));
+assert.equal(base,'/private/tmp/fvs45-ticket18-native-episode-0c4c1ino');
+assert.equal(step,'122-e1-accept-20-continuous');
+assert.ok(path.isAbsolute(evidenceRoot)&&fs.realpathSync(evidenceRoot)===evidenceRoot);
+assert.ok(path.isAbsolute(closureFile)&&/^[0-9a-f]{64}$/.test(closureSha256));
+assert.ok(path.isAbsolute(base) && fs.realpathSync(base) === base);
+const sha = b => crypto.createHash('sha256').update(b).digest('hex');
+const ref = file => ({ file, sha256: sha(fs.readFileSync(file)) });
+const save = (file, value) => { fs.writeFileSync(file, JSON.stringify(value, null, 2) + '\n', { flag: 'wx' }); return ref(file); };
+const read = file => JSON.parse(fs.readFileSync(file));
+const uuid = () => crypto.randomUUID();
+const offline = { PATH: '/usr/bin:/bin', LANG: 'C', LC_ALL: 'C', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1', GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', DISABLE_TELEMETRY: '1', DO_NOT_TRACK: '1' };
+let commandIndex = 0;
+function command(argv, cwd, env = offline) {
+  const startedAtMs = Date.now(), p = spawnSync(argv[0], argv.slice(1), { cwd, env, timeout: 60000, maxBuffer: 16 * 1024 * 1024 }), endedAtMs = Date.now();
+  const prefix = path.join(base, `${mode}-${step ?? 'setup'}-command-${String(++commandIndex).padStart(4, '0')}`);
+  fs.writeFileSync(prefix + '.stdout', p.stdout ?? Buffer.alloc(0), { flag: 'wx' });
+  fs.writeFileSync(prefix + '.stderr', p.stderr ?? Buffer.alloc(0), { flag: 'wx' });
+  const receipt = save(prefix + '.json', { argv, cwd, env, startedAtMs, endedAtMs, exitCode: p.status, signal: p.signal, error: p.error?.code ?? null, tool: ref(fs.realpathSync(argv[0])), stdout: ref(prefix + '.stdout'), stderr: ref(prefix + '.stderr') });
+  assert.equal(p.status, 0, `${argv[0]} ${argv.slice(1).join(' ')}: ${p.stderr}`);
+  assert.equal(p.signal, null); assert.equal(p.error, undefined);
+  return { stdout: (p.stdout ?? Buffer.alloc(0)).toString(), receipt };
+}
+const git = (root, ...args) => command(['/usr/bin/git', '-C', root, '-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', ...args], root).stdout.trim();
+function gitIdentity(root) {
+  const resolve = value => fs.realpathSync(path.resolve(root, value));
+  return { root, gitDir: resolve(git(root, 'rev-parse', '--git-dir')), gitCommonDir: resolve(git(root, 'rev-parse', '--git-common-dir')), branchRef: git(root, 'symbolic-ref', 'HEAD'), commit: git(root, 'rev-parse', 'HEAD'), tree: git(root, 'rev-parse', 'HEAD^{tree}'), dirty: git(root, 'status', '--porcelain=v1', '--untracked-files=all') !== '' };
+}
+const j = (name, value) => save(path.join(base, name + '-' + uuid() + '.json'), value);
+const out = name => path.join(base, name + '-' + uuid());
+const C1 = 'c1dca808811357a10839287cf12a5316a130c95d';
+const TREE = 'f3b44d57710592be2e3458182efa0057e37e17df';
+const TEMPLATE = '/private/tmp/fvs45-ticket15-c5a8dcf-bpo78xjw/qualification/freeze-main/freeze-request.json';
+let c;
+const runtime = () => auto.readRuntimeState({ projectRoot: c.root });
+const canonical = () => { const view = auto.readState({ projectRoot: c.root, requireAgreement: true }); return { view, envelope: view.agreement.agreement }; };
+function currentInputs() {
+  const steps = path.join(base, 'steps'); let baseline = null;
+  if (fs.existsSync(steps)) for (const name of fs.readdirSync(steps).sort()) { const file = path.join(steps, name, 'after.json'); if (fs.existsSync(file)) baseline = read(file).baseline; }
+  return { extraction: c.extraction.identity, graph: c.extraction.graph, plan: c.extraction.plan, baseline, acceptedStore: { root: path.join(base, 'store'), expectedHeadSha256: checker.readAcceptedStore(path.join(base, 'store')).headSha256 } };
+}
+function associations() {
+  const folder = path.join(base, 'actors'); if (!fs.existsSync(folder)) return [];
+  return fs.readdirSync(folder).sort().flatMap(name => { const dir = path.join(folder, name); if (!fs.statSync(dir).isDirectory()) return []; const files = fs.readdirSync(dir).filter(f => /^\d{3}-association\.json$/.test(f)).sort(); if (!files.length) return []; const latest = ref(path.join(dir, files.at(-1))), a = t.transitionBound(latest); return runtime().reservations.get(a.reservationId)?.state === 'closed' ? [] : [latest]; });
+}
+function request(extra = {}) {
+  const attemptId = uuid(), phase = extra.phase ?? 'resume', resumeId = phase === 'start' ? null : uuid(), source = gitIdentity(c.integration);
+  return { schema: 'fvs/auto-resume-request', schemaVersion: 1, attemptId, runId: c.runId, phase, resumeId,
+    ao: { tool: ref(c.aoTool), stateHome: c.aoHome, projectId: c.projectId, coordinatorSessionId: 'coordinator' }, expectedHeadSha256: runtime().headSha256,
+    source: { kind: 'git', root: c.integration, commit: source.commit, expectedTree: source.tree }, inputs: currentInputs(), associations: associations(), priorAccounting: c.accounting,
+    memoryRequest: auto.prepareMemoryRequest({ projectRoot: c.root, attemptId, operation: 'coordinator-refresh', phase, target: { projectId: c.projectId, sessionId: 'coordinator', resumeId } }), transition: null, ...extra };
+}
+function invoke(q, label, operation = 'checkpoint') {
+  const output = out(label), result = auto[operation === 'state' ? 'reconcileState' : 'checkpointState']({ projectRoot: c.root, request: q, out: output });
+  const manifest = j(label, { q, out: output, result }); console.log(label, result.code, result.observation?.transition?.admissibility?.status, manifest.file);
+  return { q, out: output, result, manifest };
+}
+function association(intent, before, worktree, sessionId = 'owned-proof-fixture') {
+  const g = gitIdentity(worktree); assert.equal(g.dirty, false); const { root, dirty, ...rest } = g;
+  return { schema: 'fvs/auto-session-association', schemaVersion: 1, runId: c.runId, assignmentId: intent.effect.assignmentId, reservationId: intent.reservationId, projectId: c.projectId, sessionId,
+    scopeRelation: 'run-assignment', nodes: intent.nodes, owner: intent.owner, controllerSessionId: 'coordinator', worktree: { path: root, ...rest },
+    provenance: { kind: 'controller-launch', beforeEventSha256: before, evidence: [j('fixture-association-provenance', { authority: 'owned controller association; AO protocol double, not provider or OS attestation', worktree, before })] }, rulesProfile: null };
+}
+const before = intent => ({ position: 'before', intent, beforeEventSha256: null, outcome: null, effect: null });
+const after = (b, completion) => ({ position: 'after', intent: b.q.transition.intent, beforeEventSha256: b.result.recordedEventSha256, outcome: 'succeeded', effect: { sessionId: null, association: null, evidence: [completion], resolution: null } });
+function basis(name) { const v = read(path.join(base, name + '-after.json')); return { beforeEventSha256: v.beforeEventSha256, afterEventSha256: v.afterEventSha256, completion: v.completion }; }
+function makeAction(kind, stage, nodes, target, previous = null, prepared = null) {
+  const q = prepared?.q ?? request(), intent = { transitionId: uuid(), reservationId: uuid(), stage, nodes, owner: 'qualification-controller', effect: { kind: 'local', operation: stage } };
+  const run = runtime().state.run;
+  // Proposal data only; the production checkpoint independently re-observes all
+  // identities and validates the exact equality before committing permission.
+  const observation = { identity: { source: gitIdentity(c.integration) }, associations: associations().map(reference => ({ reference, value: t.transitionBound(reference) })) };
+  const snapshot = prepared?.snapshot ?? t.transitionSnapshot({ q, run, canonical: canonical(), observation, action: { before: { registry: { root: c.registry } }, target, owner: intent.owner, nodes, authorization: c.authorization, profile: c.profile } }, { profileObservation: c.profileObservation, observeWorktree: w => ({ ...w, dirty: gitIdentity(w.path).dirty }) });
+  const action = { schema: 'fvs/auto-transition-request', schemaVersion: 1, runId: c.runId, transitionId: intent.transitionId, reservationId: intent.reservationId, kind, stage, nodes, owner: intent.owner,
+    expectedHeadSha256: q.expectedHeadSha256, before: snapshot, target, authorization: c.authorization, profile: c.profile, basis: previous };
+  const actionRef = j('action-' + step, action); intent.request = actionRef; q.transition = before(intent); return { q, action, actionRef };
+}
+function completion(item, b, commandRef, resultRef) {
+  return j('completion-' + step, { schema: 'fvs/auto-transition-completion', schemaVersion: 1, runId: c.runId, transitionId: item.action.transitionId, reservationId: item.action.reservationId,
+    actionSha256: memory.memoryHash(item.action), beforeEventSha256: b.result.recordedEventSha256, command: commandRef, result: resultRef });
+}
+function verifyOriginalFiles() {
+  const inventory = read(path.join(base, 'fixture-input-inventory.json'));
+  for (const row of inventory) assert.equal(sha(fs.readFileSync(path.join(c.integration, row.path))), row.sha256, row.path);
+  assert.equal(git(c.integration, 'rev-parse', 'HEAD^{tree}'), TREE);
+  return inventory;
+}
+c = read(path.join(base, 'context.json'));
+
+const steps = path.join(base, 'steps');
+const dir = () => { assert.ok(/^\d{3}-[a-z0-9-]+$/.test(step)); return path.join(steps, step); };
+const done = name => read(path.join(steps, name, 'after.json'));
+const basisOf = name => { const a = done(name); return { version: 2, beforeEventSha256: a.beforeEventSha256, afterEventSha256: a.afterEventSha256, completion: a.completion, workCompletion: null }; };
+// PROPOSAL ONLY: no A122 execution is authorized by this file.
+const selected={kind:'accept',node:20,previous:'110-e1-accept-19'};
+const closureRef={file:closureFile,sha256:closureSha256},preparedFile=path.join(evidenceRoot,'prepared-inputs.json');
+function proposal(q){
+  const source=q.source,inputs=q.inputs,frozen=t.transitionBound(inputs.baseline),prior=done(selected.previous),snapshot=structuredClone(prior.recorded.result.observation.transition.snapshot);
+  assert.equal(snapshot.fixed.runId,q.runId);assert.equal(snapshot.fixed.memoryBindingSha256,q.memoryRequest.expected.bindingSha256);
+  assert.deepEqual(snapshot.baseline,inputs.baseline);assert.equal(snapshot.store.headSha256,inputs.acceptedStore.expectedHeadSha256);
+  assert.equal(snapshot.source.root,source.root);assert.equal(snapshot.source.commit,source.commit);assert.equal(snapshot.source.tree,source.expectedTree);assert.equal(gitIdentity(source.root).dirty,false);assert.equal(snapshot.worker,null);
+  assert.equal(snapshot.registry.root,frozen.registry.root);assert.equal(snapshot.registry.headSha256,frozen.registry.headSha256);assert.deepEqual(snapshot.fixed.graph,inputs.graph);assert.deepEqual(snapshot.fixed.plan,inputs.plan);
+  assert.deepEqual(frozen.overlayFiles,['Specs/CheckerOverlayV1.lean']);assert.equal(source.commit,read(path.join(base,'actors/e1-h/work.json')).candidate.commit);
+  for(const row of read(path.join(base,'fixture-input-inventory.json')))assert.equal(sha(fs.readFileSync(path.join(c.integration,row.path))),row.sha256,row.path);
+  return snapshot;
+}
+if(mode==='prepare'){
+  const beganAtMs=Date.now(),failed=read(path.join(steps,'121-e1-accept-20-recovery/before.json')),closure=t.transitionBound(closureRef),failureRequest=t.transitionBound(closure.request),view=runtime();
+  assert.equal(failureRequest.expectedBeforeEventSha256,'b9116775d9678f3f0ca91b01c94b8f0235663dcaa56f1ea24fdd6624ac685f4a');
+  assert.deepEqual(failureRequest.expectedAction,failed.actionRef);assert.equal(failureRequest.expectedCommand.sha256,'eede7dd199db9f3fdeb4a139e1384ec7dc0a16dc001a705e0e6645a77a8c2248');
+  assert.equal(view.reservations.get(failed.action.reservationId)?.state,'closed');assert.equal(view.reservations.get(failed.action.reservationId)?.after,closure.head);assert.equal(view.headSha256,closure.head);
+  const consumed=respec.consumeConclusiveLocalFailure({projectRoot:c.root,request:failureRequest,out:closure.out});
+  assert.equal(consumed.status,'conclusive-no-canonical-effect');assert.equal(consumed.proofAuthority,'none');assert.equal(consumed.effectExecutable,false);assert.equal(consumed.committedHeadSha256,closure.head);
+  const q=request(),snapshot=proposal(q),current=runtime();assert.equal(current.headSha256,closure.head);
+  const prepared=save(preparedFile,{schema:'fvs/owned-continuous-input-preparation',version:1,status:'non-authoritative-inputs-only',runId:c.runId,q,snapshot,runtimeFileSha256:current.fileSha256,closure:closureRef,closureConsumed:consumed.evidence,
+    proposalOrigin:ref(path.join(steps,selected.previous,'after.json')),beganAtMs,endedAtMs:Date.now(),authority:'input/proposal data only; all production checks remain fresh; no new proof job or dispatch permission'});
+  console.log(JSON.stringify({status:'prepared-inputs-only',prepared}));
+}else if(mode==='before-run'){
+  assert.ok(/^[0-9a-f]{64}$/.test(preparedSha256));const preparedRef={file:preparedFile,sha256:preparedSha256},p=t.transitionBound(preparedRef);
+  assert.equal(p.schema,'fvs/owned-continuous-input-preparation');assert.equal(p.version,1);assert.equal(p.status,'non-authoritative-inputs-only');assert.equal(p.runId,c.runId);assert.deepEqual(p.closure,closureRef);
+  const current=runtime();assert.equal(current.headSha256,p.q.expectedHeadSha256);assert.equal(current.fileSha256,p.runtimeFileSha256);assert.equal(current.headSha256,t.transitionBound(closureRef).head);
+  assert.ok(Date.now()>=p.endedAtMs&&Date.now()<current.state.run.deadlineMs);proposal(p.q);assert.ok(!fs.existsSync(dir()));fs.mkdirSync(dir());
+  // The immutable job clock begins only now. Nothing below pauses or replaces it.
+  const jobCreatedAtMs=Date.now(),job={schema:'fvs-checker/accept-request',version:1,purpose:'auto',runId:'owned18-'+step+'-'+uuid(),deadlineMs:Math.min(jobCreatedAtMs+600000,current.state.run.deadlineMs),baseline:p.q.inputs.baseline,source:p.q.source,node:20,candidateCheck:done('100-e1-check').result,store:p.q.inputs.acceptedStore};
+  const target={request:save(path.join(dir(),'producer-request.json'),job),node:20};
+  const item=makeAction('accept','acceptance',[],target,basisOf(selected.previous),{q:p.q,snapshot:p.snapshot}),b=invoke(item.q,step+'-before');
+  assert.equal(b.result.observation.transition.admissibility.status,'next-action-eligible');const beforeReturnedAtMs=Date.now();
+  save(path.join(dir(),'before.json'),{...item,before:b,prepared:preparedRef,recoveryClosure:{closure:closureRef,consumed:p.closureConsumed},proposalOrigin:{scope:'NON-AUTHORITATIVE prior successful after snapshot; production before/execute/consume unchanged',file:p.proposalOrigin}});
+  // Immediate local call: no chat, status update, external tool invocation or new deadline.
+  const executeCalledAtMs=Date.now(),executed=auto.executeTransition({projectRoot:c.root,request:item.q,beforeOut:b.out,producerOut:path.join(dir(),'producer'),evidenceDir:path.join(dir(),'command')});
+  save(path.join(dir(),'run.json'),executed);save(path.join(evidenceRoot,'continuous-timing.json'),{jobCreatedAtMs,immutableJobDeadlineMs:job.deadlineMs,beforeReturnedAtMs,executeCalledAtMs,immediateCallGapMs:executeCalledAtMs-beforeReturnedAtMs,executeReturnedAtMs:Date.now()});
+  assert.equal(executed.status,'command-completed');console.log(JSON.stringify({status:'producer-command-completed-awaiting-after',command:executed.command,proofAuthority:'none from this orchestration envelope'}));
+}else{
+  const item=read(path.join(dir(),'before.json')),executed=read(path.join(dir(),'run.json'));assert.equal(executed.status,'command-completed');
+  const displayed=JSON.parse(t.transitionBound(t.transitionBound(executed.command).stdout,false)),result=save(path.join(dir(),'displayed-result.json'),displayed),completed=completion(item,item.before,executed.command,result),q=request({transition:after(item.before,completed)});
+  const recorded=invoke(q,step+'-after'),verified=auto.verifyTransition({projectRoot:c.root,request:q,out:recorded.out});
+  assert.equal(recorded.result.observation.transition.admissibility.status,'facts-recorded-partial');assert.equal(verified.position,'after');
+  save(path.join(dir(),'after.json'),{beforeEventSha256:item.before.result.recordedEventSha256,afterEventSha256:recorded.result.recordedEventSha256,completion:completed,result,baseline:q.inputs.baseline,recorded,verified});
+  console.log(JSON.stringify({status:'after-independently-consumed',head:verified.committedHeadSha256,scope:'one owned fixture root only; no target promotion/B/E2/wholequalification claim'}));
+}

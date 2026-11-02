@@ -112,3 +112,49 @@ the original path/digest identity and its exact archive body. Its captured-only
 verifier derives the same required mapping from the raw inspect, rather than
 trusting a caller-selected retention list. Missing, conflicting or changed
 archive bytes refuse; this grants no proof/currentness authority.
+
+Controller termination is a separate recovery type, never an ordinary producer
+exit. `captureControllerProcessObservation` records one bounded, complete fixed
+`ps -axo pid=,ppid=,pgid=,command=` observation in exclusive evidence. It does not
+close a reservation. Observer failure, truncation, empty/incomplete inventory,
+visible owned detached work or a surviving controller group cannot establish
+quiescence. The initial supported profile is only
+`configured-git-local-accept-finalization-v1`: the exact assessed controller,
+wrapper, driver and builder sources, a complete verified Git export and terminal
+configured-build child sequence ending in the environment query, before build
+snapshot/kernel publication. The three controller sources are non-executable
+reference data; the helper does not execute them.
+
+The closed `fvs/auto-controller-termination-context` v1 binds caller-owned exact
+run/before/action/reservation/job/output/marker/source/tool identities, actual
+outer launch/kill/wait and clocks, all child/output identities, complete canonical
+before/after observations and an independently captured process inventory. The
+inner producer's start/end/exit/signal/error remain null with status `unknown`.
+The original execution-uncertain marker, SIGKILL, missing terminal command and
+history remain unchanged. The trust claim is current quiescence of the known
+managed lifecycle on the trusted host, without retrospective full PID lineage
+or an inferred producer result. An unresolved possibility of surviving work
+refuses; it must not be replaced by an empty observer result.
+
+Only a future actual16 paired **failed after** can close its reservation. Its
+exact request/result and committed head join the independently supplied complete
+context in `fvs/auto-respec-controller-termination-request` v1, with a fresh
+attempt and bounded deadline. `verifyControllerTermination` and the independent
+`consumeControllerTermination` repeat current process/full16 canonical checks,
+complete registry/store-prefix/head/byte checks and original clock fences. They
+never append an after or mutate canonical state. No pending publication, dirty
+source, changed grant/profile/memory/scope/accounting, stale head, incomplete
+chain, clock rollback or exhausted deadline is admissible. These checks may
+refuse within the original600s bound; no validation cache or larger cap is
+implied. Successful evidence is `conclusive-known-lifecycle-termination`, with
+`execution-closure-only`, `effectExecutable:false` and `proofAuthority:none`.
+Historical18 trace retains that distinct failure without advancing its tuple or
+allowing a successor. Source review alone does not authorize a live failed-after
+or any further attempt.
+
+For either failure type, a17 handoff may reference both unchanged successful
+envelopes, for example `{finish: finish.evidence, executionClosure:
+closure.evidence}`. Supply exact original-path/digest historical runtime captures
+when needed.17 must build **and verify** the copied original request, result,
+publication, marker, controller and closure evidence. Neither that immutable
+bundle integrity nor the closure certificate grants proof/currentness authority.

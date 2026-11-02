@@ -1,0 +1,43 @@
+from pathlib import Path
+import subprocess,os,hashlib,json,time,signal,shutil,sys
+ROOT=Path('/Users/ada/.ao/data/worktrees/formal-verification-skills/formal-verification-skills-45');B=Path('/private/tmp/fvs45-ticket18-native-episode-0c4c1ino');E=Path(sys.argv[2]);MODE=sys.argv[1];STEP=sys.argv[3];CLOSURE_FILE=sys.argv[4];CLOSURE_SHA=sys.argv[5];PREPARED_SHA=sys.argv[6];CONTROLLER=Path('/private/tmp/fvs45-ticket18-continuous-proposal-v34.mjs');assert MODE in ['prepare','before-run','after'] and E.resolve()==E;assert STEP=='122-e1-accept-20-continuous'
+h=lambda b:hashlib.sha256(b).hexdigest();ref=lambda p:{'file':str(p),'sha256':h(p.read_bytes())}
+assert h(Path(CLOSURE_FILE).read_bytes())==CLOSURE_SHA
+inputPaths=[Path(CLOSURE_FILE)]+([E/'prepared-inputs.json'] if MODE!='prepare' else [])
+inputRefsBefore=[ref(p) for p in inputPaths]
+if MODE!='prepare':assert ref(E/'prepared-inputs.json')['sha256']==PREPARED_SHA
+def save(p,v):p.open('x').write(json.dumps(v,indent=2)+'\n');return ref(p)
+cleanenv={'PATH':'/usr/bin:/bin','LANG':'C','LC_ALL':'C','GIT_CONFIG_GLOBAL':'/dev/null','GIT_CONFIG_NOSYSTEM':'1','GIT_NO_LAZY_FETCH':'1','GIT_NO_REPLACE_OBJECTS':'1','GIT_OPTIONAL_LOCKS':'0','GIT_TERMINAL_PROMPT':'0'}
+def git(*a):return subprocess.check_output(['/usr/bin/git','-C',str(ROOT),*a],env=cleanenv).decode().strip()
+manifest=json.loads(Path('/private/tmp/fvs45-ticket18-retention-export-226e540-_6p_pppm/manifest.json').read_text())
+def source():
+ assert git('rev-parse','HEAD')==manifest['head'] and git('rev-parse','HEAD^{tree}')==manifest['tree'] and not git('status','--porcelain=v1');rows=[]
+ for row in manifest['files']:
+  p=ROOT/row['path'];assert h(p.read_bytes())==row['sha256'] and (p.stat().st_mode&0o777)==int(row['mode'][-3:],8);rows.append({'path':row['path'],'sha256':row['sha256'],'mode':row['mode'],'size':p.stat().st_size})
+ return {'head':manifest['head'],'tree':manifest['tree'],'files':rows}
+def guards():
+ primary=Path('/Users/ada/GitHub/BAIF_GH/formal-verification-skills');paths=[primary/n for n in ['.beads/metadata.json','.beads/config.yaml','.beads/PRIME.md','.formalising/auto-fv/state.json']]+[B/'product.json',B/'frame/initial.json',B/'steps/080-e1-freeze/producer/frozen.json',B/'steps/120-e1-accept-20/before.json',B/'steps/120-e1-accept-20/run.json',B/'steps/120-e1-accept-20/command/command.json']
+ return [{'file':str(p),'sha256':h(p.read_bytes()) if p.is_file() else None} for p in paths]
+before=source();binding=E/'product-226e540.json'
+if not binding.exists():save(binding,before)
+assert json.loads(binding.read_text())==before
+protected=guards();controllers=[ref(CONTROLLER),ref(Path(__file__))];node=Path(shutil.which('node')).resolve();bd=Path(shutil.which('bd')).resolve();old=json.loads((B/'receipts/120-e1-accept-20-run.json').read_text());assert ref(bd)==old['bd'] and ref(node)==old['node'];run=json.loads((B/'control/.formalising/auto-fv/resume/state.json').read_text())['run'];assert run['runId']=='386aca9c-66af-4a02-be70-6afff41a60d5' and run['deadlineMs']==1793736237017
+started=int(time.time()*1000);deadline=min(started+600000,run['deadlineMs']);assert deadline>started;prefix=E/'receipts'/(STEP+'-'+MODE);env={**cleanenv,'PATH':str(node.parent)+':/usr/bin:/bin','HOME':str(E/'home'),'TMPDIR':str(E/'tmp'),'XDG_CACHE_HOME':str(E/'cache'),'XDG_CONFIG_HOME':str(E/'config'),'XDG_DATA_HOME':str(E/'data'),'FVS_BRIDGE_BD':str(bd),'DISABLE_TELEMETRY':'1','DO_NOT_TRACK':'1'};native=MODE=='before-run';argv=([] if native else ['/usr/bin/sandbox-exec','-f',str(E/'recovery.sb')])+['/usr/bin/env','-i',*[k+'='+v for k,v in sorted(env.items())],str(node),str(CONTROLLER),MODE,str(B),STEP,str(E),CLOSURE_FILE,CLOSURE_SHA,PREPARED_SHA];power=subprocess.run(['/usr/bin/pmset','-g','batt'],capture_output=True,timeout=10);powerFile=Path(str(prefix)+'.power.stdout');powerFile.open('xb').write(power.stdout);assert power.returncode==0 and b"Now drawing from 'AC Power'" in power.stdout
+print('START',MODE,'E',E,flush=True);timedout=False;inhibitor=None
+with Path(str(prefix)+'.stdout').open('xb') as stdout,Path(str(prefix)+'.stderr').open('xb') as stderr:
+ p=subprocess.Popen(argv,cwd=ROOT,env=cleanenv,stdout=stdout,stderr=stderr,start_new_session=True)
+ try:
+  inhibitor=subprocess.Popen(['/usr/bin/caffeinate','-is','-w',str(p.pid)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL);save(Path(str(prefix)+'.started.json'),{'argv':argv,'pid':p.pid,'startedAtMs':started,'deadlineMs':deadline,'inhibitor':{'argv':['/usr/bin/caffeinate','-is','-w',str(p.pid)],'pid':inhibitor.pid}});print('ACTIVE',p.pid,'inhibitor',inhibitor.pid,flush=True)
+  while p.poll() is None:
+   if int(time.time()*1000)>=deadline:timedout=True;os.killpg(p.pid,signal.SIGKILL);break
+   time.sleep(.2)
+  p.wait()
+ finally:
+  if p.poll() is None:os.killpg(p.pid,signal.SIGKILL);p.wait()
+  if inhibitor:
+   try:inhibitor.wait(timeout=5)
+   except subprocess.TimeoutExpired:inhibitor.terminate();inhibitor.wait(timeout=5)
+ended=int(time.time()*1000);after=source();protectedAfter=guards();controllersAfter=[ref(CONTROLLER),ref(Path(__file__))];inputRefsAfter=[ref(p) for p in inputPaths];r={'scope':'same original386/40h owned case; PROPOSAL ONLY future singleRoot20 continuous attempt; no current execution authorization; actual A121-specific closure required; no target proofpromotion','mode':MODE,'step':STEP,'confinement':'existing product-owned compiler sandbox; controller/kernel existing host-trust boundary' if native else 'outer network-denied/write-confined owned case+evidence','argv':argv,'cwd':str(ROOT),'env':env,'head':before['head'],'tree':before['tree'],'sourceBefore':before,'sourceAfter':after,'sourceUnchanged':before==after,'protectedBefore':protected,'protectedAfter':protectedAfter,'protectedUnchanged':protected==protectedAfter,'immutableInputsBefore':inputRefsBefore,'immutableInputsAfter':inputRefsAfter,'immutableInputsUnchanged':inputRefsBefore==inputRefsAfter,'controllersBefore':controllers,'controllersAfter':controllersAfter,'controllersUnchanged':controllers==controllersAfter,'node':ref(node),'bd':ref(bd),'startedAtMs':started,'endedAtMs':ended,'absoluteDeadlineMs':deadline,'deadlineSeconds':600,'durationMs':ended-started,'exitCode':p.returncode,'signal':None if p.returncode>=0 else -p.returncode,'timedOut':timedout or ended>=deadline,'stdout':ref(Path(str(prefix)+'.stdout')),'stderr':ref(Path(str(prefix)+'.stderr')),'power':{'argv':['/usr/bin/pmset','-g','batt'],'exitCode':power.returncode,'stdout':ref(powerFile)},'inhibitor':{'argv':['/usr/bin/caffeinate','-is','-w',str(p.pid)],'pid':inhibitor.pid,'terminated':inhibitor.poll() is not None,'exitCode':inhibitor.returncode},'policy':ref(E/'recovery.sb')};print('TERMINAL',MODE,'exit',p.returncode,'timeout',r['timedOut'],'receipt',save(Path(str(prefix)+'.json'),r),flush=True)
+for suffix in ['.stdout','.stderr']:
+ print(Path(str(prefix)+suffix).read_text(errors='replace')[-6500:])
+sys.exit(0 if p.returncode==0 and not r['timedOut'] and r['sourceUnchanged'] and r['protectedUnchanged'] and r['controllersUnchanged'] and r['immutableInputsUnchanged'] else 1)

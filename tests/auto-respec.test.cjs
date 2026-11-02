@@ -16,6 +16,13 @@ function mutatePublished(out, change) {
 }
 async function failedProducer(patch = {}) {
   const x = await fixture(), initial = begin(x), inputs = read(initial.q.current.resume.request.file).inputs;
+  const historical = original => { const file = path.join(x.owned, 'historical-runtime-' + f.uuid() + '.json'); fs.writeFileSync(file, fs.readFileSync(original.file), { mode: 0o600 });
+    return { schema: 'fvs/auto-bundle-historical-input', schemaVersion: 1, original, archive: f.ref(file), mode: 0o600 }; };
+  const historicalCaptures = [historical(initial.q.current.bundle.runtime.state)];
+  const priorManifest = read(initial.q.priorBundle.manifest.file), priorRuntime = priorManifest.snapshot.request.runtime.state;
+  const priorCopy = priorManifest.copies.find(r => r.original === priorRuntime.file && r.sha256 === priorRuntime.sha256);
+  historicalCaptures.push({ schema: 'fvs/auto-bundle-historical-input', schemaVersion: 1, original: priorRuntime,
+    archive: f.ref(path.join(path.dirname(initial.q.priorBundle.manifest.file), priorCopy.stored)), mode: priorCopy.mode });
   if (patch.emptyStore) { const root = path.join(x.owned, 'empty-accepted-store'); fs.mkdirSync(root); inputs.acceptedStore = { root, expectedHeadSha256: null }; }
   const q = x.request({ inputs }), intent = x.local([], 'check'), target = { request: f.json(x.owned, 'failed-job', {
     schema: 'fvs-checker/check-request', version: 1, purpose: 'auto', runId: 'protocol-failure', deadlineMs: Date.now() + 120000,
@@ -43,7 +50,7 @@ async function failedProducer(patch = {}) {
     expectedBeforeEventSha256: before.result.recordedEventSha256, expectedAction: actionRef, expectedCommand: commandRef,
     afterRequest: f.ref(path.join(after.out, 'request.json')), afterResult: f.ref(path.join(after.out, 'result.json')),
     committedHeadSha256: after.result.committedHeadSha256, deadlineMs: Date.now() + 120000 };
-  return { x, initial, before, after, request, commandRef, inputs, action, actionRef };
+  return { x, initial, before, after, request, commandRef, inputs, action, actionRef, historicalCaptures };
 }
 
 describe('conclusive local failures and exact legacy inspect compatibility (protocol only)', () => {
@@ -57,6 +64,10 @@ describe('conclusive local failures and exact legacy inspect compatibility (prot
     assert.equal(composed.after.result.observation.transition.admissibility.status, 'facts-recorded-partial'); assert.equal(result.status, 'partial');
     assert.equal(result.observation.history.failures.length, 1); assert.equal(result.observation.history.effects.length, 1); assert.equal(result.observation.history.effects[0].kind, 'compose-spec');
     assert.equal(result.observation.history.failures[0].terminalOutcome, 'failed'); assert.deepEqual(result.frame, p.initial.result.frame);
+    const handoff = f.json(x.owned, 'ordinary-failure-finish', { finish: result.evidence, executionClosure: v.evidence }), review = { ...q.current.bundle, handoff, historicalCaptures: p.historicalCaptures,
+      absenceReasons: { ...q.current.bundle.absenceReasons, handoff: null } };
+    const built = bundle.buildReviewBundle(review, x.output('ordinary-failure-bundle'));
+    assert.equal(bundle.verifyReviewBundle({ manifest: built.manifest, expectedContext: bundle.bundleExpectedContext(review), deadlineMs: Date.now() + 120000, out: x.output('ordinary-failure-bundle-check') }).integrity.status, 'valid');
   });
   for (const field of ['before', 'action', 'command', 'run', 'head']) it('rejects another caller expected ' + field + ' without state writes', async () => {
     const p = await failedProducer(), q = structuredClone(p.request), state = f.ref(path.join(p.x.root, '.formalising/auto-fv/resume/state.json'));
