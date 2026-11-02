@@ -14,6 +14,11 @@ const reject = (code, fn) => assert.throws(fn, e => e.code === code, code);
 function build(x, q = x.request()) { const out = x.out('bundle'), result = api.buildReviewBundle(q, out); return { q, out, result, manifest: read(result.manifest.file) }; }
 function verify(x, b, context = api.bundleExpectedContext(b.q)) { return api.verifyReviewBundle({ manifest: b.result.manifest, expectedContext: context, deadlineMs: Date.now() + 120000, out: x.out('verify') }); }
 function editManifest(b, mutate) { const m = read(b.result.manifest.file); mutate(m); fs.writeFileSync(b.result.manifest.file, JSON.stringify(m)); b.result.manifest = f.ref(b.result.manifest.file); }
+function editViews(b, m, changeCard = v => v) {
+  const file = path.join(b.out, 'contract.lean'), lines = fs.readFileSync(file, 'utf8').trimEnd().split('\n');
+  fs.writeFileSync(file, lines.map((line, i) => i < 2 ? line : '-- ' + JSON.stringify(changeCard(JSON.parse(line.slice(3))))).join('\n') + '\n');
+  m.views.contract.sha256 = f.ref(file).sha256;
+}
 
 describe('read-only review bundle coverage and integrity', () => {
   it('publishes all requested roots and shared helper without inventing proof or human approval', () => {
@@ -74,6 +79,33 @@ describe('read-only review bundle coverage and integrity', () => {
   it('cannot hide a missing required input by removing its copy-index row', () => {
     const x = fixture(), b = build(x); editManifest(b, m => { m.copies = m.copies.filter(r => r.original !== b.q.extraction.file); });
     reject('bundle-integrity-invalid', () => verify(x, b));
+  });
+  for (const omission of ['head list', 'middle list', 'head copy', 'middle copy']) it('refuses consistently edited registered ' + omission + ' omission', async () => {
+    const x = fixture(), q = x.request(); await x.register(q); const r = await x.register(q, 20); q.registry.expectedHeadSha256 = r.recordSha256;
+    const b = build(x, q), before = fs.readFileSync(q.agreement.state.file), out = x.out('omitted-record');
+    editManifest(b, m => {
+      const target = m.snapshot.registry.records[omission.startsWith('head') ? 1 : 0], node = read(target.file).defId;
+      m.snapshot.registry.records = m.snapshot.registry.records.filter(v => v.file !== target.file);
+      m.snapshot.registry.sourceVersions = m.snapshot.registry.sourceVersions.filter(v => v.node !== node);
+      m.facts.nodes.find(n => n.node === node).registered = null;
+      editViews(b, m, v => v.node === node ? { ...v, registered: null, registeredRecord: null } : v);
+      if (omission.endsWith('copy')) m.copies = m.copies.filter(v => v.original !== target.file);
+    });
+    assert.throws(() => api.verifyReviewBundle({ manifest: b.result.manifest, expectedContext: api.bundleExpectedContext(q), deadlineMs: Date.now() + 120000, out }), e => e.code === 'bundle-integrity-invalid' && /committed.*inventory/.test(e.message));
+    assert.equal(fs.existsSync(out), false); assert.deepEqual(fs.readFileSync(q.agreement.state.file), before);
+  });
+  it('cannot erase a source view by consistently editing both indexes/facts/recall', () => {
+    const x = fixture(), b = build(x);
+    editManifest(b, m => {
+      const target = m.sources[0]; m.sources = m.sources.slice(1); m.snapshot.sourceViews = m.sources; m.facts.sourceViews = m.sources;
+      const file = path.join(b.out, 'recall.md'); fs.writeFileSync(file, fs.readFileSync(file, 'utf8').split('\n').filter(line => !line.includes('](' + target.view + ')')).join('\n')); m.views.recall.sha256 = f.ref(file).sha256;
+    });
+    assert.throws(() => verify(x, b), e => e.code === 'bundle-integrity-invalid' && /source-view inventory/.test(e.message));
+  });
+  it('cannot substitute request heads while keeping the original captured context', async () => {
+    const x = fixture(), q = x.request(), r = await x.register(q); q.registry.expectedHeadSha256 = r.recordSha256; const b = build(x, q);
+    editManifest(b, m => { m.snapshot.request.registry.expectedHeadSha256 = null; });
+    assert.throws(() => verify(x, b), e => e.code === 'bundle-integrity-invalid' && /request differs/.test(e.message));
   });
   it('a changed captured assumption remains integrity-invalid even if the view bytes are not changed', async () => {
     const x = fixture(), q = x.request(), r = await x.register(q); q.registry.expectedHeadSha256 = r.recordSha256; const b = build(x, q);
@@ -144,6 +176,23 @@ describe('read-only review bundle coverage and integrity', () => {
     const handoff = f.write(dir, 'imports', { attempt: { imports: [{ module: 'Fixture', parts: [f.ref(body)] }] } }), q = x.request({ handoff }); q.absenceReasons.handoff = null;
     const b = build(x, q); assert.ok(b.manifest.indexOnly.some(r => r.original === body)); assert.ok(b.manifest.copies.some(r => r.original === handoff.file)); assert.equal(verify(x, b).integrity.status, 'valid');
   });
+  for (const omission of [null, 'request bytes', 'request row', 'compiled row', 'sealed row', 'runtime row']) it('kernel input closure ' + (omission ?? 'copies extensionless metadata and indexes bodies'), () => {
+    const x = fixture(), k = f.kernelFixture(x), q = x.request({ handoff: k.attempt }); q.absenceReasons.handoff = null;
+    const b = build(x, q), copied = r => b.manifest.copies.find(v => v.original === r.file), indexed = r => b.manifest.indexOnly.some(v => v.original === r.file && v.sha256 === r.sha256);
+    assert.ok(copied(k.request)); assert.ok(copied(k.context)); for (const r of [k.compiled, k.copied, k.runtime, k.lean, k.node]) assert.ok(indexed(r));
+    if (!omission) { fs.unlinkSync(k.compiled.file); const v = verify(x, b); assert.equal(v.integrity.status, 'valid'); assert.equal(v.availability.status, 'unavailable'); assert.notEqual(v.currentness.status, 'current'); return; }
+    if (omission === 'request bytes') fs.unlinkSync(path.join(b.out, copied(k.request).stored));
+    else editManifest(b, m => {
+      if (omission === 'request row') m.copies = m.copies.filter(v => v.original !== k.request.file);
+      else { const r = omission === 'compiled row' ? k.compiled : omission === 'sealed row' ? k.copied : k.runtime; m.indexOnly = m.indexOnly.filter(v => v.original !== r.file); }
+    });
+    const out = x.out('omitted-kernel'); assert.throws(() => api.verifyReviewBundle({ manifest: b.result.manifest, expectedContext: api.bundleExpectedContext(q), deadlineMs: Date.now() + 120000, out })); assert.equal(fs.existsSync(out), false);
+  });
+  it('refuses an unsupported reordered kernel input layout before publication', () => {
+    const x = fixture(), k = f.kernelFixture(x), attempt = read(k.attempt.file); attempt.inputs = Object.fromEntries(Object.entries(attempt.inputs).reverse());
+    const q = x.request({ handoff: f.write(path.dirname(k.attempt.file), 'reordered', attempt) }); q.absenceReasons.handoff = null; const out = x.out('reordered-inputs');
+    assert.throws(() => api.buildReviewBundle(q, out), e => e.code === 'bundle-evidence-invalid' && /kernel input layout/.test(e.message)); assert.equal(fs.existsSync(out), false);
+  });
   it('missing original-only indexed material preserves integrity but never current acceptance', () => {
     const x = fixture(), dir = path.join(x.owned, 'producer'); fs.mkdirSync(dir); const body = path.join(dir, 'fixture.ir'); fs.writeFileSync(body, 'owned indexed fixture body');
     const handoff = f.write(dir, 'indexed-body', { authority: 'no-proof', tool: f.ref(body) }), q = x.request({ handoff }); q.absenceReasons.handoff = null;
@@ -186,6 +235,16 @@ describe('pending committed snapshots keep weaker validation', () => {
     fs.mkdirSync(path.join(x.registry, '.tmp-owned')); const b = build(x, q);
     assert.equal(b.manifest.snapshot.registry.validation, 'raw-captured-unvalidated'); assert.equal(b.manifest.snapshot.registry.effectiveNodes, null);
     assert.deepEqual(b.manifest.facts.requestedRoots, [20, 21]); assert.equal(b.manifest.facts.nodes[0].registered.validation, 'raw-captured-unvalidated');
+    assert.equal(verify(x, b).integrity.status, 'valid');
+  });
+  it('a pending raw accepted inventory cannot omit its requested head', () => {
+    const x = fixture(), store = path.join(x.owned, 'raw-store'); fs.mkdirSync(store); fs.mkdirSync(path.join(store, 'records')); fs.mkdirSync(path.join(store, '.tmp-owned'));
+    const bytes = JSON.stringify({ schema: 'fvs-checker/accepted-event', version: 1, seq: 0, prev: null, authority: 'protocol-only, deliberately not validated' }), digest = f.sha(bytes);
+    fs.writeFileSync(path.join(store, 'records', '000000-' + digest + '.json'), bytes);
+    const q = x.request({ acceptedStore: { root: store, expectedHeadSha256: digest } }); q.absenceReasons.acceptedStore = null;
+    const b = build(x, q); assert.equal(verify(x, b).integrity.status, 'valid'); assert.equal(b.manifest.snapshot.accepted.validation, 'raw-captured-unvalidated');
+    editManifest(b, m => { m.snapshot.accepted.rawRecords = []; });
+    assert.throws(() => verify(x, b), e => e.code === 'bundle-integrity-invalid' && /record inventory/.test(e.message));
   });
   it('corrupt committed bytes cannot be hidden by a pending marker', async () => {
     const x = fixture(), q = x.request(); const r = await x.register(q); q.registry.expectedHeadSha256 = r.recordSha256;

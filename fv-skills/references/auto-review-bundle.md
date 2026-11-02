@@ -83,6 +83,19 @@ saved facts, `contract.lean` comments, `recall.md` and per-context/core source c
 evaluation uses no live inputs. A historical artifact remains integrity-valid after a real HEAD,
 registry or context change. Changed captured bytes, missing required copies or changed views fail.
 
+Committed14/15 inventories are linked from captured bytes, sequence and predecessor hashes to the
+request's exact expected heads; saved record lists cannot omit a head or middle event. This is
+inventory integrity, not a second proof checker. Raw temporary-state inventories retain their
+weaker validation label. Source versions and views are derived from anchored records and the fixed
+reached-source copy policy, rather than trusting matching saved lists.
+
+The finite identity policy includes15 kernel-attempt inputs/runtimes/snapshots and pristine-context
+dependency maps. Kernel-attempt version1 records retain their producer input-map order
+(request, Lean, Node, runner, helper, compiled/runtime inputs); an unsupported layout refuses.
+The request and bounded source/code/context evidence are required copies; compiled and tool bodies
+are indexed. Known request/check metadata recurses by semantic position even without a JSON suffix.
+Removing a required request or compiled identity from its index fails integrity.
+
 Fresh currentness is evaluated independently against actual original paths and existing15 readers,
 and is returned outside the bundle as current/stale/pending/unverified. Original-only indexed
 compiled/import/dependency bodies may be unavailable while their retained index stays intact;

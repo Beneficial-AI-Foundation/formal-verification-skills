@@ -61,6 +61,10 @@ function bound(r, json = true) {
   if (hash(b) !== r.sha256) fail('bundle-evidence-invalid', 'bound input changed: ' + r.file);
   return json ? transitionJson(b) : b;
 }
+function capturedJson(b) {
+  transitionJson(b); // Validate UTF-8/duplicates/data while retaining producer map order.
+  return JSON.parse(b.toString('utf8'));
+}
 function save(file, value) {
   const b = Buffer.isBuffer(value) ? value : Buffer.from(typeof value === 'string' ? value : stringify(value));
   const fd = fs.openSync(file, 'wx', 0o600);
@@ -140,7 +144,9 @@ function request(raw) {
   return q;
 }
 export function bundleExpectedContext(raw) {
-  const q = request(raw);
+  return contextOf(request(raw));
+}
+function contextOf(q) {
   return { projectRoot: q.projectRoot, source: q.source, agreement: q.agreement, extraction: q.extraction, graph: q.graph, plan: q.plan,
     scopeInventory: q.scopeInventory, registry: q.registry, baseline: q.baseline, acceptedStore: q.acceptedStore, runtime: q.runtime, handoff: q.handoff };
 }
@@ -166,11 +172,19 @@ function scopeData(q, get) {
 }
 
 function refPolicy(file, key) {
+  if (['kernelCheck', 'candidateCheck', 'integratedCheck', 'baseline', 'input', 'controllerInput', 'adapterInput', 'contextInventory', 'extractionMeaningCheck', 'meaningCheck'].includes(key)) return { role: 'evidence', recurse: true };
   if (/\.(?:mjs|cjs|js|py)$/.test(file)) return { role: 'code', recurse: false };
   if (/\.(?:lean|md|toml|rs)$/.test(file)) return { role: 'source', recurse: false };
   if (key === 'parts' && /\.(?:olean(?:\..*)?|ilean|ir|so|dylib|a|o)$/.test(file)) return { role: 'index-only', recurse: false };
   if (['tool', 'lean', 'lake', 'bd', 'node', 'git', 'ao', 'olean', 'ilean', 'ir'].includes(key)) return { role: 'index-only', recurse: false };
   return { role: 'evidence', recurse: file.endsWith('.json') };
+}
+const compiledBody = file => /\.(?:olean(?:\..*)?|ilean|ir|so(?:\.\d+)*|dylib|dll|a|o)$/.test(file);
+function digestEntries(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) fail('bundle-evidence-invalid', 'file identity map is not an object');
+  const entries = Object.entries(v);
+  if (entries.some(([file, digest]) => !path.isAbsolute(file) || !sha(digest))) fail('bundle-evidence-invalid', 'malformed file identity map');
+  return entries;
 }
 function protectedMetadataRoots(v) {
   const roots = [];
@@ -188,11 +202,11 @@ function scanRefs(v, copy, index, key = '', digestMap = false) {
   if (Object.hasOwn(v, 'sha256') && typeof original === 'string' && path.isAbsolute(original)) {
     const r = { file: original, sha256: v.sha256 }, policy = refPolicy(r.file, key); reference(r);
     if (policy.role === 'index-only') index(r.file, r.sha256, 'compiled-or-tool'); else copy(r, policy.role, policy.recurse);
+    for (const [k, x] of Object.entries(v)) if (!['file', 'path', 'sha256'].includes(k)) scanRefs(x, copy, index, k);
     return;
   }
   if (digestMap) {
-    for (const [file, digest] of Object.entries(v)) {
-      if (!path.isAbsolute(file) || !sha(digest)) fail('bundle-evidence-invalid', 'malformed frozen file index');
+    for (const [file, digest] of digestEntries(v)) {
       if (key === 'checker') {
         if (/\.(?:mjs|cjs|js|py|lean)$/.test(file)) copy({ file, sha256: digest }, 'code', false); else index(file, digest, key);
       } else if (key === 'compiled' && !/\.(?:olean(?:\..*)?|ilean|ir|so|dylib|a|o)$/.test(file)) copy({ file, sha256: digest }, 'source', false);
@@ -200,14 +214,37 @@ function scanRefs(v, copy, index, key = '', digestMap = false) {
     }
     return;
   }
-  for (const [k, x] of Object.entries(v)) if (k !== 'specDefinitions') {
+  const skipped = new Set(['specDefinitions']);
+  if (v.schema === 'fvs-checker/kernel-attempt' && v.version === 1) {
+    // v1 kernelAudit constructs inputs in request/Lean/Node/code/parts order.
+    const inputs = digestEntries(v.inputs), runtimes = new Map(digestEntries(v.runtimes));
+    if (inputs.length < 5 || inputs[1][0] !== v.argv?.[0] || !inputs[3][0].endsWith('.mjs') || !inputs[4][0].endsWith('.lean')) fail('bundle-evidence-invalid', 'unsupported kernel input layout');
+    inputs.forEach(([file, digest], i) => {
+      if (i === 0) copy({ file, sha256: digest }, 'evidence', true);
+      else if (i < 3 || compiledBody(file) || runtimes.has(file)) index(file, digest, 'kernel-input-body');
+      else { const p = refPolicy(file, ''); copy({ file, sha256: digest }, p.role, p.recurse); }
+    });
+    for (const [file, digest] of runtimes) index(file, digest, 'kernel-runtime');
+    for (const [name, position] of [['runner', 3], ['helper', 4]]) {
+      copy({ file: v.snapshots?.[name], sha256: inputs[position][1] }, 'code', false);
+    }
+    if (!Array.isArray(v.snapshots?.modules)) fail('bundle-evidence-invalid', 'missing kernel snapshot inventory');
+    for (const r of v.snapshots.modules) { reference({ file: r.file, sha256: r.sha256 }); index(r.file, r.sha256, 'kernel-snapshot-body'); }
+    skipped.add('inputs'); skipped.add('runtimes'); skipped.add('snapshots');
+  }
+  if (v.schema === 'fvs-checker/auto-baseline' && v.version === 1) {
+    for (const c of v.expected?.contexts ?? []) for (const m of c.projectImports ?? []) {
+      for (const [file, digest] of digestEntries(m.inputs)) index(file, digest, 'pristine-context-body');
+    }
+  }
+  for (const [k, x] of Object.entries(v)) if (!skipped.has(k)) {
     const digestMap = v.schema === 'fvs-checker/auto-baseline' && ['compiled', 'imports', 'runtimes', 'checker'].includes(k);
     scanRefs(x, copy, index, k, digestMap);
   }
 }
 
 function collector(out, q) {
-  const entries = new Map(), buffers = new Map(), external = new Map(), protectedRoots = new Set(), sourceViews = [];
+  const entries = new Map(), buffers = new Map(), external = new Map(), protectedRoots = new Set(), sources = new Map(), scanned = new Set();
   let copied = 0;
   const identity = r => r.file + '\0' + r.sha256;
   function indexed(file, digest, role) {
@@ -218,7 +255,9 @@ function collector(out, q) {
   }
   function capture(r, role = 'evidence', recurse = true) {
     deadline(q.deadlineMs); reference(r);
-    const key = identity(r); if (entries.has(key)) return entries.get(key);
+    const key = identity(r);
+    if (role === 'source') sources.set(key, { original: r.file, sha256: r.sha256, stored: 'evidence/' + r.sha256, view: sourceView(r.file, r.sha256) });
+    if (entries.has(key)) { scan(r, recurse); return entries.get(key); }
     if (entries.size + external.size >= BUNDLE_LIMITS.entries) fail('bundle-size-limit', 'evidence entry bound exceeded');
     const b = bound(r, false); if (!buffers.has(r.sha256)) copied += b.length;
     if (copied > BUNDLE_LIMITS.copiedBytes) fail('bundle-size-limit', 'required copy budget exceeded at ' + r.file + '; scope was not narrowed');
@@ -226,13 +265,18 @@ function collector(out, q) {
     buffers.set(r.sha256, b);
     const row = { original: r.file, sha256: r.sha256, size: b.length, mode: fs.statSync(r.file).mode & 0o777, policy: 'required-copy', role, stored: relative };
     entries.set(key, row);
-    if (role === 'source') sourceViews.push({ original: r.file, sha256: r.sha256, stored: relative, view: sourceView(r.file, r.sha256) });
     if (role === 'evidence') protectedRoots.add(path.dirname(r.file));
-    if (recurse && r.file.endsWith('.json')) { const value = transitionJson(b); protectedMetadataRoots(value).forEach(r => protectedRoots.add(r)); scanRefs(value, capture, indexed); }
+    scan(r, recurse);
     return row;
   }
-  return { capture, protectedRoots, sourceViews,
-    get: r => { const row = entries.get(identity(r)); if (!row) fail('bundle-evidence-invalid', 'required captured identity missing'); return transitionJson(buffers.get(row.sha256)); },
+  function scan(r, recurse) {
+    const key = identity(r);
+    if (!recurse || scanned.has(key)) return;
+    scanned.add(key);
+    const value = capturedJson(buffers.get(r.sha256)); protectedMetadataRoots(value).forEach(r => protectedRoots.add(r)); scanRefs(value, capture, indexed);
+  }
+  return { capture, protectedRoots, get sourceViews() { return sortedSources(sources); },
+    get: r => { const row = entries.get(identity(r)); if (!row) fail('bundle-evidence-invalid', 'required captured identity missing'); return capturedJson(buffers.get(row.sha256)); },
     materialize() { for (const [digest, b] of buffers) save(path.join(out, 'evidence', digest), b); },
     index: () => [...entries.values()].sort((a, b) => a.original.localeCompare(b.original)),
     external: () => [...external.values()].sort((a, b) => a.original.localeCompare(b.original)),
@@ -343,6 +387,54 @@ function contractView(value) {
   return { statement: value.statement, assumptions: value.assumptions, grounding: value.grounding, implementationDependencies: value.implementationDependencies,
     specDefinitions: value.specDefinitions, externalReferences: value.externalReferences };
 }
+function sortedSources(sources) {
+  return [...sources.values()].sort((a, b) => a.original.localeCompare(b.original) || a.sha256.localeCompare(b.sha256));
+}
+// Inventory linkage only: existing14/15 readers retain semantic/proof authority.
+function capturedChain(copies, get, store, schema) {
+  if (store === null) return [];
+  const refs = copies.filter(r => path.dirname(r.original) === path.join(store.root, 'records'))
+    .map(r => ({ file: r.original, sha256: r.sha256 })).sort((a, b) => a.file.localeCompare(b.file));
+  let previous = null;
+  refs.forEach((r, seq) => {
+    const v = get(r), name = /^(\d{6})-([0-9a-f]{64})\.json$/.exec(path.basename(r.file));
+    if (!name || Number(name[1]) !== seq || name[2] !== r.sha256 || v.schema !== schema || v.version !== 1 || v.seq !== seq || v.prev !== previous) fail('bundle-integrity-invalid', 'captured committed inventory has a missing/conflicting predecessor');
+    previous = r.sha256;
+  });
+  if (previous !== store.expectedHeadSha256) fail('bundle-integrity-invalid', 'captured committed inventory does not reach requested head');
+  return refs;
+}
+function capturedSourceVersions(q, refs, get, copies) {
+  return refs.flatMap(r => {
+    const v = get(r);
+    return v.contract.specDefinitions.map(d => {
+      const file = path.join(q.source.root, d.file), rows = copies.filter(row => row.original === file);
+      if (rows.length > 1) fail('bundle-integrity-invalid', 'multiple captured current definition versions');
+      const current = rows.length ? { file, sha256: rows[0].sha256 } : null;
+      return { node: v.defId, name: d.name, file: d.file, registeredSha256: d.sha256, current,
+        status: current === null ? 'source-version-unavailable' : current.sha256 === d.sha256 ? 'matches-registration' : 'changed-since-registration' };
+    });
+  });
+}
+function anchoredInventories(snapshot, copies, get) {
+  const q = snapshot.request;
+  if (!same(contextOf(q), snapshot.context)) fail('bundle-integrity-invalid', 'captured request differs from saved context');
+  const registry = capturedChain(copies, get, q.registry, 'fvs-contract-registry/record');
+  const accepted = capturedChain(copies, get, q.acceptedStore, 'fvs-checker/accepted-event');
+  const rawAccepted = snapshot.accepted.validation === 'raw-captured-unvalidated';
+  const rawRegistry = snapshot.registry.pending.some(n => n.startsWith('.tmp-'));
+  if (snapshot.registry.validation !== (rawRegistry ? 'raw-captured-unvalidated' : 'committed-history-validated')
+    || snapshot.registry.headSha256 !== (rawRegistry ? null : q.registry.expectedHeadSha256)) fail('bundle-integrity-invalid', 'registry validation/head differs from captured inventory level');
+  if (q.acceptedStore === null ? snapshot.accepted.validation !== 'not-established' || snapshot.accepted.headSha256 !== null
+    : rawAccepted !== snapshot.accepted.pending.some(n => n.startsWith('.tmp-'))
+      || snapshot.accepted.validation !== (rawAccepted ? 'raw-captured-unvalidated' : 'history-chain-and-bound-evidence-validated')
+      || snapshot.accepted.headSha256 !== (rawAccepted ? null : q.acceptedStore.expectedHeadSha256)) fail('bundle-integrity-invalid', 'accepted validation/head differs from captured inventory level');
+  if (!same(registry, snapshot.registry.records) || !same(rawAccepted ? [] : accepted, snapshot.accepted.records)
+    || !same(rawAccepted ? accepted : [], snapshot.accepted.rawRecords ?? [])) fail('bundle-integrity-invalid', 'saved committed record inventory is incomplete');
+  const versions = capturedSourceVersions(q, registry, get, copies);
+  if (!same(versions, snapshot.registry.sourceVersions)) fail('bundle-integrity-invalid', 'saved definition inventory is incomplete');
+  return { registry, accepted, versions };
+}
 function facts(snapshot, get) {
   const q = snapshot.request, scope = scopeData(q, get), p = scope.plan;
   const frozen = q.baseline === null ? null : get(q.baseline), registered = new Map(), accepted = new Map(), provisional = new Map();
@@ -445,6 +537,7 @@ export function buildReviewBundle(raw, out) {
   fs.mkdirSync(out, { mode: 0o700 }); fs.mkdirSync(path.join(out, 'evidence')); fs.mkdirSync(path.join(out, 'sources')); c.materialize();
   const context = bundleExpectedContext(q), currentnessAtCapture = freshCurrentness(context, q.deadlineMs, path.join(out, 'inspection-at-capture'), scope.valid);
   const snapshot = { request: q, capturedAtMs: Date.now(), context, agreement: a, registry, runtime, accepted, frozenValidation, frozenDiagnostic, currentnessAtCapture, sourceViews: c.sourceViews };
+  anchoredInventories(snapshot, c.index(), c.get);
   const views = render(snapshot, c.get);
   for (const s of c.sourceViews) {
     const target = path.join(out, sourceView(s.original, s.sha256));
@@ -484,37 +577,37 @@ export function verifyReviewBundle(raw) {
     if (b.length !== row.size || hash(b) !== row.sha256) fail('bundle-integrity-invalid', 'required captured bytes changed');
     captured.set(key, b);
   }
-  const get = r => { reference(r); const b = captured.get(r.file + '\0' + r.sha256); if (!b) fail('bundle-integrity-invalid', 'required copied evidence missing'); return transitionJson(b); };
+  const get = r => { reference(r); const b = captured.get(r.file + '\0' + r.sha256); if (!b) fail('bundle-integrity-invalid', 'required copied evidence missing'); return capturedJson(b); };
   const indexed = new Set();
   for (const row of manifest.indexOnly) {
     if (row.policy !== 'index-only' || !path.isAbsolute(row.original) || !sha(row.sha256)) fail('bundle-integrity-invalid', 'malformed index-only identity');
     const key = row.original + '\0' + row.sha256;
     if (indexed.has(key)) fail('bundle-integrity-invalid', 'duplicate index-only identity'); indexed.add(key);
   }
-  const visited = new Set(), derivedEvidenceRoots = new Set();
+  const visited = new Set(), derivedEvidenceRoots = new Set(), derivedSources = new Map();
   const requireIndex = (file, digest) => { if (!indexed.has(file + '\0' + digest)) fail('bundle-integrity-invalid', 'required external index entry missing'); };
   function requireCopy(r, role = 'evidence', recurse = true) {
     reference(r); const key = r.file + '\0' + r.sha256;
-    if (visited.has(key)) return; visited.add(key);
+    if (role === 'source') derivedSources.set(key, { original: r.file, sha256: r.sha256, stored: 'evidence/' + r.sha256, view: sourceView(r.file, r.sha256) });
     if (role === 'evidence') derivedEvidenceRoots.add(path.dirname(r.file));
     const b = captured.get(key); if (!b) fail('bundle-integrity-invalid', 'promised bounded evidence omitted from copy index');
-    if (recurse && r.file.endsWith('.json')) { const value = transitionJson(b); protectedMetadataRoots(value).forEach(r => derivedEvidenceRoots.add(r)); scanRefs(value, requireCopy, requireIndex); }
+    if (recurse && !visited.has(key)) { visited.add(key); const value = capturedJson(b); protectedMetadataRoots(value).forEach(r => derivedEvidenceRoots.add(r)); scanRefs(value, requireCopy, requireIndex); }
   }
   const q = manifest.snapshot.request;
   requireCopy(manifest.producer, 'code', false);
-  for (const r of [q.agreement.state, q.agreement.roadmap, q.extraction, q.graph, q.plan, q.scopeInventory]) requireCopy(r, 'input', false);
+  for (const r of [q.agreement.state, q.agreement.roadmap, q.extraction, q.graph, q.plan, q.scopeInventory]) requireCopy(r, r === q.agreement.roadmap ? 'source' : 'input', false);
   for (const b of get(q.agreement.state).memoryBindings ?? []) for (const root of [b.storeDir, b.databasePath]) if (typeof root === 'string' && path.isAbsolute(root)) derivedEvidenceRoots.add(root);
   const scope = scopeData(q, get); scope.inventory.applicability.forEach(a => a.evidence.forEach(r => requireCopy(r, 'source', false)));
-  manifest.snapshot.registry.records.forEach(r => requireCopy(r));
-  for (const s of manifest.snapshot.registry.sourceVersions) if (s.current) requireCopy(s.current, 'source', false);
+  const inventories = anchoredInventories(manifest.snapshot, manifest.copies, get);
+  inventories.registry.forEach(r => requireCopy(r));
+  for (const s of inventories.versions) if (s.current) requireCopy(s.current, 'source', false);
   if (q.runtime?.state) requireCopy(q.runtime.state);
   if (q.baseline) requireCopy(q.baseline);
   if (q.handoff) requireCopy(q.handoff);
-  manifest.snapshot.accepted.records.forEach(r => requireCopy(r));
-  (manifest.snapshot.accepted.rawRecords ?? []).forEach(r => requireCopy(r));
+  inventories.accepted.forEach(r => requireCopy(r));
   protectOutput(options.out, { ...capturedRequest, ...options.expectedContext }, [root, ...derivedEvidenceRoots]);
   const regenerated = render(manifest.snapshot, get);
-  if (!same(manifest.snapshot.sourceViews, manifest.sources)) fail('bundle-integrity-invalid', 'saved source-view index differs');
+  if (!same(sortedSources(derivedSources), manifest.sources) || !same(manifest.snapshot.sourceViews, manifest.sources)) fail('bundle-integrity-invalid', 'saved source-view inventory is incomplete');
   if (!same(regenerated.facts, manifest.facts)) fail('bundle-integrity-invalid', 'saved facts differ from captured records');
   for (const [key, expected, file] of [['contract', regenerated.contract, 'contract.lean'], ['recall', regenerated.recall, 'recall.md']]) {
     if (manifest.views[key].file !== file || hash(Buffer.from(expected)) !== manifest.views[key].sha256 || !bytes(path.join(root, file)).equals(Buffer.from(expected))) fail('bundle-integrity-invalid', 'rendered view changed');

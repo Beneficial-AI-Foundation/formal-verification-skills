@@ -9,6 +9,20 @@ const sha = b => crypto.createHash('sha256').update(b).digest('hex');
 const ref = file => ({ file, sha256: sha(fs.readFileSync(file)) });
 const uuid = () => crypto.randomUUID();
 const write = (root, name, value) => { const file = path.join(root, name + '-' + uuid() + '.json'); fs.writeFileSync(file, JSON.stringify(value)); return ref(file); };
+function kernelFixture(x) {
+  const dir = path.join(x.owned, 'kernel-protocol'); fs.mkdirSync(dir);
+  const body = (name, value) => { const file = path.join(dir, name); fs.writeFileSync(file, value); return ref(file); };
+  const lean = body('lean-tool', 'not an executable; protocol identity only'), node = body('node-tool', 'not an executable; protocol identity only');
+  const runner = body('runner.mjs', '// protocol runner'), helper = body('Audit.lean', '-- protocol helper');
+  const compiled = body('Fixture.olean', 'protocol compiled identity'), runtime = body('runtime.dylib', 'protocol runtime identity');
+  const copied = body('Sealed.olean', 'protocol sealed identity');
+  const context = body('context-without-extension', JSON.stringify({ authority: 'protocol-only', source: ref(path.join(x.root, 'Defs.lean')) }));
+  const request = body('request-without-extension', JSON.stringify({ schema: 'fvs-checker/kernel-request', version: 1, lean: { path: lean.file, sha256: lean.sha256 }, controllerInput: context }));
+  const attempt = write(dir, 'kernel-attempt', { schema: 'fvs-checker/kernel-attempt', version: 1,
+    inputs: Object.fromEntries([request, lean, node, runner, helper, compiled, runtime].map(r => [r.file, r.sha256])),
+    runtimes: { [runtime.file]: runtime.sha256 }, snapshots: { runner: runner.file, helper: helper.file, modules: [copied] }, argv: [lean.file, '--run', helper.file] });
+  return { attempt, request, context, compiled, copied, runtime, lean, node };
+}
 function fixture(auto, parent = fs.realpathSync(os.tmpdir()), existing = null) {
   const owned = fs.mkdtempSync(path.join(parent, 'fvs-bundle-fixture-'));
   const root = existing ?? memory.createProject(auto, owned);
@@ -50,7 +64,7 @@ function fixture(auto, parent = fs.realpathSync(os.tmpdir()), existing = null) {
       author: { session: 'fixture-author', harness: 'fixture', model: 'none', runId: uuid() }, ...patch };
     const candidate = api.candidateOf(contract, api.contextOf(plan, graph, view, node));
     const reviews = path.join(owned, 'review-inputs'); fs.mkdirSync(reviews, { recursive: true });
-    const evidence = path.join(reviews, 'review-' + uuid() + (x.reviewEvidenceSuffix ?? '.md')); fs.writeFileSync(evidence, 'Declared protocol review; no provider/model execution.');
+    const evidence = path.join(reviews, 'review-' + uuid() + (x.reviewEvidenceSuffix ?? '.md')); fs.writeFileSync(evidence, 'Declared protocol review ' + node + '/' + uuid() + '; no provider/model execution.');
     const review = { candidateSha256: candidate, registryHeadSha256: api.readChain(x.registry).records.at(-1)?.sha ?? null, verdict: 'pass',
       reviewer: { session: 'fixture-reviewer', harness: 'fixture', model: 'none', runId: uuid() }, evidence: ref(evidence) };
     const c = write(owned, 'contract', contract), r = write(owned, 'review', review);
@@ -60,4 +74,4 @@ function fixture(auto, parent = fs.realpathSync(os.tmpdir()), existing = null) {
   };
   return x;
 }
-module.exports = { ...memory, fixture, sha, ref, write, uuid };
+module.exports = { ...memory, fixture, kernelFixture, sha, ref, write, uuid };
