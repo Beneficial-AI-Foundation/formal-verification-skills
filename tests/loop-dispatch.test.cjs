@@ -43,7 +43,7 @@ describe('Fresh child per pass: delegated loop sites', () => {
     for (const file of ['commands/fvs/lean-refactor.md', 'fv-skills/workflows/lean-refactor.md']) {
       const text = flat(file);
       assert.doesNotMatch(text, /## ERROR: Store error, PASS \+= 1/);
-      assert.match(text, /## ERROR: Stop this theorem's loop and report the error/);
+      assert.match(text, /## ERROR`: Stop the affected batch and report the error/);
     }
   });
 

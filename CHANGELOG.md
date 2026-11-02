@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+
+- Lean refactoring proposes a protected boundary and editable file/module/project scope before
+  editing. It seeks net LoC reduction through reuse and shared lemmas, including new helper/import
+  costs, while preserving useful prose. Broader scope and new public interfaces require proposals.
+- Refactor acceptance records actual comparable build/elaboration samples and stops for an owner
+  trade-off on a repeatable material performance regression. Tactic tiers, fixed reduction targets
+  and unsupported speed guarantees are removed. Legacy mode flags remain explicit search hints
+  warned when explicitly supplied; defaults need no migration prompt. Pass ceilings remain budgets.
+- Parent-only serial compiler gates and a pristine printed-boundary comparison replace child builds.
+  Net-code-LoC reporting excludes comment deletion and known formatting-only packing; operator
+  counts are hints, not a hard acceptance limit or a complete Lean parser. Unsupported printed
+  coverage or interpolation metrics use explicit reviewed comparisons; helper limitations do not
+  block valid refactoring or waive compilation/axiom safeguards. Unavailable counts are not guessed.
+
 ## [2.3.10] - 2026-10-30
 
 ### Fixed

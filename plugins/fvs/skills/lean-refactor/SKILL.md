@@ -1,6 +1,6 @@
 ---
 name: lean-refactor
-description: Refactor, simplify, and decompose verified Lean proofs while preserving compilation
+description: Reduce verified Lean proof code through reuse within an agreed scope
 argument-hint: "<lean_file_path> [--theorem name] [--mode safe|balanced|aggressive] [--max-passes N] [--report-only]"
 allowed-tools:
   - Read
@@ -98,21 +98,17 @@ Result parsing:
 </codex_skill_adapter>
 
 <objective>
-Orchestrate proof refactoring for a verified Lean file (an FVS spec or an ordinary Lean file) using three-phase subagent dispatch (baseline -> research -> iterative refactor). Dispatches fvs-researcher for 3-lens analysis, then iteratively dispatches fvs-lean-refactorer to apply tiered heuristics ONE CHANGE AT A TIME, verifying compilation after each.
+Reduce net Lean source LoC across an agreed file, module or project scope through reuse,
+shared lemmas, deduplication and clearer proofs. Include all new helpers and wiring in the total.
+Preserve useful prose, readability and the confirmed statements/core definitions/public interfaces.
+Do not promise a percentage reduction or a performance gain.
 
-This command sits after `/fvs:lean-verify` in the verification lifecycle. The input file must compile with zero sorry. The output is the same file with shorter, cleaner, more maintainable proofs.
-
-**Scope and safety.** The target is any Lean file whose proofs already compile: an FVS spec or an
-ordinary Lean project file. Refactor complete proofs only. If the file has `sorry` or does not build,
-stop and route it to `/fvs:lean-verify`; never promise to refactor a broken file. Keep every theorem,
-lemma and definition statement, signature and attribute, the meaning of definitions, and the axiom and
-`sorry` policy unchanged; if a statement seems to need changing, tell the user and leave it as is.
-Aeneas conventions
-(`Funs.lean`, `Specs/`, `@[step]`, `unfold + step`) apply only when the project uses Aeneas extraction.
-New helpers stay as local as possible: a `have` or local lemma for one proof, a `private` lemma for
-reuse inside the file, and a public declaration only with the user's approval.
-
-Output: Refactored spec file with before/after metrics, or NO_CHANGE report if proofs are already clean.
+The target is any Lean file whose proofs already compile: an FVS spec or an ordinary Lean project
+file. If the file has `sorry` or does not build, stop and route it to `/fvs:lean-verify`; never
+promise to refactor a broken file. Existing file arguments seed the scope recommendation; editing
+neighbouring modules or a project requires the owner's agreement.
+Apply Aeneas conventions only to Aeneas-extracted projects; use current definitions/proof support
+without freezing a particular tactic sequence.
 </objective>
 
 <execution_context>
@@ -120,62 +116,57 @@ Output: Refactored spec file with before/after metrics, or NO_CHANGE report if p
 @${CLAUDE_PLUGIN_ROOT}/fv-skills/references/ui-brand.md
 </execution_context>
 
-<context>
-Spec file path: $ARGUMENTS (required -- path to spec .lean file).
-
-Parse flags from $ARGUMENTS:
-- `--theorem name` -- scope to a single theorem (default: all theorems)
-- `--mode safe|balanced|aggressive` -- refactoring mode (default: balanced)
-- `--max-passes N` -- max passes per theorem (default: 5, cap: 20)
-- `--report-only` -- run research analysis but do not apply changes
-
-- Check for .formalising/CODEMAP.md for dependency context
-- Track iteration count in command scope (agents are stateless per Task() invocation)
-</context>
-
 <process>
+## Step 1: Orient and propose the boundary
 
-Before any dispatch, load trusted shipped guidance from the installed FVS root (the host adapter
-transforms this canonical path; never resolve it from the consumer cwd):
+Parse `$ARGUMENTS` into the starting `SPEC_PATH` and flags: `--theorem name`, `--mode safe|balanced|aggressive`
+(default balanced), `--max-passes N` (nonnegative per-target ceiling, default 5, cap 20), and
+`--report-only`. Reject unsupported values rather than dropping a flag. A shared change counts
+against each affected target; zero allows no editing passes. A cap is a budget limit, not a quota.
+`--theorem` limits editable proof targets; adding other proofs requires scope approval.
+
+Read the supplied task, starting file, imports, nearby reuse candidates and any existing
+`Contract.lean`/approved agreement. Recommend file, module or project scope from this evidence.
+Propose exact editable files/declarations/helper locations and protected statements, core definitions,
+assumptions, attributes and public interfaces. Preserve existing user edits. A recall view is a
+summary, not enforcement: check the actual source/diff and gates. Confirm uncovered or changed
+boundaries before edits; reuse an existing agreement only when it matches the current source/scope.
+
+Load the trusted installed guidance before dispatch; never resolve it from the consumer cwd:
 
 ```bash
 LAKE_BUILD_GUIDE=$(cat ${CLAUDE_PLUGIN_ROOT}/fv-skills/references/lake-build.md) || exit 1
+LEAN_REFACTORING=$(cat ${CLAUDE_PLUGIN_ROOT}/fv-skills/references/lean-refactoring.md) || exit 1
 ```
 
+## Step 2: Confirm settings, scope and compatibility
 
-## Step 1: Parse Arguments
+Read the complete config and apply `model-profiles.md`. Declare `research` for `fvs-researcher`
+and `lean_refactor` for `fvs-lean-refactorer`; resolve each independently. Current project/native
+role settings and confirmed stages remain authoritative. Use the existing selection gate for a
+mismatch; do not rewrite roles or substitute cheaper models.
+Refactoring `--mode` is independent of `model_profile` and never selects a cheaper role or effort.
 
-Parse $ARGUMENTS for spec file path and optional flags:
+Show one command-level selection manifest with scope, budget and both model/effort choices before
+dispatch. Combine scope/settings confirmation where practical. Offer the existing one-run change,
+exact-stage Save override, notes/reconfirmation and Cancel.
 
-```bash
-SPEC_PATH="(parsed from $ARGUMENTS, excluding flags)"
-THEOREM_FILTER="(parsed from --theorem flag, default: all)"
-MODE="(parsed from --mode flag, default: balanced)"
-MAX_PASSES="(parsed from --max-passes flag, default: 5)"
-REPORT_ONLY="(parsed from --report-only flag, default: false)"
+If `--mode` was explicitly supplied, emit one legacy-mapping warning: safe starts locally,
+balanced compares reuse/helpers/strategy, and aggressive explores broader proposals. The agreement
+controls edits in every mode. The default mode needs no compatibility question. An explicit flag
+gets a warning, not an extra approval prompt. No new approval is needed for each coherent edit
+inside the agreed boundary.
 
-# Hard cap: never exceed 20
-if [ "$MAX_PASSES" -gt 20 ]; then
-  MAX_PASSES=20
-fi
+Record baseline/final LoC inventory and comparable build/elaboration commands, cache conditions,
+timer, repetitions and resource limits. Use existing performance criteria or agreed evidence/noise;
+Do not invent a fixed regression percentage. Additional benchmark/provider work needs bounded
+consent. The parent alone runs compiler commands, gates and measurements serially. Children never
+run Lake in the shared workspace.
 
-[ -f "$SPEC_PATH" ] && echo "Spec found" || echo "Spec not found"
-```
+## Step 3: Establish the baseline and file gates
 
-If not found: list Lean files in the project (in an Aeneas project, also suggest `/fvs:lean-specify`).
-
-```bash
-find . -name "*.lean" -not -path "./.lake/*" 2>/dev/null | head -40
-```
-
-Wait for valid path.
-
-## Step 1a: Warm the project cache
-
-Run the cache preflight from the validated Lean project root before the baseline build when the
-project provides Mathlib's `cache` executable: `lake-manifest.json` names Mathlib as the root package
-or as a dependency. An applicable preflight that fails stops the workflow. A project without
-that executable skips the preflight; never install dependencies or change pins to create one:
+Run from the validated project root. Preserve toolchain/dependency pins. Warm Mathlib only when
+the exact root/dependency identity supplies its cache executable; failure stops the workflow:
 
 ```bash
 if { [ ! -f lakefile.lean ] && [ ! -f lakefile.toml ]; } || [ ! -f lean-toolchain ]; then
@@ -196,20 +187,11 @@ else
 fi
 ```
 
-## Step 2: Baseline Build Check
+Selected proofs must compile without admissions. A text scan is a lead to inspect, not proof that
+an identifier in a comment is an admission. Record/check the existing project trust policy and
+protected source before editing. Stop on a real unfinished proof or baseline error.
 
-Confirm file exists, run build, confirm zero sorry.
-
-```bash
-# Check for sorry
-SORRY_COUNT=$(grep -c "sorry" "$SPEC_PATH")
-echo "Sorry count: $SORRY_COUNT"
-```
-
-If sorry found: direct to `/fvs:lean-verify $SPEC_PATH`. STOP.
-
-**Selected-file gate.** A default `lake build` may not include this file, so check the file itself
-with its imports, and keep the real exit status (the displayed tail is not the result):
+For every selected Lean file, set `SPEC_PATH` and try its workspace-module gate:
 
 ```bash
 set -o pipefail
@@ -217,13 +199,12 @@ LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build "$SPEC_PATH" 2>&
 FILE_GATE_STATUS=${PIPESTATUS[0]}
 ```
 
-This builds the file as a workspace module. If Lake reports an unknown target or module because the
-file is outside every package library, use Lake's import-building direct check instead. `lake lean`
-builds the file's actual imported modules, including non-default libraries, before checking the file;
-`lake env lean` alone does not build them. Keep this import preparation in `FILE_GATE` on every pass.
-If the pinned Lake does not support `lake lean`, stop and report the unsupported gate instead of
-substituting a default-only build or a raw direct check.
-[Lake's implementation](https://github.com/leanprover/lean4/blob/v4.31.0/src/lake/Lake/Build/Module.lean#L1358-L1396).
+Only an unknown target/module outside library roots uses the import-building direct gate below.
+`lake lean` builds actual imports before checking; raw `lake env lean` does not. If unsupported by
+the pinned toolchain, stop instead of using stale artifacts. Preserve real status independently
+from the displayed tail:
+
+Keep this import preparation in `FILE_GATE` on every pass.
 
 ```bash
 set -o pipefail
@@ -231,98 +212,76 @@ LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake lean "$SPEC_PATH" 2>&1
 FILE_GATE_STATUS=${PIPESTATUS[0]}
 ```
 
-Record the gate that applies as `FILE_GATE` and run it again after every change. If
-`FILE_GATE_STATUS` is non-zero, report the errors, route to `/fvs:lean-verify`, and STOP.
-
-**Gather baseline metrics:**
-
-```bash
-TOTAL_LINES=$(wc -l < "$SPEC_PATH")
-THEOREM_COUNT=$(grep -c "@\[step\]\|theorem " "$SPEC_PATH")
-TACTIC_LINES=$(grep -cE "^\s+(unfold|step|simp|agrind|scalar_tac|ring|field_simp|have|obtain|rw|by_cases|interval_cases|grind|bvify|bv_tac)" "$SPEC_PATH")
-echo "Baseline: $TOTAL_LINES lines, $THEOREM_COUNT theorems, $TACTIC_LINES tactic lines"
-```
-
-## Step 3: Read Config and Resolve Models + Effort
-
-Read the complete config and apply `model-profiles.md`. Declare `research` for
-`fvs-researcher` and `lean_refactor` for `fvs-lean-refactorer`; resolve both stages independently
-rather than deriving tiers from agent names.
-
-Before dispatch, show one command-level selection manifest with both stages and obtain confirmation.
-Offer one-run adjustment, exact-stage Save override, notes that rebuild and reconfirm the manifest,
-and Cancel. Missing preferred models or unsupported efforts prompt interactively; noninteractive
-unresolved choices fail before dispatch with exact remediation.
-
-## Step 4: Read Reference Files for Inlining
-
-Read the reference files that MUST be inlined into Task() prompts because @-references do not cross Task boundaries:
+Record the applicable command as `FILE_GATE` for each file, including any new helper file, and
+rerun it after each coherent change. For a multi-file task, `$FILE_GATE` contains the complete
+file-to-command map, including new helpers, not only the last file. Non-zero `FILE_GATE_STATUS`
+stops acceptance. A default build
+does not prove that an unselected file was checked. Run/record the required project baseline too:
 
 ```bash
-LEAN_REFACTORING=$(cat ${CLAUDE_PLUGIN_ROOT}/fv-skills/references/lean-refactoring.md)
-TACTIC_USAGE=$(cat ${CLAUDE_PLUGIN_ROOT}/fv-skills/references/tactic-usage.md)
-PROOF_STRATEGIES=$(cat ${CLAUDE_PLUGIN_ROOT}/fv-skills/references/proof-strategies.md)
+set -o pipefail
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build 2>&1 | tail -40
+PROJECT_STATUS=${PIPESTATUS[0]}
 ```
 
-All three must be captured as content strings for inlining into subagent prompts.
+Stop on non-zero `PROJECT_STATUS`. Before any edit, execute the inlined reference's printed
+boundary recipe: capture the pristine source/context and fixed protected-name query; collect
+types, protected definition bodies and axiom footprints with pinned Lean. Record complete expected
+coverage and protected-definition output slots; require fully rendered `:=` bodies, not signatures,
+missing values or `⋯`. Theorems use only types/axioms, never printed proofs. Keep the baseline exclusive. If a protected dependency cannot be observed in its
+original built context, explain the exact gap and use the reference's reviewed boundary fallback.
+A helper limitation does not make a valid Lean file unrefactorable. Never omit protected coverage,
+claim equivalence from a signature, or waive compilation/axiom checks.
+The view is syntax evidence, not a kernel identity proof. No new checker/receipt framework is added.
 
-## Step 5: Dispatch Research Subagent
+Capture the reference's net-code-LoC baseline and three warm serial timing samples within the
+approved budget. The parent alone runs these commands. Do not recapture the baseline after edits.
+
+## Step 4: Research in proportion to the task
+
+A small cleanup uses lightweight analysis and one fresh refactorer. Parent compiler work is serial and waits until all edit workers are terminal. For substantial cross-file
+work, use two fresh read-only scouts with distinct questions: reuse/dependency evidence and
+scope/net-cost alternatives. Use the configured researcher role for both; await terminal results. Scouts do not run compiler
+commands. A feedback path that may trigger builds uses the conservative serial plan.
 
 ```
 Task(
   subagent_type="fvs-researcher",
   model="$RESEARCH_MODEL",
-  reasoning_effort="$RESEARCH_EFFORT", // when supported; otherwise apply the capability gate
-  description="Research refactoring context for $SPEC_FILE",
+  reasoning_effort="$RESEARCH_EFFORT",
+  description="Assess reuse and net-cost opportunities in the agreed scope",
   prompt="Research mode: lean-refactor
-
-<lake_build_guide>
-$LAKE_BUILD_GUIDE
-</lake_build_guide>
-
-<spec_file_path>$SPEC_PATH</spec_file_path>
-<spec_content>
-$SPEC_FILE_CONTENT
-</spec_content>
-
-<lean_refactoring>
-$LEAN_REFACTORING_CONTENT
-</lean_refactoring>
-
-<tactic_usage>
-$TACTIC_USAGE_CONTENT
-</tactic_usage>
-
-<proof_strategies>
-$PROOF_STRATEGIES_CONTENT
-</proof_strategies>
-
-Aeneas-specific material in the inlined references (`step`, `scalar_tac`, `unfold + step`, Funs.lean)
-applies only if this is an Aeneas project; otherwise analyse the file as ordinary Lean.
-
-Tasks:
-1. Read the spec file and identify all theorem proofs (not sorry)
-2. In an Aeneas project, read the corresponding function body from Funs.lean for structural context;
-   otherwise use the file's own definitions and imports
-3. Search for similar proved theorems in the project to identify reuse patterns
-4. For each theorem proof, apply the 3-lens analysis (reuse, quality, efficiency)
-5. Return structured findings with per-theorem refactoring recommendations
-6. Classify each recommendation by tier (1-4)
-
-Return with ## RESEARCH COMPLETE"
+<agreement>$CONFIRMED_BOUNDARY_AND_READ_SCOPE</agreement>
+<question>$SCOUT_QUESTION</question>
+<current_sources>$CURRENT_SOURCE_CONTEXT</current_sources>
+<lean_refactoring>$LEAN_REFACTORING</lean_refactoring>
+<lake_build_guide>$LAKE_BUILD_GUIDE</lake_build_guide>
+Return current declarations/types, affected files, removed/added/helper/wiring estimates,
+basis and uncertainty, the narrow alternative and any needed public-API/scope proposal.
+Read parent boundary views and LSP evidence only. Do not run Lake, Lean or compiler-backed scripts
+in the shared workspace; ask the parent for serial queries. No invented times. Return ## RESEARCH COMPLETE."
 )
 ```
 
-Parse the returned research findings to get:
-- Per-theorem analysis with tier-classified recommendations
-- Recommended refactoring order
-- Shared patterns across theorems
+For a materially better cross-file opportunity, show concrete affected files, the shared abstraction
+and estimated net benefit with basis/uncertainty versus the narrow option. Ask BEFORE expanding.
+If declined, stay inside the agreement and retain the opportunity in the final out-of-scope list.
+`--report-only` returns findings/proposals here without changing proof sources.
 
-**If --report-only:** Display research findings and exit. No refactoring passes.
+## Step 5: Plan independent coherent changes
 
-## Step 6: Iterative Refactorer Dispatch
+Compare reuse, helper extraction, proof strategy and local cleanup using the reference. Reject
+format golf and deletion of useful prose as a way to meet the objective. Include new helper/import
+costs. A new public API or protected change requires a concrete proposal and approval first.
 
-For each theorem (in order from research recommendations, filtered by --theorem if set):
+Assign disjoint ownership by file and snapshot each coherent unit before editing. For substantial cross-file work use at most five independent
+workers in a batch, within host/project limits and the confirmed budget. Assign a helper and its call sites as one coherent ownership unit. Units with a direct or transitive
+import relation are dependent and run serially, even with disjoint files. A new module imported by
+another owned unit is dependent too. If independence is unknown, use one worker. A small cleanup
+uses one worker.
+If usable child LSP feedback is unavailable, use one edit worker at a time, with parent gates between units. Required-live requests still stop; degraded serial feedback needs the existing parent consent.
+Check each affected target's remaining pass budget before dispatch. At zero or an exhausted budget,
+dispatch no edit worker; report partial completion and remaining work instead.
 
 **Fresh child per pass:** every pass or round of this loop that delegates work dispatches a new
 child of the role named here, with the current inputs and the confirmed settings; the parent never
@@ -332,120 +291,96 @@ fails, the child cannot be confirmed, or it ends in a terminal error, stop and r
 pass. Valid results such as a failed build, NOVEL, REJECT, REVISE or FOLLOWUP still route as this
 step describes, and parent-owned baseline, build, revert and report steps stay with the parent.
 
-```
-PASS=0
-WHILE PASS < MAX_PASSES:
-
-  # Re-read spec each iteration (it changes!)
-  CURRENT_SPEC=$(cat "$SPEC_PATH")
-
-  Task(
-    subagent_type="fvs-lean-refactorer",
-    model="$REFACTORER_MODEL",
-    reasoning_effort="$REFACTORER_EFFORT", // when supported; otherwise apply the capability gate
-    description="Refactor {theorem_name} pass {PASS+1}",
-    prompt="<lake_build_guide>
-$LAKE_BUILD_GUIDE
-</lake_build_guide>
-<refactoring_reference>$LEAN_REFACTORING_CONTENT</refactoring_reference>
-    <research_findings>$RESEARCH_OUTPUT</research_findings>
-    <current_spec>$CURRENT_SPEC</current_spec>
-    <target_theorem>{theorem_name}</target_theorem>
-    <mode>{MODE}</mode>
-    <pass>{PASS+1} of {MAX_PASSES}</pass>
-    <previous_feedback>{build errors from last pass, if any}</previous_feedback>
-    <file_gate>$FILE_GATE</file_gate>
-
-    Apply ONE refactoring from the highest applicable tier within the mode ceiling.
-    Keep statements, signatures, attributes, definition meaning and the axiom and `sorry` policy
-    unchanged. New helpers: a `have` or local lemma for one proof, a `private` lemma for reuse in this
-    file; never add a public declaration, describe it in your return instead. Aeneas conventions
-    apply only in an Aeneas project. Verify with the file gate above.
-    Write via Write tool. User approves inline."
-  )
-
-  ROUTE ON RETURN:
-    ## REFACTORED:
-      Run the recorded FILE_GATE with `set -o pipefail` and use its captured status
-      If build passes: record change, PASS += 1, continue
-      If build fails: REVERT the change (re-write previous content), store error as feedback, PASS += 1
-    ## NO_CHANGE:
-      Break -- no more refactorings possible for this theorem
-    ## ERROR:
-      Stop this theorem's loop and report the error; do not start another pass
-
-END WHILE
-```
-
-After the last theorem, run the project build once (`set -o pipefail; LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`) and use its real status; if it fails,
-revert this session's changes and report the errors.
-
-Move to next theorem after max passes or NO_CHANGE.
-
-## Step 7: Display Summary
+For each approved coherent task, pass the full current agreement, reference and source/gate inputs:
 
 ```
-FVS >> REFACTORING {STATUS}
-
-File:      {spec_file}
-Mode:      {MODE}
-Theorems:  {N} processed
-Changes:   {total changes applied}
-Lines:     {before} -> {after} ({delta})
-Status:    REFACTORED | NO_CHANGE | ERROR
+Task(
+  subagent_type="fvs-lean-refactorer",
+  model="$REFACTORER_MODEL",
+  reasoning_effort="$REFACTORER_EFFORT",
+  description="Reduce net proof code within assigned ownership",
+  prompt="<agreement>$CONFIRMED_BOUNDARY_AND_PROTECTED_SOURCE</agreement>
+<ownership>$OWNED_FILES_AND_INDEPENDENCE</ownership>
+<current_sources>$CURRENT_SOURCE_CONTEXT</current_sources>
+<research_findings>$RESEARCH_OUTPUT</research_findings>
+<lean_refactoring>$LEAN_REFACTORING</lean_refactoring>
+<lake_build_guide>$LAKE_BUILD_GUIDE</lake_build_guide>
+<file_gate>$FILE_GATE</file_gate>
+<measurement_plan>$BASELINE_AND_COMPARABLE_MEASUREMENT_PLAN</measurement_plan>
+<previous_feedback>$ACTUAL_PREVIOUS_DIAGNOSTICS</previous_feedback>
+Apply one coherent refactor within ownership. You are not alone; preserve other work.
+Use child LSP feedback only. Do not run Lake, Lean or compiler-backed project scripts in the shared workspace. Return ready for the parent gate.
+Helpers, file organisation and strategy changes are allowed only within the agreement.
+Propose a new public API/protected change before editing it. Report helper/wiring cost and actual
+LSP diagnostics and estimates; child build/timing status is UNRUN and a candidate is not acceptance. Return a documented terminal header."
+)
 ```
 
-**Status classification:**
-- **REFACTORED:** At least one change applied and build passes
-- **NO_CHANGE:** No refactorings possible at current mode's tier ceiling
-- **ERROR:** Build failures that could not be reverted
+Wait for every launched worker to be terminal before integration or recovery. On dispatch/child
+failure, stop new dispatch and collect or cancel active work through the normal runtime.
 
-## Step 8: Update CODEMAP.md If Exists
+Route each terminal result:
 
-If .formalising/CODEMAP.md exists, verification status remains [OK] (refactoring preserves verification -- zero sorry before and after).
+- `## REFACTORED`: this is a candidate ready for the parent, not an acceptance. After the batch is
+  terminal, the parent runs the recorded FILE_GATE with `set -o pipefail` and uses its captured
+  status. Run one file/new helper at a time, including import preparation; gate a helper before
+  callers. Run printed-boundary/context comparisons and inspect protected closure/attributes.
+- `## NO_CHANGE`: record the evidence and search boundary.
+- `## PROPOSAL`: present the concrete scope/API/protected-meaning or cost trade-off. Obtain the
+  owner's decision before further edits or acceptance.
+- `## ERROR`: Stop the affected batch and report the error; do not start another pass. Once active
+  workers stop, the parent gates the other independent owned units serially. Keep passing
+  candidates and restore only the failed owner's files from its unit snapshot. Preserve other
+  work. If failure ownership is unclear, hold an unaccepted proposal instead of guessing rollback.
 
-```bash
-[ -f ".formalising/CODEMAP.md" ] && echo "CODEMAP exists" || echo "No CODEMAP"
-```
+Passing units still need integrated final checks. Report failed units and partial completion.
 
-No status change needed -- spec remains verified.
+Repeat only while worthwhile permitted opportunities remain and the confirmed budget allows it.
+Count coherent passes per affected target. At a budget/resource limit, report partial completion
+and remaining work; do not claim that opportunities were exhausted.
 
-## Step 9: Suggest Next Steps
+## Step 6: Check the integrated scope and measurements
 
-**If REFACTORED:**
+After the last integrated batch, the parent serially reruns all affected file gates and the required project gate above,
+plus existing project/style/trust checks. The parent owns integration, checks and recovery; never
+overwrite other edits. Stop on verification/recovery failure rather than weakening a statement.
 
-```
->> Proof refactored. Consider committing the changes.
+Use the reporting recipe for final net code LoC across the baseline/new-file union. Include all
+helper and compatibility wiring.
+Derive that inventory from the actual diff, including new/untracked helper files. Include ancillary
+source/configuration cost in the combined net total. Stop/propose an out-of-scope edit instead of
+omitting its cost or silently accepting it.
+Report code LoC, helper costs, raw/prose deltas and `final code total - baseline code total`.
+Keep conventional formatting and useful explanations. List every file whose sequence hint rises
+while code lines fall, with a one-line reason. Semicolon counts are hints, not a parser
+or a hard veto. Review mixed format/strategy changes. If unsupported syntax makes automated
+counts/hints unavailable, disclose that and continue with a clearly reviewed full-scope comparison;
+never use fake counts or block the task solely on the metric helper. The metric supports readability
+judgment, not scoring.
 
-git add {spec_path}
-git commit -m "refactor: clean up {function_name} proof"
+After serial final gates, the parent reruns the fixed query. Require unchanged query/context and
+printed boundary data where fully covered. Loss of previously available coverage stops acceptance
+of the affected unit as a regression, not a pre-existing helper limit. Complete the explicit review/checkable comparison for
+any recorded gap; unverified preservation is not acceptance. Missing compilation or axiom evidence
+still blocks retention of the affected unit. Then run the same
+three warm serial timing samples and record the profiling phases actually reported.
 
-/fvs:fc-plan to select next verification target
-```
+Do not infer speed from fewer lines or decomposition. Repeat a suspected material regression within
+the agreed budget; a repeatable material regression blocks automatic acceptance. Present an owner
+trade-off with actual samples/cost and uncertainty. Incomparable measurements remain inconclusive.
 
-**If NO_CHANGE:**
+Retain a result only with evidence of full-scope net code reduction without formatting/comment-deletion
+credit, preserved protected meaning/readability, passing checks and no repeatable material timing
+regression. An unavailable automated metric or printed view uses the documented reviewed comparison,
+not an automatic rejection or an unsupported success claim. Otherwise hold an explicitly unaccepted proposal or restore the
+session's edits. Reconfirm a changed agreement and take a new baseline before a different task.
 
-```
->> Proofs are already clean at the {mode} tier ceiling.
+## Step 7: Report and stop
 
-Try --mode aggressive for more aggressive refactoring.
-/fvs:fc-plan to select next verification target
-```
-
+Use the reference's report fields: confirmed scope/protection, deduplication and reused declarations,
+baseline/final total and helper costs, net delta, actual build/elaboration samples/conditions,
+check results, stopping reason, partial completion and remaining out-of-scope opportunities.
+Return `REFACTORED`, `NO_CHANGE`, `PROPOSAL` or `ERROR` with the corresponding evidence. A worker
+header is not a final acceptance or proof receipt. Update existing derived context only after
+checks and only inside the agreed scope. Do not commit unless the user separately requests it.
 </process>
-
-<success_criteria>
-- [ ] Spec file located and zero sorry confirmed
-- [ ] Baseline selected-file gate (FILE_GATE) passes with its real exit status; builds use LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build
-- [ ] Config read and models resolved for fvs-researcher and fvs-lean-refactorer
-- [ ] Research subagent dispatched with inlined lean-refactoring, tactic-usage, proof-strategies
-- [ ] 3-lens analysis returned with per-theorem recommendations
-- [ ] Report-only mode stops after research phase when flag is set
-- [ ] Refactorer dispatched iteratively per theorem (one change at a time)
-- [ ] Build check after every change with LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build (never plain lake build)
-- [ ] Failed changes reverted and error stored as feedback
-- [ ] Max-passes cap enforced (default 5, hard cap 20)
-- [ ] Result correctly classified as REFACTORED, NO_CHANGE, or ERROR
-- [ ] Before/after metrics displayed
-- [ ] Clear next steps offered based on outcome
-</success_criteria>
