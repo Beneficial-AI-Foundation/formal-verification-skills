@@ -14,11 +14,145 @@ function mutatePublished(out, change) {
   const file = path.join(out, 'result.json'), r = read(file); change(r); fs.writeFileSync(file, JSON.stringify(r));
   const clockFile = path.join(out, 'result-clock.json'), p = read(clockFile); p.result = f.ref(file); p.status = r.status; fs.writeFileSync(clockFile, JSON.stringify(p));
 }
+async function failedProducer(patch = {}) {
+  const x = await fixture(), initial = begin(x), inputs = read(initial.q.current.resume.request.file).inputs;
+  if (patch.emptyStore) { const root = path.join(x.owned, 'empty-accepted-store'); fs.mkdirSync(root); inputs.acceptedStore = { root, expectedHeadSha256: null }; }
+  const q = x.request({ inputs }), intent = x.local([], 'check'), target = { request: f.json(x.owned, 'failed-job', {
+    schema: 'fvs-checker/check-request', version: 1, purpose: 'auto', runId: 'protocol-failure', deadlineMs: Date.now() + 120000,
+    source: q.source, baseline: inputs.baseline, nodes: [19] }), nodes: [19] };
+  const view = auto.readState({ projectRoot: x.root, requireAgreement: true }), profile = initial.q.current.profile, authorization = initial.q.current.authorization;
+  const snapshot = transitions.transitionSnapshot({ q, run: auto.readRuntimeState({ projectRoot: x.root }).state.run,
+    canonical: { view, envelope: view.agreement.agreement }, observation: { identity: { source: { root: x.root, commit: q.source.commit, tree: q.source.expectedTree,
+      branchRef: f.git(x.root, 'symbolic-ref', 'HEAD'), gitCommonDir: x.root + '/.git', dirty: false } }, associations: [] },
+    action: { before: { registry: { root: x.registry } }, target, authorization, profile, owner: intent.owner, nodes: [] } }, { profileObservation: read(profile.file).controller });
+  const action = { schema: 'fvs/auto-transition-request', schemaVersion: 1, runId: x.runId, transitionId: intent.transitionId, reservationId: intent.reservationId,
+    kind: 'check', stage: 'check', nodes: [], owner: intent.owner, expectedHeadSha256: q.expectedHeadSha256, before: snapshot, target, authorization, profile, basis: null };
+  const actionRef = f.json(x.owned, 'failed-action', action); intent.request = actionRef; q.transition = x.before(intent); const before = x.invoke(q, 'checkpoint');
+  const memory = await import('../scripts/fvs-project-memory.mjs'), stdout = f.json(x.owned, 'failed-stdout', { ok: false, status: 'unverified', code: 'timeout', message: 'Protocol-only terminal timeout; no compiler executed' });
+  const errFile = path.join(x.owned, 'failure-stderr'); fs.writeFileSync(errFile, 'FVS >> timeout: Protocol-only terminal timeout; no compiler executed\n');
+  const now = Date.now(), command = { schema: 'fvs/auto-command-receipt', schemaVersion: 1, runId: x.runId, transitionId: intent.transitionId, actionSha256: memory.memoryHash(action),
+    argv: [process.execPath, path.join(f.ROOT, 'scripts/fvs-auto.mjs'), 'check', '--request', target.request.file, '--out', x.output('unused-producer')], cwd: x.root,
+    env: { PATH: '/usr/bin:/bin', LANG: 'C', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1' },
+    tool: f.ref(process.execPath), startedAtMs: now, endedAtMs: now, exitCode: 8, signal: null, error: null, stdout, stderr: f.ref(errFile) };
+  patch.command?.(command); const commandRef = f.json(x.owned, 'failed-command', command);
+  if (patch.delta === 'source') f.git(x.root, 'commit', '--allow-empty', '-qm', 'test(fixture): retain failed action source drift');
+  if (patch.delta === 'registry') await x.registryFixture.register(x.bundle, 19, { statement: 'True' }, 'revise');
+  const afterQ = x.request({ inputs, transition: x.after(before, { sessionId: null, association: null, evidence: [commandRef], resolution: null }, patch.outcome ?? 'failed') });
+  const after = x.invoke(afterQ, 'checkpoint');
+  const request = { schema: 'fvs/auto-respec-failure-request', schemaVersion: 1, attemptId: f.uuid(), runId: x.runId,
+    expectedBeforeEventSha256: before.result.recordedEventSha256, expectedAction: actionRef, expectedCommand: commandRef,
+    afterRequest: f.ref(path.join(after.out, 'request.json')), afterResult: f.ref(path.join(after.out, 'result.json')),
+    committedHeadSha256: after.result.committedHeadSha256, deadlineMs: Date.now() + 120000 };
+  return { x, initial, before, after, request, commandRef, inputs, action, actionRef };
+}
+
+describe('conclusive local failures and exact legacy inspect compatibility (protocol only)', () => {
+  it('closes execution without tuple progress/permission, consumes exact caller evidence and retains a later valid action', async () => {
+    const p = await failedProducer(), { x, request } = p, state = f.ref(path.join(x.root, '.formalising/auto-fv/resume/state.json')), out = x.output('failure-proof');
+    assert.equal(auto.readRuntimeState({ projectRoot: x.root }).reservations.get(p.action.reservationId).state, 'closed');
+    const v = api.verifyConclusiveLocalFailure({ projectRoot: x.root, request, out }); assert.equal(v.status, 'conclusive-no-canonical-effect'); assert.equal(v.proofAuthority, 'none'); assert.equal(v.effectExecutable, false);
+    assert.equal(api.consumeConclusiveLocalFailure({ projectRoot: x.root, request, out }).afterEventSha256, v.afterEventSha256);
+    assert.deepEqual(f.ref(state.file), state);
+    const composed = x.compose(), q = x.respecRequest('finish', p.initial.evidence), result = api.runRespec({ request: q, out: x.output('after-failure') });
+    assert.equal(composed.after.result.observation.transition.admissibility.status, 'facts-recorded-partial'); assert.equal(result.status, 'partial');
+    assert.equal(result.observation.history.failures.length, 1); assert.equal(result.observation.history.effects.length, 1); assert.equal(result.observation.history.effects[0].kind, 'compose-spec');
+    assert.equal(result.observation.history.failures[0].terminalOutcome, 'failed'); assert.deepEqual(result.frame, p.initial.result.frame);
+  });
+  for (const field of ['before', 'action', 'command', 'run', 'head']) it('rejects another caller expected ' + field + ' without state writes', async () => {
+    const p = await failedProducer(), q = structuredClone(p.request), state = f.ref(path.join(p.x.root, '.formalising/auto-fv/resume/state.json'));
+    if (field === 'before') q.expectedBeforeEventSha256 = 'f'.repeat(64);
+    if (field === 'action') q.expectedAction = f.json(p.x.owned, 'other-action', { ...p.action, owner: 'other' });
+    if (field === 'command') q.expectedCommand = f.json(p.x.owned, 'other-command', { other: true });
+    if (field === 'run') q.runId = f.uuid(); if (field === 'head') q.committedHeadSha256 = 'f'.repeat(64);
+    assert.throws(() => api.verifyConclusiveLocalFailure({ projectRoot: p.x.root, request: q, out: p.x.output('wrong') })); assert.deepEqual(f.ref(state.file), state);
+  });
+  for (const delta of ['source', 'registry']) it('refuses a failed action with canonical ' + delta + ' change', async () => {
+    const p = await failedProducer({ delta }), state = f.ref(path.join(p.x.root, '.formalising/auto-fv/resume/state.json'));
+    reject('respec-failure-unverified', () => api.verifyConclusiveLocalFailure({ projectRoot: p.x.root, request: p.request, out: p.x.output('delta') })); assert.deepEqual(f.ref(state.file), state);
+    const q = p.x.respecRequest('finish', p.initial.evidence); assert.throws(() => api.runRespec({ request: q, out: p.x.output('delta-finish') }));
+  });
+  const commandChanges = { success: c => c.exitCode = 0, stringExit: c => c.exitCode = '8', signal: c => c.signal = 'SIGKILL', error: c => c.error = 'ETIMEDOUT', argv: c => c.argv[2] = 'freeze',
+    action: c => c.actionSha256 = 'f'.repeat(64), tool: c => c.tool = c.stdout, environment: c => c.env.EXTRA_PERMISSION = 'yes', start: c => c.startedAtMs = 0, end: c => c.endedAtMs = Date.now() + 60000 };
+  commandChanges.environmentType = c => c.env.PATH = { unexpected: true };
+  for (const [name, command] of Object.entries(commandChanges)) it('rejects nonconclusive or foreign command ' + name, async () => {
+    const p = await failedProducer({ command }), state = f.ref(path.join(p.x.root, '.formalising/auto-fv/resume/state.json'));
+    reject('respec-failure-unverified', () => api.verifyConclusiveLocalFailure({ projectRoot: p.x.root, request: p.request, out: p.x.output('bad-command') })); assert.deepEqual(f.ref(state.file), state);
+  });
+  it('uncertain effects remain held and cannot supply conclusive failure evidence', async () => {
+    const p = await failedProducer({ outcome: 'uncertain' }); assert.equal(auto.readRuntimeState({ projectRoot: p.x.root }).reservations.get(p.action.reservationId).state, 'uncertain');
+    reject('respec-failure-unverified', () => api.verifyConclusiveLocalFailure({ projectRoot: p.x.root, request: p.request, out: p.x.output('uncertain') }));
+  });
+  it('validates a complete unchanged empty store without inventing proof authority', async () => {
+    const p = await failedProducer({ emptyStore: true }), out = p.x.output('empty-store');
+    const v = api.verifyConclusiveLocalFailure({ projectRoot: p.x.root, request: p.request, out });
+    assert.equal(v.canonical.store.headSha256, null); assert.equal(v.proofAuthority, 'none');
+    assert.deepEqual(fs.readdirSync(p.inputs.acceptedStore.root), []);
+  });
+  for (const change of ['pending', 'prefix']) it('refuses accepted-store ' + change + ' even without a selected-node delta', async () => {
+    const p = await failedProducer({ emptyStore: true }), root = p.inputs.acceptedStore.root;
+    if (change === 'pending') fs.mkdirSync(path.join(root, 'lock'));
+    else { fs.mkdirSync(path.join(root, 'records')); fs.writeFileSync(path.join(root, 'records', '000000-' + 'f'.repeat(64) + '.json'), '{}'); }
+    const state = f.ref(path.join(p.x.root, '.formalising/auto-fv/resume/state.json'));
+    assert.throws(() => api.verifyConclusiveLocalFailure({ projectRoot: p.x.root, request: p.request, out: p.x.output('bad-store') }));
+    assert.deepEqual(f.ref(state.file), state);
+  });
+  it('does not authenticate a changed immutable producer/frozen-context input', async () => {
+    const p = await failedProducer(), file = p.action.target.request.file, body = read(file), state = f.ref(path.join(p.x.root, '.formalising/auto-fv/resume/state.json'));
+    body.baseline = { file: file, sha256: 'f'.repeat(64) }; fs.writeFileSync(file, JSON.stringify(body));
+    assert.throws(() => api.verifyConclusiveLocalFailure({ projectRoot: p.x.root, request: p.request, out: p.x.output('changed-baseline') }));
+    assert.deepEqual(f.ref(state.file), state);
+  });
+  it('a failed row itself cannot grant a fresh bound producer successor', async () => {
+    const p = await failedProducer(), x = p.x, q = x.request({ inputs: p.inputs }), intent = x.local([], 'check'), action = { ...p.action,
+      transitionId: intent.transitionId, reservationId: intent.reservationId, expectedHeadSha256: q.expectedHeadSha256,
+      basis: { version: 2, beforeEventSha256: p.before.result.recordedEventSha256, afterEventSha256: p.after.result.recordedEventSha256, completion: p.commandRef, workCompletion: null } };
+    intent.request = f.json(x.owned, 'invalid-failure-successor', action); q.transition = x.before(intent);
+    const state = f.ref(path.join(x.root, '.formalising/auto-fv/resume/state.json'));
+    reject('transition-explanation-required', () => x.invoke(q, 'checkpoint')); assert.deepEqual(f.ref(state.file), state);
+  });
+  it('another same-content attempt or coherently edited saved closure cannot replace caller evidence', async () => {
+    const p = await failedProducer(), out = p.x.output('closure'); api.verifyConclusiveLocalFailure({ projectRoot: p.x.root, request: p.request, out });
+    reject('respec-failure-unverified', () => api.consumeConclusiveLocalFailure({ projectRoot: p.x.root, request: { ...p.request, attemptId: f.uuid() }, out }));
+    const file = path.join(out, 'result.json'), v = read(file); v.canonical.source.commit = 'f'.repeat(40); fs.writeFileSync(file, JSON.stringify(v));
+    reject('respec-failure-unverified', () => api.consumeConclusiveLocalFailure({ projectRoot: p.x.root, request: p.request, out }));
+  });
+  it('coherently edited closure clock fields cannot overstate a bounded publication', async () => {
+    const p = await failedProducer(), out = p.x.output('clock-tamper'); api.verifyConclusiveLocalFailure({ projectRoot: p.x.root, request: p.request, out });
+    const file = path.join(out, 'result.json'), v = read(file); v.endedAtMs = p.request.deadlineMs; fs.writeFileSync(file, JSON.stringify(v));
+    reject('respec-failure-unverified', () => api.consumeConclusiveLocalFailure({ projectRoot: p.x.root, request: p.request, out }));
+  });
+  for (const kind of ['inspection', 'run', 'rollback']) it('failure evidence refuses a late publication clock: ' + kind, async () => {
+    const p = await failedProducer(), out = p.x.output('late-failure'), realNow = Date.now, open = fs.openSync, fsync = fs.fsyncSync;
+    const state = f.ref(path.join(p.x.root, '.formalising/auto-fv/resume/state.json')), run = auto.readRuntimeState({ projectRoot: p.x.root }).state.run;
+    let now = realNow(), resultFd; Date.now = () => now;
+    fs.openSync = function(file, ...args) { const fd = open.call(fs, file, ...args); if (file === path.join(out, 'result.json')) resultFd = fd; return fd; };
+    fs.fsyncSync = function(fd) { const v = fsync.call(fs, fd); if (fd === resultFd) now = kind === 'inspection' ? p.request.deadlineMs + 1 : kind === 'run' ? run.deadlineMs + 1 : now - 60000; return v; };
+    try { reject(kind === 'rollback' ? 'respec-clock-rollback' : 'respec-deadline-exhausted', () => api.verifyConclusiveLocalFailure({ projectRoot: p.x.root, request: p.request, out })); }
+    finally { Date.now = realNow; fs.openSync = open; fs.fsyncSync = fsync; }
+    assert.ok(fs.existsSync(path.join(out, 'failure.json'))); assert.deepEqual(f.ref(state.file), state);
+    reject('respec-failure-unverified', () => api.consumeConclusiveLocalFailure({ projectRoot: p.x.root, request: p.request, out }));
+  });
+  it('accepts only the exact retained old inspect pair for historical inspect and keeps current results current', async () => {
+    const x = await fixture(), b = begin(x), old = '6593d0f4f8ef6d0ddc510666644946ce4fc85898a161610fdc2f00d6c121a866';
+    mutatePublished(b.out, r => { r.implementation.respec.sha256 = old; }); b.evidence.result = f.ref(path.join(b.out, 'result.json'));
+    reject('respec-result-mismatch', () => api.verifyRespecResult({ request: b.q, out: b.out }));
+    const q = x.respecRequest('finish', b.evidence), out = x.output('legacy-finish'), result = api.runRespec({ request: q, out });
+    assert.equal(result.status, 'partial'); assert.notEqual(result.implementation.respec.sha256, old); assert.equal(api.verifyRespecResult({ request: q, out }).status, 'partial');
+  });
+  for (const change of ['respec', 'bundle', 'path', 'archive']) it('rejects legacy inspect substitution: ' + change, async () => {
+    const x = await fixture(), b = begin(x), old = '6593d0f4f8ef6d0ddc510666644946ce4fc85898a161610fdc2f00d6c121a866';
+    mutatePublished(b.out, r => { r.implementation.respec.sha256 = old; if (change === 'respec') r.implementation.respec.sha256 = 'f'.repeat(64); if (change === 'bundle') r.implementation.bundle.sha256 = 'f'.repeat(64); if (change === 'path') r.implementation.respec.file = r.implementation.bundle.file; });
+    b.evidence.result = f.ref(path.join(b.out, 'result.json')); const q = x.respecRequest('finish', b.evidence), open = fs.openSync, readFile = fs.readFileSync; let archiveFd;
+    if (change === 'archive') { fs.openSync = function(file, ...args) { const fd = open.call(fs, file, ...args); if (file.endsWith?.('auto-respec-inspect-v1-6593d0f4.source.txt')) archiveFd = fd; return fd; }; fs.readFileSync = function(file, ...args) { const value = readFile.call(fs, file, ...args); return file === archiveFd ? Buffer.concat([value, Buffer.from('changed')]) : value; }; }
+    try { reject('respec-inspect-mismatch', () => api.runRespec({ request: q, out: x.output('bad-legacy') })); } finally { fs.openSync = open; fs.readFileSync = readFile; }
+  });
+});
 
 describe('same-pipeline feedback currentness (protocol only)', () => {
   it('captures full scope and independently consumes the actual caller16/20 requests', async () => {
     const x = await fixture(), b = begin(x), before = f.ref(path.join(x.root, '.formalising/auto-fv/resume/state.json'));
     assert.equal(b.result.status, 'revision-proposed'); assert.equal(b.result.effectExecutable, false); assert.equal(b.result.humanReview, 'pending');
+    assert.deepEqual(Object.keys(b.result.observation.history).sort(), ['effects', 'gitEvidence', 'promotions'], 'inspect-v1 historical contract stays unchanged');
     assert.deepEqual(b.result.frame.scope.requestedRoots, [20, 21]); assert.deepEqual(b.result.observation.nodes.map(n => n.node), [19, 20, 21]);
     assert.equal(b.result.implementation.respec.file, path.join(f.ROOT, 'scripts/fvs-auto-respec.mjs')); assert.equal(b.result.implementation.respec.sha256, f.ref(b.result.implementation.respec.file).sha256);
     assert.ok(path.isAbsolute(b.result.observation.memoryEvidence.prime.file)); assert.ok(b.result.observation.memoryEvidence.receipts.every(r => path.isAbsolute(r.stdout.file) && path.isAbsolute(r.receipt.file)));

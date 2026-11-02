@@ -180,16 +180,161 @@ function promotionGuard(before, after, storeRows, registryRows) {
   }
   return promoted;
 }
+const legacyInspect = {
+  respec: '6593d0f4f8ef6d0ddc510666644946ce4fc85898a161610fdc2f00d6c121a866',
+  bundle: '340a0278d334c43036acd147341c2d72009de36f5fba49f63f4e043cdac10e5a',
+};
+const legacyInspectSource = fileURLToPath(new URL('../fv-skills/references/auto-respec-inspect-v1-6593d0f4.source.txt', import.meta.url));
+function inspectImplementation(v) {
+  const current = implementation();
+  if (same(v, current)) return true;
+  const expected = { respec: { file: current.respec.file, sha256: legacyInspect.respec }, bundle: { file: current.bundle.file, sha256: legacyInspect.bundle } };
+  // Only the unchanged inspect-v1 contract may read this exact retained version.
+  return current.bundle.sha256 === legacyInspect.bundle && same(v, expected)
+    && !(fs.statSync(legacyInspectSource).mode & 0o111) && hash(bytes(legacyInspectSource)) === legacyInspect.respec;
+}
+function storeHeads(rows) {
+  const heads = new Map();
+  for (const { sha256, record } of rows) heads.set(record.node, { node: record.node, sha256, integrated: record.integrated,
+    frozenSha256: record.frozenSha256, registryHeadSha256: record.registryHeadSha256, dependencies: record.dependencies });
+  return [...heads.values()].sort((a, b) => a.node - b.node);
+}
+function conclusiveLocalFailure(a, before, after, observation, run, registryRows, storeRows) {
+  const bad = message => fail('respec-failure-unverified', message), e = after.event, snapshot = observation.transition?.snapshot;
+  if (e.position !== 'after' || e.outcome !== 'failed' || before?.event.position !== 'before' || e.beforeEventSha256 !== before.sha256
+    || !same(e.intent, before.event.intent) || e.intent.effect.kind !== 'local' || !same(e.intent.request, before.event.intent.request)
+    || !['check', 'accept', 'freeze'].includes(a.kind) || a.stage !== (a.kind === 'accept' ? 'acceptance' : 'check')
+    || a.runId !== run.runId || a.transitionId !== e.intent.transitionId || a.reservationId !== e.intent.reservationId
+    || a.owner !== e.intent.owner || !same(a.nodes, e.intent.nodes) || a.expectedHeadSha256 !== before.event.prev
+    || e.effect.sessionId !== null || e.effect.association !== null || e.effect.resolution !== null
+    || observation.transition?.admissibility.status !== 'facts-unverified' || observation.transition.admissibility.next !== null
+    || observation.transition.admissibility.executable !== false || observation.transition.admissibility.reason !== 'effect-outcome-failed'
+    || !snapshot || a.before.worker !== null || !same(a.before, snapshot)) bad('exact failed local producer with unchanged complete snapshot required');
+  const original = readRuntimeObservation(before.event);
+  if (original.transition?.admissibility.status !== 'next-action-eligible' || !same(original.transition.snapshot, a.before)) bad('original independently eligible before observation required');
+  const fixed = a.before.fixed;
+  if (fixed.runId !== run.runId || fixed.canonicalRoot !== run.canonicalRoot || fixed.gitCommonDir !== run.gitCommonDir
+    || fixed.startedAtMs !== run.startedAtMs || fixed.deadlineMs !== run.deadlineMs || fixed.choicesGeneration !== run.choicesGeneration
+    || fixed.agreementContextSha256 !== run.agreementContextSha256 || fixed.scopeSha256 !== memoryHash(run.scope)
+    || fixed.limitsSha256 !== memoryHash(run.limits) || !same(fixed.authorization, a.authorization) || !same(fixed.profile, a.profile)
+    || snapshot.source.dirty || snapshot.registry?.pending || snapshot.store?.pending) bad('original run/grant/context or pending canonical mutation changed');
+  if (snapshot.baseline) bound(snapshot.baseline);
+  if (snapshot.registry) chainPrefix(registryRows, snapshot.registry.headSha256, 'sha');
+  if (snapshot.store && !same(snapshot.store.heads, storeHeads(chainPrefix(storeRows, snapshot.store.headSha256, 'sha256')))) bad('complete accepted-store prefix/heads differ');
+  const commands = e.effect.evidence.filter(ref => { try { return transitionJson(bound(ref, false)).schema === 'fvs/auto-command-receipt'; } catch (err) { if (err.code !== 'transition-invalid-input') throw err; return false; } });
+  if (commands.length !== 1) bad('one exact retained terminal command required');
+  const command = bound(commands[0]);
+  closed(command, ['schema', 'schemaVersion', 'runId', 'transitionId', 'actionSha256', 'argv', 'cwd', 'env', 'tool', 'startedAtMs', 'endedAtMs', 'exitCode', 'signal', 'error', 'stdout', 'stderr'], 'terminal command');
+  const autoFile = fileURLToPath(new URL('fvs-auto.mjs', import.meta.url)), argv = command.argv, job = bound(a.target.request), source = job.source ?? job.baseline?.source;
+  if (command.schemaVersion !== 1 || command.runId !== run.runId || command.transitionId !== a.transitionId || command.actionSha256 !== memoryHash(a)
+    || !Array.isArray(argv) || argv.length !== 7 || !same(argv.slice(0, 6), [process.execPath, autoFile, a.kind, '--request', a.target.request.file, '--out'])
+    || !text(argv[6]) || !path.isAbsolute(argv[6]) || path.normalize(argv[6]) !== argv[6] || command.cwd !== snapshot.source.root
+    || command.tool.file !== process.execPath || job.schema !== 'fvs-checker/' + a.kind + '-request' || job.version !== 1 || job.purpose !== 'auto'
+    || !source || source.root !== snapshot.source.root || source.commit !== snapshot.source.commit || source.expectedTree !== snapshot.source.tree
+    || !Number.isSafeInteger(job.deadlineMs) || job.deadlineMs > run.deadlineMs || job.deadlineMs <= before.event.observedAtMs
+    || !Number.isSafeInteger(command.startedAtMs) || !Number.isSafeInteger(command.endedAtMs) || command.startedAtMs < before.event.observedAtMs
+    || command.endedAtMs < command.startedAtMs || command.endedAtMs > e.observedAtMs || command.endedAtMs > Date.now()
+    || command.signal !== null || command.error !== null) bad('command is not the original exact producer invocation/terminal interval');
+  const allowedEnv = ['PATH', 'LANG', 'LC_ALL', 'HOME', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM', 'GIT_NO_LAZY_FETCH', 'GIT_NO_REPLACE_OBJECTS', 'GIT_OPTIONAL_LOCKS', 'GIT_TERMINAL_PROMPT', 'DISABLE_TELEMETRY', 'DO_NOT_TRACK'];
+  if (!command.env || Object.keys(command.env).some(k => !allowedEnv.includes(k) || typeof command.env[k] !== 'string') || command.env.GIT_NO_LAZY_FETCH !== '1') bad('command environment is not the retained offline allowlist');
+  if (a.kind === 'accept' && (job.node !== a.target.node || !same(job.store, { root: snapshot.store?.root, expectedHeadSha256: snapshot.store?.headSha256 }))) bad('acceptance target/store differs');
+  if (a.kind === 'check' && !same(job.nodes, a.target.nodes)) bad('check scope differs');
+  if (a.kind !== 'freeze' && !same(job.baseline, snapshot.baseline)) bad('producer frozen context differs');
+  if (a.kind === 'freeze' && !same(job.registry, { root: snapshot.registry?.root, headSha256: snapshot.registry?.headSha256 })) bad('freeze registry differs');
+  bound(command.tool, false); const output = bound(command.stdout), stderr = bound(command.stderr, false).toString('utf8');
+  closed(output, ['ok', 'status', 'code', 'message'], 'terminal refusal');
+  const codes = { 4: ['audit-failed'], 5: ['invalid-input'], 6: ['unsupported', 'baseline-unavailable'], 7: ['stale-input'], 8: ['timeout'] };
+  if (!Number.isInteger(command.exitCode) || !codes[command.exitCode]?.includes(output.code) || output.ok !== false || output.status !== 'unverified' || !text(output.message)
+    || !stderr.trim().endsWith('FVS >> ' + output.code + ': ' + output.message)) bad('definite matching non-success command/refusal required');
+  return { beforeEventSha256: before.sha256, afterEventSha256: after.sha256, action: before.event.intent.request, command: commands[0],
+    runId: run.runId, reservationId: a.reservationId, terminalOutcome: 'failed', diagnostic: output, canonical: tupleOfAction(snapshot),
+    authority: 'execution-closure-only; no tuple advance or successor', effectExecutable: false, proofAuthority: 'none' };
+}
+function failureRequest(raw) {
+  const q = data(raw);
+  closed(q, ['schema', 'schemaVersion', 'attemptId', 'runId', 'expectedBeforeEventSha256', 'expectedAction', 'expectedCommand', 'afterRequest', 'afterResult', 'committedHeadSha256', 'deadlineMs'], 'failure consumer request');
+  if (q.schema !== 'fvs/auto-respec-failure-request' || q.schemaVersion !== 1 || ![q.attemptId, q.runId].every(uuid)
+    || ![q.expectedBeforeEventSha256, q.committedHeadSha256].every(sha)) fail('respec-invalid-input', 'exact caller-owned failure identities required');
+  for (const r of [q.expectedAction, q.expectedCommand, q.afterRequest, q.afterResult]) reference(r);
+  if (path.basename(q.afterResult.file) !== 'result.json') fail('respec-invalid-input', 'canonical after result required');
+  deadline(q.deadlineMs); return q;
+}
+function failureClock(q, run, floor) {
+  const now = Date.now();
+  if (now < floor) fail('respec-clock-rollback', 'failure consumer clock moved backwards');
+  if (now >= q.deadlineMs || now >= run.deadlineMs) fail('respec-deadline-exhausted', 'failure inspection/original deadline exhausted');
+  return now;
+}
+function failureInputs(projectRoot, q) {
+  const runtime = readRuntime(projectRoot), run = runtime.state?.run, rq = bound(q.afterRequest), result = bound(q.afterResult), a = readTransitionAction(q.expectedAction);
+  if (!run || run.runId !== q.runId || runtime.headSha256 !== q.committedHeadSha256 || result.committedHeadSha256 !== q.committedHeadSha256
+    || runtime.fileSha256 !== result.runtimeFileSha256 || !same(result.request, rq) || result.requestSha256 !== memoryHash(rq)
+    || rq.runId !== q.runId || rq.transition?.position !== 'after' || rq.transition.outcome !== 'failed'
+    || rq.transition.beforeEventSha256 !== q.expectedBeforeEventSha256 || !same(rq.transition.intent.request, q.expectedAction)
+    || !rq.transition.effect.evidence.some(r => same(r, q.expectedCommand))) fail('respec-failure-unverified', 'not the current exact failed-after request/result');
+  const after = runtime.state.history.find(r => r.sha256 === result.recordedEventSha256), before = runtime.state.history.find(r => r.sha256 === q.expectedBeforeEventSha256);
+  if (!after || after.sha256 !== runtime.headSha256 || !before || !same(after.event.intent.request, q.expectedAction)
+    || runtime.reservations.get(a.reservationId)?.state !== 'closed' || runtime.reservations.get(a.reservationId)?.after !== after.sha256) fail('respec-failure-unverified', 'exact failed after must conclusively close this local reservation');
+  const registry = a.before.registry === null ? null : readChain(a.before.registry.root), store = a.before.store === null ? null : readAcceptedStore(a.before.store.root);
+  if (registry?.pending || (registry?.records.at(-1)?.sha ?? null) !== (a.before.registry?.headSha256 ?? null)
+    || (store?.headSha256 ?? null) !== (a.before.store?.headSha256 ?? null)) fail('respec-failure-unverified', 'canonical heads/pending state changed since the failed effect');
+  const observation = readRuntimeObservation(after.event), facts = conclusiveLocalFailure(a, before, after, observation, run, registry?.records ?? [], store?.records ?? []);
+  if (!same(facts.command, q.expectedCommand)) fail('respec-failure-unverified', 'another terminal command is not this caller expected failure');
+  return { runtime, run, rq, result, a, facts };
+}
+function failureOutput(out, projectRoot, x) {
+  if (!text(out) || !path.isAbsolute(out) || path.normalize(out) !== out || fs.existsSync(out) || fs.realpathSync(path.dirname(out)) !== path.dirname(out)) fail('respec-output-invalid', 'exclusive canonical failure output required');
+  const cmd = bound(x.facts.command), roots = [projectRoot, x.a.before.source.root, x.a.before.registry?.root, x.a.before.store?.root,
+    cmd.argv[6], path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')];
+  if (x.a.before.baseline) {
+    const frozen = bound(x.a.before.baseline), job = bound(frozen.input);
+    roots.push(path.dirname(x.a.before.baseline.file), frozen.build?.projectRoot, frozen.build?.buildRoot, job.baseline?.source?.root, job.baseline?.dependencies?.root);
+  }
+  for (const binding of readState({ projectRoot, requireAgreement: true }).state.memoryBindings ?? []) roots.push(binding.storeDir, binding.databasePath);
+  if (roots.filter(Boolean).some(root => inside(root, out) || inside(out, root))) fail('respec-output-protected', 'failure output overlaps canonical/producer/input state');
+}
+// This consumes a truthful16 failed-after; it never records or grants an effect.
+export function verifyConclusiveLocalFailure(options) {
+  options = data(options); closed(options, ['projectRoot', 'request', 'out'], 'failure verifier');
+  const { projectRoot, out } = options, q = failureRequest(options.request), x = failureInputs(projectRoot, q), began = failureClock(q, x.run, x.runtime.lastObservedAtMs);
+  failureOutput(out, projectRoot, x); fs.mkdirSync(out, { mode: 0o700 }); const input = save(out, 'request.json', q), product = implementation();
+  try {
+    const consumed = verifyTransition({ projectRoot, request: x.rq, out: path.dirname(q.afterResult.file) });
+    if (consumed.position !== 'after' || consumed.committedHeadSha256 !== q.committedHeadSha256) fail('respec-failure-unverified', 'independent16 consumer did not confirm this failed after');
+    const final = failureInputs(projectRoot, q), endedAtMs = failureClock(q, x.run, began);
+    if (final.runtime.fileSha256 !== x.runtime.fileSha256 || !same(final.facts, x.facts) || !same(product, implementation())) fail('respec-failure-unverified', 'failure context/implementation changed during consumption');
+    const value = { schema: 'fvs/auto-respec-local-failure', schemaVersion: 1, request: q, requestSha256: memoryHash(q), requestInput: input,
+      implementation: product, status: 'conclusive-no-canonical-effect', ...x.facts, committedHeadSha256: q.committedHeadSha256,
+      runtimeFileSha256: final.runtime.fileSha256, beganAtMs: began, endedAtMs, verificationEvidence: consumed.verificationEvidence };
+    const evidence = save(out, 'result.json', value); failureClock(q, x.run, endedAtMs);
+    return { ...value, evidence };
+  } catch (e) { save(out, 'failure.json', diagnostic(e)); throw e; }
+}
+export function consumeConclusiveLocalFailure(options) {
+  options = data(options); closed(options, ['projectRoot', 'request', 'out'], 'failure evidence consumer');
+  const q = failureRequest(options.request), result = bound({ file: path.join(options.out, 'result.json'), sha256: hash(bytes(path.join(options.out, 'result.json'))) });
+  if (fs.existsSync(path.join(options.out, 'failure.json')) || result.schema !== 'fvs/auto-respec-local-failure' || result.schemaVersion !== 1
+    || result.requestSha256 !== memoryHash(q) || !same(result.request, q) || !same(bound(result.requestInput), q)
+    || !same(result.implementation, implementation()) || result.status !== 'conclusive-no-canonical-effect' || result.effectExecutable !== false
+    || result.proofAuthority !== 'none' || result.authority !== 'execution-closure-only; no tuple advance or successor'
+    || !Number.isSafeInteger(result.beganAtMs) || !Number.isSafeInteger(result.endedAtMs) || result.endedAtMs < result.beganAtMs
+    || result.endedAtMs >= q.deadlineMs || result.endedAtMs > Date.now()) fail('respec-failure-unverified', 'not this caller/current implementation failure evidence');
+  const output = path.join(fs.realpathSync(os.tmpdir()), 'fvs-respec-failure-consume-' + crypto.randomUUID());
+  const fresh = verifyConclusiveLocalFailure({ projectRoot: options.projectRoot, request: q, out: output });
+  const stable = v => { const { beganAtMs, endedAtMs, verificationEvidence, requestInput, evidence, ...rest } = v; return rest; };
+  if (!same(stable(result), stable(fresh))) fail('respec-failure-unverified', 'saved failure evidence differs from fresh independent validation');
+  return { ...fresh, effectExecutable: false };
+}
 function trace(q, x, initial, out) {
   const original = bound(initial.request), result = bound(initial.result);
   publicationOf(path.dirname(initial.result.file), original, initial.result, result);
-  if (original.operation !== 'inspect' || result.schema !== 'fvs/auto-respec-result' || result.operation !== 'inspect' || result.requestSha256 !== memoryHash(original) || !same(result.request, original) || !same(result.implementation, implementation())) fail('respec-inspect-mismatch', 'not the exact original inspect request/result/implementation');
+  if (original.operation !== 'inspect' || result.schema !== 'fvs/auto-respec-result' || result.operation !== 'inspect' || result.requestSha256 !== memoryHash(original) || !same(result.request, original) || !inspectImplementation(result.implementation)) fail('respec-inspect-mismatch', 'not the exact original inspect request/result/implementation');
   const originalFrame = frameOf(original, x.prior, x.runtime.state.run);
   if (!same(originalFrame, result.frame) || !same(originalFrame, x.frame)) fail('respec-frame-mismatch', 'original feedback/scope/run/accounting frame changed');
   const head = original.current.resume.committedHeadSha256, index = x.runtime.state.history.findIndex(row => row.sha256 === head);
   if (index < 0) fail('respec-history-mismatch', 'initial committed runtime prefix is missing');
   checkVersions(original.requestedItems, nodeHeads(chainPrefix(x.chain.records, original.current.bundle.registry.expectedHeadSha256, 'sha')));
-  let current = tupleOfBundle(original.current.bundle); const effects = [], promotions = [], gitEvidence = [];
+  let current = tupleOfBundle(original.current.bundle); const effects = [], failures = [], promotions = [], gitEvidence = [];
   const toolRef = name => { const file = fileURLToPath(new URL(name, import.meta.url)); return { file, sha256: hash(bytes(file)) }; };
   const validators = transitionValidators({ tools: { auto: toolRef('fvs-auto.mjs'), registry: toolRef('fvs-contract-registry.mjs') }, git(root, args, buffer = false) {
     if (root !== x.b.source.root || !['rev-parse', 'show', 'rev-list', 'diff-tree'].includes(args[0])) fail('respec-history-mismatch', 'unexpected historical Git read');
@@ -207,6 +352,14 @@ function trace(q, x, initial, out) {
   for (const row of x.runtime.state.history.slice(index + 1)) {
     const event = row.event; if (!event.intent.request || event.position !== 'after') continue;
     const observation = readRuntimeObservation(event), a = readTransitionAction(event.intent.request), snapshot = observation.transition?.snapshot;
+    if (event.outcome === 'failed') {
+      const before = x.runtime.state.history.find(r => r.sha256 === event.beforeEventSha256);
+      if (!same(tupleOfAction(a.before), current) || !same(a.authorization, x.frame.authorization) || !same(a.profile, x.frame.profile)
+        || !same(a.before.fixed.extraction, x.frame.stages.extraction) || !same(a.before.fixed.graph, x.frame.stages.graph)
+        || !same(a.before.fixed.plan, x.frame.stages.plan)) fail('respec-history-mismatch', 'failed action lost the original trace frame');
+      failures.push(conclusiveLocalFailure(a, before, row, observation, x.runtime.state.run, x.chain.records, x.store?.records ?? []));
+      continue; // A failure grants no progress; a fresh before must justify any retry.
+    }
     if (event.outcome !== 'succeeded' || observation.transition?.admissibility.status !== 'facts-recorded-partial' || !snapshot) fail('respec-history-mismatch', 'effect completion remains uncertain/unverified');
     const before = x.runtime.state.history.find(r => r.sha256 === event.beforeEventSha256);
     const completion = observation.transition.admissibility.completion;
@@ -240,7 +393,7 @@ function trace(q, x, initial, out) {
     current = after; effects.push({ beforeEventSha256: before.sha256, afterEventSha256: row.sha256, kind: a.kind, completion });
   }
   if (!same(current, tupleOfBundle(x.b))) fail('respec-history-mismatch', 'current context has no complete paired revision path');
-  return { effects, promotions, gitEvidence };
+  return { effects, failures, promotions, gitEvidence };
 }
 function implementation() {
   return Object.fromEntries([['respec', 'fvs-auto-respec.mjs'], ['bundle', 'fvs-auto-bundle.mjs']].map(([key, name]) => {
