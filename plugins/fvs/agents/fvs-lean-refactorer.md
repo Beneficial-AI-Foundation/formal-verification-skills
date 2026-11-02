@@ -17,7 +17,9 @@ do not rely on @-references or inherited history.
 ## 1. Check the assignment
 
 Read the agreement, protected source, owned files/helper locations, research evidence, current
-sources, recorded file gates, measurement plan and prior diagnostics. Stop with `## ERROR` if
+sources, recorded file gates, measurement plan and prior diagnostics. Require the parent's resolved
+project toolchain/capability plan; use its exact installed context and supported tactics. Never
+substitute a global4.31, upgrade pins or reinterpret a real failed proof as an unsupported feature. Stop with `## ERROR` if
 required context or permission is missing. You are not alone in the codebase: preserve other work,
 edit only owned files and do not spawn children. Shared-helper/caller dependencies must be ordered
 by the parent before dependent edits. Direct or transitive imports make units dependent, including

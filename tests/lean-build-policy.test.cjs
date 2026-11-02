@@ -45,13 +45,14 @@ describe('Lean build entrypoints are cache-first and fail closed', () => {
   for (const file of ENTRYPOINTS) {
     it(`${relative(file)} warms the cache before its first build-capable action`, () => {
       const source = fs.readFileSync(file, 'utf8');
+      const cacheCommand=file.endsWith('lean-refactor.md')?`${THREAD_PREFIX}\"$PROJECT_LAKE\" exe cache get`:CACHE_COMMAND;
       const lines = source.split('\n');
-      const cacheLine = lines.findIndex(line => line.includes(CACHE_COMMAND));
+      const cacheLine = lines.findIndex(line => line.includes(cacheCommand));
       assert.ok(cacheLine >= 0, `${relative(file)} missing ${CACHE_COMMAND}`);
 
-      const cacheAt = source.indexOf(CACHE_COMMAND);
+      const cacheAt = source.indexOf(cacheCommand);
       const actions = [
-        source.search(/^\s*LEAN_NUM_THREADS="\$\{LEAN_NUM_THREADS:-4\}" nice -n 19 lake build\b/m),
+        source.search(/^\s*LEAN_NUM_THREADS="\$\{LEAN_NUM_THREADS:-4\}" nice -n 19 (?:lake|"\$PROJECT_LAKE") build\b/m),
         source.search(/subagent_type="[^"\n]+"/),
         source.search(/<step name="(?:dispatch|research_phase|execute_phase|iterative_execute)/),
       ].filter(at => at >= 0);
@@ -93,8 +94,8 @@ describe('Canonical FVS build instructions use native bounded concurrency', () =
     const offenders = [];
     for (const file of canonicalFiles) {
       fs.readFileSync(file, 'utf8').split('\n').forEach((line, index) => {
-        if (line.includes('nice -n 19 lake build') &&
-            !line.includes(`${THREAD_PREFIX}lake build`)) {
+        if ((line.includes('nice -n 19 lake build') || line.includes('nice -n 19 "$PROJECT_LAKE" build')) &&
+            !line.includes(`${THREAD_PREFIX}lake build`) && !line.includes(`${THREAD_PREFIX}\"$PROJECT_LAKE\" build`)) {
           offenders.push(`${relative(file)}:${index + 1}: ${line.trim()}`);
         }
       });

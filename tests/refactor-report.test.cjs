@@ -8,6 +8,8 @@ const { pathToFileURL } = require('node:url');
 const { spawnSync } = require('node:child_process');
 const tool = import(pathToFileURL(path.join(__dirname, '../scripts/fvs-refactor-report.mjs')));
 const dir = () => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-refactor-report-')));
+const TEST_PIN=process.env.FVS_REFACTOR_TEST_PIN || 'leanprover/lean4:v4.31.0';
+const TEST_VERSION=TEST_PIN.split(':').at(-1).replace(/^v/,'');
 const printedGuard=()=>fs.readFileSync(path.join(__dirname,'../fv-skills/references/lean-refactoring.md'),'utf8')
   .match(/# A previously covered boundary must remain covered\.\n[\s\S]*?\nfi/)[0];
 function guardFixture(){
@@ -116,6 +118,23 @@ it('hashes context without treating configuration comments as proof-line savings
   assert.notEqual(a.inputs['lakefile.toml'],contextHashes(root,['lakefile.toml']).inputs['lakefile.toml']);assert.equal(a.inputs['lean-toolchain'],null);
 });
 
+it('resolves only the effective installed project override, never the global default',async()=>{
+  const {projectToolchainContext}=await tool;const root=dir();fs.writeFileSync(path.join(root,'lean-toolchain'),'project-pin\n');
+  const install=name=>{const p=path.join(root,name);fs.mkdirSync(path.join(p,'bin'),{recursive:true});for(const n of ['lean','lake']){fs.writeFileSync(path.join(p,'bin',n),'#!/bin/sh\nexit 99\n');fs.chmodSync(path.join(p,'bin',n),0o755);}return p;};
+  const a=install('pinned');const b=install('override');
+  const state={elan_version:{current:'fixture'},toolchains:{installed:[{resolved_name:'project-pin',path:a},{resolved_name:'explicit-override',path:b}],default:{resolved:{live:{Ok:'global-other'}}},active_override:{reason:{ToolchainFile:path.join(root,'lean-toolchain')}},resolved_active:{live:{Ok:'project-pin'},cached:'project-pin'}}};
+  const ctx=projectToolchainContext(root,state);assert.equal(ctx.effectiveToolchain,'project-pin');assert.equal(ctx.lean.path,path.join(a,'bin','lean'));assert.equal(ctx.pin.value,'project-pin');
+  const overridden=structuredClone(state);overridden.toolchains.active_override={reason:'Environment'};overridden.toolchains.resolved_active={live:{Ok:'explicit-override'}};
+  assert.equal(projectToolchainContext(root,overridden).lake.path,path.join(b,'bin','lake'));
+  const cached=structuredClone(state);cached.toolchains.resolved_active={live:{Err:'offline channel'},cached:'project-pin'};assert.equal(projectToolchainContext(root,cached).resolution,'cached-offline');
+  const missing=structuredClone(state);missing.toolchains.resolved_active={live:{Ok:'uninstalled-pin'}};assert.throws(()=>projectToolchainContext(root,missing),/not uniquely installed/);assert.equal(fs.existsSync(path.join(root,'uninstalled-pin')),false);
+  const global=structuredClone(state);global.toolchains.active_override=null;assert.throws(()=>projectToolchainContext(root,global),/refusing global default/);
+  const nested=path.join(root,'nested');fs.mkdirSync(nested);fs.writeFileSync(path.join(nested,'lean-toolchain'),'different-pin\n');
+  assert.throws(()=>projectToolchainContext(nested,state),/does not describe this project pin/);
+  fs.appendFileSync(path.join(a,'bin','lean'),'# changed');assert.notEqual(projectToolchainContext(root,state).lean.sha256,ctx.lean.sha256,'binary identity drift is visible');
+  fs.writeFileSync(path.join(root,'lean-toolchain'),'changed-pin\n');assert.notEqual(projectToolchainContext(root,state).pin.sha256,ctx.pin.sha256);
+});
+
 it('requires rendered definition bodies and refuses elided, opaque, missing or theorem-proof views',async()=>{
   const {normaliseBoundaryMessages}=await tool;const info=data=>JSON.stringify({severity:'information',data})+'\n';
   for(const text of ['opaque core : Nat','axiom core : Nat','constructor Core.mk : Core','def core : Nat','def core : Nat :=','def core : Nat := <not imported>','def core : Nat := ⋯']) {
@@ -182,9 +201,30 @@ it('a covered baseline stops when the final protected view becomes elided',async
 });
 
 const REAL_LAKE=process.env.FVS_REFACTOR_TEST_LAKE;
+const REAL_ELAN=process.env.FVS_REFACTOR_TEST_ELAN;
+it('installed Elan resolves file, environment and directory overrides offline without installing',{skip:!REAL_ELAN},async()=>{
+  const {projectToolchainContext}=await tool;const root=dir();
+  const installs=JSON.parse(process.env.FVS_REFACTOR_TEST_INSTALLED_CONTEXTS);assert.ok(installs.length>=2);
+  const elanHome=path.join(root,'elan');fs.mkdirSync(path.join(elanHome,'toolchains'),{recursive:true});
+  for(const entry of installs)fs.symlinkSync(entry.path,path.join(elanHome,'toolchains',entry.directoryName),'dir');
+  const settings=path.join(elanHome,'settings.toml');const other=installs.find(x=>x.pin!==TEST_PIN);assert.ok(other);
+  const config=`default_toolchain = "${other.pin}"\nversion = "12"\n`;
+  fs.writeFileSync(settings,config);fs.writeFileSync(path.join(root,'lean-toolchain'),TEST_PIN+'\n');
+  for(const n of ['home','tmp'])fs.mkdirSync(path.join(root,n));
+  const env={HOME:path.join(root,'home'),TMPDIR:path.join(root,'tmp'),ELAN_HOME:elanHome,PATH:'/usr/bin:/bin',LC_ALL:'C'};
+  const capture=extra=>{const r=spawnSync(REAL_ELAN,['dump-state','--no-net'],{cwd:root,env:{...env,...extra},encoding:'utf8',timeout:20000});assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout);};
+  const original=fs.readFileSync(path.join(root,'lean-toolchain'),'utf8');
+  const a=projectToolchainContext(root,capture());assert.equal(a.effectiveToolchain,TEST_PIN);assert.equal(a.lean.path,fs.realpathSync(path.join(installs.find(x=>x.pin===TEST_PIN).path,'bin','lean')));
+  const b=projectToolchainContext(root,capture({ELAN_TOOLCHAIN:other.pin}));assert.equal(b.effectiveToolchain,other.pin);assert.equal(b.overrideReason,'Environment');
+  fs.writeFileSync(settings,config+`\n[overrides]\n${JSON.stringify(root)} = "${other.pin}"\n`);
+  const c=projectToolchainContext(root,capture());assert.equal(c.effectiveToolchain,other.pin);assert.equal(c.overrideReason.OverrideDB,root);
+  const names=fs.readdirSync(path.join(elanHome,'toolchains'));
+  const missing=capture({ELAN_TOOLCHAIN:'leanprover/lean4:v0.0.999'});assert.throws(()=>projectToolchainContext(root,missing),/not uniquely installed/);
+  assert.deepEqual(fs.readdirSync(path.join(elanHome,'toolchains')),names);assert.equal(fs.readFileSync(path.join(root,'lean-toolchain'),'utf8'),original);
+});
 it('real Lean external-file comparison keeps type and axiom checks while body and metric gaps need review',{skip:!REAL_LAKE},t=>{
   const root=dir();for(const name of ['home','tmp','Extra'])fs.mkdirSync(path.join(root,name));
-  fs.writeFileSync(path.join(root,'lean-toolchain'),'leanprover/lean4:v4.31.0\n');
+  fs.writeFileSync(path.join(root,'lean-toolchain'),TEST_PIN+'\n');
   fs.writeFileSync(path.join(root,'lakefile.toml'),'name = "external_review"\ndefaultTargets = ["Main"]\n[[lean_lib]]\nname = "Main"\n');
   fs.writeFileSync(path.join(root,'Main.lean'),'def mainValue : Nat := 0\n');
   const env={HOME:path.join(root,'home'),TMPDIR:path.join(root,'tmp'),PATH:path.dirname(REAL_LAKE)+':/usr/bin:/bin',LEAN_NUM_THREADS:'1',LC_ALL:'C',GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_NOSYSTEM:'1',GIT_TERMINAL_PROMPT:'0'};
@@ -213,7 +253,7 @@ it('real Lean external-file comparison keeps type and axiom checks while body an
 });
 it('real Lean views allow proof rewrites but expose type, definition and hidden-axiom changes', {skip:!REAL_LAKE},async t=>{
   const {normaliseBoundaryMessages,scanLean}=await tool;assert.ok(path.isAbsolute(REAL_LAKE));const root=dir();for(const n of ['home','tmp'])fs.mkdirSync(path.join(root,n));
-  fs.writeFileSync(path.join(root,'lean-toolchain'),'leanprover/lean4:v4.31.0\n');fs.writeFileSync(path.join(root,'lakefile.toml'),'name = "guard_demo"\ndefaultTargets = ["GuardDemo"]\n[[lean_lib]]\nname = "GuardDemo"\n');
+  fs.writeFileSync(path.join(root,'lean-toolchain'),TEST_PIN+'\n');fs.writeFileSync(path.join(root,'lakefile.toml'),'name = "guard_demo"\ndefaultTargets = ["GuardDemo"]\n[[lean_lib]]\nname = "GuardDemo"\n');
   const query='import GuardDemo\nset_option pp.all true\nset_option pp.maxSteps 20000\n#check @claim\n#check @core\n#print core\n#print axioms claim\n#print axioms core\n';const q=path.join(root,'Probe.lean');fs.writeFileSync(q,query);
   const env={HOME:path.join(root,'home'),TMPDIR:path.join(root,'tmp'),PATH:path.dirname(REAL_LAKE)+':/usr/bin:/bin',LEAN_NUM_THREADS:'1',LC_ALL:'C',GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_NOSYSTEM:'1',GIT_TERMINAL_PROMPT:'0'};
   const run=args=>{const r=spawnSync('nice',['-n','19',REAL_LAKE,...args],{cwd:root,env,encoding:'utf8',timeout:60000});assert.equal(r.status,0,r.error?.message||r.stderr+r.stdout);return r;};
@@ -246,7 +286,7 @@ it('real Lean views allow proof rewrites but expose type, definition and hidden-
   const reference=fs.readFileSync(path.join(__dirname,'../fv-skills/references/lean-refactoring.md'),'utf8');
   const timing=[...reference.matchAll(/```bash\n([\s\S]*?)```/g)].map(m=>m[1]).find(b=>b.includes('FVS_ELAPSED_SECONDS'));
   assert.ok(timing);const times=path.join(root,'times');fs.mkdirSync(times);
-  const timingArgs=['-c',`SPEC_PATH=GuardDemo.lean\nTIMING_DIR=${times}\nPHASE=baseline\n${timing}`];
+  const timingArgs=['-c',`SPEC_PATH=GuardDemo.lean\nTIMING_DIR=${times}\nPHASE=baseline\nELABORATION_CMD=("${REAL_LAKE}" lean "$SPEC_PATH" -- --profile)\n${timing}`];
   const timed=spawnSync('/bin/bash',timingArgs,{cwd:root,env,encoding:'utf8',timeout:60000});assert.equal(timed.status,0,timed.stderr+timed.stdout);
   const log=path.join(times,'baseline-1.log');const bytes=fs.readFileSync(log);assert.match(bytes.toString(),/FVS_ELAPSED_SECONDS=\d/);
   const refused=spawnSync('/bin/bash',timingArgs,{cwd:root,env,encoding:'utf8',timeout:60000});assert.notEqual(refused.status,0);assert.deepEqual(fs.readFileSync(log),bytes,'baseline timing logs must not be overwritten');

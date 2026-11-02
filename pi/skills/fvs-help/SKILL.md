@@ -213,6 +213,7 @@ maintainable proofs. Count new helpers/wiring and preserve useful prose.
 - Reuses a matching approved Contract when available; a recall view is not enforcement
 - Shows concrete broader-scope benefit/cost and asks before expanding or adding public API
 - Keeps legacy flags; warns once when an explicit legacy mode maps to a search hint; the default needs no compatibility prompt
+- Resolves the actual installed project toolchain/overrides and checks capabilities; never upgrades a pin
 - Parent runs serial file/project gates, printed type/definition/axiom comparisons and comparable timings
 - Net code LoC excludes comment deletion/format packing; helper/wiring costs remain visible
 - Unavailable printed coverage or metric syntax uses an explicit reviewed comparison; builds and axiom checks remain required

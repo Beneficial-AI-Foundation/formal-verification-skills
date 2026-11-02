@@ -183,6 +183,57 @@ export function contextHashes(root, names) {
   return { schema: 'fvs-refactor/context-inputs', root, inputs };
 }
 
+// Interpret an existing Elan no-network state dump; never execute/install a toolchain.
+export function projectToolchainContext(root, state) {
+  root = fs.realpathSync(root);
+  const pinPath = path.join(root, 'lean-toolchain');
+  const pin = fs.readFileSync(pinPath, 'utf8');
+  if (!pin.trim()) throw new Error('Empty project toolchain pin');
+  const tc = state?.toolchains; const active = tc?.active_override;
+  if (!active?.reason) throw new Error('No project toolchain override resolved; refusing global default');
+  const selected = tc.resolved_active?.live?.Ok || tc.resolved_active?.cached;
+  if (typeof selected !== 'string' || !selected) throw new Error('Project toolchain cannot be resolved offline');
+  const matches = Array.isArray(tc.installed) ? tc.installed.filter(t => t.resolved_name === selected) : [];
+  if (matches.length !== 1 || typeof matches[0].path !== 'string' || !path.isAbsolute(matches[0].path)) {
+    throw new Error('Exact effective toolchain is not uniquely installed; do not download or substitute');
+  }
+  const reason = active.reason;
+  if (reason !== 'Environment') {
+    const keys = reason && typeof reason === 'object' ? Object.keys(reason) : [];
+    if (keys.length !== 1 || !['ToolchainFile', 'OverrideDB', 'LeanpkgFile', 'InToolchainDirectory'].includes(keys[0])) {
+      throw new Error('Unsupported toolchain override metadata; inspect project setup explicitly');
+    }
+    const key = keys[0]; const namedPath = reason[key];
+    if (typeof namedPath !== 'string' || !path.isAbsolute(namedPath)) throw new Error('Invalid override origin');
+    if (key === 'ToolchainFile' && fs.realpathSync(namedPath) !== fs.realpathSync(pinPath)) {
+      throw new Error('Toolchain state does not describe this project pin');
+    }
+    const origin = fs.realpathSync(key.endsWith('File') ? path.dirname(namedPath) : namedPath);
+    const relative = path.relative(origin, root);
+    if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) {
+      throw new Error('Toolchain state belongs to another project context');
+    }
+  }
+  const installedRoot = fs.realpathSync(matches[0].path);
+  const executable = name => {
+    const file = fs.realpathSync(path.join(installedRoot, 'bin', name));
+    if (path.dirname(file) !== path.join(installedRoot, 'bin') || !fs.statSync(file).isFile()) {
+      throw new Error('Toolchain executable redirects outside its installed bin; validate setup explicitly');
+    }
+    fs.accessSync(file, fs.constants.X_OK);
+    return { path: file, sha256: hash(fs.readFileSync(file)) };
+  };
+  return { schema: 'fvs-refactor/project-toolchain', root,
+    pin: { path: pinPath, value: pin.trim(), sha256: hash(pin) },
+    effectiveToolchain: selected, overrideReason: reason, unresolved: active.unresolved,
+    resolution: tc.resolved_active.live?.Ok ? 'offline-resolved' : 'cached-offline',
+    elanVersion: state.elan_version?.current, lean: executable('lean'), lake: executable('lake'),
+    environmentOverrides: Object.fromEntries(['ELAN_TOOLCHAIN', 'ELAN_HOME', 'LEAN_SYSROOT', 'LEAN_PATH',
+      'LEAN_SRC_PATH', 'LAKE_CONFIG', 'LAKE_OVERRIDE_LEAN'].filter(k => process.env[k] !== undefined)
+      .map(k => [k, process.env[k]])),
+    limits: 'Selection/identity only, not capability or dependency validation. Record actual versions/configuration and validate commands on this context before use. Never install or guess a replacement.' };
+}
+
 export function normaliseBoundaryMessages(query, raw, expected, definitionSlots = []) {
   if (!Number.isSafeInteger(expected) || expected < 1) throw new Error('Expected query coverage must be positive');
   if (!Array.isArray(definitionSlots) || new Set(definitionSlots).size !== definitionSlots.length ||
@@ -248,7 +299,9 @@ function main(args) {
       fs.readFileSync(args[2], 'utf8'), Number(args[3]), JSON.parse(fs.readFileSync(args[4], 'utf8'))));
   } else if (args[0] === 'hashes' && args.length === 4) {
     writeExclusive(args[3], contextHashes(args[1], JSON.parse(fs.readFileSync(args[2], 'utf8'))));
-  } else throw new Error('Usage: capture ROOT FILES_JSON OUT | compare BASELINE ROOT FILES_JSON OUT | messages QUERY RAW EXPECTED_COUNT DEFINITION_SLOTS_JSON OUT | hashes ROOT FILES_JSON OUT');
+  } else if (args[0] === 'toolchain' && args.length === 4) {
+    writeExclusive(args[3], projectToolchainContext(args[1], JSON.parse(fs.readFileSync(args[2], 'utf8'))));
+  } else throw new Error('Usage: capture ROOT FILES_JSON OUT | compare BASELINE ROOT FILES_JSON OUT | messages QUERY RAW EXPECTED_COUNT DEFINITION_SLOTS_JSON OUT | hashes ROOT FILES_JSON OUT | toolchain ROOT ELAN_STATE_JSON OUT');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

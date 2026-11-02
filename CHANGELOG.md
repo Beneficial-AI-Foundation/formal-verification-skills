@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Lean refactoring resolves the effective installed project toolchain, including overrides, before
+  choosing version-sensitive targets, inspection and profiling commands. Unsupported capabilities
+  use explicit project/review routes; pins are never upgraded to match reference examples.
+
 - Lean refactoring proposes a protected boundary and editable file/module/project scope before
   editing. It seeks net LoC reduction through reuse and shared lemmas, including new helper/import
   costs, while preserving useful prose. Broader scope and new public interfaces require proposals.

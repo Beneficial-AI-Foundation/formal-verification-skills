@@ -79,7 +79,24 @@ run Lake in the shared workspace.
 
 ## Step 3: Establish the baseline and file gates
 
-Run from the validated project root. Preserve toolchain/dependency pins. Warm Mathlib only when
+Run from the validated project root. Preserve toolchain/dependency pins. First apply the inlined
+reference's project-toolchain/capability preflight. Resolve file/env/directory overrides, require the
+exact toolchain already installed, and bind `PROJECT_LEAN`/`PROJECT_LAKE` to its actual executables.
+Never use a global/default4.31, install/download a missing toolchain, reset an override or change a
+pin to make an example work. If no supported no-network resolver exists, validate the project's
+existing installed setup explicitly; do not fall back to `elan show`/`which` or a guessed global.
+Record actual versions, relevant config/environment overrides and dependency identities. Check
+local dependency availability and the operation's existing network permission before Lake loads
+configuration; missing dependencies stop without fetching. Cache-first applies only within that
+permission. No toolchain/dependency/cache download is implied by this preflight.
+
+Before editing, read the captured help and validate actual file targets, import preparation, JSON/
+printer/pp options, optional profiling and suggested tactics on this context. Use the documented
+review route for unsupported introspection, not for real compiler errors or lost baseline coverage.
+Append this exact context/capability plan to the parent manifest and child inputs; never guess from
+the version number alone. The block below uses an installed Elan with `dump-state --no-net` support;
+its pure reporting helper does not execute/install compilers. `TOOLCHAIN_DIR` is fresh and owned.
+Warm Mathlib only when
 the exact root/dependency identity supplies its cache executable; failure stops the workflow:
 
 ```bash
@@ -87,10 +104,39 @@ if { [ ! -f lakefile.lean ] && [ ! -f lakefile.toml ]; } || [ ! -f lean-toolchai
   echo "FVS >> ERROR: run from the Lean project root" >&2
   exit 1
 fi
+# Resolve the effective project override without selecting/installing a global toolchain.
+: "${ELAN_BIN:?trusted installed Elan executable required}"
+: "${TOOLCHAIN_DIR:?fresh owned toolchain evidence directory required}"
+PROJECT_ROOT=$(pwd -P) || exit 1
+REFACTOR_REPORT_TOOL=../../../scripts/fvs-refactor-report.mjs
+(
+  set -C
+  "$ELAN_BIN" dump-state --no-net > "$TOOLCHAIN_DIR/elan.json" || exit 1
+  node "$REFACTOR_REPORT_TOOL" toolchain "$PROJECT_ROOT" "$TOOLCHAIN_DIR/elan.json" "$TOOLCHAIN_DIR/toolchain.json" || exit 1
+) || exit 1
+PROJECT_LAKE=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1])).lake.path)' "$TOOLCHAIN_DIR/toolchain.json") || exit 1
+PROJECT_LEAN=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1])).lean.path)' "$TOOLCHAIN_DIR/toolchain.json") || exit 1
+(
+  set -C
+  LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 "$PROJECT_LEAN" --version > "$TOOLCHAIN_DIR/lean-version.txt" || exit 1
+  LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 "$PROJECT_LAKE" --version > "$TOOLCHAIN_DIR/lake-version.txt" || exit 1
+  LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 "$PROJECT_LAKE" help build > "$TOOLCHAIN_DIR/build-help.txt" || exit 1
+  LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 "$PROJECT_LEAN" --help > "$TOOLCHAIN_DIR/lean-help.txt" || exit 1
+) || exit 1
+if (set -C; LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 "$PROJECT_LAKE" help lean > "$TOOLCHAIN_DIR/lean-help-lake.txt" 2>&1) && grep -Eq '^[[:space:]]*lake lean[[:space:]]' "$TOOLCHAIN_DIR/lean-help-lake.txt"; then
+  LAKE_LEAN_AVAILABLE=1
+else
+  LAKE_LEAN_AVAILABLE=0
+fi
+PROFILE_ARGS=()
+if grep -Eq '^[[:space:]]*--profile([[:space:]=]|$)' "$TOOLCHAIN_DIR/lean-help.txt"; then
+  PROFILE_ARGS=(--profile)
+fi
+
 # Exact identity: the root package or a recorded dependency is named mathlib in lake-manifest.json.
 if node -e 'const m = JSON.parse(require("fs").readFileSync("lake-manifest.json", "utf8"));
   process.exit(m.name === "mathlib" || (m.packages || []).some(p => p.name === "mathlib") ? 0 : 1)' 2>/dev/null; then
-  LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake exe cache get
+  LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 "$PROJECT_LAKE" exe cache get
   CACHE_STATUS=$?
   if [ "$CACHE_STATUS" -ne 0 ]; then
     echo "FVS >> ERROR: Lake cache preflight failed; stopping workflow" >&2
@@ -99,21 +145,32 @@ if node -e 'const m = JSON.parse(require("fs").readFileSync("lake-manifest.json"
 else
   echo "FVS >> Cache preflight not applicable: no Mathlib cache executable in this project"
 fi
+# After cache permission/preflight, verify Lake's selected Lean is the resolved executable too.
+(
+  set -C
+  LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 "$PROJECT_LAKE" env /bin/sh -c 'command -v lean' > "$TOOLCHAIN_DIR/lake-lean-path.txt" || exit 1
+  node -e 'const fs = require("fs"); if (fs.realpathSync(process.argv[1]) !== fs.realpathSync(fs.readFileSync(process.argv[2], "utf8").trim())) throw Error("Lake environment compiler differs from resolved project context")' "$PROJECT_LEAN" "$TOOLCHAIN_DIR/lake-lean-path.txt" || exit 1
+) || exit 1
 ```
 
 Selected proofs must compile without admissions. A text scan is a lead to inspect, not proof that
 an identifier in a comment is an admission. Record/check the existing project trust policy and
 protected source before editing. Stop on a real unfinished proof or baseline error.
 
-For every selected Lean file, set `SPEC_PATH` and try its workspace-module gate:
+For every selected Lean file, set `SPEC_PATH` and a validated `FILE_TARGET` from the actual pin's help/configuration. Use the source path only when supported; otherwise use its real configured
+module selector (for example `+MyProject.Core`). A path-syntax failure is not a broken proof or proof
+that the file lies outside the library. Record and run the chosen workspace-module gate:
 
 ```bash
 set -o pipefail
-LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build "$SPEC_PATH" 2>&1 | tail -40
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 "$PROJECT_LAKE" build "${FILE_TARGET:?validated source-path or module selector required}" 2>&1 | tail -40
 FILE_GATE_STATUS=${PIPESTATUS[0]}
 ```
 
-Only an unknown target/module outside library roots uses the import-building direct gate below.
+For a file without an applicable module target, use the import-building direct gate below only
+after checking `LAKE_LEAN_AVAILABLE`. If that command is unavailable, record a project-validated
+equivalent which builds every actual import before direct elaboration; never substitute raw
+`lake env lean` alone. Unsupported syntax/capability is not a proof error or permission to upgrade.
 `lake lean` builds actual imports before checking; raw `lake env lean` does not. If unsupported by
 the pinned toolchain, stop instead of using stale artifacts. Preserve real status independently
 from the displayed tail:
@@ -122,7 +179,8 @@ Keep this import preparation in `FILE_GATE` on every pass.
 
 ```bash
 set -o pipefail
-LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake lean "$SPEC_PATH" 2>&1 | tail -40
+[ "$LAKE_LEAN_AVAILABLE" = "1" ] || { echo "FVS >> Import-building command unavailable; validate the project-specific gate" >&2; exit 2; }
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 "$PROJECT_LAKE" lean "$SPEC_PATH" 2>&1 | tail -40
 FILE_GATE_STATUS=${PIPESTATUS[0]}
 ```
 
@@ -134,7 +192,7 @@ does not prove that an unselected file was checked. Run/record the required proj
 
 ```bash
 set -o pipefail
-LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build 2>&1 | tail -40
+LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 "$PROJECT_LAKE" build 2>&1 | tail -40
 PROJECT_STATUS=${PIPESTATUS[0]}
 ```
 
@@ -167,6 +225,7 @@ Task(
   prompt="Research mode: lean-refactor
 <agreement>$CONFIRMED_BOUNDARY_AND_READ_SCOPE</agreement>
 <question>$SCOUT_QUESTION</question>
+<project_toolchain>$RESOLVED_PROJECT_TOOLCHAIN_AND_CAPABILITY_PLAN</project_toolchain>
 <current_sources>$CURRENT_SOURCE_CONTEXT</current_sources>
 <lean_refactoring>$LEAN_REFACTORING</lean_refactoring>
 <lake_build_guide>$LAKE_BUILD_GUIDE</lake_build_guide>
@@ -221,6 +280,7 @@ Task(
 <lake_build_guide>$LAKE_BUILD_GUIDE</lake_build_guide>
 <file_gate>$FILE_GATE</file_gate>
 <measurement_plan>$BASELINE_AND_COMPARABLE_MEASUREMENT_PLAN</measurement_plan>
+<project_toolchain>$RESOLVED_PROJECT_TOOLCHAIN_AND_CAPABILITY_PLAN</project_toolchain>
 <previous_feedback>$ACTUAL_PREVIOUS_DIAGNOSTICS</previous_feedback>
 Apply one coherent refactor within ownership. You are not alone; preserve other work.
 Use child LSP feedback only. Do not run Lake, Lean or compiler-backed project scripts in the shared workspace. Return ready for the parent gate.

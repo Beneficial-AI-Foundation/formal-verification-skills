@@ -109,6 +109,50 @@ syntax is not a universal refactoring boundary. Preserve the agreed specificatio
 correspondence and attributes; change strategy only within that agreement. Refactoring does not
 authorise Rust changes, re-extraction, dependency upgrades or weakening a theorem.
 
+## Resolve the project's installed context before using recipes
+
+The refactoring strategy is version-neutral; command syntax, printer output, options and tactics
+are not. A 4.31 citation is evidence about that example, not a requirement to upgrade the consumer.
+Read `lean-toolchain` and resolve the effective environment/directory/file override in the actual
+project cwd. With a supported installed Elan, use `dump-state --no-net` and the reporting helper's
+`toolchain` operation as shown in the command/workflow. The helper only interprets data and hashes
+existing executables; it never runs or installs Lean. It requires an active project override and
+an exact installed match, never the global default. Cached offline channel resolution is labelled;
+an unresolved/uninstalled pin stops without downloads or substitution.
+
+Keep the file pin, effective selection and override origin visible. If an ambient override conflicts
+with the requested project pin, resolve that mismatch before edits; do not reset it or silently
+choose4.31. Record relevant configuration/environment overrides, actual `lean`/`lake` version output,
+absolute executable paths/hashes, dependency revisions, actual source roots and package Lean arguments.
+Validate the Lake-selected environment/compiler against this context too. Preserve local pins and
+lockfiles. Inspect local dependency availability before Lake loads configuration; do not authorize
+fetches/cache downloads implicitly. Use the existing task's network/confinement policy.
+
+Elan shims can install missing toolchains; even `elan show`/`which` can resolve through installing
+paths. Do not use them as an offline preflight. If the installed resolver lacks the no-network API,
+validate an existing project-specific installed setup explicitly and record equivalent identities;
+never install/upgrade Elan or guess a replacement. See official [Elan selection/installation](https://github.com/leanprover/elan)
+and [CLI/state API](https://github.com/leanprover/elan/blob/master/src/elan-cli/elan_mode.rs).
+
+Before edits, establish this small capability plan from the selected tools' help, matching official
+source and pristine project probes. Commands use `PROJECT_LAKE`/`PROJECT_LEAN` from this context:
+
+| Capability | If unavailable on this pin/project |
+| --- | --- |
+| File-path build selector | Use the actual configured module target such as `+MyProject.Core`; never guess roots from filenames |
+| Import-building `lake lean` | Validate equivalent prerequisite/import builds plus direct elaboration with the project's arguments/plugins; raw `lake env lean` alone is insufficient |
+| JSON / `#check` / `#print axioms` / pp options and full-body rendering | Use a validated project query or the explicit reviewed comparison below; never drop compilation/axiom safeguards |
+| `--profile` and profiler options | Mark unavailable detail; time the same validated elaboration argv without unsupported options, not a cached no-op |
+| Tactic/linter recommendation | Check current definitions/parser or a bounded probe; use available reuse/proof tools instead of assuming a named tactic exists |
+| Lexical metric coverage | Keep unsupported counts unavailable and use reviewed full-scope accounting |
+
+A real compiler/build failure is not an unsupported capability. Classify a pristine probe as a
+capability gap only with pin-specific evidence and passing actual source gates. A capability that
+worked on the baseline and fails after edits remains a regression stop. Freeze the chosen query,
+file/import gates and timing argv before baseline/final measurements; do not renegotiate them to
+hide a regression. Send this context/plan to scouts and edit workers. This is not a new runtime or
+compatibility framework, and no complete-version support matrix is implied.
+
 ## Printed boundary recipe: parent only
 
 Before editing, resolve the protected declaration/definition inventory in the real project and
@@ -157,10 +201,11 @@ REFACTOR_REPORT_TOOL=~/.claude/scripts/fvs-refactor-report.mjs
 (
   set -C
   cat "$BOUNDARY_QUERY" > "$BASELINE_DIR/query.lean" || exit 1
+  cat "$TOOLCHAIN_DIR/toolchain.json" > "$BASELINE_DIR/toolchain.json" || exit 1
   node "$REFACTOR_REPORT_TOOL" hashes "$PROJECT_ROOT" "$SCOPE_FILES" "$BASELINE_DIR/source-before.json" || exit 1
   node "$REFACTOR_REPORT_TOOL" capture "$PROJECT_ROOT" "$SCOPE_FILES" "$BASELINE_DIR/source.json" || exit 1
   node "$REFACTOR_REPORT_TOOL" hashes "$PROJECT_ROOT" "$CONTEXT_FILES" "$BASELINE_DIR/context.json" || exit 1
-  LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake env lean --json "$BOUNDARY_QUERY" > "$BASELINE_DIR/raw.jsonl" 2> "$BASELINE_DIR/stderr.log"
+  LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 "$PROJECT_LAKE" env "$PROJECT_LEAN" --json "$BOUNDARY_QUERY" > "$BASELINE_DIR/raw.jsonl" 2> "$BASELINE_DIR/stderr.log"
   BOUNDARY_STATUS=$?
   echo "$BOUNDARY_STATUS" > "$BASELINE_DIR/inspection-status.txt" || exit 1
   if [ "$BOUNDARY_STATUS" -eq 0 ]; then
@@ -182,10 +227,16 @@ After all workers stop, run the updated file/module gates serially, then:
 
 ```bash
 cmp -s "$BASELINE_DIR/query.lean" "$BOUNDARY_QUERY" || exit 1
+(
+  set -C
+  "$ELAN_BIN" dump-state --no-net > "$FINAL_DIR/elan.json" || exit 1
+  node "$REFACTOR_REPORT_TOOL" toolchain "$PROJECT_ROOT" "$FINAL_DIR/elan.json" "$FINAL_DIR/toolchain.json" || exit 1
+) || exit 1
+diff -u "$BASELINE_DIR/toolchain.json" "$FINAL_DIR/toolchain.json" || exit 1
 node "$REFACTOR_REPORT_TOOL" hashes "$PROJECT_ROOT" "$FINAL_SCOPE_FILES" "$FINAL_DIR/source-before.json" || exit 1
 (
   set -C
-  LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake env lean --json "$BOUNDARY_QUERY" > "$FINAL_DIR/raw.jsonl" 2> "$FINAL_DIR/stderr.log"
+  LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 "$PROJECT_LAKE" env "$PROJECT_LEAN" --json "$BOUNDARY_QUERY" > "$FINAL_DIR/raw.jsonl" 2> "$FINAL_DIR/stderr.log"
   BOUNDARY_STATUS=$?
   echo "$BOUNDARY_STATUS" > "$FINAL_DIR/inspection-status.txt" || exit 1
   if [ "$BOUNDARY_STATUS" -eq 0 ]; then
@@ -267,7 +318,8 @@ not run Lake, Lean or compiler-backed scripts in the shared workspace. The paren
 edit workers are terminal, then runs every `FILE_GATE`, boundary query, measurement and project
 gate strictly one at a time. This avoids relying on a shared build lock; Lake 4.31
 [does not use one](https://github.com/leanprover/lean4/blob/v4.31.0/src/lake/Lake/Util/Lock.lean#L18-L20).
-If child LSP feedback is unavailable, use serial edit/parent-gate cycles with one child. Honour
+This serial policy does not depend on other pins sharing4.31 lock behavior. Check the project pin's
+LSP/import setup before assuming feedback is build-free. If child LSP feedback is unavailable, use serial edit/parent-gate cycles with one child. Honour
 required-live stops and the existing consent for degraded feedback. Do not call parallel edits
 or compiler fallback safe merely because files are disjoint.
 If an LSP feedback path may trigger shared compiler/build jobs, use the conservative serial path.
@@ -329,14 +381,23 @@ file using the same pins, imports/cache state, thread limit and quiet worker sta
 the approved budget, not permission for a provider benchmark. A new helper file has no baseline
 run: record zero prior contribution and measure its final cost. A removed file has no final run.
 Compare the scope totals as well as unchanged entry points, and disclose changed coverage. Never
-invent samples for a path that did not exist. On the checked 4.31 pin:
+invent samples for a path that did not exist.
+
+Before sampling, freeze `ELABORATION_CMD` as a Bash argv array for this file and actual installed
+context. Where `lake lean` is supported, it is `( "$PROJECT_LAKE" lean "$SPEC_PATH" --
+"${PROFILE_ARGS[@]}" )`; `PROFILE_ARGS` is empty unless the actual compiler advertises `--profile`.
+On another pin use a validated equivalent with import preparation and the project's Lean arguments.
+Unsupported profiling is unavailable detail, not a broken proof. Do not silently change argv/cache
+conditions between baseline/final; if meaningful comparable elaboration cannot be established,
+report timing inconclusive and hold the performance trade-off. The sampling loop is:
 
 ```bash
+declare -p ELABORATION_CMD >/dev/null 2>&1 || { echo "FVS >> Validated elaboration argv required" >&2; exit 2; }
 for SAMPLE in 1 2 3; do
   (
     set -C
     TIMEFORMAT='FVS_ELAPSED_SECONDS=%R'
-    { time LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake lean "$SPEC_PATH" -- --profile; } > "$TIMING_DIR/$PHASE-$SAMPLE.log" 2>&1
+    { time LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 "${ELABORATION_CMD[@]}"; } > "$TIMING_DIR/$PHASE-$SAMPLE.log" 2>&1
   )
   TIMING_STATUS=$?
   [ "$TIMING_STATUS" -eq 0 ] || exit "$TIMING_STATUS"
@@ -348,7 +409,8 @@ actual build gate wall
 time, cache/rebuilt state and the profiling phases the pin reports. The checked `--profile` probe
 reported cumulative phases, not a complete per-declaration table. On that pin,
 `profiler.threshold` defaults to 100 ms; declarations below it have no individual profile message.
-Record the threshold and keep it unchanged for comparable runs. Do not invent missing timings.
+Record the threshold actually used by the selected pin/project and keep it unchanged for comparable
+runs; do not apply this4.31 default to another toolchain or override a project setting. Do not invent missing timings.
 See the [pinned profiler option](https://github.com/leanprover/lean4/blob/v4.31.0/src/Lean/Util/Profile.lean#L23-L26). The syntax
 is documented in [Lake 4.31 help](https://github.com/leanprover/lean4/blob/v4.31.0/src/lake/Lake/CLI/Help.lean#L679-L687)
 and the pinned `lean --help`.
@@ -358,6 +420,25 @@ evidence: a consistent material slowdown beyond baseline variation blocks automa
 and becomes an owner trade-off. Three observations are not a statistical guarantee. Label noisy
 or incomparable results inconclusive; do not compare a cached no-op with fresh elaboration or
 assume decomposition is faster. Never delete global caches or acquire tools just for timing.
+
+## Compatibility evidence and limits
+
+Dependency-free tests exercised installed Lean/Lake **4.25.2, 4.31.0 and 4.35.0**, with network denied
+and isolated temporary profiles. Each ran the file/import gates, protected type/body/axiom and
+coverage-regression cases, reporting-helper limits, worked proof examples and timing-log recipe.
+Installed Elan4.2.3 tests covered file, environment and directory overrides, rejection of an
+uninstalled pin without installing, and unchanged pin/toolchain identities. These are bounded
+fixtures, not a real consumer refactor, benchmark or universal compatibility claim.
+
+Older4.19 source documents import-building `lake lean`, but its build-target parser differs from
+the newer source-path selector. That version was not installed/tested here. Compare official
+[4.19 target parsing](https://github.com/leanprover/lean4/blob/v4.19.0/src/lake/Lake/CLI/Build.lean),
+[4.19 Lean command](https://github.com/leanprover/lean4/blob/v4.19.0/src/lake/Lake/CLI/Help.lean), and
+[4.35 Lean command](https://github.com/leanprover/lean4/blob/v4.35.0/src/lake/Lake/CLI/Help.lean).
+Keep4.31-specific printer/profiler/tactic citations scoped to their checked pin; another project
+still needs its own capability/context validation. Custom parsers, private/module contexts and
+other Elan state schemas may need the explicit project/review route. Never upgrade a project to
+fit this matrix.
 
 ## Evidence tools and short examples
 

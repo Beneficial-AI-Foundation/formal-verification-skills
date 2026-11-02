@@ -147,7 +147,7 @@ const { spawnSync } = require('node:child_process');
 const blocks = file => [...fs.readFileSync(path.join(ROOT, file), 'utf8').matchAll(/```bash\n([\s\S]*?)```/g)].map(m => m[1]);
 const block = (file, needle) => blocks(file).find(b => b.includes(needle));
 
-function project({ mathlib = false, behaviour = {}, manifest = null, lakefile = null } = {}) {
+function project({ mathlib = false, behaviour = {}, manifest = null, lakefile = null, profile = true } = {}) {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-refactor-gate-')));
   const bin = path.join(dir, 'bin'); fs.mkdirSync(bin);
   const [lakeName, lakeText] = lakefile ?? ['lakefile.toml', 'name = "demo"\n'];
@@ -158,20 +158,42 @@ function project({ mathlib = false, behaviour = {}, manifest = null, lakefile = 
   fs.writeFileSync(path.join(bin, 'lake'), [
     '#!/bin/sh', 'echo "$*" >> "$FAKE_LAKE_LOG"', 'key=$(echo "$*" | tr " /." "___")',
     'case "$key" in', ...Object.entries(behaviour).map(([k, [out, code]]) => `  ${k}) echo "${out}"; exit ${code};;`),
-    '  *) exit 0;;', 'esac', ''].join('\n'));
+    '  env__bin_sh_-c_command_-v_lean) echo "$PWD/bin/lean"; exit 0;;', '  help_lean) echo "lake lean <file> [-- <args>...]"; exit 0;;', '  *) exit 0;;', 'esac', ''].join('\n'));
   fs.chmodSync(path.join(bin, 'lake'), 0o755);
+  fs.writeFileSync(path.join(bin,'lean'), '#!/bin/sh\nif [ "$1" = --help ]; then echo "'+(profile?'  --profile show profiling':'  file elaborate file')+'"; else echo "Lean (version 4.31.0)"; fi\n');fs.chmodSync(path.join(bin,'lean'),0o755);
+  const state={elan_version:{current:'fixture'},toolchains:{installed:[{resolved_name:'leanprover/lean4:v4.31.0',path:dir}],active_override:{reason:{ToolchainFile:path.join(dir,'lean-toolchain')}},resolved_active:{live:{Ok:'leanprover/lean4:v4.31.0'}}}};
+  fs.writeFileSync(path.join(dir,'elan-state.json'),JSON.stringify(state));
+  fs.writeFileSync(path.join(bin,'elan'),'#!/bin/sh\n[ "$1" = dump-state ] && [ "$2" = --no-net ] || exit 88\ncat "$FAKE_ELAN_STATE"\n');fs.chmodSync(path.join(bin,'elan'),0o755);
+  fs.mkdirSync(path.join(dir,'evidence'));fs.mkdirSync(path.join(dir,'global-bin'));
+  fs.writeFileSync(path.join(dir,'global-bin','lake'),'#!/bin/sh\necho invoked >> "$GLOBAL_LAKE_LOG"\nexit 99\n');fs.chmodSync(path.join(dir,'global-bin','lake'),0o755);
+  fs.mkdirSync(path.join(dir,'home','.claude','scripts'),{recursive:true});fs.copyFileSync(path.join(ROOT,'scripts/fvs-refactor-report.mjs'),path.join(dir,'home','.claude','scripts/fvs-refactor-report.mjs'));
   return dir;
 }
 function run(dir, script) {
   const log = path.join(dir, 'lake.log');
-  const r = spawnSync('bash', ['-c', `SPEC_PATH=Extra/Broken.lean\n${script}\necho "STATUS ${'$'}{FILE_GATE_STATUS:-} ${'$'}{PROJECT_STATUS:-}"`],
-    { cwd: dir, encoding: 'utf8', env: { ...process.env, PATH: path.join(dir, 'bin') + path.delimiter + process.env.PATH, FAKE_LAKE_LOG: log } });
-  return { ...r, calls: fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '' };
+  const r = spawnSync('bash', ['-c', `SPEC_PATH=Extra/Broken.lean\nFILE_TARGET=$SPEC_PATH\nPROJECT_LAKE="$PWD/bin/lake"\nPROJECT_LEAN="$PWD/bin/lean"\nLAKE_LEAN_AVAILABLE=1\n${script}\necho "STATUS ${'$'}{FILE_GATE_STATUS:-} ${'$'}{PROJECT_STATUS:-}"`],
+    { cwd: dir, encoding: 'utf8', env: { ...process.env, HOME:path.join(dir,'home'), ELAN_BIN:path.join(dir,'bin','elan'), TOOLCHAIN_DIR:path.join(dir,'evidence'), FAKE_ELAN_STATE:path.join(dir,'elan-state.json'), GLOBAL_LAKE_LOG:path.join(dir,'global.log'), PATH: path.join(dir,'global-bin')+path.delimiter+process.env.PATH, FAKE_LAKE_LOG: log } });
+  const allCalls=fs.existsSync(log)?fs.readFileSync(log,'utf8'):'';return {...r,allCalls,calls:allCalls.split('\n').filter(l=>l&&!l.startsWith('help ')&&l!=='--version'&&!l.startsWith('env /bin/sh -c command -v lean')).join('\n')+(allCalls.split('\n').some(l=>l&&!l.startsWith('help ')&&l!=='--version'&&!l.startsWith('env /bin/sh -c command -v lean'))?'\n':'')};
 }
 
 for (const file of SOURCES) {
+  it(`${file}: preflight binds the installed context, omits unsupported profiling and never calls a global shim`,()=>{
+    const root=project({profile:false});const preflight=block(file,'"$PROJECT_LAKE" exe cache get');
+    const r=run(root,preflight+'\necho "SELECTED=$PROJECT_LAKE PROFILE=${PROFILE_ARGS[*]} LEAN_GATE=$LAKE_LEAN_AVAILABLE"');
+    assert.equal(r.status,0,r.stderr+r.stdout);assert.ok(r.stdout.includes(`SELECTED=${root}/bin/lake PROFILE= LEAN_GATE=1`));
+    assert.equal(fs.existsSync(path.join(root,'global.log')),false);
+    const wrong=run(project({behaviour:{'env__bin_sh_-c_command_-v_lean':['/usr/bin/false',0]}}),preflight);assert.notEqual(wrong.status,0);assert.match(wrong.stderr,/Lake environment compiler differs/);
+    const missing=project();const state=JSON.parse(fs.readFileSync(path.join(missing,'elan-state.json')));state.toolchains.installed=[];fs.writeFileSync(path.join(missing,'elan-state.json'),JSON.stringify(state));
+    const failed=run(missing,preflight);assert.notEqual(failed.status,0);assert.match(failed.stderr,/not uniquely installed/);assert.equal(failed.allCalls,'');assert.equal(fs.existsSync(path.join(missing,'global.log')),false);
+    const noLean=project({behaviour:{help_lean:['generic usage',0]}});
+    const unavailable=run(noLean,preflight+'\n'+block(file,'"$PROJECT_LAKE" lean "$SPEC_PATH"'));
+    assert.equal(unavailable.status,2);assert.match(unavailable.stderr,/Import-building command unavailable/);assert.equal(unavailable.calls,'');
+    const module=run(project(),'FILE_TARGET=+Demo.Core\n'+block(file,'"$PROJECT_LAKE" build "${FILE_TARGET:'));
+    assert.equal(module.status,0);assert.equal(module.calls,'build +Demo.Core\n');
+  });
+
   it(`${file}: cache preflight is skipped without a cache executable and stops on a real cache failure`, () => {
-    const cache = block(file, 'lake exe cache get');
+    const cache = block(file, '"$PROJECT_LAKE" exe cache get');
     const plain = run(project(), cache);
     assert.equal(plain.status, 0); assert.match(plain.stdout, /Cache preflight not applicable/); assert.equal(plain.calls, '');
     const ok = run(project({ mathlib: true }), cache);
@@ -190,8 +212,8 @@ for (const file of SOURCES) {
   });
 
   it(`${file}: the selected-file gate keeps the real status and covers files outside the default build`, () => {
-    const moduleGate = block(file, 'lake build "$SPEC_PATH"');
-    const directGate = block(file, 'lake lean "$SPEC_PATH"');
+    const moduleGate = block(file, '"$PROJECT_LAKE" build "${FILE_TARGET:');
+    const directGate = block(file, '"$PROJECT_LAKE" lean "$SPEC_PATH"');
     const good = run(project(), moduleGate);
     assert.match(good.stdout, /STATUS 0/); assert.match(good.calls, /^build Extra\/Broken\.lean$/m);
     const broken = run(project({ behaviour: { build_Extra_Broken_lean: ['error: Broken.lean:3: type mismatch', 1] } }), moduleGate);
@@ -226,12 +248,32 @@ for (const file of SOURCES) {
 
 // Explicitly opt in with an installed, pinned Lake; ordinary npm test never acquires a toolchain.
 const REAL_LAKE = process.env.FVS_REFACTOR_TEST_LAKE;
+const TEST_PIN=process.env.FVS_REFACTOR_TEST_PIN || 'leanprover/lean4:v4.31.0';
+const TEST_VERSION=TEST_PIN.split(':').at(-1).replace(/^v/,'');
+const REAL_ELAN=process.env.FVS_REFACTOR_TEST_ELAN;
+it('real project preflight uses its pin and Lake environment despite a different default/global shim',{skip:!REAL_ELAN},()=>{
+  const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'fvs-project-preflight-')));
+  const contexts=JSON.parse(process.env.FVS_REFACTOR_TEST_INSTALLED_CONTEXTS);const other=contexts.find(x=>x.pin!==TEST_PIN);
+  for(const name of ['home','tmp','evidence','global-bin','elan/toolchains','home/.claude/scripts'])fs.mkdirSync(path.join(root,name),{recursive:true});
+  for(const x of contexts)fs.symlinkSync(x.path,path.join(root,'elan/toolchains',x.directoryName),'dir');
+  fs.writeFileSync(path.join(root,'elan/settings.toml'),`version = "12"\ndefault_toolchain = "${other.pin}"\n`);
+  fs.writeFileSync(path.join(root,'lean-toolchain'),TEST_PIN+'\n');fs.writeFileSync(path.join(root,'lakefile.toml'),'name = "preflight_demo"\n');
+  fs.copyFileSync(path.join(ROOT,'scripts/fvs-refactor-report.mjs'),path.join(root,'home/.claude/scripts/fvs-refactor-report.mjs'));
+  fs.writeFileSync(path.join(root,'global-bin/lake'),'#!/bin/sh\necho bad > "$HOME/global-invoked"\nexit 99\n');fs.chmodSync(path.join(root,'global-bin/lake'),0o755);
+  const env={HOME:path.join(root,'home'),TMPDIR:path.join(root,'tmp'),ELAN_HOME:path.join(root,'elan'),ELAN_BIN:REAL_ELAN,TOOLCHAIN_DIR:path.join(root,'evidence'),PATH:path.join(root,'global-bin')+':'+path.dirname(process.execPath)+':/usr/bin:/bin',LAKE_NO_CACHE:'1',LC_ALL:'C',GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_NOSYSTEM:'1',GIT_TERMINAL_PROMPT:'0'};
+  const script=block(SOURCES[0],'"$PROJECT_LAKE" exe cache get')+'\necho "SELECTED=$PROJECT_LAKE AVAILABLE=$LAKE_LEAN_AVAILABLE PROFILE=${PROFILE_ARGS[*]}"';
+  const r=spawnSync('/bin/bash',['-c',script],{cwd:root,env,encoding:'utf8',timeout:60000});assert.equal(r.status,0,r.stderr+r.stdout);
+  const ctx=JSON.parse(fs.readFileSync(path.join(root,'evidence/toolchain.json')));assert.equal(ctx.effectiveToolchain,TEST_PIN);assert.equal(ctx.lake.path,fs.realpathSync(REAL_LAKE));
+  assert.ok(r.stdout.includes(`SELECTED=${ctx.lake.path} AVAILABLE=1 PROFILE=--profile`));assert.equal(fs.existsSync(path.join(root,'home/global-invoked')),false);
+  assert.equal(fs.realpathSync(fs.readFileSync(path.join(root,'evidence/lake-lean-path.txt'),'utf8').trim()),ctx.lean.path);
+  assert.equal(fs.readFileSync(path.join(root,'lean-toolchain'),'utf8'),TEST_PIN+'\n');
+});
 it('real Lake rebuilds non-default imports for the external-file gate on every pass',
   { skip: !REAL_LAKE }, t => {
     assert.ok(path.isAbsolute(REAL_LAKE), 'FVS_REFACTOR_TEST_LAKE must name an absolute installed Lake');
     const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-refactor-imports-')));
     for (const name of ['home', 'tmp', 'Other', 'Extra']) fs.mkdirSync(path.join(dir, name));
-    fs.writeFileSync(path.join(dir, 'lean-toolchain'), 'leanprover/lean4:v4.31.0\n');
+    fs.writeFileSync(path.join(dir, 'lean-toolchain'), TEST_PIN+'\n');
     fs.writeFileSync(path.join(dir, 'lakefile.toml'), [
       'name = "refactor_gate"', 'defaultTargets = ["Main"]',
       '[[lean_lib]]', 'name = "Main"', '[[lean_lib]]', 'name = "Other"', ''].join('\n'));
@@ -248,15 +290,15 @@ it('real Lake rebuilds non-default imports for the external-file gate on every p
     const options = { cwd: dir, env, encoding: 'utf8', timeout: 60000 };
     const lake = args => spawnSync('nice', ['-n', '19', REAL_LAKE, '--no-cache', ...args], options);
     const success = r => assert.equal(r.status, 0, r.error?.message || r.stderr + r.stdout);
-    const gates = SOURCES.map(file => block(file, 'lake lean "$SPEC_PATH"'));
+    const gates = SOURCES.map(file => block(file, '"$PROJECT_LAKE" lean "$SPEC_PATH"'));
     assert.ok(gates[0], 'the import-building direct gate must be present');
     assert.equal(gates[0], gates[1], 'command and workflow must use the same import-building gate');
     const gate = () => spawnSync('/bin/bash', ['-c',
-      `SPEC_PATH=Extra/Proof.lean\n${gates[0]}\nexit "$FILE_GATE_STATUS"`],
+      `SPEC_PATH=Extra/Proof.lean\nPROJECT_LAKE="${REAL_LAKE}"\nLAKE_LEAN_AVAILABLE=1\n${gates[0]}\nexit "$FILE_GATE_STATUS"`],
       { cwd: dir, env, encoding: 'utf8', timeout: 60000 });
     const version = spawnSync('nice', ['-n', '19', REAL_LAKE, '--version'], options);
     success(version);
-    assert.match(version.stdout, /Lean version 4\.31\.0/);
+    assert.ok(version.stdout.includes(TEST_VERSION),version.stdout);
     success(lake(['build']));
     const artifact = path.join(dir, '.lake/build/lib/lean/Other/Basic.olean');
     assert.equal(fs.existsSync(artifact), false, 'the default build must leave the non-default import unbuilt');
