@@ -254,3 +254,36 @@ controllerObservedAtMs, which must be no later than the current observation and 
 the original limits. A fresh clock fence after all reads refuses rollback or exhaustion.
 All before-CAS, capacity, fresh20/16, proof-dependency and strict final-inspection gates remain.
 These files are trusted controller evidence, not process isolation or proof receipts.
+
+### Exact review input and stale-store retirement
+
+Specification/review launch nodes must belong to the supported selected13 union. A known
+selected node without a contract is distinct from an unknown/out-of-scope ID. Local
+controller actions can retain empty control-node reservations; no second actor owns a node.
+For a v2 review-result continuation, put exactly one typed `fvs/auto-review-input` v1
+in the existing packet.inputs. Its closed fields are schema, schemaVersion, node, contract,
+candidateSha256, registryHeadSha256. The immutable contract reference, node and exact
+candidate/head must match the issued work and returned review. The node must be in that
+launch's assignment. A valid review for another node or a newly chosen candidate does not
+qualify; issue a separately linked fresh packet instead. Legacy work envelopes stay readable.
+Registry invocation shape/schema/version are checked before intent/command creation as well
+as after execution, through one shared reader; unknown keys/versions cannot append14 first.
+
+After an actor's completed materialization/composition/review publication, v2 may retire
+only that exact issued actor, preserving S/R/B/store and the original clocks. Use the normal
+terminate action with empty control nodes, exact association and completed output basis.
+A terminated session alone still holds its original reservation. Resolve it using the same
+terminate kind with closed target `{sessionId,association,operation:resolve-terminated-reservation}`
+(the operation is a JSON string), and the existing16 reconcile-stage reservation-resolution intent targeting
+that exact original reservation. This operation has no executable command. Its paired after
+uses reason session-terminated and the real terminated observation reference both in
+resolution.evidence and effect.evidence. For this explicit operation only, that reference is
+the basis completion; no external command or legacy completion is fabricated.
+
+An already conclusively terminated issued actor can resolve directly from its completed
+output basis; otherwise retain the successful terminate before/completion/after first.
+Unknown/uncertain effects, unrelated actors/reservations, idle sessions, drift or exhausted
+limits grant nothing. The fresh AO observation must match the project/session and actual
+owned association before capacity is freed. A completed resolution permits only the original
+output row's finite frontier, with its canonical projection unchanged; the strict15 inspector
+continues to refuse stale proof. No store clearing, current-cache flag, new run or new queue.

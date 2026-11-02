@@ -387,7 +387,7 @@ function observe(root, q, services, out, previous, now, memory = null, unanchore
     const transitionServices = { ...services.transitions,
       profileObservation: redactAOProfile(r.run(q.ao.tool.file, ['project', 'get', run.aoProjectId, '--json'], root, true, redactAOProfile)),
       observeSession: (id) => ao.find((s) => s.id === id),
-      verifyAssociation(a) { reservedAssociation(a, history, run, { live: true, pending: action.kind === 'launch' && q.transition.position === 'after' }); },
+      verifyAssociation(a) { reservedAssociation(a, history, run, { live: !(action.kind === 'terminate' && action.target.operation === 'resolve-terminated-reservation' && q.transition.position === 'after'), pending: action.kind === 'launch' && q.transition.position === 'after' }); },
       verifyCandidateAssignment(ref, stage) {
         reservedAssociation(association(ref, run), history, run, { stage });
       },
