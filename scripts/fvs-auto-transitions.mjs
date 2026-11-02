@@ -81,6 +81,7 @@ function registryInvocation(ref) {
   const i = transitionBound(ref);
   closed(i, ['schema', 'schemaVersion', 'plan', 'graph', 'registry', 'specRoot', 'contract', 'review', 'previous'], 'registry invocation');
   if (i.schema !== 'fvs/auto-registry-invocation' || i.schemaVersion !== 1) stop('transition-registry-unverified', 'unsupported registry invocation schema/version');
+  for (const key of ['plan', 'graph', 'contract', 'review']) transitionBound(i[key]);
   return i;
 }
 const KINDS = ['construct', 'launch', 'prepare-input', 'compose-spec', 'materialize-proof', 'registry-revise', 'freeze', 'check', 'accept', 'release', 'terminate', 'handoff'];
@@ -278,7 +279,6 @@ export function transitionValidators({ tools, git, inspectBaseline = inspectAuto
       const committed = readChain(actual.registry.root).records.at(-1);
       if (!committed || committed.sha !== actual.registry.headSha256 || !same(committed.record, evidence.result.record)) stop('transition-registry-unverified', 'result is not the actual committed event body');
       const invocation = registryInvocation(a.target.request);
-      for (const key of ['plan', 'graph', 'contract', 'review']) transitionBound(invocation[key]);
       const contract = transitionBound(invocation.contract), previous = before.registry.nodes[contract.node]?.head ?? null;
       const argv = [fs.realpathSync(process.execPath), tools.registry.file, previous === null ? 'register' : 'revise', '--plan', invocation.plan.file, '--graph', invocation.graph.file, '--registry', invocation.registry, '--spec-root', invocation.specRoot, '--contract', invocation.contract.file, '--review', invocation.review.file, ...(previous === null ? [] : ['--previous', previous])];
       if (invocation.schema !== 'fvs/auto-registry-invocation' || invocation.schemaVersion !== 1 || !same(evidence.command.argv, argv)

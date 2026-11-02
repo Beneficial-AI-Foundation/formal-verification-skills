@@ -266,7 +266,7 @@ candidateSha256, registryHeadSha256. The immutable contract reference, node and 
 candidate/head must match the issued work and returned review. The node must be in that
 launch's assignment. A valid review for another node or a newly chosen candidate does not
 qualify; issue a separately linked fresh packet instead. Legacy work envelopes stay readable.
-Registry invocation shape/schema/version are checked before intent/command creation as well
+Registry invocation shape/schema/version and referenced input bytes are checked before intent/command creation as well
 as after execution, through one shared reader; unknown keys/versions cannot append14 first.
 
 After an actor's completed materialization/composition/review publication, v2 may retire

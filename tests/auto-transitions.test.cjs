@@ -925,6 +925,13 @@ describe('fresh registry successor preflight (actual14, declared review fixture)
       assert.equal(registry.readChain(x.registryRoot).records.length, 0); assert.equal(auto.readRuntimeState({ projectRoot: x.root }).fileSha256, runtime);
     }
 
+    for (const key of ['contract', 'review']) {
+      const stale = { ...original, [key]: { ...original[key], sha256: '0'.repeat(64) } }, request = f.json(x.owned, 'stale-bound-registry-input', stale);
+      const action = x.action('registry-revise', { ...a.target, request, review: stale.review }, { stage: 'review' });
+      reject('transition-evidence-invalid', () => x.invoke(action.q, 'checkpoint'));
+      reject('transition-evidence-invalid', () => t.transitionCommand({ actionRef: action.actionRef, ao: action.q.ao.tool, tools: {}, out: x.out(), beforeEventSha256: 'a'.repeat(64) }));
+      assert.equal(registry.readChain(x.registryRoot).records.length, 0); assert.equal(auto.readRuntimeState({ projectRoot: x.root }).fileSha256, runtime);
+    }
     reject('transition-registry-unverified', () => v.verifyRegistryBefore({ target: { ...a.target, candidateSha256: 'b'.repeat(64) } }, actual()));
     publishRegistry(input); const head = registry.readChain(x.registryRoot).records.at(-1).sha;
     reject('transition-registry-unverified', () => v.verifyRegistryBefore(a, actual()));
