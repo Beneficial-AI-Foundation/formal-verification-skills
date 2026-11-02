@@ -64,10 +64,11 @@ describe('conclusive local failures and exact legacy inspect compatibility (prot
     assert.equal(composed.after.result.observation.transition.admissibility.status, 'facts-recorded-partial'); assert.equal(result.status, 'partial');
     assert.equal(result.observation.history.failures.length, 1); assert.equal(result.observation.history.effects.length, 1); assert.equal(result.observation.history.effects[0].kind, 'compose-spec');
     assert.equal(result.observation.history.failures[0].terminalOutcome, 'failed'); assert.deepEqual(result.frame, p.initial.result.frame);
-    const handoff = f.json(x.owned, 'ordinary-failure-finish', { finish: result.evidence, executionClosure: v.evidence }), review = { ...q.current.bundle, handoff, historicalCaptures: p.historicalCaptures,
+    const handoff = f.json(x.owned, 'ordinary-failure-finish', { finish: result, executionClosure: v.evidence }), review = { ...q.current.bundle, handoff, historicalCaptures: p.historicalCaptures,
       absenceReasons: { ...q.current.bundle.absenceReasons, handoff: null } };
     const built = bundle.buildReviewBundle(review, x.output('ordinary-failure-bundle'));
     assert.equal(bundle.verifyReviewBundle({ manifest: built.manifest, expectedContext: bundle.bundleExpectedContext(review), deadlineMs: Date.now() + 120000, out: x.output('ordinary-failure-bundle-check') }).integrity.status, 'valid');
+    for (const ref of [result.evidence, result.publication]) assert.ok(read(built.manifest.file).copies.some(row => row.original === ref.file && row.sha256 === ref.sha256));
   });
   for (const field of ['before', 'action', 'command', 'run', 'head']) it('rejects another caller expected ' + field + ' without state writes', async () => {
     const p = await failedProducer(), q = structuredClone(p.request), state = f.ref(path.join(p.x.root, '.formalising/auto-fv/resume/state.json'));

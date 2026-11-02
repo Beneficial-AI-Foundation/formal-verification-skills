@@ -63,13 +63,13 @@ describe('known controller termination: execution closure only (protocol doubles
     const captures = [...p.historicalCaptures, { schema: 'fvs/auto-bundle-historical-input', schemaVersion: 1,
       original: f.read(p.context.canonicalObservations.file).runtimeCurrent,
       archive: f.write(path.join(p.x.owned, 'bundle-before-archive.json'), fs.readFileSync(beforeRuntime.file)), mode: 0o600 }];
-    const handoff = f.json(p.x.owned, 'finish-handoff', { finish: finish.evidence, executionClosure: result.evidence }), request = { ...current.current.bundle, handoff,
+    const handoff = f.json(p.x.owned, 'finish-handoff', { finish, executionClosure: result.evidence }), request = { ...current.current.bundle, handoff,
       historicalCaptures: captures, absenceReasons: { ...current.current.bundle.absenceReasons, handoff: null } };
     const built = bundle.buildReviewBundle(request, p.x.output('bundle'));
     const checked = bundle.verifyReviewBundle({ manifest: built.manifest, expectedContext: bundle.bundleExpectedContext(request), deadlineMs: Date.now() + 120000, out: p.x.output('verify-bundle') });
     assert.equal(checked.integrity.status, 'valid');
     const manifest = f.read(built.manifest.file);
-    for (const ref of [p.context.outer, p.context.marker, p.context.code.controller, v.request.terminationEvidence, result.evidence]) assert.ok(manifest.copies.some(row => row.original === ref.file && row.sha256 === ref.sha256), 'retained input ' + ref.file);
+    for (const ref of [p.context.outer, p.context.marker, p.context.code.controller, v.request.terminationEvidence, result.evidence, finish.evidence, finish.publication]) assert.ok(manifest.copies.some(row => row.original === ref.file && row.sha256 === ref.sha256), 'retained input ' + ref.file);
   });
   const mutations = {
     lifecycle: c => c.lifecycle = 'arbitrary-process', version: c => c.schemaVersion = 2, extra: c => c.unsupported = true,

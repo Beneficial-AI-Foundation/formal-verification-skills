@@ -153,7 +153,7 @@ allowing a successor. Source review alone does not authorize a live failed-after
 or any further attempt.
 
 For either failure type, a17 handoff may reference both unchanged successful
-envelopes, for example `{finish: finish.evidence, executionClosure:
+envelopes, for example `{finish, executionClosure:
 closure.evidence}`. Supply exact original-path/digest historical runtime captures
 when needed.17 must build **and verify** the copied original request, result,
 publication, marker, controller and closure evidence. Neither that immutable
