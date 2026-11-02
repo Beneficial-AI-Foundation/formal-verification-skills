@@ -66,7 +66,7 @@ if (process.argv.includes('--version')) {
   return { root, source, files, request };
 }
 
-async function build(request) { return (await helper).buildCheckerSnapshot(request); }
+async function build(request, services) { return (await helper).buildCheckerSnapshot(request, services); }
 function git(root, ...args) {
   const result = spawnSync('/usr/bin/git', args, { cwd: root, encoding: 'utf8', env: {
     PATH: '/usr/bin:/bin', HOME: root, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0',
@@ -160,6 +160,7 @@ if (process.platform === 'darwin') {
     assert.equal(source.split(marker).length, 2, 'one explicit private-state fault seam');
     source = source.replace(marker, statement + '\n' + marker);
     source = source.replace("from './fvs-probe-inventory.mjs'", 'from ' + JSON.stringify(pathToFileURL(path.resolve(__dirname, '../scripts/fvs-probe-inventory.mjs')).href));
+    source = source.replace("from './fvs-execution.mjs'", 'from ' + JSON.stringify(pathToFileURL(path.resolve(__dirname, '../scripts/fvs-execution.mjs')).href));
     const copy = path.join(f.root, 'test-only-state-fault.mjs'); fs.writeFileSync(copy, source, { flag: 'wx' });
     return import(pathToFileURL(copy).href);
   }
@@ -708,3 +709,41 @@ if (process.env.FVS_CHECKER_BUILD_REAL === '1') {
     assert.equal(result.lake, undefined);
   });
 }
+
+
+test('v2 trusted-host build has no implicit elapsed budget and retains final identities', async () => {
+  const { createExecution } = await import('../scripts/fvs-execution.mjs');
+  const f = fixture();
+  delete f.request.deadlineMs; Object.assign(f.request, { version: 2, execution: createExecution('project-run', { kind: 'none' }) });
+  const result = await build(f.request, { now: () => Date.now() + 5 * 3600000 });
+  assert.equal(result.status, 'built', result.reason); assert.equal(result.version, 2); assert.equal(result.proofChecked, false);
+  assert.equal(result.runner.network, 'enabled'); assert.equal(result.runner.platform, process.platform);
+  assert.ok(result.policy.file.endsWith('execution-policy.json')); assert.deepEqual(json(result.policy.file).execution, f.request.execution);
+  assert.ok(result.receipts.every(r => r.argv[0] !== '/usr/bin/sandbox-exec'));
+  assert.ok(result.receipts.map(r => json(r.file)).every(r => r.cleanupComplete === true && r.cancelled === false));
+  assert.deepEqual(result.modules.map(m => m.name), ['Sample']);
+});
+
+test('v2 observed cancellation never returns built or an output inventory', async () => {
+  const { createExecution } = await import('../scripts/fvs-execution.mjs');
+  const f = fixture('process.stdout.write("owned-build-started");setInterval(()=>{},1000);');
+  delete f.request.deadlineMs; Object.assign(f.request, { version: 2, execution: createExecution('project-run', { kind: 'none' }) });
+  const controller = new AbortController();
+  const result = await build(f.request, { signal: controller.signal, spawnProcess(file, args, options) {
+    const child = childProcess.spawn(file, args, options);
+    if (args.includes('build')) child.stdout.once('data', () => controller.abort());
+    return child;
+  } });
+  assert.equal(result.status, 'cancelled', result.reason); assert.equal(result.proofChecked, false);
+  const last = json(result.receipts.at(-1).file);assert.equal(last.cancelled, true);assert.equal(last.signal, 'SIGKILL');assert.equal(last.cleanupComplete, true);
+  assert.equal(result.inventories.outputs, undefined);assert.equal(result.modules, undefined);
+  assert.equal(fs.readFileSync(path.join(f.source, 'Sample.lean'), 'utf8'), f.files['Sample.lean']);
+});
+
+test('v2 mixed or forged execution controls refuse before output creation', async () => {
+  const { createExecution } = await import('../scripts/fvs-execution.mjs');
+  for (const change of [r => {}, r => { delete r.deadlineMs; r.execution.policySha256 = '0'.repeat(64); }]) {
+    const f = fixture();Object.assign(f.request, { version: 2, execution: createExecution('run', { kind: 'none' }) });change(f.request);
+    assert.equal((await build(f.request)).status, 'unverified');assert.equal(fs.existsSync(f.request.out), false);
+  }
+});

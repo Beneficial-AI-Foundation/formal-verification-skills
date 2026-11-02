@@ -2,6 +2,7 @@
 'use strict';
 
 import { spawnSync } from 'node:child_process';
+import { parseBudget } from './fvs-execution.mjs';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -568,9 +569,9 @@ function fields(errors, value, where, allowed) {
   return true;
 }
 
-function choiceErrors(choices) {
+function choiceErrors(choices, version = 1) {
   const errors = [];
-  if (!fields(errors, choices, 'choices', ['source', 'scope', 'limits'])) return errors;
+  if (!fields(errors, choices, 'choices', ['source', 'scope', 'limits', ...(version === 2 ? ['budget', 'memory'] : [])])) return errors;
   if (fields(errors, choices.source, 'source', ['revision', 'configuration'])) {
     // The revision reaches git as an argument, so an option-like value is refused.
     if (!isText(choices.source.revision) || /^-|\s/.test(choices.source.revision)) {
@@ -579,6 +580,11 @@ function choiceErrors(choices) {
     if (!isText(choices.source.configuration)) errors.push('source.configuration must be a non-empty string');
   }
   if (!isText(choices.scope)) errors.push('scope must be a non-empty string naming the bounded initial scope');
+  if (version === 2) {
+    if (fields(errors, choices.limits, 'limits', ['workers']) && (!Number.isSafeInteger(choices.limits.workers) || choices.limits.workers < 1)) errors.push('limits.workers must be a positive integer');
+    try { parseBudget(choices.budget); } catch (error) { errors.push(error.message); }
+    if (fields(errors, choices.memory, 'memory policy', ['mode']) && !['disabled', 'beads'].includes(choices.memory.mode)) errors.push('memory mode must be disabled or beads');
+  } else {
   if (fields(errors, choices.limits, 'limits', ['nodeHours', 'workers', 'wallClockHours'])) {
     const { nodeHours, workers, wallClockHours } = choices.limits;
     if (!positive(nodeHours)) errors.push('limits.nodeHours must be a positive number of hours');
@@ -586,31 +592,34 @@ function choiceErrors(choices) {
     if (wallClockHours === undefined) errors.push('limits.wallClockHours is required: the owner names one total wall-clock cap');
     else if (!positive(wallClockHours)) errors.push('limits.wallClockHours must be a positive number of hours');
   }
+  }
   return errors;
 }
 
-function normalizeChoices(input) {
+function normalizeChoices(input, version = 1) {
+  if (version === 2) input = JSON.parse(JSON.stringify(memoryDataSnapshot(input)));
   const choices = plainObject(input) && plainObject(input.limits)
-    ? { ...input, limits: { ...DEFAULT_LIMITS, ...input.limits } }
+    ? { ...input, limits: { ...(version === 1 ? DEFAULT_LIMITS : { workers: DEFAULT_LIMITS.workers }), ...input.limits }, ...(version === 2 ? { budget: input.budget ?? { kind: 'none' }, memory: input.memory ?? { mode: 'disabled' } } : {}) }
     : input;
-  const errors = choiceErrors(choices);
+  const errors = choiceErrors(choices, version);
   if (errors.length > 0) refuse('invalid-input', `invalid owner choices: ${errors.join('; ')}`, { errors });
   const { source, scope, limits } = choices;
   return {
     source: { revision: source.revision, configuration: source.configuration },
     scope,
-    limits: { nodeHours: limits.nodeHours, workers: limits.workers, wallClockHours: limits.wallClockHours },
+    limits: version === 1 ? { nodeHours: limits.nodeHours, workers: limits.workers, wallClockHours: limits.wallClockHours } : { workers: limits.workers },
+    ...(version === 2 ? { budget: parseBudget(choices.budget), memory: { mode: choices.memory.mode } } : {}),
   };
 }
 
 function stateErrors(state) {
   const errors = [];
   if (!fields(errors, state, 'state', ['schema', 'schemaVersion', 'profiledAt', 'profile', 'choices', 'roadmap', 'extraction', 'choicesGeneration', 'agreements', 'memoryBindings'])) return errors;
-  if (state.schema !== 'fvs/auto-state' || state.schemaVersion !== 1) errors.push('schema must be fvs/auto-state version 1');
+  if (state.schema !== 'fvs/auto-state' || ![1, 2].includes(state.schemaVersion)) errors.push('schema must be fvs/auto-state version 1 or 2');
   if (!plainObject(state.profile) || state.profile.schema !== 'fvs/auto-profile' || !Array.isArray(state.profile.items)) {
     errors.push('profile must be a recorded fvs/auto-profile result');
   }
-  errors.push(...choiceErrors(state.choices));
+  errors.push(...choiceErrors(state.choices, state.schemaVersion));
   const { roadmap, extraction } = state;
   if (roadmap !== null && (!fields(errors, roadmap, 'roadmap', ['decision', 'path', 'decidedAt'])
     || !['accepted', 'declined'].includes(roadmap.decision)
@@ -660,13 +669,13 @@ export const agreementPayloadSha256 = (agreement) => sha256(canonicalJson(approv
 function agreementErrors(value, stored = false) {
   const errors = [];
   if (!fields(errors, value, 'agreement', [...AGREEMENT_FIELDS, ...(stored ? ['contextSha256', 'recordedAt'] : [])])) return errors;
-  if (value.schema !== 'fvs/auto-agreement' || value.schemaVersion !== 1) errors.push('agreement must be fvs/auto-agreement version 1');
+  if (value.schema !== 'fvs/auto-agreement' || ![1, 2].includes(value.schemaVersion)) errors.push('agreement must be fvs/auto-agreement version 1 or 2');
   if (value.mode !== 'nonpublic-intent') errors.push('agreement.mode must be nonpublic-intent; public-api is unsupported pending separately permitted visibility landing');
   const p = value.payload;
   if (fields(errors, p, 'agreement.payload', PAYLOAD_FIELDS)) {
     if (!generationValid(p.choicesGeneration)) errors.push('agreement.payload.choicesGeneration must be a nonnegative safe integer');
     if (!Number.isSafeInteger(p.contextVersion) || p.contextVersion < 1) errors.push('agreement.payload.contextVersion must be a positive safe integer');
-    errors.push(...choiceErrors(p.choices));
+    errors.push(...choiceErrors(p.choices, value.schemaVersion));
     if (!['single-crate', 'monorepo'].includes(p.layout)) errors.push('agreement.payload.layout must be single-crate or monorepo');
     for (const key of ['boundaries', 'conventions', 'claims', 'trust', 'acceptance', 'ownerReserved']) {
       if (!textList(p[key]) || (['claims', 'trust', 'acceptance', 'ownerReserved'].includes(key) && p[key].length === 0)) {
@@ -708,6 +717,7 @@ function agreementStateErrors(state) {
   let previousGeneration = 0;
   for (const record of state.agreements) {
     const recordErrors = agreementErrors(record, true);
+    if (record.schemaVersion !== state.schemaVersion) recordErrors.push('agreement/state versions differ');
     errors.push(...recordErrors);
     if (recordErrors.length) continue;
     if (record.payload.contextVersion <= previousVersion || record.payload.choicesGeneration < previousGeneration
@@ -829,6 +839,7 @@ export function recordAgreement({ projectRoot, agreement, confirmOverwrite = fal
   const root = projectDirectory(projectRoot);
   const state = requireState(root);
   validateAgreement(agreement, 'invalid-input');
+  if (agreement.schemaVersion !== state.schemaVersion) refuse('invalid-input', 'agreement/state versions differ; no implicit migration');
   const current = currentAgreementContext(root);
   if (canonicalJson(agreement) !== canonicalJson(current.agreement)) refuse('agreement-context-mismatch', 'the submitted agreement is not the actual current canonical roadmap envelope');
   checkAgreementChoices(state, agreement);
@@ -1026,10 +1037,13 @@ function choiceChanges(recorded, requested) {
 const blocks = (entry) => ['incompatible', 'unsupported-platform'].includes(entry.verdict)
   || (entry.verdict === 'missing' && entry.id !== 'probe');
 
-export function initState({ projectRoot, choices, confirmOverwrite = false, platform = hostTarget() }) {
+export function initState({ projectRoot, choices, confirmOverwrite = false, platform = hostTarget(), schemaVersion }) {
   const root = projectDirectory(projectRoot);
-  const requested = normalizeChoices(choices);
   const recorded = loadState(root);
+  schemaVersion ??= recorded?.schemaVersion ?? (Object.hasOwn(choices?.limits ?? {}, 'wallClockHours') || Object.hasOwn(choices?.limits ?? {}, 'nodeHours') ? 1 : 2);
+  if (![1, 2].includes(schemaVersion)) refuse('invalid-input', 'unsupported setup version');
+  if (recorded && recorded.schemaVersion !== schemaVersion) refuse('migration-required', 'existing setup version is preserved; no in-place migration');
+  const requested = normalizeChoices(choices, schemaVersion);
   if (recorded) {
     const changes = choiceChanges(recorded.choices, requested);
     if (changes.length === 0) {
@@ -1048,7 +1062,7 @@ export function initState({ projectRoot, choices, confirmOverwrite = false, plat
   }
   const state = {
     schema: 'fvs/auto-state',
-    schemaVersion: 1,
+    schemaVersion,
     profiledAt: now(),
     profile: result,
     choices: requested,
