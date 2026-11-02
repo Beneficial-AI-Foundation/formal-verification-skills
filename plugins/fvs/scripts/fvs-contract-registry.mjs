@@ -289,7 +289,7 @@ export function candidateOf(contract, context) {
   }));
 }
 
-function reviewProblems(review, reviewFile, contract, candidate, chain) {
+export function reviewProblems(review, reviewFile, contract, candidate, chain) {
   const r = review;
   if (!isObject(r) || !isSha(r.candidateSha256) || !Object.hasOwn(r, 'registryHeadSha256') || !(r.registryHeadSha256 === null || isSha(r.registryHeadSha256))
     || !['pass', 'changes-requested'].includes(r.verdict) || !personValid(r.reviewer) || !isObject(r.evidence) || !isText(r.evidence.file) || !isSha(r.evidence.sha256)) {

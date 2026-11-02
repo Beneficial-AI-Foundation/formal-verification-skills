@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { memoryDataSnapshot, memoryHash, MEMORY_LIMITS } from './fvs-project-memory.mjs';
 import { duplicateKeys } from './fvs-lean-graph.mjs';
-import { readChain, registryStatus, validatePlan } from './fvs-contract-registry.mjs';
+import { readChain, registryStatus, validatePlan, contextOf, contractProblems, candidateOf, reviewProblems } from './fvs-contract-registry.mjs';
 import { readAcceptedStore, inspectAutoBaselineArtifacts, inspectAutoProvisional, extractionContext } from './fvs-checker-auto.mjs';
 
 export class TransitionError extends Error {
@@ -84,7 +84,12 @@ export function readTransitionAction(ref) {
     || !text(a.stage) || !text(a.owner) || !(a.expectedHeadSha256 === null || isSha(a.expectedHeadSha256)) || !Array.isArray(a.nodes) || a.nodes.some((n, i) => !Number.isSafeInteger(n) || n < 0 || (i && n <= a.nodes[i - 1]))) stop('transition-invalid-input', 'invalid finite action identity');
   snapshotValid(a.before);
   transitionBound(a.authorization); transitionBound(a.profile);
-  if (a.basis !== null) closed(a.basis, ['beforeEventSha256', 'afterEventSha256', 'completion'], 'prior explanation');
+  if (a.basis !== null) {
+    closed(a.basis, a.basis.version === 2 ? ['version', 'beforeEventSha256', 'afterEventSha256', 'completion', 'workCompletion'] : ['beforeEventSha256', 'afterEventSha256', 'completion'], 'prior explanation');
+    if (![a.basis.beforeEventSha256, a.basis.afterEventSha256].every(isSha)) stop('transition-invalid-input', 'invalid historical explanation hashes');
+    transitionBound(a.basis.completion);
+    if (a.basis.version === 2 && a.basis.workCompletion !== null) transitionBound(a.basis.workCompletion);
+  }
   const keys = {
     construct: ['procedure'], launch: ['projectId', 'branchRef', 'assignmentId', 'selectionStage', 'invocation', 'startup'],
     'prepare-input': ['sessionId', 'association', 'launch', 'startupAck', 'startupRequest', 'candidate'],
@@ -318,6 +323,44 @@ export function transitionValidators({ tools, git, inspectBaseline = inspectAuto
         }
       }
     },
+    verifyProtectedCheck(a, actual) {
+      this.verifyProofLaunch({ ...a, stage: 'proof', nodes: a.target.nodes }, actual);
+      if (!actual.store) stop('transition-protected-proof-required', 'protected recheck requires retained accepted proof history');
+      const frozen = transitionBound(actual.baseline), history = readStore(actual.store.root);
+      for (const node of a.target.nodes) {
+        const target = frozen.targets.find((t) => t.node === node), mod = frozen.build.modules.find((m) => m.name === target?.module);
+        const prior = [...history.records].reverse().find(({ record }) => {
+          if (record.node !== node) return false;
+          const old = transitionBound(record.baseline).targets.find((t) => t.node === node);
+          return old?.name === target?.name && old?.module === target?.module;
+        });
+        if (!prior || !mod || frozen.overlayFiles.includes(mod.source) || !isSha(frozen.build.source.files[mod.source]?.sha256)
+          || hash(git(actual.source.root, ['show', actual.source.commit + ':' + mod.source], true)) !== frozen.build.source.files[mod.source].sha256) stop('transition-protected-proof-required', 'recheck requires the exact previously accepted target in protected frozen source');
+        const checked = transitionBound(prior.record.integratedCheck), oldBuild = checked.build;
+        if (!oldBuild || !same(oldBuild.source?.files[mod.source], frozen.build.source.files[mod.source])) stop('transition-protected-proof-required', 'prior integrated proof bytes do not match this protected target');
+      }
+    },
+    verifyRegistryBefore(a, actual) {
+      const i = transitionBound(a.target.request), contract = transitionBound(i.contract), review = transitionBound(a.target.review);
+      const plan = { json: transitionBound(i.plan), sha256: i.plan.sha256 }, graph = { json: transitionBound(i.graph), sha256: i.graph.sha256 }, view = validatePlan(plan, graph);
+      if (view.problems.length || !view.nodes.has(contract.node) || view.nodes.get(contract.node).eligibility !== 'eligible') stop('transition-registry-unverified', 'review publication needs a supported actual bound node');
+      const context = contextOf(plan, graph, view, contract.node), chain = readChain(actual.registry.root);
+      if (chain.pending) stop('transition-registry-unverified', 'registry publication is pending');
+      if (context.role === 'out-of-scope' || contractProblems(contract, context, actual.source.root).length || candidateOf(contract, context) !== a.target.candidateSha256
+        || i.previous !== (chain.heads.get(contract.node)?.sha ?? null) || (chain.records.at(-1)?.sha ?? null) !== actual.registry.headSha256
+        || reviewProblems(review, a.target.review.file, contract, a.target.candidateSha256, chain).length
+        || chain.records.some(({ record }) => record.review && (record.review.reviewer.runId === review.reviewer.runId || record.review.evidence.sha256 === review.evidence.sha256))) stop('transition-registry-unverified', 'fresh exact current-candidate independent unused review is required');
+    },
+    verifyWorkCandidate(a, prepared, result, actor) {
+      const assignment = transitionBound(result.assignment), { dirty, ...worktree } = actor.worktree;
+      this.verifyCandidateAssignment(result.assignment, a.kind === 'materialize-proof' ? 'proof' : 'specification');
+      if (!same(assignment.worktree, worktree) || assignment.sessionId !== actor.sessionId || assignment.reservationId !== actor.reservationId || assignment.assignmentId !== actor.assignmentId
+        || !same(assignment.rulesProfile, actor.profile) || !same(this.observeActor(actor), actor)
+        || git(actor.worktree.path, ['merge-base', '--is-ancestor', prepared.commit, result.commit], false, true) !== 0) stop('transition-work-result-invalid', 'candidate is not independently observed progress of this exact owned assignment');
+      this.verifyCandidateInputs(a);
+      const changed = git(actor.worktree.path, ['diff', '--name-only', '-z', prepared.commit, result.commit]).split('\0').filter(Boolean).sort();
+      if (!same(changed, Object.keys(result.files).sort())) stop('transition-work-result-invalid', 'actor changed unrecorded candidate paths');
+    },
     verifyPreparation(a, before, actual, evidence) {
       const w = actual.worker?.worktree, old = before.worker?.worktree;
       const observeGit = this.observeGit ?? git;
@@ -431,6 +474,90 @@ function validateDelta(a, before, actual, evidence, services) {
   }
 }
 
+const legacyNext = (next, kind) => next === kind || (next === 'accept-or-strict' && kind === 'accept');
+function conclusiveWork(a, release, after, actual, view, now, services) {
+  const ref = a.basis.workCompletion, c = transitionBound(ref);
+  closed(c, ['schema', 'schemaVersion', 'runId', 'packet', 'marker', 'sourceAfter', 'outcome', 'artifacts', 'controllerSessionId'], 'conclusive work completion');
+  const p = readWorkPacket(release.target.packet), marker = transitionBound(c.marker);
+  closed(marker, ['schema', 'schemaVersion', 'runId', 'packet', 'actor', 'actionSha256', 'challenge', 'deliveryHandle', 'memoryRequest', 'status', 'memoryEvidence'], 'execution start marker');
+  if (c.schema !== 'fvs/auto-work-completion' || c.schemaVersion !== 1 || c.runId !== a.runId || c.outcome !== 'completed' || c.controllerSessionId !== actual.fixed.coordinatorSessionId
+    || !same(c.packet, release.target.packet) || !Array.isArray(c.artifacts) || !c.artifacts.length || new Set(c.artifacts.map((r) => r.file)).size !== c.artifacts.length
+    || c.marker.file !== p.startMarker || marker.schema !== 'fvs/auto-execution-start' || marker.schemaVersion !== 1 || marker.runId !== a.runId || marker.status !== 'execution-uncertain'
+    || !same(marker.packet, c.packet) || !same(marker.actor, p.actor) || marker.actionSha256 !== p.actionSha256 || marker.challenge !== p.challenge || marker.deliveryHandle !== p.deliveryHandle
+    || !same(marker.memoryRequest, p.memoryRequest) || !same(marker.memoryEvidence, workerMemoryEvidence(marker.memoryEvidence?.out, p.memoryRequest))) stop('transition-work-result-invalid', 'exact published packet/start/current prime and conclusive v1 envelope are required');
+  validateReleasePreparation(release, p, view, services);
+  const results = [];
+  for (const artifact of c.artifacts) {
+    const b = transitionBound(artifact, false);
+    try { const v = transitionJson(b); if (v.schema === 'fvs/auto-work-result') results.push(v); } catch (error) { if (error.code !== 'transition-invalid-input') throw error; }
+  }
+  if (results.length !== 1) stop('transition-work-result-invalid', 'exactly one separately typed actor result is required');
+  const r = results[0];
+  closed(r, ['schema', 'schemaVersion', 'runId', 'packet', 'marker', 'actionSha256', 'actor', 'kind', 'prepared', 'result', 'controllerObservedAtMs', 'controllerSessionId'], 'typed work result');
+  const prepared = { commit: p.actor.worktree.commit, tree: p.actor.worktree.tree }, floor = view.state.history.filter((row) => row.event.intent.transitionId !== a.transitionId).at(-1)?.event.observedAtMs ?? actual.fixed.startedAtMs;
+  if (r.schemaVersion !== 1 || r.runId !== a.runId || !same(r.packet, c.packet) || !same(r.marker, c.marker) || r.actionSha256 !== p.actionSha256 || !same(r.actor, p.actor)
+    || !same(r.prepared, prepared) || r.controllerSessionId !== c.controllerSessionId || !['candidate', 'review'].includes(r.kind)
+    || !Number.isSafeInteger(r.controllerObservedAtMs) || r.controllerObservedAtMs < Math.max(floor, after.event.observedAtMs, actual.fixed.startedAtMs) || r.controllerObservedAtMs > now
+    || r.controllerObservedAtMs >= actual.fixed.deadlineMs) stop('transition-work-result-invalid', 'result lost its exact actor/prepared source or actual controller-observation bounds');
+  proofInvocation(readTransitionAction(p.launch), r.controllerObservedAtMs);
+  if (view.state.history.some((row) => {
+    if (row.event.position !== 'before' || row.event.intent.transitionId === a.transitionId || !row.event.intent.request) return false;
+    const oldRef = readTransitionAction(row.event.intent.request).basis?.workCompletion;
+    if (!oldRef) return false;
+    const old = transitionBound(oldRef);
+    return same(old.packet, c.packet) && old.marker?.file === p.startMarker;
+  })) stop('transition-work-result-replayed', 'this issued packet/start already has a reserved result consumer; recover it');
+  if (r.kind === 'candidate') {
+    closed(r.result, ['commit', 'tree', 'files', 'assignment'], 'candidate result');
+    if (!['compose-spec', 'materialize-proof'].includes(a.kind) || !same(a.target.candidates, [r.result]) || !same(a.target.files, r.result.files)
+      || !same(c.sourceAfter, { commit: r.result.commit, tree: r.result.tree })) stop('transition-work-result-invalid', 'materialization must use exactly the observed candidate');
+    const actor = { ...p.actor, worktree: { ...p.actor.worktree, commit: r.result.commit, tree: r.result.tree } };
+    services.verifyWorkCandidate(a, prepared, r.result, actor);
+  } else {
+    closed(r.result, ['contract', 'review'], 'review result');
+    const i = a.kind === 'registry-revise' ? transitionBound(a.target.request) : null;
+    if (!i || !same(i.contract, r.result.contract) || !same(i.review, r.result.review) || !same(c.sourceAfter, prepared) || !same(services.observeActor(p.actor), p.actor)
+      || readTransitionAction(p.launch).stage !== 'review') stop('transition-work-result-invalid', 'publication must use this exact observed reviewer/source/result');
+    const review = transitionBound(r.result.review);
+    if (review.reviewer?.session !== p.actor.sessionId) stop('transition-work-result-invalid', 'review result belongs to another actor');
+  }
+  return r.controllerObservedAtMs;
+}
+function validateSuccessor(a, prior, before, after, completed, actual, view, now, services) {
+  const observation = readRuntimeObservation(after.event), recorded = observation.transition?.snapshot, facts = observation.transition?.admissibility;
+  if (!recorded || facts?.status !== 'facts-recorded-partial' || !same(facts.completion, a.basis.completion) || facts.beforeEventSha256 !== before.sha256
+    || !same(after.event.intent, before.event.intent)) stop('transition-explanation-required', 'basis needs the independently published exact after snapshot');
+  const next = validateDelta(prior, prior.before, recorded, completed, services);
+  sameExcept(recorded, actual, ['worker']);
+  let permitted = legacyNext(next, a.kind), observedAtMs = now;
+  if (prior.kind === 'release') {
+    if (a.basis.workCompletion === null) stop('transition-work-result-invalid', 'delivery/start alone grants no successor');
+    observedAtMs = conclusiveWork(a, prior, after, actual, view, now, services);
+    if (actual.worker !== null) stop('transition-extra-drift', 'local result consumption does not select an unexplained actor');
+    permitted = ['materialize-proof', 'compose-spec', 'registry-revise'].includes(a.kind);
+  } else {
+    if (a.basis.workCompletion !== null) stop('transition-work-result-invalid', 'only a published release consumes conclusive actor work');
+    if (!same(recorded.worker, actual.worker)) stop('transition-extra-drift', 'unexplained actor progress');
+    if (prior.kind === 'freeze') permitted = a.kind === 'check' || (a.kind === 'launch' && a.stage === 'proof');
+    if (prior.kind === 'accept') permitted = ['accept', 'check'].includes(a.kind) || (a.kind === 'launch' && ['proof', 'review'].includes(a.stage));
+    if (prior.kind === 'registry-revise') permitted = ['registry-revise', 'freeze'].includes(a.kind) || (a.kind === 'launch' && ['specification', 'review'].includes(a.stage));
+  }
+  if (!permitted) stop('transition-next-action-forbidden', 'completed facts do not admit this finite successor');
+  if (a.kind === 'check' && ['freeze', 'accept'].includes(prior.kind)) {
+    if (!same(a.nodes, a.target.nodes) || !a.nodes.length) stop('transition-protected-proof-required', 'exact nonempty reserved recheck scope required');
+    services.verifyProtectedCheck(a, actual);
+  }
+  if (a.kind === 'launch') {
+    services.verifyProofLaunch(a, actual);
+    if (a.stage !== 'proof' && (!a.nodes.length || a.nodes.some((n) => ['machine-reviewed-provisional', 'recheck-required'].includes(actual.registry?.nodes[n]?.state)))) stop('transition-next-action-forbidden', 'specification/review launch must address actual missing or pending contracts');
+  }
+  if (a.kind === 'freeze' && (!actual.registry || !Object.keys(actual.registry.nodes).length || Object.values(actual.registry.nodes).some((r) => !['machine-reviewed-provisional', 'recheck-required'].includes(r.state)))) stop('transition-next-action-forbidden', 'freeze requires current reviewed14 readiness');
+  if (a.kind === 'registry-revise') services.verifyRegistryBefore(a, actual);
+  const end = (services.now ?? Date.now)();
+  if (end < Math.max(now, observedAtMs, view.lastObservedAtMs ?? actual.fixed.startedAtMs)) stop('transition-clock-rollback', 'continuation clock moved behind its conclusive observations');
+  if (end >= actual.fixed.deadlineMs) stop('transition-budget-exhausted', 'original limit expired during continuation validation');
+}
+
 // Called with fresh observations and a fully validated16 history, never a
 // caller-supplied expected-stale flag. It records facts OR names one next row.
 export function assessTransition({ actionRef, q, view, canonical, run, actual, reasons, now, evidenceRefs = [] }, services) {
@@ -450,6 +577,7 @@ export function assessTransition({ actionRef, q, view, canonical, run, actual, r
     if (candidates.length !== 1) stop('transition-completion-required', 'exactly one actual completion is required');
     const completed = completionFor(a, candidates[0], before, view.state.history);
     const next = validateDelta(a, a.before, actual, completed, services);
+    if (a.basis?.version === 2 && a.basis.workCompletion !== null && !evidenceRefs.some((r) => same(r, a.basis.workCompletion))) stop('transition-work-result-invalid', 'after must retain its conclusive actor envelope for linked resume');
     return { status: 'facts-recorded-partial', action: a.kind, next, completion: candidates[0], beforeEventSha256: before.sha256, executable: false, selected };
   }
   if (a.expectedHeadSha256 !== q.expectedHeadSha256) stop('transition-predecessor-stale', 'proposal predecessor is stale');
@@ -462,10 +590,12 @@ export function assessTransition({ actionRef, q, view, canonical, run, actual, r
     if (!before || !after || before.event.position !== 'before' || after.event.position !== 'after' || after.event.beforeEventSha256 !== before.sha256
       || after.event.outcome !== 'succeeded' || !after.event.effect.evidence.some((r) => same(r, a.basis.completion))) stop('transition-explanation-required', 'no exact completed historical explanation');
     const prior = readTransitionAction(before.event.intent.request), completed = completionFor(prior, a.basis.completion, before, view.state.history.filter((r) => r.sha256 !== after.sha256));
-    const next = validateDelta(prior, prior.before, actual, completed, services);
-    const permitted = next === a.kind || (next === 'accept-or-strict' && a.kind === 'accept') || (next === 'launch' && a.kind === 'launch');
-    if (!permitted) stop('transition-next-action-forbidden', 'explained facts permit only the exact next row');
-    if (a.kind === 'launch') services.verifyProofLaunch(a, actual);
+    if (a.basis.version === 2) validateSuccessor(a, prior, before, after, completed, actual, view, now, services);
+    else {
+      const next = validateDelta(prior, prior.before, actual, completed, services);
+      if (!legacyNext(next, a.kind)) stop('transition-next-action-forbidden', 'explained facts permit only the exact next row');
+      if (a.kind === 'launch') services.verifyProofLaunch(a, actual);
+    }
   } else if (a.kind === 'launch' && a.stage === 'proof') services.verifyProofLaunch(a, actual);
   if (a.kind === 'prepare-input') services.verifyPreparationBefore(a, actual);
   if (a.kind === 'launch') {

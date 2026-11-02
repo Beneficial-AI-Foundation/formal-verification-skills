@@ -209,3 +209,48 @@ Before any live provider tracer, bind its concrete owned project/source/scope, a
 capability/profile/standing-override manifest, execution/resource limits, memory/paths and evidence
 matrix under19's separately authorized gate. Component doubles, simulation and real15/16 qualification
 are distinct; none silently grants live provider execution, publication or target proof promotion.
+
+## Retained-store revision continuations
+
+Legacy three-key `basis` and both closed v1 work/start formats remain unchanged.
+The optional closed basis `{version:2,beforeEventSha256,afterEventSha256,completion,workCompletion}`
+revalidates the actual successful before/completion against its recorded after snapshot,
+then compares fresh canonical source, registry, baseline, accepted store and every fixed
+run/scope/grant/profile/memory/stage/accounting field. Pending or unexplained drift refuses.
+Only an exact published release may set `workCompletion`; other rows require null.
+
+The finite successors are: current-source freeze to a protected-target recheck or
+dependency-ready proof launch; fresh accept to another accept, protected recheck or
+dependency-ready proof/review launch; actual registry revision to a fresh qualified
+publication, needed specification/review launch or freeze when all14 nodes are ready.
+A protected recheck requires prior integrated proof evidence with the same target/module,
+exact frozen protected source bytes and current accepted helper dependencies. Mutable or
+future overlay targets do not qualify. All other successors retain the legacy restrictions.
+Unrelated stale heads stay historical: neither a continuation nor provisional check makes
+them current, and the full15 currentness inspector is unchanged.
+
+A release successor to candidate composition/materialization or review publication needs
+the unchanged closed nine-key `fvs/auto-work-completion` v1 envelope, outcome completed,
+with exactly one separate `fvs/auto-work-result` v1 artifact among its bound artifacts.
+The result's closed fields are `schema,schemaVersion,runId,packet,marker,actionSha256,actor,
+kind,prepared,result,controllerObservedAtMs,controllerSessionId`. Actor is the exact issued
+packet actor; prepared is its `{commit,tree}`. Candidate result is
+`{commit,tree,files,assignment}`; review result is `{contract,review}`. The completion's
+sourceAfter is the exact resulting `{commit,tree}`. Unknown versions, mixed formats,
+missing/multiple typed results or another actor/packet/result refuse.
+
+The controller independently observes the assigned actor's clean Git identity and candidate
+FF ancestry/allowed paths, or unchanged reviewer source plus exact candidate/head-bound
+independent unused14 packet. Its new before binds the completion; its succeeded after must
+retain that same completion in effect evidence, including the observed association. This
+retention supports the existing legacy linked-resume reader; it grants no automatic resend
+or retry. The issued packet/start marker identifies the reserved consumer; copying or freshly observing
+the same result cannot create another consumer.
+
+The execution-start v1 marker has no timestamp. Its hashes establish causal identity,
+not measured worker start/runtime. The published release-after observation and original
+invocation/run/last controller observation supply the lower bound for the newly retained
+controllerObservedAtMs, which must be no later than the current observation and inside
+the original limits. A fresh clock fence after all reads refuses rollback or exhaustion.
+All before-CAS, capacity, fresh20/16, proof-dependency and strict final-inspection gates remain.
+These files are trusted controller evidence, not process isolation or proof receipts.

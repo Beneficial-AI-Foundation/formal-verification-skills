@@ -175,8 +175,8 @@ function publishRegistry(input) {
   if (r.status === 6) assert.equal(result.record.review.verdict, 'changes-requested', 'recorded rejection remains unready');
   return result;
 }
-function stageLaunch(x, nodes = [19]) {
-  const intent = x.launch(nodes); intent.stage = 'specification';
+function stageLaunch(x, nodes = [19], stage = 'specification') {
+  const intent = x.launch(nodes); intent.stage = stage;
   const item = x.action('launch', { projectId: 'fixture-project', branchRef: intent.effect.intendedBranchRef, assignmentId: intent.effect.assignmentId,
     startup: { challenge: f.uuid(), attemptId: f.uuid(), phase: 'resume', resumeId: f.uuid() } }, { intent });
   const before = x.invoke(item.q, 'checkpoint');
@@ -423,9 +423,10 @@ describe('completed action evidence and bounded staleness', () => {
     reject('transition-extra-drift', () => x.invoke(q, 'checkpoint')); assert.equal(auto.readRuntimeState({ projectRoot: x.root }).fileSha256, old);
   });
 });
-function lifecycle(x, { noOp = false, crashPublication = false, stalePreparation = false } = {}) {
+function lifecycle(x, { noOp = false, crashPublication = false, stalePreparation = false, consumeCandidate = false, consumeReview = false } = {}) {
   const canonicalBefore = f.sha(fs.readFileSync(f.stateFile(x.root)));
-    effectDouble(x); const l = stageLaunch(x), value = t.transitionBound(l.assignment);
+    if (consumeReview) trackRegistry(x);
+    effectDouble(x); const l = stageLaunch(x, [19], consumeReview ? 'review' : 'specification'), value = t.transitionBound(l.assignment);
     const actor = { projectId: 'fixture-project', sessionId: l.result.session.id, reservationId: value.reservationId, assignmentId: value.assignmentId, worktree: { ...value.worktree, dirty: false }, profile: value.rulesProfile };
     const startup = l.item.a.target.startup, startupRequest = auto.prepareMemoryRequest({ projectRoot: x.root, attemptId: startup.attemptId, phase: startup.phase, operation: 'worker-readonly', target: { projectId: actor.projectId, sessionId: actor.sessionId, resumeId: startup.resumeId } });
     const memoryOut = x.out(); auto.primeMemory({ projectRoot: x.root, callerRoot: l.worktree, request: startupRequest, out: memoryOut });
@@ -443,7 +444,7 @@ function lifecycle(x, { noOp = false, crashPublication = false, stalePreparation
     const candidate = { commit: f.git(staging, 'rev-parse', 'HEAD'), expectedTree: f.git(staging, 'rev-parse', 'HEAD^{tree}') };
     let q = x.request(), run = auto.readRuntimeState({ projectRoot: x.root }).state.run;
     const snap = (target) => t.transitionSnapshot({ q, run, canonical: x.canonical(), observation: { ...x.initial.result.observation, associations: [{ reference: l.assignment, value }] },
-      action: { before: { registry: null }, target, owner: value.owner, nodes: [], authorization: x.auth, profile: x.profile } }, { profileObservation: x.profileObservation, observeWorktree: () => actor.worktree });
+      action: { before: { registry: consumeReview ? { root: x.registryRoot } : null }, target, owner: value.owner, nodes: [], authorization: x.auth, profile: x.profile } }, { profileObservation: x.profileObservation, observeWorktree: () => actor.worktree });
     const p = x.action('prepare-input', { sessionId: actor.sessionId, association: l.assignment, launch: l.item.actionRef, startupAck, startupRequest, candidate }, { before: snap({ sessionId: actor.sessionId }), stage: 'integration' });
     const mutable = x.action('prepare-input', { ...p.a.target, candidate: { ...candidate, commit: 'HEAD' } }, { before: p.a.before, stage: 'integration' }), held = auto.readRuntimeState({ projectRoot: x.root }).headSha256;
     reject('transition-preparation-unverified', () => x.invoke(mutable.q, 'checkpoint')); assert.equal(auto.readRuntimeState({ projectRoot: x.root }).headSha256, held);
@@ -457,7 +458,7 @@ function lifecycle(x, { noOp = false, crashPublication = false, stalePreparation
     assert.equal(after.result.observation.transition.admissibility.next, 'release');
     const primeRequest = auto.prepareMemoryRequest({ projectRoot: x.root, attemptId: f.uuid(), phase: 'resume', operation: 'worker-readonly', target: { projectId: actor.projectId, sessionId: actor.sessionId, resumeId: f.uuid() } });
     const packet = f.json(x.owned, 'work', { schema: 'fvs/auto-work-packet', schemaVersion: 1, runId: x.runId, actionSha256: memory.memoryHash(l.item.a), launch: l.item.actionRef, beforeEventSha256: l.before.result.recordedEventSha256,
-      challenge: f.uuid(), actor: nextActor, deliveryHandle: 'release-' + f.uuid(), memoryRequest: primeRequest, procedure: 'lean-specify/controller-direct', inputs: [x.profile], resumeOf: null, startMarker: path.join(x.owned, 'worker-start.json') });
+      challenge: f.uuid(), actor: nextActor, deliveryHandle: 'release-' + f.uuid(), memoryRequest: primeRequest, procedure: consumeReview ? 'lean-spec-review/Other' : 'lean-specify/controller-direct', inputs: [x.profile], resumeOf: null, startMarker: path.join(x.owned, 'worker-start.json') });
     q = x.request(); const releaseSnapshot = { ...after.result.observation.transition.snapshot, worker: { ...after.result.observation.transition.snapshot.worker, worktree: nextActor.worktree } };
     if (stalePreparation) {
       f.git(l.worktree, 'commit', '--allow-empty', '-qm', 'fixture stale prepared candidate');
@@ -498,7 +499,7 @@ function lifecycle(x, { noOp = false, crashPublication = false, stalePreparation
     const delivered = x.invoke(deliveredRequest, 'checkpoint');
     const ack = auto.acknowledgeWorkPacket({ projectRoot: x.root, ao: release.q.ao, packet, actor: nextActor, expectedMemoryRequest: primeRequest, memoryOut: freshOut, marker: t.readWorkPacket(packet).startMarker, out: x.out() });
     assert.equal(ack.mayStart, true);
-    fs.writeFileSync(path.join(l.worktree, 'Authored.lean'), 'def Authored := Nat\n'); f.git(l.worktree, 'add', 'Authored.lean'); f.git(l.worktree, 'commit', '-qm', 'fixture immediate authorized progress');
+    if (!consumeReview) { fs.writeFileSync(path.join(l.worktree, 'Authored.lean'), 'def Authored := Nat\n'); f.git(l.worktree, 'add', 'Authored.lean'); f.git(l.worktree, 'commit', '-qm', 'fixture immediate authorized progress'); }
     const progressed = x.associate(actor.sessionId, l.worktree, l.item.intent, l.before.result.recordedEventSha256, { rulesProfile: value.rulesProfile });
     const progressActor = { ...actor, worktree: { ...t.transitionBound(progressed).worktree, dirty: false } };
     x.request = (extra = {}) => request({ associations: [progressed], ...extra });
@@ -507,6 +508,72 @@ function lifecycle(x, { noOp = false, crashPublication = false, stalePreparation
     assert.equal(x.invoke(deliveredRequest, 'checkpoint').result.code, 'already-recorded');
     assert.equal(auto.readRuntimeState({ projectRoot: x.root }).headSha256, publishedHead, 'immediate progress cannot invalidate/re-publish the already completed delivery');
     assert.equal(fs.readFileSync(x.log, 'utf8').split('\n').filter(Boolean).map(JSON.parse).filter((a) => a[0] === 'send').length, 1);
+    if (consumeReview) {
+      const contract = { node: 19, role: 'helper', statement: 'True', assumptions: [], grounding: { kind: 'none', reason: 'Explicit protocol simulation, no semantic authority' },
+        implementationDependencies: [], specDefinitions: [], externalReferences: [], author: { session: 'fixture-author', harness: 'fixture', model: 'none', runId: f.uuid() } };
+      const input = reviewedInvocation(x, contract), invocation = t.transitionBound(input.request), oldReview = t.transitionBound(input.review);
+      input.review = f.json(x.owned, 'actor-review', { ...oldReview, reviewer: { ...oldReview.reviewer, session: actor.sessionId } });
+      input.request = f.json(x.owned, 'actor-review-invocation', { ...invocation, review: input.review });
+      const typed = { schema: 'fvs/auto-work-result', schemaVersion: 1, runId: x.runId, packet, marker: ack.marker, actionSha256: memory.memoryHash(l.item.a), actor: nextActor, kind: 'review',
+        prepared: { commit: nextActor.worktree.commit, tree: nextActor.worktree.tree }, result: { contract: invocation.contract, review: input.review }, controllerObservedAtMs: Date.now(), controllerSessionId: 'coordinator' };
+      const work = f.json(x.owned, 'conclusive-review', { schema: 'fvs/auto-work-completion', schemaVersion: 1, runId: x.runId, packet, marker: ack.marker, sourceAfter: typed.prepared, outcome: 'completed',
+        artifacts: [f.json(x.owned, 'typed-review', typed)], controllerSessionId: 'coordinator' });
+      const basis = { version: 2, beforeEventSha256: rb.result.recordedEventSha256, afterEventSha256: delivered.result.recordedEventSha256, completion: deliveredRequest.transition.effect.evidence[0], workCompletion: work };
+      const target = { candidateSha256: input.candidateSha256, review: input.review, request: input.request };
+      const item = x.action('registry-revise', target, { basis, stage: 'review' }), held = auto.readRuntimeState({ projectRoot: x.root }).fileSha256;
+      const wrong = f.json(x.owned, 'wrong-review-actor', { ...t.transitionBound(input.review), reviewer: { ...oldReview.reviewer, session: 'unrelated-reviewer' } });
+      const badWork = f.json(x.owned, 'bad-review-completion', { ...t.transitionBound(work), artifacts: [f.json(x.owned, 'bad-review-result', { ...typed, result: { contract: invocation.contract, review: wrong } })] });
+      const badRequest = f.json(x.owned, 'bad-review-invocation', { ...t.transitionBound(input.request), review: wrong });
+      const bad = x.action('registry-revise', { ...target, review: wrong, request: badRequest }, { basis: { ...basis, workCompletion: badWork }, stage: 'review' });
+      reject('transition-work-result-invalid', () => x.invoke(bad.q, 'checkpoint')); assert.equal(auto.readRuntimeState({ projectRoot: x.root }).fileSha256, held);
+      const before = x.invoke(item.q, 'checkpoint'), executed = auto.executeTransition({ projectRoot: x.root, request: item.q, beforeOut: before.out, producerOut: x.out(), evidenceDir: x.out() });
+      assert.equal(executed.status, 'command-completed');
+      const result = JSON.parse(t.transitionBound(t.transitionBound(executed.command).stdout, false)), completion = controllerCompletion(x, item, before, executed.command, result);
+      const after = x.invoke(x.request({ transition: x.after(before, { sessionId: null, association: null, evidence: [completion, work], resolution: null }) }), 'checkpoint');
+      assert.equal(after.result.observation.transition.snapshot.registry.nodes[19].state, 'machine-reviewed-provisional');
+      assert.equal(registry.readChain(x.registryRoot).records.length, 1);
+      assert.equal(f.sha(fs.readFileSync(f.stateFile(x.root))), canonicalBefore);
+      return { scope: 'actual14 append under v2 review-result route; review/AO/Beads are protocol fixtures', basis };
+    }
+    if (consumeCandidate) {
+      const candidate = { commit: progressActor.worktree.commit, tree: progressActor.worktree.tree,
+        files: { 'Authored.lean': f.sha(fs.readFileSync(path.join(l.worktree, 'Authored.lean'))) }, assignment: progressed };
+      const typed = { schema: 'fvs/auto-work-result', schemaVersion: 1, runId: x.runId, packet, marker: ack.marker, actionSha256: memory.memoryHash(l.item.a), actor: nextActor,
+        kind: 'candidate', prepared: { commit: nextActor.worktree.commit, tree: nextActor.worktree.tree }, result: candidate, controllerObservedAtMs: Date.now(), controllerSessionId: 'coordinator' };
+      const terminal = { schema: 'fvs/auto-work-completion', schemaVersion: 1, runId: x.runId, packet, marker: ack.marker,
+        sourceAfter: { commit: candidate.commit, tree: candidate.tree }, outcome: 'completed', artifacts: [f.json(x.owned, 'typed-result', typed)], controllerSessionId: 'coordinator' };
+      const basis = { version: 2, beforeEventSha256: rb.result.recordedEventSha256, afterEventSha256: delivered.result.recordedEventSha256,
+        completion: deliveredRequest.transition.effect.evidence[0], workCompletion: f.json(x.owned, 'completed-work', terminal) };
+      const target = { parent: f.git(x.root, 'rev-parse', 'HEAD'), candidates: [candidate], files: candidate.files }, held = auto.readRuntimeState({ projectRoot: x.root }).fileSha256;
+      const attempt = (body, code = 'transition-work-result-invalid') => {
+        const item = x.action('compose-spec', target, { stage: 'integration', basis: { ...basis, workCompletion: f.json(x.owned, 'refused-completion', body) } });
+        reject(code, () => x.invoke(item.q, 'checkpoint')); assert.equal(auto.readRuntimeState({ projectRoot: x.root }).fileSha256, held);
+      };
+      attempt({ ...terminal, schemaVersion: 2 });
+      attempt({ ...terminal, actor: nextActor }, 'transition-invalid-input');
+      attempt({ ...terminal, artifacts: [x.profile] });
+      attempt({ ...terminal, artifacts: [...terminal.artifacts, f.json(x.owned, 'second-result', typed)] });
+      for (const patch of [{ schemaVersion: 2 }, { kind: 'future-kind' }, { actionSha256: 'f'.repeat(64) }, { prepared: terminal.sourceAfter },
+        { controllerObservedAtMs: delivered.result.observation.transition.snapshot.fixed.startedAtMs - 1 }, { controllerObservedAtMs: auto.readRuntimeState({ projectRoot: x.root }).lastObservedAtMs - 1 }, { controllerObservedAtMs: Date.now() + 10000 }, { actor: progressActor }]) {
+        attempt({ ...terminal, artifacts: [f.json(x.owned, 'bad-typed-result', { ...typed, ...patch })] });
+      }
+      const wrongAssignment = f.json(x.owned, 'wrong-assignment', { ...t.transitionBound(progressed), assignmentId: f.uuid() });
+      attempt({ ...terminal, artifacts: [f.json(x.owned, 'foreign-assignment-result', { ...typed, result: { ...candidate, assignment: wrongAssignment } })] });
+      const item = x.action('compose-spec', target, { stage: 'integration', basis }), before = x.invoke(item.q, 'checkpoint');
+      assert.equal(auto.verifyTransition({ projectRoot: x.root, request: item.q, out: before.out }).observation.transition.admissibility.status, 'next-action-eligible');
+      const reservedHead = auto.readRuntimeState({ projectRoot: x.root }).fileSha256;
+      const reobserved = f.json(x.owned, 'copied-reobserved-work', { ...terminal, artifacts: [f.json(x.owned, 'reobserved-result', { ...typed, controllerObservedAtMs: Date.now() })] });
+      const duplicate = x.action('compose-spec', target, { stage: 'integration', basis: { ...basis, workCompletion: reobserved } });
+      reject('transition-work-result-replayed', () => x.invoke(duplicate.q, 'checkpoint'));
+      assert.equal(auto.readRuntimeState({ projectRoot: x.root }).fileSha256, reservedHead, 'copied completion cannot reserve another consumer while the first is pending');
+      const completion = commandReceipt(x, item, ['/usr/bin/git', '-C', x.root, '-c', 'core.hooksPath=/dev/null', 'merge', '--ff-only', candidate.commit], { status: 'materialized', ...candidate }, before);
+      const q = x.request({ transition: x.after(before, { sessionId: null, association: null, evidence: [completion, basis.workCompletion], resolution: null }) }), after = x.invoke(q, 'checkpoint');
+      assert.equal(after.result.observation.transition.admissibility.next, 'registry-revise');
+      assert.equal(f.git(x.root, 'rev-parse', 'HEAD'), candidate.commit);
+      assert.ok(t.readRuntimeObservation(auto.readRuntimeState({ projectRoot: x.root }).state.history.at(-1).event).associations.some((r) => r.value.worktree.commit === candidate.commit));
+      assert.equal(f.sha(fs.readFileSync(f.stateFile(x.root))), canonicalBefore);
+      return { scope: 'real Git candidate consumption via v2 basis; AO/Beads doubles, no proof authority', terminal, basis };
+    }
     const terminal = f.json(x.owned, 'conclusive-partial', { schema: 'fvs/auto-work-completion', schemaVersion: 1, runId: x.runId, packet, marker: ack.marker,
       sourceAfter: { commit: progressActor.worktree.commit, tree: progressActor.worktree.tree }, outcome: 'partial', artifacts: [f.json(x.owned, 'partial-artifact', { status: 'partial', note: 'Protocol fixture, no proof authority' })], controllerSessionId: 'coordinator' });
     const resumeRequest = auto.prepareMemoryRequest({ projectRoot: x.root, attemptId: f.uuid(), phase: 'resume', operation: 'worker-readonly', target: { projectId: actor.projectId, sessionId: actor.sessionId, resumeId: f.uuid() } });
@@ -539,6 +606,8 @@ function lifecycle(x, { noOp = false, crashPublication = false, stalePreparation
   return { scope: "genuine Beads when explicitly enabled; AO remains a protocol double; no provider/proof/target authority", runId: x.runId, initialLaunch: l.item.actionRef, startupAck, packet, startAck: ack, linkedResume: resumedPacket, resumedStartAck: resumedAck, runtime: f.ref(path.join(x.root, ".formalising/auto-fv/resume/state.json")), canonicalStateUnchanged: true };
 }
 describe('stock command adapter with owned AO lifecycle double', () => {
+  it('published release consumes an exact independently bound review result via actual local14 publication', () => lifecycle(fixture(), { noOp: true, consumeReview: true }));
+  it('published release with exact conclusive typed candidate permits composition and rejects mixed/old/future bindings without history writes', () => lifecycle(fixture(), { noOp: true, consumeCandidate: true }));
   it('first release and worker consumption reject a valid launch/current packet without startup/preparation', () => {
     const x = fixture(); effectDouble(x); const l = stageLaunch(x), a = t.transitionBound(l.assignment), snapshot = l.after.result.observation.transition.snapshot;
     const actor = { projectId: a.projectId, sessionId: a.sessionId, reservationId: a.reservationId, assignmentId: a.assignmentId, worktree: { ...a.worktree, dirty: false }, profile: a.rulesProfile };
@@ -684,5 +753,133 @@ describe('simulation-authority checker control trace (not Lean/proof qualificati
     assert.ok(state.records.every((r) => r.record.authority === 'simulation-authority'));
     assert.throws(() => auto.reconcileState({ projectRoot: x.root, request: x.request(), out: x.out() }), (e) => ['stale-input', 'invalid-input'].includes(e.code), 'production cannot select/consume this coded simulation service or its fake store');
     assert.deepEqual(fs.readdirSync(storeRoot), ['AUTHORITY.txt']);
+  });
+});
+
+// Pure row/reader boundary tests. Supplied services below are explicit protocol
+// doubles; these records are not canonical proof or real Lean qualification.
+function successorFixture(kind = 'freeze') {
+  const x = fixture(), storeRoot = path.join(x.owned, 'simulation-accepted'), registryRoot = path.join(x.owned, 'simulation-registry');
+  fs.mkdirSync(storeRoot); fs.mkdirSync(registryRoot);
+  const b = x.snapshot(), source = b.source, nodes = [19, 20, 21], registry = { root: registryRoot, headSha256: 'a'.repeat(64), pending: false,
+    nodes: Object.fromEntries(nodes.map(n => [n, { state: 'recheck-required' }])) };
+  const frozen = f.json(x.owned, 'simulation-frozen', { authority: 'simulation-authority' }), oldFrozen = f.json(x.owned, 'old-simulation-frozen', { authority: 'simulation-authority' });
+  const heads = nodes.map(node => ({ node, sha256: f.sha(String(node)), integrated: { commit: '1'.repeat(40), tree: '2'.repeat(40) }, frozenSha256: oldFrozen.sha256, registryHeadSha256: 'b'.repeat(64), dependencies: [] }));
+  const priorBefore = { ...b, registry, baseline: oldFrozen, store: { root: storeRoot, headSha256: 'c'.repeat(64), pending: false, heads } };
+  const recorded = { ...priorBefore, baseline: kind === 'freeze' ? frozen : oldFrozen };
+  if (kind === 'accept') {
+    recorded.store = { ...priorBefore.store, headSha256: 'd'.repeat(64), heads: heads.map(r => r.node === 19 ? { ...r, integrated: { commit: source.commit, tree: source.tree }, frozenSha256: oldFrozen.sha256, registryHeadSha256: registry.headSha256 } : r) };
+  }
+  if (kind === 'registry-revise') {
+    priorBefore.registry = { ...registry, headSha256: 'e'.repeat(64) };
+    recorded.registry = { ...registry, nodes: { ...registry.nodes, 20: { state: 'needs-semantic-review' }, 21: { state: 'needs-semantic-review' } } };
+  }
+  const prior = x.action(kind, kind === 'freeze' ? { request: x.profile } : kind === 'accept' ? { request: x.profile, node: 19 } : { request: x.profile, review: x.profile, candidateSha256: 'f'.repeat(64) }, { before: priorBefore, stage: 'check' });
+  const before = { sha256: '3'.repeat(64), event: { position: 'before', intent: prior.intent, observedAtMs: Date.now() - 100 } };
+  const result = kind === 'freeze' ? { baseline: frozen } : kind === 'accept' ? { acceptedReceipt: { sha256: recorded.store.headSha256 } }
+    : { recordSha256: recorded.registry.headSha256, record: { prev: priorBefore.registry.headSha256, candidateSha256: prior.a.target.candidateSha256 } };
+  const completion = commandReceipt(x, prior, ['/usr/bin/true'], result, { result: { recordedEventSha256: before.sha256 } });
+  const after = { sha256: '4'.repeat(64), event: { position: 'after', beforeEventSha256: before.sha256, intent: prior.intent, observedAtMs: Date.now(), outcome: 'succeeded', effect: { evidence: [completion] },
+    observation: { transition: { snapshot: recorded, admissibility: { status: 'facts-recorded-partial', beforeEventSha256: before.sha256, completion } } } } };
+  const run = auto.readRuntimeState({ projectRoot: x.root }).state.run, history = [before, after], view = { state: { run, history }, lastObservedAtMs: after.event.observedAtMs };
+  const validators = t.transitionValidators({ tools: {}, git() { throw Error('unexpected Git in protocol dependency test'); }, inspectBaseline() { return { nodes, registry: { root: registryRoot, headSha256: registry.headSha256 }, dependencies: { 19: [], 20: [19], 21: [19] } }; } });
+  let protectedChecks = 0, registryChecks = 0;
+  const services = { ...validators, verifyTarget() {}, verifyBaseline() {}, verifyAccept() {}, verifyRegistry() {},
+    verifyProtectedCheck(a, actual) { protectedChecks++; validators.verifyProofLaunch({ ...a, nodes: a.target.nodes, stage: 'proof' }, actual); },
+    verifyRegistryBefore() { registryChecks++; } };
+  const basis = { version: 2, beforeEventSha256: before.sha256, afterEventSha256: after.sha256, completion, workCompletion: null };
+  const action = (kind, options = {}) => {
+    const intent = kind === 'launch' ? x.launch(options.nodes ?? [19]) : x.local(options.nodes ?? [19], options.stage ?? 'check');
+    intent.stage = options.stage ?? (kind === 'launch' ? 'proof' : 'check');
+    const target = kind === 'check' ? { request: x.profile, nodes: [19] } : kind === 'launch' ? { projectId: 'fixture-project', branchRef: intent.effect.intendedBranchRef, assignmentId: intent.effect.assignmentId, startup: { challenge: f.uuid(), attemptId: f.uuid(), phase: 'start', resumeId: null } }
+      : kind === 'accept' ? { request: x.profile, node: 20 } : kind === 'freeze' ? { request: x.profile } : { request: x.profile, review: x.profile, candidateSha256: 'f'.repeat(64) };
+    return x.action(kind, target, { basis, before: recorded, nodes: [19], stage: intent.stage, ...options, intent });
+  };
+  const invoke = (item, extra = {}, overrides = {}) => assess(x, item, item.a.before, { view, run, reasons: ['acceptance-unverified'], ...extra }, { ...services, ...overrides });
+  return { x, basis, prior, before, after, recorded, view, run, action, invoke, services, protectedChecks: () => protectedChecks, registryChecks: () => registryChecks };
+}
+describe('fresh registry successor preflight (actual14, declared review fixture)', () => {
+  it('same shared contract/review readers reject stale, mismatched and reused publication before append', () => {
+    const x = fixture(); trackRegistry(x);
+    const contract = { node: 19, role: 'helper', statement: 'True', assumptions: [], grounding: { kind: 'none', reason: 'Protocol fixture only' }, implementationDependencies: [], specDefinitions: [], externalReferences: [], author: { session: 'fixture-author', harness: 'fixture', model: 'none', runId: f.uuid() } };
+    const input = reviewedInvocation(x, contract), v = t.transitionValidators({ tools: {}, git() { throw Error('not used'); } });
+    const actual = () => ({ source: { root: x.root }, registry: { root: x.registryRoot, headSha256: registry.readChain(x.registryRoot).records.at(-1)?.sha ?? null } });
+    const a = { target: { request: input.request, review: input.review, candidateSha256: input.candidateSha256 } };
+    v.verifyRegistryBefore(a, actual()); assert.equal(registry.readChain(x.registryRoot).records.length, 0);
+    reject('transition-registry-unverified', () => v.verifyRegistryBefore({ target: { ...a.target, candidateSha256: 'b'.repeat(64) } }, actual()));
+    publishRegistry(input); const head = registry.readChain(x.registryRoot).records.at(-1).sha;
+    reject('transition-registry-unverified', () => v.verifyRegistryBefore(a, actual()));
+    const reused = f.json(x.owned, 'reused-review-at-new-head', { ...t.transitionBound(input.review), registryHeadSha256: head });
+    const request = f.json(x.owned, 'reused-invocation', { ...t.transitionBound(input.request), previous: head, review: reused });
+    reject('transition-registry-unverified', () => v.verifyRegistryBefore({ target: { ...a.target, request, review: reused } }, actual()));
+    assert.equal(registry.readChain(x.registryRoot).records.at(-1).sha, head); assert.equal(registry.readChain(x.registryRoot).records.length, 1);
+  });
+});
+describe('v2 finite frontiers with retained stale heads (protocol doubles)', () => {
+  it('completed freeze permits protected H recheck while all H/A/B old heads remain historical', () => {
+    const z = successorFixture(), item = z.action('check');
+    assert.equal(z.invoke(item).status, 'next-action-eligible'); assert.equal(z.protectedChecks(), 1);
+    assert.equal(z.recorded.store.heads.length, 3); assert.ok(z.recorded.store.heads.every(r => r.integrated.commit !== z.recorded.source.commit));
+    reject('transition-proof-dependencies-unverified', () => z.invoke(z.action('check', { nodes: [20], target: { request: z.x.profile, nodes: [20] } })));
+  });
+  it('current H accept permits A proof launch with unrelated stale A/B still present; old helper generations refuse', () => {
+    const z = successorFixture('accept');
+    assert.equal(z.invoke(z.action('launch', { nodes: [20] })).status, 'next-action-eligible');
+    z.after.event.observation.transition.snapshot.store.heads[0].frozenSha256 = '0'.repeat(64);
+    reject('transition-proof-dependencies-unverified', () => z.invoke(z.action('launch', { nodes: [20] })));
+    assert.equal(z.recorded.store.heads.length, 3);
+  });
+  it('registry frontier admits exact new publication/needed review, but not proof or premature freeze', () => {
+    const z = successorFixture('registry-revise');
+    assert.equal(z.invoke(z.action('registry-revise')).status, 'next-action-eligible'); assert.equal(z.registryChecks(), 1);
+    assert.equal(z.invoke(z.action('launch', { nodes: [20], stage: 'review' })).status, 'next-action-eligible');
+    reject('transition-next-action-forbidden', () => z.invoke(z.action('freeze')));
+    reject('transition-next-action-forbidden', () => z.invoke(z.action('launch', { nodes: [20] })));
+    reject('transition-next-action-forbidden', () => z.invoke(z.action('launch', { nodes: [19], stage: 'review' })));
+  });
+  for (const field of ['source', 'registry', 'baseline', 'store', 'fixed']) it('coherently changed action/current ' + field + ' cannot reuse an old recorded after snapshot', () => {
+    const z = successorFixture(), actual = JSON.parse(JSON.stringify(z.recorded));
+    if (field === 'source') actual.source.commit = '5'.repeat(40);
+    if (field === 'registry') actual.registry.headSha256 = '5'.repeat(64);
+    if (field === 'baseline') actual.baseline = z.x.profile;
+    if (field === 'store') actual.store.heads = actual.store.heads.slice(1);
+    if (field === 'fixed') actual.fixed.scopeSha256 = '5'.repeat(64);
+    reject('transition-extra-drift', () => z.invoke(z.action('check', { before: actual })));
+  });
+  it('unrecorded/mismatched after, pending state and extra work evidence refuse', () => {
+    const z = successorFixture();
+    z.after.event.observation.transition.admissibility.status = 'facts-unverified';
+    reject('transition-explanation-required', () => z.invoke(z.action('check')));
+    z.after.event.observation.transition.admissibility.status = 'facts-recorded-partial';
+    const actual = { ...z.recorded, store: { ...z.recorded.store, pending: true } };
+    reject('transition-context-unavailable', () => z.invoke(z.action('check', { before: actual })));
+    reject('transition-work-result-invalid', () => z.invoke(z.action('check', { basis: { ...z.basis, workCompletion: z.x.profile } })));
+  });
+  it('clock crossing during last guard or rolling back cannot publish new permission', () => {
+    const z = successorFixture(), item = z.action('check');
+    reject('transition-budget-exhausted', () => z.invoke(item, {}, { now: () => z.run.deadlineMs }));
+    reject('transition-clock-rollback', () => z.invoke(item, {}, { now: () => z.before.event.observedAtMs - 1 }));
+  });
+  it('unknown basis versions/hybrids never coerce into legacy authority', () => {
+    const z = successorFixture();
+    reject('transition-invalid-input', () => z.invoke(z.action('check', { basis: { ...z.basis, version: 3 } })));
+    reject('transition-invalid-input', () => z.invoke(z.action('check', { basis: { ...z.basis, extra: true } })));
+    const legacy = { beforeEventSha256: z.basis.beforeEventSha256, afterEventSha256: z.basis.afterEventSha256, completion: z.basis.completion };
+    reject('transition-next-action-forbidden', () => z.invoke(z.action('check', { basis: legacy })));
+  });
+  it('protected-target reader binds prior target/module/file plus current frozen protected bytes, never a mutable/future target', () => {
+    const x = fixture(), file = 'Proof.lean', identity = { sha256: f.sha('theorem fixture : True := by trivial\n'), size: 42 };
+    const target = { node: 19, name: 'fixture', module: 'Proof' }, build = { source: { files: { [file]: identity } }, modules: [{ name: 'Proof', source: file }] };
+    const old = f.json(x.owned, 'SIMULATION-prior-frozen', { targets: [target] }), checked = f.json(x.owned, 'SIMULATION-integrated', { build });
+    const history = { records: [{ record: { node: 19, baseline: old, integratedCheck: checked } }] };
+    const v = t.transitionValidators({ tools: {}, readStore: () => history, inspectBaseline: () => ({ nodes: [19], registry: { root: x.root, headSha256: 'a'.repeat(64) }, dependencies: { 19: [] } }),
+      git() { return Buffer.from('theorem fixture : True := by trivial\n'); } });
+    const actual = { source: { root: x.root, commit: '1'.repeat(40) }, baseline: f.json(x.owned, 'SIMULATION-current-frozen', { targets: [target], build, overlayFiles: [] }), fixed: { deadlineMs: Date.now() + 10000 },
+      registry: { root: x.root, headSha256: 'a'.repeat(64), nodes: { 19: { state: 'recheck-required' } } }, store: { root: x.owned, heads: [] } };
+    v.verifyProtectedCheck({ target: { nodes: [19] } }, actual);
+    for (const body of [{ targets: [target], build, overlayFiles: [file] }, { targets: [{ ...target, name: 'new_target' }], build, overlayFiles: [] },
+      { targets: [target], build: { ...build, modules: [] }, overlayFiles: [] }, { targets: [target], build: { ...build, source: { files: { [file]: { ...identity, sha256: 'b'.repeat(64) } } } }, overlayFiles: [] }]) {
+      reject('transition-protected-proof-required', () => v.verifyProtectedCheck({ target: { nodes: [19] } }, { ...actual, baseline: f.json(x.owned, 'refused-frozen', body) }));
+    }
   });
 });
