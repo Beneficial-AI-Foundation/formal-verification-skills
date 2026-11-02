@@ -96,6 +96,8 @@ export async function buildCheckerSnapshot(input) {
   let root;
   let created = false;
   let sequence = 0;
+  const invocation = Symbol('build invocation');
+  let postCommandInputs = null;
   let sourceFiles = {};
   let sourceIdentity;
   let dependencyFiles = {};
@@ -160,6 +162,7 @@ export async function buildCheckerSnapshot(input) {
   };
   const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   const checkInputs = () => {
+    postCommandInputs = null;
     tick();
     for (const tool of [request.lean, request.lake].filter(Boolean)) if (digest(tool.path, true).sha256 !== tool.sha256) fail('pinned tool bytes changed');
     if (runtimeRoot && !equal(tree(runtimeRoot, true), runtimeFiles)) fail('toolchain runtime bytes changed');
@@ -168,11 +171,13 @@ export async function buildCheckerSnapshot(input) {
       if (!equal(digest(path.join(root, 'source', file)), identity)) fail('snapshot source/config bytes changed');
       if (request.source.kind === 'worktree' && !equal(digest(path.join(request.source.root, file)), identity)) fail('pre-edit source/config bytes changed');
     }
+    let observedDependencies = {};
     if (dependenciesReady && request.dependencies) {
-      if (!equal(tree(request.dependencies.root, false, true), dependencyFiles)) fail('supplied dependency snapshot changed');
+      observedDependencies = tree(request.dependencies.root, false, true);
+      if (!equal(observedDependencies, dependencyFiles)) fail('supplied dependency snapshot changed');
       if (request.dependencies.identity && digest(request.dependencies.identity.file).sha256 !== request.dependencies.identity.sha256) fail('dependency identity changed');
     }
-    return hash(JSON.stringify({ sourceFiles, runtimeFiles, dependencyFiles }));
+    return { digest: hash(JSON.stringify({ sourceFiles, runtimeFiles, dependencyFiles })), dependencies: observedDependencies };
   };
   const env = () => ({
     PATH: `${path.dirname(request.lean.path)}:/usr/bin:/bin`, HOME: path.join(root, 'home'),
@@ -215,11 +220,14 @@ export async function buildCheckerSnapshot(input) {
     let drift;
     try { after = checkInputs(); } catch (error) { drift = error.message; }
     const receipt = { argv: actual, cwd, exit: execution.exit, signal: execution.signal, timedOut: execution.timedOut,
-      startedAt, endedAt: Date.now(), stdout, stderr, inputsBefore: before, inputsAfter: after ?? null,
+      startedAt, endedAt: Date.now(), stdout, stderr, inputsBefore: before.digest, inputsAfter: after?.digest ?? null,
       outputLimitExceeded: execution.overflow,
       ...(execution.error ? { error: execution.error } : {}), ...(drift ? { drift } : {}) };
     receipts.push({ ...save(`${id}.json`, receipt), argv: actual, cwd, exit: execution.exit, signal: execution.signal, timedOut: execution.timedOut });
-    if (drift || execution.exit !== 0 || execution.signal || execution.timedOut || execution.overflow || execution.error) fail(drift ?? 'build subprocess failed');
+    if (drift || execution.exit !== 0 || execution.signal || execution.timedOut || execution.overflow || execution.error || receipt.endedAt < startedAt) fail(drift ?? 'build subprocess failed');
+    for (const identity of Object.values(after.dependencies)) Object.freeze(identity);
+    postCommandInputs = Object.freeze({ invocation, sequence, observedAtMs: receipt.endedAt,
+      dependencies: Object.freeze(after.dependencies) });
     return execution.stdout;
   };
   try {
@@ -343,6 +351,7 @@ export async function buildCheckerSnapshot(input) {
     }
     const depsBefore = save('dependencies-before.json', dependencyFiles);
     dependenciesReady = true;
+    let finalChildSequence;
     if (configured) {
       const manifest = JSON.parse(fs.readFileSync(path.join(project, 'lake-manifest.json'), 'utf8'));
       if (!Array.isArray(manifest.packages) || (manifest.packagesDir ?? '.lake/packages') !== '.lake/packages' || (manifest.lakeDir ?? '.lake') !== '.lake' ||
@@ -358,8 +367,10 @@ export async function buildCheckerSnapshot(input) {
       const stem = path.join(result.buildRoot, 'lib', 'lean', moduleSources[0].name.split('.').join('/'));
       fs.mkdirSync(path.dirname(stem), { recursive: true });
       await run([request.lean.path, '--root', sourceRoot, '-o', `${stem}.olean`, '-i', `${stem}.ilean`, path.join(project, moduleSources[0].source)], project, true);
+      finalChildSequence = sequence;
     }
     const declaredSearchPaths = configured ? (await run([request.lake.path, 'env', '/usr/bin/printenv', 'LEAN_PATH'], project, true)).toString().trim().split(path.delimiter).filter(Boolean) : [];
+    if (configured) finalChildSequence = sequence;
     declaredSearchPaths.push(path.join(toolRoot, 'lib', 'lean'));
     const searchPaths = [];
     const missingSearchPaths = [];
@@ -375,8 +386,14 @@ export async function buildCheckerSnapshot(input) {
       if (!stat.isDirectory()) fail('search path is not a directory');
       searchPaths.push(directory);
     }
-    checkInputs();
-    const depsAfter = request.dependencies ? tree(request.dependencies.root, false, true) : {};
+    // No child or input writer runs between the final postcheck and this tail.
+    tick();
+    const observed = postCommandInputs;
+    postCommandInputs = null;
+    if (!observed || observed.invocation !== invocation || observed.sequence !== sequence || observed.sequence !== finalChildSequence) fail('missing current final-child input observation');
+    if (Date.now() < observed.observedAtMs) fail('build clock moved behind final-child observation');
+    // The after receipt describes that postcheck, not a new validation-tail scan.
+    const depsAfter = observed.dependencies;
     const changed = Object.keys({ ...dependencyFiles, ...depsAfter }).filter((file) => !equal(dependencyFiles[file], depsAfter[file]));
     const depReceipt = { root: request.dependencies?.root ?? null, ...(request.dependencies?.identity ? { identity: request.dependencies.identity } : {}),
       before: depsBefore, after: save('dependencies-after.json', depsAfter), changed };

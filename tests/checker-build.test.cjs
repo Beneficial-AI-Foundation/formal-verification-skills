@@ -7,6 +7,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const childProcess = require('node:child_process');
+const { syncBuiltinESMExports } = require('node:module');
 const { pathToFileURL } = require('node:url');
 
 const helper = import(pathToFileURL(path.resolve(__dirname, '../scripts/fvs-checker-build.mjs')));
@@ -129,6 +131,195 @@ test('refuses expired deadlines before allocating an output directory', async ()
 });
 
 if (process.platform === 'darwin') {
+  async function scanTrace(f) {
+    await helper;
+    const directories = { runtime: path.join(path.dirname(path.dirname(f.request.lean.path)), 'lib'),
+      original: f.request.dependencies?.root, owned: path.join(f.request.out, 'source/.lake/packages'),
+      outputs: path.join(f.request.out, 'source/.lake/build') };
+    const counts = { runtime: 0, original: 0, owned: 0, outputs: 0 }, events = [];
+    const readdir = fs.readdirSync, write = fs.writeFileSync, spawn = childProcess.spawn;
+    fs.readdirSync = function(file, ...args) {
+      for (const [key, directory] of Object.entries(directories)) if (file === directory) counts[key]++;
+      return readdir.call(fs, file, ...args);
+    };
+    fs.writeFileSync = function(file, ...args) {
+      const value = write.call(fs, file, ...args);
+      if (typeof file === 'string' && path.dirname(file) === path.join(f.request.out, 'receipts') && /^\d{4}\.json$/.test(path.basename(file))) events.push({ kind: 'receipt', counts: { ...counts } });
+      return value;
+    };
+    childProcess.spawn = function(...args) { events.push({ kind: 'spawn', counts: { ...counts } }); return spawn.apply(this, args); };
+    syncBuiltinESMExports();
+    try { return { result: await build(f.request), counts, events }; }
+    finally { fs.readdirSync = readdir; fs.writeFileSync = write; childProcess.spawn = spawn; syncBuiltinESMExports(); }
+  }
+
+  async function faultBuilder(f, statement) {
+    const file = path.resolve(__dirname, '../scripts/fvs-checker-build.mjs');
+    const marker = '    const observed = postCommandInputs;';
+    let source = fs.readFileSync(file, 'utf8');
+    assert.equal(source.split(marker).length, 2, 'one explicit private-state fault seam');
+    source = source.replace(marker, statement + '\n' + marker);
+    source = source.replace("from './fvs-probe-inventory.mjs'", 'from ' + JSON.stringify(pathToFileURL(path.resolve(__dirname, '../scripts/fvs-probe-inventory.mjs')).href));
+    const copy = path.join(f.root, 'test-only-state-fault.mjs'); fs.writeFileSync(copy, source, { flag: 'wx' });
+    return import(pathToFileURL(copy).href);
+  }
+
+  function onReceipt(f, id, change) {
+    const write = fs.writeFileSync; let changed = false;
+    fs.writeFileSync = function(file, ...args) {
+      const value = write.call(fs, file, ...args);
+      if (!changed && file === path.join(f.request.out, 'receipts', id + '.json')) { changed = true; change(JSON.parse(args[0])); }
+      return value;
+    };
+    return () => { fs.writeFileSync = write; assert.equal(changed, true, 'injection reached the postcheck boundary'); };
+  }
+
+  test('final-child observation removes only the two tail rescans; every child pre/post and final scan remains', async (t) => {
+    const f = duplicateImportFixture(1), { result, counts, events } = await scanTrace(f);
+    assert.equal(result.status, 'built', result.reason);
+    assert.deepEqual(counts, { runtime: 10, original: 6, owned: 3, outputs: 2 });
+    const starts = events.filter(e => e.kind === 'spawn').map(e => e.counts);
+    const ends = events.filter(e => e.kind === 'receipt').map(e => e.counts);
+    assert.deepEqual(starts, [
+      { runtime: 2, original: 0, owned: 0, outputs: 0 }, { runtime: 4, original: 0, owned: 0, outputs: 0 },
+      { runtime: 6, original: 2, owned: 1, outputs: 0 }, { runtime: 8, original: 4, owned: 1, outputs: 0 },
+    ]);
+    assert.deepEqual(ends, [
+      { runtime: 3, original: 0, owned: 0, outputs: 0 }, { runtime: 5, original: 0, owned: 0, outputs: 0 },
+      { runtime: 7, original: 3, owned: 1, outputs: 0 }, { runtime: 9, original: 5, owned: 1, outputs: 0 },
+    ]);
+    const expected = sha256(Buffer.from(JSON.stringify({ sourceFiles: result.source.files,
+      runtimeFiles: json(result.lean.runtime.file).files, dependencyFiles: json(result.dependencies.before.file) })));
+    const last = json(result.receipts.at(-1).file);
+    assert.deepEqual(Object.keys(last), ['argv', 'cwd', 'exit', 'signal', 'timedOut', 'startedAt', 'endedAt', 'stdout', 'stderr', 'inputsBefore', 'inputsAfter', 'outputLimitExceeded']);
+    assert.equal(last.inputsBefore, expected); assert.equal(last.inputsAfter, expected);
+    assert.deepEqual(fs.readFileSync(result.dependencies.after.file), fs.readFileSync(result.dependencies.before.file));
+    t.diagnostic(JSON.stringify({ profile: 'configured-with-dependencies', fullScans: counts, childCalls: starts.length, receiptDigestShapeUnchanged: true }));
+  });
+
+  test('configured no-deps and standalone final-child boundaries retain independent final scans', async (t) => {
+    for (const direct of [false, true]) {
+      const f = fixture();
+      if (direct) { f.request.source.files = ['Sample.lean']; delete f.request.lake; delete f.request.libraries; }
+      const { result, counts, events } = await scanTrace(f);
+      assert.equal(result.status, 'built', result.reason);
+      assert.deepEqual(counts, { runtime: direct ? 6 : 10, original: 0, owned: 0, outputs: 2 });
+      assert.equal(events.filter(e => e.kind === 'spawn').length, direct ? 2 : 4);
+      assert.deepEqual(json(result.dependencies.after.file), {});
+      assert.equal(result.dependencies.root, null); assert.equal(result.proofChecked, false);
+      const last = json(result.receipts.at(-1).file); assert.equal(typeof last.inputsBefore, 'string'); assert.equal(last.inputsBefore, last.inputsAfter);
+      t.diagnostic(JSON.stringify({ profile: direct ? 'standalone-no-deps' : 'configured-no-deps', fullScans: counts }));
+    }
+  });
+
+  test('test-only probe confirms the captured dependency map is observed, private and frozen', async () => {
+    const f = duplicateImportFixture(1);
+    const api = await faultBuilder(f, "    if (!Object.isFrozen(postCommandInputs) || !Object.isFrozen(postCommandInputs.dependencies) || postCommandInputs.dependencies === dependencyFiles || !Object.values(postCommandInputs.dependencies).every(Object.isFrozen)) fail('test witness: capture not immutable/observed');");
+    const result = await api.buildCheckerSnapshot(f.request); assert.equal(result.status, 'built', result.reason);
+    assert.equal(Object.hasOwn(result, 'postCommandInputs'), false);
+    const invalid = fixture(); invalid.request.postCommandInputs = {};
+    const refused = await build(invalid.request); assert.notEqual(refused.status, 'built'); assert.equal(fs.existsSync(invalid.request.out), false);
+  });
+
+  for (const [name, injection] of [
+    ['missing', '    postCommandInputs = null;'],
+    ['wrong invocation', "    postCommandInputs = Object.freeze({ ...postCommandInputs, invocation: Symbol('different build') });"],
+    ['old sequence', '    postCommandInputs = Object.freeze({ ...postCommandInputs, sequence: sequence - 1 });'],
+    ['nonterminal child marker', '    finalChildSequence = sequence - 1;'],
+  ]) test('test-only fault injection refuses ' + name + ' final-child capture', async () => {
+    const f = duplicateImportFixture(1), api = await faultBuilder(f, injection), result = await api.buildCheckerSnapshot(f.request);
+    assert.equal(result.status, 'unverified'); assert.match(result.reason, /current final-child/);
+    assert.ok(result.receipts.every(r => r.exit === 0)); assert.equal(fs.existsSync(path.join(f.request.out, 'receipts/dependencies-after.json')), false);
+  });
+
+  test('two interleaved build invocations cannot borrow post-command manifests', async () => {
+    const a = duplicateImportFixture(1), b = duplicateImportFixture(1);
+    fs.writeFileSync(b.originalArtifact, 'different frozen dependency bytes');
+    const results = await Promise.all([build(a.request), build(b.request)]);
+    for (const result of results) assert.equal(result.status, 'built', result.reason);
+    const left = json(results[0].dependencies.after.file), right = json(results[1].dependencies.after.file);
+    assert.notDeepEqual(left, right);
+    for (const result of results) assert.deepEqual(json(result.dependencies.after.file), json(result.dependencies.before.file));
+  });
+
+  test('a later failed or timed-out child cannot leave the earlier successful capture usable', async () => {
+    for (const timeout of [false, true]) {
+      const f = duplicateImportFixture(1), needle = "} else if (process.argv.includes('env')) {";
+      const source = fs.readFileSync(f.request.lake.path, 'utf8'); assert.equal(source.split(needle).length, 2);
+      fs.writeFileSync(f.request.lake.path, source.replace(needle, needle + (timeout ? ' setInterval(()=>{},1000);' : ' process.exit(7);')));
+      f.request.lake = tool(f.request.lake.path); if (timeout) f.request.deadlineMs = Date.now() + 1500;
+      const result = await build(f.request); assert.equal(result.status, 'unverified');
+      assert.equal(result.receipts.length, 4); assert.equal(result.receipts.at(-1).timedOut, timeout);
+      if (!timeout) assert.equal(result.receipts.at(-1).exit, 7);
+      assert.equal(fs.existsSync(path.join(f.request.out, 'receipts/dependencies-after.json')), false);
+    }
+  });
+
+  test('the next child clears a successful capture before a failing precheck', async () => {
+    const f = duplicateImportFixture(1), restore = onReceipt(f, '0003', () => fs.appendFileSync(f.originalArtifact, 'changed before next precheck'));
+    let result; try { result = await build(f.request); } finally { restore(); }
+    assert.equal(result.status, 'unverified'); assert.match(result.reason, /snapshot changed/); assert.equal(result.receipts.length, 3);
+    assert.equal(fs.existsSync(path.join(f.request.out, 'receipts/dependencies-after.json')), false);
+  });
+
+  for (const kind of ['copied-source', 'original-source', 'runtime', 'original-dependency']) test('final fresh inputs reject post-capture ' + kind + ' drift', async () => {
+    const f = duplicateImportFixture(1), target = kind === 'copied-source' ? path.join(f.request.out, 'source/Sample.lean') :
+      kind === 'original-source' ? path.join(f.source, 'Sample.lean') : kind === 'runtime' ? path.join(path.dirname(path.dirname(f.request.lean.path)), 'lib/lean/external.olean') : f.originalArtifact;
+    const restore = onReceipt(f, '0004', () => fs.appendFileSync(target, 'late bytes')); let result;
+    try { result = await build(f.request); } finally { restore(); }
+    assert.equal(result.status, 'unverified'); assert.match(result.reason, /changed/);
+    assert.deepEqual(json(result.dependencies.after.file), json(result.dependencies.before.file), 'intermediate manifest is the honest post-child observation, not a later rescan');
+    assert.equal(fs.existsSync(path.join(f.request.out, 'receipts/result.json')), false);
+  });
+
+  for (const kind of ['symlink', 'hardlink', 'changed-file-swap']) test('final fresh inventory rejects post-capture ' + kind, async () => {
+    const f = duplicateImportFixture(1), restore = onReceipt(f, '0004', () => {
+      const shadow = path.join(f.root, 'shadow'); fs.writeFileSync(shadow, fs.readFileSync(f.originalArtifact)); fs.unlinkSync(f.originalArtifact);
+      if (kind === 'symlink') fs.symlinkSync(shadow, f.originalArtifact);
+      else if (kind === 'hardlink') fs.linkSync(shadow, f.originalArtifact);
+      else fs.writeFileSync(f.originalArtifact, 'replacement bytes');
+    }); let result;
+    try { result = await build(f.request); } finally { restore(); }
+    assert.equal(result.status, 'unverified'); assert.match(result.reason, /changed|aliased|symlink/);
+    assert.equal(fs.existsSync(path.join(f.request.out, 'receipts/result.json')), false);
+  });
+
+  for (const kind of ['owned-unimported', 'output']) test('final fresh ' + kind + ' inventory survives the new observation boundary', async () => {
+    const f = duplicateImportFixture(1), originalRead = fs.readFileSync; let changed = false;
+    fs.readFileSync = function(file, ...args) {
+      const bytes = originalRead.call(fs, file, ...args);
+      if (!changed && file === path.join(f.request.out, 'source/.lake/build/ir/Sample.setup.json')) {
+        changed = true; fs.appendFileSync(kind === 'output' ? path.join(f.request.out, 'source/.lake/build/lib/lean/Sample.olean') : path.join(f.request.out, 'source/.lake/packages/Dep/empty.txt'), 'late changed bytes');
+      }
+      return bytes;
+    };
+    let result; try { result = await build(f.request); } finally { fs.readFileSync = originalRead; }
+    assert.equal(changed, true); assert.equal(result.status, 'unverified'); assert.match(result.reason, /changed/);
+    assert.equal(fs.existsSync(path.join(f.request.out, 'receipts/result.json')), false);
+  });
+
+  for (const rollback of [false, true]) test('phase-use clock fence refuses ' + (rollback ? 'future observation after rollback' : 'expired absolute deadline'), async () => {
+    const f = fixture(), now = Date.now; let forced = null; Date.now = () => forced ?? now();
+    const restore = onReceipt(f, '0004', r => { forced = rollback ? r.endedAt - 1000 : f.request.deadlineMs + 1; }); let result;
+    try { result = await build(f.request); } finally { Date.now = now; restore(); }
+    assert.equal(result.status, 'unverified'); assert.match(result.reason, rollback ? /clock moved behind/ : /deadline/);
+    assert.equal(fs.existsSync(path.join(f.request.out, 'receipts/dependencies-after.json')), false);
+  });
+
+  test('a child with reversed receipt clocks cannot supply a successful postcheck capture', async () => {
+    const f = fixture(), now = Date.now, write = fs.writeFileSync; let forced = null, changed = false;
+    Date.now = () => forced ?? now();
+    fs.writeFileSync = function(file, ...args) {
+      const value = write.call(fs, file, ...args);
+      if (!changed && file === path.join(f.request.out, 'receipts/0004.stdout')) { changed = true; forced = now() - 2000; }
+      return value;
+    };
+    let result; try { result = await build(f.request); } finally { Date.now = now; fs.writeFileSync = write; }
+    assert.equal(changed, true); assert.equal(result.status, 'unverified');
+    const last = json(result.receipts.at(-1).file); assert.ok(last.endedAt < last.startedAt); assert.equal(last.exit, 0);
+    assert.equal(fs.existsSync(path.join(f.request.out, 'receipts/dependencies-after.json')), false);
+  });
+
   test('protocol fixture captures multipart outputs and immutable receipts in an exclusive run', async () => {
     const f = fixture();
     const oldTmp = process.env.TMPDIR;

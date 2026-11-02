@@ -69,7 +69,9 @@ async function fixture(auto, bundle, transitions, api, clock) {
     schema: 'fvs/auto-effect-start', schemaVersion: 1, status: 'execution-uncertain', beforeEventSha256: before.result.recordedEventSha256,
     committedHeadSha256: before.result.recordedEventSha256, action: actionRef, evidenceDir: path.join(caseRoot, 'steps', step, 'command') });
   const code = Object.fromEntries(['controller', 'wrapper', 'driver'].map(k => [k, f.ref(path.join(f.ROOT, 'fv-skills/references/controller-termination-v1-' + k + '.source.txt'))]));
-  code.builder = f.ref(path.join(f.ROOT, 'scripts/fvs-checker-build.mjs'));
+  // Generic algorithm metadata retains the qualified historical builder; this never qualifies the current engine.
+  code.builder = f.ref(path.join(f.ROOT, 'tests/fixtures/auto-respec-controller/builder-v1-6558.source.txt'));
+  if (code.builder.sha256 !== '6558d19c217cd25158e47521e18202e4fecbfd8a09c87c6b4512479577eea246') throw Error('qualified lifecycle builder fixture changed');
   const sourceSnapshot = { head: f.git(f.ROOT, 'rev-parse', 'HEAD'), tree: f.git(f.ROOT, 'rev-parse', 'HEAD^{tree}'), files: sourceFiles.map(n => {
     const file = path.join(f.ROOT, 'scripts', n); return { path: 'scripts/' + n, sha256: f.ref(file).sha256, mode: '100644', size: fs.statSync(file).size };
   }) };
