@@ -107,3 +107,25 @@ history or valid rendered artifact alone never supplies current proof or human a
 Human review remains pending. Partial scope/proof results retain every unfinished node/reason,
 original limits and uncertainty. A complete artifact is not complete proof coverage,18 re-specification,
 19 actual stock-AO execution, a target-project proof promotion, a PR mutation or a completed pilot.
+
+For a reached historical input whose live path has advanced, version1 accepts an
+optional `historicalCaptures` list. Each closed entry is
+`{schema:"fvs/auto-bundle-historical-input",schemaVersion:1,original,archive,mode}`:
+both refs have the SAME SHA256, `archive` names separately retained non-executable
+bytes, and `mode` retains the historical mode metadata. Keep these bytes before
+advancing mutable state; absent bytes cannot be replaced by a same-meaning hash.
+The list is part of the consumer's exact expected context. Duplicate, chained,
+conflicting, unused or unavailable captures refuse. It supplies bytes only to
+required-copy traversal and captured integrity, never to live currentness checks.
+It cannot replace the current agreement, stage inputs, frozen baseline or runtime
+snapshot. Nested old versions remain distinct path/digest identities.18 callers
+retain each inspect-time runtime body before later checkpoints, and may reuse
+exact already-captured bodies from a prior17 bundle. Missing historical bytes
+refuse rather than changing an old reference or substituting current contents.
+
+The exact old18 inspect pair `6593d0f4` / `340a0278` also derives two versioned
+`fvs/auto-bundle-historical-code` mappings to digest-pinned, non-executable source
+data. Original paths/digests, raw inspect/request/publication/frame and current
+executable identities all remain separate required copies. Captured-only
+verification rederives this finite mapping from the retained inspect; a mapping
+or archive cannot be dropped or changed coherently to evade required traversal.

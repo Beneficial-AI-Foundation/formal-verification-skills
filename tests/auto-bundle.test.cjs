@@ -21,12 +21,42 @@ function editViews(b, m, changeCard = v => v) {
 }
 
 describe('read-only review bundle coverage and integrity', () => {
+  it('copies an exact explicitly retained historical input without changing its live identity or fresh-currentness policy', () => {
+    const x = fixture(), retainedDir = path.join(x.owned, 'retained'); fs.mkdirSync(retainedDir);
+    const original = f.write(retainedDir, 'historical-handoff', { retained: 'original' }), archive = path.join(retainedDir, 'archive.json');
+    fs.writeFileSync(archive, fs.readFileSync(original.file), { flag: 'wx', mode: 0o600 }); fs.writeFileSync(original.file, '{"retained":"new live bytes"}\n');
+    const capture = { schema: 'fvs/auto-bundle-historical-input', schemaVersion: 1, original, archive: f.ref(archive), mode: 0o600 };
+    const q = x.request({ handoff: original }); q.absenceReasons.handoff = null; q.historicalCaptures = [capture];
+    const b = build(x, q), v = verify(x, b); assert.equal(v.integrity.status, 'valid'); assert.equal(v.currentness.status, 'unverified');
+    assert.deepEqual(b.manifest.copies.find(r => r.original === original.file).historicalCapture, capture);
+    assert.notEqual(f.ref(original.file).sha256, original.sha256); assert.equal(f.ref(archive).sha256, original.sha256);
+    const initial = structuredClone(b.manifest);
+    for (const defect of ['archive omission', 'conflicting mapping', 'original omission']) {
+      editManifest(b, m => { Object.assign(m, structuredClone(initial)); const row = m.copies.find(r => r.original === original.file);
+        if (defect === 'archive omission') m.copies = m.copies.filter(r => r.original !== archive);
+        if (defect === 'conflicting mapping') row.historicalCapture.archive.file = original.file;
+        if (defect === 'original omission') m.copies = m.copies.filter(r => r !== row);
+      }); reject('bundle-integrity-invalid', () => verify(x, b));
+    }
+    for (const defect of ['wrong digest', 'missing bytes', 'duplicate', 'unused', 'chain', 'null', 'current input']) {
+      const changed = structuredClone(q);
+      if (defect === 'wrong digest') changed.historicalCaptures[0].archive.sha256 = 'f'.repeat(64);
+      if (defect === 'missing bytes') changed.historicalCaptures[0].archive.file = path.join(x.owned, 'missing.json');
+      if (defect === 'duplicate') changed.historicalCaptures.push(structuredClone(capture));
+      if (defect === 'unused') changed.historicalCaptures[0].original = { file: path.join(x.owned, 'unreached.json'), sha256: original.sha256 };
+      if (defect === 'chain') changed.historicalCaptures.push({ ...capture, original: capture.archive, archive: { file: path.join(x.owned, 'another.json'), sha256: original.sha256 } });
+      if (defect === 'null') changed.historicalCaptures = null;
+      if (defect === 'current input') changed.historicalCaptures = [{ ...capture, original: q.extraction, archive: { file: archive, sha256: q.extraction.sha256 } }];
+      assert.throws(() => build(x, changed));
+    }
+  });
   it('publishes all requested roots and shared helper without inventing proof or human approval', () => {
     const x = fixture(), b = build(x), v = verify(x, b);
     assert.equal(b.result.status, 'review-bundle-written'); assert.equal(v.integrity.status, 'valid'); assert.equal(v.currentness.status, 'unverified');
     assert.deepEqual(b.manifest.facts.requestedRoots, [20, 21]); assert.deepEqual(b.manifest.facts.union, [19, 20, 21]);
     assert.deepEqual(b.manifest.facts.nodes.map(n => n.node), [19, 20, 21]); assert.equal(b.manifest.facts.proofCoverage, 'partial-at-capture');
     assert.equal(b.manifest.humanReview, 'pending'); assert.match(fs.readFileSync(path.join(b.out, 'contract.lean'), 'utf8'), /^-- FVS review bundle/);
+    assert.ok(b.manifest.copies.every(r => !r.historicalCapture), 'ordinary current capture keeps its existing representation');
     assert.ok(b.manifest.facts.nodes.every(n => n.proofAtCapture !== 'current-accepted-at-capture'));
   });
   it('retains inadmissible requested/failed IDs and null closure as unknown', () => {

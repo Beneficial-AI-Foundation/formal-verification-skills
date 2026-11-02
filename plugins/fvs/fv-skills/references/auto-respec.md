@@ -102,3 +102,13 @@ requires it. A late or failed output, including a staged result beside `failure.
 readiness. Keep the successful CLI/API envelope (including its publication ref) as the17 handoff evidence,
 so the review bundle retains that clock receipt as well as the result. Verification records its own
 separate clock evidence; original run start/deadline never changes.
+
+The original inspect implementation pair `6593d0f4` / `340a0278` is a finite
+historical compatibility case. Both exact sources are retained as non-executable
+data, with the original inspect/request/publication/frame unchanged. The current
+helper and bundle keep their own executable identities.17 derives a versioned
+`fvs/auto-bundle-historical-code` mapping from that inspect pair and copies both
+the original path/digest identity and its exact archive body. Its captured-only
+verifier derives the same required mapping from the raw inspect, rather than
+trusting a caller-selected retention list. Missing, conflicting or changed
+archive bytes refuse; this grants no proof/currentness authority.

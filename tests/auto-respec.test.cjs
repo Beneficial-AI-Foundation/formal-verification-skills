@@ -132,16 +132,69 @@ describe('conclusive local failures and exact legacy inspect compatibility (prot
     assert.ok(fs.existsSync(path.join(out, 'failure.json'))); assert.deepEqual(f.ref(state.file), state);
     reject('respec-failure-unverified', () => api.consumeConclusiveLocalFailure({ projectRoot: p.x.root, request: p.request, out }));
   });
-  it('accepts only the exact retained old inspect pair for historical inspect and keeps current results current', async () => {
+  it('retains the exact old inspect through upgraded finish consumption and documented17 build AND verify', async () => {
     const x = await fixture(), b = begin(x), old = '6593d0f4f8ef6d0ddc510666644946ce4fc85898a161610fdc2f00d6c121a866';
-    mutatePublished(b.out, r => { r.implementation.respec.sha256 = old; }); b.evidence.result = f.ref(path.join(b.out, 'result.json'));
+    mutatePublished(b.out, r => { r.implementation.respec.sha256 = old; r.implementation.bundle.sha256 = '340a0278d334c43036acd147341c2d72009de36f5fba49f63f4e043cdac10e5a'; }); b.evidence.result = f.ref(path.join(b.out, 'result.json'));
+    const original = read(b.evidence.result.file), retained = [b.evidence.request, b.evidence.result, f.ref(path.join(b.out, 'result-clock.json'))];
+    const frame = structuredClone(original.frame);
+    const originalRuntime = original.request.current.bundle.runtime.state, archiveFile = path.join(x.owned, 'exact-inspect-runtime-' + f.uuid() + '.json');
+    fs.writeFileSync(archiveFile, fs.readFileSync(originalRuntime.file), { flag: 'wx', mode: 0o600 });
+    assert.equal(f.ref(archiveFile).sha256, originalRuntime.sha256);
+    const prior = read(original.request.priorBundle.manifest.file), priorRuntime = prior.snapshot.request.runtime.state;
+    const priorCopy = prior.copies.find(r => r.original === priorRuntime.file && r.sha256 === priorRuntime.sha256);
+    const historicalCaptures = [
+      { schema: 'fvs/auto-bundle-historical-input', schemaVersion: 1, original: originalRuntime, archive: f.ref(archiveFile), mode: 0o600 },
+      { schema: 'fvs/auto-bundle-historical-input', schemaVersion: 1, original: priorRuntime, archive: f.ref(path.join(path.dirname(original.request.priorBundle.manifest.file), priorCopy.stored)), mode: priorCopy.mode },
+    ];
     reject('respec-result-mismatch', () => api.verifyRespecResult({ request: b.q, out: b.out }));
     const q = x.respecRequest('finish', b.evidence), out = x.output('legacy-finish'), result = api.runRespec({ request: q, out });
     assert.equal(result.status, 'partial'); assert.notEqual(result.implementation.respec.sha256, old); assert.equal(api.verifyRespecResult({ request: q, out }).status, 'partial');
+    assert.deepEqual(result.frame, frame); assert.notEqual(result.implementation.bundle.sha256, original.implementation.bundle.sha256);
+    const state = f.ref(path.join(x.root, '.formalising/auto-fv/resume/state.json'));
+    const handoff = f.json(x.owned, 'successful-finish-envelope', result), request = { ...q.current.bundle, bundleId: f.uuid(), handoff, historicalCaptures, deadlineMs: Date.now() + 120000 };
+    request.absenceReasons = { ...request.absenceReasons, handoff: null };
+    const output = x.output('legacy-review'), built = bundle.buildReviewBundle(request, output), manifestBytes = fs.readFileSync(built.manifest.file), manifest = read(built.manifest.file);
+    const verify = () => bundle.verifyReviewBundle({ manifest: f.ref(built.manifest.file), expectedContext: bundle.bundleExpectedContext(request), deadlineMs: Date.now() + 120000, out: x.output('legacy-review-verify') });
+    const verified = verify(); assert.equal(verified.integrity.status, 'valid'); assert.equal(verified.currentness.status, 'unverified');
+    const captures = bundle.legacyInspectCodeCaptures(original.implementation);
+    assert.equal(captures.length, 2);
+    for (const capture of captures) {
+      const row = manifest.copies.find(r => r.original === capture.original.file && r.sha256 === capture.original.sha256);
+      assert.deepEqual(row.historicalCapture, capture); assert.equal(row.policy, 'required-copy'); assert.equal(row.role, 'code'); assert.equal(row.mode, 0o644);
+      assert.deepEqual(fs.readFileSync(path.join(output, row.stored)), fs.readFileSync(capture.archive.file));
+      assert.ok(manifest.copies.some(r => r.original === capture.archive.file && r.sha256 === capture.archive.sha256 && r.policy === 'required-copy'));
+      assert.ok(manifest.copies.some(r => r.original === capture.original.file && r.sha256 === f.ref(capture.original.file).sha256 && !r.historicalCapture));
+    }
+    for (const ref of retained.concat([result.evidence, result.publication])) {
+      assert.deepEqual(f.ref(ref.file), ref); const row = manifest.copies.find(r => r.original === ref.file && r.sha256 === ref.sha256);
+      assert.ok(row, 'raw request/result/publication retained'); assert.deepEqual(fs.readFileSync(path.join(output, row.stored)), fs.readFileSync(ref.file));
+    }
+    for (const c of historicalCaptures) assert.deepEqual(manifest.copies.find(r => r.original === c.original.file && r.sha256 === c.original.sha256).historicalCapture, c);
+    for (const defect of ['original', 'archive', 'mapping', 'conflict', 'index-only', 'mode']) {
+      const m = structuredClone(manifest), capture = captures[0], row = m.copies.find(r => r.original === capture.original.file && r.sha256 === capture.original.sha256);
+      if (defect === 'original') m.copies = m.copies.filter(r => r !== row);
+      if (['archive', 'index-only'].includes(defect)) m.copies = m.copies.filter(r => r.original !== capture.archive.file);
+      if (defect === 'mapping') delete row.historicalCapture;
+      if (defect === 'conflict') row.historicalCapture.archive.file = result.implementation.respec.file;
+      if (defect === 'index-only') m.indexOnly.push({ original: capture.archive.file, sha256: capture.archive.sha256, policy: 'index-only', role: 'code', availability: 'not-established-by-index' });
+      if (defect === 'mode') m.copies.find(r => r.original === capture.archive.file).mode = 0o755;
+      fs.writeFileSync(built.manifest.file, JSON.stringify(m)); reject('bundle-integrity-invalid', verify);
+    }
+    fs.writeFileSync(built.manifest.file, manifestBytes); assert.equal(verify().integrity.status, 'valid');
+    for (const defect of ['missing', 'wrong']) {
+      const readFile = fs.readFileSync, open = fs.openSync; let archiveFd;
+      fs.openSync = function(file, ...args) { const fd = open.call(fs, file, ...args); if (file === captures[1].archive.file) archiveFd = fd; return fd; };
+      fs.readFileSync = function(file, ...args) { if (file === archiveFd) { if (defect === 'missing') throw Object.assign(Error('missing archive'), { code: 'ENOENT' }); return Buffer.from('wrong archive bytes'); } return readFile.call(fs, file, ...args); };
+      const refused = x.output('bad-archive');
+      try { reject('bundle-evidence-invalid', () => bundle.buildReviewBundle(request, refused)); assert.equal(fs.existsSync(refused), false); }
+      finally { fs.readFileSync = readFile; fs.openSync = open; }
+    }
+    for (const ref of retained) assert.deepEqual(f.ref(ref.file), ref);
+    assert.deepEqual(read(b.evidence.result.file).frame, frame); assert.deepEqual(f.ref(state.file), state);
   });
   for (const change of ['respec', 'bundle', 'path', 'archive']) it('rejects legacy inspect substitution: ' + change, async () => {
     const x = await fixture(), b = begin(x), old = '6593d0f4f8ef6d0ddc510666644946ce4fc85898a161610fdc2f00d6c121a866';
-    mutatePublished(b.out, r => { r.implementation.respec.sha256 = old; if (change === 'respec') r.implementation.respec.sha256 = 'f'.repeat(64); if (change === 'bundle') r.implementation.bundle.sha256 = 'f'.repeat(64); if (change === 'path') r.implementation.respec.file = r.implementation.bundle.file; });
+    mutatePublished(b.out, r => { r.implementation.respec.sha256 = old; r.implementation.bundle.sha256 = '340a0278d334c43036acd147341c2d72009de36f5fba49f63f4e043cdac10e5a'; if (change === 'respec') r.implementation.respec.sha256 = 'f'.repeat(64); if (change === 'bundle') r.implementation.bundle.sha256 = 'f'.repeat(64); if (change === 'path') r.implementation.respec.file = r.implementation.bundle.file; });
     b.evidence.result = f.ref(path.join(b.out, 'result.json')); const q = x.respecRequest('finish', b.evidence), open = fs.openSync, readFile = fs.readFileSync; let archiveFd;
     if (change === 'archive') { fs.openSync = function(file, ...args) { const fd = open.call(fs, file, ...args); if (file.endsWith?.('auto-respec-inspect-v1-6593d0f4.source.txt')) archiveFd = fd; return fd; }; fs.readFileSync = function(file, ...args) { const value = readFile.call(fs, file, ...args); return file === archiveFd ? Buffer.concat([value, Buffer.from('changed')]) : value; }; }
     try { reject('respec-inspect-mismatch', () => api.runRespec({ request: q, out: x.output('bad-legacy') })); } finally { fs.openSync = open; fs.readFileSync = readFile; }

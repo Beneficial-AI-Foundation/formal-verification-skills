@@ -11,7 +11,7 @@ import { readRuntime, readRuntimeAssignment } from './fvs-auto-resume.mjs';
 import { transitionJson, readTransitionAction, readRuntimeObservation, readTransitionCompletion, verifyTransitionAuthorization, transitionValidators } from './fvs-auto-transitions.mjs';
 import { validatePlan, readChain, registryStatus } from './fvs-contract-registry.mjs';
 import { inspectAutoAcceptance, readAcceptedStore } from './fvs-checker-auto.mjs';
-import { bundleExpectedContext, readReviewSnapshot, BUNDLE_LIMITS } from './fvs-auto-bundle.mjs';
+import { bundleExpectedContext, readReviewSnapshot, legacyInspectCodeCaptures, BUNDLE_LIMITS } from './fvs-auto-bundle.mjs';
 
 export class RespecError extends Error {
   constructor(code, message) { super(message); this.code = code; }
@@ -184,14 +184,16 @@ const legacyInspect = {
   respec: '6593d0f4f8ef6d0ddc510666644946ce4fc85898a161610fdc2f00d6c121a866',
   bundle: '340a0278d334c43036acd147341c2d72009de36f5fba49f63f4e043cdac10e5a',
 };
-const legacyInspectSource = fileURLToPath(new URL('../fv-skills/references/auto-respec-inspect-v1-6593d0f4.source.txt', import.meta.url));
 function inspectImplementation(v) {
   const current = implementation();
   if (same(v, current)) return true;
   const expected = { respec: { file: current.respec.file, sha256: legacyInspect.respec }, bundle: { file: current.bundle.file, sha256: legacyInspect.bundle } };
-  // Only the unchanged inspect-v1 contract may read this exact retained version.
-  return current.bundle.sha256 === legacyInspect.bundle && same(v, expected)
-    && !(fs.statSync(legacyInspectSource).mode & 0o111) && hash(bytes(legacyInspectSource)) === legacyInspect.respec;
+  // Historical340a is retained as data beside6593, independently of the
+  // upgraded current collector. Only this exact old inspect pair is accepted.
+  if (!same(v, expected)) return false;
+  try { return legacyInspectCodeCaptures(v).every(c => (fs.statSync(c.archive.file).mode & 0o777) === c.mode
+    && hash(bytes(c.archive.file)) === c.archive.sha256); }
+  catch { return false; }
 }
 function storeHeads(rows) {
   const heads = new Map();
@@ -327,7 +329,7 @@ export function consumeConclusiveLocalFailure(options) {
 }
 function trace(q, x, initial, out) {
   const original = bound(initial.request), result = bound(initial.result);
-  publicationOf(path.dirname(initial.result.file), original, initial.result, result);
+  const inspectPublication = publicationOf(path.dirname(initial.result.file), original, initial.result, result);
   if (original.operation !== 'inspect' || result.schema !== 'fvs/auto-respec-result' || result.operation !== 'inspect' || result.requestSha256 !== memoryHash(original) || !same(result.request, original) || !inspectImplementation(result.implementation)) fail('respec-inspect-mismatch', 'not the exact original inspect request/result/implementation');
   const originalFrame = frameOf(original, x.prior, x.runtime.state.run);
   if (!same(originalFrame, result.frame) || !same(originalFrame, x.frame)) fail('respec-frame-mismatch', 'original feedback/scope/run/accounting frame changed');
@@ -393,7 +395,7 @@ function trace(q, x, initial, out) {
     current = after; effects.push({ beforeEventSha256: before.sha256, afterEventSha256: row.sha256, kind: a.kind, completion });
   }
   if (!same(current, tupleOfBundle(x.b))) fail('respec-history-mismatch', 'current context has no complete paired revision path');
-  return { effects, failures, promotions, gitEvidence };
+  return { effects, failures, promotions, gitEvidence, inspectPublication };
 }
 function implementation() {
   return Object.fromEntries([['respec', 'fvs-auto-respec.mjs'], ['bundle', 'fvs-auto-bundle.mjs']].map(([key, name]) => {
@@ -509,12 +511,13 @@ function publish(q, x, out, name, value) {
 }
 function publicationOf(out, q, ref, result) {
   if (fs.existsSync(path.join(out, 'failure.json'))) fail('respec-result-mismatch', 'failed/staged output cannot supply readiness');
-  const file = path.join(out, 'result-clock.json'), p = transitionJson(bytes(file));
+  const file = path.join(out, 'result-clock.json'), raw = bytes(file), p = transitionJson(raw);
   closed(p, ['schema', 'schemaVersion', 'requestSha256', 'result', 'status', 'publishedAtMs'], 'publication clock');
   if (p.schema !== 'fvs/auto-respec-publication' || p.schemaVersion !== 1 || p.requestSha256 !== memoryHash(q) || !same(p.result, ref) || p.status !== result.status
     || !Number.isSafeInteger(p.publishedAtMs) || p.publishedAtMs < result.observation.endedAtMs || p.publishedAtMs >= q.deadlineMs
     || (p.publishedAtMs >= result.frame.run.deadlineMs && !result.observation.reasons.includes('original-limit-exhausted'))) fail('respec-result-mismatch', 'not this successfully published bounded result');
   if (Date.now() < p.publishedAtMs) fail('respec-clock-rollback', 'clock precedes successful publication');
+  return { file, sha256: hash(raw) };
 }
 export function runRespec(options) {
   options = data(options); closed(options, ['request', 'out'], 'respec operation'); const { request: raw, out } = options;
