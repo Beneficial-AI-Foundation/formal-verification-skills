@@ -48,6 +48,12 @@ against current canonical agreement. No fallback model or new role setting.
 Each item has a unique `itemId`, explicit sorted node IDs, and `expectedRecords` entries
 `{node,recordSha256,candidateSha256}` for those original node versions. `feedback` and nonempty evidence
 refs record the workflow's owner-request correspondence. They are not a language classifier.
+For an item with no registered version, use `{node,unestablished:"actual reason"}` instead of invented
+hashes. Selected unregistered and unsupported/unmapped IDs remain visible in the whole request and
+node inventory as non-executable partial facts. A known version still needs exact current hashes;
+an unestablished flag cannot hide an existing record. A response cannot clear this original unknown
+version. Once a prerequisite is established, prepare a fresh inspect frame from actual versions,
+preserving the owner payload, original scope and accounting without another routine owner gate.
 `response` is null until there is an actual prepared response. A response ref names the closed
 `fvs/auto-respec-response` version1 object with `revisionId,itemId,ownerFeedbackSha256,priorCandidates,
 contracts,correspondenceEvidence` (plus schema/version). The candidates equal the original item versions;
@@ -89,3 +95,10 @@ Build a NEW17 review artifact from the complete current context and retain all p
 approval must reference the exact resulting contracts/bundle and actual response. Another requested
 revision uses the same path. Changed scope/limits/context that16 cannot reconcile stays partial rather
 than silently rebinding the original run. No PR is created, published or merged by this helper.
+
+Final clock/rollback checks follow all slow fence reads and output publication. Successful output has
+`result-clock.json` binding the exact result/request and publication time; the independent consumer
+requires it. A late or failed output, including a staged result beside `failure.json`, supplies no
+readiness. Keep the successful CLI/API envelope (including its publication ref) as the17 handoff evidence,
+so the review bundle retains that clock receipt as well as the result. Verification records its own
+separate clock evidence; original run start/deadline never changes.

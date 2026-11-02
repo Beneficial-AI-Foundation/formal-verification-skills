@@ -10,6 +10,10 @@ const fixture = () => f.fixture(auto, bundle, transitions, process.env.FVS_RESPE
 const read = p => JSON.parse(fs.readFileSync(p));
 function begin(x) { const q = x.respecRequest(), out = x.output('inspect'), result = api.runRespec({ request: q, out }); return { q, out, result, evidence: { request: result.requestInput, result: result.evidence } }; }
 const reject = (code, fn) => assert.throws(fn, e => e.code === code, code);
+function mutatePublished(out, change) {
+  const file = path.join(out, 'result.json'), r = read(file); change(r); fs.writeFileSync(file, JSON.stringify(r));
+  const clockFile = path.join(out, 'result-clock.json'), p = read(clockFile); p.result = f.ref(file); p.status = r.status; fs.writeFileSync(clockFile, JSON.stringify(p));
+}
 
 describe('same-pipeline feedback currentness (protocol only)', () => {
   it('captures full scope and independently consumes the actual caller16/20 requests', async () => {
@@ -61,12 +65,12 @@ describe('same-pipeline feedback currentness (protocol only)', () => {
   });
   it('a coherent saved ready label cannot bypass whole-scope fresh proof checks', async () => {
     const x = await fixture(), b = begin(x), q = x.respecRequest('finish', b.evidence), out = x.output('fake-ready'); api.runRespec({ request: q, out });
-    const result = read(path.join(out, 'result.json')); result.status = 'ready-for-final-human-review'; result.observation.reasons = []; fs.writeFileSync(path.join(out, 'result.json'), JSON.stringify(result));
+    mutatePublished(out, result => { result.status = 'ready-for-final-human-review'; result.observation.reasons = []; });
     reject('respec-context-stale', () => api.verifyRespecResult({ request: q, out }));
   });
   it('omitted or tampered current consumer receipts do not pass independent verification', async () => {
-    const x = await fixture(), b = begin(x), result = read(path.join(b.out, 'result.json')); result.observation.currentConsumer.receipts = [];
-    fs.writeFileSync(path.join(b.out, 'result.json'), JSON.stringify(result)); reject('respec-evidence-invalid', () => api.verifyRespecResult({ request: b.q, out: b.out }));
+    const x = await fixture(), b = begin(x); mutatePublished(b.out, r => { r.observation.currentConsumer.receipts = []; });
+    reject('respec-evidence-invalid', () => api.verifyRespecResult({ request: b.q, out: b.out }));
   });
   it('retains raw AO evidence without treating irrelevant output metadata as semantic drift', async () => {
     const x = await fixture(), b = begin(x); x.rows[0].debugRevision = 'unrelated metadata'; x.writeControl();
@@ -145,5 +149,60 @@ describe('same-pipeline feedback currentness (protocol only)', () => {
     fs.mkdirSync = function(p, ...rest) { const v = mkdir.call(fs, p, ...rest); if (p === out) Date.now = () => last - 1; return v; };
     try { reject('respec-clock-rollback', () => api.runRespec({ request: q, out })); } finally { Date.now = now; fs.mkdirSync = mkdir; }
     assert.equal(fs.existsSync(path.join(out, 'result.json')), false); assert.deepEqual(fs.readFileSync(x.log), log);
+  });
+  for (const kind of ['selected', 'unmapped', 'mixed']) it('retains ' + kind + ' unestablished feedback without invented hashes', async () => {
+    const x = await fixture(), q = x.respecRequest();
+    const unknown = node => ({ itemId: 'unestablished-' + node, nodes: [node], expectedRecords: [{ node, unestablished: node === 21 ? 'selected root has no registered contract' : 'no supported mapping/record' }], feedback: 'requested item must remain visible', evidence: [q.ownerFeedback.evidence], response: null });
+    q.requestedItems = kind === 'selected' ? [unknown(21)] : kind === 'unmapped' ? [unknown(999)] : [...q.requestedItems, unknown(21), unknown(999)];
+    const out = x.output('unknown'), r = api.runRespec({ request: q, out }); assert.equal(r.status, 'partial'); assert.equal(r.effectExecutable, false);
+    assert.deepEqual(r.frame.requestedItems.map(i => i.itemId), q.requestedItems.map(i => i.itemId));
+    for (const id of kind === 'selected' ? [21] : kind === 'unmapped' ? [999] : [21, 999]) { assert.ok(r.observation.nodes.some(n => n.node === id)); assert.ok(r.observation.reasons.includes('requested-version-unestablished:' + id)); }
+    assert.equal(api.verifyRespecResult({ request: q, out }).status, 'partial');
+  });
+  it('a response cannot clear an originally unestablished version', async () => {
+    const x = await fixture(), q = x.respecRequest(); q.requestedItems.push({ itemId: 'missing-B', nodes: [21], expectedRecords: [{ node: 21, unestablished: 'no14 record' }], feedback: 'keep B', evidence: [q.ownerFeedback.evidence], response: null });
+    const initial = api.runRespec({ request: q, out: x.output('unknown-inspect') }), next = x.respecRequest('finish', { request: initial.requestInput, result: initial.evidence });
+    next.requestedItems = structuredClone(q.requestedItems); next.requestedItems.forEach(i => { i.response = f.json(x.owned, 'claimed-response', { claimed: 'done', node: i.nodes[0] }); });
+    // Known responses remain valid workflow declarations; unknown B cannot be upgraded.
+    next.requestedItems.slice(0, 2).forEach(i => { i.response = x.response(next, i); });
+    const r = api.runRespec({ request: next, out: x.output('unknown-finish') }); assert.equal(r.status, 'partial'); assert.equal(r.observation.items.at(-1).reason, 'requested-version-unestablished');
+  });
+  it('incorrect known versions still refuse and cannot become unestablished flags', async () => {
+    const x = await fixture(), q = x.respecRequest(); q.requestedItems[0].expectedRecords[0].recordSha256 = 'f'.repeat(64);
+    reject('respec-request-stale', () => api.runRespec({ request: q, out: x.output('known-stale') }));
+    q.requestedItems[0].expectedRecords = [{ node: 19, unestablished: 'caller says missing' }];
+    reject('respec-request-stale', () => api.runRespec({ request: q, out: x.output('known-hidden') }));
+  });
+  for (const consumer of [false, true]) for (const crossing of ['run', 'inspection', 'rollback']) it((consumer ? 'consumer' : 'producer') + ' clocks after the last fence: ' + crossing, async () => {
+    const x = await fixture(), realNow = Date.now, open = fs.openSync, mkdir = fs.mkdirSync;
+    const run = auto.readRuntimeState({ projectRoot: x.root }).state.run; let now = crossing === 'run' ? run.deadlineMs - 60000 : realNow(); const start = now;
+    Date.now = () => now;
+    try {
+      const q = x.respecRequest(), out = x.output('last-fence'), before = f.ref(path.join(x.root, '.formalising/auto-fv/resume/state.json'));
+      if (consumer) api.runRespec({ request: q, out });
+      let active = !consumer, reads = 0;
+      fs.mkdirSync = function(file, ...rest) { const value = mkdir.call(fs, file, ...rest); if (consumer && path.basename(file).startsWith('fvs-respec-consume-')) active = true; return value; };
+      fs.openSync = function(file, ...rest) {
+        const fd = open.call(fs, file, ...rest);
+        if (active && file === q.ownerFeedback.evidence.file && (consumer || fs.existsSync(out)) && ++reads === 2) now = crossing === 'run' ? run.deadlineMs + 1 : crossing === 'inspection' ? q.deadlineMs + 1 : start - 1;
+        return fd;
+      };
+      const action = () => consumer ? api.verifyRespecResult({ request: q, out }) : api.runRespec({ request: q, out });
+      if (crossing === 'run' && !consumer) { const r = action(); assert.equal(r.status, 'partial'); assert.ok(r.observation.reasons.includes('original-limit-exhausted')); assert.ok(r.observation.endedAtMs >= run.deadlineMs); }
+      else reject(crossing === 'run' ? 'respec-context-stale' : crossing === 'inspection' ? 'respec-deadline-exhausted' : 'respec-clock-rollback', action);
+      assert.equal(reads, 2); assert.deepEqual(f.ref(before.file), before);
+    } finally { Date.now = realNow; fs.openSync = open; fs.mkdirSync = mkdir; }
+  });
+  it('late durable result output stays failed/unverified rather than returning ready/proposed', async () => {
+    const x = await fixture(), realNow = Date.now, run = auto.readRuntimeState({ projectRoot: x.root }).state.run; let now = run.deadlineMs - 60000;
+    Date.now = () => now;
+    try {
+      const q = x.respecRequest(), out = x.output('late-write'), fsync = fs.fsyncSync, open = fs.openSync; let resultFd;
+      fs.openSync = function(file, ...rest) { const fd = open.call(fs, file, ...rest); if (file === path.join(out, 'result.json')) resultFd = fd; return fd; };
+      fs.fsyncSync = function(fd) { const result = fsync.call(fs, fd); if (fd === resultFd) now = run.deadlineMs + 1; return result; };
+      try { reject('respec-publication-stale', () => api.runRespec({ request: q, out })); }
+      finally { fs.fsyncSync = fsync; fs.openSync = open; }
+      assert.ok(fs.existsSync(path.join(out, 'failure.json'))); reject('respec-result-mismatch', () => api.verifyRespecResult({ request: q, out }));
+    } finally { Date.now = realNow; }
   });
 });
