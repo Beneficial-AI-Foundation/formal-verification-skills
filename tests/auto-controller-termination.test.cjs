@@ -203,8 +203,16 @@ describe('controller termination algorithm: exact-profile/inspector/PS doubles',
   it('rechecks exact lifecycle and tool bytes after the slow consumer reads', () => {
     const v = p.complete(), file = p.context.tools.lean.file, original = fs.readFileSync(file); let calls = 0;
     processPatch = () => { if (++calls === 2) fs.writeFileSync(file, 'changed owned protocol tool'); };
-    try { refused(v.request, undefined, /bound bytes changed/); }
+    try { refused(v.request, undefined, /executable hash changed/); }
     finally { f.write(path.join(p.x.owned, 'retained-late-tool-mutant'), fs.readFileSync(file)); fs.writeFileSync(file, original); processPatch = null; }
+  });
+  it('keeps the32MiB metadata/source bound separate from larger streamed tools', async () => {
+    const file = path.join(p.x.owned, 'oversized-before-request.json'), fd = fs.openSync(file, 'wx', 0o600);
+    fs.ftruncateSync(fd, 33554433); fs.closeSync(fd);
+    const hash = require('node:crypto').createHash('sha256');
+    for await (const chunk of fs.createReadStream(file, { highWaterMark: 65536 })) hash.update(chunk);
+    const ref = { file, sha256: hash.digest('hex') }, v = p.complete(c => c.beforeRequest = ref);
+    refused(v.request, undefined, /bounded regular input unavailable/);
   });
   it('does not let a late process read hide canonical drift or an exhausted deadline', () => {
     const rollback = p.complete(), now = Date.now;

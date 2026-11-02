@@ -150,6 +150,20 @@ must correspond, including the recorded preparation/before/job ordering.
 The earlier closure establishes the starting predecessor only; it never closes
 A122 or renews proof. No missing timing or producer outcome is reconstructed.
 
+Executable refs are SHA-256 identities, separate from JSON/source documents.
+They use the existing builder's bounded fd-stream/stat-drift pattern, adapted
+inside18 because that engine routine is private. No executable is loaded as a
+whole buffer or copied as metadata. The finite142769104B ceiling is exactly the
+largest executable in the supported pinned cohort (Beads1.3.1); Node24.21,
+Lean/Lake4.31, systemPS and systemGit are smaller. There is no headroom for an
+unqualified tool upgrade. The32MiB document/source and512MiB copied-artifact
+limits are unchanged. Every call rehashes bytes under its caller deadline;
+canonical component paths, regular/executable mode, aliases, fd/path identity,
+size/EOF, byte/stat drift, rollback and deadline checks remain mandatory.
+Only the pinned root-owned `/usr/bin/git` system dispatcher may retain its
+known hardlinks (exact path/hash/size/mode and at most78); arbitrary hardlinks
+and all symlink aliases refuse. No caller-supplied alias or size override exists.
+
 `assertKnownControllerPreparation` is only a correspondence assertion, returning
 no receipt or permission. The public verifier always uses its real bound reader.
 Separate tests check that exact assertion against copied retained metadata;

@@ -22,7 +22,8 @@ async function fixture(auto, bundle, transitions, api, clock) {
   const b = x.bundle, last = await x.registryFixture.register(b, 21); b.registry.expectedHeadSha256 = last.recordSha256;
   const store = path.join(x.owned, 'empty-store'); fs.mkdirSync(store);
   const tools = { node: f.ref(process.execPath), bd: f.ref(path.join(x.root, 'fixture-bd.cjs')), ps: f.ref(fs.realpathSync('/bin/ps')) };
-  tools.lean = write(path.join(x.owned, 'lean-tool'), 'protocol identity only; not executable'); tools.lake = write(path.join(x.owned, 'lake-tool'), 'protocol identity only; not executable');
+  tools.lean = write(path.join(x.owned, 'lean-tool'), 'protocol identity bytes only; never invoked'); tools.lake = write(path.join(x.owned, 'lake-tool'), 'protocol identity bytes only; never invoked');
+  fs.chmodSync(tools.lean.file, 0o700); fs.chmodSync(tools.lake.file, 0o700);
   const engine = Object.fromEntries([process.execPath, '/usr/bin/git', ...sourceFiles.map(n => path.join(f.ROOT, 'scripts', n))].map(file => [file, f.ref(file).sha256]));
   const input = f.json(x.owned, 'SIMULATION-freeze-input', { baseline: { source: x.request().source, libraries: ['Defs'], sourceRoot: '.',
     lean: { path: tools.lean.file, sha256: tools.lean.sha256 }, lake: { path: tools.lake.file, sha256: tools.lake.sha256 } } });

@@ -46,6 +46,61 @@ function bound(r, json = true) {
   if (hash(b) !== r.sha256) fail('respec-evidence-invalid', 'bound bytes changed: ' + r.file);
   return json ? transitionJson(b) : b;
 }
+// Largest executable in the supported pinned A122 cohort: Beads1.3.1,142769104B.
+// No headroom for unqualified tool upgrades; document/source limits stay unchanged.
+export const TERMINATION_EXECUTABLE_BYTES = 142769104;
+// This pinned Apple dispatcher is legitimately hardlinked across system tool names.
+const SYSTEM_GIT_EXECUTABLE = { file: '/usr/bin/git', sha256: 'b8763cf250e607a778bb4603cecb5b90338814d0a3dfcba0d57b1de242f610e9', size: 118640, links: 78, mode: 0o100755 };
+export function terminationExecutableIdentity(raw, deadlineMs) {
+  const r = data(raw); reference(r); return executableIdentity(r.file, deadlineMs, r.sha256);
+}
+function executableIdentity(file, deadlineMs, expectedSha256 = null) {
+  if (!text(file) || !path.isAbsolute(file)) fail('respec-evidence-invalid', 'absolute executable path required');
+  const r = { file, sha256: expectedSha256 }; deadline(deadlineMs); const began = Date.now();
+  const tick = () => {
+    const now = Date.now();
+    if (now < began) fail('respec-clock-rollback', 'tool identity clock moved backwards');
+    if (now >= deadlineMs) fail('respec-deadline-exhausted', 'tool identity inspection deadline exhausted');
+  };
+  const pathStat = () => {
+    if (path.normalize(r.file) !== r.file || /[\u0000-\u001f\u007f]/.test(r.file)) fail('respec-evidence-invalid', 'canonical executable path required');
+    let current = path.parse(r.file).root;
+    for (const part of r.file.slice(current.length).split('/')) { current = path.join(current, part); if (fs.lstatSync(current).isSymbolicLink()) fail('respec-evidence-invalid', 'executable path alias refused'); }
+    if (fs.realpathSync(r.file) !== r.file) fail('respec-evidence-invalid', 'executable canonical path changed');
+    return fs.lstatSync(r.file);
+  };
+  const sameFile = (a, b) => ['dev', 'ino', 'size', 'mtimeMs', 'ctimeMs', 'mode', 'uid', 'gid', 'nlink'].every(key => a[key] === b[key]);
+  const valid = s => {
+    const systemDispatcher = r.file === SYSTEM_GIT_EXECUTABLE.file && (r.sha256 === null || r.sha256 === SYSTEM_GIT_EXECUTABLE.sha256)
+      && s.size === SYSTEM_GIT_EXECUTABLE.size && s.mode === SYSTEM_GIT_EXECUTABLE.mode && s.uid === 0 && s.gid === 0 && s.nlink >= 1 && s.nlink <= SYSTEM_GIT_EXECUTABLE.links;
+    if (!s.isFile() || (s.nlink !== 1 && !systemDispatcher) || !(s.mode & 0o111)) fail('respec-evidence-invalid', 'regular non-aliased executable required');
+    if (!Number.isSafeInteger(s.size) || s.size < 1 || s.size > TERMINATION_EXECUTABLE_BYTES) fail('respec-evidence-invalid', 'executable exceeds supported pinned tool size bound');
+  };
+  let fd;
+  try {
+    tick(); const original = pathStat(); valid(original);
+    fd = fs.openSync(r.file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const before = fs.fstatSync(fd); valid(before);
+    if (!sameFile(original, before)) fail('respec-evidence-invalid', 'executable path changed before hashing');
+    // Reuse the builder digest's bounded fd-stream and before/after-stat pattern.
+    const buffer = Buffer.allocUnsafe(1024 * 1024), digest = crypto.createHash('sha256'); let remaining = before.size;
+    while (remaining > 0) {
+      tick(); const count = fs.readSync(fd, buffer, 0, Math.min(buffer.length, remaining), null);
+      if (!count) fail('respec-evidence-invalid', 'executable shrank while hashing');
+      digest.update(buffer.subarray(0, count)); remaining -= count;
+    }
+    tick(); if (fs.readSync(fd, buffer, 0, 1, null)) fail('respec-evidence-invalid', 'executable grew while hashing');
+    const after = fs.fstatSync(fd), current = pathStat(); valid(after); valid(current); tick();
+    if (!sameFile(before, after) || !sameFile(after, current)) fail('respec-evidence-invalid', 'executable identity drifted while hashing');
+    const actualSha256 = digest.digest('hex');
+    if (r.sha256 !== null && actualSha256 !== r.sha256) fail('respec-evidence-invalid', 'executable hash changed: ' + r.file);
+    if (after.nlink !== 1 && actualSha256 !== SYSTEM_GIT_EXECUTABLE.sha256) fail('respec-evidence-invalid', 'unqualified executable alias identity');
+    return { file: r.file, sha256: actualSha256, sizeBytes: after.size };
+  } catch (e) {
+    if (e instanceof RespecError) throw e;
+    fail('respec-evidence-invalid', 'required executable identity unavailable: ' + r.file + ': ' + e.code);
+  } finally { if (fd !== undefined) fs.closeSync(fd); }
+}
 function save(out, name, value) {
   const file = path.join(out, name), b = Buffer.from(JSON.stringify(data(value), null, 2) + '\n');
   const fd = fs.openSync(file, 'wx', 0o600); try { fs.writeFileSync(fd, b); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
@@ -225,7 +280,7 @@ function failedLocalSnapshot(a, before, after, observation, run, registryRows, s
   if (snapshot.store && !same(snapshot.store.heads, storeHeads(chainPrefix(storeRows, snapshot.store.headSha256, 'sha256')))) bad('complete accepted-store prefix/heads differ');
   return snapshot;
 }
-function conclusiveLocalFailure(a, before, after, observation, run, registryRows, storeRows) {
+function conclusiveLocalFailure(a, before, after, observation, run, registryRows, storeRows, identityDeadlineMs) {
   const snapshot = failedLocalSnapshot(a, before, after, observation, run, registryRows, storeRows), e = after.event;
   const bad = message => fail('respec-failure-unverified', message);
   const commands = e.effect.evidence.filter(ref => { try { return transitionJson(bound(ref, false)).schema === 'fvs/auto-command-receipt'; } catch (err) { if (err.code !== 'transition-invalid-input') throw err; return false; } });
@@ -248,7 +303,7 @@ function conclusiveLocalFailure(a, before, after, observation, run, registryRows
   if (a.kind === 'check' && !same(job.nodes, a.target.nodes)) bad('check scope differs');
   if (a.kind !== 'freeze' && !same(job.baseline, snapshot.baseline)) bad('producer frozen context differs');
   if (a.kind === 'freeze' && !same(job.registry, { root: snapshot.registry?.root, headSha256: snapshot.registry?.headSha256 })) bad('freeze registry differs');
-  bound(command.tool, false); const output = bound(command.stdout), stderr = bound(command.stderr, false).toString('utf8');
+  terminationExecutableIdentity(command.tool, identityDeadlineMs); const output = bound(command.stdout), stderr = bound(command.stderr, false).toString('utf8');
   closed(output, ['ok', 'status', 'code', 'message'], 'terminal refusal');
   const codes = { 4: ['audit-failed'], 5: ['invalid-input'], 6: ['unsupported', 'baseline-unavailable'], 7: ['stale-input'], 8: ['timeout'] };
   if (!Number.isInteger(command.exitCode) || !codes[command.exitCode]?.includes(output.code) || output.ok !== false || output.status !== 'unverified' || !text(output.message)
@@ -281,7 +336,7 @@ const terminationBad = message => fail('respec-termination-unverified', message)
 function canonicalPath(file) {
   if (!text(file) || !path.isAbsolute(file) || path.normalize(file) !== file) terminationBad('canonical absolute lifecycle path required');
 }
-function processInventory(ref, tool, floor, ceiling, pid, pgid, ownedPaths) {
+function processInventory(ref, tool, floor, ceiling, pid, pgid, ownedPaths, identityDeadlineMs) {
   const r = bound(ref);
   closed(r, ['schema', 'schemaVersion', 'tool', 'argv', 'cwd', 'observerPid', 'startedAtMs', 'endedAtMs', 'exitCode', 'signal', 'error', 'outputLimitExceeded', 'stdout', 'stderr'], 'complete process observation');
   if (r.schema !== 'fvs/auto-process-inventory' || r.schemaVersion !== 1 || !same(r.tool, tool)
@@ -289,7 +344,7 @@ function processInventory(ref, tool, floor, ceiling, pid, pgid, ownedPaths) {
     || !integer(r.observerPid) || !Number.isSafeInteger(r.startedAtMs) || !Number.isSafeInteger(r.endedAtMs)
     || r.startedAtMs < floor || r.endedAtMs < r.startedAtMs || r.endedAtMs > ceiling
     || r.exitCode !== 0 || r.signal !== null || r.error !== null || r.outputLimitExceeded !== false) terminationBad('failed, incomplete or unrelated process observer');
-  bound(tool, false); const stdout = bound(r.stdout, false).toString('utf8'), stderr = bound(r.stderr, false).toString('utf8');
+  terminationExecutableIdentity(tool, identityDeadlineMs); const stdout = bound(r.stdout, false).toString('utf8'), stderr = bound(r.stderr, false).toString('utf8');
   if (!stdout.trim() || stderr.trim()) terminationBad('empty or incomplete process inventory is not quiescence');
   const seen = new Set();
   for (const line of stdout.trimEnd().split('\n')) {
@@ -305,7 +360,7 @@ function processInventory(ref, tool, floor, ceiling, pid, pgid, ownedPaths) {
 // A current, bounded observation only. It never records or closes a reservation.
 export function captureControllerProcessObservation(options) {
   options = data(options); closed(options, ['action', 'tool', 'out', 'deadlineMs'], 'process capture');
-  const { action, tool, out, deadlineMs } = options; reference(tool); deadline(deadlineMs); bound(tool, false);
+  const { action, tool, out, deadlineMs } = options; reference(tool); deadline(deadlineMs); terminationExecutableIdentity(tool, deadlineMs);
   const a = readTransitionAction(action);
   if (tool.file !== fs.realpathSync('/bin/ps')) terminationBad('only the fixed complete process query is supported');
   canonicalPath(out);
@@ -323,7 +378,7 @@ export function captureControllerProcessObservation(options) {
   if (value.exitCode !== 0 || value.signal !== null || value.error !== null || value.endedAtMs >= deadlineMs) terminationBad('process query did not complete within its bound');
   return { ...value, evidence, authority: 'process observation only; no execution closure or proof' };
 }
-function terminationContext(raw) {
+function terminationContext(raw, identityDeadlineMs) {
   const c = data(raw);
   closed(c, ['schema', 'schemaVersion', 'lifecycle', 'trustScope', 'runId', 'beforeEventSha256', 'transitionId', 'reservationId', 'action', 'job',
     'caseRoot', 'evidenceRoot', 'producerOut', 'step', 'code', 'tools', 'sourceSnapshot', 'beforeRequest', 'beforeResult', 'marker',
@@ -334,7 +389,7 @@ function terminationContext(raw) {
   closed(c.code, Object.keys(terminationCode), 'assessed source identities');
   for (const [key, digest] of Object.entries(terminationCode)) { reference(c.code[key]); if (c.code[key].sha256 !== digest) terminationBad('unassessed controller or producer lifecycle'); bound(c.code[key], false); }
   closed(c.tools, ['node', 'bd', 'lean', 'lake', 'ps'], 'independent tool identities');
-  for (const r of Object.values(c.tools)) bound(r, false);
+  for (const r of Object.values(c.tools)) terminationExecutableIdentity(r, identityDeadlineMs);
   closed(c.sourceSnapshot, ['head', 'tree', 'files'], 'historical source snapshot');
   if (!/^[0-9a-f]{40}$/.test(c.sourceSnapshot.head) || !/^[0-9a-f]{40}$/.test(c.sourceSnapshot.tree)
     || !Array.isArray(c.sourceSnapshot.files) || !c.sourceSnapshot.files.length || c.sourceSnapshot.files.length > 10000) terminationBad('complete historical source identities required');
@@ -524,7 +579,7 @@ function terminationChildren(c, job, before, outer) {
   return { count, firstStartedAtMs: children[0].startedAt, lastEndedAtMs: children.at(-1).endedAt, allTerminal: true,
     boundary: 'after final environment query, before synchronous build snapshot publication', pidLineage: 'not retrospectively reconstructed' };
 }
-function controllerTerminationFacts(c, a, before, after, observation, run, registryRows, storeRows, history) {
+function controllerTerminationFacts(c, a, before, after, observation, run, registryRows, storeRows, history, identityDeadlineMs) {
   const snapshot = failedLocalSnapshot(a, before, after, observation, run, registryRows, storeRows), job = bound(c.job), launch = bound(c.launch), outer = bound(c.outer);
   if (a.kind !== 'accept' || a.runId !== c.runId || c.runId !== run.runId || c.beforeEventSha256 !== before.sha256 || c.transitionId !== a.transitionId
     || c.reservationId !== a.reservationId || !same(c.action, before.event.intent.request) || !same(c.job, a.target.request)
@@ -535,7 +590,7 @@ function controllerTerminationFacts(c, a, before, after, observation, run, regis
   const frozen = bound(snapshot.baseline), original = bound(frozen.input);
   for (const key of ['lean', 'lake']) if (!original.baseline?.[key] || !same(c.tools[key], { file: original.baseline[key].path, sha256: original.baseline[key].sha256 })) terminationBad('producer tool differs from frozen identity');
   for (const [file, digest] of Object.entries(frozen.checker ?? {})) {
-    if (file === process.execPath || file === '/usr/bin/git') { bound({ file, sha256: digest }, false); continue; }
+    if (file === process.execPath || file === '/usr/bin/git') { terminationExecutableIdentity({ file, sha256: digest }, identityDeadlineMs); continue; }
     const relative = path.relative(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), file);
     if (relative.startsWith('..') || !c.sourceSnapshot.files.some(f => f.path === relative && f.sha256 === digest)) terminationBad('historical source omits a frozen engine identity');
     bound({ file, sha256: digest }, false);
@@ -582,7 +637,7 @@ function controllerTerminationFacts(c, a, before, after, observation, run, regis
   if (!same(outer.env, expectedEnv) || !same(outer.argv, argv) || !same(outer.inhibitor?.argv, ['/usr/bin/caffeinate', '-is', '-w', String(launch.pid)])
     || outer.inhibitor.terminated !== true || outer.inhibitor.exitCode !== 0) terminationBad('unsupported controller invocation or incomplete owned cleanup');
   bound(outer.stdout, false); bound(outer.stderr, false);
-  const children = terminationChildren(c, job, before, outer), observed = processInventory(c.observer, c.tools.ps, outer.endedAtMs, after.event.observedAtMs, launch.pid, launch.pid, terminationPaths(c));
+  const children = terminationChildren(c, job, before, outer), observed = processInventory(c.observer, c.tools.ps, outer.endedAtMs, after.event.observedAtMs, launch.pid, launch.pid, terminationPaths(c), identityDeadlineMs);
   const canonical = bound(c.canonicalObservations), rawBefore = bound(canonical.runtimeBefore, false);
   reference(canonical.runtimeCurrent);
   if (canonical.schema !== 'fvs/owned-a122-readonly-observations' || canonical.version !== 1 || canonical.runId !== run.runId
@@ -605,7 +660,7 @@ function terminationRequest(raw) {
   if (q.schema !== 'fvs/auto-respec-controller-termination-request' || q.schemaVersion !== 1 || ![q.attemptId, q.runId].every(uuid)
     || ![q.expectedBeforeEventSha256, q.committedHeadSha256].every(sha)) fail('respec-invalid-input', 'caller-owned versioned termination request required');
   for (const r of [q.expectedAction, q.terminationEvidence, q.afterRequest, q.afterResult]) reference(r);
-  q.expectedContext = terminationContext(q.expectedContext);
+  deadline(q.deadlineMs); q.expectedContext = terminationContext(q.expectedContext, q.deadlineMs);
   if (!same(bound(q.terminationEvidence), q.expectedContext) || q.expectedContext.runId !== q.runId
     || q.expectedContext.beforeEventSha256 !== q.expectedBeforeEventSha256 || !same(q.expectedContext.action, q.expectedAction)
     || path.basename(q.afterResult.file) !== 'result.json') terminationBad('returned evidence cannot select this caller expected context');
@@ -624,7 +679,7 @@ function terminationInputs(projectRoot, q) {
   const registry = a.before.registry === null ? null : readChain(a.before.registry.root), store = a.before.store === null ? null : readAcceptedStore(a.before.store.root);
   if (registry?.pending || store?.pending || (registry?.records.at(-1)?.sha ?? null) !== (a.before.registry?.headSha256 ?? null)
     || (store?.headSha256 ?? null) !== (a.before.store?.headSha256 ?? null)) terminationBad('canonical producer prefix/head changed or is pending');
-  const facts = controllerTerminationFacts(q.expectedContext, a, before, after, readRuntimeObservation(after.event), run, registry?.records ?? [], store?.records ?? [], runtime.state.history);
+  const facts = controllerTerminationFacts(q.expectedContext, a, before, after, readRuntimeObservation(after.event), run, registry?.records ?? [], store?.records ?? [], runtime.state.history, Math.min(q.deadlineMs, run.deadlineMs));
   return { runtime, run, rq, result, a, facts };
 }
 function terminationOutput(out, projectRoot, c, a) {
@@ -643,7 +698,7 @@ export function verifyControllerTermination(options) {
   try {
     const capture = label => {
       const value = captureControllerProcessObservation({ action: q.expectedAction, tool: q.expectedContext.tools.ps, out: path.join(out, label), deadlineMs: q.deadlineMs });
-      return processInventory(value.evidence, q.expectedContext.tools.ps, began, Date.now(), x.facts.controller.pid, x.facts.controller.pgid, terminationPaths(q.expectedContext));
+      return processInventory(value.evidence, q.expectedContext.tools.ps, began, Date.now(), x.facts.controller.pid, x.facts.controller.pgid, terminationPaths(q.expectedContext), Math.min(q.deadlineMs, x.run.deadlineMs));
     };
     const beforeProcess = capture('process-before'), consumed = verifyTransition({ projectRoot, request: x.rq, out: path.dirname(q.afterResult.file) });
     if (consumed.position !== 'after' || consumed.committedHeadSha256 !== q.committedHeadSha256) terminationBad('independent16 consumer did not confirm this actual after');
@@ -651,7 +706,8 @@ export function verifyControllerTermination(options) {
     if (finalConsumer.position !== 'after' || finalConsumer.committedHeadSha256 !== q.committedHeadSha256) terminationBad('final full canonical consumer fence failed');
     const final = terminationInputs(projectRoot, q);
     // These historical lifecycle identities are separate from15 proof currentness.
-    for (const ref of [...Object.values(q.expectedContext.code), ...Object.values(q.expectedContext.tools)]) bound(ref, false);
+    for (const ref of Object.values(q.expectedContext.code)) bound(ref, false);
+    for (const ref of Object.values(q.expectedContext.tools)) terminationExecutableIdentity(ref, Math.min(q.deadlineMs, x.run.deadlineMs));
     const endedAtMs = failureClock(q, x.run, began);
     if (final.runtime.fileSha256 !== x.runtime.fileSha256 || !same(final.facts, x.facts) || !same(product, implementation())) terminationBad('head, bytes, context or implementation changed during consumption');
     const value = { schema: 'fvs/auto-respec-controller-termination', schemaVersion: 1, request: q, requestSha256: memoryHash(q), requestInput: input,
@@ -670,7 +726,7 @@ export function consumeControllerTermination(options) {
     || !Number.isSafeInteger(result.beganAtMs) || !Number.isSafeInteger(result.endedAtMs) || result.endedAtMs < result.beganAtMs
     || result.endedAtMs >= q.deadlineMs || result.endedAtMs > Date.now()) terminationBad('not this caller/current implementation successfully published termination evidence');
   if (!Array.isArray(result.currentProcesses) || result.currentProcesses.length !== 2) terminationBad('both fresh process fences required');
-  for (const p of result.currentProcesses) processInventory(p.evidence, q.expectedContext.tools.ps, result.beganAtMs, result.endedAtMs, result.controller.pid, result.controller.pgid, terminationPaths(q.expectedContext));
+  for (const p of result.currentProcesses) processInventory(p.evidence, q.expectedContext.tools.ps, result.beganAtMs, result.endedAtMs, result.controller.pid, result.controller.pgid, terminationPaths(q.expectedContext), q.deadlineMs);
   const out = path.join(fs.realpathSync(os.tmpdir()), 'fvs-controller-termination-consume-' + crypto.randomUUID());
   const fresh = verifyControllerTermination({ projectRoot: options.projectRoot, request: q, out });
   const stable = v => { const { beganAtMs, endedAtMs, currentProcesses, verificationEvidence, requestInput, evidence, ...rest } = v; return rest; };
@@ -696,7 +752,7 @@ function failureInputs(projectRoot, q) {
   const registry = a.before.registry === null ? null : readChain(a.before.registry.root), store = a.before.store === null ? null : readAcceptedStore(a.before.store.root);
   if (registry?.pending || (registry?.records.at(-1)?.sha ?? null) !== (a.before.registry?.headSha256 ?? null)
     || (store?.headSha256 ?? null) !== (a.before.store?.headSha256 ?? null)) fail('respec-failure-unverified', 'canonical heads/pending state changed since the failed effect');
-  const observation = readRuntimeObservation(after.event), facts = conclusiveLocalFailure(a, before, after, observation, run, registry?.records ?? [], store?.records ?? []);
+  const observation = readRuntimeObservation(after.event), facts = conclusiveLocalFailure(a, before, after, observation, run, registry?.records ?? [], store?.records ?? [], Math.min(q.deadlineMs, run.deadlineMs));
   if (!same(facts.command, q.expectedCommand)) fail('respec-failure-unverified', 'another terminal command is not this caller expected failure');
   return { runtime, run, rq, result, a, facts };
 }
@@ -756,14 +812,15 @@ function trace(q, x, initial, out) {
   const toolRef = name => { const file = fileURLToPath(new URL(name, import.meta.url)); return { file, sha256: hash(bytes(file)) }; };
   const validators = transitionValidators({ tools: { auto: toolRef('fvs-auto.mjs'), registry: toolRef('fvs-contract-registry.mjs') }, git(root, args, buffer = false) {
     if (root !== x.b.source.root || !['rev-parse', 'show', 'rev-list', 'diff-tree'].includes(args[0])) fail('respec-history-mismatch', 'unexpected historical Git read');
-    const argv = ['/usr/bin/git', '-C', root, ...args], toolSha256 = hash(bytes('/usr/bin/git'));
+    const argv = ['/usr/bin/git', '-C', root, ...args], toolSha256 = executableIdentity('/usr/bin/git', q.deadlineMs).sha256;
     const env = { PATH: '/usr/bin:/bin', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1', GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' };
     const startedAtMs = Date.now(), p = spawnSync(argv[0], argv.slice(1), { cwd: root, env, timeout: Math.max(1, Math.min(10000, q.deadlineMs - startedAtMs)), maxBuffer: 16 * 1024 * 1024 });
     const stream = (suffix, b) => { const file = path.join(out, 'trace-git-' + gitEvidence.length + '.' + suffix); fs.writeFileSync(file, b, { flag: 'wx' }); return { file, sha256: hash(b) }; };
     const receipt = save(out, 'trace-git-' + gitEvidence.length + '.json', { argv, cwd: root, env, requestSha256: memoryHash(q), startedAtMs, endedAtMs: Date.now(), toolSha256, exitCode: p.status,
       signal: p.signal, error: p.error?.code ?? null, stdout: stream('stdout', p.stdout ?? Buffer.alloc(0)), stderr: stream('stderr', p.stderr ?? Buffer.alloc(0)) });
     gitEvidence.push(receipt);
-    if (p.error || p.signal || p.status !== 0 || toolSha256 !== hash(bytes('/usr/bin/git'))) fail('respec-history-mismatch', 'bounded historical Git read failed');
+    if (p.error || p.signal || p.status !== 0) fail('respec-history-mismatch', 'bounded historical Git read failed');
+    terminationExecutableIdentity({ file: '/usr/bin/git', sha256: toolSha256 }, q.deadlineMs);
     return buffer ? p.stdout : p.stdout.toString('utf8');
   } });
   validators.verifyCandidateAssignment = (ref, stage) => readRuntimeAssignment(ref, x.runtime, x.runtime.state.run, stage);
@@ -781,9 +838,9 @@ function trace(q, x, initial, out) {
       });
       if (termination.length) {
         if (termination.length !== 1 || event.effect.evidence.length !== 1) terminationBad('mixed or ambiguous controller termination evidence');
-        const context = terminationContext(bound(termination[0]));
-        failures.push(controllerTerminationFacts(context, a, before, row, observation, x.runtime.state.run, x.chain.records, x.store?.records ?? [], x.runtime.state.history));
-      } else failures.push(conclusiveLocalFailure(a, before, row, observation, x.runtime.state.run, x.chain.records, x.store?.records ?? []));
+        const context = terminationContext(bound(termination[0]), q.deadlineMs);
+        failures.push(controllerTerminationFacts(context, a, before, row, observation, x.runtime.state.run, x.chain.records, x.store?.records ?? [], x.runtime.state.history, q.deadlineMs));
+      } else failures.push(conclusiveLocalFailure(a, before, row, observation, x.runtime.state.run, x.chain.records, x.store?.records ?? [], q.deadlineMs));
       continue; // A failure grants no progress; a fresh before must justify any retry.
     }
     if (event.outcome !== 'succeeded' || observation.transition?.admissibility.status !== 'facts-recorded-partial' || !snapshot) fail('respec-history-mismatch', 'effect completion remains uncertain/unverified');
@@ -968,7 +1025,7 @@ export function verifyRespecResult(options) {
   if ((observed.currentConsumer === null) !== (result.observation.currentConsumer === null)) fail('respec-evidence-invalid', 'saved consumer presence differs');
   if (observed.currentConsumer !== null && (observed.currentConsumer.code !== result.observation.currentConsumer.code
     || !same(receiptFacts(observed.currentConsumer.receipts, x.rq), receiptFacts(result.observation.currentConsumer.receipts, x.rq)))) fail('respec-evidence-invalid', 'current consumer invocation/output changed');
-  for (const ref of result.observation.history.gitEvidence) { const r = bound(ref); if (r.requestSha256 !== memoryHash(q) || r.exitCode !== 0 || r.signal || r.error || r.toolSha256 !== hash(bytes('/usr/bin/git'))) fail('respec-evidence-invalid', 'historical Git observation is not this caller request/tool'); bound(r.stdout, false); bound(r.stderr, false); }
+  for (const ref of result.observation.history.gitEvidence) { const r = bound(ref); if (r.requestSha256 !== memoryHash(q) || r.exitCode !== 0 || r.signal || r.error || !sha(r.toolSha256)) fail('respec-evidence-invalid', 'historical Git observation is not this caller request/tool'); terminationExecutableIdentity({ file: '/usr/bin/git', sha256: r.toolSha256 }, q.deadlineMs); bound(r.stdout, false); bound(r.stderr, false); }
   const stable = o => { const { beganAtMs, endedAtMs, currentConsumer, ...rest } = o; const { gitEvidence, ...history } = rest.history; return { ...rest, history }; };
   stamp(q, x, observed);
   if (!same(stable(observed), stable(result.observation))) fail('respec-context-stale', 'current revision observation changed');
