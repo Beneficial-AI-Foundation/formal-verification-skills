@@ -146,6 +146,19 @@ it('returns full-role Codex authoring to parent-owned plans with unknown observa
   for (const mode of ['fail', 'signal', 'timeout', 'missing', 'utf8', 'incomplete']) {
     const r = run('plan', mode); assert.notEqual(r.status, 0, mode); assert.equal(r.stdout, '');
   }
+  // Eval wall time is the measured authoring-process time from process.json, never a model figure.
+  const timed = run('eval'); assert.equal(timed.status, 0, timed.stderr);
+  const timedEnvelope = JSON.parse(timed.stdout);
+  const measured = JSON.parse(fs.readFileSync(path.join(timedEnvelope.evidence, 'process.json'), 'utf8'));
+  assert.equal(measured.phase, 'authoring');
+  assert.equal(timedEnvelope.durationMs, measured.durationMs);
+  assert.ok(Number.isInteger(timedEnvelope.durationMs) && timedEnvelope.durationMs >= 0);
+  for (const [mode, outcome] of [['timeout', /ran \d+ ms \(timed out\)/], ['fail', /ran \d+ ms \(exit 9\)/],
+    ['incomplete', /ran \d+ ms \(exit 0\)/]]) {
+    const r = run('eval', mode);
+    assert.notEqual(r.status, 0, mode); assert.equal(r.stdout, '');
+    assert.match(r.stderr, outcome, mode);
+  }
   const installedDir = path.join(tmp, 'installed-roles'); fs.mkdirSync(installedDir);
   const markdown = path.join(installedDir, 'fvs-crypto-thinker.md');
   for (const [header, converted, format] of [

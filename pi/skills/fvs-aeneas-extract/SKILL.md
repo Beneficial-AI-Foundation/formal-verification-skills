@@ -107,6 +107,14 @@ loop bounds (per-blocker attempt-cap 3, per-run cycle hard-cap ~25, bisection va
 ~12, no-progress key `sha256(layer || signature)` -- a same-key recurrence after an applied
 fix escalates immediately).
 
+**Fresh child per pass:** every pass or round of this loop that delegates work dispatches a new
+child of the role named here, with the current inputs and the confirmed settings; the parent never
+performs that role's work itself. Wait for the child's terminal result through the runtime's normal
+wait or notification; a spawn acknowledgement or progress message is not a result. If the dispatch
+fails, the child cannot be confirmed, or it ends in a terminal error, stop and report the affected
+pass. Valid results such as a failed build, NOVEL, REJECT, REVISE or FOLLOWUP still route as this
+step describes, and parent-owned baseline, build, revert and report steps stay with the parent.
+
 - **EXTRACT:** run extraction and build under `set -o pipefail` + `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`;
   read the tool's real exit status via `${PIPESTATUS[0]}`, never the tail of a piped log.
   Clean -> success oracle (Step 5). Failure -> classify.

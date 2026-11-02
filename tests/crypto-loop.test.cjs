@@ -795,3 +795,32 @@ for (const absPath of [STAGE_FILES.cmdEval, STAGE_FILES.wfEval,
     });
   });
 }
+
+// Eval wall time must be a measured clock value with explicit absent/failed semantics.
+for (const key of ['cmdEval', 'wfEval']) {
+  whenExists(STAGE_FILES[key], `Crypto eval: measured thinker wall time in ${rel(STAGE_FILES[key])}`, raw => {
+    // Prose wraps lines, so match whitespace-collapsed text.
+    const content = raw.replace(/\s+/g, ' ');
+    it('persists a measured Thinker wall time line or an explicit reason it was not measured', () => {
+      assert.match(content, /`Thinker wall time: <N> s \(measured: parent clock from launch to terminal response\)`/);
+      assert.match(content, /`Thinker wall time: <N> ms \(measured: --codex helper process\)`/);
+      assert.match(content, /`Thinker wall time: not measured \(<reason>\)`/);
+    });
+    it('stops the in-runtime timer at the terminal response, not at a spawn acknowledgement', () => {
+      assert.match(content, /terminal response or confirmed terminal failure/);
+      assert.match(content, /a spawn acknowledgement, task ID or intermediate message does not end the timer/);
+    });
+    it('keeps the start sample attempt-local and validates both samples before reporting', () => {
+      assert.match(content, /keep the printed value as this attempt's start/);
+      assert.match(content, /never write it to a shared file/);
+      assert.match(content, /every attempt, including a correction recheck, samples its own start/);
+      assert.match(content, /both samples are integers from this attempt and end >= start/);
+      assert.doesNotMatch(content, /\.eval-dispatch-started/);
+    });
+    it('reuses the helper durationMs and keeps failed or timed-out runs out of EVAL_nN', () => {
+      assert.match(content, /envelope's `durationMs`/);
+      assert.match(content, /failed or timed-out thinker run persists no EVAL_nN/);
+      assert.match(content, /never derive it from model, token or reasoning telemetry/);
+    });
+  });
+}

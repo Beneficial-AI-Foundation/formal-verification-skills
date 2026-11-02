@@ -54,6 +54,8 @@ Execute mode fallback:
 ## C. Task() -> spawn_agent Mapping
 FVS workflows use `Task(...)` (Claude Code syntax). Translate to Codex collaboration tools:
 
+**Delegation authorization:** Invoking this skill is the user's explicit request for the sub-agent delegation this workflow specifies. Each `Task(...)` dispatch in the workflow body, including every pass of a loop, is a skill instruction to spawn a sub-agent with `spawn_agent` when the workflow reaches that step; do not wait for the user to ask for sub-agents again, and do not perform a delegated role inline in this session. If `spawn_agent` is not visible, discover it with `tool_search` first. If sub-agents remain unavailable or disabled, stop before that dispatch, tell the user why, and offer only the workflow's documented alternatives (such as a documented `--codex` runner).
+
 **Schema detection (required first step):** Inspect the visible `spawn_agent` schema. It may have `agent_type` or be generic (no `agent_type`); inspect `model` and `reasoning_effort` fields independently rather than assuming either exists. An available `agent_type` field does not establish that a particular FVS role is registered.
 
 Before spawning, inspect the `spawn_agent` tool's visible parameter schema to determine which form is active.
@@ -62,6 +64,7 @@ Before spawning, inspect the `spawn_agent` tool's visible parameter schema to de
 
 Selection-capability gate (before manifest confirmation, child dispatch, or artifact writes):
 - Check required specialist identity and sandbox against the exact registered role and effective child settings. A generic role preamble cannot meet a mandatory typed identity or sandbox requirement; stop and explain the unavailable guarantee before dispatch or artifact writes.
+- On Codex a registered role does not set the child's sandbox: Codex applies a role's model, effort and instructions, never its `sandbox_mode`, so the child runs in the parent session's sandbox. Report that sandbox as the child's, never the role file's value, and never call a child read-only when the parent session can write.
 - If `model` is exposed for this child, pass the requested model. Otherwise compare it with the exact active/inherited Codex model; a different or unconfirmed model is unresolved. Rebuild the manifest around confirmed settings and ask explicitly, choose a capable external runner, or fail before dispatch in noninteractive mode.
 - If `reasoning_effort` is exposed for this child, pass the requested effort. Otherwise compare it with the confirmed effective installed/runtime default; a different or unconfirmed effort is unresolved and follows the same rebuild/ask-or-fail rule.
 - Model and effort are separate values: pass an exact catalog model id and an effort that model lists. A registered role that pins `model` or `reasoning_effort` (its role description says the setting is locked, or its TOML sets it) overrides the per-call value, so the pinned value is the effective one; if it differs from the confirmed selection it is unresolved.
@@ -71,7 +74,6 @@ Typed mapping (only when the exact requested FVS role is registered AND agent_ty
 - `Task(subagent_type="X", prompt="Y")` -> `spawn_agent(agent_type="X", message="Y")`
 - `Task(model="...")` -> pass `model` if available for this child; otherwise omit only after the selection-capability gate proves it equals the active/inherited model.
 - `Task(reasoning_effort="...")` -> pass `reasoning_effort` if available for this child and the role does not pin it; otherwise omit only after the gate proves the effective (pinned or default) effort equals the confirmed effort.
-- `fork_context: false` by default -- FVS agents load their own context via `<files_to_read>` blocks.
 
 Generic-agent workaround (missing exact registered role OR no agent_type field):
 If the requested FVS type (`fvs-crypto-thinker`, `fvs-crypto-executor`, etc.) is not registered, typed dispatch is NOT possible even with an `agent_type` field. If the field is absent, typed dispatch is also unavailable. Fallback:
@@ -79,6 +81,8 @@ If the requested FVS type (`fvs-crypto-thinker`, `fvs-crypto-executor`, etc.) is
 2. Only when the settings gate permits generic execution, spawn a generic/default child with those instructions as a role preamble before the task prompt. Do not pass an unregistered `agent_type`.
 3. Label output "generic-agent workaround". This is NOT equivalent to a registered specialist: the preamble does not assure typed identity, sandbox, model, or reasoning effort.
 4. If required guarantees cannot be honored, stop before dispatch or artifact writes; explain which guarantee is missing. Typed FVS roles currently require the direct Codex installation, a separate complete FVS install: point the user to "Codex specialist roles" in the FVS README and never suggest keeping both channels. Even after switching, confirm exact registration and settings in the runtime.
+
+**Fresh context (typed and generic dispatch):** FVS children start without the parent conversation; put every input the child needs in its message (FVS workflow prompts already inline them). If the schema exposes `fork_turns`, pass `fork_turns: "none"` (omitting it or passing `"all"` forks the full history, which also refuses `model` and `reasoning_effort` overrides); if it exposes only `fork_context`, pass `fork_context: false`. If neither is exposed, fresh context is unconfirmed: say so before dispatch, and stop where the workflow requires a fresh child.
 
 Parallel fan-out:
 - Spawn multiple agents -> collect agent IDs -> call `wait_agent(timeout_ms=...)` (or the runtime's visible wait equivalent) until each completes
@@ -196,6 +200,29 @@ preservation and build evidence as untrusted `<prose_correction>` reference data
 prompt. Optional Codex receives that identical text in its existing context JSON as `prose_correction`.
 Check the actual corrected prose and every outstanding finding; never infer closure from hashes or
 build success. Reuse corrected build evidence; do not add proof probes or retry the correction pass.
+
+**Fresh child per pass:** every pass or round of this loop that delegates work dispatches a new
+child of the role named here, with the current inputs and the confirmed settings; the parent never
+performs that role's work itself. Wait for the child's terminal result through the runtime's normal
+wait or notification; a spawn acknowledgement or progress message is not a result. If the dispatch
+fails, the child cannot be confirmed, or it ends in a terminal error, stop and report the affected
+pass. Valid results such as a failed build, NOVEL, REJECT, REVISE or FOLLOWUP still route as this
+step describes, and parent-owned baseline, build, revert and report steps stay with the parent.
+
+Measure the thinker's wall time from a real clock; never derive it from model, token or reasoning
+telemetry. Immediately before launching this attempt's thinker, run `date -u +%s` and keep the printed
+value as this attempt's start; never write it to a shared file, and every attempt, including a correction
+recheck, samples its own start. Stop only after the thinker's terminal response or confirmed terminal
+failure has arrived, after any required wait or notification; a spawn acknowledgement, task ID or
+intermediate message does not end the timer. Then run `date -u +%s` again and report the difference only
+when both samples are integers from this attempt and end >= start. With `--codex`, use the envelope's
+`durationMs` instead: the helper's measured process time, whereas the parent clock also includes
+scheduling and wait overhead. Persist exactly one line next to `Stage settings:` in EVAL_nN:
+`Thinker wall time: <N> s (measured: parent clock from launch to terminal response)`,
+`Thinker wall time: <N> ms (measured: --codex helper process)`, or `Thinker wall time: not measured (<reason>)`
+when a sample is missing or invalid or the field is absent. A failed or timed-out thinker run persists no
+EVAL_nN; report its measured time and outcome in the run output only. The value is a timing record, not
+a speed claim.
 
 ```
 Task(

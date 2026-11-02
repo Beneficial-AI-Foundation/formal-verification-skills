@@ -30,7 +30,7 @@ Commands are grouped into five bundles. Each bundle has a router command (e.g. `
 4. `/fvs:fc-plan` - Select verification targets
 5. `/fvs:lean-specify <function>` - Generate spec with sorry, then choose an adversarial reviewer
 6. `/fvs:lean-verify <spec_path>` - Prove autonomously, then cheat-audit
-7. `/fvs:lean-refactor <spec_path>` - Golf and clean up verified proofs
+7. `/fvs:lean-refactor <lean_file_path>` - Reduce proof code through agreed-scope reuse and shared lemmas
 8. `/fvs:trust-audit <target>` - Audit the sorry/axiom trust surface
 
 **From a paper — paper track:**
@@ -197,18 +197,25 @@ Generate detailed natural-language explanation of a function.
 
 Usage: `/fvs:natural-language scalar_mul`
 
-**`/fvs:lean-refactor <spec_file_path>`** (also in Formalise)
-Refactor, simplify, and decompose verified Lean proofs while preserving compilation.
+**`/fvs:lean-refactor <lean_file_path>`** (also in Formalise)
+Reduce net Lean LoC across an agreed file/module/project scope through reuse, shared lemmas and
+maintainable proofs. Count new helpers/wiring and preserve useful prose.
 
-- Requires fully verified spec (zero sorry) -- run `/fvs:lean-verify` first
-- Three modes: safe (zero-risk cleanup), balanced (default), aggressive (smart automation)
-- Applies tiered heuristics: dead code removal, simp sharpening, tactic golf, automation replacement
-- Verifies compilation after every change
-- Optional --report-only flag for analysis without modification
+- Proposes protected statements/core definitions/public interfaces and editable scope before edits
+- Reuses a matching approved Contract when available; a recall view is not enforcement
+- Shows concrete broader-scope benefit/cost and asks before expanding or adding public API
+- Keeps legacy flags; warns once when an explicit legacy mode maps to a search hint; the default needs no compatibility prompt
+- Resolves the actual installed project toolchain/overrides and checks capabilities; never upgrades a pin
+- Parent runs serial file/project gates, printed type/definition/axiom comparisons and comparable timings
+- Net code LoC excludes comment deletion/format packing; helper/wiring costs remain visible
+- Unavailable printed coverage or metric syntax uses an explicit reviewed comparison; builds and axiom checks remain required
+- Holds material performance/net-cost trade-offs for the owner; stops when worthwhile work ends
+- `--report-only` reports proposals without changing proof sources
 
 Usage: `/fvs:lean-refactor Specs/Backend/Field/Sub.lean`
 Usage: `/fvs:lean-refactor Specs/Backend/Field/Sub.lean --mode aggressive --max-passes 10`
 Usage: `/fvs:lean-refactor Specs/Backend/Field/Sub.lean --theorem sub_spec --report-only`
+Usage: `/fvs:lean-refactor MyProject/Algebra/Lemmas.lean --mode safe`
 
 **`/fvs:trust-audit <target spec file | module subtree>`**
 Build-backed trust audit of an Aeneas-extracted Lean target.
@@ -247,8 +254,8 @@ Formalise mathematical paper content into Lean 4 specifications (paper track).
 Usage: `/fvs:lean-formalise`
 Result: Lean definition and spec files with sorry placeholders
 
-**`/fvs:lean-refactor <spec_file_path>`** (also in Formal-Core)
-Refactor, simplify, and decompose verified Lean proofs while preserving compilation. See the Formal-Core bundle above for full details.
+**`/fvs:lean-refactor <lean_file_path>`** (also in Formal-Core)
+Reduce verified proof code within an agreed scope. See the Formalise entry above for the contract, measurement and legacy-flag policy.
 
 Usage: `/fvs:lean-refactor Specs/Backend/Field/Sub.lean`
 

@@ -1,753 +1,559 @@
 <overview>
+# Lean proof refactoring
 
-Tiered proof refactoring for Aeneas-generated Lean 4 specifications. Purpose is cleanup
-AFTER verification -- the input proof must compile with zero sorry. Three modes control
-how aggressively refactorings are applied:
+Reduce net Lean source LoC across the selected scope through reuse, shared lemmas, deduplication
+and clearer proof structure. Count new helpers and import or compatibility wiring in that total.
+Keep useful prose, conventional formatting and readable proofs. Shorter theorem bodies alone are
+not the objective. There is no fixed reduction percentage or promised speedup.
 
-- **safe** -- Tier 1 only. Zero-risk cleanup. No behavioral change possible.
-- **balanced** -- Tiers 1-3. Default mode. Conservative improvements with low-medium risk.
-- **aggressive** -- All tiers (1-4). Includes smart automation replacement. Higher risk of
-  introducing fragility.
+Refactor compiling proofs without admissions. First agree the editable scope and protected
+statements, core definitions, assumptions, attributes and public interfaces. Within that boundary,
+helper extraction, file organisation and a different proof strategy are permitted. A protected
+change, new public API or scope expansion needs a concrete proposal and approval first.
 
-Every refactoring is verified with `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` before proceeding. If a
-change breaks the build, it is reverted immediately.
-For target/facet selection and import prerequisites, see [Practical Lake builds](lake-build.md).
-Its conditional recipes preserve the existing one-change discipline and final gates.
-
+Use [Practical Lake builds](lake-build.md) for the pinned toolchain's targets and import preparation.
 </overview>
 
 <quick_reference>
+## Agreement before edits
 
-## Refactoring Tier Reference
+Recommend a file, module or project scope from the task and evidence. The input file is a starting
+point, not permission to edit its neighbours. Show the actual file/declaration list, including
+where new helper files may be created. Identify existing user edits and preserve them.
 
-| Tier | Name | Risk | Examples |
-|------|------|------|----------|
-| 1 | Zero-risk cleanup | None | Remove duplicate hypotheses, collapse `simp [*]; scalar_tac` into `scalar_tac` when sufficient, normalize whitespace/indentation |
-| 2 | Sharper tactics | Low | Delete dead `have` bindings (with proof-fuel check), replace `simp [*]` with `simp only [...]` (use `simp?` to discover), replace `omega` with `norm_num` where applicable, inline single-use `have` bindings |
-| 3 | Better simp strategy | Medium | Merge consecutive `simp` calls, replace `unfold X; simp [...]` with `simp [X, ...]`, factor repeated tactic blocks into named local lemmas |
-| 4 | Smart automation | High | Replace multi-line tactic scripts with `grind` or `aesop` where they close the goal in one step, consolidate `step` chains with `step*` |
+The agreement records:
 
-### Mode-to-Tier Mapping
+| Part | What to confirm |
+| --- | --- |
+| Goal | Net LoC reduction with readable, maintainable proofs and useful prose preserved |
+| Editable scope | Files, declarations, proof bodies, allowed helper locations and reorganisation |
+| Protected meaning | Exact statements/types, core definitions, assumptions and required attributes |
+| Public interfaces | Names, signatures, exported instances/attributes and supported import paths |
+| Verification | Per-file gates, required project/style/trust checks and unchanged tool/dependency pins |
+| Measurement | LoC inventory, actual build/elaboration commands, cache conditions, repetitions and resource budget |
 
-| Mode | Tiers Applied | Use When |
-|------|--------------|----------|
-| safe | 1 | Cleaning up before a commit. Zero chance of breakage. |
-| balanced | 1-3 | Default. Good balance of improvement vs risk. |
-| aggressive | 1-4 | Maximizing proof conciseness. Willing to accept fragility. |
+Use an existing `Contract.lean` or approved agreement if it covers the current source and scope.
+Confirm gaps instead of inferring approval from its filename. A recall view summarises the agreed
+boundary; it is not enforcement or proof acceptance. Compare actual source/diffs and run the
+required checks. Do not import recall axioms or incomplete witnesses to justify a refactoring.
 
+## Existing flags
+
+Keep `--theorem`, `--mode safe|balanced|aggressive`, `--max-passes N` and `--report-only` recognised.
+The default uses adaptive balanced search without a compatibility question. If `--mode` was
+explicitly passed, warn once that these names now select search preferences, not tactic tiers:
+
+| Mode | Search preference; the confirmed boundary controls edits in every mode |
+| --- | --- |
+| safe | Start with existing lemmas and local duplication; present larger alternatives separately |
+| balanced | Compare reuse, helper extraction, proof strategy and local cleanup together |
+| aggressive | Explore broader strategy and organisation options; propose expansion before edits |
+
+These labels grant no extra scope or permission to change protected meaning. They do not select
+a different model profile. Keep explicit values visible; do not ignore them or add a second
+compatibility approval prompt. A request for the old tier behaviour becomes a proposal, not a
+silent fallback. Scope/settings confirmation remains separate.
+`--max-passes` keeps its per-target ceiling: default 5, cap 20. A shared change counts against each
+affected target; zero permits no editing passes. It is a budget limit, not a quota. A budget stop reports remaining work and partial
+completion. `--report-only` produces findings and proposals without changing proof sources.
 </quick_reference>
 
 <patterns>
+## Find worthwhile work
 
-## Critical Rule: Proof Fuel
+Search current project code and the pinned libraries for an existing result before designing one.
+Check the actual declaration, type, assumptions, namespace and imports. A similar name is not
+evidence of reuse. Consider these options using the current proof context:
 
-Not referenced by name != unused. Tactics like `omega`, `linarith`, `simp_all`, and `scalar_tac`
-consume hypotheses from the local context semantically -- they use every available hypothesis
-matching their domain WITHOUT explicit textual reference. A `have h : x < 10 := ...` followed
-by `omega` is actively used as "proof fuel" even though `h` never appears in the omega call.
+- Reuse an existing theorem or a stronger already-approved abstraction.
+- Replace repeated reasoning with a well-named helper and simpler callers.
+- Change proof strategy when it makes the reasoning clearer and reduces total code.
+- Remove local redundancy after checking the goal/context and elaborating the changed proof.
 
-**Before removing ANY have/let binding, check:** Does the proof below it contain `omega`,
-`linarith`, `simp_all`, `scalar_tac`, or `grind`? If yes, the binding may be proof fuel.
-Test removal with a build check -- do NOT assume it is dead based on textual absence alone.
+Choose by evidence, expected net saving, readability and measured cost. There are no tactic tiers,
+minimum theorem lengths, required numbers of consumers or universal tactic replacements.
+Keep a useful explanation even when removing it would improve the line count.
 
----
+## Compare a broader opportunity before expanding
 
-## Preferred Refactoring Order
+For a materially better cross-file opportunity, show both the narrow option and the proposed
+broader option. Name affected files, the shared abstraction and its proposed interface. Estimate
+removed lines, added helper/wiring lines and net benefit, with the evidence and uncertainty behind
+the estimate. Also disclose dependency, public-API and measurement costs. Ask before expanding.
+If expansion is declined, continue only worthwhile work within the original agreement and report
+the broader opportunity as out of scope. Never invent a percentage guarantee to justify expansion.
 
-When multiple refactorings are possible, prefer this order (most impactful first):
+## Helpers and organisation
 
-1. **Lemma reuse** -- Extract shared proof steps into a local lemma used by multiple goals
-2. **Proof tail compression** -- Collapse redundant tactic chains at the end of proof branches
-3. **Helper extraction** -- Factor repeated tactic blocks into named local lemmas
-4. **Backend replacement** -- Replace multi-step manual proofs with single-tactic closers (simp, omega, etc.)
-5. **Automation unification** -- Replace multiple automation calls with one stronger call (grind, aesop)
+Start with local reasoning for a single proof and a private helper for reuse within a file.
+A cross-file helper needs an importable declaration. A namespace called `Internal` does not by
+itself make a declaration private. Propose and obtain approval for any new public name/interface
+not already authorised in the agreement. Count helper declarations, new files, imports and any
+compatibility forwarding code in the net total.
 
----
+Treat a shared helper and its call sites as one coherent unit. The parent gates the helper before its callers. Preserve agreed public names and
+import paths when reorganising files. Report any change to assumptions or attributes as a protected
+change. Revise the agreement and take a new baseline only after explicit approval; do not describe
+a changed specification as preservation of the old one.
 
-## High-Risk Operations
+Local context matters: a tactic may use a hypothesis without naming it in its source text. Treat
+textual absence as a search hint, then inspect the actual goal/context and check the removal.
+Private names include the defining module, so inspect visibility and imports before moving helpers.
+These cautions follow the checked Lean 4.31 sources for
+[assumption search](https://github.com/leanprover/lean4/blob/v4.31.0/src/Lean/Meta/Tactic/Assumption.lean)
+and [private names](https://github.com/leanprover/lean4/blob/v4.31.0/src/Lean/PrivateName.lean).
+Other tactic syntax, capabilities and cost must be checked against the consumer's current pins.
 
-These operations look safe but frequently break proofs:
+In an Aeneas project, inspect the current generated code and proof support. `step` or `unfold`
+syntax is not a universal refactoring boundary. Preserve the agreed specification, extraction
+correspondence and attributes; change strategy only within that agreement. Refactoring does not
+authorise Rust changes, re-extraction, dependency upgrades or weakening a theorem.
 
-- **Removing locals near omega/linarith** -- These tactics consume all matching hypotheses
-  from context. Removing a "dead-looking" have near omega can silently remove proof fuel.
-- **Removing `set ... with hdef` bindings** -- The `hdef` equation is often used implicitly
-  by `simp` and `omega` without textual reference. Never remove set bindings without a build test.
-- **Reordering branch-local lemmas** -- Lean's elaborator is sensitive to declaration order.
-  Moving a `have` above or below another `have` can change what is in scope for subsequent tactics.
-- **Optimizing for proof length over elaboration cost** -- A shorter proof is not always faster.
-  Replacing `simp only [a, b]` with `simp` may save characters but massively increase elaboration
-  time. Proof length != elaboration cost.
+## Resolve the project's installed context before using recipes
 
----
+The refactoring strategy is version-neutral; command syntax, printer output, options and tactics
+are not. A 4.31 citation is evidence about that example, not a requirement to upgrade the consumer.
+Read `lean-toolchain` and resolve the effective environment/directory/file override in the actual
+project cwd. With a supported installed Elan, use `dump-state --no-net` and the reporting helper's
+`toolchain` operation as shown in the command/workflow. The helper only interprets data and hashes
+existing executables; it never runs or installs Lean. It requires an active project override and
+an exact installed match, never the global default. Cached offline channel resolution is labelled;
+an unresolved/uninstalled pin stops without downloads or substitution.
 
-## Pattern 1: Dead Have Elimination
+Keep the file pin, effective selection and override origin visible. If an ambient override conflicts
+with the requested project pin, resolve that mismatch before edits; do not reset it or silently
+choose4.31. Record relevant configuration/environment overrides, actual `lean`/`lake` version output,
+absolute executable paths/hashes, dependency revisions, actual source roots and package Lean arguments.
+Validate Lake's actual selected compiler against this context too. On the checked pins its exported
+`LEAN` value identifies that compiler; `command -v lean` does not, because Lake may put its own bin
+directory first even when an override selects a different Lean. Reject mismatches before cache/
+verification operations; do not reset or ignore the override. Unsupported selection inspection
+requires an explicit pin-specific route, never a PATH guess. Preserve local pins and
+lockfiles. Inspect local dependency availability before Lake loads configuration; do not authorize
+fetches/cache downloads implicitly. Use the existing task's network/confinement policy.
 
-Detect `have h : ... := by ...` where `h` is never referenced downstream in the proof.
-Remove the binding entirely.
+Elan shims can install missing toolchains; even `elan show`/`which` can resolve through installing
+paths. Do not use them as an offline preflight. If the installed resolver lacks the no-network API,
+validate an existing project-specific installed setup explicitly and record equivalent identities;
+never install/upgrade Elan or guess a replacement. See official [Elan selection/installation](https://github.com/leanprover/elan)
+and [CLI/state API](https://github.com/leanprover/elan/blob/master/src/elan-cli/elan_mode.rs).
 
-**Detection:** Search for `have h_name` declarations. Check if `h_name` appears anywhere
-after the declaration in the same proof block. If not referenced textually, it is a candidate
-for removal -- but see the proof-fuel rule. Tactics like `omega`, `linarith`, and `simp_all`
-use hypotheses by name internally even when the hypothesis name does not appear literally in
-the tactic invocation. A `have h_bound` followed by `omega` IS used even though `h_bound`
-never appears textually after the have. Always build-test before removing.
+Before edits, establish this small capability plan from the selected tools' help, matching official
+source and pristine project probes. Commands use `PROJECT_LAKE`/`PROJECT_LEAN` from this context:
 
-**Example:**
-```lean
--- Before: dead binding (h_unused never referenced)
-theorem my_spec ... := by
-  unfold my_fn
-  step
-  have h_unused : x.val < 2^64 := by scalar_tac
-  have h_bound : a.val + b.val <= U64.max := by
-    have := h_bounds 0 (by simp); scalar_tac
-  simp [*]; scalar_tac
+| Capability | If unavailable on this pin/project |
+| --- | --- |
+| File-path build selector | Use the actual configured module target such as `+MyProject.Core`; never guess roots from filenames |
+| Import-building `lake lean` | Validate equivalent prerequisite/import builds plus direct elaboration with the project's arguments/plugins; raw `lake env lean` alone is insufficient |
+| JSON / `#check` / `#print axioms` / pp options and full-body rendering | Use a validated project query or the explicit reviewed comparison below; never drop compilation/axiom safeguards |
+| `--profile` and profiler options | Mark unavailable detail; time the same validated elaboration argv without unsupported options, not a cached no-op |
+| Tactic/linter recommendation | Check current definitions/parser or a bounded probe; use available reuse/proof tools instead of assuming a named tactic exists |
+| Lexical metric coverage | Keep unsupported counts unavailable and use reviewed full-scope accounting |
 
--- After: dead binding removed
-theorem my_spec ... := by
-  unfold my_fn
-  step
-  have h_bound : a.val + b.val <= U64.max := by
-    have := h_bounds 0 (by simp); scalar_tac
-  simp [*]; scalar_tac
-```
+A real compiler/build failure is not an unsupported capability. Classify a pristine probe as a
+capability gap only with pin-specific evidence and passing actual source gates. A capability that
+worked on the baseline and fails after edits remains a regression stop. Freeze the chosen query,
+file/import gates and timing argv before baseline/final measurements; do not renegotiate them to
+hide a regression. Send this context/plan to scouts and edit workers. This is not a new runtime or
+compatibility framework, and no complete-version support matrix is implied.
 
-**Verify:** `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` must still pass after removal.
+## Printed boundary recipe: parent only
 
-**Tier:** 2 (low risk -- tactics like omega, linarith, simp_all consume hypotheses semantically without textual reference; see proof-fuel rule)
+Before editing, resolve the protected declaration/definition inventory in the real project and
+allocate fresh owned baseline/final directories. Include relevant definition closure and required
+attributes. Preserve source/configuration snapshots and record pinned tool versions/executable
+hashes. Build the protected modules with their recorded gates first. No child may write while the
+parent captures or checks a boundary.
+Use a fresh check/final directory for every pass; the baseline remains read-only. Hash the source
+inputs around each capture too, so the saved view is not paired with a changing source snapshot.
 
----
-
-## Pattern 2: Simp Sharpening
-
-Replace `simp [*]` with `simp only [specific_lemmas]` using `simp?` discovery. This
-produces faster elaboration, less fragility to upstream simp lemma changes, and clearer
-intent about which lemmas the proof actually depends on.
-
-**Workflow:**
-1. Temporarily replace `simp [*]` with `simp?` in the proof
-2. Run Lean -- the infoview reports: `Try this: simp only [lemma1, lemma2, ...]`
-3. Replace `simp?` with the discovered `simp only [...]` call
-4. Verify with `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`
-
-**Example:**
-```lean
--- Before: broad simp
-. simp [*]; scalar_tac
-
--- After: sharpened simp (discovered via simp?)
-. simp only [ha0'_val, hk]; scalar_tac
-```
-
-**Benefits:**
-- Faster elaboration (fewer lemmas to try)
-- Less fragile (unaffected by new @[simp] lemmas added upstream)
-- Clearer intent (documents exactly which facts are needed)
-
-**Tier:** 2 (low risk -- same proof with explicit lemma set)
-
----
-
-## Pattern 3: Tactic Golf
-
-When a simpler tactic alone closes a goal, remove the preceding setup tactic.
-
-**Sub-pattern A:** When `scalar_tac` alone closes a goal, remove preceding `simp [*]`.
+Write a scratch query using the actual built modules/names. For example:
 
 ```lean
--- Before
-. simp [*]; scalar_tac
-
--- After (if scalar_tac alone closes the goal)
-. scalar_tac
+import MyProject.Core
+set_option pp.all true
+set_option pp.maxSteps 20000
+#check @MyProject.publicRoot
+#check @MyProject.coreDefinition
+#print MyProject.coreDefinition
+#print axioms MyProject.publicRoot
+#print axioms MyProject.coreDefinition
 ```
 
-**Sub-pattern B:** When `omega` closes a goal, remove preceding `norm_num` setup.
+Use `#check` for each protected declaration, `#print` for each protected definition, and
+`#print axioms` for each protected declaration's footprint. The example has five observations;
+set `BOUNDARY_EXPECTED` from the approved query, not from whatever output happens to appear.
+Theorems use only `#check` and `#print axioms`; never `#print` their proofs. Provide
+`BOUNDARY_DEFINITION_SLOTS`, a JSON file of zero-based output positions for protected definition
+bodies: the example is `[2]`. Every protected definition must have its body observation listed.
+For this automated path each must actually render as `def` or `abbrev` with `:=` followed by a value.
+Classify an instance by its printed header, not its declaration category. Signature-only opaque/axiom/
+constructor views, `<not imported>` and any `⋯` elision refuse coverage. The helper never falls
+back to a signature. The finite `pp.maxSteps` example is a display budget, not protection depth or
+a proof resource override. Choose it in the inspection plan; remaining elision leaves a coverage gap.
+The following recipe was checked on Lean/Lake 4.31. Other pins require the same operations to be
+validated first. Names must be observable in their original built module context. A private or
+unimportable protected dependency needs a validated query or the reviewed fallback below.
+Do not omit the dependency or silently copy it into a different module context to make the check pass.
+
+`SCOPE_FILES` is an approved JSON source-path list, including possible new helpers. `CONTEXT_FILES`
+lists the project's toolchain/configuration/manifest inputs. All paths below are parent-owned.
+Load the reporting helper from the trusted installed FVS root:
+
+```bash
+REFACTOR_REPORT_TOOL=${CLAUDE_PLUGIN_ROOT}/scripts/fvs-refactor-report.mjs
+(
+  set -C
+  cat "$BOUNDARY_QUERY" > "$BASELINE_DIR/query.lean" || exit 1
+  cat "$TOOLCHAIN_DIR/toolchain.json" > "$BASELINE_DIR/toolchain.json" || exit 1
+  LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 "$PROJECT_LAKE" env /bin/sh -c 'test -n "$LEAN" && printf "%s\n" "$LEAN"' > "$BASELINE_DIR/lake-selected-lean.txt" || exit 1
+  node "$REFACTOR_REPORT_TOOL" lake-compiler "$BASELINE_DIR/toolchain.json" "$BASELINE_DIR/lake-selected-lean.txt" "$BASELINE_DIR/lake-compiler.json" || exit 1
+  node "$REFACTOR_REPORT_TOOL" hashes "$PROJECT_ROOT" "$SCOPE_FILES" "$BASELINE_DIR/source-before.json" || exit 1
+  node "$REFACTOR_REPORT_TOOL" capture "$PROJECT_ROOT" "$SCOPE_FILES" "$BASELINE_DIR/source.json" || exit 1
+  node "$REFACTOR_REPORT_TOOL" hashes "$PROJECT_ROOT" "$CONTEXT_FILES" "$BASELINE_DIR/context.json" || exit 1
+  LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 "$PROJECT_LAKE" env "$PROJECT_LEAN" --json "$BOUNDARY_QUERY" > "$BASELINE_DIR/raw.jsonl" 2> "$BASELINE_DIR/stderr.log"
+  BOUNDARY_STATUS=$?
+  echo "$BOUNDARY_STATUS" > "$BASELINE_DIR/inspection-status.txt" || exit 1
+  if [ "$BOUNDARY_STATUS" -eq 0 ]; then
+    node "$REFACTOR_REPORT_TOOL" messages "$BOUNDARY_QUERY" "$BASELINE_DIR/raw.jsonl" "$BOUNDARY_EXPECTED" "$BOUNDARY_DEFINITION_SLOTS" "$BASELINE_DIR/view.json" || exit 1
+  else
+    echo "FVS >> Inspection failed: retain diagnostics and establish the reviewed boundary route" >&2
+  fi
+  node "$REFACTOR_REPORT_TOOL" hashes "$PROJECT_ROOT" "$SCOPE_FILES" "$BASELINE_DIR/source-after.json" || exit 1
+  diff -u "$BASELINE_DIR/source-before.json" "$BASELINE_DIR/source-after.json" || exit 1
+) || exit 1
+```
+
+This capture happens once on the pristine pre-edit source, after parent import/module gates.
+Outputs are exclusive files. Never overwrite or regenerate the baseline from the edited context.
+The helper rejects malformed, diagnostic, missing or extra observations; it does not run Lean.
+A supported message set with unavailable body coverage produces `coverage: "review-required"`,
+not a successful printed comparison. A zero helper exit means a report was written, not acceptance.
+After all workers stop, run the updated file/module gates serially, then:
+
+```bash
+cmp -s "$BASELINE_DIR/query.lean" "$BOUNDARY_QUERY" || exit 1
+(
+  set -C
+  "$ELAN_BIN" dump-state --no-net > "$FINAL_DIR/elan.json" || exit 1
+  node "$REFACTOR_REPORT_TOOL" toolchain "$PROJECT_ROOT" "$FINAL_DIR/elan.json" "$FINAL_DIR/toolchain.json" || exit 1
+  LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 "$PROJECT_LAKE" env /bin/sh -c 'test -n "$LEAN" && printf "%s\n" "$LEAN"' > "$FINAL_DIR/lake-selected-lean.txt" || exit 1
+  node "$REFACTOR_REPORT_TOOL" lake-compiler "$FINAL_DIR/toolchain.json" "$FINAL_DIR/lake-selected-lean.txt" "$FINAL_DIR/lake-compiler.json" || exit 1
+) || exit 1
+diff -u "$BASELINE_DIR/toolchain.json" "$FINAL_DIR/toolchain.json" || exit 1
+diff -u "$BASELINE_DIR/lake-compiler.json" "$FINAL_DIR/lake-compiler.json" || exit 1
+node "$REFACTOR_REPORT_TOOL" hashes "$PROJECT_ROOT" "$FINAL_SCOPE_FILES" "$FINAL_DIR/source-before.json" || exit 1
+(
+  set -C
+  LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 "$PROJECT_LAKE" env "$PROJECT_LEAN" --json "$BOUNDARY_QUERY" > "$FINAL_DIR/raw.jsonl" 2> "$FINAL_DIR/stderr.log"
+  BOUNDARY_STATUS=$?
+  echo "$BOUNDARY_STATUS" > "$FINAL_DIR/inspection-status.txt" || exit 1
+  if [ "$BOUNDARY_STATUS" -eq 0 ]; then
+    node "$REFACTOR_REPORT_TOOL" messages "$BOUNDARY_QUERY" "$FINAL_DIR/raw.jsonl" "$BOUNDARY_EXPECTED" "$BOUNDARY_DEFINITION_SLOTS" "$FINAL_DIR/view.json" || exit 1
+  else
+    echo "FVS >> Inspection failed: retain diagnostics and complete the reviewed boundary route" >&2
+  fi
+) || exit 1
+node "$REFACTOR_REPORT_TOOL" hashes "$PROJECT_ROOT" "$FINAL_SCOPE_FILES" "$FINAL_DIR/source-after.json" || exit 1
+diff -u "$FINAL_DIR/source-before.json" "$FINAL_DIR/source-after.json" || exit 1
+node "$REFACTOR_REPORT_TOOL" hashes "$PROJECT_ROOT" "$CONTEXT_FILES" "$FINAL_DIR/context.json" || exit 1
+diff -u "$BASELINE_DIR/context.json" "$FINAL_DIR/context.json" || exit 1
+# A previously covered boundary must remain covered.
+BASELINE_COVERAGE=$(node -e 'const fs = require("fs"); const p = process.argv[1]; const c = fs.existsSync(p) ? JSON.parse(fs.readFileSync(p)).coverage : "review-required"; if (!["available", "review-required"].includes(c)) process.exit(1); process.stdout.write(c)' "$BASELINE_DIR/view.json") || exit 1
+if [ "$BASELINE_COVERAGE" = "available" ]; then
+  [ "$(cat "$FINAL_DIR/inspection-status.txt")" = "0" ] || { echo "FVS >> Final inspection failed after a covered baseline; stop affected unit" >&2; exit 1; }
+  node -e 'const fs = require("fs"); const p = process.argv[1]; process.exit(fs.existsSync(p) && JSON.parse(fs.readFileSync(p)).coverage === "available" ? 0 : 1)' "$FINAL_DIR/view.json" || { echo "FVS >> Previously available protected coverage lost; stop affected unit" >&2; exit 1; }
+  diff -u "$BASELINE_DIR/view.json" "$FINAL_DIR/view.json" || exit 1
+else
+  echo "FVS >> Pre-existing coverage gap: complete the explicit reviewed boundary comparison"
+fi
+node "$REFACTOR_REPORT_TOOL" compare "$BASELINE_DIR/source.json" "$PROJECT_ROOT" "$FINAL_SCOPE_FILES" "$FINAL_DIR/metrics.json" || exit 1
+```
+
+The views compare fully printed types, definition bodies and axiom footprints. They are syntax
+observations, not a kernel identity proof, complete semantic closure or proof acceptance. Inspect
+the source diff for protected definition closure, attributes, instances and scope commands too.
+Complete the reviewed fallback for gaps; never declare unverified preservation. A changed
+view or context stops acceptance; do not quietly rebase the baseline. Printed-output differences
+may need owner review even when the underlying change is harmless.
+
+### Reviewed boundary fallback
+
+A helper limitation must not make a valid file/declaration unrefactorable. Explain the exact missing
+observation and retain its source/query hashes, tool pin and diagnostics. `coverage: "available"`
+is required on both views before using their equality; two identical gap reports prove nothing.
+Do not present a signature as a definition body or claim semantic equivalence from printed syntax.
+Loss of previously available coverage is a regression signal: failed final inspection, a missing
+view or final elision stops acceptance of that affected unit. It cannot be relabelled as a
+pre-existing helper limitation. Diagnose and repair it before continuing acceptance.
+
+Before editing an affected unit, record an appropriate comparison route using the preserved pristine
+source and protected inventory. Prefer an existing project-supported inspection that can expose the
+missing declaration in its original context. Otherwise arrange explicit independent review of the
+exact baseline/final protected declarations, types, definition bodies, dependency closure, namespace/
+instance resolution and attributes. Bind that review to source hashes and the full diff, including
+helpers/import wiring. Record what is checked, what is not, and the reviewer's conclusion; source
+review is not a kernel identity proof. Do not silently substitute a weaker check for the agreed
+protection. Use the project's established review channel, not a new checker framework.
+
+Compilation and axiom safeguards remain mandatory: run the selected-file/import, affected-consumer
+and project gates and compare protected-root axiom footprints with pinned Lean. For an external file
+that cannot be imported, a project-validated temporary instrumented copy may append the same type/
+axiom queries to the file's own source after its import gate. Validate name resolution and module/
+private-name effects first; a different-context copy is not automatically equivalent. This recipe
+does not establish body visibility for temporary copies; keep any protected-body gap explicit unless
+that project/pin validates the body query too. Compare pristine
+and final observations under the same validated setup. Keep snapshots exclusive and disclose every
+remaining coverage gap. A failed inspection is not permission to dismiss compiler errors: establish
+why the file itself still passes its gates and how the missing check will be supplied.
+
+If preservation or required axiom evidence still cannot be established, hold only the affected unit
+as an unaccepted proposal, explain the missing evidence and continue independent work. Do not weaken
+a statement, import recall axioms, change project configuration, or waive safeguards to obtain success.
+
+## Delegate in proportion to the task
+
+A small cleanup uses lightweight analysis and one fresh refactorer. Substantial cross-file work
+uses two fresh read-only scouts, then at most five independent edit workers per batch within the
+confirmed budget. Ownership is disjoint by file. A helper and all affected call sites form a
+coherent unit; dependent/overlapping units run sequentially.
+Files in different workers' units must have no direct or transitive import relation. A new module
+and a unit importing it are dependent too, even with disjoint paths. Run those units serially.
+If import independence cannot be established, use the conservative serial plan.
+
+Children, including scouts, use available LSP diagnostics/goals and return evidence or a candidate
+ready for gate. They do
+not run Lake, Lean or compiler-backed scripts in the shared workspace. The parent waits until all
+edit workers are terminal, then runs every `FILE_GATE`, boundary query, measurement and project
+gate strictly one at a time. This avoids relying on a shared build lock; Lake 4.31
+[does not use one](https://github.com/leanprover/lean4/blob/v4.31.0/src/lake/Lake/Util/Lock.lean#L18-L20).
+This serial policy does not depend on other pins sharing4.31 lock behavior. Check the project pin's
+LSP/import setup before assuming feedback is build-free. If child LSP feedback is unavailable, use serial edit/parent-gate cycles with one child. Honour
+required-live stops and the existing consent for degraded feedback. Do not call parallel edits
+or compiler fallback safe merely because files are disjoint.
+If an LSP feedback path may trigger shared compiler/build jobs, use the conservative serial path.
+
+Use current project roles and confirmed `research`/`lean_refactor` settings. Optional cheaper
+models remain user choices through the existing manifest, never implicit substitutions. Each
+delegated pass gets a fresh child and current inputs; await a terminal result. Stop new dispatch
+on failure, collect/cancel active work normally, and keep parent checks/recovery serial. These
+instructions are not host-enforced receipts.
+
+Capture each unit's owned-file snapshot before that unit starts. On a failed unit, restore only
+that owner's files, including removal of its new files. Gate the other independent units serially
+and preserve passing candidates and unrelated work. Passing units still need integrated checks.
+If a final failure cannot be attributed safely, hold an unaccepted proposal rather than guess a
+rollback or reset the workspace. Report the failed unit and partial completion.
+
+## Net code LoC and readability
+
+Use the complete before/after source union from the actual diff, including new helpers/imports,
+removed files and compatibility wiring. New files have baseline zero; removed files final zero.
+The reporting helper measures nonblank Lean code lines while excluding comments/docstrings.
+It reports raw lines and removed/added comment text separately, so deleting an explanation earns
+no code reduction. Useful prose must still be preserved or explicitly accounted for in review.
+
+Report `net code LoC change = final code total - baseline code total`, including helper costs.
+The helper also counts `;`/`<;>` tokens outside comments, supported strings/chars and quoted
+identifiers. This is a readability hint, not a parsed proof-step count or a hard acceptance limit.
+Genuine idiomatic shorter proofs may increase that hint. Do not penalise them by count alone.
+List every file with `sequenceHintDelta > 0` and fewer code lines, with a one-line explanation.
+The helper exposes `mixedPackingFiles` for that disclosure; it is not an automatic penalty.
+
+Whitespace-only changes and pure sequence packing earn zero reduction credit. The helper detects
+whole-file cases through lexical token comparisons; it is not a general Lean parser. Mixed
+format/strategy changes require hunk review or the same approved formatter/counter on both owned
+views. If the structural saving cannot be separated reliably, present a proposal instead of an
+automatic win. The metric supports readability judgment, not scoring.
+
+Unsupported interpolated-string syntax makes automated code counts and hints unavailable for that
+file. Source snapshots/hashes remain usable; `metricStatus: "unavailable"` and `unavailableFiles`
+identify the gap, and full-scope totals/`metricWin` are null, never zero or a partial total passed off
+as complete. Supported rows may still be inspected separately. Continue refactoring with a clearly
+reviewed baseline/final comparison across the entire agreed scope, including helper/wiring costs.
+Use a validated project counter when available, or explicit reviewed source/hunk accounting that
+excludes prose deletion and line packing. State the method, affected files and any uncertainty; do
+not invent exact numbers or naively parse nested interpolation as a plain string. The reviewer must
+be able to establish worthwhile net reduction and readability from the comparison. If evidence is
+insufficient, hold that candidate as a proposal and continue other work; the helper limitation alone
+does not block the whole task.
+
+Ancillary language/configuration growth counts as cost. Deletions in an unsupported language earn
+no automatic credit because they may only remove prose. Report them separately or agree a validated
+counter. The helper's legacy `metricWin` field is only a candidate hint, not a score or correctness/
+readability acceptance. Its value is null when automated full-scope comparison is unavailable.
+
+## Comparable timing: parent serial recipe
+
+After a warm build, the default is three serial baseline and three serial final runs per affected
+file using the same pins, imports/cache state, thread limit and quiet worker state. This is part of
+the approved budget, not permission for a provider benchmark. A new helper file has no baseline
+run: record zero prior contribution and measure its final cost. A removed file has no final run.
+Compare the scope totals as well as unchanged entry points, and disclose changed coverage. Never
+invent samples for a path that did not exist.
+
+Before sampling, freeze `ELABORATION_CMD` as a Bash argv array for this file and actual installed
+context. Where `lake lean` is supported, it is `( "$PROJECT_LAKE" lean "$SPEC_PATH" --
+"${PROFILE_ARGS[@]}" )`; `PROFILE_ARGS` is empty unless the actual compiler advertises `--profile`.
+On another pin use a validated equivalent with import preparation and the project's Lean arguments.
+Unsupported profiling is unavailable detail, not a broken proof. Do not silently change argv/cache
+conditions between baseline/final; if meaningful comparable elaboration cannot be established,
+report timing inconclusive and hold the performance trade-off. The sampling loop is:
+
+```bash
+declare -p ELABORATION_CMD >/dev/null 2>&1 || { echo "FVS >> Validated elaboration argv required" >&2; exit 2; }
+for SAMPLE in 1 2 3; do
+  (
+    set -C
+    TIMEFORMAT='FVS_ELAPSED_SECONDS=%R'
+    { time LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 "${ELABORATION_CMD[@]}"; } > "$TIMING_DIR/$PHASE-$SAMPLE.log" 2>&1
+  )
+  TIMING_STATUS=$?
+  [ "$TIMING_STATUS" -eq 0 ] || exit "$TIMING_STATUS"
+done
+```
+
+`PHASE` is baseline or final; use a separate fresh `TIMING_DIR` for each file. Record all samples,
+actual build gate wall
+time, cache/rebuilt state and the profiling phases the pin reports. The checked `--profile` probe
+reported cumulative phases, not a complete per-declaration table. On that pin,
+`profiler.threshold` defaults to 100 ms; declarations below it have no individual profile message.
+Record the threshold actually used by the selected pin/project and keep it unchanged for comparable
+runs; do not apply this4.31 default to another toolchain or override a project setting. Do not invent missing timings.
+See the [pinned profiler option](https://github.com/leanprover/lean4/blob/v4.31.0/src/Lean/Util/Profile.lean#L23-L26). The syntax
+is documented in [Lake 4.31 help](https://github.com/leanprover/lean4/blob/v4.31.0/src/lake/Lake/CLI/Help.lean#L679-L687)
+and the pinned `lean --help`.
+
+Use an existing project criterion first. Otherwise compare the three-run ranges and timer/noise
+evidence: a consistent material slowdown beyond baseline variation blocks automatic acceptance
+and becomes an owner trade-off. Three observations are not a statistical guarantee. Label noisy
+or incomparable results inconclusive; do not compare a cached no-op with fresh elaboration or
+assume decomposition is faster. Never delete global caches or acquire tools just for timing.
+
+## Compatibility evidence and limits
+
+Dependency-free tests exercised installed Lean/Lake **4.25.2, 4.31.0 and 4.35.0**, with network denied
+and isolated temporary profiles. Each ran the file/import gates, protected type/body/axiom and
+coverage-regression cases, reporting-helper limits, worked proof examples and timing-log recipe.
+Installed Elan4.2.3 tests covered file, environment and directory overrides, rejection of an
+uninstalled pin without installing, unchanged pin/toolchain identities, and actual Lake sysroot
+overrides where PATH still points at the other installation. The mismatch is rejected before
+cache/proof work and selected compiler identity is rechecked in baseline/final captures. These are bounded
+fixtures, not a real consumer refactor, benchmark or universal compatibility claim.
+
+Older4.19 source documents import-building `lake lean`, but its build-target parser differs from
+the newer source-path selector. That version was not installed/tested here. Compare official
+[4.19 target parsing](https://github.com/leanprover/lean4/blob/v4.19.0/src/lake/Lake/CLI/Build.lean),
+[4.19 Lean command](https://github.com/leanprover/lean4/blob/v4.19.0/src/lake/Lake/CLI/Help.lean), and
+[4.35 Lean command](https://github.com/leanprover/lean4/blob/v4.35.0/src/lake/Lake/CLI/Help.lean).
+Keep4.31-specific printer/profiler/tactic citations scoped to their checked pin; another project
+still needs its own capability/context validation. Custom parsers, private/module contexts and
+other Elan state schemas may need the explicit project/review route. Never upgrade a project to
+fit this matrix.
+
+## Evidence tools and short examples
+
+On checked Lean 4.31, `simp?`, `exact?` and `apply?` are
+[core suggestion tactics](https://github.com/leanprover/lean4/blob/v4.31.0/src/Init/Tactics.lean).
+[`grind?`](https://github.com/leanprover/lean4/blob/v4.31.0/src/Init/Grind/Tactics.lean#L283-L297)
+can suggest a sufficient `grind only` call. Suggestions still need goal/type and gate checks.
+`linter.unusedSimpArgs` and `linter.unnecessarySimpa` are enabled by default in that pin
+([source](https://github.com/leanprover/lean4/blob/v4.31.0/src/Lean/Elab/Tactic/Simp.lean#L675-L685),
+[source](https://github.com/leanprover/lean4/blob/v4.31.0/src/Lean/Elab/Tactic/Simpa.lean#L19-L23)).
+They are evidence, not universal replacement rules. Revalidate availability for another consumer pin.
+
+1. **Shared reasoning.** Two eight-code-line proofs repeat a zero/successor case split. A private
+   six-line helper plus two two-line callers costs ten code lines instead of sixteen: net minus six,
+   including the helper. Keep the target statements and explanations; search existing lemmas first.
 
 ```lean
--- Before
-. norm_num; omega
+/-- Classifies a natural number as zero or positive. -/
+private theorem splitHelper (n : Nat) : n = 0 ∨ 0 < n := by
+  cases n with
+  | zero =>
+    exact Or.inl rfl
+  | succ k =>
+    exact Or.inr (Nat.zero_lt_succ k)
 
--- After (if omega alone closes the goal)
-. omega
+theorem first (n : Nat) : n = 0 ∨ 0 < n := by
+  exact splitHelper n
+theorem second (n : Nat) : n = 0 ∨ 0 < n := by
+  exact splitHelper n
 ```
 
-**Verification:** Always test the simpler version with `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build` before
-committing. The simpler tactic may not always suffice -- only apply when confirmed.
-
-**Tier:** 1 (when removing redundant prefix) or 2 (when replacing with equivalent)
-
----
-
-## Pattern 3b: Simpa Chain Compression
-
-Replace `have` + `rw` + `exact` chains with `simpa only [...] using h` when the chain is a
-straightforward rewrite-then-close sequence.
-
-**Example:**
-```lean
--- Before: have/rw/exact chain
-have h_eq : a = b := by ring
-rw [h_eq]
-exact h_goal
-
--- After: simpa only compresses the chain
-simpa only [show a = b from by ring] using h_goal
-```
-
-**Safety rule:** Use `simpa only [...]` (with explicit lemma list), NEVER bare `simpa`.
-Bare `simpa` triggers the full simp set which is fragile and slow.
-
-**Tier:** 2 (low risk -- explicit lemma list preserves intent)
-
----
-
-## Pattern 4: Grind/Aesop Replacement (Aggressive Only)
-
-If a multi-line tactic block (3+ lines) can be replaced by a single `grind` or `aesop`
-call that closes the goal, do it.
-
-**Constraints:**
-- ONLY in aggressive mode (Tier 4)
-- ONLY when the automation reliably closes the goal
-- NEVER for goals involving Aeneas monadic code (`step` steps)
-- Test with `grind?` or `aesop?` first to confirm
-
-**Example:**
-```lean
--- Before: 4-line tactic block
-. have h1 : a + b = b + a := by ring
-  rw [h1]
-  simp only [Nat.add_comm]
-  omega
-
--- After: grind closes it in one step (confirmed via grind?)
-. grind
-```
-
-**Tier:** 4 (high risk -- automation may be fragile across Lean versions)
-
----
-
-## Grind Guidance
-
-**Good fit:**
-- Pure arithmetic goals (linear and nonlinear)
-- Propositional logic
-- Simple rewriting chains
-
-**Bad fit:**
-- Aeneas monadic code (use `step` instead)
-- Goals with `Finset.sum` expansion (too complex for grind)
-- Bitwise operations (use `bvify`/`bv_decide` instead)
-
-**Exploratory workflow:**
-1. Use `grind?` to test if grind can close the goal
-2. If it closes the goal instantly, replace the multi-line block
-3. If it takes >5 seconds or produces `sorry`, do not use grind
-4. If `grind?` suggests a specific configuration, use that exact call
-
-**Local lemma control:**
-`grind` uses all `@[simp]` and `@[grind]` lemmas in scope. Be aware of unintended
-rewrites from ambient lemmas. If grind produces a different proof than expected, the
-ambient lemma set may have changed.
-
-**Syntax warnings:**
-- `grind` does NOT accept lemma arguments like `grind [lemma]`
-- Use `simp [lemma]; grind` if you need specific lemmas in scope before grind
-- `grind` is not `simp` -- it uses E-matching and case splitting, not just rewriting
-
----
-
-## Aeneas-Specific Policy
-
-**NEVER refactor:**
-- `unfold + step` sequences -- these are the structural backbone of Aeneas proofs
-- `step` steps that correspond to distinct monadic bind points -- merging them loses
-  the 1:1 correspondence between Rust operations and proof steps
-
-**SAFE to refactor:**
-- Bounds obligations (`simp [*]; scalar_tac` patterns)
-- Case split tails (`interval_cases i <;> omega`)
-- Modular arithmetic closers (`simp [Field51_as_Nat, ...]; omega`)
-
-**step* policy:**
-`step*` is acceptable as a replacement for consecutive `step` calls ONLY when
-all steps are independent (no intermediate `have` bindings between them). If there are
-`have` bindings or manual `simp` steps between `step` calls, do NOT merge them.
-
----
-
-## Target Selection Heuristics
-
-### Good Targets (refactor these first)
-- Theorems with 3+ consecutive `simp`/`omega`/`scalar_tac` calls on the same goal
-- Proofs where `simp?` reports a shorter lemma list than current `simp [*]`
-- Proofs with obvious dead bindings confirmed by build test
-- Stable, self-contained theorems with no cross-file dependents
-
-### Bad Targets (leave these alone)
-- Theorems that other files import (high blast radius on failure)
-- Proofs near `omega`/`linarith` that use many local hypotheses
-- Recently modified proofs that are not yet stable
-- Proofs that are already minimal (2-3 tactic lines)
-
-**Rule:** Refactor stable plateaus first, not cliff edges. A "plateau" is a theorem that has
-compiled successfully through multiple project changes. A "cliff edge" is a theorem that was
-recently proved or modified and may still be fragile.
-
----
-
-## Refactoring Layering Strategy
-
-When refactoring a multi-file project, work through these layers in order:
-
-1. **Pure math layer** -- Theorems about mathematical properties (commutativity, associativity,
-   bounds). These have the fewest dependencies and are safest to refactor.
-2. **Representation layer** -- Theorems connecting Rust types to mathematical objects
-   (Field51_as_Nat, Scalar52_as_Nat). More sensitive but still relatively contained.
-3. **Bridge layer** -- Theorems that connect representation to specification (interpretation
-   functions applied to computation results). Cross-cutting; changes may affect multiple files.
-4. **Top-level specs** -- The main correctness theorems. Most dependencies, highest risk.
-   Refactor last, after lower layers are stable.
-
-This ordering ensures that refactorings in lower layers do not cascade into breakage
-in higher layers.
-
----
-
-## Repo-Specific Lessons (Aeneas/Ristretto)
-
-Hard-won lessons from real proof cleanup work:
-
-- **Parity/omega fragility** -- `omega` proofs involving parity (even/odd, % 2) are extremely
-  fragile. Small changes to hypothesis ordering or available lemmas can break them. Avoid
-  refactoring near parity-related omega calls.
-- **`simpa only` is safer than broad `simpa`** -- Always use the `only` variant with an
-  explicit lemma list. Bare `simpa` pulls in the full simp set which changes across Mathlib
-  versions.
-- **Declaration order matters** -- Lean elaborates top-to-bottom. Moving a `have` binding
-  up or down changes what is available in the local context for subsequent tactics. Never
-  reorder declarations without a build test.
-- **Cross-file extraction cost model** -- Extracting a helper lemma into a separate file
-  has overhead: import management, namespace changes, potential simp set pollution. Only
-  extract when the lemma is used in 3+ files.
-- **Proof length != elaboration cost** -- A 5-line proof using `simp only [a, b, c]` can
-  elaborate faster than a 2-line proof using `simp`. The simp set size dominates elaboration
-  time, not proof length. Prefer `simp only` even when `simp` alone works.
-
----
-
-## Refactoring Principles
-
-Principles extracted from real-world refactoring of large verified proofs. These
-complement the tier-based heuristics above with strategic guidance on *what* to
-extract and *how* to structure the result.
-
-### Extract by semantic unit, not by local syntax
-
-Good helper lemmas package one real unit of reasoning:
-- an invariant package (e.g., `SomeStructure.IsValid`)
-- a case split and its consequences
-- a bridge from implementation state to pure definitions (e.g., `sub_preserves_bound`)
-- a generic arithmetic fact reused in multiple places
-
-Bad helper lemmas merely rename:
-- one `toField` rewrite
-- one cast
-- one constant
-- one one-off `have`
-
-If the helper does not remove a genuine repeated block, it is probably noise. The test
-is: does this helper correspond to a meaningful mathematical concept?
-
-### Fix helper first, then use it
-
-When extracting a helper lemma:
-1. Make the helper compile on its own first
-2. Fix binder types, casts, and return types before replacing any call site
-3. Only then use the helper to shrink the main theorem
-
-This avoids turning one local proof into two broken proofs. Never leave both the
-helper and the main theorem sorry-d at the same time.
-
-### Short theorem body + reusable helper layer
-
-The ideal refactored proof has a 5-10 line main body that calls well-named helpers.
-The real target is:
-- **Short theorem body** -- reads like a proof plan, not a transcript of every step
-- **Reusable helper layer** -- heavy reasoning lives in private lemmas
-- **Same proof strength** -- theorem statement unchanged
-
-Total file LOC may or may not drop. The meaningful metric is whether the theorem body
-became clearer. If the main theorem body drops more than 50% of its LOC, that is
-already a good refactoring.
-
-### Prefer aggregated results over fragmented lemmas
-
-If the proof repeatedly re-establishes related facts, prefer returning a structured
-result once and projecting fields later. One lemma returning `SomeStructure.IsValid`
-with 5 conjuncts beats 5 separate lemmas when the facts are always used together.
-This usually gives the biggest theorem-body reduction.
-
-### Do not hoist local proof state across sibling goals
-
-In FV proofs with `step*`, `rename_i`, or generated postconditions, two visually
-nearby proof blocks may live in different local contexts. Consequences:
-- A `have` in one bullet often cannot be reused in another
-- Literal hoisting above the bullet structure often fails
-- Reuse must happen through private lemmas abstracted over the generated locals
-
-This is a structural constraint of Lean's elaborator, not a style preference.
-
-### Refactor in layers
-
-A productive extraction order:
-1. Arithmetic and lift boilerplate
-2. Invariant package
-3. Repeated case-analysis package
-4. Pure semantic bridge
-5. Theorem-body rewrite
-
-Later extractions often become obvious only after the invariant layer is packaged.
-
----
-
-## Reduction Types
-
-Three different kinds of "proof reduction" exist. A refactoring agent should not
-confuse these goals.
-
-### 1. Theorem-body reduction (golf)
-
-The main theorem becomes shorter and reads like orchestration. This is the
-highest-value maintainability win. Focus on semantic duplication first, then
-setup duplication.
-
-### 2. File-level reduction (extract common)
-
-The theorem file becomes smaller by moving stable support lemmas into a companion
-helpers file. This is a readability and maintainability move -- it usually does not
-reduce total repo LOC.
-
-**When to split:** A theorem file is support-heavy when the actual top-level theorem
-body is a minority of the file (under ~35% of file LOC), most remaining lines are
-private structures or bridge lemmas, and helper extraction is no longer removing
-duplicated semantic reasoning -- only setup noise.
-
-### 3. Repo-wide reduction (shared lemma library)
-
-Total proof mass drops. This only happens when repeated support logic disappears or
-upstream specs expose stronger semantic facts. This is the biggest long-term
-opportunity but requires changing the abstraction boundary.
-
-### When in-file golf stops paying off
-
-Further local golfing is low-yield when most remaining bulk is:
-- Bundle or witness construction repeated across sibling `step*` goals
-- `unfold toField` plus `lift_mod_eq` plus `push_cast` boilerplate
-- Local bridge lemmas that only exist because upstream specs are too weak
-
-At that point, another wave of micro-lemmas often moves lines instead of deleting
-them, increases API surface, and makes the file less readable.
-
-**Diminishing returns threshold:** If the next expected reduction is below ~20% of
-current theorem-body LOC, escalate to a file-split or upstream-spec recommendation
-rather than continuing local golf.
-
-### Detecting support-heavy files
-
-Heuristic thresholds:
-- Theorem body under 35% of file LOC -- file is probably support-heavy
-- Most duplication is in witness packaging rather than semantic reasoning -- local
-  golf is nearing exhaustion
-- A new helper shortens one block but grows the file overall and does not create
-  reuse across files -- warning sign to stop
-
-### Decision policy
-
-The refactorer should classify each action into one of three modes:
-1. **local_golf** -- Use when duplicated reasoning still exists inside the file
-2. **file_split_recommendation** -- Use when the file is dominated by stable support
-3. **upstream_spec_recommendation** -- Use when support lemmas mainly reconstruct
-   facts that should be exported by dependencies
-
----
-
-## Performance-Aware Decomposition
-
-Lessons from decomposing monolithic proofs into extracted helpers while tracking
-build performance. Decomposition improves readability but adds elaboration overhead.
-
-### `abbrev` vs `def` for postcondition predicates
-
-When extracting a bundled postcondition into a named predicate, use `abbrev` not `def`.
-
-- **`def`**: Lean treats the predicate as opaque. At `exact` call sites, the elaborator
-  must explicitly unfold it. Expensive.
-- **`abbrev`**: The predicate is reducible -- unification is transparent. Measured saving:
-  ~1.4s across 5 call sites in sqrt_ratio_i_spec'.
-
-**Exception**: Never use `abbrev` for term-level constants with large numeric content
-(e.g., `SQRT_M1_val := constants.SQRT_M1_raw` with 5 limbs of 64-bit values). Lean
-eagerly unfolds `abbrev` during `whnf`, triggering expensive big-number computation.
-Use `def` for numeric constants.
-
-### `exact` at dispatch sites, never `simpa`
-
-When the main theorem dispatches to a helper, use `exact helper args...` rather than
-`simpa [pred, and_imp] using helper args...`.
-
-`simpa` applies `simp` to **both** the goal **and** the helper's return type, then checks
-if they match. This is O(simp-set-size). `exact` only needs definitional unification --
-O(1) relative to the simp set.
-
-Measured saving: ~1.3s across 5 call sites (from `simpa` to `exact`).
-
-**Precondition**: The goal must already definitionally match the helper's return type.
-Remove postcondition-shaping lemmas (`and_imp`, `Nat.mul_mod_mod`, etc.) from branch
-simp sets.
-
-### Measured overhead data
-
-From curve25519-dalek sqrt_ratio_i_spec' decomposition:
-
-| Component | Typical Cost | Notes |
-|-----------|-------------|-------|
-| `abbrev` postcondition predicate | 1.0-1.5s | One-time; shared across helpers |
-| Each helper signature | 200-400ms | Proportional to parameter count |
-| Each `exact` dispatch | 50-100ms | Cheap with `abbrev` predicate |
-| Each `simpa` dispatch | 200-400ms | Avoid; use `exact` instead |
-| Each `let*` (step) step | 50-100ms | Fixed cost per monadic step |
-
-**Rule of thumb**: Extracting N helpers adds roughly `1.5 + N * 0.3` seconds of
-elaboration overhead (with `abbrev` + `exact`). Without these optimizations, the
-overhead is `1.5 + N * 0.6` seconds.
-
-### Minimize `simp only` lemma sets
-
-Every lemma in a `simp only` set causes `simp` to traverse the goal looking for
-matches. For large goals (after 17+ `let*` steps with 30+ hypotheses), this is
-expensive. Discovery method: remove lemmas one at a time, check if proof still compiles.
-
-### `if_pos`/`if_neg` over `reduceIte`
-
-When resolving `if` expressions after `by_cases`, use targeted `if_pos h` or
-`if_neg h` in `simp only` instead of `reduceIte`. The latter scans the entire goal.
-
----
-
-## Advanced Techniques
-
-### `let*` WP transform technique
-
-The Aeneas WP (weakest precondition) transformer provides `let*` syntax as an
-alternative to `step as` for stepping through monadic binds. Both produce equivalent
-proofs, but `let*` with explicit spec names eliminates the typeclass/simp search that
-`step` performs.
-
-**Before:**
-```lean
-unfold my_function
-step as <<x, h_x_eq, x_bounds>>
-step as <<y, h_y_eq, y_bounds>>
-```
-
-**After:**
-```lean
-unfold my_function
-simp only [step_simps]
-let* << x, x_post1, x_post2 >> <-
-  Namespace.Of.The.Spec.add_spec
-let* << y, y_post1, y_post2 >> <-
-  Namespace.Of.The.Spec.mul_spec
-```
-
-**Key rules:**
-1. `simp only [step_simps]` after `unfold` normalizes the goal to WP form (required
-   once, before the first `let*`)
-2. Explicit spec name (`<- SpecName`) tells the tactic exactly which spec to apply -- no
-   typeclass search, no simp scan of the `@[step]` lemma set
-3. Postcondition naming: `let*` names postconditions `_post1, _post2` positionally
-4. Use `step*?` in the info view after `simp only [step_simps]` to discover `let*`
-   statements
-
-**Measured improvement (AffineNielsPoint/Add.lean):**
-
-| Metric | `step as` | `let*` | Delta |
-|--------|-----------|--------|-------|
-| simp | 0.87s | 0.36s | **-58%** |
-| typeclass | 0.47s | 0.31s | **-34%** |
-
-### `obtain` for non-`@[step]` specs
-
-When a spec is NOT tagged `@[step]`, `let*` rejects it. Use `obtain` + `simp only`:
+2. **Existing result.** After checking the available `Nat.add_comm` type, replace a manual induction
+   for the same statement with reuse. No helper cost is hidden:
 
 ```lean
-obtain <<fe2, h_fe2_ok, fe2_post1, fe2_post2>> :=
-  CompletedPoint.add_spec' Z2_post2 Txy2d_post2
-simp only [h_fe2_ok, bind_tc_ok]
+theorem commDemo (a b : Nat) : a + b = b + a := by
+  exact Nat.add_comm a b
 ```
 
-### `[local irreducible]` for opaque postcondition predicates
-
-Heavy algebra in `ZMod p` (`field_simp`, `linear_combination`, `ring`) triggers
-reduction of `p = 2^255 - 19`, a 78-digit prime. This is extremely expensive.
-
-**Pattern:**
-1. Extract `lift_mod_eq` steps into a helper lemma (needs `p` reducible)
-2. Mark `p` irreducible for the main theorem:
+3. **Non-win.** Joining these last two tactics with `;` only packs the same steps. It lowers raw
+   code lines but earns zero structural reduction credit. Removing genuinely redundant reasoning
+   would be a different candidate, subject to the usual gates:
 
 ```lean
-attribute [local irreducible] p in
-theorem my_spec ... := by
-  ...
-  obtain <<hX_F, hY_F, hZ_F, hT_F>> := my_lift_to_field_eqs ...
-  -- All subsequent algebra runs with p opaque -- no big-number reduction
+theorem packingDemo (p : Prop) (h : p) : p := by
+  have h' : p := h
+  exact h'
 ```
 
-**Measured improvement:** maxHeartbeats 1000000 -> 200000 (default) -- 5x reduction.
+The packed form is a non-win, despite one fewer physical code line:
 
-**What works with p irreducible:** `linear_combination`, `field_simp`, `ring`,
-`ring_nf`, `simp only [Ed25519]`, `pow_ne_zero`, `norm_num` on small numbers.
+```lean
+theorem packingDemo (p : Prop) (h : p) : p := by
+  have h' : p := h; exact h'
+```
 
-**What breaks:** `lift_mod_eq`, `push_cast` after `lift_mod_eq`, `unfold
-FieldElement51.toField`, `decide` for `(2 : ZMod p) != 0`.
+These small examples validate the accounting/strategy distinction, not a performance guarantee.
 
-### Applicability checklist
+## Accept or stop
 
-Use `let*` refactoring when:
-- The proof uses `step as` (not `step*` which is already fast)
-- Profile shows >0.3s in simp or >0.3s in typeclass for the file
-- The spec is `@[step]`-tagged (otherwise use `obtain`)
+After workers stop, the parent serially runs every applicable recorded file gate, including import preparation,
+and capture real statuses. After integrating a batch, check the complete affected scope and required
+project/style/trust gates. Run the printed-boundary/context diffs and review protected source/attributes against the agreement.
+A green default build alone is insufficient. Recover only this session's edits on failure;
+preserve other work. A failed delegated child stops the batch rather than moving the work inline.
 
-Use `[local irreducible] p` when:
-- maxHeartbeats is elevated (>200000)
-- The proof does heavy algebra in `ZMod p`
-- `lift_mod_eq` calls can be isolated into a helper
+Retain a result only when the measured or explicitly reviewed full-scope net code total decreases without format/prose deletion credit, readability/prose and
+the protected boundary are preserved, required checks pass, and comparable timing evidence has no
+repeatable material regression. Otherwise present an explicit proposal/trade-off or restore the
+session's changes. Keep any proposed diff visibly unaccepted until the owner decides.
 
+Stop when worthwhile permitted opportunities are exhausted. Do not fill a pass budget with cosmetic
+edits or stop at an arbitrary percentage. A budget/resource stop is partial completion with remaining
+opportunities listed. Moving code without a net reduction can be a proposal, not an automatic win.
 </patterns>
 
-<anti_patterns>
-
-## Anti-Patterns
-
-### 1. Never remove @[step] attributes
-
-These attributes are consumed by other proofs via the `step` tactic. Removing them
-silently breaks downstream theorems that depend on them.
-
-### 2. Never change theorem signatures
-
-Preconditions and postconditions are the specification contract. Changing them changes
-what is being proved. Refactoring operates ONLY on the proof body (the `by ...` block).
-
-### 3. Never replace scalar_tac with omega blindly
-
-`scalar_tac` understands Aeneas scalar types (U8, U16, U32, U64, Usize) and their bounds.
-`omega` only handles pure Nat/Int linear arithmetic. Replacing `scalar_tac` with `omega`
-will fail when Aeneas type bounds are involved.
-
-### 4. Never use decide or native_decide on large numeric goals
-
-`decide` and `native_decide` compile to native code and run at elaboration time. On large
-constants (2^255, field primes) they will time out or exhaust memory.
-
-### 5. Never simplify away explicit intermediate have blocks that document proof strategy
-
-Readability matters. If a `have` block exists to document a proof step (even if the binding
-could be inlined), leave it alone unless you are certain the proof remains clear without it.
-
-### 6. Never batch-refactor multiple theorems in one pass
-
-One theorem at a time. Verify after each. If a refactoring breaks a build, you need to
-know exactly which theorem was affected.
-
-### 7. Never use broad simpa/simp mid-proof
-
-Using `simpa` or `simp` without `only [...]` in the middle of a proof creates a hidden
-dependency on the entire simp lemma set. This is fragile across Mathlib updates and makes
-the proof non-reproducible. Always use `simpa only [...]` or `simp only [...]`.
-
-### 8. Never mix refactoring with theorem changes
-
-Refactoring changes the proof body only. Never combine refactoring with changes to
-theorem statements, imports, or module structure in the same pass. Mixing refactoring with
-proof changes makes it impossible to isolate what broke the build.
-
-### 9. Never delete arithmetic locals because they "look unused"
-
-If a `have h_bound : x < 2^64 := by scalar_tac` appears before `omega` or `linarith`,
-it IS used -- these tactics consume all hypotheses matching their domain. See the
-proof-fuel rule above.
-
-### 10. Never batch proof-golf multiple theorems
-
-Refactor one theorem at a time, verify the build, then move to the next. Batch changes
-across theorems make it impossible to identify which refactoring broke the build.
-This strengthens anti-pattern 6 (never batch-refactor) with the specific failure mode:
-when a batch edit breaks, you must revert ALL changes and retry one at a time.
-
-</anti_patterns>
-
-<summary>
-
-## Refactoring Selection Flowchart
-
-```
-What mode?
-|
-+-- safe (Tier 1 only)
-|   +-- Duplicate hypotheses? --> Remove duplicates
-|   +-- scalar_tac closes goal without simp? --> Remove simp prefix
-|   +-- Whitespace/indentation inconsistent? --> Normalize
-|   +-- Nothing else to do --> NO_CHANGE
-|
-+-- balanced (Tiers 1-3)
-|   +-- All Tier 1 changes first
-|   +-- Dead have bindings (proof-fuel check)? --> Remove after build-test
-|   +-- simp [*] present? --> Try simp? to sharpen to simp only [...]
-|   +-- omega where norm_num suffices? --> Replace
-|   +-- Single-use have binding? --> Inline it
-|   +-- Consecutive simp calls? --> Merge them
-|   +-- unfold X; simp [...] pattern? --> Try simp [X, ...]
-|   +-- Repeated tactic blocks? --> Factor into local lemma
-|   +-- Nothing else to do --> NO_CHANGE
-|
-+-- aggressive (All tiers)
-    +-- All Tier 1-3 changes first
-    +-- Multi-line block closeable by grind? --> Replace (test with grind? first)
-    +-- Multi-line block closeable by aesop? --> Replace (test with aesop? first)
-    +-- Consecutive independent step calls? --> Try step*
-    +-- Nothing else to do --> NO_CHANGE
-
-ALWAYS: Verify with LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build after every change.
-NEVER: Touch @[step] attributes, theorem signatures, unfold+step backbone.
-```
-
-</summary>
-
 <output_format>
+## Final report
 
-The refactorer agent reports per-theorem results in this format:
+Report scope and protected boundary; reused declarations and removed duplication; original/added
+helper/wiring costs; baseline/final code LoC, helper cost, raw/prose deltas and net code delta; actual build/elaboration samples
+and conditions; check outcomes; and the stopping reason. List remaining out-of-scope opportunities
+with affected files and evidence. Disclose automated coverage gaps, the reviewed comparison route
+and its result. Distinguish estimates, unavailable counts and measurements.
 
-```
-FVS >> REFACTORING {STATUS}
+- `REFACTORED`: retained result meets all acceptance conditions; disclose partial completion if capped.
+- `NO_CHANGE`: no source change retained; explain the search boundary and remaining proposals.
+- `PROPOSAL`: scope/API/protected-meaning or net-cost/performance choice needs the owner; not accepted.
+- `ERROR`: verification, dispatch or recovery failed; report actual diagnostics and retained state.
 
-File:      {spec_file}
-Theorem:   {theorem_name}
-Mode:      {safe|balanced|aggressive}
-Passes:    {N} completed
-Changes:   {list of changes made}
-Lines:     {before} -> {after} ({delta})
-Status:    REFACTORED | NO_CHANGE | ERROR
-
-Verify: LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build
-```
-
-Status values:
-- **REFACTORED** -- at least one change was applied and the build passes
-- **NO_CHANGE** -- no further refactorings possible at the current tier ceiling
-- **ERROR** -- a refactoring attempt broke the build and was reverted
-
+A worker's `REFACTORED` header describes a candidate patch, not whole-scope acceptance. The parent
+checks the integrated result and reports the final status. No refactoring report is a proof receipt.
 </output_format>
+
+<provenance>
+## Prior art
+
+The ordinary-Lean entry point, compiled-proof prerequisite, strategy/reuse focus and helper locality
+draw on Cameron Freer and the Lean 4 Theorem Proving Skill Contributors' MIT-licensed
+[lean4-skills refactor command](https://github.com/cameronfreer/lean4-skills/blob/83582df9d9172456993929f32ac4dd9d99c6211c/plugins/lean4/commands/refactor.md).
+The checked pin is `83582df9d9172456993929f32ac4dd9d99c6211c`; its
+[license](https://github.com/cameronfreer/lean4-skills/blob/83582df9d9172456993929f32ac4dd9d99c6211c/LICENSE)
+credits Copyright (c) 2025 Lean 4 Theorem Proving Skill Contributors. This guidance is newly written;
+no upstream text or code is copied. Readability hints about sequence packing also draw on the
+pinned [golf command](https://github.com/cameronfreer/lean4-skills/blob/83582df9d9172456993929f32ac4dd9d99c6211c/plugins/lean4/commands/golf.md);
+FVS uses no hard semicolon rule or upstream scoring policy. The agreed FVS boundary governs.
+</provenance>
