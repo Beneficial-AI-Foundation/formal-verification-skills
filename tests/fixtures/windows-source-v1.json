@@ -1,0 +1,1752 @@
+{
+  "schema": "fvs/windows-source-compatibility/v2",
+  "status": "unqualified",
+  "recordedAt": "2026-10-26T16:15:46.145Z",
+  "distribution": {
+    "id": "windows-source-v1",
+    "target": "x86_64-pc-windows-msvc",
+    "official": false,
+    "policySha256": "d5ef0588040b6ba8ce5e52f19d17f23a817b557580e437750fcb8264c2311177",
+    "tuple": "aeneas-6e167c9b-charon-0.1.225-lean-v4.31.0",
+    "isolation": "windows-appcontainer-journal-v2"
+  },
+  "historical": {
+    "path": "tests/fixtures/windows-source-v1-historical-7ad374b.json",
+    "sha256": "54e7f395dd87b9cb982f460f2f43718b6b6c5234bee253918857bf6c0b6ec8ba",
+    "reviewedHead": "7ad374bd124951017ac0f047af0ac84764e17c27"
+  },
+  "source": {
+    "policyFiles": [
+      {
+        "name": "Extract-Archive.ps1",
+        "sha256": "f571f5c21406e84f3088c2ed2950c21746f56dc0cba7c384641895e859467085"
+      },
+      {
+        "name": "SetupCreation.cs",
+        "sha256": "94062d4013431934e190d33816079c3193441c6c483e2f04a6adf2d419ebdf0d"
+      },
+      {
+        "name": "SetupHost.cs",
+        "sha256": "b4e57104f1ce57f57bed9d66a0ff93dc07b515c9774efd872dcbfe1399b317b6"
+      },
+      {
+        "name": "build-source.mjs",
+        "sha256": "87770afede0a9fbc34f1832be1374f45d3f4562f3ea881d3cd3cd17e6528fd0e"
+      },
+      {
+        "name": "fs-at.patch",
+        "sha256": "5575e0a75e20e7679779c15e073d91baf53b401e8e54cf9691ff379f0cbfb8a3"
+      },
+      {
+        "name": "policy.json",
+        "sha256": "8a9de665e141a269e78d17eac68436899e2235fb5abe0dca6f8bae88c1261638"
+      },
+      {
+        "name": "probe-aeneas.patch",
+        "sha256": "7dfa2564190812e90acd29fb799f52db9ff0f0afd99e8008c153d0b9cc1887f9"
+      },
+      {
+        "name": "probe-lean.patch",
+        "sha256": "d8f346e30452a6caf34527c05af5caa46ebd49e2af0a2580af18f8c5b5f43576"
+      },
+      {
+        "name": "probe-rust.patch",
+        "sha256": "551f1cc7bd25e9c49e8d00d36db4d29b520a7a1d92cad9f57d4317b0e40e85b4"
+      },
+      {
+        "name": "reviewed-artifacts.json",
+        "sha256": "7889c4ef92ea5af23e0a26ffbb06c030dedfad252a034690cb019f98fd08dd9c"
+      },
+      {
+        "name": "../windows/NativeMethods.cs",
+        "sha256": "41d93ea073f269c162b4aa37d13a5ef1228a952ac7f905abbb34c1b6325fdce1"
+      },
+      {
+        "name": "../windows/NativeExtra.cs",
+        "sha256": "cb7ffafb57801a593841ee7afc64951774db1e196c20d8142b2c9722fa11b6c0"
+      },
+      {
+        "name": "../windows/VerifiedPrivateLeafCleanup.cs",
+        "sha256": "1d5230d4212746704cdae1b9157a90c7676684e4db1c15b1d88e7781fabc2adb"
+      },
+      {
+        "name": "../windows/FvsWindowsLauncher.cs",
+        "sha256": "3bdcd963d718870f3b487edc9684e3999ec15863c66c9311c0eef3f8781420e5"
+      },
+      {
+        "name": "../windows/WindowsLifecycle.cs",
+        "sha256": "73bb38f59876d5d582a429b0bce0f2e1b648058485df04c769ee94916e4ef30c"
+      },
+      {
+        "name": "../windows/Build-Launcher.ps1",
+        "sha256": "20f7e87d65ecbd39062640f07f8e032236ea78abf81defd89f8d2128afce4911"
+      },
+      {
+        "name": "../../fvs-probe-windows-runtime.mjs",
+        "sha256": "8a03bafa4e50acf149da04bb09b41572ec3b46dcd430019794929f18191d99b7"
+      },
+      {
+        "name": "../../fvs-probe-windows-setup.mjs",
+        "sha256": "ab49d8b07e4ee22e212ae402e2ac6c2a6ad83456fa2ab9ecc2b2dda9e82b3ef5"
+      },
+      {
+        "name": "../../fvs-probe-windows-sandbox.mjs",
+        "sha256": "629f9ec21d83feb672dd431c7b67e91fe63137becff45746e5f9c331877723b9"
+      }
+    ],
+    "sources": {
+      "probe-aeneas": {
+        "repository": "https://github.com/Beneficial-AI-Foundation/probe-aeneas.git",
+        "commit": "70cbb9b4675d1639721fa60d1e0f2cd2df80cb54",
+        "patch": "probe-aeneas.patch",
+        "lockSha256": "b5bd6e78b63a09c752394a5cc98faff209eef114e27b36804d8d6cd9d415e39e"
+      },
+      "probe-rust": {
+        "repository": "https://github.com/Beneficial-AI-Foundation/probe-rust.git",
+        "commit": "1d2a7c5d0e5a5dd95e55c8d6a51cddae0b3d7572",
+        "patch": "probe-rust.patch",
+        "lockSha256": "d2bdbe69e1414fa9cdc096af7860c93030ae55d52223be70be81fc9bd10088ce"
+      },
+      "probe-lean": {
+        "repository": "https://github.com/Beneficial-AI-Foundation/probe-lean.git",
+        "commit": "fa581edfcb3de7eb801580ea183430edaa50cc68",
+        "patch": "probe-lean.patch",
+        "cliCommit": "92564e5770e4d09f2d86dfbf8ada1e9c715b384c"
+      },
+      "scip": {
+        "repository": "https://github.com/scip-code/scip.git",
+        "commit": "1c2b6db7e560d5233c944f36e4ac1377cc6963fc"
+      },
+      "rustup": {
+        "repository": "https://github.com/rust-lang/rustup.git",
+        "commit": "d8c92c6765f85625b20482e165066bf1e98e7297",
+        "lockOriginalSha256": "a7081f4b94a8a9b10422a643a7bd855b541ed7c595cd488e0c86f9580ab4ba1a",
+        "lockSha256": "f60011f494763d3671041aa9c2f434a6e975cd83cdc06cd44f3b754beb4dbfe6",
+        "fsAtPatch": "fs-at.patch",
+        "fsAtWinSha256": "4b7d59cfa7739468f89748c9a947716ced54c088f9a49cebb24baca59dacabc9"
+      }
+    },
+    "modules": [
+      {
+        "file": "scripts/fvs-probe-inventory.mjs",
+        "sha256": "a3d7efa29a1c7ed115cbf2d5ebe898de71fd2893174cd751ee4716f25119631e"
+      },
+      {
+        "file": "scripts/fvs-probe-windows-runtime.mjs",
+        "sha256": "8a03bafa4e50acf149da04bb09b41572ec3b46dcd430019794929f18191d99b7"
+      },
+      {
+        "file": "scripts/fvs-probe-windows-setup.mjs",
+        "sha256": "ab49d8b07e4ee22e212ae402e2ac6c2a6ad83456fa2ab9ecc2b2dda9e82b3ef5"
+      },
+      {
+        "file": "scripts/fvs-probe-windows-sandbox.mjs",
+        "sha256": "629f9ec21d83feb672dd431c7b67e91fe63137becff45746e5f9c331877723b9"
+      }
+    ],
+    "packagedModules": [
+      {
+        "file": "plugins/fvs/scripts/fvs-probe-inventory.mjs",
+        "sha256": "a3d7efa29a1c7ed115cbf2d5ebe898de71fd2893174cd751ee4716f25119631e"
+      },
+      {
+        "file": "plugins/fvs/scripts/fvs-probe-windows-runtime.mjs",
+        "sha256": "8a03bafa4e50acf149da04bb09b41572ec3b46dcd430019794929f18191d99b7"
+      },
+      {
+        "file": "plugins/fvs/scripts/fvs-probe-windows-setup.mjs",
+        "sha256": "ab49d8b07e4ee22e212ae402e2ac6c2a6ad83456fa2ab9ecc2b2dda9e82b3ef5"
+      },
+      {
+        "file": "plugins/fvs/scripts/fvs-probe-windows-sandbox.mjs",
+        "sha256": "629f9ec21d83feb672dd431c7b67e91fe63137becff45746e5f9c331877723b9"
+      }
+    ],
+    "nativeSources": [
+      {
+        "file": "scripts/fvs-probe-native/windows/NativeMethods.cs",
+        "sha256": "41d93ea073f269c162b4aa37d13a5ef1228a952ac7f905abbb34c1b6325fdce1"
+      },
+      {
+        "file": "scripts/fvs-probe-native/windows/NativeExtra.cs",
+        "sha256": "cb7ffafb57801a593841ee7afc64951774db1e196c20d8142b2c9722fa11b6c0"
+      },
+      {
+        "file": "scripts/fvs-probe-native/windows/VerifiedPrivateLeafCleanup.cs",
+        "sha256": "1d5230d4212746704cdae1b9157a90c7676684e4db1c15b1d88e7781fabc2adb"
+      },
+      {
+        "file": "scripts/fvs-probe-native/windows/FvsWindowsLauncher.cs",
+        "sha256": "3bdcd963d718870f3b487edc9684e3999ec15863c66c9311c0eef3f8781420e5"
+      },
+      {
+        "file": "scripts/fvs-probe-native/windows/WindowsLifecycle.cs",
+        "sha256": "73bb38f59876d5d582a429b0bce0f2e1b648058485df04c769ee94916e4ef30c"
+      }
+    ],
+    "nativeSourceSetSha256": "1e8862ef110bac2dfe687fd5e7470886ac026fc1abf73309cb7970d7caf52ded"
+  },
+  "validation": {
+    "native": [
+      {
+        "evidence": ".native-work/evidence/review-regressions-02/summary.json",
+        "sha256": "717e9163813b6b1f2d30341d68e1533abc039bad27179daa5683790eaa024149",
+        "ok": true,
+        "mode": "review-regressions",
+        "checks": [
+          {
+            "name": "partial writable work removal recovers idempotently, rejects protected replacement/missing file, releases session",
+            "passed": true
+          },
+          {
+            "name": "partial readonly w removal recovers idempotently, rejects protected replacement/missing file, releases session",
+            "passed": true
+          },
+          {
+            "name": "copied readonly private leaf disposal preserves outside bytes/ACL/attributes/link count",
+            "passed": true
+          },
+          {
+            "name": "copied readonly private leaf recovery preserves outside bytes/ACL/attributes/link count",
+            "passed": true
+          },
+          {
+            "name": "child readonly private leaf disposal preserves outside bytes/ACL/attributes/link count",
+            "passed": true
+          },
+          {
+            "name": "child readonly private leaf recovery preserves outside bytes/ACL/attributes/link count",
+            "passed": true
+          },
+          {
+            "name": "hardlink readonly private leaf disposal preserves outside bytes/ACL/attributes/link count",
+            "passed": true
+          },
+          {
+            "name": "hardlink readonly private leaf recovery preserves outside bytes/ACL/attributes/link count",
+            "passed": true
+          }
+        ],
+        "launcherSha256": "635e3938aacffb11a1d35c446a63498667dbf672c10916fe00bb91fb8ec23d50",
+        "sourceSetSha256": "1e8862ef110bac2dfe687fd5e7470886ac026fc1abf73309cb7970d7caf52ded",
+        "testHooks": true,
+        "canarySha256": "ffb4c7bdcb388f150ffb12bdd2453afc65d4df93138f53db586e0d03258d3dca",
+        "harnessSha256": "499cb25fd5185170f01ddac28da95d09e0f2eab8af3c11b01e7e76c47ddb89bc",
+        "finishedAt": "2026-10-25T22:49:29.604Z"
+      },
+      {
+        "evidence": ".native-work/evidence/review-smoke-01/summary.json",
+        "sha256": "e34c175968b481517b48e4e5cdb1b2439266da550b59dad1bbde5fffb6f5d5dd",
+        "ok": true,
+        "mode": "smoke",
+        "checks": [
+          {
+            "name": "execution, effective readonly check, digest-bound receipt and exact ACL restoration",
+            "passed": true
+          },
+          {
+            "name": "different live outer copier owner cannot be recovered",
+            "passed": true
+          },
+          {
+            "name": "bounded timeout drains three generations",
+            "passed": true
+          },
+          {
+            "name": "strict default rejects generated hardlink before ACL mutation; scoped recovery unlinks only private alias",
+            "passed": true
+          },
+          {
+            "name": "separate cancellation signal reaches locked run and drains descendants",
+            "passed": true
+          }
+        ],
+        "launcherSha256": "635e3938aacffb11a1d35c446a63498667dbf672c10916fe00bb91fb8ec23d50",
+        "sourceSetSha256": "1e8862ef110bac2dfe687fd5e7470886ac026fc1abf73309cb7970d7caf52ded",
+        "testHooks": true,
+        "canarySha256": "ffb4c7bdcb388f150ffb12bdd2453afc65d4df93138f53db586e0d03258d3dca",
+        "harnessSha256": "3e4a06f885defa7b4db49b4434fb1eb2486a8a69b40e372a01995adcc44ca917",
+        "finishedAt": "2026-10-25T22:46:47.034Z"
+      },
+      {
+        "evidence": ".native-work/evidence/review-faults-02/summary.json",
+        "sha256": "4e4bd49138858b0e45817810d73ed7e9bf16d3788728f819015c91416b8760ee",
+        "ok": true,
+        "mode": "faults",
+        "checks": [
+          {
+            "name": "reserve termination create-session:before-intent",
+            "passed": true
+          },
+          {
+            "name": "reserve termination create-session:after-intent",
+            "passed": true
+          },
+          {
+            "name": "reserve termination create-session:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "reserve termination create-session:after-completion",
+            "passed": true
+          },
+          {
+            "name": "reserve termination create-control:before-intent",
+            "passed": true
+          },
+          {
+            "name": "reserve termination create-control:after-intent",
+            "passed": true
+          },
+          {
+            "name": "reserve termination create-control:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "reserve termination create-control:after-completion",
+            "passed": true
+          },
+          {
+            "name": "reserve termination create-stage:before-intent",
+            "passed": true
+          },
+          {
+            "name": "reserve termination create-stage:after-intent",
+            "passed": true
+          },
+          {
+            "name": "reserve termination create-stage:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "reserve termination create-stage:after-completion",
+            "passed": true
+          },
+          {
+            "name": "prepare termination create-profile:before-intent",
+            "passed": true
+          },
+          {
+            "name": "prepare termination create-profile:after-intent",
+            "passed": true
+          },
+          {
+            "name": "prepare termination create-profile:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "prepare termination create-profile:after-completion",
+            "passed": true
+          },
+          {
+            "name": "prepare termination create-temp:before-intent",
+            "passed": true
+          },
+          {
+            "name": "prepare termination create-temp:after-intent",
+            "passed": true
+          },
+          {
+            "name": "prepare termination create-temp:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "prepare termination create-temp:after-completion",
+            "passed": true
+          },
+          {
+            "name": "prepare termination harden-profile:before-intent",
+            "passed": true
+          },
+          {
+            "name": "prepare termination harden-profile:after-intent",
+            "passed": true
+          },
+          {
+            "name": "prepare termination harden-profile:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "prepare termination harden-profile:after-completion",
+            "passed": true
+          },
+          {
+            "name": "prepare termination grant-0:before-intent",
+            "passed": true
+          },
+          {
+            "name": "prepare termination grant-0:after-intent",
+            "passed": true
+          },
+          {
+            "name": "prepare termination grant-0:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "prepare termination grant-0:after-completion",
+            "passed": true
+          },
+          {
+            "name": "prepare termination grant-2:before-intent",
+            "passed": true
+          },
+          {
+            "name": "prepare termination grant-2:after-intent",
+            "passed": true
+          },
+          {
+            "name": "prepare termination grant-2:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "prepare termination grant-2:after-completion",
+            "passed": true
+          },
+          {
+            "name": "prepare termination grant-5:before-intent",
+            "passed": true
+          },
+          {
+            "name": "prepare termination grant-5:after-intent",
+            "passed": true
+          },
+          {
+            "name": "prepare termination grant-5:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "prepare termination grant-5:after-completion",
+            "passed": true
+          },
+          {
+            "name": "prepare termination publish-state:before-intent",
+            "passed": true
+          },
+          {
+            "name": "prepare termination publish-state:after-intent",
+            "passed": true
+          },
+          {
+            "name": "prepare termination publish-state:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "prepare termination publish-state:after-completion",
+            "passed": true
+          },
+          {
+            "name": "prepare termination create-run.lock:before-intent",
+            "passed": true
+          },
+          {
+            "name": "prepare termination create-run.lock:after-intent",
+            "passed": true
+          },
+          {
+            "name": "prepare termination create-run.lock:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "prepare termination create-run.lock:after-completion",
+            "passed": true
+          },
+          {
+            "name": "dispose termination remove-resource-5:before-intent",
+            "passed": true
+          },
+          {
+            "name": "dispose termination remove-resource-5:after-intent",
+            "passed": true
+          },
+          {
+            "name": "dispose termination remove-resource-5:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "dispose termination remove-resource-5:after-completion",
+            "passed": true
+          },
+          {
+            "name": "dispose termination delete-profile:before-intent",
+            "passed": true
+          },
+          {
+            "name": "dispose termination delete-profile:after-intent",
+            "passed": true
+          },
+          {
+            "name": "dispose termination delete-profile:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "dispose termination delete-profile:after-completion",
+            "passed": true
+          },
+          {
+            "name": "dispose termination persist-cleanup-audit:before-intent",
+            "passed": true
+          },
+          {
+            "name": "dispose termination persist-cleanup-audit:after-intent",
+            "passed": true
+          },
+          {
+            "name": "dispose termination persist-cleanup-audit:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "dispose termination persist-cleanup-audit:after-completion",
+            "passed": true
+          },
+          {
+            "name": "dispose termination remove-stage:before-intent",
+            "passed": true
+          },
+          {
+            "name": "dispose termination remove-stage:after-intent",
+            "passed": true
+          },
+          {
+            "name": "dispose termination remove-stage:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "dispose termination remove-stage:after-completion",
+            "passed": true
+          },
+          {
+            "name": "dispose termination terminal-receipt:before-intent",
+            "passed": true
+          },
+          {
+            "name": "dispose termination terminal-receipt:after-intent",
+            "passed": true
+          },
+          {
+            "name": "dispose termination terminal-receipt:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "dispose termination terminal-receipt:after-completion",
+            "passed": true
+          },
+          {
+            "name": "dispose termination session-release:before-intent",
+            "passed": true
+          },
+          {
+            "name": "dispose termination session-release:after-intent",
+            "passed": true
+          },
+          {
+            "name": "dispose termination session-release:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "dispose termination session-release:after-completion",
+            "passed": true
+          },
+          {
+            "name": "individual readonly grant-entry-2-0:before-mutation",
+            "passed": true
+          },
+          {
+            "name": "individual readonly grant-entry-2-0:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "individual readonly grant-entry-2-1:before-mutation",
+            "passed": true
+          },
+          {
+            "name": "individual readonly grant-entry-2-1:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "execution termination run:before-intent",
+            "passed": true
+          },
+          {
+            "name": "execution termination run:after-intent",
+            "passed": true
+          },
+          {
+            "name": "execution termination job:before-create",
+            "passed": true
+          },
+          {
+            "name": "execution termination job:after-configure",
+            "passed": true
+          },
+          {
+            "name": "execution termination child:after-create-suspended",
+            "passed": true
+          },
+          {
+            "name": "execution termination child:after-token-checks",
+            "passed": true
+          },
+          {
+            "name": "execution termination child:before-resume",
+            "passed": true
+          },
+          {
+            "name": "execution termination child:after-resume",
+            "passed": true
+          },
+          {
+            "name": "execution termination job:after-drain",
+            "passed": true
+          },
+          {
+            "name": "execution termination run-result:before-write",
+            "passed": true
+          },
+          {
+            "name": "execution termination run-result:after-write",
+            "passed": true
+          },
+          {
+            "name": "execution termination run-complete:before-write",
+            "passed": true
+          },
+          {
+            "name": "execution termination run-complete:after-write",
+            "passed": true
+          }
+        ],
+        "launcherSha256": "635e3938aacffb11a1d35c446a63498667dbf672c10916fe00bb91fb8ec23d50",
+        "sourceSetSha256": "1e8862ef110bac2dfe687fd5e7470886ac026fc1abf73309cb7970d7caf52ded",
+        "testHooks": true,
+        "canarySha256": "ffb4c7bdcb388f150ffb12bdd2453afc65d4df93138f53db586e0d03258d3dca",
+        "harnessSha256": "499cb25fd5185170f01ddac28da95d09e0f2eab8af3c11b01e7e76c47ddb89bc",
+        "finishedAt": "2026-10-26T11:22:48.075Z"
+      },
+      {
+        "evidence": ".native-work/evidence/review-cleanup-faults-01/summary.json",
+        "sha256": "42c9a04d61a88243c5823f4acf2eba47cd02f39f36eaa1cde229082a0c1aafa7",
+        "ok": true,
+        "mode": "cleanup-faults",
+        "checks": [
+          {
+            "name": "additional prepare termination grant-1:before-intent",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination grant-1:after-intent",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination grant-1:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination grant-1:after-completion",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination grant-3:before-intent",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination grant-3:after-intent",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination grant-3:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination grant-3:after-completion",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination grant-4:before-intent",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination grant-4:after-intent",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination grant-4:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination grant-4:after-completion",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination create-handle-sentinel:before-intent",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination create-handle-sentinel:after-intent",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination create-handle-sentinel:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "additional prepare termination create-handle-sentinel:after-completion",
+            "passed": true
+          },
+          {
+            "name": "additional readonly entry grant-entry-0-0:before-mutation",
+            "passed": true
+          },
+          {
+            "name": "additional readonly entry grant-entry-0-0:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "additional readonly entry grant-entry-1-0:before-mutation",
+            "passed": true
+          },
+          {
+            "name": "additional readonly entry grant-entry-1-0:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "writable resource cleanup termination remove-resource-3:before-intent",
+            "passed": true
+          },
+          {
+            "name": "writable resource cleanup termination remove-resource-3:after-intent",
+            "passed": true
+          },
+          {
+            "name": "writable resource cleanup termination remove-resource-3:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "writable resource cleanup termination remove-resource-3:after-completion",
+            "passed": true
+          },
+          {
+            "name": "writable resource cleanup termination remove-resource-4:before-intent",
+            "passed": true
+          },
+          {
+            "name": "writable resource cleanup termination remove-resource-4:after-intent",
+            "passed": true
+          },
+          {
+            "name": "writable resource cleanup termination remove-resource-4:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "writable resource cleanup termination remove-resource-4:after-completion",
+            "passed": true
+          },
+          {
+            "name": "dispose original-entry cleanup termination source.txt remove-entry-3:before-mutation",
+            "passed": true
+          },
+          {
+            "name": "dispose original-entry cleanup termination source.txt remove-entry-3:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "dispose original-entry cleanup termination protected remove-entry-4:before-mutation",
+            "passed": true
+          },
+          {
+            "name": "dispose original-entry cleanup termination protected remove-entry-4:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "recover original-entry cleanup termination source.txt remove-entry-3:before-mutation",
+            "passed": true
+          },
+          {
+            "name": "recover original-entry cleanup termination source.txt remove-entry-3:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "recover original-entry cleanup termination protected remove-entry-4:before-mutation",
+            "passed": true
+          },
+          {
+            "name": "recover original-entry cleanup termination protected remove-entry-4:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "dispose created-entry cleanup termination remove-created-entry:before-intent",
+            "passed": true
+          },
+          {
+            "name": "dispose created-entry cleanup termination remove-created-entry:after-intent",
+            "passed": true
+          },
+          {
+            "name": "dispose created-entry cleanup termination remove-created-entry:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "dispose created-entry cleanup termination remove-created-entry:after-completion",
+            "passed": true
+          },
+          {
+            "name": "recover created-entry cleanup termination remove-created-entry:before-intent",
+            "passed": true
+          },
+          {
+            "name": "recover created-entry cleanup termination remove-created-entry:after-intent",
+            "passed": true
+          },
+          {
+            "name": "recover created-entry cleanup termination remove-created-entry:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "recover created-entry cleanup termination remove-created-entry:after-completion",
+            "passed": true
+          },
+          {
+            "name": "recovery directory termination recover-session-directory:before-intent",
+            "passed": true
+          },
+          {
+            "name": "recovery directory termination recover-session-directory:after-intent",
+            "passed": true
+          },
+          {
+            "name": "recovery directory termination recover-session-directory:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "recovery directory termination recover-session-directory:after-completion",
+            "passed": true
+          },
+          {
+            "name": "recovery directory termination recover-control-directory:before-intent",
+            "passed": true
+          },
+          {
+            "name": "recovery directory termination recover-control-directory:after-intent",
+            "passed": true
+          },
+          {
+            "name": "recovery directory termination recover-control-directory:after-mutation",
+            "passed": true
+          },
+          {
+            "name": "recovery directory termination recover-control-directory:after-completion",
+            "passed": true
+          },
+          {
+            "name": "cleanup durable I/O refusal write:active.json",
+            "passed": true
+          },
+          {
+            "name": "cleanup durable I/O refusal flush:active.json",
+            "passed": true
+          },
+          {
+            "name": "cleanup durable I/O refusal replace:active.json",
+            "passed": true
+          },
+          {
+            "name": "cleanup durable I/O refusal write:cleanup-audit.json",
+            "passed": true
+          },
+          {
+            "name": "cleanup durable I/O refusal flush:cleanup-audit.json",
+            "passed": true
+          },
+          {
+            "name": "cleanup durable I/O refusal replace:cleanup-audit.json",
+            "passed": true
+          },
+          {
+            "name": "cleanup durable I/O refusal write:terminal-receipt.json",
+            "passed": true
+          },
+          {
+            "name": "cleanup durable I/O refusal flush:terminal-receipt.json",
+            "passed": true
+          },
+          {
+            "name": "cleanup durable I/O refusal replace:terminal-receipt.json",
+            "passed": true
+          },
+          {
+            "name": "control-file durable I/O refusal write:run.lock",
+            "passed": true
+          },
+          {
+            "name": "control-file durable I/O refusal flush:run.lock",
+            "passed": true
+          },
+          {
+            "name": "control-file durable I/O refusal replace:run.lock",
+            "passed": true
+          },
+          {
+            "name": "control-file durable I/O refusal write:handle-sentinel",
+            "passed": true
+          },
+          {
+            "name": "control-file durable I/O refusal flush:handle-sentinel",
+            "passed": true
+          },
+          {
+            "name": "control-file durable I/O refusal replace:handle-sentinel",
+            "passed": true
+          }
+        ],
+        "launcherSha256": "635e3938aacffb11a1d35c446a63498667dbf672c10916fe00bb91fb8ec23d50",
+        "sourceSetSha256": "1e8862ef110bac2dfe687fd5e7470886ac026fc1abf73309cb7970d7caf52ded",
+        "testHooks": true,
+        "canarySha256": "ffb4c7bdcb388f150ffb12bdd2453afc65d4df93138f53db586e0d03258d3dca",
+        "harnessSha256": "499cb25fd5185170f01ddac28da95d09e0f2eab8af3c11b01e7e76c47ddb89bc",
+        "finishedAt": "2026-10-26T11:37:55.963Z"
+      },
+      {
+        "evidence": ".native-work/evidence/review-extended-01/summary.json",
+        "sha256": "57943ac34f9193b058e1436eb98b1b82aa13f03dbb42b55a179c41f5be462ca3",
+        "ok": true,
+        "mode": "extended",
+        "checks": [
+          {
+            "name": "second reservation cannot replace active logical session",
+            "passed": true
+          },
+          {
+            "name": "valid-JSON journal corruption fails checksum before any cleanup or reservation",
+            "passed": true
+          },
+          {
+            "name": "durable I/O refusal write:plan.json",
+            "passed": true
+          },
+          {
+            "name": "durable I/O refusal flush:plan.json",
+            "passed": true
+          },
+          {
+            "name": "durable I/O refusal replace:plan.json",
+            "passed": true
+          },
+          {
+            "name": "durable I/O refusal write:state.json",
+            "passed": true
+          },
+          {
+            "name": "durable I/O refusal flush:state.json",
+            "passed": true
+          },
+          {
+            "name": "durable I/O refusal replace:state.json",
+            "passed": true
+          },
+          {
+            "name": "protected descendant identity replacement refuses all ACL cleanup",
+            "passed": true
+          },
+          {
+            "name": "interrupted recovery resumes idempotently",
+            "passed": true
+          }
+        ],
+        "launcherSha256": "635e3938aacffb11a1d35c446a63498667dbf672c10916fe00bb91fb8ec23d50",
+        "sourceSetSha256": "1e8862ef110bac2dfe687fd5e7470886ac026fc1abf73309cb7970d7caf52ded",
+        "testHooks": true,
+        "canarySha256": "ffb4c7bdcb388f150ffb12bdd2453afc65d4df93138f53db586e0d03258d3dca",
+        "harnessSha256": "499cb25fd5185170f01ddac28da95d09e0f2eab8af3c11b01e7e76c47ddb89bc",
+        "finishedAt": "2026-10-26T11:39:35.793Z"
+      },
+      {
+        "evidence": ".native-work/evidence/review-adversarial-01/summary.json",
+        "sha256": "db2d428b2c6b838efd06331587a524a28d0e30c469396444182f0f3bfda56f73",
+        "ok": true,
+        "mode": "adversarial",
+        "checks": [
+          {
+            "name": "reject UNC",
+            "passed": true
+          },
+          {
+            "name": "reject device namespace",
+            "passed": true
+          },
+          {
+            "name": "reject drive relative",
+            "passed": true
+          },
+          {
+            "name": "reject alternate stream",
+            "passed": true
+          },
+          {
+            "name": "reject trailing dot",
+            "passed": true
+          },
+          {
+            "name": "reject trailing space",
+            "passed": true
+          },
+          {
+            "name": "reject dot component",
+            "passed": true
+          },
+          {
+            "name": "reject reserved device",
+            "passed": true
+          },
+          {
+            "name": "reject mixed separators",
+            "passed": true
+          },
+          {
+            "name": "reject junction",
+            "passed": true
+          },
+          {
+            "name": "reject hardlink",
+            "passed": true
+          },
+          {
+            "name": "reject overlap",
+            "passed": true
+          },
+          {
+            "name": "reject coordinator",
+            "passed": true
+          },
+          {
+            "name": "reject descendant-junction",
+            "passed": true
+          },
+          {
+            "name": "reject actual NTFS short-name alias",
+            "passed": true
+          },
+          {
+            "name": "bad-state-digest",
+            "passed": true
+          },
+          {
+            "name": "changed-state",
+            "passed": true
+          },
+          {
+            "name": "changed-executable",
+            "passed": true
+          },
+          {
+            "name": "metadata-cwd",
+            "passed": true
+          },
+          {
+            "name": "metadata-executable",
+            "passed": true
+          },
+          {
+            "name": "reserved-environment",
+            "passed": true
+          },
+          {
+            "name": "output-limit",
+            "passed": true
+          },
+          {
+            "name": "background-descendant",
+            "passed": true
+          },
+          {
+            "name": "private cleanup refuses junction before touching outside bytes or ACLs",
+            "passed": true
+          },
+          {
+            "name": "cleanup preserves unrelated trusted ACE and refuses exact-restoration attestation",
+            "passed": true
+          },
+          {
+            "name": "simulated origin-logon mismatch refuses mutation; actual alternate logon remains unqualified",
+            "passed": true
+          },
+          {
+            "name": "three-generation native network/write/owner/LPAC/handle boundary canary",
+            "passed": true
+          },
+          {
+            "name": "durable setup marker blocks native sessions and malformed marker quarantines without repair",
+            "passed": true
+          }
+        ],
+        "launcherSha256": "635e3938aacffb11a1d35c446a63498667dbf672c10916fe00bb91fb8ec23d50",
+        "sourceSetSha256": "1e8862ef110bac2dfe687fd5e7470886ac026fc1abf73309cb7970d7caf52ded",
+        "testHooks": true,
+        "canarySha256": "ffb4c7bdcb388f150ffb12bdd2453afc65d4df93138f53db586e0d03258d3dca",
+        "harnessSha256": "499cb25fd5185170f01ddac28da95d09e0f2eab8af3c11b01e7e76c47ddb89bc",
+        "finishedAt": "2026-10-26T11:44:11.958Z"
+      },
+      {
+        "evidence": ".native-work/evidence/review-job-recovery-01/summary.json",
+        "sha256": "f10d21222103fffeaeccf73262a565fb7298fbcc05b258048b71f58f309c9470",
+        "ok": true,
+        "mode": "job-recovery",
+        "checks": [
+          {
+            "name": "preexisting same-owner Global job collision refuses child creation",
+            "passed": true
+          },
+          {
+            "name": "hard launcher termination with externally retained job handle recovers and drains all three generations",
+            "passed": true
+          }
+        ],
+        "launcherSha256": "635e3938aacffb11a1d35c446a63498667dbf672c10916fe00bb91fb8ec23d50",
+        "sourceSetSha256": "1e8862ef110bac2dfe687fd5e7470886ac026fc1abf73309cb7970d7caf52ded",
+        "testHooks": true,
+        "canarySha256": "ffb4c7bdcb388f150ffb12bdd2453afc65d4df93138f53db586e0d03258d3dca",
+        "harnessSha256": "499cb25fd5185170f01ddac28da95d09e0f2eab8af3c11b01e7e76c47ddb89bc",
+        "finishedAt": "2026-10-26T11:44:37.790Z"
+      }
+    ],
+    "setup": {
+      "fresh": {
+        "ok": false,
+        "status": "blocked-helper-conflict",
+        "policySha256": "d5ef0588040b6ba8ce5e52f19d17f23a817b557580e437750fcb8264c2311177",
+        "installationId": "2562a0441f8576a6fbf7fbe6bc2a7299",
+        "helperBuildsComplete": true,
+        "externalArtifactCache": false,
+        "archiveCache": true,
+        "helpers": [
+          {
+            "name": "probe-aeneas",
+            "origin": "fresh-source-build",
+            "output": {
+              "sha256": "bc4582ca29c2e3fcce5d4807569dd58bc78d6bf0233fdc654986867c27ed348e",
+              "entries": 2,
+              "files": 1,
+              "bytes": 3373568
+            }
+          },
+          {
+            "name": "probe-rust",
+            "origin": "fresh-source-build",
+            "output": {
+              "sha256": "ebef536a8b2d6f9a97afeeeeac8647dd188d8ad716ebbc245cbac5ab502a5327",
+              "entries": 2,
+              "files": 1,
+              "bytes": 5541888
+            }
+          },
+          {
+            "name": "probe-lean",
+            "origin": "fresh-source-build",
+            "output": {
+              "sha256": "3da74c7d36249edd52556f8a3ed2ebba73f13efb13a50ff3d5085a70f4cfa6d6",
+              "entries": 86,
+              "files": 82,
+              "bytes": 391521122
+            }
+          },
+          {
+            "name": "scip",
+            "origin": "fresh-source-build",
+            "output": {
+              "sha256": "2424a8e70f67a9ca893de2145bf42fa023ff34dcf581fcf4e8423146d1a347ca",
+              "entries": 2,
+              "files": 1,
+              "bytes": 28494848
+            }
+          },
+          {
+            "name": "rustup",
+            "origin": "fresh-source-build",
+            "output": {
+              "sha256": "79863e52e11041d4700a3d543539dadfe1638b08d5f2c6687ad2d607f617b439",
+              "entries": 2,
+              "files": 1,
+              "bytes": 12578816
+            }
+          }
+        ],
+        "evidence": {
+          "path": ".native-work/evidence/review-fresh-helper-builds-02.json",
+          "sha256": "b2908bd66ac61af1194af7c7f96da8a8174de9f58ce782ad3ba2df3d725ee5a2"
+        },
+        "timing": {
+          "finishedUtc": "2026-10-26T12:56:00.4007773Z",
+          "elapsedMs": 4180480.3652,
+          "startedUtc": "2026-10-26T11:46:19.9370322Z",
+          "exitCode": 2
+        },
+        "blocker": "Fresh probe-lean-v4.31.0.exe differs from the existing actual-profile helper. Setup refused replacement and preserved the previous installation.",
+        "comparison": {
+          "path": ".native-work/evidence/review-fresh-lean-comparison-02.json",
+          "sha256": "d502c45cffb0b0934fee986188d388b8a52b0cbc572e7767b0d2705992fb48bd"
+        },
+        "recovery": {
+          "evidence": ".native-work/evidence/review-fresh-setup-02-recovery-checks.json",
+          "sha256": "cd8c4d2e012511f26185c620825d1abeb4bab1f7d57ca7f63ad75876369de96d",
+          "exitCode": 0,
+          "stageRemoved": true,
+          "journalRemoved": true,
+          "markerRemoved": true,
+          "currentPreserved": true,
+          "matchesPreviousRegisteredInstallation": true
+        }
+      },
+      "reused": {
+        "name": "ordinary-reuse",
+        "args": [
+          "C:\\Users\\wolos\\Documents\\ChatGPT\\FVS\\.native-work\\Windows review candidate 02\\scripts\\fvs-probe-inventory.mjs",
+          "setup",
+          "--distribution",
+          "windows-source-v1",
+          "--project-root",
+          "C:\\Users\\wolos\\Documents\\ChatGPT\\FVS\\.native-work\\lean-scip\\dalek with spaces",
+          "--consent",
+          "policy"
+        ],
+        "externalArtifactCache": false,
+        "startedAt": "2026-10-26T13:39:23.143Z",
+        "stdout": "C:\\Users\\wolos\\Documents\\ChatGPT\\FVS\\.native-work\\evidence\\review-setup-followups-01\\ordinary-reuse.stdout.json",
+        "stderr": "C:\\Users\\wolos\\Documents\\ChatGPT\\FVS\\.native-work\\evidence\\review-setup-followups-01\\ordinary-reuse.stderr.txt",
+        "finishedAt": "2026-10-26T14:11:31.204Z",
+        "elapsedMs": 1928061,
+        "exitCode": 0,
+        "signal": null,
+        "ok": true,
+        "installationId": "5c00a53480f3987ec86dc1e6a5f370fe",
+        "receipt": "C:\\Users\\wolos\\.fvs\\tools\\windows-source\\windows-source-v1\\installations\\5c00a53480f3987ec86dc1e6a5f370fe\\INSTALL.json",
+        "receiptSha256": "72ae4bad2445790669ed50c0c648a2016f2f350f79b272cb7eb1053f594d0a03",
+        "project": {
+          "projectRoot": "C:\\Users\\wolos\\Documents\\ChatGPT\\FVS\\.native-work\\lean-scip\\dalek with spaces",
+          "rustProject": "C:\\Users\\wolos\\Documents\\ChatGPT\\FVS\\.native-work\\lean-scip\\dalek with spaces\\curve25519-dalek",
+          "translationJson": "C:\\Users\\wolos\\Documents\\ChatGPT\\FVS\\.native-work\\lean-scip\\dalek with spaces\\Curve25519Dalek\\translation.json",
+          "translationSha256": "968a0725b105de2a38a94ee606bd7da85e775267da04dea6a8c9067061372fbd",
+          "aeneasRev": "6e167c9b63a4dafd66d0e0edd9d94669f957ff7b",
+          "charonVersion": "0.1.225",
+          "leanToolchain": "leanprover/lean4:v4.31.0",
+          "cargoLock": "C:\\Users\\wolos\\Documents\\ChatGPT\\FVS\\.native-work\\lean-scip\\dalek with spaces\\Cargo.lock",
+          "cargoLockSha256": "450c780726213e0ce6dc64b69fdaac13a96afcc4d012d8e202af737b7352f2fe",
+          "configSha256": "97d2095966073c3ac476650d8127a07c450e884749a5a4f51eecdda43ec2bb76",
+          "lakeManifestSha256": "7335a2a324c8f8a77b1ccab51f1782393c07ac24892208dccc4aa2c87c1881ee"
+        },
+        "projectInputsSha256": "b7bb2be9e70f189662dad213edcdb6bf023a7c64a56a439899da5bd28d69a6e4",
+        "helpers": [
+          {
+            "name": "probe-aeneas",
+            "origin": "reviewed-existing-artifact",
+            "reusedFrom": {
+              "installationId": "e29c31ed8e749ec6e984a05ac8b197a7",
+              "receiptSha256": "52f2e93089e1d0f08c6c58dbac33a098635e2af36d5383cf051e20f0675f8b5b"
+            },
+            "output": {
+              "sha256": "69e5557bbf2b63151ba5f4c200b7b47df88da424f25227a2a309bc30adf804c9",
+              "entries": 2,
+              "files": 1,
+              "bytes": 3363328
+            }
+          },
+          {
+            "name": "probe-rust",
+            "origin": "reviewed-existing-artifact",
+            "reusedFrom": {
+              "installationId": "e29c31ed8e749ec6e984a05ac8b197a7",
+              "receiptSha256": "52f2e93089e1d0f08c6c58dbac33a098635e2af36d5383cf051e20f0675f8b5b"
+            },
+            "output": {
+              "sha256": "a83888630e1d58843a532df156e5762eacda19e3d59d237b5efbd8d921ee6a5f",
+              "entries": 2,
+              "files": 1,
+              "bytes": 5524992
+            }
+          },
+          {
+            "name": "probe-lean",
+            "origin": "reviewed-existing-artifact",
+            "reusedFrom": {
+              "installationId": "e29c31ed8e749ec6e984a05ac8b197a7",
+              "receiptSha256": "52f2e93089e1d0f08c6c58dbac33a098635e2af36d5383cf051e20f0675f8b5b"
+            },
+            "output": {
+              "sha256": "b93e557a5485c9131015aa57594965b1f03c81cde96696426e92cb90f6ed261d",
+              "entries": 86,
+              "files": 82,
+              "bytes": 391521122
+            }
+          },
+          {
+            "name": "scip",
+            "origin": "reviewed-existing-artifact",
+            "reusedFrom": {
+              "installationId": "e29c31ed8e749ec6e984a05ac8b197a7",
+              "receiptSha256": "52f2e93089e1d0f08c6c58dbac33a098635e2af36d5383cf051e20f0675f8b5b"
+            },
+            "output": {
+              "sha256": "9e3303cf728551a19a60a6b99dd815b1aa51c6ecb5d9f38c50675904a73e8f2f",
+              "entries": 2,
+              "files": 1,
+              "bytes": 28440064
+            }
+          },
+          {
+            "name": "rustup",
+            "origin": "reviewed-existing-artifact",
+            "reusedFrom": {
+              "installationId": "e29c31ed8e749ec6e984a05ac8b197a7",
+              "receiptSha256": "52f2e93089e1d0f08c6c58dbac33a098635e2af36d5383cf051e20f0675f8b5b"
+            },
+            "output": {
+              "sha256": "12b10fe8f70da9381532b72fec7645e3c0a794ee83bd5c2d6f60ee7607cf80d5",
+              "entries": 2,
+              "files": 1,
+              "bytes": 12544512
+            }
+          }
+        ],
+        "launcherTestHooks": false,
+        "policySha256": "d5ef0588040b6ba8ce5e52f19d17f23a817b557580e437750fcb8264c2311177",
+        "evidence": {
+          "path": ".native-work/evidence/review-setup-followups-01/report.json",
+          "sha256": "0c81212c157ad8929792a9053320b7982fd53cbe92a832a3166f390e02f1b4d3"
+        },
+        "resolvedAndExecuted": false
+      },
+      "reconfigured": {
+        "name": "second-project",
+        "args": [
+          "C:\\Users\\wolos\\Documents\\ChatGPT\\FVS\\.native-work\\Windows review candidate 02\\scripts\\fvs-probe-inventory.mjs",
+          "setup",
+          "--distribution",
+          "windows-source-v1",
+          "--project-root",
+          "C:\\Users\\wolos\\Documents\\ChatGPT\\FVS\\.native-work\\lean-scip\\dalek review with spaces",
+          "--consent",
+          "policy"
+        ],
+        "externalArtifactCache": false,
+        "startedAt": "2026-10-26T14:11:31.268Z",
+        "stdout": "C:\\Users\\wolos\\Documents\\ChatGPT\\FVS\\.native-work\\evidence\\review-setup-followups-01\\second-project.stdout.json",
+        "stderr": "C:\\Users\\wolos\\Documents\\ChatGPT\\FVS\\.native-work\\evidence\\review-setup-followups-01\\second-project.stderr.txt",
+        "finishedAt": "2026-10-26T14:50:50.080Z",
+        "elapsedMs": 2358813,
+        "exitCode": 0,
+        "signal": null,
+        "ok": true,
+        "installationId": "aa85fda3c81f6c0192ea948e2ca3fe7f",
+        "receipt": "C:\\Users\\wolos\\.fvs\\tools\\windows-source\\windows-source-v1\\installations\\aa85fda3c81f6c0192ea948e2ca3fe7f\\INSTALL.json",
+        "receiptSha256": "9b871c8d090d480c825a2c2d0623aa0269dc799755aa8387a60e99fd93c8b13f",
+        "project": {
+          "projectRoot": "C:\\Users\\wolos\\Documents\\ChatGPT\\FVS\\.native-work\\lean-scip\\dalek review with spaces",
+          "rustProject": "C:\\Users\\wolos\\Documents\\ChatGPT\\FVS\\.native-work\\lean-scip\\dalek review with spaces\\curve25519-dalek",
+          "translationJson": "C:\\Users\\wolos\\Documents\\ChatGPT\\FVS\\.native-work\\lean-scip\\dalek review with spaces\\Curve25519Dalek\\translation.json",
+          "translationSha256": "968a0725b105de2a38a94ee606bd7da85e775267da04dea6a8c9067061372fbd",
+          "aeneasRev": "6e167c9b63a4dafd66d0e0edd9d94669f957ff7b",
+          "charonVersion": "0.1.225",
+          "leanToolchain": "leanprover/lean4:v4.31.0",
+          "cargoLock": "C:\\Users\\wolos\\Documents\\ChatGPT\\FVS\\.native-work\\lean-scip\\dalek review with spaces\\Cargo.lock",
+          "cargoLockSha256": "450c780726213e0ce6dc64b69fdaac13a96afcc4d012d8e202af737b7352f2fe",
+          "configSha256": "97d2095966073c3ac476650d8127a07c450e884749a5a4f51eecdda43ec2bb76",
+          "lakeManifestSha256": "7335a2a324c8f8a77b1ccab51f1782393c07ac24892208dccc4aa2c87c1881ee"
+        },
+        "projectInputsSha256": "7e685820ec30f64616e8285ab3bad2a18082a023a7b962e14ef71c53f05141d2",
+        "helpers": [
+          {
+            "name": "probe-aeneas",
+            "origin": "reviewed-existing-artifact",
+            "reusedFrom": {
+              "installationId": "5c00a53480f3987ec86dc1e6a5f370fe",
+              "receiptSha256": "72ae4bad2445790669ed50c0c648a2016f2f350f79b272cb7eb1053f594d0a03"
+            },
+            "output": {
+              "sha256": "69e5557bbf2b63151ba5f4c200b7b47df88da424f25227a2a309bc30adf804c9",
+              "entries": 2,
+              "files": 1,
+              "bytes": 3363328
+            }
+          },
+          {
+            "name": "probe-rust",
+            "origin": "reviewed-existing-artifact",
+            "reusedFrom": {
+              "installationId": "5c00a53480f3987ec86dc1e6a5f370fe",
+              "receiptSha256": "72ae4bad2445790669ed50c0c648a2016f2f350f79b272cb7eb1053f594d0a03"
+            },
+            "output": {
+              "sha256": "a83888630e1d58843a532df156e5762eacda19e3d59d237b5efbd8d921ee6a5f",
+              "entries": 2,
+              "files": 1,
+              "bytes": 5524992
+            }
+          },
+          {
+            "name": "probe-lean",
+            "origin": "reviewed-existing-artifact",
+            "reusedFrom": {
+              "installationId": "5c00a53480f3987ec86dc1e6a5f370fe",
+              "receiptSha256": "72ae4bad2445790669ed50c0c648a2016f2f350f79b272cb7eb1053f594d0a03"
+            },
+            "output": {
+              "sha256": "b93e557a5485c9131015aa57594965b1f03c81cde96696426e92cb90f6ed261d",
+              "entries": 86,
+              "files": 82,
+              "bytes": 391521122
+            }
+          },
+          {
+            "name": "scip",
+            "origin": "reviewed-existing-artifact",
+            "reusedFrom": {
+              "installationId": "5c00a53480f3987ec86dc1e6a5f370fe",
+              "receiptSha256": "72ae4bad2445790669ed50c0c648a2016f2f350f79b272cb7eb1053f594d0a03"
+            },
+            "output": {
+              "sha256": "9e3303cf728551a19a60a6b99dd815b1aa51c6ecb5d9f38c50675904a73e8f2f",
+              "entries": 2,
+              "files": 1,
+              "bytes": 28440064
+            }
+          },
+          {
+            "name": "rustup",
+            "origin": "reviewed-existing-artifact",
+            "reusedFrom": {
+              "installationId": "5c00a53480f3987ec86dc1e6a5f370fe",
+              "receiptSha256": "72ae4bad2445790669ed50c0c648a2016f2f350f79b272cb7eb1053f594d0a03"
+            },
+            "output": {
+              "sha256": "12b10fe8f70da9381532b72fec7645e3c0a794ee83bd5c2d6f60ee7607cf80d5",
+              "entries": 2,
+              "files": 1,
+              "bytes": 12544512
+            }
+          }
+        ],
+        "launcherTestHooks": false,
+        "policySha256": "d5ef0588040b6ba8ce5e52f19d17f23a817b557580e437750fcb8264c2311177",
+        "evidence": {
+          "path": ".native-work/evidence/review-setup-followups-01/report.json",
+          "sha256": "0c81212c157ad8929792a9053320b7982fd53cbe92a832a3166f390e02f1b4d3"
+        },
+        "resolvedAndExecuted": false
+      },
+      "reviewed": {
+        "ok": true,
+        "policySha256": "d5ef0588040b6ba8ce5e52f19d17f23a817b557580e437750fcb8264c2311177",
+        "installationId": "e29c31ed8e749ec6e984a05ac8b197a7",
+        "externalArtifactCache": true,
+        "helperSource": "Built-in reviewed artifact groups",
+        "launcherTestHooks": false,
+        "launcherSha256": "be0136d5242c4387cc8125bb5514ee461310bb3eb71b1580d39db00edc9f8a1b",
+        "launcherSourceSetSha256": "1e8862ef110bac2dfe687fd5e7470886ac026fc1abf73309cb7970d7caf52ded",
+        "receipt": {
+          "path": "C:\\Users\\wolos\\.fvs\\tools\\windows-source\\windows-source-v1\\installations\\e29c31ed8e749ec6e984a05ac8b197a7\\INSTALL.json",
+          "sha256": "52f2e93089e1d0f08c6c58dbac33a098635e2af36d5383cf051e20f0675f8b5b"
+        },
+        "evidence": {
+          "path": ".native-work/evidence/review-cached-setup-01.json",
+          "sha256": "ad6e3d1884ad20caa4d70d2b5719e53b0aa14b6da21a379d27e4f836ab71b722"
+        },
+        "elapsedMs": 2013643,
+        "helpers": [
+          {
+            "name": "probe-aeneas",
+            "origin": "reviewed-existing-artifact",
+            "output": {
+              "sha256": "69e5557bbf2b63151ba5f4c200b7b47df88da424f25227a2a309bc30adf804c9",
+              "entries": 2,
+              "files": 1,
+              "bytes": 3363328
+            }
+          },
+          {
+            "name": "probe-rust",
+            "origin": "reviewed-existing-artifact",
+            "output": {
+              "sha256": "a83888630e1d58843a532df156e5762eacda19e3d59d237b5efbd8d921ee6a5f",
+              "entries": 2,
+              "files": 1,
+              "bytes": 5524992
+            }
+          },
+          {
+            "name": "probe-lean",
+            "origin": "reviewed-existing-artifact",
+            "output": {
+              "sha256": "b93e557a5485c9131015aa57594965b1f03c81cde96696426e92cb90f6ed261d",
+              "entries": 86,
+              "files": 82,
+              "bytes": 391521122
+            }
+          },
+          {
+            "name": "scip",
+            "origin": "reviewed-existing-artifact",
+            "output": {
+              "sha256": "9e3303cf728551a19a60a6b99dd815b1aa51c6ecb5d9f38c50675904a73e8f2f",
+              "entries": 2,
+              "files": 1,
+              "bytes": 28440064
+            }
+          },
+          {
+            "name": "rustup",
+            "origin": "reviewed-existing-artifact",
+            "output": {
+              "sha256": "12b10fe8f70da9381532b72fec7645e3c0a794ee83bd5c2d6f60ee7607cf80d5",
+              "entries": 2,
+              "files": 1,
+              "bytes": 12544512
+            }
+          }
+        ]
+      }
+    },
+    "normal": null,
+    "denial": {
+      "ok": true,
+      "evidence": {
+        "path": "C:\\Users\\wolos\\Documents\\ChatGPT\\FVS\\.native-work\\windows-adapter-smoke\\denial nOFjJX\\report.json",
+        "sha256": "b07ccfd3d4cbc6b2012fcea64fd7a24c00c7347013f20dc3d620af57d287db59"
+      },
+      "authority": "Trusted negative fixture deliberately withholds helper grants; no production brand/receipt modified; production adapter and launcher bytes unchanged",
+      "policySha256": "d5ef0588040b6ba8ce5e52f19d17f23a817b557580e437750fcb8264c2311177",
+      "launcherSha256": "60128b2300621a6b81d5122d2ba484a58ac2b09014fdc845d043ac0aa133b431",
+      "launcherSourceSetSha256": "1e8862ef110bac2dfe687fd5e7470886ac026fc1abf73309cb7970d7caf52ded",
+      "launcherTestHooks": false,
+      "adapterSha256": "629f9ec21d83feb672dd431c7b67e91fe63137becff45746e5f9c331877723b9",
+      "installAttemptObserved": true,
+      "installDenied": true,
+      "graphAccepted": false,
+      "protectedResourcesUnchanged": true,
+      "cleanup": [
+        {
+          "path": "C:\\Users\\wolos\\.fvs\\windows-confinement\\s\\e8b34ef4ae6540829a61f95e49f4754e\\c\\terminal-receipt.json",
+          "sha256": "26c8cd13328993a8e4fe7f64580550ea0938d551558df19ad603a233a937ff56",
+          "sessionId": "e8b34ef4ae6540829a61f95e49f4754e",
+          "jobDrained": true,
+          "profileAbsent": true,
+          "stageRemoved": true,
+          "exactAclsRestored": true
+        },
+        {
+          "path": "C:\\Users\\wolos\\.fvs\\windows-confinement\\s\\4e6c9258aa064fb4bb99442fdfff13ea\\c\\terminal-receipt.json",
+          "sha256": "bba82553301fb2ce1004630422c121cbc9b789d7ffec04b1f599d89a4a06ec02",
+          "sessionId": "4e6c9258aa064fb4bb99442fdfff13ea",
+          "jobDrained": true,
+          "profileAbsent": true,
+          "stageRemoved": true,
+          "exactAclsRestored": true
+        }
+      ],
+      "jobDrained": true,
+      "profileAbsent": true,
+      "stageRemoved": true,
+      "startedAt": "2026-10-26T14:51:33.452Z",
+      "finishedAt": "2026-10-26T14:52:46.575Z"
+    },
+    "normalInterrupted": {
+      "requestedByUser": true,
+      "evidence": {
+        "path": ".native-work/evidence/review-production-stop-01.json",
+        "sha256": "91c2490187eaacecc55ce03d9ff57d78fb096635ae6d8d9dd15ca6490b61850e"
+      },
+      "phase": "resolve inventory-after",
+      "confinedHelperChecks": {
+        "count": 11,
+        "passed": true,
+        "runs": [
+          {
+            "path": "C:\\Users\\wolos\\.fvs\\windows-confinement\\s\\89cee8fc879b4120a7e19ecfc01eb033\\c\\run-49e6578879204161847f76163910242f.json",
+            "sha256": "3dff6cba084344e7b3211498a8e73de3a4511ba50962a79ec94fbfc6691f9d16",
+            "runId": "49e6578879204161847f76163910242f",
+            "exitCode": 0,
+            "activeProcessesAfter": 0,
+            "lpacAccessCheckVerified": true,
+            "inheritedSentinelExcluded": true
+          },
+          {
+            "path": "C:\\Users\\wolos\\.fvs\\windows-confinement\\s\\89cee8fc879b4120a7e19ecfc01eb033\\c\\run-55eaaf23937a493dbace7d89c21d03d5.json",
+            "sha256": "20f6632be033d932a0cec19c093c1891dda69fbc03c937db92ec3e820fa4653e",
+            "runId": "55eaaf23937a493dbace7d89c21d03d5",
+            "exitCode": 0,
+            "activeProcessesAfter": 0,
+            "lpacAccessCheckVerified": true,
+            "inheritedSentinelExcluded": true
+          },
+          {
+            "path": "C:\\Users\\wolos\\.fvs\\windows-confinement\\s\\89cee8fc879b4120a7e19ecfc01eb033\\c\\run-59d0422e9be247dfa43f4951ef38f64f.json",
+            "sha256": "657b967b68714e2612739039bf099a9a250a22f3c50bc36a21697f399acc9183",
+            "runId": "59d0422e9be247dfa43f4951ef38f64f",
+            "exitCode": 0,
+            "activeProcessesAfter": 0,
+            "lpacAccessCheckVerified": true,
+            "inheritedSentinelExcluded": true
+          },
+          {
+            "path": "C:\\Users\\wolos\\.fvs\\windows-confinement\\s\\89cee8fc879b4120a7e19ecfc01eb033\\c\\run-68dcc545ddd14d6dbc7397761d659337.json",
+            "sha256": "2dad432adeee5a1ceaf7832a59f5d909dd1775217a177cd1f22b77a072340683",
+            "runId": "68dcc545ddd14d6dbc7397761d659337",
+            "exitCode": 0,
+            "activeProcessesAfter": 0,
+            "lpacAccessCheckVerified": true,
+            "inheritedSentinelExcluded": true
+          },
+          {
+            "path": "C:\\Users\\wolos\\.fvs\\windows-confinement\\s\\89cee8fc879b4120a7e19ecfc01eb033\\c\\run-894b3b79953e43919d7971d2313b6436.json",
+            "sha256": "1b74bd16bdb84079a11d5f0103bd0cd3e2f34236192ba68d75ae03f80784a157",
+            "runId": "894b3b79953e43919d7971d2313b6436",
+            "exitCode": 0,
+            "activeProcessesAfter": 0,
+            "lpacAccessCheckVerified": true,
+            "inheritedSentinelExcluded": true
+          },
+          {
+            "path": "C:\\Users\\wolos\\.fvs\\windows-confinement\\s\\89cee8fc879b4120a7e19ecfc01eb033\\c\\run-8bcd030a633a4091bf4ff9d4cb75e651.json",
+            "sha256": "87550faa7684ba7629c07c6c2068b21dda44f29f0f40258cc25e1d856f9878a3",
+            "runId": "8bcd030a633a4091bf4ff9d4cb75e651",
+            "exitCode": 0,
+            "activeProcessesAfter": 0,
+            "lpacAccessCheckVerified": true,
+            "inheritedSentinelExcluded": true
+          },
+          {
+            "path": "C:\\Users\\wolos\\.fvs\\windows-confinement\\s\\89cee8fc879b4120a7e19ecfc01eb033\\c\\run-8cd4285778c442ce95ea2851700819f7.json",
+            "sha256": "16661d6cca20717c4f4d917db256eb6cbcc057213ec0e7f3dc3ca13b835b3efb",
+            "runId": "8cd4285778c442ce95ea2851700819f7",
+            "exitCode": 0,
+            "activeProcessesAfter": 0,
+            "lpacAccessCheckVerified": true,
+            "inheritedSentinelExcluded": true
+          },
+          {
+            "path": "C:\\Users\\wolos\\.fvs\\windows-confinement\\s\\89cee8fc879b4120a7e19ecfc01eb033\\c\\run-8dc263ce3eb6492cb794bc1700d3d7dc.json",
+            "sha256": "8ddfeab1236e4e136cbf5ed0584ded307c9275f04d8f4f94738d509d36d886f7",
+            "runId": "8dc263ce3eb6492cb794bc1700d3d7dc",
+            "exitCode": 0,
+            "activeProcessesAfter": 0,
+            "lpacAccessCheckVerified": true,
+            "inheritedSentinelExcluded": true
+          },
+          {
+            "path": "C:\\Users\\wolos\\.fvs\\windows-confinement\\s\\89cee8fc879b4120a7e19ecfc01eb033\\c\\run-b1a4d4d9cff64a4399a1c1883d8d52b2.json",
+            "sha256": "542b30ce5c9cb0ca56b24c4b3a997b7c1687b1a237e86bbb83a05016c5109adf",
+            "runId": "b1a4d4d9cff64a4399a1c1883d8d52b2",
+            "exitCode": 0,
+            "activeProcessesAfter": 0,
+            "lpacAccessCheckVerified": true,
+            "inheritedSentinelExcluded": true
+          },
+          {
+            "path": "C:\\Users\\wolos\\.fvs\\windows-confinement\\s\\89cee8fc879b4120a7e19ecfc01eb033\\c\\run-bef50a19a9ca4a1d8c347ac75f86eee0.json",
+            "sha256": "65cc82d7a9ef1bcd9e5303e96e2e4af89e29ab49ba488d57a99ea48400e12c98",
+            "runId": "bef50a19a9ca4a1d8c347ac75f86eee0",
+            "exitCode": 0,
+            "activeProcessesAfter": 0,
+            "lpacAccessCheckVerified": true,
+            "inheritedSentinelExcluded": true
+          },
+          {
+            "path": "C:\\Users\\wolos\\.fvs\\windows-confinement\\s\\89cee8fc879b4120a7e19ecfc01eb033\\c\\run-f78a23f148b946e3b0cb6331f202fe2f.json",
+            "sha256": "da442ff347b2b971305c2b1d4053b30f285560f5de7eacc73a881bbe1c422528",
+            "runId": "f78a23f148b946e3b0cb6331f202fe2f",
+            "exitCode": 0,
+            "activeProcessesAfter": 0,
+            "lpacAccessCheckVerified": true,
+            "inheritedSentinelExcluded": true
+          }
+        ],
+        "observations": [
+          {
+            "name": "probe-aeneas",
+            "runId": "894b3b79953e43919d7971d2313b6436",
+            "observed": "probe-aeneas 0.20.0"
+          },
+          {
+            "name": "probe-rust",
+            "runId": "8dc263ce3eb6492cb794bc1700d3d7dc",
+            "observed": "probe-rust 0.11.0"
+          },
+          {
+            "name": "probe-lean",
+            "runId": "8cd4285778c442ce95ea2851700819f7",
+            "observed": "0.14.0"
+          },
+          {
+            "name": "scip",
+            "runId": "55eaaf23937a493dbace7d89c21d03d5",
+            "observed": "scip version v0.10.0"
+          },
+          {
+            "name": "lean",
+            "runId": "b1a4d4d9cff64a4399a1c1883d8d52b2",
+            "observed": "Lean (version 4.31.0, x86_64-w64-windows-gnu, commit 68218e876d2a38b1985b8590fff244a83c321783, Release)"
+          },
+          {
+            "name": "lake",
+            "runId": "f78a23f148b946e3b0cb6331f202fe2f",
+            "observed": "Lake version 5.0.0-src+68218e8 (Lean version 4.31.0)"
+          },
+          {
+            "name": "rust-analyzer",
+            "runId": "59d0422e9be247dfa43f4951ef38f64f",
+            "observed": "rust-analyzer 1.98.1 (48a229ce 2026-09-01)"
+          },
+          {
+            "name": "rustup-components",
+            "runId": "8bcd030a633a4091bf4ff9d4cb75e651",
+            "observed": "cargo-x86_64-pc-windows-msvc\nrust-analyzer-x86_64-pc-windows-msvc\nrust-src\nrust-std-x86_64-pc-windows-msvc\nrustc-x86_64-pc-windows-msvc\nrustfmt-x86_64-pc-windows-msvc"
+          },
+          {
+            "name": "cargo",
+            "runId": "68dcc545ddd14d6dbc7397761d659337",
+            "observed": "cargo 1.98.1 (797e8a9bc 2026-08-05)"
+          },
+          {
+            "name": "rustc",
+            "runId": "bef50a19a9ca4a1d8c347ac75f86eee0",
+            "observed": "rustc 1.98.1 (48a229cea 2026-09-01)"
+          },
+          {
+            "name": "git",
+            "runId": "49e6578879204161847f76163910242f",
+            "observed": "git version 2.56.0.windows.3"
+          }
+        ]
+      },
+      "cleanup": {
+        "path": "C:\\Users\\wolos\\.fvs\\windows-confinement\\s\\89cee8fc879b4120a7e19ecfc01eb033\\c\\terminal-receipt.json",
+        "sha256": "e3bbd666a00fa5e20f3749007538ec2b2f321e384890d8fbfbd88931adaae338",
+        "sessionId": "89cee8fc879b4120a7e19ecfc01eb033",
+        "jobDrained": true,
+        "profileAbsent": true,
+        "stageRemoved": true,
+        "exactAclsRestored": true,
+        "originalEntriesChecked": 4874
+      },
+      "resolveCommand": {
+        "command": [
+          "C:\\Users\\wolos\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\node\\bin\\node.exe",
+          "C:\\Users\\wolos\\Documents\\ChatGPT\\FVS\\.native-work\\Windows review candidate 02\\scripts\\fvs-probe-inventory.mjs",
+          "resolve",
+          "--project-root",
+          "C:\\Users\\wolos\\Documents\\ChatGPT\\FVS\\.native-work\\lean-scip\\dalek review with spaces",
+          "--format",
+          "json"
+        ],
+        "exitCode": 4294967295,
+        "elapsedMs": 4665850.9806
+      },
+      "normalCommandsCompleted": false,
+      "finalProtectedInventoryComplete": false,
+      "extractionStarted": false,
+      "graphAccepted": false,
+      "statusAfter": "idle",
+      "finishedAt": "2026-10-26T16:12:29.276Z"
+    }
+  },
+  "remainingGates": [
+    "Successful fresh helper-build installation is blocked by a differing existing Lean profile helper; preserving that helper prevents completing this acceptance case on the current profile.",
+    "Complete packaged resolve/run acceptance on the reconfigured project: stopped at user request after helper-session cleanup; final protected inventory was incomplete and extraction was not started."
+  ]
+}

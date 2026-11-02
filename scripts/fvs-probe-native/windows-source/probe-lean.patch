@@ -1,0 +1,267 @@
+diff --git a/ProbeLean/Atomize.lean b/ProbeLean/Atomize.lean
+index f2112d7..8388af7 100644
+--- a/ProbeLean/Atomize.lean
++++ b/ProbeLean/Atomize.lean
+@@ -213,8 +213,7 @@ def computeSpecs (atoms : Array Atom) : Array Atom :=
+ 
+ /-- Resolve a potentially relative path against a base directory -/
+ def resolvePath (basePath : System.FilePath) (path : System.FilePath) : IO System.FilePath := do
+-  let pathStr := path.toString
+-  if pathStr.startsWith "/" then
++  if path.isAbsolute then
+     return path
+   else
+     let resolved := basePath / path
+@@ -252,13 +251,14 @@ def importProjectEnv (projectPath : System.FilePath) (modules : Array ProjectMod
+ 
+   let probeLeanPaths ← findProbeLeanLib
+ 
+-  let (leanPathOut, _, exitCode) ← runLakeCmd #["env", "printenv", "LEAN_PATH"] (some absProjectPath) nixMode
++  let (envOut, _, exitCode) ← runLakeCmd #["env"] (some absProjectPath) nixMode
+   if exitCode != 0 then
+     return .error "Failed to get LEAN_PATH from target project"
+ 
+-  let leanPath := leanPathOut.trimAscii.toString
++  let some leanPath := leanPathFromLakeEnv envOut
++    | return .error "Lake did not report LEAN_PATH"
+ 
+-  let paths := leanPath.splitOn ":"
++  let paths := System.SearchPath.parse leanPath
+   let mut searchPaths : Array System.FilePath := #[]
+   for p in paths do
+     let resolved ← resolvePath absProjectPath p
+diff --git a/ProbeLean/Environment.lean b/ProbeLean/Environment.lean
+index f0d5507..f7b2cd4 100644
+--- a/ProbeLean/Environment.lean
++++ b/ProbeLean/Environment.lean
+@@ -44,6 +44,12 @@ def runLakeCmd (args : Array String) (cwd : Option System.FilePath := none)
+   | none =>
+     runCmd "lake" args cwd
+ 
++/-- Read the `LEAN_PATH` entry emitted by bare `lake env`, without depending on
++    an external `printenv` executable. Keep spaces and `=` inside path names. -/
++def leanPathFromLakeEnv (output : String) : Option String := do
++  let line ← (output.splitOn "\n").find? (·.startsWith "LEAN_PATH=")
++  return ((line.drop "LEAN_PATH=".length).toString.dropSuffix "\r").toString
++
+ /-- Build the target project using lake, returning combined stdout+stderr on success -/
+ def buildProject (projectPath : System.FilePath) : IO (Except String String) := do
+   let (stdout, stderr, exitCode) ← runCmd "lake" #["build"] projectPath
+@@ -173,9 +179,8 @@ partial def collectOleanFiles (basePath : System.FilePath) (currentPath : System
+       result := result ++ subResult
+     else if path.extension == some "olean" then
+       -- Convert path to module name
+-      let relPath := (path.toString.dropPrefix basePath.toString).toString
+-      let relPath := (relPath.dropPrefix "/").toString
+-      let relPath := (relPath.dropSuffix ".olean").toString
++      let parts := path.components.drop basePath.components.length
++      let relPath := (("/".intercalate parts).dropSuffix ".olean").toString
+       result := result.push (pathToModuleName relPath, relPath)
+   return result
+ 
+@@ -233,7 +238,7 @@ structure ProjectModule where
+ def getProjectModules (projectPath : System.FilePath)
+     (nixMode : Option NixMode := none) (sourceRoots : Array String := #["."])
+     : IO (Except String (Array ProjectModule)) := do
+-  let (_, stderr, exitCode) ← runLakeCmd #["env", "printenv", "LEAN_PATH"] projectPath nixMode
++  let (_, stderr, exitCode) ← runLakeCmd #["env"] projectPath nixMode
+   if exitCode != 0 then
+     return .error s!"Failed to get LEAN_PATH:\n{stderr}"
+ 
+diff --git a/ProbeLean/NixEnv.lean b/ProbeLean/NixEnv.lean
+index 5cfd73e..dd90c87 100644
+--- a/ProbeLean/NixEnv.lean
++++ b/ProbeLean/NixEnv.lean
+@@ -30,7 +30,12 @@ def isNixAvailable (mode : NixMode) : IO Bool := do
+   let bin := match mode with
+     | .flake => "nix"
+     | .shell => "nix-shell"
+-  let result ← IO.Process.output { cmd := "which", args := #[bin] }
+-  return result.exitCode == 0
++  let bin := if System.Platform.isWindows then bin ++ ".exe" else bin
++  let finder := if System.Platform.isWindows then "where.exe" else "which"
++  try
++    let result ← IO.Process.output { cmd := finder, args := #[bin] }
++    return result.exitCode == 0
++  catch _ =>
++    return false
+ 
+ end ProbeLean
+diff --git a/Tests/Main.lean b/Tests/Main.lean
+index ef5ac92..7c31645 100644
+--- a/Tests/Main.lean
++++ b/Tests/Main.lean
+@@ -23,6 +23,19 @@ def test (name : String) (condition : Bool) (result : TestResult) : IO TestResul
+     IO.println s!"  ✗ {name}"
+     return result.add false
+ 
++def testLakeEnvOutput (result : TestResult) : IO TestResult := do
++  let mut result := result
++  IO.println "Testing lake env output..."
++  result ← test "selects exact LEAN_PATH entry"
++    (leanPathFromLakeEnv "LEAN_SRC_PATH=src\nLEAN_PATH=lib:dep\nPATH=bin\n" == some "lib:dep") result
++  result ← test "preserves Windows drives, spaces and equals"
++    (leanPathFromLakeEnv "LEAN_PATH=C:\\work area\\lib;D:\\a=b\r\n" == some "C:\\work area\\lib;D:\\a=b") result
++  result ← test "missing LEAN_PATH stays missing"
++    (leanPathFromLakeEnv "PATH=bin\n" == none) result
++  result ← test "empty LEAN_PATH is distinct from missing"
++    (leanPathFromLakeEnv "LEAN_PATH=\n" == some "") result
++  return result
++
+ def testConstants (result : TestResult) : IO TestResult := do
+   let mut result := result
+   IO.println "Testing Constants..."
+@@ -1358,8 +1371,9 @@ def testEnvelopeAwareLoading (result : TestResult) : IO TestResult := do
+ 
+   IO.println ""
+   IO.println "Testing loadAtoms end-to-end with envelope..."
+-  let tmpBarePath : System.FilePath := "/tmp/probe-lean-test-bare.json"
+-  let tmpEnvPath : System.FilePath := "/tmp/probe-lean-test-env.json"
++  let tmpDir ← IO.FS.createTempDir
++  let tmpBarePath := tmpDir / "bare.json"
++  let tmpEnvPath := tmpDir / "envelope.json"
+   IO.FS.writeFile tmpBarePath bareStr
+   IO.FS.writeFile tmpEnvPath envStr
+ 
+@@ -1377,6 +1391,7 @@ def testEnvelopeAwareLoading (result : TestResult) : IO TestResult := do
+ 
+   IO.FS.removeFile tmpBarePath
+   IO.FS.removeFile tmpEnvPath
++  IO.FS.removeDir tmpDir
+   return result
+ 
+ def testMetadataHelpers (result : TestResult) : IO TestResult := do
+@@ -1420,7 +1435,7 @@ def testFindDefaultAtomsPath (result : TestResult) : IO TestResult := do
+   let mut result := result
+   IO.println ""
+   IO.println "Testing findDefaultAtomsPath..."
+-  let tmpBase : System.FilePath := "/tmp/probe-lean-test-" ++ toString (← IO.monoNanosNow)
++  let tmpBase ← IO.FS.createTempDir
+   let probesDir := tmpBase / ".verilib" / "probes"
+   IO.FS.createDirAll probesDir
+   let testSourceForPath : SourceInfo := {
+@@ -1439,7 +1454,7 @@ def testFindDefaultAtomsPath (result : TestResult) : IO TestResult := do
+   let (found2, fb2) ← findDefaultAtomsPath tmpBase testSourceForPath
+   result ← test "fallback finds alternative atoms file" (found2.toString == altPath.toString && fb2) result
+ 
+-  let _ ← IO.Process.run { cmd := "sleep", args := #["0.05"] }
++  IO.sleep 50
+   let newerPath := probesDir / "lean_testpkg_new5678.json"
+   IO.FS.writeFile newerPath "{}"
+   let (found3, fb3) ← findDefaultAtomsPath tmpBase testSourceForPath
+@@ -2369,7 +2384,7 @@ def testReadToolchain (result : TestResult) : IO TestResult := do
+   let mut result := result
+   IO.println ""
+   IO.println "Testing readToolchain..."
+-  let tmpBase : System.FilePath := "/tmp/probe-lean-test-tc-" ++ toString (← IO.monoNanosNow)
++  let tmpBase ← IO.FS.createTempDir
+   IO.FS.createDirAll tmpBase
+   IO.FS.writeFile (tmpBase / "lean-toolchain") "leanprover/lean4:v4.29.0-rc3\n"
+   let tc1 ← readToolchain tmpBase
+@@ -2487,7 +2502,7 @@ def testParseDefaultTargets (result : TestResult) : IO TestResult := do
+   IO.println ""
+   IO.println "Testing getLeanLibs priority (defaultTargets > lean_lib)..."
+ 
+-  let tmpBase : System.FilePath := "/tmp/probe-lean-test-libs-" ++ toString (← IO.monoNanosNow)
++  let tmpBase ← IO.FS.createTempDir
+   IO.FS.createDirAll tmpBase
+ 
+   IO.FS.writeFile (tmpBase / "lakefile.toml") withDefault
+@@ -2522,7 +2537,7 @@ def testParseSrcDirs (result : TestResult) : IO TestResult := do
+ 
+   IO.println ""
+   IO.println "Testing getSourceRoots..."
+-  let tmpBase : System.FilePath := "/tmp/probe-lean-test-srcroots-" ++ toString (← IO.monoNanosNow)
++  let tmpBase ← IO.FS.createTempDir
+   IO.FS.createDirAll tmpBase
+ 
+   IO.FS.writeFile (tmpBase / "lakefile.toml") twoSrcDirs
+@@ -2544,7 +2559,7 @@ def testOrphanOleanFilter (result : TestResult) : IO TestResult := do
+   IO.println ""
+   IO.println "Testing partitionBySource (orphan olean filtering)..."
+ 
+-  let tmpBase : System.FilePath := "/tmp/probe-lean-test-orphan-" ++ toString (← IO.monoNanosNow)
++  let tmpBase ← IO.FS.createTempDir
+   -- Live sources at the default root.
+   IO.FS.createDirAll (tmpBase / "Pkg" / "Code")
+   IO.FS.writeFile (tmpBase / "Pkg" / "Lib.lean") ""
+@@ -2965,7 +2980,7 @@ def testCacheValidity (result : TestResult) : IO TestResult := do
+   IO.println ""
+   IO.println "Testing isCacheValid..."
+ 
+-  let tmpBase : System.FilePath := "/tmp/probe-lean-test-cache-" ++ toString (← IO.monoNanosNow)
++  let tmpBase ← IO.FS.createTempDir
+   IO.FS.createDirAll tmpBase
+ 
+   -- No cache file at all → invalid
+@@ -3024,7 +3039,7 @@ def testCheckFilesSkipsDotDirs (result : TestResult) : IO TestResult := do
+   IO.println ""
+   IO.println "Testing checkFilesNewerThan skips dot-directories..."
+ 
+-  let tmpBase : System.FilePath := "/tmp/probe-lean-test-dotdir-" ++ toString (← IO.monoNanosNow)
++  let tmpBase ← IO.FS.createTempDir
+   IO.FS.createDirAll tmpBase
+ 
+   -- Write a cache timestamp file, then wait
+@@ -3058,7 +3073,7 @@ def testNixEnv (result : TestResult) : IO TestResult := do
+   IO.println ""
+   IO.println "Testing Nix environment detection..."
+ 
+-  let tmpBase : System.FilePath := "/tmp/probe-lean-test-nix-" ++ toString (← IO.monoNanosNow)
++  let tmpBase ← IO.FS.createTempDir
+   IO.FS.createDirAll tmpBase
+ 
+   let r1 ← detectNixShell tmpBase
+@@ -4182,6 +4197,7 @@ def main : IO UInt32 := do
+   result ← testProjectModuleMembership result
+   result ← testPathToModuleName result
+   result ← testConstants result
++  result ← testLakeEnvOutput result
+   result ← testAnalysisHelpers result
+   result ← testPrivateNames result
+   result ← testSharedUtilities result
+diff --git a/lake-manifest.json b/lake-manifest.json
+index 1ce7e46..b236326 100644
+--- a/lake-manifest.json
++++ b/lake-manifest.json
+@@ -1,15 +1,16 @@
+-{"version": "1.1.0",
++{"version": "1.2.0",
+  "packagesDir": ".lake/packages",
+  "packages":
+  [{"url": "https://github.com/leanprover/lean4-cli",
+    "type": "git",
+    "subDir": null,
+    "scope": "",
+-   "rev": "28e0856d4424863a85b18f38868c5420c55f9bae",
++   "rev": "92564e5770e4d09f2d86dfbf8ada1e9c715b384c",
+    "name": "Cli",
+    "manifestFile": "lake-manifest.json",
+-   "inputRev": "v4.28.0-rc1",
++   "inputRev": "92564e5770e4d09f2d86dfbf8ada1e9c715b384c",
+    "inherited": false,
+    "configFile": "lakefile.toml"}],
+  "name": "«probe-lean»",
+- "lakeDir": ".lake"}
++ "lakeDir": ".lake",
++ "fixedToolchain": false}
+diff --git a/lakefile.toml b/lakefile.toml
+index a9aa7b4..0b05979 100644
+--- a/lakefile.toml
++++ b/lakefile.toml
+@@ -5,7 +5,7 @@ defaultTargets = ["probe-lean"]
+ [[require]]
+ name = "Cli"
+ git = "https://github.com/leanprover/lean4-cli"
+-rev = "v4.28.0-rc1"
++rev = "92564e5770e4d09f2d86dfbf8ada1e9c715b384c"
+ 
+ [[lean_lib]]
+ name = "ProbeLean"
+diff --git a/lean-toolchain b/lean-toolchain
+index 4bafde2..18640c8 100644
+--- a/lean-toolchain
++++ b/lean-toolchain
+@@ -1 +1 @@
+-leanprover/lean4:v4.28.0-rc1
++leanprover/lean4:v4.31.0

@@ -12,6 +12,19 @@ import {
   decodeLinuxTarXz, planLinuxSandbox, runLinuxSandbox, runLinuxStagedExtract,
   selectProbeToolPaths, validateLinuxToolPaths,
 } from './fvs-probe-linux.mjs';
+import { decodeWindowsZip } from './fvs-probe-windows.mjs';
+import { WINDOWS_SOURCE_QUALIFICATION } from './fvs-probe-windows-qualification.mjs';
+import { matchesWindowsVersion, assertValidatedWindowsRuntime, plainWindowsPath, resolveWindowsRuntime } from './fvs-probe-windows-runtime.mjs';
+import { planWindowsSetup, setupWindowsRuntime, recoverWindowsSetup } from './fvs-probe-windows-setup.mjs';
+import {
+  getWindowsConfinementStatus, recoverWindowsSession,
+  runWindowsReadOnly, runWindowsStagedExtract,
+} from './fvs-probe-windows-sandbox.mjs';
+
+// A resolved native runtime is process-local authority, never deserialized from
+// CLI output or accepted as an arbitrary caller-written receipt.
+const WINDOWS_RUNTIME = Symbol('validated Windows runtime');
+const WINDOWS_PROJECTS = new WeakMap();
 
 const MINIMUM_VERSION = [0, 19, 0];
 const VERIFICATION_STATUSES = [
@@ -43,12 +56,18 @@ function usage() {
     '',
     '       node fvs-probe-inventory.mjs resolve --project-root DIR',
     '  [--probe ABS_PATH] [--platform TARGET] [--format json|status|text]',
+    '  [--distribution auto|official|windows-source-v1]',
     '       node fvs-probe-inventory.mjs run --project-root DIR --output FILE',
-    '  [--probe ABS_PATH] [--with-public-api]',
+    '  [--probe ABS_PATH] [--with-public-api] [--distribution DISTRIBUTION]',
     '       node fvs-probe-inventory.mjs install --project-root DIR',
     '  [--manifest | --manual | --consent interactive|policy] [--archive FILE]',
+    '       node fvs-probe-inventory.mjs setup --project-root DIR',
+    '  --distribution windows-source-v1 [--manifest | --consent interactive|policy]',
+    '  [--cache-dir DIR]',
+    '       node fvs-probe-inventory.mjs recover --session SESSION_ID',
     '',
-    'resolve classifies verified-probe readiness without writing anything.',
+    'resolve never installs or downloads tools or changes project/tool contents.',
+    'Native Windows checks temporarily provision confinement profiles and access grants.',
     'run executes the verified probe-aeneas by absolute path under an',
     'FVS-generated sandbox. install places the pinned official release in an',
     'FVS-owned versioned directory after explicit consent. The FVS tool',
@@ -545,9 +564,14 @@ export const PROBE_RELEASE = {
     },
     'x86_64-pc-windows-msvc': {
       asset: 'probe-aeneas-x86_64-pc-windows-msvc.zip',
+      assetId: 554534285,
       archiveSha256: '91ebd551073d0f705fdf905185e8d82224c53909f22ef774c231aa411000a2dc',
+      archiveBytes: 1445872,
+      members: ['CHANGELOG.md', 'probe-aeneas.exe', 'README.md'],
+      executable: 'probe-aeneas.exe',
+      executableSha256: '68a131d2c8bb02b23e17cd8d99f5d1de059a7adb2f4ff1ba52fd8b635f5c4c77',
       supported: false,
-      reason: 'scip and probe-lean publish no Windows binaries, and there is no confinement equivalent',
+      reason: 'the official Windows executable has not been qualified; native source builds use a separate distribution; tracked in Beneficial-AI-Foundation/formal-verification-skills#77',
     },
   },
 };
@@ -598,8 +622,8 @@ export const TESTED_TUPLES = [
   },
 ];
 
-// Manual setup for each helper at the tested version. FVS never installs a
-// helper; it only prints these steps.
+// Official-release mode prints manual helper setup at the tested version.
+// The separately selected Windows source distribution has explicit setup.
 const HELPER_SETUP = {
   'x86_64-unknown-linux-gnu': {
     'probe-rust': 'cargo install --locked --git https://github.com/Beneficial-AI-Foundation/probe-rust --rev 1d2a7c5d0e5a5dd95e55c8d6a51cddae0b3d7572',
@@ -635,7 +659,8 @@ function toolsHome() {
 }
 
 export function managedProbePath(root = toolsHome(), target = hostTarget(), release = PROBE_RELEASE) {
-  return path.join(root, release.tool, `${release.version}-${target}`, release.tool);
+  const executable = `${release.tool}${target.endsWith('-pc-windows-msvc') ? '.exe' : ''}`;
+  return path.join(root, release.tool, `${release.version}-${target}`, executable);
 }
 
 function sha256(buffer) {
@@ -831,7 +856,17 @@ const READ_ONLY_POLICY = [
   `(allow file-write* ${READ_ONLY_DEVICES.join(' ')})`,
 ].join('\n');
 
-function readOnlyRun(bin, args, cwd, { projectRoot = null, toolPaths = null } = {}) {
+function readOnlyRun(bin, args, cwd, { projectRoot = null, toolPaths = null, runtime = null } = {}) {
+  if (process.platform === 'win32') {
+    if (!runtime) return { ok: false, stdout: '', output: '', confinementError: 'Windows confinement unavailable: a validated source-build runtime is required' };
+    const command = runtime.versions.find(item => item.executable === bin && JSON.stringify(item.args) === JSON.stringify(args));
+    if (!command) return { ok: false, stdout: '', output: '', confinementError: 'Windows confinement unavailable: command is outside the pinned check recipe' };
+    const batch = runWindowsReadOnly({ runtime, commands: [command], cwd, projectRoot });
+    const result = batch.results?.[0];
+    const output = `${result?.stdout ?? ''}${result?.stderr ?? ''}`.trim();
+    return { ok: batch.ok && result?.ok === true, stdout: (result?.stdout ?? '').trim(), output: output || batch.error || '',
+      ...(!batch.ok ? { confinementError: batch.confinementError ?? batch.error ?? 'Windows confined check failed' } : {}) };
+  }
   if (process.platform === 'linux') {
     const unavailable = (diagnostic) => ({
       ok: false, stdout: '', output: '', confinementError: `Linux confinement unavailable: ${diagnostic}`,
@@ -938,7 +973,7 @@ function candidateProbe(explicit, target) {
   }
   const managed = managedProbePath(toolsHome(), target);
   if (fs.existsSync(managed)) return { source: 'fvs-managed', path: managed };
-  const onPath = which('probe-aeneas');
+  const onPath = which(path.basename(managed));
   return onPath ? { source: 'path', path: onPath } : null;
 }
 
@@ -972,9 +1007,163 @@ function tupleMismatch(provenance) {
   });
 }
 
-// Read-only classification of verified-probe readiness. It never installs,
-// downloads or writes; version checks run under a deny-all-writes sandbox.
-export function resolveProbe({ projectRoot, probe = null, platform = hostTarget() }) {
+export function selectProbeDistribution(distribution = 'auto', platform = hostTarget()) {
+  if (!['auto', 'official', WINDOWS_SOURCE_QUALIFICATION.id].includes(distribution)) fatal(`unknown probe distribution: ${distribution}`);
+  return distribution === 'auto'
+    ? (platform === WINDOWS_SOURCE_QUALIFICATION.target ? WINDOWS_SOURCE_QUALIFICATION.id : 'official')
+    : distribution;
+}
+
+function bindWindowsProject(root, provenance) {
+  plainWindowsPath(root);
+  plainWindowsPath(provenance.rustProject);
+  const files = ['aeneas-config.yml', 'lake-manifest.json', 'lean-toolchain']
+    .map(name => path.join(root, name)).concat(provenance.translationJson);
+  const snapshot = () => files.map(file => {
+    plainWindowsPath(file);
+    return Object.freeze({ path: file, sha256: sha256(fs.readFileSync(file)) });
+  });
+  const before = snapshot();
+  const observed = readProvenance(root);
+  const after = snapshot();
+  if (JSON.stringify(before) !== JSON.stringify(after) || JSON.stringify(observed) !== JSON.stringify(provenance)) {
+    fatal('Project provenance changed during Windows resolution; resolve again.');
+  }
+  return Object.freeze({ projectRoot: root, rustProject: provenance.rustProject, files: Object.freeze(after) });
+}
+
+function validateWindowsExtraction({ runtime, probePath, projectRoot, rustProject }) {
+  if (!WINDOWS_SOURCE_QUALIFICATION.qualified) fatal(WINDOWS_SOURCE_QUALIFICATION.reason);
+  assertValidatedWindowsRuntime(runtime);
+  const binding = WINDOWS_PROJECTS.get(runtime);
+  if (!binding) fatal('Windows extraction requires a runtime verified by resolveProbe for this project.');
+  const same = (left, right) => plainWindowsPath(left).toLowerCase() === plainWindowsPath(right).toLowerCase();
+  if (!same(projectRoot, binding.projectRoot) || !same(projectRoot, runtime.projectRoot) ||
+      !same(rustProject, binding.rustProject) || !same(probePath, runtime.probePath)) {
+    fatal('Windows extraction paths differ from the verified project and managed runtime.');
+  }
+  verifyWindowsProjectBinding(binding);
+  return binding;
+}
+
+function verifyWindowsProjectBinding(binding) {
+  for (const file of binding.files) {
+    plainWindowsPath(file.path);
+    if (sha256(fs.readFileSync(file.path)) !== file.sha256) fatal(`Project provenance changed after resolution: ${file.path}`);
+  }
+}
+
+function resolveWindowsSource({ result, probe, root, onProgress }) {
+  const progress = value => { try { onProgress?.(value); } catch {} };
+  const finish = (status, reason) => {
+    result.status = status;
+    if (reason) result.reasons.push(reason);
+    if (status === 'verified') result.choices = [];
+    return result;
+  };
+  const qualification = WINDOWS_SOURCE_QUALIFICATION;
+  result.distribution = { id: qualification.id, origin: 'source-build', official: false, qualified: qualification.qualified };
+  result.platformSupported = qualification.qualified && result.platform === qualification.target;
+  result.setup = { available: false, distribution: qualification.id };
+  if (result.platform !== qualification.target || result.platform !== hostTarget()) {
+    result.platformSupported = false;
+    return finish('unsupported-platform', `Windows source builds require actual host ${qualification.target}; requested ${result.platform}, host ${hostTarget()}`);
+  }
+  if (!qualification.qualified) return finish('unsupported-platform', qualification.reason);
+  if (result.provenance.problems.length) {
+    result.reasons.push(...result.provenance.problems.map(problem => `unknown provenance: ${problem}`));
+    return finish('unknown');
+  }
+  const tuple = TESTED_TUPLES.find(item => item.id === qualification.tuple &&
+    item.aeneasRev === result.provenance.aeneasRev && item.charonVersion === result.provenance.charonVersion &&
+    item.leanToolchain === result.provenance.leanToolchain);
+  if (!tuple) return finish('incompatible', 'No qualified Windows source-build tuple matches this project.');
+  result.tuple = tuple.id;
+  let binding;
+  try { binding = bindWindowsProject(root, result.provenance); }
+  catch (error) { return finish('incompatible', error.message); }
+  const reportConfinement = state => {
+    if (state.status === 'host-unsupported') {
+      result.platformSupported = false;
+      result.host = state.host;
+      return finish('unsupported-platform', 'This distribution requires native Windows 11 x64 on a qualified local NTFS layout.');
+    }
+    result.recovery = { status: state.status ?? 'unavailable', sessionId: state.sessionId ?? null };
+    result.confinementError = state.error || state.diagnostics?.map(item => typeof item === 'string' ? item : item.message).join('; ')
+      || `Windows confinement requires attention: ${state.status}`;
+    return finish('incompatible', result.confinementError);
+  };
+  // Recovery must remain discoverable even when a helper has changed since an
+  // interrupted run. This lookup validates only the retained managed launcher.
+  const pending = getWindowsConfinementStatus();
+  if (['host-unsupported', 'quarantined', 'recovery-required', 'reserved', 'prepared', 'busy', 'running'].includes(pending.status)) {
+    return reportConfinement(pending);
+  }
+  progress({ phase: 'resolve-managed-runtime', event: 'start' });
+  const resolved = resolveWindowsRuntime({ projectRoot: root, distributionId: qualification.id, onProgress: progress });
+  progress({ phase: 'resolve-managed-runtime', event: 'complete', ok: resolved.ok });
+  if (!resolved.ok) {
+    result.reasons.push(...(resolved.diagnostics ?? []).map(item => typeof item === 'string' ? item : item.message));
+    const recovery = resolved.recovery ?? resolved.diagnostics?.find(item => item.recovery)?.recovery;
+    if (recovery) result.recovery = recovery;
+    result.setup.available = resolved.status === 'missing';
+    if (result.setup.available) result.manual.push(`Run setup --distribution ${qualification.id} --project-root "${root}" --manifest to inspect explicit source-build setup.`);
+    return finish(resolved.status === 'missing' ? 'missing' : 'incompatible');
+  }
+  const runtime = resolved.runtime;
+  if (!/^[a-f0-9]{64}$/.test(qualification.policySha256 ?? '') || runtime.policySha256 !== qualification.policySha256) {
+    result.platformSupported = false;
+    result.distribution.qualified = false;
+    return finish('unsupported-platform', 'This Windows source recipe is not covered by the shipped native qualification receipt.');
+  }
+  try {
+    assertValidatedWindowsRuntime(runtime);
+    if (probe && plainWindowsPath(probe).toLowerCase() !== runtime.probePath.toLowerCase()) {
+      return finish('incompatible', '--probe must identify the exact source-build executable in the managed receipt.');
+    }
+  } catch (error) {
+    return finish('incompatible', error.message);
+  }
+  const state = getWindowsConfinementStatus({ runtime });
+  if (!state.ok || !['idle', 'disposed', 'recovered'].includes(state.status)) {
+    return reportConfinement(state);
+  }
+  const checked = runWindowsReadOnly({ runtime, commands: runtime.versions, cwd: result.provenance.rustProject, projectRoot: root, onProgress: progress });
+  if (!checked.ok) {
+    result.confinementError = checked.confinementError ?? checked.error ?? 'Windows confined helper checks failed';
+    if (checked.recovery) result.recovery = checked.recovery;
+    return finish('incompatible', result.confinementError);
+  }
+  const observations = checked.results ?? [];
+  if (observations.length !== runtime.versions.length) return finish('incompatible', 'Incomplete confined Windows helper checks.');
+  for (const [index, version] of runtime.versions.entries()) {
+    const observation = observations.find(item => item.name === version.name) ?? observations[index];
+    if (!observation?.ok || !matchesWindowsVersion(version, observation.stdout)) {
+      return finish('incompatible', `Confined ${version.name} output does not match the source-build recipe.`);
+    }
+  }
+  try { verifyWindowsProjectBinding(binding); }
+  catch (error) { return finish('incompatible', error.message); }
+  const versionOf = name => runtime.versions.find(item => item.name === name);
+  result.probe = { status: 'ok', path: runtime.probePath, source: 'fvs-source-build', official: false,
+    sha256: versionOf('probe-aeneas')?.sha256, version: versionOf('probe-aeneas')?.expected };
+  for (const name of ['probe-rust', 'scip', 'probe-lean', 'rust-analyzer']) {
+    const bin = runtime.helpers[name];
+    const version = versionOf(name);
+    result.helpers[name] = { status: 'ok', path: bin.path, sha256: bin.sha256, expected: version?.expected, found: version?.expected,
+      ...(name === 'probe-lean' ? { libraryPath: runtime.libraryPath } : {}),
+      ...(name === 'rust-analyzer' ? { rustupPath: runtime.rustupPath } : {}) };
+  }
+  result.timings = checked.timings;
+  result.confinement = { sessionId: checked.sessionId, terminalReceipt: checked.terminalReceipt };
+  WINDOWS_PROJECTS.set(runtime, binding);
+  Object.defineProperty(result, WINDOWS_RUNTIME, { value: runtime, enumerable: false });
+  return finish('verified');
+}
+
+// Classification never installs/downloads tools or changes project/tool bytes.
+// Windows version checks provision and dispose temporary native confinement.
+export function resolveProbe({ projectRoot, probe = null, platform = hostTarget(), distribution = 'auto', onProgress }) {
   const root = path.resolve(projectRoot);
   const provenance = readProvenance(root);
   const asset = PROBE_RELEASE.assets[platform];
@@ -993,6 +1182,9 @@ export function resolveProbe({ projectRoot, probe = null, platform = hostTarget(
     choices: CHOICES,
     manual: [],
   };
+  const selectedDistribution = selectProbeDistribution(distribution, platform);
+  if (selectedDistribution === WINDOWS_SOURCE_QUALIFICATION.id) return resolveWindowsSource({ result, probe, root, onProgress });
+  result.distribution = { id: 'official', origin: 'release', official: true };
   const finish = (status) => {
     result.status = status;
     if (status === 'verified') result.choices = [];
@@ -1094,6 +1286,8 @@ function renderResolveText(result) {
     `Provenance: aeneas ${result.provenance.aeneasRev ?? 'unknown'}, charon ${result.provenance.charonVersion ?? 'unknown'}, lean ${result.provenance.leanToolchain ?? 'unknown'}`,
   ];
   if (result.tuple) lines.push(`Tested tuple: ${result.tuple}`);
+  if (result.distribution?.origin === 'source-build') lines.push(`Distribution: ${result.distribution.id} (pinned source build)`);
+  if (result.recovery?.sessionId) lines.push(`Recovery required: recover --session ${result.recovery.sessionId}`);
   if (result.probe?.path) lines.push(`Probe: ${result.probe.path} (${result.probe.source}, ${result.probe.version ?? 'version unknown'})`);
   for (const reason of result.reasons) lines.push(`- ${reason}`);
   if (result.choices.length > 0) {
@@ -1168,20 +1362,38 @@ export function extractionPolicy({ projectRoot, rustProject, outputDir, privateT
   ].join('\n') + '\n';
 }
 
-// Run the probe by absolute path under native confinement. Linux writes only
+// Run the probe by absolute path under native confinement. Linux and Windows write only
 // to an independent project copy and publishes a validated, nonempty graph
 // atomically; an existing destination is refused without changing it.
-export function confinedExtract({ probePath, projectRoot, rustProject, output, withPublicApi = false, stdio = 'inherit', toolPaths = null }) {
-  if (process.platform === 'linux') {
+export function confinedExtract({ probePath, projectRoot, rustProject, output, withPublicApi = false, stdio = 'inherit', toolPaths = null, runtime = null }) {
+  if (process.platform === 'win32' && !runtime) return { ok: false, error: 'Windows extraction confinement is unavailable: a validated source-build runtime is required' };
+  if (process.platform === 'win32' && withPublicApi) return { ok: false, error: '--with-public-api is not qualified for native Windows' };
+  if (process.platform === 'linux' || process.platform === 'win32') {
+    const windows = process.platform === 'win32';
     let staging = null;
+    let publishedIdentity = null;
+    let outputFile = null;
+    let candidatePath = null;
+    let candidateIdentity = null;
     let log = '';
     let status = null;
+    let timings;
     try {
-      const selected = toolPaths ?? selectProbeToolPaths({ projectRoot });
-      const tools = validateLinuxToolPaths(selected, { projectRoot });
+      const expectedProvenance = windows ? validateWindowsExtraction({ runtime, probePath, projectRoot, rustProject }) : null;
+      if (windows) plainWindowsPath(path.resolve(output), { allowMissing: true });
+      const selected = windows ? null : (toolPaths ?? selectProbeToolPaths({ projectRoot }));
+      const tools = windows ? null : validateLinuxToolPaths(selected, { projectRoot });
       const outputDir = fs.realpathSync(path.dirname(path.resolve(output)));
-      const outputFile = path.join(outputDir, path.basename(output));
-      for (const directory of [...protectedDirs(probePath), ...tools.protectedPaths]) {
+      outputFile = path.join(outputDir, path.basename(output));
+      const protectedPaths = windows ? [
+        ...(runtime.readOnlyPaths ?? []), path.dirname(probePath),
+        path.dirname(runtime.sourceBuildReceipt),
+        path.resolve(path.dirname(runtime.sourceBuildReceipt), '..', '..'),
+        path.join(runtime.profileDirectory, '.fvs', 'windows-confinement'),
+        ...['.cargo', '.rustup', '.elan', '.local', '.probe-rust'].map(name => path.join(runtime.profileDirectory, name)),
+      ]
+        : [...protectedDirs(probePath), ...tools.protectedPaths];
+      for (const directory of protectedPaths) {
         const relative = path.relative(directory, outputFile);
         if (relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))) {
           return { ok: false, error: `output must not be inside a protected tool directory: ${directory}` };
@@ -1190,9 +1402,13 @@ export function confinedExtract({ probePath, projectRoot, rustProject, output, w
       if (fs.existsSync(outputFile) || fs.lstatSync(outputFile, { throwIfNoEntry: false })) {
         return { ok: false, error: `output already exists; left unchanged: ${outputFile}` };
       }
-      const child = runLinuxStagedExtract({ probePath, projectRoot, rustProject, withPublicApi, toolPaths: selected });
+      const child = windows
+        ? runWindowsStagedExtract({ runtime, probePath, projectRoot, rustProject, withPublicApi, expectedProvenance,
+          onProgress: stdio === 'inherit' ? progress => process.stderr.write(`FVS >> ${typeof progress === 'string' ? progress : JSON.stringify(progress)}\n`) : undefined })
+        : runLinuxStagedExtract({ probePath, projectRoot, rustProject, withPublicApi, toolPaths: selected });
       log = `${child.stdout ?? ''}${child.stderr ?? ''}`;
       status = child.status ?? null;
+      timings = child.timings;
       if (stdio === 'inherit') {
         if (child.stdout) process.stdout.write(child.stdout);
         if (child.stderr) process.stderr.write(child.stderr);
@@ -1200,7 +1416,10 @@ export function confinedExtract({ probePath, projectRoot, rustProject, output, w
       if (!child.ok || typeof child.outputText !== 'string') {
         return {
           ok: false, status, signal: child.signal ?? null, log,
-          error: child.error ?? 'confined probe produced no candidate graph',
+          error: child.error ?? child.confinementError ?? child.cleanupError ?? 'confined probe produced no candidate graph',
+          ...(child.recovery ? { recovery: child.recovery } : {}),
+          ...(child.confinementError ? { confinementError: child.confinementError } : {}),
+          ...(child.timings ? { timings: child.timings } : {}),
           ...(child.cleanupError ? {
             cleanupError: child.cleanupError,
             retainedStage: child.retainedStage,
@@ -1216,13 +1435,46 @@ export function confinedExtract({ probePath, projectRoot, rustProject, output, w
       // output, including one created while the confined probe was running.
       staging = fs.mkdtempSync(path.join(outputDir, '.fvs-probe-output-'));
       const candidate = path.join(staging, 'extract.json');
+      candidatePath = candidate;
       fs.writeFileSync(candidate, child.outputText, { mode: 0o600, flag: 'wx' });
+      candidateIdentity = fs.lstatSync(candidate, { bigint: true });
       fs.linkSync(candidate, outputFile);
-      return { ok: true, status, signal: child.signal ?? null, output: outputFile, policy: child.policy ?? child.plan, log };
+      publishedIdentity = fs.lstatSync(candidate, { bigint: true });
+      // The public destination must have no remaining private hardlink alias.
+      fs.unlinkSync(candidate);
+      fs.rmdirSync(staging);
+      staging = null;
+      return { ok: true, status, signal: child.signal ?? null, output: outputFile, policy: child.policy ?? child.plan, log,
+        ...(child.terminalReceipt ? { terminalReceipt: child.terminalReceipt } : {}), ...(timings ? { timings } : {}) };
     } catch (error) {
-      return { ok: false, status, log, error: error.message };
-    } finally {
-      if (staging) fs.rmSync(staging, { recursive: true, force: true });
+      const failure = { ok: false, status, log, error: error.message, ...(timings ? { timings } : {}) };
+      if (publishedIdentity && outputFile) {
+        try {
+          const current = fs.lstatSync(outputFile, { bigint: true });
+          if (current.dev !== publishedIdentity.dev || current.ino !== publishedIdentity.ino || current.isSymbolicLink()) {
+            throw new Error('published output identity changed; rollback refused');
+          }
+          fs.unlinkSync(outputFile);
+        } catch (rollback) {
+          failure.rollbackError = rollback.message;
+        }
+      }
+      if (staging) {
+        try {
+          const current = fs.lstatSync(candidatePath, { throwIfNoEntry: false, bigint: true });
+          if (current) {
+            if (!candidateIdentity || current.isSymbolicLink() || current.dev !== candidateIdentity.dev || current.ino !== candidateIdentity.ino) {
+              throw new Error('private publication candidate identity changed; cleanup refused');
+            }
+            fs.unlinkSync(candidatePath);
+          }
+          fs.rmdirSync(staging);
+        } catch (cleanup) {
+          failure.cleanupError = cleanup.message;
+          failure.retainedStage = staging;
+        }
+      }
+      return failure;
     }
   }
   if (process.platform !== 'darwin') return { ok: false, error: 'extraction confinement is unavailable on this host' };
@@ -1408,7 +1660,7 @@ export async function installProbe({
     outcome: null,
   };
   fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
-  const executablePath = path.join(destination, release.tool);
+  const executablePath = managedProbePath(toolsRoot, target, release);
   if (fs.existsSync(destination)) {
     const current = executableFile(executablePath) ? sha256File(executablePath) : null;
     record.actualExecutableSha256 = current;
@@ -1423,21 +1675,26 @@ export async function installProbe({
     if (bytes.length > MAX_ARCHIVE_BYTES) fatal('archive is larger than the size limit');
     record.actualArchiveSha256 = sha256(bytes);
     if (record.actualArchiveSha256 !== asset.archiveSha256) fatal('archive SHA-256 does not match the pinned official digest');
-    const archiveFile = path.join(staging, asset.asset);
-    fs.writeFileSync(archiveFile, bytes, { mode: 0o600 });
-    let tarBytes;
-    if (process.platform === 'linux') {
-      tarBytes = decodeLinuxTarXz(bytes, asset.archiveSha256);
+    let executableBytes;
+    if (target.endsWith('-pc-windows-msvc')) {
+      executableBytes = decodeWindowsZip(bytes, asset);
     } else {
-      const tar = spawnSync(BSDTAR, ['-cf', '-', `@${archiveFile}`], { maxBuffer: 256 * 1024 * 1024 });
-      if (tar.status !== 0) fatal(`cannot decompress archive: ${String(tar.stderr ?? tar.error?.message).trim()}`);
-      tarBytes = tar.stdout;
+      const archiveFile = path.join(staging, asset.asset);
+      fs.writeFileSync(archiveFile, bytes, { mode: 0o600 });
+      let tarBytes;
+      if (process.platform === 'linux') {
+        tarBytes = decodeLinuxTarXz(bytes, asset.archiveSha256);
+      } else {
+        const tar = spawnSync(BSDTAR, ['-cf', '-', `@${archiveFile}`], { maxBuffer: 256 * 1024 * 1024 });
+        if (tar.status !== 0) fatal(`cannot decompress archive: ${String(tar.stderr ?? tar.error?.message).trim()}`);
+        tarBytes = tar.stdout;
+      }
+      executableBytes = inspectTar(tarBytes, asset);
+      fs.rmSync(archiveFile);
     }
-    const executableBytes = inspectTar(tarBytes, asset);
-    fs.rmSync(archiveFile);
     record.actualExecutableSha256 = sha256(executableBytes);
     if (record.actualExecutableSha256 !== asset.executableSha256) fatal('executable SHA-256 does not match the pinned digest');
-    const staged = path.join(staging, release.tool);
+    const staged = path.join(staging, path.basename(executablePath));
     fs.writeFileSync(staged, executableBytes, { mode: 0o755 });
     const version = readOnlyRun(staged, ['--version'], staging);
     if (version.confinementError) fatal(`${version.confinementError}. ${LINUX_CONFINEMENT_GUIDANCE}`);
@@ -1457,7 +1714,7 @@ export async function installProbe({
   }
 }
 
-function parseFlags(argv, booleans, values) {
+function parseFlags(argv, booleans, values, { requireProject = true } = {}) {
   if (argv.includes('--help') || argv.includes('-h')) {
     usage();
     process.exit(0);
@@ -1476,15 +1733,16 @@ function parseFlags(argv, booleans, values) {
     if (!value || value.startsWith('--')) fatal(`${flag} requires a value`);
     flags[key] = value;
   }
-  if (!flags['project-root']) fatal('--project-root is required');
+  if (requireProject && !flags['project-root']) fatal('--project-root is required');
   return flags;
 }
 
 function resolveCli(argv) {
-  const flags = parseFlags(argv, [], ['project-root', 'probe', 'platform', 'format']);
+  const flags = parseFlags(argv, [], ['project-root', 'probe', 'platform', 'format', 'distribution']);
   const format = flags.format ?? 'json';
   if (!['json', 'status', 'text'].includes(format)) fatal('--format must be json, status, or text');
-  const result = resolveProbe({ projectRoot: flags['project-root'], probe: flags.probe, platform: flags.platform });
+  const result = resolveProbe({ projectRoot: flags['project-root'], probe: flags.probe, platform: flags.platform, distribution: flags.distribution,
+    onProgress: progress => process.stderr.write(`FVS >> ${JSON.stringify(progress)}\n`) });
   if (format === 'status') process.stdout.write(`${result.status}\n`);
   else if (format === 'text') process.stdout.write(renderResolveText(result));
   else process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
@@ -1492,10 +1750,12 @@ function resolveCli(argv) {
 }
 
 function runCli(argv) {
-  const flags = parseFlags(argv, ['with-public-api'], ['project-root', 'probe', 'output']);
+  const flags = parseFlags(argv, ['with-public-api'], ['project-root', 'probe', 'output', 'distribution']);
   if (!flags.output) fatal('--output is required');
   if (!fs.existsSync(path.dirname(path.resolve(flags.output)))) fatal('the --output directory must exist');
-  const result = resolveProbe({ projectRoot: flags['project-root'], probe: flags.probe });
+  if (process.platform === 'win32' && flags['with-public-api']) fatal('--with-public-api is not qualified for native Windows');
+  const result = resolveProbe({ projectRoot: flags['project-root'], probe: flags.probe, distribution: flags.distribution,
+    onProgress: progress => process.stderr.write(`FVS >> ${JSON.stringify(progress)}\n`) });
   if (result.status !== 'verified') {
     process.stderr.write(renderResolveText(result));
     process.stderr.write('FVS >> refusing verified extraction: the probe is not verified for this project\n');
@@ -1505,6 +1765,7 @@ function runCli(argv) {
     probePath: result.probe.path,
     projectRoot: result.provenance.projectRoot,
     rustProject: result.provenance.rustProject,
+    runtime: result[WINDOWS_RUNTIME] ?? null,
     toolPaths: {
       executables: [...Object.values(result.helpers).map((helper) => helper.path), result.helpers['rust-analyzer']?.rustupPath].filter(Boolean),
       libraries: [result.helpers['probe-lean']?.libraryPath].filter(Boolean),
@@ -1514,15 +1775,18 @@ function runCli(argv) {
   });
   if (!run.ok) {
     process.stderr.write(`FVS >> confined probe-aeneas extraction failed; no output was accepted: ${run.error}\n`);
+    if (run.recovery?.sessionId) process.stderr.write(`FVS >> recovery required: recover --session ${run.recovery.sessionId}\n`);
+    if (run.cleanupError) process.stderr.write(`FVS >> cleanup: ${run.cleanupError}\n`);
     return 1;
   }
   process.stderr.write(`FVS >> confined extraction written to ${run.output}\n`);
+  if (run.terminalReceipt) process.stderr.write(`FVS >> cleanup receipt ${JSON.stringify(run.terminalReceipt)}\n`);
   return 0;
 }
 
 async function installCli(argv) {
   const flags = parseFlags(argv, ['manifest', 'manual'], ['project-root', 'consent', 'archive']);
-  const result = resolveProbe({ projectRoot: flags['project-root'] });
+  const result = resolveProbe({ projectRoot: flags['project-root'], distribution: 'official' });
   if (!result.install.available) {
     process.stderr.write(renderResolveText(result));
     if (result.confinementError) return 3;
@@ -1566,7 +1830,37 @@ async function installCli(argv) {
   return 0;
 }
 
-const SUBCOMMANDS = { resolve: resolveCli, run: runCli, install: installCli };
+async function setupCli(argv) {
+  const flags = parseFlags(argv, ['manifest'], ['project-root', 'distribution', 'consent', 'cache-dir']);
+  const distributionId = flags.distribution ?? WINDOWS_SOURCE_QUALIFICATION.id;
+  if (distributionId !== WINDOWS_SOURCE_QUALIFICATION.id) fatal(`unsupported source-build setup distribution: ${distributionId}`);
+  const options = { projectRoot: flags['project-root'], distributionId, cacheDirectory: flags['cache-dir'] };
+  if (flags.manifest || !flags.consent) {
+    process.stdout.write(`${JSON.stringify(await planWindowsSetup(options), null, 2)}\n`);
+    if (!flags.manifest) process.stderr.write('FVS >> source-build setup requires --consent interactive or an explicit setup policy\n');
+    return flags.manifest ? 0 : 3;
+  }
+  if (!['interactive', 'policy'].includes(flags.consent)) fatal('--consent must be interactive or policy');
+  if (flags.consent === 'policy' && process.env.FVS_PROBE_SETUP_POLICY !== 'build') {
+    fatal('--consent policy requires FVS_PROBE_SETUP_POLICY=build');
+  }
+  const result = await setupWindowsRuntime({ ...options, decision: flags.consent,
+    onProgress: progress => process.stderr.write(`FVS >> ${typeof progress === 'string' ? progress : JSON.stringify(progress)}\n`) });
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  return result.ok === false ? 1 : 0;
+}
+
+async function recoverCli(argv) {
+  const flags = parseFlags(argv, [], ['session'], { requireProject: false });
+  if (!flags.session) fatal('--session is required');
+  const result = flags.session.startsWith('setup:')
+    ? await recoverWindowsSetup({ sessionId: flags.session })
+    : await recoverWindowsSession({ sessionId: flags.session });
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  return result.ok ? 0 : 1;
+}
+
+const SUBCOMMANDS = { resolve: resolveCli, run: runCli, install: installCli, setup: setupCli, recover: recoverCli };
 
 async function main(argv) {
   try {
@@ -1577,6 +1871,8 @@ async function main(argv) {
     }
   } catch (error) {
     process.stderr.write(`FVS_PROBE_INVENTORY_ERROR: ${error.message}\n`);
+    const recovery = error.recovery ?? error.diagnostic?.recovery;
+    if (recovery?.sessionId) process.stderr.write(`FVS >> recovery required: recover --session ${recovery.sessionId}\n`);
     process.exitCode = 2;
   }
 }

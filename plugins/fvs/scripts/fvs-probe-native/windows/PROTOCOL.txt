@@ -1,0 +1,138 @@
+FVS native Windows lifecycle protocol v2
+
+Build through Build-Launcher.ps1 with an explicit immutable OutputDirectory.
+SourceDirectory defaults to the recipe directory and supports a trusted inline
+PowerShell invocation without changing execution policy. TestHooks builds are
+for fault injection only and must never qualify a distributed installation.
+
+Host qualification precedes mutation: native Windows 11 client x64, RtlGetVersion
+major/minor 10.0, build 22000..29999, productType 1, native AMD64 system and process.
+Windows 10, Server and x64 emulation on ARM64 are refused. The read-only `host`
+command returns fvs/windows-host/v1 facts. This family filter is not a claim that
+every build has been tested; API/LPAC effective-access checks also fail closed.
+
+Every JSON request argument accepts '-' for bounded strict UTF-8 stdin. All
+stdout is UTF-8 JSON. No profile or ACL operation is performed by status/host.
+
+reserve request.json
+  schema fvs/windows-reserve/v2; mode readonly|staged.
+  Returns sessionId, stageRoot, controlDirectory, statePath and journalRevision.
+  Uses actual Windows UserProfile known-folder lookup, never HOME overrides.
+  Fixed coordinator: UserProfile\.fvs\windows-confinement.
+  New compact layout: coordinator\s\<sessionId>\s (stage) and sibling c (control).
+  Caller copies independent source into stage\p, output into stage\o; readonly
+  version checks use stage\w. The native reservation precedes any source copy.
+  AppData was deliberately avoided after MSIX filesystem redirection was measured
+  from a packaged host. No OS/package virtualization policy was changed.
+
+prepare request.json
+  schema fvs/windows-prepare/v2; sessionId; readOnlyPaths, writablePaths,
+  disposablePaths, executablePaths; profileTempWritable boolean.
+  Optional controlDirectory must equal the reserved path. Writable/disposable
+  sets must match exactly and be disjoint directories beneath reserved stage.
+  Exact .exe entrypoints must be inside readonly resources. Lifecycle/profile
+  storage cannot be granted as a resource. Metadata-only actual UserProfile
+  access is non-inheriting and never authorizes cwd/entrypoint containment.
+  Returns statePath/stateSha256, launcherSha256, profileSid/profileRoot/privateTemp.
+  Snapshots every original descendant identity/owner/DACL before grants. Null,
+  noncanonical, callback/object ACEs, case-sensitive paths, links and unsupported
+  filesystems are refused. Original readonly trees receive non-propagating
+  per-entry grants; only disposable writable copies use inheritable grants.
+
+run state.json request.json
+  schema fvs/windows-run/v2; stateSha256; executable; args[]; cwd; environment{};
+  timeoutMs 1..3600000; maxOutputBytes 1024..67108864.
+  Exact journal/session/launcher/state identity required. Readonly sessions can
+  run multiple commands; writable extraction sessions are single-use.
+  Native preflight retains path/identity/ACL/readonly leases and rehashes the
+  executable. Before resuming, AccessCheck verifies LPAC AAP opt-out and ARAP
+  access and refuses effective write rights on readonly entries. Actual token
+  AppContainer state and exactly registryRead capability are checked.
+  Returns exit/status/stdout/stderr, activeProcessesAfter, capability and handle
+  evidence, runId, resultPath/resultSha256. The result digest covers exact saved
+  UTF-8 JSON bytes with runId, before response-only path/digest fields are added.
+
+dispose state.json request.json
+  schema fvs/windows-dispose/v2; stateSha256; optional cleanPrivatePaths[].
+  If specified, cleanPrivatePaths exactly equals prepared disposable roots.
+  Drain the private Global job; handle-unlink only verified private leaf names;
+  preflight all resource descendants before any ACL restoration. Default alias
+  rejection stays strict. Remove only this unique SID; preserve unrelated ACL
+  edits and report exactRestored=false instead of overwriting those edits.
+  Persist cleanup audit before deleting the reserved stage. Return a durable
+  terminal receipt only after profile absence, ACL cleanup and stage removal.
+
+status [request.json]
+  Read-only current journal inspection. Reports idle, busy, reserved, prepared,
+  run-complete, recovery-required or quarantined, responsibleLauncher path/hash,
+  ownerProcessId/ownerAlive, sameLogon and crossLogonRecoveryQualified=false.
+  Never repairs or provisions. Resolution must not silently recover stale state.
+
+cancel request.json
+  schema fvs/windows-cancel/v2; sessionId.
+  Signals a private Global cancellation event without acquiring the occupied
+  lifecycle lock. Preparation observes cancellation at safe checkpoints; run
+  drains descendants. Forced termination leaves durable recovery state.
+
+recover request.json
+  schema fvs/windows-recover/v2; optional sessionId (must match active journal).
+  Explicit setup/recovery operation only. Never resumes interrupted extraction.
+  Requires exact responsible launcher hash; retain old installation launchers.
+  Permits the same native-observed outer owner (PID plus creation time), or a
+  verified dead original owner. Another live copier/owner is refused. Current
+  Windows session ID and logon AuthenticationId must match. Actual alternate-
+  logon recovery is unqualified and refused; same-session Global-job tests do
+  not establish that missing qualification. Repeated recovery is idempotent.
+
+Shared setup/native coordination
+  coordinator\lifecycle.lock is held FileShare.None across every native mutation
+  and throughout setup/build-job drain. Setup checks active.json only AFTER
+  acquiring this same lock, and refuses nonterminal/unknown/corrupt sessions.
+  Bootstrap directories atomically with a protected DACL: current user, SYSTEM
+  and Administrators FullControl (OI|CI), owner=current user. Existing directories
+  and files require canonical final paths, no links, current-user owner, non-null
+  canonical ACL, and no writable ACE for other principals. Never repair a loose
+  existing coordinator by replacing its ACL. Native session ownership persists
+  while the outer caller copies between launcher invocations.
+
+Journal and terminal receipt
+  active.json schema fvs/windows-lifecycle-journal/v2, bounded to 1 MiB, contains
+  immutable-plan/state hashes, origin/owner, directory identities, responsible
+  launcher and per-phase progress. integritySha256 is SHA-256 of canonical JSON
+  excluding that field: recursively sorted ordinal object keys, original array
+  order, UTF-8, no whitespace/BOM/newline. Validate original parsed fields before
+  adding future default fields. Every mutation has a durable preceding intent;
+  subtree intents bind the complete pre-entry manifest before any member update.
+  stageRemovalIntended is durably recorded together with remove-stage intent,
+  after the cleanup audit has been persisted and bound by its digest. Recovery
+  authenticates that audit before accepting absent private paths under stageRoot.
+  Surviving resources retain their identity checks; missing protected resources
+  are never excused. The intent survives interruptions during recovery itself.
+  Same-volume pending snapshots use WriteThrough, Flush(true), and write-through
+  replacement. Ambiguous I/O or corrupt state prevents new sessions/publication.
+  The current entry limit is 250000 and each resource/state snapshot is bounded
+  to 128 MiB. This does not claim immunity to arbitrary storage hardware failure.
+
+  control\terminal-receipt.json schema fvs/windows-terminal-receipt/v2 binds
+  sessionId/stateSha256/launcherSha256/lastRunId/lastRunResultSha256, stageRoot and
+  controlDirectory. It records jobDrained, profileAbsent, stageRemoved,
+  aclCleanupConfirmed, resourceAclResults and descendantAclAudit. Its exact byte
+  hash is returned and pinned in the terminal journal. Native cleanup success
+  alone does not authorize graph publication: the caller must also validate graph
+  semantics, exact original ACL/inventory invariants and captured output bytes.
+
+  Private leaves use SetFileInformationByHandle(FileDispositionInfoEx) with
+  FILE_DISPOSITION_DELETE | FILE_DISPOSITION_POSIX_SEMANTICS |
+  FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE on the qualified Windows/NTFS host.
+  Deletion uses the already identity-checked handle while ancestors remain leased.
+  It does not clear attributes, rewrite ACLs or change contents through a hardlink.
+
+Scope
+  Local fixed NTFS only; no UNC/device/ADS/reparse/hardlink aliases, no permissive
+  fallback, no administrator elevation or global policy changes. General Windows
+  long-path support is not claimed; compact staging handles the measured pinned
+  fixture. Untrusted children are confined; hostile concurrent same-user host
+  filesystem/ACL mutation is outside the threat model and observed interference
+  fails closed. Ambient OS registry/device channels are not an exhaustive proof
+  of zero access. Production qualification still requires tests of the exact
+  source-build distribution and actual public resolve/setup/extract route.

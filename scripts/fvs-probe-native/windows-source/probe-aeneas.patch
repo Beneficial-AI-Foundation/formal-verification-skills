@@ -1,0 +1,193 @@
+diff --git a/src/extract_runner.rs b/src/extract_runner.rs
+index df31f59..0f01012 100644
+--- a/src/extract_runner.rs
++++ b/src/extract_runner.rs
+@@ -262,7 +262,9 @@ fn find_or_install_probe_lean(lean_project: Option<&Path>) -> Result<PathBuf> {
+     };
+ 
+     if let Some(ref ver) = lean_version {
+-        let versioned_bin = home_dir()?.join(format!(".local/bin/probe-lean-{ver}"));
++        let versioned_bin = home_dir()?
++            .join(".local/bin")
++            .join(setup::executable_name(&format!("probe-lean-{ver}")));
+         if versioned_bin.exists() {
+             println!("Using versioned probe-lean for Lean {ver}");
+             return Ok(versioned_bin);
+@@ -274,7 +276,9 @@ fn find_or_install_probe_lean(lean_project: Option<&Path>) -> Result<PathBuf> {
+         if let Some(p) = find_on_path("probe-lean") {
+             return Ok(p);
+         }
+-        let local_bin = home_dir()?.join(".local/bin/probe-lean");
++        let local_bin = home_dir()?
++            .join(".local/bin")
++            .join(setup::executable_name("probe-lean"));
+         if local_bin.exists() {
+             return Ok(local_bin);
+         }
+@@ -438,8 +442,10 @@ fn try_prebuilt_download(lean_version: &str) -> Result<PathBuf> {
+     let dest_dir = home_dir()?.join(".local/bin");
+     std::fs::create_dir_all(&dest_dir).context("create ~/.local/bin")?;
+ 
+-    let versioned_bin = dest_dir.join(format!("probe-lean-{lean_version}"));
+-    let downloaded_bin = tmp.join("bin/probe-lean");
++    let versioned_bin = dest_dir.join(setup::executable_name(&format!(
++        "probe-lean-{lean_version}"
++    )));
++    let downloaded_bin = tmp.join("bin").join(setup::executable_name("probe-lean"));
+     // Require a plain regular file: a symlinked `bin/probe-lean` would make the
+     // copy below follow it out of the extracted tree, and a hardlinked one would
+     // copy an out-of-tree file's contents (#46 #2).
+@@ -512,15 +518,16 @@ fn is_hardlinked(meta: &std::fs::Metadata) -> bool {
+ }
+ 
+ /// Reject archive entry names that would escape the extraction directory:
+-/// absolute paths (`/etc/...`) or any `..` path component.
++/// rooted or prefixed paths (including Windows drive-relative paths), or `..`.
+ fn is_safe_archive_entry(entry: &str) -> bool {
+-    let path = Path::new(entry);
+-    if path.is_absolute() {
+-        return false;
+-    }
+-    !path
+-        .components()
+-        .any(|c| matches!(c, std::path::Component::ParentDir))
++    !Path::new(entry).components().any(|component| {
++        matches!(
++            component,
++            std::path::Component::ParentDir
++                | std::path::Component::RootDir
++                | std::path::Component::Prefix(_)
++        )
++    })
+ }
+ 
+ /// Whether the floating-`main` source-build fallback is explicitly enabled via
+@@ -623,7 +630,9 @@ fn build_from_source(lean_version: &str) -> Result<PathBuf> {
+         });
+     }
+ 
+-    let built_bin = build_dir.join(".lake/build/bin/probe-lean");
++    let built_bin = build_dir
++        .join(".lake/build/bin")
++        .join(setup::executable_name("probe-lean"));
+     if !built_bin.exists() {
+         return Err(ExtractRunnerError::MissingOutput {
+             command: "lake build".to_string(),
+@@ -643,7 +652,7 @@ fn build_from_source(lean_version: &str) -> Result<PathBuf> {
+     } else {
+         "probe-lean-latest".to_string()
+     };
+-    let dest_bin = dest_dir.join(&versioned_name);
++    let dest_bin = dest_dir.join(setup::executable_name(&versioned_name));
+ 
+     install_file_atomic(&built_bin, &dest_bin)?;
+     update_symlink(&dest_bin)?;
+@@ -715,7 +724,7 @@ fn update_symlink(versioned_bin: &Path) -> Result<()> {
+     let dest = versioned_bin
+         .parent()
+         .context("versioned binary has no parent directory")?
+-        .join("probe-lean");
++        .join(setup::executable_name("probe-lean"));
+     install_file_atomic(versioned_bin, &dest)
+ }
+ 
+@@ -1238,6 +1247,24 @@ mod tests {
+         assert!(!is_safe_archive_entry("bin/../../escape"));
+     }
+ 
++    #[cfg(windows)]
++    #[test]
++    fn windows_rooted_and_prefixed_archive_entries_rejected() {
++        for entry in [
++            r"\escape",
++            r"C:\escape",
++            "C:/escape",
++            "C:escape",
++            r"\\server\share\escape",
++            r"\\?\C:\escape",
++            r"\\.\C:\escape",
++            r"bin\..\..\escape",
++        ] {
++            assert!(!is_safe_archive_entry(entry), "{entry:?} must be rejected");
++        }
++        assert!(is_safe_archive_entry(r".\bin\probe-lean.exe"));
++    }
++
+     // --- env_flag_enabled: source-build gate parsing, fail-closed (#46 #5/#6) ---
+ 
+     #[test]
+diff --git a/src/setup.rs b/src/setup.rs
+index 322cc55..e4ccf96 100644
+--- a/src/setup.rs
++++ b/src/setup.rs
+@@ -120,8 +120,9 @@ pub fn install_charon() -> Result<()> {
+ 
+     let release_dir = src_dir.join("charon/target/release");
+     for binary in ["charon", "charon-driver"] {
+-        let src = release_dir.join(binary);
+-        let dst = tools_dir.join(binary);
++        let filename = executable_name(binary);
++        let src = release_dir.join(&filename);
++        let dst = tools_dir.join(&filename);
+         std::fs::copy(&src, &dst).with_context(|| format!("copy {binary} to {}", dst.display()))?;
+ 
+         #[cfg(unix)]
+@@ -138,7 +139,9 @@ pub fn install_charon() -> Result<()> {
+ 
+ /// Install probe-rust via `cargo install --git`.
+ pub fn install_probe_rust() -> Result<PathBuf> {
+-    let cargo_bin = home_dir()?.join(".cargo/bin/probe-rust");
++    let cargo_bin = home_dir()?
++        .join(".cargo/bin")
++        .join(executable_name("probe-rust"));
+     if cargo_bin.exists() {
+         return Ok(cargo_bin);
+     }
+@@ -164,6 +167,11 @@ pub fn install_probe_rust() -> Result<PathBuf> {
+ // Resolution helpers (shared with extract_runner)
+ // ---------------------------------------------------------------------------
+ 
++/// File name used for a native executable, including `.exe` on Windows.
++pub(crate) fn executable_name(stem: &str) -> String {
++    format!("{stem}{}", std::env::consts::EXE_SUFFIX)
++}
++
+ pub fn find_on_path(name: &str) -> Option<PathBuf> {
+     which::which(name).ok()
+ }
+@@ -177,7 +185,10 @@ pub fn resolve_probe_rust() -> Option<PathBuf> {
+     if let Some(p) = find_on_path("probe-rust") {
+         return Some(p);
+     }
+-    let cargo_bin = home_dir().ok()?.join(".cargo/bin/probe-rust");
++    let cargo_bin = home_dir()
++        .ok()?
++        .join(".cargo/bin")
++        .join(executable_name("probe-rust"));
+     if cargo_bin.exists() {
+         Some(cargo_bin)
+     } else {
+@@ -187,7 +198,10 @@ pub fn resolve_probe_rust() -> Option<PathBuf> {
+ 
+ /// Resolve charon binary: managed directory then PATH.
+ pub fn resolve_charon() -> Option<PathBuf> {
+-    let managed = home_dir().ok()?.join(".probe-rust/tools/charon");
++    let managed = home_dir()
++        .ok()?
++        .join(".probe-rust/tools")
++        .join(executable_name("charon"));
+     if managed.exists() {
+         return Some(managed);
+     }
+@@ -242,7 +256,10 @@ fn resolve_probe_lean() -> Option<PathBuf> {
+     if let Some(p) = find_on_path("probe-lean") {
+         return Some(p);
+     }
+-    let local_bin = home_dir().ok()?.join(".local/bin/probe-lean");
++    let local_bin = home_dir()
++        .ok()?
++        .join(".local/bin")
++        .join(executable_name("probe-lean"));
+     if local_bin.exists() {
+         Some(local_bin)
+     } else {
