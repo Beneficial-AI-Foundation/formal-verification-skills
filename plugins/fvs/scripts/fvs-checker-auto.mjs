@@ -5,6 +5,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { which } from './fvs-probe-inventory.mjs';
+import { requestControl, assertRunning, timeoutOptions, executionFields, runOwned, parseExecution } from './fvs-execution.mjs';
 import { buildRecord } from './fvs-rust-identity.mjs';
 import { buildLeanGraph, duplicateKeys } from './fvs-lean-graph.mjs';
 import { buildPlan, definitionClosure } from './fvs-closure-plan.mjs';
@@ -39,10 +41,13 @@ function save(dir, name, value) {
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, { flag: 'wx' });
   return { file, sha256: hash(file) };
 }
-function beforeDeadline(job) {
+function beforeDeadline(job, services = {}) {
+  if (job.version === 2 || Object.hasOwn(job, 'execution')) { assertRunning(requestControl(job), services); return; }
   if (!Number.isSafeInteger(job.deadlineMs)) refuse('invalid-input', 'a finite checker deadline is required');
   if (Date.now() >= job.deadlineMs) refuse('timeout', 'the checker deadline is exhausted');
 }
+const timingKey = job => job.version === 2 ? 'execution' : 'deadlineMs';
+const gitExecutable = version => version === 2 ? fs.realpathSync(which('git') ?? refuse('unsupported', 'installed Git unavailable')) : '/usr/bin/git';
 function exclusive(out) {
   if (!path.isAbsolute(out ?? '')) refuse('invalid-input', 'output must be absolute');
   try { fs.mkdirSync(out); } catch (e) { refuse('invalid-input', `exclusive output unavailable: ${e.code}`); }
@@ -95,9 +100,9 @@ function registryContext(job, context, specRoot, { ignoreLock = false } = {}) {
   return records;
 }
 
-const engineFiles = ['fvs-auto.mjs', 'fvs-auto-resume.mjs', 'fvs-auto-transitions.mjs', 'fvs-project-memory.mjs', 'fvs-checker.mjs', 'FvsKernelAudit.lean', 'fvs-checker-auto.mjs', 'fvs-checker-build.mjs', 'fvs-rust-identity.mjs', 'fvs-lean-graph.mjs', 'fvs-closure-plan.mjs', 'fvs-contract-registry.mjs', 'fvs-probe-inventory.mjs', 'fvs-probe-linux.mjs', 'fvs-extract-patches.mjs'];
-function engineIdentity() {
-  return Object.fromEntries([process.execPath, '/usr/bin/git', ...engineFiles.map((f) => fileURLToPath(new URL(f, import.meta.url)))].map((file) => [file, hash(file)]));
+const engineFiles = ['fvs-execution.mjs', 'fvs-auto.mjs', 'fvs-auto-resume.mjs', 'fvs-auto-transitions.mjs', 'fvs-project-memory.mjs', 'fvs-checker.mjs', 'FvsKernelAudit.lean', 'fvs-checker-auto.mjs', 'fvs-checker-build.mjs', 'fvs-rust-identity.mjs', 'fvs-lean-graph.mjs', 'fvs-closure-plan.mjs', 'fvs-contract-registry.mjs', 'fvs-probe-inventory.mjs', 'fvs-probe-linux.mjs', 'fvs-extract-patches.mjs'];
+function engineIdentity(version = 1) {
+  return Object.fromEntries([process.execPath, gitExecutable(version), ...engineFiles.map((f) => fileURLToPath(new URL(f, import.meta.url)))].map((file) => [file, hash(file)]));
 }
 function verifyFiles(files) {
   for (const [file, digest] of Object.entries(files)) if (hash(file) !== digest) refuse('stale-input', `frozen input changed: ${file}`);
@@ -107,34 +112,42 @@ function buildFiles(build) {
   return Object.fromEntries([...build.modules.flatMap((m) => [...m.parts, ...[m.parts[0].replace(/\.olean$/, '.ir')].filter((f) => fs.existsSync(f)), m.ilean]),
     ...Object.keys(build.source.files).map((rel) => path.join(build.projectRoot, rel))].map((file) => [file, hash(file)]));
 }
-async function buildSnapshot(job, source, out, runId) {
+async function buildSnapshot(job, source, out, runId, services = {}) {
   const { buildCheckerSnapshot } = await import('./fvs-checker-build.mjs');
-  const result = await buildCheckerSnapshot({ ...job, schema: 'fvs-checker/build-request', version: 1, purpose: 'auto', source, out, runId });
+  const result = await buildCheckerSnapshot({ ...job, schema: 'fvs-checker/build-request', version: job.version ?? 1, purpose: 'auto', source, out, runId }, services);
+  if (result.status === 'cancelled') refuse('cancelled', result.reason);
   if (result.status !== 'built') refuse(result.status === 'unsupported' ? 'unsupported' : result.receipts?.some((r) => r.timedOut) || /deadline/i.test(result.reason ?? '') ? 'timeout' : 'audit-failed', result.reason ?? 'fresh build did not complete');
-  if (result.schema !== 'fvs-checker/build-result' || result.version !== 1 || result.status !== 'built' || result.authority !== 'build-only'
+  if (result.schema !== 'fvs-checker/build-result' || result.version !== (job.version ?? 1) || result.status !== 'built' || result.authority !== 'build-only'
     || result.runId !== runId || !result.modules?.length || result.proofChecked !== false) refuse('audit-failed', 'builder returned incomplete or foreign evidence');
   return result;
 }
-function checkedProcess(lean, args, cwd, deadlineMs, searchPaths, label) {
-  const run = spawnSync(lean.path, args, { cwd, encoding: 'utf8', timeout: Math.max(1, deadlineMs - Date.now()), maxBuffer: 16 * 1024 * 1024,
-    env: { PATH: `${path.dirname(lean.path)}:/usr/bin:/bin`, LANG: 'C', LEAN_PATH: searchPaths.join(path.delimiter), TMPDIR: cwd } });
+function checkedProcess(lean, args, cwd, control, searchPaths, label, services = {}) {
+  const options = { cwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024,
+    env: { PATH: `${path.dirname(lean.path)}:/usr/bin:/bin`, LANG: 'C', LEAN_PATH: searchPaths.join(path.delimiter), TMPDIR: cwd } };
+  const finish = (run, owned = null) => {
   fs.writeFileSync(path.join(cwd, `${label}.stdout`), run.stdout ?? '', { flag: 'wx' });
   fs.writeFileSync(path.join(cwd, `${label}.stderr`), run.stderr ?? '', { flag: 'wx' });
   const receipt = save(cwd, `${label}.json`, { argv: [lean.path, ...args], cwd, exit: run.status, signal: run.signal, error: run.error?.code ?? null,
-    stdoutSha256: sha(run.stdout ?? ''), stderrSha256: sha(run.stderr ?? '') });
+    stdoutSha256: sha(run.stdout ?? ''), stderrSha256: sha(run.stderr ?? ''), ...(owned ? { supervision: { cancelled: owned.cancelled, timedOut: owned.timedOut, cleanupComplete: owned.cleanupComplete, cleanup: owned.cleanup } } : {}) });
+  if (owned?.cancelled) refuse('cancelled', 'operation cancelled; no expected-context publication');
+  if (owned?.timedOut) refuse('timeout', 'selected execution budget exhausted');
+  if (owned && !owned.cleanupComplete) refuse('unsupported', 'owned child termination is unverified');
   if (run.error?.code === 'ETIMEDOUT') refuse('timeout', `${label} timed out`);
   if (run.status !== 0 || run.signal || run.error) refuse('audit-failed', `${label} failed: ${run.stdout ?? ''}${run.stderr ?? ''}`);
   return { run, receipt };
+  };
+  return typeof control === 'object' ? runOwned([lean.path, ...args], options, control, services).then(run => finish(run, run))
+    : finish(spawnSync(lean.path, args, { ...options, timeout: Math.max(1, control - Date.now()) }));
 }
 
 export function sourceInventory(source, deadlineMs, out, label) {
   closed(source, ['kind', 'root', 'commit', 'expectedTree'], 'immutable source');
   if (source.kind !== 'git' || !path.isAbsolute(source.root ?? '') || !isCommit(source.commit) || !isCommit(source.expectedTree)) refuse('invalid-input', 'immutable context/candidate source is required');
-  beforeDeadline({ deadlineMs });
-  const git = '/usr/bin/git', toolSha256 = hash(git);
+  assertRunning(deadlineMs);
+  const git = gitExecutable(typeof deadlineMs === 'object' ? 2 : 1), toolSha256 = hash(git);
   const argv = [git, '--no-optional-locks', '--no-replace-objects', '-C', source.root, 'ls-tree', '-rz', '--full-tree', source.expectedTree];
   const env = { PATH: '/usr/bin:/bin', LANG: 'C', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0', GIT_NO_LAZY_FETCH: '1' };
-  const run = spawnSync(git, argv.slice(1), { cwd: out, timeout: Math.max(1, deadlineMs - Date.now()), maxBuffer: 16 * 1024 * 1024,
+  const run = spawnSync(git, argv.slice(1), { cwd: out, ...(typeof deadlineMs === 'object' ? timeoutOptions(deadlineMs, { administrativeMs: 10000 }) : { timeout: Math.max(1, deadlineMs - Date.now()) }), maxBuffer: 16 * 1024 * 1024,
     env });
   fs.writeFileSync(path.join(out, `${label}.stdout`), run.stdout ?? '', { flag: 'wx' });
   fs.writeFileSync(path.join(out, `${label}.stderr`), run.stderr ?? '', { flag: 'wx' });
@@ -187,7 +200,9 @@ export function verifyContextBindings(expected, targets, originalFiles, records,
   }
 }
 
-export function expectedWitness(job, build, targets, out, engine) {
+function* expectedWitnessSteps(job, build, targets, out, engine, version) {
+  if (version === 2 ? job.version !== 2 : job.version !== undefined && job.version !== 1) refuse('invalid-input', 'expected-context wrapper version differs');
+  const control = version === 2 ? requestControl(job) : requestControl({ ...job, version: 1 });
   fs.mkdirSync(out);
   const projectRoots = build.modules.map((m) => {
     const suffix = `${m.name.split('.').join('/')}.olean`;
@@ -235,14 +250,14 @@ export function expectedWitness(job, build, targets, out, engine) {
     }
     const name = groups.length === 1 ? 'FvsCheckerExpected' : `FvsCheckerExpected${index}`;
     const termsRequest = save(out, `terms-request-${index}.json`, { runId: `${job.runId}-terms-${index}`, referenceModules: [context], terms: selected.map((t) => t.statement) });
-    const parsed = checkedProcess(build.lean, ['--run', engine.HELPER, 'validate-terms', termsRequest.file], out, job.deadlineMs, paths, `parse-terms-${index}`);
+    const parsed = yield [build.lean, ['--run', engine.HELPER, 'validate-terms', termsRequest.file], out, control, paths, `parse-terms-${index}`, engine.executionServices];
     const result = json(Buffer.from(parsed.run.stdout));
     if (result.schema !== 'fvs-checker/parsed-terms' || result.runId !== `${job.runId}-terms-${index}`) refuse('audit-failed', 'foreign term parser result');
     const source = [`import ${context.name}`, 'set_option autoImplicit false', ...(opens.size ? [`open ${[...opens].join(' ')}`] : []), 'namespace FvsCheckerExpected',
       ...selected.map((t) => `theorem expected_${t.node} : (${t.statement}) := by sorry`), 'end FvsCheckerExpected', ''].join('\n');
     const file = path.join(out, `${name}.lean`); fs.writeFileSync(file, source, { flag: 'wx' });
     const base = path.join(out, name);
-    const compiled = checkedProcess(build.lean, ['-o', `${base}.olean`, '-i', `${base}.ilean`, file], out, job.deadlineMs, paths, `compile-expectations-${index}`);
+    const compiled = yield [build.lean, ['-o', `${base}.olean`, '-i', `${base}.ilean`, file], out, control, paths, `compile-expectations-${index}`, engine.executionServices];
     modules.push({ name, parts: [`${base}.olean`] }); sources.push({ file, sha256: hash(file) }); receipts.push(parsed.receipt, compiled.receipt);
     contexts.push({ contextFile, module: context.name, projectImports: bindings });
     for (const target of selected) targetModules[target.node] = name;
@@ -251,9 +266,20 @@ export function expectedWitness(job, build, targets, out, engine) {
   return { modules, sources, receipts, contexts, targetModules };
 }
 
+export function expectedWitness(job, build, targets, out, engine) {
+  const steps = expectedWitnessSteps(job, build, targets, out, engine, 1); let step = steps.next();
+  while (!step.done) step = steps.next(checkedProcess(...step.value));
+  return step.value;
+}
+export async function expectedWitnessV2(job, build, targets, out, engine) {
+  const steps = expectedWitnessSteps(job, build, targets, out, engine, 2); let step = steps.next();
+  while (!step.done) step = steps.next(await checkedProcess(...step.value));
+  return step.value;
+}
+
 function kernelRequest(job, build, references, targets, context, nodes = targets.map((t) => t.node)) {
   const selected = targets.filter((t) => nodes.includes(t.node));
-  return { schema: 'fvs-checker/kernel-request', version: 1, runId: job.runId, deadlineMs: job.deadlineMs, lean: build.lean,
+  return { schema: 'fvs-checker/kernel-request', ...executionFields(job), runId: job.runId, lean: build.lean,
     externalSearchPaths: build.externalSearchPaths, externalImports: build.externalImports,
     modules: build.modules.map(({ name, parts }) => ({ name, parts })), referenceModules: references.map(({ name, parts }) => ({ name, parts })),
     targets: selected.map(({ name, expectedName, module }) => ({ name, expectedName, module })),
@@ -289,7 +315,7 @@ function originalExternalParts(job, context, build) {
 }
 
 async function freezeAuto(job, out, engine) {
-  closed(job, ['schema', 'version', 'purpose', 'runId', 'deadlineMs', 'extraction', 'registry', 'baseline', 'targets', 'overlayFiles'], 'auto freeze request');
+  closed(job, ['schema', 'version', 'purpose', 'runId', timingKey(job), 'extraction', 'registry', 'baseline', 'targets', 'overlayFiles'], 'auto freeze request');
   if (!Array.isArray(job.overlayFiles) || !job.overlayFiles.every(relative) || new Set(job.overlayFiles).size !== job.overlayFiles.length) refuse('invalid-input', 'explicit proof overlay file list is required');
   const context = extractionContext(job.extraction);
   if (job.baseline?.source?.kind !== 'git' || !isCommit(job.baseline.source.commit) || !isCommit(job.baseline.source.expectedTree)) refuse('invalid-input', 'auto baseline must name an immutable fixture commit and tree');
@@ -297,12 +323,12 @@ async function freezeAuto(job, out, engine) {
   const records = registryContext(job, context, job.baseline.source.root);
   exclusive(out);
   const requestInput = captureInput(job, out, engine);
-  const checker = engineIdentity();
-  const pristine = sourceInventory(job.baseline.source, job.deadlineMs, out, 'pristine-source');
+  const checker = engineIdentity(job.version);
+  const pristine = sourceInventory(job.baseline.source, requestControl(job), out, 'pristine-source');
   if (pristine.files.some((file) => job.overlayFiles.includes(file))) refuse('unsupported', 'freeze requires a pristine context commit with mutable proof overlays absent');
   const reviewed = new Set(Object.values(records).flatMap((r) => r.contract.specDefinitions.map((d) => d.file)));
   if (pristine.files.some((file) => file.endsWith('.lean') && !Object.hasOwn(context.constants.inputs.files, file) && !reviewed.has(file))) refuse('unsupported', 'pristine context contains unreviewed Lean source');
-  const build = await buildSnapshot({ ...job.baseline, deadlineMs: job.deadlineMs }, job.baseline.source, path.join(out, 'baseline-build'), `${job.runId}-build`);
+  const build = await buildSnapshot({ ...job.baseline, ...executionFields(job) }, job.baseline.source, path.join(out, 'baseline-build'), `${job.runId}-build`, engine.executionServices);
   const files = sourceHashes(build);
   for (const [rel, digest] of Object.entries(context.constants.inputs.files)) if (!rel.startsWith('.lake/') && files[rel] !== digest) refuse('stale-input', `baseline differs from original extraction context: ${rel}`);
   const frozenRecords = registryContext(job, context, build.projectRoot);
@@ -313,23 +339,23 @@ async function freezeAuto(job, out, engine) {
   const original = { ...kernelRequest({ ...job, runId: `${job.runId}-extraction-meaning` }, build, originalProjectModules(job, context), targets, context),
     targets: [], meaningOnly: true };
   const originalRequest = save(out, 'extraction-meaning-request.json', original);
-  const extractionMeaning = engine.runKernelAudit({ request: originalRequest.file, out: path.join(out, 'extraction-meaning-check') }, { baseline: true });
-  engine.verifyBuildImports(build, extractionMeaning.attempt.imports, job.deadlineMs);
-  const expected = expectedWitness(job, build, targets, path.join(out, 'expectations'), engine);
+  const extractionMeaning = await engine.runKernelAudit({ request: originalRequest.file, out: path.join(out, 'extraction-meaning-check') }, { baseline: true });
+  engine.verifyBuildImports(build, extractionMeaning.attempt.imports, requestControl(job));
+  const expected = await (job.version === 2 ? expectedWitnessV2 : expectedWitness)(job, build, targets, path.join(out, 'expectations'), engine);
   verifyContextBindings(expected, targets, context.constants.inputs.files, records, build.projectRoot);
   const references = [...build.modules, ...expected.modules];
   const anchors = targets.map((t) => ({ ...t, name: t.expectedName, module: expected.targetModules[t.node] }));
   const kernel = kernelRequest(job, { ...build, modules: references }, references, anchors, context);
   const request = save(out, 'meaning-request.json', kernel);
-  const meaning = engine.runKernelAudit({ request: request.file, out: path.join(out, 'meaning-check') }, { baseline: true });
-  engine.verifyBuildImports(build, meaning.attempt.imports, job.deadlineMs);
+  const meaning = await engine.runKernelAudit({ request: request.file, out: path.join(out, 'meaning-check') }, { baseline: true });
+  engine.verifyBuildImports(build, meaning.attempt.imports, requestControl(job));
   const compiled = { ...buildFiles(build), ...Object.fromEntries([...expected.sources.map((s) => s.file), ...expected.modules.flatMap((m) => [...m.parts,
     ...['.ilean', '.ir'].map((suffix) => m.parts[0].replace(/\.olean$/, suffix)).filter((f) => fs.existsSync(f))])].map((f) => [f, hash(f)])) };
   const imports = Object.fromEntries(meaning.attempt.imports.filter((m) => !m.project).flatMap((m) => m.parts.map((p) => [p.file, p.sha256])));
   const input = save(out, 'freeze-request.json', job);
   verifyFiles(checker); verifyFiles(compiled); verifyFiles(imports);
-  extractionContext(job.extraction); registryContext(job, context, build.projectRoot); beforeDeadline(job);
-  const frozen = { schema: 'fvs-checker/auto-baseline', version: 1, purpose: 'auto', authority: 'expectations-only', runId: job.runId,
+  extractionContext(job.extraction); registryContext(job, context, build.projectRoot); beforeDeadline(job, engine.executionServices);
+  const frozen = { schema: 'fvs-checker/auto-baseline', version: job.version, purpose: 'auto', authority: 'expectations-only', runId: job.runId,
     input, ...requestInput, contextInventory: pristine.evidence, checker, extractionSourceCommit: context.identity.json.provenance.sourceCommit, fixtureSource: build.source,
     registry: job.registry, records, targets, overlayFiles: job.overlayFiles, build, references, compiled, imports, runtimes: meaning.attempt.runtimes,
     expected, extractionMeaningCheck: extractionMeaning.evidence, extractionMeaning: extractionMeaning.audit,
@@ -340,7 +366,7 @@ async function freezeAuto(job, out, engine) {
 
 function frozenArtifacts(ref) {
   const frozen = bound(ref).json;
-  if (frozen.schema !== 'fvs-checker/auto-baseline' || frozen.version !== 1 || frozen.purpose !== 'auto' || frozen.authority !== 'expectations-only'
+  if (frozen.schema !== 'fvs-checker/auto-baseline' || ![1, 2].includes(frozen.version) || frozen.purpose !== 'auto' || frozen.authority !== 'expectations-only'
     || frozen.meaning?.status !== 'meaning-checked' || frozen.meaning?.targetProofsChecked !== false
     || frozen.extractionMeaning?.status !== 'meaning-checked' || frozen.extractionMeaning?.targetProofsChecked !== false) refuse('invalid-input', 'auto check requires an extraction-bound expectation bundle');
   for (const [ref, declared] of [[frozen.extractionMeaningCheck, frozen.extractionMeaning], [frozen.meaningCheck, frozen.meaning]]) {
@@ -349,17 +375,19 @@ function frozenArtifacts(ref) {
       || evidence.audit.targetProofsChecked !== false) refuse('stale-input', 'frozen meaning evidence does not match its retained checker result');
   }
   const job = bound(frozen.input).json, context = extractionContext(job.extraction);
+  if (job.version !== frozen.version || frozen.build.version !== frozen.version) refuse('stale-input', 'mixed frozen/wrapper versions');
   if (canonical(bound(frozen.contextInventory).json.source) !== canonical(job.baseline.source)) refuse('stale-input', 'frozen pristine context inventory changed');
   if (canonical(frozen.registry) !== canonical(job.registry) || canonical(frozen.fixtureSource) !== canonical(frozen.build.source)
     || frozen.extractionSourceCommit !== context.identity.json.provenance.sourceCommit || frozen.runId !== job.runId
     || frozen.build.source.commit !== job.baseline.source.commit || frozen.build.source.tree !== job.baseline.source.expectedTree) refuse('stale-input', 'frozen source/registry tuple is inconsistent');
   bound(frozen.controllerInput); bound(frozen.adapterInput);
-  if (canonical(engineIdentity()) !== canonical(frozen.checker)) refuse('stale-input', 'checker/policy identity changed since freeze');
+  if (canonical(engineIdentity(frozen.version)) !== canonical(frozen.checker)) refuse('stale-input', 'checker/policy identity changed since freeze');
   verifyFiles(frozen.compiled); verifyFiles(frozen.imports); verifyFiles(frozen.runtimes);
   return { frozen, job, context };
 }
-function frozenContext(ref, { ignoreRegistryLock = false } = {}) {
+function frozenContext(ref, { ignoreRegistryLock = false, version } = {}) {
   const { frozen, job, context } = frozenArtifacts(ref);
+  if (version !== undefined && version !== frozen.version) refuse('stale-input', 'baseline/request versions differ');
   const records = registryContext(job, context, frozen.build.projectRoot, { ignoreLock: ignoreRegistryLock });
   if (canonical(records) !== canonical(frozen.records)) refuse('stale-input', 'contract records changed since freeze');
   return { frozen, job, context };
@@ -367,35 +395,41 @@ function frozenContext(ref, { ignoreRegistryLock = false } = {}) {
 
 // Facts only: valid immutable artifacts do not imply current registry readiness
 // or accepted proof.22 uses this while a completed transition needs rechecking.
-export function inspectAutoBaselineArtifacts({ baseline, deadlineMs }) {
-  beforeDeadline({ deadlineMs });
+export function inspectAutoBaselineArtifacts(raw) {
+  const { baseline, version = 1 } = raw;
+  if (version === 2) closed(raw, ['baseline', 'version', 'execution'], 'v2 baseline inspection');
+  const control = requestControl({ ...raw, version }); assertRunning(control);
   const { frozen, job, context } = frozenArtifacts(baseline);
-  beforeDeadline({ deadlineMs });
+  if (frozen.version !== version) refuse('stale-input', 'inspection/baseline versions differ');
+  assertRunning(control);
   return { status: 'artifacts-valid', authority: 'expectations-only', targetProofsChecked: false, baseline, registry: frozen.registry,
     source: job.baseline.source, overlays: frozen.overlayFiles, nodes: [...context.view.union].sort((a, b) => a - b),
     dependencies: Object.fromEntries([...context.view.union].map((node) => [node, context.view.nodes.get(node).dependsOn])),
     inputs: { extraction: job.extraction.identity, graph: job.extraction.graph, plan: job.extraction.plan } };
 }
-export function inspectAutoProvisional({ evidence, baseline, source, nodes, deadlineMs }) {
-  beforeDeadline({ deadlineMs }); frozenContext(baseline);
+export function inspectAutoProvisional(raw) {
+  const { evidence, baseline, source, nodes, version = 1 } = raw;
+  if (version === 2) closed(raw, ['evidence', 'baseline', 'source', 'nodes', 'version', 'execution'], 'v2 provisional inspection');
+  const control = requestControl({ ...raw, version }); assertRunning(control); frozenContext(baseline, { version });
   const result = checkEvidence(evidence, baseline.sha256);
   if (result.source.commit !== source.commit || result.source.tree !== source.expectedTree || !Array.isArray(nodes) || nodes.some((id) => !result.nodes.includes(id))) refuse('stale-input', 'provisional evidence is not for the requested current source/coverage');
-  checkBuildEvidence(result, { verifyBuildImports }, deadlineMs); beforeDeadline({ deadlineMs });
+  checkBuildEvidence(result, { verifyBuildImports }, control); assertRunning(control);
   return { status: 'provisional', authority: 'provisional-only', evidence, baseline, source: result.source, nodes: result.nodes };
 }
 
 function checkEvidence(ref, frozenSha256) {
   const result = bound(ref).json;
-  if (result.schema !== 'fvs-checker/auto-check' || result.version !== 1 || result.purpose !== 'auto' || result.authority !== 'provisional-only'
+  if (result.schema !== 'fvs-checker/auto-check' || ![1, 2].includes(result.version) || result.purpose !== 'auto' || result.authority !== 'provisional-only'
     || result.status !== 'provisional' || result.frozenSha256 !== frozenSha256 || !Array.isArray(result.nodes) || !result.nodes.length
     || new Set(result.nodes).size !== result.nodes.length || !result.nodes.every((n) => Number.isSafeInteger(n) && n >= 0)
     || !isCommit(result.source?.commit) || !isCommit(result.source?.tree)) refuse('invalid-input', 'candidate evidence is not a bound auto provisional check');
   const frozen = bound(result.baseline).json;
-  if (result.baseline.sha256 !== frozenSha256 || frozen.schema !== 'fvs-checker/auto-baseline' || frozen.purpose !== 'auto'
+  if (frozen.version !== result.version || result.build?.version !== result.version || result.baseline.sha256 !== frozenSha256 || frozen.schema !== 'fvs-checker/auto-baseline' || frozen.purpose !== 'auto'
     || result.registryHeadSha256 !== frozen.registry.headSha256 || canonical(result.records) !== canonical(frozen.records)) refuse('stale-input', 'candidate evidence has foreign frozen/registry bindings');
   const kernel = bound(result.kernelCheck).json;
   const adapter = bound(result.adapterInput).json;
   bound(result.controllerInput);
+  if (adapter.version !== result.version || (result.version === 2 && canonical(parseExecution(adapter.execution)) !== canonical(parseExecution(kernel.attempt?.execution)))) refuse('stale-input', 'mixed execution policy/wrapper versions');
   if (adapter.runId !== result.runId || adapter.baseline?.sha256 !== result.frozenSha256 || adapter.source?.commit !== result.source.commit
     || adapter.source?.expectedTree !== result.source.tree || canonical(adapter.nodes) !== canonical(result.nodes)) refuse('stale-input', 'checker evidence lost its exact adapter request');
   if (kernel.audit?.schema !== 'fvs-kernel-audit/result' || kernel.audit.status !== 'kernel-checked' || kernel.audit.runId !== result.runId
@@ -410,6 +444,7 @@ function checkEvidence(ref, frozenSha256) {
 
 // The same artifact checks serve ordinary evidence and retained helper identity audits.
 function checkKernelArtifacts(kernel) {
+  if (kernel.attempt.version === 2 && (!kernel.attempt.supervision || kernel.attempt.supervision.cancelled || kernel.attempt.supervision.timedOut || kernel.attempt.supervision.cleanupComplete !== true)) refuse('stale-input', 'uncompleted v2 kernel supervision');
   verifyFiles(kernel.attempt.inputs);
   verifyFiles(Object.fromEntries(kernel.attempt.imports.flatMap((m) => m.parts.map((p) => [p.file, p.sha256]))));
   for (const row of kernel.attempt.snapshots.modules) if (hash(row.file) !== row.sha256) refuse('stale-input', 'accepted kernel input snapshot changed');
@@ -433,10 +468,10 @@ function checkBuildEvidence(result, engine, deadlineMs) {
 function integrationHead(source, out, label, deadlineMs, tree = false) {
   closed(source, ['kind', 'root', 'commit', 'expectedTree'], 'integrated source');
   if (source.kind !== 'git' || !path.isAbsolute(source.root ?? '') || !isCommit(source.commit) || !isCommit(source.expectedTree)) refuse('invalid-input', 'exact integrated git source is required');
-  const git = '/usr/bin/git', toolSha256 = hash(git), argv = ['rev-parse', '--verify', tree ? 'HEAD^{tree}' : 'HEAD'];
+  const git = gitExecutable(typeof deadlineMs === 'object' ? 2 : 1), toolSha256 = hash(git), argv = ['rev-parse', '--verify', tree ? 'HEAD^{tree}' : 'HEAD'];
   const env = { PATH: '/usr/bin:/bin', LANG: 'C', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_OPTIONAL_LOCKS: '0',
     GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1', GIT_TERMINAL_PROMPT: '0' };
-  const run = spawnSync(git, argv, { cwd: source.root, env, encoding: 'utf8', timeout: Math.max(1, deadlineMs - Date.now()), maxBuffer: 1024 * 1024 });
+  const run = spawnSync(git, argv, { cwd: source.root, env, encoding: 'utf8', ...(typeof deadlineMs === 'object' ? timeoutOptions(deadlineMs, { administrativeMs: 10000 }) : { timeout: Math.max(1, deadlineMs - Date.now()) }), maxBuffer: 1024 * 1024 });
   const receipt = save(out, `${label}.json`, { argv: [git, ...argv], cwd: source.root, env, toolSha256, exit: run.status, signal: run.signal,
     error: run.error?.code ?? null, stdout: run.stdout ?? '', stderr: run.stderr ?? '' });
   if (hash(git) !== toolSha256) refuse('stale-input', 'git tool changed during integrated-head validation');
@@ -446,13 +481,13 @@ function integrationHead(source, out, label, deadlineMs, tree = false) {
 }
 
 async function acceptAuto(job, out, engine) {
-  closed(job, ['schema', 'version', 'purpose', 'runId', 'deadlineMs', 'baseline', 'candidateCheck', 'source', 'node', 'store'], 'auto accept request');
-  const { frozen, context } = frozenContext(job.baseline);
+  closed(job, ['schema', 'version', 'purpose', 'runId', timingKey(job), 'baseline', 'candidateCheck', 'source', 'node', 'store'], 'auto accept request');
+  const { frozen, context } = frozenContext(job.baseline, { version: job.version });
   if (!Number.isSafeInteger(job.node) || !context.view.union.has(job.node)) refuse('invalid-input', 'accept one known selected proof node');
   closed(job.store, ['root', 'expectedHeadSha256'], 'accepted store');
   if (!path.isAbsolute(job.store.root ?? '') || !(job.store.expectedHeadSha256 === null || isSha(job.store.expectedHeadSha256))) refuse('invalid-input', 'explicit accepted-store head is required');
   const candidate = checkEvidence(job.candidateCheck, job.baseline.sha256);
-  checkBuildEvidence(candidate, engine, job.deadlineMs);
+  checkBuildEvidence(candidate, engine, requestControl(job));
   if (!candidate.nodes.includes(job.node)) refuse('invalid-input', 'candidate check omits the selected node');
   const previous = readAcceptedStore(job.store.root);
   if (previous.headSha256 !== job.store.expectedHeadSha256) refuse('stale-input', 'accepted-store expected head is stale');
@@ -460,23 +495,23 @@ async function acceptAuto(job, out, engine) {
   const dependencies = dependenciesOf(context, job.node).map((node) => {
     const accepted = previous.heads.get(node);
     if (!accepted || accepted.record.frozenSha256 !== job.baseline.sha256 || accepted.record.registryHeadSha256 !== frozen.registry.headSha256) refuse('stale-input', `helper ${node} lacks a current accepted receipt`);
-    checkBuildEvidence(checkEvidence(accepted.record.integratedCheck, job.baseline.sha256), engine, job.deadlineMs);
+    checkBuildEvidence(checkEvidence(accepted.record.integratedCheck, job.baseline.sha256), engine, requestControl(job));
     return { node, sha256: accepted.sha256 };
   });
   exclusive(out);
   const requestInput = captureInput(job, out, engine);
-  const headBefore = integrationHead(job.source, out, 'integration-head-before', job.deadlineMs);
-  const integrated = await checkAuto({ schema: 'fvs-checker/check-request', version: 1, purpose: 'auto', runId: `${job.runId}-integrated`, deadlineMs: job.deadlineMs,
+  const headBefore = integrationHead(job.source, out, 'integration-head-before', requestControl(job));
+  const integrated = await checkAuto({ schema: 'fvs-checker/check-request', ...executionFields(job), purpose: 'auto', runId: `${job.runId}-integrated`,
     baseline: job.baseline, source: job.source, nodes: [job.node, ...dependencies.map((d) => d.node)] }, path.join(out, 'integrated'), engine);
   const reuseChecks = [];
   for (const dependency of dependencies) {
     const old = checkEvidence(previous.heads.get(dependency.node).record.integratedCheck, job.baseline.sha256);
     const target = frozen.targets.find((t) => t.node === dependency.node);
-    const request = kernelRequest({ runId: `${job.runId}-reuse-${dependency.node}`, deadlineMs: job.deadlineMs }, integrated.build, old.build.modules,
+    const request = kernelRequest({ runId: `${job.runId}-reuse-${dependency.node}`, ...executionFields(job) }, integrated.build, old.build.modules,
       [{ ...target, expectedName: target.name }], context, [dependency.node]);
     request.proofIdentityRoots = [target.name];
     const ref = save(out, `helper-${dependency.node}-request.json`, request);
-    const checked = engine.runKernelAudit({ request: ref.file, out: path.join(out, `helper-${dependency.node}-identity`) });
+    const checked = await engine.runKernelAudit({ request: ref.file, out: path.join(out, `helper-${dependency.node}-identity`) });
     reuseChecks.push(checked.evidence);
   }
   const recordsDir = path.join(job.store.root, 'records'); fs.mkdirSync(recordsDir, { recursive: true });
@@ -488,16 +523,16 @@ async function acceptAuto(job, out, engine) {
   let writing = false, completed = false;
   try {
     lock(job.store.root); lock(frozen.registry.root);
-    frozenContext(job.baseline, { ignoreRegistryLock: true });
+    frozenContext(job.baseline, { ignoreRegistryLock: true, version: job.version });
     const current = readAcceptedStore(job.store.root, { ignoreLock: true });
     if (current.headSha256 !== job.store.expectedHeadSha256) refuse('stale-input', 'accepted-store head changed during integrated checking');
     if (current.records.some(({ record }) => record.runId === job.runId)) refuse('stale-input', 'publication run identity has already been used');
     for (const dep of dependencies) if (current.heads.get(dep.node)?.sha256 !== dep.sha256) refuse('stale-input', 'accepted helper changed during integrated checking');
-    checkBuildEvidence(checkEvidence(job.candidateCheck, job.baseline.sha256), engine, job.deadlineMs);
-    checkBuildEvidence(checkEvidence(integrated.evidence, job.baseline.sha256), engine, job.deadlineMs);
-    for (const dep of dependencies) checkBuildEvidence(checkEvidence(current.heads.get(dep.node).record.integratedCheck, job.baseline.sha256), engine, job.deadlineMs);
-    const headAtPublication = integrationHead(job.source, out, 'integration-head-publication', job.deadlineMs);
-    beforeDeadline(job);
+    checkBuildEvidence(checkEvidence(job.candidateCheck, job.baseline.sha256), engine, requestControl(job));
+    checkBuildEvidence(checkEvidence(integrated.evidence, job.baseline.sha256), engine, requestControl(job));
+    for (const dep of dependencies) checkBuildEvidence(checkEvidence(current.heads.get(dep.node).record.integratedCheck, job.baseline.sha256), engine, requestControl(job));
+    const headAtPublication = integrationHead(job.source, out, 'integration-head-publication', requestControl(job));
+    beforeDeadline(job, engine.executionServices);
     const record = { schema: 'fvs-checker/accepted-event', version: 1, authority: 'canonical-checker', seq: current.records.length, prev: current.headSha256,
       runId: job.runId, node: job.node, frozenSha256: job.baseline.sha256, baseline: job.baseline, registryHeadSha256: frozen.registry.headSha256,
       contract: frozen.records[job.node].sha256, candidate: candidate.source, integrated: integrated.source,
@@ -511,7 +546,7 @@ async function acceptAuto(job, out, engine) {
     fs.renameSync(temporary, file);
     const dir = fs.openSync(recordsDir, 'r'); try { fs.fsyncSync(dir); } finally { fs.closeSync(dir); }
     completed = true;
-    return { code: 'ok', schema: 'fvs-checker/accept-result', version: 1, purpose: 'auto', authority: 'canonical-checker', status: 'accepted',
+    return { code: 'ok', schema: 'fvs-checker/accept-result', version: job.version, purpose: 'auto', authority: 'canonical-checker', status: 'accepted',
       acceptedReceipt: { file, sha256: digest }, integratedCheck: integrated.evidence, node: job.node };
   } finally {
     if (!writing || completed) for (const file of locks.reverse()) fs.rmdirSync(file);
@@ -519,32 +554,32 @@ async function acceptAuto(job, out, engine) {
 }
 
 async function checkAuto(job, out, engine) {
-  closed(job, ['schema', 'version', 'purpose', 'runId', 'deadlineMs', 'baseline', 'source', 'nodes'], 'auto check request');
-  const { frozen, job: original, context } = frozenContext(job.baseline);
+  closed(job, ['schema', 'version', 'purpose', 'runId', timingKey(job), 'baseline', 'source', 'nodes'], 'auto check request');
+  const { frozen, job: original, context } = frozenContext(job.baseline, { version: job.version });
   if (!Array.isArray(job.nodes) || !job.nodes.length || new Set(job.nodes).size !== job.nodes.length || job.nodes.some((id) => !context.view.union.has(id))) refuse('invalid-input', 'select known distinct proof nodes');
   closed(job.source, ['kind', 'root', 'commit', 'expectedTree'], 'candidate source');
   if (job.source.kind !== 'git' || !isCommit(job.source.commit) || !isCommit(job.source.expectedTree)) refuse('invalid-input', 'candidate commit and exact tree are required');
   exclusive(out);
   const requestInput = captureInput(job, out, engine);
-  const candidateInventory = sourceInventory(job.source, job.deadlineMs, out, 'candidate-source');
+  const candidateInventory = sourceInventory(job.source, requestControl(job), out, 'candidate-source');
   const proofModules = frozen.overlayFiles.filter((file) => candidateInventory.files.includes(file)).map((file) => overlayModule(file, original.baseline.sourceRoot)).filter(Boolean);
   const libraries = [...new Set([...(original.baseline.libraries ?? []), ...proofModules])];
-  const build = await buildSnapshot({ ...original.baseline, ...(libraries.length ? { libraries } : {}), deadlineMs: job.deadlineMs }, job.source, path.join(out, 'candidate-build'), `${job.runId}-build`);
+  const build = await buildSnapshot({ ...original.baseline, ...(libraries.length ? { libraries } : {}), ...executionFields(job) }, job.source, path.join(out, 'candidate-build'), `${job.runId}-build`, engine.executionServices);
   const files = sourceHashes(build), baseline = sourceHashes(frozen.build);
   for (const [rel, digest] of Object.entries(baseline)) if (!frozen.overlayFiles.includes(rel) && files[rel] !== digest) refuse('stale-input', `protected baseline input changed: ${rel}`);
   for (const rel of Object.keys(files)) if (!Object.hasOwn(baseline, rel) && !frozen.overlayFiles.includes(rel)) refuse('stale-input', `unrecorded candidate source: ${rel}`);
   const kernel = kernelRequest(job, build, frozen.references, frozen.targets, context, job.nodes);
   const request = save(out, 'kernel-request.json', kernel);
-  const checked = engine.runKernelAudit({ request: request.file, out: path.join(out, 'kernel-check') });
-  engine.verifyBuildImports(build, checked.attempt.imports, job.deadlineMs);
+  const checked = await engine.runKernelAudit({ request: request.file, out: path.join(out, 'kernel-check') });
+  engine.verifyBuildImports(build, checked.attempt.imports, requestControl(job));
   const observed = Object.fromEntries(checked.attempt.imports.filter((m) => !m.project).flatMap((m) => m.parts.map((p) => [p.file, p.sha256])));
   // A builder may use an owned dependency copy at a different path. Bind names,
   // ordered parts and bytes, rather than accepting a caller's dependency label.
   const external = (audit) => audit.filter((m) => !m.project).map((m) => [m.name, m.parts.map((p) => p.sha256)]).sort(([a], [b]) => a.localeCompare(b));
   const baselineAudit = bound(frozen.meaningCheck).json;
   if (canonical(external(checked.attempt.imports)) !== canonical(external(baselineAudit.attempt.imports)) || canonical(checked.attempt.runtimes) !== canonical(frozen.runtimes)) refuse('stale-input', 'resolved dependency/runtime identity changed since freeze');
-  frozenContext(job.baseline); verifyFiles(buildFiles(build)); verifyFiles(observed); beforeDeadline(job);
-  const result = { schema: 'fvs-checker/auto-check', version: 1, purpose: 'auto', authority: 'provisional-only', status: 'provisional', code: 'ok', runId: job.runId,
+  frozenContext(job.baseline); verifyFiles(buildFiles(build)); verifyFiles(observed); beforeDeadline(job, engine.executionServices);
+  const result = { schema: 'fvs-checker/auto-check', version: job.version, purpose: 'auto', authority: 'provisional-only', status: 'provisional', code: 'ok', runId: job.runId,
     nodes: job.nodes, baseline: job.baseline, frozenSha256: job.baseline.sha256, registryHeadSha256: frozen.registry.headSha256,
     source: { commit: build.source.commit, tree: build.source.tree }, extractionSourceCommit: frozen.extractionSourceCommit,
     records: frozen.records, ...requestInput, build, kernelCheck: checked.evidence, audit: checked.audit };
@@ -609,30 +644,32 @@ export function currentAcceptedRows(history, { selection, source, frozenSha256, 
 
 // Resume inspects currentness, never builds or publishes a proof. Historical
 // chain validity alone cannot clear a current freeze/registry/import mismatch.
-export function inspectAutoAcceptance({ baseline, store, source, deadlineMs, out }) {
+export function inspectAutoAcceptance(raw) {
+  const { baseline, store, source, out, version = 1 } = raw;
+  if (version === 2) closed(raw, ['baseline', 'store', 'source', 'out', 'version', 'execution'], 'v2 acceptance inspection');
   closed(store, ['root', 'expectedHeadSha256'], 'accepted store inspection');
   if (!path.isAbsolute(store.root ?? '') || !(store.expectedHeadSha256 === null || isSha(store.expectedHeadSha256))) refuse('invalid-input', 'explicit accepted-store head is required');
-  beforeDeadline({ deadlineMs });
+  const control = requestControl({ ...raw, version }); assertRunning(control);
   const history = readAcceptedStore(store.root);
   if (history.headSha256 !== store.expectedHeadSha256) refuse('stale-input', 'accepted-store head changed');
   if (!history.records.length) {
-    const current = baseline === null ? null : frozenContext(baseline);
+    const current = baseline === null ? null : frozenContext(baseline, { version });
     return { status: 'not-established', acceptedBaseline: null, storeHeadSha256: null, nodes: [], registry: current?.frozen.registry ?? null,
       inputs: current ? { extraction: current.job.extraction.identity, graph: current.job.extraction.graph, plan: current.job.extraction.plan } : null };
   }
   if (baseline === null) refuse('stale-input', 'accepted history requires its exact current frozen context');
-  const { frozen, context, job } = frozenContext(baseline);
+  const { frozen, context, job } = frozenContext(baseline, { version });
   const currentRows = currentAcceptedRows(history, { selection: context.view.union, source, frozenSha256: baseline.sha256, registryHeadSha256: frozen.registry.headSha256 });
   exclusive(out);
-  integrationHead(source, out, 'inspection-head-before', deadlineMs);
-  integrationHead(source, out, 'inspection-tree-before', deadlineMs, true);
+  integrationHead(source, out, 'inspection-head-before', control);
+  integrationHead(source, out, 'inspection-tree-before', control, true);
   const latest = history.records.at(-1).record;
   if (latest.integrated.commit !== source.commit || latest.integrated.tree !== source.expectedTree) refuse('stale-input', 'accepted integrated source differs; a fresh checker recheck is required');
   const nodes = [];
   for (const row of currentRows) {
     const record = row.record, node = record.node;
     if (record.frozenSha256 !== baseline.sha256 || record.registryHeadSha256 !== frozen.registry.headSha256 || record.contract !== frozen.records[node]?.sha256) refuse('stale-input', 'accepted node is stale under the current freeze/registry');
-    checkBuildEvidence(checkEvidence(record.integratedCheck, baseline.sha256), { verifyBuildImports }, deadlineMs);
+    checkBuildEvidence(checkEvidence(record.integratedCheck, baseline.sha256), { verifyBuildImports }, control);
     if (!Array.isArray(record.helperIdentityChecks) || record.helperIdentityChecks.length !== record.dependencies.length) refuse('stale-input', 'accepted helper identity evidence is missing');
     for (const [index, dependency] of record.dependencies.entries()) {
       const kernel = bound(record.helperIdentityChecks[index]).json, target = frozen.targets.find((t) => t.node === dependency.node);
@@ -640,15 +677,15 @@ export function inspectAutoAcceptance({ baseline, store, source, deadlineMs, out
         || kernel.audit.runId !== `${record.runId}-reuse-${dependency.node}` || kernel.attempt?.runId !== kernel.audit.runId
         || canonical(kernel.audit.targets) !== canonical([target.name])) refuse('stale-input', 'accepted helper identity evidence is foreign');
       checkKernelArtifacts(kernel);
-      verifyBuildImports(checkEvidence(record.integratedCheck, baseline.sha256).build, kernel.attempt.imports, deadlineMs);
+      verifyBuildImports(checkEvidence(record.integratedCheck, baseline.sha256).build, kernel.attempt.imports, control);
     }
     nodes.push({ node, receipt: { file: row.file, sha256: row.sha256 }, integrated: record.integrated });
   }
-  frozenContext(baseline);
+  frozenContext(baseline, { version });
   if (readAcceptedStore(store.root).headSha256 !== history.headSha256) refuse('stale-input', 'accepted store changed during inspection');
-  integrationHead(source, out, 'inspection-head-after', deadlineMs);
-  integrationHead(source, out, 'inspection-tree-after', deadlineMs, true);
-  beforeDeadline({ deadlineMs });
+  integrationHead(source, out, 'inspection-head-after', control);
+  integrationHead(source, out, 'inspection-tree-after', control, true);
+  assertRunning(control);
   return { status: 'current', acceptedBaseline: latest.integrated, storeHeadSha256: history.headSha256, nodes: nodes.sort((a, b) => a.node - b.node), registry: frozen.registry,
     inputs: { extraction: job.extraction.identity, graph: job.extraction.graph, plan: job.extraction.plan } };
 }
@@ -656,8 +693,8 @@ export function inspectAutoAcceptance({ baseline, store, source, deadlineMs, out
 export async function runAuto(command, { request, out }, engine) {
   const bytes = fs.readFileSync(request), job = json(bytes);
   engine = { ...engine, controllerInput: { file: path.resolve(request), sha256: sha(bytes), bytes } };
-  if (!object(job) || job.schema !== `fvs-checker/${command === 'accept' ? 'accept' : command}-request` || job.version !== 1 || job.purpose !== 'auto') refuse('invalid-input', 'expected a complete extraction-bound auto request');
-  beforeDeadline(job);
+  if (!object(job) || job.schema !== `fvs-checker/${command === 'accept' ? 'accept' : command}-request` || ![1, 2].includes(job.version) || job.purpose !== 'auto') refuse('invalid-input', 'expected a complete extraction-bound auto request');
+  beforeDeadline(job, engine.executionServices);
   if (typeof job.runId !== 'string' || !job.runId) refuse('invalid-input', 'unique controller run identity is required');
   if (command === 'freeze') return freezeAuto(job, out, engine);
   if (command === 'check') return checkAuto(job, out, engine);

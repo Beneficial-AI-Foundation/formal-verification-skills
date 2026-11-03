@@ -8,6 +8,12 @@ reports establish no proof acceptance; trusted15 remains the sole publication au
 
 ## Opt-in AO controller continuation
 
+For a v2 project, follow `auto-execution.md`: keep its original optional budget and explicit memory
+disposition. During active small proof work use cheap progress observations, diagnose around1h when
+useful, and stop/reconcile the exact known scope before replacement. This is not a proof deadline.
+The current source component and protocol fixtures do not qualify actual stock-AO replacement;
+report unsupported known-work stop scope honestly and retain the cooperative handoff fallback.
+
 For an actual orchestrator with a complete current controller request, execution grant and resolved
 stage manifest, follow `fv-skills/references/auto-transitions.md` through the bounded proposal/effect/checkpoint loop to
 the17 reference handoff. Reuse initial agreement; no routine per-round human gate or hidden provider
@@ -52,7 +58,7 @@ action. On `no-state`, use `message` and `nextAction`.
 
 ## Step 3: Reconcile an agreed configured continuation
 
-When current agreement, project memory and caller invocation context exist, follow `auto-resume.md`.
+When current agreement, the recorded memory disposition and caller invocation context exist, follow `auto-resume.md`.
 Perform the mandatory canonical semantic applicability/actions check, prepare a fresh request and
 run `state` with exclusive output, then `verifyReconciliation` against the independently held request.
 Preserve partial reasons, reservations and original limits. The adapter may update only its runtime

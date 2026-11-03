@@ -27,6 +27,7 @@ const REPOSITORY_URL = 'https://github.com/Beneficial-AI-Foundation/formal-verif
 const MARKETPLACE_ID = 'beneficial-ai-foundation';
 const SCRIPT_FILES = [
   'fvs-auto.mjs',
+  'fvs-execution.mjs',
   'fvs-auto-resume.mjs',
   'fvs-auto-transitions.mjs',
   'fvs-auto-bundle.mjs',

@@ -68,3 +68,15 @@ test('already cancelled request starts nothing; uncertain group absence never be
   const result = await m.runOwned([process.execPath, '-e', ''], options, none, { probeGroup: () => 'unknown' });
   assert.equal(result.status, 0); assert.equal(result.cleanupComplete, false); assert.equal(result.cleanup.result, 'unknown');
 });
+
+test('long explicitly selected budget re-arms Node timer range rather than adding a hidden short limit',async()=>{const m=await mod;let now=Date.now(),callback;const delays=[],control=m.createExecution('long-selected',{kind:'deadline',deadlineMs:now+30*86400000});const result=await m.runOwned([process.execPath,'-e','process.stdout.write("done")'],options,control,{now:()=>now,scheduleTimeout(fn,delay){callback=fn;delays.push(delay);return delays.length;},cancelTimeout(){},onSpawn(){now+=86400000;callback();now+=27*86400000;callback();}});assert.equal(result.status,0);assert.equal(result.timedOut,false);assert.equal(delays[0],2147483647);assert.equal(delays[1],2147483647);assert.equal(delays[2],2*86400000);});
+
+test('installed pinned Apple Git dispatcher is supported exactly without generic hardlink exemption',async()=>{if(process.platform!=='darwin')return;const m=await mod,fs=require('node:fs'),crypto=require('node:crypto'),file='/usr/bin/git',expected='b8763cf250e607a778bb4603cecb5b90338814d0a3dfcba0d57b1de242f610e9';if(crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')!==expected)return;assert.equal(m.executionToolIdentity(file).sha256,expected);assert.ok(fs.statSync(file).nlink>1);});
+
+test('exited parent with inherited child pipe returns uncertain cleanup and never signals a recycled parent group',async()=>{
+ const m=await mod,c=new AbortController(),fs=require('node:fs'),os=require('node:os'),dir=fs.mkdtempSync(path.join(os.tmpdir(),'fvs-drain-unit-')),stopFile=path.join(dir,'stop');
+ const grandchild='const fs=require("node:fs");const timer=setInterval(()=>{if(fs.existsSync('+JSON.stringify(stopFile)+'))process.exit(0)},25);setTimeout(()=>process.exit(89),8000);';
+ const code='const{spawn}=require("node:child_process");spawn(process.execPath,["-e",'+JSON.stringify(grandchild)+'],{stdio:["ignore",process.stdout,process.stderr]});process.exit(0);';
+ try{const result=await m.runOwned([process.execPath,'-e',code],options,m.createExecution('closed-parent',{kind:'none'}),{signal:c.signal,spawnProcess(file,args,opts){const child=spawn(file,args,opts);child.once('exit',()=>c.abort());return child;}});assert.equal(result.status,0);assert.equal(result.signal,null);assert.equal(result.cancelled,true);assert.equal(result.cleanupComplete,false);assert.equal(result.cleanup.streamsDrained,false);assert.equal(result.cleanup.descendantAttestation,false);}
+ finally{fs.writeFileSync(stopFile,'stop');await new Promise(done=>setTimeout(done,250));fs.rmSync(dir,{recursive:true,force:true});}
+});

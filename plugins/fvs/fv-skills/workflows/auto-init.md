@@ -31,8 +31,8 @@ node "$AUTO" read-state --project-root .
 - `ok`: inspect `state.choices`, extraction history and the latest `state.agreements`, if present.
   Do not ask Keep/Change or repeat an interview when the applicable agreement is current. Reuse actual
   existing owner responses/grants rather than asking for them again. Check Step 5 first; if it passes,
-  proceed to Step6 memory bootstrap and then Step7 reconciliation and Step8 report without re-interviewing. Every start/resume
-  needs a fresh caller request/prime; never reuse an old memory-ready result. Missing/stale agreement blocks continuation;
+  proceed to Step6's recorded memory disposition and then Step7 reconciliation and Step8 report without re-interviewing. Every start/resume
+  needs its own current request; enabled memory also needs the fresh prime; never reuse an old memory-ready result. Missing/stale agreement blocks continuation;
   resolve only the affected setup through Steps 3–5. When the owner requests a material change,
   show only the affected choices and use those steps.
 - `malformed-state` or `malformed-externals`: print `message` and `nextStep` verbatim and stop.
@@ -64,15 +64,14 @@ Record only missing owner choices, using the current applicable evidence for kno
 
 - source revision and configuration/features (prefer an exact full commit; moving refs are not immutable);
 - initial scope, boundaries, conventions and single-crate/monorepo layout;
-- concurrent workers (default3) and one total wall-clock cap in hours, with no invented default;
+- concurrent workers (default3), optional explicitly chosen total budget, and optional memory disposition; new v2 uses no elapsed budget and explicit disabled memory unless a backend is configured;
 - actual delegated execution actions/limits and any draft-PR destination/authority, separately.
 
-`nodeHours` (default2) is inactive metadata, not enforced as a proof deadline; there is
-no arbitrary per-node proof timeout. Existing resource and
+New v2 choices use `limits:{workers}`, `budget:{kind:"none"}` or an explicitly selected wall budget, and `memory:{mode:"disabled"|"beads"}`. Follow `auto-execution.md` for cancellation and small-proof progress diagnosis. There is no arbitrary per-node proof timeout. Existing v1 `nodeHours` stays inactive metadata, not enforced; retain its original finite budget unchanged. Existing resource and
 spending limits are never raised or reset automatically. The initial owner scope/execution agreement
 is the setup human gate. Later provisional specify/review/revise cycles are autonomous within it;
 there is no per-round human contract approval. Final PR acceptance remains human. Agreement storage
-does not dispatch; Step6 bootstraps memory and Step7 selects the configured controller continuation.
+does not dispatch; Step6 handles the recorded memory disposition and Step7 selects the configured controller continuation.
 
 Write the known/answered choices to a temporary file outside the project:
 
@@ -103,14 +102,16 @@ The closed envelope is:
 ```json
 {
   "schema": "fvs/auto-agreement",
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "mode": "nonpublic-intent",
   "payload": {
     "choicesGeneration": 0,
     "choices": {
       "source": { "revision": "<selected revision>", "configuration": "<configuration>" },
       "scope": "<owner-agreed initial scope>",
-      "limits": { "nodeHours": 2, "workers": 3, "wallClockHours": 40 }
+      "limits": { "workers": 3 },
+      "budget": { "kind": "none" },
+      "memory": { "mode": "disabled" }
     },
     "contextVersion": 1,
     "boundaries": ["<explicit boundary>"],
@@ -194,7 +195,11 @@ contract/proof revisions and ordinary progress within the agreement do not cause
 Never refresh approval from candidate-generated contracts. Record declared uncertainties and report
 outside/unresolved discovered roots before any later dispatch; never silently add them or reduce scope.
 
-## Step 6: Bootstrap the configured project memory
+## Step 6: Apply the recorded memory disposition
+
+For v2 disabled memory, retain the explicit disabled disposition and continue to Step7 with
+`memoryRequest:null`; no backend command or substitute prime receipt is produced. For enabled Beads,
+follow the existing bootstrap path below. Existing v1 records keep their original memory requirements.
 
 Follow `auto-memory.md` after Step5's stored-context AND semantic applicability checks. Use the recorded
 canonical primary control root and existing store, never worker-cwd discovery or FVS's development store.
@@ -226,7 +231,7 @@ if the necessary invocation context is unavailable, report that missing input an
 
 ## Step 7: Reconcile configured continuation
 
-For a current applicable agreement and registered memory, read `auto-resume.md`. Prepare the fresh
+For a current applicable agreement and its verified enabled/disabled memory disposition, read `auto-resume.md`. Prepare the fresh
 caller-owned request from actual AO/controller associations, Git inputs, existing runtime head and
 accounting. Call `state`, then consume it with `verifyReconciliation` against that same independently
 held request. Stop continuation on partial/missing/uncertain context with its actual reason; preserve
@@ -251,9 +256,9 @@ Use the refreshed post-init/post-record state, not the pre-init `no-state` resul
 ```
 FVS >> AUTO-INIT
 
-State:            revision {revision} ({configuration}); scope {scope}; limits {workers} workers, {wallClockHours} h total (per-node hours {nodeHours} recorded, not enforced); extraction {not run | succeeded | failed}; agreement {missing | stale | stored-context-current, semantic check passed}
+State:            revision {revision} ({configuration}); scope {scope}; resources {workers} workers; budget {none | original explicitly selected deadline | literal legacy v1 budget}; extraction {not run | succeeded | failed}; agreement {missing | stale | stored-context-current, semantic check passed}
 Next action:      {opt-in controller proposal/partial reason, or existing standalone extraction/reconciliation continuation}
-Memory:           {unregistered | missing | stale | blocked/partial reason | memory-primed for current caller request}
+Memory:           {explicitly disabled | unregistered | missing | stale | blocked/partial reason | memory-primed for current caller request}
 Pending decision: {only affected missing initial decisions, or none}
 ```
 

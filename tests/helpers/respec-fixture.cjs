@@ -5,9 +5,10 @@ const os = require('node:os');
 const { spawnSync } = require('node:child_process');
 const rf = require('./resume-fixture.cjs');
 const bf = require('./bundle-fixture.cjs');
-async function fixture(auto, bundle, transitions, parent) {
+async function fixture(auto, bundle, transitions, parent, policy = {}) {
+  const execution=await import('../../scripts/fvs-execution.mjs');
   const { memoryHash } = await import('../../scripts/fvs-project-memory.mjs');
-  const x = rf.fixture(auto, parent), y = bf.fixture(auto, x.owned, x.root);
+  const x = rf.fixture(auto, parent, null, policy), y = bf.fixture(auto, x.owned, x.root);
   const view = auto.readState({ projectRoot: x.root, requireAgreement: true }), approval = structuredClone(view.agreement.agreement);
   for (const k of ['choicesGeneration', 'contextSha256', 'recordedAt']) delete approval[k];
   approval.payload.contextVersion++; approval.payload.execution = { actions: ['fixture delegated work'], reference: 'fixture:execution' };
@@ -23,11 +24,13 @@ async function fixture(auto, bundle, transitions, parent) {
   const controller = transitions.redactAOProfile(Buffer.from(JSON.stringify({ project })));
   const profile = rf.json(x.owned, 'profile', { schema: 'fvs/auto-stage-profile', schemaVersion: 1, source: 'protocol only', controller,
     stages: Object.fromEntries(['specification', 'review', 'proof', 'integration', 'check', 'acceptance', 'extraction'].map(k => [k, { harness: 'fixture', model: 'fixture', effort: 'fixture', provenance: 'no real model invocation' }])) });
+  if(policy.schemaVersion===2)x.invoke();
   const b = y.request(), h = await y.register(b), a = await y.register(b, 20); b.registry.expectedHeadSha256 = a.recordSha256;
   const stages = { extraction: b.extraction, graph: b.graph, plan: b.plan, baseline: null, acceptedStore: null };
-  x.invoke(x.request({ inputs: stages, priorAccounting: x.accounting() }));
+  x.invoke(x.request({ inputs: stages, priorAccounting: policy.schemaVersion===2?null:x.accounting() }));
+  if(policy.schemaVersion===2){b.schemaVersion=2;b.execution=execution.runControl(auto.readRuntimeState({projectRoot:x.root}).state.run);delete b.deadlineMs;}
   b.runtime = { root: x.root, state: rf.ref(path.join(x.root, '.formalising/auto-fv/resume/state.json')), absenceReason: null }; b.absenceReasons.runtime = null;
-  const prior = bundle.buildReviewBundle(b, y.out('prior-bundle')), priorContext = bundle.bundleExpectedContext(b);
+  const prior = await bundle.buildReviewBundle(b, y.out('prior-bundle')), priorContext = bundle.bundleExpectedContext(b);
   const feedback = rf.json(x.owned, 'owner-feedback', { owner: 'protocol owner reference', requests: ['revise H', 'revise A'], authority: 'not human authentication' });
   const version = r => ({ node: r.record.defId, recordSha256: r.recordSha256, candidateSha256: r.record.candidateSha256 });
   const initialItems = [h, a].map((r, i) => ({ itemId: i ? 'A' : 'H', nodes: [r.record.defId], expectedRecords: [version(r)], feedback: i ? 'revise A' : 'revise H', evidence: [feedback], response: null }));
@@ -35,13 +38,13 @@ async function fixture(auto, bundle, transitions, parent) {
   let associations = [];
   x.respecRequest = (operation = 'inspect', inspectEvidence = null) => {
     const current = x.invoke(x.request({ inputs: stages, associations }));
-    const req = structuredClone(b); req.bundleId = rf.uuid(); req.deadlineMs = Date.now() + 120000; req.source = current.q.source;
+    const req = structuredClone(b); req.bundleId = rf.uuid(); if(policy.schemaVersion!==2)req.deadlineMs = Date.now() + 120000; req.source = current.q.source;
     req.runtime.state = rf.ref(path.join(x.root, '.formalising/auto-fv/resume/state.json'));
-    return { schema: 'fvs/auto-respec-request', schemaVersion: 1, revisionId, attemptId: current.q.attemptId, operation,
+    return { schema: 'fvs/auto-respec-request', schemaVersion:policy.schemaVersion??1, revisionId, attemptId: current.q.attemptId, operation,
       ownerFeedback: { ownerReference: 'protocol-owner-request', evidence: feedback }, priorBundle: { manifest: prior.manifest, expectedContext: priorContext },
       current: { bundle: req, resume: { request: rf.ref(path.join(current.out, 'request.json')), result: rf.ref(path.join(current.out, 'result.json')), committedHeadSha256: current.result.committedHeadSha256 },
-        memory: { request: rf.ref(path.join(current.result.observation.memory.out, 'request.json')), result: rf.ref(path.join(current.result.observation.memory.out, 'result.json')) }, authorization: auth, profile },
-      requestedItems: structuredClone(initialItems), inspectEvidence, deadlineMs: req.deadlineMs };
+        memory: policy.schemaVersion===2&&policy.memory!=='beads'?{mode:'disabled'}:{...(policy.schemaVersion===2?{mode:'beads'}:{}),request: rf.ref(path.join(current.result.observation.memory.out, 'request.json')), result: rf.ref(path.join(current.result.observation.memory.out, 'result.json')) }, authorization: auth, profile },
+      requestedItems: structuredClone(initialItems), inspectEvidence, ...(policy.schemaVersion===2?{execution:req.execution}:{deadlineMs:req.deadlineMs}) };
   };
   x.response = (q, item) => rf.json(x.owned, 'response', { schema: 'fvs/auto-respec-response', schemaVersion: 1, revisionId, itemId: item.itemId,
     ownerFeedbackSha256: feedback.sha256, priorCandidates: item.expectedRecords, contracts: item.expectedRecords, correspondenceEvidence: [feedback] });

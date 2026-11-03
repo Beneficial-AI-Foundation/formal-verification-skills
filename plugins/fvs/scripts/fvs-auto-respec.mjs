@@ -5,6 +5,8 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { parseExecution, assertRunning, controlDeadline, runControl, runExpired, unbudgetedRun, runExecutionFields, timeoutOptions, withProcessCancellation } from './fvs-execution.mjs';
+import { which } from './fvs-probe-inventory.mjs';
 import { memoryDataSnapshot, memoryHash } from './fvs-project-memory.mjs';
 import { readState, verifyReconciliation, verifyTransition, verifyMemoryBootstrap } from './fvs-auto.mjs';
 import { readRuntime, readRuntimeAssignment } from './fvs-auto-resume.mjs';
@@ -56,11 +58,11 @@ export function terminationExecutableIdentity(raw, deadlineMs) {
 }
 function executableIdentity(file, deadlineMs, expectedSha256 = null) {
   if (!text(file) || !path.isAbsolute(file)) fail('respec-evidence-invalid', 'absolute executable path required');
-  const r = { file, sha256: expectedSha256 }; deadline(deadlineMs); const began = Date.now();
+  const r = { file, sha256: expectedSha256 }; checkControl(deadlineMs); const began = Date.now();
   const tick = () => {
     const now = Date.now();
-    if (now < began) fail('respec-clock-rollback', 'tool identity clock moved backwards');
-    if (now >= deadlineMs) fail('respec-deadline-exhausted', 'tool identity inspection deadline exhausted');
+    if (typeof deadlineMs !== 'object' && now < began) fail('respec-clock-rollback', 'tool identity clock moved backwards');
+    if (controlDeadline(deadlineMs)!==null && now >= controlDeadline(deadlineMs)) fail('respec-deadline-exhausted', 'tool identity inspection deadline exhausted');
   };
   const pathStat = () => {
     if (path.normalize(r.file) !== r.file || /[\u0000-\u001f\u007f]/.test(r.file)) fail('respec-evidence-invalid', 'canonical executable path required');
@@ -107,6 +109,21 @@ function save(out, name, value) {
   return { file, sha256: hash(b) };
 }
 function deadline(ms) { if (!Number.isSafeInteger(ms) || ms <= Date.now() || ms > Date.now() + BUNDLE_LIMITS.deadlineMs) fail('respec-deadline-exhausted', 'future bounded600s inspection required'); }
+const controlOf=q=>{if(q.schemaVersion===2)return parseExecution(q.execution);if(!Number.isSafeInteger(q.deadlineMs))fail('respec-deadline-exhausted','future bounded600s inspection required');return q.deadlineMs;};
+function checkControl(control){if(typeof control==='object')assertRunning(parseExecution(control));else deadline(control);}
+const inspectionFields=q=>q.schemaVersion===2?{version:2,execution:parseExecution(q.execution)}:{deadlineMs:q.deadlineMs};
+const requestExpired=(q,at)=>controlDeadline(controlOf(q))!==null&&at>=controlDeadline(controlOf(q));
+const disabledMemory=q=>q.schemaVersion===2&&q.current.memory.mode==='disabled';
+function respecDriver(steps) { let step=steps.next();while(!step.done){try{const d=step.value;step=steps.next(publish(d.q,d.x,d.out,d.name,d.value));}catch(error){step=steps.throw(error);}}return step.value; }
+async function respecDriverV2(steps,q,services) {
+  assertRunning(controlOf(q),services);let step=steps.next();
+  while(!step.done){try{
+    const d=step.value;await new Promise(done=>setImmediate(done));assertRunning(controlOf(q),services);
+    services.beforePublication?.();assertRunning(controlOf(q),services);fence(d.q,d.x);assertRunning(controlOf(q),services);
+    step=steps.next(publish(d.q,d.x,d.out,d.name,d.value));
+  }catch(error){step=steps.throw(error);}}
+  return step.value;
+}
 function versions(v, nodes, allowUnestablished = false) {
   if (!Array.isArray(v) || !same(v.map(r => r.node), nodes)) fail('respec-invalid-input', 'exact sorted node versions required');
   for (const r of v) {
@@ -116,16 +133,17 @@ function versions(v, nodes, allowUnestablished = false) {
 }
 function request(raw) {
   const q = data(raw);
-  closed(q, ['schema', 'schemaVersion', 'revisionId', 'attemptId', 'operation', 'ownerFeedback', 'priorBundle', 'current', 'requestedItems', 'inspectEvidence', 'deadlineMs'], 'revision request');
-  if (q.schema !== 'fvs/auto-respec-request' || q.schemaVersion !== 1 || ![q.revisionId, q.attemptId].every(uuid) || !['inspect', 'finish'].includes(q.operation)) fail('respec-invalid-input', 'version1 revision/attempt/operation required');
+  closed(q, ['schema', 'schemaVersion', 'revisionId', 'attemptId', 'operation', 'ownerFeedback', 'priorBundle', 'current', 'requestedItems', 'inspectEvidence', ...(q.schemaVersion===2?['execution']:['deadlineMs'])], 'revision request');
+  if (q.schema !== 'fvs/auto-respec-request' || ![1,2].includes(q.schemaVersion) || ![q.revisionId, q.attemptId].every(uuid) || !['inspect', 'finish'].includes(q.operation)) fail('respec-invalid-input', 'supported revision/attempt/operation required');
   closed(q.ownerFeedback, ['ownerReference', 'evidence'], 'actual owner feedback'); if (!text(q.ownerFeedback.ownerReference)) fail('respec-invalid-input', 'retained owner reference required'); reference(q.ownerFeedback.evidence);
   closed(q.priorBundle, ['manifest', 'expectedContext'], 'prior bundle'); reference(q.priorBundle.manifest);
   closed(q.current, ['bundle', 'resume', 'memory', 'authorization', 'profile'], 'current inputs');
   closed(q.current.resume, ['request', 'result', 'committedHeadSha256'], 'current reconciliation');
-  closed(q.current.memory, ['request', 'result'], 'current bootstrap');
-  for (const r of [q.current.resume.request, q.current.resume.result, q.current.memory.request, q.current.memory.result, q.current.authorization, q.current.profile]) reference(r);
+  closed(q.current.memory,q.schemaVersion===2?(q.current.memory?.mode==='disabled'?['mode']:['mode','request','result']):['request','result'],'current bootstrap');
+  if(q.schemaVersion===2&&!['disabled','beads'].includes(q.current.memory.mode))fail('respec-invalid-input','explicit supported memory disposition required');
+  for (const r of [q.current.resume.request, q.current.resume.result, ...(!disabledMemory(q)?[q.current.memory.request,q.current.memory.result]:[]), q.current.authorization, q.current.profile]) reference(r);
   if (!sha(q.current.resume.committedHeadSha256)) fail('respec-invalid-input', 'independent committed runtime head required');
-  for (const r of [q.current.resume.result, q.current.memory.result]) if (path.basename(r.file) !== 'result.json') fail('respec-invalid-input', 'canonical result.json required');
+  for (const r of [q.current.resume.result,...(!disabledMemory(q)?[q.current.memory.result]:[])]) if (path.basename(r.file) !== 'result.json') fail('respec-invalid-input', 'canonical result.json required');
   if (q.operation === 'inspect' ? q.inspectEvidence !== null : !q.inspectEvidence) fail('respec-invalid-input', 'finish must pin initial inspect request/result');
   if (q.inspectEvidence !== null) { closed(q.inspectEvidence, ['request', 'result'], 'initial inspect'); reference(q.inspectEvidence.request); reference(q.inspectEvidence.result); }
   if (!Array.isArray(q.requestedItems) || !q.requestedItems.length || q.requestedItems.length > 1000) fail('respec-invalid-input', 'bounded nonempty requested items required');
@@ -137,7 +155,7 @@ function request(raw) {
     if (q.operation === 'inspect' && item.response !== null) fail('respec-invalid-input', 'initial inspect cannot predeclare completion');
     if (item.response !== null) reference(item.response);
   }
-  deadline(q.deadlineMs); return q;
+  checkControl(controlOf(q)); return q;
 }
 function canonicalAgreement(view) { return { contextSha256: view.agreement.contextSha256, choicesGeneration: view.state.choicesGeneration, approvedPayloadSha256: view.agreement.agreement.approvedPayloadSha256 }; }
 function scopeOf(facts) {
@@ -165,10 +183,10 @@ function protect(out, q, prior) {
   if (roots.filter(Boolean).some(root => inside(root, out) || inside(out, root))) fail('respec-output-protected', 'output overlaps source/backend/receipt/bundle inputs');
 }
 function setup(q) {
-  const prior = readReviewSnapshot({ manifest: q.priorBundle.manifest, deadlineMs: q.deadlineMs });
+  const prior = readReviewSnapshot({ manifest: q.priorBundle.manifest, ...inspectionFields(q) });
   if (!same(q.priorBundle.expectedContext, prior.body.snapshot.context)) fail('respec-frame-mismatch', 'prior bundle is not the independently requested captured context');
   const b = q.current.bundle, ctx = bundleExpectedContext(b), old = prior.body.snapshot.request;
-  if (b.deadlineMs > q.deadlineMs || b.projectRoot !== old.projectRoot || b.source.root !== old.source.root) fail('respec-frame-mismatch', 'same primary/source and bounded current context required');
+  if (b.schemaVersion!==q.schemaVersion || old.schemaVersion!==q.schemaVersion || (q.schemaVersion===2?!same(b.execution,q.execution):b.deadlineMs > q.deadlineMs) || b.projectRoot !== old.projectRoot || b.source.root !== old.source.root) fail('respec-frame-mismatch', 'same primary/source and bounded current context required');
   for (const key of ['extraction', 'graph', 'plan']) if (!same(b[key], old[key])) fail('respec-frame-mismatch', 'nonempty-run stage identity replacement is unsupported');
   bound(q.ownerFeedback.evidence, false); q.requestedItems.forEach(item => item.evidence.forEach(r => bound(r, false)));
   const view = readState({ projectRoot: b.projectRoot, requireAgreement: true }), agreement = canonicalAgreement(view);
@@ -180,15 +198,16 @@ function setup(q) {
     || !same({ requestedRoots: inv.requestedRoots, failed: inv.failed, applicability: inv.applicability.map(a => ({ ...a, evidence: a.evidence.map(r => r.sha256) })) }, scopeOf(prior.body.facts))
     || !same(plan.selection.requestedRoots, inv.requestedRoots) || !same(plan.selection.failed, inv.failed)) fail('respec-scope-mismatch', 'full original requested/failed/applicability inventory required');
   inv.applicability.forEach(a => a.evidence.forEach(r => bound(r, false)));
-  const rq = bound(q.current.resume.request), rr = bound(q.current.resume.result), mq = bound(q.current.memory.request), mr = bound(q.current.memory.result);
-  if (rq.phase !== 'resume' || rq.attemptId !== q.attemptId || !same(rq.source, b.source) || !same(rq.memoryRequest, mq)
+  const rq = bound(q.current.resume.request), rr = bound(q.current.resume.result), mq = disabledMemory(q)?null:bound(q.current.memory.request), mr = disabledMemory(q)?null:bound(q.current.memory.result);
+  if (rq.schemaVersion!==q.schemaVersion || rr.schemaVersion!==q.schemaVersion || rq.phase !== 'resume' || rq.attemptId !== q.attemptId || !same(rq.source, b.source) || !same(rq.memoryRequest, mq)
     || !same(rr.request, rq) || rr.requestSha256 !== memoryHash(rq) || rr.committedHeadSha256 !== q.current.resume.committedHeadSha256
-    || rr.observation?.memory?.out !== path.dirname(q.current.memory.result.file) || mr.requestSha256 !== memoryHash(mq) || !same(mr.request, mq)) fail('respec-current-request-mismatch', 'own current16/20 attempt/phase/source/result required');
+    || (disabledMemory(q)?rr.observation?.memory?.status!=='disabled':rr.observation?.memory?.out !== path.dirname(q.current.memory.result.file) || mr.requestSha256 !== memoryHash(mq) || !same(mr.request, mq))) fail('respec-current-request-mismatch', 'own current16/20 attempt/phase/source/result required');
   for (const key of ['graph', 'plan', 'baseline']) if (!same(rq.inputs[key], b[key])) fail('respec-current-request-mismatch', 'resume stage tuple differs');
   if (!same(rq.inputs.extraction, b.extraction) || !same(rq.inputs.acceptedStore, b.acceptedStore)) fail('respec-current-request-mismatch', 'resume extraction/store tuple differs');
   const runtime = readRuntime(b.projectRoot);
   if (!runtime.state || runtime.headSha256 !== q.current.resume.committedHeadSha256 || runtime.fileSha256 !== b.runtime?.state?.sha256 || b.runtime.state.file !== path.join(b.projectRoot, '.formalising/auto-fv/resume/state.json')) fail('respec-context-stale', 'actual current committed runtime/bytes required');
   if (!same(runtime.state.run.choicesGeneration, agreement.choicesGeneration) || runtime.state.run.agreementContextSha256 !== agreement.contextSha256 || runtime.state.run.runId !== rq.runId) fail('respec-frame-mismatch', 'run context changed');
+  if(runtime.state.schemaVersion!==q.schemaVersion || (q.schemaVersion===2&&(!same(runControl(runtime.state.run),q.execution)||runtime.state.run.memory.mode!==q.current.memory.mode)))fail('respec-context-stale','runtime execution/memory policy differs');
   const canonical = { view, envelope: view.agreement.agreement };
   for (const [kind, stage] of [['registry-revise', 'specification'], ['freeze', 'check'], ['check', 'check'], ['accept', 'acceptance'], ['materialize-proof', 'integration'], ['handoff', 'integration']]) verifyTransitionAuthorization({ kind, stage, authorization: q.current.authorization, profile: q.current.profile }, canonical);
   const chain = readChain(b.registry.root);
@@ -802,7 +821,7 @@ export function consumeConclusiveLocalFailure(options) {
 function trace(q, x, initial, out) {
   const original = bound(initial.request), result = bound(initial.result);
   const inspectPublication = publicationOf(path.dirname(initial.result.file), original, initial.result, result);
-  if (original.operation !== 'inspect' || result.schema !== 'fvs/auto-respec-result' || result.operation !== 'inspect' || result.requestSha256 !== memoryHash(original) || !same(result.request, original) || !inspectImplementation(result.implementation)) fail('respec-inspect-mismatch', 'not the exact original inspect request/result/implementation');
+  if (original.schemaVersion!==q.schemaVersion || result.schemaVersion!==q.schemaVersion || original.operation !== 'inspect' || result.schema !== 'fvs/auto-respec-result' || result.operation !== 'inspect' || result.requestSha256 !== memoryHash(original) || !same(result.request, original) || !inspectImplementation(result.implementation)) fail('respec-inspect-mismatch', 'not the exact original inspect request/result/implementation');
   const originalFrame = frameOf(original, x.prior, x.runtime.state.run);
   if (!same(originalFrame, result.frame) || !same(originalFrame, x.frame)) fail('respec-frame-mismatch', 'original feedback/scope/run/accounting frame changed');
   const head = original.current.resume.committedHeadSha256, index = x.runtime.state.history.findIndex(row => row.sha256 === head);
@@ -812,15 +831,16 @@ function trace(q, x, initial, out) {
   const toolRef = name => { const file = fileURLToPath(new URL(name, import.meta.url)); return { file, sha256: hash(bytes(file)) }; };
   const validators = transitionValidators({ tools: { auto: toolRef('fvs-auto.mjs'), registry: toolRef('fvs-contract-registry.mjs') }, git(root, args, buffer = false) {
     if (root !== x.b.source.root || !['rev-parse', 'show', 'rev-list', 'diff-tree'].includes(args[0])) fail('respec-history-mismatch', 'unexpected historical Git read');
-    const argv = ['/usr/bin/git', '-C', root, ...args], toolSha256 = executableIdentity('/usr/bin/git', q.deadlineMs).sha256;
+    const gitTool=q.schemaVersion===2?fs.realpathSync(which('git')??''): '/usr/bin/git';
+    const argv = [gitTool, '-C', root, ...args], toolSha256 = executableIdentity(gitTool, controlOf(q)).sha256;
     const env = { PATH: '/usr/bin:/bin', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1', GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' };
-    const startedAtMs = Date.now(), p = spawnSync(argv[0], argv.slice(1), { cwd: root, env, timeout: Math.max(1, Math.min(10000, q.deadlineMs - startedAtMs)), maxBuffer: 16 * 1024 * 1024 });
+    const startedAtMs = Date.now(), p = spawnSync(argv[0], argv.slice(1), { cwd: root, env, ...(q.schemaVersion===2?timeoutOptions(q.execution,{administrativeMs:10000}):{timeout:Math.max(1,Math.min(10000,q.deadlineMs-startedAtMs))}), maxBuffer: 16 * 1024 * 1024 });
     const stream = (suffix, b) => { const file = path.join(out, 'trace-git-' + gitEvidence.length + '.' + suffix); fs.writeFileSync(file, b, { flag: 'wx' }); return { file, sha256: hash(b) }; };
     const receipt = save(out, 'trace-git-' + gitEvidence.length + '.json', { argv, cwd: root, env, requestSha256: memoryHash(q), startedAtMs, endedAtMs: Date.now(), toolSha256, exitCode: p.status,
       signal: p.signal, error: p.error?.code ?? null, stdout: stream('stdout', p.stdout ?? Buffer.alloc(0)), stderr: stream('stderr', p.stderr ?? Buffer.alloc(0)) });
     gitEvidence.push(receipt);
     if (p.error || p.signal || p.status !== 0) fail('respec-history-mismatch', 'bounded historical Git read failed');
-    terminationExecutableIdentity({ file: '/usr/bin/git', sha256: toolSha256 }, q.deadlineMs);
+    terminationExecutableIdentity({ file: gitTool, sha256: toolSha256 }, controlOf(q));
     return buffer ? p.stdout : p.stdout.toString('utf8');
   } });
   validators.verifyCandidateAssignment = (ref, stage) => readRuntimeAssignment(ref, x.runtime, x.runtime.state.run, stage);
@@ -851,7 +871,7 @@ function trace(q, x, initial, out) {
     const fixed = a.before.fixed, run = x.runtime.state.run;
     if (a.runId !== run.runId || a.transitionId !== event.intent.transitionId || a.reservationId !== event.intent.reservationId || a.owner !== event.intent.owner || !same(a.nodes, event.intent.nodes)
       || a.expectedHeadSha256 !== before.event.prev || !same(a.authorization, x.frame.authorization) || !same(a.profile, x.frame.profile) || !same(fixed, snapshot.fixed)
-      || fixed.runId !== run.runId || fixed.canonicalRoot !== run.canonicalRoot || fixed.gitCommonDir !== run.gitCommonDir || fixed.startedAtMs !== run.startedAtMs || fixed.deadlineMs !== run.deadlineMs
+      || fixed.runId !== run.runId || fixed.canonicalRoot !== run.canonicalRoot || fixed.gitCommonDir !== run.gitCommonDir || fixed.startedAtMs !== run.startedAtMs || (q.schemaVersion===2?!same(runControl(fixed),runControl(run)):fixed.deadlineMs !== run.deadlineMs)
       || fixed.choicesGeneration !== run.choicesGeneration || fixed.agreementContextSha256 !== run.agreementContextSha256 || fixed.scopeSha256 !== memoryHash(run.scope) || fixed.limitsSha256 !== memoryHash(run.limits)) fail('respec-history-mismatch', 'historical action lost the original grant/run/head/accounting');
     const prior = tupleOfAction(a.before), after = tupleOfAction(snapshot);
     if (!same(prior, current)) fail('respec-history-mismatch', 'unexplained source/registry/frozen/store advance');
@@ -884,6 +904,7 @@ function implementation() {
   }));
 }
 function memoryEvidence(q, x) {
+  if(disabledMemory(q))return{status:'disabled',request:null,policy:x.runtime.state.run.memory};
   const root = path.dirname(q.current.memory.result.file), r = x.mr;
   const absolute = ref => { const file = path.resolve(root, ref.file); if (!inside(root, file)) fail('respec-evidence-invalid', 'bootstrap evidence escaped its original output'); const boundRef = { file, sha256: ref.sha256 }; bound(boundRef, false); return boundRef; };
   const receipts = [];
@@ -926,17 +947,17 @@ function fence(q, x) {
 }
 function observe(q, x, out) {
   const began = Date.now(), reasons = [...x.validation.problems], run = x.runtime.state.run;
-  const expired = began >= run.deadlineMs;
-  if (began < x.runtime.lastObservedAtMs) fail('respec-clock-rollback', 'clock precedes current accounting');
+  const expired = runExpired(run,began);
+  if (!unbudgetedRun(run) && began < x.runtime.lastObservedAtMs) fail('respec-clock-rollback', 'clock precedes current accounting');
   let consumed = null, actualMemory = null, currentness = { status: 'unverified', reason: 'current-proof-not-established', nodes: [] };
   if (expired) reasons.push('original-limit-exhausted');
   else {
-    verifyMemoryBootstrap({ projectRoot: x.b.projectRoot, callerRoot: x.b.projectRoot, request: x.mq, out: path.dirname(q.current.memory.result.file) });
+    if(!disabledMemory(q))verifyMemoryBootstrap({ projectRoot: x.b.projectRoot, callerRoot: x.b.projectRoot, request: x.mq, out: path.dirname(q.current.memory.result.file) });
     actualMemory = memoryEvidence(q, x);
     consumed = (x.rq.transition === null ? verifyReconciliation : verifyTransition)({ projectRoot: x.b.projectRoot, request: x.rq, out: path.dirname(q.current.resume.result.file) });
     if (consumed.committedHeadSha256 !== x.runtime.headSha256) fail('respec-context-stale', 'consumer observed another runtime head');
     if (x.b.baseline && x.b.acceptedStore && !x.validation.problems.length) {
-      try { currentness = inspectAutoAcceptance({ baseline: x.b.baseline, store: x.b.acceptedStore, source: x.b.source, deadlineMs: Math.min(q.deadlineMs, run.deadlineMs), out: path.join(out, 'current-proof') }); }
+      try { currentness = inspectAutoAcceptance({ baseline: x.b.baseline, store: x.b.acceptedStore, source: x.b.source, ...(q.schemaVersion===2?runExecutionFields(run):{deadlineMs:Math.min(q.deadlineMs,run.deadlineMs)}), out: path.join(out, 'current-proof') }); }
       catch (e) { currentness = { status: 'unverified', diagnostic: diagnostic(e), nodes: [] }; }
     }
   }
@@ -955,12 +976,12 @@ function observe(q, x, out) {
   if (items.some(i => i.status === 'pending')) reasons.push('feedback-response-pending');
   fence(q, x);
   if (!expired) {
-    verifyMemoryBootstrap({ projectRoot: x.b.projectRoot, callerRoot: x.b.projectRoot, request: x.mq, out: path.dirname(q.current.memory.result.file) });
+    if(!disabledMemory(q))verifyMemoryBootstrap({ projectRoot: x.b.projectRoot, callerRoot: x.b.projectRoot, request: x.mq, out: path.dirname(q.current.memory.result.file) });
     (x.rq.transition === null ? verifyReconciliation : verifyTransition)({ projectRoot: x.b.projectRoot, request: x.rq, out: path.dirname(q.current.resume.result.file) });
   }
   fence(q, x);
   const ended = clock(q, x, began);
-  if (ended >= run.deadlineMs) reasons.push('original-limit-exhausted');
+  if (runExpired(run,ended)) reasons.push('original-limit-exhausted');
   return { source: x.b.source, committedRuntimeHeadSha256: x.runtime.headSha256, runtimeFileSha256: x.runtime.fileSha256, originalRun: run,
     stageValidation: x.validation.problems, currentness, nodes, items, history, reasons: [...new Set(reasons)], beganAtMs: began, endedAtMs: ended,
     memoryEvidence: actualMemory, currentConsumer: consumed === null ? null : { code: consumed.code, evidence: consumed.verificationEvidence, receipts: consumed.observation.receipts }, semanticCheckRequired: 'Workflow must compare actual owner feedback with proposed contracts/applicability; no Boolean authentication or proof/dispatch authority.' };
@@ -973,50 +994,56 @@ function statusOf(q, observation) {
 }
 function clock(q, x, floor) {
   const at = Date.now();
-  if (at < floor || at < x.runtime.lastObservedAtMs) fail('respec-clock-rollback', 'clock moved backwards during final reads/publication');
-  if (at >= q.deadlineMs) fail('respec-deadline-exhausted', 'inspection deadline expired during final reads/publication');
+  if (!unbudgetedRun(x.runtime.state.run) && (at < floor || at < x.runtime.lastObservedAtMs)) fail('respec-clock-rollback', 'clock moved backwards during final reads/publication');
+  checkControl(controlOf(q));
   return at;
 }
 function stamp(q, x, observation) {
   observation.endedAtMs = clock(q, x, observation.endedAtMs);
-  if (observation.endedAtMs >= x.runtime.state.run.deadlineMs && !observation.reasons.includes('original-limit-exhausted')) observation.reasons.push('original-limit-exhausted');
+  if (runExpired(x.runtime.state.run,observation.endedAtMs) && !observation.reasons.includes('original-limit-exhausted')) observation.reasons.push('original-limit-exhausted');
 }
 function publish(q, x, out, name, value) {
   stamp(q, x, value.observation); value.status = statusOf(q, value.observation);
   const evidence = save(out, name, value), at = clock(q, x, value.observation.endedAtMs);
-  if (at >= x.runtime.state.run.deadlineMs && !value.observation.reasons.includes('original-limit-exhausted')) fail('respec-publication-stale', 'original limit expired while output was being published; staged artifact is unverified');
-  const publication = save(out, name.replace(/\.json$/, '-clock.json'), { schema: 'fvs/auto-respec-publication', schemaVersion: 1, requestSha256: memoryHash(q), result: evidence, status: value.status, publishedAtMs: at });
+  if (runExpired(x.runtime.state.run,at) && !value.observation.reasons.includes('original-limit-exhausted')) fail('respec-publication-stale', 'original limit expired while output was being published; staged artifact is unverified');
+  const publication = save(out, name.replace(/\.json$/, '-clock.json'), { schema: 'fvs/auto-respec-publication', schemaVersion: q.schemaVersion, requestSha256: memoryHash(q), result: evidence, status: value.status, publishedAtMs: at });
   const last = clock(q, x, at);
-  if (last >= x.runtime.state.run.deadlineMs && !value.observation.reasons.includes('original-limit-exhausted')) fail('respec-publication-stale', 'original limit expired at the final publication fence');
+  if (runExpired(x.runtime.state.run,last) && !value.observation.reasons.includes('original-limit-exhausted')) fail('respec-publication-stale', 'original limit expired at the final publication fence');
   return { evidence, publication };
 }
 function publicationOf(out, q, ref, result) {
   if (fs.existsSync(path.join(out, 'failure.json'))) fail('respec-result-mismatch', 'failed/staged output cannot supply readiness');
   const file = path.join(out, 'result-clock.json'), raw = bytes(file), p = transitionJson(raw);
   closed(p, ['schema', 'schemaVersion', 'requestSha256', 'result', 'status', 'publishedAtMs'], 'publication clock');
-  if (p.schema !== 'fvs/auto-respec-publication' || p.schemaVersion !== 1 || p.requestSha256 !== memoryHash(q) || !same(p.result, ref) || p.status !== result.status
-    || !Number.isSafeInteger(p.publishedAtMs) || p.publishedAtMs < result.observation.endedAtMs || p.publishedAtMs >= q.deadlineMs
-    || (p.publishedAtMs >= result.frame.run.deadlineMs && !result.observation.reasons.includes('original-limit-exhausted'))) fail('respec-result-mismatch', 'not this successfully published bounded result');
-  if (Date.now() < p.publishedAtMs) fail('respec-clock-rollback', 'clock precedes successful publication');
+  if (p.schema !== 'fvs/auto-respec-publication' || p.schemaVersion !== q.schemaVersion || p.requestSha256 !== memoryHash(q) || !same(p.result, ref) || p.status !== result.status
+    || !Number.isSafeInteger(p.publishedAtMs) || (!unbudgetedRun(result.frame.run)&&p.publishedAtMs < result.observation.endedAtMs) || requestExpired(q,p.publishedAtMs)
+    || (runExpired(result.frame.run,p.publishedAtMs) && !result.observation.reasons.includes('original-limit-exhausted'))) fail('respec-result-mismatch', 'not this successfully published bounded result');
+  if (!unbudgetedRun(result.frame.run) && Date.now() < p.publishedAtMs) fail('respec-clock-rollback', 'clock precedes successful publication');
   return { file, sha256: hash(raw) };
 }
-export function runRespec(options) {
+export function runRespec(options,services={}) {
+  const value=data(options),q=request(value.request);return q.schemaVersion===2?respecDriverV2(runRespecSteps(value),q,services):respecDriver(runRespecSteps(value));
+}
+function* runRespecSteps(options) {
   options = data(options); closed(options, ['request', 'out'], 'respec operation'); const { request: raw, out } = options;
   const q = request(raw), x = setup(q); protect(out, q, x.prior); fs.mkdirSync(out, { mode: 0o700 });
   const input = save(out, 'request.json', q), product = implementation();
   try {
     const observation = observe(q, x, out), status = statusOf(q, observation);
-    const result = { schema: 'fvs/auto-respec-result', schemaVersion: 1, operation: q.operation, status, authority: 'no-proof-dispatch-or-human-approval-authority',
+    const result = { schema: 'fvs/auto-respec-result', schemaVersion: q.schemaVersion, operation: q.operation, status, authority: 'no-proof-dispatch-or-human-approval-authority',
       request: q, requestSha256: memoryHash(q), requestInput: input, implementation: product, frame: x.frame, observation, humanReview: 'pending', effectExecutable: false };
     if (!same(product, implementation())) fail('respec-implementation-changed', 'implementation changed during inspection');
-    const published = publish(q, x, out, 'result.json', result); return { ...result, ...published };
+    const published = yield{q,x,out,name:'result.json',value:result}; return { ...result, ...published };
   } catch (e) { save(out, 'failure.json', diagnostic(e)); throw e; }
 }
-export function verifyRespecResult(options) {
+export function verifyRespecResult(options,services={}) {
+  const value=data(options),q=request(value.request);return q.schemaVersion===2?respecDriverV2(verifyRespecSteps(value),q,services):respecDriver(verifyRespecSteps(value));
+}
+function* verifyRespecSteps(options) {
   options = data(options); closed(options, ['request', 'out'], 'respec consumer'); const { request: raw, out } = options;
   const q = request(raw), resultRef = { file: path.join(out, 'result.json'), sha256: hash(bytes(path.join(out, 'result.json'))) }, result = bound(resultRef);
   publicationOf(out, q, resultRef, result);
-  if (result.schema !== 'fvs/auto-respec-result' || result.schemaVersion !== 1 || result.operation !== q.operation || result.requestSha256 !== memoryHash(q) || !same(result.request, q)
+  if (result.schema !== 'fvs/auto-respec-result' || result.schemaVersion !== q.schemaVersion || result.operation !== q.operation || result.requestSha256 !== memoryHash(q) || !same(result.request, q)
     || !same(bound(result.requestInput), q) || !same(result.implementation, implementation()) || result.effectExecutable !== false || result.humanReview !== 'pending') fail('respec-result-mismatch', 'not this independent current caller request/result');
   const x = setup(q);
   if (!same(x.frame, result.frame)) fail('respec-frame-mismatch', 'saved revision frame differs');
@@ -1025,23 +1052,24 @@ export function verifyRespecResult(options) {
   if ((observed.currentConsumer === null) !== (result.observation.currentConsumer === null)) fail('respec-evidence-invalid', 'saved consumer presence differs');
   if (observed.currentConsumer !== null && (observed.currentConsumer.code !== result.observation.currentConsumer.code
     || !same(receiptFacts(observed.currentConsumer.receipts, x.rq), receiptFacts(result.observation.currentConsumer.receipts, x.rq)))) fail('respec-evidence-invalid', 'current consumer invocation/output changed');
-  for (const ref of result.observation.history.gitEvidence) { const r = bound(ref); if (r.requestSha256 !== memoryHash(q) || r.exitCode !== 0 || r.signal || r.error || !sha(r.toolSha256)) fail('respec-evidence-invalid', 'historical Git observation is not this caller request/tool'); terminationExecutableIdentity({ file: '/usr/bin/git', sha256: r.toolSha256 }, q.deadlineMs); bound(r.stdout, false); bound(r.stderr, false); }
+  for (const ref of result.observation.history.gitEvidence) { const r = bound(ref); if (r.requestSha256 !== memoryHash(q) || r.exitCode !== 0 || r.signal || r.error || !sha(r.toolSha256)) fail('respec-evidence-invalid', 'historical Git observation is not this caller request/tool'); terminationExecutableIdentity({ file: q.schemaVersion===2?r.argv[0]:'/usr/bin/git', sha256: r.toolSha256 }, controlOf(q)); bound(r.stdout, false); bound(r.stderr, false); }
   const stable = o => { const { beganAtMs, endedAtMs, currentConsumer, ...rest } = o; const { gitEvidence, ...history } = rest.history; return { ...rest, history }; };
   stamp(q, x, observed);
   if (!same(stable(observed), stable(result.observation))) fail('respec-context-stale', 'current revision observation changed');
   const status = statusOf(q, observed);
   if (result.status !== status || result.authority !== 'no-proof-dispatch-or-human-approval-authority') fail('respec-result-mismatch', 'saved result overstates current facts');
   const checked = { status, frame: x.frame, observation: observed, authority: result.authority, effectExecutable: false, humanReview: 'pending', verificationEvidence: verificationOut };
-  try { const published = publish(q, x, verificationOut, 'verification.json', checked); return { ...checked, ...published }; }
+  try { const published = yield{q,x,out:verificationOut,name:'verification.json',value:checked}; return { ...checked, ...published }; }
   catch (e) { save(verificationOut, 'failure.json', diagnostic(e)); throw e; }
 }
-function cli(args) {
+async function cli(args) {
   const operation = args.shift(), flags = {};
   while (args.length) { const key = args.shift(), value = args.shift(); if (!['--request', '--out'].includes(key) || !value || Object.hasOwn(flags, key)) fail('respec-usage', 'inspect/finish/verify --request FILE --out DIR'); flags[key] = value; }
   if (!['inspect', 'finish', 'verify'].includes(operation) || !flags['--request'] || !flags['--out']) fail('respec-usage', 'inspect/finish/verify --request FILE --out DIR');
   const q = transitionJson(bytes(path.resolve(flags['--request'])));
   if (operation !== 'verify' && q.operation !== operation) fail('respec-invalid-input', 'CLI/request operation differs');
-  return (operation === 'verify' ? verifyRespecResult : runRespec)({ request: q, out: path.resolve(flags['--out']) });
+  const call=services=>(operation==='verify'?verifyRespecResult:runRespec)({request:q,out:path.resolve(flags['--out'])},services);
+  return q.schemaVersion===2?withProcessCancellation(call):call({});
 }
 let direct = false; try { direct = fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch {}
-if (direct) { try { console.log(JSON.stringify(cli(process.argv.slice(2)), null, 2)); } catch (e) { console.log(JSON.stringify({ status: 'unverified', ...diagnostic(e) }, null, 2)); process.exitCode = 7; } }
+if (direct) { try { console.log(JSON.stringify(await cli(process.argv.slice(2)), null, 2)); } catch (e) { console.log(JSON.stringify({ status: 'unverified', ...diagnostic(e) }, null, 2)); process.exitCode = e.code==='cancelled'?130:7; } }

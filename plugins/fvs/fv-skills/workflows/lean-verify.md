@@ -21,16 +21,22 @@ cheat audit (VERIFIED), or a report of what remains (PARTIAL or STUCK).
 <process>
 
 <controller_mode>
+For a v2 packet, read `fv-skills/references/auto-execution.md` and use its bound execution policy
+instead of standalone argument/budget/model setup. No implicit4h or per-proof time limit applies.
+Use the concrete pinned tools through run-owned, retain progress/goal/failed approaches, and return
+cancellation or a genuine blocker as partial work. The orchestrator diagnoses small unresolved
+proofs around1h; it does not weaken the theorem or automatically kill at that time.
+
 For a verified `lean-verify/controller-direct`, `plan-direct` or `prove-direct` packet,
 follow `fv-skills/references/auto-transitions.md` actor prime,
 current-context and exclusive start guards. Execute the existing research and proof instructions
 sequentially in this assigned seat under the supplied applicable manifest. Plan-direct returns only
 bound research/strategy; prove-direct consumes it and proves. Combine only identical role tuples.
-Keep the same bound invocation start/deadline across split roles; no nested provider or
-new model interview. Keep style/build/cheat-audit gates. Use pinned frozen offline dependencies
-instead of cache download. The controller's auto pristine B/14 statement/semantic identity is the
-fixed target: do not create a candidate-derived or standalone replacement expectation. The normal
-four-hour invocation cap is bounded by remaining original project time; a cap/three-review-round
+Keep the same bound invocation/execution policy across split roles; no nested provider or
+new model interview. Keep style/build/cheat-audit gates. For v2, use configured network-enabled research/acquisition under existing grants before freezing stable check inputs; preserve pins. V1
+retains its literal frozen-dependency policy. The controller's auto pristine B/14 statement/semantic identity is the
+fixed target: do not create a candidate-derived or standalone replacement expectation. Only the legacy v1 invocation has the recorded
+four-hour bound capped by original project time; v2 follows its optional chosen budget; a cap/three-review-round
 exit becomes PARTIAL with a linked resume, never a new total budget. Do not weaken statements.
 Return immutable candidate/audit/build references, including unresolved findings, and preserve
 controller receipts instead of standalone cleanup. Worker VERIFIED is candidate evidence only;

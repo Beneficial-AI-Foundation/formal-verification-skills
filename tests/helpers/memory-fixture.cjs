@@ -11,18 +11,19 @@ function git(root, ...args) {
     env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_NO_LAZY_FETCH: '1', GIT_TERMINAL_PROMPT: '0' }, encoding: 'utf8' });
   if (r.status !== 0) throw new Error(r.stderr); return r.stdout.trim();
 }
-function createProject(auto, base = fs.realpathSync(os.tmpdir())) {
+function createProject(auto, base = fs.realpathSync(os.tmpdir()), policy = {}) {
   const root = fs.mkdtempSync(path.join(base, 'fvs-memory-project-'));
   fs.cpSync(path.join(ROOT, 'tests/fixtures/auto-profile/fresh'), root, { recursive: true });
   fs.cpSync(path.join(ROOT, 'tests/fixtures/extract-patches/crate'), root, { recursive: true });
   fs.writeFileSync(path.join(root, 'README.md'), 'Memory fixture, not a verification claim.\n');
   git(root, 'init', '-q'); git(root, 'add', '-A'); git(root, 'commit', '-qm', 'fixture');
   fs.mkdirSync(path.dirname(stateFile(root)), { recursive: true });
-  fs.writeFileSync(stateFile(root), JSON.stringify({ schema: 'fvs/auto-state', schemaVersion: 1, profiledAt: 'fixture',
+  fs.writeFileSync(stateFile(root), JSON.stringify({ schema: 'fvs/auto-state', schemaVersion: policy.schemaVersion ?? 1, profiledAt: 'fixture',
     profile: { schema: 'fvs/auto-profile', items: [] }, choices: { source: { revision: 'HEAD', configuration: 'fixture' }, scope: 'fixture scope',
-      limits: { nodeHours: 2, workers: 3, wallClockHours: 40 } }, roadmap: null, extraction: null }));
+      limits: policy.schemaVersion === 2 ? { workers: 3 } : { nodeHours: 2, workers: 3, wallClockHours: 40 },
+      ...(policy.schemaVersion === 2 ? { budget: policy.budget ?? { kind: 'none' }, memory: { mode: policy.memory ?? 'disabled' } } : {}) }, roadmap: null, extraction: null }));
   const s = JSON.parse(fs.readFileSync(stateFile(root)));
-  const a = { schema: 'fvs/auto-agreement', schemaVersion: 1, mode: 'nonpublic-intent',
+  const a = { schema: 'fvs/auto-agreement', schemaVersion: policy.schemaVersion ?? 1, mode: 'nonpublic-intent',
     payload: { choicesGeneration: 0, choices: s.choices, contextVersion: 1, boundaries: [], conventions: ['fixture convention'], layout: 'single-crate',
       claims: ['fixture goal'], trust: ['fixture assumptions'], acceptance: ['independent checks'], ownerReserved: ['human final PR decision'], execution: null, draftPr: null },
     ownerEvidence: { reference: 'fixture:response', response: 'Fixture initial agreement only; not a real owner response.' } };

@@ -7,7 +7,8 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { memoryDataSnapshot, memoryHash, MEMORY_LIMITS } from './fvs-project-memory.mjs';
 import { duplicateKeys } from './fvs-lean-graph.mjs';
-import { readTransitionAction, readWorkPacket, readRuntimeObservation, transitionSnapshot, assessTransition, validateReleasedContext, redactAOProfile } from './fvs-auto-transitions.mjs';
+import { parseBudget, resolveBudget, runControl, runExpired, unbudgetedRun, runExecutionFields } from './fvs-execution.mjs';
+import { readTransitionAction, readWorkPacket, readRuntimeObservation, transitionSnapshot, assessTransition, validateReleasedContext, redactAOProfile, lifecycleOnlyAction } from './fvs-auto-transitions.mjs';
 
 const SHA = /^[0-9a-f]{64}$/, COMMIT = /^[0-9a-f]{40}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -77,6 +78,16 @@ function runtimeDir(root, create = false) {
 }
 const runKeys = ['runId', 'canonicalRoot', 'gitCommonDir', 'aoProjectId', 'aoStateHome', 'coordinatorSessionId', 'choicesGeneration', 'agreementContextSha256', 'scope', 'limits', 'startedAtMs', 'deadlineMs'];
 function runValid(run) {
+  if (run?.schemaVersion === 2) {
+    closed(run, [...runKeys.filter(k => k !== 'deadlineMs'), 'schemaVersion', 'budget', 'memory'], 'v2 runtime run');
+    if (!matches(run.runId, UUID) || ![run.canonicalRoot, run.gitCommonDir, run.aoStateHome].every(p => text(p) && path.isAbsolute(p))
+      || ![run.aoProjectId, run.coordinatorSessionId, run.scope].every(text) || !integer(run.choicesGeneration) || !matches(run.agreementContextSha256, SHA) || !integer(run.startedAtMs)) stop('resume-history-invalid', 'invalid v2 run identity');
+    closed(run.limits, ['workers'], 'v2 capacity');
+    if (!Number.isSafeInteger(run.limits.workers) || run.limits.workers < 1) stop('resume-history-invalid', 'invalid capacity');
+    parseBudget(run.budget, true); closed(run.memory, ['mode'], 'v2 memory disposition');
+    if (!['disabled', 'beads'].includes(run.memory.mode)) stop('resume-history-invalid', 'invalid memory disposition');
+    return;
+  }
   closed(run, runKeys, 'runtime run');
   if (!matches(run.runId, UUID) || ![run.canonicalRoot, run.gitCommonDir, run.aoStateHome].every((p) => text(p) && path.isAbsolute(p))
     || ![run.aoProjectId, run.coordinatorSessionId, run.scope].every(text) || !integer(run.choicesGeneration) || !matches(run.agreementContextSha256, SHA)
@@ -125,7 +136,7 @@ function replay(history, run) {
   const transitions = new Map(), reservations = new Map(); let prev = null, time = run.startedAtMs;
   for (const [index, row] of history.entries()) {
     closed(row, ['event', 'sha256'], 'history row'); const e = row.event, observation = eventValid(e);
-    if (row.sha256 !== memoryHash(e) || e.seq !== index || e.prev !== prev || e.runSha256 !== memoryHash(run) || e.observedAtMs < time) stop('resume-history-invalid', 'history chain/time mismatch');
+    if (row.sha256 !== memoryHash(e) || e.seq !== index || e.prev !== prev || e.runSha256 !== memoryHash(run) || (e.observedAtMs < time && !unbudgetedRun(run))) stop('resume-history-invalid', 'history chain/time mismatch');
     time = e.observedAtMs; prev = row.sha256;
     const id = e.intent.transitionId, rId = e.intent.reservationId, old = transitions.get(id);
     if (e.position === 'before') {
@@ -161,6 +172,11 @@ function replay(history, run) {
           closed(proof, ['schema', 'schemaVersion', 'runId', 'reservationId', 'controllerSessionId', 'effectInvoked'], 'controller no-effect evidence');
           if (proof.schema !== 'fvs/auto-effect-not-invoked' || proof.schemaVersion !== 1 || proof.runId !== run.runId || proof.reservationId !== target.id || proof.controllerSessionId !== run.coordinatorSessionId || proof.effectInvoked !== false || target.sessionId !== null) stop('resume-pair-conflict', 'unproven no-effect resolution');
         } else if (resolution.reason === 'session-terminated') {
+          if(run.schemaVersion===2){
+            closed(proof,['schema','schemaVersion','session','progress','terminationCompletion'],'owned termination evidence');
+            if(proof.schema!=='fvs/auto-owned-session-termination'||proof.schemaVersion!==1)stop('resume-pair-conflict','v2 closure requires exact typed termination completion');
+            if(proof.progress===null){if([...transitions.values()].some(r=>r.intent.request&&(()=>{const a=readTransitionAction(r.intent.request);return a.kind==='release'&&bound(a.target.association).reservationId===target.id;})()))stop('resume-pair-conflict','uncertain/released work cannot close without exact handoff');}else boundBytes(proof.progress);boundBytes(proof.terminationCompletion);
+          }
           const observed = proof.session;
           if (!target.sessionId || observed?.id !== target.sessionId || observed.projectId !== run.aoProjectId || observed.isTerminated !== true
             || !observation.ao.some((s) => s.id === observed.id && s.isTerminated)) stop('resume-pair-conflict', 'missing current matched termination');
@@ -192,7 +208,7 @@ export function readRuntime(root, { ignoreLock = false } = {}) {
   if (!fs.existsSync(file)) return { state: null, headSha256: null, transitions: new Map(), reservations: new Map(), lastObservedAtMs: null };
   const b = bytes(file); if (b.length > MEMORY_LIMITS.maxBytes) stop('resume-history-invalid', 'runtime history exceeds supported metadata size');
   const state = parse(b); closed(state, ['schema', 'schemaVersion', 'run', 'history'], 'runtime state');
-  if (state.schema !== 'fvs/auto-runtime' || state.schemaVersion !== 1 || !Array.isArray(state.history) || !state.history.length) stop('resume-history-invalid', 'unsupported runtime state');
+  if (state.schema !== 'fvs/auto-runtime' || ![1, 2].includes(state.schemaVersion) || (state.schemaVersion === 2) !== (state.run?.schemaVersion === 2) || !Array.isArray(state.history) || !state.history.length) stop('resume-history-invalid', 'unsupported runtime state');
   runValid(state.run); const view = replay(state.history, state.run);
   if (!ignoreLock && fs.existsSync(path.join(dir, 'lock'))) stop('resume-pending', 'runtime lock appeared');
   return { state, fileSha256: hash(b), ...view };
@@ -204,7 +220,7 @@ function validateRequest(raw) {
   closed(q.ao, ['tool', 'stateHome', 'projectId', 'coordinatorSessionId'], 'AO request'); closed(q.ao.tool, ['file', 'sha256'], 'AO tool');
   closed(q.source, ['kind', 'root', 'commit', 'expectedTree'], 'integration source');
   closed(q.inputs, ['extraction', 'graph', 'plan', 'baseline', 'acceptedStore'], 'stage inputs');
-  if (q.schema !== 'fvs/auto-resume-request' || q.schemaVersion !== 1 || ![q.attemptId, q.runId].every((v) => matches(v, UUID)) || !['start', 'resume'].includes(q.phase)
+  if (q.schema !== 'fvs/auto-resume-request' || ![1, 2].includes(q.schemaVersion) || ![q.attemptId, q.runId].every((v) => matches(v, UUID)) || !['start', 'resume'].includes(q.phase)
     || (q.phase === 'start' ? q.resumeId !== null : !matches(q.resumeId, UUID)) || !(q.expectedHeadSha256 === null || matches(q.expectedHeadSha256, SHA))
     || !text(q.ao.projectId) || !text(q.ao.coordinatorSessionId) || !matches(q.ao.tool.sha256, SHA) || q.source.kind !== 'git' || !matches(q.source.commit, COMMIT) || !matches(q.source.expectedTree, COMMIT)
     || !Array.isArray(q.associations)) stop('resume-invalid-input', 'invalid resume identity/source');
@@ -217,7 +233,7 @@ function validateRequest(raw) {
   }
   if (q.priorAccounting !== null) bound(q.priorAccounting);
   const m = q.memoryRequest;
-  if (!m || m.attemptId !== q.attemptId || m.phase !== q.phase || m.operation !== 'coordinator-refresh' || m.target?.projectId !== q.ao.projectId || m.target.sessionId !== q.ao.coordinatorSessionId || m.target.resumeId !== q.resumeId) stop('resume-memory-mismatch', 'independently prepared memory request must bind this exact caller/phase');
+  if (!(q.schemaVersion === 2 && m === null) && (!m || m.attemptId !== q.attemptId || m.phase !== q.phase || m.operation !== 'coordinator-refresh' || m.target?.projectId !== q.ao.projectId || m.target.sessionId !== q.ao.coordinatorSessionId || m.target.resumeId !== q.resumeId)) stop('resume-memory-mismatch', 'independently prepared memory request must bind this exact caller/phase');
   if (q.transition !== null) {
     closed(q.transition, ['position', 'intent', 'beforeEventSha256', 'outcome', 'effect'], 'checkpoint transition');
     intentValid(q.transition.intent);
@@ -311,13 +327,14 @@ function canonicalRun(root, q, canonical, identity, previous, now) {
   let startedAtMs = previous?.startedAtMs ?? now;
   if (!previous && q.priorAccounting !== null) {
     const a = bound(q.priorAccounting);
-    closed(a, ['schema', 'schemaVersion', 'runId', 'startedAtMs', 'lastObservedAtMs', 'limits'], 'prior accounting');
-    if (a.schema !== 'fvs/auto-runtime-accounting' || a.schemaVersion !== 1 || a.runId !== q.runId || !integer(a.startedAtMs) || !integer(a.lastObservedAtMs) || a.lastObservedAtMs < a.startedAtMs || a.lastObservedAtMs > now || !same(a.limits, c.state.choices.limits)) stop('resume-accounting-invalid', 'prior accounting cannot reset/increase limits');
+    closed(a, ['schema', 'schemaVersion', 'runId', 'startedAtMs', 'lastObservedAtMs', 'limits', ...(q.schemaVersion === 2 ? ['budget'] : [])], 'prior accounting');
+    if (a.schema !== 'fvs/auto-runtime-accounting' || a.schemaVersion !== q.schemaVersion || (q.schemaVersion === 2 && !same(a.budget, c.state.choices.budget)) || a.runId !== q.runId || !integer(a.startedAtMs) || !integer(a.lastObservedAtMs) || a.lastObservedAtMs < a.startedAtMs || a.lastObservedAtMs > now || !same(a.limits, c.state.choices.limits)) stop('resume-accounting-invalid', 'prior accounting cannot reset/increase limits');
     startedAtMs = a.startedAtMs;
   }
+  if (q.schemaVersion !== c.state.schemaVersion) stop('resume-context-stale', 'setup/runtime request versions differ; no implicit migration');
   const run = { runId: q.runId, canonicalRoot: root, gitCommonDir: identity.gitCommonDir, aoProjectId: q.ao.projectId, aoStateHome: q.ao.stateHome, coordinatorSessionId: q.ao.coordinatorSessionId,
     choicesGeneration: c.state.choicesGeneration, agreementContextSha256: c.agreement.contextSha256, scope: c.state.choices.scope, limits: c.state.choices.limits,
-    startedAtMs, deadlineMs: Math.floor(startedAtMs + c.state.choices.limits.wallClockHours * 3600000) };
+    startedAtMs, ...(q.schemaVersion === 2 ? { schemaVersion: 2, budget: resolveBudget(c.state.choices.budget, startedAtMs), memory: c.state.choices.memory } : { deadlineMs: Math.floor(startedAtMs + c.state.choices.limits.wallClockHours * 3600000) }) };
   runValid(run);
   if (previous && !same(run, previous)) stop('resume-context-stale', 'original run scope/limits/context changed; preserve history and limits');
   if (envelope.mode !== 'nonpublic-intent') stop('resume-context-stale', 'only the reviewed nonpublic route is supported');
@@ -325,14 +342,14 @@ function canonicalRun(root, q, canonical, identity, previous, now) {
 }
 function observe(root, q, services, out, previous, now, memory = null, unanchored = !previous, history = null) {
   const actionRef = q.transition?.intent?.request ?? null;
-  const action = actionRef === null ? null : readTransitionAction(actionRef);
+  const action = actionRef === null ? null : readTransitionAction(actionRef),stopping=lifecycleOnlyAction(action);
   for (const key of ['extraction', 'graph', 'plan', 'baseline']) if (q.inputs[key] !== null) bound(q.inputs[key]);
   const r = runner(out, q), identity = git(root, r), canonical = services.loadCanonical();
   const run = canonicalRun(root, q, canonical, identity, previous, now);
   const source = git(q.source.root, r), reasons = [];
   if (source.gitCommonDir !== identity.gitCommonDir || source.commit !== q.source.commit || source.tree !== q.source.expectedTree || source.dirty) reasons.push('integration-source-mismatch');
-  if (now < run.startedAtMs) stop('resume-clock-rollback', 'clock precedes original run start');
-  if (now >= run.deadlineMs) reasons.push('original-limit-exhausted');
+  if (!unbudgetedRun(run) && now < run.startedAtMs) stop('resume-clock-rollback', 'clock precedes original run start');
+  if (runExpired(run, now)) reasons.push('original-limit-exhausted');
   const ao = aoObserve(q, run, r), associations = [];
   if (ao.find((s) => s.id === run.coordinatorSessionId)?.kind !== 'orchestrator') stop('resume-route-mismatch', 'checkpoint/refresh is the declared coordinator route, not worker authentication');
   const refs = [...q.associations];
@@ -344,17 +361,18 @@ function observe(root, q, services, out, previous, now, memory = null, unanchore
     seen.add(a.sessionId);
     const actual = git(a.worktree.path, r), expected = { path: actual.root, gitDir: actual.gitDir, gitCommonDir: actual.gitCommonDir, branchRef: actual.branchRef, commit: actual.commit, tree: actual.tree };
     const registered = actual.worktrees.split('\n\n').some((s) => s.split('\n').includes('worktree ' + a.worktree.path) && s.split('\n').includes('branch ' + a.worktree.branchRef));
-    if (!same(a.worktree, expected) || actual.gitCommonDir !== run.gitCommonDir || !registered || !ao.some((s) => s.id === a.sessionId)) reasons.push('association-git-or-session-mismatch');
+    if ((!stopping && !same(a.worktree, expected)) || (stopping && ['path','gitDir','gitCommonDir','branchRef'].some(k=>a.worktree[k]!==expected[k])) || actual.gitCommonDir !== run.gitCommonDir || !registered || !ao.some((s) => s.id === a.sessionId)) reasons.push('association-git-or-session-mismatch');
     associations.push({ reference: ref, value: a });
   }
   for (const s of ao) if (s.id !== run.coordinatorSessionId && !s.isTerminated && !seen.has(s.id)) reasons.push('unclassified-ao-session:' + s.id);
   if (history) for (const reserved of history.reservations.values()) if (reserved.state !== 'closed' && reserved.intent.effect.kind === 'ao-launch' && reserved.sessionId
     && !associations.some((a) => a.value.sessionId === reserved.sessionId && a.value.reservationId === reserved.id)) reasons.push('reserved-association-missing');
   let acceptance = { status: 'not-established', acceptedBaseline: null, nodes: [], storeHeadSha256: null };
-  if (q.inputs.acceptedStore !== null) {
-    if (now >= run.deadlineMs) acceptance = { status: 'unverified', reason: 'original-limit-exhausted', diagnostic: { code: 'original-limit-exhausted', message: 'currentness inspection skipped after the original deadline' }, acceptedBaseline: null, nodes: [], storeHeadSha256: null };
+  if(stopping){acceptance={status:'unverified',reason:'lifecycle-only-unverified',acceptedBaseline:null,nodes:null,storeHeadSha256:null};reasons.push('lifecycle-only-unverified');}
+  else if (q.inputs.acceptedStore !== null) {
+    if (runExpired(run, now)) acceptance = { status: 'unverified', reason: 'original-limit-exhausted', diagnostic: { code: 'original-limit-exhausted', message: 'currentness inspection skipped after the original deadline' }, acceptedBaseline: null, nodes: [], storeHeadSha256: null };
     else {
-      try { acceptance = services.inspectAcceptance({ baseline: q.inputs.baseline, store: q.inputs.acceptedStore, source: q.source, deadlineMs: run.deadlineMs, out: path.join(out, 'acceptance') }); }
+      try { acceptance = services.inspectAcceptance({ baseline: q.inputs.baseline, store: q.inputs.acceptedStore, source: q.source, ...runExecutionFields(run), out: path.join(out, 'acceptance') }); }
       catch (e) {
         if (e.code === 'timeout') {
           acceptance = { status: 'unverified', reason: 'original-limit-exhausted', diagnostic: { code: e.code, message: e.message }, acceptedBaseline: null, nodes: [], storeHeadSha256: null };
@@ -374,13 +392,21 @@ function observe(root, q, services, out, previous, now, memory = null, unanchore
   }
   const earlierExecution = canonical.view.state.extraction !== null || ['extraction', 'graph', 'plan', 'baseline'].some((key) => q.inputs[key] !== null)
     || q.inputs.acceptedStore?.expectedHeadSha256 != null || acceptance.acceptedBaseline || ao.some((s) => s.kind === 'worker') || q.associations.length;
-  if (unanchored && q.priorAccounting === null && earlierExecution) reasons.push('prior-accounting-unknown');
-  if (memory === null) {
-    services.refreshMemory({ projectRoot: root, callerRoot: root, request: q.memoryRequest, out: path.join(out, 'memory') });
-    memory = { out: path.join(out, 'memory'), requestSha256: memoryHash(q.memoryRequest) };
+  if (unanchored && !unbudgetedRun(run) && q.priorAccounting === null && earlierExecution) reasons.push('prior-accounting-unknown');
+  if (run.schemaVersion === 2 && run.memory.mode === 'disabled') {
+    if (q.memoryRequest !== null) stop('resume-memory-mismatch', 'disabled memory cannot consume a bootstrap receipt');
+    const disabled = { status: 'disabled', policySha256: memoryHash({ generation: run.choicesGeneration, agreement: run.agreementContextSha256, memory: run.memory }), request: null };
+    if (memory !== null && !same(memory, disabled)) stop('resume-memory-mismatch', 'disabled memory disposition changed');
+    memory = disabled;
+  } else {
+    if (q.memoryRequest === null) stop('resume-memory-mismatch', 'enabled memory needs its independent current caller request');
+    if (memory === null) {
+      services.refreshMemory({ projectRoot: root, callerRoot: root, request: q.memoryRequest, out: path.join(out, 'memory') });
+      memory = { out: path.join(out, 'memory'), requestSha256: memoryHash(q.memoryRequest) };
+    }
+    const consumed = services.verifyMemory({ projectRoot: root, callerRoot: root, request: q.memoryRequest, out: memory.out });
+    if (consumed.status !== 'memory-primed') stop('resume-memory-mismatch', 'actual current prime was not consumed');
   }
-  const consumed = services.verifyMemory({ projectRoot: root, callerRoot: root, request: q.memoryRequest, out: memory.out });
-  if (consumed.status !== 'memory-primed') stop('resume-memory-mismatch', 'actual current prime was not consumed');
   const observation = { identity: { primary: identity, source }, inputs: q.inputs, memory, ao, associations, acceptance, reasons: [...new Set(reasons)], receipts: r.refs };
   if (action) {
     if (!history || !services.transitions) stop('resume-transition-unavailable', 'bound22 transition services/history are required');
@@ -454,7 +480,7 @@ export function runResume(operation, options, services) {
   const data = snapshot(options); closed(data, ['projectRoot', 'request', 'out'], 'resume options');
   const root = directory(data.projectRoot), q = validateRequest(data.request), previous = readRuntime(root);
   if (operation === 'checkpoint' ? q.transition === null : q.transition !== null) stop('resume-invalid-input', 'wrong operation/transition');
-  if (previous.state && (previous.state.run.runId !== q.runId || previous.state.run.canonicalRoot !== root || previous.state.run.aoProjectId !== q.ao.projectId || previous.state.run.aoStateHome !== q.ao.stateHome || previous.state.run.coordinatorSessionId !== q.ao.coordinatorSessionId)) stop('resume-context-stale', 'request is not for this recorded run/controller');
+  if (previous.state && (previous.state.schemaVersion !== q.schemaVersion || previous.state.run.runId !== q.runId || previous.state.run.canonicalRoot !== root || previous.state.run.aoProjectId !== q.ao.projectId || previous.state.run.aoStateHome !== q.ao.stateHome || previous.state.run.coordinatorSessionId !== q.ao.coordinatorSessionId)) stop('resume-context-stale', 'request is not for this recorded run/controller');
   const old = q.transition ? previous.transitions.get(q.transition.intent.transitionId) : null;
   if (old) {
     const existing = q.transition.position === 'before' ? old.before : old.after;
@@ -472,14 +498,14 @@ export function runResume(operation, options, services) {
   const requestInput = save(data.out, 'request.json', q), scriptIdentity = implementation();
   try {
     const now = services.now?.() ?? Date.now();
-    if (previous.lastObservedAtMs !== null && now < previous.lastObservedAtMs) stop('resume-clock-rollback', 'clock/accounting moved backwards');
+    if (previous.lastObservedAtMs !== null && !unbudgetedRun(previous.state?.run) && now < previous.lastObservedAtMs) stop('resume-clock-rollback', 'clock/accounting moved backwards');
     const { run, observation } = observe(root, q, services, data.out, previous.state?.run, now, null, !previous.state, previous);
     if (!previous.state && observation.reasons.includes('prior-accounting-unknown')) {
-      const result = { schema: 'fvs/auto-resume-result', schemaVersion: 1, code: 'partial', request: q, requestSha256: memoryHash(q), expectedPredecessorHeadSha256: q.expectedHeadSha256, committedHeadSha256: null, observation, effectExecutable: false, reason: 'prior accounting unknown; no execution anchor or runtime was created' };
+      const result = { schema: 'fvs/auto-resume-result', schemaVersion: q.schemaVersion, code: 'partial', request: q, requestSha256: memoryHash(q), expectedPredecessorHeadSha256: q.expectedHeadSha256, committedHeadSha256: null, observation, effectExecutable: false, reason: 'prior accounting unknown; no execution anchor or runtime was created' };
       if (q.transition) stop('resume-partial', result.reason, { reasons: observation.reasons });
       save(data.out, 'result.json', result); return result;
     }
-    const state = previous.state ? snapshot(previous.state) : { schema: 'fvs/auto-runtime', schemaVersion: 1, run, history: [] };
+    const state = previous.state ? snapshot(previous.state) : { schema: 'fvs/auto-runtime', schemaVersion: q.schemaVersion, run, history: [] };
     let recorded;
     if (q.transition) {
       if (q.transition.position === 'before' && observation.reasons.length && observation.transition?.admissibility.status !== 'next-action-eligible') stop('resume-partial', 'continuation is blocked by current observations', { reasons: observation.reasons });
@@ -493,15 +519,15 @@ export function runResume(operation, options, services) {
     const published = commit(root, q, state, previous.headSha256, services, () => {
       const fenceOut = ownOutput(path.join(data.out, 'fence'), root);
       const fenceAtMs = services.now?.() ?? Date.now();
-      if (fenceAtMs < now) stop('resume-clock-rollback', 'clock moved backwards at the observation fence');
+      if (!unbudgetedRun(run) && fenceAtMs < now) stop('resume-clock-rollback', 'clock moved backwards at the observation fence');
       const checked = observe(root, q, services, fenceOut, run, fenceAtMs, observation.memory, !previous.state, previous);
       save(fenceOut, 'observation.json', checked.observation);
       if (!same(stableObservation(checked.observation), stableObservation(observation))) stop('resume-context-stale', 'AO/Git/receipt/context changed before checkpoint');
       validateRequest(q); // Rehash caller-bound inputs at the publication fence.
       const endedAtMs = services.now?.() ?? Date.now();
-      if (endedAtMs < now) stop('resume-clock-rollback', 'clock moved backwards during observation');
-      if (endedAtMs >= run.deadlineMs) {
-        if (q.transition?.position === 'before') stop('resume-partial', 'original limit expired before intent publication', { reasons: ['original-limit-exhausted'] });
+      if (!unbudgetedRun(run) && endedAtMs < now) stop('resume-clock-rollback', 'clock moved backwards during observation');
+      if (runExpired(run, endedAtMs)) {
+        if (q.transition?.position === 'before' && !lifecycleOnlyAction(q.transition?.intent.request?readTransitionAction(q.transition.intent.request):null)) stop('resume-partial', 'original limit expired before intent publication', { reasons: ['original-limit-exhausted'] });
         if (!observation.reasons.includes('original-limit-exhausted')) observation.reasons.push('original-limit-exhausted');
       }
       const observationInput = q.transition?.intent.request ? save(data.out, 'observation.json', observation) : null;
@@ -515,7 +541,7 @@ export function runResume(operation, options, services) {
         row.sha256 = memoryHash(row.event); rewritten.set(oldSha, row.sha256);
       }
     });
-    const result = { schema: 'fvs/auto-resume-result', schemaVersion: 1, code: observation.reasons.length ? 'partial' : operation === 'state' ? 'reconciled' : 'checkpointed', request: q, requestSha256: memoryHash(q),
+    const result = { schema: 'fvs/auto-resume-result', schemaVersion: q.schemaVersion, code: observation.reasons.length ? 'partial' : operation === 'state' ? 'reconciled' : 'checkpointed', request: q, requestSha256: memoryHash(q),
       expectedPredecessorHeadSha256: q.expectedHeadSha256, ...published, recordedEventSha256: recorded.sha256, observation, requestInput, implementation: scriptIdentity, effectExecutable: false,
       semanticCheckRequired: 'Current canonical agreement applicability/actions remain a mandatory workflow check. No dispatch or proof authority.' };
     save(data.out, 'result.json', result); return result;
@@ -526,7 +552,7 @@ export function consumeTransition(options, services) { return consume(options, s
 function consume(options, services, transition) {
   const data = snapshot(options); closed(data, ['projectRoot', 'request', 'out'], 'resume consumer');
   const q = validateRequest(data.request), root = directory(data.projectRoot), result = parse(bytes(path.join(data.out, 'result.json')));
-  if (result.schema !== 'fvs/auto-resume-result' || result.schemaVersion !== 1 || !(result.code === 'reconciled' || (transition && ['partial', 'checkpointed'].includes(result.code))) || result.requestSha256 !== memoryHash(q) || !same(result.request, q)
+  if (result.schema !== 'fvs/auto-resume-result' || result.schemaVersion !== q.schemaVersion || !(result.code === 'reconciled' || (transition && ['partial', 'checkpointed'].includes(result.code))) || result.requestSha256 !== memoryHash(q) || !same(result.request, q)
     || result.expectedPredecessorHeadSha256 !== q.expectedHeadSha256 || !matches(result.committedHeadSha256, SHA)) stop('resume-result-mismatch', 'not this caller current reconciliation result');
   if (!same(bound(result.requestInput), q) || !same(result.implementation, implementation())) stop('resume-evidence-invalid', 'request or adapter implementation changed');
   const current = readRuntime(root), latest = current.state?.history.at(-1);
@@ -538,11 +564,11 @@ function consume(options, services, transition) {
   }
   const out = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'fvs-resume-consume-')); fs.mkdirSync(path.join(out, 'receipts'));
   const now = services.now?.() ?? Date.now();
-  if (now < current.lastObservedAtMs) stop('resume-clock-rollback', 'clock/accounting moved backwards');
+  if (!unbudgetedRun(current.state.run) && now < current.lastObservedAtMs) stop('resume-clock-rollback', 'clock/accounting moved backwards');
   const observed = observe(root, q, services, out, current.state.run, now, result.observation.memory, false, current);
   const finalHead = readRuntime(root).headSha256, endedAtMs = services.now?.() ?? Date.now();
-  if (endedAtMs < now || endedAtMs < current.lastObservedAtMs) stop('resume-clock-rollback', 'clock moved backwards during consumption', { verificationEvidence: out });
-  if (endedAtMs >= current.state.run.deadlineMs && !(transition && q.transition?.position === 'after')) stop('resume-partial', 'original limit expired during consumption; preserve the resumable checkpoint', { reasons: ['original-limit-exhausted'], verificationEvidence: out });
+  if (!unbudgetedRun(current.state.run) && (endedAtMs < now || endedAtMs < current.lastObservedAtMs)) stop('resume-clock-rollback', 'clock moved backwards during consumption', { verificationEvidence: out });
+  if (runExpired(current.state.run, endedAtMs) && !lifecycleOnlyAction(q.transition?.intent.request?readTransitionAction(q.transition.intent.request):null) && !(transition && q.transition?.position === 'after')) stop('resume-partial', 'original limit expired during consumption; preserve the resumable checkpoint', { reasons: ['original-limit-exhausted'], verificationEvidence: out });
   if ((!transition && observed.observation.reasons.length) || !same(stableObservation(observed.observation), stableObservation(result.observation)) || finalHead !== result.committedHeadSha256) stop('resume-context-stale', 'current observation no longer matches the committed reconciliation');
   if (transition) {
     const row = observed.observation.transition?.admissibility;
@@ -594,7 +620,7 @@ export function verifyReleasedPacketContext({ projectRoot, ao, packet, memoryReq
   validateReleasedContext({ actionRef: before.event.intent.request, packet, canonical, actual, view }, ts);
   const current = readRuntime(projectRoot), observedAtMs = Date.now();
   if (!same(current.state.run, run) || observedAtMs < current.lastObservedAtMs) stop('resume-clock-rollback', 'run/clock changed during packet observations');
-  if (observedAtMs >= run.deadlineMs) stop('transition-budget-exhausted', 'original limit expired during packet observations');
+  if (runExpired(run, observedAtMs)) stop('transition-budget-exhausted', 'original limit expired during packet observations');
   return { status: 'released-context-current', releaseBeforeEventSha256: before.sha256, deliveryAfterEventSha256: delivered.sha256, receipts: r.refs, executable: false,
-    clock: { runId: run.runId, startedAtMs: run.startedAtMs, deadlineMs: run.deadlineMs, lastObservedAtMs: current.lastObservedAtMs, observedAtMs } };
+    clock: { runId: run.runId, startedAtMs: run.startedAtMs, ...(run.schemaVersion === 2 ? { schemaVersion: 2, budget: run.budget } : { deadlineMs: run.deadlineMs }), lastObservedAtMs: current.lastObservedAtMs, observedAtMs } };
 }

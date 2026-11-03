@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readState } from './fvs-auto.mjs';
 import { memoryDataSnapshot, memoryHash } from './fvs-project-memory.mjs';
+import { parseExecution, assertRunning, runControl, withProcessCancellation } from './fvs-execution.mjs';
 import { transitionJson } from './fvs-auto-transitions.mjs';
 import { validatePlan, readChain, registryStatus } from './fvs-contract-registry.mjs';
 import { readRuntime } from './fvs-auto-resume.mjs';
@@ -32,6 +33,30 @@ function closed(v, keys, label) {
 }
 function deadline(ms) {
   if (!Number.isSafeInteger(ms) || ms <= Date.now()) fail('bundle-deadline-exhausted', 'read-only inspection deadline exhausted');
+}
+const controlOf=v=>{if(v.schemaVersion===2||v.version===2)return parseExecution(v.execution);if(!Number.isSafeInteger(v.deadlineMs))fail('bundle-deadline-exhausted','read-only inspection deadline exhausted');return v.deadlineMs;};
+function checkControl(control){if(typeof control==='object')assertRunning(parseExecution(control));else deadline(control);}
+const inspectionFields=v=>v.schemaVersion===2||v.version===2?{version:2,execution:parseExecution(v.execution)}:{deadlineMs:v.deadlineMs};
+function inspectionOptions(raw,keys) {
+  const v=data(raw);closed(v,v.version===2?[...keys.filter(k=>k!=='deadlineMs'),'version','execution']:keys,'inspection options');checkControl(controlOf(v));return v;
+}
+async function readerOperation(q,out,services,work,currentFence,ownership) {
+  const control=controlOf(q);assertRunning(control,services);
+  try {
+    await new Promise(done=>setImmediate(done));assertRunning(control,services);
+    const before=currentFence(),result=work();
+    await new Promise(done=>setImmediate(done));assertRunning(control,services);
+    services.beforePublication?.();assertRunning(control,services);
+    if(!same(before,currentFence()))fail('bundle-context-stale','context changed before final publication');
+    assertRunning(control,services);
+    if(result.status==='review-bundle-written'){
+      const content=bound(result.manifest),publication=save(path.join(out,'publication.json'),{schema:'fvs/auto-review-publication',schemaVersion:2,execution:control,manifestContentSha256:memoryHash(content),publishedAtMs:Date.now(),authority:'completed read-only output; no proof authority'});
+      const manifest=save(path.join(out,'manifest.json'),{...content,publication});
+      const fd=fs.openSync(out,'r');try{fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
+      return{...result,manifest};
+    }
+    return result;
+  }catch(error){if(ownership.created&&fs.existsSync(out)&&!fs.existsSync(path.join(out,'failure.json')))save(path.join(out,'failure.json'),diagnostic(error));throw error;}
 }
 function directory(root, missing = false) {
   if (!text(root) || !path.isAbsolute(root) || path.normalize(root) !== root) fail('bundle-path-invalid', 'canonical directory required');
@@ -117,9 +142,9 @@ function protectOutput(out, q, extra = []) {
 }
 function request(raw) {
   const q = data(raw);
-  closed(q, ['schema', 'schemaVersion', 'bundleId', 'projectRoot', 'source', 'agreement', 'extraction', 'graph', 'plan', 'scopeInventory', 'registry', 'baseline', 'acceptedStore', 'runtime', 'handoff', 'absenceReasons', 'deadlineMs', ...(Object.hasOwn(q, 'historicalCaptures') ? ['historicalCaptures'] : [])], 'bundle request');
+  closed(q, ['schema', 'schemaVersion', 'bundleId', 'projectRoot', 'source', 'agreement', 'extraction', 'graph', 'plan', 'scopeInventory', 'registry', 'baseline', 'acceptedStore', 'runtime', 'handoff', 'absenceReasons', ...(q.schemaVersion===2?['execution']:['deadlineMs']), ...(Object.hasOwn(q, 'historicalCaptures') ? ['historicalCaptures'] : [])], 'bundle request');
   historicalInputs(q);
-  if (q.schema !== 'fvs/auto-bundle-request' || q.schemaVersion !== 1 || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(q.bundleId)) fail('bundle-invalid-input', 'version1 bundle UUID required');
+  if (q.schema !== 'fvs/auto-bundle-request' || ![1,2].includes(q.schemaVersion) || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(q.bundleId)) fail('bundle-invalid-input', 'supported versioned bundle UUID required');
   directory(q.projectRoot); closed(q.source, ['kind', 'root', 'commit', 'expectedTree'], 'source');
   if (q.source.kind !== 'git' || !commit(q.source.commit) || !commit(q.source.expectedTree)) fail('bundle-invalid-input', 'immutable Git source required');
   directory(q.source.root);
@@ -140,15 +165,15 @@ function request(raw) {
   }
   closed(q.absenceReasons, ['baseline', 'acceptedStore', 'runtime', 'handoff'], 'absence reasons');
   for (const k of Object.keys(q.absenceReasons)) if (q[k] === null ? !text(q.absenceReasons[k]) : q.absenceReasons[k] !== null) fail('bundle-invalid-input', 'explicit absence reason differs: ' + k);
-  deadline(q.deadlineMs);
-  if (q.deadlineMs > Date.now() + BUNDLE_LIMITS.deadlineMs) fail('bundle-invalid-input', 'inspection exceeds existing600s bound');
+  checkControl(controlOf(q));
+  if (q.schemaVersion===1 && q.deadlineMs > Date.now() + BUNDLE_LIMITS.deadlineMs) fail('bundle-invalid-input', 'inspection exceeds existing600s bound');
   return q;
 }
 export function bundleExpectedContext(raw) {
   return contextOf(request(raw));
 }
 function contextOf(q) {
-  return { projectRoot: q.projectRoot, source: q.source, agreement: q.agreement, extraction: q.extraction, graph: q.graph, plan: q.plan,
+  return { ...(q.schemaVersion===2?{schemaVersion:2,execution:parseExecution(q.execution)}:{}), projectRoot: q.projectRoot, source: q.source, agreement: q.agreement, extraction: q.extraction, graph: q.graph, plan: q.plan,
     scopeInventory: q.scopeInventory, registry: q.registry, baseline: q.baseline, acceptedStore: q.acceptedStore, runtime: q.runtime, handoff: q.handoff,
     ...(Object.hasOwn(q, 'historicalCaptures') ? { historicalCaptures: q.historicalCaptures } : {}) };
 }
@@ -263,7 +288,8 @@ function scanRefs(v, copy, index, key = '', digestMap = false) {
     return;
   }
   const skipped = new Set(['specDefinitions']);
-  if (v.schema === 'fvs-checker/kernel-attempt' && v.version === 1) {
+  if (v.schema === 'fvs-checker/kernel-attempt') {
+    if(![1,2].includes(v.version))fail('bundle-evidence-invalid','unsupported kernel attempt version');
     // v1 kernelAudit constructs inputs in request/Lean/Node/code/parts order.
     const inputs = digestEntries(v.inputs), runtimes = new Map(digestEntries(v.runtimes));
     if (inputs.length < 5 || inputs[1][0] !== v.argv?.[0] || !inputs[3][0].endsWith('.mjs') || !inputs[4][0].endsWith('.lean')) fail('bundle-evidence-invalid', 'unsupported kernel input layout');
@@ -280,7 +306,8 @@ function scanRefs(v, copy, index, key = '', digestMap = false) {
     for (const r of v.snapshots.modules) { reference({ file: r.file, sha256: r.sha256 }); index(r.file, r.sha256, 'kernel-snapshot-body'); }
     skipped.add('inputs'); skipped.add('runtimes'); skipped.add('snapshots');
   }
-  if (v.schema === 'fvs-checker/auto-baseline' && v.version === 1) {
+  if (v.schema === 'fvs-checker/auto-baseline') {
+    if(![1,2].includes(v.version))fail('bundle-evidence-invalid','unsupported frozen version');
     for (const c of v.expected?.contexts ?? []) for (const m of c.projectImports ?? []) {
       for (const [file, digest] of digestEntries(m.inputs)) index(file, digest, 'pristine-context-body');
     }
@@ -297,13 +324,13 @@ function collector(out, q) {
   let copied = 0;
   const identity = r => r.file + '\0' + r.sha256;
   function indexed(file, digest, role) {
-    deadline(q.deadlineMs);
+    checkControl(controlOf(q));
     if (!path.isAbsolute(file) || !sha(digest)) fail('bundle-evidence-invalid', 'malformed indexed identity');
     if (entries.size + external.size >= BUNDLE_LIMITS.entries && !external.has(file + '\0' + digest)) fail('bundle-size-limit', 'evidence entry bound exceeded');
     external.set(file + '\0' + digest, { original: file, sha256: digest, policy: 'index-only', role, availability: 'not-established-by-index' });
   }
   function capture(r, role = 'evidence', recurse = true, historical = null) {
-    deadline(q.deadlineMs); reference(r);
+    checkControl(controlOf(q)); reference(r);
     const key = identity(r);
     historical ??= archives.get(key) ?? null;
     if (historical) {
@@ -340,7 +367,7 @@ function collector(out, q) {
     external: () => [...external.values()].sort((a, b) => a.original.localeCompare(b.original)),
     fence() {
       if (usedArchives.size !== archives.size) fail('bundle-evidence-invalid', 'unused historical capture does not belong to required traversal');
-      for (const row of entries.values()) { deadline(q.deadlineMs); if (hash(row.historicalCapture ? archivedBytes(row.historicalCapture) : bytes(row.original)) !== row.sha256) fail('bundle-snapshot-drift', 'captured byte version changed before publication'); }
+      for (const row of entries.values()) { checkControl(controlOf(q)); if (hash(row.historicalCapture ? archivedBytes(row.historicalCapture) : bytes(row.original)) !== row.sha256) fail('bundle-snapshot-drift', 'captured byte version changed before publication'); }
     },
   };
 }
@@ -383,7 +410,7 @@ function capturedRuntime(q, c) {
   }
   c.capture(q.runtime.state); // Malformed/hash-mismatched committed JSON is fatal.
   const raw = c.get(q.runtime.state);
-  if (raw.schema !== 'fvs/auto-runtime' || raw.schemaVersion !== 1 || !raw.run || !Array.isArray(raw.history)) fail('bundle-evidence-invalid', 'unsupported committed16 header');
+  if (raw.schema !== 'fvs/auto-runtime' || raw.schemaVersion !== q.schemaVersion || !raw.run || !Array.isArray(raw.history)) fail('bundle-evidence-invalid', 'unsupported committed16 header');
   let value;
   try { value = readRuntime(q.runtime.root); }
   catch (e) {
@@ -407,14 +434,16 @@ function tupleFence(q) {
     accepted: q.acceptedStore === null ? null : { pending: markers(q.acceptedStore.root), records: recordFiles(q.acceptedStore.root).map(r => { bound(r, false); return r; }) } };
 }
 function expectedShape(v) {
-  closed(v, ['projectRoot', 'source', 'agreement', 'extraction', 'graph', 'plan', 'scopeInventory', 'registry', 'baseline', 'acceptedStore', 'runtime', 'handoff', ...(Object.hasOwn(v, 'historicalCaptures') ? ['historicalCaptures'] : [])], 'consumer expected context');
+  closed(v, ['projectRoot', 'source', 'agreement', 'extraction', 'graph', 'plan', 'scopeInventory', 'registry', 'baseline', 'acceptedStore', 'runtime', 'handoff', ...(v.schemaVersion===2?['schemaVersion','execution']:[]), ...(Object.hasOwn(v, 'historicalCaptures') ? ['historicalCaptures'] : [])], 'consumer expected context');
   historicalInputs(v);
+  if(Object.hasOwn(v,'schemaVersion')&&v.schemaVersion!==2)fail('bundle-invalid-input','unsupported expected context version');
+  if(v.schemaVersion===2)parseExecution(v.execution);
   closed(v.source, ['kind', 'root', 'commit', 'expectedTree'], 'expected source');
   for (const r of [v.extraction, v.graph, v.plan, v.scopeInventory, v.agreement?.state, v.agreement?.roadmap]) reference(r);
   if (v.source.kind !== 'git' || !commit(v.source.commit) || !commit(v.source.expectedTree)) fail('bundle-invalid-input', 'consumer immutable source required');
 }
 function freshCurrentness(context, ms, out, scopeValid = true) {
-  deadline(ms); expectedShape(context);
+  checkControl(ms); expectedShape(context);
   try {
     projectBinding(context.projectRoot, context.source.root);
     const before = tupleFence(context);
@@ -430,9 +459,10 @@ function freshCurrentness(context, ms, out, scopeValid = true) {
     if (context.runtime?.state && hash(bytes(context.runtime.state.file)) !== context.runtime.state.sha256) return { status: 'stale', reason: 'runtime-snapshot-changed', nodes: [] };
     if (!scopeValid) return { status: 'unverified', reason: 'plan-has-no-validated-union', nodes: [] };
     if (context.baseline === null || context.acceptedStore === null) return { status: 'unverified', reason: 'frozen-or-accepted-evidence-not-established', nodes: [] };
-    const artifacts = inspectAutoBaselineArtifacts({ baseline: context.baseline, deadlineMs: ms });
+    const fields=context.schemaVersion===2?{version:2,execution:context.execution}:{deadlineMs:ms};
+    const artifacts = inspectAutoBaselineArtifacts({ baseline: context.baseline, ...fields });
     if (!same(artifacts.inputs, { extraction: context.extraction, graph: context.graph, plan: context.plan }) || !same(artifacts.registry, { root: context.registry.root, headSha256: context.registry.expectedHeadSha256 })) return { status: 'stale', reason: 'frozen-stage-context-differs', nodes: [] };
-    const result = inspectAutoAcceptance({ baseline: context.baseline, store: context.acceptedStore, source: context.source, deadlineMs: ms, out });
+    const result = inspectAutoAcceptance({ baseline: context.baseline, store: context.acceptedStore, source: context.source, ...fields, out });
     for (const r of [context.extraction, context.graph, context.plan, context.scopeInventory]) bound(r);
     if (!same(before, tupleFence(context))) return { status: 'stale', reason: 'consumer-tuple-changed-during-inspection', nodes: [], existing15Observation: result };
     return { status: result.status === 'current' ? 'current' : 'unverified', reason: result.status === 'current' ? null : 'accepted-history-not-established', nodes: result.nodes,
@@ -565,7 +595,11 @@ function render(snapshot, get) {
   return { facts: f, contract, recall };
 }
 
-export function buildReviewBundle(raw, out) {
+export function buildReviewBundle(raw,out,services={}) {
+  const q=request(raw);if(q.schemaVersion!==2)return buildReviewBundleBody(q,out);
+  const ownership={created:false};return readerOperation(q,out,services,()=>buildReviewBundleBody(q,out,()=>{ownership.created=true;}),()=>tupleFence(q),ownership);
+}
+function buildReviewBundleBody(raw, out, created=()=>{}) {
   const q = request(raw); protectOutput(out, q);
   projectBinding(q.projectRoot, q.source.root);
   const before = tupleFence(q), a = before.agreement;
@@ -577,13 +611,15 @@ export function buildReviewBundle(raw, out) {
   for (const r of [q.agreement.state, q.agreement.roadmap, q.extraction, q.graph, q.plan, q.scopeInventory]) c.capture(r, r === q.agreement.roadmap ? 'source' : 'input', false);
   for (const b of c.get(q.agreement.state).memoryBindings ?? []) for (const root of [b.storeDir, b.databasePath]) if (typeof root === 'string' && path.isAbsolute(root)) c.protectedRoots.add(root);
   const scope = scopeData(q, c.get); scope.inventory.applicability.forEach(a => a.evidence.forEach(r => c.capture(r, 'source', false)));
+  if(c.get(q.agreement.state).schemaVersion!==q.schemaVersion)fail('bundle-evidence-invalid','state/request versions differ');
   const registry = capturedRegistry(q, c, scope), runtime = capturedRuntime(q, c);
+  if(runtime.validatedSnapshot&&q.schemaVersion===2&&!same(runControl(runtime.validatedSnapshot.run),q.execution))fail('bundle-context-stale','bundle lost original runtime policy');
   let frozenValidation = 'not-established', frozenDiagnostic = null;
   if (q.baseline !== null) {
     c.capture(q.baseline);
     const frozen = c.get(q.baseline);
-    if (frozen.schema !== 'fvs-checker/auto-baseline' || frozen.version !== 1 || frozen.purpose !== 'auto' || frozen.authority !== 'expectations-only') fail('bundle-evidence-invalid', 'not a supported15 expectation bundle');
-    try { inspectAutoBaselineArtifacts({ baseline: q.baseline, deadlineMs: q.deadlineMs }); frozenValidation = 'frozen-artifacts-validated'; }
+    if (frozen.schema !== 'fvs-checker/auto-baseline' || frozen.version !== q.schemaVersion || frozen.purpose !== 'auto' || frozen.authority !== 'expectations-only') fail('bundle-evidence-invalid', 'not a supported15 expectation bundle');
+    try { inspectAutoBaselineArtifacts({ baseline: q.baseline, ...inspectionFields(q) }); frozenValidation = 'frozen-artifacts-validated'; }
     catch (e) { if (e.code === 'invalid-input') fail('bundle-evidence-invalid', 'malformed frozen evidence: ' + e.message); frozenValidation = 'captured-unverified'; frozenDiagnostic = diagnostic(e); }
   }
   let accepted = { validation: 'not-established', headSha256: null, records: [], reason: q.absenceReasons.acceptedStore };
@@ -596,8 +632,8 @@ export function buildReviewBundle(raw, out) {
     } else accepted = { validation: 'raw-captured-unvalidated', headSha256: null, records: [], pending, reason: 'accepted store pending; no private replay', rawRecords: refs };
   }
   protectOutput(out, q, [...c.protectedRoots]);
-  fs.mkdirSync(out, { mode: 0o700 }); fs.mkdirSync(path.join(out, 'evidence')); fs.mkdirSync(path.join(out, 'sources')); c.materialize();
-  const context = bundleExpectedContext(q), currentnessAtCapture = freshCurrentness(context, q.deadlineMs, path.join(out, 'inspection-at-capture'), scope.valid);
+  fs.mkdirSync(out, { mode: 0o700 }); created(); fs.mkdirSync(path.join(out, 'evidence')); fs.mkdirSync(path.join(out, 'sources')); c.materialize();
+  const context = bundleExpectedContext(q), currentnessAtCapture = freshCurrentness(context, controlOf(q), path.join(out, 'inspection-at-capture'), scope.valid);
   const snapshot = { request: q, capturedAtMs: Date.now(), context, agreement: a, registry, runtime, accepted, frozenValidation, frozenDiagnostic, currentnessAtCapture, sourceViews: c.sourceViews };
   anchoredInventories(snapshot, c.index(), c.get);
   const views = render(snapshot, c.get);
@@ -610,24 +646,33 @@ export function buildReviewBundle(raw, out) {
   c.fence(); const after = tupleFence(q);
   if (!same(before, after)) fail('bundle-snapshot-drift', 'source/context/committed/pending tuple changed during collection');
   const contract = save(path.join(out, 'contract.lean'), views.contract), recall = save(path.join(out, 'recall.md'), views.recall);
-  const manifest = { schema: 'fvs/auto-review-bundle', schemaVersion: 1, bundleId: q.bundleId, authority: 'human-review-artifact-only', humanReview: 'pending',
+  const manifest = { schema: 'fvs/auto-review-bundle', schemaVersion: q.schemaVersion, bundleId: q.bundleId, authority: 'human-review-artifact-only', humanReview: 'pending',
     producer: { file: fileURLToPath(import.meta.url), sha256: hash(bytes(fileURLToPath(import.meta.url))) }, snapshot, facts: views.facts,
     copies: c.index(), indexOnly: c.external(), sources: c.sourceViews,
     views: { contract: { file: 'contract.lean', sha256: contract.sha256 }, recall: { file: 'recall.md', sha256: recall.sha256 } } };
   for (const row of manifest.copies) if (hash(bytes(path.join(out, row.stored))) !== row.sha256) fail('bundle-evidence-invalid', 'staged copy changed');
-  const published = save(path.join(out, 'manifest.json'), manifest), fd = fs.openSync(out, 'r'); try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  const published = save(path.join(out, q.schemaVersion===2?'manifest.staged.json':'manifest.json'), manifest), fd = fs.openSync(out, 'r'); try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
   return { status: 'review-bundle-written', authority: 'no-proof-or-dispatch-authority', humanReview: 'pending', proofCoverage: views.facts.proofCoverage, manifest: published };
 }
 
 export function readReviewSnapshot(raw) {
-  const options = data(raw); closed(options, ['manifest', 'deadlineMs'], 'snapshot verification'); reference(options.manifest); deadline(options.deadlineMs);
-  if (options.deadlineMs > Date.now() + BUNDLE_LIMITS.deadlineMs) fail('bundle-invalid-input', 'inspection exceeds existing600s bound');
+  const options = inspectionOptions(raw,['manifest','deadlineMs']); reference(options.manifest);
+  if (options.version!==2 && options.deadlineMs > Date.now() + BUNDLE_LIMITS.deadlineMs) fail('bundle-invalid-input', 'inspection exceeds existing600s bound');
   const manifest = bound(options.manifest), root = path.dirname(options.manifest.file);
-  if (path.basename(options.manifest.file) !== 'manifest.json' || manifest.schema !== 'fvs/auto-review-bundle' || manifest.schemaVersion !== 1 || manifest.authority !== 'human-review-artifact-only' || manifest.humanReview !== 'pending') fail('bundle-integrity-invalid', 'unsupported review manifest');
+  if (path.basename(options.manifest.file) !== 'manifest.json' || manifest.schema !== 'fvs/auto-review-bundle' || ![1,2].includes(manifest.schemaVersion) || manifest.authority !== 'human-review-artifact-only' || manifest.humanReview !== 'pending') fail('bundle-integrity-invalid', 'unsupported review manifest');
+  if(manifest.snapshot.request.schemaVersion!==manifest.schemaVersion)fail('bundle-integrity-invalid','mixed captured request/manifest versions');
+  if(manifest.schemaVersion===2){
+    const q=manifest.snapshot.request;parseExecution(q.execution);
+    const file=path.join(root,'publication.json');
+    if(fs.existsSync(path.join(root,'failure.json')))fail('bundle-integrity-invalid','cancelled/staged bundle cannot supply completion');
+    reference(manifest.publication);const publicationBytes=bytes(file),publication=capturedJson(publicationBytes),{publication:retainedPublication,...content}=manifest;
+    closed(publication,['schema','schemaVersion','execution','manifestContentSha256','publishedAtMs','authority'],'bundle publication');
+    if(path.basename(retainedPublication.file)!=='publication.json'||hash(publicationBytes)!==retainedPublication.sha256||publication.schema!=='fvs/auto-review-publication'||publication.schemaVersion!==2||!same(publication.execution,q.execution)||publication.manifestContentSha256!==memoryHash(content)||!Number.isSafeInteger(publication.publishedAtMs)||publication.authority!=='completed read-only output; no proof authority')fail('bundle-integrity-invalid','bundle lacks exact successful publication');
+  }
   const captured = new Map(), copyRows = new Map();
   if (!Array.isArray(manifest.copies) || !Array.isArray(manifest.indexOnly) || manifest.copies.length + manifest.indexOnly.length > BUNDLE_LIMITS.entries) fail('bundle-size-limit', 'captured index exceeds supported bound');
   for (const row of manifest.copies) {
-    deadline(options.deadlineMs);
+    checkControl(controlOf(options));
     if (row.policy !== 'required-copy' || row.stored !== 'evidence/' + row.sha256 || !sha(row.sha256) || !text(row.original) || !path.isAbsolute(row.original)) fail('bundle-integrity-invalid', 'invalid captured identity');
     const key = row.original + '\0' + row.sha256;
     if (captured.has(key)) fail('bundle-integrity-invalid', 'duplicate captured identity');
@@ -686,40 +731,46 @@ export function readReviewSnapshot(raw) {
   return { body: manifest, root, protectedRoots: [...derivedEvidenceRoots], integrity: { status: 'valid', level: 'captured-data-and-view-integrity-only' } };
 }
 
-export function verifyReviewBundle(raw) {
-  const options = data(raw); closed(options, ['manifest', 'expectedContext', 'deadlineMs', 'out'], 'bundle verification'); expectedShape(options.expectedContext);
-  const verified = readReviewSnapshot({ manifest: options.manifest, deadlineMs: options.deadlineMs });
+export function verifyReviewBundle(raw,services={}) {
+  const options=inspectionOptions(raw,['manifest','expectedContext','deadlineMs','out']);if(options.version!==2)return verifyReviewBundleBody(options);
+  const ownership={created:false};return readerOperation(options,options.out,services,()=>verifyReviewBundleBody(options,()=>{ownership.created=true;}),()=>tupleFence(options.expectedContext),ownership);
+}
+function verifyReviewBundleBody(raw,created=()=>{}) {
+  const options = inspectionOptions(raw,['manifest','expectedContext','deadlineMs','out']); expectedShape(options.expectedContext);
+  const verified = readReviewSnapshot({ manifest: options.manifest, ...inspectionFields(options) });
   const manifest = verified.body, root = verified.root, capturedRequest = manifest.snapshot.request;
+  if((options.version??1)!==manifest.schemaVersion || (manifest.schemaVersion===2?options.expectedContext.schemaVersion!==2:Object.hasOwn(options.expectedContext,'schemaVersion')))fail('bundle-invalid-input','fresh consumer/context/manifest versions differ');
   protectOutput(options.out, { ...capturedRequest, ...options.expectedContext }, [root, capturedRequest.projectRoot, capturedRequest.source.root, capturedRequest.registry.root,
     capturedRequest.acceptedStore?.root, capturedRequest.runtime?.root, capturedRequest.baseline && path.dirname(capturedRequest.baseline.file), ...verified.protectedRoots,
     ...manifest.copies.filter(r => r.role === 'evidence').map(r => path.dirname(r.original))].filter(Boolean));
-  fs.mkdirSync(options.out, { mode: 0o700 });
+  fs.mkdirSync(options.out, { mode: 0o700 }); created();
   const contextMatches = same(options.expectedContext, manifest.snapshot.context);
-  let fresh = contextMatches ? freshCurrentness(options.expectedContext, options.deadlineMs, path.join(options.out, 'current-inspection'), manifest.facts.union !== null)
+  let fresh = contextMatches ? freshCurrentness(options.expectedContext, controlOf(options), path.join(options.out, 'current-inspection'), manifest.facts.union !== null)
     : { status: 'stale', reason: 'consumer-context-differs-from-captured-snapshot', nodes: [] };
   const unavailable = [];
   for (const row of manifest.indexOnly) {
-    deadline(options.deadlineMs);
+    checkControl(controlOf(options));
     try { if (fs.realpathSync(row.original) !== row.original || !fs.lstatSync(row.original).isFile()) throw Error('not a direct regular body'); }
     catch { unavailable.push({ original: row.original, sha256: row.sha256 }); }
   }
   if (unavailable.length && fresh.status === 'current') fresh = { status: 'unverified', reason: 'indexed-original-material-unavailable', nodes: [], existing15Observation: fresh };
-  const result = { schema: 'fvs/auto-review-bundle-verification', schemaVersion: 1, authority: 'no-proof-or-dispatch-authority', manifest: options.manifest,
+  const result = { schema: 'fvs/auto-review-bundle-verification', schemaVersion: options.version===2?2:1, authority: 'no-proof-or-dispatch-authority', manifest: options.manifest,
     integrity: { status: 'valid', level: 'captured-data-and-view-integrity-only' }, savedFacts: 'unchanged-at-capture', currentness: fresh,
     availability: { status: unavailable.length ? 'unavailable' : 'paths-present-unverified', level: 'existence is not content validation; current proof requires existing15 full inspection', indexedBodies: manifest.indexOnly.length, unavailable }, humanReview: 'pending' };
   save(path.join(options.out, 'result.json'), result); return result;
 }
 
-function cli(args) {
+async function cli(args) {
   const command = args.shift(), flags = {};
   while (args.length) { const k = args.shift(), v = args.shift(); if (!['--request', '--out'].includes(k) || !v || Object.hasOwn(flags, k)) fail('bundle-usage', 'build/verify --request FILE --out DIR'); flags[k] = v; }
   if (!['build', 'verify'].includes(command) || !flags['--request'] || !flags['--out']) fail('bundle-usage', 'build/verify --request FILE --out DIR');
   const input = path.resolve(flags['--request']);
   const q = transitionJson(bytes(input));
-  return command === 'build' ? buildReviewBundle(q, path.resolve(flags['--out'])) : verifyReviewBundle({ ...q, out: path.resolve(flags['--out']) });
+  const call=services=>command==='build'?buildReviewBundle(q,path.resolve(flags['--out']),services):verifyReviewBundle({...q,out:path.resolve(flags['--out'])},services);
+  return q.schemaVersion===2||q.version===2?withProcessCancellation(call):call({});
 }
 let direct = false; try { direct = fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch {}
 if (direct) {
-  try { console.log(JSON.stringify(cli(process.argv.slice(2)), null, 2)); }
-  catch (e) { console.log(JSON.stringify({ status: 'unverified', code: e.code ?? 'bundle-unverified', message: e.message }, null, 2)); process.exitCode = 7; }
+  try { console.log(JSON.stringify(await cli(process.argv.slice(2)), null, 2)); }
+  catch (e) { console.log(JSON.stringify({ status: 'unverified', code: e.code ?? 'bundle-unverified', message: e.message }, null, 2)); process.exitCode = e.code==='cancelled'?130:7; }
 }

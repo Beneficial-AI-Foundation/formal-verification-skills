@@ -1,5 +1,7 @@
 # Bounded auto controller route
 
+For v2 actions, worker packets, cancellation and handoffs, read `auto-execution.md` first. It defines the explicit execution policy, optional memory and current lifecycle. The version1 field tables and finite bounds below describe retained legacy records; apply them only to v1.
+
 <purpose>
 Bind the existing AO/FVS stage loop to current agreement, memory, source and checker evidence.
 Keep uncertain effects partial and preserve whole-scope gaps for the17 handoff.
@@ -168,9 +170,9 @@ through the mandatory canonical applicability check, not graph-root naming or a 
 
 For each owner, launch one specification actor with `lean-specify/controller-direct`. In that seat,
 execute the existing research and executor instructions sequentially under the supplied applicable
-manifest: full source/type/body/dependency/RFC/version/assumption context, style and build checks. Use
-only existing frozen offline dependencies; the ordinary `cache get` download command is outside this
-route. Return immutable candidate/artifact hashes to the controller; do not launch a nested reviewer.
+manifest: full source/type/body/dependency/RFC/version/assumption context, style and build checks. For v2, use configured network-enabled research and pinned acquisition under the existing grants;
+freeze stable source/tool/dependency inputs for checking. V1 retains its recorded offline check
+conditions. Acquisition does not silently upgrade pins or authorize provider allocation. Return immutable candidate/artifact hashes to the controller; do not launch a nested reviewer.
 
 The controller composes allowed spec/context changes, then prepares `lean-spec-review` with runtime
 `other` using the existing preflight/export. It launches a fresh read-only AO review actor, gives it
@@ -185,8 +187,8 @@ When14 contexts are ready,15 freezes pristine context with overlays absent. Chan
 consumers invalidate/review/reprove/recheck; proof-only edits recheck without semantic re-review. Never
 refresh expectations from a candidate. For bottom-up proof actors use `lean-verify/controller-direct`:
 research and execute in that actor, fixed frozen statement/definitions, ordinary style/build/audit
-requirements, no nested provider. Its four-hour invocation bound is capped by remaining project time;
-nodeHours stays inactive and total limits/spending are sticky. A failed audit stops readiness. Preserve
+requirements, no nested provider. V2 follows the original optional execution budget and small-proof progress policy in
+`auto-execution.md`; legacy v1 retains its finite invocation bound. Chosen resources/spending stay sticky. A failed audit stops readiness. Preserve
 all controller evidence rather than running standalone cleanup. Worker VERIFIED is candidate evidence
 only; this route uses the existing auto frozen B instead of creating standalone acceptance authority.
 Distinct roles use `lean-specify/research-direct` then `author-direct`, or `lean-verify/plan-direct`

@@ -1,5 +1,26 @@
 # Local verification review bundle
 
+For v2 review-bundle requests and consumers, read `auto-execution.md` first. It defines the explicit execution policy, optional memory and current lifecycle. The version1 field tables and finite bounds below describe retained legacy records; apply them only to v1.
+
+## V2 bundle operations
+
+Use `schemaVersion:2` with the same complete source/agreement/scope inventory, replacing
+`deadlineMs` by the original run's `execution` control. `buildReviewBundle(request,out)` is awaited
+for v2. Verification uses `{manifest,expectedContext,version:2,execution,out}`; immutable snapshot
+reading uses `{manifest,version:2,execution}`. Keep the caller's independent expected context.
+An integrity-only v2 inspection may read retained v1 bytes; fresh-currentness consumers use their
+matching wrapper version. It does not migrate or renew the original run.
+
+A completed v2 manifest retains an exact `publication` reference whose immutable content identity
+binds the complete manifest body. A staged manifest or failed/cancelled output cannot supply that
+completion. Downstream bundles traverse and copy the publication bytes as ordinary required evidence.
+Preserve historical runtime versions using the existing explicit `historicalCaptures` mapping:
+original path+SHA, exact non-executable archive+sameSHA, and original mode. Capture current bytes
+before a later checkpoint changes the live path. Prior bundles already retain their historical copies.
+Current canonical inputs are never replaced by that mapping. All scope/completeness/alias/byte limits
+and independent15 currentness checks below remain in force.
+
+
 <overview>
 
 Use the installed `fvs-auto-bundle.mjs` script to collect an immutable local contract/recall/evidence

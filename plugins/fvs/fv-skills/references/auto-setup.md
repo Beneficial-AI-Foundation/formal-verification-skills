@@ -9,6 +9,19 @@ matrix mirrors it and a test keeps the two in step.
 
 </overview>
 
+## V2 run policy and runner boundary
+
+For a new v2 project, read `auto-execution.md` for optional budgets, optional memory, cancellation and
+small-proof progress/handoff. Stock AO may run locally or on the user's cloud host; no Linux-first
+choice is imposed. Orchestration/research and pinned acquisition are network-enabled through the
+configured tools and grants. The profile below only detects tools.
+
+The confinement/tool matrix below qualifies a particular probe-inventory operation. It is not a
+blanket SWVF networking or nested-sandbox requirement. The v2 compiler path uses the actual trusted
+host with pinned inputs and strict checker integrity, and needs its own real qualification. Keep
+per-tool availability/distribution constraints and unsupported tuples explicit. Neither an installed
+version line nor unit fixtures establish full AO/Lean factory or cloud support.
+
 ## Prerequisites you install yourself
 
 This walkthrough and the profile install nothing: you install every prerequisite below yourself. The

@@ -2,6 +2,7 @@
 'use strict';
 
 import { spawnSync } from 'node:child_process';
+import { parseBudget, executionToolIdentity, ExecutionError, runExecutionFields, withProcessCancellation, runControl, runTaskCommand, observeOwnedWork, closeOwnedWork } from './fvs-execution.mjs';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -20,12 +21,13 @@ import {
 } from './fvs-probe-inventory.mjs';
 
 import {
-  MemoryError, memoryOwnData, memoryDataSnapshot, memoryBindingsErrors, bindingIdentity, inspectMemoryRegistration, memoryJson,
+  MemoryError, memoryHash, memoryOwnData, memoryDataSnapshot, memoryBindingsErrors, bindingIdentity, inspectMemoryRegistration, memoryJson,
   prepareMemoryBootstrapRequest, runMemoryBootstrap, consumeMemoryBootstrap,
 } from './fvs-project-memory.mjs';
 import { ResumeError, runResume, consumeResume, consumeTransition, observeAssignedActor, verifyReleasedPacketContext, readRuntime, parseResumeRequest } from './fvs-auto-resume.mjs';
+import { readChain } from './fvs-contract-registry.mjs';
 import { inspectAutoAcceptance } from './fvs-checker-auto.mjs';
-import { TransitionError, transitionValidators, transitionBytes, transitionJson, transitionSave, nextTransitionFacts, performTransition, verifyStartup, acknowledgeStart } from './fvs-auto-transitions.mjs';
+import { TransitionError, transitionValidators, transitionBytes, transitionJson, transitionSave, nextTransitionFacts, performTransition, verifyStartup, acknowledgeStart, readWorkPacket, readTransitionAction, transitionBound, readRuntimeObservation, recordTaskProgress, readTaskProgress, assessTaskProgress, workerMemoryEvidence, verifyTransitionAuthorization } from './fvs-auto-transitions.mjs';
 
 const GREEN = 'supported-and-tested';
 
@@ -43,7 +45,7 @@ function usage() {
     '       node fvs-auto.mjs prime-memory --request REQUEST.json --out EXCLUSIVE_DIR [--project-root PRIMARY]',
     '       node fvs-auto.mjs refresh-memory --request REQUEST.json --out EXCLUSIVE_DIR [--project-root PRIMARY]',
     '       node fvs-auto.mjs checkpoint|state --request REQUEST.json --out EXCLUSIVE_DIR [--project-root PRIMARY]',
-    '       node fvs-auto.mjs next-transition|execute-transition|verify-transition|verify-startup|ack-work --input OPTIONS.json [--project-root PRIMARY]',
+    '       node fvs-auto.mjs next-transition|execute-transition|verify-transition|verify-startup|ack-work|run-owned|record-progress|read-progress|observe-progress --input OPTIONS.json [--project-root PRIMARY]',
     '       node fvs-auto.mjs record-roadmap --decision accepted|declined [--project-root DIR] [--confirm-overwrite]',
     '       node fvs-auto.mjs record-extraction --out OUT --build-exit-code N --oracle complete|refused|unknown [--oracle-reason TEXT] [--project-root DIR]',
     '       node fvs-auto.mjs record-externals --input RECORDS.json [--project-root DIR]',
@@ -568,9 +570,9 @@ function fields(errors, value, where, allowed) {
   return true;
 }
 
-function choiceErrors(choices) {
+function choiceErrors(choices, version = 1) {
   const errors = [];
-  if (!fields(errors, choices, 'choices', ['source', 'scope', 'limits'])) return errors;
+  if (!fields(errors, choices, 'choices', ['source', 'scope', 'limits', ...(version === 2 ? ['budget', 'memory'] : [])])) return errors;
   if (fields(errors, choices.source, 'source', ['revision', 'configuration'])) {
     // The revision reaches git as an argument, so an option-like value is refused.
     if (!isText(choices.source.revision) || /^-|\s/.test(choices.source.revision)) {
@@ -579,6 +581,11 @@ function choiceErrors(choices) {
     if (!isText(choices.source.configuration)) errors.push('source.configuration must be a non-empty string');
   }
   if (!isText(choices.scope)) errors.push('scope must be a non-empty string naming the bounded initial scope');
+  if (version === 2) {
+    if (fields(errors, choices.limits, 'limits', ['workers']) && (!Number.isSafeInteger(choices.limits.workers) || choices.limits.workers < 1)) errors.push('limits.workers must be a positive integer');
+    try { parseBudget(choices.budget); } catch (error) { errors.push(error.message); }
+    if (fields(errors, choices.memory, 'memory policy', ['mode']) && !['disabled', 'beads'].includes(choices.memory.mode)) errors.push('memory mode must be disabled or beads');
+  } else {
   if (fields(errors, choices.limits, 'limits', ['nodeHours', 'workers', 'wallClockHours'])) {
     const { nodeHours, workers, wallClockHours } = choices.limits;
     if (!positive(nodeHours)) errors.push('limits.nodeHours must be a positive number of hours');
@@ -586,31 +593,34 @@ function choiceErrors(choices) {
     if (wallClockHours === undefined) errors.push('limits.wallClockHours is required: the owner names one total wall-clock cap');
     else if (!positive(wallClockHours)) errors.push('limits.wallClockHours must be a positive number of hours');
   }
+  }
   return errors;
 }
 
-function normalizeChoices(input) {
+function normalizeChoices(input, version = 1) {
+  if (version === 2) input = JSON.parse(JSON.stringify(memoryDataSnapshot(input)));
   const choices = plainObject(input) && plainObject(input.limits)
-    ? { ...input, limits: { ...DEFAULT_LIMITS, ...input.limits } }
+    ? { ...input, limits: { ...(version === 1 ? DEFAULT_LIMITS : { workers: DEFAULT_LIMITS.workers }), ...input.limits }, ...(version === 2 ? { budget: input.budget ?? { kind: 'none' }, memory: input.memory ?? { mode: 'disabled' } } : {}) }
     : input;
-  const errors = choiceErrors(choices);
+  const errors = choiceErrors(choices, version);
   if (errors.length > 0) refuse('invalid-input', `invalid owner choices: ${errors.join('; ')}`, { errors });
   const { source, scope, limits } = choices;
   return {
     source: { revision: source.revision, configuration: source.configuration },
     scope,
-    limits: { nodeHours: limits.nodeHours, workers: limits.workers, wallClockHours: limits.wallClockHours },
+    limits: version === 1 ? { nodeHours: limits.nodeHours, workers: limits.workers, wallClockHours: limits.wallClockHours } : { workers: limits.workers },
+    ...(version === 2 ? { budget: parseBudget(choices.budget), memory: { mode: choices.memory.mode } } : {}),
   };
 }
 
 function stateErrors(state) {
   const errors = [];
   if (!fields(errors, state, 'state', ['schema', 'schemaVersion', 'profiledAt', 'profile', 'choices', 'roadmap', 'extraction', 'choicesGeneration', 'agreements', 'memoryBindings'])) return errors;
-  if (state.schema !== 'fvs/auto-state' || state.schemaVersion !== 1) errors.push('schema must be fvs/auto-state version 1');
+  if (state.schema !== 'fvs/auto-state' || ![1, 2].includes(state.schemaVersion)) errors.push('schema must be fvs/auto-state version 1 or 2');
   if (!plainObject(state.profile) || state.profile.schema !== 'fvs/auto-profile' || !Array.isArray(state.profile.items)) {
     errors.push('profile must be a recorded fvs/auto-profile result');
   }
-  errors.push(...choiceErrors(state.choices));
+  errors.push(...choiceErrors(state.choices, state.schemaVersion));
   const { roadmap, extraction } = state;
   if (roadmap !== null && (!fields(errors, roadmap, 'roadmap', ['decision', 'path', 'decidedAt'])
     || !['accepted', 'declined'].includes(roadmap.decision)
@@ -660,13 +670,13 @@ export const agreementPayloadSha256 = (agreement) => sha256(canonicalJson(approv
 function agreementErrors(value, stored = false) {
   const errors = [];
   if (!fields(errors, value, 'agreement', [...AGREEMENT_FIELDS, ...(stored ? ['contextSha256', 'recordedAt'] : [])])) return errors;
-  if (value.schema !== 'fvs/auto-agreement' || value.schemaVersion !== 1) errors.push('agreement must be fvs/auto-agreement version 1');
+  if (value.schema !== 'fvs/auto-agreement' || ![1, 2].includes(value.schemaVersion)) errors.push('agreement must be fvs/auto-agreement version 1 or 2');
   if (value.mode !== 'nonpublic-intent') errors.push('agreement.mode must be nonpublic-intent; public-api is unsupported pending separately permitted visibility landing');
   const p = value.payload;
   if (fields(errors, p, 'agreement.payload', PAYLOAD_FIELDS)) {
     if (!generationValid(p.choicesGeneration)) errors.push('agreement.payload.choicesGeneration must be a nonnegative safe integer');
     if (!Number.isSafeInteger(p.contextVersion) || p.contextVersion < 1) errors.push('agreement.payload.contextVersion must be a positive safe integer');
-    errors.push(...choiceErrors(p.choices));
+    errors.push(...choiceErrors(p.choices, value.schemaVersion));
     if (!['single-crate', 'monorepo'].includes(p.layout)) errors.push('agreement.payload.layout must be single-crate or monorepo');
     for (const key of ['boundaries', 'conventions', 'claims', 'trust', 'acceptance', 'ownerReserved']) {
       if (!textList(p[key]) || (['claims', 'trust', 'acceptance', 'ownerReserved'].includes(key) && p[key].length === 0)) {
@@ -708,6 +718,7 @@ function agreementStateErrors(state) {
   let previousGeneration = 0;
   for (const record of state.agreements) {
     const recordErrors = agreementErrors(record, true);
+    if (record.schemaVersion !== state.schemaVersion) recordErrors.push('agreement/state versions differ');
     errors.push(...recordErrors);
     if (recordErrors.length) continue;
     if (record.payload.contextVersion <= previousVersion || record.payload.choicesGeneration < previousGeneration
@@ -829,6 +840,7 @@ export function recordAgreement({ projectRoot, agreement, confirmOverwrite = fal
   const root = projectDirectory(projectRoot);
   const state = requireState(root);
   validateAgreement(agreement, 'invalid-input');
+  if (agreement.schemaVersion !== state.schemaVersion) refuse('invalid-input', 'agreement/state versions differ; no implicit migration');
   const current = currentAgreementContext(root);
   if (canonicalJson(agreement) !== canonicalJson(current.agreement)) refuse('agreement-context-mismatch', 'the submitted agreement is not the actual current canonical roadmap envelope');
   checkAgreementChoices(state, agreement);
@@ -1026,10 +1038,13 @@ function choiceChanges(recorded, requested) {
 const blocks = (entry) => ['incompatible', 'unsupported-platform'].includes(entry.verdict)
   || (entry.verdict === 'missing' && entry.id !== 'probe');
 
-export function initState({ projectRoot, choices, confirmOverwrite = false, platform = hostTarget() }) {
+export function initState({ projectRoot, choices, confirmOverwrite = false, platform = hostTarget(), schemaVersion }) {
   const root = projectDirectory(projectRoot);
-  const requested = normalizeChoices(choices);
   const recorded = loadState(root);
+  schemaVersion ??= recorded?.schemaVersion ?? (Object.hasOwn(choices?.limits ?? {}, 'wallClockHours') || Object.hasOwn(choices?.limits ?? {}, 'nodeHours') ? 1 : 2);
+  if (![1, 2].includes(schemaVersion)) refuse('invalid-input', 'unsupported setup version');
+  if (recorded && recorded.schemaVersion !== schemaVersion) refuse('migration-required', 'existing setup version is preserved; no in-place migration');
+  const requested = normalizeChoices(choices, schemaVersion);
   if (recorded) {
     const changes = choiceChanges(recorded.choices, requested);
     if (changes.length === 0) {
@@ -1048,7 +1063,7 @@ export function initState({ projectRoot, choices, confirmOverwrite = false, plat
   }
   const state = {
     schema: 'fvs/auto-state',
-    schemaVersion: 1,
+    schemaVersion,
     profiledAt: now(),
     profile: result,
     choices: requested,
@@ -1101,11 +1116,12 @@ export function readState({ projectRoot, requireAgreement = false }) {
 }
 
 function memoryOperation(fn) {
-  try { return fn(); }
-  catch (error) {
+  const failure = error => {
     if (error instanceof Refusal) throw error;
-    refuse(error instanceof MemoryError || error instanceof ResumeError || error instanceof TransitionError ? error.code : 'memory-unverified', error.message, error.details ?? {});
-  }
+    refuse(error instanceof MemoryError || error instanceof ResumeError || error instanceof TransitionError || error instanceof ExecutionError ? error.code : 'memory-unverified', error.message, error.details ?? {});
+  };
+  try { const result = fn(); return result instanceof Promise ? result.catch(failure) : result; }
+  catch (error) { return failure(error); }
 }
 function memoryCanonical(root) {
   const view = readState({ projectRoot: root, requireAgreement: true });
@@ -1189,7 +1205,7 @@ const transitionTools = () => Object.fromEntries(['auto', 'registry'].map((key) 
   const file = fs.realpathSync(fileURLToPath(new URL(key === 'auto' ? 'fvs-auto.mjs' : 'fvs-contract-registry.mjs', import.meta.url)));
   return [key, { file, sha256: sha256(transitionBytes(file)) }];
 }));
-export function executeTransition(options) {
+export function executeTransition(options, executionServices = {}) {
   return memoryOperation(() => {
     const data = JSON.parse(JSON.stringify(memoryDataSnapshot(options)));
     if (Object.keys(data).length !== 5 || ['projectRoot', 'request', 'beforeOut', 'producerOut', 'evidenceDir'].some((k) => !Object.hasOwn(data, k))) refuse('transition-invalid-input', 'closed effect options required');
@@ -1199,7 +1215,7 @@ export function executeTransition(options) {
     const runtime = readRuntime(root), latest = runtime.state.history.at(-1);
     if (latest.event.position !== 'before' || latest.event.intent.request.sha256 !== checked.action.sha256) refuse('transition-before-required', 'no exact current pending before');
     return performTransition({ actionRef: checked.action, ao: request.ao.tool, tools: transitionTools(), producerOut, evidenceDir, beforeEventSha256: latest.sha256,
-      committedHeadSha256: checked.committedHeadSha256, runtimeRoot: path.join(root, '.formalising/auto-fv/resume'), deadlineMs: runtime.state.run.deadlineMs, lastObservedAtMs: runtime.lastObservedAtMs }, { head: () => readRuntime(root).headSha256 });
+      committedHeadSha256: checked.committedHeadSha256, runtimeRoot: path.join(root, '.formalising/auto-fv/resume'), ...runExecutionFields(runtime.state.run), lastObservedAtMs: runtime.lastObservedAtMs }, { ...executionServices, head: () => readRuntime(root).headSha256 });
   });
 }
 export function nextTransition(options) {
@@ -1208,6 +1224,15 @@ export function nextTransition(options) {
     if (Object.keys(data).length !== 3 || ['projectRoot', 'currentRequest', 'out'].some((k) => !Object.hasOwn(data, k))) refuse('transition-invalid-input', 'closed proposal options required');
     const { projectRoot, currentRequest, out } = data, root = projectDirectory(projectRoot);
     if (currentRequest.resume?.transition !== null) refuse('transition-invalid-input', 'next-transition cannot reserve or execute an action');
+    const runtime=readRuntime(root);
+    if(runtime.state?.run.schemaVersion===2){
+      const c=JSON.parse(JSON.stringify(memoryDataSnapshot(currentRequest))),q=parseResumeRequest(Buffer.from(memoryJson(c.resume)));
+      if(Object.keys(c).length!==4||['resume','registry','authorization','profile'].some(k=>!Object.hasOwn(c,k))||q.schemaVersion!==2||q.transition!==null||q.runId!==runtime.state.run.runId||q.expectedHeadSha256!==runtime.headSha256)refuse('resume-head-stale','proposal needs its own current request/head');
+      const canonical=memoryCanonical(root);verifyTransitionAuthorization({kind:'construct',stage:'extraction',authorization:c.authorization,profile:c.profile},canonical);
+      if(canonical.view.state.choicesGeneration!==runtime.state.run.choicesGeneration||canonical.view.agreement.contextSha256!==runtime.state.run.agreementContextSha256)refuse('resume-context-stale','progress scope agreement changed');
+      const active=[...runtime.reservations.values()].filter(r=>r.state!=='closed'&&r.intent.effect.kind==='ao-launch').map(r=>({reservationId:r.id,sessionId:r.sessionId,nodes:r.intent.nodes,state:r.state}));
+      if(active.length)return{status:'proposal',kind:'observe-existing',assignments:active,executable:false,proofCurrentness:'not inspected; scheduling facts only',next:'observe-progress with the issued packet and retained progress; actual stop/replacement still requires current transition checks'};
+    }
     const reconciled = reconcileState({ projectRoot: root, request: currentRequest.resume, out });
     if (reconciled.code === 'partial') return { status: 'partial', reasons: reconciled.observation.reasons, executable: false };
     verifyReconciliation({ projectRoot: root, request: currentRequest.resume, out });
@@ -1224,7 +1249,7 @@ function workerTransition(operation, options) {
     if (!path.isAbsolute(out) || path.dirname(out) !== fs.realpathSync(path.dirname(out)) || out === projectDirectory(projectRoot) || out.startsWith(projectDirectory(projectRoot) + path.sep)) refuse('transition-invalid-input', 'canonical exclusive output outside the protected project required');
     fs.mkdirSync(out, { mode: 0o700 }); const requestInput = transitionSave(path.join(out, 'request.json'), data);
     const root = projectDirectory(projectRoot), services = { memoryOut,
-      currentClock() { const v = readRuntime(root), run = v.state?.run; if (!run) refuse('resume-context-stale', 'original run missing'); return { runId: run.runId, startedAtMs: run.startedAtMs, deadlineMs: run.deadlineMs, lastObservedAtMs: v.lastObservedAtMs }; },
+      currentClock() { const v = readRuntime(root), run = v.state?.run; if (!run) refuse('resume-context-stale', 'original run missing'); return { runId: run.runId, startedAtMs: run.startedAtMs, ...(run.schemaVersion === 2 ? { schemaVersion: 2, budget: run.budget } : { deadlineMs: run.deadlineMs }), lastObservedAtMs: v.lastObservedAtMs }; },
       beforeForAction(ref) {
         const r = readRuntime(root).state?.history.find((r) => r.event.position === 'before' && memoryJson(r.event.intent.request ?? null) === memoryJson(ref));
         if (!r) refuse('resume-pair-conflict', 'no exact retained launch-before event'); return r.sha256;
@@ -1238,6 +1263,91 @@ function workerTransition(operation, options) {
     transitionSave(path.join(out, 'result.json'), { ...result, requestInput }); return result;
   });
 }
+// Candidate work permission is relational metadata, never proof acceptance.
+export function verifyActiveTask(raw, {progressOnly=false}={}) {
+  return memoryOperation(() => {
+    raw=JSON.parse(JSON.stringify(memoryDataSnapshot(raw)));
+    if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(raw.invocationId))refuse('owned-work-unsupported','fresh task observation identity required');
+    const packetRef = raw.packet, markerRef = raw.marker, packet = readWorkPacket(packetRef), launch = readTransitionAction(packet.launch);
+    if (packet.schemaVersion !== 2 || launch.stage !== 'proof' || !launch.nodes.length) refuse('owned-work-unsupported', 'owned command route requires an issued v2 proof task');
+    const root = projectDirectory(launch.before.fixed.canonicalRoot), current = readRuntime(root), run = current.state?.run, reservation = current.reservations.get(packet.actor.reservationId);
+    if (!run || run.schemaVersion !== 2 || run.runId !== packet.runId || !reservation || reservation.state !== 'active' || reservation.sessionId !== packet.actor.sessionId
+      || reservation.intent.effect.assignmentId !== packet.actor.assignmentId || reservation.intent.stage !== launch.stage || !sameMemory(reservation.intent.nodes, launch.nodes) || !sameMemory(reservation.intent.request, packet.launch)) refuse('owned-work-unsupported', 'task has no current active assignment');
+    const view = readState({ projectRoot: root, requireAgreement: true });
+    if (view.state.choicesGeneration !== run.choicesGeneration || view.agreement.contextSha256 !== run.agreementContextSha256) refuse('resume-context-stale', 'task agreement changed');
+    const marker = transitionBound(markerRef);
+    if (markerRef.file !== packet.startMarker || marker.schema !== 'fvs/auto-execution-start' || marker.schemaVersion !== 2 || !sameMemory(marker.packet, packetRef) || !sameMemory(marker.actor, packet.actor)) refuse('owned-work-unsupported', 'task has no exact start marker');
+    const releases = current.state.history.filter(row => row.event.position === 'before' && row.event.intent.request && (() => { const a = readTransitionAction(row.event.intent.request); return a.kind === 'release' && sameMemory(a.target.packet, packetRef); })());
+    if (releases.length !== 1 || !current.state.history.some(row => row.event.position === 'after' && row.event.beforeEventSha256 === releases[0].sha256 && row.event.outcome === 'succeeded')) refuse('owned-work-unsupported', 'work delivery is not durably published');
+    for (const row of current.state.history) if (row.event.position === 'before' && row.event.intent.request) {
+      const a = readTransitionAction(row.event.intent.request), completion = a.basis?.workCompletion;
+      if (completion && sameMemory(transitionBound(completion).packet, packetRef)) refuse('owned-work-closed', 'issued task already has a result consumer');
+    }
+    const latest = readRuntimeObservation(current.state.history.at(-1).event);
+    if (!sameMemory(latest.inputs.baseline, launch.before.baseline)) refuse('resume-context-stale', 'task baseline changed');
+    const out = path.join(path.dirname(packetRef.file), 'lease-' + raw.invocationId);
+    const actor = observeAssignedActor({ projectRoot: root, ao: { tool: launch.before.fixed.aoTool, stateHome: run.aoStateHome, projectId: run.aoProjectId }, actor: packet.actor, attemptId: raw.invocationId, out });
+    const fixedActor = a => ({ projectId:a.projectId,sessionId:a.sessionId,reservationId:a.reservationId,assignmentId:a.assignmentId,path:a.worktree.path,gitDir:a.worktree.gitDir,common:a.worktree.gitCommonDir,branch:a.worktree.branchRef,profile:a.profile });
+    if (!sameMemory(fixedActor(actor), fixedActor(packet.actor))) refuse('resume-context-stale', 'task actor path/branch/profile changed');
+    const frozen = launch.before.baseline === null ? null : transitionBound(launch.before.baseline);
+    if (frozen?.schema !== 'fvs-checker/auto-baseline' || frozen.version !== 2) refuse('owned-work-unsupported', 'issued proof task lacks v2 expectations');
+    const toolPins = [...Object.entries(frozen.checker ?? {}).filter(([file]) => ['node','git'].includes(path.basename(file))).map(([file,sha256])=>({file,sha256})), ...[frozen.build?.lean,frozen.build?.lake].filter(Boolean).map(t=>({file:t.path,sha256:t.sha256}))];
+    const gitTools=toolPins.filter(t=>path.basename(t.file)==='git');if(gitTools.length!==1)refuse('owned-work-unsupported','one exact frozen Git tool required');
+    const gitTool=gitTools[0];let readSeq=0;
+    const fence=()=>{
+      const observed=readRuntime(root),canonical=readState({projectRoot:root,requireAgreement:true});
+      if(observed.headSha256!==current.headSha256||canonical.state.choicesGeneration!==run.choicesGeneration||canonical.agreement.contextSha256!==run.agreementContextSha256||!sameMemory(canonical.state.memoryBindings??[],view.state.memoryBindings??[]))refuse('resume-context-stale','task/run/memory binding context changed');
+      transitionBound(packetRef);transitionBound(markerRef);transitionBound(launch.before.baseline);
+      const chain=readChain(frozen.registry.root);if(chain.pending||(chain.records.at(-1)?.sha??null)!==frozen.registry.headSha256)refuse('resume-context-stale','task semantic generation changed');
+      if(executionToolIdentity(gitTool.file).sha256!==gitTool.sha256)refuse('resume-context-stale','frozen Git tool changed');
+      const expected=[launch.before.source.commit,launch.before.source.tree,'',run.gitCommonDir,launch.before.source.branchRef],queries=[['rev-parse','HEAD'],['rev-parse','HEAD^{tree}'],['status','--porcelain=v1','--untracked-files=all'],['rev-parse','--git-common-dir'],['symbolic-ref','HEAD']];
+      for(const[index,args]of queries.entries()){
+        const argv=[gitTool.file,'-C',launch.before.source.root,...args],env={PATH:'/usr/bin:/bin',LANG:'C',GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_NOSYSTEM:'1',GIT_NO_LAZY_FETCH:'1',GIT_NO_REPLACE_OBJECTS:'1',GIT_OPTIONAL_LOCKS:'0',GIT_TERMINAL_PROMPT:'0'},p=spawnSync(argv[0],argv.slice(1),{cwd:launch.before.source.root,env,timeout:10000,maxBuffer:1024*1024});
+        const stem='task-source-'+readSeq++,stream=(suffix,bytes)=>{const file=path.join(out,stem+suffix);fs.writeFileSync(file,bytes??Buffer.alloc(0),{flag:'wx'});return{file,sha256:sha256(bytes??Buffer.alloc(0))};};
+        transitionSave(path.join(out,stem+'.json'),{argv,env,tool:gitTool,exitCode:p.status,signal:p.signal,error:p.error?.code??null,stdout:stream('.stdout',p.stdout),stderr:stream('.stderr',p.stderr)});
+        const value=p.stdout?.toString('utf8').trim(),actual=index===3&&value?fs.realpathSync(path.resolve(launch.before.source.root,value)):value;
+        if(p.status!==0||p.signal||p.error||actual!==expected[index])refuse('resume-context-stale','actual integration source/common Git/branch changed');
+      }
+      const finalChain=readChain(frozen.registry.root);if(executionToolIdentity(gitTool.file).sha256!==gitTool.sha256||readRuntime(root).headSha256!==current.headSha256||finalChain.pending||(finalChain.records.at(-1)?.sha??null)!==frozen.registry.headSha256)refuse('resume-context-stale','tool/run/semantic generation changed during task observation');
+    };
+    if(!progressOnly){
+      if(!sameMemory(marker.memoryEvidence,workerMemoryEvidence(marker.memoryEvidence?.out,packet.memoryRequest,launch.before.fixed)))refuse('resume-context-stale','worker memory evidence changed');
+      if(run.memory.mode==='beads')verifyMemoryBootstrap({projectRoot:root,callerRoot:packet.actor.worktree.path,request:packet.memoryRequest,out:marker.memoryEvidence.out});
+    }
+    fence();
+    return { packet:packetRef, actor:packet.actor, observedActor:actor, control:runControl(run), toolPins, fence, authority:progressOnly?'progress facts only; no work/dispatch authority':'candidate work lease only; no proof authority' };
+  });
+}
+const sameMemory = (a,b) => memoryHash(a) === memoryHash(b);
+
+export function recordProgress(options) {
+  return memoryOperation(() => {
+    const value=JSON.parse(JSON.stringify(memoryDataSnapshot(options))),invocationId=crypto.randomUUID();
+    const lease=verifyActiveTask({packet:value.packet,marker:value.marker,invocationId},{progressOnly:true});
+    return recordTaskProgress(value,{observeActor:()=>lease.observedActor});
+  });
+}
+export function observeProgress(options) {
+  return memoryOperation(()=>{
+    const value=JSON.parse(JSON.stringify(memoryDataSnapshot(options)));
+    if(Object.keys(value).length!==4||['packet','marker','progress','out'].some(k=>!Object.hasOwn(value,k)))refuse('transition-progress-invalid','closed current progress observation required');
+    const p=readTaskProgress(value.progress);
+    if(!sameMemory(p.packet,value.packet)||!sameMemory(p.marker,value.marker))refuse('transition-progress-invalid','current observation/handoff differ');
+    const lease=verifyActiveTask({packet:value.packet,marker:value.marker,invocationId:crypto.randomUUID()},{progressOnly:true});
+    if(fs.existsSync(value.out)||!path.isAbsolute(value.out)||fs.realpathSync(path.dirname(value.out))!==path.dirname(value.out))refuse('transition-progress-invalid','exclusive progress observation output required');
+    const observation={schema:'fvs/auto-progress-observation',schemaVersion:1,progress:value.progress,actor:lease.observedActor,ownedWork:observeOwnedWork(value.packet,p.actor),assessment:assessTaskProgress(p),executable:false,proofAuthority:'none; current scheduling facts only'};
+    fs.mkdirSync(value.out,{mode:0o700});const evidence=transitionSave(path.join(value.out,'observation.json'),observation);return{...observation,evidence};
+  });
+}
+export function readProgress(options) {
+  return memoryOperation(() => {
+    const value=JSON.parse(JSON.stringify(memoryDataSnapshot(options)));
+    if(Object.keys(value).length!==1||!Object.hasOwn(value,'progress'))refuse('transition-progress-invalid','closed progress reference required');
+    const p=readTaskProgress(value.progress);
+    return{status:'historical-progress-facts',progress:value.progress,task:p,assessment:assessTaskProgress(p),executable:false,proofAuthority:'none; current actor/context and stop still need fresh observation'};
+  });
+}
+
 export function readRuntimeState(options) {
   return memoryOperation(() => {
     const data = memoryDataSnapshot(options), errors = [];
@@ -1404,14 +1514,18 @@ function stateFlags(argv, values, switches = [], optional = []) {
 }
 
 const STATE_COMMANDS = {
-  ...Object.fromEntries([['next-transition', nextTransition], ['execute-transition', executeTransition], ['verify-transition', verifyTransition], ['verify-startup', verifyWorkerStartup], ['ack-work', acknowledgeWorkPacket]].map(([command, run]) => [command, (argv) => {
+  'record-progress': argv => { const flags=stateFlags(argv,['input']);return recordProgress(transitionJson(fs.readFileSync(flags.input))); },
+  'observe-progress': argv => { const flags=stateFlags(argv,['input']);return observeProgress(transitionJson(fs.readFileSync(flags.input))); },
+  'read-progress': argv => { const flags=stateFlags(argv,['input']);return readProgress(transitionJson(fs.readFileSync(flags.input))); },
+  ...Object.fromEntries([['next-transition', nextTransition], ['execute-transition', executeTransition], ['verify-transition', verifyTransition], ['verify-startup', verifyWorkerStartup], ['ack-work', acknowledgeWorkPacket]].map(([command, run]) => [command, (argv, services) => {
     const flags = stateFlags(argv, ['input']);
-    return run({ ...transitionJson(fs.readFileSync(flags.input)), projectRoot: flags['project-root'] });
+    return run({ ...transitionJson(fs.readFileSync(flags.input)), projectRoot: flags['project-root'] }, services);
   }])),
   ...Object.fromEntries([['checkpoint', checkpointState], ['state', reconcileState]].map(([command, run]) => [command, (argv) => {
     const flags = stateFlags(argv, ['request', 'out']);
     return run({ projectRoot: flags['project-root'], request: parseResumeRequest(fs.readFileSync(flags.request)), out: flags.out });
   }])),
+  'run-owned': (argv, services) => { const flags = stateFlags(argv, ['input']); return runTaskCommand(transitionJson(fs.readFileSync(flags.input)), services); },
   'init-state': (argv) => {
     const flags = stateFlags(argv, ['input'], ['confirm-overwrite']);
     return initState({ projectRoot: flags['project-root'], choices: readInput(flags.input), confirmOverwrite: flags['confirm-overwrite'] === true });
@@ -1457,19 +1571,31 @@ const STATE_COMMANDS = {
   },
 };
 
-function stateMain(command, argv) {
+async function stateMain(command, argv) {
   let result;
   try {
-    result = { ok: true, command, ...STATE_COMMANDS[command](argv) };
+    let v2Effect = false;
+    let stdinCancelId;
+    if (command === 'run-owned') {
+      const index = argv.indexOf('--input'); const input = index >= 0 ? transitionJson(fs.readFileSync(argv[index + 1])) : null;
+      v2Effect = true; stdinCancelId = input?.invocationId;
+    }
+    if (command === 'execute-transition') {
+      const index = argv.indexOf('--input');
+      if (index >= 0 && argv[index + 1]) v2Effect = transitionJson(fs.readFileSync(argv[index + 1])).request?.schemaVersion === 2;
+    }
+    const invoke = async services => await STATE_COMMANDS[command](argv, services);
+    const value = v2Effect ? await withProcessCancellation(invoke, { stdinCancelId }) : await invoke({});
+    result = { ok: !(v2Effect && value.status === 'execution-unverified'), command, ...value };
   } catch (error) {
-    result = error instanceof Refusal || error instanceof ResumeError
+    result = error instanceof Refusal || error instanceof ResumeError || error instanceof TransitionError || error instanceof ExecutionError || error instanceof MemoryError
       ? { ok: false, code: error.code, command, message: error.message, ...error.details }
       : { ok: false, code: 'internal', command, message: error.message };
   }
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   if (!result.ok) process.stderr.write(`FVS >> ${result.code}: ${result.message}\n`);
   const malformed = ['malformed-state', 'malformed-externals'].includes(result.code);
-  process.exitCode = result.ok ? 0 : malformed ? 3 : ['usage', 'internal'].includes(result.code) ? 2 : 1;
+  process.exitCode = result.code === 'cancelled' ? 130 : result.ok ? 0 : malformed ? 3 : ['usage', 'internal'].includes(result.code) ? 2 : 1;
 }
 
 const SUBCOMMANDS = { profile: profileCli };
@@ -1480,7 +1606,7 @@ async function main(argv) {
     return;
   }
   if (Object.prototype.hasOwnProperty.call(STATE_COMMANDS, argv[0])) {
-    stateMain(argv[0], argv.slice(1));
+    await stateMain(argv[0], argv.slice(1));
     return;
   }
   if (['freeze', 'check', 'accept'].includes(argv[0])) {

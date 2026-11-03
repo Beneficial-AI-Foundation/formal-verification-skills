@@ -9,10 +9,10 @@ const uuid = () => crypto.randomUUID();
 function ref(file) { return { file, sha256: sha(fs.readFileSync(file)) }; }
 function json(root, name, value) { const file = path.join(root, name + '-' + uuid() + '.json'); fs.writeFileSync(file, JSON.stringify(value)); return ref(file); }
 function row(id, role = 'worker', extra = {}) { return { id, projectId: 'fixture-project', role, activity: 'idle', status: 'idle', isTerminated: false, branch: 'stale/branch-hint', ...extra }; }
-function fixture(auto, parent = fs.realpathSync(os.tmpdir()), realBd = null) {
-  const owned = fs.mkdtempSync(path.join(parent, 'fvs-resume-fixture-')), root = memory.createProject(auto, owned);
+function fixture(auto, parent = fs.realpathSync(os.tmpdir()), realBd = null, policy = {}) {
+  const owned = fs.mkdtempSync(path.join(parent, 'fvs-resume-fixture-')), root = memory.createProject(auto, owned, policy);
   fs.appendFileSync(path.join(root, '.git/info/exclude'), '\n.formalising/\n.beads/\nfixture-bd.cjs\n.fixture-bd-calls.jsonl\n');
-  if (!realBd) auto.recordMemory({ projectRoot: root, registration: memory.fakeStore(root) });
+  if (!realBd && !(policy.schemaVersion === 2 && (policy.memory ?? 'disabled') === 'disabled')) auto.recordMemory({ projectRoot: root, registration: memory.fakeStore(root) });
   const stateHome = path.join(owned, 'ao-home'); fs.mkdirSync(path.join(stateHome, '.ao'), { recursive: true });
   const control = path.join(owned, 'ao-control.json'), log = path.join(owned, 'ao-calls.jsonl'), tool = path.join(owned, 'ao.cjs');
   fs.writeFileSync(tool, '#!' + process.execPath + '\n' + `
@@ -34,12 +34,13 @@ const {role,activity,...rest}=row;console.log(JSON.stringify({session:{...rest,k
   x.out = () => path.join(owned, 'observe-' + uuid());
   x.request = (extra = {}) => {
     const attemptId = uuid(), phase = extra.phase ?? 'resume', resumeId = phase === 'start' ? null : uuid();
-    const request = { schema: 'fvs/auto-resume-request', schemaVersion: 1, attemptId, runId: x.runId, phase, resumeId,
+    const selected = auto.readState({ projectRoot: root }).state;
+    const request = { schema: 'fvs/auto-resume-request', schemaVersion: selected.schemaVersion, attemptId, runId: x.runId, phase, resumeId,
       ao: { tool: ref(tool), stateHome, projectId: 'fixture-project', coordinatorSessionId: 'coordinator' },
       expectedHeadSha256: auto.readRuntimeState({ projectRoot: root }).headSha256,
       source: { kind: 'git', root, commit: memory.git(root, 'rev-parse', 'HEAD'), expectedTree: memory.git(root, 'rev-parse', 'HEAD^{tree}') },
       inputs: { extraction: null, graph: null, plan: null, baseline: null, acceptedStore: null }, associations: [], priorAccounting: null,
-      memoryRequest: auto.prepareMemoryRequest({ projectRoot: root, attemptId, operation: 'coordinator-refresh', phase,
+      memoryRequest: selected.schemaVersion === 2 && selected.choices.memory.mode === 'disabled' ? null : auto.prepareMemoryRequest({ projectRoot: root, attemptId, operation: 'coordinator-refresh', phase,
         target: { projectId: 'fixture-project', sessionId: 'coordinator', resumeId } }), transition: null, ...extra };
     return request;
   };
@@ -48,8 +49,8 @@ const {role,activity,...rest}=row;console.log(JSON.stringify({session:{...rest,k
   x.launch = (nodes = [19]) => ({ ...x.local(nodes), effect: { kind: 'ao-launch', projectId: 'fixture-project', intendedBranchRef: 'refs/heads/worker-' + uuid(), assignmentId: uuid(), sessionId: null } });
   x.before = (intent) => ({ position: 'before', intent, beforeEventSha256: null, outcome: null, effect: null });
   x.after = (before, effect = { sessionId: null, association: null, evidence: [], resolution: null }, outcome = 'succeeded') => ({ position: 'after', intent: before.q.transition.intent, beforeEventSha256: before.result.recordedEventSha256, outcome, effect });
-  x.accounting = () => json(owned, 'accounting', { schema: 'fvs/auto-runtime-accounting', schemaVersion: 1, runId: x.runId,
-    startedAtMs: Date.now() - 1000, lastObservedAtMs: Date.now(), limits: auto.readState({ projectRoot: root }).state.choices.limits });
+  x.accounting = () => json(owned, 'accounting', { schema: 'fvs/auto-runtime-accounting', schemaVersion: auto.readState({ projectRoot: root }).state.schemaVersion, runId: x.runId,
+    startedAtMs: Date.now() - 1000, lastObservedAtMs: Date.now(), limits: auto.readState({ projectRoot: root }).state.choices.limits, ...(policy.schemaVersion === 2 ? { budget: auto.readState({ projectRoot: root }).state.choices.budget } : {}) });
   x.associate = (sessionId, tree = root, intent = x.local(), beforeEventSha256 = null, extra = {}) => {
     const gitDir = fs.realpathSync(path.resolve(tree, memory.git(tree, 'rev-parse', '--git-dir'))), gitCommonDir = fs.realpathSync(path.resolve(tree, memory.git(tree, 'rev-parse', '--git-common-dir')));
     return json(owned, 'association', { schema: 'fvs/auto-session-association', schemaVersion: 1, runId: x.runId, assignmentId: intent.effect.assignmentId ?? uuid(), reservationId: intent.reservationId,

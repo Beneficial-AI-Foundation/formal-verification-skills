@@ -199,10 +199,17 @@ describe('auto-init setup state', () => {
     assert.match(read.nextAction, /\/fvs:auto-extract.*default features/);
   });
 
+  it('new choices with no selected budget use v2 defaults without phantom legacy hours', () => {
+    const root=project(),result=init(root,{source:CHOICES.source,scope:CHOICES.scope,limits:{}});
+    assert.equal(result.code,'created');const state=JSON.parse(fs.readFileSync(stateFile(root),'utf8'));
+    assert.equal(state.schemaVersion,2);assert.deepEqual(state.choices.limits,{workers:3});
+    assert.deepEqual(state.choices.budget,{kind:'none'});assert.deepEqual(state.choices.memory,{mode:'disabled'});
+  });
+
   it('missing or invalid choices are refused before anything is written', () => {
     const root = project();
     for (const choices of [
-      { ...CHOICES, limits: {} },
+      { ...CHOICES, limits: { nodeHours: 2, workers: 3 } },
       { ...CHOICES, limits: { wallClockHours: 0 } },
       { ...CHOICES, limits: { wallClockHours: 10, workers: 1.5 } },
       { ...CHOICES, source: { revision: '', configuration: 'x' } },

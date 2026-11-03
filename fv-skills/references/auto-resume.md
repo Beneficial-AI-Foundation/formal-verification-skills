@@ -1,5 +1,7 @@
 # Coordinator checkpoints and resume
 
+For v2 resume and checkpoint requests, read `auto-execution.md` first. It defines the explicit execution policy, optional memory and current lifecycle. The version1 field tables and finite bounds below describe retained legacy records; apply them only to v1.
+
 <purpose>
 Use this reference from auto-init/auto-execute when continuing an agreed nonpublic project. The
 coordinator reconciles before any later transition; workers use the separate read-only memory route

@@ -1,5 +1,29 @@
 # Same-pipeline human re-specification
 
+For v2 feedback requests and result consumers, read `auto-execution.md` first. It defines the explicit execution policy, optional memory and current lifecycle. The version1 field tables and finite bounds below describe retained legacy records; apply them only to v1.
+
+## V2 feedback operations
+
+Use `schemaVersion:2`; replace the inspection `deadlineMs` with the original run's `execution`.
+The current bundle/resume/runtime must be v2 and bind that same policy. `current.memory` is explicitly
+`{mode:"disabled"}` or `{mode:"beads",request,result}`. Disabled means the actual recorded run is
+disabled and its resume request has null memory; enabled keeps the existing20 caller/prime checks.
+Feedback responses remain version1 because their contract/correspondence shape is unchanged.
+
+Await `runRespec` and `verifyRespecResult` for v2 (the CLI also awaits them). Cancellation and selected
+budget are checked before final publication, with fresh runtime/source/registry/store/memory fences.
+No-budget age is not proof staleness. Keep actual owner feedback, complete selected scope, original
+inspect frame, old implementation identities and all failed/interrupted evidence. Unsupported
+execution recovery remains unverified; it does not advance the proof tuple or grant another effect.
+The legacy exact controller-termination profile below continues to describe only its original v1 case.
+
+For finish -> human-review bundle, retain old runtime snapshots before later checkpoints and use the
+existing exact `historicalCaptures` mappings described in `auto-review-bundle.md`. Retain raw request,
+result and publication references; source identity/ready labels never replace their bodies. V2 bundle
+publications are required references too. The final artifact still distinguishes snapshot integrity,
+live currentness, partial scope and pending human approval; no PR is published by these readers.
+
+
 <overview>
 
 After an end/partial17 artifact the owner can request changes to chosen contracts. Preserve the

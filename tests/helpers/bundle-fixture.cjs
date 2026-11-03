@@ -23,9 +23,9 @@ function kernelFixture(x) {
     runtimes: { [runtime.file]: runtime.sha256 }, snapshots: { runner: runner.file, helper: helper.file, modules: [copied] }, argv: [lean.file, '--run', helper.file] });
   return { attempt, request, context, compiled, copied, runtime, lean, node };
 }
-function fixture(auto, parent = fs.realpathSync(os.tmpdir()), existing = null) {
+function fixture(auto, parent = fs.realpathSync(os.tmpdir()), existing = null, policy = {}) {
   const owned = fs.mkdtempSync(path.join(parent, 'fvs-bundle-fixture-'));
-  const root = existing ?? memory.createProject(auto, owned);
+  const root = existing ?? memory.createProject(auto, owned, policy);
   const gitDir = fs.realpathSync(path.resolve(root, memory.git(root, 'rev-parse', '--git-common-dir')));
   fs.appendFileSync(path.join(gitDir, 'info/exclude'), '\n.formalising/\n');
   fs.writeFileSync(path.join(root, 'Defs.lean'), 'def Shared := Nat\n');

@@ -2,7 +2,9 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { extractionPolicy, protectedDirs } from './fvs-probe-inventory.mjs';
+import { extractionPolicy, protectedDirs, which } from './fvs-probe-inventory.mjs';
+
+import { requestControl, assertRunning, runOwned, trustedRunner, executionData, controlDeadline } from './fvs-execution.mjs';
 
 const SHA = /^[a-f0-9]{64}$/;
 const OBJECT = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
@@ -48,11 +50,13 @@ function absolute(value, exists = true, allowMissingTail = false) {
 }
 
 function validate(request) {
-  keys(request, ['schema', 'version', 'runId', 'purpose', 'source', 'out', 'lean', 'lake', 'libraries', 'sourceRoot', 'dependencies', 'deadlineMs'],
-    ['schema', 'version', 'runId', 'purpose', 'source', 'out', 'lean', 'deadlineMs']);
-  if (request.schema !== 'fvs-checker/build-request' || request.version !== 1 ||
+  const timing = request?.version === 2 ? 'execution' : 'deadlineMs';
+  keys(request, ['schema', 'version', 'runId', 'purpose', 'source', 'out', 'lean', 'lake', 'libraries', 'sourceRoot', 'dependencies', timing],
+    ['schema', 'version', 'runId', 'purpose', 'source', 'out', 'lean', timing]);
+  requestControl(request);
+  if (request.schema !== 'fvs-checker/build-request' || ![1, 2].includes(request.version) ||
       typeof request.runId !== 'string' || !/^[A-Za-z0-9._-]{1,128}$/.test(request.runId) ||
-      !['auto', 'standalone'].includes(request.purpose) || !Number.isSafeInteger(request.deadlineMs)) fail('invalid build request identity/deadline');
+      !['auto', 'standalone'].includes(request.purpose)) fail('invalid build request identity/deadline');
   if (!request.source || typeof request.source !== 'object') fail('invalid source');
   if (request.source.kind === 'git') {
     keys(request.source, ['kind', 'root', 'commit', 'expectedTree'], ['kind', 'root', 'commit']);
@@ -91,7 +95,7 @@ function validate(request) {
 
 // This helper deliberately leaves its exclusive run directory in place, including on failure.
 // It never cleans a caller's tree or uses an inherited TMPDIR as a cleanup target.
-export async function buildCheckerSnapshot(input) {
+export async function buildCheckerSnapshot(input, services = {}) {
   let request;
   let root;
   let created = false;
@@ -106,11 +110,17 @@ export async function buildCheckerSnapshot(input) {
   let runtimeRoot;
   let ownedDependencies;
   let policyIdentity;
+  let control;
+  let extraTools = [];
   const readBuffer = Buffer.allocUnsafe(1024 * 1024);
   const receipts = [];
-  const result = { schema: 'fvs-checker/build-result', version: 1, runId: input?.runId ?? null,
+  const result = { schema: 'fvs-checker/build-result', version: input?.version === 2 ? 2 : 1, runId: input?.runId ?? null,
     status: 'unverified', authority: 'build-only', proofChecked: false, receipts };
-  const tick = () => { if (Date.now() >= request.deadlineMs) fail('build deadline exceeded'); };
+  const tick = () => {
+    if (request?.version === 2) {
+      try { assertRunning(control, services); } catch (error) { fail(error.message, error.code === 'cancelled' ? 'cancelled' : 'unverified'); }
+    } else if (Date.now() >= request.deadlineMs) fail('build deadline exceeded');
+  };
   const digest = (file, aliases = false, checked = false) => {
     tick();
     if (!checked) absolute(file);
@@ -164,7 +174,7 @@ export async function buildCheckerSnapshot(input) {
   const checkInputs = () => {
     postCommandInputs = null;
     tick();
-    for (const tool of [request.lean, request.lake].filter(Boolean)) if (digest(tool.path, true).sha256 !== tool.sha256) fail('pinned tool bytes changed');
+    for (const tool of [request.lean, request.lake, ...extraTools].filter(Boolean)) if (digest(tool.path, true).sha256 !== tool.sha256) fail('pinned tool bytes changed');
     if (runtimeRoot && !equal(tree(runtimeRoot, true), runtimeFiles)) fail('toolchain runtime bytes changed');
     if (policyIdentity && digest(policyIdentity.file).sha256 !== policyIdentity.sha256) fail('confinement policy changed');
     for (const [file, identity] of Object.entries(sourceFiles)) {
@@ -190,9 +200,10 @@ export async function buildCheckerSnapshot(input) {
   const run = async (argv, cwd, confined = false) => {
     const before = checkInputs();
     const id = String(++sequence).padStart(4, '0');
-    const actual = confined ? ['/usr/bin/sandbox-exec', '-f', path.join(root, 'build.sb'), ...argv] : argv;
+    const actual = confined && request.version === 1 ? ['/usr/bin/sandbox-exec', '-f', path.join(root, 'build.sb'), ...argv] : argv;
     const startedAt = Date.now();
-    const execution = await new Promise((resolve) => {
+    const owned = request.version === 2 ? await runOwned(actual, { cwd, env: env(), maxBuffer: MAX_LOG }, control, services) : null;
+    const execution = owned ? { exit: owned.status, signal: owned.signal, timedOut: owned.timedOut, overflow: owned.outputLimitExceeded, error: owned.error?.code, stdout: owned.stdout, stderr: owned.stderr, cancelled: owned.cancelled, cleanupComplete: owned.cleanupComplete, cleanup: owned.cleanup } : await new Promise((resolve) => {
       let timedOut = false;
       let overflow = false;
       let size = 0;
@@ -222,19 +233,25 @@ export async function buildCheckerSnapshot(input) {
     const receipt = { argv: actual, cwd, exit: execution.exit, signal: execution.signal, timedOut: execution.timedOut,
       startedAt, endedAt: Date.now(), stdout, stderr, inputsBefore: before.digest, inputsAfter: after?.digest ?? null,
       outputLimitExceeded: execution.overflow,
-      ...(execution.error ? { error: execution.error } : {}), ...(drift ? { drift } : {}) };
+      ...(execution.error ? { error: execution.error } : {}), ...(drift ? { drift } : {}),
+      ...(request.version === 2 ? { cancelled: execution.cancelled, cleanupComplete: execution.cleanupComplete, cleanup: execution.cleanup } : {}) };
     receipts.push({ ...save(`${id}.json`, receipt), argv: actual, cwd, exit: execution.exit, signal: execution.signal, timedOut: execution.timedOut });
-    if (drift || execution.exit !== 0 || execution.signal || execution.timedOut || execution.overflow || execution.error || receipt.endedAt < startedAt) fail(drift ?? 'build subprocess failed');
+    if (request.version === 2 && (execution.cancelled || services.signal?.aborted)) fail('operation cancelled; no build authority', 'cancelled');
+    if (request.version === 2 && !execution.cleanupComplete) fail('owned child termination is unverified', 'unsupported');
+    if (drift || execution.exit !== 0 || execution.signal || execution.timedOut || execution.overflow || execution.error || (request.version === 1 && receipt.endedAt < startedAt)) fail(drift ?? 'build subprocess failed');
     for (const identity of Object.values(after.dependencies)) Object.freeze(identity);
     postCommandInputs = Object.freeze({ invocation, sequence, observedAtMs: receipt.endedAt,
       dependencies: Object.freeze(after.dependencies) });
     return execution.stdout;
   };
   try {
-    validate(input);
-    request = structuredClone(input);
+    const raw = input?.version === 2 ? executionData(input) : input;
+    validate(raw);
+    request = structuredClone(raw);
+    control = requestControl(request);
     tick();
-    if (process.platform !== 'darwin' || !fs.existsSync('/usr/bin/sandbox-exec')) fail('native checker build confinement unavailable', 'unsupported');
+    if (request.version === 1 && (process.platform !== 'darwin' || !fs.existsSync('/usr/bin/sandbox-exec'))) fail('native checker build confinement unavailable', 'unsupported');
+    if (request.version === 2 && !['darwin', 'linux'].includes(process.platform)) fail('owned process profile is unqualified on this host', 'unsupported');
     root = request.out;
     const protectedPaths = [...protectedDirs(), path.dirname(path.dirname(request.lean.path)), request.source.root, ...(request.dependencies ? [request.dependencies.root] : [])];
     for (const directory of protectedPaths) {
@@ -244,6 +261,9 @@ export async function buildCheckerSnapshot(input) {
     for (const dir of ['source', 'receipts', 'tmp', 'home', 'output']) fs.mkdirSync(path.join(root, dir), { mode: 0o700 });
     Object.assign(result, { root, projectRoot: path.join(root, 'source'), buildRoot: path.join(root, 'source', '.lake', 'build') });
     const project = result.projectRoot;
+    const gitTool = request.version === 2 ? fs.realpathSync(which('git') ?? fail('Git unavailable', 'unsupported')) : '/usr/bin/git';
+    const printenvTool = request.version === 2 ? fs.realpathSync(which('printenv') ?? fail('printenv unavailable', 'unsupported')) : '/usr/bin/printenv';
+    if (request.version === 2) extraTools = [gitTool, printenvTool].map(file => ({ path: absolute(file), sha256: digest(file, true).sha256 }));
     const copyDirectories = new Set([project]);
     const copyDirectory = (directory) => {
       if (!copyDirectories.has(directory)) {
@@ -268,7 +288,7 @@ export async function buildCheckerSnapshot(input) {
       sourceFiles = original;
       sourceIdentity = { kind: 'worktree', originalRoot: request.source.root, commit: null, tree: null, files: sourceFiles };
     } else {
-      const git = async (...args) => run(['/usr/bin/git', ...args], request.source.root);
+      const git = async (...args) => run([gitTool, ...args], request.source.root);
       if ((await git('rev-parse', '--show-toplevel')).toString().trim() !== request.source.root) fail('git root is not the requested project');
       const commitBytes = await git('cat-file', 'commit', request.source.commit);
       if (gitHash('commit', commitBytes, request.source.commit.length) !== request.source.commit) fail('git commit object identity mismatch');
@@ -323,9 +343,12 @@ export async function buildCheckerSnapshot(input) {
       runtimeFiles = tree(runtimeRoot, true);
     }
     const protect = [...protectedPaths, toolRoot, ...Object.keys(sourceFiles).map((file) => path.join(project, file))];
-    fs.writeFileSync(path.join(root, 'build.sb'), extractionPolicy({ projectRoot: project, rustProject: project,
-      outputDir: path.join(root, 'output'), privateTmp: path.join(root, 'tmp'), protect }), { mode: 0o400, flag: 'wx' });
-    policyIdentity = { file: path.join(root, 'build.sb'), ...digest(path.join(root, 'build.sb')) };
+    const policyFile = path.join(root, request.version === 2 ? 'execution-policy.json' : 'build.sb');
+    const policy = request.version === 2 ? JSON.stringify({ execution: request.execution, runner: trustedRunner(Object.fromEntries(extraTools.map(t => [path.basename(t.path), t]))) }, null, 2) + '\n'
+      : extractionPolicy({ projectRoot: project, rustProject: project, outputDir: path.join(root, 'output'), privateTmp: path.join(root, 'tmp'), protect });
+    fs.writeFileSync(policyFile, policy, { mode: 0o400, flag: 'wx' });
+    policyIdentity = { file: policyFile, ...digest(policyFile) };
+    if (request.version === 2) Object.assign(result, { execution: request.execution, runner: trustedRunner(Object.fromEntries(extraTools.map(t => [path.basename(t.path), t]))) });
     result.policy = policyIdentity;
     const leanVersion = (await run([request.lean.path, '--version'], project, true)).toString().trim();
     if (!/^Lean \(version 4\.31\.0(?:,|\))/.test(leanVersion)) fail('only Lean 4.31.0 is qualified', 'unsupported');
@@ -369,7 +392,7 @@ export async function buildCheckerSnapshot(input) {
       await run([request.lean.path, '--root', sourceRoot, '-o', `${stem}.olean`, '-i', `${stem}.ilean`, path.join(project, moduleSources[0].source)], project, true);
       finalChildSequence = sequence;
     }
-    const declaredSearchPaths = configured ? (await run([request.lake.path, 'env', '/usr/bin/printenv', 'LEAN_PATH'], project, true)).toString().trim().split(path.delimiter).filter(Boolean) : [];
+    const declaredSearchPaths = configured ? (await run([request.lake.path, 'env', printenvTool, 'LEAN_PATH'], project, true)).toString().trim().split(path.delimiter).filter(Boolean) : [];
     if (configured) finalChildSequence = sequence;
     declaredSearchPaths.push(path.join(toolRoot, 'lib', 'lean'));
     const searchPaths = [];
@@ -391,7 +414,7 @@ export async function buildCheckerSnapshot(input) {
     const observed = postCommandInputs;
     postCommandInputs = null;
     if (!observed || observed.invocation !== invocation || observed.sequence !== sequence || observed.sequence !== finalChildSequence) fail('missing current final-child input observation');
-    if (Date.now() < observed.observedAtMs) fail('build clock moved behind final-child observation');
+    if (request.version === 1 && Date.now() < observed.observedAtMs) fail('build clock moved behind final-child observation');
     // The after receipt describes that postcheck, not a new validation-tail scan.
     const depsAfter = observed.dependencies;
     const changed = Object.keys({ ...dependencyFiles, ...depsAfter }).filter((file) => !equal(dependencyFiles[file], depsAfter[file]));
