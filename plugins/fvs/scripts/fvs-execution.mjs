@@ -115,6 +115,7 @@ export function runOwned(argv, options, control, { signal, spawnProcess = spawn,
     };
     const cancel = () => { cancelled = true; stop(); };
     try {
+      assertRunning(control, { signal, now });
       child = spawnProcess(argv[0], argv.slice(1), { ...options, detached: process.platform !== 'win32' && !inheritGroup, stdio: ['ignore', 'pipe', 'pipe'] });
       child.on('error', failure => { error = failure; });
       child.once('exit',()=>{
