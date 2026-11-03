@@ -4,7 +4,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { extractionPolicy, protectedDirs, which } from './fvs-probe-inventory.mjs';
 
-import { requestControl, assertRunning, runOwned, trustedRunner, executionData, controlDeadline } from './fvs-execution.mjs';
+import { requestControl, assertRunning, runOwned, trustedRunner, executionData, controlDeadline, conclusiveOwnedSupervision } from './fvs-execution.mjs';
 
 const SHA = /^[a-f0-9]{64}$/;
 const OBJECT = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
@@ -237,7 +237,7 @@ export async function buildCheckerSnapshot(input, services = {}) {
       ...(request.version === 2 ? { cancelled: execution.cancelled, cleanupComplete: execution.cleanupComplete, cleanup: execution.cleanup } : {}) };
     receipts.push({ ...save(`${id}.json`, receipt), argv: actual, cwd, exit: execution.exit, signal: execution.signal, timedOut: execution.timedOut });
     if (request.version === 2 && (execution.cancelled || services.signal?.aborted)) fail('operation cancelled; no build authority', 'cancelled');
-    if (request.version === 2 && !execution.cleanupComplete) fail('owned child termination is unverified', 'unsupported');
+    if (request.version === 2 && !conclusiveOwnedSupervision({cancelled:execution.cancelled,timedOut:execution.timedOut,cleanupComplete:execution.cleanupComplete,cleanup:execution.cleanup})) fail('owned checking scope termination is unverified', 'unsupported');
     if (drift || execution.exit !== 0 || execution.signal || execution.timedOut || execution.overflow || execution.error || (request.version === 1 && receipt.endedAt < startedAt)) fail(drift ?? 'build subprocess failed');
     for (const identity of Object.values(after.dependencies)) Object.freeze(identity);
     postCommandInputs = Object.freeze({ invocation, sequence, observedAtMs: receipt.endedAt,

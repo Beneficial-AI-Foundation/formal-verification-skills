@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { memoryDataSnapshot } from './fvs-project-memory.mjs';
 
 const canonical = value => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item)
@@ -42,6 +42,8 @@ export function parseExecution(raw) {
   if (value.policySha256 !== expected.policySha256) reject('execution policy identity differs');
   return expected;
 }
+export const sameExecutionPolicy=(left,right)=>canonical(parseExecution(left))===canonical(parseExecution(right));
+
 export function resolveBudget(budget, startedAtMs) {
   const selected = parseBudget(budget);
   if (!Number.isSafeInteger(startedAtMs) || startedAtMs < 0) reject('invalid original start');
@@ -98,6 +100,8 @@ export function runOwned(argv, options, control, { signal, spawnProcess = spawn,
   if (!options || !path.isAbsolute(options.cwd ?? '') || !options.env || Object.keys(options).some(key => !['cwd', 'env', 'maxBuffer', 'encoding'].includes(key))) reject('explicit owned cwd/environment and no hidden process timeout required');
   if (Object.values(options.env).some(value => typeof value !== 'string')) reject('string-only explicit child environment required');
   if (signal && (typeof signal.addEventListener !== 'function' || typeof signal.removeEventListener !== 'function' || typeof signal.aborted !== 'boolean')) reject('AbortSignal service required');
+  const inheritedBefore=inheritGroup?observeCheckingGroup():null;
+  if(inheritGroup&&inheritedBefore.status!=='quiescent')throw new ExecutionError('execution-uncertain','current checker does not own a quiescent supported checking group');
   const deadline = controlDeadline(control);
   const maxBuffer = options.maxBuffer ?? 32 * 1024 * 1024;
   if (!Number.isSafeInteger(maxBuffer) || maxBuffer < 1) reject('bounded child output required');
@@ -121,15 +125,18 @@ export function runOwned(argv, options, control, { signal, spawnProcess = spawn,
         if (timer !== undefined) cancelTimeout(timer);if(drainTimer!==undefined)clearTimeout(drainTimer);
         signal?.removeEventListener('abort', cancel);
         const observeGroup = () => { try { const result = probeGroup(child.pid); return ['absent','present','unknown'].includes(result) ? result : 'unknown'; } catch { return 'unknown'; } };
-        let ownership = inheritGroup ? 'child-terminal' : child.pid > 1 && process.platform !== 'win32' ? observeGroup() : 'unsupported';
+        let inheritedAfter=inheritGroup?observeCheckingGroup():null;
+        let ownership = inheritGroup ? inheritedAfter.status : child.pid > 1 && process.platform !== 'win32' ? observeGroup() : 'unsupported';
         // Bounded absence confirmation after exit is administrative cleanup, not a proof timer.
         const cleanupUntil = performance.now() + 1000;
-        while (ownership === 'present' && performance.now() < cleanupUntil) {
-          await new Promise(done => setTimeout(done, 10)); ownership = observeGroup();
+        let joinAttempts=1;
+        while ((ownership === 'present'||(inheritGroup&&ownership==='busy')) && performance.now() < cleanupUntil) {
+          await new Promise(done => setTimeout(done, 25));
+          if(inheritGroup){inheritedAfter=observeCheckingGroup();ownership=inheritedAfter.status;joinAttempts++;}else ownership=observeGroup();
         }
         resolve({ pid: child.pid ?? null, status, signal: childSignal, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr),
-          error, cancelled, timedOut, outputLimitExceeded: overflow, cleanupComplete: !forcedDrain && (ownership === 'absent' || ownership === 'child-terminal'),
-          cleanup: { kind: inheritGroup ? 'child-terminal-within-caller-owned-group' : 'recorded-owned-group-absence', result: ownership, descendantAttestation: false, streamsDrained: !forcedDrain } });
+          error, cancelled, timedOut, outputLimitExceeded: overflow, cleanupComplete: !forcedDrain && (ownership === 'absent' || ownership === 'quiescent'),
+          cleanup: { kind: inheritGroup ? 'recorded-checking-group-join' : 'recorded-owned-group-absence', result: ownership, descendantAttestation: false, streamsDrained: !forcedDrain, ...(inheritGroup?{join:{before:inheritedBefore,after:inheritedAfter,attempts:joinAttempts}}:{}) } });
       });
 
       signal?.addEventListener('abort', cancel, { once: true });
@@ -213,6 +220,57 @@ function fileHash(file, limit = TOOL_BYTES, links = 1) {
   } finally { fs.closeSync(fd); }
 }
 export const executionToolIdentity = file => ({file,sha256:fileHash(file)});
+// System observation of the known checking PGID, never a source of destructive signals.
+export function executionScopeTool() {
+  const file=fs.realpathSync('/bin/ps'),s=fs.lstatSync(file);
+  if(!['darwin','linux'].includes(process.platform)||s.uid!==0||!(s.mode&0o111)||(s.mode&0o022))throw new ExecutionError('execution-uncertain','unsupported checking-group observer');
+  return executionToolIdentity(file);
+}
+function numericGroups(stdout) {
+  if(typeof stdout!=='string'||Buffer.byteLength(stdout)>1024*1024)reject('bounded numeric group inventory required');
+  const rows=[],seen=new Set();
+  for(const line of stdout.split('\n')){
+    if(!line.trim())continue;const match=/^\s*(\d+)\s+(\d+)\s*$/.exec(line);
+    if(!match)reject('incomplete numeric group inventory');const pid=Number(match[1]),pgid=Number(match[2]);
+    if(!Number.isSafeInteger(pid)||!Number.isSafeInteger(pgid)||seen.has(pid)||rows.length>=65536)reject('ambiguous numeric group inventory');
+    seen.add(pid);rows.push({pid,pgid});
+  }
+  return rows;
+}
+function checkingObservationValid(o) {
+  closed(o,['schema','schemaVersion','rootPid','observerPid','tool','toolAfterSha256','argv','env','cwd','exitCode','signal','error','stdout','stderr','observedAtMs','status','members'],'checking-group observation');
+  closed(o.tool,['file','sha256'],'scope observer tool');
+  if(o.schema!=='fvs/checking-group-observation'||o.schemaVersion!==1||!Number.isSafeInteger(o.rootPid)||o.rootPid<=1||!Number.isSafeInteger(o.observerPid)||o.observerPid<=1
+    ||!path.isAbsolute(o.tool.file)||!/^[0-9a-f]{64}$/.test(o.tool.sha256)||o.toolAfterSha256!==o.tool.sha256||canonical(o.argv)!==canonical([o.tool.file,'-axo','pid=,pgid='])
+    ||canonical(o.env)!==canonical({PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'})||o.cwd!=='/'||o.exitCode!==0||o.signal!==null||o.error!==null||o.stderr!==''||!Number.isSafeInteger(o.observedAtMs))return false;
+  const rows=numericGroups(o.stdout),self=rows.find(r=>r.pid===o.rootPid),members=rows.filter(r=>r.pgid===o.rootPid).map(r=>r.pid).sort((a,b)=>a-b);
+  return self?.pgid===o.rootPid&&canonical(o.members)===canonical(members)&&canonical(members)===canonical([o.rootPid])&&o.status==='quiescent';
+}
+function observeCheckingGroup() {
+  let tool,p,after;const env={PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'};
+  try{
+    tool=executionScopeTool();const argv=[tool.file,'-axo','pid=,pgid='];
+    p=spawnSync(argv[0],argv.slice(1),{cwd:'/',env,encoding:'utf8',detached:true,timeout:1000,maxBuffer:1024*1024});after=executionScopeTool();
+    const value={schema:'fvs/checking-group-observation',schemaVersion:1,rootPid:process.pid,observerPid:p.pid??null,tool,toolAfterSha256:after.sha256,argv,env,cwd:'/',exitCode:p.status,signal:p.signal,error:p.error?.code??null,stdout:p.stdout??'',stderr:p.stderr??'',observedAtMs:Date.now(),status:'unknown',members:[]};
+    if(p.status!==0||p.signal||p.error||value.stderr||after.sha256!==tool.sha256)return value;
+    const rows=numericGroups(value.stdout),self=rows.find(r=>r.pid===process.pid);value.members=rows.filter(r=>r.pgid===process.pid).map(r=>r.pid).sort((a,b)=>a-b);
+    value.status=self?.pgid!==process.pid?'unsupported':value.members.length===1&&value.members[0]===process.pid?'quiescent':'busy';return value;
+  }catch(error){return{status:'unknown',reason:error.message};}
+}
+export function conclusiveOwnedSupervision(raw) {
+  try{
+    const s=executionData(raw);closed(s,['cancelled','timedOut','cleanupComplete','cleanup'],'owned supervision');
+    if(s.cancelled!==false||s.timedOut!==false||s.cleanupComplete!==true)return false;
+    const c=s.cleanup;closed(c,c?.kind==='recorded-checking-group-join'?['kind','result','descendantAttestation','streamsDrained','join']:['kind','result','descendantAttestation','streamsDrained'],'owned cleanup');
+    if(c.descendantAttestation!==false||c.streamsDrained!==true)return false;
+    if(c.kind==='recorded-owned-group-absence')return c.result==='absent';
+    if(c.kind!=='recorded-checking-group-join'||c.result!=='quiescent')return false;
+    closed(c.join,['before','after','attempts'],'owned checking join');
+    return Number.isSafeInteger(c.join.attempts)&&c.join.attempts>0&&checkingObservationValid(c.join.before)&&checkingObservationValid(c.join.after)
+      &&c.join.before.rootPid===c.join.after.rootPid&&canonical(c.join.before.tool)===canonical(c.join.after.tool);
+  }catch{return false;}
+}
+
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function regularData(file, links = 1) {
   const expected = fileHash(file, DOCUMENT_BYTES, links), bytes = fs.readFileSync(file);

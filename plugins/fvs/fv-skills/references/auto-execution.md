@@ -52,7 +52,12 @@ source/common Git/branch, semantic generation, memory when enabled and final exp
 It records intent before spawn and actual start/terminal/output facts in this packet's owned scope.
 
 The process adapter propagates cancellation to its retained live child/group and waits for terminal
-facts. A caller retaining this process can send SIGINT/SIGTERM, or a newline JSON
+facts. Nested checking in the caller's group also verifies that the current checker owns that PGID
+and joins the group after each terminal child. A fixed numeric system observer records only PID/group
+columns; only the checker may remain. The actual observer identity is bound in kernel inputs when
+used. An environment scope string alone is not completion evidence. Missing/unsupported observation
+or a surviving same-group child keeps the check unverified; this is not hostwide or escaped-descendant
+attestation. A caller retaining this process can send SIGINT/SIGTERM, or a newline JSON
 `{kind:"cancel",invocationId:<this invocation>}` to its stdin. AO session status does not expose a job
 stdin API or a universal descendant ledger. Use documented AO lifecycle controls and concrete FVS
 handles that actually exist; qualify the installed integration before promising automatic replacement.

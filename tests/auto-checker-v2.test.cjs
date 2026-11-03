@@ -53,3 +53,14 @@ test('CLI SIGTERM propagates to an owned witness and reports cancellation withou
  assert.equal(result.code,130,stderr);assert.equal(result.signal,null);assert.equal(JSON.parse(stdout).code,'cancelled');assert.equal(fs.existsSync(path.join(f.out,'result.json')),false);
  const witness=JSON.parse(fs.readFileSync(path.join(f.out,'witness-attempt.json')));assert.equal(witness.exit,null);assert.equal(witness.signal,'SIGKILL');assert.equal(witness.error,null);assert.equal(witness.supervision.cancelled,true);assert.equal(witness.supervision.cleanupComplete,true);
 });
+
+test('actual inherited-group kernel dispatcher refuses a closed-stdio survivor before retaining success',async()=>{
+ const f=await fixture(),stop=path.join(f.root,'stop-survivor');
+ const grandchild='const fs=require("node:fs");setInterval(()=>{if(fs.existsSync('+JSON.stringify(stop)+'))process.exit(0)},20);setTimeout(()=>process.exit(89),8000);';
+ fs.appendFileSync(f.job.lean.path,'\nif(mode==="audit"){const{spawn}=require("node:child_process");const child=spawn(process.execPath,["-e",'+JSON.stringify(grandchild)+'],{stdio:"ignore"});child.unref();}\n');
+ f.job.lean.sha256=sha(fs.readFileSync(f.job.lean.path));fs.writeFileSync(f.request,JSON.stringify(f.job));
+ const program='import fs from "node:fs";import{runKernelAuditV2}from '+JSON.stringify(pathToFileURL(path.resolve(__dirname,'../scripts/fvs-checker.mjs')).href)+';try{await runKernelAuditV2('+JSON.stringify({request:f.request,out:f.out})+',{inheritGroup:true});console.log(JSON.stringify({code:"unexpected-success"}));}catch(e){console.log(JSON.stringify({code:e.code,message:e.message}));}finally{fs.writeFileSync('+JSON.stringify(stop)+',"stop");await new Promise(done=>setTimeout(done,200));}';
+ const child=spawn(process.execPath,['--input-type=module','-e',program],{detached:true,cwd:f.root,env:{PATH:path.dirname(process.execPath)+':/usr/bin:/bin',LANG:'C'},stdio:['ignore','pipe','pipe']});let stdout='',stderr='';child.stdout.on('data',b=>stdout+=b);child.stderr.on('data',b=>stderr+=b);const ended=await new Promise((resolve,reject)=>{child.once('error',reject);child.once('close',(code,signal)=>resolve({code,signal}));});
+ assert.equal(ended.code,0,stderr);assert.equal(ended.signal,null);assert.equal(JSON.parse(stdout).code,'unsupported');assert.equal(fs.existsSync(path.join(f.out,'result.json')),false);const attempt=JSON.parse(fs.readFileSync(path.join(f.out,'attempt.json')));assert.equal(attempt.exit,0);assert.equal(attempt.supervision.cleanupComplete,false);assert.equal(attempt.supervision.cleanup.join.after.status,'busy');
+ if(process.env.FVS_UNIT_SCOPE_OUT)fs.cpSync(f.root,path.join(process.env.FVS_UNIT_SCOPE_OUT,'kernel-inherited-survivor'),{recursive:true});
+});

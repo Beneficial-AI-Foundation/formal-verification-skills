@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { requestControl, assertRunning, timeoutOptions, executionFields, runOwned, withProcessCancellation } from './fvs-execution.mjs';
+import { requestControl, assertRunning, timeoutOptions, executionFields, runOwned, withProcessCancellation, sameExecutionPolicy, conclusiveOwnedSupervision, executionScopeTool } from './fvs-execution.mjs';
 
 class Refusal extends Error {
   constructor(code, message) { super(message); this.code = code; }
@@ -141,6 +141,7 @@ async function standaloneBuild({ job, root, sourceRoot, files, profile = null, b
   if (result.status !== 'built') refuse(result.status === 'unsupported' ? 'unsupported' : result.receipts?.some((r) => r.timedOut) || /deadline/i.test(result.reason ?? '') ? 'timeout' : baseline ? 'baseline-unavailable' : 'audit-failed', result.reason ?? 'fresh standalone build did not complete');
   if (result.schema !== 'fvs-checker/build-result' || result.version !== job.version || result.runId !== `${job.runId}-build` || result.authority !== 'build-only'
     || result.proofChecked !== false) refuse('audit-failed', 'incomplete standalone build evidence');
+  if(job.version===2&&!sameExecutionPolicy(result.execution,job.execution))refuse('audit-failed','standalone build execution policy changed');
   const selected = result.modules.filter((m) => m.source === job.specFile);
   if (selected.length !== 1) refuse('unsupported', 'the spec does not map to one freshly built module');
   const file = path.join(root, 'snapshot-build.json'); fs.writeFileSync(file, `${JSON.stringify(result, null, 2)}\n`, { flag: 'wx' });
@@ -241,7 +242,7 @@ export async function freeze({ request, out }, services = {}) {
     modules: kernelJob.modules.map((m) => ({ name: m.name, parts: m.parts.map((p) => path.relative(root, p).split(path.sep).join('/')) })), meaningRoots: kernelJob.meaningRoots,
     lean: job.lean, buildProfile: job.build ?? null, externalSearchPaths: built.externalSearchPaths, externalImports: built.externalImports,
     externalBindings, externalIdentity: externalIdentity(meaning.attempt.imports), runtimeBindings: meaning.attempt.runtimes, meaning: meaning.audit };
-  if (job.version === 2) assertRunning(control, services);
+  if(job.version===2){record.execution=job.execution;record.meaningCheck=meaning.evidence;assertRunning(control,services);}
   const file = path.join(root, 'frozen.json'); fs.writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`, { flag: 'wx' });
   return { code: 'ok', authority: 'audit-only', baseline: { file, sha256: sha(fs.readFileSync(file)) }, targetProofsChecked: false };
 }
@@ -266,6 +267,8 @@ export async function check({ request, out }, services = {}) {
     || !object(frozen.compiled) || !Object.keys(frozen.compiled).length || !object(frozen.checker) || !object(frozen.externalBindings) || !Object.keys(frozen.externalBindings).length
     || !object(frozen.runtimeBindings) || !Array.isArray(frozen.targets) || !frozen.targets.length
     || frozen.meaning?.status !== 'meaning-checked' || frozen.meaning?.targetProofsChecked !== false) refuse('invalid-input', 'no valid pre-edit type/meaning baseline; a candidate cannot replace it');
+  if(job.version===2&&!sameExecutionPolicy(job.execution,frozen.execution))refuse('stale-input','standalone continuation execution policy differs from its frozen run');
+  if(job.version===2){if(!object(frozen.meaningCheck)||!path.isAbsolute(frozen.meaningCheck.file??'')||! /^[0-9a-f]{64}$/.test(frozen.meaningCheck.sha256??''))refuse('invalid-input','missing v2 frozen meaning wrapper');const meaning=readJson(frozen.meaningCheck.file);if(sha(fs.readFileSync(frozen.meaningCheck.file))!==frozen.meaningCheck.sha256||meaning.authority!=='audit-only'||JSON.stringify(meaning.audit)!==JSON.stringify(frozen.meaning))refuse('stale-input','standalone frozen meaning evidence changed');validateKernelExecution(meaning,2,frozen.execution);}
   if (fs.realpathSync(job.projectRoot) !== frozen.projectRoot) refuse('stale-input', 'standalone baseline belongs to another project root');
   if (sha(fs.readFileSync(SCRIPT)) !== frozen.checker.scriptSha256 || sha(fs.readFileSync(HELPER)) !== frozen.checker.helperSha256
     || sha(fs.readFileSync(process.execPath)) !== frozen.checker.nodeSha256) refuse('stale-input', 'checker identity changed since pre-edit capture');
@@ -331,14 +334,14 @@ export async function check({ request, out }, services = {}) {
   return retainResult(root, { ...result, kernelEvidence: result.evidence, schema: 'fvs-checker/standalone-result', purpose: 'standalone', sourceIdentity: 'matched', baselineSha256: job.baseline.sha256 });
 }
 
-function ownedFacts(run, version) {
-  return version === 2 ? { supervision: { cancelled: run.cancelled, timedOut: run.timedOut, cleanupComplete: run.cleanupComplete, cleanup: run.cleanup } } : {};
+function ownedFacts(run, version, control) {
+  return version === 2 ? { supervision: { cancelled: run.cancelled, timedOut: run.timedOut, cleanupComplete: run.cleanupComplete, cleanup: run.cleanup }, execution:control } : {};
 }
 function assertOwnedOutcome(run, version) {
   if (version !== 2) return;
   if (run.cancelled) refuse('cancelled', 'operation cancelled; no proof result');
   if (run.timedOut) refuse('timeout', 'selected execution budget exhausted');
-  if (!run.cleanupComplete) refuse('unsupported', 'owned child cleanup is unverified');
+  if (!conclusiveOwnedSupervision(ownedFacts(run,2).supervision)) refuse('unsupported', 'owned checking scope cleanup is unverified');
 }
 function* kernelAuditSteps({ request, out }, { baseline = false } = {}, expectedVersion = 1, services = {}) {
   const job = readJson(request);
@@ -370,7 +373,8 @@ function* kernelAuditSteps({ request, out }, { baseline = false } = {}, expected
   const trustedPaths = [...new Set([standardRoot, ...job.externalSearchPaths])];
   const irFiles = [...job.modules, ...job.referenceModules].map((m) => m.parts[0].replace(/\.olean$/, '.ir')).filter((p) => fs.existsSync(p));
   const runtimes = nativeRuntimeFiles(job.lean.path);
-  const paths = [...new Set([path.resolve(request), job.lean.path, process.execPath, SCRIPT, HELPER, EXECUTION, EXECUTION_DATA, ...job.modules.flatMap((m) => m.parts), ...job.referenceModules.flatMap((m) => m.parts), ...irFiles, ...runtimes])];
+  const scopeTools=expectedVersion===2&&services.inheritGroup?[executionScopeTool().file]:[];
+  const paths = [...new Set([path.resolve(request), job.lean.path, process.execPath, SCRIPT, HELPER, EXECUTION, EXECUTION_DATA, ...scopeTools, ...job.modules.flatMap((m) => m.parts), ...job.referenceModules.flatMap((m) => m.parts), ...irFiles, ...runtimes])];
   const inputs = Object.fromEntries(paths.map((p) => [p, sha(fs.readFileSync(p))]));
   if (inputs[job.lean.path] !== job.lean.sha256) refuse('stale-input', 'the Lean executable differs from its controller binding');
   try { fs.mkdirSync(out); } catch (e) { refuse('invalid-input', `exclusive audit output unavailable: ${e.code}`); }
@@ -406,7 +410,7 @@ function* kernelAuditSteps({ request, out }, { baseline = false } = {}, expected
   fs.writeFileSync(path.join(out, 'witness.stdout.log'), witness.stdout ?? '', { flag: 'wx' });
   fs.writeFileSync(path.join(out, 'witness.stderr.log'), witness.stderr ?? '', { flag: 'wx' });
   const witnessReceipt = { argv: [job.lean.path, ...witnessArgv], exit: witness.status, signal: witness.signal, error: witness.error?.code ?? null,
-    stdoutSha256: sha(witness.stdout ?? ''), stderrSha256: sha(witness.stderr ?? ''), ...ownedFacts(witness, expectedVersion) };
+    stdoutSha256: sha(witness.stdout ?? ''), stderrSha256: sha(witness.stderr ?? ''), ...ownedFacts(witness, expectedVersion, control) };
   fs.writeFileSync(path.join(out, 'witness-attempt.json'), `${JSON.stringify(witnessReceipt, null, 2)}\n`, { flag: 'wx' });
   assertOwnedOutcome(witness, expectedVersion);
   if (witness.error?.code === 'ETIMEDOUT') refuse('timeout', 'the baseline witness timed out');
@@ -422,7 +426,7 @@ function* kernelAuditSteps({ request, out }, { baseline = false } = {}, expected
   fs.writeFileSync(path.join(out, 'verified-witness.stdout.log'), verifiedWitness.stdout ?? '', { flag: 'wx' });
   fs.writeFileSync(path.join(out, 'verified-witness.stderr.log'), verifiedWitness.stderr ?? '', { flag: 'wx' });
   const verifiedWitnessReceipt = { argv: [job.lean.path, ...witnessArgv], exit: verifiedWitness.status, signal: verifiedWitness.signal, error: verifiedWitness.error?.code ?? null,
-    stdoutSha256: sha(verifiedWitness.stdout ?? ''), stderrSha256: sha(verifiedWitness.stderr ?? ''), ...ownedFacts(verifiedWitness, expectedVersion) };
+    stdoutSha256: sha(verifiedWitness.stdout ?? ''), stderrSha256: sha(verifiedWitness.stderr ?? ''), ...ownedFacts(verifiedWitness, expectedVersion, control) };
   fs.writeFileSync(path.join(out, 'verified-witness-attempt.json'), `${JSON.stringify(verifiedWitnessReceipt, null, 2)}\n`, { flag: 'wx' });
   assertOwnedOutcome(verifiedWitness, expectedVersion);
   if (verifiedWitness.error?.code === 'ETIMEDOUT') refuse('timeout', 'the bound baseline witness timed out');
@@ -443,7 +447,7 @@ function* kernelAuditSteps({ request, out }, { baseline = false } = {}, expected
   const attempt = { schema: 'fvs-checker/kernel-attempt', version: expectedVersion, authority: 'audit-only', bindingLevel: 'resolved-inputs', runId: job.runId,
     inputs, snapshots, imports, runtimes: Object.fromEntries(runtimes.map((p) => [p, inputs[p]])), discovery: witnessReceipt, witness: verifiedWitnessReceipt,
     requestSha256: sha(fs.readFileSync(auditRequest)), argv: [job.lean.path, ...argv], exit: run.status, signal: run.signal, error: run.error?.code ?? null,
-    stdoutSha256: sha(run.stdout ?? ''), stderrSha256: sha(run.stderr ?? ''), ...ownedFacts(run, expectedVersion), ...(expectedVersion === 2 ? { execution: job.execution } : {}) };
+    stdoutSha256: sha(run.stdout ?? ''), stderrSha256: sha(run.stderr ?? ''), ...ownedFacts(run, expectedVersion, control), ...(expectedVersion === 2 ? { execution: job.execution } : {}) };
   fs.writeFileSync(path.join(out, 'attempt.json'), `${JSON.stringify(attempt, null, 2)}\n`, { flag: 'wx' });
   assertOwnedOutcome(run, expectedVersion);
   for (const [p, digest] of Object.entries(inputs)) if (sha(fs.readFileSync(p)) !== digest) refuse('stale-input', `an input changed during the audit: ${p}`);
@@ -466,6 +470,37 @@ function* kernelAuditSteps({ request, out }, { baseline = false } = {}, expected
   if (expectedVersion === 1) { if (Date.now() > job.deadlineMs) refuse('timeout', 'the validation deadline elapsed before completion'); }
   else assertRunning(control, services);
   return retainResult(out, { code: 'ok', authority: 'audit-only', bindingLevel: attempt.bindingLevel, audit, witness: facts, attempt });
+}
+
+// Static artifact integrity is distinct from a caller's permission to start more work.
+export function validateKernelExecution(kernel, expectedVersion, execution) {
+  const a=kernel?.attempt;
+  if(![1,2].includes(expectedVersion)||a?.schema!=='fvs-checker/kernel-attempt'||a.version!==expectedVersion||a.authority!=='audit-only'||a.runId!==kernel.audit?.runId)refuse('stale-input','kernel attempt version differs from its enclosing evidence');
+  for(const phase of [a.discovery,a.witness,a]){
+    if(!phase||phase.exit!==0||phase.signal!==null||phase.error!==null)refuse('stale-input','uncompleted kernel phase receipt');
+    if(expectedVersion===2){
+      if(!sameExecutionPolicy(phase.execution,execution))refuse('stale-input','kernel execution policy differs from its enclosing evidence');
+      if(!conclusiveOwnedSupervision(phase.supervision))refuse('stale-input','uncompleted v2 checking-scope supervision');
+      const join=phase.supervision.cleanup.join;
+      if(join)for(const o of [join.before,join.after])if(a.inputs?.[o.tool.file]!==o.tool.sha256)refuse('stale-input','checking-scope observer lost its kernel input binding');
+    }else if(Object.hasOwn(phase,'execution')||Object.hasOwn(phase,'supervision'))refuse('stale-input','legacy kernel phase contains mixed execution fields');
+  }
+  if(!a.inputs||!a.snapshots||!Array.isArray(a.imports)||!Array.isArray(a.snapshots.modules)||!Array.isArray(a.argv))refuse('stale-input','incomplete kernel artifact inventory');
+  const original=Object.entries(a.inputs)[0],sealed=a.argv.at(-1);
+  if(!original||!path.isAbsolute(original[0])||!path.isAbsolute(sealed??''))refuse('stale-input','missing original/sealed kernel request');
+  for(const[file,digest]of [original,[sealed,a.requestSha256]]){
+    const bytes=fs.readFileSync(file);if(sha(bytes)!==digest)refuse('stale-input','kernel request input changed');
+    const request=readJson(file);
+    if(request.schema!=='fvs-checker/kernel-request'||request.version!==expectedVersion||request.runId!==a.runId)refuse('stale-input','kernel request version/run differs from its attempt');
+    const control=requestControl(request);if(expectedVersion===2&&!sameExecutionPolicy(control,execution))refuse('stale-input','retained kernel request execution policy changed');
+  }
+}
+export function checkKernelArtifacts(kernel,expectedVersion,execution){
+  validateKernelExecution(kernel,expectedVersion,execution);const a=kernel.attempt;
+  for(const[file,digest]of Object.entries(a.inputs))if(sha(fs.readFileSync(file))!==digest)refuse('stale-input','accepted kernel input changed');
+  for(const m of a.imports)for(const part of m.parts)if(sha(fs.readFileSync(part.file))!==part.sha256)refuse('stale-input','accepted kernel import changed');
+  for(const row of a.snapshots.modules)if(sha(fs.readFileSync(row.file))!==row.sha256)refuse('stale-input','accepted kernel input snapshot changed');
+  for(const[name,source]of [['helper',HELPER],['runner',SCRIPT]])if(sha(fs.readFileSync(a.snapshots[name]))!==sha(fs.readFileSync(source)))refuse('stale-input','captured checker evidence changed');
 }
 
 export function runKernelAudit(options, flags = {}) {

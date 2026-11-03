@@ -6,12 +6,12 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { which } from './fvs-probe-inventory.mjs';
-import { requestControl, assertRunning, timeoutOptions, executionFields, runOwned, parseExecution } from './fvs-execution.mjs';
+import { requestControl, assertRunning, timeoutOptions, executionFields, runOwned, parseExecution, sameExecutionPolicy, conclusiveOwnedSupervision } from './fvs-execution.mjs';
 import { buildRecord } from './fvs-rust-identity.mjs';
 import { buildLeanGraph, duplicateKeys } from './fvs-lean-graph.mjs';
 import { buildPlan, definitionClosure } from './fvs-closure-plan.mjs';
 import { canonical, validatePlan, readChain, registryStatus } from './fvs-contract-registry.mjs';
-import { tokens, verifyBuildImports } from './fvs-checker.mjs';
+import { tokens, verifyBuildImports, checkKernelArtifacts, validateKernelExecution } from './fvs-checker.mjs';
 
 const sha = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
 const hash = (file) => sha(fs.readFileSync(file));
@@ -119,6 +119,7 @@ async function buildSnapshot(job, source, out, runId, services = {}) {
   if (result.status !== 'built') refuse(result.status === 'unsupported' ? 'unsupported' : result.receipts?.some((r) => r.timedOut) || /deadline/i.test(result.reason ?? '') ? 'timeout' : 'audit-failed', result.reason ?? 'fresh build did not complete');
   if (result.schema !== 'fvs-checker/build-result' || result.version !== (job.version ?? 1) || result.status !== 'built' || result.authority !== 'build-only'
     || result.runId !== runId || !result.modules?.length || result.proofChecked !== false) refuse('audit-failed', 'builder returned incomplete or foreign evidence');
+  if(job.version===2&&!sameExecutionPolicy(result.execution,job.execution))refuse('audit-failed','builder execution policy differs from its request');
   return result;
 }
 function checkedProcess(lean, args, cwd, control, searchPaths, label, services = {}) {
@@ -131,7 +132,7 @@ function checkedProcess(lean, args, cwd, control, searchPaths, label, services =
     stdoutSha256: sha(run.stdout ?? ''), stderrSha256: sha(run.stderr ?? ''), ...(owned ? { supervision: { cancelled: owned.cancelled, timedOut: owned.timedOut, cleanupComplete: owned.cleanupComplete, cleanup: owned.cleanup } } : {}) });
   if (owned?.cancelled) refuse('cancelled', 'operation cancelled; no expected-context publication');
   if (owned?.timedOut) refuse('timeout', 'selected execution budget exhausted');
-  if (owned && !owned.cleanupComplete) refuse('unsupported', 'owned child termination is unverified');
+  if (owned && !conclusiveOwnedSupervision({cancelled:owned.cancelled,timedOut:owned.timedOut,cleanupComplete:owned.cleanupComplete,cleanup:owned.cleanup})) refuse('unsupported', 'owned checking scope termination is unverified');
   if (run.error?.code === 'ETIMEDOUT') refuse('timeout', `${label} timed out`);
   if (run.status !== 0 || run.signal || run.error) refuse('audit-failed', `${label} failed: ${run.stdout ?? ''}${run.stderr ?? ''}`);
   return { run, receipt };
@@ -369,12 +370,15 @@ function frozenArtifacts(ref) {
   if (frozen.schema !== 'fvs-checker/auto-baseline' || ![1, 2].includes(frozen.version) || frozen.purpose !== 'auto' || frozen.authority !== 'expectations-only'
     || frozen.meaning?.status !== 'meaning-checked' || frozen.meaning?.targetProofsChecked !== false
     || frozen.extractionMeaning?.status !== 'meaning-checked' || frozen.extractionMeaning?.targetProofsChecked !== false) refuse('invalid-input', 'auto check requires an extraction-bound expectation bundle');
+  const job = bound(frozen.input).json, context = extractionContext(job.extraction);
+  if(job.version!==frozen.version||frozen.build.version!==frozen.version)refuse('stale-input','mixed frozen/wrapper versions');
+  if(frozen.version===2&&!sameExecutionPolicy(frozen.build.execution,job.execution))refuse('stale-input','frozen build execution policy changed');
   for (const [ref, declared] of [[frozen.extractionMeaningCheck, frozen.extractionMeaning], [frozen.meaningCheck, frozen.meaning]]) {
     const evidence = bound(ref).json;
     if (evidence.authority !== 'audit-only' || canonical(evidence.audit) !== canonical(declared) || evidence.audit?.schema !== 'fvs-kernel-baseline/result'
       || evidence.audit.targetProofsChecked !== false) refuse('stale-input', 'frozen meaning evidence does not match its retained checker result');
+    validateKernelExecution(evidence,frozen.version,frozen.version===2?job.execution:undefined);
   }
-  const job = bound(frozen.input).json, context = extractionContext(job.extraction);
   if (job.version !== frozen.version || frozen.build.version !== frozen.version) refuse('stale-input', 'mixed frozen/wrapper versions');
   if (canonical(bound(frozen.contextInventory).json.source) !== canonical(job.baseline.source)) refuse('stale-input', 'frozen pristine context inventory changed');
   if (canonical(frozen.registry) !== canonical(job.registry) || canonical(frozen.fixtureSource) !== canonical(frozen.build.source)
@@ -385,9 +389,10 @@ function frozenArtifacts(ref) {
   verifyFiles(frozen.compiled); verifyFiles(frozen.imports); verifyFiles(frozen.runtimes);
   return { frozen, job, context };
 }
-function frozenContext(ref, { ignoreRegistryLock = false, version } = {}) {
+function frozenContext(ref, { ignoreRegistryLock = false, version, execution } = {}) {
   const { frozen, job, context } = frozenArtifacts(ref);
   if (version !== undefined && version !== frozen.version) refuse('stale-input', 'baseline/request versions differ');
+  if(execution!==undefined&&(version!==2||!sameExecutionPolicy(execution,job.execution)))refuse('stale-input','continuation execution policy differs from its frozen run');
   const records = registryContext(job, context, frozen.build.projectRoot, { ignoreLock: ignoreRegistryLock });
   if (canonical(records) !== canonical(frozen.records)) refuse('stale-input', 'contract records changed since freeze');
   return { frozen, job, context };
@@ -429,7 +434,8 @@ function checkEvidence(ref, frozenSha256) {
   const kernel = bound(result.kernelCheck).json;
   const adapter = bound(result.adapterInput).json;
   bound(result.controllerInput);
-  if (adapter.version !== result.version || (result.version === 2 && canonical(parseExecution(adapter.execution)) !== canonical(parseExecution(kernel.attempt?.execution)))) refuse('stale-input', 'mixed execution policy/wrapper versions');
+  const original=bound(frozen.input).json;
+  if(original.version!==result.version||adapter.version!==result.version||(result.version===2&&(!sameExecutionPolicy(adapter.execution,original.execution)||!sameExecutionPolicy(result.build.execution,original.execution)))) refuse('stale-input', 'mixed execution policy/wrapper versions');
   if (adapter.runId !== result.runId || adapter.baseline?.sha256 !== result.frozenSha256 || adapter.source?.commit !== result.source.commit
     || adapter.source?.expectedTree !== result.source.tree || canonical(adapter.nodes) !== canonical(result.nodes)) refuse('stale-input', 'checker evidence lost its exact adapter request');
   if (kernel.audit?.schema !== 'fvs-kernel-audit/result' || kernel.audit.status !== 'kernel-checked' || kernel.audit.runId !== result.runId
@@ -438,21 +444,10 @@ function checkEvidence(ref, frozenSha256) {
   if (wanted.some((name) => !name) || canonical([...kernel.audit.targets].sort()) !== canonical(wanted.sort())
     || canonical(result.audit) !== canonical(kernel.audit) || result.build.source.commit !== result.source.commit
     || result.build.source.tree !== result.source.tree) refuse('stale-input', 'candidate evidence lost exact source/target coverage');
-  checkKernelArtifacts(kernel);
+  checkKernelArtifacts(kernel,result.version,result.version===2?original.execution:undefined);
   return result;
 }
 
-// The same artifact checks serve ordinary evidence and retained helper identity audits.
-function checkKernelArtifacts(kernel) {
-  if (kernel.attempt.version === 2 && (!kernel.attempt.supervision || kernel.attempt.supervision.cancelled || kernel.attempt.supervision.timedOut || kernel.attempt.supervision.cleanupComplete !== true)) refuse('stale-input', 'uncompleted v2 kernel supervision');
-  verifyFiles(kernel.attempt.inputs);
-  verifyFiles(Object.fromEntries(kernel.attempt.imports.flatMap((m) => m.parts.map((p) => [p.file, p.sha256]))));
-  for (const row of kernel.attempt.snapshots.modules) if (hash(row.file) !== row.sha256) refuse('stale-input', 'accepted kernel input snapshot changed');
-  for (const name of ['helper', 'runner']) {
-    const file = kernel.attempt.snapshots[name], source = name === 'helper' ? 'FvsKernelAudit.lean' : 'fvs-checker.mjs';
-    if (hash(file) !== hash(fileURLToPath(new URL(source, import.meta.url)))) refuse('stale-input', 'captured checker evidence changed');
-  }
-}
 
 function dependenciesOf(context, node) {
   const found = new Set(), visit = (id) => {
@@ -482,7 +477,7 @@ function integrationHead(source, out, label, deadlineMs, tree = false) {
 
 async function acceptAuto(job, out, engine) {
   closed(job, ['schema', 'version', 'purpose', 'runId', timingKey(job), 'baseline', 'candidateCheck', 'source', 'node', 'store'], 'auto accept request');
-  const { frozen, context } = frozenContext(job.baseline, { version: job.version });
+  const { frozen, context } = frozenContext(job.baseline, { version: job.version, ...(job.version===2?{execution:job.execution}:{}) });
   if (!Number.isSafeInteger(job.node) || !context.view.union.has(job.node)) refuse('invalid-input', 'accept one known selected proof node');
   closed(job.store, ['root', 'expectedHeadSha256'], 'accepted store');
   if (!path.isAbsolute(job.store.root ?? '') || !(job.store.expectedHeadSha256 === null || isSha(job.store.expectedHeadSha256))) refuse('invalid-input', 'explicit accepted-store head is required');
@@ -512,6 +507,7 @@ async function acceptAuto(job, out, engine) {
     request.proofIdentityRoots = [target.name];
     const ref = save(out, `helper-${dependency.node}-request.json`, request);
     const checked = await engine.runKernelAudit({ request: ref.file, out: path.join(out, `helper-${dependency.node}-identity`) });
+    validateKernelExecution(checked,job.version,job.version===2?job.execution:undefined);
     reuseChecks.push(checked.evidence);
   }
   const recordsDir = path.join(job.store.root, 'records'); fs.mkdirSync(recordsDir, { recursive: true });
@@ -523,7 +519,7 @@ async function acceptAuto(job, out, engine) {
   let writing = false, completed = false;
   try {
     lock(job.store.root); lock(frozen.registry.root);
-    frozenContext(job.baseline, { ignoreRegistryLock: true, version: job.version });
+    frozenContext(job.baseline, { ignoreRegistryLock: true, version: job.version, ...(job.version===2?{execution:job.execution}:{}) });
     const current = readAcceptedStore(job.store.root, { ignoreLock: true });
     if (current.headSha256 !== job.store.expectedHeadSha256) refuse('stale-input', 'accepted-store head changed during integrated checking');
     if (current.records.some(({ record }) => record.runId === job.runId)) refuse('stale-input', 'publication run identity has already been used');
@@ -543,6 +539,7 @@ async function acceptAuto(job, out, engine) {
     const fd = fs.openSync(temporary, 'wx'); writing = true;
     try { fs.writeFileSync(fd, bytes); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
     const file = path.join(recordsDir, `${String(record.seq).padStart(6, '0')}-${digest}.json`);
+    if(job.version===2)beforeDeadline(job,engine.executionServices);
     fs.renameSync(temporary, file);
     const dir = fs.openSync(recordsDir, 'r'); try { fs.fsyncSync(dir); } finally { fs.closeSync(dir); }
     completed = true;
@@ -555,7 +552,7 @@ async function acceptAuto(job, out, engine) {
 
 async function checkAuto(job, out, engine) {
   closed(job, ['schema', 'version', 'purpose', 'runId', timingKey(job), 'baseline', 'source', 'nodes'], 'auto check request');
-  const { frozen, job: original, context } = frozenContext(job.baseline, { version: job.version });
+  const { frozen, job: original, context } = frozenContext(job.baseline, { version: job.version, ...(job.version===2?{execution:job.execution}:{}) });
   if (!Array.isArray(job.nodes) || !job.nodes.length || new Set(job.nodes).size !== job.nodes.length || job.nodes.some((id) => !context.view.union.has(id))) refuse('invalid-input', 'select known distinct proof nodes');
   closed(job.source, ['kind', 'root', 'commit', 'expectedTree'], 'candidate source');
   if (job.source.kind !== 'git' || !isCommit(job.source.commit) || !isCommit(job.source.expectedTree)) refuse('invalid-input', 'candidate commit and exact tree are required');
@@ -578,7 +575,7 @@ async function checkAuto(job, out, engine) {
   const external = (audit) => audit.filter((m) => !m.project).map((m) => [m.name, m.parts.map((p) => p.sha256)]).sort(([a], [b]) => a.localeCompare(b));
   const baselineAudit = bound(frozen.meaningCheck).json;
   if (canonical(external(checked.attempt.imports)) !== canonical(external(baselineAudit.attempt.imports)) || canonical(checked.attempt.runtimes) !== canonical(frozen.runtimes)) refuse('stale-input', 'resolved dependency/runtime identity changed since freeze');
-  frozenContext(job.baseline); verifyFiles(buildFiles(build)); verifyFiles(observed); beforeDeadline(job, engine.executionServices);
+  frozenContext(job.baseline,{version:job.version,...(job.version===2?{execution:job.execution}:{})}); verifyFiles(buildFiles(build)); verifyFiles(observed); beforeDeadline(job, engine.executionServices);
   const result = { schema: 'fvs-checker/auto-check', version: job.version, purpose: 'auto', authority: 'provisional-only', status: 'provisional', code: 'ok', runId: job.runId,
     nodes: job.nodes, baseline: job.baseline, frozenSha256: job.baseline.sha256, registryHeadSha256: frozen.registry.headSha256,
     source: { commit: build.source.commit, tree: build.source.tree }, extractionSourceCommit: frozen.extractionSourceCommit,
@@ -676,7 +673,7 @@ export function inspectAutoAcceptance(raw) {
       if (!target || kernel.authority !== 'audit-only' || kernel.audit?.status !== 'kernel-checked' || kernel.audit.targetProofsChecked !== true
         || kernel.audit.runId !== `${record.runId}-reuse-${dependency.node}` || kernel.attempt?.runId !== kernel.audit.runId
         || canonical(kernel.audit.targets) !== canonical([target.name])) refuse('stale-input', 'accepted helper identity evidence is foreign');
-      checkKernelArtifacts(kernel);
+      checkKernelArtifacts(kernel,frozen.version,frozen.version===2?job.execution:undefined);
       verifyBuildImports(checkEvidence(record.integratedCheck, baseline.sha256).build, kernel.attempt.imports, control);
     }
     nodes.push({ node, receipt: { file: row.file, sha256: row.sha256 }, integrated: record.integrated });
