@@ -1248,6 +1248,9 @@ function workerTransition(operation, options) {
     const { projectRoot, ao, out, actor, expectedMemoryRequest, memoryOut, ...rest } = data;
     if (!path.isAbsolute(out) || path.dirname(out) !== fs.realpathSync(path.dirname(out)) || out === projectDirectory(projectRoot) || out.startsWith(projectDirectory(projectRoot) + path.sep)) refuse('transition-invalid-input', 'canonical exclusive output outside the protected project required');
     fs.mkdirSync(out, { mode: 0o700 }); const requestInput = transitionSave(path.join(out, 'request.json'), data);
+    // A v2 start validates the released context twice (before and after the marker commit); each
+    // check owns a fresh exclusive output, so the second check is never refused by the first's directory.
+    let contextChecks = 0;
     const root = projectDirectory(projectRoot), services = { memoryOut,
       currentClock() { const v = readRuntime(root), run = v.state?.run; if (!run) refuse('resume-context-stale', 'original run missing'); return { runId: run.runId, startedAtMs: run.startedAtMs, ...(run.schemaVersion === 2 ? { schemaVersion: 2, budget: run.budget } : { deadlineMs: run.deadlineMs }), lastObservedAtMs: v.lastObservedAtMs }; },
       beforeForAction(ref) {
@@ -1255,7 +1258,7 @@ function workerTransition(operation, options) {
         if (!r) refuse('resume-pair-conflict', 'no exact retained launch-before event'); return r.sha256;
       },
       verifyMemory: (o) => verifyMemoryBootstrap({ ...o, projectRoot: root }),
-      verifyReleasedPacket: (packet) => verifyReleasedPacketContext({ projectRoot: root, ao, packet, memoryRequest: expectedMemoryRequest, out: out + '-context' }, { loadCanonical: () => memoryCanonical(root), transitions: transitionValidators({ tools: { ...transitionTools(), ao: ao.tool }, git() { refuse('transition-unavailable', 'unexpected packet Git mutation'); } }) }),
+      verifyReleasedPacket: (packet) => verifyReleasedPacketContext({ projectRoot: root, ao, packet, memoryRequest: expectedMemoryRequest, out: out + '-context-' + (++contextChecks) }, { loadCanonical: () => memoryCanonical(root), transitions: transitionValidators({ tools: { ...transitionTools(), ao: ao.tool }, git() { refuse('transition-unavailable', 'unexpected packet Git mutation'); } }) }),
       observeActor: (a) => observeAssignedActor({ projectRoot: root, ao, actor: a, attemptId: expectedMemoryRequest.attemptId, out: out + '-actor' }) };
     // Supplied role/profile data is controller provenance, not OS authentication.
     const result = operation === 'startup' ? verifyStartup({ ...rest, actor, expectedMemoryRequest }, services)
