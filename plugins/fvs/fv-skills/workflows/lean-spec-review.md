@@ -81,7 +81,7 @@ being silently summarized or truncated.
 Check the grounding budget read-only with the same request before running it:
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-spec-review.mjs preflight "$REQUEST_FILE"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/fvs-spec-review.mjs" preflight "$REQUEST_FILE"
 ```
 
 Preflight creates no `.formalising/spec-reviews/` state, needs no Pi host or authentication, and
@@ -92,7 +92,7 @@ On overrun it exits nonzero and names the first span that crossed the limit. Nar
 same check against current sources before creating the review directory:
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-spec-review.mjs run "$REQUEST_FILE"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/fvs-spec-review.mjs" run "$REQUEST_FILE"
 ```
 
 The helper records input hashes and a complete `prompt.md` under a new
@@ -156,8 +156,8 @@ If the child facility does not report any required receipt field, leave the revi
 choose another route; never infer it from the request. Then import:
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-spec-review.mjs import "$REVIEW_DIRECTORY" "$RESPONSE_FILE"       # Other
-node ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-spec-review.mjs import-pi "$REVIEW_DIRECTORY" "$RESPONSE_FILE" "$DISPATCH_RECEIPT" # Pi
+node "${CLAUDE_PLUGIN_ROOT}/scripts/fvs-spec-review.mjs" import "$REVIEW_DIRECTORY" "$RESPONSE_FILE"       # Other
+node "${CLAUDE_PLUGIN_ROOT}/scripts/fvs-spec-review.mjs" import-pi "$REVIEW_DIRECTORY" "$RESPONSE_FILE" "$DISPATCH_RECEIPT" # Pi
 ```
 
 Both importers verify the packet's explicit runtime/model/effort, author/provenance, input hashes,

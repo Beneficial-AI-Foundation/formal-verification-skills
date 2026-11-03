@@ -100,7 +100,7 @@ manifest before dispatch. Never infer tiers from agent names.
 Discover the target repository's style guide before either subagent runs:
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-lean-style-check.mjs discover \
+node "${CLAUDE_PLUGIN_ROOT}/scripts/fvs-lean-style-check.mjs" discover \
   --root . --config .formalising/fvs-config.json
 ```
 
@@ -214,7 +214,7 @@ Validate the generated spec meets structural requirements.
 First run the mandatory mechanical gate:
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-lean-style-check.mjs check "$SPEC_OUTPUT_PATH" \
+node "${CLAUDE_PLUGIN_ROOT}/scripts/fvs-lean-style-check.mjs" check "$SPEC_OUTPUT_PATH" \
   --root . --config .formalising/fvs-config.json
 ```
 
@@ -258,7 +258,7 @@ store unchanged.
 **Adversarial review:** after the generation checks succeed, resolve the optional setting:
 
 ```bash
-AUTOMATIC_REVIEW=$(node ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-spec-review.mjs automatic) || exit 1
+AUTOMATIC_REVIEW=$(node "${CLAUDE_PLUGIN_ROOT}/scripts/fvs-spec-review.mjs" automatic) || exit 1
 ```
 
 Missing config or `spec_review.automatic` means true; malformed config stops with an error.

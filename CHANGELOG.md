@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.3.11] - 2026-11-03
+
+### Fixed
+
+- Direct installs resolve bundled script paths from the selected installation directory, including
+  project-local installs invoked from a nested working directory. Shell examples quote those paths,
+  so spaces and literal shell characters in direct-install paths do not split or expand them.
+  Generated plugin examples keep the plugin root, and Pi examples keep package-relative resources.
+
 ## [2.3.10] - 2026-11-02
 
 ### Fixed

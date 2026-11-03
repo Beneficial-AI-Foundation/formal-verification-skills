@@ -106,7 +106,7 @@ and the budget clock (`START_EPOCH`, `DEADLINE_EPOCH`) starts right after it.
 Discover and read the complete target style guide:
 
 ```bash
-node ~/.claude/scripts/fvs-lean-style-check.mjs discover \
+node "$HOME/.claude/scripts/fvs-lean-style-check.mjs" discover \
   --root . --config .formalising/fvs-config.json
 ```
 
@@ -119,7 +119,7 @@ Before the first write, copy the spec to an OS temporary baseline. Existing viol
 are legacy debt; after every normal proof edit run:
 
 ```bash
-node ~/.claude/scripts/fvs-lean-style-check.mjs check "$SPEC_PATH" \
+node "$HOME/.claude/scripts/fvs-lean-style-check.mjs" check "$SPEC_PATH" \
   --root . --config .formalising/fvs-config.json --baseline "$STYLE_BASELINE"
 ```
 

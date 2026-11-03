@@ -135,7 +135,7 @@ The existing project roles/confirmed stage settings govern; do not select substi
    - Markdown/Text: read directly
    - LaTeX: read as text, focus on \begin{definition}, \begin{theorem}, \begin{lemma} environments
 2. If KB config provided and domain matches task:
-   - Query KB via Bash: `.formalising/.kb-venv/bin/python ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-kb-query.py ask "<question>" --notebook <id> --json`
+   - Query KB via Bash: `.formalising/.kb-venv/bin/python "${CLAUDE_PLUGIN_ROOT}/scripts/fvs-kb-query.py" ask "<question>" --notebook <id> --json`
    - Parse JSON response, incorporate answer and references into findings
    - If KB query fails (auth expired, not installed): report gracefully and continue without KB
    - If KB domain does not match task description: skip KB entirely (log "KB skipped: domain mismatch")

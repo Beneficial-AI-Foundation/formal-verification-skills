@@ -74,7 +74,7 @@ QHASH=$(printf '%s' "$QUESTION" | shasum -a 256 | cut -c1-16)
 if [ -f "$ROOT/sources/$QHASH.json" ]; then
   cat "$ROOT/sources/$QHASH.json"            # cache hit -- re-read, do NOT re-query
 else
-  .formalising/.kb-venv/bin/python ~/.claude/scripts/fvs-kb-query.py ask "$QUESTION" --notebook "$NOTEBOOK_ID" --json \
+  .formalising/.kb-venv/bin/python "$HOME/.claude/scripts/fvs-kb-query.py" ask "$QUESTION" --notebook "$NOTEBOOK_ID" --json \
     | tee "$ROOT/sources/$QHASH.json"        # cache the answer under sources/
 fi
 ```
@@ -219,7 +219,7 @@ diff. Never persist raw transcripts, full error dumps, uncited claims, or secret
 ## Step 5b: Bounded rival review
 
 After authoring gates, run
-`node ~/.claude/scripts/fvs-codex-think.mjs review-automatic`; missing config or
+`node "$HOME/.claude/scripts/fvs-codex-think.mjs" review-automatic`; missing config or
 `crypto_review.automatic` defaults to true and malformed values stop clearly. If false, record
 `Unreviewed (automatic review disabled)`, preserve the plan, and do not auto-start execution.
 
