@@ -611,7 +611,8 @@ export function verifyReleasedPacketContext({ projectRoot, ao, packet, memoryReq
   const known = new Set([...view.reservations.values()].filter((r) => r.state === 'active').map((r) => r.sessionId));
   if (!known.has(p.actor.sessionId) || rows.some((s) => s.kind === 'worker' && !s.isTerminated && !known.has(s.id))) stop('resume-association-invalid', 'packet actor or another current worker lacks an active controller assignment');
   const source = git(a.before.source.root, r), associated = association(a.target.association, run);
-  const ts = { ...services.transitions, profileObservation: redactAOProfile(r.run(ao.tool.file, ['project', 'get', run.aoProjectId, '--json'], projectRoot, true, redactAOProfile)),
+  // Replacement handoff checks need the old actor's lifecycle; use the rows observed just above.
+  const ts = { ...services.transitions, observeSession: (id) => rows.find((s) => s.id === id), profileObservation: redactAOProfile(r.run(ao.tool.file, ['project', 'get', run.aoProjectId, '--json'], projectRoot, true, redactAOProfile)),
     beforeForAction(ref) { const row = view.state.history.find((row) => row.event.position === 'before' && same(row.event.intent.request ?? null, ref)); if (!row) stop('resume-pair-conflict', 'missing retained launch-before'); return row.sha256; },
     observeGit(root, args, binary = false, status = false) { const b = r.run('/usr/bin/git', ['-C', root, ...args], root); return status ? 0 : binary ? b : b.toString('utf8'); },
     verifyAssociation(a) { reservedAssociation(a, view, run, { live: true }); },
