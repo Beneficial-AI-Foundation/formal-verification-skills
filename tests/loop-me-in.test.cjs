@@ -61,12 +61,12 @@ test('roadmap, audience and docs are discovered or asked, never inferred from co
   assert.match(roadmap, /\*\*\/ROADMAP\.md/);
   assert.match(roadmap, /no roadmap was found.*never a reason to stop/);
   const audience = flat(workflow.split('## 3. Audience and documentation')[1].split('## 4.')[0]);
-  assert.match(audience, /"loop_me_in": \{ "docs": \[\], "audience": null \}/);
+  assert.match(audience, /"loop_me_in": \{ "docs": \[\], "audience": null, "style_refs": \[\] \}/);
   assert.match(audience, /Never infer the reader's level from the code/);
   assert.match(audience, /two most recent walkthroughs/);
   assert.match(audience, /200 KB/);
   const config = JSON.parse(read('fv-skills/templates/config.json'));
-  assert.deepEqual(config.loop_me_in, { docs: [], audience: null });
+  assert.deepEqual(config.loop_me_in, { docs: [], audience: null, style_refs: [] });
 });
 
 test('what changed is high-level, backed by declarations, prefers IMPLEMENTATION_nN.md, and never upgrades a decision', () => {

@@ -7,7 +7,8 @@
 <!--
   FVS walkthrough template. The command fills every {{PLACEHOLDER}} and the five <section>
   bodies. Self-contained: inline CSS/JS only, no remote assets. Keep the section ids: tests and
-  later walkthroughs rely on them.
+  later walkthroughs rely on them. When style references are supplied, adapt the prose and inline
+  CSS/layout to their chosen traits while preserving the sections, evidence and quiz behavior.
 -->
 <style>
   :root {
@@ -54,6 +55,7 @@
     <dt>Decision</dt><dd class="status">{{DECISION_VERBATIM}} <span class="ref">(<a href="{{RECORD_PATH}}">{{RECORD_PATH}}</a>)</span></dd>
     <dt>Roadmap</dt><dd>{{ROADMAP_PATH_OR_NONE}}</dd>
     <dt>Audience</dt><dd>{{AUDIENCE}}</dd>
+    <dt>Style</dt><dd>{{STYLE_SUMMARY}}</dd>
   </dl>
 </header>
 

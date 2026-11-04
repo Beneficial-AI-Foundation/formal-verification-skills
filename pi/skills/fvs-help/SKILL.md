@@ -410,7 +410,7 @@ another consented batch. Existing track review/proof and publication gates remai
 Usage: `/skill:fvs-ask-baif where are we?`
 Usage: `/skill:fvs-ask-baif take next`
 
-**`/skill:fvs-loop-me-in [<description of the change> | <topic> nN] [--commit [<ref>] | --working-tree] [--roadmap <path>] [--docs <path>] [--audience "<text>"]`**
+**`/skill:fvs-loop-me-in [<description of the change> | <topic> nN] [--commit [<ref>] | --working-tree] [--roadmap <path>] [--docs <path>] [--style <path|url|document>...] [--audience "<text>"]`**
 Catch up after an automated run: one self-contained HTML walkthrough of the last self-contained
 chunk of work, with a quiz.
 
@@ -419,10 +419,14 @@ chunk of work, with a quiz.
 - Bare: picks the last chunk (newest ACCEPTed iteration newer than HEAD, else uncommitted changes, else HEAD) and confirms chunk, roadmap and audience on one screen before writing
 - Sections: what changed (planned vs observed), where we are on the roadmap (status quoted verbatim), how it was made with `path:line` references, and a multiple-choice quiz with collapsible cited answers
 - Audience and extra documentation come from `loop_me_in` in `fvs-config.json` or flags; the reader's level is never inferred from the code
+- Match a local document, web tutorial or accessible internal document with repeatable `--style` references (or `loop_me_in.style_refs`); attached or pasted style examples also work; both writing and visual style are adapted where available
 - Runs inline (no extra model call); writes `.formalising/loop-me-in/<slug>/<timestamp>-<slug>.html` and never overwrites, commits or edits the roadmap
 
 Usage: `/skill:fvs-loop-me-in`
 Usage: `/skill:fvs-loop-me-in the changes to key validation`
+Usage: `/skill:fvs-loop-me-in the changes to key validation --style docs/example-tutorial.html`
+Usage: `/skill:fvs-loop-me-in --working-tree --style "https://example.com/tutorial"`
+Usage: `/skill:fvs-loop-me-in --working-tree --style "Engineering onboarding guide"`
 Usage: `/skill:fvs-loop-me-in ntt n3`
 Usage: `/skill:fvs-loop-me-in --commit HEAD~2..HEAD --audience "new to Aeneas"`
 
