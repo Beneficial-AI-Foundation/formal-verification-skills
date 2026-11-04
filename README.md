@@ -208,6 +208,9 @@ after an interactive `/fvs:crypto-eval` ACCEPT and runs on demand otherwise.
 You can describe the change in plain words, such as `/fvs:loop-me-in the changes to key validation`;
 the matching work is shown for confirmation, with no directory name or iteration number required.
 Audience and extra documentation come from `loop_me_in` in `.formalising/fvs-config.json`.
+To match another document's writing and visual style, pass `--style <path|url|document>` (repeatable),
+for example `--style docs/example-tutorial.html`, or configure `loop_me_in.style_refs`.
+Web tutorials, accessible internal documents, and attached or pasted style examples are supported.
 It runs inline, writes under `.formalising/loop-me-in/` and never commits or edits the roadmap.
 
 
