@@ -61,7 +61,7 @@ Five router commands group the skills. Invoke a router bare to print its routing
 - `/skill:fvs-context` — Codebase context (map-code)
 - `/skill:fvs-fc` — Formal-correctness core (fc-plan, model-external, lean-specify, lean-spec-review, lean-verify, natural-language, lean-refactor, trust-audit)
 - `/skill:fvs-formalise` — Paper formalisation (lean-formalise, lean-refactor, protocol-prose, crypto loop)
-- `/skill:fvs-manage` — Management (help, update, checkpoint, pause-work, resume-work, reapply-patches, kb-setup, roadmap, issues-setup, to-issues, ask-baif)
+- `/skill:fvs-manage` — Management (help, update, checkpoint, pause-work, resume-work, reapply-patches, kb-setup, roadmap, issues-setup, to-issues, ask-baif, loop-me-in)
 
 ### Aeneas (`/skill:fvs-aeneas`)
 
@@ -402,6 +402,22 @@ another consented batch. Existing track review/proof and publication gates remai
 
 Usage: `/skill:fvs-ask-baif where are we?`
 Usage: `/skill:fvs-ask-baif take next`
+
+**`/skill:fvs-loop-me-in [<description of the change> | <topic> nN] [--commit [<ref>] | --working-tree] [--roadmap <path>] [--docs <path>] [--audience "<text>"]`**
+Catch up after an automated run: one self-contained HTML walkthrough of the last self-contained
+chunk of work, with a quiz.
+
+- Offered once after an interactive `/skill:fvs-crypto-eval` ACCEPT; declining writes nothing
+- Describe the change in plain words, with or without quotes; the matching work is shown for confirmation, with no directory name or iteration number required
+- Bare: picks the last chunk (newest ACCEPTed iteration newer than HEAD, else uncommitted changes, else HEAD) and confirms chunk, roadmap and audience on one screen before writing
+- Sections: what changed (planned vs observed), where we are on the roadmap (status quoted verbatim), how it was made with `path:line` references, and a multiple-choice quiz with collapsible cited answers
+- Audience and extra documentation come from `loop_me_in` in `fvs-config.json` or flags; the reader's level is never inferred from the code
+- Runs inline (no extra model call); writes `.formalising/loop-me-in/<slug>/<timestamp>-<slug>.html` and never overwrites, commits or edits the roadmap
+
+Usage: `/skill:fvs-loop-me-in`
+Usage: `/skill:fvs-loop-me-in the changes to key validation`
+Usage: `/skill:fvs-loop-me-in ntt n3`
+Usage: `/skill:fvs-loop-me-in --commit HEAD~2..HEAD --audience "new to Aeneas"`
 
 **`/skill:fvs-roadmap [path/ROADMAP.md | path/] [goal prompt]`**
 Turn the current conversation or a short prompt into a long-horizon verification roadmap.

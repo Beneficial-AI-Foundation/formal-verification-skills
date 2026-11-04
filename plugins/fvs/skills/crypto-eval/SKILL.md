@@ -10,6 +10,7 @@ allowed-tools:
   - Write
   - Task
   - AskUserQuestion
+  - Skill
 ---
 
 <plugin_runtime>
@@ -322,6 +323,16 @@ may validate a source-cited modeling lesson; FOLLOWUP/BLOCKED findings may stren
 or failed-approach lesson. HUMAN_RULING candidates remain provisional until the user rules. Update an
 equivalent record or create one `lessons/crypto/` file per lesson and its index row in the same
 reviewable diff. Keep the independent `crypto-review` output as cited evidence, not mutable memory.
+
+## Step 3b: Offer a walkthrough (ACCEPT, interactive only)
+
+After the decision is persisted and lessons are reconciled, and ONLY when the decision is `ACCEPT`
+and `behavior.mode` in `.formalising/fvs-config.json` is `interactive` (or the file/key is missing),
+ask once with `AskUserQuestion` (plain text + WAIT on a runtime without it): "Walk you through this
+iteration?" with options yes / no. On yes, invoke `/fvs:loop-me-in <topic> nN` through the Skill
+tool; that command runs inline and writes the walkthrough. On no, do nothing: no artefact, no extra
+agent work, nothing recorded (EVAL files are immutable). In a non-interactive mode skip the offer
+entirely; the user can run `/fvs:loop-me-in` later.
 
 ## Step 4: Run-end banner
 
