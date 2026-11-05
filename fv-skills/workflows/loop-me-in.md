@@ -337,7 +337,11 @@ offer with `<topic> nN`, skip the screen: the user's "yes" to the offer is the a
 subject and body are the only "plan"; section 1 says so.
 
 **Working-tree chunk** (`--working-tree`): `git diff` plus `git diff --cached`; untracked files are
-listed by name only.
+listed by name only. 
+For untracked source files included in the confirmed chunk, read their contents and treat them as additions for change
+ statements, excerpts and quiz citations; apply this rule to iteration chunks too. If their inclusion
+ is unclear, ask before reading them. Leave unrelated untracked files unread and report any omitted
+ chunk evidence in the footer.
 
 For "how it was made", read the changed declarations in full, proofs included, to understand the
 argument; what is shown is another matter. An excerpt is a statement, never the proof body: a
