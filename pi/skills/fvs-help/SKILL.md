@@ -416,7 +416,7 @@ chunk of work, with a quiz.
 
 - Offered once after an interactive `/skill:fvs-crypto-eval` ACCEPT; declining writes nothing
 - Describe the change in plain words, with or without quotes; the matching work is shown for confirmation, with no directory name or iteration number required
-- Bare: picks the last chunk (newest ACCEPTed iteration newer than HEAD, else uncommitted changes, else HEAD) and confirms chunk, roadmap and audience on one screen before writing
+- Bare: picks the most recently active recorded iteration newer than HEAD, regardless of verdict or evaluation availability, else uncommitted changes, else HEAD; confirms the work, roadmap, audience and style before writing
 - Sections: what changed (planned vs observed), where we are on the roadmap (status quoted verbatim), how it was made with `path:line` references, and a multiple-choice quiz with collapsible cited answers
 - Audience and extra documentation come from `loop_me_in` in `fvs-config.json` or flags; the reader's level is never inferred from the code
 - Match a local document, web tutorial or accessible internal document with repeatable `--style` references (or `loop_me_in.style_refs`); attached or pasted style examples also work; both writing and visual style are adapted where available

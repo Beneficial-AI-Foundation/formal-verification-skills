@@ -202,9 +202,11 @@ checks. Existing crypto authoring calls also receive the shared prose guidance; 
 call or review stage is added.
 
 Catching up: `/fvs:loop-me-in` writes a self-contained HTML walkthrough of the last self-contained
-chunk of work (an ACCEPTed crypto iteration, uncommitted changes or the last commit): what changed,
+chunk of work (a crypto iteration, uncommitted changes or the last commit): what changed,
 where it sits in the roadmap, how it was made with code references, and a quiz. It is offered once
 after an interactive `/fvs:crypto-eval` ACCEPT and runs on demand otherwise.
+Without an explicit target, it prefers the most recently active recorded iteration newer than
+`HEAD`, regardless of verdict or evaluation availability, then uncommitted changes, then `HEAD`.
 You can describe the change in plain words, such as `/fvs:loop-me-in the changes to key validation`;
 the matching work is shown for confirmation, with no directory name or iteration number required.
 Audience and extra documentation come from `loop_me_in` in `.formalising/fvs-config.json`.

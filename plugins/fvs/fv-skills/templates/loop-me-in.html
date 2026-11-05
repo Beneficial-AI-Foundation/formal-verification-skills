@@ -132,11 +132,16 @@
   document.querySelectorAll('.quiz .q').forEach(function (q) {
     var correct = Number(q.getAttribute('data-correct'));
     var buttons = Array.prototype.slice.call(q.querySelectorAll('button'));
+    var feedback = document.createElement('p');
+    feedback.setAttribute('role', 'status');
+    q.appendChild(feedback);
     buttons.forEach(function (b, i) {
       b.addEventListener('click', function () {
         buttons.forEach(function (x) { x.classList.remove('right', 'wrong'); });
         b.classList.add(i === correct ? 'right' : 'wrong');
         if (i !== correct) buttons[correct].classList.add('right');
+        feedback.textContent = i === correct ? 'Correct.' :
+          'Incorrect. The correct answer is: ' + buttons[correct].textContent.trim();
         var d = q.querySelector('details'); if (d) d.open = true;
       });
     });
