@@ -298,22 +298,30 @@ match the writing and state that visual matching was unavailable.
    inputs, a missing roadmap or `IMPLEMENTATION_nN.md`.
 
 Length: about a ten-minute read. The audience governs vocabulary and how much background to explain,
-not the size. Links: visible text is always `path:line`; `href` is the relative path, never an
-absolute `file://` path or a remote permalink. The file is self-contained: inline CSS and JS, no
-remote assets, `prefers-color-scheme` for dark and light.
+not the size. Links: visible text is always the repository-relative `path:line`; `href` is
+`../../../` followed by that same path, because the walkthrough sits three directories below the
+project root (`.formalising/loop-me-in/<slug>/`) and a browser resolves a relative `href` against
+the HTML's own directory. The template already carries the prefix in every link; never an absolute
+`file://` path or a remote permalink. A browser shows the linked file as plain text and cannot jump
+to the line, so the `:line` in the label is for the reader, and the inline excerpt is the primary
+view. The file is self-contained: inline CSS and JS, no remote assets, `prefers-color-scheme` for
+dark and light.
 
-Resolve the output path and write with the Write tool so the runtime's diff approval applies:
+Resolve the output path and write with the Write tool so the runtime's diff approval applies. The
+block changes to the project root first so that the output location and the `../../../` links agree:
 
 ```bash
 # fvs:loop-me-in-output
 # Input (environment only): LOOP_SLUG, validated as [A-Za-z0-9._-]+.
+# Output: FILE=<path relative to the project root>, LINK_PREFIX=../../../
 case $LOOP_SLUG in *[!A-Za-z0-9._-]*|'') printf 'FVS >> invalid slug\n' >&2; exit 2 ;; esac
+cd -- "$(git rev-parse --show-toplevel)" || exit 2
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 DIR=.formalising/loop-me-in/$LOOP_SLUG
 mkdir -p -- "$DIR"
 FILE=$DIR/$STAMP-$LOOP_SLUG.html
 [ -e "$FILE" ] && { printf 'FVS >> refusing to overwrite %s\n' "$FILE" >&2; exit 2; }
-printf '%s\n' "$FILE"
+printf 'FILE=%s\nLINK_PREFIX=../../../\n' "$FILE"
 ```
 
 For a description, derive a short output slug using lowercase ASCII letters, digits and single

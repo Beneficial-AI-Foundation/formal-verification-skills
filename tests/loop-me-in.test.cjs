@@ -174,3 +174,19 @@ test('the HTML template is self-contained with the five parts and a static quiz'
   assert.match(output, /refusing to overwrite/);
   assert.match(output, /\.formalising\/loop-me-in\/\$LOOP_SLUG/);
 });
+
+test('hrefs resolve from the walkthrough directory: ../../../ plus the repository-relative path', () => {
+  // The HTML lives at .formalising/loop-me-in/<slug>/, three levels below the project root.
+  const hrefs = [...template.matchAll(/href="([^"]*)"/g)].map(m => m[1]);
+  assert.ok(hrefs.length >= 5, 'template has project-file links');
+  for (const href of hrefs) {
+    assert.ok(href.startsWith('../../../') || href.startsWith('#'), href);
+  }
+  assert.match(template, /href="\.\.\/\.\.\/\.\.\/\{\{REL_PATH\}\}">\{\{REL_PATH\}\}:\{\{LINE\}\}/);
+  assert.match(template, /href="\.\.\/\.\.\/\.\.\/\{\{RECORD_PATH\}\}">\{\{RECORD_PATH\}\}/);
+  const output = flat(workflow.split('## 7. Write the walkthrough')[1].split('## 8.')[0]);
+  assert.match(output, /`href` is `\.\.\/\.\.\/\.\.\/` followed by that same path/);
+  assert.match(output, /three directories below the project root/);
+  assert.match(output, /cd -- "\$\(git rev-parse --show-toplevel\)" \|\| exit 2/);
+  assert.match(output, /LINK_PREFIX=\.\.\/\.\.\/\.\.\//);
+});
