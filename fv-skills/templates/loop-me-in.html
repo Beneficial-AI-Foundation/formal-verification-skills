@@ -9,9 +9,11 @@
   bodies. Self-contained: inline CSS/JS only, no remote assets. Keep the section ids: tests and
   later walkthroughs rely on them. When style references are supplied, adapt the prose and inline
   CSS/layout to their chosen traits while preserving the sections, evidence and quiz behavior.
-  Links: the file is written to .formalising/loop-me-in/<slug>/, three directories below the
-  project root, so every href to a project file is "../../../" + the repository-relative path.
-  The visible label stays repository-relative (path:line). Never file:// absolutes or permalinks.
+  Links: every {{HREF}} / {{RECORD_HREF}} is the chosen editor's URL (for example
+  vscode://file/Users/me/proj/src/File.lean:42) built from the workflow's editor table, so a click
+  opens the file in the editor at the line; the browser never reads the file itself. The visible
+  label stays repository-relative (path:line). Never file:// links, bare relative paths or
+  permalinks.
 -->
 <style>
   :root {
@@ -55,8 +57,9 @@
   <h1>{{CHUNK_LABEL}}</h1>
   <dl class="meta">
     <dt>Generated</dt><dd>{{DATE_UTC}}</dd>
-    <dt>Decision</dt><dd class="status">{{DECISION_VERBATIM}} <span class="ref">(<a href="../../../{{RECORD_PATH}}">{{RECORD_PATH}}</a>)</span></dd>
+    <dt>Decision</dt><dd class="status">{{DECISION_VERBATIM}} <span class="ref">(<a href="{{RECORD_HREF}}">{{RECORD_PATH}}</a>)</span></dd>
     <dt>Roadmap</dt><dd>{{ROADMAP_PATH_OR_NONE}}</dd>
+    <dt>Links</dt><dd>open in {{EDITOR_LABEL}} at the cited line</dd>
     <dt>Audience</dt><dd>{{AUDIENCE}}</dd>
     <dt>Style</dt><dd>{{STYLE_SUMMARY}}</dd>
   </dl>
@@ -67,8 +70,8 @@
   <!-- 2 to 5 statements at the level of the mathematics or protocol, each naming the
        declaration(s) that realise it.
   <ul class="established">
-    <li>The hybrid argument for step 2 is now proved. <span class="ref">(<code>theorem hybrid_step2</code>, <a href="../../../path/to/File.lean">File.lean:42</a>)</span></li>
-    <li>The key-freshness invariant holds for every oracle call. <span class="ref">(<code>lemma fresh_of_oracle</code>, <a href="../../../path/to/File.lean">File.lean:88</a>)</span></li>
+    <li>The hybrid argument for step 2 is now proved. <span class="ref">(<code>theorem hybrid_step2</code>, <a href="{{HREF}}">File.lean:42</a>)</span></li>
+    <li>The key-freshness invariant holds for every oracle call. <span class="ref">(<code>lemma fresh_of_oracle</code>, <a href="{{HREF}}">File.lean:88</a>)</span></li>
   </ul>
   -->
   <ul class="established">{{WHAT_CHANGED_STATEMENTS}}</ul>
@@ -76,10 +79,10 @@
     <summary>Files and declarations touched</summary>
     <!-- One <h3> per touched file, then one <li> per declaration added, changed (before to after)
          or removed, each with its path:line.
-    <h3><a href="../../../path/to/File.lean">path/to/File.lean</a></h3>
+    <h3><a href="{{HREF}}">path/to/File.lean</a></h3>
     <ul class="delta">
-      <li><span class="tag">added</span> <code>theorem foo_spec</code> <span class="ref">(<a href="../../../path/to/File.lean">File.lean:42</a>)</span></li>
-      <li><span class="tag">changed</span> <code>def bar</code>: <code>Nat</code> to <code>Fin n</code> <span class="ref">(<a href="../../../path/to/File.lean">File.lean:17</a>)</span></li>
+      <li><span class="tag">added</span> <code>theorem foo_spec</code> <span class="ref">(<a href="{{HREF}}">File.lean:42</a>)</span></li>
+      <li><span class="tag">changed</span> <code>def bar</code>: <code>Nat</code> to <code>Fin n</code> <span class="ref">(<a href="{{HREF}}">File.lean:17</a>)</span></li>
       <li><span class="tag">removed</span> <code>lemma baz_aux</code></li>
     </ul>
     -->
@@ -101,7 +104,7 @@
     <li>
       <p>{{STEP_TEXT}}</p>
       <pre><code>{{EXCERPT}}</code></pre>
-      <p class="ref"><a href="../../../{{REL_PATH}}">{{REL_PATH}}:{{LINE}}</a></p>
+      <p class="ref"><a href="{{HREF}}">{{REL_PATH}}:{{LINE}}</a></p>
     </li>
     -->
     {{HOW_STEPS}}
@@ -118,7 +121,7 @@
     <button type="button">{{OPTION_C}}</button>
     <details><summary>Show the full answer</summary>
       <p>{{LONG_ANSWER}}</p>
-      <p class="ref"><a href="../../../{{REL_PATH}}">{{REL_PATH}}:{{LINE}}</a></p>
+      <p class="ref"><a href="{{HREF}}">{{REL_PATH}}:{{LINE}}</a></p>
     </details>
   </div>
   -->

@@ -120,12 +120,12 @@ test('roadmap, audience and docs are discovered or asked, never inferred from co
   assert.match(roadmap, /\*\*\/ROADMAP\.md/);
   assert.match(roadmap, /no roadmap was found.*never a reason to stop/);
   const audience = flat(workflow.split('## 3. Audience and documentation')[1].split('## 4.')[0]);
-  assert.match(audience, /"loop_me_in": \{ "docs": \[\], "audience": null, "style_refs": \[\] \}/);
+  assert.match(audience, /"loop_me_in": \{ "docs": \[\], "audience": null, "style_refs": \[\], "editor": null \}/);
   assert.match(audience, /Never infer the reader's level from the code/);
   assert.match(audience, /two most recent walkthroughs/);
   assert.match(audience, /200 KB/);
   const config = JSON.parse(read('fv-skills/templates/config.json'));
-  assert.deepEqual(config.loop_me_in, { docs: [], audience: null, style_refs: [] });
+  assert.deepEqual(config.loop_me_in, { docs: [], audience: null, style_refs: [], editor: null });
 });
 
 test('what changed is high-level, backed by declarations, prefers IMPLEMENTATION_nN.md, and never upgrades a decision', () => {
@@ -175,18 +175,38 @@ test('the HTML template is self-contained with the five parts and a static quiz'
   assert.match(output, /\.formalising\/loop-me-in\/\$LOOP_SLUG/);
 });
 
-test('hrefs resolve from the walkthrough directory: ../../../ plus the repository-relative path', () => {
-  // The HTML lives at .formalising/loop-me-in/<slug>/, three levels below the project root.
+test('links open the file in a detected or chosen editor at the line, never via the browser', () => {
+  // A browser may not read files under protected folders; the href hands an editor URL to the OS.
   const hrefs = [...template.matchAll(/href="([^"]*)"/g)].map(m => m[1]);
   assert.ok(hrefs.length >= 5, 'template has project-file links');
   for (const href of hrefs) {
-    assert.ok(href.startsWith('../../../') || href.startsWith('#'), href);
+    assert.ok(href === '{{HREF}}' || href === '{{RECORD_HREF}}' || href.startsWith('#'), href);
   }
-  assert.match(template, /href="\.\.\/\.\.\/\.\.\/\{\{REL_PATH\}\}">\{\{REL_PATH\}\}:\{\{LINE\}\}/);
-  assert.match(template, /href="\.\.\/\.\.\/\.\.\/\{\{RECORD_PATH\}\}">\{\{RECORD_PATH\}\}/);
+  assert.match(template, /href="\{\{HREF\}\}">\{\{REL_PATH\}\}:\{\{LINE\}\}/);
+  assert.match(template, /href="\{\{RECORD_HREF\}\}">\{\{RECORD_PATH\}\}/);
+  assert.match(template, /open in \{\{EDITOR_LABEL\}\}/);
+  assert.doesNotMatch(template, /href="(?:\.\.\/|file:)/);
+  const editor = workflow.split('### Editor for code links')[1].split('## 4.')[0];
+  assert.match(editor, /# fvs:loop-me-in-editor/);
+  assert.match(editor, /\$TERM_PROGRAM" = vscode/);
+  assert.match(editor, /"VISUAL:\$VISUAL" "EDITOR:\$EDITOR" "core\.editor:/);
+  assert.match(editor, /command -v "\$cmd"/);
+  assert.match(editor, /kind=vscode; source=fallback/);
+  assert.match(editor, /`vscode:\/\/file\{abs\}:\{line\}`/);
+  assert.match(editor, /`cursor:\/\/file\{abs\}:\{line\}`/);
+  assert.match(editor, /`idea:\/\/open\?file=\{abs\}&line=\{line\}`/);
+  assert.match(flat(editor), /scheme is none of `javascript`, `data`, `vbscript`, `file`, `http`, `https`/);
+  assert.match(flat(editor), /plain string substitution, never through a shell/);
+  assert.match(flat(editor), /a fallback is never applied silently/);
+  assert.doesNotMatch(editor, /\beval\b/);
+  const screen = workflow.split('## 4. One correction screen')[1].split('## 5.')[0];
+  assert.match(screen, /^Editor:   <name \| template> \(<source>/m);
+  assert.match(flat(screen), /change the editor/);
   const output = flat(workflow.split('## 7. Write the walkthrough')[1].split('## 8.')[0]);
-  assert.match(output, /`href` is `\.\.\/\.\.\/\.\.\/` followed by that same path/);
-  assert.match(output, /three directories below the project root/);
+  assert.match(output, /`href` is the editor URL from step 3's table/);
+  assert.match(output, /never a bare relative path/);
   assert.match(output, /cd -- "\$\(git rev-parse --show-toplevel\)" \|\| exit 2/);
-  assert.match(output, /LINK_PREFIX=\.\.\/\.\.\/\.\.\//);
+  assert.match(output, /ABS_ROOT=%s/);
+  assert.doesNotMatch(output, /LINK_PREFIX|\.\.\/\.\.\/\.\.\//);
+  assert.match(flat(read('commands/fvs/loop-me-in.md')), /--editor <name\|template>/);
 });
