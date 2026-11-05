@@ -357,6 +357,16 @@ with its `Status:` quoted verbatim from the roadmap, and name the next open mile
 walkthrough never changes the roadmap and never flips a status. When nothing matches, section 2 says
 "could not place this step on the roadmap" and still shows the first open milestone.
 
+Section 2 also draws the roadmap as a milestone track (the template's `ol.track`): every milestone
+in roadmap order, grouped under phase headings when the roadmap has phases, each with its verbatim
+`Status:` and a rendering class read off that status (`done` when it says done or complete,
+`blocked` when it says blocked, `open` otherwise). The matched milestone carries `current` and the
+label "this step"; the next open milestone(s) carry `next` and name the command or checker the
+roadmap says decides them. The class only renders the roadmap's own words; it never adds a status
+the roadmap does not state. When the step could not be placed, no milestone is `current` and the
+paragraph says so. Without a roadmap the track is omitted and the section states that plainly.
+"Next steps" below the track names the next open milestone(s) and the command that decides each.
+
 ## 7. Write the walkthrough
 
 Render `${CLAUDE_PLUGIN_ROOT}/fv-skills/templates/loop-me-in.html` (the host adapter resolves the installed
@@ -379,7 +389,9 @@ match the writing and state that visual matching was unavailable.
 2. **What changed**: 2 to 5 high-level statements of what was proved, defined or shown to hold,
    each naming the declaration(s) that realise it with a `path:line` link; below them, a collapsed
    `<details>` with the per-file list of declarations added, changed and removed.
-3. **Where we are**: one paragraph, the matched milestone with verbatim status, the next open one.
+3. **Where we are**: one paragraph, then the milestone track from step 6 (phases, every
+   milestone with its verbatim status, this step marked, the next open ones marked), then "Next
+   steps" naming the next open milestone(s) and the command that decides each.
 4. **How it was made**: 3 to 7 ordered steps that explain the argument in prose: the reduction or
    invariant, the key lemma, the case split, the reused result, the design choice; each step
    links to its declaration with `path:line`, and shows at most one short statement-only excerpt
@@ -449,7 +461,7 @@ next command the roadmap or the records suggest, without starting it.
 - [ ] Audience and docs from config or flags, one question with an offer to save otherwise; never inferred from code
 - [ ] Local, web or internal style references were read and their chosen traits applied to prose and presentation; access gaps were resolved with the user; no private source text, names or links copied without an explicit request
 - [ ] What changed is stated at the level of the mathematics or protocol (what was proved, defined, shown to hold), each statement linked to its realising declaration; the per-file delta is collapsed evidence; touched files come from the topic-root `IMPLEMENTATION_nN.md` when present, else the diff
-- [ ] Roadmap position quotes the milestone status verbatim and names the next open milestone; the roadmap is never edited
+- [ ] Roadmap position quotes the milestone status verbatim, draws the milestone track with this step and the next open milestone(s) marked, and names the command that decides each next step; the roadmap is never edited and no status is invented
 - [ ] Every how-step explains the idea in prose and links its declaration with a relative `path:line`; any excerpt is short and a statement, never the proof body, showing only what the reader needs to follow (a proof fragment only when the proof idea is the point, with the reason stated)
 - [ ] Every href is the chosen editor's URL opening the file at the line; the editor came from the flag, config, detection or the stated VS Code fallback, was shown on the screen and is named in the footer's Provenance block; a custom template was validated and substituted as text
 - [ ] Quiz: 4 to 6 questions, clickable options, collapsible cited answers
