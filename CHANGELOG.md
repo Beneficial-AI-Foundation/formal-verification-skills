@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.3.12] - 2026-11-09
+
+### Added
+
+- `/fvs:loop-me-in` writes a self-contained HTML walkthrough of the last self-contained chunk of
+  work so you can catch up after an automated run: what was established, stated at the level of the
+  mathematics or protocol rather than the files; where that step sits in the topic roadmap, with the
+  milestone status quoted verbatim; how it was made, with code excerpts; and a multiple-choice quiz
+  with collapsible answers that cite the code. It is offered once after an interactive
+  `/fvs:crypto-eval` ACCEPT and can be run on demand with a plain-language description, an exact
+  `<topic> nN`, `--commit` or `--working-tree`; a bare call ranks the most recently active work and
+  shows one correction screen before anything is written. Audience, documentation and style
+  references come from a new `loop_me_in` config block or flags. Every code and record link opens
+  the file in your editor at the cited line through the editor's URL scheme (`--editor`,
+  `loop_me_in.editor`, or detection from the terminal, `$VISUAL`/`$EDITOR`/`core.editor` and `PATH`,
+  with VS Code as the stated fallback), so a browser never has to read project files. Output goes
+  under `.formalising/loop-me-in/<slug>/` and is never overwritten; the command runs in the current
+  session with no subagent and never commits, edits project files or changes a recorded decision.
+  (#96)
+
+### Changed
+
+- `/fvs:crypto-execute` names the executor's run report path explicitly,
+  `.formalising/fv-plans/<topic>/IMPLEMENTATION_nN.md` next to `build.log` (where it already landed
+  in practice), checks it after the run and writes the returned report there itself when missing.
+  `/fvs:loop-me-in` reads it as the authoritative list of files an iteration touched. (#96)
+
 ## [2.3.11] - 2026-11-03
 
 ### Fixed
@@ -82,6 +109,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   coverage or interpolation metrics use explicit reviewed comparisons; helper limitations do not
   block valid refactoring or waive compilation/axiom safeguards. Unavailable counts are not guessed.
   Printed comparisons support review; they are not kernel identity proofs.
+
 
 ## [2.3.9] - 2026-10-27
 
