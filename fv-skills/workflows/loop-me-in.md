@@ -30,7 +30,9 @@ The optional value of `--commit` is only a Git ref or range; leave other words a
 
 Keep `<topic> nN` as an optional exact reference when the whole positional value is a valid topic
 slug followed by `nN` matching `^n[0-9]+$` and identifies an existing
-`.formalising/fv-plans/<topic>/reviews/EVAL_nN.md`.
+`.formalising/fv-plans/<topic>/reviews/EVAL_nN.md` or `PROSE_BASELINE_nN.md` under that same reviews
+directory, or `.formalising/fv-plans/<topic>/IMPLEMENTATION_nN.md`. Any of these identifies the
+iteration, including work not yet evaluated; its evaluation status is resolved separately below.
 Otherwise treat it as a description, even if its last word resembles an iteration number.
 Reject only a standalone `*.lean` path with a one-line message that offers `--commit` or
 `--working-tree`; a description may mention a Lean file.
@@ -61,21 +63,43 @@ evidence, use that screen to ask which work the user means. Never substitute an 
 A description always uses the correction screen, including when it resolves to an iteration.
 
 With no description or explicit source, the chunk is the last self-contained chunk of work.
-Collect the candidates and rank them:
+Collect iteration and Git candidates, then rank by recorded work activity, regardless of verdict:
 
 ```bash
 # fvs:loop-me-in-candidates
 # Output, one per line: kind<TAB>key<TAB>epoch<TAB>label
+# Iteration epochs describe activity, not acceptance; decision status is resolved after selection.
 LC_ALL=C
 export LC_ALL
 head_epoch=$(git log -1 --format=%ct 2>/dev/null || echo 0)
-for f in .formalising/fv-plans/*/reviews/EVAL_n*.md; do
-  [ -f "$f" ] || continue
-  grep -Eq '^\*\*Decision:\*\* *ACCEPT *$' -- "$f" || continue
-  topic=${f#.formalising/fv-plans/}; topic=${topic%%/*}
-  iter=${f##*/EVAL_}; iter=${iter%.md}
-  epoch=$(stat -f %m -- "$f" 2>/dev/null) || epoch=$(stat -c %Y -- "$f" 2>/dev/null) || epoch=0
-  printf 'iteration\t%s %s\t%s\tACCEPTed iteration %s of %s\n' "$topic" "$iter" "$epoch" "$iter" "$topic"
+for topic_root in .formalising/fv-plans/*; do
+  [ -d "$topic_root" ] || continue
+  topic=${topic_root#.formalising/fv-plans/}
+  reviews=$topic_root/reviews
+  for f in "$topic_root"/IMPLEMENTATION_n*.md "$reviews"/EVAL_n*.md "$reviews"/PROSE_BASELINE_n*.md; do
+    [ -f "$f" ] || continue
+    name=${f##*/}
+    iter=${name#IMPLEMENTATION_}; iter=${iter#EVAL_}; iter=${iter#PROSE_BASELINE_}; iter=${iter%.md}
+    case $iter in n[0-9]*) ;; *) continue ;; esac
+    case ${iter#n} in *[!0-9]*) continue ;; esac
+    # Emit each iteration once, even when implementation and multiple eval records exist.
+    if [ "$name" != "PROSE_BASELINE_$iter.md" ] && [ -f "$reviews/PROSE_BASELINE_$iter.md" ]; then
+      continue
+    fi
+    if [ "$name" = "IMPLEMENTATION_$iter.md" ] && [ -f "$reviews/EVAL_$iter.md" ]; then
+      continue
+    fi
+    epoch=0
+    for record in "$topic_root/IMPLEMENTATION_$iter.md" "$reviews/EVAL_$iter.md" \
+      "$reviews/PROSE_BASELINE_$iter.md" "$reviews/PROSE_CORRECTION_$iter.md" \
+      "$reviews/PROSE_RECHECK_$iter.md"; do
+      [ -f "$record" ] || continue
+      record_epoch=$(stat -f %m -- "$record" 2>/dev/null) || \
+        record_epoch=$(stat -c %Y -- "$record" 2>/dev/null) || record_epoch=0
+      if [ "$record_epoch" -gt "$epoch" ]; then epoch=$record_epoch; fi
+    done
+    printf 'iteration\t%s %s\t%s\titeration %s of %s\n' "$topic" "$iter" "$epoch" "$iter" "$topic"
+  done
 done
 if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
   printf 'working-tree\t-\t%s\tuncommitted changes (%s files)\n' "$(date +%s)" "$(git status --porcelain | wc -l | tr -d ' ')"
@@ -85,12 +109,26 @@ if [ "$head_epoch" != 0 ]; then
 fi
 ```
 
+An iteration's activity time is the newest mtime among its exact implementation, ordinary eval,
+prose baseline, correction and recheck records. Ignore filename suffixes and orphan correction or
+recheck records that have no implementation, EVAL or baseline identifying that iteration. Keep every
+discovered iteration eligible: `ACCEPT`, `FOLLOWUP`, `HUMAN_RULING`, `BLOCKED`, unevaluated work and
+stale/incomplete prose attempts all qualify. The verdict never affects eligibility or recency.
+
+After choosing the work, resolve its evaluation status in step 5 using `eval_result_resolution` in
+the trusted installed `~/.claude/fv-skills/workflows/protocol-prose.md` (the host adapter resolves
+the installed path). Apply only its read-only selection and evidence checks. Never create or update
+a correction record, rerun eval or start followup. Missing or stale evaluation evidence changes the
+status label, not the selected work; never substitute an older accepted iteration.
+
 Rank:
 
 1. The `<topic> nN` the crypto-eval offer passed (no question at all; the "yes" to the offer is the
    confirmation).
-2. The newest ACCEPTed iteration whose EVAL file is newer than HEAD's commit time. Because the loop
-   never commits, a dirty working tree is treated as that iteration's content, not as a rival.
+2. The most recently active iteration whose recorded activity is newer than HEAD's commit time,
+   regardless of verdict or whether it has been evaluated.
+   Because the loop never commits, a dirty working tree is treated as that iteration's content,
+   not as a rival.
 3. Otherwise a dirty working tree: the chunk is "uncommitted changes".
 4. Otherwise HEAD: the chunk is "last commit" (a `checkpoint(...)` commit is a natural fit).
 5. Nothing at all: stop with `FVS >> LOOP ME IN: nothing to walk through` and suggest
@@ -177,7 +215,18 @@ offer with `<topic> nN`, skip the screen: the user's "yes" to the offer is the a
 
 **Iteration chunk** (`<topic> nN`, root `.formalising/fv-plans/<topic>/`):
 
-- Read `reviews/EVAL_nN.md` and quote its single `**Decision:**` line verbatim; never upgrade it.
+- Resolve the authoritative eval using the shared `eval_result_resolution` rules from step 1.
+  If no evaluation or prose-attempt records exist, show "Not evaluated" and continue with the
+  implementation evidence.
+  With an ordinary evaluation and no prose-attempt records, use `reviews/EVAL_nN.md`.
+  After `--fix-prose`, inspect the linked
+  `PROSE_BASELINE_nN.md`, `PROSE_CORRECTION_nN.md` and `PROSE_RECHECK_nN.md` records: a valid
+  `not-applied` attempt uses the baseline; a completed, current, validated recheck uses the recheck.
+  Check the recorded status, finding dispositions, file hashes and linked plan/source/build evidence
+  as that shared rule requires. Quote the selected eval's single anchored `**Decision:**` line
+  verbatim and link to that exact record; never upgrade it. If the attempt is incomplete, stale or
+  cannot be validated, show "Acceptance unverified" and label any quoted earlier decisions as
+  historical evidence in the footer. Never fall back to an older ACCEPT or invent a new verdict.
 - Read `plans/EXEC_PLAN_nN.md` or `plans/FOLLOWUP_PLAN_nN.md`: field 2 (exact target files and
   theorems), field 3 (public statements that must not change), field 4 (old to new API map); and
   `plans/PLAN_nN.md`'s `## Reuse audit` for reused results and design decisions.
@@ -185,17 +234,23 @@ offer with `<topic> nN`, skip the screen: the user's "yes" to the offer is the a
   `Files written` list is authoritative); otherwise every file in `git diff --stat` and
   `git status --porcelain`. If the tree is clean and no `IMPLEMENTATION_nN.md` exists, ask for the
   commit or range that landed the iteration.
-- Read `build.log` for the final build status.
+  Include the exact prose-edit paths from an applied `PROSE_CORRECTION_nN.md` alongside the executor
+  record, identifying those edits separately. Missing or inconsistent correction details belong in
+  the footer rather than an inferred change list.
+- Read `build.log` for the executor's build status. After an applied prose correction, use the
+  linked correction/recheck build evidence for the corrected files' status; the earlier executor
+  build alone does not validate those edits.
 - "What changed" is stated at the level of the mathematics or the protocol, not the files: what
   was proved, defined, shown to hold, or strengthened, in the reader's terms ("the hybrid argument
   for step 2 is now proved", "the key-freshness invariant holds for every oracle call", "the
   definition of the simulator was changed to take the adversary's view"). Derive these statements
-  from the diff of the touched files, the plan's purpose (field 2, the reuse audit) and the EVAL's
-  findings; each statement names the declaration(s) that realise it with a `path:line` link, so the
-  reader can descend. A statement with no realising declaration in the diff is not a change; put it
+  from the diff of the touched files, the plan's purpose (field 2, the reuse audit) and the selected
+  eval's findings; each statement names the declaration(s) that realise it with a `path:line` link,
+  so the reader can descend. A statement with no realising declaration in the diff is not a change; put it
   in the footer instead. The per-file list of declarations added, changed and removed is kept as
   collapsed evidence under the statements, never as the main text. A file the record names but the
   diff does not touch, or a change outside the record, is one footer line.
+  Describe prose corrections as exposition changes, without claiming a new mathematical result.
 
 **Commit chunk** (`--commit`): `git show --stat` and `git show` of the ref or range; the commit
 subject and body are the only "plan"; section 1 says so.
@@ -227,6 +282,9 @@ match the writing and state that visual matching was unavailable.
 
 1. Header: chunk label, date, the quoted decision with a link to its record, the roadmap and
    audience used, and a short style summary (adopted traits, or the default style).
+   When no eval or prose-attempt records exist, show "Not evaluated". When evaluation evidence is
+   stale, incomplete or invalid, show "Acceptance unverified" instead of a final decision and move
+   historical decision links to the footer. Neither case prevents a walkthrough of the selected work.
 2. **What changed**: 2 to 5 high-level statements of what was proved, defined or shown to hold,
    each naming the declaration(s) that realise it with a `path:line` link; below them, a collapsed
    `<details>` with the per-file list of declarations added, changed and removed.
@@ -283,6 +341,8 @@ next command the roadmap or the records suggest, without starting it.
 <success_criteria>
 - [ ] Arguments validated as untrusted text; no `eval`; every expansion quoted
 - [ ] A description was matched to evidence without slug or iteration requirements; otherwise the chunk came from an exact iteration reference, explicit flag or ranked default; confirmed on one screen (skipped only for the crypto-eval offer)
+- [ ] The bare default ranks iteration activity regardless of verdict, including unevaluated work and stale/incomplete evaluations; evaluation status never excludes or replaces the selected work
+- [ ] Iteration candidates and quoted decisions follow the shared eval_result_resolution rules, including prose baseline/correction/recheck evidence; stale or incomplete attempts never reuse an older ACCEPT
 - [ ] Roadmap: union scan, repository fallback, ask on ambiguity, explicit "none found" section instead of a block
 - [ ] Audience and docs from config or flags, one question with an offer to save otherwise; never inferred from code
 - [ ] Local, web or internal style references were read and their chosen traits applied to prose and presentation; access gaps were resolved with the user; no private source text, names or links copied without an explicit request

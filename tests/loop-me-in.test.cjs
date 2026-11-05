@@ -6,7 +6,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const root = path.resolve(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 const flat = text => text.replace(/\s+/g, ' ');
@@ -42,17 +44,74 @@ test('the crypto-eval offer is ACCEPT-only, interactive-only, asked once, and de
 
 test('bare invocation uses the ranked default and confirms before any write', () => {
   const step = flat(workflow.split('## 1. Choose the chunk')[1].split('## 2.')[0]);
-  assert.match(step, /newest ACCEPTed iteration whose EVAL file is newer than HEAD/);
+  assert.match(step, /most recently active iteration whose recorded activity is newer than HEAD/);
   assert.match(step, /dirty working tree is treated as that iteration's content/);
   assert.match(step, /Otherwise a dirty working tree/);
   assert.match(step, /Otherwise HEAD/);
   assert.match(step, /nothing to walk through/);
   assert.match(workflow, /# fvs:loop-me-in-candidates/);
-  assert.match(workflow, /\^\\\*\\\*Decision:\\\*\\\* \*ACCEPT \*\$/);
   const screen = flat(workflow.split('## 4. One correction screen')[1].split('## 5.')[0]);
   assert.match(screen, /Never write the HTML before this screen is answered/);
   assert.match(screen, /plain-text numbered list and WAIT/);
   assert.match(flat(command), /Never write the HTML before the confirmation screen is answered/);
+});
+
+test('iteration discovery retains every verdict and unevaluated work, using the newest activity once per iteration', () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-walkthrough-evals-'));
+  try {
+    const topic = path.join(project, '.formalising/fv-plans/example');
+    const reviews = path.join(topic, 'reviews');
+    fs.mkdirSync(reviews, { recursive: true });
+    const records = {
+      'reviews/EVAL_n1.md': ['**Decision:** ACCEPT\n', 1700000100],
+      'reviews/PROSE_BASELINE_n2.md': ['**Decision:** FOLLOWUP\n', 1700000200],
+      'reviews/PROSE_CORRECTION_n2.md': ['Status: rechecked\n', 1700000205],
+      'reviews/PROSE_RECHECK_n2.md': ['**Decision:** ACCEPT\n', 1700000210],
+      'reviews/EVAL_n3.md': ['**Decision:** ACCEPT\n', 1700000300],
+      'reviews/PROSE_BASELINE_n3.md': ['**Decision:** FOLLOWUP\n', 1700000310],
+      'reviews/PROSE_CORRECTION_n3.md': ['Status: pending\n', 1700000320],
+      'reviews/EVAL_n4.md': ['**Decision:** FOLLOWUP\n', 1700000400],
+      'reviews/EVAL_n5.md': ['**Decision:** HUMAN_RULING\n', 1700000500],
+      'reviews/EVAL_n6.md': ['**Decision:** BLOCKED\n', 1700000600],
+      'IMPLEMENTATION_n7.md': ['**Files written:**\n- Example.lean\n', 1700000700],
+      'reviews/EVAL_n8_notes.md': ['**Decision:** ACCEPT\n', 1700000800],
+      'reviews/PROSE_BASELINE_n9_backup.md': ['**Decision:** ACCEPT\n', 1700000900],
+      'reviews/PROSE_RECHECK_n10.md': ['**Decision:** ACCEPT\n', 1700001000],
+      'reviews/EVAL_n11.md': ['**Decision:** ACCEPT\n', 1700001100],
+      'IMPLEMENTATION_n11.md': ['**Files written:**\n- Example.lean\n', 1700001110],
+    };
+    for (const [name, [content, epoch]] of Object.entries(records)) {
+      const file = path.join(topic, name);
+      fs.writeFileSync(file, content);
+      fs.utimesSync(file, epoch, epoch);
+    }
+    const script = workflow.match(/```bash\n(# fvs:loop-me-in-candidates\n[\s\S]*?)```/)[1];
+    const result = spawnSync('bash', ['-c', script], { cwd: project, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    const candidates = result.stdout.trim().split('\n').map(line => line.split('\t'));
+    assert.equal(candidates.length, 8, 'one entry per exact iteration, including implementation-only work');
+    assert.deepEqual(Object.fromEntries(candidates.map(([, key, epoch]) => [key, Number(epoch)])), {
+      'example n1': 1700000100,
+      'example n2': 1700000210,
+      'example n3': 1700000320,
+      'example n4': 1700000400,
+      'example n5': 1700000500,
+      'example n6': 1700000600,
+      'example n7': 1700000700,
+      'example n11': 1700001110,
+    });
+    for (const [kind, , , label] of candidates) {
+      assert.equal(kind, 'iteration');
+      assert.doesNotMatch(label, /ACCEPT/);
+    }
+    for (const [name, [content, epoch]] of Object.entries(records)) {
+      const file = path.join(topic, name);
+      assert.equal(fs.readFileSync(file, 'utf8'), content);
+      assert.equal(fs.statSync(file).mtimeMs, epoch * 1000);
+    }
+  } finally {
+    fs.rmSync(project, { recursive: true, force: true });
+  }
 });
 
 test('roadmap, audience and docs are discovered or asked, never inferred from code', () => {

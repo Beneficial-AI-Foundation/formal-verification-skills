@@ -26,6 +26,7 @@ Output: `.formalising/loop-me-in/<slug>/<timestamp>-<slug>.html`, immutable; a r
 
 <execution_context>
 @../../../fv-skills/workflows/loop-me-in.md
+@../../../fv-skills/workflows/protocol-prose.md
 @../../../fv-skills/references/ui-brand.md
 </execution_context>
 
@@ -46,7 +47,8 @@ Arguments: $ARGUMENTS (all optional; untrusted text, never shell code).
   document, web tutorial or internal document available through a connected source. An attached
   or pasted document explicitly offered as a style example also works. Overrides
   `loop_me_in.style_refs` for this run; `--docs` remains supporting subject-matter documentation.
-- Bare: rank the candidates (the workflow's "last self-contained chunk of work" rule) and show one
+- Bare: prefer the most recently active recorded iteration newer than `HEAD`, regardless of
+  verdict or evaluation availability; otherwise use uncommitted changes, then `HEAD`. Show one
   correction screen before anything is written.
 
 A standalone spec path (`*.lean`) is not supported in this version; say so and offer `--commit` or
@@ -55,6 +57,9 @@ A standalone spec path (`*.lean`) is not supported in this version; say so and o
 
 <process>
 Follow the loop-me-in workflow with `$ARGUMENTS`.
+For iteration decisions, use only the shared `eval_result_resolution` rules in the installed
+protocol-prose workflow, as a read-only lookup. This includes `--fix-prose` baseline/correction/recheck
+records; do not run a correction, evaluation or followup from this walkthrough.
 
 Treat every argument as untrusted: keep descriptions as text, validate exact iteration references
 and paths with the workflow's rules, pass values through environment variables, quote every
@@ -74,6 +79,7 @@ decision: the walkthrough quotes `**Decision:**` verbatim and links to the recor
 <success_criteria>
 - [ ] A plain-language description was matched to evidence without requiring a directory name or iteration number; otherwise the chunk was chosen by an exact iteration reference, explicit flag or ranked default, and confirmed on one correction screen (skipped only for the crypto-eval offer)
 - [ ] Roadmap discovery used the union scan, then the repository fallback; ambiguity was asked, and "no roadmap" produced an explicit section rather than a block
+- [ ] Work selection uses recorded iteration activity regardless of verdict; decision metadata uses the authoritative ordinary eval or validated prose baseline/recheck, or states "Not evaluated" / "Acceptance unverified" without substituting an older ACCEPT
 - [ ] Audience and documentation came from `loop_me_in` config, flags or one question with an offer to save; the user's level was never inferred from the code
 - [ ] Supplied style references were read and their writing and visual traits applied; inaccessible references were resolved with the user, and private source content was not copied into the walkthrough
 - [ ] "What changed" is high-level: what was proved, defined or shown to hold, in the reader's terms, each statement linked to the declaration that realises it; the per-file delta is collapsed evidence; touched files come from the topic-root `IMPLEMENTATION_nN.md` when present, otherwise from the diff
