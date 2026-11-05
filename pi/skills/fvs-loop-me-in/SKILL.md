@@ -47,6 +47,10 @@ Arguments: $ARGUMENTS (all optional; untrusted text, never shell code).
   document, web tutorial or internal document available through a connected source. An attached
   or pasted document explicitly offered as a style example also works. Overrides
   `loop_me_in.style_refs` for this run; `--docs` remains supporting subject-matter documentation.
+- `--editor <name|template>`: the editor that code links open (`vscode`, `cursor`, `zed`,
+  `jetbrains`, ... or a URL template with `{abs}`/`{line}`). Without it: `loop_me_in.editor`, then
+  detection from the terminal, `$VISUAL`/`$EDITOR`/`core.editor` and `PATH`, then VS Code as the
+  stated fallback. The choice and its source are shown on the correction screen.
 - Bare: prefer the most recently active recorded iteration newer than `HEAD`, regardless of
   verdict or evaluation availability; otherwise use uncommitted changes, then `HEAD`. Show one
   correction screen before anything is written.
@@ -85,6 +89,7 @@ decision: the walkthrough quotes `**Decision:**` verbatim and links to the recor
 - [ ] "What changed" is high-level: what was proved, defined or shown to hold, in the reader's terms, each statement linked to the declaration that realises it; the per-file delta is collapsed evidence; touched files come from the topic-root `IMPLEMENTATION_nN.md` when present, otherwise from the diff
 - [ ] "Where we are" quotes the matching milestone's `Status:` verbatim, names the next open milestone, and says when the step could not be placed
 - [ ] Every "how it was made" step carries a code excerpt of at most 15 lines with a relative `path:line` reference
+- [ ] Every link opens the file in the chosen editor at the line (editor URL scheme, no `file://` or bare relative hrefs); the editor came from the flag, config, detection or the stated VS Code fallback and is named in the header
 - [ ] The quiz has 4 to 6 multiple-choice questions, each with a collapsible answer that cites the code
 - [ ] Anything that could not be verified is listed in the footer rather than smoothed over
 - [ ] One self-contained HTML (inline CSS/JS, no remote assets) was written under `.formalising/loop-me-in/<slug>/` with a timestamped name; no existing file was overwritten

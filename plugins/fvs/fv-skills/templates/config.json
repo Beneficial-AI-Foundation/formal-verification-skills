@@ -58,6 +58,7 @@
   "loop_me_in": {
     "docs": [],
     "audience": null,
-    "style_refs": []
+    "style_refs": [],
+    "editor": null
   }
 }
