@@ -74,7 +74,7 @@ for f in .formalising/fv-plans/*/reviews/EVAL_n*.md; do
   grep -Eq '^\*\*Decision:\*\* *ACCEPT *$' -- "$f" || continue
   topic=${f#.formalising/fv-plans/}; topic=${topic%%/*}
   iter=${f##*/EVAL_}; iter=${iter%.md}
-  epoch=$(stat -f %m -- "$f" 2>/dev/null || stat -c %Y -- "$f" 2>/dev/null || echo 0)
+  epoch=$(stat -f %m -- "$f" 2>/dev/null) || epoch=$(stat -c %Y -- "$f" 2>/dev/null) || epoch=0
   printf 'iteration\t%s %s\t%s\tACCEPTed iteration %s of %s\n' "$topic" "$iter" "$epoch" "$iter" "$topic"
 done
 if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
