@@ -168,7 +168,14 @@ test('the HTML template is self-contained with the five parts and a static quiz'
   assert.match(template, /<details><summary>/);
   assert.match(template, /FVS >> LOOP ME IN/);
   const output = flat(workflow.split('## 7. Write the walkthrough')[1].split('## 8.')[0]);
-  assert.match(output, /at most 15 lines/);
+  assert.match(output, /statement-only excerpt of at most 8 lines/);
+  assert.match(output, /Proof scripts are not shown/);
+  const evidence = flat(workflow.split('## 5. Gather evidence')[1].split('## 6.')[0]);
+  assert.match(evidence, /An excerpt is a statement, never the proof body/);
+  assert.match(evidence, /up to and excluding `:=`/);
+  assert.match(evidence, /At most 8 lines; beyond that, link/);
+  assert.match(evidence, /at most 3 lines with a sentence saying why/);
+  assert.doesNotMatch(workflow, /15 lines/);
   assert.match(output, /4 to 6 multiple-choice questions/);
   assert.match(output, /never an absolute `file:\/\/` path or a remote permalink/);
   assert.match(output, /refusing to overwrite/);

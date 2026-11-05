@@ -11,7 +11,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - `/fvs:loop-me-in` writes a self-contained HTML walkthrough of the last self-contained chunk of
   work so you can catch up after an automated run: what was established, stated at the level of the
   mathematics or protocol rather than the files; where that step sits in the topic roadmap, with the
-  milestone status quoted verbatim; how it was made, with code excerpts; and a multiple-choice quiz
+  milestone status quoted verbatim; how it was made, as the argument in prose with links to the
+  declarations and statement-only excerpts, never proof scripts; and a multiple-choice quiz
   with collapsible answers that cite the code. It is offered once after an interactive
   `/fvs:crypto-eval` ACCEPT and can be run on demand with a plain-language description, an exact
   `<topic> nN`, `--commit` or `--working-tree`; a bare call ranks the most recently active work and
