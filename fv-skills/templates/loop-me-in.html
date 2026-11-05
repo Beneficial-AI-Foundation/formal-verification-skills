@@ -55,14 +55,6 @@
 
 <header id="header">
   <h1>{{CHUNK_LABEL}}</h1>
-  <dl class="meta">
-    <dt>Generated</dt><dd>{{DATE_UTC}}</dd>
-    <dt>Decision</dt><dd class="status">{{DECISION_VERBATIM}} <span class="ref">(<a href="{{RECORD_HREF}}">{{RECORD_PATH}}</a>)</span></dd>
-    <dt>Roadmap</dt><dd>{{ROADMAP_PATH_OR_NONE}}</dd>
-    <dt>Links</dt><dd>open in {{EDITOR_LABEL}} at the cited line</dd>
-    <dt>Audience</dt><dd>{{AUDIENCE}}</dd>
-    <dt>Style</dt><dd>{{STYLE_SUMMARY}}</dd>
-  </dl>
 </header>
 
 <section id="what-changed">
@@ -133,6 +125,17 @@
 <footer id="unverified">
   <h2>Unverified / not found</h2>
   <ul>{{UNVERIFIED_ITEMS}}</ul>
+  <details id="provenance">
+    <summary>Provenance</summary>
+    <dl class="meta">
+      <dt>Generated</dt><dd>{{DATE_UTC}}</dd>
+      <dt>Decision</dt><dd class="status">{{DECISION_VERBATIM}} <span class="ref">(<a href="{{RECORD_HREF}}">{{RECORD_PATH}}</a>)</span></dd>
+      <dt>Roadmap</dt><dd>{{ROADMAP_PATH_OR_NONE}}</dd>
+      <dt>Links</dt><dd>open in {{EDITOR_LABEL}} at the cited line</dd>
+      <dt>Audience</dt><dd>{{AUDIENCE}}</dd>
+      <dt>Style</dt><dd>{{STYLE_SUMMARY}}</dd>
+    </dl>
+  </details>
 </footer>
 
 <script>

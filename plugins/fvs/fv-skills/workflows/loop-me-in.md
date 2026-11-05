@@ -368,11 +368,14 @@ code evidence, truthful status text, accessible quiz behavior, and light/dark su
 audience still governs background explanations and technical vocabulary. If only text was available,
 match the writing and state that visual matching was unavailable.
 
-1. Header: chunk label, date, the quoted decision with a link to its record, the roadmap and
-   audience used, and a short style summary (adopted traits, or the default style).
-   When no eval or prose-attempt records exist, show "Not evaluated". When evaluation evidence is
-   stale, incomplete or invalid, show "Acceptance unverified" instead of a final decision and move
-   historical decision links to the footer. Neither case prevents a walkthrough of the selected work.
+1. Header: the chunk label only. The page starts with the content; everything about how the
+   page was made (date, the quoted decision with a link to its record, the roadmap and audience
+   used, the editor the links target, a short style summary of adopted traits or the default
+   style) goes into the collapsed **Provenance** block of the footer.
+   When no eval or prose-attempt records exist, the decision reads "Not evaluated". When
+   evaluation evidence is stale, incomplete or invalid, it reads "Acceptance unverified" instead
+   of a final decision, and historical decision links are listed as unverified. Neither case
+   prevents a walkthrough of the selected work.
 2. **What changed**: 2 to 5 high-level statements of what was proved, defined or shown to hold,
    each naming the declaration(s) that realise it with a `path:line` link; below them, a collapsed
    `<details>` with the per-file list of declarations added, changed and removed.
@@ -385,12 +388,14 @@ match the writing and state that visual matching was unavailable.
    immediate right/wrong highlighting; a `<details>` block under each question holds the long-form
    answer and the code citation that justifies it.
 6. Footer **Unverified / not found**: everything the walkthrough could not confirm, truncated
-   inputs, a missing roadmap or `IMPLEMENTATION_nN.md`.
+   inputs, a missing roadmap or `IMPLEMENTATION_nN.md`; then the collapsed **Provenance** block
+   from item 1.
 
 Length: about a ten-minute read. The audience governs vocabulary and how much background to explain,
 not the size. Links: visible text is always the repository-relative `path:line`; `href` is the
 editor URL from step 3's table for the chosen editor, built from `ABS_ROOT`, the path and the line,
-so a click opens the file in the editor at that line. The header names the editor the links target.
+so a click opens the file in the editor at that line. The footer's Provenance block names the
+editor the links target.
 The href is never an absolute `file://` path or a remote permalink and never a bare relative path:
 a browser may not open files under protected folders and shows Lean as plain text anyway. The
 inline excerpt remains the view that needs no click. The file is self-contained: inline CSS and JS,
@@ -446,7 +451,7 @@ next command the roadmap or the records suggest, without starting it.
 - [ ] What changed is stated at the level of the mathematics or protocol (what was proved, defined, shown to hold), each statement linked to its realising declaration; the per-file delta is collapsed evidence; touched files come from the topic-root `IMPLEMENTATION_nN.md` when present, else the diff
 - [ ] Roadmap position quotes the milestone status verbatim and names the next open milestone; the roadmap is never edited
 - [ ] Every how-step explains the idea in prose and links its declaration with a relative `path:line`; any excerpt is short and a statement, never the proof body, showing only what the reader needs to follow (a proof fragment only when the proof idea is the point, with the reason stated)
-- [ ] Every href is the chosen editor's URL opening the file at the line; the editor came from the flag, config, detection or the stated VS Code fallback, was shown on the screen and is named in the header; a custom template was validated and substituted as text
+- [ ] Every href is the chosen editor's URL opening the file at the line; the editor came from the flag, config, detection or the stated VS Code fallback, was shown on the screen and is named in the footer's Provenance block; a custom template was validated and substituted as text
 - [ ] Quiz: 4 to 6 questions, clickable options, collapsible cited answers
 - [ ] Footer lists every unverified or missing input
 - [ ] Self-contained HTML under `.formalising/loop-me-in/<slug>/` with a timestamped name; nothing overwritten; no commit, project edit or decision upgrade
