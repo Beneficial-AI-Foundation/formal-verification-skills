@@ -135,7 +135,7 @@ unresolved choices fail before dispatch with exact remediation.
 Run the installed, read-only discovery helper from the target repository root:
 
 ```bash
-STYLE_INFO=$(node ../../../scripts/fvs-lean-style-check.mjs discover \
+STYLE_INFO=$(node "../../../scripts/fvs-lean-style-check.mjs" discover \
   --root . --config .formalising/fvs-config.json)
 ```
 
@@ -294,7 +294,7 @@ Wait for `## EXECUTION COMPLETE`. If `## ERROR`, display the error and stop.
 Before structural validation or a build, check the actual generated file:
 
 ```bash
-node ../../../scripts/fvs-lean-style-check.mjs check "$SPEC_OUTPUT_PATH" \
+node "../../../scripts/fvs-lean-style-check.mjs" check "$SPEC_OUTPUT_PATH" \
   --root . --config .formalising/fvs-config.json
 ```
 
@@ -310,6 +310,14 @@ or add a semantics-preserving local name/abbreviation. The user approves the dif
 Run at most two repair passes. Re-run the checker after each pass. If it still fails, STOP and
 report the diagnostics; never label the spec ready and never rely on the user to find the remaining
 violations manually.
+
+**Fresh child per pass:** every pass or round of this loop that delegates work dispatches a new
+child of the role named here, with the current inputs and the confirmed settings; the parent never
+performs that role's work itself. Wait for the child's terminal result through the runtime's normal
+wait or notification; a spawn acknowledgement or progress message is not a result. If the dispatch
+fails, the child cannot be confirmed, or it ends in a terminal error, stop and report the affected
+pass. Valid results such as a failed build, NOVEL, REJECT, REVISE or FOLLOWUP still route as this
+step describes, and parent-owned baseline, build, revert and report steps stay with the parent.
 
 ## Step 9: Validate Spec Structure
 
@@ -364,7 +372,7 @@ setting. The helper defaults to true when the config file or key is missing; it 
 migrates config. A malformed setting is an error, not an implicit opt-out:
 
 ```bash
-AUTOMATIC_REVIEW=$(node ../../../scripts/fvs-spec-review.mjs automatic) || exit 1
+AUTOMATIC_REVIEW=$(node "../../../scripts/fvs-spec-review.mjs" automatic) || exit 1
 ```
 
 If `true`, read and follow `../../../fv-skills/workflows/lean-spec-review.md` with the generated

@@ -65,7 +65,7 @@ anything.
 ```bash
 # fvs:probe-mode
 PROJECT_ROOT=$(cd "${PROJECT_ROOT:-$PWD}" && pwd -P) || exit 1
-INVENTORY_SCRIPT=../../../scripts/fvs-probe-inventory.mjs
+INVENTORY_SCRIPT="../../../scripts/fvs-probe-inventory.mjs"
 PROBE_STATUS=$(node "$INVENTORY_SCRIPT" resolve --project-root "$PROJECT_ROOT" --format status) || exit 1
 node "$INVENTORY_SCRIPT" resolve --project-root "$PROJECT_ROOT" --format text
 FVS_MODE=

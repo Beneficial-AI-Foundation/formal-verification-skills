@@ -74,7 +74,7 @@ QHASH=$(printf '%s' "$QUESTION" | shasum -a 256 | cut -c1-16)
 if [ -f "$ROOT/sources/$QHASH.json" ]; then
   cat "$ROOT/sources/$QHASH.json"            # cache hit -- re-read, do NOT re-query
 else
-  .formalising/.kb-venv/bin/python ~/.claude/scripts/fvs-kb-query.py ask "$QUESTION" --notebook "$NOTEBOOK_ID" --json \
+  .formalising/.kb-venv/bin/python "$HOME/.claude/scripts/fvs-kb-query.py" ask "$QUESTION" --notebook "$NOTEBOOK_ID" --json \
     | tee "$ROOT/sources/$QHASH.json"        # cache the answer under sources/
 fi
 ```
@@ -219,7 +219,7 @@ diff. Never persist raw transcripts, full error dumps, uncited claims, or secret
 ## Step 5b: Bounded rival review
 
 After authoring gates, run
-`node ~/.claude/scripts/fvs-codex-think.mjs review-automatic`; missing config or
+`node "$HOME/.claude/scripts/fvs-codex-think.mjs" review-automatic`; missing config or
 `crypto_review.automatic` defaults to true and malformed values stop clearly. If false, record
 `Unreviewed (automatic review disabled)`, preserve the plan, and do not auto-start execution.
 
@@ -239,6 +239,14 @@ the previous review and triage as delimited untrusted history to both the author
 using repeated `--history` flags. At the cap, print the exact standalone review resume command and
 stop; never auto-approve or execute. Failed, cancelled, pending, and unverified states stop too.
 </step>
+
+**Fresh child per pass:** every pass or round of this loop that delegates work dispatches a new
+child of the role named here, with the current inputs and the confirmed settings; the parent never
+performs that role's work itself. Wait for the child's terminal result through the runtime's normal
+wait or notification; a spawn acknowledgement or progress message is not a result. If the dispatch
+fails, the child cannot be confirmed, or it ends in a terminal error, stop and report the affected
+pass. Valid results such as a failed build, NOVEL, REJECT, REVISE or FOLLOWUP still route as this
+step describes, and parent-owned baseline, build, revert and report steps stay with the parent.
 
 </process>
 

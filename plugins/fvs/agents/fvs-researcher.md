@@ -92,37 +92,37 @@ not produce readiness, blocked sets, dependency layers, or a fixed verification 
 
 <mode name="lean-refactor">
 **Dispatched by:** /fvs:lean-refactor
-**Goal:** Gather context for refactoring a verified proof using 3-lens analysis.
+**Goal:** Evidence for net LoC reduction and readable proof reuse within the agreed scope.
 
-The 3-lens analysis pattern:
+Read the agreement/read scope, current source and the parent's question. A small cleanup needs
+lightweight research. Substantial cross-file work may use two fresh scouts with distinct questions:
+reuse/dependency evidence, and the broader-versus-narrow scope/net-cost comparison.
+Use parent-supplied printed views and available LSP feedback. Do not run Lake, Lean or compiler-backed
+scripts in the shared workspace. Request further compiler queries from the parent for serial
+execution. If the feedback path may launch builds, use the parent's conservative serial plan.
+For metric/printed-view limitations identify the exact gap and an existing project check or explicit
+review route. A helper limitation alone is not evidence that valid Lean cannot be refactored.
+Use the parent's resolved effective project pin/override, installed executables and capability plan.
+Check reuse/tactic/linter claims against that context; a4.31 example is not universal support.
+Report missing capability separately from proof errors; do not install or change pins.
 
-**Lens 1 -- Reuse:** Find similar proofs in the project. Identify shared tactic patterns, common helper lemmas, and idioms that could be factored or standardized.
+1. Identify complete proofs, existing helper/results and actual declaration types/assumptions.
+2. In an Aeneas project, locate the actual generated implementation through the supplied project
+   evidence and inspect it; `Funs.lean` is a convention, not a required filename. Otherwise use the
+   file's own definitions and imports.
+3. Search current project/pinned libraries for reusable results and duplicated reasoning.
+4. Compare existing-result reuse, helper extraction, proof strategy and local cleanup by evidence.
+5. For a materially better cross-file option, name affected files and the shared abstraction/API;
+   estimate removed lines, added helper/import/compatibility cost and net benefit. Give the basis,
+   uncertainty and narrow alternative. Scope/public-API/protected changes need approval before edits.
+6. Suggest dependency order and disjoint ownership for at most five independent workers per batch;
+   identify direct/transitive import relations and planned new-module imports. Those units are
+   dependent even with disjoint files; run them serially rather than call them independent.
 
-**Lens 2 -- Proof Quality:** Analyze the target proof for:
-- Dead hypotheses (have bindings never referenced downstream)
-- Redundant simp calls (consecutive simp that could merge)
-- Overpowered tactics (grind where agrind/ring suffice, or vice versa)
-- Inconsistent style (mixed simp [*] and simp only [...] patterns)
-- Tactic lines that can be collapsed (simp [*]; scalar_tac where scalar_tac alone works)
-
-**Lens 3 -- Efficiency/Stability:** Assess:
-- Elaboration time concerns (native_decide on large terms, deep simp chains)
-- Fragility indicators (simp [*] that depend on ambient simp lemmas)
-- Version sensitivity (tactics likely to break on Lean/Mathlib updates)
-
-Steps:
-1. Read the target spec file and identify all theorem proofs (not sorry -- these should be complete)
-2. Read the corresponding function body from Funs.lean for structural context
-3. Search for similar proved theorems in the project to identify reuse patterns
-4. For each theorem proof, apply the 3-lens analysis
-5. Return structured findings with per-theorem simplification recommendations
-6. Classify each recommendation by tier (1-4) from lean-refactoring.md
-
-Return structured findings with:
-- Per-theorem analysis (current line count, identified issues per lens)
-- Recommended simplifications ordered by tier (safest first)
-- Shared patterns across theorems that could be standardized
-- Estimated impact (lines saved, fragility reduction)
+Return concrete source locations/types, candidate reuse/deduplication, estimates with uncertainty,
+measurement needs, remaining out-of-scope opportunities and any approval proposal. Never invent a
+reduction percentage, elapsed time, or claim that a tactic/helper decomposition is always faster.
+The existing project roles/confirmed stage settings govern; do not select substitute models.
 </mode>
 
 <mode name="formalise">
@@ -135,7 +135,7 @@ Return structured findings with:
    - Markdown/Text: read directly
    - LaTeX: read as text, focus on \begin{definition}, \begin{theorem}, \begin{lemma} environments
 2. If KB config provided and domain matches task:
-   - Query KB via Bash: `.formalising/.kb-venv/bin/python ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-kb-query.py ask "<question>" --notebook <id> --json`
+   - Query KB via Bash: `.formalising/.kb-venv/bin/python "${CLAUDE_PLUGIN_ROOT}/scripts/fvs-kb-query.py" ask "<question>" --notebook <id> --json`
    - Parse JSON response, incorporate answer and references into findings
    - If KB query fails (auth expired, not installed): report gracefully and continue without KB
    - If KB domain does not match task description: skip KB entirely (log "KB skipped: domain mismatch")
@@ -169,7 +169,10 @@ Return structured findings with:
 Handle missing files without failing:
 
 - **CODEMAP.md not found:** Report "CODEMAP.md does not exist at .formalising/CODEMAP.md. Recommend running `/fvs:map-code` first." Continue gathering what context is available.
-- **Funs.lean not found:** Report the searched paths. This is a critical missing file -- include in findings as a blocker.
+- **Funs.lean not found:** Report the searched paths. Modes that require that source retain the
+  missing-context blocker. In lean-refactor mode, locate the actual generated implementation from
+  project evidence instead. Another generated filename, or an ordinary Lean project without Aeneas,
+  is not a blocker; an unavailable implementation needed by the agreed task remains a blocker.
 - **No stubs directory:** Report ".formalising/stubs/ directory not found." This is non-blocking -- stubs are optional context.
 - **No Specs/ directory:** Report "No existing specs found." This is expected for new projects.
 - **No Rust source:** Report "Rust source not provided or not found." Continue with Lean-only analysis.

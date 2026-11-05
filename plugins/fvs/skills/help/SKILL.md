@@ -45,6 +45,8 @@ Execute mode fallback:
 ## C. Task() -> spawn_agent Mapping
 FVS workflows use `Task(...)` (Claude Code syntax). Translate to Codex collaboration tools:
 
+**Delegation authorization:** Invoking this skill is the user's explicit request for the sub-agent delegation this workflow specifies. Each `Task(...)` dispatch in the workflow body, including every pass of a loop, is a skill instruction to spawn a sub-agent with `spawn_agent` when the workflow reaches that step; do not wait for the user to ask for sub-agents again, and do not perform a delegated role inline in this session. If `spawn_agent` is not visible, discover it with `tool_search` first. If sub-agents remain unavailable or disabled, stop before that dispatch, tell the user why, and offer only the workflow's documented alternatives (such as a documented `--codex` runner).
+
 **Schema detection (required first step):** Inspect the visible `spawn_agent` schema. It may have `agent_type` or be generic (no `agent_type`); inspect `model` and `reasoning_effort` fields independently rather than assuming either exists. An available `agent_type` field does not establish that a particular FVS role is registered.
 
 Before spawning, inspect the `spawn_agent` tool's visible parameter schema to determine which form is active.
@@ -53,6 +55,7 @@ Before spawning, inspect the `spawn_agent` tool's visible parameter schema to de
 
 Selection-capability gate (before manifest confirmation, child dispatch, or artifact writes):
 - Check required specialist identity and sandbox against the exact registered role and effective child settings. A generic role preamble cannot meet a mandatory typed identity or sandbox requirement; stop and explain the unavailable guarantee before dispatch or artifact writes.
+- On Codex a registered role does not set the child's sandbox: Codex applies a role's model, effort and instructions, never its `sandbox_mode`, so the child runs in the parent session's sandbox. Report that sandbox as the child's, never the role file's value, and never call a child read-only when the parent session can write.
 - If `model` is exposed for this child, pass the requested model. Otherwise compare it with the exact active/inherited Codex model; a different or unconfirmed model is unresolved. Rebuild the manifest around confirmed settings and ask explicitly, choose a capable external runner, or fail before dispatch in noninteractive mode.
 - If `reasoning_effort` is exposed for this child, pass the requested effort. Otherwise compare it with the confirmed effective installed/runtime default; a different or unconfirmed effort is unresolved and follows the same rebuild/ask-or-fail rule.
 - Model and effort are separate values: pass an exact catalog model id and an effort that model lists. A registered role that pins `model` or `reasoning_effort` (its role description says the setting is locked, or its TOML sets it) overrides the per-call value, so the pinned value is the effective one; if it differs from the confirmed selection it is unresolved.
@@ -62,7 +65,6 @@ Typed mapping (only when the exact requested FVS role is registered AND agent_ty
 - `Task(subagent_type="X", prompt="Y")` -> `spawn_agent(agent_type="X", message="Y")`
 - `Task(model="...")` -> pass `model` if available for this child; otherwise omit only after the selection-capability gate proves it equals the active/inherited model.
 - `Task(reasoning_effort="...")` -> pass `reasoning_effort` if available for this child and the role does not pin it; otherwise omit only after the gate proves the effective (pinned or default) effort equals the confirmed effort.
-- `fork_context: false` by default -- FVS agents load their own context via `<files_to_read>` blocks.
 
 Generic-agent workaround (missing exact registered role OR no agent_type field):
 If the requested FVS type (`fvs-researcher`, `fvs-executor`, etc.) is not registered, typed dispatch is NOT possible even with an `agent_type` field. If the field is absent, typed dispatch is also unavailable. Fallback:
@@ -70,6 +72,8 @@ If the requested FVS type (`fvs-researcher`, `fvs-executor`, etc.) is not regist
 2. Only when the settings gate permits generic execution, spawn a generic/default child with those instructions as a role preamble before the task prompt. Do not pass an unregistered `agent_type`.
 3. Label output "generic-agent workaround". This is NOT equivalent to a registered specialist: the preamble does not assure typed identity, sandbox, model, or reasoning effort.
 4. If required guarantees cannot be honored, stop before dispatch or artifact writes; explain which guarantee is missing. Typed FVS roles currently require the direct Codex installation, a separate complete FVS install: point the user to "Codex specialist roles" in the FVS README and never suggest keeping both channels. Even after switching, confirm exact registration and settings in the runtime.
+
+**Fresh context (typed and generic dispatch):** FVS children start without the parent conversation; put every input the child needs in its message (FVS workflow prompts already inline them). If the schema exposes `fork_turns`, pass `fork_turns: "none"` (omitting it or passing `"all"` forks the full history, which also refuses `model` and `reasoning_effort` overrides); if it exposes only `fork_context`, pass `fork_context: false`. If neither is exposed, fresh context is unconfirmed: say so before dispatch, and stop where the workflow requires a fresh child.
 
 Parallel fan-out:
 - Spawn multiple agents -> collect agent IDs -> call `wait_agent(timeout_ms=...)` (or the runtime's visible wait equivalent) until each completes
@@ -112,7 +116,7 @@ Commands are grouped into five bundles. Each bundle has a router command (e.g. `
 4. `/fvs:fc-plan` - Select verification targets
 5. `/fvs:lean-specify <function>` - Generate spec with sorry, then choose an adversarial reviewer
 6. `/fvs:lean-verify <spec_path>` - Prove autonomously, then cheat-audit
-7. `/fvs:lean-refactor <spec_path>` - Golf and clean up verified proofs
+7. `/fvs:lean-refactor <lean_file_path>` - Reduce proof code through agreed-scope reuse and shared lemmas
 8. `/fvs:trust-audit <target>` - Audit the sorry/axiom trust surface
 
 **From a paper — paper track:**
@@ -279,18 +283,25 @@ Generate detailed natural-language explanation of a function.
 
 Usage: `/fvs:natural-language scalar_mul`
 
-**`/fvs:lean-refactor <spec_file_path>`** (also in Formalise)
-Refactor, simplify, and decompose verified Lean proofs while preserving compilation.
+**`/fvs:lean-refactor <lean_file_path>`** (also in Formalise)
+Reduce net Lean LoC across an agreed file/module/project scope through reuse, shared lemmas and
+maintainable proofs. Count new helpers/wiring and preserve useful prose.
 
-- Requires fully verified spec (zero sorry) -- run `/fvs:lean-verify` first
-- Three modes: safe (zero-risk cleanup), balanced (default), aggressive (smart automation)
-- Applies tiered heuristics: dead code removal, simp sharpening, tactic golf, automation replacement
-- Verifies compilation after every change
-- Optional --report-only flag for analysis without modification
+- Proposes protected statements/core definitions/public interfaces and editable scope before edits
+- Reuses a matching approved Contract when available; a recall view is not enforcement
+- Shows concrete broader-scope benefit/cost and asks before expanding or adding public API
+- Keeps legacy flags; warns once when an explicit legacy mode maps to a search hint; the default needs no compatibility prompt
+- Resolves the actual installed project toolchain/overrides and checks capabilities; never upgrades a pin
+- Parent runs serial file/project gates, printed type/definition/axiom comparisons and comparable timings
+- Net code LoC excludes comment deletion/format packing; helper/wiring costs remain visible
+- Unavailable printed coverage or metric syntax uses an explicit reviewed comparison; builds and axiom checks remain required
+- Holds material performance/net-cost trade-offs for the owner; stops when worthwhile work ends
+- `--report-only` reports proposals without changing proof sources
 
 Usage: `/fvs:lean-refactor Specs/Backend/Field/Sub.lean`
 Usage: `/fvs:lean-refactor Specs/Backend/Field/Sub.lean --mode aggressive --max-passes 10`
 Usage: `/fvs:lean-refactor Specs/Backend/Field/Sub.lean --theorem sub_spec --report-only`
+Usage: `/fvs:lean-refactor MyProject/Algebra/Lemmas.lean --mode safe`
 
 **`/fvs:trust-audit <target spec file | module subtree>`**
 Build-backed trust audit of an Aeneas-extracted Lean target.
@@ -329,8 +340,8 @@ Formalise mathematical paper content into Lean 4 specifications (paper track).
 Usage: `/fvs:lean-formalise`
 Result: Lean definition and spec files with sorry placeholders
 
-**`/fvs:lean-refactor <spec_file_path>`** (also in Formal-Core)
-Refactor, simplify, and decompose verified Lean proofs while preserving compilation. See the Formal-Core bundle above for full details.
+**`/fvs:lean-refactor <lean_file_path>`** (also in Formal-Core)
+Reduce verified proof code within an agreed scope. See the Formalise entry above for the contract, measurement and legacy-flag policy.
 
 Usage: `/fvs:lean-refactor Specs/Backend/Field/Sub.lean`
 

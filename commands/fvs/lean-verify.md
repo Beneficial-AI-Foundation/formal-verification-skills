@@ -154,7 +154,7 @@ DEADLINE_EPOCH=$((START_EPOCH + BUDGET_SECONDS))
 Run the installed discovery helper from the target repository root:
 
 ```bash
-STYLE_INFO=$(node ~/.claude/scripts/fvs-lean-style-check.mjs discover \
+STYLE_INFO=$(node "$HOME/.claude/scripts/fvs-lean-style-check.mjs" discover \
   --root . --config .formalising/fvs-config.json)
 ```
 
@@ -177,7 +177,7 @@ AUDIT_DIR=$(mktemp -d "${TMPDIR:-/tmp}/fvs-lean-verify-audit.XXXXXX")
 find . -name .lake -prune -o \( -name '*.lean' -o -name 'lakefile.toml' \) -type f \
   -exec cksum {} + | LC_ALL=C sort > "$AUDIT_DIR/tree-before.txt"
 
-BASELINE_STYLE_DIAGNOSTICS=$(node ~/.claude/scripts/fvs-lean-style-check.mjs \
+BASELINE_STYLE_DIAGNOSTICS=$(node "$HOME/.claude/scripts/fvs-lean-style-check.mjs" \
   check "$SPEC_PATH" --root . --config .formalising/fvs-config.json 2>&1)
 BASELINE_STYLE_STATUS=$?
 ```
@@ -297,6 +297,14 @@ Parse the returned research findings to get:
 
 ## Step 7: Autonomous Proof Loop
 
+**Fresh child per pass:** every pass or round of this loop that delegates work dispatches a new
+child of the role named here, with the current inputs and the confirmed settings; the parent never
+performs that role's work itself. Wait for the child's terminal result through the runtime's normal
+wait or notification; a spawn acknowledgement or progress message is not a result. If the dispatch
+fails, the child cannot be confirmed, or it ends in a terminal error, stop and report the affected
+pass. Valid results such as a failed build, NOVEL, REJECT, REVISE or FOLLOWUP still route as this
+step describes, and parent-owned baseline, build, revert and report steps stay with the parent.
+
 ```
 PREVIOUS_FEEDBACK=""
 
@@ -367,7 +375,7 @@ block using the shared candidate contract, or `none`."
   If ## EXECUTION COMPLETE, apply these gates in order:
     1. Run the baseline-aware mechanical style gate:
 
-         node ~/.claude/scripts/fvs-lean-style-check.mjs check "$SPEC_PATH" \
+         node "$HOME/.claude/scripts/fvs-lean-style-check.mjs" check "$SPEC_PATH" \
            --root . --config .formalising/fvs-config.json --baseline "$STYLE_BASELINE"
 
        For a user-authorized statement edit, run the same check WITHOUT `--baseline`; the complete

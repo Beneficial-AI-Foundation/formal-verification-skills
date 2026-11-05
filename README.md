@@ -253,5 +253,15 @@ architecture follows [GSD Core](https://github.com/open-gsd/gsd-core). We also u
 [probe-aeneas](https://github.com/Beneficial-AI-Foundation/probe-aeneas) and recommend
 [lean-lsp-mcp](https://github.com/oOo0oOo/lean-lsp-mcp). The Lake reference credits its source talk.
 [Jin Xing Lim](https://github.com/jinxinglim) proposed independent crypto-plan review and its reviewer prompt.
+The ordinary-Lean entry point, compiled-proof prerequisite, reuse/strategy focus and helper-locality
+defaults draw on `/lean4:refactor`; sequence-packing hints draw on `/lean4:golf`, from
+[lean4-skills](https://github.com/cameronfreer/lean4-skills) by Cameron Freer and the Lean 4 Theorem
+Proving Skill Contributors (MIT, pinned commit
+[`83582df9d9172456993929f32ac4dd9d99c6211c`](https://github.com/cameronfreer/lean4-skills/tree/83582df9d9172456993929f32ac4dd9d99c6211c)).
+FVS newly writes the guidance rather than copying upstream text or code. Its refactor workflow
+first agrees protected meaning and editable scope, then measures net LoC including helpers and
+actual build/elaboration cost. Parent-only serial gates compare a pre-edit printed boundary; the comparison is not a kernel identity proof.
+Unsupported printed coverage or metric syntax uses an explicit reviewed comparison, with compilation
+and axiom checks retained. Broader scope or public-API changes need an explicit proposal.
 
 MIT. See [LICENSE](LICENSE).

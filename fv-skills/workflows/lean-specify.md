@@ -100,7 +100,7 @@ manifest before dispatch. Never infer tiers from agent names.
 Discover the target repository's style guide before either subagent runs:
 
 ```bash
-node ~/.claude/scripts/fvs-lean-style-check.mjs discover \
+node "$HOME/.claude/scripts/fvs-lean-style-check.mjs" discover \
   --root . --config .formalising/fvs-config.json
 ```
 
@@ -214,13 +214,21 @@ Validate the generated spec meets structural requirements.
 First run the mandatory mechanical gate:
 
 ```bash
-node ~/.claude/scripts/fvs-lean-style-check.mjs check "$SPEC_OUTPUT_PATH" \
+node "$HOME/.claude/scripts/fvs-lean-style-check.mjs" check "$SPEC_OUTPUT_PATH" \
   --root . --config .formalising/fvs-config.json
 ```
 
 On failure, give the exact diagnostics and complete guide to the executor for at most
 two style-only repair passes. Preserve theorem meaning, preconditions, postconditions,
 and `sorry`. If the gate still fails, stop without reporting the spec ready.
+
+**Fresh child per pass:** every pass or round of this loop that delegates work dispatches a new
+child of the role named here, with the current inputs and the confirmed settings; the parent never
+performs that role's work itself. Wait for the child's terminal result through the runtime's normal
+wait or notification; a spawn acknowledgement or progress message is not a result. If the dispatch
+fails, the child cannot be confirmed, or it ends in a terminal error, stop and report the affected
+pass. Valid results such as a failed build, NOVEL, REJECT, REVISE or FOLLOWUP still route as this
+step describes, and parent-owned baseline, build, revert and report steps stay with the parent.
 
 **Checklist:**
 - [ ] File exists at expected path
@@ -250,7 +258,7 @@ store unchanged.
 **Adversarial review:** after the generation checks succeed, resolve the optional setting:
 
 ```bash
-AUTOMATIC_REVIEW=$(node ~/.claude/scripts/fvs-spec-review.mjs automatic) || exit 1
+AUTOMATIC_REVIEW=$(node "$HOME/.claude/scripts/fvs-spec-review.mjs" automatic) || exit 1
 ```
 
 Missing config or `spec_review.automatic` means true; malformed config stops with an error.

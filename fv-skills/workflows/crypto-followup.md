@@ -187,7 +187,7 @@ the index in the same reviewable diff. Unruled choices remain `provisional`.
 ## Step 4b: Bounded rival review
 
 After authoring gates, run
-`node ~/.claude/scripts/fvs-codex-think.mjs review-automatic`; missing config or
+`node "$HOME/.claude/scripts/fvs-codex-think.mjs" review-automatic`; missing config or
 `crypto_review.automatic` defaults to true and malformed values stop clearly. If false, record
 `Unreviewed (automatic review disabled)`, preserve the follow-up, and do not auto-start execution.
 
@@ -207,6 +207,14 @@ the prior review and triage as delimited untrusted history to the author and via
 `--history` flags to the reviewer. At the cap print the exact standalone resume command and stop;
 failed, cancelled, pending, and unverified states never start execution.
 </step>
+
+**Fresh child per pass:** every pass or round of this loop that delegates work dispatches a new
+child of the role named here, with the current inputs and the confirmed settings; the parent never
+performs that role's work itself. Wait for the child's terminal result through the runtime's normal
+wait or notification; a spawn acknowledgement or progress message is not a result. If the dispatch
+fails, the child cannot be confirmed, or it ends in a terminal error, stop and report the affected
+pass. Valid results such as a failed build, NOVEL, REJECT, REVISE or FOLLOWUP still route as this
+step describes, and parent-owned baseline, build, revert and report steps stay with the parent.
 
 </process>
 

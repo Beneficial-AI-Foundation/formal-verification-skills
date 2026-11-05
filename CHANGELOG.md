@@ -33,6 +33,83 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   in practice), checks it after the run and writes the returned report there itself when missing.
   `/fvs:loop-me-in` reads it as the authoritative list of files an iteration touched. (#96)
 
+## [2.3.11] - 2026-11-03
+
+### Fixed
+
+- Direct installs resolve bundled script paths from the selected installation directory, including
+  project-local installs invoked from a nested working directory. Shell examples quote those paths,
+  so spaces and literal shell characters in direct-install paths do not split or expand them.
+  Generated plugin examples keep the plugin root, and Pi examples keep package-relative resources.
+
+## [2.3.10] - 2026-11-02
+
+### Fixed
+
+- Codex: crypto and other FVS commands now dispatch their sub-agents without a manual request. Codex
+  only spawns sub-agents when the user or a skill explicitly asks; the Codex skill adapter now states
+  that invoking an FVS skill is that request, discovers a deferred `spawn_agent` tool first, and stops
+  with an explanation instead of silently doing a delegated role inline when sub-agents are
+  unavailable (#114).
+- Codex: FVS sub-agents start with fresh context on both spawn schemas. The adapter passes
+  `fork_turns: "none"` (MultiAgentV2, used by most current models) or `fork_context: false` (V1)
+  instead of an unconditional `fork_context: false` that V2 rejects or treats as a full-history fork,
+  which also refused the confirmed model and effort (#114).
+- Codex: the adapter no longer implies that a role's `sandbox_mode` is enforced. Codex children run
+  in the parent session's sandbox; the effective sandbox is reported as the parent's, and a child is
+  never called read-only when the parent can write.
+- Loop commands that delegate a sub-agent per pass or round (lean-refactor, lean-verify, aeneas-extract,
+  lean-specify repair passes, lean-formalise researcher re-dispatch, model-external revision rounds, and
+  crypto-plan, crypto-followup and crypto-eval re-authoring or recheck) now state one uniform rule for
+  Claude Code and Codex: a fresh child per pass with current inputs, no inline substitution by the parent,
+  and a stop when a dispatch fails or ends in a terminal error, while valid results keep their routing.
+  lean-refactor no longer starts another pass after a refactorer `## ERROR`. This is an instruction
+  contract; it is not host enforcement of each pass (#114).
+
+### Added
+
+- `/fvs:crypto-eval` records a measured `Thinker wall time` in each eval: the `--codex` helper's
+  measured process time, or the parent's clock from launch to the thinker's terminal response, or
+  `not measured (<reason>)`. Failed or timed-out runs still persist no eval. This is timing
+  instrumentation only, with no change to decisions or reviewer policy (#115).
+- `/fvs:lean-refactor` works on any Lean file whose proofs already compile, an FVS spec or an ordinary
+  Lean project file. Aeneas conventions apply only in Aeneas-extracted projects. Files with `sorry` or
+  build errors go to `/fvs:lean-verify`; statements, signatures, attributes, definition meaning and the
+  axiom policy stay unchanged, and new helpers stay as local as possible. A selected-file gate checks
+  the chosen file with its imports at baseline and after every change (a default build may skip it),
+  with real exit status. Outside configured library roots, `lake lean` rebuilds the actual imports,
+  including non-default libraries, before each direct check. The Mathlib cache preflight runs only
+  in projects that provide it. The argument label is now `<lean_file_path>`. Existing flags remain
+  recognized; legacy mode mappings and pass budgets are described below.
+  Credit: ideas from `/lean4:refactor` in Cameron Freer's
+  lean4-skills (MIT, commit `83582df`), paraphrased.
+- The protocol-prose guidance used by existing authoring calls adds a light plain-English wording pass
+  after the exposition, guided by ASD-STE100 Simplified Technical English (Issue 9) but not
+  STE-compliant. It freezes quotations, citations, code, Lean names, commands and formulas, keeps the
+  mathematical register and house style, treats sentence lengths as soft guidance, and preserves
+  every claim, quantifier and hedge. It adds no agent or review step.
+
+### Changed
+
+- Lean refactoring resolves the effective installed project toolchain, including overrides, and
+  checks Lake's actual compiler path and binary hash before cache/proof work and at baseline/final
+  capture. Targets, inspection, tactics and profiling use the project's available capabilities;
+  unsupported capabilities use explicit project/review routes without upgrading a pin. Dependency-free
+  checks cover Lean/Lake 4.25.2, 4.31.0 and 4.35.0; this is not universal compatibility qualification.
+- Lean refactoring proposes a protected boundary and editable file/module/project scope before
+  editing. It seeks net LoC reduction through reuse and shared lemmas, including new helper/import
+  costs, while preserving useful prose. Broader scope and new public interfaces require proposals.
+- Refactor acceptance records actual comparable build/elaboration samples and stops for an owner
+  trade-off on a repeatable material performance regression. Tactic tiers, fixed reduction targets
+  and unsupported speed guarantees are removed. Legacy mode flags remain explicit search hints
+  warned when explicitly supplied; defaults need no migration prompt. Pass ceilings remain budgets.
+- Parent-only serial compiler gates and a pristine printed-boundary comparison replace child builds.
+  Net-code-LoC reporting excludes comment deletion and known formatting-only packing; operator
+  counts are hints, not a hard acceptance limit or a complete Lean parser. Unsupported printed
+  coverage or interpolation metrics use explicit reviewed comparisons; helper limitations do not
+  block valid refactoring or waive compilation/axiom safeguards. Unavailable counts are not guessed.
+  Printed comparisons support review; they are not kernel identity proofs.
+
 ## [2.3.9] - 2026-10-27
 
 ### Added
