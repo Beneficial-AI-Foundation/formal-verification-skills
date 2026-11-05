@@ -159,9 +159,18 @@ test('crypto-execute persists the executor run report under reviews/', () => {
 
 test('the HTML template is self-contained with the five parts and a static quiz', () => {
   assert.match(template, /^<!doctype html>/i);
-  for (const id of ['header', 'what-changed', 'where-we-are', 'how-it-was-made', 'quiz', 'unverified']) {
+  for (const id of ['header', 'what-changed', 'where-we-are', 'how-it-was-made', 'quiz', 'unverified', 'provenance']) {
     assert.ok(template.includes(`id="${id}"`), id);
   }
+  // The page opens with the content: the header is the title only; metadata is collapsed in the footer.
+  const header = template.split('<header id="header">')[1].split('</header>')[0];
+  assert.match(header.trim(), /^<h1>\{\{CHUNK_LABEL\}\}<\/h1>$/);
+  const footer = template.split('<footer id="unverified">')[1].split('</footer>')[0];
+  assert.match(footer, /<details id="provenance">\s*<summary>Provenance<\/summary>/);
+  for (const field of ['DATE_UTC', 'DECISION_VERBATIM', 'RECORD_HREF', 'ROADMAP_PATH_OR_NONE', 'EDITOR_LABEL', 'AUDIENCE', 'STYLE_SUMMARY']) {
+    assert.ok(footer.includes(`{{${field}}}`), field);
+  }
+  assert.match(flat(workflow), /Header: the chunk label only/);
   assert.match(template, /prefers-color-scheme: dark/);
   assert.doesNotMatch(template, /<(?:script|link)[^>]+(?:src|href)=["']https?:/);
   assert.match(template, /data-correct/);

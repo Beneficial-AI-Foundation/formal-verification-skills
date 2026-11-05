@@ -89,7 +89,7 @@ decision: the walkthrough quotes `**Decision:**` verbatim and links to the recor
 - [ ] "What changed" is high-level: what was proved, defined or shown to hold, in the reader's terms, each statement linked to the declaration that realises it; the per-file delta is collapsed evidence; touched files come from the topic-root `IMPLEMENTATION_nN.md` when present, otherwise from the diff
 - [ ] "Where we are" quotes the matching milestone's `Status:` verbatim, names the next open milestone, and says when the step could not be placed
 - [ ] Every "how it was made" step explains the idea in prose and links its declaration with a relative `path:line`; excerpts are short and statements only, showing just the basic ideas needed to follow, never proof bodies, with a proof fragment only when the proof idea is the point
-- [ ] Every link opens the file in the chosen editor at the line (editor URL scheme, no `file://` or bare relative hrefs); the editor came from the flag, config, detection or the stated VS Code fallback and is named in the header
+- [ ] Every link opens the file in the chosen editor at the line (editor URL scheme, no `file://` or bare relative hrefs); the editor came from the flag, config, detection or the stated VS Code fallback and is named in the footer's Provenance block
 - [ ] The quiz has 4 to 6 multiple-choice questions, each with a collapsible answer that cites the code
 - [ ] Anything that could not be verified is listed in the footer rather than smoothed over
 - [ ] One self-contained HTML (inline CSS/JS, no remote assets) was written under `.formalising/loop-me-in/<slug>/` with a timestamped name; no existing file was overwritten
