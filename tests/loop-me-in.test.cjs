@@ -146,6 +146,17 @@ test('what changed is high-level, backed by declarations, prefers IMPLEMENTATION
   assert.match(placement, /`Status:` quoted verbatim/);
   assert.match(placement, /never changes the roadmap and never flips a status/);
   assert.match(placement, /could not place this step on the roadmap/);
+  // The milestone track is a rendering of the roadmap's own statuses, never a new one.
+  assert.match(placement, /milestone track \(the template's `ol\.track`\)/);
+  assert.match(placement, /`done` when it says done or complete, `blocked` when it says blocked, `open` otherwise/);
+  assert.match(placement, /never adds a status the roadmap does not state/);
+  assert.match(placement, /no milestone is `current` and the paragraph says so/);
+  assert.match(placement, /Without a roadmap the track is omitted/);
+  assert.match(template, /<ol class="track">\{\{MILESTONE_TRACK\}\}<\/ol>/);
+  assert.match(template, /\{\{NEXT_STEPS\}\}/);
+  for (const cls of ['done', 'blocked', 'current', 'next']) {
+    assert.ok(template.includes(`ol.track li.m.${cls} .dot`), cls);
+  }
 });
 
 test('crypto-execute persists the executor run report under reviews/', () => {

@@ -36,6 +36,19 @@
   .status { font-family: ui-monospace, monospace; }
   #what-changed h3 { font-size: 1em; margin: 1.25rem 0 .25rem; font-family: ui-monospace, monospace; }
   ul.established li { margin: .5rem 0; }
+  /* Milestone track: a vertical line of dots, one per roadmap milestone. */
+  ol.track { list-style: none; padding: 0; margin: 1rem 0; position: relative; }
+  ol.track::before { content: ""; position: absolute; left: .55rem; top: .6rem; bottom: .6rem; border-left: 2px solid var(--rule); }
+  ol.track li.phase { margin: 1rem 0 .25rem 1.9rem; color: var(--muted); font-size: .9em; text-transform: uppercase; letter-spacing: .04em; }
+  ol.track li.m { position: relative; display: grid; grid-template-columns: 1fr; padding: .35rem 0 .35rem 1.9rem; }
+  ol.track li.m .dot { position: absolute; left: 0; top: .6rem; width: 1.2rem; height: 1.2rem; border-radius: 50%; border: 2px solid var(--rule); background: var(--bg); box-sizing: border-box; }
+  ol.track li.m.done .dot { border-color: var(--ok); background: var(--ok); }
+  ol.track li.m.blocked .dot { border-color: var(--bad); }
+  ol.track li.m.current .dot { border-color: var(--accent); background: var(--accent); }
+  ol.track li.m.next .dot { border-color: var(--accent); }
+  ol.track li.m.current .name { font-weight: 600; }
+  ol.track li.m .status { font-family: ui-monospace, monospace; font-size: .85em; color: var(--muted); }
+  ol.track li.m .here, ol.track li.m .decides { font-size: .85em; color: var(--accent); }
   ul.delta li { margin: .25rem 0; }
   .tag { font-family: ui-monospace, monospace; font-size: .85em; color: var(--muted); }
   .quiz .q { border: 1px solid var(--rule); padding: 1rem; margin: 1rem 0; }
@@ -85,8 +98,21 @@
 <section id="where-we-are">
   <h2>2. Where we are</h2>
   <p>{{ROADMAP_POSITION_PARAGRAPH}}</p>
-  <p><strong>Milestone:</strong> {{MATCHED_MILESTONE}} <span class="status">Status: {{MILESTONE_STATUS_VERBATIM}}</span></p>
-  <p><strong>Next open:</strong> {{NEXT_OPEN_MILESTONE}}</p>
+  <!-- Milestone track: one <li> per roadmap milestone, in roadmap order, grouped under a
+       <li class="phase"> heading when the roadmap has phases. The class is a rendering of the
+       roadmap's own Status: line (done / blocked / open); "current" marks the milestone this chunk
+       was placed on, "next" the next open one(s). The verbatim status is always shown. When the
+       step could not be placed, no <li> carries "current" and the paragraph above says so.
+  <ol class="track">
+    <li class="phase">Phase 1: definitions</li>
+    <li class="m done"><span class="dot"></span><span class="name">M1: Simulator defined</span><span class="status">Status: done 2026-10-30</span></li>
+    <li class="m current"><span class="dot"></span><span class="name">M2: Hybrid argument</span><span class="status">Status: in progress</span><span class="here">this step</span></li>
+    <li class="m next open"><span class="dot"></span><span class="name">M3: Key freshness</span><span class="status">Status: open</span><span class="decides">decided by /fvs:lean-verify</span></li>
+    <li class="m blocked"><span class="dot"></span><span class="name">M4: External RNG model</span><span class="status">Status: blocked on owner ruling</span></li>
+  </ol>
+  -->
+  <ol class="track">{{MILESTONE_TRACK}}</ol>
+  <p><strong>Next steps:</strong> {{NEXT_STEPS}}</p>
 </section>
 
 <section id="how-it-was-made">
