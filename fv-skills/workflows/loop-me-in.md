@@ -339,8 +339,14 @@ subject and body are the only "plan"; section 1 says so.
 **Working-tree chunk** (`--working-tree`): `git diff` plus `git diff --cached`; untracked files are
 listed by name only.
 
-For "how it was made", read the changed declarations and at most 15 lines of context around each.
-Every step cites a relative `path:line`.
+For "how it was made", read the changed declarations in full, proofs included, to understand the
+argument; what is shown is another matter. An excerpt is a statement, never the proof body: a
+theorem or lemma up to and excluding `:=`, a definition's signature with at most its first few
+lines of body, a structure's fields, an instance head. At most 8 lines; beyond that, link. Show a
+proof fragment only when the proof idea is itself the point of the step (a non-obvious case split,
+the one rewrite that makes a reduction go through), then at most 3 lines with a sentence saying
+why they are shown. The walkthrough is the high-level idea with links to the low-level code; the
+editor link is how the reader descends. Every step cites a relative `path:line`.
 
 ## 6. Place the step on the roadmap
 
@@ -370,8 +376,11 @@ match the writing and state that visual matching was unavailable.
    each naming the declaration(s) that realise it with a `path:line` link; below them, a collapsed
    `<details>` with the per-file list of declarations added, changed and removed.
 3. **Where we are**: one paragraph, the matched milestone with verbatim status, the next open one.
-4. **How it was made**: 3 to 7 ordered steps, each with a code excerpt of at most 15 lines and its
-   `path:line`; design decisions and reused results from the reuse audit go here.
+4. **How it was made**: 3 to 7 ordered steps that explain the argument in prose: the reduction or
+   invariant, the key lemma, the case split, the reused result, the design choice; each step
+   links to its declaration with `path:line`, and shows at most one statement-only excerpt of at
+   most 8 lines (the rules in step 5), or no excerpt when the link suffices. Proof scripts are
+   not shown. Design decisions and reused results from the reuse audit go here.
 5. **Quiz**: 4 to 6 multiple-choice questions ordered easy to hard; each option is clickable with
    immediate right/wrong highlighting; a `<details>` block under each question holds the long-form
    answer and the code citation that justifies it.
@@ -436,7 +445,7 @@ next command the roadmap or the records suggest, without starting it.
 - [ ] Local, web or internal style references were read and their chosen traits applied to prose and presentation; access gaps were resolved with the user; no private source text, names or links copied without an explicit request
 - [ ] What changed is stated at the level of the mathematics or protocol (what was proved, defined, shown to hold), each statement linked to its realising declaration; the per-file delta is collapsed evidence; touched files come from the topic-root `IMPLEMENTATION_nN.md` when present, else the diff
 - [ ] Roadmap position quotes the milestone status verbatim and names the next open milestone; the roadmap is never edited
-- [ ] Every how-step has a code excerpt of at most 15 lines and a relative `path:line`
+- [ ] Every how-step explains the idea in prose and links its declaration with a relative `path:line`; any excerpt is a statement, never the proof body, at most 8 lines (a proof fragment of at most 3 lines only when the proof idea is the point, with the reason stated)
 - [ ] Every href is the chosen editor's URL opening the file at the line; the editor came from the flag, config, detection or the stated VS Code fallback, was shown on the screen and is named in the header; a custom template was validated and substituted as text
 - [ ] Quiz: 4 to 6 questions, clickable options, collapsible cited answers
 - [ ] Footer lists every unverified or missing input
