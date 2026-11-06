@@ -24,7 +24,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   with VS Code as the stated fallback), so a browser never has to read project files. Output goes
   under `.formalising/loop-me-in/<slug>/` and is never overwritten; the command runs in the current
   session with no subagent and never commits, edits project files or changes a recorded decision.
-  (#96)
+  `/fvs:loop-me-in --final [<topic>]` explains the whole work instead of a chunk, typically at the
+  end of a formalisation: a tutorial at the level of the top-level theorems, every idea stated
+  mathematically and in prose, no Lean beyond a reading table and editor links, and a trust
+  section whose "standard axioms only" claim is made only after a bounded `#print axioms` check.
+  The work is the roadmap plus the branch against the branch it diverged from (pull-request base,
+  then the reflog, then `main` as the stated default), shown with the other candidates and the
+  top-level theorems for correction before anything is written. (#96)
 
 ### Changed
 

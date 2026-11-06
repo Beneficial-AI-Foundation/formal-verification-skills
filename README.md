@@ -215,6 +215,12 @@ for example `--style docs/example-tutorial.html`, or configure `loop_me_in.style
 Web tutorials, accessible internal documents, and attached or pasted style examples are supported.
 It runs inline, writes under `.formalising/loop-me-in/` and never commits or edits the roadmap.
 
+At the end, `/fvs:loop-me-in --final [<topic>]` explains the whole work: a tutorial at the level
+of the top-level theorems, ideas stated mathematically, no Lean beyond a reading table and editor
+links, and a trust section backed by a bounded axiom check. The work is the roadmap plus the branch
+against the branch it diverged from (detected, shown with the other candidates for correction, or
+`--commit <range>`); the top-level theorems are confirmed on the same screen.
+
 
 ## Updates and removal
 
