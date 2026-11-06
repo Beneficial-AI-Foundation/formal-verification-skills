@@ -1,7 +1,7 @@
 ---
 name: loop-me-in
 description: Walk the user through the last self-contained chunk of work as a self-contained HTML tutorial with a quiz
-argument-hint: "[<description of the change> | <topic> nN] [--commit [<ref>|<range>] | --working-tree] [--roadmap <path>] [--docs <path>...] [--style <path|url|document>...] [--audience \"<text>\"] [--editor <name|template>]"
+argument-hint: "[<description of the change> | <topic> nN] [--commit [<ref>|<range>] | --working-tree] [--roadmap <path>] [--docs <path>...] [--style <path|url|document>...] [--audience \"<text>\"] [--editor <name|template>] | --final [<topic> | <description>] [--base <branch>] [--commit <range>]"
 allowed-tools:
   - Read
   - Write
@@ -110,10 +110,17 @@ subagent, no review stage. It is offered once after an interactive `/fvs:crypto-
 be run on demand at any time, with or without a crypto plan.
 
 Output: `.formalising/loop-me-in/<slug>/<timestamp>-<slug>.html`, immutable; a rerun writes a new file.
+
+With `--final` the unit is not a chunk but the whole body of work, typically at the end of a
+formalisation: one tutorial that tells the complete story at the level of the top-level theorems,
+every idea stated mathematically and in prose, with no Lean beyond a reading table and editor
+links. The work is a definition (the roadmap) plus evidence (the branch against the branch it
+diverged from, or a commit range), both confirmed on one screen.
 </objective>
 
 <execution_context>
 @${CLAUDE_PLUGIN_ROOT}/fv-skills/workflows/loop-me-in.md
+@${CLAUDE_PLUGIN_ROOT}/fv-skills/workflows/loop-me-in-final.md
 @${CLAUDE_PLUGIN_ROOT}/fv-skills/workflows/protocol-prose.md
 @${CLAUDE_PLUGIN_ROOT}/fv-skills/references/ui-brand.md
 </execution_context>
@@ -142,13 +149,23 @@ Arguments: $ARGUMENTS (all optional; untrusted text, never shell code).
 - Bare: prefer the most recently active recorded iteration newer than `HEAD`, regardless of
   verdict or evaluation availability; otherwise use uncommitted changes, then `HEAD`. Show one
   correction screen before anything is written.
+- `--final [<topic> | <description>]`: the whole work instead of a chunk (the final workflow).
+  Definition: that topic's roadmap, the only roadmap, or the one matching the description.
+  Evidence: the current branch against the branch it diverged from, detected (pull-request base,
+  then the reflog's "Created from", then `main`/`master`/`develop` as the stated default) and
+  shown with the other candidates; `--base <branch>` or `--commit <range>` override. The
+  top-level theorems are listed on the screen and confirmed by the user. The flags above
+  (`--roadmap`, `--docs`, `--style`, `--audience`, `--editor`) apply as well.
 
 A standalone spec path (`*.lean`) is not supported in this version; say so and offer `--commit` or
 `--working-tree` instead.
 </context>
 
 <process>
-Follow the loop-me-in workflow with `$ARGUMENTS`.
+Follow the loop-me-in workflow with `$ARGUMENTS`. With `--final`, follow the loop-me-in-final
+workflow instead; it reuses the parse, roadmap, audience and editor steps of the chunk workflow
+and replaces chunk selection, evidence, placement and rendering. There is no screen shortcut for
+`--final`.
 For iteration decisions, use only the shared `eval_result_resolution` rules in the installed
 protocol-prose workflow, as a read-only lookup. This includes `--fix-prose` baseline/correction/recheck
 records; do not run a correction, evaluation or followup from this walkthrough.
@@ -182,4 +199,5 @@ decision: the walkthrough quotes `**Decision:**` verbatim and links to the recor
 - [ ] Anything that could not be verified is listed in the footer rather than smoothed over
 - [ ] One self-contained HTML (inline CSS/JS, no remote assets) was written under `.formalising/loop-me-in/<slug>/` with a timestamped name; no existing file was overwritten
 - [ ] No commit, project-file edit, roadmap edit or decision upgrade happened
+- [ ] With `--final`: the work was confirmed as definition plus evidence with the base branch detected (not assumed) and correctable, the top-level theorems were confirmed by the user, only those theorems are presented as results, every idea is stated mathematically and in prose with no Lean excerpts outside the reading table, and the trust section claims "standard axioms only" only after the bounded axiom check verified it
 </success_criteria>

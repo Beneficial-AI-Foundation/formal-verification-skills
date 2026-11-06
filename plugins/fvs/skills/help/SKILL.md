@@ -499,9 +499,11 @@ chunk of work, with a quiz.
 - Audience and extra documentation come from `loop_me_in` in `fvs-config.json` or flags; the reader's level is never inferred from the code
 - Match a local document, web tutorial or accessible internal document with repeatable `--style` references (or `loop_me_in.style_refs`); attached or pasted style examples also work; both writing and visual style are adapted where available
 - Runs inline (no extra model call); writes `.formalising/loop-me-in/<slug>/<timestamp>-<slug>.html` and never overwrites, commits or edits the roadmap
+- `--final [<topic> | <description>] [--base <branch>] [--commit <range>]`: the whole work instead of a chunk, typically at the end: one tutorial at the level of the top-level theorems, every idea stated mathematically and in prose, no Lean beyond a reading table and editor links, with a trust section (axioms per theorem from a bounded check, named obligations, exclusions). Definition = the roadmap; evidence = the branch against the branch it diverged from (pull-request base, then the reflog, then `main` as the stated default), shown with the other candidates for correction; the top-level theorems are confirmed on the screen
 
 Usage: `/fvs:loop-me-in`
 Usage: `/fvs:loop-me-in the changes to key validation`
+Usage: `/fvs:loop-me-in --final kem-hybrid`
 Usage: `/fvs:loop-me-in the changes to key validation --style docs/example-tutorial.html`
 Usage: `/fvs:loop-me-in --working-tree --style "https://example.com/tutorial"`
 Usage: `/fvs:loop-me-in --working-tree --style "Engineering onboarding guide"`
