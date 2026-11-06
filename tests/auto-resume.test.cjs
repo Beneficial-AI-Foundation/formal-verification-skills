@@ -362,3 +362,31 @@ describe('actual AO shapes plus retained controller associations', () => {
     const b = stateBytes(x); refuses('resume-history-invalid', () => auto.readRuntimeState({ projectRoot: x.root })); assert.deepEqual(stateBytes(x), b);
   });
 });
+
+describe('controller turn activity versus meaningful AO drift at consumption', () => {
+  const coordinator = (extra) => f.row('coordinator', 'orchestrator', extra);
+  it('the coordinator\'s own idle/working flip between checkpoint and consumption is not context drift', () => {
+    for (const [from, to] of [[{}, { status: 'working', activity: 'active' }], [{ status: 'working', activity: 'active' }, {}], [{}, { status: 'needs_input', activity: 'waiting' }]]) {
+      const x = make(); x.rows = [coordinator(from)]; x.writeControl(); const y = x.invoke(); assert.equal(y.result.code, 'reconciled');
+      x.rows = [coordinator(to)]; x.writeControl(); assert.equal(verify(x, y).code, 'reconciled');
+    }
+  });
+  it('a coordinator whose agent exited or terminated still refuses', () => {
+    for (const extra of [{ status: 'idle', activity: 'exited' }, { status: 'terminated', activity: 'exited', isTerminated: true }]) {
+      const x = make(), y = x.invoke(); x.rows = [coordinator(extra)]; x.writeControl();
+      assert.throws(() => verify(x, y), (e) => typeof e.code === 'string' && e.code.startsWith('resume-'));
+    }
+  });
+  it('a new unassigned session still refuses', () => {
+    const x = make(), y = x.invoke(); x.rows.push(f.row('other')); x.writeControl();
+    refuses('resume-context-stale', () => verify(x, y));
+  });
+  it('an assigned actor\'s status/activity change is still compared raw', () => {
+    const x = make(), linked = path.join(x.owned, 'linked'); f.git(x.root, 'worktree', 'add', '-qb', 'worker', linked);
+    x.rows.push(f.row('worker')); x.writeControl();
+    const ref = x.associate('worker', linked), y = x.invoke(x.request({ associations: [ref], priorAccounting: x.accounting() }));
+    assert.equal(y.result.code, 'reconciled');
+    x.rows = [x.rows[0], f.row('worker', 'worker', { status: 'working', activity: 'active' })]; x.writeControl();
+    refuses('resume-context-stale', () => verify(x, y));
+  });
+});

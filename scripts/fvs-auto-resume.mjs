@@ -447,12 +447,18 @@ function event(state, q, transition, observation, now) {
     ...transition, observation };
   const result = { event: row, sha256: memoryHash(row) }; state.history.push(result); return result;
 }
-function stableObservation(o) {
+const LIVE_ACTIVITY = new Set(['active', 'idle', 'waiting']);
+function stableObservation(o, coordinatorSessionId) {
   // Timeout-before-cap and skipped-after-cap are the same unavailable budget
   // state. Preserve raw diagnostics in each observation; compare every other
   // context/head/acceptance field, and never normalize current proof evidence.
   const budgetPartial = o.acceptance.status === 'unverified' && o.acceptance.reason === 'original-limit-exhausted' && o.reasons.includes('original-limit-exhausted');
-  return { identity: o.identity, inputs: o.inputs, ao: o.ao, associations: o.associations, ...(Object.hasOwn(o, 'transition') ? { transition: o.transition } : {}),
+  // The coordinator runs these checks itself, so AO reports its own row as idle
+  // or working depending on its turn. Only that live turn state is compared as
+  // one value; its id, project, kind, termination, an exited agent and every
+  // other session row stay raw.
+  const ao = o.ao.map((s) => s.id === coordinatorSessionId && !s.isTerminated && LIVE_ACTIVITY.has(s.activity) ? { ...s, status: 'live', activity: 'live' } : s);
+  return { identity: o.identity, inputs: o.inputs, ao, associations: o.associations, ...(Object.hasOwn(o, 'transition') ? { transition: o.transition } : {}),
     acceptance: budgetPartial ? { ...o.acceptance, diagnostic: null } : o.acceptance,
     reasons: budgetPartial ? [...o.reasons].sort() : o.reasons };
 }
@@ -522,7 +528,7 @@ export function runResume(operation, options, services) {
       if (!unbudgetedRun(run) && fenceAtMs < now) stop('resume-clock-rollback', 'clock moved backwards at the observation fence');
       const checked = observe(root, q, services, fenceOut, run, fenceAtMs, observation.memory, !previous.state, previous);
       save(fenceOut, 'observation.json', checked.observation);
-      if (!same(stableObservation(checked.observation), stableObservation(observation))) stop('resume-context-stale', 'AO/Git/receipt/context changed before checkpoint');
+      if (!same(stableObservation(checked.observation, q.ao.coordinatorSessionId), stableObservation(observation, q.ao.coordinatorSessionId))) stop('resume-context-stale', 'AO/Git/receipt/context changed before checkpoint');
       validateRequest(q); // Rehash caller-bound inputs at the publication fence.
       const endedAtMs = services.now?.() ?? Date.now();
       if (!unbudgetedRun(run) && endedAtMs < now) stop('resume-clock-rollback', 'clock moved backwards during observation');
@@ -569,7 +575,8 @@ function consume(options, services, transition) {
   const finalHead = readRuntime(root).headSha256, endedAtMs = services.now?.() ?? Date.now();
   if (!unbudgetedRun(current.state.run) && (endedAtMs < now || endedAtMs < current.lastObservedAtMs)) stop('resume-clock-rollback', 'clock moved backwards during consumption', { verificationEvidence: out });
   if (runExpired(current.state.run, endedAtMs) && !lifecycleOnlyAction(q.transition?.intent.request?readTransitionAction(q.transition.intent.request):null) && !(transition && q.transition?.position === 'after')) stop('resume-partial', 'original limit expired during consumption; preserve the resumable checkpoint', { reasons: ['original-limit-exhausted'], verificationEvidence: out });
-  if ((!transition && observed.observation.reasons.length) || !same(stableObservation(observed.observation), stableObservation(result.observation)) || finalHead !== result.committedHeadSha256) stop('resume-context-stale', 'current observation no longer matches the committed reconciliation');
+  save(out, 'observation.json', observed.observation);
+  if ((!transition && observed.observation.reasons.length) || !same(stableObservation(observed.observation, q.ao.coordinatorSessionId), stableObservation(result.observation, q.ao.coordinatorSessionId)) || finalHead !== result.committedHeadSha256) stop('resume-context-stale', 'current observation no longer matches the committed reconciliation', { verificationEvidence: out });
   if (transition) {
     const row = observed.observation.transition?.admissibility;
     if (!row || !q.transition?.intent.request || (q.transition.position === 'before' && row.status !== 'next-action-eligible')) stop('resume-partial', 'no independently current bounded transition');
