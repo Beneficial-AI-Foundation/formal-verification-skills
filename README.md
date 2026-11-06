@@ -179,7 +179,7 @@ and arguments. Bundle routers list their members when invoked without arguments.
 | `/fvs:context` | `/fvs:map-code` |
 | `/fvs:fc` | `/fvs:fc-plan`, `/fvs:natural-language`, `/fvs:lean-specify`, `/fvs:lean-spec-review`, `/fvs:lean-verify`, `/fvs:lean-refactor`, `/fvs:model-external`, `/fvs:trust-audit` |
 | `/fvs:formalise` | `/fvs:lean-formalise`, `/fvs:lean-refactor`, `/fvs:crypto-plan`, `/fvs:crypto-review`, `/fvs:crypto-execute`, `/fvs:crypto-eval`, `/fvs:crypto-followup`, `/fvs:protocol-prose` |
-| `/fvs:manage` | `/fvs:help`, `/fvs:configure`, `/fvs:update`, `/fvs:reapply-patches`, `/fvs:kb-setup`, `/fvs:roadmap`, `/fvs:issues-setup`, `/fvs:to-issues`, `/fvs:ask-baif` |
+| `/fvs:manage` | `/fvs:help`, `/fvs:configure`, `/fvs:update`, `/fvs:reapply-patches`, `/fvs:kb-setup`, `/fvs:roadmap`, `/fvs:issues-setup`, `/fvs:to-issues`, `/fvs:ask-baif`, `/fvs:loop-me-in` |
 
 `/fvs:ask-baif` gives a concise evidence-backed goal/state/blocker brief and routes one next step.
 It is optional before, within and between issue batches. Explicit or already-authorized requests
@@ -200,6 +200,26 @@ Protocol exposition: `/fvs:protocol-prose <file-or-topic>` is an opt-in prose-on
 the source paper and target documentation conventions, with formal-content comparison and build
 checks. Existing crypto authoring calls also receive the shared prose guidance; no extra model
 call or review stage is added.
+
+Catching up: `/fvs:loop-me-in` writes a self-contained HTML walkthrough of the last self-contained
+chunk of work (a crypto iteration, uncommitted changes or the last commit): what changed,
+where it sits in the roadmap, how it was made with code references, and a quiz. It is offered once
+after an interactive `/fvs:crypto-eval` ACCEPT and runs on demand otherwise.
+Without an explicit target, it prefers the most recently active recorded iteration newer than
+`HEAD`, regardless of verdict or evaluation availability, then uncommitted changes, then `HEAD`.
+You can describe the change in plain words, such as `/fvs:loop-me-in the changes to key validation`;
+the matching work is shown for confirmation, with no directory name or iteration number required.
+Audience and extra documentation come from `loop_me_in` in `.formalising/fvs-config.json`.
+To match another document's writing and visual style, pass `--style <path|url|document>` (repeatable),
+for example `--style docs/example-tutorial.html`, or configure `loop_me_in.style_refs`.
+Web tutorials, accessible internal documents, and attached or pasted style examples are supported.
+It runs inline, writes under `.formalising/loop-me-in/` and never commits or edits the roadmap.
+
+At the end, `/fvs:loop-me-in --final [<topic>]` explains the whole work: a tutorial at the level
+of the top-level theorems, ideas stated mathematically, no Lean beyond a reading table and editor
+links, and a trust section backed by a bounded axiom check. The work is the roadmap plus the branch
+against the branch it diverged from (detected, shown with the other candidates for correction, or
+`--commit <range>`); the top-level theorems are confirmed on the same screen.
 
 
 ## Updates and removal

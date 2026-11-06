@@ -61,7 +61,7 @@ Five router commands group the skills. Invoke a router bare to print its routing
 - `/skill:fvs-context` — Codebase context (map-code)
 - `/skill:fvs-fc` — Formal-correctness core (fc-plan, model-external, lean-specify, lean-spec-review, lean-verify, natural-language, lean-refactor, trust-audit)
 - `/skill:fvs-formalise` — Paper formalisation (lean-formalise, lean-refactor, protocol-prose, crypto loop)
-- `/skill:fvs-manage` — Management (help, update, checkpoint, pause-work, resume-work, reapply-patches, kb-setup, roadmap, issues-setup, to-issues, ask-baif)
+- `/skill:fvs-manage` — Management (help, update, checkpoint, pause-work, resume-work, reapply-patches, kb-setup, roadmap, issues-setup, to-issues, ask-baif, loop-me-in)
 
 ### Aeneas (`/skill:fvs-aeneas`)
 
@@ -409,6 +409,28 @@ another consented batch. Existing track review/proof and publication gates remai
 
 Usage: `/skill:fvs-ask-baif where are we?`
 Usage: `/skill:fvs-ask-baif take next`
+
+**`/skill:fvs-loop-me-in [<description of the change> | <topic> nN] [--commit [<ref>] | --working-tree] [--roadmap <path>] [--docs <path>] [--style <path|url|document>...] [--audience "<text>"]`**
+Catch up after an automated run: one self-contained HTML walkthrough of the last self-contained
+chunk of work, with a quiz.
+
+- Offered once after an interactive `/skill:fvs-crypto-eval` ACCEPT; declining writes nothing
+- Describe the change in plain words, with or without quotes; the matching work is shown for confirmation, with no directory name or iteration number required
+- Bare: picks the most recently active recorded iteration newer than HEAD, regardless of verdict or evaluation availability, else uncommitted changes, else HEAD; confirms the work, roadmap, audience and style before writing
+- Sections: what changed (planned vs observed), where we are on the roadmap (status quoted verbatim), how it was made with `path:line` references, and a multiple-choice quiz with collapsible cited answers
+- Audience and extra documentation come from `loop_me_in` in `fvs-config.json` or flags; the reader's level is never inferred from the code
+- Match a local document, web tutorial or accessible internal document with repeatable `--style` references (or `loop_me_in.style_refs`); attached or pasted style examples also work; both writing and visual style are adapted where available
+- Runs inline (no extra model call); writes `.formalising/loop-me-in/<slug>/<timestamp>-<slug>.html` and never overwrites, commits or edits the roadmap
+- `--final [<topic> | <description>] [--base <branch>] [--commit <range>]`: the whole work instead of a chunk, typically at the end: one tutorial at the level of the top-level theorems, every idea stated mathematically and in prose, no Lean beyond a reading table and editor links, with a trust section (axioms per theorem from a bounded check, named obligations, exclusions). Definition = the roadmap; evidence = the branch against the branch it diverged from (pull-request base, then the reflog, then `main` as the stated default), shown with the other candidates for correction; the top-level theorems are confirmed on the screen
+
+Usage: `/skill:fvs-loop-me-in`
+Usage: `/skill:fvs-loop-me-in the changes to key validation`
+Usage: `/skill:fvs-loop-me-in --final kem-hybrid`
+Usage: `/skill:fvs-loop-me-in the changes to key validation --style docs/example-tutorial.html`
+Usage: `/skill:fvs-loop-me-in --working-tree --style "https://example.com/tutorial"`
+Usage: `/skill:fvs-loop-me-in --working-tree --style "Engineering onboarding guide"`
+Usage: `/skill:fvs-loop-me-in ntt n3`
+Usage: `/skill:fvs-loop-me-in --commit HEAD~2..HEAD --audience "new to Aeneas"`
 
 **`/skill:fvs-roadmap [path/ROADMAP.md | path/] [goal prompt]`**
 Turn the current conversation or a short prompt into a long-horizon verification roadmap.
