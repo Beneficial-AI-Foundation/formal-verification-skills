@@ -133,6 +133,7 @@ describe('published FVS plugin package', () => {
       filesUnder(path.join(PLUGIN_ROOT, 'scripts')),
       [
         'fvs-execution.mjs', 'fvs-auto.mjs', 'fvs-auto-resume.mjs', 'fvs-auto-transitions.mjs', 'fvs-auto-bundle.mjs', 'fvs-auto-respec.mjs',
+        'fvs-auto-driver.mjs', 'fvs-auto-actor-permissions.py',
         'fvs-closure-plan.mjs',
         'fvs-contract-registry.mjs',
         'fvs-checker.mjs',

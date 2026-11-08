@@ -7,6 +7,154 @@ Bind the existing AO/FVS stage loop to current agreement, memory, source and che
 Keep uncertain effects partial and preserve whole-scope gaps for the17 handoff.
 </purpose>
 
+## Production driver: authorized v2 continuation
+
+Use `scripts/fvs-auto-driver.mjs` from the **one fixed trusted engine** in the controller context.
+Per-worktree workflow installation does not make each copied script a separately trusted checker.
+This source supplies the adapter; an installable preview still requires its exact source and real
+qualification. Existing receipts remain bound to their original engine bytes.
+
+The actual AO orchestrator reads the current canonical agreement and applies its semantic scope,
+claims, trust and execution grants. V2 alone, a source-review PASS or a saved ready label grants
+nothing. Keep the legacy/read-only reporting route when this context is absent. Current live actor
+execution needs the concrete19 capability/profile/permission setup; fixture tests supply no grant.
+Initial setup and final human review remain the human gates; routine source-grounded iterations
+continue under the existing grant. A missing capability is a precise partial result.
+
+### Requests and paired effects
+
+Resolve the engine's actual absolute root from the held context; quote every path. Import its
+`fvs-auto-driver.mjs` for awaited JS calls, or use `node "$DRIVER" OP --input "$INPUT"`.
+The CLI operations are `prepare`, `advance`, `effect`, `after`, `prepare-review`, `import-review`.
+Write actual JSON inputs to exclusive caller-owned files; JSON values never become shell text.
+
+The closed JS/CLI inputs are:
+
+| Export / operation | Exact fields |
+|---|---|
+| `prepareCurrentRequest` / `prepare` | `{projectRoot,context,phase,transition}`. `context` is exactly `{runId,ao,source,inputs,associations,priorAccounting}` with the existing16 nested schemas; `phase` is `start` only for a genuinely new run, otherwise `resume`. `transition` is null or the existing exact before/after envelope. |
+| `recordCheckpoint` (JS) | `{projectRoot,request,out}`; returns `{request:ref,result:ref,out,value,verification}` after the actual16 producer and independent consumer. |
+| `advanceOnce` / `advance` | `{projectRoot,currentRequest,out}`, with existing closed `currentRequest:{resume,registry,authorization,profile}`. Ordinary `resume.transition:null` calls22's strict proposal. A concrete before request takes the action-specific path directly; it records/verifies that action, without an unconditional strict proposal first. |
+| `runPairedEffect` / `effect` | `{projectRoot,request,out}` with an exact v2 before request. Creates exclusive `out/before`, `out/producer`, `out/effect`; awaits16 verification and22 execution. Returns command evidence, before and status, **not** an invented after-state. |
+| `recordAfter` / `after` | `{projectRoot,request,out}` with the fresh actual after request, original intent/before hash and real completion/effect evidence. Independently verifies16; returns checkpoint and a v2basis template only for `facts-recorded-partial`. |
+
+Choose one before-producing route per action. `runPairedEffect` records its own before; call it
+directly with the concrete request. `advanceOnce`'s concrete-before route is for the existing
+externally managed construction/composition/resolution procedures. If that route has already
+recorded a before, use its retained checkpoint with the existing producer procedure (or
+`executeTransition` with that `beforeOut`), then `recordAfter`. A second before is a replay, not
+the next step.
+
+Construct `context` from actual AO/controller identity, current integration Git commit/tree,
+canonical stage input references, association receipts and original accounting. Use the original
+run ID on resume. The preparer allocates fresh attempt/resume IDs, reads the real current runtime
+head and prepares the current Beads request when enabled; disabled memory stays null. It neither
+discovers source nor resets policy. Re-read actual input/store heads at every boundary.
+
+For one concrete effect, build the existing closed22 action and intent from that fresh snapshot,
+with its exact authorization/profile and existing target schema. Run `effect`. Preserve the returned
+command receipt and its actual stdout/stderr/result; build the existing
+`fvs/auto-transition-completion` v2 from that exact command, action hash and recorded before hash.
+Observe actual post-Git/AO/14/15 inputs; prepare the new after request and call `after`.
+Launch completion joins the real association; do not list that same association twice in the after
+request. Construct/composition and reservation resolution keep their existing procedures and checked
+command/evidence paths; `effect` does not execute arbitrary worker shell text for them.
+The adapter awaits v2 work and forwards SIGINT/SIGTERM or stdin
+`{"kind":"cancel","invocationId":"<this action transitionId>"}` through the existing owned-process
+adapter. An uncertain result retains its marker/reservation; it does not publish a successful after.
+
+`command-recorded-partial` is a typed producer outcome requiring its actual completion/after checks.
+`facts-recorded-partial` is explained delta evidence with `executable:false`. Neither means PASS or
+dispatch permission. Use the returned exact basis
+`{version:2,beforeEventSha256,afterEventSha256,completion,workCompletion:null}` for a candidate
+successor. Only an exact published release's conclusive typed actor result may supply a nonnull
+`workCompletion`. The existing finite validators below admit or refuse a fresh action-specific
+before. During ordinary revisions, stale accepted receipts need this explained route; a strict
+transition:null proposal can refuse them. Keep the store/history intact. Unknown effects retain
+capacity; final whole-scope15 currentness stays strict.
+
+### Actors and permissions
+
+Resolve each FVS role through the current stage manifest, preserving requested/resolved/observed
+model and effort separately. Differing roles run sequentially with artifact handoff; matching tuples
+may use the existing combined direct procedure. No fixed model, silent substitution or nested role.
+
+After the paired launch, bind the actual same-project session/worktree association. The worker's
+launch instruction waits before its first gate call. For an explicitly granted Claude gate profile,
+run the trusted `fvs-auto-actor-permissions.py --input REQUEST.json` once for that actor. Its closed
+request is `{schema:"fvs/auto-actor-permissions",schemaVersion:1,projectRoot,association,grant,node,gate,out}`;
+all four references are actual `{file,sha256}` inputs. The held grant body is
+`{schema:"fvs/auto-actor-permission-grant",schemaVersion:1,runId,projectId,controllerSessionId,gate,node,ownerReference}`.
+Its reference records the actual approval of these tools/rules; do not invent approval from null
+execution or permission mode. Node/gate name the fixed trusted executables, not consumer scripts.
+Use an already installed recorded Python3; a missing executable is a named capability gap, not an
+implicit tool installation.
+
+The merger preserves hooks and unrelated keys and retains before/after bytes. Existing permissions,
+drift, aliases or uncertain installation hold the actor. Compare then atomic replace assumes a
+trusted/supervised writer; it is not OS atomic CAS or actor authentication. The plain `node` rule
+uses PATH and is not executable-hash enforcement. Matching quoted rules and actual native-runtime
+permission handling require their own qualification. Other harnesses need their real qualified
+permission route; Claude settings are not portable authorization.
+
+Only after verified association/profile/install readback, send one permission-ready notice naming
+the launch, actor/worktree and retained installation receipt. This is trusted instruction coordination,
+not OS suspension. Then obtain the fresh startup ack, prepare-input FF and published exact work
+release/start marker through the existing protocol. Missing evidence remains held; use the agreed
+auto mode/profile, never a global bypass or new admin credential. The notice itself grants no task
+edits; only the original work-start guard does. Same-handle delivery recovery remains mandatory.
+
+### Actual specification review bridge
+
+Use10/21/13 to bind the agreed nonpublic targets and entire closure, with one helper owner. Keep
+unsupported/missing/failed targets in the separate full scope inventory. A name/graph root is not
+scope approval or public-API discovery. Author through `lean-specify/controller-direct`, or split
+research/author roles, using full actual source/type/body/dependency/standard context. Compose only
+the allowed exact candidate bytes before review.
+
+Export the existing grounded Other packet through `fvs-spec-review.mjs preflight` then `run` with
+runtime `other`; export invokes no reviewer. `prepareReviewBinding` / `prepare-review` takes exactly
+`{projectRoot,plan,graph,registry,contract,packet,prompt,out}`. It computes the actual14 candidate
+fingerprint/current global head and freezes the contract/context, author, exported packet/prompt and
+source hashes. It returns `{binding,input}` references. Include **both** in the new review work packet;
+the reviewer reads the full binding/contract and exported prompt. `input` is the existing six-field
+`fvs/auto-review-input` v1. Never bind an old PASS to a new candidate/head after review.
+
+Launch a fresh read-only reviewer under `spec_review` with `procedure:"lean-spec-review/Other"`
+through the actor protocol above. Retain the
+actual returned Markdown and its association with the issued work packet. `importReviewedContract`
+/ `import-review` takes exactly `{projectRoot,binding,workPacket,marker,response,session,settings,out}`.
+`response` references a controller-held record exactly
+`{workPacket,marker,binding,response:<raw Markdown ref>,reviewerInvocation:<actual launch transitionId>}`.
+`session` and `settings` reference actual retained AO session-get and config-options JSON, not requested
+settings copied into observed fields. Missing model/effort evidence stays unknown and holds the
+settings-dependent route. This is trusted controller evidence, not provider authentication.
+
+The bridge independently observes the active assigned actor/Git, checks the published release/start,
+original policy/current memory and held candidate/head, then calls the actual Other Markdown import.
+It constructs14's existing review envelope from the prior binding and fresh invocation/provenance:
+clean PASS → `pass`; APPROVE-WITH-EDITS/REVISE → `changes-requested`; BLOCKED/malformed/unavailable
+evidence → held/no PASS. Other stays externally supplied/unverified;14 independence stays declared
+distinct session/run, `verified:false`. Submit the actual resulting envelope through the paired
+registry-revise action. Any append or semantic/context edit needs a fresh bound review. Serialize
+review preparation/publication. Three rounds checkpoint under the original run; do not add a
+routine human approval or weaken a statement to obtain PASS.
+
+### Proof and final handoff
+
+After current14 readiness, freeze15 with mutable overlays absent. Use22's ready frontier for actual
+`lean-verify/controller-direct` work (or separate plan/prove roles), original budgets and meaningful
+progress. Integrate only allowed exact candidate bytes and retain the actual typed work completion.
+Check independently through15, then accept dependency-first and serially at the fixed tree. During
+revisions use the finite basis route above. Worker VERIFIED and driver command success accept nothing.
+
+At complete or precise partial status, inspect the entire original selected scope, reconcile current
+state and build/verify17 using the actual current request and historical captures. The artifact keeps
+integrity, live currentness, unavailable inputs, each root's PASS/partial reason and pending human
+review separate. A draft PR requires its separately recorded publication grant/trusted publisher.
+Human feedback uses18 inspect/finish and this same pipeline. An all-fail run is not a successful pilot.
+No public-API/whole-crate/platform/side-channel claim follows from this bounded route.
+
 Use this route only for an AO orchestrator continuing the current applicable nonpublic
 agreement with a concrete execution grant, complete persisted/explicit selections, primary
 project memory, actual controller invocation and original run accounting. It is the opt-in

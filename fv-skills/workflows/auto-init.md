@@ -246,6 +246,14 @@ from actual state and existing decisions; a genuinely missing capability/input i
 scope agreement and final human PR decision remain the human gates. Actual live provider execution
 requires the separately concrete19 setup/permission; fixture qualification supplies no such grant.
 
+Use that reference's **Production driver: authorized v2 continuation** recipe: resolve its one
+trusted engine and closed caller context, then use `prepareCurrentRequest`/`advanceOnce` and the
+actual paired effect/after APIs. Continue extraction/discovery → `auto-top-specs` actual author and
+fresh bound14 review → `auto-execute` dependency-ready proof, serial15 acceptance and17 human bundle.
+Existing input/grant/profile/capability gaps remain partial; v2 or agreement storage alone enables
+nothing. Keep the original run on resume and explain stale-store revisions through the finite
+v2basis route. Do not ask the owner to manually launch the next stage.
+
 Without that complete opt-in context, report the available16 continuation below and stop. Do not
 infer dispatch permission from a stored agreement, remembered grant, partial result or worker verdict.
 

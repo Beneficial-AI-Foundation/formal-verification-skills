@@ -24,10 +24,11 @@ A roadmap-offer decision alone is not agreement or authorization. Material chang
 confirmation; routine progress does not reopen setup. Public-API selection remains unsupported
 pending separately permitted visibility landing.
 
-Output: recorded setup/agreement and the available continuation or exact refusal. This bounded
-slice launches no workers or proofs. Its configured project-memory bootstrap does not complete
-resume16 or orchestration22. Later provisional cycles stay autonomous within the agreement and
-final PR acceptance stays human.
+Output: recorded setup/agreement and the available continuation or exact refusal. Agreement storage
+alone launches no workers or proofs. With complete authorized v2 controller context, continue the
+production driver automatically through the agreed stages. Legacy/read-only or missing-grant routes
+stop at their recorded continuation. Later provisional cycles stay autonomous within the agreement
+and final PR acceptance stays human.
 </objective>
 
 <execution_context>
@@ -72,6 +73,7 @@ Applicable existing explicit responses are reused without another question; comp
 - [ ] Stored-context-current is distinguished from the mandatory semantic applicability check.
 - [ ] The configured memory route uses a primary store and fresh caller request/actual prime bytes on start/resume.
 - [ ] Worker prime is read-only; missing real stores are never initialized or migrated automatically.
-- [ ] No public-API classifier, implicit grant, per-round human approval or worker dispatch is introduced.
+- [ ] No public-API classifier, implicit grant or per-round human approval is introduced.
+- [ ] Worker dispatch requires actual authorized v2 controller context and the driver/current effect gates.
 - [ ] The report carries the State, Next action and Pending decision lines.
 </success_criteria>

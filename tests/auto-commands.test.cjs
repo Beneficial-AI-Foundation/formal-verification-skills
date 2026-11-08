@@ -826,12 +826,19 @@ describe('auto command and workflow text', () => {
     }
   });
 
-  it('top-specs and execute stop at milestone 2 and write nothing', () => {
+  it('top-specs and execute retain legacy stops and gate the authorized v2 driver route', () => {
     for (const name of ['auto-top-specs', 'auto-execute']) {
       const body = text(name);
       assert.match(body, /milestone 2 functionality not yet available/, name);
       assert.match(body, /"Auto track" section of the FVS README/, name);
-      assert.doesNotMatch(read(`commands/fvs/${name}.md`), /^ {2}- (Write|Edit|Task|Skill)$/m, `${name} has no write or dispatch tool`);
+      const command = read(`commands/fvs/${name}.md`);
+      assert.match(command, /Legacy\/read-only and missing-context invocations retain the reporting stop without dispatch/);
+      assert.match(command, /^ {2}- Write$/m);
+      assert.match(command, /explicit execution grant/);
+      assert.match(body, /Production driver: authorized v2 continuation/);
+      assert.match(body, /runPairedEffect/);
+      assert.match(body, /recordAfter/);
+      assert.match(body, /partial/);
       assert.doesNotMatch(body, /record-(roadmap|extraction|externals)|init-state/, name);
     }
     assert.match(read('README.md'), /^### Auto track$/m);
