@@ -10,6 +10,7 @@ import { candidateOf, contractProblems, contextOf, readChain, reviewProblems, va
 import { observeAssignedActor } from './fvs-auto-resume.mjs';
 import { runExpired, withProcessCancellation } from './fvs-execution.mjs';
 import { spawnSync } from 'node:child_process';
+import { recordValidatedResponse } from './fvs-spec-review.mjs';
 
 export class DriverError extends Error {
   constructor(code, message) { super(message); this.code = code; }
@@ -101,13 +102,34 @@ export async function recordAfter(raw) {
   return { status: facts.status, checkpoint, basis, executable: false, proofAuthority: 'none; every successor needs a fresh validated before' };
 }
 
-function currentCandidate({ projectRoot, plan, graph, registry, contract }) {
+function sourceIdentity(projectRoot, source) {
+  closed(source, ['kind', 'root', 'commit', 'expectedTree'], 'review source');
+  if (source.kind !== 'git' || ![source.commit, source.expectedTree].every(s => /^[0-9a-f]{40}$/.test(s ?? ''))
+    || ![projectRoot, source.root].every(p => path.isAbsolute(p ?? '') && fs.realpathSync(p) === p && fs.lstatSync(p).isDirectory())) fail('Review needs canonical primary and integration source roots');
+  const run = auto.readRuntimeState({ projectRoot }).state?.run;
+  if (!run || run.schemaVersion !== 2 || run.canonicalRoot !== projectRoot) fail('Review needs its actual v2 primary runtime');
+  const git = args => {
+    const result = spawnSync('/usr/bin/git', ['-C', source.root, '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', ...args], {
+      env: { PATH: '/usr/bin:/bin', LANG: 'C', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1', GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' },
+      timeout: 30000, maxBuffer: 1024 * 1024 });
+    if (result.status !== 0 || result.signal || result.error) fail('Integration source Git observation failed');
+    return result.stdout.toString('utf8').trim();
+  };
+  const common = fs.realpathSync(path.resolve(source.root, git(['rev-parse', '--git-common-dir'])));
+  if (common !== run.gitCommonDir) fail('Integration source is outside the primary Git store');
+  const actual = { root: git(['rev-parse', '--show-toplevel']), commit: git(['rev-parse', 'HEAD']), tree: git(['rev-parse', 'HEAD^{tree}']),
+    branchRef: git(['symbolic-ref', '-q', 'HEAD']), gitCommonDir: common, dirty: git(['status', '--porcelain=v1', '--untracked-files=all']) !== '' };
+  if (actual.root !== source.root || actual.commit !== source.commit || actual.tree !== source.expectedTree || actual.dirty) fail('Integration source moved or is dirty');
+  return actual;
+}
+function currentCandidate({ projectRoot, source, plan, graph, registry, contract }) {
+  const identity = sourceIdentity(projectRoot, source);
   const p = { json: transitionBound(plan), sha256: plan.sha256 }, g = { json: transitionBound(graph), sha256: graph.sha256 };
   const view = validatePlan(p, g), c = transitionBound(contract);
   if (view.problems.length || !view.union.has(c.node) || view.nodes.get(c.node)?.eligibility !== 'eligible') fail('Review needs a supported selected node');
-  const context = contextOf(p, g, view, c.node), problems = contractProblems(c, context, projectRoot), chain = readChain(registry);
+  const context = contextOf(p, g, view, c.node), problems = contractProblems(c, context, source.root), chain = readChain(registry);
   if (problems.length || chain.pending) fail('Contract/context unavailable: ' + problems.join('; '));
-  return { contract: c, context, chain, candidateSha256: candidateOf(c, context), registryHeadSha256: chain.records.at(-1)?.sha ?? null };
+  return { contract: c, context, chain, sourceIdentity: identity, candidateSha256: candidateOf(c, context), registryHeadSha256: chain.records.at(-1)?.sha ?? null };
 }
 function packetSources(projectRoot, packet, prompt) {
   if (packet.version !== 2 || packet.root !== projectRoot || packet.request?.runtime !== 'other' || !Array.isArray(packet.inputs) || !packet.inputs.length) fail('Expected an actual grounded Other packet');
@@ -129,16 +151,16 @@ function reviewAuthority(projectRoot, launch, run) {
 
 // Freeze14's fingerprint and the exported prompt before issuing the review packet.
 export function prepareReviewBinding(raw) {
-  const q = closed(transitionData(raw), ['projectRoot', 'plan', 'graph', 'registry', 'contract', 'packet', 'prompt', 'out'], 'review preparation');
+  const q = closed(transitionData(raw), ['projectRoot', 'source', 'plan', 'graph', 'registry', 'contract', 'packet', 'prompt', 'out'], 'review preparation');
   const current = currentCandidate(q), packet = transitionBound(q.packet);
   transitionBound(q.prompt, false);
   if (q.prompt.file !== path.join(path.dirname(q.packet.file), 'prompt.md') || path.basename(q.packet.file) !== 'packet.json') fail('Use the original exported packet/prompt pair');
-  const sources = packetSources(q.projectRoot, packet, q.prompt);
-  outputDirectory(q.out, [q.projectRoot, q.registry]);
+  const sources = packetSources(q.source.root, packet, q.prompt);
+  outputDirectory(q.out, [q.projectRoot, q.source.root, q.registry]);
   const input = transitionSave(path.join(q.out, 'input.json'), { schema: 'fvs/auto-review-input', schemaVersion: 1, node: current.contract.node,
     contract: q.contract, candidateSha256: current.candidateSha256, registryHeadSha256: current.registryHeadSha256 });
   const binding = transitionSave(path.join(q.out, 'binding.json'), { schema: 'fvs/auto-driver-review-binding', schemaVersion: 1,
-    projectRoot: q.projectRoot, plan: q.plan, graph: q.graph, registry: q.registry, contract: q.contract, packet: q.packet, prompt: q.prompt,
+    projectRoot: q.projectRoot, source: q.source, sourceIdentity: current.sourceIdentity, plan: q.plan, graph: q.graph, registry: q.registry, contract: q.contract, packet: q.packet, prompt: q.prompt,
     input, sources, context: current.context, author: current.contract.author });
   return { binding, input, authority: 'pre-dispatch context only; no review verdict' };
 }
@@ -151,9 +173,11 @@ export async function importReviewedContract(raw) {
     || launch.stage !== 'review' || p.schemaVersion !== 2 || !p.inputs.some(r => same(r, b.input))
     || !p.inputs.some(r => same(r, q.binding)) || !launch.nodes.includes(input.node)) fail('Review is not this pre-dispatch binding/assignment');
   const current = currentCandidate(b);
+  if (!same(current.sourceIdentity, b.sourceIdentity) || !same(b.sourceIdentity, launch.before.source)
+    || p.actor.worktree.commit !== b.source.commit || p.actor.worktree.tree !== b.source.expectedTree) fail('Review source is not the issued integration/prepared context');
   if (current.candidateSha256 !== input.candidateSha256 || current.registryHeadSha256 !== input.registryHeadSha256 || !same(current.context, b.context)) fail('Review candidate/head/context changed; prepare a fresh review');
   const packet = transitionBound(b.packet); transitionBound(b.prompt, false);
-  if (!same(packetSources(q.projectRoot, packet, b.prompt), b.sources)) fail('Exported review sources changed');
+  if (!same(packetSources(b.source.root, packet, b.prompt), b.sources)) fail('Exported review sources changed');
   const marker = transitionBound(q.marker), runtime = auto.readRuntimeState({ projectRoot: q.projectRoot }), reservation = runtime.reservations.get(p.actor.reservationId);
   if (!runtime.state || runtime.state.run.runId !== p.runId || marker.runId !== p.runId || runExpired(runtime.state.run) || q.marker.file !== p.startMarker || marker.schema !== 'fvs/auto-execution-start' || marker.schemaVersion !== 2
     || marker.status !== 'execution-uncertain' || !same(marker.packet, q.workPacket) || !same(marker.actor, p.actor)
@@ -173,28 +197,48 @@ export async function importReviewedContract(raw) {
     || setting('model') !== selected.model || setting('effort') !== selected.effort || packet.request.model !== selected.model || packet.request.effort !== selected.effort) fail('Required actual reviewer/settings evidence unavailable or mismatched');
   const reviewer = { session: p.actor.sessionId, harness: session.harness, model: setting('model'), runId: launch.transitionId };
   if (reviewer.session === b.author.session || reviewer.runId === b.author.runId) fail('Reviewer must be a distinct fresh invocation');
-  outputDirectory(q.out, [q.projectRoot, b.registry, p.actor.worktree.path]);
+  outputDirectory(q.out, [q.projectRoot, b.source.root, b.registry, p.actor.worktree.path]);
   const actor = observeAssignedActor({ projectRoot: q.projectRoot, ao: { tool: launch.before.fixed.aoTool, stateHome: runtime.state.run.aoStateHome,
     projectId: runtime.state.run.aoProjectId }, actor: p.actor, attemptId: crypto.randomUUID(), out: path.join(q.out, 'actor') });
   if (!same(actor, p.actor) || actor.worktree.dirty) fail('Read-only reviewer source changed');
   const returned = closed(transitionBound(q.response), ['workPacket', 'marker', 'binding', 'response', 'reviewerInvocation'], 'actual returned review');
   if (!same(returned.workPacket, q.workPacket) || !same(returned.marker, q.marker) || !same(returned.binding, q.binding) || returned.reviewerInvocation !== launch.transitionId) fail('Response belongs to another packet/binding/invocation');
   const response = transitionBound(returned.response, false);
+  const sealedFile = path.join(q.out, 'response.bin'); fs.writeFileSync(sealedFile, response, { flag: 'wx', mode: 0o600 });
+  const sealed = { file: sealedFile, sha256: crypto.createHash('sha256').update(response).digest('hex') };
+  const directory = path.dirname(b.packet.file), priorValidations = new Set(fs.readdirSync(directory).filter(n => n.startsWith('validation-')));
   const helper = fileURLToPath(new URL('./fvs-spec-review.mjs', import.meta.url));
-  const argv = [process.execPath, helper, 'import', path.dirname(b.packet.file), returned.response.file];
+  const argv = [process.execPath, helper, 'import', directory, sealed.file];
   const env = { PATH: '/usr/bin:/bin', LANG: 'C', HOME: runtime.state.run.aoStateHome, GIT_NO_LAZY_FETCH: '1' };
   const tool = { file: helper, sha256: crypto.createHash('sha256').update(transitionBytes(helper)).digest('hex') };
-  const result = spawnSync(argv[0], argv.slice(1), { cwd: q.projectRoot, env, timeout: 30000, maxBuffer: 1024 * 1024 });
-  const receipt = transitionSave(path.join(q.out, 'import.json'), { argv, cwd: q.projectRoot, env, tool, exitCode: result.status, signal: result.signal,
+  const result = spawnSync(argv[0], argv.slice(1), { cwd: b.source.root, env, timeout: 30000, maxBuffer: 1024 * 1024 });
+  const receipt = transitionSave(path.join(q.out, 'import.json'), { argv, cwd: b.source.root, env, tool, exitCode: result.status, signal: result.signal,
     error: result.error?.code ?? null, stdout: String(result.stdout ?? ''), stderr: String(result.stderr ?? '') });
   if (result.status !== 0 || result.signal || result.error) fail('Other import refused; preserve response/import evidence');
-  reviewAuthority(q.projectRoot, launch, runtime.state.run);
   if (crypto.createHash('sha256').update(transitionBytes(helper)).digest('hex') !== tool.sha256) fail('Import helper changed');
-  if (!same(currentCandidate(b).candidateSha256, input.candidateSha256) || currentCandidate(b).registryHeadSha256 !== input.registryHeadSha256
+  const validations = fs.readdirSync(directory).filter(n => n.startsWith('validation-') && !priorValidations.has(n));
+  if (validations.length !== 1) fail('One actual imported validation artifact is required');
+  const validation = path.join(directory, validations[0]);
+  const ref = file => ({ file, sha256: crypto.createHash('sha256').update(transitionBytes(file)).digest('hex') });
+  const imported = { raw: ref(path.join(validation, 'imported-response.bin')), normalized: ref(path.join(validation, 'normalized-response.md')),
+    transformation: ref(path.join(validation, 'transformation.json')), review: ref(path.join(directory, 'review.md')) };
+  if (imported.raw.sha256 !== sealed.sha256) fail('Importer validated different response bytes');
+  fs.mkdirSync(path.join(q.out, 'revalidation'));
+  const expected = recordValidatedResponse(path.join(q.out, 'revalidation'), transitionBound(sealed, false), {
+    verdicts: ['PASS', 'APPROVE-WITH-EDITS', 'REVISE', 'BLOCKED'], headings: ['Findings', 'Content coverage statement', 'Coverage', 'Evidence'], warnings: [] });
+  const normalized = new TextDecoder('utf-8', { fatal: true }).decode(transitionBound(imported.normalized, false));
+  const transformation = transitionBound(imported.transformation);
+  if (normalized !== expected || transformation.validated !== true || transformation.replay_matches !== true
+    || transformation.hashes?.['normalized-response.md'] !== imported.normalized.sha256
+    || !transitionBound(imported.review, false).toString('utf8').endsWith('\n\n' + normalized.trim() + '\n')) fail('Imported normalized response/artifact differs from sealed validation');
+  for (const r of [q.binding, b.input, b.contract, b.packet, b.prompt, ...b.sources, q.workPacket, q.marker, q.response, returned.response, q.session, q.settings, sealed, ...Object.values(imported)]) transitionBound(r, false);
+  reviewAuthority(q.projectRoot, launch, runtime.state.run);
+  const after = currentCandidate(b);
+  if (after.candidateSha256 !== input.candidateSha256 || after.registryHeadSha256 !== input.registryHeadSha256 || !same(after.sourceIdentity, b.sourceIdentity)
     || auto.readRuntimeState({ projectRoot: q.projectRoot }).headSha256 !== runtime.headSha256 || runExpired(runtime.state.run)) fail('Context advanced during import; no review publication');
-  const verdict = response.toString('utf8').trim().split(/\r?\n/).at(-1).trim().replace(/^[-\s]*VERDICT:\s*/i, '').toUpperCase();
+  const verdict = normalized.trim().split(/\r?\n/).at(-1).trim().replace(/^[-\s]*VERDICT:\s*/i, '').toUpperCase();
   const evidence = transitionSave(path.join(q.out, 'evidence.json'), { binding: q.binding, workPacket: q.workPacket, marker: q.marker, response: q.response,
-    session: q.session, settings: q.settings, actor, import: receipt, reviewer, requested: selected, observed: { harness: reviewer.harness, model: reviewer.model, effort: setting('effort') },
+    sealedResponse: sealed, imported, verdict, session: q.session, settings: q.settings, actor, import: receipt, reviewer, requested: selected, observed: { harness: reviewer.harness, model: reviewer.model, effort: setting('effort') },
     provenance: 'Other externally supplied/unverified; trusted controller observations; independence declared-distinct verified:false' });
   if (verdict === 'BLOCKED') return { status: 'review-blocked', evidence, review: null, executable: false };
   if (!['PASS', 'APPROVE-WITH-EDITS', 'REVISE'].includes(verdict)) fail('Unrecognized imported verdict');

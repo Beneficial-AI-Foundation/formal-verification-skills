@@ -141,6 +141,10 @@ def merge(file, rules, out, before_commit=None):
 def install(request):
     closed(request, ['schema', 'schemaVersion', 'projectRoot', 'association', 'grant', 'node', 'gate', 'out'])
     need(request['schema'] == 'fvs/auto-actor-permissions' and request['schemaVersion'] == 1, 'unsupported request')
+    for tool in ['node', 'gate']:
+        closed(request[tool], ['file', 'sha256'])
+        need(isinstance(request[tool]['file'], str) and not any(c in request[tool]['file'] for c in '*?\r\n'),
+             'literal wildcard/pattern tool paths are unsupported; no permission change')
     root = canonical(request['projectRoot'])
     association = decode(bound(request['association']))
     grant = decode(bound(request['grant']))

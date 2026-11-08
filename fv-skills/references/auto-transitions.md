@@ -96,6 +96,8 @@ trusted/supervised writer; it is not OS atomic CAS or actor authentication. The 
 uses PATH and is not executable-hash enforcement. Matching quoted rules and actual native-runtime
 permission handling require their own qualification. Other harnesses need their real qualified
 permission route; Claude settings are not portable authorization.
+Literal wildcard/pattern characters (`*`, `?`, or line breaks) in node/gate paths are refused
+before output or settings writes. Shell quoting does not make a permission wildcard literal.
 
 Only after verified association/profile/install readback, send one permission-ready notice naming
 the launch, actor/worktree and retained installation receipt. This is trusted instruction coordination,
@@ -103,6 +105,8 @@ not OS suspension. Then obtain the fresh startup ack, prepare-input FF and publi
 release/start marker through the existing protocol. Missing evidence remains held; use the agreed
 auto mode/profile, never a global bypass or new admin credential. The notice itself grants no task
 edits; only the original work-start guard does. Same-handle delivery recovery remains mandatory.
+This permission-ready instruction is a v2 extension. Legacy v1 launches retain their original
+startup instructions.
 
 ### Actual specification review bridge
 
@@ -114,7 +118,13 @@ the allowed exact candidate bytes before review.
 
 Export the existing grounded Other packet through `fvs-spec-review.mjs preflight` then `run` with
 runtime `other`; export invokes no reviewer. `prepareReviewBinding` / `prepare-review` takes exactly
-`{projectRoot,plan,graph,registry,contract,packet,prompt,out}`. It computes the actual14 candidate
+`{projectRoot,source,plan,graph,registry,contract,packet,prompt,out}`. `projectRoot` is the canonical
+primary runtime/agreement/memory root. `source` is the actual existing16 Git source identity
+`{kind:"git",root,commit,expectedTree}`; its root is the integration/spec root, not a guessed cwd.
+Export the Other packet in that source root and keep new specDefinitions there. The binding checks
+the common Git store, actual clean commit/tree/branch and the issued/prepared source before review
+publication. Keep distinct worktrees distinct; do not copy specs into the primary to satisfy a check.
+It computes the actual14 candidate
 fingerprint/current global head and freezes the contract/context, author, exported packet/prompt and
 source hashes. It returns `{binding,input}` references. Include **both** in the new review work packet;
 the reviewer reads the full binding/contract and exported prompt. `input` is the existing six-field
@@ -131,7 +141,13 @@ settings copied into observed fields. Missing model/effort evidence stays unknow
 settings-dependent route. This is trusted controller evidence, not provider authentication.
 
 The bridge independently observes the active assigned actor/Git, checks the published release/start,
-original policy/current memory and held candidate/head, then calls the actual Other Markdown import.
+original policy/current memory and held candidate/head, then seals the exact returned Markdown into
+an exclusive response snapshot and calls the actual Other importer on that snapshot in the bound
+integration/spec root. Retain the importer's actual raw, normalized, transformation and review
+artifacts. Revalidate the sealed bytes through the existing normalizer, compare the imported outputs
+and rehash relevant inputs before publication. The14 verdict comes from the validated normalized
+import, never a cached read of a path the child later reopens. Substituted/tampered responses hold
+the route; supported normalization keeps its raw and normalized hashes distinct.
 It constructs14's existing review envelope from the prior binding and fresh invocation/provenance:
 clean PASS → `pass`; APPROVE-WITH-EDITS/REVISE → `changes-requested`; BLOCKED/malformed/unavailable
 evidence → held/no PASS. Other stays externally supplied/unverified;14 independence stays declared

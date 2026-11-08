@@ -33,9 +33,13 @@ Without this context retain the standalone read-only report below.
    permission-ready notice, verify startup, prepare/release the exact `lean-specify/controller-direct`
    (or split direct) packet and wait for conclusive results. Preserve all branches/drafts. Compose
    only the checked allowed paths/content, with one owner for each shared helper.
-5. Export a grounded Other review packet. Before reviewer dispatch, call `prepareReviewBinding`;
+5. Export a grounded Other review packet in the actual integration/spec root. Before reviewer
+   dispatch, call `prepareReviewBinding` with the canonical primary `projectRoot` and the explicit
+   current `{kind:"git",root,commit,expectedTree}` source identity;
    include the returned binding/input in the actual fresh review packet. After the read-only reviewer
    returns, call `importReviewedContract` with its exact response/start/session/settings evidence.
+   Its sealed response and actual imported normalized artifact determine the verdict; response
+   substitution or a different integration source remains held.
    A packet export is not a review, and Other import alone is not14's candidate/head envelope.
 6. Publish the fresh envelope through the existing paired14 register/revise action. Clean PASS may
    establish machine readiness only. Changes/blocked evidence returns to the grounded author loop;

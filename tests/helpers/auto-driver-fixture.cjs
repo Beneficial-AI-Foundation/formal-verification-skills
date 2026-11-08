@@ -1,8 +1,10 @@
 // Shared only by the new driver tests. Real Git/16/22, owned AO/Beads doubles; no proof evidence.
 const fs = require('node:fs'), path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const f = require('./transition-v2-fixture.cjs');
-async function world() {
-  const [driver, auto, t, m] = await Promise.all([import('../../scripts/fvs-auto-driver.mjs'), import('../../scripts/fvs-auto.mjs'), import('../../scripts/fvs-auto-transitions.mjs'), import('../../scripts/fvs-project-memory.mjs')]);
+async function world(engineRoot = path.resolve(__dirname, '../..')) {
+  const module = name => pathToFileURL(path.join(engineRoot, 'scripts', name)).href;
+  const [driver, auto, t, m] = await Promise.all([import(module('fvs-auto-driver.mjs')), import(module('fvs-auto.mjs')), import(module('fvs-auto-transitions.mjs')), import(module('fvs-project-memory.mjs'))]);
   const x = await f.fixture(auto, t);
   const effects = `
 if(args[0]==='spawn'){const cp=require('node:child_process'),branch=args[args.indexOf('--branch')+1],wt=c.workerPath;
@@ -13,19 +15,20 @@ if(args[0]==='send'){console.log(JSON.stringify({deliveryHandle:args[args.indexO
 `;
   fs.writeFileSync(x.tool, fs.readFileSync(x.tool, 'utf8').replace("if (args[0] !== 'session'", effects + "if (args[0] !== 'session'"));
   x.writeControl({ workerPath: path.join(x.owned, 'review-worker') });
-  let associations = [];
+  let associations = [], sourceRoot = x.root;
   const inputs = { extraction: f.json(x.owned, 'fixture-extraction', { authority: 'metadata only; no extraction claim' }),
     plan: f.ref(path.resolve(__dirname, '../fixtures/auto-contract-registry/plan.json')), graph: f.ref(path.resolve(__dirname, '../fixtures/auto-contract-registry/graph.json')), baseline: null, acceptedStore: null };
-  const context = () => { const q = x.request({ inputs, associations }); return Object.fromEntries(['runId', 'ao', 'source', 'inputs', 'associations', 'priorAccounting'].map(k => [k, q[k]])); };
+  const source = () => ({ kind: 'git', root: sourceRoot, commit: f.git(sourceRoot, 'rev-parse', 'HEAD'), expectedTree: f.git(sourceRoot, 'rev-parse', 'HEAD^{tree}') });
+  const context = () => { const q = x.request({ inputs, associations, source: source() }); return Object.fromEntries(['runId', 'ao', 'source', 'inputs', 'associations', 'priorAccounting'].map(k => [k, q[k]])); };
   const request = transition => driver.prepareCurrentRequest({ projectRoot: x.root, context: context(), phase: 'resume', transition: transition ?? null });
   const worktree = p => ({ path: p, gitDir: fs.realpathSync(path.resolve(p, f.git(p, 'rev-parse', '--git-dir'))), gitCommonDir: fs.realpathSync(path.resolve(p, f.git(p, 'rev-parse', '--git-common-dir'))),
     branchRef: f.git(p, 'symbolic-ref', 'HEAD'), commit: f.git(p, 'rev-parse', 'HEAD'), tree: f.git(p, 'rev-parse', 'HEAD^{tree}'), dirty: f.git(p, 'status', '--porcelain=v1', '--untracked-files=all') !== '' });
-  async function paired({ kind, stage, nodes = [], target, sessionId = null, effect = { kind: 'local', operation: stage }, result = raw => raw, after = () => ({ sessionId: null, association: null }) }) {
+  async function paired({ kind, stage, nodes = [], target, sessionId = null, registryRoot = null, effect = { kind: 'local', operation: stage }, result = raw => raw, after = () => ({ sessionId: null, association: null }) }) {
     const observed = await driver.recordCheckpoint({ projectRoot: x.root, request: request(), out: x.out() }), q = request();
     const ids = { transitionId: f.uuid(), reservationId: f.uuid() }, owner = 'worker-owner';
     const actorId = sessionId ?? target.sessionId ?? null;
     const before = t.transitionSnapshot({ q, run: x.run(), canonical: x.canonical(), observation: observed.value.observation,
-      action: { schemaVersion: 2, kind, before: { registry: null }, target: actorId ? { sessionId: actorId } : {}, owner, nodes, authorization: x.auth, profile: x.profile } },
+      action: { schemaVersion: 2, kind, before: { registry: registryRoot ? { root: registryRoot } : null }, target: actorId ? { sessionId: actorId } : {}, owner, nodes, authorization: x.auth, profile: x.profile } },
     { profileObservation: x.profileObservation, observeWorktree: o => worktree(o.path) });
     const action = { schema: 'fvs/auto-transition-request', schemaVersion: 2, runId: x.runId, ...ids, kind, stage, nodes, owner, expectedHeadSha256: q.expectedHeadSha256, before, target, authorization: x.auth, profile: x.profile, basis: null };
     const actionRef = f.json(x.owned, 'action', action), intent = { ...ids, stage, nodes, owner, effect, request: actionRef };
@@ -48,15 +51,21 @@ if(args[0]==='send'){console.log(JSON.stringify({deliveryHandle:args[args.indexO
       target: { projectId: 'fixture-project', branchRef, assignmentId, selectionStage: 'spec_review', invocation: null, startup, resumeOf: null }, after: (raw, before, intent) => {
         association = x.associate(raw.session.id, raw.worktree, intent, before); associations = [association]; return { sessionId: raw.session.id, association };
       } });
-    const actor = { projectId: 'fixture-project', sessionId: launched.raw.session.id, reservationId: launched.action.reservationId, assignmentId, worktree: worktree(launched.raw.worktree), profile: null };
+    let actor = { projectId: 'fixture-project', sessionId: launched.raw.session.id, reservationId: launched.action.reservationId, assignmentId, worktree: worktree(launched.raw.worktree), profile: null };
     const caller = s => ({ attemptId: s.attemptId, phase: s.phase, target: { projectId: actor.projectId, sessionId: actor.sessionId, resumeId: s.resumeId } });
     const startupRequest = t.disabledWorkerMemoryRequest(launched.action.before.fixed, caller(startup));
     const startupAck = f.json(x.owned, 'startup', { schema: 'fvs/auto-startup-ack', schemaVersion: 2, runId: x.runId, actionSha256: m.memoryHash(launched.action),
       beforeEventSha256: launched.produced.before.value.recordedEventSha256, challenge: startup.challenge, actor, memoryRequest: startupRequest, memoryOut: null,
       memoryEvidence: t.workerMemoryEvidence(null, startupRequest, launched.action.before.fixed), waiting: true });
+    const candidate = source();
     const prep = await paired({ kind: 'prepare-input', stage: 'integration', sessionId: actor.sessionId,
-      target: { sessionId: actor.sessionId, association, launch: launched.actionRef, startupAck, startupRequest, candidate: { commit: actor.worktree.commit, expectedTree: actor.worktree.tree } },
-      result: () => ({ status: 'prepared', candidate: { commit: actor.worktree.commit } }) });
+      target: { sessionId: actor.sessionId, association, launch: launched.actionRef, startupAck, startupRequest, candidate: { commit: candidate.commit, expectedTree: candidate.expectedTree } },
+      result: () => ({ status: 'prepared', candidate: { commit: candidate.commit } }), after: () => {
+        const intent = launched.produced.before.value.request.transition.intent;
+        association = x.associate(actor.sessionId, actor.worktree.path, intent, launched.produced.before.value.recordedEventSha256); associations = [association];
+        return { sessionId: null, association: null };
+      } });
+    actor = { ...actor, worktree: worktree(actor.worktree.path) };
     const packetRequest = t.disabledWorkerMemoryRequest(launched.action.before.fixed, caller({ attemptId: f.uuid(), phase: 'resume', resumeId: f.uuid() }));
     const packet = f.json(x.owned, 'review-work', { schema: 'fvs/auto-work-packet', schemaVersion: 2, runId: x.runId, actionSha256: m.memoryHash(launched.action), launch: launched.actionRef,
       beforeEventSha256: launched.produced.before.value.recordedEventSha256, challenge: f.uuid(), actor, deliveryHandle: 'release-' + f.uuid(), memoryRequest: packetRequest,
@@ -68,6 +77,6 @@ if(args[0]==='send'){console.log(JSON.stringify({deliveryHandle:args[args.indexO
     if (!ack.mayStart) throw Error('fixture start refused');
     return { packet, marker: f.ref(markerPath), actor, launch: launched };
   }
-  return { driver, auto, t, m, x, inputs, context, request, paired, releaseReview };
+  return { driver, auto, t, m, x, inputs, context, request, paired, releaseReview, source, useSource: root => { sourceRoot = root; } };
 }
 module.exports = { ...f, world };

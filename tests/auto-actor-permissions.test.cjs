@@ -61,3 +61,26 @@ test('compare-then-replace refuses detected drift and retains the before evidenc
   const f = fixture(), code = `import importlib.util, json, pathlib\ns=importlib.util.spec_from_file_location('permissions',${JSON.stringify(SCRIPT)}); m=importlib.util.module_from_spec(s); s.loader.exec_module(m)\nout=${JSON.stringify(path.join(f.root, 'drift-evidence'))}; pathlib.Path(out).mkdir()\nf=${JSON.stringify(f.file)}\ntry: m.merge(f,['Bash(node trusted *)'],out,before_commit=lambda:pathlib.Path(f).write_text('new writer bytes'))\nexcept m.Refused: pass\nelse: raise AssertionError('drift must refuse')\nassert pathlib.Path(f).read_text()=='new writer bytes'\nassert pathlib.Path(out,'before.json').is_file()\n`;
   const result = spawnSync(PYTHON, ['-c', code], { encoding: 'utf8', env: { PATH: process.env.PATH, PYTHONDONTWRITEBYTECODE: '1' } }); assert.equal(result.status, 0, result.stderr);
 });
+for (const tool of ['gate', 'node']) test('literal wildcard ' + tool + ' path refuses before output/settings writes', () => {
+  const f = fixture(), directory = path.join(f.root, 'literal*tool'); fs.mkdirSync(directory);
+  const file = path.join(directory, tool === 'gate' ? 'fvs-auto.mjs' : 'node');
+  fs.writeFileSync(file, '#!/bin/sh\nexit 1\n', { mode: 0o755 }); f.request[tool] = ref(file);
+  const grant = JSON.parse(fs.readFileSync(f.request.grant.file)); grant[tool] = f.request[tool];
+  f.request.grant = json(f.request.grant.file, grant);
+  const before = fs.readFileSync(f.file), result = invoke(f);
+  assert.notEqual(result.status, 0); assert.match(result.stderr, /wildcard|pattern/i);
+  assert.deepEqual(fs.readFileSync(f.file), before); assert.equal(fs.existsSync(f.request.out), false);
+});
+test('ordinary spaces and quotes retain exact shell-quoted tool prefixes', () => {
+  const f = fixture(), directory = path.join(f.root, "tool path 'quoted'"); fs.mkdirSync(directory);
+  for (const tool of ['node', 'gate']) {
+    const file = path.join(directory, tool); fs.writeFileSync(file, '#!/bin/sh\nexit 1\n', { mode: 0o755 }); f.request[tool] = ref(file);
+  }
+  const grant = JSON.parse(fs.readFileSync(f.request.grant.file)); grant.node = f.request.node; grant.gate = f.request.gate; f.request.grant = json(f.request.grant.file, grant);
+  const result = invoke(f); assert.equal(result.status, 0, result.stderr);
+  const rules = JSON.parse(result.stdout).rules;
+  const parsed = spawnSync(PYTHON, ['-c', 'import json,shlex,sys; r=json.loads(sys.argv[1]); print(json.dumps([shlex.split(s[5:-3]) for s in r]))', JSON.stringify(rules)], { encoding: 'utf8' });
+  assert.equal(parsed.status, 0, parsed.stderr);
+  assert.deepEqual(JSON.parse(parsed.stdout), [['node', f.request.gate.file], [f.request.node.file, f.request.gate.file]]);
+  // Shell quoting only; actual native permission matching remains a separate qualification.
+});
