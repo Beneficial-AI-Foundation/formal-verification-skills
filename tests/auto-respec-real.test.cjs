@@ -13,7 +13,8 @@ it('genuine owned two-generation re-specification/currentness (FVS_REAL_RESPEC=1
   const api = await import('../scripts/fvs-auto-respec.mjs'), initial = read(c.initial.result), finalRequest = read(c.final.request), final = read(c.final.result);
   assert.equal(initial.operation, 'inspect'); assert.equal(final.operation, 'finish'); assert.equal(final.status, 'ready-for-final-human-review');
   assert.deepEqual(final.frame, initial.frame); assert.equal(final.effectExecutable, false); assert.equal(final.humanReview, 'pending');
-  const consumed = api.verifyRespecResult({ request: finalRequest, out: c.final.out }); assert.equal(consumed.status, final.status);
+  assert.equal(finalRequest.schemaVersion, 2, 'qualification consumes the current v2 respec request');
+  const consumed = await api.verifyRespecResult({ request: finalRequest, out: c.final.out }); assert.equal(consumed.status, final.status);
   assert.deepEqual(consumed.observation.nodes.map(n => n.node), [19, 20, 21]); assert.ok(consumed.observation.nodes.every(n => n.proof === 'current'));
   assert.ok(consumed.observation.history.promotions.some(p => p.node === 19 && p.file === 'Specs/CheckerOverlayV1.lean'));
   const f1 = read(c.episode1.baseline), f2 = read(c.episode2.baseline);
