@@ -71,7 +71,9 @@ async function dWorld({ engineRoot, base, materials, bd, scope = 'ticket18 D two
   w.useSource(r.source);
   // The exported Other packet records the reviewer selection; the stage profile must name the same effort.
   const profile = w.t.transitionBound(w.x.profile); profile.stages.spec_review.effort = 'xhigh'; w.x.profile = json(w.x.owned, 'profile-review', profile);
-  return { ...w, real: r, git, engineRoot };
+  const e = await import(require('node:url').pathToFileURL(path.join(engineRoot, 'scripts/fvs-execution.mjs')).href);
+  const ca = await import(require('node:url').pathToFileURL(path.join(engineRoot, 'scripts/fvs-checker-auto.mjs')).href);
+  return { ...w, real: r, git, engineRoot, e, ca };
 }
 
 // Name the scenario step in any refusal so retained evidence points at the exact transition.
@@ -126,10 +128,55 @@ async function closeAssignment(w, actor, progress) {
     target: target('resolve-terminated-reservation'), after: () => ({ sessionId: null, association: null, evidence: [evidence], resolution: { reason: 'session-terminated', evidence } }) }));
   return { stopped, resolved };
 }
+// A run-bound auto freeze request from the pinned persistent template: the run's own execution control, the current
+// registry head, the real extraction inputs and the clean source worktree with its owned dependency copy.
+function freezeRequest(w, materials, { overlayFiles = [], targets = {}, libraries = null } = {}) {
+  const t = materials.freezeTemplate, tpl = JSON.parse(fs.readFileSync(t.file));
+  if (sha(fs.readFileSync(t.file)) !== t.sha256 || sha(fs.readFileSync(materials.rustLeanReceipt.file)) !== materials.rustLeanReceipt.sha256) throw new Error('pinned freeze material changed');
+  const { deadlineMs, ...rest } = tpl, src = w.source();
+  const job = { ...rest, version: 2, runId: 'd-freeze-' + crypto.randomUUID(), execution: w.e.runControl(w.x.run()),
+    extraction: { ...tpl.extraction, rust: { ...tpl.extraction.rust, leanReceipt: { file: materials.rustLeanReceipt.file, sha256: materials.rustLeanReceipt.sha256 } } },
+    registry: { root: w.real.registry, headSha256: registryStatus(w).registryHeadSha256 },
+    baseline: { ...tpl.baseline, source: src, dependencies: { ...tpl.baseline.dependencies, root: path.join(src.root, '.lake/packages') }, ...(libraries ? { libraries } : {}) },
+    targets: tpl.targets.map(target => targets[target.node] ?? target), overlayFiles };
+  return json(w.x.owned, 'freeze-request', job);
+}
+// Engine admission of a paired freeze before, with no producer run: recording the before performs the transition's
+// own target validation (source, registry head, extraction identity, run execution control). The world is then left
+// with a pending before, so callers use a throwaway world.
+class BeforeAdmitted extends Error {}
+async function admitFreeze(w, request) {
+  try { await w.paired({ kind: 'freeze', stage: 'check', registryRoot: w.real.registry, execute: false, target: { request }, after: () => { throw new BeforeAdmitted('before admitted'); } }); }
+  catch (error) { if (error instanceof BeforeAdmitted) return true; throw error; }
+  throw new Error('freeze before unexpectedly completed');
+}
+// E0 (real Lean, opt-in only): F0 freeze at pristine C0, one provisional check of H/A/B, then accept H before its
+// consumers A and B. Every step is one paired transition through the shared driver; afters bind the produced baseline
+// and the advanced accepted-store head, which the engine re-validates.
+async function runE0(w, materials) {
+  const storeRoot = path.join(path.dirname(w.real.root), 'store'), ca = w.ca;
+  const storeHead = () => ({ root: storeRoot, expectedHeadSha256: ca.readAcceptedStore(storeRoot).headSha256 });
+  w.inputs.acceptedStore = storeHead();
+  const control = () => w.e.runControl(w.x.run()), receipts = {};
+  receipts.freeze = await step('F0 freeze', () => w.paired({ kind: 'freeze', stage: 'check', registryRoot: w.real.registry, target: { request: freezeRequest(w, materials) },
+    after: raw => { if (raw?.authority !== 'expectations-only' || !raw.baseline) throw new Error('freeze produced no expectations-only baseline'); w.inputs.baseline = raw.baseline; return { sessionId: null, association: null }; } }));
+  const nodes = [19, 20, 21];
+  const check = json(w.x.owned, 'check-request', { schema: 'fvs-checker/check-request', version: 2, purpose: 'auto', runId: 'd-check-' + crypto.randomUUID(), execution: control(), baseline: w.inputs.baseline, source: w.source(), nodes });
+  receipts.check = await step('E0 check', () => w.paired({ kind: 'check', stage: 'check', nodes, registryRoot: w.real.registry, target: { request: check, nodes } }));
+  if (receipts.check.raw?.status !== 'provisional' || !receipts.check.raw.evidence) throw new Error('E0 check is not provisional');
+  receipts.accept = [];
+  for (const node of nodes) {
+    const accept = json(w.x.owned, 'accept-request-' + node, { schema: 'fvs-checker/accept-request', version: 2, purpose: 'auto', runId: 'd-accept-' + node + '-' + crypto.randomUUID(), execution: control(),
+      baseline: w.inputs.baseline, candidateCheck: receipts.check.raw.evidence, source: w.source(), node, store: storeHead() });
+    receipts.accept.push(await step('E0 accept ' + node, () => w.paired({ kind: 'accept', stage: 'acceptance', nodes: [node], registryRoot: w.real.registry, target: { request: accept, node },
+      after: raw => { if (raw?.status !== 'accepted') throw new Error('accept ' + node + ' did not publish'); w.inputs.acceptedStore = storeHead(); return { sessionId: null, association: null }; } })));
+  }
+  return { storeRoot, receipts };
+}
 function registryStatus(w) {
   const p = spawnSync(process.execPath, [path.join(w.engineRoot, 'scripts/fvs-contract-registry.mjs'), 'status', '--plan', w.inputs.plan.file, '--graph', w.inputs.graph.file,
     '--registry', w.real.registry, '--spec-root', w.source().root], { encoding: 'utf8' });
   return JSON.parse(p.stdout);
 }
 
-module.exports = { prepareRealRoot, recordSetup, dWorld, reviseContract, closeAssignment, registryStatus, git, sha };
+module.exports = { prepareRealRoot, recordSetup, dWorld, reviseContract, closeAssignment, freezeRequest, admitFreeze, runE0, registryStatus, git, sha };

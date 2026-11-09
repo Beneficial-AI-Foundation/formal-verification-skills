@@ -8,7 +8,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const crypto = require('node:crypto');
-const { dWorld, reviseContract, registryStatus, git, sha } = require('./helpers/d-respec-world.cjs');
+const { dWorld, reviseContract, freezeRequest, admitFreeze, runE0, registryStatus, git, sha } = require('./helpers/d-respec-world.cjs');
 const ROOT = path.resolve(__dirname, '..');
 const cfg = process.env.FVS_D_CONFIG ? JSON.parse(fs.readFileSync(process.env.FVS_D_CONFIG)) : null;
 const skip = cfg ? false : 'FVS_D_CONFIG not set (local qualification materials required)';
@@ -78,4 +78,32 @@ test('E1 revises H through the exported packet, a fresh reviewer assignment and 
   const launches = [...w.auto.readRuntimeState({ projectRoot: w.x.root }).reservations.values()].filter(r => r.intent.effect.kind === 'ao-launch');
   assert.equal(launches.length, 3); assert.ok(launches.every(r => r.state === 'closed'), 'every reviewer reservation is closed; no open node reservation remains');
   console.log('E1 freeze readiness:', JSON.stringify(Object.fromEntries(Object.entries(ready.nodes).map(([k, v]) => [k, v.state]))));
+});
+
+// E0 readiness without Lean: the F0 request (pristine C0, no overlays, G0 registry) is admitted by the engine's paired
+// freeze validation. The producer (the first real build) is not run here.
+test('F0 freeze request at C0 is admitted by the paired transition validation (no build)', { skip }, async () => {
+  const w = await setup(), request = freezeRequest(w, cfg.materials), job = w.t.transitionBound(request);
+  assert.deepEqual(job.overlayFiles, []); assert.equal(job.registry.headSha256, cfg.materials.registry.headSha256);
+  assert.deepEqual(job.extraction.identity, w.inputs.extraction); assert.deepEqual(job.baseline.source, w.source());
+  // A refused before records no transition (paired's opening reconcile may still commit an observation), so the same
+  // world then admits the exact request.
+  const befores = () => w.auto.readRuntimeState({ projectRoot: w.x.root }).state.history.filter(r => r.event.position === 'before' && r.event.intent?.request && w.t.readTransitionAction(r.event.intent.request).kind === 'freeze').length, start = befores();
+  const variant = patch => { const v = structuredClone(job); patch(v); return { file: request.file + '-' + crypto.randomUUID() + '.json', value: v }; };
+  for (const [label, patch] of [['stale registry head', v => { v.registry.headSha256 = '0'.repeat(64); }], ['other source tree', v => { v.baseline.source.expectedTree = '0'.repeat(40); }],
+    ['fresh execution control', v => { v.execution = w.e.createExecution('d-other-run-' + crypto.randomUUID(), { kind: 'none' }); }]]) {
+    const { file, value } = variant(patch); fs.writeFileSync(file, JSON.stringify(value));
+    await assert.rejects(admitFreeze(w, { file, sha256: sha(fs.readFileSync(file)) }), { code: 'transition-target-stale' }, label);
+    assert.equal(befores(), start, label + ' recorded no before');
+  }
+  assert.equal(await admitFreeze(w, request), true);
+  assert.equal(befores(), start + 1, 'exactly the admitted freeze before is recorded');
+});
+
+// Real Lean (explicit allocation only): E0 = F0 freeze, one provisional check, accept H then A and B.
+test('E0 real: F0 freeze, check and canonical acceptance of H, A, B (FVS_REAL_RESPEC_D=1)', { skip: skip || (process.env.FVS_REAL_RESPEC_D !== '1' && 'real Lean run requires FVS_REAL_RESPEC_D=1 and an owner allocation') }, async () => {
+  const w = await setup(), r = await runE0(w, cfg.materials), store = w.ca.readAcceptedStore(r.storeRoot);
+  assert.deepEqual(store.records.map(x => x.record.node), [19, 20, 21]);
+  assert.ok(store.records.every(x => x.record.authority === 'canonical-checker' && x.record.integrated.commit === cfg.materials.c0.commit));
+  console.log('E0 receipts:', JSON.stringify({ storeRoot: r.storeRoot, head: store.headSha256, baseline: w.inputs.baseline }));
 });
