@@ -163,7 +163,10 @@ async function runE0(w, materials) {
     after: raw => { if (raw?.authority !== 'expectations-only' || !raw.baseline) throw new Error('freeze produced no expectations-only baseline'); w.inputs.baseline = raw.baseline; return { sessionId: null, association: null }; } }));
   const nodes = [19, 20, 21];
   const check = json(w.x.owned, 'check-request', { schema: 'fvs-checker/check-request', version: 2, purpose: 'auto', runId: 'd-check-' + crypto.randomUUID(), execution: control(), baseline: w.inputs.baseline, source: w.source(), nodes });
-  receipts.check = await step('E0 check', () => w.paired({ kind: 'check', stage: 'check', nodes, registryRoot: w.real.registry, target: { request: check, nodes } }));
+  // The checker CLI prints a compact envelope when its result is large and names the full result document as
+  // `evidence`; the completion must carry that producer result (run, controller and adapter input), not the summary.
+  receipts.check = await step('E0 check', () => w.paired({ kind: 'check', stage: 'check', nodes, registryRoot: w.real.registry, target: { request: check, nodes },
+    result: raw => raw?.evidence ? w.t.transitionBound(raw.evidence) : raw }));
   if (receipts.check.raw?.status !== 'provisional' || !receipts.check.raw.evidence) throw new Error('E0 check is not provisional');
   receipts.accept = [];
   for (const node of nodes) {
