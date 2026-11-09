@@ -10,9 +10,15 @@ function ref(file) { return { file, sha256: sha(fs.readFileSync(file)) }; }
 function json(root, name, value) { const file = path.join(root, name + '-' + uuid() + '.json'); fs.writeFileSync(file, JSON.stringify(value)); return ref(file); }
 function row(id, role = 'worker', extra = {}) { return { id, projectId: 'fixture-project', role, activity: 'idle', status: 'idle', isTerminated: false, branch: 'stale/branch-hint', ...extra }; }
 function fixture(auto, parent = fs.realpathSync(os.tmpdir()), realBd = null, policy = {}) {
-  const owned = fs.mkdtempSync(path.join(parent, 'fvs-resume-fixture-')), root = memory.createProject(auto, owned, policy);
-  fs.appendFileSync(path.join(root, '.git/info/exclude'), '\n.formalising/\n.beads/\nfixture-bd.cjs\n.fixture-bd-calls.jsonl\n');
-  if (!realBd && !(policy.schemaVersion === 2 && (policy.memory ?? 'disabled') === 'disabled')) auto.recordMemory({ projectRoot: root, registration: memory.fakeStore(root) });
+  // A supplied root (policy.root) is the caller's prepared real project: it lies outside the owned temp directory,
+  // keeps its own excludes and real memory registration, and is never created, rewritten or cleaned up here.
+  const owned = fs.mkdtempSync(path.join(parent, 'fvs-resume-fixture-')), supplied = policy.root ?? null;
+  if (supplied !== null && (!path.isAbsolute(supplied) || fs.realpathSync(supplied) !== supplied || (supplied + path.sep).startsWith(owned + path.sep))) throw new Error('supplied fixture root must be an existing canonical path outside the owned directory');
+  const root = supplied ?? memory.createProject(auto, owned, policy);
+  if (supplied === null) {
+    fs.appendFileSync(path.join(root, '.git/info/exclude'), '\n.formalising/\n.beads/\nfixture-bd.cjs\n.fixture-bd-calls.jsonl\n');
+    if (!realBd && !(policy.schemaVersion === 2 && (policy.memory ?? 'disabled') === 'disabled')) auto.recordMemory({ projectRoot: root, registration: memory.fakeStore(root) });
+  }
   const stateHome = path.join(owned, 'ao-home'); fs.mkdirSync(path.join(stateHome, '.ao'), { recursive: true });
   const control = path.join(owned, 'ao-control.json'), log = path.join(owned, 'ao-calls.jsonl'), tool = path.join(owned, 'ao.cjs');
   fs.writeFileSync(tool, '#!' + process.execPath + '\n' + `

@@ -2,10 +2,10 @@
 const fs = require('node:fs'), path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const f = require('./transition-v2-fixture.cjs');
-async function world(engineRoot = path.resolve(__dirname, '../..')) {
+async function world(engineRoot = path.resolve(__dirname, '../..'), policy = {}) {
   const module = name => pathToFileURL(path.join(engineRoot, 'scripts', name)).href;
   const [driver, auto, t, m] = await Promise.all([import(module('fvs-auto-driver.mjs')), import(module('fvs-auto.mjs')), import(module('fvs-auto-transitions.mjs')), import(module('fvs-project-memory.mjs'))]);
-  const x = await f.fixture(auto, t);
+  const x = await f.fixture(auto, t, policy);
   const effects = `
 if(args[0]==='spawn'){const cp=require('node:child_process'),branch=args[args.indexOf('--branch')+1],wt=c.workerPath;
  const p=cp.spawnSync('/usr/bin/git',['-C',${JSON.stringify(x.root)},'worktree','add','-q','-b',branch,wt],{env:{PATH:'/usr/bin:/bin',GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_NOSYSTEM:'1',GIT_NO_LAZY_FETCH:'1'}});
