@@ -12,7 +12,8 @@ function row(id, role = 'worker', extra = {}) { return { id, projectId: 'fixture
 function fixture(auto, parent = fs.realpathSync(os.tmpdir()), realBd = null, policy = {}) {
   // A supplied root (policy.root) is the caller's prepared real project: it lies outside the owned temp directory,
   // keeps its own excludes and real memory registration, and is never created, rewritten or cleaned up here.
-  const owned = fs.mkdtempSync(path.join(parent, 'fvs-resume-fixture-')), supplied = policy.root ?? null;
+  // policy.parent lets a caller retain the owned controller/AO-double evidence outside the OS temporary directory.
+  const owned = fs.mkdtempSync(path.join(policy.parent ?? parent, 'fvs-resume-fixture-')), supplied = policy.root ?? null;
   if (supplied !== null && (!path.isAbsolute(supplied) || fs.realpathSync(supplied) !== supplied || (supplied + path.sep).startsWith(owned + path.sep))) throw new Error('supplied fixture root must be an existing canonical path outside the owned directory');
   const root = supplied ?? memory.createProject(auto, owned, policy);
   if (supplied === null) {

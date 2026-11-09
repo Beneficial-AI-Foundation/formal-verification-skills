@@ -102,7 +102,16 @@ test('F0 freeze request at C0 is admitted by the paired transition validation (n
 
 // Real Lean (explicit allocation only): E0 = F0 freeze, one provisional check, accept H then A and B.
 test('E0 real: F0 freeze, check and canonical acceptance of H, A, B (FVS_REAL_RESPEC_D=1)', { skip: skip || (process.env.FVS_REAL_RESPEC_D !== '1' && 'real Lean run requires FVS_REAL_RESPEC_D=1 and an owner allocation') }, async () => {
-  const w = await setup(), r = await runE0(w, cfg.materials), store = w.ca.readAcceptedStore(r.storeRoot);
+  // Evidence is retained: an explicit new run root outside the OS temporary directory, never cleaned up here, and the
+  // engine is the pinned commit with a clean tree.
+  const runRoot = process.env.FVS_D_RUN_ROOT, pinned = process.env.FVS_D_ENGINE_COMMIT, tmp = fs.realpathSync(os.tmpdir());
+  assert.ok(runRoot && path.isAbsolute(runRoot) && !fs.existsSync(runRoot) && !(path.resolve(runRoot) + path.sep).startsWith(tmp + path.sep), 'FVS_D_RUN_ROOT must be a new absolute path outside the temporary directory');
+  assert.equal(git(ROOT, 'rev-parse', 'HEAD'), pinned, 'FVS_D_ENGINE_COMMIT must name the checked-out engine');
+  assert.equal(git(ROOT, 'status', '--porcelain=v1', '--untracked-files=all'), '', 'pinned engine tree must be clean');
+  fs.mkdirSync(runRoot, { recursive: true }); const base = fs.realpathSync(runRoot);
+  const w = await dWorld({ engineRoot: ROOT, base, materials: cfg.materials, bd: cfg.bd });
+  fs.writeFileSync(path.join(base, 'engine.json'), JSON.stringify({ commit: pinned, tree: git(ROOT, 'rev-parse', 'HEAD^{tree}'), root: ROOT, startedAt: new Date().toISOString() }) + '\n');
+  const r = await runE0(w, cfg.materials), store = w.ca.readAcceptedStore(r.storeRoot);
   assert.deepEqual(store.records.map(x => x.record.node), [19, 20, 21]);
   assert.ok(store.records.every(x => x.record.authority === 'canonical-checker' && x.record.integrated.commit === cfg.materials.c0.commit));
   console.log('E0 receipts:', JSON.stringify({ storeRoot: r.storeRoot, head: store.headSha256, baseline: w.inputs.baseline }));

@@ -63,7 +63,8 @@ async function dWorld({ engineRoot, base, materials, bd, scope = 'ticket18 D two
   const r = prepareRealRoot({ base, materials, bd, scope, grantReference });
   const auto = await import(require('node:url').pathToFileURL(path.join(engineRoot, 'scripts/fvs-auto.mjs')).href);
   recordSetup(auto, r, bd);
-  const w = await world(engineRoot, { schemaVersion: 2, memory: 'beads', root: r.root });
+  // The controller's owned evidence (AO double, actions, completions, producer outputs) stays beside the real root.
+  const w = await world(engineRoot, { schemaVersion: 2, memory: 'beads', root: r.root, parent: base });
   // A paired freeze binds the job's extraction identity to these exact inputs, so the real identity record replaces
   // the protocol world's metadata-only extraction placeholder.
   const pinned = m => { if (sha(fs.readFileSync(m.file)) !== m.sha256) throw new Error('pinned material changed: ' + m.file); return { file: m.file, sha256: m.sha256 }; };
