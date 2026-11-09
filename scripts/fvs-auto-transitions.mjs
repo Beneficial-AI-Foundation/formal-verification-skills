@@ -1,5 +1,6 @@
 // Finite controller protocol. No AO/provider/backend work runs on import.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
@@ -7,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { requestControl, parseExecution, createExecution, runControl, runExpired, unbudgetedRun, runExecutionFields, runOwned, assertRunning, initializeOwnedWork, closeOwnedWork, observeOwnedWork } from './fvs-execution.mjs';
 import { memoryDataSnapshot, memoryHash, MEMORY_LIMITS } from './fvs-project-memory.mjs';
 import { duplicateKeys } from './fvs-lean-graph.mjs';
+import { recordValidatedResponse } from './fvs-spec-review.mjs';
 import { readChain, registryStatus, validatePlan, contextOf, contractProblems, candidateOf, reviewProblems } from './fvs-contract-registry.mjs';
 import { readAcceptedStore, inspectAutoBaselineArtifacts, inspectAutoProvisional, extractionContext } from './fvs-checker-auto.mjs';
 
@@ -902,6 +904,13 @@ export function readReviewWorkCompletion(ref) {
   if (transitionBound(returned.response, false).compare(sealed) !== 0 || transitionBound(imported.raw, false).compare(sealed) !== 0 || transformation.validated !== true || transformation.replay_matches !== true
     || transformation.hashes?.['normalized-response.md'] !== imported.normalized.sha256 || !transitionBound(imported.review, false).toString('utf8').endsWith('\n\n' + normalized.trim() + '\n'))
     stop('transition-progress-invalid', 'import artifacts do not form the validated sealed/normalized chain');
+  // The retained normalized text must be what the existing review validator derives from the sealed bytes; the replay
+  // writes only into a throwaway directory and reads no registry, baseline or reviewer.
+  const replayRoot = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'fvs-review-replay-'));
+  let replayed = null;
+  try { replayed = recordValidatedResponse(replayRoot, sealed, { verdicts: ['PASS', 'APPROVE-WITH-EDITS', 'REVISE', 'BLOCKED'], headings: ['Findings', 'Content coverage statement', 'Coverage', 'Evidence'], warnings: [] }); }
+  catch { replayed = null; } finally { fs.rmSync(replayRoot, { recursive: true, force: true }); }
+  if (replayed !== normalized) stop('transition-progress-invalid', 'retained normalized response is not the validator replay of the sealed response');
   const stated = normalized.trim().split(/\r?\n/).at(-1).trim().replace(/^[-\s]*VERDICT:\s*/i, '').toUpperCase(), expected = REVIEW_OUTCOMES[stated];
   if (!expected || e.verdict !== stated || c.outcome !== expected[0]) stop('transition-progress-invalid', 'completion outcome differs from the validated normalized verdict');
   if (expected[1] === null ? r.result.review !== null : (() => { const v = transitionBound(r.result.review); return v.verdict !== expected[1] || v.candidateSha256 !== input.candidateSha256 || v.registryHeadSha256 !== input.registryHeadSha256

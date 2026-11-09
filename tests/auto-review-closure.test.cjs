@@ -12,7 +12,7 @@ const ROOT = path.resolve(__dirname, '..');
 const RESPONSE = '# FC Specification Review\n\n## Findings\nNone.\n\n## Content coverage statement\nFixture source covered.\n\n## Coverage\nFixture only.\n\n## Evidence\nFuns.lean:1.\n\nVERDICT: PASS\n';
 const EDITS = RESPONSE.replace('None.', '### F-1 — MINOR\nClass: CONTENT\nClaim: Needs an edit.\nEvidence: Funs.lean:1\nSuggested change: Edit.');
 
-async function reviewed(verdict = 'PASS') {
+async function reviewed(verdict = 'PASS', text = null) {
   const w = await f.world(), { x, t, driver } = w; owned.push(x.owned);
   const profile = t.transitionBound(x.profile); profile.stages.spec_review.effort = 'xhigh'; x.profile = f.json(x.owned, 'profile-review', profile);
   const root = w.source().root;
@@ -29,7 +29,7 @@ async function reviewed(verdict = 'PASS') {
   const binding = driver.prepareReviewBinding({ projectRoot: x.root, source: w.source(), plan: w.inputs.plan, graph: w.inputs.graph, registry: path.join(x.owned, 'registry'), contract,
     packet: f.ref(path.join(dir, 'packet.json')), prompt: f.ref(path.join(dir, 'prompt.md')), out: x.out() });
   const s = await w.releaseReview(binding), response = path.join(x.owned, 'response-' + f.uuid() + '.md');
-  fs.writeFileSync(response, (verdict === 'PASS' ? RESPONSE : EDITS).replace('VERDICT: PASS', 'VERDICT: ' + verdict));
+  fs.writeFileSync(response, text ?? (verdict === 'PASS' ? RESPONSE : EDITS).replace('VERDICT: PASS', 'VERDICT: ' + verdict));
   const imported = await driver.importReviewedContract({ projectRoot: x.root, binding: binding.binding, workPacket: s.packet, marker: s.marker,
     response: f.json(x.owned, 'returned', { workPacket: s.packet, marker: s.marker, binding: binding.binding, response: f.ref(response), reviewerInvocation: s.launch.action.transitionId }),
     session: f.json(x.owned, 'session', { session: { id: s.actor.sessionId, projectId: 'fixture-project', harness: 'fixture', isTerminated: false } }),
@@ -141,5 +141,26 @@ test('G1-1: rehashed contract, candidate/head, verdict, artifact and observed-so
   };
   for (const [label, patch] of Object.entries(cases)) assert.throws(() => t.readKnownWork(rebuild(w, value, patch)), { code: 'transition-progress-invalid' }, label);
   await assert.rejects(closeAssignment(w, w.s.actor, rebuild(w, value, cases['PASS relabelled BLOCKED'])), { code: 'transition-progress-invalid' });
+  assert.equal(reservation(w, w.s.actor.reservationId).state, 'active', 'refused before any stop effect');
+});
+
+// G1-1R: the retained normalized text must be the validator's replay of the sealed bytes, not merely self-consistent.
+test('G1-1R: a normalized response closes; a coherent normalized/transformation/review substitution refuses', async () => {
+  const bold = 'Review complete.\n' + RESPONSE.replace('VERDICT: PASS', '**VERDICT: PASS**');
+  const p = await reviewed('PASS', bold), pe = p.t.transitionBound(p.imported.evidence);
+  assert.notEqual(pe.imported.normalized.sha256, pe.sealedResponse.sha256, 'the importer actually normalized this response');
+  await closeAssignment(p, p.s.actor, p.completion());
+  assert.equal(reservation(p, p.s.actor.reservationId).state, 'closed', 'a faithfully normalized response closes');
+  const w = await reviewed(), { t, x } = w, value = t.transitionBound(w.completion());
+  const forgedNormalized = RESPONSE.replace('VERDICT: PASS', 'VERDICT: BLOCKED'), file = name => path.join(x.owned, name + '-' + f.uuid());
+  const coherent = e => {
+    const normalized = file('normalized'); fs.writeFileSync(normalized, forgedNormalized);
+    const transformation = file('transformation'); fs.writeFileSync(transformation, JSON.stringify({ ...t.transitionBound(e.imported.transformation), hashes: { ...t.transitionBound(e.imported.transformation).hashes, 'normalized-response.md': f.ref(normalized).sha256 } }));
+    const review = file('review'); fs.writeFileSync(review, '# Imported review\n\n' + forgedNormalized.trim() + '\n');
+    return { ...e, verdict: 'BLOCKED', imported: { raw: e.imported.raw, normalized: f.ref(normalized), transformation: f.ref(transformation), review: f.ref(review) } };
+  };
+  const forged = rebuild(w, value, { evidence: coherent, review: () => null, completion: c => ({ ...c, outcome: 'failed' }) });
+  assert.throws(() => t.readKnownWork(forged), { code: 'transition-progress-invalid', message: /validator replay/ });
+  await assert.rejects(closeAssignment(w, w.s.actor, forged), { code: 'transition-progress-invalid' });
   assert.equal(reservation(w, w.s.actor.reservationId).state, 'active', 'refused before any stop effect');
 });
