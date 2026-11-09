@@ -884,17 +884,29 @@ export function readReviewWorkCompletion(ref) {
   closed(r.result, ['contract', 'review'], 'review result');
   if (r.schemaVersion !== 2 || r.runId !== c.runId || !same(r.packet, c.packet) || !same(r.marker, c.marker) || r.actionSha256 !== p.actionSha256 || !same(r.actor, p.actor) || r.kind !== 'review'
     || !same(r.prepared, c.sourceAfter) || r.controllerSessionId !== c.controllerSessionId || !Number.isSafeInteger(r.controllerObservedAtMs)) stop('transition-progress-invalid', 'review result lost its exact actor/packet');
-  // The import evidence binds the consumed response to this packet/start and the actor observed clean at import.
-  const stableActor = a => a && ({ ...a, worktree: { path: a.worktree?.path, gitDir: a.worktree?.gitDir, gitCommonDir: a.worktree?.gitCommonDir, branchRef: a.worktree?.branchRef } });
-  if (!same(e.workPacket, c.packet) || !same(e.marker, c.marker) || !same(stableActor(e.actor), stableActor(p.actor)) || e.actor?.worktree?.dirty !== false || e.reviewer?.session !== p.actor.sessionId)
-    stop('transition-progress-invalid', 'import evidence is for another review packet, start or actor');
-  for (const b of [e.response, e.sealedResponse, ...Object.values(e.imported ?? {})]) transitionBound(b, false);
-  if (transitionBound(e.imported.raw, false).compare(transitionBound(e.sealedResponse, false)) !== 0) stop('transition-progress-invalid', 'imported bytes differ from the sealed response');
-  const expected = REVIEW_OUTCOMES[e.verdict];
-  if (!expected || c.outcome !== expected[0]) stop('transition-progress-invalid', 'completion outcome differs from the imported verdict');
-  if (expected[1] === null ? r.result.review !== null : (() => { const v = transitionBound(r.result.review); return v.verdict !== expected[1] || v.reviewer?.session !== p.actor.sessionId || !same(v.evidence, c.artifacts[values.indexOf(e)]); })())
-    stop('transition-progress-invalid', 'review envelope differs from the imported verdict/evidence');
-  transitionBound(r.result.contract);
+  // The import evidence must be the validated import for this exact issued review: the frozen pre-dispatch binding and
+  // review input (historical node/contract/candidate/head, never the current registry), the returned and sealed
+  // response, the importer's normalized artifacts with the verdict they state, and the actor observed exactly at the
+  // prepared read-only source.
+  if (!same(e.workPacket, c.packet) || !same(e.marker, c.marker) || !same(e.actor, p.actor) || p.actor.worktree.dirty !== false || e.reviewer?.session !== p.actor.sessionId || e.reviewer?.runId !== launch.transitionId)
+    stop('transition-progress-invalid', 'import evidence is for another review packet, start or observed actor/source');
+  const b = transitionBound(e.binding), inputRef = b.input, input = transitionBound(inputRef);
+  if (b.schema !== 'fvs/auto-driver-review-binding' || b.schemaVersion !== 1 || !p.inputs.some(ref => same(ref, e.binding)) || !p.inputs.some(ref => same(ref, inputRef))
+    || input.schema !== 'fvs/auto-review-input' || input.schemaVersion !== 1 || !launch.nodes.includes(input.node) || !same(input.contract, b.contract) || !same(r.result.contract, input.contract)
+    || transitionBound(input.contract).node !== input.node) stop('transition-progress-invalid', 'review result is not the issued contract/node');
+  const returned = transitionBound(e.response);
+  if (!same(returned.workPacket, c.packet) || !same(returned.marker, c.marker) || !same(returned.binding, e.binding) || returned.reviewerInvocation !== launch.transitionId) stop('transition-progress-invalid', 'returned response belongs to another packet/binding/invocation');
+  const sealed = transitionBound(e.sealedResponse, false), imported = e.imported ?? {};
+  if (['raw', 'normalized', 'transformation', 'review'].some(k => !imported[k])) stop('transition-progress-invalid', 'the complete retained import artifacts are required');
+  const normalizedBytes = transitionBound(imported.normalized, false), transformation = transitionBound(imported.transformation), normalized = normalizedBytes.toString('utf8');
+  if (transitionBound(returned.response, false).compare(sealed) !== 0 || transitionBound(imported.raw, false).compare(sealed) !== 0 || transformation.validated !== true || transformation.replay_matches !== true
+    || transformation.hashes?.['normalized-response.md'] !== imported.normalized.sha256 || !transitionBound(imported.review, false).toString('utf8').endsWith('\n\n' + normalized.trim() + '\n'))
+    stop('transition-progress-invalid', 'import artifacts do not form the validated sealed/normalized chain');
+  const stated = normalized.trim().split(/\r?\n/).at(-1).trim().replace(/^[-\s]*VERDICT:\s*/i, '').toUpperCase(), expected = REVIEW_OUTCOMES[stated];
+  if (!expected || e.verdict !== stated || c.outcome !== expected[0]) stop('transition-progress-invalid', 'completion outcome differs from the validated normalized verdict');
+  if (expected[1] === null ? r.result.review !== null : (() => { const v = transitionBound(r.result.review); return v.verdict !== expected[1] || v.candidateSha256 !== input.candidateSha256 || v.registryHeadSha256 !== input.registryHeadSha256
+    || v.reviewer?.session !== p.actor.sessionId || v.reviewer?.runId !== launch.transitionId || !same(v.evidence, c.artifacts[values.indexOf(e)]); })())
+    stop('transition-progress-invalid', 'review envelope differs from the issued candidate/head or the validated verdict/evidence');
   return { packet: c.packet, marker: c.marker, actor: p.actor, runId: c.runId, outcome: c.outcome, review: r.result.review };
 }
 // Controller wrapper for a validated review import (driver evidence + optional envelope); never a proof or PASS record.

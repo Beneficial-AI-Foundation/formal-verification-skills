@@ -112,3 +112,34 @@ test('a resolution after submitted at a moved head refuses and never closes twic
   console.log('stale-head / replay refusals:', JSON.stringify(codes));
   assert.equal(reservation(w, w.s.actor.reservationId).state, 'closed');
 });
+
+// Coordinated edits with every affected reference correctly rehashed: the handoff must still be the validated import for
+// the issued contract/candidate/head, its normalized verdict and the exactly observed prepared source.
+function rebuild(w, value, { evidence, result, review, completion } = {}) {
+  const { t, x } = w, [resultRef, evidenceRef] = value.artifacts, r0 = t.transitionBound(resultRef);
+  const ev = evidence ? f.json(x.owned, 'rehashed-evidence', evidence(structuredClone(t.transitionBound(evidenceRef)))) : evidenceRef;
+  let env = r0.result.review;
+  if (review) env = review(env);
+  else if (env && evidence) env = f.json(x.owned, 'rehashed-review', { ...t.transitionBound(env), evidence: ev });
+  const r1 = { ...r0, result: { ...r0.result, review: env } }, res = f.json(x.owned, 'rehashed-result', result ? result(r1) : r1), c1 = { ...value, artifacts: [res, ev] };
+  return f.json(x.owned, 'rehashed-completion', completion ? completion(c1) : c1);
+}
+test('G1-1: rehashed contract, candidate/head, verdict, artifact and observed-source substitutions refuse', async () => {
+  const w = await reviewed(), { t, x } = w, value = t.transitionBound(w.completion()), contract = t.transitionBound(t.transitionBound(value.artifacts[0]).result.contract);
+  assert.equal(t.readKnownWork(rebuild(w, value)).outcome, 'completed', 'a faithful rehash is still accepted');
+  const env = ref => t.transitionBound(ref);
+  const cases = {
+    'other-node contract': { result: r => ({ ...r, result: { ...r.result, contract: f.json(x.owned, 'other-contract', { ...contract, node: 20 }) } }) },
+    'same-node other statement': { result: r => ({ ...r, result: { ...r.result, contract: f.json(x.owned, 'other-statement', { ...contract, statement: 'm1demo.helper = 2' }) } }) },
+    'envelope other candidate': { review: ref => f.json(x.owned, 'other-candidate', { ...env(ref), candidateSha256: 'a'.repeat(64) }) },
+    'envelope other head': { review: ref => f.json(x.owned, 'other-head', { ...env(ref), registryHeadSha256: 'b'.repeat(64) }) },
+    'PASS relabelled BLOCKED': { evidence: e => ({ ...e, verdict: 'BLOCKED' }), review: () => null, completion: c => ({ ...c, outcome: 'failed' }) },
+    'PASS relabelled REVISE': { evidence: e => ({ ...e, verdict: 'REVISE' }), review: ref => f.json(x.owned, 'relabel', { ...env(ref), verdict: 'changes-requested' }) },
+    'missing normalized artifact': { evidence: e => ({ ...e, imported: { raw: e.imported.raw, transformation: e.imported.transformation, review: e.imported.review } }) },
+    'missing transformation artifact': { evidence: e => ({ ...e, imported: { raw: e.imported.raw, normalized: e.imported.normalized, review: e.imported.review } }) },
+    'other observed commit/tree': { evidence: e => ({ ...e, actor: { ...e.actor, worktree: { ...e.actor.worktree, commit: '0'.repeat(40), tree: '0'.repeat(40) } } }) },
+  };
+  for (const [label, patch] of Object.entries(cases)) assert.throws(() => t.readKnownWork(rebuild(w, value, patch)), { code: 'transition-progress-invalid' }, label);
+  await assert.rejects(closeAssignment(w, w.s.actor, rebuild(w, value, cases['PASS relabelled BLOCKED'])), { code: 'transition-progress-invalid' });
+  assert.equal(reservation(w, w.s.actor.reservationId).state, 'active', 'refused before any stop effect');
+});
