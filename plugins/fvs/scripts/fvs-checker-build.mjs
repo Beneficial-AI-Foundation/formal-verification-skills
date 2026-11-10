@@ -143,7 +143,20 @@ export async function buildCheckerSnapshot(input, services = {}) {
       return { sha256: sha.digest('hex'), size: after.size };
     } finally { fs.closeSync(fd); }
   };
-  const tree = (directory, aliases = false, inertLinks = false) => {
+  // Dependency-tree rechecks inside one build invocation may reuse a digest from this invocation when the file's
+  // kernel-maintained identity (device, inode, size, mode, owner, link count, nanosecond mtime and ctime) is unchanged:
+  // any write, truncation, replacement, relink or chmod changes it. The first inventories and the final scans always
+  // rehash every byte (`reuse` false); the memo never outlives the invocation.
+  const remembered = new Map();
+  const identityOf = (file) => { const s = fs.lstatSync(file, { bigint: true }); return [s.dev, s.ino, s.size, s.mode, s.uid, s.nlink, s.mtimeNs, s.ctimeNs].join(':'); };
+  const dependencyDigest = (file, aliases, reuse) => {
+    const key = identityOf(file), known = remembered.get(file);
+    if (reuse && known?.key === key) { tick(); return { ...known.value }; }
+    const value = digest(file, aliases, true);
+    if (identityOf(file) === key) remembered.set(file, { key, value }); else remembered.delete(file);
+    return value;
+  };
+  const tree = (directory, aliases = false, inertLinks = false, reuse = false) => {
     absolute(directory);
     if (!fs.statSync(directory).isDirectory()) fail('inventory root is not a directory');
     const files = {};
@@ -158,7 +171,7 @@ export async function buildCheckerSnapshot(input, services = {}) {
           if (path.isAbsolute(target) || !within(directory, path.resolve(path.dirname(file), target))) fail('dependency symlink escapes snapshot');
           // Unused documentation links can be dangling. They are never followed or treated as files.
           files[path.relative(directory, file)] = { symlink: target, sha256: hash(target), size: Buffer.byteLength(target) };
-        } else files[path.relative(directory, file)] = digest(file, aliases, true);
+        } else files[path.relative(directory, file)] = inertLinks ? dependencyDigest(file, aliases, reuse) : digest(file, aliases, true);
       }
     };
     walk(directory);
@@ -171,7 +184,7 @@ export async function buildCheckerSnapshot(input, services = {}) {
     return { file, sha256: hash(bytes) };
   };
   const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-  const checkInputs = () => {
+  const checkInputs = (fresh = false) => {
     postCommandInputs = null;
     tick();
     for (const tool of [request.lean, request.lake, ...extraTools].filter(Boolean)) if (digest(tool.path, true).sha256 !== tool.sha256) fail('pinned tool bytes changed');
@@ -183,7 +196,7 @@ export async function buildCheckerSnapshot(input, services = {}) {
     }
     let observedDependencies = {};
     if (dependenciesReady && request.dependencies) {
-      observedDependencies = tree(request.dependencies.root, false, true);
+      observedDependencies = tree(request.dependencies.root, false, true, !fresh);
       if (!equal(observedDependencies, dependencyFiles)) fail('supplied dependency snapshot changed');
       if (request.dependencies.identity && digest(request.dependencies.identity.file).sha256 !== request.dependencies.identity.sha256) fail('dependency identity changed');
     }
@@ -422,7 +435,7 @@ export async function buildCheckerSnapshot(input, services = {}) {
       before: depsBefore, after: save('dependencies-after.json', depsAfter), changed };
     let ownedAfter;
     if (ownedDependencies) {
-      ownedAfter = tree(ownedDependencies, false, true);
+      ownedAfter = tree(ownedDependencies, false, true, true);
       const ownedChanges = Object.keys({ ...dependencyFiles, ...ownedAfter }).filter((file) => !equal(dependencyFiles[file], ownedAfter[file]));
       depReceipt.owned = { root: ownedDependencies, after: save('dependencies-owned-after.json', ownedAfter), changed: ownedChanges };
       if (ownedChanges.some((file) => !file.split('/').includes('.lake') && !file.endsWith('/.git/index'))) fail('owned dependency source/config changed');
@@ -512,7 +525,7 @@ export async function buildCheckerSnapshot(input, services = {}) {
     if (actualModules.length !== modules.length) fail('unexpected/partial project module coverage');
     const exportedParts = new Set(modules.flatMap((mod) => mod.parts.map((file) => path.relative(result.buildRoot, file))));
     if (Object.keys(outputFiles).some((file) => /\.olean(?:\.server|\.private)?$/.test(file) && !exportedParts.has(file))) fail('unexpected compiled project module');
-    checkInputs();
+    checkInputs(true);
     if (!equal(tree(result.buildRoot), outputFiles)) fail('compiled outputs changed during validation');
     if (ownedDependencies && !equal(tree(ownedDependencies, false, true), ownedAfter)) fail('owned dependency files changed during validation');
     // Reuse checks only within this phase; full inventories above rehash every byte.

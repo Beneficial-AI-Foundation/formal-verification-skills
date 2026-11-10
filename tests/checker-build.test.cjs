@@ -499,6 +499,46 @@ if (process.platform === 'darwin') {
     }
   });
 
+  // Dependency rechecks inside one build may reuse a digest only while the file's kernel identity is unchanged; the
+  // first and final scans always read every byte. Each mutation below happens while the child runs.
+  test('dependency digest reuse never hides same-size, replaced or aliased drift during a build', async () => {
+    const mutations = {
+      'same-size rewrite with restored mtime': (target) => { const s = fs.statSync(target); fs.writeFileSync(target, 'FIXED'); fs.utimesSync(target, s.atime, s.mtime); },
+      'replacement inode': (target) => { const next = target + '.next'; fs.writeFileSync(next, 'fiXed'); fs.renameSync(next, target); },
+      'outside hardlink alias': (target, f) => { fs.linkSync(target, path.join(f.root, 'alias-' + crypto.randomUUID())); },
+    };
+    for (const [label, mutate] of Object.entries(mutations)) {
+      const f = fixture("fs.mkdirSync('.lake',{recursive:true});fs.writeFileSync('.lake/build-started','ready');const end=Date.now()+650;while(Date.now()<end){}");
+      const deps = path.join(f.root, 'deps'); fs.mkdirSync(deps);
+      const target = path.join(deps, 'source.lean'); fs.writeFileSync(target, 'fixed');
+      f.request.dependencies = { root: deps };
+      let done = false;
+      const timer = setInterval(() => { if (!done && fs.existsSync(path.join(f.request.out, 'source/.lake/build-started'))) { done = true; clearInterval(timer); mutate(target, f); } }, 10);
+      let result;
+      try { result = await build(f.request); } finally { clearInterval(timer); }
+      assert.equal(done, true, label + ': mutation reached the child window');
+      assert.notEqual(result.status, 'built', label); assert.match(result.reason, /changed|aliased/, label);
+    }
+  });
+
+  test('unchanged dependency bytes are read only by the first and final scans; a later build rereads them', async () => {
+    const f = fixture(), deps = path.join(f.root, 'deps'); fs.mkdirSync(deps);
+    const target = path.join(deps, 'source.lean'); fs.writeFileSync(target, 'fixed');
+    f.request.dependencies = { root: deps };
+    const open = fs.openSync; let reads = 0;
+    fs.openSync = function(file, ...args) { if (file === target) reads++; return open.call(fs, file, ...args); };
+    syncBuiltinESMExports();
+    let first;
+    try { first = await build(f.request); } finally { fs.openSync = open; syncBuiltinESMExports(); }
+    assert.equal(first.status, 'built', first.reason);
+    assert.equal(reads, 2, 'the initial inventory and the final fresh scan; every child pre/post recheck reused the digest');
+    // A new build never inherits the previous invocation's digests: same-size bytes with the old mtime are reread.
+    const s = fs.statSync(target); fs.writeFileSync(target, 'FIXED'); fs.utimesSync(target, s.atime, s.mtime);
+    const second = await build({ ...f.request, out: path.join(f.root, 'second-build'), deadlineMs: Date.now() + 15000 });
+    assert.equal(second.status, 'built', second.reason);
+    assert.equal(json(second.dependencies.before.file)['source.lean'].sha256, sha256(Buffer.from('FIXED')));
+  });
+
   test('dependency links remain inert and confined; escaping links are refused', async () => {
     for (const escape of [false, true]) {
       const f = fixture();
