@@ -243,6 +243,11 @@ if (hasAll) {
   if (hasCodex) selectedRuntimes.push('codex');
 }
 
+// Keep copied helpers, local-patch ownership and uninstall on the same narrow payload.
+function isInstalledScript(name) {
+  return name.startsWith('fvs-') || name === 'FvsKernelAudit.lean';
+}
+
 // Helper to get directory name for a runtime (used for local/project installs)
 function getDirName(runtime) {
   if (runtime === 'pi') return '.pi';
@@ -2366,13 +2371,13 @@ function removeFvsFiles(targetDir, runtime) {
     }
   }
 
-  // 5. Remove FVS scripts (fvs-* files in scripts/)
+  // 5. Remove the installed FVS script/helper payload
   const scriptsUninstallDir = path.join(targetDir, 'scripts');
   if (fs.existsSync(scriptsUninstallDir)) {
     const scriptFiles = fs.readdirSync(scriptsUninstallDir);
     let scriptCount = 0;
     for (const file of scriptFiles) {
-      if (file.startsWith('fvs-')) {
+      if (isInstalledScript(file)) {
         fs.unlinkSync(path.join(scriptsUninstallDir, file));
         scriptCount++;
       }
@@ -2753,7 +2758,7 @@ function ownedFileHashes(configDir, runtime) {
     ['command', name => runtime === 'opencode' && /^fvs-.*\.md$/.test(name)],
     ['agents', name => /^fvs-.*\.(md|toml)$/.test(name)],
     ['hooks', name => /^fvs-.*\.js$/.test(name)],
-    ['scripts', name => name.startsWith('fvs-')],
+    ['scripts', isInstalledScript],
   ]) {
     const directory = path.join(configDir, dir);
     if (fs.existsSync(directory)) {
@@ -3175,7 +3180,7 @@ function install(isGlobal, runtime = 'claude') {
 
     const scriptEntries = fs.readdirSync(scriptsSrc, { withFileTypes: true });
     for (const entry of scriptEntries) {
-      if (entry.isFile() && entry.name.startsWith('fvs-')) {
+      if (entry.isFile() && isInstalledScript(entry.name)) {
         fs.copyFileSync(path.join(scriptsSrc, entry.name), path.join(scriptsDest, entry.name));
       }
     }

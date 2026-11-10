@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -58,6 +59,15 @@ for (const runtime of ['claude', 'codex', 'opencode', 'antigravity']) {
       }
       const installed = runtime === 'antigravity' ? path.join(config, 'plugins/fvs') : config;
       run(process.execPath, args, project, env);
+      const auditBytes = fs.readFileSync(path.join(ROOT, 'scripts/FvsKernelAudit.lean'));
+      const auditPath = path.join(installed, 'scripts/FvsKernelAudit.lean');
+      assert.ok(fs.existsSync(auditPath), 'the independent checker requires its installed Lean audit helper');
+      assert.deepEqual(fs.readFileSync(auditPath), auditBytes, 'installed audit helper must equal the exact source bytes');
+      const manifest = JSON.parse(fs.readFileSync(path.join(installed, 'fvs-file-manifest.json'), 'utf8'));
+      assert.equal(manifest.files['scripts/FvsKernelAudit.lean'], crypto.createHash('sha256').update(auditBytes).digest('hex'));
+      for (const file of ['run-tests.cjs', 'build-plugin.cjs', 'build-hooks.js']) {
+        assert.equal(fs.existsSync(path.join(installed, 'scripts', file)), false, 'development script is not an installed helper: ' + file);
+      }
       const snippet = styleSnippet(installed);
       for (const cwd of [project, nested]) checkSnippet(snippet, cwd, env);
 
@@ -156,3 +166,22 @@ test('CommonJS marker scopes installed .js hooks without changing an ESM project
   assert.match(output, /fixture-model/);
   checkSnippet(styleSnippet(installed), project, env);
 });
+
+for (const runtime of ['claude', 'codex', 'opencode', 'antigravity']) {
+  test(`${runtime}: uninstall removes the owned audit helper and preserves an unrelated directory`, () => {
+    const project = path.join(temporary, 'audit-cleanup-' + runtime);
+    const home = path.join(temporary, 'audit-cleanup-home-' + runtime);
+    fs.mkdirSync(project); fs.mkdirSync(home);
+    const env = envFor(home);
+    const args = [path.join(ROOT, 'bin/install.js'), `--${runtime}`, '--local'];
+    run(process.execPath, args, project, env);
+    const installed = path.join(project, runtime === 'antigravity' ? '.agents/plugins/fvs' : `.${runtime}`);
+    const audit = path.join(installed, 'scripts/FvsKernelAudit.lean');
+    assert.ok(fs.existsSync(audit));
+    const unrelated = path.join(project, 'unrelated'); fs.mkdirSync(unrelated);
+    fs.writeFileSync(path.join(unrelated, 'FvsKernelAudit.lean'), 'unrelated owned fixture');
+    run(process.execPath, [...args, '--uninstall'], project, env);
+    assert.equal(fs.existsSync(audit), false);
+    assert.equal(fs.readFileSync(path.join(unrelated, 'FvsKernelAudit.lean'), 'utf8'), 'unrelated owned fixture');
+  });
+}
