@@ -1,5 +1,6 @@
 // Finite controller protocol. No AO/provider/backend work runs on import.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
@@ -7,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { requestControl, parseExecution, createExecution, runControl, runExpired, unbudgetedRun, runExecutionFields, runOwned, assertRunning, initializeOwnedWork, closeOwnedWork, observeOwnedWork } from './fvs-execution.mjs';
 import { memoryDataSnapshot, memoryHash, MEMORY_LIMITS } from './fvs-project-memory.mjs';
 import { duplicateKeys } from './fvs-lean-graph.mjs';
+import { recordValidatedResponse } from './fvs-spec-review.mjs';
 import { readChain, registryStatus, validatePlan, contextOf, contractProblems, candidateOf, reviewProblems } from './fvs-contract-registry.mjs';
 import { readAcceptedStore, inspectAutoBaselineArtifacts, inspectAutoProvisional, extractionContext } from './fvs-checker-auto.mjs';
 
@@ -117,7 +119,7 @@ export function readTransitionAction(ref) {
   };
   closed(a.target, keys[a.kind], a.kind + ' target');
   if (a.kind === 'terminate' && Object.hasOwn(a.target, 'operation') && !['terminate-session', 'resolve-terminated-reservation'].includes(a.target.operation)) stop('transition-invalid-input', 'unsupported termination operation');
-  if (lifecycleOnlyAction(a) && a.target.progress !== null) readTaskProgress(a.target.progress);
+  if (lifecycleOnlyAction(a) && a.target.progress !== null) readKnownWork(a.target.progress);
   if (a.kind === 'registry-revise') registryInvocation(a.target.request);
   if (a.kind === 'launch') { startupValid(a.target.startup); if (a.schemaVersion === 2 && a.target.resumeOf !== null) transitionBound(a.target.resumeOf); }
   return a;
@@ -182,7 +184,7 @@ function verifyStopScope(a,actual,view,{requireStopped=false}={}) {
     if(requireStopped&&view.state.history.some(row=>row.event.position==='before'&&row.event.intent.request&&(()=>{const old=readTransitionAction(row.event.intent.request);return old.kind==='release'&&transitionBound(old.target.association).reservationId===association.reservationId;})()))stop('transition-owned-work-uncertain','released or uncertain delivery needs its exact known-work handoff');
     return null;
   }
-  const p=readTaskProgress(a.target.progress),packet=readWorkPacket(p.packet),launch=readTransitionAction(packet.launch);
+  const p=readKnownWork(a.target.progress),packet=readWorkPacket(p.packet),launch=readTransitionAction(packet.launch);
   if(p.actor.sessionId!==a.target.sessionId||p.actor.assignmentId!==association.assignmentId||p.actor.reservationId!==association.reservationId||p.runId!==a.runId||!same(launch.nodes,association.nodes)||!same(p.actor.worktree.path,association.worktree.path))stop('transition-progress-invalid','handoff is not this owned assignment');
   const issued=view.state.history.find(row=>row.event.position==='before'&&row.event.intent.request&&same(row.event.intent.request,packet.launch));
   if(!issued||issued.sha256!==packet.beforeEventSha256)stop('transition-progress-invalid','handoff launch is not retained in this run');
@@ -737,7 +739,7 @@ export function assessTransition({ actionRef, q, view, canonical, run, actual, r
     }}
     const next = validateDelta(a, a.before, actual, completed, services);
     if (a.basis?.version === 2 && a.basis.workCompletion !== null && !evidenceRefs.some((r) => same(r, a.basis.workCompletion))) stop('transition-work-result-invalid', 'after must retain its conclusive actor envelope for linked resume');
-    return { status: 'facts-recorded-partial', action: a.kind, next, completion: candidates[0], beforeEventSha256: before.sha256, executable: false, selected, ...(stopping&&a.target.progress!==null?{knownWork:(()=>{const p=readTaskProgress(a.target.progress);return observeOwnedWork(p.packet,p.actor);})()}:{} ) };
+    return { status: 'facts-recorded-partial', action: a.kind, next, completion: candidates[0], beforeEventSha256: before.sha256, executable: false, selected, ...(stopping&&a.target.progress!==null?{knownWork:(()=>{const p=readKnownWork(a.target.progress);return observeOwnedWork(p.packet,p.actor);})()}:{} ) };
   }
   if (a.expectedHeadSha256 !== q.expectedHeadSha256) stop('transition-predecessor-stale', 'proposal predecessor is stale');
   if (!same(a.before, actual)) stop('transition-extra-drift', 'proposal does not match actual current identities');
@@ -861,6 +863,72 @@ function progressEvidence(refs,label) {
 export function readTaskProgress(ref, seen=new Set()) {
   if(seen.has(ref.file)||seen.size>=1000)stop('transition-progress-invalid','cyclic/oversize progress history');seen.add(ref.file);
   return taskProgressData(transitionBound(ref),seen);
+}
+// A stop's known-work handoff: a proof task's retained progress, or a finished review assignment's typed actor
+// completion (the existing work-completion/work-result envelope). Either is execution accounting only; terminate and
+// resolve still require the actual stop and a sealed quiescent known-work scope.
+export function readKnownWork(ref) {
+  return transitionBound(ref).schema === 'fvs/auto-work-completion' ? readReviewWorkCompletion(ref) : readTaskProgress(ref);
+}
+const REVIEW_OUTCOMES = { PASS: ['completed', 'pass'], 'APPROVE-WITH-EDITS': ['completed', 'changes-requested'], REVISE: ['completed', 'changes-requested'], BLOCKED: ['failed', null] };
+export function readReviewWorkCompletion(ref) {
+  const c = transitionBound(ref);
+  closed(c, ['schema', 'schemaVersion', 'runId', 'packet', 'marker', 'sourceAfter', 'outcome', 'artifacts', 'controllerSessionId'], 'review work completion');
+  const p = readWorkPacket(c.packet), launch = readTransitionAction(p.launch), marker = transitionBound(c.marker);
+  if (c.schema !== 'fvs/auto-work-completion' || c.schemaVersion !== 2 || p.schemaVersion !== 2 || c.runId !== p.runId || launch.kind !== 'launch' || launch.stage !== 'review'
+    || c.controllerSessionId !== launch.before.fixed.coordinatorSessionId || !['completed', 'failed'].includes(c.outcome) || !Array.isArray(c.artifacts) || c.artifacts.length !== 2
+    || c.marker.file !== p.startMarker || marker.schema !== 'fvs/auto-execution-start' || marker.schemaVersion !== 2 || marker.runId !== p.runId || marker.status !== 'execution-uncertain'
+    || !same(marker.packet, c.packet) || !same(marker.actor, p.actor) || marker.actionSha256 !== p.actionSha256 || marker.challenge !== p.challenge || marker.deliveryHandle !== p.deliveryHandle
+    || !same(c.sourceAfter, { commit: p.actor.worktree.commit, tree: p.actor.worktree.tree })) stop('transition-progress-invalid', 'review completion lost its exact issued review packet, start or read-only source');
+  const values = c.artifacts.map(r => transitionBound(r)), r = values.find(v => v.schema === 'fvs/auto-work-result'), e = values.find(v => v !== r);
+  if (!r || !e) stop('transition-progress-invalid', 'one typed review result and its import evidence are required');
+  closed(r, ['schema', 'schemaVersion', 'runId', 'packet', 'marker', 'actionSha256', 'actor', 'kind', 'prepared', 'result', 'controllerObservedAtMs', 'controllerSessionId'], 'typed work result');
+  closed(r.result, ['contract', 'review'], 'review result');
+  if (r.schemaVersion !== 2 || r.runId !== c.runId || !same(r.packet, c.packet) || !same(r.marker, c.marker) || r.actionSha256 !== p.actionSha256 || !same(r.actor, p.actor) || r.kind !== 'review'
+    || !same(r.prepared, c.sourceAfter) || r.controllerSessionId !== c.controllerSessionId || !Number.isSafeInteger(r.controllerObservedAtMs)) stop('transition-progress-invalid', 'review result lost its exact actor/packet');
+  // The import evidence must be the validated import for this exact issued review: the frozen pre-dispatch binding and
+  // review input (historical node/contract/candidate/head, never the current registry), the returned and sealed
+  // response, the importer's normalized artifacts with the verdict they state, and the actor observed exactly at the
+  // prepared read-only source.
+  if (!same(e.workPacket, c.packet) || !same(e.marker, c.marker) || !same(e.actor, p.actor) || p.actor.worktree.dirty !== false || e.reviewer?.session !== p.actor.sessionId || e.reviewer?.runId !== launch.transitionId)
+    stop('transition-progress-invalid', 'import evidence is for another review packet, start or observed actor/source');
+  const b = transitionBound(e.binding), inputRef = b.input, input = transitionBound(inputRef);
+  if (b.schema !== 'fvs/auto-driver-review-binding' || b.schemaVersion !== 1 || !p.inputs.some(ref => same(ref, e.binding)) || !p.inputs.some(ref => same(ref, inputRef))
+    || input.schema !== 'fvs/auto-review-input' || input.schemaVersion !== 1 || !launch.nodes.includes(input.node) || !same(input.contract, b.contract) || !same(r.result.contract, input.contract)
+    || transitionBound(input.contract).node !== input.node) stop('transition-progress-invalid', 'review result is not the issued contract/node');
+  const returned = transitionBound(e.response);
+  if (!same(returned.workPacket, c.packet) || !same(returned.marker, c.marker) || !same(returned.binding, e.binding) || returned.reviewerInvocation !== launch.transitionId) stop('transition-progress-invalid', 'returned response belongs to another packet/binding/invocation');
+  const sealed = transitionBound(e.sealedResponse, false), imported = e.imported ?? {};
+  if (['raw', 'normalized', 'transformation', 'review'].some(k => !imported[k])) stop('transition-progress-invalid', 'the complete retained import artifacts are required');
+  const normalizedBytes = transitionBound(imported.normalized, false), transformation = transitionBound(imported.transformation), normalized = normalizedBytes.toString('utf8');
+  if (transitionBound(returned.response, false).compare(sealed) !== 0 || transitionBound(imported.raw, false).compare(sealed) !== 0 || transformation.validated !== true || transformation.replay_matches !== true
+    || transformation.hashes?.['normalized-response.md'] !== imported.normalized.sha256 || !transitionBound(imported.review, false).toString('utf8').endsWith('\n\n' + normalized.trim() + '\n'))
+    stop('transition-progress-invalid', 'import artifacts do not form the validated sealed/normalized chain');
+  // The retained normalized text must be what the existing review validator derives from the sealed bytes; the replay
+  // writes only into a throwaway directory and reads no registry, baseline or reviewer.
+  const replayRoot = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'fvs-review-replay-'));
+  let replayed = null;
+  try { replayed = recordValidatedResponse(replayRoot, sealed, { verdicts: ['PASS', 'APPROVE-WITH-EDITS', 'REVISE', 'BLOCKED'], headings: ['Findings', 'Content coverage statement', 'Coverage', 'Evidence'], warnings: [] }); }
+  catch { replayed = null; } finally { fs.rmSync(replayRoot, { recursive: true, force: true }); }
+  if (replayed !== normalized) stop('transition-progress-invalid', 'retained normalized response is not the validator replay of the sealed response');
+  const stated = normalized.trim().split(/\r?\n/).at(-1).trim().replace(/^[-\s]*VERDICT:\s*/i, '').toUpperCase(), expected = REVIEW_OUTCOMES[stated];
+  if (!expected || e.verdict !== stated || c.outcome !== expected[0]) stop('transition-progress-invalid', 'completion outcome differs from the validated normalized verdict');
+  if (expected[1] === null ? r.result.review !== null : (() => { const v = transitionBound(r.result.review); return v.verdict !== expected[1] || v.candidateSha256 !== input.candidateSha256 || v.registryHeadSha256 !== input.registryHeadSha256
+    || v.reviewer?.session !== p.actor.sessionId || v.reviewer?.runId !== launch.transitionId || !same(v.evidence, c.artifacts[values.indexOf(e)]); })())
+    stop('transition-progress-invalid', 'review envelope differs from the issued candidate/head or the validated verdict/evidence');
+  return { packet: c.packet, marker: c.marker, actor: p.actor, runId: c.runId, outcome: c.outcome, review: r.result.review };
+}
+// Controller wrapper for a validated review import (driver evidence + optional envelope); never a proof or PASS record.
+export function recordReviewWorkCompletion(options) {
+  const v = transitionData(options); closed(v, ['importEvidence', 'contract', 'review', 'controllerSessionId', 'out'], 'review completion options');
+  const e = transitionBound(v.importEvidence), p = readWorkPacket(e.workPacket), prepared = { commit: p.actor.worktree.commit, tree: p.actor.worktree.tree };
+  if (fs.existsSync(v.out) || !path.isAbsolute(v.out) || fs.realpathSync(path.dirname(v.out)) !== path.dirname(v.out)) stop('transition-progress-invalid', 'exclusive review completion output required');
+  fs.mkdirSync(v.out, { mode: 0o700 });
+  const result = transitionSave(path.join(v.out, 'review-result.json'), { schema: 'fvs/auto-work-result', schemaVersion: 2, runId: p.runId, packet: e.workPacket, marker: e.marker, actionSha256: p.actionSha256,
+    actor: p.actor, kind: 'review', prepared, result: { contract: v.contract, review: v.review }, controllerObservedAtMs: Date.now(), controllerSessionId: v.controllerSessionId });
+  const completion = transitionSave(path.join(v.out, 'review-completion.json'), { schema: 'fvs/auto-work-completion', schemaVersion: 2, runId: p.runId, packet: e.workPacket, marker: e.marker,
+    sourceAfter: prepared, outcome: REVIEW_OUTCOMES[e.verdict]?.[0] ?? null, artifacts: [result, v.importEvidence], controllerSessionId: v.controllerSessionId });
+  readReviewWorkCompletion(completion); return { status: 'review-completion-recorded', completion, proofAuthority: 'none', executable: false };
 }
 function taskProgressData(p,seen=new Set()) {
   closed(p,['schema','schemaVersion','runId','packet','marker','actor','observedActor','context','logicalTask','attemptStartedAtMs','observedAtMs','lastMeaningfulProgress','currentGoal','failedApproaches','blocker','nextStep','blockerResolution','previous'],'task progress');
@@ -1157,7 +1225,7 @@ async function performTransitionV2(options, services, a) {
   const administrative=['launch','release','terminate'].includes(a.kind);
   const deadline=administrative?(stopping||unbudgetedRun(a.before.fixed)?Date.now()+MEMORY_LIMITS.timeoutMs:Math.min(Date.now()+MEMORY_LIMITS.timeoutMs,a.before.fixed.budget.deadlineMs)):null;
   const operationControl=administrative?createExecution(a.runId,{kind:'deadline',deadlineMs:deadline}):control;
-  if(stopping&&a.target.progress!==null){const p=readTaskProgress(a.target.progress);closeOwnedWork(p.packet,p.actor);}
+  if(stopping&&a.target.progress!==null){const p=readKnownWork(a.target.progress);closeOwnedWork(p.packet,p.actor);}
   const processResult=await runOwned(argv,{cwd:a.before.source.root,env,maxBuffer:1024*1024},operationControl,services);
   const endedAtMs=Date.now(),stream=(name,b)=>{const file=path.join(evidenceDir,name);fs.writeFileSync(file,b,{flag:'wx'});return{file,sha256:hash(b)};};
   const supervision={cancelled:processResult.cancelled,timedOut:processResult.timedOut,cleanupComplete:processResult.cleanupComplete,cleanup:processResult.cleanup,operationKind:administrative?'administrative':['freeze','check','accept'].includes(a.kind)?'proof':'work',administrativeTimeoutMs:administrative?MEMORY_LIMITS.timeoutMs:null,workScope:administrative?'direct-administrative-child':'known-fvs-command-group',descendantMapping:'no arbitrary AO descendant guarantee',elapsedMs:performance.now()-started};
