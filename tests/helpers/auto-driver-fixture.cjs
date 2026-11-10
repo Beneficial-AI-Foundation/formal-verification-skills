@@ -24,14 +24,16 @@ if(args[0]==='send'){console.log(JSON.stringify({deliveryHandle:args[args.indexO
   const request = transition => driver.prepareCurrentRequest({ projectRoot: x.root, context: context(), phase: 'resume', transition: transition ?? null });
   const worktree = p => ({ path: p, gitDir: fs.realpathSync(path.resolve(p, f.git(p, 'rev-parse', '--git-dir'))), gitCommonDir: fs.realpathSync(path.resolve(p, f.git(p, 'rev-parse', '--git-common-dir'))),
     branchRef: f.git(p, 'symbolic-ref', 'HEAD'), commit: f.git(p, 'rev-parse', 'HEAD'), tree: f.git(p, 'rev-parse', 'HEAD^{tree}'), dirty: f.git(p, 'status', '--porcelain=v1', '--untracked-files=all') !== '' });
-  async function paired({ kind, stage, nodes = [], target, sessionId = null, registryRoot = null, effect = { kind: 'local', operation: stage }, result = raw => raw, after = () => ({ sessionId: null, association: null }), execute = true }) {
+  // `basis` is the engine's v2 explanation of this successor (the prior recorded paired output, optionally with the
+  // consumed actor work completion); the engine validates it whenever present and requires it once acceptance is stale.
+  async function paired({ kind, stage, nodes = [], target, sessionId = null, registryRoot = null, effect = { kind: 'local', operation: stage }, result = raw => raw, after = () => ({ sessionId: null, association: null }), execute = true, basis = null }) {
     const observed = await driver.recordCheckpoint({ projectRoot: x.root, request: request(), out: x.out() }), q = request();
     const ids = { transitionId: f.uuid(), reservationId: f.uuid() }, owner = 'worker-owner';
     const actorId = sessionId ?? target.sessionId ?? null;
     const before = t.transitionSnapshot({ q, run: x.run(), canonical: x.canonical(), observation: observed.value.observation,
       action: { schemaVersion: 2, kind, before: { registry: registryRoot ? { root: registryRoot } : null }, target: actorId ? { sessionId: actorId } : {}, owner, nodes, authorization: x.auth, profile: x.profile } },
     { profileObservation: x.profileObservation, observeWorktree: o => worktree(o.path) });
-    const action = { schema: 'fvs/auto-transition-request', schemaVersion: 2, runId: x.runId, ...ids, kind, stage, nodes, owner, expectedHeadSha256: q.expectedHeadSha256, before, target, authorization: x.auth, profile: x.profile, basis: null };
+    const action = { schema: 'fvs/auto-transition-request', schemaVersion: 2, runId: x.runId, ...ids, kind, stage, nodes, owner, expectedHeadSha256: q.expectedHeadSha256, before, target, authorization: x.auth, profile: x.profile, basis };
     const actionRef = f.json(x.owned, 'action', action), intent = { ...ids, stage, nodes, owner, effect, request: actionRef };
     const beforeRequest = request({ position: 'before', intent, beforeEventSha256: null, outcome: null, effect: null });
     const produced = execute ? await driver.runPairedEffect({ projectRoot: x.root, request: beforeRequest, out: x.out() })
@@ -42,17 +44,22 @@ if(args[0]==='send'){console.log(JSON.stringify({deliveryHandle:args[args.indexO
     const completion = execute ? f.json(x.owned, 'completion', { schema: 'fvs/auto-transition-completion', schemaVersion: 2, runId: x.runId, ...ids, actionSha256: m.memoryHash(action),
       beforeEventSha256: produced.before.value.recordedEventSha256, command: produced.producer.command, result: f.json(x.owned, 'producer-result', result(raw)) }) : null;
     const actual = after(raw, produced.before.value.recordedEventSha256, intent);
+    // An after that consumes released actor work (basis.workCompletion) must retain that exact envelope as evidence.
+    const evidence = [...(actual.evidence ?? (completion ? [completion] : [])), ...(basis?.workCompletion ? [basis.workCompletion] : [])];
     const afterRequest = request({ position: 'after', intent, beforeEventSha256: produced.before.value.recordedEventSha256,
-      outcome: 'succeeded', effect: { evidence: completion ? [completion] : [], resolution: null, ...actual } });
+      outcome: 'succeeded', effect: { resolution: null, ...actual, evidence } });
     afterRequest.associations = afterRequest.associations.filter(r => !actual.association || r.sha256 !== actual.association.sha256);
     const recorded = await driver.recordAfter({ projectRoot: x.root, request: afterRequest, out: x.out() });
     return { action, actionRef, produced, recorded, completion, raw };
   }
-  async function releaseReview(binding) {
+  // Review defaults; a proof task passes its own stage/selection/invocation/procedure/inputs/nodes and binding null.
+  async function releaseReview(binding, { basis = null, chain = basis !== null, stage = 'review', nodes = null, selectionStage = 'spec_review', invocation = null,
+    procedure = 'lean-spec-review/Other', inputs = null, registryRoot = null } = {}) {
+    // A chained successor compares whole snapshots, so every action in one chain observes the same registry root.
     const assignmentId = f.uuid(), branchRef = 'refs/heads/review-' + f.uuid().slice(0, 8), startup = { challenge: f.uuid(), attemptId: f.uuid(), phase: 'resume', resumeId: f.uuid() };
     let association;
-    const launched = await paired({ kind: 'launch', stage: 'review', nodes: [t.transitionBound(binding.input).node], effect: { kind: 'ao-launch', projectId: 'fixture-project', intendedBranchRef: branchRef, assignmentId, sessionId: null },
-      target: { projectId: 'fixture-project', branchRef, assignmentId, selectionStage: 'spec_review', invocation: null, startup, resumeOf: null }, after: (raw, before, intent) => {
+    const launched = await paired({ kind: 'launch', stage, registryRoot, nodes: nodes ?? [t.transitionBound(binding.input).node], effect: { kind: 'ao-launch', projectId: 'fixture-project', intendedBranchRef: branchRef, assignmentId, sessionId: null },
+      target: { projectId: 'fixture-project', branchRef, assignmentId, selectionStage, invocation, startup, resumeOf: null }, basis, after: (raw, before, intent) => {
         association = x.associate(raw.session.id, raw.worktree, intent, before); associations = [association]; return { sessionId: raw.session.id, association };
       } });
     let actor = { projectId: 'fixture-project', sessionId: launched.raw.session.id, reservationId: launched.action.reservationId, assignmentId, worktree: worktree(launched.raw.worktree), profile: null };
@@ -66,9 +73,9 @@ if(args[0]==='send'){console.log(JSON.stringify({deliveryHandle:args[args.indexO
       beforeEventSha256: launched.produced.before.value.recordedEventSha256, challenge: startup.challenge, actor, memoryRequest: startupRequest, memoryOut: startupMemory.out,
       memoryEvidence: t.workerMemoryEvidence(startupMemory.out, startupRequest, launched.action.before.fixed), waiting: true });
     const candidate = source();
-    const prep = await paired({ kind: 'prepare-input', stage: 'integration', sessionId: actor.sessionId,
+    const prep = await paired({ kind: 'prepare-input', stage: 'integration', sessionId: actor.sessionId, registryRoot,
       target: { sessionId: actor.sessionId, association, launch: launched.actionRef, startupAck, startupRequest, candidate: { commit: candidate.commit, expectedTree: candidate.expectedTree } },
-      result: () => ({ status: 'prepared', candidate: { commit: candidate.commit } }), after: () => {
+      result: () => ({ status: 'prepared', candidate: { commit: candidate.commit } }), basis: chain ? launched.recorded.basis : null, after: () => {
         const intent = launched.produced.before.value.request.transition.intent;
         association = x.associate(actor.sessionId, actor.worktree.path, intent, launched.produced.before.value.recordedEventSha256); associations = [association];
         return { sessionId: null, association: null };
@@ -77,14 +84,14 @@ if(args[0]==='send'){console.log(JSON.stringify({deliveryHandle:args[args.indexO
     const packetMemory = workerMemory(caller({ attemptId: f.uuid(), phase: 'resume', resumeId: f.uuid() })), packetRequest = packetMemory.request;
     const packet = f.json(x.owned, 'review-work', { schema: 'fvs/auto-work-packet', schemaVersion: 2, runId: x.runId, actionSha256: m.memoryHash(launched.action), launch: launched.actionRef,
       beforeEventSha256: launched.produced.before.value.recordedEventSha256, challenge: f.uuid(), actor, deliveryHandle: 'release-' + f.uuid(), memoryRequest: packetRequest,
-      procedure: 'lean-spec-review/Other', inputs: [binding.binding, binding.input], resumeOf: null, startMarker: path.join(x.owned, 'review-start-' + f.uuid() + '.json') });
-    await paired({ kind: 'release', stage: 'integration', target: { sessionId: actor.sessionId, association, packet, handle: t.readWorkPacket(packet).deliveryHandle } });
+      procedure, inputs: inputs ?? [binding.binding, binding.input], resumeOf: null, startMarker: path.join(x.owned, 'review-start-' + f.uuid() + '.json') });
+    const released = await paired({ kind: 'release', stage: 'integration', registryRoot, target: { sessionId: actor.sessionId, association, packet, handle: t.readWorkPacket(packet).deliveryHandle }, basis: chain ? prep.recorded.basis : null });
     const markerPath = t.readWorkPacket(packet).startMarker;
     const ack = auto.acknowledgeWorkPacket({ projectRoot: x.root, ao: { tool: f.ref(x.tool), stateHome: x.stateHome, projectId: 'fixture-project' }, out: x.out(),
       actor, expectedMemoryRequest: packetRequest, memoryOut: packetMemory.out, packet, marker: markerPath });
     if (!ack.mayStart) throw Error('fixture start refused');
-    return { packet, marker: f.ref(markerPath), actor, launch: launched };
+    return { packet, marker: f.ref(markerPath), actor, launch: launched, prepared: prep, released };
   }
-  return { driver, auto, t, m, x, inputs, context, request, paired, releaseReview, source, useSource: root => { sourceRoot = root; } };
+  return { driver, auto, t, m, x, inputs, context, request, paired, releaseReview, source, useSource: root => { sourceRoot = root; }, useAssociations: list => { associations = list; } };
 }
 module.exports = { ...f, world };
