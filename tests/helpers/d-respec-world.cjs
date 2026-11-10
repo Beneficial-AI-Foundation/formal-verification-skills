@@ -74,7 +74,8 @@ async function dWorld({ engineRoot, base, materials, bd, scope = 'ticket18 D two
   const profile = w.t.transitionBound(w.x.profile); profile.stages.spec_review.effort = 'xhigh'; w.x.profile = json(w.x.owned, 'profile-review', profile);
   const e = await import(require('node:url').pathToFileURL(path.join(engineRoot, 'scripts/fvs-execution.mjs')).href);
   const ca = await import(require('node:url').pathToFileURL(path.join(engineRoot, 'scripts/fvs-checker-auto.mjs')).href);
-  return { ...w, real: r, git, engineRoot, e, ca };
+  const reg = await import(require('node:url').pathToFileURL(path.join(engineRoot, 'scripts/fvs-contract-registry.mjs')).href);
+  return { ...w, real: r, git, engineRoot, e, ca, reg };
 }
 
 // Name the scenario step in any refusal so retained evidence points at the exact transition.
@@ -265,21 +266,88 @@ function integrate(w, intent, beforeEventSha256, commit) {
   return { sessionId: null, association: null, evidence: [completion] };
 }
 
-// E1 (real Lean after E0, opt-in only): revise H and freshly review A/B, freeze F1 at the source with the V1 overlay
-// mutable, run the scripted writer for H, then check and accept H/A/B at I1. Every step carries the v2 basis chain.
-async function runE1(w, materials, { storeRoot, basis, reviews, overlay }) {
+// One revision episode (real Lean, opt-in only): fresh reviews of the revised contracts, a freeze at the current source
+// with only the absent overlay mutable, the scripted writer for that node, then check and accept H/A/B at the
+// integrated source. Every step carries the v2 basis chain (E0's acceptances are stale from the first revision on).
+async function runEpisode(w, materials, label, { storeRoot, basis, reviews, overlay, libraries = null }) {
   let next = basis;
   for (const review of reviews) next = (await reviews_step(w, review, next)).basis;
-  const f1 = await freezeStep(w, materials, 'F1 freeze', { overlayFiles: [overlay.file], targets: { 19: overlay.target } }, next);
-  const writer = await proofWriter(w, { node: 19, file: overlay.file, wrong: overlay.wrong, correct: overlay.correct, basis: f1.recorded.basis });
-  const checked = await checkAccept(w, 'E1', storeRoot, writer.basis);
-  return { f1, writer, checked, basis: checked.basis };
+  const frozen = await freezeStep(w, materials, label.freeze + ' freeze', { overlayFiles: [overlay.file], targets: overlay.targets, libraries }, next);
+  const writer = await proofWriter(w, { node: overlay.node, file: overlay.file, wrong: overlay.wrong, correct: overlay.correct, basis: frozen.recorded.basis });
+  const checked = await checkAccept(w, label.episode, storeRoot, writer.basis);
+  return { frozen, writer, checked, basis: checked.basis };
+}
+// E1: revise H, review A/B, F1 at C0 with the V1 overlay mutable, writer for H, integrate I1.
+async function runE1(w, materials, { storeRoot, basis, reviews, overlay }) {
+  const r = await runEpisode(w, materials, { episode: 'E1', freeze: 'F1' }, { storeRoot, basis, reviews, overlay: { ...overlay, node: 19, targets: { 19: overlay.target } } });
+  return { f1: r.frozen, writer: r.writer, checked: r.checked, basis: r.basis };
+}
+// E2: promote the protected V1 proof into H's reviewed definitions, revise A, review B, F2 at I1 with only the absent V2
+// overlay mutable (V1 is built as a protected library module), writer for A, integrate I2.
+async function runE2(w, materials, { storeRoot, basis, reviews, overlay, libraries }) {
+  const r = await runEpisode(w, materials, { episode: 'E2', freeze: 'F2' }, { storeRoot, basis, reviews, overlay, libraries });
+  return { f2: r.frozen, writer: r.writer, checked: r.checked, basis: r.basis };
 }
 const reviews_step = (w, review, basis) => reviseContract(w, { ...review, basis, chain: true });
+// A fresh current reconcile (the independent resume/memory consumer inputs of a bundle or revision request).
+function currentResume(w) {
+  const { x } = w, ctx = w.context();
+  return x.invoke(x.request({ inputs: w.inputs, associations: ctx.associations, source: w.source() }));
+}
+// The v2 review-bundle request over the real root at the current registry/baseline/store/runtime head.
+function bundleRequest(w) {
+  const { x, real } = w, view = w.auto.readState({ projectRoot: real.root, requireAgreement: true }), file = name => path.join(real.root, '.formalising/auto-fv', name);
+  const fileRef = f => ({ file: f, sha256: sha(fs.readFileSync(f)) });
+  const agreement = { state: fileRef(file('state.json')), roadmap: fileRef(file('ROADMAP.md')), contextSha256: view.agreement.contextSha256,
+    choicesGeneration: view.state.choicesGeneration, approvedPayloadSha256: view.agreement.agreement.approvedPayloadSha256 };
+  const plan = w.t.transitionBound(w.inputs.plan);
+  const scopeInventory = json(x.owned, 'scope', { schema: 'fvs/auto-bundle-scope-inventory', schemaVersion: 1, agreement, plan: w.inputs.plan,
+    requestedRoots: plan.selection.requestedRoots, failed: plan.selection.failed,
+    applicability: [{ scopeItemId: 'ticket18-d-roots', roots: plan.selection.requestedRoots, disposition: 'mapped', reason: null, evidence: [agreement.roadmap] }] });
+  const { baseline, acceptedStore } = w.inputs, run = w.auto.readRuntimeState({ projectRoot: real.root }).state.run;
+  return { schema: 'fvs/auto-bundle-request', schemaVersion: 2, bundleId: crypto.randomUUID(), projectRoot: real.root, source: w.source(), agreement,
+    extraction: w.inputs.extraction, graph: w.inputs.graph, plan: w.inputs.plan, scopeInventory, registry: { root: real.registry, expectedHeadSha256: registryStatus(w).registryHeadSha256 },
+    baseline, acceptedStore, runtime: { root: real.root, state: fileRef(file('resume/state.json')), absenceReason: null }, handoff: null,
+    absenceReasons: { baseline: baseline ? null : 'not frozen in this episode', acceptedStore: acceptedStore ? null : 'no canonical acceptance yet', runtime: null, handoff: 'scripted scenario; no handoff' },
+    execution: w.e.runControl(run) };
+}
+// A v2 revision request (inspect or finish) bound to a fresh current reconcile, the prior bundle and the owner feedback.
+function respecRequest(w, { revisionId, prior, feedback, items, operation = 'inspect', inspectEvidence = null }) {
+  const current = currentResume(w), b = bundleRequest(w), memoryOut = current.result.observation.memory.out, ref = f => ({ file: f, sha256: sha(fs.readFileSync(f)) });
+  return { schema: 'fvs/auto-respec-request', schemaVersion: 2, revisionId, attemptId: current.q.attemptId, operation,
+    ownerFeedback: { ownerReference: 'ticket18 D scripted owner feedback (no human authentication)', evidence: feedback }, priorBundle: prior,
+    current: { bundle: b, resume: { request: ref(path.join(current.out, 'request.json')), result: ref(path.join(current.out, 'result.json')), committedHeadSha256: current.result.committedHeadSha256 },
+      memory: { mode: 'beads', request: ref(path.join(memoryOut, 'request.json')), result: ref(path.join(memoryOut, 'result.json')) }, authorization: w.x.auth, profile: w.x.profile },
+    requestedItems: items, inspectEvidence, execution: b.execution };
+}
+// The node versions an item names: the current registered record and candidate for each node.
+function versionsOf(w, nodes) {
+  const heads = w.reg.readChain(w.real.registry).heads;
+  return nodes.map(node => { const row = heads.get(node); if (!row) throw new Error('no registered version for node ' + node); return { node, recordSha256: row.sha, candidateSha256: row.record.candidateSha256 }; });
+}
+// The canonical identities a refused negative must leave unchanged (runtime bytes, registry, store, source).
+function canonicalIdentity(w, storeRoot) {
+  return { runtime: sha(fs.readFileSync(path.join(w.real.root, '.formalising/auto-fv/resume/state.json'))), registry: registryStatus(w).registryHeadSha256,
+    store: storeRoot ? w.ca.readAcceptedStore(storeRoot).headSha256 : null, source: w.source() };
+}
+// One bound negative: the checker CLI on an owned request copy, refused before any build, with retained streams.
+function negative(w, { name, command, request, expectedCode, storeRoot = null, dir }) {
+  fs.mkdirSync(dir, { recursive: true });
+  const before = canonicalIdentity(w, storeRoot), records = storeRoot ? w.ca.readAcceptedStore(storeRoot).records.length : 0;
+  const argv = [path.join(w.engineRoot, 'scripts/fvs-checker.mjs'), command, '--request', request.file, '--out', path.join(dir, name + '-out')];
+  const p = spawnSync(process.execPath, argv, { cwd: dir, timeout: 600000, maxBuffer: 64 * 1024 * 1024, env: { PATH: '/usr/bin:/bin', LANG: 'C', LEAN_NUM_THREADS: '2' } });
+  const stream = (key, bytes) => { const file = path.join(dir, name + '.' + key); fs.writeFileSync(file, bytes ?? Buffer.alloc(0), { flag: 'wx' }); return { file, sha256: sha(fs.readFileSync(file)) }; };
+  return json(dir, 'negative-' + name, { schema: 'fvs45/d-bound-negative', schemaVersion: 1, name, argv: [process.execPath, ...argv], request, expectedCode,
+    exitCode: p.status, signal: p.signal, timedOut: p.error?.code === 'ETIMEDOUT', refused: Number.isInteger(p.status) && p.status !== 0,
+    stdout: stream('stdout', p.stdout), stderr: stream('stderr', p.stderr),
+    acceptedOutputCreated: (storeRoot ? w.ca.readAcceptedStore(storeRoot).records.length : 0) !== records, canonicalBefore: before, canonicalAfter: canonicalIdentity(w, storeRoot) });
+}
+// An owned variant of a request document (the original stays bound and unchanged).
+function variant(w, request, patch) { const v = structuredClone(w.t.transitionBound(request)); patch(v); return json(w.x.owned, 'negative-request', v); }
 function registryStatus(w) {
   const p = spawnSync(process.execPath, [path.join(w.engineRoot, 'scripts/fvs-contract-registry.mjs'), 'status', '--plan', w.inputs.plan.file, '--graph', w.inputs.graph.file,
     '--registry', w.real.registry, '--spec-root', w.source().root], { encoding: 'utf8' });
   return JSON.parse(p.stdout);
 }
 
-module.exports = { prepareRealRoot, recordSetup, dWorld, reviseContract, closeAssignment, freezeRequest, admitFreeze, runE0, runE1, proofWriter, intendedFailure, registryStatus, git, sha };
+module.exports = { prepareRealRoot, recordSetup, dWorld, reviseContract, closeAssignment, freezeRequest, admitFreeze, runE0, runE1, runE2, proofWriter, intendedFailure, currentResume, bundleRequest, respecRequest, versionsOf, canonicalIdentity, negative, variant, step, registryStatus, git, sha };
