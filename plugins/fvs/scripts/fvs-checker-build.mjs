@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { Worker } from 'node:worker_threads';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -11,6 +12,36 @@ const OBJECT = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const NAME = /^[A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*$/;
 const MAX_LOG = 32 * 1024 * 1024;
 const hash = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
+// Dependency trees (Aeneas/Mathlib: ~125k files, ~7.75 GB) are rehashed in full at every check; the bytes are still read
+// and checked exactly as by the sequential digest (no-follow open, regular file, single link, stable fstat), only spread
+// over a bounded pool of worker threads: 2 by default (Lean builds share the host), explicitly 1-4 per task through
+// FVS_CHECKER_HASH_THREADS. The bound only changes speed; any other value is refused.
+const HASH_BATCH = 64;
+const hashThreads = () => {
+  const raw = process.env.FVS_CHECKER_HASH_THREADS;
+  if (raw === undefined || raw === '') return 2;
+  if (!/^[1-4]$/.test(raw)) throw new Error('FVS_CHECKER_HASH_THREADS must be an integer from 1 to 4');
+  return Number(raw);
+};
+const HASH_WORKER = `const { parentPort } = require('node:worker_threads'), fs = require('node:fs'), crypto = require('node:crypto');
+const buffer = Buffer.allocUnsafe(1024 * 1024);
+const digest = (file) => {
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  try {
+    const before = fs.fstatSync(fd);
+    if (!before.isFile() || before.nlink !== 1) return { error: 'non-regular or aliased input/output file' };
+    const sha = crypto.createHash('sha256'); let remaining = before.size;
+    while (remaining > 0) {
+      const count = fs.readSync(fd, buffer, 0, Math.min(buffer.length, remaining), null);
+      if (!count) return { error: 'file changed while hashing' };
+      sha.update(buffer.subarray(0, count)); remaining -= count;
+    }
+    const after = fs.fstatSync(fd);
+    if (before.ino !== after.ino || before.dev !== after.dev || before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs || after.nlink !== 1) return { error: 'file changed while hashing' };
+    return { sha256: sha.digest('hex'), size: after.size };
+  } finally { fs.closeSync(fd); }
+};
+parentPort.on('message', (files) => { try { parentPort.postMessage(files.map(digest)); } catch (error) { parentPort.postMessage([{ error: error.message }]); } });`;
 const fail = (message, status = 'unverified') => { throw Object.assign(new Error(message), { buildStatus: status }); };
 const within = (root, file) => {
   const rel = path.relative(root, file);
@@ -143,20 +174,7 @@ export async function buildCheckerSnapshot(input, services = {}) {
       return { sha256: sha.digest('hex'), size: after.size };
     } finally { fs.closeSync(fd); }
   };
-  // Dependency-tree rechecks inside one build invocation may reuse a digest from this invocation when the file's
-  // kernel-maintained identity (device, inode, size, mode, owner, link count, nanosecond mtime and ctime) is unchanged:
-  // any write, truncation, replacement, relink or chmod changes it. The first inventories and the final scans always
-  // rehash every byte (`reuse` false); the memo never outlives the invocation.
-  const remembered = new Map();
-  const identityOf = (file) => { const s = fs.lstatSync(file, { bigint: true }); return [s.dev, s.ino, s.size, s.mode, s.uid, s.nlink, s.mtimeNs, s.ctimeNs].join(':'); };
-  const dependencyDigest = (file, aliases, reuse) => {
-    const key = identityOf(file), known = remembered.get(file);
-    if (reuse && known?.key === key) { tick(); return { ...known.value }; }
-    const value = digest(file, aliases, true);
-    if (identityOf(file) === key) remembered.set(file, { key, value }); else remembered.delete(file);
-    return value;
-  };
-  const tree = (directory, aliases = false, inertLinks = false, reuse = false) => {
+  const tree = (directory, aliases = false, inertLinks = false) => {
     absolute(directory);
     if (!fs.statSync(directory).isDirectory()) fail('inventory root is not a directory');
     const files = {};
@@ -171,11 +189,55 @@ export async function buildCheckerSnapshot(input, services = {}) {
           if (path.isAbsolute(target) || !within(directory, path.resolve(path.dirname(file), target))) fail('dependency symlink escapes snapshot');
           // Unused documentation links can be dangling. They are never followed or treated as files.
           files[path.relative(directory, file)] = { symlink: target, sha256: hash(target), size: Buffer.byteLength(target) };
-        } else files[path.relative(directory, file)] = inertLinks ? dependencyDigest(file, aliases, reuse) : digest(file, aliases, true);
+        } else files[path.relative(directory, file)] = digest(file, aliases, true);
       }
     };
     walk(directory);
     return files;
+  };
+  // The same inventory as tree(directory, false, true), with file bytes hashed in parallel. Every scan reads every byte.
+  const dependencyTree = async (directory) => {
+    absolute(directory);
+    if (!fs.statSync(directory).isDirectory()) fail('inventory root is not a directory');
+    const entries = [], files = [];
+    const walk = (dir) => {
+      for (const entry of fs.readdirSync(dir).sort()) {
+        tick();
+        const file = path.join(dir, entry);
+        const stat = fs.lstatSync(file);
+        if (stat.isDirectory()) walk(file);
+        else if (stat.isSymbolicLink()) {
+          const target = fs.readlinkSync(file);
+          if (path.isAbsolute(target) || !within(directory, path.resolve(path.dirname(file), target))) fail('dependency symlink escapes snapshot');
+          entries.push([path.relative(directory, file), { symlink: target, sha256: hash(target), size: Buffer.byteLength(target) }]);
+        } else { entries.push([path.relative(directory, file), files.length]); files.push(file); }
+      }
+    };
+    walk(directory);
+    const digests = new Array(files.length), workers = [];
+    try {
+      let next = 0;
+      const serve = (worker) => new Promise((resolve, reject) => {
+        const send = () => {
+          try { tick(); } catch (error) { reject(error); return; }
+          if (next >= files.length) { resolve(); return; }
+          const start = next; next = Math.min(files.length, next + HASH_BATCH);
+          worker.once('message', (results) => {
+            for (const [i, r] of results.entries()) {
+              if (r.error) { try { fail(r.error); } catch (error) { reject(error); return; } }
+              digests[start + i] = r;
+            }
+            send();
+          });
+          worker.postMessage(files.slice(start, next));
+        };
+        worker.once('error', reject);
+        send();
+      });
+      for (let i = 0, n = Math.min(hashThreads(), files.length); i < n; i++) workers.push(new Worker(HASH_WORKER, { eval: true }));
+      await Promise.all(workers.map(serve));
+    } finally { await Promise.all(workers.map((worker) => worker.terminate())); }
+    return Object.fromEntries(entries.map(([rel, value]) => [rel, typeof value === 'number' ? digests[value] : value]));
   };
   const save = (name, value) => {
     const file = path.join(root, 'receipts', name);
@@ -184,7 +246,7 @@ export async function buildCheckerSnapshot(input, services = {}) {
     return { file, sha256: hash(bytes) };
   };
   const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-  const checkInputs = (fresh = false) => {
+  const checkInputs = async () => {
     postCommandInputs = null;
     tick();
     for (const tool of [request.lean, request.lake, ...extraTools].filter(Boolean)) if (digest(tool.path, true).sha256 !== tool.sha256) fail('pinned tool bytes changed');
@@ -196,7 +258,7 @@ export async function buildCheckerSnapshot(input, services = {}) {
     }
     let observedDependencies = {};
     if (dependenciesReady && request.dependencies) {
-      observedDependencies = tree(request.dependencies.root, false, true, !fresh);
+      observedDependencies = await dependencyTree(request.dependencies.root);
       if (!equal(observedDependencies, dependencyFiles)) fail('supplied dependency snapshot changed');
       if (request.dependencies.identity && digest(request.dependencies.identity.file).sha256 !== request.dependencies.identity.sha256) fail('dependency identity changed');
     }
@@ -211,7 +273,7 @@ export async function buildCheckerSnapshot(input, services = {}) {
     GIT_TERMINAL_PROMPT: '0', LAKE_NO_CACHE: '1',
   });
   const run = async (argv, cwd, confined = false) => {
-    const before = checkInputs();
+    const before = await checkInputs();
     const id = String(++sequence).padStart(4, '0');
     const actual = confined && request.version === 1 ? ['/usr/bin/sandbox-exec', '-f', path.join(root, 'build.sb'), ...argv] : argv;
     const startedAt = Date.now();
@@ -242,7 +304,7 @@ export async function buildCheckerSnapshot(input, services = {}) {
     const stderr = save(`${id}.stderr`, execution.stderr);
     let after;
     let drift;
-    try { after = checkInputs(); } catch (error) { drift = error.message; }
+    try { after = await checkInputs(); } catch (error) { drift = error.message; }
     const receipt = { argv: actual, cwd, exit: execution.exit, signal: execution.signal, timedOut: execution.timedOut,
       startedAt, endedAt: Date.now(), stdout, stderr, inputsBefore: before.digest, inputsAfter: after?.digest ?? null,
       outputLimitExceeded: execution.overflow,
@@ -373,7 +435,7 @@ export async function buildCheckerSnapshot(input, services = {}) {
     }
     if (request.dependencies) {
       if (within(request.source.root, request.dependencies.root) && request.dependencies.root !== path.join(request.source.root, '.lake', 'packages')) fail('unsupported dependency root inside source');
-      dependencyFiles = tree(request.dependencies.root, false, true);
+      dependencyFiles = await dependencyTree(request.dependencies.root);
       if (request.dependencies.identity && digest(request.dependencies.identity.file).sha256 !== request.dependencies.identity.sha256) fail('dependency identity mismatch');
       ownedDependencies = path.join(project, '.lake', 'packages');
       for (const [file, identity] of Object.entries(dependencyFiles)) {
@@ -383,7 +445,7 @@ export async function buildCheckerSnapshot(input, services = {}) {
           fs.symlinkSync(identity.symlink, destination);
         } else copy(path.join(request.dependencies.root, file), destination);
       }
-      if (!equal(tree(ownedDependencies, false, true), dependencyFiles)) fail('dependency copy mismatch');
+      if (!equal(await dependencyTree(ownedDependencies), dependencyFiles)) fail('dependency copy mismatch');
     }
     const depsBefore = save('dependencies-before.json', dependencyFiles);
     dependenciesReady = true;
@@ -435,7 +497,7 @@ export async function buildCheckerSnapshot(input, services = {}) {
       before: depsBefore, after: save('dependencies-after.json', depsAfter), changed };
     let ownedAfter;
     if (ownedDependencies) {
-      ownedAfter = tree(ownedDependencies, false, true, true);
+      ownedAfter = await dependencyTree(ownedDependencies);
       const ownedChanges = Object.keys({ ...dependencyFiles, ...ownedAfter }).filter((file) => !equal(dependencyFiles[file], ownedAfter[file]));
       depReceipt.owned = { root: ownedDependencies, after: save('dependencies-owned-after.json', ownedAfter), changed: ownedChanges };
       if (ownedChanges.some((file) => !file.split('/').includes('.lake') && !file.endsWith('/.git/index'))) fail('owned dependency source/config changed');
@@ -525,9 +587,9 @@ export async function buildCheckerSnapshot(input, services = {}) {
     if (actualModules.length !== modules.length) fail('unexpected/partial project module coverage');
     const exportedParts = new Set(modules.flatMap((mod) => mod.parts.map((file) => path.relative(result.buildRoot, file))));
     if (Object.keys(outputFiles).some((file) => /\.olean(?:\.server|\.private)?$/.test(file) && !exportedParts.has(file))) fail('unexpected compiled project module');
-    checkInputs(true);
+    await checkInputs();
     if (!equal(tree(result.buildRoot), outputFiles)) fail('compiled outputs changed during validation');
-    if (ownedDependencies && !equal(tree(ownedDependencies, false, true), ownedAfter)) fail('owned dependency files changed during validation');
+    if (ownedDependencies && !equal(await dependencyTree(ownedDependencies), ownedAfter)) fail('owned dependency files changed during validation');
     // Reuse checks only within this phase; full inventories above rehash every byte.
     for (const file of Object.keys(externalFiles)) { tick(); absolute(file); }
     const externalInventory = {};

@@ -499,44 +499,58 @@ if (process.platform === 'darwin') {
     }
   });
 
-  // Dependency rechecks inside one build may reuse a digest only while the file's kernel identity is unchanged; the
-  // first and final scans always read every byte. Each mutation below happens while the child runs.
-  test('dependency digest reuse never hides same-size, replaced or aliased drift during a build', async () => {
-    const mutations = {
-      'same-size rewrite with restored mtime': (target) => { const s = fs.statSync(target); fs.writeFileSync(target, 'FIXED'); fs.utimesSync(target, s.atime, s.mtime); },
-      'replacement inode': (target) => { const next = target + '.next'; fs.writeFileSync(next, 'fiXed'); fs.renameSync(next, target); },
-      'outside hardlink alias': (target, f) => { fs.linkSync(target, path.join(f.root, 'alias-' + crypto.randomUUID())); },
-    };
-    for (const [label, mutate] of Object.entries(mutations)) {
-      const f = fixture("fs.mkdirSync('.lake',{recursive:true});fs.writeFileSync('.lake/build-started','ready');const end=Date.now()+650;while(Date.now()<end){}");
-      const deps = path.join(f.root, 'deps'); fs.mkdirSync(deps);
-      const target = path.join(deps, 'source.lean'); fs.writeFileSync(target, 'fixed');
-      f.request.dependencies = { root: deps };
-      let done = false;
-      const timer = setInterval(() => { if (!done && fs.existsSync(path.join(f.request.out, 'source/.lake/build-started'))) { done = true; clearInterval(timer); mutate(target, f); } }, 10);
-      let result;
-      try { result = await build(f.request); } finally { clearInterval(timer); }
-      assert.equal(done, true, label + ': mutation reached the child window');
-      assert.notEqual(result.status, 'built', label); assert.match(result.reason, /changed|aliased/, label);
-    }
-  });
-
-  test('unchanged dependency bytes are read only by the first and final scans; a later build rereads them', async () => {
-    const f = fixture(), deps = path.join(f.root, 'deps'); fs.mkdirSync(deps);
+  // Every dependency check rereads every byte (in a bounded worker pool). A same-size rewrite with the old mtime during
+  // the build child is refused at that child's post-check; the restoration armed for any later child never runs.
+  test('dependency drift during one child is refused at its post-check, before the next child starts', async () => {
+    const f = fixture("fs.mkdirSync('.lake',{recursive:true});fs.writeFileSync('.lake/build-started','ready');const end=Date.now()+650;while(Date.now()<end){}");
+    const deps = path.join(f.root, 'deps'); fs.mkdirSync(deps);
     const target = path.join(deps, 'source.lean'); fs.writeFileSync(target, 'fixed');
     f.request.dependencies = { root: deps };
-    const open = fs.openSync; let reads = 0;
-    fs.openSync = function(file, ...args) { if (file === target) reads++; return open.call(fs, file, ...args); };
+    let mutated = false, laterChildren = 0;
+    const timer = setInterval(() => {
+      if (!mutated && fs.existsSync(path.join(f.request.out, 'source/.lake/build-started'))) {
+        mutated = true; clearInterval(timer); const s = fs.statSync(target); fs.writeFileSync(target, 'FIXED'); fs.utimesSync(target, s.atime, s.mtime);
+      }
+    }, 10);
+    const spawn = childProcess.spawn;
+    childProcess.spawn = function(...args) { if (mutated) { laterChildren++; fs.writeFileSync(target, 'fixed'); } return spawn.apply(this, args); };
     syncBuiltinESMExports();
-    let first;
-    try { first = await build(f.request); } finally { fs.openSync = open; syncBuiltinESMExports(); }
-    assert.equal(first.status, 'built', first.reason);
-    assert.equal(reads, 2, 'the initial inventory and the final fresh scan; every child pre/post recheck reused the digest');
-    // A new build never inherits the previous invocation's digests: same-size bytes with the old mtime are reread.
-    const s = fs.statSync(target); fs.writeFileSync(target, 'FIXED'); fs.utimesSync(target, s.atime, s.mtime);
-    const second = await build({ ...f.request, out: path.join(f.root, 'second-build'), deadlineMs: Date.now() + 15000 });
-    assert.equal(second.status, 'built', second.reason);
-    assert.equal(json(second.dependencies.before.file)['source.lean'].sha256, sha256(Buffer.from('FIXED')));
+    let result;
+    try { result = await build(f.request); } finally { clearInterval(timer); childProcess.spawn = spawn; syncBuiltinESMExports(); }
+    assert.equal(mutated, true, 'the mutation reached the build child');
+    assert.notEqual(result.status, 'built'); assert.match(result.reason, /changed/);
+    assert.equal(laterChildren, 0, 'no later child started after the drifted post-check');
+    assert.match(json(result.receipts.at(-1).file).drift ?? '', /changed/, 'the drifted child receipt records the refusal');
+  });
+
+  test('parallel dependency inventories keep order and bytes, refuse aliases and bound their pool', async () => {
+    const make = () => {
+      const f = fixture(), deps = path.join(f.root, 'deps'); fs.mkdirSync(path.join(deps, 'nested'), { recursive: true });
+      for (let i = 0; i < 150; i++) fs.writeFileSync(path.join(deps, i % 2 ? 'nested' : '', 'file-' + i), 'bytes ' + i);
+      fs.writeFileSync(path.join(deps, 'large.olean'), Buffer.alloc(3 * 1024 * 1024 + 7, 9)); fs.writeFileSync(path.join(deps, 'empty'), '');
+      f.request.dependencies = { root: deps }; return { f, deps };
+    };
+    const inventories = [];
+    for (const threads of ['1', undefined, '4']) {
+      const { f, deps } = make(), saved = process.env.FVS_CHECKER_HASH_THREADS;
+      if (threads === undefined) delete process.env.FVS_CHECKER_HASH_THREADS; else process.env.FVS_CHECKER_HASH_THREADS = threads;
+      let result;
+      try { result = await build(f.request); } finally { if (saved === undefined) delete process.env.FVS_CHECKER_HASH_THREADS; else process.env.FVS_CHECKER_HASH_THREADS = saved; }
+      assert.equal(result.status, 'built', result.reason);
+      const before = json(result.dependencies.before.file);
+      for (const [rel, value] of Object.entries(before)) assert.equal(value.sha256, sha256(fs.readFileSync(path.join(deps, rel))), rel);
+      inventories.push(Object.entries(before).map(([rel, v]) => [rel, v.sha256, v.size]));
+    }
+    assert.deepEqual(inventories[1], inventories[0]); assert.deepEqual(inventories[2], inventories[0]);
+    assert.deepEqual(inventories[0].map(([rel]) => rel), inventories[0].map(([rel]) => rel).slice().sort(), 'walk order is the sorted sequential order');
+    // A hardlink outside the snapshot is refused by a worker; the pool is released and the build reports the refusal.
+    const aliased = make(); fs.linkSync(path.join(aliased.deps, 'file-100'), path.join(aliased.f.root, 'outside-alias'));
+    const refused = await build(aliased.f.request);
+    assert.notEqual(refused.status, 'built'); assert.match(refused.reason, /aliased/);
+    // Only an explicit 1-4 bound is accepted.
+    const bad = make(), saved = process.env.FVS_CHECKER_HASH_THREADS; process.env.FVS_CHECKER_HASH_THREADS = '16';
+    let unbounded; try { unbounded = await build(bad.f.request); } finally { if (saved === undefined) delete process.env.FVS_CHECKER_HASH_THREADS; else process.env.FVS_CHECKER_HASH_THREADS = saved; }
+    assert.notEqual(unbounded.status, 'built'); assert.match(unbounded.reason, /FVS_CHECKER_HASH_THREADS/);
   });
 
   test('dependency links remain inert and confined; escaping links are refused', async () => {
@@ -632,11 +646,14 @@ if (process.platform === 'darwin') {
       assert.equal(result.modules.length, count);
       assert.ok(json(result.inventories.outputs.file).externalFiles[f.artifact]);
       assert.equal(json(result.dependencies.before.file)['Dep/empty.txt'].sha256, sha256(''));
+      // Dependency inventories hash in worker threads (invisible to this main-thread spy); the owned-after inventory
+      // records the artifact's independently read bytes.
+      assert.equal(json(result.dependencies.owned.after.file)['Dep/.lake/build/lib/lean/Shared/Module.olean'].sha256, sha256(fs.readFileSync(f.originalArtifact)));
       reads.push(opened);
       directories.push(created);
       t.diagnostic(JSON.stringify({ modules: count, artifactReads: opened, copyParentMkdirCalls: created }));
     }
-    assert.ok(reads[0] >= 2, 'the artifact must remain subject to independent inventory passes');
+    assert.ok(reads[0] >= 1, 'the external-import validation reads the artifact');
     assert.equal(reads[1], reads[0], 'repeating an import must not add artifact reads');
     assert.equal(directories[1], 1, 'one owned copy parent must be created once');
   });
