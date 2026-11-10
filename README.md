@@ -104,8 +104,16 @@ and Linux x86_64. Linux requires native tools, an absolute Linux-only `PATH`, `/
 and `/usr/bin/bwrap` with working unprivileged namespaces, `--disable-userns`, and seccomp.
 FVS does not install these
 prerequisites or change system security policy; unavailable confinement stops execution.
-The receipt records preparation requirements and indexing/proof limitations. Native Windows
-and Linux arm64 remain unsupported.
+The receipt records preparation requirements and indexing/proof limitations.
+
+Native Windows 11 x64 uses the separate pinned `windows-source-v1` distribution
+on validated local NTFS layouts. Its normal setup, resolution and extraction path
+matches the retained Dalek baseline of 279 canonical functions and 189 Charon joins.
+See [Windows setup and recovery](fv-skills/references/windows-probe.md) for prerequisites,
+explicit setup consent, interruption recovery and measured phase timings, and the
+[source-distribution evidence](tests/fixtures/windows-source-v1.json) for qualification
+details. Eight upstream `sorry` warnings and incomplete Lean dependencies remain
+visible. The official Windows archive and Linux arm64 remain unsupported.
 
 Linux extraction stages an independent project copy and keeps tool homes read-only.
 Helper executable or library links through an intermediate symlink are rejected during resolution.

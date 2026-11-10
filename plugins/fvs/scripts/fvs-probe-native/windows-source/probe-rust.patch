@@ -1,0 +1,192 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index e7f7d26..a8c83ec 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -449,7 +449,11 @@ fn extract_function_name_from_symbol(symbol: &str) -> String {
+ fn collect_symbol_definitions(scip_data: &ScipIndex) -> HashMap<String, Vec<(String, i32)>> {
+     let mut symbol_to_definitions: HashMap<String, Vec<(String, i32)>> = HashMap::new();
+     for doc in &scip_data.documents {
+-        let rel_path = doc.relative_path.trim_start_matches('/').to_string();
++        // rust-analyzer can emit native Windows separators even though SCIP
++        // requires '/'. Keep source lookup, atom paths and manifest joins in
++        // the same portable path format.
++        let rel_path = doc.relative_path.replace('\\', "/");
++        let rel_path = rel_path.trim_start_matches('/').to_string();
+         for occurrence in &doc.occurrences {
+             if is_definition(occurrence.symbol_roles) && !occurrence.range.is_empty() {
+                 let line = occurrence.range[0];
+@@ -470,7 +474,8 @@ fn collect_symbol_definitions(scip_data: &ScipIndex) -> HashMap<String, Vec<(Str
+ fn collect_definition_type_contexts(scip_data: &ScipIndex) -> HashMap<(String, i32), Vec<String>> {
+     let mut contexts: HashMap<(String, i32), Vec<String>> = HashMap::new();
+     for doc in &scip_data.documents {
+-        let rel_path = doc.relative_path.trim_start_matches('/').to_string();
++        let rel_path = doc.relative_path.replace('\\', "/");
++        let rel_path = rel_path.trim_start_matches('/').to_string();
+ 
+         let mut type_refs_by_line: HashMap<i32, Vec<String>> = HashMap::new();
+         for occ in &doc.occurrences {
+diff --git a/src/scip_cache.rs b/src/scip_cache.rs
+index 2553b65..f712cf8 100644
+--- a/src/scip_cache.rs
++++ b/src/scip_cache.rs
+@@ -303,7 +303,20 @@ fn newest_source_mtime(project_path: &Path) -> Option<SystemTime> {
+                     Some("Cargo.toml") | Some("Cargo.lock")
+                 )
+         })
+-        .filter_map(|e| e.metadata().ok()?.modified().ok())
++        .filter_map(|e| {
++            // Windows directory enumeration can retain an old mtime after
++            // a child is deleted. Query the entry directly so a surviving
++            // directory cannot make a stale SCIP index appear fresh.
++            #[cfg(windows)]
++            let metadata = if e.file_type().is_symlink() {
++                std::fs::symlink_metadata(e.path())
++            } else {
++                std::fs::metadata(e.path())
++            };
++            #[cfg(not(windows))]
++            let metadata = e.metadata();
++            metadata.ok()?.modified().ok()
++        })
+         .max()
+ }
+ 
+diff --git a/src/tool_manager.rs b/src/tool_manager.rs
+index d078f5b..c2718d0 100644
+--- a/src/tool_manager.rs
++++ b/src/tool_manager.rs
+@@ -46,13 +46,8 @@ impl Tool {
+         }
+     }
+ 
+-    fn managed_filename(&self) -> &'static str {
+-        match self {
+-            Tool::RustAnalyzer => "rust-analyzer",
+-            Tool::Scip => "scip",
+-            Tool::Charon => "charon",
+-            Tool::CharonDriver => "charon-driver",
+-        }
++    fn managed_filename(&self) -> String {
++        format!("{}{}", self.binary_name(), std::env::consts::EXE_SUFFIX)
+     }
+ }
+ 
+@@ -513,8 +508,9 @@ pub fn build_charon() -> Result<PathBuf, ToolError> {
+ 
+     let release_dir = charon_crate_dir.join("target").join("release");
+     for binary in ["charon", "charon-driver"] {
+-        let src = release_dir.join(binary);
+-        let dst = dest_dir.join(binary);
++        let filename = format!("{binary}{}", std::env::consts::EXE_SUFFIX);
++        let src = release_dir.join(&filename);
++        let dst = dest_dir.join(&filename);
+         fs::copy(&src, &dst).map_err(|e| {
+             ToolError::IoError(
+                 Tool::Charon,
+@@ -530,7 +526,7 @@ pub fn build_charon() -> Result<PathBuf, ToolError> {
+         }
+     }
+ 
+-    let charon_path = dest_dir.join("charon");
++    let charon_path = dest_dir.join(Tool::Charon.managed_filename());
+     eprintln!("Installed charon to {}", charon_path.display());
+     Ok(charon_path)
+ }
+diff --git a/tests/windows_scip_paths.rs b/tests/windows_scip_paths.rs
+new file mode 100644
+index 0000000..56e8424
+--- /dev/null
++++ b/tests/windows_scip_paths.rs
+@@ -0,0 +1,92 @@
++use probe_rust::{
++    build_call_graph,
++    charon_names::{enrich_atoms, Enrichment},
++    convert_to_atoms_with_parsed_spans, parse_scip_json,
++};
++use serde_json::json;
++use std::{collections::BTreeMap, fs};
++
++fn check_scip_path(relative_path: &str) {
++    let project = tempfile::Builder::new()
++        .prefix("SCIP path with spaces ")
++        .tempdir()
++        .unwrap();
++    fs::create_dir_all(project.path().join("src/math")).unwrap();
++    fs::write(
++        project.path().join("Cargo.toml"),
++        "[package]\nname = \"path-fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
++    )
++    .unwrap();
++    fs::write(project.path().join("src/lib.rs"), "pub mod math;\n").unwrap();
++    fs::write(project.path().join("src/math/mod.rs"), "pub mod field;\n").unwrap();
++    fs::write(
++        project.path().join("src/math/field.rs"),
++        "pub struct FieldElement;\npub fn reduce(_x: FieldElement) {}\n",
++    )
++    .unwrap();
++    let symbol = "rust-analyzer cargo path-fixture 0.1.0 math/field/reduce().";
++    let scip = json!({
++        "metadata": {
++            "tool_info": {"name": "rust-analyzer", "version": "fixture"},
++            "project_root": "file:///fixture", "text_document_encoding": 1
++        },
++        "documents": [{
++            "language": "rust", "relative_path": relative_path,
++            "occurrences": [
++                {"range": [1, 7, 1, 13], "symbol": symbol, "symbol_roles": 1},
++                {"range": [1, 17, 29], "symbol": "rust-analyzer cargo path-fixture 0.1.0 math/field/FieldElement#"}
++            ],
++            "symbols": [{
++                "symbol": symbol, "kind": 17, "display_name": "reduce",
++                "signature_documentation": {"language": "rust", "text": "pub fn reduce(_x: FieldElement)"}
++            }]
++        }]
++    });
++    let index_path = project.path().join("index.scip.json");
++    fs::write(&index_path, serde_json::to_vec(&scip).unwrap()).unwrap();
++    let index = parse_scip_json(&index_path).unwrap();
++    let (graph, names) = build_call_graph(&index);
++    assert_eq!(graph.len(), 1);
++    let atoms = convert_to_atoms_with_parsed_spans(&graph, &names, project.path(), false);
++    let mut atoms: BTreeMap<_, _> = atoms
++        .into_iter()
++        .map(|atom| (atom.code_name.clone(), atom))
++        .collect();
++    let manifest = json!({
++        "charon_version": "0.1.225",
++        "functions": [
++            {"def_id": 8, "rust_name": "path_fixture::math::field::reduce", "source": {"file": "path-fixture/src/math/other.rs", "begin_line": 2, "end_line": 2}},
++            {"def_id": 9, "rust_name": "path_fixture::math::field::reduce", "source": {"file": "path-fixture/src/math/field.rs", "begin_line": 30, "end_line": 31}},
++            {"def_id": 7, "rust_name": "path_fixture::math::field::reduce", "source": {"file": "path-fixture/src/math/field.rs", "begin_line": 2, "end_line": 2}}
++        ]
++    });
++    let manifest_path = project.path().join("translation.json");
++    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
++    let enrichment = Enrichment::from_translation_json(&manifest_path).unwrap();
++    assert_eq!(enrich_atoms(&mut atoms, &enrichment, false), 1);
++    let atom = atoms.values().next().unwrap();
++    assert_eq!(atom.charon_def_id, Some(7));
++    assert_eq!(atom.charon_version.as_deref(), Some("0.1.225"));
++    assert_eq!(atom.code_path, "src/math/field.rs");
++    assert_eq!(atom.code_text.lines_start, 2);
++    assert_eq!(atom.code_text.lines_end, 2);
++    assert_eq!(
++        graph.values().next().unwrap().definition_type_context,
++        ["FieldElement"]
++    );
++}
++
++#[test]
++fn windows_scip_paths_preserve_manifest_join_and_type_context() {
++    check_scip_path(r"src\math\field.rs");
++}
++
++#[test]
++fn mixed_scip_separators_preserve_manifest_join_and_type_context() {
++    check_scip_path(r"src\math/field.rs");
++}
++
++#[test]
++fn unix_scip_paths_preserve_manifest_join_and_type_context() {
++    check_scip_path("src/math/field.rs");
++}
