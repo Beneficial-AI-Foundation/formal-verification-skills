@@ -8,14 +8,17 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const crypto = require('node:crypto');
-const { dWorld, reviseContract, freezeRequest, admitFreeze, runE0, registryStatus, git, sha } = require('./helpers/d-respec-world.cjs');
+const { dWorld, reviseContract, freezeRequest, admitFreeze, runE0, runE1, registryStatus, git, sha } = require('./helpers/d-respec-world.cjs');
 const ROOT = path.resolve(__dirname, '..');
 const cfg = process.env.FVS_D_CONFIG ? JSON.parse(fs.readFileSync(process.env.FVS_D_CONFIG)) : null;
 const skip = cfg ? false : 'FVS_D_CONFIG not set (local qualification materials required)';
 const owned = [];
-after(() => { for (const p of owned) fs.rmSync(p, { recursive: true, force: true }); });
+// FVS_D_SCRATCH=<persistent dir> creates the inert worlds there and keeps them (receipts for diagnosis);
+// FVS_D_KEEP=1 keeps temporary ones. Kept worlds are printed instead of removed.
+const scratch = process.env.FVS_D_SCRATCH ? fs.realpathSync(process.env.FVS_D_SCRATCH) : null, keep = scratch !== null || process.env.FVS_D_KEEP === '1';
+after(() => { for (const p of owned) keep ? console.log('kept:', p) : fs.rmSync(p, { recursive: true, force: true }); });
 async function setup() {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-d-world-'))); owned.push(base);
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(scratch ?? os.tmpdir(), 'fvs-d-world-'))); owned.push(base);
   const w = await dWorld({ engineRoot: ROOT, base, materials: cfg.materials, bd: cfg.bd }); owned.push(w.x.owned);
   return w;
 }
@@ -41,7 +44,7 @@ function g0Contract(node) {
   const dir = path.join(cfg.materials.registry.root, 'records');
   return structuredClone(fs.readdirSync(dir).sort().map(n => JSON.parse(fs.readFileSync(path.join(dir, n)))).find(r => r.contract.node === node).contract);
 }
-function reviseH(w) {
+function reviseH(w, chaining = {}) {
   const roots = fs.readFileSync(path.join(w.source().root, 'Specs/Roots.lean'));
   const contract = { ...g0Contract(19), statement: '\u2200 (p : m1demo.Pair), m1demo.helper p = p.a + p.b',
     assumptions: ['Lean-only checker qualification; Rust translation correspondence is not established.'],
@@ -49,17 +52,19 @@ function reviseH(w) {
     specDefinitions: [{ name: 'm1demo.roots (statement context)', file: 'Specs/Roots.lean', sha256: sha(roots) }],
     author: { session: 'd-scripted-author', harness: 'scripted', model: 'none', runId: 'd-e1-revise-h-' + crypto.randomUUID() } };
   const draft = 'import Specs.Roots\nopen Aeneas Aeneas.Std Result\ntheorem helper_eq_sum : \u2200 (p : m1demo.Pair), m1demo.helper p = p.a + p.b := by sorry\n';
-  return reviseContract(w, { contract, draft, cited: [{ path: 'Specs/Roots.lean', start: 1, end: 17 }] });
+  return reviseContract(w, { contract, draft, cited: [{ path: 'Specs/Roots.lean', start: 1, end: 17 }], ...chaining });
 }
 
-function reviewUnchanged(w, node, statement) {
+function reviewUnchanged(w, node, statement, chaining = {}) {
   const contract = { ...g0Contract(node), author: { session: 'd-scripted-author', harness: 'scripted', model: 'none', runId: 'd-e1-review-' + node + '-' + crypto.randomUUID() } };
-  return reviseContract(w, { contract, draft: 'import Specs.Roots\nopen Aeneas Aeneas.Std Result\n' + statement + '\n', cited: [{ path: 'Specs/Roots.lean', start: 1, end: 17 }] });
+  return reviseContract(w, { contract, draft: 'import Specs.Roots\nopen Aeneas Aeneas.Std Result\n' + statement + '\n', cited: [{ path: 'Specs/Roots.lean', start: 1, end: 17 }], ...chaining });
 }
 
 test('E1 revises H through the exported packet, a fresh reviewer assignment and the paired registry transition', { skip }, async () => {
   const w = await setup(), before = registryStatus(w);
-  const r = await reviseH(w);
+  // Every step carries the engine's v2 basis (validated whenever present), as it must once E0's acceptances are stale.
+  const r = await reviseH(w, { chain: true });
+  assert.ok(r.basis?.version === 2, 'each review returns the basis for its successor');
   assert.equal(r.previous, before.nodes['19'].head);
   assert.equal(r.published.recorded.status, 'facts-recorded-partial');
   assert.equal(r.published.raw.record.state, 'machine-reviewed-provisional');
@@ -69,8 +74,8 @@ test('E1 revises H through the exported packet, a fresh reviewer assignment and 
   assert.equal(git(w.source().root, 'status', '--porcelain=v1', '--untracked-files=all'), '', 'review drafts stay git-ignored');
   assert.deepEqual([after.nodes['20'].state, after.nodes['21'].state], ['needs-semantic-review', 'needs-semantic-review'], 'consumers of a revised helper need fresh review');
   // Unchanged consumer contracts receive fresh reviews against the revised helper; the freeze needs all three current.
-  await reviewUnchanged(w, 20, 'theorem root_sum_eq : \u2200 (p : m1demo.Pair), m1demo.root_sum p = m1demo.helper p := by sorry');
-  await reviewUnchanged(w, 21, 'theorem root_twice_eq : \u2200 (p : m1demo.Pair), m1demo.root_twice p = (do let i \u2190 m1demo.helper p; i * 2#u32) := by sorry');
+  const a = await reviewUnchanged(w, 20, 'theorem root_sum_eq : \u2200 (p : m1demo.Pair), m1demo.root_sum p = m1demo.helper p := by sorry', { basis: r.basis });
+  await reviewUnchanged(w, 21, 'theorem root_twice_eq : \u2200 (p : m1demo.Pair), m1demo.root_twice p = (do let i \u2190 m1demo.helper p; i * 2#u32) := by sorry', { basis: a.basis });
   const ready = registryStatus(w);
   // Freeze readiness: every node machine-reviewed or awaiting only a proof recheck after unchanged semantic inputs.
   assert.equal(ready.nodes['19'].state, 'machine-reviewed-provisional');
@@ -101,9 +106,9 @@ test('F0 freeze request at C0 is admitted by the paired transition validation (n
 });
 
 // Real Lean (explicit allocation only): E0 = F0 freeze, one provisional check, accept H then A and B.
-test('E0 real: F0 freeze, check and canonical acceptance of H, A, B (FVS_REAL_RESPEC_D=1)', { skip: skip || (process.env.FVS_REAL_RESPEC_D !== '1' && 'real Lean run requires FVS_REAL_RESPEC_D=1 and an owner allocation') }, async () => {
-  // Evidence is retained: an explicit new run root outside the OS temporary directory, never cleaned up here, and the
-  // engine is the pinned commit with a clean tree.
+// Evidence is retained: an explicit new run root outside the OS temporary directory, never cleaned up here, and the
+// engine is the pinned commit with a clean tree.
+async function realWorld() {
   const runRoot = process.env.FVS_D_RUN_ROOT, pinned = process.env.FVS_D_ENGINE_COMMIT, tmp = fs.realpathSync(os.tmpdir());
   assert.ok(runRoot && path.isAbsolute(runRoot) && !fs.existsSync(runRoot) && !(path.resolve(runRoot) + path.sep).startsWith(tmp + path.sep), 'FVS_D_RUN_ROOT must be a new absolute path outside the temporary directory');
   assert.equal(git(ROOT, 'rev-parse', 'HEAD'), pinned, 'FVS_D_ENGINE_COMMIT must name the checked-out engine');
@@ -111,8 +116,42 @@ test('E0 real: F0 freeze, check and canonical acceptance of H, A, B (FVS_REAL_RE
   fs.mkdirSync(runRoot, { recursive: true }); const base = fs.realpathSync(runRoot);
   const w = await dWorld({ engineRoot: ROOT, base, materials: cfg.materials, bd: cfg.bd });
   fs.writeFileSync(path.join(base, 'engine.json'), JSON.stringify({ commit: pinned, tree: git(ROOT, 'rev-parse', 'HEAD^{tree}'), root: ROOT, startedAt: new Date().toISOString() }) + '\n');
-  const r = await runE0(w, cfg.materials), store = w.ca.readAcceptedStore(r.storeRoot);
+  return w;
+}
+const realSkip = skip || (process.env.FVS_REAL_RESPEC_D !== '1' && 'real Lean run requires FVS_REAL_RESPEC_D=1 and an owner allocation');
+
+test('E0 real: F0 freeze, check and canonical acceptance of H, A, B (FVS_REAL_RESPEC_D=1)', { skip: realSkip }, async () => {
+  const w = await realWorld(), r = await runE0(w, cfg.materials), store = w.ca.readAcceptedStore(r.storeRoot);
   assert.deepEqual(store.records.map(x => x.record.node), [19, 20, 21]);
   assert.ok(store.records.every(x => x.record.authority === 'canonical-checker' && x.record.integrated.commit === cfg.materials.c0.commit));
   console.log('E0 receipts:', JSON.stringify({ storeRoot: r.storeRoot, head: store.headSha256, baseline: w.inputs.baseline }));
+});
+
+// E0 then E1 in one run (the E0 acceptances go stale once H is revised, so E1 carries the v2 basis chain throughout).
+const FIX = path.join(__dirname, 'fixtures', 'd-respec');
+const OVERLAY_V1 = { file: 'Specs/CheckerOverlayV1.lean', wrong: path.join(FIX, 'CheckerOverlayV1.wrong-lemma.lean'), correct: path.join(FIX, 'CheckerOverlayV1.lean'),
+  target: { node: 19, module: 'Specs.CheckerOverlayV1', name: 'm1demo.overlay.v1.helper_eq_sum', contextFile: 'Specs/Roots.lean' } };
+function e1Reviews(w) {
+  const roots = fs.readFileSync(path.join(w.source().root, 'Specs/Roots.lean')), cited = [{ path: 'Specs/Roots.lean', start: 1, end: 17 }], head = 'import Specs.Roots\nopen Aeneas Aeneas.Std Result\n';
+  const author = id => ({ session: 'd-scripted-author', harness: 'scripted', model: 'none', runId: id + '-' + crypto.randomUUID() });
+  return [
+    { contract: { ...g0Contract(19), statement: '∀ (p : m1demo.Pair), m1demo.helper p = p.a + p.b', assumptions: ['Lean-only checker qualification; Rust translation correspondence is not established.'],
+      grounding: { kind: 'source', source: 'C0 M1demo/M1demo.lean helper and Specs/Roots.lean context', version: cfg.materials.c0.commit, locator: 'm1demo.helper' },
+      specDefinitions: [{ name: 'm1demo.roots (statement context)', file: 'Specs/Roots.lean', sha256: sha(roots) }], author: author('d-e1-revise-h') },
+      draft: head + 'theorem helper_eq_sum : ∀ (p : m1demo.Pair), m1demo.helper p = p.a + p.b := by sorry\n', cited },
+    { contract: { ...g0Contract(20), author: author('d-e1-review-20') }, draft: head + 'theorem root_sum_eq : ∀ (p : m1demo.Pair), m1demo.root_sum p = m1demo.helper p := by sorry\n', cited },
+    { contract: { ...g0Contract(21), author: author('d-e1-review-21') }, draft: head + 'theorem root_twice_eq : ∀ (p : m1demo.Pair), m1demo.root_twice p = (do let i ← m1demo.helper p; i * 2#u32) := by sorry\n', cited },
+  ];
+}
+test('E0+E1 real: revise H, freeze F1, scripted writer to I1, re-accept H, A, B (FVS_REAL_RESPEC_D=1)', { skip: realSkip }, async () => {
+  const w = await realWorld(), e0 = await runE0(w, cfg.materials);
+  const e1 = await runE1(w, cfg.materials, { storeRoot: e0.storeRoot, basis: e0.basis, reviews: e1Reviews(w), overlay: OVERLAY_V1 });
+  const store = w.ca.readAcceptedStore(e0.storeRoot), i1 = w.source(), f1 = w.t.transitionBound(w.inputs.baseline);
+  assert.deepEqual(store.records.map(x => x.record.node), [19, 20, 21, 19, 20, 21]);
+  assert.ok(store.records.slice(3).every(x => x.record.authority === 'canonical-checker' && x.record.integrated.commit === i1.commit && x.record.frozenSha256 === w.inputs.baseline.sha256));
+  assert.deepEqual(f1.overlayFiles, [OVERLAY_V1.file]);
+  assert.deepEqual(git(i1.root, 'diff', '--name-only', cfg.materials.c0.commit, i1.commit).split('\n').filter(Boolean), [OVERLAY_V1.file], 'I1 adds only the V1 overlay');
+  assert.equal(w.t.readTaskProgress(e1.writer.progress).failedApproaches.length, 1, 'the failed attempt is retained');
+  assert.ok([...w.auto.readRuntimeState({ projectRoot: w.x.root }).reservations.values()].filter(r => r.intent.effect.kind === 'ao-launch').every(r => r.state === 'closed'));
+  console.log('E1 receipts:', JSON.stringify({ storeRoot: e0.storeRoot, head: store.headSha256, f1: w.inputs.baseline, i1 }));
 });

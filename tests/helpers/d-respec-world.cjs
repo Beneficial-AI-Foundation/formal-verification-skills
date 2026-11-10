@@ -84,8 +84,10 @@ const REVIEW_DOUBLE = '# FC Specification Review\n\n## Findings\nNone.\n\n## Con
   + '## Coverage\nDraft statement and its cited context only.\n\n## Evidence\nSpecs/Roots.lean:1.\n\nVERDICT: PASS\n';
 
 // One contract revision through the shared driver: actual exported Other packet over git-ignored drafts in the clean
-// source, pre-dispatch binding, labelled reviewer double, import, then the paired registry-revise on the run registry.
-async function reviseContract(w, { contract, draft, cited }) {
+// source, pre-dispatch binding, labelled reviewer double, import, the paired registry-revise publication consuming the
+// reviewer's completed work, then the reviewer's stop and reservation closure. With `chain`, every step carries the
+// engine's v2 basis (required once accepted proofs are stale); the returned basis explains the next successor.
+async function reviseContract(w, { contract, draft, cited, basis = null, chain = basis !== null }) {
   const { x, driver, real } = w, src = w.source().root, dir = path.join(src, '.formalising', 'd-review', contract.node + '-' + crypto.randomUUID().slice(0, 8));
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'Spec.lean'), draft);
@@ -100,7 +102,7 @@ async function reviseContract(w, { contract, draft, cited }) {
   const args = { projectRoot: x.root, source: w.source(), plan: w.inputs.plan, graph: w.inputs.graph, registry: real.registry, contract: contractRef,
     packet: { file: path.join(reviewDir, 'packet.json'), sha256: sha(fs.readFileSync(path.join(reviewDir, 'packet.json'))) },
     prompt: { file: path.join(reviewDir, 'prompt.md'), sha256: sha(fs.readFileSync(path.join(reviewDir, 'prompt.md'))) }, out: x.out() };
-  const binding = driver.prepareReviewBinding(args), s = await w.releaseReview(binding), response = path.join(x.owned, 'response-' + crypto.randomUUID() + '.md');
+  const binding = driver.prepareReviewBinding(args), s = await step('review assignment ' + contract.node, () => w.releaseReview(binding, { basis, chain, registryRoot: real.registry })), response = path.join(x.owned, 'response-' + crypto.randomUUID() + '.md');
   fs.writeFileSync(response, REVIEW_DOUBLE);
   const imported = await driver.importReviewedContract({ projectRoot: x.root, binding: binding.binding, workPacket: s.packet, marker: s.marker,
     response: json(x.owned, 'returned', { workPacket: s.packet, marker: s.marker, binding: binding.binding, response: { file: response, sha256: sha(fs.readFileSync(response)) }, reviewerInvocation: s.launch.action.transitionId }),
@@ -108,25 +110,28 @@ async function reviseContract(w, { contract, draft, cited }) {
     settings: json(x.owned, 'settings', { options: [{ id: 'model', currentValue: 'fixture' }, { id: 'effort', currentValue: 'xhigh' }] }), out: x.out() });
   if (imported.status !== 'review-pass-candidate') throw new Error('review import: ' + imported.status);
   const completion = w.t.recordReviewWorkCompletion({ importEvidence: imported.evidence, contract: contractRef, review: imported.review, controllerSessionId: w.context().ao.coordinatorSessionId, out: x.out() }).completion;
-  const closed = await closeAssignment(w, s.actor, completion);
   const input = w.t.transitionBound(binding.input), previous = registryStatus(w).nodes[String(contract.node)]?.head ?? null;
   const invocation = json(x.owned, 'registry-request', { schema: 'fvs/auto-registry-invocation', schemaVersion: 1, plan: w.inputs.plan, graph: w.inputs.graph,
     registry: real.registry, specRoot: src, contract: contractRef, review: imported.review, previous });
-  const published = await step('registry-revise ' + contract.node, () => w.paired({ kind: 'registry-revise', stage: 'review', registryRoot: real.registry, target: { candidateSha256: input.candidateSha256, review: imported.review, request: invocation } }));
-  return { contract: contractRef, binding, imported, published, previous, closed };
+  const published = await step('registry-revise ' + contract.node, () => w.paired({ kind: 'registry-revise', stage: 'review', registryRoot: real.registry,
+    target: { candidateSha256: input.candidateSha256, review: imported.review, request: invocation }, basis: chain ? { ...s.released.recorded.basis, workCompletion: completion } : null }));
+  const closed = await closeAssignment(w, s.actor, completion, { basis: chain ? published.recorded.basis : null, registryRoot: real.registry });
+  // The successor is explained by the completed publication: v2 stop rows record registry metadata only (nodes null),
+  // so a basis on the resolve row can never equal a full current snapshot. The stops still close the reservation.
+  return { contract: contractRef, binding, imported, published, previous, closed, basis: published.recorded.basis };
 }
 // Stop a finished assignment and close its reservation, as the reviewed Phase C steps did against actual AO: a paired
 // terminate (stock `ao session kill`, here the labelled double) sealing the known work named by the handoff, then the
 // recorded reservation resolution with the same handoff.
-async function closeAssignment(w, actor, progress) {
+async function closeAssignment(w, actor, progress, { basis = null, registryRoot = null } = {}) {
   const { x, t } = w, association = w.context().associations.find(a => t.transitionBound(a).sessionId === actor.sessionId);
   if (!association) throw new Error('no retained association for ' + actor.sessionId);
   const target = operation => ({ sessionId: actor.sessionId, association, progress, operation });
-  const stopped = await step('terminate ' + actor.sessionId, () => w.paired({ kind: 'terminate', stage: 'reconcile', sessionId: actor.sessionId, effect: { kind: 'local', operation: 'reconcile' }, target: target('terminate-session') }));
+  const stopped = await step('terminate ' + actor.sessionId, () => w.paired({ kind: 'terminate', stage: 'reconcile', sessionId: actor.sessionId, registryRoot, effect: { kind: 'local', operation: 'reconcile' }, target: target('terminate-session'), basis }));
   if (stopped.raw?.session?.isTerminated !== true) throw new Error('AO does not report the actor terminated');
   const evidence = json(x.owned, 'owned-session-termination', { schema: 'fvs/auto-owned-session-termination', schemaVersion: 1, session: stopped.raw.session, progress, terminationCompletion: stopped.completion });
-  const resolved = await step('resolve ' + actor.sessionId, () => w.paired({ kind: 'terminate', stage: 'reconcile', sessionId: actor.sessionId, execute: false, effect: { kind: 'reservation-resolution', targetReservationId: actor.reservationId },
-    target: target('resolve-terminated-reservation'), after: () => ({ sessionId: null, association: null, evidence: [evidence], resolution: { reason: 'session-terminated', evidence } }) }));
+  const resolved = await step('resolve ' + actor.sessionId, () => w.paired({ kind: 'terminate', stage: 'reconcile', sessionId: actor.sessionId, registryRoot, execute: false, effect: { kind: 'reservation-resolution', targetReservationId: actor.reservationId },
+    target: target('resolve-terminated-reservation'), basis: basis && stopped.recorded.basis, after: () => ({ sessionId: null, association: null, evidence: [evidence], resolution: { reason: 'session-terminated', evidence } }) }));
   return { stopped, resolved };
 }
 // A run-bound auto freeze request from the pinned persistent template: the run's own execution control, the current
@@ -155,33 +160,108 @@ async function admitFreeze(w, request) {
 // consumers A and B. Every step is one paired transition through the shared driver; afters bind the produced baseline
 // and the advanced accepted-store head, which the engine re-validates.
 async function runE0(w, materials) {
-  const storeRoot = path.join(path.dirname(w.real.root), 'store'), ca = w.ca;
-  const storeHead = () => ({ root: storeRoot, expectedHeadSha256: ca.readAcceptedStore(storeRoot).headSha256 });
-  w.inputs.acceptedStore = storeHead();
-  const control = () => w.e.runControl(w.x.run()), receipts = {};
-  receipts.freeze = await step('F0 freeze', () => w.paired({ kind: 'freeze', stage: 'check', registryRoot: w.real.registry, target: { request: freezeRequest(w, materials) },
+  const storeRoot = path.join(path.dirname(w.real.root), 'store');
+  w.inputs.acceptedStore = storeHead(w, storeRoot);
+  const receipts = {};
+  receipts.freeze = await freezeStep(w, materials, 'F0 freeze', {}, null);
+  const checked = await checkAccept(w, 'E0', storeRoot, null);
+  return { storeRoot, receipts: { ...receipts, ...checked.receipts }, basis: checked.basis };
+}
+const storeHead = (w, storeRoot) => ({ root: storeRoot, expectedHeadSha256: w.ca.readAcceptedStore(storeRoot).headSha256 });
+async function freezeStep(w, materials, label, options, basis) {
+  return step(label, () => w.paired({ kind: 'freeze', stage: 'check', registryRoot: w.real.registry, target: { request: freezeRequest(w, materials, options) }, basis,
     after: raw => { if (raw?.authority !== 'expectations-only' || !raw.baseline) throw new Error('freeze produced no expectations-only baseline'); w.inputs.baseline = raw.baseline; return { sessionId: null, association: null }; } }));
-  const nodes = [19, 20, 21];
+}
+// One provisional check of H/A/B at the current source and baseline, then accept H before its consumers A and B.
+async function checkAccept(w, label, storeRoot, basis) {
+  const nodes = [19, 20, 21], control = () => w.e.runControl(w.x.run()), receipts = {};
   const check = json(w.x.owned, 'check-request', { schema: 'fvs-checker/check-request', version: 2, purpose: 'auto', runId: 'd-check-' + crypto.randomUUID(), execution: control(), baseline: w.inputs.baseline, source: w.source(), nodes });
   // The checker CLI prints a compact envelope when its result is large and names the full result document as
   // `evidence`; the completion must carry that producer result (run, controller and adapter input), not the summary.
   // Plain JSON parsing keeps the producer's key order: the inspector compares serialized inventories byte for byte.
   const producerResult = raw => { if (!raw?.evidence) return raw; const bytes = fs.readFileSync(raw.evidence.file); if (sha(bytes) !== raw.evidence.sha256) throw new Error('check result changed'); return JSON.parse(bytes); };
-  receipts.check = await step('E0 check', () => w.paired({ kind: 'check', stage: 'check', nodes, registryRoot: w.real.registry, target: { request: check, nodes }, result: producerResult }));
-  if (receipts.check.raw?.status !== 'provisional' || !receipts.check.raw.evidence) throw new Error('E0 check is not provisional');
+  receipts.check = await step(label + ' check', () => w.paired({ kind: 'check', stage: 'check', nodes, registryRoot: w.real.registry, target: { request: check, nodes }, result: producerResult, basis }));
+  if (receipts.check.raw?.status !== 'provisional' || !receipts.check.raw.evidence) throw new Error(label + ' check is not provisional');
   receipts.accept = [];
+  let next = basis && receipts.check.recorded.basis;
   for (const node of nodes) {
     const accept = json(w.x.owned, 'accept-request-' + node, { schema: 'fvs-checker/accept-request', version: 2, purpose: 'auto', runId: 'd-accept-' + node + '-' + crypto.randomUUID(), execution: control(),
-      baseline: w.inputs.baseline, candidateCheck: receipts.check.raw.evidence, source: w.source(), node, store: storeHead() });
-    receipts.accept.push(await step('E0 accept ' + node, () => w.paired({ kind: 'accept', stage: 'acceptance', nodes: [node], registryRoot: w.real.registry, target: { request: accept, node },
-      after: raw => { if (raw?.status !== 'accepted') throw new Error('accept ' + node + ' did not publish'); w.inputs.acceptedStore = storeHead(); return { sessionId: null, association: null }; } })));
+      baseline: w.inputs.baseline, candidateCheck: receipts.check.raw.evidence, source: w.source(), node, store: storeHead(w, storeRoot) });
+    const accepted = await step(label + ' accept ' + node, () => w.paired({ kind: 'accept', stage: 'acceptance', nodes: [node], registryRoot: w.real.registry, target: { request: accept, node }, basis: next,
+      after: raw => { if (raw?.status !== 'accepted') throw new Error('accept ' + node + ' did not publish'); w.inputs.acceptedStore = storeHead(w, storeRoot); return { sessionId: null, association: null }; } }));
+    receipts.accept.push(accepted); next = accepted.recorded.basis;
   }
-  return { storeRoot, receipts };
+  return { receipts, basis: next };
 }
+
+// Scripted proof writer (no model): one issued proof task for `node` under the current freeze. It records a genuine
+// failed attempt (the wrong-lemma overlay compiled through the run-owned route with the frozen Lean and fails), records
+// that progress, commits the correct overlay as its candidate, and the controller materializes it into the source by
+// fast-forward (the existing manual procedure) before stopping the writer with its task progress as handoff.
+async function proofWriter(w, { node, file, wrong, correct, basis }) {
+  const { x, t, e, auto } = w, frozen = t.transitionBound(w.inputs.baseline);
+  const invocation = json(x.owned, 'invocation', { schema: 'fvs/auto-proof-invocation', schemaVersion: 2, runId: x.runId, invocationId: crypto.randomUUID(), execution: e.runControl(x.run()) });
+  const s = await step('writer assignment ' + node, () => w.releaseReview(null, { basis, chain: true, stage: 'proof', nodes: [node], selectionStage: 'fc_proof_execution', invocation,
+    procedure: 'lean-verify/controller-direct', inputs: [invocation], registryRoot: w.real.registry }));
+  const wt = s.actor.worktree.path, packet = t.readWorkPacket(s.packet), target = path.join(wt, file);
+  fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, fs.readFileSync(wrong));
+  // The frozen Lean sees the frozen project build and its external search paths; the attempt must fail honestly.
+  const build = frozen.build, leanPath = [build.buildRoot ? path.join(build.buildRoot, 'lib', 'lean') : null, ...(build.externalSearchPaths ?? [])].filter(Boolean).join(':');
+  const attempt = await e.runTaskCommand({ schema: 'fvs/owned-command-request', schemaVersion: 1, packet: s.packet, marker: s.marker, invocationId: crypto.randomUUID(),
+    tool: { file: build.lean.path, sha256: build.lean.sha256 }, argv: [build.lean.path, '--root=' + wt, target], cwd: wt, env: { PATH: '/usr/bin:/bin', LANG: 'C', LEAN_PATH: leanPath } });
+  if (attempt.status === 'command-completed') throw new Error('the deliberate wrong-lemma attempt unexpectedly compiled');
+  const progress = auto.recordProgress({ packet: s.packet, marker: s.marker, previous: null, currentGoal: 'prove ' + file + ' for node ' + node,
+    failedApproaches: [{ hypothesis: 'close the sum by a commutativity lemma', evidence: [attempt.terminal, attempt.stderr] }],
+    lastMeaningfulProgress: { observedAtMs: Date.now(), description: 'compiled the first attempt; unknown identifier m1demo.helper_add_comm', evidence: [attempt.terminal] },
+    blocker: null, nextStep: 'state the target exactly and prove it by rfl', blockerResolution: null, out: x.out() }).progress;
+  fs.writeFileSync(target, fs.readFileSync(correct));
+  git(wt, 'add', '--', file); git(wt, '-c', 'user.name=FVS scripted writer', '-c', 'user.email=writer@fvs.invalid', 'commit', '-qm', 'proof(' + node + '): revised overlay');
+  const candidateCommit = git(wt, 'rev-parse', 'HEAD'), candidateTree = git(wt, 'rev-parse', 'HEAD^{tree}');
+  const launch = s.launch.produced.before.value, assignment = x.associate(s.actor.sessionId, wt, launch.request.transition.intent, launch.recordedEventSha256);
+  w.useAssociations([assignment]);
+  const files = { [file]: sha(fs.readFileSync(target)) }, candidate = { commit: candidateCommit, tree: candidateTree, files, assignment };
+  const result = json(x.owned, 'writer-result', { schema: 'fvs/auto-work-result', schemaVersion: 2, runId: x.runId, packet: s.packet, marker: s.marker, actionSha256: packet.actionSha256, actor: packet.actor,
+    kind: 'candidate', prepared: { commit: packet.actor.worktree.commit, tree: packet.actor.worktree.tree }, result: candidate, controllerObservedAtMs: Date.now(), controllerSessionId: w.context().ao.coordinatorSessionId });
+  const completion = json(x.owned, 'writer-completion', { schema: 'fvs/auto-work-completion', schemaVersion: 2, runId: x.runId, packet: s.packet, marker: s.marker,
+    sourceAfter: { commit: candidateCommit, tree: candidateTree }, outcome: 'completed', artifacts: [result, progress], controllerSessionId: w.context().ao.coordinatorSessionId });
+  const src = w.source(), materialized = await step('materialize ' + node, () => w.paired({ kind: 'materialize-proof', stage: 'integration', execute: false, registryRoot: w.real.registry,
+    target: { parent: src.commit, candidates: [candidate], files }, basis: { ...s.released.recorded.basis, workCompletion: completion },
+    after: (raw, beforeEventSha256, intent) => integrate(w, intent, beforeEventSha256, candidateCommit) }));
+  const closed = await closeAssignment(w, s.actor, progress, { basis: materialized.recorded.basis, registryRoot: w.real.registry });
+  return { candidate, progress, attempt, materialized, closed, basis: materialized.recorded.basis };
+}
+// The existing manual integration procedure: fast-forward the clean source worktree to the candidate, retained as an
+// exact command receipt and completion for the paired after.
+function integrate(w, intent, beforeEventSha256, commit) {
+  const { x, t, m } = w, root = w.source().root, action = t.transitionBound(intent.request);
+  const argv = ['/usr/bin/git', '-C', root, 'merge', '--ff-only', commit], env = { ...GIT_ENV, GIT_NO_REPLACE_OBJECTS: '1', GIT_OPTIONAL_LOCKS: '0' };
+  const startedAtMs = Date.now(), p = spawnSync(argv[0], argv.slice(1), { cwd: root, env }), endedAtMs = Date.now();
+  if (p.status !== 0) throw new Error('integration fast-forward failed: ' + p.stderr);
+  const stream = (name, bytes) => { const file = path.join(x.owned, name + '-' + crypto.randomUUID()); fs.writeFileSync(file, bytes); return { file, sha256: sha(fs.readFileSync(file)) }; };
+  const command = json(x.owned, 'integrate-command', { schema: 'fvs/auto-command-receipt', schemaVersion: 2, runId: x.runId, transitionId: action.transitionId, actionSha256: m.memoryHash(action),
+    argv, cwd: root, env, tool: { file: '/usr/bin/git', sha256: sha(fs.readFileSync('/usr/bin/git')) }, startedAtMs, endedAtMs, exitCode: p.status, signal: p.signal, error: null,
+    stdout: stream('integrate-stdout', p.stdout), stderr: stream('integrate-stderr', p.stderr), execution: w.e.runControl(x.run()),
+    supervision: { cancelled: false, timedOut: false, cleanupComplete: true, operationKind: 'work', workScope: 'controller-integration' } });
+  const completion = json(x.owned, 'integrate-completion', { schema: 'fvs/auto-transition-completion', schemaVersion: 2, runId: x.runId, transitionId: action.transitionId, reservationId: action.reservationId,
+    actionSha256: m.memoryHash(action), beforeEventSha256, command, result: json(x.owned, 'integrated', { source: commit }) });
+  return { sessionId: null, association: null, evidence: [completion] };
+}
+
+// E1 (real Lean after E0, opt-in only): revise H and freshly review A/B, freeze F1 at the source with the V1 overlay
+// mutable, run the scripted writer for H, then check and accept H/A/B at I1. Every step carries the v2 basis chain.
+async function runE1(w, materials, { storeRoot, basis, reviews, overlay }) {
+  let next = basis;
+  for (const review of reviews) next = (await reviews_step(w, review, next)).basis;
+  const f1 = await freezeStep(w, materials, 'F1 freeze', { overlayFiles: [overlay.file], targets: { 19: overlay.target } }, next);
+  const writer = await proofWriter(w, { node: 19, file: overlay.file, wrong: overlay.wrong, correct: overlay.correct, basis: f1.recorded.basis });
+  const checked = await checkAccept(w, 'E1', storeRoot, writer.basis);
+  return { f1, writer, checked, basis: checked.basis };
+}
+const reviews_step = (w, review, basis) => reviseContract(w, { ...review, basis, chain: true });
 function registryStatus(w) {
   const p = spawnSync(process.execPath, [path.join(w.engineRoot, 'scripts/fvs-contract-registry.mjs'), 'status', '--plan', w.inputs.plan.file, '--graph', w.inputs.graph.file,
     '--registry', w.real.registry, '--spec-root', w.source().root], { encoding: 'utf8' });
   return JSON.parse(p.stdout);
 }
 
-module.exports = { prepareRealRoot, recordSetup, dWorld, reviseContract, closeAssignment, freezeRequest, admitFreeze, runE0, registryStatus, git, sha };
+module.exports = { prepareRealRoot, recordSetup, dWorld, reviseContract, closeAssignment, freezeRequest, admitFreeze, runE0, runE1, proofWriter, registryStatus, git, sha };
