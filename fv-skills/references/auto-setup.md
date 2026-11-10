@@ -32,7 +32,8 @@ extraction and a full pilot are separate from preparing this installation.
    FVS_SHA="<approved full 40-character commit SHA>"
    WORKTREE="/absolute/selected/actor-worktree"
    test "$(git -C "$FVS_SOURCE" rev-parse HEAD)" = "$FVS_SHA" || exit 1
-   test -z "$(git -C "$FVS_SOURCE" status --porcelain=v1 --untracked-files=all)" || exit 1
+   FVS_SOURCE_STATUS=$(git -C "$FVS_SOURCE" status --porcelain=v1 --untracked-files=all) || exit 1
+   test -z "$FVS_SOURCE_STATUS" || exit 1
    test "$(node -p 'require(process.argv[1]).version' "$FVS_SOURCE/package.json")" = "3.0.0-rc1" || exit 1
    test "$(cat "$FVS_SOURCE/fv-skills/VERSION")" = "3.0.0-rc1" || exit 1
    ```

@@ -208,6 +208,26 @@ if (process.argv.includes('--package-fixture')) {
     assert.match(rc, /version string.*floating branch/s);
   });
 
+  it('rc1 source status guard stops a failed Git command before the installation sentinel', () => {
+    const setup = fs.readFileSync(path.join(ROOT, 'fv-skills/references/auto-setup.md'), 'utf8');
+    const block = setup.match(/```bash\n([ \t]*FVS_SOURCE=[\s\S]*?)```/)[1];
+    const guard = block.split('\n').map(line => line.trim()).filter(line => line.startsWith('FVS_SOURCE_STATUS=') || line.startsWith('test -z ')).join('\n');
+    assert.ok(guard);
+    const area = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-rc1-status-'));
+    const bin = path.join(area, 'bin'); fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, 'git'), '#!/bin/sh\nprintf \'%s\' "$FVS_GIT_STDOUT"\nexit "$FVS_GIT_EXIT"\n', { mode: 0o755 });
+    try {
+      for (const [name, gitExit, text, allowed] of [['clean', '0', '', true], ['failed-empty', '7', '', false], ['dirty', '0', ' M README.md', false]]) {
+        const sentinel = path.join(area, name);
+        const result = spawnSync('/bin/bash', ['-c', guard + '\nprintf reached > "$FVS_SENTINEL"'], {
+          env: { PATH: bin + ':/usr/bin:/bin', HOME: area, FVS_SOURCE: area, FVS_GIT_EXIT: gitExit, FVS_GIT_STDOUT: text, FVS_SENTINEL: sentinel }, encoding: 'utf8',
+        });
+        assert.equal(result.status, allowed ? 0 : 1, name + ': ' + result.stderr);
+        assert.equal(fs.existsSync(sentinel), allowed, name + ' installer sentinel');
+      }
+    } finally { fs.rmSync(area, { recursive: true, force: true }); }
+  });
+
   it('each README help row names the command its runtime installer prints', () => {
     const {ALL_RUNTIMES}=require('../bin/install.js');
     const rows={};
