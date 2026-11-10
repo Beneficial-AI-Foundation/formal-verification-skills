@@ -100,24 +100,62 @@ async function openRevision(w, requests) {
   fs.writeFileSync(feedbackFile, JSON.stringify({ owner: 'scripted ticket18 D owner feedback', requests, authority: 'not human authentication' }));
   return { bundle, respec, out, prior, feedback: fileRef(feedbackFile) };
 }
+// The initial inspect, with the exact runtime bytes it bound archived at once: the mutable runtime file advances
+// afterwards, and the final bundle must retain the original bytes as a historical capture, never current bytes.
+async function inspectRevision(w, v, revisionId, items) {
+  const out = v.out('inspect'), request = respecRequest(w, { revisionId, prior: v.prior, feedback: v.feedback, items });
+  const inspected = await step('inspect', () => v.respec.runRespec({ request, out })), runtime = request.current.bundle.runtime.state;
+  const archive = path.join(w.x.owned, 'inspect-runtime-' + crypto.randomUUID() + '.json'); fs.writeFileSync(archive, fs.readFileSync(runtime.file), { flag: 'wx', mode: 0o600 });
+  assert.equal(fileRef(archive).sha256, runtime.sha256, 'the runtime did not advance between inspect and its archive');
+  return { out, inspected, runtime, archive: fileRef(archive), request: fileRef(path.join(out, 'request.json')), result: fileRef(path.join(out, 'result.json')), clock: fileRef(path.join(out, 'result-clock.json')) };
+}
+// An owned request/claim document written for one scenario step.
+const doc = (w, value) => { const f = path.join(w.x.owned, 'scenario-' + crypto.randomUUID() + '.json'); fs.writeFileSync(f, JSON.stringify(value)); return fileRef(f); };
+// Finish with per-item responses naming the current registered versions; nothing after it may advance the runtime head.
+async function finishRevision(w, v, revisionId, items, inspect) {
+  const answered = items.map(item => ({ ...item, response: doc(w, { schema: 'fvs/auto-respec-response', schemaVersion: 1, revisionId, itemId: item.itemId, ownerFeedbackSha256: v.feedback.sha256,
+    priorCandidates: item.expectedRecords, contracts: versionsOf(w, item.nodes), correspondenceEvidence: [v.feedback] }) }));
+  const out = v.out('finish'), request = respecRequest(w, { revisionId, prior: v.prior, feedback: v.feedback, items: answered, operation: 'finish',
+    inspectEvidence: { request: inspect.request, result: inspect.result } });
+  return { out, request, finished: await step('finish', () => v.respec.runRespec({ request, out })) };
+}
+// The final review bundle carries the complete returned finish envelope as its handoff, with the inspect-time and
+// prior-bundle runtime bytes as historical captures; it is built AND verified, and the finish chain is retained.
+async function handoffBundle(w, v, { finished, inspect }) {
+  const handoff = doc(w, finished), prior = JSON.parse(fs.readFileSync(v.prior.manifest.file)), priorRuntime = prior.snapshot.request.runtime.state;
+  const priorCopy = prior.copies.find(r => r.original === priorRuntime.file && r.sha256 === priorRuntime.sha256);
+  const historicalCaptures = [
+    { schema: 'fvs/auto-bundle-historical-input', schemaVersion: 1, original: inspect.runtime, archive: inspect.archive, mode: 0o600 },
+    { schema: 'fvs/auto-bundle-historical-input', schemaVersion: 1, original: priorRuntime, archive: fileRef(path.join(path.dirname(v.prior.manifest.file), priorCopy.stored)), mode: priorCopy.mode },
+  ];
+  const request = { ...bundleRequest(w), handoff, historicalCaptures }; request.absenceReasons = { ...request.absenceReasons, handoff: null };
+  const out = v.out('final-bundle'), built = await step('final bundle', () => v.bundle.buildReviewBundle(request, out));
+  const verified = await step('final bundle verify', () => v.bundle.verifyReviewBundle({ manifest: built.manifest, expectedContext: v.bundle.bundleExpectedContext(request), version: 2, execution: request.execution, out: v.out('final-bundle-verify') }));
+  assert.equal(verified.integrity.status, 'valid');
+  const manifest = JSON.parse(fs.readFileSync(built.manifest.file));
+  for (const ref of [handoff, finished.evidence, finished.publication, inspect.request, inspect.result, inspect.clock]) {
+    const row = manifest.copies.find(r => r.original === ref.file && r.sha256 === ref.sha256);
+    assert.ok(row, 'retained ' + ref.file); assert.deepEqual(fs.readFileSync(path.join(out, row.stored)), fs.readFileSync(ref.file));
+  }
+  for (const c of historicalCaptures) assert.deepEqual(manifest.copies.find(r => r.original === c.original.file && r.sha256 === c.original.sha256)?.historicalCapture, c);
+  return { built, verified, handoff };
+}
 test('revision finish explains a full reviewer assignment including its stop rows (no Lean)', { skip }, async () => {
   const w = await setup();
   const v = await openRevision(w, ['revise H']), revisionId = crypto.randomUUID();
   const items = [{ itemId: 'H', nodes: [19], expectedRecords: versionsOf(w, [19]), feedback: 'revise H', evidence: [v.feedback], response: null }];
-  const inspectOut = v.out('inspect'), inspected = await v.respec.runRespec({ request: respecRequest(w, { revisionId, prior: v.prior, feedback: v.feedback, items }), out: inspectOut });
-  assert.equal(inspected.status, 'revision-proposed', JSON.stringify(inspected.observation?.reasons));
+  const inspect = await inspectRevision(w, v, revisionId, items);
+  assert.equal(inspect.inspected.status, 'revision-proposed', JSON.stringify(inspect.inspected.observation?.reasons));
   await reviseH(w);
-  const response = json => { const f = path.join(w.x.owned, 'response-' + crypto.randomUUID() + '.json'); fs.writeFileSync(f, JSON.stringify(json)); return fileRef(f); };
-  const answered = items.map(item => ({ ...item, response: response({ schema: 'fvs/auto-respec-response', schemaVersion: 1, revisionId, itemId: item.itemId, ownerFeedbackSha256: v.feedback.sha256,
-    priorCandidates: item.expectedRecords, contracts: versionsOf(w, item.nodes), correspondenceEvidence: [v.feedback] }) }));
-  const finishOut = v.out('finish'), finished = await v.respec.runRespec({ request: respecRequest(w, { revisionId, prior: v.prior, feedback: v.feedback, items: answered, operation: 'finish',
-    inspectEvidence: { request: fileRef(path.join(inspectOut, 'request.json')), result: fileRef(path.join(inspectOut, 'result.json')) } }), out: finishOut });
+  const { finished } = await finishRevision(w, v, revisionId, items, inspect);
   const kinds = finished.observation.history.effects.map(e => e.kind);
   console.log('revision trace:', JSON.stringify({ status: finished.status, reasons: finished.observation.reasons, kinds }));
   assert.deepEqual(kinds, ['launch', 'prepare-input', 'release', 'registry-revise', 'terminate', 'terminate'], 'every paired row of the assignment is explained');
   assert.equal(finished.status, 'partial');
   assert.ok(finished.observation.reasons.every(r => ['whole-scope-currentness-unverified', 'selected-proof-node-missing'].includes(r)), JSON.stringify(finished.observation.reasons));
   assert.equal(finished.observation.items[0].status, 'response-prepared');
+  // The finish -> review bundle handoff chain, built and verified (a partial finish is still a complete envelope).
+  await handoffBundle(w, v, { finished, inspect });
 });
 
 // E0 readiness without Lean: the F0 request (pristine C0, no overlays, G0 registry) is admitted by the engine's paired
@@ -293,10 +331,10 @@ test('E0+E1 real: revise H, freeze F1, scripted writer to I1, re-accept H, A, B 
   console.log('E1 receipts:', JSON.stringify({ storeRoot: e0.storeRoot, head: store.headSha256, f1: w.inputs.baseline, i1 }));
 });
 
-// An owned request/claim document written for one scenario step.
-const doc = (w, value) => { const f = path.join(w.x.owned, 'scenario-' + crypto.randomUUID() + '.json'); fs.writeFileSync(f, JSON.stringify(value)); return fileRef(f); };
 // The final context's bound negatives: checker refusals on owned request copies that fail before any build, against
 // the real final state (F2 baseline, I2 source, store head), each leaving runtime/registry/store/source unchanged.
+// `acceptedOutputCreated` means no accepted-store append (refusals may still leave diagnostic output directories).
+// V1 protection is evidenced at I1 by the inert E2 negatives: at I2 the present V2 overlay would mask it.
 // Not covered here (each needs a full build): statement mismatch and hidden sorry/axiom after compilation.
 function finalNegatives(w, { storeRoot, e1, e2, i1, dir }) {
   const store = () => ({ root: storeRoot, expectedHeadSha256: w.ca.readAcceptedStore(storeRoot).headSha256 });
@@ -314,7 +352,6 @@ function finalNegatives(w, { storeRoot, e1, e2, i1, dir }) {
     ['superseded-integrated-source', 'accept', accept(v => { v.source = i1; }), 'stale-input'],
     ['unselected-check-node', 'check', doc(w, { schema: 'fvs-checker/check-request', version: 2, purpose: 'auto', runId: 'd-negative-' + crypto.randomUUID(), execution: w.e.runControl(w.x.run()),
       baseline: w.inputs.baseline, source: w.source(), nodes: [99] }), 'invalid-input'],
-    ['protected-proof-as-overlay', 'freeze', variant(w, f2(), v => { v.overlayFiles = [OVERLAY_V1.file, OVERLAY_V2.file]; }), 'unsupported'],
     ['toolchain-drift', 'freeze', variant(w, f2(), v => { v.baseline.lean.sha256 = '0'.repeat(64); }), 'stale-input'],
   ];
   return cases.map(([name, command, request, expectedCode]) => assertNegative(negative(w, { name, command, request, expectedCode, storeRoot, dir })));
@@ -325,29 +362,22 @@ test('E0+E1+E2 real: two revisions, final inspection, currentness, bundle and va
   const v = await openRevision(w, ['revise H (helper) and re-review its consumers', 'revise A (root_sum)']), revisionId = crypto.randomUUID();
   const items = [['H', 19, 'revise H (helper) and re-review its consumers'], ['A', 20, 'revise A (root_sum)']].map(([itemId, node, feedback]) =>
     ({ itemId, nodes: [node], expectedRecords: versionsOf(w, [node]), feedback, evidence: [v.feedback], response: null }));
-  const inspectOut = v.out('inspect'), inspected = await step('inspect', () => v.respec.runRespec({ request: respecRequest(w, { revisionId, prior: v.prior, feedback: v.feedback, items }), out: inspectOut }));
-  assert.equal(inspected.status, 'revision-proposed', JSON.stringify(inspected.observation?.reasons));
+  const inspect = await inspectRevision(w, v, revisionId, items);
+  assert.equal(inspect.inspected.status, 'revision-proposed', JSON.stringify(inspect.inspected.observation?.reasons));
   const e1 = await runE1(w, cfg.materials, { storeRoot: e0.storeRoot, basis: e0.basis, reviews: e1Reviews(w), overlay: OVERLAY_V1 });
   const episode1 = { baseline: w.inputs.baseline, source: w.source() };
   const e2 = await runE2(w, cfg.materials, { storeRoot: e0.storeRoot, basis: e1.basis, reviews: e2Reviews(w), overlay: OVERLAY_V2, libraries: e2Libraries() });
   const episode2 = { baseline: w.inputs.baseline, source: w.source() };
-  // Finish: per-item responses naming the current registered versions; nothing below may advance the runtime head.
-  const answered = items.map(item => ({ ...item, response: doc(w, { schema: 'fvs/auto-respec-response', schemaVersion: 1, revisionId, itemId: item.itemId, ownerFeedbackSha256: v.feedback.sha256,
-    priorCandidates: item.expectedRecords, contracts: versionsOf(w, item.nodes), correspondenceEvidence: [v.feedback] }) }));
-  const finishOut = v.out('finish'), finishRequest = respecRequest(w, { revisionId, prior: v.prior, feedback: v.feedback, items: answered, operation: 'finish',
-    inspectEvidence: { request: fileRef(path.join(inspectOut, 'request.json')), result: fileRef(path.join(inspectOut, 'result.json')) } });
-  const finished = await step('finish', () => v.respec.runRespec({ request: finishRequest, out: finishOut }));
+  const { out: finishOut, request: finishRequest, finished } = await finishRevision(w, v, revisionId, items, inspect);
   assert.equal(finished.status, 'ready-for-final-human-review', JSON.stringify(finished.observation.reasons));
   assert.equal((await step('finish consumer', () => v.respec.verifyRespecResult({ request: finishRequest, out: finishOut }))).status, finished.status);
-  const fb = bundleRequest(w), built = await step('final bundle', () => v.bundle.buildReviewBundle(fb, v.out('final-bundle')));
-  const verified = await step('final bundle verify', () => v.bundle.verifyReviewBundle({ manifest: built.manifest, expectedContext: v.bundle.bundleExpectedContext(fb), version: 2, execution: fb.execution, out: v.out('final-bundle-verify') }));
-  assert.equal(verified.integrity.status, 'valid');
+  const final = await handoffBundle(w, v, { finished, inspect });
   const negatives = finalNegatives(w, { storeRoot: e0.storeRoot, e1, e2, i1: episode1.source, dir: path.join(base, 'negatives') });
   const contextFile = path.join(base, 'qualification-context.json');
   fs.writeFileSync(contextFile, JSON.stringify({ schema: 'fvs/owned-respec-qualification', schemaVersion: 1, scope: 'qualification-only',
     labels: 'AO lifecycle, reviewers and the proof writer are labelled scripted doubles; proof authority is the independent checker only.',
-    initial: { result: fileRef(path.join(inspectOut, 'result.json')) }, final: { request: fileRef(path.join(finishOut, 'request.json')), result: fileRef(path.join(finishOut, 'result.json')), out: finishOut },
-    episode1, episode2, initialSource, finalBundle: { manifest: built.manifest, verified: verified.integrity.status }, negatives }, null, 2) + '\n');
+    initial: { result: inspect.result }, final: { request: fileRef(path.join(finishOut, 'request.json')), result: fileRef(path.join(finishOut, 'result.json')), out: finishOut },
+    episode1, episode2, initialSource, finalBundle: { manifest: final.built.manifest, handoff: final.handoff, verified: final.verified.integrity.status }, negatives }, null, 2) + '\n');
   const validator = spawnSync(process.execPath, ['--test', '--test-concurrency=1', path.join(ROOT, 'tests/auto-respec-real.test.cjs')], { cwd: ROOT, encoding: 'utf8',
     env: { ...process.env, FVS_REAL_RESPEC: '1', FVS_REAL_RESPEC_CONTEXT: contextFile } });
   fs.writeFileSync(path.join(base, 'validator.log'), validator.stdout + validator.stderr);
