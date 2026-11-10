@@ -23,8 +23,8 @@ const hashThreads = () => {
   if (!/^[1-4]$/.test(raw)) throw new Error('FVS_CHECKER_HASH_THREADS must be an integer from 1 to 4');
   return Number(raw);
 };
-const HASH_WORKER = `const { parentPort } = require('node:worker_threads'), fs = require('node:fs'), crypto = require('node:crypto');
-const buffer = Buffer.allocUnsafe(1024 * 1024);
+const HASH_WORKER = `const { parentPort, workerData } = require('node:worker_threads'), fs = require('node:fs'), crypto = require('node:crypto');
+const buffer = Buffer.allocUnsafe(1024 * 1024), stop = new Int32Array(workerData);
 const digest = (file) => {
   const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
   try {
@@ -32,6 +32,7 @@ const digest = (file) => {
     if (!before.isFile() || before.nlink !== 1) return { error: 'non-regular or aliased input/output file' };
     const sha = crypto.createHash('sha256'); let remaining = before.size;
     while (remaining > 0) {
+      if (Atomics.load(stop, 0)) return { error: 'dependency hashing stopped', stopped: true };
       const count = fs.readSync(fd, buffer, 0, Math.min(buffer.length, remaining), null);
       if (!count) return { error: 'file changed while hashing' };
       sha.update(buffer.subarray(0, count)); remaining -= count;
@@ -41,7 +42,11 @@ const digest = (file) => {
     return { sha256: sha.digest('hex'), size: after.size };
   } finally { fs.closeSync(fd); }
 };
-parentPort.on('message', (files) => { try { parentPort.postMessage(files.map(digest)); } catch (error) { parentPort.postMessage([{ error: error.message }]); } });`;
+parentPort.on('message', (files) => {
+  const out = [];
+  try { for (const file of files) { const r = digest(file); out.push(r); if (r.error) break; } } catch (error) { out.push({ error: error.message }); }
+  parentPort.postMessage(out);
+});`;
 const fail = (message, status = 'unverified') => { throw Object.assign(new Error(message), { buildStatus: status }); };
 const within = (root, file) => {
   const rel = path.relative(root, file);
@@ -214,29 +219,52 @@ export async function buildCheckerSnapshot(input, services = {}) {
       }
     };
     walk(directory);
-    const digests = new Array(files.length), workers = [];
-    try {
+    // A bounded pool: the parent keeps observing cancellation and the clock while batches are in flight (a held batch
+    // or a large file cannot delay refusal), stops dispatching on the first failure, sets a stop flag the workers read
+    // per 1 MB chunk, awaits every worker's termination and then fences the control once more.
+    const digests = new Array(files.length), workers = [], stop = new Int32Array(new SharedArrayBuffer(4));
+    let monitor, failure = null, finished = false;
+    const done = new Promise((resolve, reject) => {
+      const abort = (error) => { if (failure || finished) return; failure = error; Atomics.store(stop, 0, 1); reject(error); };
+      const refuse = (message) => { try { fail(message); } catch (error) { abort(error); } };
       let next = 0;
-      const serve = (worker) => new Promise((resolve, reject) => {
-        const send = () => {
-          try { tick(); } catch (error) { reject(error); return; }
-          if (next >= files.length) { resolve(); return; }
-          const start = next; next = Math.min(files.length, next + HASH_BATCH);
-          worker.once('message', (results) => {
+      const dispatch = (worker) => {
+        if (failure || finished) return;
+        try { tick(); } catch (error) { abort(error); return; }
+        if (next >= files.length) {
+          worker.idle = true;
+          if (workers.every((w) => w.idle)) { finished = true; resolve(); }
+          return;
+        }
+        const start = next; next = Math.min(files.length, next + HASH_BATCH);
+        worker.start = start; worker.postMessage(files.slice(start, next));
+      };
+      monitor = setInterval(() => { try { tick(); } catch (error) { abort(error); } }, 50);
+      try {
+        for (let i = 0, n = Math.min(hashThreads(), files.length); i < n; i++) {
+          const worker = new Worker(HASH_WORKER, { eval: true, workerData: stop.buffer });
+          worker.idle = false;
+          worker.on('message', (results) => {
             for (const [i, r] of results.entries()) {
-              if (r.error) { try { fail(r.error); } catch (error) { reject(error); return; } }
-              digests[start + i] = r;
+              if (r.error) { if (!r.stopped) refuse(r.error); return; }
+              digests[worker.start + i] = r;
             }
-            send();
+            dispatch(worker);
           });
-          worker.postMessage(files.slice(start, next));
-        };
-        worker.once('error', reject);
-        send();
-      });
-      for (let i = 0, n = Math.min(hashThreads(), files.length); i < n; i++) workers.push(new Worker(HASH_WORKER, { eval: true }));
-      await Promise.all(workers.map(serve));
-    } finally { await Promise.all(workers.map((worker) => worker.terminate())); }
+          worker.on('error', abort);
+          worker.on('exit', () => { if (!finished && !failure) refuse('dependency hash worker exited unexpectedly'); });
+          workers.push(worker);
+        }
+      } catch (error) { abort(error); }
+      if (!workers.length && !failure) { finished = true; resolve(); }
+      for (const worker of workers) dispatch(worker);
+    });
+    try { await done; }
+    finally {
+      clearInterval(monitor); Atomics.store(stop, 0, 1);
+      await Promise.all(workers.map((worker) => worker.terminate()));
+    }
+    tick();
     return Object.fromEntries(entries.map(([rel, value]) => [rel, typeof value === 'number' ? digests[value] : value]));
   };
   const save = (name, value) => {

@@ -553,6 +553,50 @@ if (process.platform === 'darwin') {
     assert.notEqual(unbounded.status, 'built'); assert.match(unbounded.reason, /FVS_CHECKER_HASH_THREADS/);
   });
 
+  // The hashing pool stays under the build's control while batches are in flight. Stand-in workers (test doubles, not
+  // threads) accept a batch and never answer, as an arbitrarily large file would; real workers are used for success.
+  test('held dependency hash batches still observe cancellation, the selected deadline and worker exit', async () => {
+    const { createExecution } = await import('../scripts/fvs-execution.mjs');
+    const threads = require('node:worker_threads'), { EventEmitter } = require('node:events'), Real = threads.Worker;
+    let held = [], onPost = () => {};
+    class Held extends EventEmitter {
+      constructor() { super(); held.push(this); }
+      postMessage() { onPost(this); }
+      terminate() { this.terminated = true; setImmediate(() => this.emit('exit', 1)); return Promise.resolve(1); }
+    }
+    const make = (budget) => {
+      const f = fixture(), deps = path.join(f.root, 'deps'); fs.mkdirSync(deps);
+      for (let i = 0; i < 10; i++) fs.writeFileSync(path.join(deps, 'file-' + i), 'bytes ' + i);
+      f.request.dependencies = { root: deps }; delete f.request.deadlineMs;
+      Object.assign(f.request, { version: 2, execution: createExecution('held-hash', budget) }); return f;
+    };
+    const run = async (f, services, post) => {
+      held = []; let heldAt = null, laterChildren = 0; onPost = (w) => { heldAt ??= Date.now(); post(w); };
+      const spawnProcess = (file, args, options) => { if (heldAt !== null) laterChildren++; return childProcess.spawn(file, args, options); };
+      threads.Worker = Held; syncBuiltinESMExports();
+      let result; try { result = await build(f.request, { ...services, spawnProcess }); } finally { threads.Worker = Real; syncBuiltinESMExports(); }
+      assert.ok(heldAt !== null, 'a batch was in flight'); assert.ok(Date.now() - heldAt < 3000, 'refused promptly while held');
+      assert.equal(laterChildren, 0, 'no child starts after the held inventory'); assert.ok(held.length && held.every(w => w.terminated), 'every worker terminated');
+      assert.notEqual(result.status, 'built'); assert.equal(result.modules, undefined);
+      return result;
+    };
+    const controller = new AbortController();
+    const cancelled = await run(make({ kind: 'none' }), { signal: controller.signal }, () => setTimeout(() => controller.abort(), 20));
+    assert.equal(cancelled.status, 'cancelled', cancelled.reason);
+    let expired = false; const deadlineMs = Date.now() + 600000;
+    const timedOut = await run(make({ kind: 'deadline', deadlineMs }), { now: () => (expired ? deadlineMs + 1 : Date.now()) }, () => setTimeout(() => { expired = true; }, 20));
+    assert.match(timedOut.reason, /budget exhausted/);
+    const exited = await run(make({ kind: 'none' }), {}, (w) => setImmediate(() => w.emit('exit', 1)));
+    assert.match(exited.reason, /exited unexpectedly/);
+    // Success with real worker threads: every created worker has exited when the build returns.
+    let created = 0, ended = 0;
+    class Tracked extends Real { constructor(...args) { super(...args); created++; this.once('exit', () => ended++); } }
+    const f = make({ kind: 'none' }); threads.Worker = Tracked; syncBuiltinESMExports();
+    let ok; try { ok = await build(f.request); } finally { threads.Worker = Real; syncBuiltinESMExports(); }
+    await new Promise(setImmediate);
+    assert.equal(ok.status, 'built', ok.reason); assert.ok(created > 0); assert.equal(ended, created, 'no worker outlives the build');
+  });
+
   test('dependency links remain inert and confined; escaping links are refused', async () => {
     for (const escape of [false, true]) {
       const f = fixture();
