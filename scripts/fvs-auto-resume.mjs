@@ -568,7 +568,9 @@ function consume(options, services, transition) {
     if (receipt.requestSha256 !== memoryHash(q) || receipt.attemptId !== q.attemptId || receipt.exitCode !== 0 || receipt.signal || receipt.error || receipt.toolBefore !== receipt.toolAfter) stop('resume-evidence-invalid', 'invalid observation receipt');
     for (const stream of [receipt.stdout, receipt.stderr]) { const b = bytes(stream.file); if (hash(b) !== stream.sha256) stop('resume-evidence-invalid', 'observation output changed'); }
   }
-  const out = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'fvs-resume-consume-')); fs.mkdirSync(path.join(out, 'receipts'));
+  // The consumer's own re-observation is durable evidence beside the result it verifies (returned and retained by
+  // callers), not an anonymous system-temporary directory that is never reclaimed.
+  const out = fs.mkdtempSync(path.join(fs.realpathSync(data.out), 'verify-')); fs.mkdirSync(path.join(out, 'receipts'));
   const now = services.now?.() ?? Date.now();
   if (!unbudgetedRun(current.state.run) && now < current.lastObservedAtMs) stop('resume-clock-rollback', 'clock/accounting moved backwards');
   const observed = observe(root, q, services, out, current.state.run, now, result.observation.memory, false, current);

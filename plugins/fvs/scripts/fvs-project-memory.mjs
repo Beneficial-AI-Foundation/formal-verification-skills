@@ -111,9 +111,9 @@ export function memoryBindingsErrors(records) {
 }
 export function bindingIdentity(b) { b = memoryDataSnapshot(b); return Object.fromEntries(BINDING_KEYS.filter((k) => !['bindingRevision', 'recordedAt'].includes(k)).map((k) => [k, b[k]])); }
 
-function ownOutput(root, requested, registration = false) {
+function ownOutput(root, requested, registration = false, parent = os.tmpdir()) {
   let out;
-  if (registration) out = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'fvs-memory-' + (registration === true ? 'registration' : registration) + '-'));
+  if (registration) out = fs.mkdtempSync(path.join(fs.realpathSync(parent), 'fvs-memory-' + (registration === true ? 'registration' : registration) + '-'));
   else {
     const parent = fs.realpathSync(path.dirname(path.resolve(requested)));
     out = path.join(parent, path.basename(requested));
@@ -349,7 +349,8 @@ export function consumeMemoryBootstrap(options) {
     || result.requestSha256 !== memoryHash(request) || memoryJson(result.request) !== memoryJson(request) || result.route !== request.operation
     || memoryJson(result.observed) !== memoryJson(request.expected) || memoryHash(result.context) !== request.expected.memoryContextSha256) stop('memory-result-mismatch', 'bootstrap result is not for the consumer current request/phase/target/context');
   if (result.callerRoot !== fs.realpathSync(callerRoot)) stop('memory-project-mismatch', 'bootstrap caller root differs from the consumer current caller');
-  const gitOut = ownOutput(canonical.binding.canonicalRoot, null, 'consume');
+  // The consumer's Git observation (returned as gitEvidence) stays beside the bootstrap output it verifies.
+  const gitOut = ownOutput(canonical.binding.canonicalRoot, null, 'consume', root);
   const gitRunner = runner(gitOut, request, result.requestInputSha256);
   let gitObservation;
   try { gitObservation = checkGitBinding(canonical.binding, gitRunner, callerRoot); }
