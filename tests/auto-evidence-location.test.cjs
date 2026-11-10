@@ -39,6 +39,21 @@ test('repeated verification of one result retains each call evidence; earlier re
   for (const v of [first, second]) assert.ok(v.observation.receipts.every(r => fs.existsSync(r.file) && bound(r)), 'delayed consumers can re-read the bound receipts');
 });
 
+test('protected parents are refused before any consumer evidence is allocated', async () => {
+  const { a, x, q, out } = await reconciled();
+  // A valid current result copied beneath the protected (git-ignored) project tree.
+  const copied = path.join(x.root, '.formalising', 'copied-result-' + crypto.randomUUID()); fs.cpSync(out, copied, { recursive: true });
+  assert.throws(() => a.verifyReconciliation({ projectRoot: x.root, request: q, out: copied }), { code: 'resume-path-invalid' });
+  assert.deepEqual(fs.readdirSync(copied).filter(n => n.startsWith('verify-')), [], 'no resume evidence written inside the project');
+  // A valid bootstrap output copied beneath the primary memory store.
+  const memoryOut = fs.realpathSync(a.verifyReconciliation({ projectRoot: x.root, request: q, out }).observation.memory.out);
+  fs.mkdirSync(path.join(x.root, '.beads'), { recursive: true });
+  const inStore = path.join(x.root, '.beads', 'copied-bootstrap-' + crypto.randomUUID()); fs.cpSync(memoryOut, inStore, { recursive: true });
+  for (const n of fs.readdirSync(inStore).filter(n => n.startsWith('fvs-memory-consume-'))) fs.rmSync(path.join(inStore, n), { recursive: true, force: true });
+  assert.throws(() => a.verifyMemoryBootstrap({ projectRoot: x.root, callerRoot: x.root, request: q.memoryRequest, out: inStore }), /inside the memory store/);
+  assert.deepEqual(fs.readdirSync(inStore).filter(n => n.startsWith('fvs-memory-consume-')), [], 'no memory evidence written inside the store');
+});
+
 test('a refused verification keeps its diagnostic evidence under the caller output', async () => {
   const { a, x, q, out } = await reconciled();
   fs.writeFileSync(path.join(x.root, 'untracked-' + crypto.randomUUID()), 'changes the observed source\n');

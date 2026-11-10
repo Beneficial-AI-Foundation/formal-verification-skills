@@ -557,7 +557,11 @@ export function consumeResume(options, services) { return consume(options, servi
 export function consumeTransition(options, services) { return consume(options, services, true); }
 function consume(options, services, transition) {
   const data = snapshot(options); closed(data, ['projectRoot', 'request', 'out'], 'resume consumer');
-  const q = validateRequest(data.request), root = directory(data.projectRoot), result = parse(bytes(path.join(data.out, 'result.json')));
+  const q = validateRequest(data.request), root = directory(data.projectRoot);
+  // The consumer appends its evidence beside the verified result, so that parent gets the producer's exclusion first.
+  const evidenceParent = fs.realpathSync(data.out);
+  if (evidenceParent === root || evidenceParent.startsWith(root + path.sep)) stop('resume-path-invalid', 'consumer evidence must be canonical and outside the protected project');
+  const result = parse(bytes(path.join(data.out, 'result.json')));
   if (result.schema !== 'fvs/auto-resume-result' || result.schemaVersion !== q.schemaVersion || !(result.code === 'reconciled' || (transition && ['partial', 'checkpointed'].includes(result.code))) || result.requestSha256 !== memoryHash(q) || !same(result.request, q)
     || result.expectedPredecessorHeadSha256 !== q.expectedHeadSha256 || !matches(result.committedHeadSha256, SHA)) stop('resume-result-mismatch', 'not this caller current reconciliation result');
   if (!same(bound(result.requestInput), q) || !same(result.implementation, implementation())) stop('resume-evidence-invalid', 'request or adapter implementation changed');
@@ -570,7 +574,7 @@ function consume(options, services, transition) {
   }
   // The consumer's own re-observation is durable evidence beside the result it verifies (returned and retained by
   // callers), not an anonymous system-temporary directory that is never reclaimed.
-  const out = fs.mkdtempSync(path.join(fs.realpathSync(data.out), 'verify-')); fs.mkdirSync(path.join(out, 'receipts'));
+  const out = fs.mkdtempSync(path.join(evidenceParent, 'verify-')); fs.mkdirSync(path.join(out, 'receipts'));
   const now = services.now?.() ?? Date.now();
   if (!unbudgetedRun(current.state.run) && now < current.lastObservedAtMs) stop('resume-clock-rollback', 'clock/accounting moved backwards');
   const observed = observe(root, q, services, out, current.state.run, now, result.observation.memory, false, current);

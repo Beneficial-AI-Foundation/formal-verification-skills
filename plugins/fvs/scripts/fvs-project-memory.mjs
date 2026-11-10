@@ -113,7 +113,12 @@ export function bindingIdentity(b) { b = memoryDataSnapshot(b); return Object.fr
 
 function ownOutput(root, requested, registration = false, parent = os.tmpdir()) {
   let out;
-  if (registration) out = fs.mkdtempSync(path.join(fs.realpathSync(parent), 'fvs-memory-' + (registration === true ? 'registration' : registration) + '-'));
+  if (registration) {
+    // A caller-chosen parent (consumer evidence beside its bootstrap) gets the producer's store exclusion before allocation.
+    const base = fs.realpathSync(parent);
+    if (inside(path.join(root, '.beads'), base)) stop('invalid-input', 'bootstrap output must not be inside the memory store');
+    out = fs.mkdtempSync(path.join(base, 'fvs-memory-' + (registration === true ? 'registration' : registration) + '-'));
+  }
   else {
     const parent = fs.realpathSync(path.dirname(path.resolve(requested)));
     out = path.join(parent, path.basename(requested));
