@@ -173,9 +173,10 @@ async function freezeStep(w, materials, label, options, basis) {
   return step(label, () => w.paired({ kind: 'freeze', stage: 'check', registryRoot: w.real.registry, target: { request: freezeRequest(w, materials, options) }, basis,
     after: raw => { if (raw?.authority !== 'expectations-only' || !raw.baseline) throw new Error('freeze produced no expectations-only baseline'); w.inputs.baseline = raw.baseline; return { sessionId: null, association: null }; } }));
 }
-// One provisional check of H/A/B at the current source and baseline, then accept H before its consumers A and B.
-async function checkAccept(w, label, storeRoot, basis) {
-  const nodes = [19, 20, 21], control = () => w.e.runControl(w.x.run()), receipts = {};
+// One provisional check of the nodes (default H/A/B) at the current source and baseline, then accept them in order (H
+// before its consumers A and B).
+async function checkAccept(w, label, storeRoot, basis, nodes = [19, 20, 21]) {
+  const control = () => w.e.runControl(w.x.run()), receipts = {};
   const check = json(w.x.owned, 'check-request', { schema: 'fvs-checker/check-request', version: 2, purpose: 'auto', runId: 'd-check-' + crypto.randomUUID(), execution: control(), baseline: w.inputs.baseline, source: w.source(), nodes });
   // The checker CLI prints a compact envelope when its result is large and names the full result document as
   // `evidence`; the completion must carry that producer result (run, controller and adapter input), not the summary.
@@ -269,13 +270,16 @@ function integrate(w, intent, beforeEventSha256, commit) {
 // One revision episode (real Lean, opt-in only): fresh reviews of the revised contracts, a freeze at the current source
 // with only the absent overlay mutable, the scripted writer for that node, then check and accept H/A/B at the
 // integrated source. Every step carries the v2 basis chain (E0's acceptances are stale from the first revision on).
-async function runEpisode(w, materials, label, { storeRoot, basis, reviews, overlay, libraries = null }) {
+// A proof launch requires every helper of its node accepted at the current source, freeze and registry, so protected
+// helpers (`protect`) are first checked and accepted under the new freeze at the unchanged source.
+async function runEpisode(w, materials, label, { storeRoot, basis, reviews, overlay, libraries = null, protect = [] }) {
   let next = basis;
   for (const review of reviews) next = (await reviews_step(w, review, next)).basis;
   const frozen = await freezeStep(w, materials, label.freeze + ' freeze', { overlayFiles: [overlay.file], targets: overlay.targets, libraries }, next);
-  const writer = await proofWriter(w, { node: overlay.node, file: overlay.file, wrong: overlay.wrong, correct: overlay.correct, basis: frozen.recorded.basis });
+  const protectedHelpers = protect.length ? await checkAccept(w, label.episode + ' protected', storeRoot, frozen.recorded.basis, protect) : null;
+  const writer = await proofWriter(w, { node: overlay.node, file: overlay.file, wrong: overlay.wrong, correct: overlay.correct, basis: protectedHelpers?.basis ?? frozen.recorded.basis });
   const checked = await checkAccept(w, label.episode, storeRoot, writer.basis);
-  return { frozen, writer, checked, basis: checked.basis };
+  return { frozen, protectedHelpers, writer, checked, basis: checked.basis };
 }
 // E1: revise H, review A/B, F1 at C0 with the V1 overlay mutable, writer for H, integrate I1.
 async function runE1(w, materials, { storeRoot, basis, reviews, overlay }) {
@@ -283,10 +287,11 @@ async function runE1(w, materials, { storeRoot, basis, reviews, overlay }) {
   return { f1: r.frozen, writer: r.writer, checked: r.checked, basis: r.basis };
 }
 // E2: promote the protected V1 proof into H's reviewed definitions, revise A, review B, F2 at I1 with only the absent V2
-// overlay mutable (V1 is built as a protected library module), writer for A, integrate I2.
+// overlay mutable (V1 is built as a protected library module), check and accept the protected H at I1 under F2, writer
+// for A, integrate I2, then check and accept H, A, B at I2.
 async function runE2(w, materials, { storeRoot, basis, reviews, overlay, libraries }) {
-  const r = await runEpisode(w, materials, { episode: 'E2', freeze: 'F2' }, { storeRoot, basis, reviews, overlay, libraries });
-  return { f2: r.frozen, writer: r.writer, checked: r.checked, basis: r.basis };
+  const r = await runEpisode(w, materials, { episode: 'E2', freeze: 'F2' }, { storeRoot, basis, reviews, overlay, libraries, protect: [19] });
+  return { f2: r.frozen, protectedH: r.protectedHelpers, writer: r.writer, checked: r.checked, basis: r.basis };
 }
 const reviews_step = (w, review, basis) => reviseContract(w, { ...review, basis, chain: true });
 // A fresh current reconcile (the independent resume/memory consumer inputs of a bundle or revision request).
