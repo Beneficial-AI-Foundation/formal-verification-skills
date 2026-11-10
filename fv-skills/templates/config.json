@@ -54,5 +54,11 @@
   "knowledge_bases": [],
   "issues": {
     "provider": null
+  },
+  "loop_me_in": {
+    "docs": [],
+    "audience": null,
+    "style_refs": [],
+    "editor": null
   }
 }

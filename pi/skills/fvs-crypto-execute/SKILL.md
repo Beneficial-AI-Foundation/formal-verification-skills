@@ -212,6 +212,13 @@ Return `none` when nothing reusable was learned.
 )
 ```
 
+Persist the touched-files record. The executor writes its run report to
+`$ROOT/IMPLEMENTATION_$ITER.md`, at the topic root next to `build.log`; pass that exact path in the
+prompt. After the return, check the file exists and carries a `**Files written:**` list. If the
+executor did not write it, THIS command writes the returned `## IMPLEMENTATION COMPLETE` block there
+verbatim (Write tool, never overwrite an existing record). `/fvs:loop-me-in` reads it as the
+authoritative list of files the iteration touched.
+
 Persist `Stage settings:` in existing execution build.log/run output under `crypto_execute`, resolved independently of plan/eval, using the single
 Stage settings evidence contract in `model-profiles.md`: requested and resolved
 runtime/provider/model/effort plus selection/launch source, field-wise independently

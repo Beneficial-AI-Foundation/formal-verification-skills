@@ -66,7 +66,7 @@ describe('Commands (commands/fvs/)', () => {
     'crypto-eval.md', 'crypto-execute.md', 'crypto-followup.md',
     'crypto-plan.md', 'crypto-review.md', 'fc-plan.md', 'fc.md', 'formalise.md', 'help.md', 'issues-setup.md',
     'kb-setup.md', 'lean-formalise.md', 'lean-refactor.md', 'lean-spec-review.md', 'lean-specify.md',
-    'lean-verify.md', 'manage.md', 'map-code.md', 'model-external.md', 'natural-language.md',
+    'lean-verify.md', 'loop-me-in.md', 'manage.md', 'map-code.md', 'model-external.md', 'natural-language.md',
     'pause-work.md', 'protocol-prose.md', 'reapply-patches.md', 'resume-work.md', 'roadmap.md',
     'sync-aeneas-verif.md', 'to-issues.md', 'trust-audit.md', 'update.md',
   ];
@@ -199,7 +199,7 @@ describe('Workflows (fv-skills/workflows/)', () => {
   const expected = [
     'aeneas-extract.md', 'crypto-eval.md', 'crypto-execute.md',
     'crypto-followup.md', 'crypto-plan.md', 'crypto-review.md', 'fc-plan.md', 'lean-formalise.md',
-    'lean-refactor.md', 'lean-spec-review.md', 'lean-specify.md', 'lean-verify.md', 'map-code.md',
+    'lean-refactor.md', 'lean-spec-review.md', 'lean-specify.md', 'lean-verify.md', 'loop-me-in-final.md', 'loop-me-in.md', 'map-code.md',
     'model-external.md', 'natural-language.md', 'protocol-prose.md', 'roadmap.md', 'sync-aeneas-verif.md', 'to-issues.md', 'trust-audit.md', 'update.md',
   ];
 

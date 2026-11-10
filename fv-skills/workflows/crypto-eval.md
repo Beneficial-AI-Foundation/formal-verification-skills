@@ -206,6 +206,16 @@ rules. Strengthen an equivalent record or create one file per lesson under `less
 the matching index update in the same reviewable diff.
 </step>
 
+<step name="offer_walkthrough">
+## Step 3b: Offer a walkthrough (ACCEPT, interactive only)
+
+Only after `ACCEPT` is persisted and only in `behavior.mode: interactive` (the default when the
+config file or key is missing), ask once whether the user wants a walkthrough. On yes, invoke
+`/fvs:loop-me-in <topic> nN` (Skill tool); it runs inline and writes
+`.formalising/loop-me-in/<topic>-nN/<timestamp>-<topic>-nN.html`. On no, nothing is written or
+recorded. Non-interactive modes skip the offer; `/fvs:loop-me-in` stays available on demand.
+</step>
+
 </process>
 
 <success_criteria>
