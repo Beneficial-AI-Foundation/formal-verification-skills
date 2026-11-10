@@ -84,6 +84,12 @@ Source artifact version: ${VERSION}. This is not evidence that an npm version,
 public tag, catalog pin or release is available. Public source: ${REPOSITORY_URL}.
 Native help source: ${REPOSITORY_URL}/blob/main/commands/fvs/help.md.
 
+For an unpublished prerelease, use the complete immutable source lane below. The
+source version does not promise an npm or marketplace pin. After verifying that
+complete sourceRoot, its fv-skills/references/auto-setup.md gives the SWVF host,
+per-worker installation and optional existing-store memory checklist. Setup does
+not initialize Beads or start a verification run.
+
 ## Consent
 
 Before any acquisition or installation, ask for the actual runtime, installation

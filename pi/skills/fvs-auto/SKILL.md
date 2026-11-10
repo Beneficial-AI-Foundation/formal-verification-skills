@@ -15,7 +15,7 @@ Route to the appropriate auto-track skill based on the user's intent.
 
 When invoked WITH a request, match it against the table below and invoke the matched skill immediately, forwarding the request. When invoked BARE (no request), first report the recorded state, then print this table as plain text and let the user reply free-form.
 
-To report the state, run `node ../../../scripts/fvs-auto.mjs read-state --project-root .` and print three lines from its JSON result:
+To report the state, run `node "../../../scripts/fvs-auto.mjs" read-state --project-root .` and print three lines from its JSON result:
 
 ```
 State:            {recorded choices and extraction status, or the result's message when there is no state or it is malformed}

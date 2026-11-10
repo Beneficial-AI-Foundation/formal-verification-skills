@@ -115,6 +115,19 @@ describe('Pi installer adapter', () => {
     assert.match(help.stdout, /--config-dir is reported and ignored for Pi/);
   });
 
+  it('accepts exact SemVer prereleases without accepting malformed or ranged versions', () => {
+    const installer = require('../bin/install.js');
+    for (const version of ['0.0.0', '2.3.11', '3.0.0-rc1', '3.0.0-rc.1', '1.0.0-alpha.0+build.7', '2.3.4+build.5']) {
+      assert.equal(installer.buildPiPackageSource(version), `npm:fv-skills-baif@${version}`);
+      assert.deepEqual(installer.parsePiOptions(['--pi-version', version]), { version, conflict: null });
+    }
+    for (const version of ['01.2.3', '1.02.3', '1.2.03', '3.0.0-01', '3.0.0-rc.01', '3.0.0-rc..1',
+      '3.0.0-', '3.0.0+', 'v3.0.0', '^3.0.0', '3.0.0-rc1/next', '3.0.0-rc1;echo', ' 3.0.0-rc1', '3.0.0-rc1\n', null, 3]) {
+      assert.throws(() => installer.buildPiPackageSource(version), /latest or X\.Y\.Z/, String(version));
+    }
+    assert.deepEqual(installer.buildPiCommand('install', '3.0.0-rc1', false), ['install', 'npm:fv-skills-baif@3.0.0-rc1', '--local']);
+  });
+
   it('delegates global latest and local exact installs to Pi', () => {
     const globalRoot = temp('fvs-pi-global-');
     const globalPi = makeFakePi(globalRoot);
@@ -127,6 +140,12 @@ describe('Pi installer adapter', () => {
     const local = runInstaller(localRoot, localPi, ['--pi', '--local', '--pi-version=2.3.4']);
     assert.equal(local.status, 0, local.stderr);
     assert.deepEqual(invocations(localPi.log), [['install', 'npm:fv-skills-baif@2.3.4', '--local']]);
+
+    const rcRoot = temp('fvs-pi-rc-');
+    const rcPi = makeFakePi(rcRoot);
+    const rc = runInstaller(rcRoot, rcPi, ['--pi', '--local', '--pi-version=3.0.0-rc1']);
+    assert.equal(rc.status, 0, rc.stderr);
+    assert.deepEqual(invocations(rcPi.log), [['install', 'npm:fv-skills-baif@3.0.0-rc1', '--local']]);
   });
 
   it('uses matching-scope native removal and ignores config-dir only for Pi', () => {

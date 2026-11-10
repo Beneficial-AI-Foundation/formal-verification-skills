@@ -195,9 +195,9 @@ describe('Lean style workflow contracts (#40)', () => {
   for (const relative of [...commandPaths, ...workflowPaths]) {
     it(`${relative} discovers, inlines, and checks target style`, () => {
       const content = fs.readFileSync(path.join(ROOT, relative), 'utf8');
-      assert.match(content, /fvs-lean-style-check\.mjs discover/);
+      assert.match(content, /fvs-lean-style-check\.mjs"? discover/);
       assert.match(content, /target_style_guide|complete target (?:repository )?style guide/i);
-      assert.match(content, /fvs-lean-style-check\.mjs check/);
+      assert.match(content, /fvs-lean-style-check\.mjs"? check/);
       assert.match(content, /100 column|100-column|100 columns/i);
       assert.match(content, /three or more namespace dots|3\+-dot/i);
     });
@@ -228,7 +228,7 @@ describe('Lean style workflow contracts (#40)', () => {
     );
     assert.match(executor, /three or more namespace dots/i);
     assert.match(conventions, /project\.style_guide_path/);
-    assert.match(conventions, /fvs-lean-style-check\.mjs check/);
+    assert.match(conventions, /fvs-lean-style-check\.mjs"? check/);
   });
 
   it('config template exposes project.style_guide_path', () => {

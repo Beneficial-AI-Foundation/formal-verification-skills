@@ -130,7 +130,7 @@ and the budget clock (`START_EPOCH`, `DEADLINE_EPOCH`) starts right after it.
 Discover and read the complete target style guide:
 
 ```bash
-node ~/.claude/scripts/fvs-lean-style-check.mjs discover \
+node "$HOME/.claude/scripts/fvs-lean-style-check.mjs" discover \
   --root . --config .formalising/fvs-config.json
 ```
 
@@ -143,7 +143,7 @@ Before the first write, copy the spec to an OS temporary baseline. Existing viol
 are legacy debt; after every normal proof edit run:
 
 ```bash
-node ~/.claude/scripts/fvs-lean-style-check.mjs check "$SPEC_PATH" \
+node "$HOME/.claude/scripts/fvs-lean-style-check.mjs" check "$SPEC_PATH" \
   --root . --config .formalising/fvs-config.json --baseline "$STYLE_BASELINE"
 ```
 
@@ -169,7 +169,7 @@ the pinned absolute Lean executable and its SHA-256, a finite `deadlineMs`, and 
 external import/search-path context. Invoke:
 
 ```bash
-node ~/.claude/scripts/fvs-checker.mjs freeze \
+node "$HOME/.claude/scripts/fvs-checker.mjs" freeze \
   --request "$CHECKER_FREEZE_REQUEST" --out "$AUDIT_DIR/checker-baseline"
 ```
 
@@ -309,7 +309,7 @@ with `purpose: "standalone"`, a fresh `runId`, absolute `projectRoot`, the exact
 `baseline: { file, sha256 }`, and the current finite `deadlineMs`. Run the trusted installed engine:
 
 ```bash
-node ~/.claude/scripts/fvs-checker.mjs check \
+node "$HOME/.claude/scripts/fvs-checker.mjs" check \
   --request "$CHECKER_CHECK_REQUEST" --out "$AUDIT_DIR/checker-candidate"
 ```
 

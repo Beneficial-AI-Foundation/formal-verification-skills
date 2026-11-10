@@ -64,7 +64,7 @@ The one migration command is the engine's `migrate` subcommand. There is no othe
 command, and the extraction workflow never runs it; migration is the owner's explicit step.
 
 ```bash
-node ~/.claude/scripts/fvs-extract-patches.mjs migrate --project-root "$CRATE_ROOT"
+node "$HOME/.claude/scripts/fvs-extract-patches.mjs" migrate --project-root "$CRATE_ROOT"
 ```
 
 It turns an active `src-modifications.diff` into translation patches:
@@ -145,7 +145,7 @@ whether to keep the retained ledger files is the owner's decision.
 4. Restore the pristine source (the pin the ledger was made against). The working source still
    carries the legacy edits, so until it is restored `check` stops at the first patch, reporting
    it as already applied. The engine does not restore the source for you.
-5. Run `node ~/.claude/scripts/fvs-extract-patches.mjs check --project-root "$CRATE_ROOT"`. It
+5. Run `node "$HOME/.claude/scripts/fvs-extract-patches.mjs" check --project-root "$CRATE_ROOT"`. It
    must report `translation-patches` and that every patch applies in order and undoes exactly.
 6. Review each migrated patch's `Obligations:`. They are still open obligations; the copied
    `Evidence:` and `Ratification:` are history. The patches are per hunk, not per function;

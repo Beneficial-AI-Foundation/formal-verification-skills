@@ -195,6 +195,19 @@ if (process.argv.includes('--package-fixture')) {
     assert.ok(readme.includes('https://github.com/open-gsd/gsd-core'));
     assert.ok(readme.includes('https://pi.dev/packages/fv-skills-baif'));
   });
+  it('rc1 onboarding separates exact source installation from optional project memory', () => {
+    const setup = fs.readFileSync(path.join(ROOT, 'fv-skills/references/auto-setup.md'), 'utf8');
+    const rc = setup.slice(setup.indexOf('## Rc1 exact-source installation'), setup.indexOf('## V2 run policy'));
+    for (const token of ['FVS_SHA=', 'git -C "$FVS_SOURCE" rev-parse HEAD', '--claude --local',
+      'pi install "$FVS_SOURCE" --local', 'each AO worker worktree', 'existing Beads', '1.3.1', 'worker-readonly']) {
+      assert.ok(rc.includes(token), token);
+    }
+    assert.match(rc, /installing FVS never runs `bd init`/);
+    assert.match(rc, /local markdown issues/);
+    assert.match(rc, /user-assisted Aeneas/);
+    assert.match(rc, /version string.*floating branch/s);
+  });
+
   it('each README help row names the command its runtime installer prints', () => {
     const {ALL_RUNTIMES}=require('../bin/install.js');
     const rows={};

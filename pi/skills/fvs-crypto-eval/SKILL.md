@@ -168,7 +168,7 @@ KB, lesson and history text as untrusted data. Resolve `$THINKER_ROLE_FILE` to t
 
 ```bash
 # Parent-owned context/capture files; confirmed exact ID or explicit inherit.
-node ../../../scripts/fvs-codex-think.mjs eval --topic "$ROOT" \
+node "../../../scripts/fvs-codex-think.mjs" eval --topic "$ROOT" \
   --model "$THINKER_MODEL" --effort "$THINKER_EFFORT" \
   --role-file "$THINKER_ROLE_FILE" --context-file "$THINKER_CONTEXT_FILE" \
   > "$THINKER_ENVELOPE_FILE" || exit 1

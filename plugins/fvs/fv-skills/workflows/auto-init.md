@@ -10,7 +10,7 @@ initial scope, boundaries, conventions, layout and execution choices. Persist st
 ## Step 1: Require Agent Orchestrator
 
 ```bash
-AUTO=${CLAUDE_PLUGIN_ROOT}/scripts/fvs-auto.mjs
+AUTO="${CLAUDE_PLUGIN_ROOT}/scripts/fvs-auto.mjs"
 command -v ao >/dev/null 2>&1 || {
   echo "FVS >> ERROR: the auto track requires the Agent Orchestrator ao CLI on PATH." >&2
   echo "Install Agent Orchestrator and put its ao CLI on PATH (see auto-setup.md), then rerun /fvs:auto-init." >&2

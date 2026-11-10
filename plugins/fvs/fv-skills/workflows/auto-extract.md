@@ -12,8 +12,8 @@ not a proof.
 ## Step 1: Require Agent Orchestrator and recorded setup state
 
 ```bash
-AUTO=${CLAUDE_PLUGIN_ROOT}/scripts/fvs-auto.mjs
-PATCH_ENGINE=${CLAUDE_PLUGIN_ROOT}/scripts/fvs-extract-patches.mjs
+AUTO="${CLAUDE_PLUGIN_ROOT}/scripts/fvs-auto.mjs"
+PATCH_ENGINE="${CLAUDE_PLUGIN_ROOT}/scripts/fvs-extract-patches.mjs"
 command -v ao >/dev/null 2>&1 || {
   echo "FVS >> ERROR: the auto track requires the Agent Orchestrator ao CLI on PATH." >&2
   echo "Install Agent Orchestrator and put its ao CLI on PATH (see auto-setup.md), then rerun /fvs:auto-extract." >&2

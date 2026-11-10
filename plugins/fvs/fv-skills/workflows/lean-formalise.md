@@ -180,7 +180,7 @@ Researcher tasks:
    - LaTeX: Read as text, extract \begin{definition}, \begin{theorem}, \begin{lemma} environments
 2. If KB configured and domain-relevant: query KB for definitions and key concepts
    ```bash
-   .formalising/.kb-venv/bin/python ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-kb-query.py ask \
+   .formalising/.kb-venv/bin/python "${CLAUDE_PLUGIN_ROOT}/scripts/fvs-kb-query.py" ask \
      "<question about mathematical structure>" --notebook "$KB_ID" --json
    ```
    - If KB domain does not match task: skip (log "KB skipped: domain mismatch")

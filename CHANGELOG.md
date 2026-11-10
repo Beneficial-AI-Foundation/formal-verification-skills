@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [3.0.0-rc1] - 2026-11-10
+
+This is prerelease source metadata for the selected-target SWVF candidate. Use an approved exact
+source pin; this entry does not claim npm/catalog publication, complete runtime qualification or a
+whole-library verification result.
+
 ### Added
 
 - `scripts/fvs-extract-patches.mjs` applies ordered translation patches to a disposable copy of
@@ -16,27 +22,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   sources are byte for byte what they were, and `migrate` converts a legacy ledger. A stale or
   already-applied patch fails and is never fuzzy-applied.
 
-- The auto track's milestone 1 commands, coordinated by Agent Orchestrator (they need its `ao`
-  CLI): `/fvs:auto-init` runs the compatibility profile and records your source revision,
-  configuration, initial scope and limits (3 workers by default plus a total wall-clock cap you name;
-  per-node hours are recorded but not enforced, as there is no arbitrary per-node proof timeout) in
-  `.formalising/auto-fv/state.json`, and offers once to write the
-  project roadmap; `/fvs:auto-extract` extracts that revision through `/fvs:aeneas-extract` in
-  translation-patch mode and records the result, an externals record with one entry per opaque,
-  external, handwritten or semantic-patch boundary, and regeneration instructions;
-  `/fvs:auto-top-specs` and `/fvs:auto-execute` report the recorded state and stop, because root
-  selection, frozen specifications, proof dispatch and acceptance are milestone 2 functionality
-  not yet available. `/fvs:auto` routes to the four. Every command is safe to rerun and changes a
-  recorded choice only after you confirm it.
-- `scripts/fvs-auto.mjs` gains the state operations behind those commands (`init-state`,
-  `read-state`, `record-roadmap`, `record-extraction`, `record-externals`). Writes are atomic and a
-  malformed file is reported, never overwritten. The extraction result is derived from the build
-  exit status, the shared extractor's final success-oracle verdict and the patch engine's checks, so
-  a failed extraction, including a clean build the oracle refused, is never recorded as success,
-  and a successful one is recorded as not a proof. A recorded boundary is never dropped. No
-  boundary can be marked correspondence-proved yet: that needs checked correspondence evidence,
-  which this release cannot validate, so a receipt path, a hash, a ratification packet or a review
-  link is refused.
+- The opt-in v2 auto track uses stock AO and the shared production driver for initial agreement,
+  specification and fresh bound review, bottom-up proof dispatch, independent checker acceptance and
+  a final human review bundle. Original execution/memory policy and accounting persist across resumes.
+  Complete current grants, actor profiles, source identities and request-bound evidence remain required;
+  legacy/read-only and missing-context routes retain explicit stops. Component tests or AO/reviewer
+  doubles do not establish real-provider qualification. Extraction, reviewed specifications, checked
+  proofs and open correspondence assumptions remain separate results.
+- The setup checklist documents exact-source installations in every AO worker worktree, user-assisted
+  pinned toolchain setup, optional existing primary Beads memory and separate local issue guidance.
+  No prerequisite downloads, global installs or memory initialization run automatically.
+- Installed shell paths reuse the 2.3.11 safety fix for local/root/nested cwd, spaced paths and literal
+  replacement tokens. Pi exact-version selectors accept SemVer prereleases, including `3.0.0-rc1`;
+  registry selection still requires that exact version to be published.
 - The compatibility profile no longer reports an extraction made with an Aeneas release as conflicting
   with its own lake-manifest pin: Aeneas releases report their release tag (`nightly-YYYY.MM.DD-<commit>`)
   as `aeneas_version`, and the resolver now compares that tag's commit suffix with the pinned commit. A

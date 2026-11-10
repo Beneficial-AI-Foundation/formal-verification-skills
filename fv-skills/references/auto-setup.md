@@ -9,6 +9,79 @@ matrix mirrors it and a test keeps the two in step.
 
 </overview>
 
+## Rc1 exact-source installation
+
+Use this checklist for the `3.0.0-rc1` selected-target SWVF preview. An approved immutable source pin
+and its qualification report identify the candidate; a version string, a floating branch or a stable
+marketplace/npm installation does not. Record remaining runtime qualifications honestly. Whole-libcrux
+extraction and a full pilot are separate from preparing this installation.
+
+1. **Prepare the host.** Install AO and make `ao` available. Keep the selected harness's existing
+   authentication and inspect its actual roles, model/effort and permissions. The source installer
+   needs Node and Git; the current Claude actor permission helper also needs Python 3 and
+   `/usr/bin/git`. The package's declared Node floor is not a tested SWVF compatibility matrix.
+   Install/update only through the owner's chosen route and consent. Use the prerequisites below for
+   user-assisted Aeneas/Charon, Rust and Lean setup; keep every project pin unchanged. Run the
+   read-only profile and resolver before extraction. FVS installs none of those tools.
+2. **Select one complete source snapshot.** Acquire the agreed full SHA through the normal permission
+   gate, retain it at an absolute path, and verify its actual HEAD, clean status, package version and
+   `fv-skills/VERSION`. Set these variables to actual values; the SHA placeholder is not an install pin:
+
+   ```bash
+   FVS_SOURCE="/absolute/retained/fvs-source"
+   FVS_SHA="<approved full 40-character commit SHA>"
+   WORKTREE="/absolute/selected/actor-worktree"
+   test "$(git -C "$FVS_SOURCE" rev-parse HEAD)" = "$FVS_SHA" || exit 1
+   test -z "$(git -C "$FVS_SOURCE" status --porcelain=v1 --untracked-files=all)" || exit 1
+   test "$(node -p 'require(process.argv[1]).version' "$FVS_SOURCE/package.json")" = "3.0.0-rc1" || exit 1
+   test "$(cat "$FVS_SOURCE/fv-skills/VERSION")" = "3.0.0-rc1" || exit 1
+   ```
+
+3. **Install only in the agreed scope.** Inspect existing FVS installations/local patches first and
+   choose one channel per runtime. After permission for these exact local writes, the existing
+   complete-source Claude route is:
+
+   ```bash
+   node "$FVS_SOURCE/scripts/build-hooks.js"
+   (cd "$WORKTREE" && node "$FVS_SOURCE/bin/install.js" --claude --local)
+   ```
+
+   Use the selected runtime's existing flag instead of `--claude` when that route is qualified.
+   For Pi's complete local-source package use `(cd "$WORKTREE" && pi install "$FVS_SOURCE" --local)`;
+   retain that exact source snapshot. The unified `--pi` installer delegates to npm, so it cannot
+   install an unpublished source pin. Exact registry prereleases are accepted by `--pi-version`
+   only when the requested version is actually published. Plugin users need the actual plugin root
+   and runtime role/capability checks; a stable catalog entry is not an rc1 pin.
+4. **Verify every actor installation.** Reload/start the normal session when the owner is ready.
+   Read its installed version and manifest, compare the actual scripts to the selected source, and
+   check role/tool access from that actor. Repeat for each AO worker worktree: ignored local installs
+   do not propagate through Git. Keep one fixed trusted engine identity across the run. Local shell
+   paths resolve to the selected installation even from a nested cwd; plugin resources remain rooted
+   at the plugin, and Pi resolves package-relative resources from its skill directory.
+5. **Initialize project choices through `/fvs:auto-init`.** Reuse the existing initial agreement.
+   Select source/features, roots, worker/resource limits and execution authority only where missing.
+   Recommend local markdown issues for a new preview; preserve any existing tracker choice and use
+   `/fvs:issues-setup` for an explicit change. Beads memory does not duplicate that task queue.
+6. **Choose optional memory.** Explicit `memory:{mode:"disabled"}` needs no Beads installation or
+   prime. Enabled memory currently uses an existing Beads `1.3.1` embedded/direct store in one primary
+   control checkout. Follow `auto-memory.md` to inspect/register that actual store, coordinator-refresh
+   it and verify a fresh prime. Missing/unsupported stores require separately authorized setup;
+   installing FVS never runs `bd init`, migrates a store or changes Beads settings. Every linked actor
+   uses the primary store and its own `worker-readonly` request with its actual caller worktree.
+   Fresh startup/resume primes are request-bound; an old ready flag is insufficient. Do not create a
+   backing database in each worktree. Remote hosts/independent clones need separately qualified setup.
+7. **Run only the granted preview.** Initial scope/permissions and the final human decision remain
+   explicit; routine stage transitions use the existing grants. Missing real provider access,
+   unavailable extraction tuples or unsupported target shapes remain named partial/blocked outcomes.
+   Report which checks used real tools and which used doubles. This setup grants neither publication
+   nor the held public-API path. Keep Lean threads at the agreed cap (here `LEAN_NUM_THREADS=2`), serial
+   heavy work and the project's actual supported build controls.
+
+For the Beads CLI itself, use its [official versioned installation guide](https://github.com/gastownhall/beads/blob/v1.3.1/docs/getting-started/installation.md).
+A generic latest install may differ from this adapter's supported version. No Beads plugin, MCP server
+or external Dolt server is required by the embedded adapter. Existing stores/settings are preserved;
+initialization has native Git side effects and needs its own explained setup permission.
+
 ## V2 run policy and runner boundary
 
 For a new v2 project, read `auto-execution.md` for optional budgets, optional memory, cancellation and
@@ -58,7 +131,7 @@ one active there. The resolver finds probe-lean only as `~/.local/bin/probe-lean
 downloads, digests and install steps for your host are printed by the resolver, which only reads:
 
 ```bash
-node ~/.claude/scripts/fvs-probe-inventory.mjs resolve --project-root . --format text
+node "$HOME/.claude/scripts/fvs-probe-inventory.mjs" resolve --project-root . --format text
 ```
 
 The confined probe-aeneas inventory runs every tool check and the probe itself under the operating
@@ -79,7 +152,7 @@ Run the profile from your project root. It prints one verdict per item and, for 
 green, one `next:` line:
 
 ```bash
-node ~/.claude/scripts/fvs-auto.mjs profile --project-root . --format text
+node "$HOME/.claude/scripts/fvs-auto.mjs" profile --project-root . --format text
 ```
 
 Add `--format json` for the same result with the raw evidence. The items are:

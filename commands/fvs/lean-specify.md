@@ -136,7 +136,7 @@ unresolved choices fail before dispatch with exact remediation.
 Run the installed, read-only discovery helper from the target repository root:
 
 ```bash
-STYLE_INFO=$(node ~/.claude/scripts/fvs-lean-style-check.mjs discover \
+STYLE_INFO=$(node "$HOME/.claude/scripts/fvs-lean-style-check.mjs" discover \
   --root . --config .formalising/fvs-config.json)
 ```
 
@@ -295,7 +295,7 @@ Wait for `## EXECUTION COMPLETE`. If `## ERROR`, display the error and stop.
 Before structural validation or a build, check the actual generated file:
 
 ```bash
-node ~/.claude/scripts/fvs-lean-style-check.mjs check "$SPEC_OUTPUT_PATH" \
+node "$HOME/.claude/scripts/fvs-lean-style-check.mjs" check "$SPEC_OUTPUT_PATH" \
   --root . --config .formalising/fvs-config.json
 ```
 
@@ -365,7 +365,7 @@ setting. The helper defaults to true when the config file or key is missing; it 
 migrates config. A malformed setting is an error, not an implicit opt-out:
 
 ```bash
-AUTOMATIC_REVIEW=$(node ~/.claude/scripts/fvs-spec-review.mjs automatic) || exit 1
+AUTOMATIC_REVIEW=$(node "$HOME/.claude/scripts/fvs-spec-review.mjs" automatic) || exit 1
 ```
 
 If `true`, read and follow `~/.claude/fv-skills/workflows/lean-spec-review.md` with the generated

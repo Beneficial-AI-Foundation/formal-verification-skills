@@ -57,7 +57,7 @@ standalone path below remains read-only and performs no partial authoring or dis
 ## Step 1: Require Agent Orchestrator
 
 ```bash
-AUTO=~/.claude/scripts/fvs-auto.mjs
+AUTO="$HOME/.claude/scripts/fvs-auto.mjs"
 command -v ao >/dev/null 2>&1 || {
   echo "FVS >> ERROR: the auto track requires the Agent Orchestrator ao CLI on PATH." >&2
   echo "Install Agent Orchestrator and put its ao CLI on PATH (see auto-setup.md), then rerun /fvs:auto-top-specs." >&2

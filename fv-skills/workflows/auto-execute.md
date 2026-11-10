@@ -74,7 +74,7 @@ a NEW17 artifact, listing unfinished items. Human review remains at the end; act
 ## Step 1: Require Agent Orchestrator
 
 ```bash
-AUTO=~/.claude/scripts/fvs-auto.mjs
+AUTO="$HOME/.claude/scripts/fvs-auto.mjs"
 command -v ao >/dev/null 2>&1 || {
   echo "FVS >> ERROR: the auto track requires the Agent Orchestrator ao CLI on PATH." >&2
   echo "Install Agent Orchestrator and put its ao CLI on PATH (see auto-setup.md), then rerun /fvs:auto-execute." >&2

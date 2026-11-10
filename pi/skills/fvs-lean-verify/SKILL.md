@@ -154,7 +154,7 @@ DEADLINE_EPOCH=$((START_EPOCH + BUDGET_SECONDS))
 Run the installed discovery helper from the target repository root:
 
 ```bash
-STYLE_INFO=$(node ../../../scripts/fvs-lean-style-check.mjs discover \
+STYLE_INFO=$(node "../../../scripts/fvs-lean-style-check.mjs" discover \
   --root . --config .formalising/fvs-config.json)
 ```
 
@@ -177,7 +177,7 @@ AUDIT_DIR=$(mktemp -d "${TMPDIR:-/tmp}/fvs-lean-verify-audit.XXXXXX")
 find . -name .lake -prune -o \( -name '*.lean' -o -name 'lakefile.toml' \) -type f \
   -exec cksum {} + | LC_ALL=C sort > "$AUDIT_DIR/tree-before.txt"
 
-BASELINE_STYLE_DIAGNOSTICS=$(node ../../../scripts/fvs-lean-style-check.mjs \
+BASELINE_STYLE_DIAGNOSTICS=$(node "../../../scripts/fvs-lean-style-check.mjs" \
   check "$SPEC_PATH" --root . --config .formalising/fvs-config.json 2>&1)
 BASELINE_STYLE_STATUS=$?
 ```
@@ -379,7 +379,7 @@ block using the shared candidate contract, or `none`."
   If ## EXECUTION COMPLETE, apply these gates in order:
     1. Run the baseline-aware mechanical style gate:
 
-         node ../../../scripts/fvs-lean-style-check.mjs check "$SPEC_PATH" \
+         node "../../../scripts/fvs-lean-style-check.mjs" check "$SPEC_PATH" \
            --root . --config .formalising/fvs-config.json --baseline "$STYLE_BASELINE"
 
        For a user-authorized statement edit, run the same check WITHOUT `--baseline`; the complete
@@ -425,7 +425,7 @@ The executor's success header never decides the status. Before any VERIFIED, inc
 zero-sorry spec, run the shared independent engine first:
 
 ```bash
-node ../../../scripts/fvs-checker.mjs check \
+node "../../../scripts/fvs-checker.mjs" check \
   --request "$CHECKER_CHECK_REQUEST" --out "$AUDIT_DIR/checker-candidate"
 ```
 

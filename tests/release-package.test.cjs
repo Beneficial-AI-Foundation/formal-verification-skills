@@ -13,7 +13,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const ROOT = path.resolve(__dirname, '..');
-const RELEASE = '2.3.9';
+const RELEASE = '3.0.0-rc1';
 const HOOKS = ['fvs-check-update.js', 'fvs-statusline.js'];
 const ALLOWLIST = ['bin', 'commands', 'pi', 'fv-skills', 'agents', 'hooks/dist', 'scripts', 'CHANGELOG.md', 'assets/terminal.svg'];
 const ALWAYS_SHIPPED = ['package.json', 'README.md', 'LICENSE'];
@@ -289,7 +289,7 @@ function archiveGate(qualificationFile, run = spawnSync) {
   return result;
 }
 
-describe('2.3.9 release surfaces', () => {
+describe('3.0.0-rc1 release surfaces', () => {
   it('agrees on one version across all six surfaces and the copied payload', () => {
     assert.equal(json('package.json').version, RELEASE);
     assert.deepEqual(read('fv-skills/VERSION'), Buffer.from(RELEASE), 'VERSION is exactly the version bytes');
@@ -297,12 +297,12 @@ describe('2.3.9 release surfaces', () => {
     assert.equal(json('plugins/fvs/.claude-plugin/plugin.json').version, RELEASE);
     assert.equal(json('plugins/fvs/.codex-plugin/plugin.json').version, RELEASE);
     const changelog = read('CHANGELOG.md').toString();
-    const releases = [...changelog.matchAll(/^## \[(\d+\.\d+\.\d+)\] - (\d{4}-\d{2}-\d{2})$/gm)];
+    const releases = [...changelog.matchAll(/^## \[([^\]]+)\] - (\d{4}-\d{2}-\d{2})$/gm)];
     assert.equal(releases[0][1], RELEASE, 'newest dated changelog entry');
     assert.ok(!Number.isNaN(Date.parse(releases[0][2])) && releases[0][2] >= releases[1][2], 'release date');
     assert.ok(changelog.indexOf('## [Unreleased]') < releases[0].index, 'Unreleased stays on top');
     const svg = read('assets/terminal.svg').toString().replace(/<!--[\s\S]*?-->/g, '');
-    assert.deepEqual([...svg.matchAll(/>v(\d+\.\d+\.\d+)</g)].map(match => match[1]), [RELEASE], 'visible SVG label');
+    assert.deepEqual([...svg.matchAll(/>v([^<]+)</g)].map(match => match[1]), [RELEASE], 'visible SVG label');
   });
 
   it('generates one native skill per command and one separate setup bootstrap', () => {

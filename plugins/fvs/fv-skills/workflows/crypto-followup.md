@@ -187,7 +187,7 @@ the index in the same reviewable diff. Unruled choices remain `provisional`.
 ## Step 4b: Bounded rival review
 
 After authoring gates, run
-`node ${CLAUDE_PLUGIN_ROOT}/scripts/fvs-codex-think.mjs review-automatic`; missing config or
+`node "${CLAUDE_PLUGIN_ROOT}/scripts/fvs-codex-think.mjs" review-automatic`; missing config or
 `crypto_review.automatic` defaults to true and malformed values stop clearly. If false, record
 `Unreviewed (automatic review disabled)`, preserve the follow-up, and do not auto-start execution.
 

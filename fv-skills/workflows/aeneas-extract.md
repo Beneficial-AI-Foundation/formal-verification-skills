@@ -166,7 +166,7 @@ The patch engine decides the mode. This workflow reads its verdict and never inf
 which files happen to exist. Run `check` once, before any edit, with the crate ROOT from Step 1a:
 
 ```bash
-PATCH_ENGINE=~/.claude/scripts/fvs-extract-patches.mjs
+PATCH_ENGINE="$HOME/.claude/scripts/fvs-extract-patches.mjs"
 MODE_RESULT=$(node "$PATCH_ENGINE" check --project-root "$CRATE_ROOT" --format json 2>/dev/null)
 MODE_CODE=$(printf '%s' "$MODE_RESULT" | node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(0, "utf8")).code))')
 ```

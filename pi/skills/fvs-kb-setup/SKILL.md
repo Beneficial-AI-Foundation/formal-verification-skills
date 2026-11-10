@@ -26,7 +26,7 @@ Output: Working KB query tool at `.formalising/.kb-venv/` and a registered knowl
 <context>
 Arguments: $ARGUMENTS (optional --add flag).
 
-- The KB query tool lives at ../../../scripts/fvs-kb-query.py (installed by FVS installer)
+- The KB query tool lives at "../../../scripts/fvs-kb-query.py" (installed by FVS installer)
 - The venv is per-project at .formalising/.kb-venv/ (not global)
 - notebooklm-py requires Python >= 3.10; uv can install Python 3.12 automatically
 - Authentication uses browser-based login via playwright/chromium
@@ -152,7 +152,7 @@ This step is interactive -- the user authenticates in the browser window. Wait f
 Verify authentication succeeded with a health check:
 
 ```bash
-.formalising/.kb-venv/bin/python ../../../scripts/fvs-kb-query.py health
+.formalising/.kb-venv/bin/python "../../../scripts/fvs-kb-query.py" health
 ```
 
 Parse the JSON output. If `status` is `"ok"`: continue. If `status` is `"error"`:
@@ -269,13 +269,13 @@ If the `knowledge_bases` key does not exist in the config, add it as a new top-l
 Run the health check:
 
 ```bash
-.formalising/.kb-venv/bin/python ../../../scripts/fvs-kb-query.py health
+.formalising/.kb-venv/bin/python "../../../scripts/fvs-kb-query.py" health
 ```
 
 Run a test query to confirm the notebook is accessible:
 
 ```bash
-.formalising/.kb-venv/bin/python ../../../scripts/fvs-kb-query.py ask "test" --notebook "$NOTEBOOK_ID" --text
+.formalising/.kb-venv/bin/python "../../../scripts/fvs-kb-query.py" ask "test" --notebook "$NOTEBOOK_ID" --text
 ```
 
 If test query succeeds, display the success summary:

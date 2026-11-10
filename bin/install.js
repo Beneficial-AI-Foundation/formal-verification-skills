@@ -112,8 +112,11 @@ const FVS_PLUGIN_DESCRIPTION =
 
 function buildPiPackageSource(version = 'latest') {
   if (version === 'latest') return `npm:${PI_PACKAGE_NAME}`;
-  if (!/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(version ?? '')) {
-    throw new Error('--pi-version must be latest or X.Y.Z');
+  const number = '(?:0|[1-9][0-9]*)';
+  const identifier = '(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)';
+  const exact = new RegExp(`^${number}\\.${number}\\.${number}(?:-${identifier}(?:\\.${identifier})*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$`);
+  if (typeof version !== 'string' || version !== version.trim() || !exact.test(version)) {
+    throw new Error('--pi-version must be latest or X.Y.Z (optional SemVer prerelease/build metadata)');
   }
   return `npm:${PI_PACKAGE_NAME}@${version}`;
 }
@@ -250,18 +253,20 @@ function getDirName(runtime) {
 }
 
 /**
- * Convert a pathPrefix (which uses absolute paths for global installs) to a
+ * Convert an installed resource prefix to an absolute shell path, optionally in
  * $HOME-relative form for replacing $HOME/.claude/ references in bash code blocks.
- * Preserves $HOME as a shell variable so paths remain portable across machines.
+ * Callers use these references inside double quotes. Local resources must not
+ * depend on the later shell cwd; escape literal shell characters in the suffix.
+ * Insert computed prefixes with a replace callback: directory names may contain
+ * JavaScript replacement tokens such as $& or $'.
  */
 function toHomePrefix(pathPrefix) {
   const home = os.homedir().replace(/\\/g, '/');
-  const normalized = pathPrefix.replace(/\\/g, '/');
-  if (normalized.startsWith(home)) {
-    return '$HOME' + normalized.slice(home.length);
-  }
-  // For relative paths or paths not under $HOME, return as-is
-  return normalized;
+  const normalized = path.resolve(pathPrefix).replace(/\\/g, '/') + '/';
+  const underHome = normalized.startsWith(home + '/');
+  const literal = underHome ? normalized.slice(home.length) : normalized;
+  const escaped = literal.replace(/[\\"$`]/g, '\\$&');
+  return (underHome ? '$HOME' : '') + escaped;
 }
 
 /**
@@ -1847,8 +1852,8 @@ function installCodexConfig(targetDir, agentsSrc) {
   for (const file of agentEntries) {
     let content = fs.readFileSync(path.join(agentsSrc, file), 'utf8');
     // Replace .claude paths before generating TOML (source files use ~/.claude and $HOME/.claude)
-    content = content.replace(/~\/\.claude\//g, codexPathPrefix);
-    content = content.replace(/\$HOME\/\.claude\//g, toHomePrefix(codexPathPrefix));
+    content = content.replace(/~\/\.claude\//g, () => codexPathPrefix);
+    content = content.replace(/\$HOME\/\.claude\//g, () => toHomePrefix(codexPathPrefix));
     const { frontmatter } = extractFrontmatterAndBody(content);
     const name = extractFrontmatterField(frontmatter, 'name') || file.replace('.md', '');
     const description = extractFrontmatterField(frontmatter, 'description') || '';
@@ -1955,10 +1960,10 @@ function copyCommandsAsCodexSkills(srcDir, skillsDir, prefix, pathPrefix, runtim
       const globalClaudeHomeRegex = /\$HOME\/\.claude\//g;
       const localClaudeRegex = /\.\/\.claude\//g;
       const codexDirRegex = /~\/\.codex\//g;
-      content = content.replace(globalClaudeRegex, pathPrefix);
-      content = content.replace(globalClaudeHomeRegex, toHomePrefix(pathPrefix));
+      content = content.replace(globalClaudeRegex, () => pathPrefix);
+      content = content.replace(globalClaudeHomeRegex, () => toHomePrefix(pathPrefix));
       content = content.replace(localClaudeRegex, `./${getDirName(runtime)}/`);
-      content = content.replace(codexDirRegex, pathPrefix);
+      content = content.replace(codexDirRegex, () => pathPrefix);
 
       content = convertClaudeCommandToCodexSkill(content, skillName);
 
@@ -1983,8 +1988,8 @@ function copyCommandsAsAntigravitySkills(srcDir, skillsDir, pathPrefix) {
     const skillDir = path.join(skillsDir, command);
     fs.mkdirSync(path.join(skillDir, 'references'), { recursive: true });
     const content = fs.readFileSync(path.join(srcDir, file), 'utf8')
-      .replace(/~\/\.claude\//g, pathPrefix)
-      .replace(/\$HOME\/\.claude\//g, toHomePrefix(pathPrefix))
+      .replace(/~\/\.claude\//g, () => pathPrefix)
+      .replace(/\$HOME\/\.claude\//g, () => toHomePrefix(pathPrefix))
       .replace(/\.\/\.claude\//g, `./${getDirName('antigravity')}/`);
     fs.writeFileSync(path.join(skillDir, 'references', `${command}.md`), content);
     const { frontmatter } = extractFrontmatterAndBody(content);
@@ -2053,10 +2058,10 @@ function copyFlattenedCommands(srcDir, destDir, prefix, pathPrefix, runtime) {
       const globalClaudeHomeRegex = /\$HOME\/\.claude\//g;
       const localClaudeRegex = /\.\/\.claude\//g;
       const opencodeDirRegex = /~\/\.opencode\//g;
-      content = content.replace(globalClaudeRegex, pathPrefix);
-      content = content.replace(globalClaudeHomeRegex, toHomePrefix(pathPrefix));
+      content = content.replace(globalClaudeRegex, () => pathPrefix);
+      content = content.replace(globalClaudeHomeRegex, () => toHomePrefix(pathPrefix));
       content = content.replace(localClaudeRegex, `./${getDirName(runtime)}/`);
-      content = content.replace(opencodeDirRegex, pathPrefix);
+      content = content.replace(opencodeDirRegex, () => pathPrefix);
 
       content = convertClaudeToOpencodeFrontmatter(content);
 
@@ -2098,8 +2103,8 @@ function copyWithPathReplacement(srcDir, destDir, pathPrefix, runtime) {
       const globalClaudeRegex = /~\/\.claude\//g;
       const globalClaudeHomeRegex = /\$HOME\/\.claude\//g;
       const localClaudeRegex = /\.\/\.claude\//g;
-      content = content.replace(globalClaudeRegex, pathPrefix);
-      content = content.replace(globalClaudeHomeRegex, toHomePrefix(pathPrefix));
+      content = content.replace(globalClaudeRegex, () => pathPrefix);
+      content = content.replace(globalClaudeHomeRegex, () => toHomePrefix(pathPrefix));
       content = content.replace(localClaudeRegex, `./${dirName}/`);
 
       // Convert frontmatter for opencode compatibility
@@ -3142,8 +3147,8 @@ function install(isGlobal, runtime = 'claude') {
       if (entry.isFile() && entry.name.endsWith('.md')) {
         let content = fs.readFileSync(path.join(agentsSrc, entry.name), 'utf8');
         // Replace ~/.claude/ and $HOME/.claude/ with runtime-appropriate paths
-        content = content.replace(/~\/\.claude\//g, pathPrefix);
-        content = content.replace(/\$HOME\/\.claude\//g, toHomePrefix(pathPrefix));
+        content = content.replace(/~\/\.claude\//g, () => pathPrefix);
+        content = content.replace(/\$HOME\/\.claude\//g, () => toHomePrefix(pathPrefix));
         // Convert frontmatter for runtime compatibility
         if (isOpencode) {
           content = convertClaudeToOpencodeFrontmatter(content);
@@ -3539,7 +3544,7 @@ function promptPiVersion(callback) {
       callback(resolvePiVersionChoice(answer));
       return;
     }
-    rl.question('  Exact version (X.Y.Z): ', version => {
+    rl.question('  Exact version (X.Y.Z, for example 3.0.0-rc1): ', version => {
       rl.close();
       try {
         callback(resolvePiVersionChoice(answer, version));

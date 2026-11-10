@@ -116,7 +116,7 @@ crate ROOT and read the `code` field of its JSON result (`legacy-mode` and `mixe
 exit code 4, so never read the exit status):
 
 ```bash
-PATCH_ENGINE=../../../scripts/fvs-extract-patches.mjs
+PATCH_ENGINE="../../../scripts/fvs-extract-patches.mjs"
 node "$PATCH_ENGINE" check --project-root "$CRATE_ROOT" --format json
 ```
 

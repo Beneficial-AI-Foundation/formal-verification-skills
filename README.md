@@ -9,6 +9,15 @@ directly from papers. You choose the targets, review the statements and decide w
 
 ![FVS Install](assets/terminal.svg)
 
+## SWVF 3.0.0-rc1 source preview
+
+Use a reviewed full commit SHA and the [rc1 setup checklist](fv-skills/references/auto-setup.md#rc1-exact-source-installation)
+for SWVF. The version label alone does not establish qualification or publication. The npm and
+marketplace commands below select their published versions; they do not select this preview.
+Each AO worker needs the same complete source pin and a checked installation. Initial scope and
+execution grants remain explicit. Project memory is optional and uses one existing primary Beads
+store; it is separate from the local issue tracker.
+
 ## Getting started
 
 Run `npx fv-skills-baif` for an interactive installation, or select your runtime explicitly:
@@ -41,7 +50,9 @@ pi update npm:fv-skills-baif
 
 Project packages require project trust and take precedence over the user installation.
 The default `latest` source stays updateable. `--pi-version X.Y.Z` selects a chosen published version;
-X.Y.Z is a metavariable. Exact pins are skipped by `pi update`; rollback means reinstalling a chosen
+X.Y.Z is a metavariable; exact SemVer prereleases such as `3.0.0-rc1` are accepted too, once published.
+For an unpublished preview use `pi install "$FVS_SOURCE" --local` from the exact retained source
+snapshot, as the setup checklist explains. Exact registry pins are skipped by `pi update`; rollback means reinstalling a chosen
 published pin. If FVS exists in the opposite scope, choose keep, move or cancel. Scripts must pass
 `--pi-conflict keep` or `--pi-conflict move`. Pi owns its settings paths, so `--config-dir` does not
 redirect them. See [Pi package documentation](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md).
@@ -130,16 +141,15 @@ for selection rules and runtime limitations.
 /fvs:auto-init → /fvs:auto-extract → /fvs:auto-top-specs → /fvs:auto-execute
 ```
 
-The auto track runs a functional-correctness project with Agent Orchestrator as the coordinator and
-needs its `ao` CLI on the host. `/fvs:auto-init` runs the compatibility profile and records the source
-revision, configuration, initial scope and limits in `.formalising/auto-fv/state.json`; it offers once
-to write the project roadmap with `/fvs:roadmap` at `.formalising/auto-fv/ROADMAP.md`. `/fvs:auto-extract` extracts that revision through
-`/fvs:aeneas-extract` in translation-patch mode and records the result and one externals record per
-opaque, external, handwritten or semantic-patch boundary. A failed extraction is never recorded as
-success, and a successful one is not a proof. `/fvs:auto-top-specs` and `/fvs:auto-execute` report the
-recorded state and stop: root selection, frozen specifications, proof dispatch and acceptance are
-milestone 2 functionality not yet available. Every command is safe to rerun and never overwrites an
-owner choice without confirmation. `/fvs:auto` routes to the four commands.
+The auto track uses stock Agent Orchestrator and needs its `ao` CLI. `/fvs:auto-init` checks the
+project, records the initial scope and execution choices, and reuses a current applicable roadmap
+agreement. With complete authorized v2 controller context, the driver continues through extraction,
+specification, fresh review, dependency-ready proof construction and independent checker acceptance.
+It preserves the original run policy on resume. Missing grants, profiles, installed capabilities or
+current evidence produce an explicit blocked/partial result; agreement storage alone starts no work.
+Legacy/read-only routes retain their stops. Final results separate extraction, reviewed contracts,
+checked proofs and open assumptions, and end in a bundle for human review. Source/component checks
+and AO/reviewer doubles do not establish real-provider or whole-library qualification.
 
 ### Functional correctness
 

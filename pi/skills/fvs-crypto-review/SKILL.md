@@ -96,7 +96,7 @@ Check the signature-line budget first. This is read-only: it creates no review f
 contacts no reviewer.
 
 ```bash
-node ../../../scripts/fvs-codex-think.mjs review-preflight \
+node "../../../scripts/fvs-codex-think.mjs" review-preflight \
   --topic "$ROOT" --iteration "n$N" --target "$TARGET_KIND" --grounding "$GROUNDING_FILE"
 ```
 
@@ -109,7 +109,7 @@ passes. Then run the review, which repeats the same check against current source
 ```bash
 MODEL_IDENTITY_ARGS=()
 [ "$MODEL_IS_ALIAS" != "true" ] || MODEL_IDENTITY_ARGS=(--model-is-alias)
-node ../../../scripts/fvs-codex-think.mjs review \
+node "../../../scripts/fvs-codex-think.mjs" review \
   --topic "$ROOT" --iteration "n$N" --target "$TARGET_KIND" \
   --reviewer "$REVIEWER" --model "$MODEL" --effort "$EFFORT" --grounding "$GROUNDING_FILE" \
   "${MODEL_IDENTITY_ARGS[@]}"
