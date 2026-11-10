@@ -1,5 +1,5 @@
 // Two-revision re-specification scenario over the reused real C0 fixture (owned copies only). Selected explicitly with
-// FVS_D_CONFIG (local persistent materials). AO and reviewers are labelled protocol doubles; without FVS_REAL_RESPEC_D=1
+// FVS_D_CONFIG (local persistent materials). AO and reviewers are labelled protocol doubles; without FVS_REAL_RESPEC_D=<scenario>
 // no Lean freeze/check/accept runs and nothing here is proof evidence.
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -8,7 +8,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const crypto = require('node:crypto');
-const { dWorld, reviseContract, freezeRequest, admitFreeze, runE0, runE1, registryStatus, git, sha } = require('./helpers/d-respec-world.cjs');
+const { dWorld, reviseContract, freezeRequest, admitFreeze, runE0, runE1, intendedFailure, registryStatus, git, sha } = require('./helpers/d-respec-world.cjs');
 const ROOT = path.resolve(__dirname, '..');
 const cfg = process.env.FVS_D_CONFIG ? JSON.parse(fs.readFileSync(process.env.FVS_D_CONFIG)) : null;
 const skip = cfg ? false : 'FVS_D_CONFIG not set (local qualification materials required)';
@@ -118,13 +118,58 @@ async function realWorld() {
   fs.writeFileSync(path.join(base, 'engine.json'), JSON.stringify({ commit: pinned, tree: git(ROOT, 'rev-parse', 'HEAD^{tree}'), root: ROOT, startedAt: new Date().toISOString() }) + '\n');
   return w;
 }
-const realSkip = skip || (process.env.FVS_REAL_RESPEC_D !== '1' && 'real Lean run requires FVS_REAL_RESPEC_D=1 and an owner allocation');
+// One native allocation selects exactly one scenario by name; an unknown selector fails instead of running nothing.
+const SCENARIOS = ['E0', 'E0+E1'], selected = process.env.FVS_REAL_RESPEC_D ?? null;
+if (selected !== null && !SCENARIOS.includes(selected)) throw new Error('FVS_REAL_RESPEC_D must be one of ' + SCENARIOS.join(', '));
+const enabled = (value, name) => value === name;
+const realSkip = name => skip || (!enabled(selected, name) && 'real Lean scenario ' + name + ' requires FVS_REAL_RESPEC_D=' + name + ' and an owner allocation');
+test('each native selector enables exactly one real scenario (no native run)', () => {
+  for (const value of SCENARIOS) assert.deepEqual(SCENARIOS.filter(name => enabled(value, name)), [value]);
+  for (const value of [null, '1', 'E0+E1 ', 'e0']) assert.deepEqual(SCENARIOS.filter(name => enabled(value, name)), []);
+});
 
-test('E0 real: F0 freeze, check and canonical acceptance of H, A, B (FVS_REAL_RESPEC_D=1)', { skip: realSkip }, async () => {
+test('E0 real: F0 freeze, check and canonical acceptance of H, A, B (FVS_REAL_RESPEC_D=E0)', { skip: realSkip('E0') }, async () => {
   const w = await realWorld(), r = await runE0(w, cfg.materials), store = w.ca.readAcceptedStore(r.storeRoot);
   assert.deepEqual(store.records.map(x => x.record.node), [19, 20, 21]);
   assert.ok(store.records.every(x => x.record.authority === 'canonical-checker' && x.record.integrated.commit === cfg.materials.c0.commit));
   console.log('E0 receipts:', JSON.stringify({ storeRoot: r.storeRoot, head: store.headSha256, baseline: w.inputs.baseline }));
+});
+
+// The writer's deliberate first attempt is classified from bound terminal facts only (synthetic receipts, no Lean):
+// any lifecycle failure, other diagnostic or changed stream stops the scenario instead of becoming failed-approach progress.
+test('only a clean nonzero Lean exit with the expected unknown lemma counts as the intended failed attempt', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-d-attempt-')); owned.push(dir);
+  const file = path.join(dir, 'Specs/CheckerOverlayV1.lean'), wrong = file + ":10:8: error: unknown identifier 'm1demo.helper_add_comm'\n";
+  const ref = (name, bytes) => { const f = path.join(dir, name + '-' + crypto.randomUUID()); fs.writeFileSync(f, bytes); return { file: f, sha256: sha(fs.readFileSync(f)) }; };
+  const clean = { toolUnchanged: true, pid: 4242, status: 1, signal: null, error: null, cancelled: false, timedOut: false, outputLimitExceeded: false, cleanupComplete: true,
+    cleanup: { kind: 'recorded-owned-group-absence', result: 'absent', descendantAttestation: false, streamsDrained: true } };
+  const attempt = ({ result = {}, stdout = wrong, stderr = '', status = 'execution-unverified' } = {}) => {
+    const out = ref('stdout', stdout), err = ref('stderr', stderr);
+    return { status, code: 'owned-work-unverified', stdout: out, stderr: err, terminal: ref('terminal', JSON.stringify({ schema: 'fvs/owned-command-terminal', schemaVersion: 1, result: { ...clean, ...result }, stdout: out, stderr: err })) };
+  };
+  assert.match(intendedFailure(attempt(), file, 'm1demo.helper_add_comm'), /unknown identifier 'm1demo\.helper_add_comm'/);
+  assert.ok(intendedFailure(attempt({ stdout: '', stderr: file + ":10:8: error: unknown constant 'm1demo.helper_add_comm'\n" }), file, 'm1demo.helper_add_comm'));
+  const refused = {
+    'compiled': attempt({ status: 'command-completed', result: { status: 0 } }),
+    'zero exit': attempt({ result: { status: 0 } }),
+    'import failure': attempt({ stdout: file + ":1:0: error: unknown module prefix 'Specs'\n" }),
+    'import failure beside the lemma': attempt({ stdout: wrong + file + ":1:0: error: object file of module Specs.Roots does not exist\n" }),
+    'another file': attempt({ stdout: "/elsewhere/X.lean:10:8: error: unknown identifier 'm1demo.helper_add_comm'\n" }),
+    'another identifier': attempt({ stdout: file + ":10:8: error: unknown identifier 'm1demo.other'\n" }),
+    'no diagnostic': attempt({ stdout: '' }),
+    'signal': attempt({ result: { status: null, signal: 'SIGKILL' } }),
+    'spawn error': attempt({ result: { status: null, error: 'ENOENT' } }),
+    'cancelled': attempt({ result: { cancelled: true } }),
+    'timeout': attempt({ result: { timedOut: true } }),
+    'output overflow': attempt({ result: { outputLimitExceeded: true } }),
+    'incomplete cleanup': attempt({ result: { cleanupComplete: false } }),
+    'tool drift': attempt({ result: { toolUnchanged: false } }),
+  };
+  const tampered = attempt(); fs.appendFileSync(tampered.stdout.file, 'x'); refused['changed stream'] = tampered;
+  const swapped = attempt(); swapped.stdout = attempt().stdout; refused['stream not from this terminal'] = swapped;
+  const reason = label => ['import failure', 'import failure beside the lemma', 'another file', 'another identifier', 'no diagnostic'].includes(label) ? /failed for another reason/
+    : label === 'changed stream' ? /attempt evidence changed/ : label === 'stream not from this terminal' ? /not the terminal streams/ : /not a clean nonzero Lean exit/;
+  for (const [label, a] of Object.entries(refused)) assert.throws(() => intendedFailure(a, file, 'm1demo.helper_add_comm'), reason(label), label);
 });
 
 // E0 then E1 in one run (the E0 acceptances go stale once H is revised, so E1 carries the v2 basis chain throughout).
@@ -143,7 +188,7 @@ function e1Reviews(w) {
     { contract: { ...g0Contract(21), author: author('d-e1-review-21') }, draft: head + 'theorem root_twice_eq : ∀ (p : m1demo.Pair), m1demo.root_twice p = (do let i ← m1demo.helper p; i * 2#u32) := by sorry\n', cited },
   ];
 }
-test('E0+E1 real: revise H, freeze F1, scripted writer to I1, re-accept H, A, B (FVS_REAL_RESPEC_D=1)', { skip: realSkip }, async () => {
+test('E0+E1 real: revise H, freeze F1, scripted writer to I1, re-accept H, A, B (FVS_REAL_RESPEC_D=E0+E1)', { skip: realSkip('E0+E1') }, async () => {
   const w = await realWorld(), e0 = await runE0(w, cfg.materials);
   const e1 = await runE1(w, cfg.materials, { storeRoot: e0.storeRoot, basis: e0.basis, reviews: e1Reviews(w), overlay: OVERLAY_V1 });
   const store = w.ca.readAcceptedStore(e0.storeRoot), i1 = w.source(), f1 = w.t.transitionBound(w.inputs.baseline);

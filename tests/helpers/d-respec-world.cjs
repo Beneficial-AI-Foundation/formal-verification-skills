@@ -194,6 +194,24 @@ async function checkAccept(w, label, storeRoot, basis) {
   return { receipts, basis: next };
 }
 
+// The deliberate first attempt counts only as the intended failed proof: an actually started, normally terminated,
+// nonzero Lean run with the tool unchanged and cleanup complete, whose hash-bound diagnostics are exactly the expected
+// unknown identifier in this file. Any other failure (lifecycle, import, search path) stops with its own facts.
+const WRONG_LEMMA = 'm1demo.helper_add_comm';
+function intendedFailure(attempt, file, identifier) {
+  const read = ref => { const b = fs.readFileSync(ref.file); if (sha(b) !== ref.sha256) throw new Error('attempt evidence changed: ' + ref.file); return b; };
+  const terminal = JSON.parse(read(attempt.terminal)), r = terminal.result;
+  if (attempt.status !== 'execution-unverified' || !r || r.toolUnchanged !== true || !Number.isInteger(r.status) || r.status === 0 || r.signal !== null || r.error !== null
+    || r.cancelled !== false || r.timedOut !== false || r.outputLimitExceeded !== false || r.cleanupComplete !== true)
+    throw new Error('first attempt is not a clean nonzero Lean exit: ' + JSON.stringify({ status: attempt.status, code: attempt.code ?? null, result: r }));
+  for (const key of ['stdout', 'stderr']) if (terminal[key].file !== attempt[key].file || terminal[key].sha256 !== attempt[key].sha256) throw new Error('attempt streams are not the terminal streams');
+  const text = read(attempt.stdout).toString('utf8') + read(attempt.stderr).toString('utf8');
+  // Lean names an absent simp lemma as an unknown identifier or constant; either way it is this exact name.
+  const errors = text.split('\n').filter(line => /(^|: )error\b/.test(line)), expected = file + ':', unknown = ["unknown identifier '" + identifier + "'", "unknown constant '" + identifier + "'"];
+  if (!errors.length || errors.some(line => !line.startsWith(expected) || !unknown.some(u => line.includes(u)))) throw new Error('first attempt failed for another reason: ' + (errors.join(' | ') || text.slice(0, 400)));
+  return errors[0].slice(expected.length);
+}
+
 // Scripted proof writer (no model): one issued proof task for `node` under the current freeze. It records a genuine
 // failed attempt (the wrong-lemma overlay compiled through the run-owned route with the frozen Lean and fails), records
 // that progress, commits the correct overlay as its candidate, and the controller materializes it into the source by
@@ -209,10 +227,10 @@ async function proofWriter(w, { node, file, wrong, correct, basis }) {
   const build = frozen.build, leanPath = [build.buildRoot ? path.join(build.buildRoot, 'lib', 'lean') : null, ...(build.externalSearchPaths ?? [])].filter(Boolean).join(':');
   const attempt = await e.runTaskCommand({ schema: 'fvs/owned-command-request', schemaVersion: 1, packet: s.packet, marker: s.marker, invocationId: crypto.randomUUID(),
     tool: { file: build.lean.path, sha256: build.lean.sha256 }, argv: [build.lean.path, '--root=' + wt, target], cwd: wt, env: { PATH: '/usr/bin:/bin', LANG: 'C', LEAN_PATH: leanPath } });
-  if (attempt.status === 'command-completed') throw new Error('the deliberate wrong-lemma attempt unexpectedly compiled');
+  const diagnostic = intendedFailure(attempt, target, WRONG_LEMMA);
   const progress = auto.recordProgress({ packet: s.packet, marker: s.marker, previous: null, currentGoal: 'prove ' + file + ' for node ' + node,
     failedApproaches: [{ hypothesis: 'close the sum by a commutativity lemma', evidence: [attempt.terminal, attempt.stderr] }],
-    lastMeaningfulProgress: { observedAtMs: Date.now(), description: 'compiled the first attempt; unknown identifier m1demo.helper_add_comm', evidence: [attempt.terminal] },
+    lastMeaningfulProgress: { observedAtMs: Date.now(), description: 'compiled the first attempt: ' + diagnostic, evidence: [attempt.terminal] },
     blocker: null, nextStep: 'state the target exactly and prove it by rfl', blockerResolution: null, out: x.out() }).progress;
   fs.writeFileSync(target, fs.readFileSync(correct));
   git(wt, 'add', '--', file); git(wt, '-c', 'user.name=FVS scripted writer', '-c', 'user.email=writer@fvs.invalid', 'commit', '-qm', 'proof(' + node + '): revised overlay');
@@ -264,4 +282,4 @@ function registryStatus(w) {
   return JSON.parse(p.stdout);
 }
 
-module.exports = { prepareRealRoot, recordSetup, dWorld, reviseContract, closeAssignment, freezeRequest, admitFreeze, runE0, runE1, proofWriter, registryStatus, git, sha };
+module.exports = { prepareRealRoot, recordSetup, dWorld, reviseContract, closeAssignment, freezeRequest, admitFreeze, runE0, runE1, proofWriter, intendedFailure, registryStatus, git, sha };
