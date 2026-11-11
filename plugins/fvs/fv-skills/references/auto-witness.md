@@ -37,3 +37,22 @@ M1demo-only tracer, relocated from the preserved seven-step producer with unchan
 support/templates. Its prepare-only path runs no tools and is not witness evidence. Actual capture,
 consumer/provenance review and real checker acceptance remain separate gates. Do not use an old
 state/Specs/receipt in the new source, remove inconvenient inputs or rewrite envelope SHAs.
+
+## Worker commands and project-local MCP caps
+
+For a tracer proof task, set owned-command env.LEAN_NUM_THREADS to the string "2"; other values
+are refused. Absence retains legacy explicit-environment behavior and does not inherit the outer
+shell's value. This is a narrow allowlist addition, not permission to submit arbitrary environment.
+The real pinned Lean/Lake remain subject to the active-task lease and normal startup/currentness.
+For direct Lean calls also use --threads=2. Lake has no -j flag: retain the real argv and request env.
+Use the frozen build/dependency search paths, with no source/tool upgrades or wrapper escape.
+
+Prefer the tracer project's local lean-lsp-mcp configuration with server env.LEAN_NUM_THREADS="2".
+Install/merge it only during authorized trusted setup, preserve existing entries and permissions,
+and propagate that local configuration before each actor's native startup. In the counted readiness
+slot, observe the actual server and its lake serve/Lean children: selected environment key, tool/start
+identity and thread observations. Never log whole environments or secrets, infer the bound from a
+parent setting alone, or claim all OS threads are compiler workers. Existing provider/MCP trust gates
+still apply. If the actual child cap cannot be verified, use the existing owned capped CLI route
+and disclose that MCP compilation was unavailable. No MCP server/config was started or changed by
+these source tests. No global settings or existing projects are modified by this instruction.

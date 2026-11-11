@@ -409,8 +409,9 @@ export async function runTaskCommand(raw, services={}) {
   if(fs.realpathSync(request.tool.file)!==request.tool.file||fileHash(request.tool.file)!==request.tool.sha256||!toolPins.some(t=>t.file===request.tool.file&&t.sha256===request.tool.sha256))reject('command is not a pinned task tool');
   const relative=path.relative(actor.worktree.path,request.cwd);
   if(relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative)||fs.realpathSync(request.cwd)!==request.cwd)reject('owned cwd escapes assigned worktree');
-  const allowed=['PATH','LANG','LC_ALL','HOME','TMPDIR','CARGO_HOME','RUSTUP_HOME','ELAN_HOME','LEAN_PATH','GIT_CONFIG_GLOBAL','GIT_CONFIG_NOSYSTEM','GIT_TERMINAL_PROMPT','GIT_NO_LAZY_FETCH','GIT_NO_REPLACE_OBJECTS','GIT_OPTIONAL_LOCKS','DISABLE_TELEMETRY','DO_NOT_TRACK'];
+  const allowed=['PATH','LANG','LC_ALL','HOME','TMPDIR','CARGO_HOME','RUSTUP_HOME','ELAN_HOME','LEAN_PATH','LEAN_NUM_THREADS','GIT_CONFIG_GLOBAL','GIT_CONFIG_NOSYSTEM','GIT_TERMINAL_PROMPT','GIT_NO_LAZY_FETCH','GIT_NO_REPLACE_OBJECTS','GIT_OPTIONAL_LOCKS','DISABLE_TELEMETRY','DO_NOT_TRACK'];
   if(!request.env||Object.keys(request.env).some(k=>!allowed.includes(k))||Object.values(request.env).some(v=>typeof v!=='string'))reject('credential-free command environment required');
+  if(Object.hasOwn(request.env,'LEAN_NUM_THREADS')&&request.env.LEAN_NUM_THREADS!=='2')reject("LEAN_NUM_THREADS must be the literal '2'");
   assertRunning(control,services);const root=ownedWorkRoot(packet),unlock=scopeLock(root);let released=false,dir,intent;
   const release=()=>{if(!released){unlock();released=true;}};
   try {
