@@ -215,8 +215,11 @@ if (process.argv.includes('--package-fixture')) {
     for (const token of ['hooks/dist/fvs-check-update.js', 'hooks/dist/fvs-statusline.js',
       'raw Git checkout', 'mcpServers.lean-lsp', 'before native startup', 'externally prepared',
       'profile-blocked', 'identity, correspondence and eligibility',
-      'uncertain reservation with no rc1 closure route', 'keep the old run as a partial',
-      'fresh run root']) assert.ok(rc.includes(token), token);
+      'uncertain reservation with no rc1 closure route', 'retain the old run as a partial',
+      'failed-attempt history and applicable limits/accounting',
+      'Start a fresh run root only after the old launch and any created session are conclusively stopped or absent',
+      'existing authorization covers the new attempt', 'If termination remains uncertain, HOLD',
+      'not a same-run resume', 'do not synthesize an after-event or delete the pending reservation']) assert.ok(rc.includes(token), token);
     const help = section(fs.readFileSync(path.join(ROOT, 'commands/fvs/help.md'), 'utf8'),
       '### Auto (`/fvs:auto`)', '### Context (`/fvs:context`)');
     assert.doesNotMatch(help, /milestone 2 functionality not yet available|is safe to rerun/);
