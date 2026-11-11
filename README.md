@@ -137,9 +137,8 @@ for selection rules and runtime limitations.
 
 ### Auto track
 
-Human re-specification after end/partial results is unsupported in 3.0.0-rc1. Keep feedback and
-whole-scope partial reasons; AUTO does not start revision effects or providers for that request.
-Initial specification/review/revise/prove and ordinary safe resume retain their existing gates.
+Human re-specification is unsupported in 3.0.0-rc1; keep feedback and whole-scope partial reasons.
+Initial cycles and safe resume keep their gates; feedback starts no revision work or providers.
 
 ```text
 /fvs:auto-init → /fvs:auto-extract → /fvs:auto-top-specs → /fvs:auto-execute
