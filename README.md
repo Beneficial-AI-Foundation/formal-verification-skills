@@ -119,6 +119,8 @@ for selection rules and runtime limitations.
 
 ## Workflows
 
+[A typical FVS project](docs/workflow.md) walks through a whole project and where FVS stops for you.
+
 ### Functional correctness
 
 ```text
