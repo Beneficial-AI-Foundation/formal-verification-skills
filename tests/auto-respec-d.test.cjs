@@ -8,7 +8,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const crypto = require('node:crypto');
-const { dWorld, reviseContract, freezeRequest, admitFreeze, runE0, runE1, runE2, intendedFailure, bundleRequest, respecRequest, versionsOf, negative, variant, step, registryStatus, git, sha } = require('./helpers/d-respec-world.cjs');
+const { dWorld, reviseContract, freezeRequest, admitFreeze, runE0, runE1, runE2, episodeReviews, intendedFailure, bundleRequest, respecRequest, versionsOf, negative, variant, step, registryStatus, git, sha } = require('./helpers/d-respec-world.cjs');
 const ROOT = path.resolve(__dirname, '..');
 const cfg = process.env.FVS_D_CONFIG ? JSON.parse(fs.readFileSync(process.env.FVS_D_CONFIG)) : null;
 const skip = cfg ? false : 'FVS_D_CONFIG not set (local qualification materials required)';
@@ -249,7 +249,8 @@ test('only a clean nonzero Lean exit with the expected unknown lemma counts as t
   for (const [label, a] of Object.entries(refused)) assert.throws(() => intendedFailure(a, file, 'm1demo.helper_add_comm'), reason(label), label);
 });
 
-// E0 then E1 in one run (the E0 acceptances go stale once H is revised, so E1 carries the v2 basis chain throughout).
+// E0 then E1 in one run (the E0 acceptances go stale once H is revised, so after its first, fresh review E1 carries the
+// v2 basis chain throughout).
 const FIX = path.join(__dirname, 'fixtures', 'd-respec');
 const OVERLAY_V1 = { file: 'Specs/CheckerOverlayV1.lean', wrong: path.join(FIX, 'CheckerOverlayV1.wrong-lemma.lean'), correct: path.join(FIX, 'CheckerOverlayV1.lean'),
   target: { node: 19, module: 'Specs.CheckerOverlayV1', name: 'm1demo.overlay.v1.helper_eq_sum', contextFile: 'Specs/Roots.lean' } };
@@ -320,6 +321,24 @@ test('E2 promotes the protected V1 proof into H, revises A and admits F2 at the 
   assertNegative(negative(w, { name: 'protected-proof-as-overlay', command: 'freeze', request: variant(w, f2(), v => { v.overlayFiles = [OVERLAY_V1.file, OVERLAY_V2.file]; }), expectedCode: 'unsupported', dir }));
   assertNegative(negative(w, { name: 'toolchain-drift', command: 'freeze', request: variant(w, f2(), v => { v.baseline.lean.sha256 = '0'.repeat(64); }), expectedCode: 'stale-input', dir }));
   assert.equal(await admitFreeze(w, request), true);
+});
+
+// A revision episode opens on contracts the previous episode left reviewed (and, natively, accepted). The engine admits
+// a chained review launch only for missing or pending contracts, so the episode's first review cannot be a successor of
+// the previous episode's last completed step; the owner's revision is outside that chain. Here H is reviewed through a
+// chained step, then the E2 reviews (promote H, revise A, review B) run as an episode handed that step's basis.
+test('a revision episode re-reviews an already reviewed contract when handed the previous chain (no Lean)', { skip }, async () => {
+  const w = await setup(), src = w.source().root;
+  fs.copyFileSync(OVERLAY_V1.correct, path.join(src, OVERLAY_V1.file));
+  git(src, 'add', '--', OVERLAY_V1.file); git(src, '-c', 'user.name=FVS inert stand-in', '-c', 'user.email=inert@fvs.invalid', 'commit', '-qm', 'inert stand-in for I1');
+  const previous = await reviseContract(w, { ...e1Reviews(w)[0], chain: true });
+  assert.equal(registryStatus(w).nodes['19'].state, 'machine-reviewed-provisional');
+  assert.equal(previous.basis?.version, 2);
+  const basis = await episodeReviews(w, e2Reviews(w), previous.basis), heads = w.reg.readChain(w.real.registry).heads, ready = registryStatus(w);
+  assert.equal(basis?.version, 2, 'the episode returns the chained basis of its last review');
+  assert.equal(heads.get(19).record.contract.specDefinitions.find(d => d.file === OVERLAY_V1.file)?.sha256, sha(fs.readFileSync(path.join(src, OVERLAY_V1.file))));
+  assert.equal(heads.get(20).record.contract.statement, '∀ (p : m1demo.Pair), m1demo.root_sum p = p.a + p.b');
+  for (const n of ['19', '20']) assert.equal(ready.nodes[n].state, 'machine-reviewed-provisional', n);
 });
 
 test('E0+E1 real: revise H, freeze F1, scripted writer to I1, re-accept H, A, B (FVS_REAL_RESPEC_D=E0+E1)', { skip: realSkip('E0+E1') }, async () => {
