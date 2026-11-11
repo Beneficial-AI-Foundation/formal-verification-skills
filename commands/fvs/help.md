@@ -555,6 +555,7 @@ Rust → Charon → LLBC → Aeneas → Lean 4
 
 ## Getting Help
 
+- Follow a whole project step by step: https://github.com/Beneficial-AI-Foundation/formal-verification-skills/blob/main/docs/workflow.md
 - Run `/fvs:map-code` to analyze your project
 - Check `.formalising/CODEMAP.md` for verification status
 - Inspect `~/.claude/fv-skills/references/` for domain knowledge
