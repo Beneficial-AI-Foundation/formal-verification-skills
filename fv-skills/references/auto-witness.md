@@ -1,7 +1,9 @@
 # Reproduce a Lean witness without adopting historical runtime state
 
+<overview>
 The graph reader keeps extraction facts separate from project setup. This is a bounded interface
 for the qualified Lean4.31 constants-v2/probe-lean lane; no new extraction or proof is implied.
+</overview>
 
 `fvs-lean-graph.mjs ... --extraction-state ORIGINAL_STATE.json` reads the raw original state outside
 the immutable Lean source. The API equivalent is `buildLeanGraph({... , extractionStateText})`.

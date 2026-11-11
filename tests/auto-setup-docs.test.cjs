@@ -10,6 +10,7 @@ const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { commandContext, nodeArguments } = require('./helpers/documented-node-command.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 const AUTO_SCRIPT = path.join(ROOT, 'scripts', 'fvs-auto.mjs');
@@ -67,6 +68,28 @@ function section(text, heading) {
   assert.ok(start >= 0, `section ${heading}`);
   const end = text.indexOf('\n## ', start + 1);
   return text.slice(start, end < 0 ? undefined : end);
+}
+
+// Only profile/resolver statements belong to the read-only host-check sections.
+function readOnlyExamples(text) {
+  const checks = section(text, 'Prerequisites you install yourself') + section(text, 'Check your host');
+  return [...checks.matchAll(/```bash\n([\s\S]*?)```/g)].flatMap(m => m[1].split('\n'))
+    .map(line => line.trim()).filter(line => line && !line.startsWith('#'));
+}
+function namedReadOnlyExamples(text) {
+  const lines = readOnlyExamples(text);
+  return ['fvs-auto.mjs', 'fvs-probe-inventory.mjs'].map(name => {
+    const matches = lines.filter(line => line.startsWith('node ') && line.includes('/' + name + '"'));
+    assert.equal(matches.length, 1, `one documented ${name} check`); return matches[0];
+  });
+}
+function assertOnlyReadOnlyExamples(text) {
+  assert.deepEqual(readOnlyExamples(text).sort(), namedReadOnlyExamples(text).sort(),
+    'read-only prerequisite/profile examples may run only the declared profile and resolver');
+}
+function assertBoundedVerdictWording(text) {
+  const stripped = text.replace(/supported-and-tested|unsupported-platform|unsupported/g, '');
+  assert.doesNotMatch(stripped, /\bsupported\b/i);
 }
 
 let tested = null;
@@ -191,13 +214,16 @@ describe('auto-setup reference: prerequisites', () => {
     assert.ok(raw.includes('git ls-files .formalising/'));
   });
 
-  it('shows how to run the profile and the resolver that prints helper setup steps', () => {
-    assert.ok(raw.includes('node ~/.claude/scripts/fvs-auto.mjs profile --project-root . --format text'));
-    assert.ok(raw.includes('fvs-probe-inventory.mjs resolve --project-root . --format text'));
+  it('passes exact profile/resolver argv with a spaced literal HOME', (t) => {
+    const context = commandContext(t), [profile, resolver] = namedReadOnlyExamples(raw);
+    assert.deepEqual(nodeArguments(profile, context), [path.join(context.home, '.claude/scripts/fvs-auto.mjs'),
+      'profile', '--project-root', '.', '--format', 'text']);
+    assert.deepEqual(nodeArguments(resolver, context), [path.join(context.home, '.claude/scripts/fvs-probe-inventory.mjs'),
+      'resolve', '--project-root', '.', '--format', 'text']);
     assert.ok(raw.includes('.aeneas/releases/<rev>/<platform>/'));
   });
 
-  it('gives an official source for each prerequisite and installs nothing itself', () => {
+  it('keeps prerequisite checks read-only and manual FVS setup behind explicit consent', () => {
     for (const source of [
       'https://rustup.rs',
       'https://github.com/leanprover/elan',
@@ -205,10 +231,15 @@ describe('auto-setup reference: prerequisites', () => {
       'https://github.com/Beneficial-AI-Foundation/probe-aeneas/releases',
       'https://github.com/OrchestratorInc/agent-orchestrator/releases',
     ]) assert.ok(raw.includes(source), source);
-    assert.match(doc, /This walkthrough and the profile install nothing/);
+    assert.match(doc, /The profile and resolver install no prerequisites/);
     assert.match(doc, /you install every prerequisite below yourself/);
-    // The walkthrough must not describe an installer next to its no-install promise.
-    assert.doesNotMatch(raw, /installer|consent-gated|FVS-owned/i);
+    assertOnlyReadOnlyExamples(raw);
+    const manual = flat(section(raw, 'Rc1 exact-source installation'));
+    assert.match(manual, /After permission for these exact local writes/);
+    assert.match(manual, /FVS installs none of those tools/);
+    assert.match(manual, /installing FVS never runs `bd init`, migrates a store or changes Beads settings/);
+    const unsafe = raw.replace('## Check your host', '## Check your host\n\n```bash\nnpm install forbidden-example\n```');
+    assert.throws(() => assertOnlyReadOnlyExamples(unsafe), /read-only prerequisite/);
   });
 
   it('explains how .formalising stays out of git and how to check it', () => {
@@ -271,9 +302,13 @@ describe('auto-setup reference: tested matrix', () => {
     }
   });
 
-  it('has no blanket "supported" wording', () => {
-    const stripped = raw.replace(/supported-and-tested|unsupported-platform|unsupported/g, '');
-    assert.doesNotMatch(stripped, /\bsupported\b/i);
+  it('keeps whole-guide support wording bound to the recorded verdict names', () => {
+    assertBoundedVerdictWording(raw);
+    assert.match(doc, /Neither an installed version line nor unit fixtures establish full AO\/Lean factory or cloud support/);
+    for (const heading of ['Rc1 exact-source installation', 'Tested matrix']) {
+      const blanket = raw.replace(`## ${heading}`, `## ${heading}\n\nFVS is supported on every host.`);
+      assert.throws(() => assertBoundedVerdictWording(blanket), /not match/);
+    }
   });
 
   it('keeps planning artefacts out of shipped text', () => {

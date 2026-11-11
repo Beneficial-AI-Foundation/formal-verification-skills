@@ -3,8 +3,8 @@
 How to get from a clean host to a recorded auto-init state when you are new to functional-correctness
 verification: what you install yourself, how to check each tool, what each compatibility verdict means
 and what the single next step is, how to keep `.formalising/` out of git, and which operation, tuple
-and platforms have a recorded run. This walkthrough installs nothing and makes no claim beyond the
-tested matrix at the end. `TESTED_TUPLES` in `scripts/fvs-probe-inventory.mjs` is the authority; the
+and platforms have a recorded run. The guide separates explicit owner-run FVS setup from read-only
+prerequisite checks and makes no claim beyond the tested matrix at the end. `TESTED_TUPLES` in `scripts/fvs-probe-inventory.mjs` is the authority; the
 matrix mirrors it and a test keeps the two in step.
 
 </overview>
@@ -75,11 +75,11 @@ extraction and a full pilot are separate from preparing this installation.
    explicit; routine stage transitions use the existing grants. Missing real provider access,
    unavailable extraction tuples or unsupported target shapes remain named partial/blocked outcomes.
    Report which checks used real tools and which used doubles. This setup grants neither publication
-   nor the held public-API path. Keep Lean threads at the agreed cap (here `LEAN_NUM_THREADS=2`), serial
-   heavy work and the project's actual supported build controls.
+   nor the held public-API path. Keep Lean threads at the agreed cap (here `LEAN_NUM_THREADS=2`),
+   serialize heavy work and use only controls available in the project's pinned build tools.
 
 For the Beads CLI itself, use its [official versioned installation guide](https://github.com/gastownhall/beads/blob/v1.3.1/docs/getting-started/installation.md).
-A generic latest install may differ from this adapter's supported version. No Beads plugin, MCP server
+A generic latest install may differ from the Beads `1.3.1` version recorded for this adapter. No Beads plugin, MCP server
 or external Dolt server is required by the embedded adapter. Existing stores/settings are preserved;
 initialization has native Git side effects and needs its own explained setup permission.
 
@@ -98,8 +98,9 @@ version line nor unit fixtures establish full AO/Lean factory or cloud support.
 
 ## Prerequisites you install yourself
 
-This walkthrough and the profile install nothing: you install every prerequisite below yourself. The
-profile described below only detects; it never installs, downloads or modifies anything.
+The profile and resolver install no prerequisites: you install every prerequisite below yourself.
+These checks only detect; they never install, download or modify anything. The separate FVS install
+example above is an explicit owner-run step after permission for its local writes.
 
 | Prerequisite | Official source | Version check | What the profile reads |
 |---|---|---|---|

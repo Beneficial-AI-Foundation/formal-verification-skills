@@ -14,6 +14,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { commandContext, nodeArguments } = require('./helpers/documented-node-command.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 const ENGINE = path.join(ROOT, 'scripts', 'fvs-extract-patches.mjs');
@@ -49,6 +50,13 @@ function run(...args) {
     // left null: the assertion on json reports the raw output
   }
   return { status: result.status, stdout: result.stdout, json };
+}
+
+// The feature announcement belongs to its introduction release, not every future Unreleased block.
+function migrationNotes(changelog) {
+  const matching = changelog.split(/^## \[/m).filter(block => block.startsWith('3.0.0-rc1]'));
+  assert.equal(matching.length, 1, 'exactly one migration-introduction release entry');
+  return matching[0];
 }
 
 function setConfig(root, config) {
@@ -127,9 +135,13 @@ describe('Migration reference: names only what the scripts provide', () => {
     assert.ok(reference.length > 0, 'fv-skills/references/extraction-patch-migration.md is missing');
   });
 
-  it('describes the shipped migrate subcommand', () => {
+  it('passes the shipped migrate subcommand and a quoted crate root as exact argv', (t) => {
     assert.ok(subcommands.includes('migrate'), 'the engine no longer ships migrate');
-    assert.match(reference, /fvs-extract-patches\.mjs migrate/);
+    const command = reference.split('\n').find(line => line.startsWith('node ') && line.includes('fvs-extract-patches.mjs') && line.includes(' migrate '));
+    assert.ok(command, 'documented migrate command');
+    const context = commandContext(t);
+    assert.deepEqual(nodeArguments(command, context), [path.join(context.home, '.claude/scripts/fvs-extract-patches.mjs'),
+      'migrate', '--project-root', context.crate]);
   });
 
   for (const file of DOCS) {
@@ -186,17 +198,24 @@ describe('Migration reference: names only what the scripts provide', () => {
   });
 });
 
-describe('CHANGELOG: the patch-mode default is recorded under Unreleased', () => {
+describe('CHANGELOG: the patch-mode default stays in its introduction release', () => {
   const changelog = fs.readFileSync(path.join(ROOT, 'CHANGELOG.md'), 'utf8');
-  const unreleased = changelog.split(/^## \[/m).find((block) => block.startsWith('Unreleased]')) ?? '';
+  const notes = migrationNotes(changelog);
+
+  it('retains that history when later release sections are added, and refuses missing/duplicate history', () => {
+    const later = changelog.replace('## [Unreleased]', '## [Unreleased]\n\n## [3.0.1] - 2027-01-01\n\nUnrelated patch.');
+    assert.equal(migrationNotes(later), notes);
+    assert.throws(() => migrationNotes(changelog.replace('## [3.0.0-rc1]', '## [other-version]')), /exactly one/);
+    assert.throws(() => migrationNotes(changelog + '\n## [3.0.0-rc1]\n'), /exactly one/);
+  });
 
   it('names the breaking default, unchanged legacy projects, the procedure and the equivalence caveat', () => {
-    assert.match(unreleased, /translation patch/i);
-    assert.match(unreleased, /breaking/i);
-    assert.match(unreleased, /legacy/i);
-    assert.match(unreleased, /migrate/i);
-    assert.match(unreleased, /extraction-patch-migration\.md/);
-    assert.match(unreleased, /does not prove[^.]*equivalen|not (a )?proof[^.]*equivalen/i);
+    assert.match(notes, /translation patch/i);
+    assert.match(notes, /breaking/i);
+    assert.match(notes, /legacy/i);
+    assert.match(notes, /migrate/i);
+    assert.match(notes, /extraction-patch-migration\.md/);
+    assert.match(notes, /does not prove[^.]*equivalen|not (a )?proof[^.]*equivalen/i);
   });
 });
 
@@ -216,20 +235,31 @@ describe('Migration sequence: starting from an explicit legacy mode', () => {
     assert.equal(late.json.mode, 'translation-patches');
   });
 
-  it('is documented in that order', () => {
+  it('documents the quoted check after the mode change in the reference and release note', (t) => {
     const reference = fs.readFileSync(REFERENCE, 'utf8');
     const manual = reference.slice(reference.indexOf('## The manual steps'));
     const steps = [...manual.matchAll(/^(\d+)\. ([\s\S]*?)(?=^\d+\. |\n<\/migration>)/gm)].map((match) => [Number(match[1]), match[2]]);
     const modeStep = steps.find(([, text]) => text.includes('extraction.mode'))?.[0];
-    const checkStep = steps.find(([, text]) => /fvs-extract-patches\.mjs check/.test(text))?.[0];
+    const context = commandContext(t);
+    const checkStep = steps.find(([, text]) => [...text.matchAll(/`(node [^`]+)`/g)].some(([, command]) => {
+      const argv = nodeArguments(command, context);
+      if (argv[1] !== 'check') return false;
+      assert.deepEqual(argv, [path.join(context.home, '.claude/scripts/fvs-extract-patches.mjs'),
+        'check', '--project-root', context.crate]);
+      return true;
+    }))?.[0];
     assert.ok(modeStep && checkStep, 'the manual steps must name the mode change and the check');
     assert.ok(modeStep < checkStep, `step ${modeStep} (mode change) must come before step ${checkStep} (check)`);
 
     const changelog = fs.readFileSync(path.join(ROOT, 'CHANGELOG.md'), 'utf8');
-    const migrate = changelog.split(/^## \[/m).find((block) => block.startsWith('Unreleased]')).split('\n- ')
+    const migrate = migrationNotes(changelog).split('\n- ')
       .find((bullet) => bullet.startsWith('To migrate'))?.replace(/\s+/g, ' ');
     assert.ok(migrate, 'the CHANGELOG has no migration bullet');
     assert.ok(migrate.indexOf('extraction.mode') < migrate.indexOf('run `check`'), 'the CHANGELOG must change the mode before check');
+    const instruction = [...migrate.matchAll(/`(node [^`]+)`/g)].map(m => m[1]);
+    assert.equal(instruction.length, 1, 'one executable migration example in the release note');
+    assert.deepEqual(nodeArguments(instruction[0], context), [path.join(context.home, '.claude/scripts/fvs-extract-patches.mjs'),
+      'migrate', '--project-root', context.crate]);
   });
 });
 

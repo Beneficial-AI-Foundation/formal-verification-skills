@@ -59,8 +59,9 @@ whole-library verification result.
   flow, unchanged, until they migrate. The engine picks the mode (`extraction.mode` in
   `.formalising/fvs-config.json` under the crate root overrides it), and a project with both an
   active ledger and a patch list stops with a mixed-mode message instead of picking one.
-- To migrate a legacy project, run `node ~/.claude/scripts/fvs-extract-patches.mjs migrate
-  --project-root <crate root>`. It writes one patch per ledger hunk, copies each entry's
+- To migrate a legacy project, set `CRATE_ROOT` to the crate's absolute path and run
+  `node "$HOME/.claude/scripts/fvs-extract-patches.mjs" migrate --project-root "$CRATE_ROOT"`.
+  It writes one patch per ledger hunk, copies each entry's
   classification, assumptions, correspondence obligations, assessor evidence and ratification into
   its patch header, and marks the ledger inactive without editing it or the source. If you had set
   `extraction.mode` to the legacy value, set it to `translation-patches` now, then restore the

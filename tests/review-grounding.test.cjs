@@ -258,7 +258,7 @@ test('crypto review allows observations but rejects adverse empty verdicts', asy
   validateReviewResponse(observed, options);
 });
 
-test('review selections stay explicit and thread values follow policy', async () => {
+test('review selections stay explicit and thread values follow policy independently of the caller', async (t) => {
   const { validateReviewerOptions, reviewThreadCount } = await import('../scripts/fvs-spec-review.mjs');
   assert.throws(() => validateReviewerOptions({ runtime: 'codex', effort: 'max' }),
     /explicit model/);
@@ -278,7 +278,23 @@ test('review selections stay explicit and thread values follow policy', async ()
   }
   assert.throws(() => validateReviewerOptions({ runtime: 'codex', model: 'catalog/model',
     effort: 'bad"value' }), /explicit effort/);
-  assert.equal(reviewThreadCount(undefined), 4);
+  assert.equal(reviewThreadCount(''), 4);
+  const parentThreads = process.env.LEAN_NUM_THREADS;
+  const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-review-thread-env-')));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const probe = path.join(directory, 'thread-metadata.mjs');
+  const moduleUrl = require('node:url').pathToFileURL(path.join(__dirname, '../scripts/fvs-spec-review.mjs')).href;
+  fs.writeFileSync(probe, `import { reviewThreadCount } from ${JSON.stringify(moduleUrl)};\n` +
+    `console.log(JSON.stringify([reviewThreadCount(), reviewThreadCount(undefined), reviewThreadCount('')]));\n`);
+  for (const [threads, expected] of [[undefined, [4, 4, 4]], ['2', [2, 2, 4]]]) {
+    // Only metadata is evaluated in the child; the parent owner cap is never changed.
+    const env = { PATH: path.dirname(process.execPath) + ':/usr/bin:/bin', DISABLE_TELEMETRY: '1', DO_NOT_TRACK: '1',
+      ...(threads === undefined ? {} : { LEAN_NUM_THREADS: threads }) };
+    const result = require('node:child_process').spawnSync(process.execPath, [probe], { encoding: 'utf8', env });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), expected);
+  }
+  assert.equal(process.env.LEAN_NUM_THREADS, parentThreads);
   assert.equal(reviewThreadCount('1'), 1);
   assert.equal(reviewThreadCount('4096'), 4096);
   for (const value of ['0', '-1', '1.5', 'eight']) {
