@@ -790,7 +790,12 @@ export function assessTransition({ actionRef, q, view, canonical, run, actual, r
 }
 
 export function validateReleasePreparation(a, packet, view, services) {
-  const launched = view.state.history.find((r) => r.event.position === 'before' && same(r.event.intent.request ?? null, packet.launch));
+  // acknowledgeStart requires the start marker beside its packet and outside protected roots. A published release
+  // cannot be withdrawn, so a packet that could never be acknowledged is refused here, before publication.
+  const marker = packet.startMarker, roots = readTransitionAction(packet.launch).before;
+  if (path.dirname(marker) !== path.dirname(a.target.packet.file) || fs.realpathSync(path.dirname(marker)) !== path.dirname(marker)
+    || [packet.actor.worktree.path, roots.source.root, roots.fixed.canonicalRoot].some((root) => marker === root || marker.startsWith(root + path.sep))) stop('transition-marker-invalid', 'start marker must be beside its packet, outside protected source, before release');
+  const launched =view.state.history.find((r) => r.event.position === 'before' && same(r.event.intent.request ?? null, packet.launch));
   if (!launched || launched.sha256 !== packet.beforeEventSha256 || launched.event.intent.reservationId !== packet.actor.reservationId) stop('transition-preparation-required', 'release has no exact retained launch');
   // Every resume retains the first release's startup barrier. Its own conclusive
   // source/artifact link is checked separately by releaseHistory.

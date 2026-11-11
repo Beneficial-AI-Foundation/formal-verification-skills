@@ -459,7 +459,7 @@ function retainedStoreSimulation(x) {
   x.transitionServices = state.services.transitions; x.invoke = (q = x.request(), op = 'state', out = x.out()) => ({ q, out, result: resume.runResume(op, { projectRoot: x.root, request: q, out }, state.services) });
   return state;
 }
-function lifecycle(x, { noOp = false, crashPublication = false, stalePreparation = false, consumeCandidate = false, consumeReview = false, staleRetirement = false } = {}) {
+function lifecycle(x, { noOp = false, crashPublication = false, stalePreparation = false, misplacedMarker = false, consumeCandidate = false, consumeReview = false, staleRetirement = false } = {}) {
   const canonicalBefore = f.sha(fs.readFileSync(f.stateFile(x.root)));
     if (consumeReview) trackRegistry(x);
     effectDouble(x); const stale = staleRetirement ? retainedStoreSimulation(x) : null;
@@ -517,6 +517,14 @@ function lifecycle(x, { noOp = false, crashPublication = false, stalePreparation
       assert.deepEqual(fs.readFileSync(path.join(x.root, '.formalising/auto-fv/resume/state.json')), original); assert.equal(fs.existsSync(body.startMarker), false);
       assert.equal(fs.readFileSync(x.log, 'utf8').split('\n').filter(Boolean).map(JSON.parse).filter((a) => a[0] === 'send').length, 0);
       return { scope: 'stale actor/candidate cannot reuse an earlier preparation, even at the same tree', runId: x.runId };
+    }
+    if (misplacedMarker) {
+      const body = { ...t.readWorkPacket(packet), startMarker: path.join(x.owned, 'workers', 'worker-start.json') }, misplaced = f.json(x.owned, 'misplaced-marker-packet', body);
+      const bad = x.action('release', { sessionId: actor.sessionId, association: updated, packet: misplaced, handle: body.deliveryHandle }, { before: releaseSnapshot, stage: 'integration' }), original = fs.readFileSync(path.join(x.root, '.formalising/auto-fv/resume/state.json'));
+      reject('transition-marker-invalid', () => x.invoke(bad.q, 'checkpoint'));
+      assert.deepEqual(fs.readFileSync(path.join(x.root, '.formalising/auto-fv/resume/state.json')), original); assert.equal(fs.existsSync(body.startMarker), false);
+      assert.equal(fs.readFileSync(x.log, 'utf8').split('\n').filter(Boolean).map(JSON.parse).filter((a) => a[0] === 'send').length, 0);
+      return { scope: 'a packet whose start marker is not beside it is refused before release publication', runId: x.runId };
     }
     const release = x.action('release', { sessionId: actor.sessionId, association: updated, packet, handle: t.readWorkPacket(packet).deliveryHandle }, { before: releaseSnapshot, stage: 'integration' });
     const rb = x.invoke(release.q, 'checkpoint'), sent = (x.execute ?? auto.executeTransition)({ projectRoot: x.root, request: release.q, beforeOut: rb.out, producerOut: x.out(), evidenceDir: x.out() });
@@ -754,6 +762,7 @@ describe('stock command adapter with owned AO lifecycle double', () => {
   it('already-correct worker source still uses an explicit validated no-op preparation', () => { lifecycle(fixture(), { noOp: true }); });
   it('crash during delivery publication retains uncertainty and cannot start or resend work', () => { lifecycle(fixture(), { crashPublication: true }); });
   it('first release refuses an old preparation for a stale actor/candidate even at the same tree', () => { lifecycle(fixture(), { stalePreparation: true }); });
+  it('release refuses a packet whose start marker is not beside it, before anything is published', () => { lifecycle(fixture(), { misplacedMarker: true }); });
   it('genuine installed Beads primary/linked actor transition lane (AO double)', { skip: process.env.FVS_TRANSITIONS_NATIVE !== '1' }, () => { const x = fixture(true); f.json(x.owned, 'native-qualification', lifecycle(x)); });
 });
 describe('simulation-authority checker control trace (not Lean/proof qualification)', () => {
