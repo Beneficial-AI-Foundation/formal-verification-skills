@@ -93,6 +93,8 @@ extraction and a full pilot are separate from preparing this installation.
    nor the held public-API path. Keep Lean threads at the agreed cap (here `LEAN_NUM_THREADS=2`),
    serialize heavy work and use only controls available in the project's pinned build tools.
 
+Known rc1 issue: a failed worker launch can leave an uncertain reservation with no rc1 closure route; keep the old run as a partial and recover in a fresh run root.
+
 For the Beads CLI itself, use its [official versioned installation guide](https://github.com/gastownhall/beads/blob/v1.3.1/docs/getting-started/installation.md).
 A generic latest install may differ from the Beads `1.3.1` version recorded for this adapter. No Beads plugin, MCP server
 or external Dolt server is required by the embedded adapter. Existing stores/settings are preserved;

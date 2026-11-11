@@ -214,7 +214,9 @@ if (process.argv.includes('--package-fixture')) {
     assert.ok(rc.indexOf('scripts/build-hooks.js') < rc.indexOf('bin/install.js'));
     for (const token of ['hooks/dist/fvs-check-update.js', 'hooks/dist/fvs-statusline.js',
       'raw Git checkout', 'mcpServers.lean-lsp', 'before native startup', 'externally prepared',
-      'profile-blocked', 'identity, correspondence and eligibility']) assert.ok(rc.includes(token), token);
+      'profile-blocked', 'identity, correspondence and eligibility',
+      'uncertain reservation with no rc1 closure route', 'keep the old run as a partial',
+      'fresh run root']) assert.ok(rc.includes(token), token);
     const help = section(fs.readFileSync(path.join(ROOT, 'commands/fvs/help.md'), 'utf8'),
       '### Auto (`/fvs:auto`)', '### Context (`/fvs:context`)');
     assert.doesNotMatch(help, /milestone 2 functionality not yet available|is safe to rerun/);
