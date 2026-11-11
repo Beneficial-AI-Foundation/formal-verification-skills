@@ -6,7 +6,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { readState } from './fvs-auto.mjs';
+import { readState, recordedStateErrors } from './fvs-auto.mjs';
+import { isDeepStrictEqual } from 'node:util';
 import { readProvenance } from './fvs-probe-inventory.mjs';
 
 // The only interface qualified so far: probe-lean 0.14.0 `extract` (Lean 4.31.0
@@ -48,6 +49,7 @@ function usage() {
     '  --log PROBE_LEAN_LOG --receipt RUN_RECEIPT.json --project-root DIR',
     '  [--manifest PATCH_MANIFEST.json] [--constants LEAN_CONSTANTS.json]',
     '  [--constants-receipt LEAN_CONSTANTS_RUN.json] [--imports IMPORTS.json]',
+    '  [--extraction-state ORIGINAL_STATE.json]',
     '',
     'Builds the Lean declaration and dependency record from a probe-lean 0.14.0',
     '`extract` output. --library names the Lean module roots that must have been',
@@ -69,7 +71,9 @@ function usage() {
     'Exit 0 and state "complete" claim only that this Lean graph record of the',
     'bound run is complete. binding.status, reported separately, is "bound" only',
     'when the generated Lean the graph analysed is byte for byte what the recorded',
-    'extraction attempt in the project state published. Neither claims that a join',
+    'extraction attempt published. --extraction-state supplies validated historical',
+    'state outside the project; its exact bytes are bound separately, never adopted',
+    'as runtime choices. Existing live extraction facts must agree. Neither claims a join',
     'with the Rust identity record may proceed: a consumer needs a complete state',
     'AND bound bindings with agreeing provenance on both records.',
   ].join('\n') + '\n');
@@ -80,7 +84,7 @@ function fatal(message) {
 }
 
 function parseArgs(argv) {
-  const args = { extract: null, libraries: [], log: null, receipt: null, projectRoot: null, manifest: null, constants: null, constantsReceipt: null, imports: null };
+  const args = { extract: null, libraries: [], log: null, receipt: null, projectRoot: null, manifest: null, constants: null, constantsReceipt: null, imports: null, extractionState: null };
   const rest = [...argv];
   if (rest[0] && !rest[0].startsWith('--')) args.extract = rest.shift();
   while (rest.length > 0) {
@@ -95,6 +99,10 @@ function parseArgs(argv) {
     else if (flag === '--constants') args.constants = value;
     else if (flag === '--constants-receipt') args.constantsReceipt = value;
     else if (flag === '--imports') args.imports = value;
+    else if (flag === '--extraction-state') {
+      if (args.extractionState !== null) fatal('--extraction-state may be supplied only once');
+      args.extractionState = value;
+    }
     else fatal(`unknown argument ${JSON.stringify(flag)}`);
   }
   if (!args.extract) fatal('a probe-lean extract JSON path is required');
@@ -194,7 +202,7 @@ function publishedRelative(root, file) {
 // from the given patch manifest. Paths are matched relative to the project the
 // attempt published into, so a copy of that project still binds by content. Absent or unsupported evidence leaves the
 // binding unbound; evidence that disagrees blocks the record.
-function bindAttempt({ projectRoot, files, runConsistent, manifest, translationRelative, entries, data, block }) {
+function bindAttempt({ projectRoot, files, runConsistent, manifest, translationRelative, entries, data, block, extractionStateText }) {
   if (!files) return { status: 'unbound', reasons: ['run-not-bound'] };
   // Matching input files are not enough: the receipt must also vouch for this
   // extract, log, Lean commit, scope and a successful run.
@@ -205,6 +213,25 @@ function bindAttempt({ projectRoot, files, runConsistent, manifest, translationR
   } catch (error) {
     block('malformed-state', `the project state does not validate: ${error.message}`);
     return { status: 'unbound', reasons: ['inputs-disagree-with-attempt'] };
+  }
+  if (extractionStateText !== null) {
+    let external;
+    try {
+      if (typeof extractionStateText !== 'string' || Buffer.from(extractionStateText, 'utf8').toString('utf8') !== extractionStateText || duplicateKeys(extractionStateText).length) throw new Error('expected unambiguous UTF-8 raw state JSON');
+      external = JSON.parse(extractionStateText);
+      const problems = recordedStateErrors(external);
+      if (problems.length) throw new Error(problems.join('; '));
+    } catch (error) {
+      block('malformed-state', `the external extraction state does not validate: ${error.message}`);
+      return { status: 'unbound', reasons: ['inputs-disagree-with-attempt'] };
+    }
+    // Compare extraction facts only: historical choices never become live authority.
+    const facts = state => ({ status: state.extraction?.status, inputs: state.extraction?.inputs, run: state.extraction?.run });
+    if (loaded.state && !isDeepStrictEqual(facts(loaded.state), facts(external))) {
+      block('extraction-state-conflict', 'live and explicit historical extraction facts disagree');
+      return { status: 'unbound', reasons: ['inputs-disagree-with-attempt'] };
+    }
+    loaded = { state: external };
   }
   const extraction = loaded.state?.extraction ?? null;
   const run = extraction?.run;
@@ -527,8 +554,22 @@ function familyValid(node) {
   return family === undefined;
 }
 
-function constantsRunProblems(run, constantsText, constants) {
+function pinnedFile(file, digest) {
+  try { return isText(file) && path.isAbsolute(file) && fs.statSync(file).isFile() && sha256(fs.readFileSync(file)) === digest; }
+  catch { return false; }
+}
+
+function sameDirectory(left, right) {
+  try { return path.isAbsolute(left) && path.isAbsolute(right) && fs.realpathSync(left) === fs.realpathSync(right); }
+  catch { return false; }
+}
+
+function constantsRunProblems(run, constantsText, constants, projectRoot) {
   if (!plainObject(run) || run.schema !== CONSTANTS_RUN_SCHEMA || run.version !== 1) return [`not a ${CONSTANTS_RUN_SCHEMA} version 1 receipt`];
+  const argv = run.argv;
+  const prefix = Array.isArray(argv) && argv.every(isText) && path.basename(argv[0]) === 'lake' && argv[1] === 'env' && argv[2] === 'lean';
+  const legacy = prefix && argv.length === 4 && isText(argv[3]) && argv[3].endsWith('.lean');
+  const capped = prefix && argv.length === 5 && argv[3] === '--threads=2' && isText(argv[4]) && argv[4].endsWith('.lean');
   return [
     run.exitCode !== 0 && `the oracle exited ${JSON.stringify(run.exitCode)}`,
     run.outputSha256 !== sha256(constantsText) && 'the record is not the output the receipt names',
@@ -536,8 +577,10 @@ function constantsRunProblems(run, constantsText, constants) {
     (run.inventoryBefore !== run.inventoryAfter || run.inventoryBefore !== constants.inputs?.imports?.digest) &&
       'the import inventory changed during the oracle run or differs from the record',
     JSON.stringify(run.producer) !== JSON.stringify(constants.producer) && 'the receipt names another producer',
-    !(Array.isArray(run.argv) && path.basename(String(run.argv[0])) === 'lake' && run.argv[1] === 'env' && run.argv[2] === 'lean' &&
-      isText(run.argv[3]) && run.argv[3].endsWith('.lean') && run.argv.length === 4) && 'the receipt does not record the extractor invocation (lake env lean FILE)',
+    !(legacy || capped) && 'the receipt does not record a supported extractor invocation (lake env lean [--threads=2] FILE)',
+    capped && !pinnedFile(argv[0], constants.producer.lakeSha256) && 'the capped receipt does not use the pinned Lake bytes',
+    capped && !pinnedFile(argv[4], constants.producer.extractorSha256) && 'the capped receipt does not name the retained extractor bytes',
+    capped && !sameDirectory(run.cwd, projectRoot) && 'the capped receipt working directory is not this project',
     !isText(run.cwd) && 'the receipt does not record the working directory',
   ].filter(Boolean);
 }
@@ -777,7 +820,7 @@ function oracleClosure(root, byName, flagged) {
   return { rule: ORACLE_CLOSURE_RULE, declarations: sorted(declarations).map((name) => `probe:${name}`), external: sorted(external).map((name) => `probe:${name}`), blockers };
 }
 
-export function buildLeanGraph({ extractText, logText = null, receiptText = null, libraries, projectRoot = null, manifestText = null, constantsText = null, constantsRunText = null, importsText = null }) {
+export function buildLeanGraph({ extractText, logText = null, receiptText = null, libraries, projectRoot = null, manifestText = null, constantsText = null, constantsRunText = null, importsText = null, extractionStateText = null }) {
   const blockers = [];
   const block = (code, reason, extra = {}) => blockers.push({ code, reason, ...extra });
   const requested = sorted(libraries);
@@ -913,8 +956,13 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
       block('scope-not-requested', `the recorded probe-lean run was not scoped to exactly --library ${requested.join(',')} without --module`);
     }
     const lakeArgv = receipt.lakeBuild.argv;
-    if (path.basename(String(lakeArgv[0])) !== 'lake' || lakeArgv[1] !== 'build' || requested.some((library) => !lakeArgv.slice(2).includes(library))) {
-      block('scope-not-requested', `the recorded lake build did not build ${requested.join(', ')}`);
+    const lake = Array.isArray(lakeArgv) && lakeArgv.every(isText) && path.basename(lakeArgv[0]) === 'lake';
+    const legacyBuild = lake && lakeArgv[1] === 'build' && requested.every((library) => lakeArgv.slice(2).includes(library));
+    const cacheBuild = lake && JSON.stringify(lakeArgv.slice(1, 5)) === JSON.stringify(['--no-cache', '--rehash', '--verbose', 'build']) &&
+      lakeArgv.length === 5 + requested.length && sameSet(lakeArgv.slice(5), requested) &&
+      pinnedFile(lakeArgv[0], constants?.producer?.lakeSha256);
+    if (!(legacyBuild || cacheBuild)) {
+      block('scope-not-requested', `the recorded lake build did not build ${requested.join(', ')} with a supported argv and pinned tool`);
     }
     if (receipt.outputs.extractSha256 !== sha256(extractText)) block('run-mismatch', 'the extract is not the output the receipt records');
     if (logText === null || receipt.outputs.logSha256 !== sha256(logText)) block('run-mismatch', 'the log is not the log the receipt records');
@@ -1015,8 +1063,9 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
   // The same-extraction claim, kept apart from the graph's state. A complete
   // state never implies it; joining with the Rust record needs both.
   if (projectRoot) {
-    const { llbcSha256, ...binding } = bindAttempt({ projectRoot, files, runConsistent, manifest, translationRelative, entries, data, block });
+    const { llbcSha256, ...binding } = bindAttempt({ projectRoot, files, runConsistent, manifest, translationRelative, entries, data, block, extractionStateText });
     record.binding = binding;
+    if (typeof extractionStateText === 'string') record.binding.input = { mode: 'external-recorded-attempt', sha256: sha256(extractionStateText) };
     if (binding.status === 'bound') {
       record.provenance.llbcSha256 = llbcSha256;
       record.provenance.configSha256 = binding.configSha256;
@@ -1086,7 +1135,7 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
   if (files && record.schemaVersion === 2) {
     const shape = oracleShapeProblems(constants);
     const run = constantsRunText === null ? null : parseJson(constantsRunText);
-    const runProblems = shape.length > 0 ? [] : constantsRunProblems(run, constantsText, constants);
+    const runProblems = shape.length > 0 ? [] : constantsRunProblems(run, constantsText, constants, projectRoot);
     const pairs = (map) => Object.entries(map ?? {}).map(([file, hash]) => `${file} ${hash}`);
     let importIssues;
     if (shape.length > 0) block('invalid-constants', `the constants record is not a usable version 2 record: ${shape.join('; ')}`);
@@ -1165,6 +1214,12 @@ function main(argv) {
   try {
     const args = parseArgs(argv);
     const text = (file) => (file ? fs.readFileSync(file, 'utf8') : null);
+    let extractionStateText = null;
+    if (args.extractionState) {
+      const bytes = fs.readFileSync(args.extractionState);
+      extractionStateText = bytes.toString('utf8');
+      if (!Buffer.from(extractionStateText, 'utf8').equals(bytes)) fatal('external extraction state is not exact UTF-8');
+    }
     const record = buildLeanGraph({
       extractText: fs.readFileSync(args.extract, 'utf8'),
       logText: text(args.log),
@@ -1175,6 +1230,7 @@ function main(argv) {
       constantsText: text(args.constants),
       constantsRunText: text(args.constantsReceipt),
       importsText: text(args.imports),
+      extractionStateText,
     });
     process.stdout.write(`${JSON.stringify(record, null, 2)}\n`);
     if (record.state !== 'complete') {

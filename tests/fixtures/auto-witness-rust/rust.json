@@ -1,0 +1,103 @@
+{
+  "schema": "probe-rust/extract",
+  "schema-version": "3.0",
+  "tool": {
+    "name": "probe-rust",
+    "version": "0.11.0",
+    "command": "extract"
+  },
+  "source": {
+    "repo": "",
+    "commit": "2359861154ccd5180021702637cad43e6f562ec6",
+    "language": "rust",
+    "package": "m1demo",
+    "package-version": "0.1.0"
+  },
+  "timestamp": "2026-10-30T22:35:08Z",
+  "data": {
+    "probe:core/https://github.com/rust-lang/rust/library/core/ops/arith/impl#[u32][`Add<Self>`]add()": {
+      "display-name": "add",
+      "dependencies": [],
+      "code-module": "/github.com/rust-lang/rust/library/core/ops/arith",
+      "code-path": "",
+      "code-text": {
+        "lines-start": 0,
+        "lines-end": 0
+      },
+      "kind": "exec",
+      "language": "rust",
+      "untracked": false
+    },
+    "probe:core/https://github.com/rust-lang/rust/library/core/ops/arith/impl#[u32][`Mul<Self>`]mul()": {
+      "display-name": "mul",
+      "dependencies": [],
+      "code-module": "/github.com/rust-lang/rust/library/core/ops/arith",
+      "code-path": "",
+      "code-text": {
+        "lines-start": 0,
+        "lines-end": 0
+      },
+      "kind": "exec",
+      "language": "rust",
+      "untracked": false
+    },
+    "probe:m1demo/0.1.0/helper()": {
+      "display-name": "helper",
+      "dependencies": [
+        "probe:core/https://github.com/rust-lang/rust/library/core/ops/arith/impl#[u32][`Add<Self>`]add()"
+      ],
+      "code-module": "",
+      "code-path": "src/lib.rs",
+      "code-text": {
+        "lines-start": 8,
+        "lines-end": 10
+      },
+      "kind": "exec",
+      "language": "rust",
+      "rust-qualified-name": "m1demo::helper",
+      "untracked": false,
+      "is-public": false,
+      "charon-def-id": 19,
+      "charon-version": "0.1.274"
+    },
+    "probe:m1demo/0.1.0/root_sum()": {
+      "display-name": "root_sum",
+      "dependencies": [
+        "probe:m1demo/0.1.0/helper()"
+      ],
+      "code-module": "",
+      "code-path": "src/lib.rs",
+      "code-text": {
+        "lines-start": 12,
+        "lines-end": 14
+      },
+      "kind": "exec",
+      "language": "rust",
+      "rust-qualified-name": "m1demo::root_sum",
+      "untracked": false,
+      "is-public": true,
+      "charon-def-id": 20,
+      "charon-version": "0.1.274"
+    },
+    "probe:m1demo/0.1.0/root_twice()": {
+      "display-name": "root_twice",
+      "dependencies": [
+        "probe:core/https://github.com/rust-lang/rust/library/core/ops/arith/impl#[u32][`Mul<Self>`]mul()",
+        "probe:m1demo/0.1.0/helper()"
+      ],
+      "code-module": "",
+      "code-path": "src/lib.rs",
+      "code-text": {
+        "lines-start": 16,
+        "lines-end": 18
+      },
+      "kind": "exec",
+      "language": "rust",
+      "rust-qualified-name": "m1demo::root_twice",
+      "untracked": false,
+      "is-public": true,
+      "charon-def-id": 21,
+      "charon-version": "0.1.274"
+    }
+  }
+}

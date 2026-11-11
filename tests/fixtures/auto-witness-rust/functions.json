@@ -1,0 +1,28 @@
+{
+  "functions": [
+    {
+      "lean_name": "m1demo.helper",
+      "rust_name": "m1demo::helper",
+      "source": "src/lib.rs",
+      "lines": "L8-L10",
+      "is_hidden": false,
+      "is_extraction_artifact": false
+    },
+    {
+      "lean_name": "m1demo.root_sum",
+      "rust_name": "m1demo::root_sum",
+      "source": "src/lib.rs",
+      "lines": "L12-L14",
+      "is_hidden": false,
+      "is_extraction_artifact": false
+    },
+    {
+      "lean_name": "m1demo.root_twice",
+      "rust_name": "m1demo::root_twice",
+      "source": "src/lib.rs",
+      "lines": "L16-L18",
+      "is_hidden": false,
+      "is_extraction_artifact": false
+    }
+  ]
+}

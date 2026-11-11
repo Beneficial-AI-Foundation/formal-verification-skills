@@ -633,6 +633,7 @@ function stateErrors(state) {
   return errors;
 }
 
+export { stateErrors as recordedStateErrors };
 const EXTRACTION_FIELDS = ['status', 'recordedAt', 'selected', 'reasons', 'declared', 'checks', 'inputs', 'note'];
 
 function inputsValid(inputs) {

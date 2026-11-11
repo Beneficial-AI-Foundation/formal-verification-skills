@@ -1,0 +1,42 @@
+{
+  "mappings": [
+    {
+      "confidence": "exact",
+      "from": "probe:m1demo/0.1.0/helper()",
+      "method": "charon-def-id",
+      "to": "probe:m1demo.helper"
+    },
+    {
+      "confidence": "exact",
+      "from": "probe:m1demo/0.1.0/root_sum()",
+      "method": "charon-def-id",
+      "to": "probe:m1demo.root_sum"
+    },
+    {
+      "confidence": "exact",
+      "from": "probe:m1demo/0.1.0/root_twice()",
+      "method": "charon-def-id",
+      "to": "probe:m1demo.root_twice"
+    }
+  ],
+  "schema": "probe/mappings",
+  "schema-version": "3.0",
+  "sources": {
+    "from": {
+      "package": "m1demo",
+      "package-version": "0.1.0",
+      "schema": "probe-rust/extract"
+    },
+    "to": {
+      "package": "m1demo",
+      "package-version": "2359861",
+      "schema": "probe-lean/extract"
+    }
+  },
+  "timestamp": "2026-10-30T22:35:17Z",
+  "tool": {
+    "command": "translate",
+    "name": "probe-aeneas",
+    "version": "0.20.0"
+  }
+}

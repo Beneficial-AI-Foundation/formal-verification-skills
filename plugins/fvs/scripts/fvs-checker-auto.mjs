@@ -65,13 +65,21 @@ export function extractionContext(extraction) {
   const identity = bound(extraction.identity), graph = bound(extraction.graph), plan = bound(extraction.plan);
   closed(extraction.rust, ['sourceCommit', 'translation', 'manifest', 'rust', 'mappings', 'lean', 'functions', 'state', 'llbc', 'leanReceipt'], 'Rust identity inputs');
   const rust = Object.fromEntries(Object.entries(extraction.rust).map(([key, ref]) => [key, key === 'sourceCommit' ? ref : bound(ref)]));
+  let extractionStateText = null;
+  if (Object.hasOwn(graph.json.binding ?? {}, 'input')) {
+    const input = graph.json.binding.input;
+    closed(input, ['mode', 'sha256'], 'graph extraction binding');
+    if (input.mode !== 'external-recorded-attempt' || !isSha(input.sha256)) refuse('invalid-input', 'unsupported graph extraction binding');
+    if (!rust.state || rust.state.sha256 !== input.sha256) refuse('stale-input', 'graph external extraction state does not match bound Rust state');
+    extractionStateText = rust.state.bytes.toString('utf8');
+  }
   if (!isCommit(rust.sourceCommit) || canonical(buildRecord(rust)) !== canonical(identity.json)) refuse('stale-input', 'Rust identity does not reproduce from the original extraction');
   closed(extraction.lean, ['projectRoot', 'libraries', 'extract', 'log', 'receipt', 'manifest', 'constants', 'constantsRun', 'imports'], 'Lean graph inputs');
   const raw = extraction.lean;
   if (!path.isAbsolute(raw.projectRoot ?? '') || !Array.isArray(raw.libraries) || !raw.libraries.length || !raw.libraries.every(moduleName)) refuse('invalid-input', 'missing original Lean project/library context');
   const text = (key) => bound(raw[key], key !== 'log').bytes.toString('utf8');
   const rebuilt = buildLeanGraph({ projectRoot: raw.projectRoot, libraries: raw.libraries, extractText: text('extract'), logText: text('log'),
-    receiptText: text('receipt'), manifestText: text('manifest'), constantsText: text('constants'), constantsRunText: text('constantsRun'), importsText: text('imports') });
+    receiptText: text('receipt'), manifestText: text('manifest'), constantsText: text('constants'), constantsRunText: text('constantsRun'), importsText: text('imports'), extractionStateText });
   if (canonical(rebuilt) !== canonical(graph.json)) refuse('stale-input', 'Lean graph does not reproduce from the original bound run');
   const actual = buildPlan({ identity, graph, roots: plan.json.selection?.requestedRoots, failed: plan.json.selection?.failed, llbc: rust.llbc });
   if (canonical(actual) !== canonical(plan.json)) refuse('stale-input', 'closure plan does not reproduce from bound extraction inputs');
