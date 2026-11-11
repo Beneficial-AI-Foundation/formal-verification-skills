@@ -285,17 +285,17 @@ describe('same-pipeline feedback currentness (protocol only)', () => {
     reject('respec-output-protected', () => api.runRespec({ request: q, out: path.join(x.root, 'must-not-exist') }));
     reject('respec-output-protected', () => api.runRespec({ request: q, out: path.join(path.dirname(q.priorBundle.manifest.file), 'must-not-exist') })); assert.deepEqual(fs.readFileSync(x.log), before);
   });
-  it('CLI rejects duplicate JSON and wrong operation before output', async () => {
-    const x = await fixture(), q = x.respecRequest(), p = path.join(x.owned, 'duplicate.json'); fs.writeFileSync(p, '{"schema":1,"schema":2}');
+  it('diagnostic CLI verify rejects duplicate JSON before output', async () => {
+    const x = await fixture(), p = path.join(x.owned, 'duplicate.json'); fs.writeFileSync(p, '{"schema":1,"schema":2}');
     const script = path.join(f.ROOT, 'scripts/fvs-auto-respec.mjs'), out = x.output('duplicate');
-    const bad = spawnSync(process.execPath, [script, 'inspect', '--request', p, '--out', out], { encoding: 'utf8' }); assert.equal(bad.status, 7); assert.match(bad.stdout, /duplicate keys/); assert.equal(fs.existsSync(out), false);
-    const r = f.json(x.owned, 'cli-q', q), wrong = spawnSync(process.execPath, [script, 'finish', '--request', r.file, '--out', out], { encoding: 'utf8' }); assert.equal(wrong.status, 7); assert.match(wrong.stdout, /operation differs/);
+    const bad = spawnSync(process.execPath, [script, 'verify', '--request', p, '--out', out], { encoding: 'utf8' });
+    assert.equal(bad.status, 7); assert.match(bad.stdout, /duplicate keys/); assert.equal(fs.existsSync(out), false);
   });
-  it('CLI inspect/verify preserve partial facts and do not dispatch', async () => {
-    const x = await fixture(), q = x.respecRequest(), p = f.json(x.owned, 'cli-q', q), out = x.output('cli'), script = path.join(f.ROOT, 'scripts/fvs-auto-respec.mjs');
-    for (const operation of ['inspect', 'verify']) {
-      const r = spawnSync(process.execPath, [script, operation, '--request', p.file, '--out', out], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stdout + r.stderr); const body = JSON.parse(r.stdout); assert.equal(body.status, 'revision-proposed'); assert.equal(body.effectExecutable, false);
-    }
+  it('diagnostic CLI verify consumes retained internal partial facts without enabling public revision', async () => {
+    const x = await fixture(), initial = begin(x), p = f.json(x.owned, 'cli-q', initial.q), script = path.join(f.ROOT, 'scripts/fvs-auto-respec.mjs');
+    const r = spawnSync(process.execPath, [script, 'verify', '--request', p.file, '--out', initial.out], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stdout + r.stderr); const body = JSON.parse(r.stdout);
+    assert.equal(body.status, 'revision-proposed'); assert.equal(body.effectExecutable, false);
   });
   it('ordinary status logs preserve the initial semantic agreement/feedback frame', async () => {
     const x = await fixture(), b = begin(x), oldRoadmap = x.bundle.agreement.roadmap;

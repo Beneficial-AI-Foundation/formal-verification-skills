@@ -15,6 +15,18 @@ Restore verification context from `.formalising/fv-plans/.continue-here.md` and 
 
 <process>
 
+## Rc1 human-feedback boundary
+
+For AUTO owner feedback that revises previously reviewed contracts after end/partial results,
+report `unsupported: human re-specification is not available in 3.0.0-rc1` and stop before
+state/agreement/registry changes, revision effects or provider dispatch. Apply this to direct
+requests and resumed handoff instructions. Keep the actual feedback, complete selected scope,
+original accounting and each root's failed/unsupported/partial reason. No ready/success claim follows.
+Initial autonomous specify/review/revise/prove and ordinary safe resume remain available under their
+existing gates; stale proofs still need current checker receipts. Internal diagnostic APIs do not
+authorize a public re-specification run.
+
+
 ## Step 1: Discover Handoff
 
 **If an explicit path argument is given** (`$ARGUMENTS`), resolve it with the same rule as `/fvs:pause-work`: a token ending in `.md` is the exact handoff file; an otherwise path-like token (contains `/`) means `<token>/.continue-here.md`. Load that file directly.

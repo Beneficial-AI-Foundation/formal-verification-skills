@@ -1064,12 +1064,13 @@ function* verifyRespecSteps(options) {
 }
 async function cli(args) {
   const operation = args.shift(), flags = {};
-  while (args.length) { const key = args.shift(), value = args.shift(); if (!['--request', '--out'].includes(key) || !value || Object.hasOwn(flags, key)) fail('respec-usage', 'inspect/finish/verify --request FILE --out DIR'); flags[key] = value; }
-  if (!['inspect', 'finish', 'verify'].includes(operation) || !flags['--request'] || !flags['--out']) fail('respec-usage', 'inspect/finish/verify --request FILE --out DIR');
+  if (['inspect', 'finish'].includes(operation)) fail('respec-unsupported', 'Human re-specification is unsupported in FVS 3.0.0-rc1. Preserve feedback, the complete scope and historical receipts; no revision work is started.');
+  while (args.length) { const key = args.shift(), value = args.shift(); if (!['--request', '--out'].includes(key) || !value || Object.hasOwn(flags, key)) fail('respec-usage', 'Human re-specification is unsupported in 3.0.0-rc1; diagnostic verify --request FILE --out DIR'); flags[key] = value; }
+  if (!['inspect', 'finish', 'verify'].includes(operation) || !flags['--request'] || !flags['--out']) fail('respec-usage', 'Human re-specification is unsupported in 3.0.0-rc1; diagnostic verify --request FILE --out DIR');
   const q = transitionJson(bytes(path.resolve(flags['--request'])));
   if (operation !== 'verify' && q.operation !== operation) fail('respec-invalid-input', 'CLI/request operation differs');
   const call=services=>(operation==='verify'?verifyRespecResult:runRespec)({request:q,out:path.resolve(flags['--out'])},services);
   return q.schemaVersion===2?withProcessCancellation(call):call({});
 }
 let direct = false; try { direct = fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch {}
-if (direct) { try { console.log(JSON.stringify(await cli(process.argv.slice(2)), null, 2)); } catch (e) { console.log(JSON.stringify({ status: 'unverified', ...diagnostic(e) }, null, 2)); process.exitCode = e.code==='cancelled'?130:7; } }
+if (direct) { try { console.log(JSON.stringify(await cli(process.argv.slice(2)), null, 2)); } catch (e) { console.log(JSON.stringify({ status: e.code === 'respec-unsupported' ? 'unsupported' : 'unverified', ...diagnostic(e) }, null, 2)); process.exitCode = e.code==='cancelled'?130:7; } }

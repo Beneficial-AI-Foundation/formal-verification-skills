@@ -1,4 +1,13 @@
-# Same-pipeline human re-specification
+# Internal human re-specification diagnostics
+
+Public human re-specification is **unsupported in 3.0.0-rc1**. The default `inspect` and `finish`
+CLI operations refuse before reading a request or causing effects. AUTO entry, execute and resume
+feedback routes stop before revision work or provider dispatch. Preserve all feedback and the
+complete selected scope, with precise partial reasons; do not report revision success/readiness.
+
+The remaining material describes retained internal engine records and diagnostic consumers.
+It grants no public continuation or provider authority. Initial autonomous specification/review/revise,
+ordinary safe resume and current checker safeguards remain separate and unchanged.
 
 For v2 feedback requests and result consumers, read `auto-execution.md` first. It defines the explicit execution policy, optional memory and current lifecycle. The version1 field tables and finite bounds below describe retained legacy records; apply them only to v1.
 
@@ -26,19 +35,21 @@ live currentness, partial scope and pending human approval; no PR is published b
 
 <overview>
 
-After an end/partial17 artifact the owner can request changes to chosen contracts. Preserve the
-initial scope, feedback payload and original run accounting. Use the existing grounded specify,
-fresh review, proof, check and serial acceptance stages; no routine human gate at each round.
-The helper below validates correspondence and current observations. It creates no proof, dispatch,
-human approval or publication authority, and it runs no model or proof compiler.
+Internal revision records retain the initial scope, feedback payload and original run accounting.
+Their diagnostic readers check correspondence and current observations against the recorded
+specification, fresh review, proof, check and serial acceptance stages. These APIs create no proof,
+dispatch, human approval or publication authority and run no model or proof compiler.
+They do not provide a public human-feedback continuation in rc1.
 
 </overview>
 
+Retained diagnostic consumer only:
+
 ```text
-node <installed-scripts>/fvs-auto-respec.mjs inspect --request REQUEST.json --out NEW_INSPECTION
-node <installed-scripts>/fvs-auto-respec.mjs finish --request CURRENT.json --out NEW_RESULT
 node <installed-scripts>/fvs-auto-respec.mjs verify --request CURRENT.json --out EXISTING_RESULT
 ```
+
+Its output reports internal evidence only; it does not enable human re-specification in rc1.
 
 The JS operations are `runRespec({request,out})` and `verifyRespecResult({request,out})`. The consumer
 provides its independently held current request. Verification creates separate bounded evidence;
@@ -85,7 +96,9 @@ contracts use the same node-version shape but must name actual current14 records
 retain the specification/review rationale. The workflow must independently read the feedback and assess
 that rationale against the revised contracts; a byte-bound response does not establish human approval.
 
-## Guard the existing pipeline
+## Internal validation contract
+
+The following describes internal/qualification records, not an enabled public workflow.
 
 1. Inspect the prior17 captured bytes using `readReviewSnapshot`; captured integrity is independent of
    live currentness and never launches a compiler/backend/AO call. Separately supply current12 applicability,

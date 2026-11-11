@@ -184,6 +184,10 @@ Usage: `/fvs:sync-aeneas-verif`
 
 ### Auto (`/fvs:auto`)
 
+Human re-specification after end/partial results is unsupported in 3.0.0-rc1. Keep feedback and
+whole-scope partial reasons; AUTO does not start revision effects or providers for that request.
+Initial specification/review/revise/prove and ordinary safe resume retain their existing gates.
+
 The FVS auto track, coordinated by Agent Orchestrator (requires the `ao` CLI). Every command reports
 the recorded state, the next action and any pending decision, and is safe to rerun. State lives in
 `.formalising/auto-fv/` and is written only through `scripts/fvs-auto.mjs`.

@@ -6,6 +6,18 @@ reports establish no proof acceptance; trusted15 remains the sole publication au
 
 <process>
 
+## Rc1 human-feedback boundary
+
+For AUTO owner feedback that revises previously reviewed contracts after end/partial results,
+report `unsupported: human re-specification is not available in 3.0.0-rc1` and stop before
+state/agreement/registry changes, revision effects or provider dispatch. Apply this to direct
+requests and resumed handoff instructions. Keep the actual feedback, complete selected scope,
+original accounting and each root's failed/unsupported/partial reason. No ready/success claim follows.
+Initial autonomous specify/review/revise/prove and ordinary safe resume remain available under their
+existing gates; stale proofs still need current checker receipts. Internal diagnostic APIs do not
+authorize a public re-specification run.
+
+
 ## Opt-in AO controller continuation
 
 For a v2 project, follow `auto-execution.md`: keep its original optional budget and explicit memory
@@ -61,15 +73,9 @@ inventory and current source/context references, including failed/unmapped items
 alone is not complete coverage evidence. Capture pending/expired/unfinished reasons without restarting
 work. Bundle integrity, historical proof facts, fresh currentness and human approval are separate.
 This step writes no PR, checker receipt, registry, runtime or memory state. Human re-specification
-continues through the bounded route in `fv-skills/references/auto-respec.md`; it is not inferred from bundle verification.
-
-For an actual owner request X/Y/Z, retain that payload and the original complete scope/inspect frame.
-Use fresh16/20 caller requests at each boundary and independently consume the18 result before preparing
-or releasing revision work. The result creates no dispatch grant: existing22 startup, paired effects,
-current heads and recovery rules still apply. Run grounded specify/fresh review,14 invalidation, proof
-and trusted15 checks automatically within the original limits. Keep old receipts as history; unchanged
-proof text needs whatever fresh current-context checks15 requires. Finish with whole-scope checks and
-a NEW17 artifact, listing unfinished items. Human review remains at the end; actual providers still need19.
+stops at the rc1 boundary above. Keep any requested changes and their whole-scope partial status;
+bundle verification never supplies revision permission. `auto-respec.md` documents internal diagnostic
+records only, not an enabled continuation.
 
 ## Step 1: Require Agent Orchestrator
 

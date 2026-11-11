@@ -10,6 +10,17 @@ ordering. A `reconciled` result is neither execution permission nor a proof rece
 
 </purpose>
 
+## Rc1 human-feedback boundary
+
+For AUTO owner feedback that revises previously reviewed contracts after end/partial results,
+report `unsupported: human re-specification is not available in 3.0.0-rc1` and stop before
+state/agreement/registry changes, revision effects or provider dispatch. Apply this to direct
+requests and resumed handoff instructions. Keep the actual feedback, complete selected scope,
+original accounting and each root's failed/unsupported/partial reason. No ready/success claim follows.
+Initial autonomous specify/review/revise/prove and ordinary safe resume remain available under their
+existing gates; stale proofs still need current checker receipts. Internal diagnostic APIs do not
+authorize a public re-specification run.
+
 ## Prepare the current request
 
 Read the actual owner response and current canonical scope, claims, trust, conventions and reserved

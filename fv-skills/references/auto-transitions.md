@@ -168,7 +168,9 @@ At complete or precise partial status, inspect the entire original selected scop
 state and build/verify17 using the actual current request and historical captures. The artifact keeps
 integrity, live currentness, unavailable inputs, each root's PASS/partial reason and pending human
 review separate. A draft PR requires its separately recorded publication grant/trusted publisher.
-Human feedback uses18 inspect/finish and this same pipeline. An all-fail run is not a successful pilot.
+Human feedback revising reviewed contracts is unsupported in rc1; stop before revision effects or
+provider dispatch, preserving whole-scope partial reasons. Internal18 diagnostics grant no continuation.
+An all-fail run is not a successful pilot.
 No public-API/whole-crate/platform/side-channel claim follows from this bounded route.
 
 Use this route only for an AO orchestrator continuing the current applicable nonpublic
@@ -368,7 +370,7 @@ then serially checks/refreshes helpers and publishes consumers bottom-up at that
 change mid-batch. Older node/tree/helper-generation heads remain stale until actually rechecked;
 standalone/worker verdicts and14 provisional/declared-independence records unblock nothing. Once whole
 selected-scope currentness is recomputed, return only the typed authoritative-reference handoff to17,
-including every unfinished/unsupported reason.17 materializes the bundle;18 handles human re-spec;
+including every unfinished/unsupported reason.17 materializes the bundle; human re-spec is unsupported in rc1;
 19 qualifies actual stock-AO end-to-end behavior. This protocol does not open a PR or complete them.
 
 Before any live provider tracer, bind its concrete owned project/source/scope, actual complete
