@@ -226,9 +226,10 @@ async function proofWriter(w, { node, file, wrong, correct, basis }) {
   const wt = s.actor.worktree.path, packet = t.readWorkPacket(s.packet), target = path.join(wt, file);
   fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, fs.readFileSync(wrong));
   // The frozen Lean sees the frozen project build and its external search paths; the attempt must fail honestly.
+  // Owned commands take only an allow-listed environment, so the two-thread cap is Lean's own flag.
   const build = frozen.build, leanPath = [build.buildRoot ? path.join(build.buildRoot, 'lib', 'lean') : null, ...(build.externalSearchPaths ?? [])].filter(Boolean).join(':');
   const attempt = await e.runTaskCommand({ schema: 'fvs/owned-command-request', schemaVersion: 1, packet: s.packet, marker: s.marker, invocationId: crypto.randomUUID(),
-    tool: { file: build.lean.path, sha256: build.lean.sha256 }, argv: [build.lean.path, '--root=' + wt, target], cwd: wt, env: { PATH: '/usr/bin:/bin', LANG: 'C', LEAN_PATH: leanPath } });
+    tool: { file: build.lean.path, sha256: build.lean.sha256 }, argv: [build.lean.path, '--threads=2', '--root=' + wt, target], cwd: wt, env: { PATH: '/usr/bin:/bin', LANG: 'C', LEAN_PATH: leanPath } });
   const diagnostic = intendedFailure(attempt, target, WRONG_LEMMA);
   const progress = auto.recordProgress({ packet: s.packet, marker: s.marker, previous: null, currentGoal: 'prove ' + file + ' for node ' + node,
     failedApproaches: [{ hypothesis: 'close the sum by a commutativity lemma', evidence: [attempt.terminal, attempt.stderr] }],
