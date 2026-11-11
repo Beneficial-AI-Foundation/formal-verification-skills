@@ -27,6 +27,11 @@ test('v2 owns and awaits all three witness/audit calls with no elapsed-budget fa
  const m=await checker,f=await fixture();const modes=[];const promise=m.runKernelAuditV2(f,{now:()=>Date.now()+5*3600000,spawnProcess(file,args,opts){modes.push(args.at(-2));assert.equal('timeout'in opts,false);return spawn(file,args,opts);}});assert.equal(typeof promise.then,'function');const result=await promise;
  assert.equal(result.code,'ok');assert.equal(result.attempt.version,2);assert.deepEqual(modes,['witness','witness','audit']);assert.ok(result.attempt.inputs[path.resolve(__dirname,'../scripts/fvs-execution.mjs')]);assert.ok(result.attempt.inputs[path.resolve(__dirname,'../scripts/fvs-project-memory.mjs')]);
 });
+test('every witness/audit Lean runs with the fixed two-thread cap, not the caller value',async()=>{
+ const m=await checker,f=await fixture(),envs=[],old=process.env.LEAN_NUM_THREADS;process.env.LEAN_NUM_THREADS='16';
+ let result;try{result=await m.runKernelAuditV2(f,{spawnProcess(file,args,opts){envs.push(opts.env);return spawn(file,args,opts);}});}finally{if(old===undefined)delete process.env.LEAN_NUM_THREADS;else process.env.LEAN_NUM_THREADS=old;}
+ assert.equal(result.code,'ok');assert.equal(envs.length,3);for(const env of envs)assert.equal(env.LEAN_NUM_THREADS,'2');
+});
 test('v2 cancellation before final audit publication retains actual command facts, no result',async()=>{
  const m=await checker,f=await fixture(),c=new AbortController();let calls=0;
  await assert.rejects(m.runKernelAuditV2(f,{signal:c.signal,spawnProcess(file,args,opts){calls++;const child=spawn(file,args,opts);if(args.at(-2)==='audit')child.on('close',()=>c.abort());return child;}}),e=>e.code==='cancelled');

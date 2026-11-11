@@ -299,6 +299,8 @@ export async function buildCheckerSnapshot(input, services = {}) {
     XDG_DATA_HOME: path.join(root, 'home'), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
     GIT_OPTIONAL_LOCKS: '0', GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1',
     GIT_TERMINAL_PROMPT: '0', LAKE_NO_CACHE: '1',
+    // Builds share the host: Lake and every Lean it runs use a fixed two-thread pool (never inherited from the caller).
+    LEAN_NUM_THREADS: '2',
   });
   const run = async (argv, cwd, confined = false) => {
     const before = await checkInputs();

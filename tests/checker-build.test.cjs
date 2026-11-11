@@ -339,13 +339,15 @@ if (process.platform === 'darwin') {
     const oldTmp = process.env.TMPDIR;
     const oldSecret = process.env.FVS_TEST_CREDENTIAL;
     const oldLeanPath = process.env.LEAN_PATH;
+    const oldThreads = process.env.LEAN_NUM_THREADS;
     const sentinel = 'not-in-child-environment-312ce8';
     process.env.FVS_TEST_CREDENTIAL = sentinel;
     process.env.LEAN_PATH = f.source;
     process.env.TMPDIR = f.source;
+    process.env.LEAN_NUM_THREADS = '16';
     let result;
     try { result = await build(f.request); } finally {
-      for (const [key, value] of [['TMPDIR', oldTmp], ['FVS_TEST_CREDENTIAL', oldSecret], ['LEAN_PATH', oldLeanPath]]) {
+      for (const [key, value] of [['TMPDIR', oldTmp], ['FVS_TEST_CREDENTIAL', oldSecret], ['LEAN_PATH', oldLeanPath], ['LEAN_NUM_THREADS', oldThreads]]) {
         if (value === undefined) delete process.env[key]; else process.env[key] = value;
       }
     }
@@ -354,6 +356,7 @@ if (process.platform === 'darwin') {
     assert.deepEqual(result.modules.map((mod) => [mod.name, mod.source, mod.parts.length]), [['Sample', 'Sample.lean', 3]]);
     const env = json(path.join(result.buildRoot, 'ir', 'env.json'));
     assert.equal(env.FVS_TEST_CREDENTIAL, undefined); assert.equal(env.LEAN_PATH, undefined);
+    assert.equal(env.LEAN_NUM_THREADS, '2', 'the build uses the fixed thread cap, not the caller\'s value');
     assert.equal(env.HOME, path.join(f.request.out, 'home')); assert.equal(env.TMPDIR, path.join(f.request.out, 'tmp'));
     assert.equal(fs.readFileSync(path.join(f.source, 'Sample.lean'), 'utf8'), f.files['Sample.lean']);
     assert.deepEqual(result.externalImports, []);

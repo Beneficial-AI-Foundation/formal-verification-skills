@@ -403,7 +403,8 @@ function* kernelAuditSteps({ request, out }, { baseline = false } = {}, expected
   if (sha(fs.readFileSync(snapshots.helper)) !== inputs[HELPER] || sha(fs.readFileSync(snapshots.runner)) !== inputs[SCRIPT]) refuse('stale-input', 'checker source changed while being captured');
   const sealed = path.join(out, 'request.json');
   fs.writeFileSync(sealed, `${JSON.stringify(sealedJob)}\n`, { flag: 'wx' });
-  const baseEnv = { PATH: `${path.dirname(job.lean.path)}:/usr/bin:/bin`, LANG: 'C', TMPDIR: path.resolve(out) };
+  // Audits share the host: a fixed two-thread Lean pool, never inherited from the caller.
+  const baseEnv = { PATH: `${path.dirname(job.lean.path)}:/usr/bin:/bin`, LANG: 'C', TMPDIR: path.resolve(out), LEAN_NUM_THREADS: '2' };
   const witnessArgv = ['--run', snapshots.helper, 'witness', path.resolve(sealed)];
   const witness = (yield { argv: [job.lean.path, ...witnessArgv], control, options: { cwd: path.resolve(out), encoding: 'utf8', ...(expectedVersion === 2 ? timeoutOptions(control) : { timeout: Math.max(1, job.deadlineMs - Date.now()) }), maxBuffer: 16 * 1024 * 1024,
     env: { ...baseEnv, LEAN_PATH: [...new Set([standardRoot, ...sealedJob.referenceModules.map((m) => m.searchRoot), ...trustedPaths])].join(path.delimiter) }} });
