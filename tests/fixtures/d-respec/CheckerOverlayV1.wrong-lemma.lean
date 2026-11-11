@@ -8,6 +8,6 @@ def helperSpec (p : m1demo.Pair) : Result Std.U32 := p.a + p.b
 
 -- Deliberately failing first attempt at node 19's target: the commutativity lemma does not exist.
 theorem helper_eq_sum (p : m1demo.Pair) : m1demo.helper p = p.a + p.b := by
-  simp [m1demo.helper_add_comm]
+  exact m1demo.helper_add_comm p
 
 end m1demo.overlay.v1

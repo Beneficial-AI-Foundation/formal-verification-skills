@@ -208,9 +208,9 @@ function intendedFailure(attempt, file, identifier) {
     throw new Error('first attempt is not a clean nonzero Lean exit: ' + JSON.stringify({ status: attempt.status, code: attempt.code ?? null, result: r }));
   for (const key of ['stdout', 'stderr']) if (terminal[key].file !== attempt[key].file || terminal[key].sha256 !== attempt[key].sha256) throw new Error('attempt streams are not the terminal streams');
   const text = read(attempt.stdout).toString('utf8') + read(attempt.stderr).toString('utf8');
-  // Lean names an absent simp lemma as an unknown identifier or constant; either way it is this exact name.
-  const errors = text.split('\n').filter(line => /(^|: )error\b/.test(line)), expected = file + ':', unknown = ["unknown identifier '" + identifier + "'", "unknown constant '" + identifier + "'"];
-  if (!errors.length || errors.some(line => !line.startsWith(expected) || !unknown.some(u => line.includes(u)))) throw new Error('first attempt failed for another reason: ' + (errors.join(' | ') || text.slice(0, 400)));
+  // Lean 4.31 reports the absent lemma as "error(lean.unknownIdentifier): Unknown identifier `name`"; that must be the only error.
+  const errors = text.split('\n').filter(line => /(^|: )error\b/.test(line)), expected = file + ':', unknown = 'Unknown identifier `' + identifier + '`';
+  if (!errors.length || errors.some(line => !line.startsWith(expected) || !line.includes(unknown))) throw new Error('first attempt failed for another reason: ' + (errors.join(' | ') || text.slice(0, 400)));
   return errors[0].slice(expected.length);
 }
 

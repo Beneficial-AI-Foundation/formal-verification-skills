@@ -212,7 +212,9 @@ test('E0 real: F0 freeze, check and canonical acceptance of H, A, B (FVS_REAL_RE
 // any lifecycle failure, other diagnostic or changed stream stops the scenario instead of becoming failed-approach progress.
 test('only a clean nonzero Lean exit with the expected unknown lemma counts as the intended failed attempt', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-d-attempt-')); owned.push(dir);
-  const file = path.join(dir, 'Specs/CheckerOverlayV1.lean'), wrong = file + ":10:8: error: unknown identifier 'm1demo.helper_add_comm'\n";
+  // The exact line shape Lean 4.31 printed for the wrong-lemma fixture compiled with the frozen toolchain.
+  const unknown = id => ':11:8: error(lean.unknownIdentifier): Unknown identifier `' + id + '`\n';
+  const file = path.join(dir, 'Specs/CheckerOverlayV1.lean'), wrong = file + unknown('m1demo.helper_add_comm');
   const ref = (name, bytes) => { const f = path.join(dir, name + '-' + crypto.randomUUID()); fs.writeFileSync(f, bytes); return { file: f, sha256: sha(fs.readFileSync(f)) }; };
   const clean = { toolUnchanged: true, pid: 4242, status: 1, signal: null, error: null, cancelled: false, timedOut: false, outputLimitExceeded: false, cleanupComplete: true,
     cleanup: { kind: 'recorded-owned-group-absence', result: 'absent', descendantAttestation: false, streamsDrained: true } };
@@ -220,15 +222,17 @@ test('only a clean nonzero Lean exit with the expected unknown lemma counts as t
     const out = ref('stdout', stdout), err = ref('stderr', stderr);
     return { status, code: 'owned-work-unverified', stdout: out, stderr: err, terminal: ref('terminal', JSON.stringify({ schema: 'fvs/owned-command-terminal', schemaVersion: 1, result: { ...clean, ...result }, stdout: out, stderr: err })) };
   };
-  assert.match(intendedFailure(attempt(), file, 'm1demo.helper_add_comm'), /unknown identifier 'm1demo\.helper_add_comm'/);
-  assert.ok(intendedFailure(attempt({ stdout: '', stderr: file + ":10:8: error: unknown constant 'm1demo.helper_add_comm'\n" }), file, 'm1demo.helper_add_comm'));
+  assert.match(intendedFailure(attempt(), file, 'm1demo.helper_add_comm'), /Unknown identifier `m1demo\.helper_add_comm`/);
+  assert.ok(intendedFailure(attempt({ stdout: '', stderr: wrong }), file, 'm1demo.helper_add_comm'));
   const refused = {
     'compiled': attempt({ status: 'command-completed', result: { status: 0 } }),
     'zero exit': attempt({ result: { status: 0 } }),
     'import failure': attempt({ stdout: file + ":1:0: error: unknown module prefix 'Specs'\n" }),
     'import failure beside the lemma': attempt({ stdout: wrong + file + ":1:0: error: object file of module Specs.Roots does not exist\n" }),
-    'another file': attempt({ stdout: "/elsewhere/X.lean:10:8: error: unknown identifier 'm1demo.helper_add_comm'\n" }),
-    'another identifier': attempt({ stdout: file + ":10:8: error: unknown identifier 'm1demo.other'\n" }),
+    // What `simp [m1demo.helper_add_comm]` printed: the unknown name and then a second, unrelated error.
+    'follow-on error beside the lemma': attempt({ stdout: wrong + file + ':11:2: error: `simp` made no progress\n' }),
+    'another file': attempt({ stdout: '/elsewhere/X.lean' + unknown('m1demo.helper_add_comm') }),
+    'another identifier': attempt({ stdout: file + unknown('m1demo.other') }),
     'no diagnostic': attempt({ stdout: '' }),
     'signal': attempt({ result: { status: null, signal: 'SIGKILL' } }),
     'spawn error': attempt({ result: { status: null, error: 'ENOENT' } }),
@@ -240,7 +244,7 @@ test('only a clean nonzero Lean exit with the expected unknown lemma counts as t
   };
   const tampered = attempt(); fs.appendFileSync(tampered.stdout.file, 'x'); refused['changed stream'] = tampered;
   const swapped = attempt(); swapped.stdout = attempt().stdout; refused['stream not from this terminal'] = swapped;
-  const reason = label => ['import failure', 'import failure beside the lemma', 'another file', 'another identifier', 'no diagnostic'].includes(label) ? /failed for another reason/
+  const reason = label => ['import failure', 'import failure beside the lemma', 'follow-on error beside the lemma', 'another file', 'another identifier', 'no diagnostic'].includes(label) ? /failed for another reason/
     : label === 'changed stream' ? /attempt evidence changed/ : label === 'stream not from this terminal' ? /not the terminal streams/ : /not a clean nonzero Lean exit/;
   for (const [label, a] of Object.entries(refused)) assert.throws(() => intendedFailure(a, file, 'm1demo.helper_add_comm'), reason(label), label);
 });
