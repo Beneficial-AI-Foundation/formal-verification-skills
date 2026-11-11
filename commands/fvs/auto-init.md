@@ -40,7 +40,9 @@ and final PR acceptance stays human.
 <context>
 Run from the project root (the Lean project that holds `lakefile.toml` and `lean-toolchain`).
 State lives under `.formalising/auto-fv/`; `auto-setup.md` explains how to keep `.formalising/`
-out of git.
+out of git. Fresh rc1 setup requires the declared Aeneas/Charon executables locally even for an
+externally prepared, validated extraction. A retained witness does not bypass `profile-blocked`;
+see the prerequisite and exact-source installation steps in `auto-setup.md`.
 </context>
 
 <process>

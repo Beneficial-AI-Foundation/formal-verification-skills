@@ -44,9 +44,14 @@ extraction and a full pilot are separate from preparing this installation.
 
    ```bash
    node "$FVS_SOURCE/scripts/build-hooks.js"
+   test -f "$FVS_SOURCE/hooks/dist/fvs-check-update.js" || exit 1
+   test -f "$FVS_SOURCE/hooks/dist/fvs-statusline.js" || exit 1
    (cd "$WORKTREE" && node "$FVS_SOURCE/bin/install.js" --claude --local)
    ```
 
+   Run the hook build once per retained source snapshot before actor installs. A raw Git checkout
+   omits ignored `hooks/dist`; the build copies the two source hooks without installing dependencies.
+   Verify their installed bytes as well as the helper scripts. Keep the retained source fixed afterward.
    Use the selected runtime's existing flag instead of `--claude` when that route is qualified.
    For Pi's complete local-source package use `(cd "$WORKTREE" && pi install "$FVS_SOURCE" --local)`;
    retain that exact source snapshot. The unified `--pi` installer delegates to npm, so it cannot
@@ -59,10 +64,20 @@ extraction and a full pilot are separate from preparing this installation.
    do not propagate through Git. Keep one fixed trusted engine identity across the run. Local shell
    paths resolve to the selected installation even from a nested cwd; plugin resources remain rooted
    at the plugin, and Pi resolves package-relative resources from its skill directory.
+   For Claude's Lean MCP tools, the project `.mcp.json` server key must be `lean-lsp`
+   (`mcpServers.lean-lsp`); the executable/package name is `lean-lsp-mcp`. FVS agent allowlists use
+   that server key. Preserve existing MCP entries and the project's pinned tools/resource caps.
+   Configure it before native startup, or use a supported reload and verify actual tool discovery.
+   Dependencies must be available before its first Lean diagnostic; installation alone proves neither.
 5. **Initialize project choices through `/fvs:auto-init`.** Reuse the existing initial agreement.
    Select source/features, roots, worker/resource limits and execution authority only where missing.
    Recommend local markdown issues for a new preview; preserve any existing tracker choice and use
    `/fvs:issues-setup` for an explicit change. Beads memory does not duplicate that task queue.
+   Fresh rc1 setup requires the declared Aeneas and Charon executables locally even when resuming an
+   externally prepared, validated extraction. Missing executables still produce `profile-blocked`;
+   the retained witness does not bypass that presence check. Installing them does not qualify the
+   tuple or replace the extraction's identity, correspondence and eligibility checks. Rerun the profile,
+   not the extraction, when the only missing prerequisite was executable presence.
 6. **Choose optional memory.** Explicit `memory:{mode:"disabled"}` needs no Beads installation or
    prime. Enabled memory currently uses an existing Beads `1.3.1` embedded/direct store in one primary
    control checkout. Follow `auto-memory.md` to inspect/register that actual store, coordinator-refresh

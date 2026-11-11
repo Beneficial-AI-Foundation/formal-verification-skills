@@ -65,6 +65,12 @@ For a fresh project, show the compatibility profile:
 node "$AUTO" profile --project-root . --format text
 ```
 
+Fresh rc1 setup requires the declared Aeneas and Charon executables locally even for an externally
+prepared, validated extraction. A missing executable still blocks `init-state`; preserve and report
+its `profile-blocked` next step. After separately authorized prerequisite setup, rerun the profile and
+resume this workflow. Executable presence does not qualify a tuple or replace the bound extraction's
+identity, correspondence and eligibility checks; it does not require repeating a valid extraction.
+
 Synthesize the repository facts and applicable decisions from sources first. Use
 `/fvs:roadmap .formalising/auto-fv/ROADMAP.md <the project goal>` with its existing light/deep/reuse
 route. Initial scope is whatever the owner actually agrees, kept distinct from discovered roots;

@@ -189,15 +189,16 @@ whole-scope partial reasons; AUTO does not start revision effects or providers f
 Initial specification/review/revise/prove and ordinary safe resume retain their existing gates.
 
 The FVS auto track, coordinated by Agent Orchestrator (requires the `ao` CLI). Every command reports
-the recorded state, the next action and any pending decision, and is safe to rerun. State lives in
-`.formalising/auto-fv/` and is written only through `scripts/fvs-auto.mjs`.
+the recorded state, the next action and any pending decision. State lives in `.formalising/auto-fv/`
+and changes through the shipped FVS helpers. A pending or uncertain effect stops continuation; a
+rerun is not permission to repeat that effect.
 
 **`/fvs:auto-init`**
-Run the compatibility profile and record the source revision and configuration, the bounded initial
-scope and the limits (3 workers by default plus a total wall-clock cap the owner names; per-node hours
-are recorded but not enforced, as there is no arbitrary per-node proof timeout). An unchanged rerun writes nothing; a changed choice needs the owner's confirmation. Offers once
-to write the project roadmap with `/fvs:roadmap .formalising/auto-fv/ROADMAP.md`; the offer never blocks
-extraction.
+Run the compatibility profile and reuse or record the initial roadmap agreement, source revision,
+configuration, bounded scope and worker limit. V2 supports an optional total budget; legacy per-node
+hours are recorded but not enforced, as there is no arbitrary per-node proof timeout. Reuse current
+owner choices without repeated interviewing; material changes need confirmation. Fresh rc1 setup
+requires the declared Aeneas/Charon locally even for a prepared extraction; see `auto-setup.md`.
 
 **`/fvs:auto-extract <crate path>`**
 Extract the recorded revision through `/fvs:aeneas-extract` in translation-patch mode, record the
@@ -206,7 +207,10 @@ extraction is never recorded as success), the externals record and regeneration 
 Extraction success is not a proof.
 
 **`/fvs:auto-top-specs`**, **`/fvs:auto-execute`**
-Report the recorded state and stop: milestone 2 functionality not yet available.
+With complete authorized v2 controller context, run the production driver through fresh specification
+and review, then bottom-up proof/checker acceptance. Agreement, profile, memory, invocation and
+currentness gates still apply; v2 alone grants no dispatch permission. Legacy/read-only or missing-grant
+routes report the recorded continuation and stop. Final human review and partial reporting remain.
 
 ### Context (`/fvs:context`)
 

@@ -208,6 +208,26 @@ if (process.argv.includes('--package-fixture')) {
     assert.match(rc, /version string.*floating branch/s);
   });
 
+  it('rc1 setup and help describe the actual prerequisite and continuation boundaries', () => {
+    const setup = fs.readFileSync(path.join(ROOT, 'fv-skills/references/auto-setup.md'), 'utf8');
+    const rc = section(setup, '## Rc1 exact-source installation', '## V2 run policy');
+    assert.ok(rc.indexOf('scripts/build-hooks.js') < rc.indexOf('bin/install.js'));
+    for (const token of ['hooks/dist/fvs-check-update.js', 'hooks/dist/fvs-statusline.js',
+      'raw Git checkout', 'mcpServers.lean-lsp', 'before native startup', 'externally prepared',
+      'profile-blocked', 'identity, correspondence and eligibility']) assert.ok(rc.includes(token), token);
+    const help = section(fs.readFileSync(path.join(ROOT, 'commands/fvs/help.md'), 'utf8'),
+      '### Auto (`/fvs:auto`)', '### Context (`/fvs:context`)');
+    assert.doesNotMatch(help, /milestone 2 functionality not yet available|is safe to rerun/);
+    for (const token of ['authorized v2 controller context', 'v2 alone grants no dispatch permission',
+      'Legacy/read-only or missing-grant', 'uncertain effect']) assert.ok(help.includes(token), token);
+    for (const file of ['commands/fvs/auto-init.md', 'fv-skills/workflows/auto-init.md']) {
+      const body = fs.readFileSync(path.join(ROOT, file), 'utf8');
+      assert.match(body, /Fresh rc1 setup requires the declared Aeneas/);
+      assert.match(body, /externally\s+prepared/);
+      assert.match(body, /profile-blocked/);
+    }
+  });
+
   it('rc1 source status guard stops a failed Git command before the installation sentinel', () => {
     const setup = fs.readFileSync(path.join(ROOT, 'fv-skills/references/auto-setup.md'), 'utf8');
     const block = setup.match(/```bash\n([ \t]*FVS_SOURCE=[\s\S]*?)```/)[1];
