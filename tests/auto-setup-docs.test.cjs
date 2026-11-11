@@ -10,7 +10,7 @@ const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { commandContext, nodeArguments } = require('./helpers/documented-node-command.cjs');
+const { commandContext, nodeArguments, validateDocumentedNodeCommand } = require('./helpers/documented-node-command.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 const AUTO_SCRIPT = path.join(ROOT, 'scripts', 'fvs-auto.mjs');
@@ -84,6 +84,7 @@ function namedReadOnlyExamples(text) {
   });
 }
 function assertOnlyReadOnlyExamples(text) {
+  for (const command of readOnlyExamples(text)) validateDocumentedNodeCommand(command);
   assert.deepEqual(readOnlyExamples(text).sort(), namedReadOnlyExamples(text).sort(),
     'read-only prerequisite/profile examples may run only the declared profile and resolver');
 }
@@ -223,6 +224,22 @@ describe('auto-setup reference: prerequisites', () => {
     assert.ok(raw.includes('.aeneas/releases/<rev>/<platform>/'));
   });
 
+  it('rejects suffix and substitution before Bash can write a sentinel', async (t) => {
+    const [profile] = namedReadOnlyExamples(raw);
+    const variants = [
+      ['suffix', profile + '; : > "$CRATE_ROOT/write-sentinel"'],
+      ['substitution', profile.replace('fvs-auto.mjs"', 'fvs-auto.mjs$(: > "$CRATE_ROOT/write-sentinel")"')],
+    ];
+    for (const [name, command] of variants) await t.test(name, (tt) => {
+      const context = commandContext(tt), sentinel = path.join(context.crate, 'write-sentinel');
+      let rejection = null;
+      try { nodeArguments(command, context); } catch (error) { rejection = error; }
+      assert.equal(fs.existsSync(sentinel), false, `${name} ran unsupported shell syntax before rejection`);
+      assert.match(rejection?.message ?? '', /unsupported documented node invocation/);
+      assert.throws(() => assertOnlyReadOnlyExamples(raw.replace(profile, command)), /unsupported documented node invocation/);
+    });
+  });
+
   it('keeps prerequisite checks read-only and manual FVS setup behind explicit consent', () => {
     for (const source of [
       'https://rustup.rs',
@@ -239,7 +256,7 @@ describe('auto-setup reference: prerequisites', () => {
     assert.match(manual, /FVS installs none of those tools/);
     assert.match(manual, /installing FVS never runs `bd init`, migrates a store or changes Beads settings/);
     const unsafe = raw.replace('## Check your host', '## Check your host\n\n```bash\nnpm install forbidden-example\n```');
-    assert.throws(() => assertOnlyReadOnlyExamples(unsafe), /read-only prerequisite/);
+    assert.throws(() => assertOnlyReadOnlyExamples(unsafe), /unsupported documented node invocation/);
   });
 
   it('explains how .formalising stays out of git and how to check it', () => {
