@@ -269,12 +269,12 @@ function integrate(w, intent, beforeEventSha256, commit) {
 
 // One revision episode (real Lean, opt-in only): fresh reviews of the revised contracts, a freeze at the current source
 // with only the absent overlay mutable, the scripted writer for that node, then check and accept H/A/B at the
-// integrated source. Every step carries the v2 basis chain (E0's acceptances are stale from the first revision on).
+// integrated source. The first review is a fresh decision (see `episodeReviews`); every later step carries the v2 basis
+// chain from it (the previous acceptances are stale from the first revision on).
 // A proof launch requires every helper of its node accepted at the current source, freeze and registry, so protected
 // helpers (`protect`) are first checked and accepted under the new freeze at the unchanged source.
 async function runEpisode(w, materials, label, { storeRoot, basis, reviews, overlay, libraries = null, protect = [] }) {
-  let next = basis;
-  for (const review of reviews) next = (await reviews_step(w, review, next)).basis;
+  const next = await episodeReviews(w, reviews, basis);
   const frozen = await freezeStep(w, materials, label.freeze + ' freeze', { overlayFiles: [overlay.file], targets: overlay.targets, libraries }, next);
   const protectedHelpers = protect.length ? await checkAccept(w, label.episode + ' protected', storeRoot, frozen.recorded.basis, protect) : null;
   const writer = await proofWriter(w, { node: overlay.node, file: overlay.file, wrong: overlay.wrong, correct: overlay.correct, basis: protectedHelpers?.basis ?? frozen.recorded.basis });
@@ -293,7 +293,16 @@ async function runE2(w, materials, { storeRoot, basis, reviews, overlay, librari
   const r = await runEpisode(w, materials, { episode: 'E2', freeze: 'F2' }, { storeRoot, basis, reviews, overlay, libraries, protect: [19] });
   return { f2: r.frozen, protectedH: r.protectedHelpers, writer: r.writer, checked: r.checked, basis: r.basis };
 }
-const reviews_step = (w, review, basis) => reviseContract(w, { ...review, basis, chain: true });
+// An episode opens on the owner's revision, which no completed transition explains: the engine admits a chained review
+// launch only for missing or pending contracts, and the revised contracts are already reviewed (and accepted). So the
+// first review is the coordinator's fresh decision, admitted only while every retained acceptance is verified current,
+// and every later step chains on that review's publication. `basis` (the previous episode's end) is used only when the
+// episode has no reviews.
+async function episodeReviews(w, reviews, basis) {
+  let next = reviews.length ? null : basis;
+  for (const review of reviews) next = (await reviseContract(w, { ...review, basis: next, chain: true })).basis;
+  return next;
+}
 // A fresh current reconcile (the independent resume/memory consumer inputs of a bundle or revision request).
 function currentResume(w) {
   const { x } = w, ctx = w.context();
@@ -355,4 +364,4 @@ function registryStatus(w) {
   return JSON.parse(p.stdout);
 }
 
-module.exports = { prepareRealRoot, recordSetup, dWorld, reviseContract, closeAssignment, freezeRequest, admitFreeze, runE0, runE1, runE2, proofWriter, intendedFailure, currentResume, bundleRequest, respecRequest, versionsOf, canonicalIdentity, negative, variant, step, registryStatus, git, sha };
+module.exports = { prepareRealRoot, recordSetup, dWorld, reviseContract, closeAssignment, freezeRequest, admitFreeze, runE0, runE1, runE2, episodeReviews, proofWriter, intendedFailure, currentResume, bundleRequest, respecRequest, versionsOf, canonicalIdentity, negative, variant, step, registryStatus, git, sha };
