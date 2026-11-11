@@ -124,7 +124,8 @@ async function buildSnapshot(job, source, out, runId, services = {}) {
 }
 function checkedProcess(lean, args, cwd, control, searchPaths, label, services = {}) {
   const options = { cwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024,
-    env: { PATH: `${path.dirname(lean.path)}:/usr/bin:/bin`, LANG: 'C', LEAN_PATH: searchPaths.join(path.delimiter), TMPDIR: cwd } };
+    // A fixed two-thread Lean pool, never inherited from the caller (as in the builder and kernel audits).
+    env: { PATH: `${path.dirname(lean.path)}:/usr/bin:/bin`, LANG: 'C', LEAN_PATH: searchPaths.join(path.delimiter), TMPDIR: cwd, LEAN_NUM_THREADS: '2' } };
   const finish = (run, owned = null) => {
   fs.writeFileSync(path.join(cwd, `${label}.stdout`), run.stdout ?? '', { flag: 'wx' });
   fs.writeFileSync(path.join(cwd, `${label}.stderr`), run.stderr ?? '', { flag: 'wx' });

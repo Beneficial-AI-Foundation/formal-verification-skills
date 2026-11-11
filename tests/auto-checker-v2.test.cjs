@@ -10,6 +10,7 @@ const { spawn } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const checker = import(pathToFileURL(path.resolve(__dirname, '../scripts/fvs-checker.mjs')));
 const execution = import(pathToFileURL(path.resolve(__dirname, '../scripts/fvs-execution.mjs')));
+const checkerAuto = import(pathToFileURL(path.resolve(__dirname, '../scripts/fvs-checker-auto.mjs')));
 const roots=[];after(()=>{for(const root of roots)fs.rmSync(root,{recursive:true,force:true});});
 const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
 async function fixture(version=2,budget={kind:'none'}){
@@ -31,6 +32,17 @@ test('every witness/audit Lean runs with the fixed two-thread cap, not the calle
  const m=await checker,f=await fixture(),envs=[],old=process.env.LEAN_NUM_THREADS;process.env.LEAN_NUM_THREADS='16';
  let result;try{result=await m.runKernelAuditV2(f,{spawnProcess(file,args,opts){envs.push(opts.env);return spawn(file,args,opts);}});}finally{if(old===undefined)delete process.env.LEAN_NUM_THREADS;else process.env.LEAN_NUM_THREADS=old;}
  assert.equal(result.code,'ok');assert.equal(envs.length,3);for(const env of envs)assert.equal(env.LEAN_NUM_THREADS,'2');
+});
+test('expected-context term validation and compilation run Lean with the fixed two-thread cap, not the caller value',async()=>{
+ const a=await checkerAuto,e=await execution,root=fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()),'fvs-expected-cap-'));roots.push(root);
+ const lib=path.join(root,'lib');fs.mkdirSync(lib);fs.writeFileSync(path.join(lib,'Ctx.olean'),'fixture');fs.writeFileSync(path.join(lib,'Ctx.ilean'),JSON.stringify({version:5,module:'Ctx',directImports:[]}));fs.writeFileSync(path.join(root,'Ctx.lean'),'-- context\n');
+ // Answers the term validation, then fails the expectation compile: both runs are observed, nothing is published.
+ const lean=path.join(root,'lean');fs.writeFileSync(lean,`#!${process.execPath}\nconst fs=require('node:fs');const a=process.argv.slice(2);if(a.includes('validate-terms')){const q=JSON.parse(fs.readFileSync(a.at(-1)));console.log(JSON.stringify({schema:'fvs-checker/parsed-terms',runId:q.runId}));}else process.exit(3);`,{mode:0o700});
+ const build={lean:{path:lean},projectRoot:root,externalSearchPaths:[],modules:[{name:'Ctx',source:'Ctx.lean',parts:[path.join(lib,'Ctx.olean')],ilean:path.join(lib,'Ctx.ilean')}]};
+ const job={version:2,runId:'protocol-run',execution:e.createExecution('project-run',{kind:'none'}),overlayFiles:[]},envs=[],calls=[],old=process.env.LEAN_NUM_THREADS;process.env.LEAN_NUM_THREADS='16';
+ const engine={HELPER:path.join(root,'helper.lean'),executionServices:{spawnProcess(file,args,opts){envs.push(opts.env);calls.push(args.includes('validate-terms')?'validate-terms':'compile');return spawn(file,args,opts);}}};
+ try{await assert.rejects(a.expectedWitnessV2(job,build,[{node:1,contextFile:'Ctx.lean',statement:'True'}],path.join(root,'expected'),engine),x=>x.code==='audit-failed');}finally{if(old===undefined)delete process.env.LEAN_NUM_THREADS;else process.env.LEAN_NUM_THREADS=old;}
+ assert.deepEqual(calls,['validate-terms','compile']);for(const env of envs)assert.equal(env.LEAN_NUM_THREADS,'2');
 });
 test('v2 cancellation before final audit publication retains actual command facts, no result',async()=>{
  const m=await checker,f=await fixture(),c=new AbortController();let calls=0;
