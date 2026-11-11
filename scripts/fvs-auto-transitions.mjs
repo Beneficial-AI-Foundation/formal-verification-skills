@@ -18,6 +18,9 @@ export class TransitionError extends Error {
 const stop = (code, message, details) => { throw new TransitionError(code, message, details); };
 const hash = (b) => crypto.createHash('sha256').update(b).digest('hex');
 const SHA = /^[0-9a-f]{64}$/, UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+// AO launch/release/terminate calls get their own bound, separate from short metadata observations: a real
+// `ao spawn` creates a worktree and starts an agent, which takes seconds and much longer under load.
+export const ADMINISTRATIVE_TIMEOUT_MS = 120000;
 const text = (v) => typeof v === 'string' && v.trim() !== '';
 const isSha = (v) => typeof v === 'string' && SHA.test(v);
 const isUuid = (v) => typeof v === 'string' && UUID.test(v);
@@ -1223,12 +1226,12 @@ async function performTransitionV2(options, services, a) {
   const startedAtMs=Date.now(),started=performance.now();
   // Metadata RPC/Git/registry calls keep a named administrative transport bound; proof/build work does not.
   const administrative=['launch','release','terminate'].includes(a.kind);
-  const deadline=administrative?(stopping||unbudgetedRun(a.before.fixed)?Date.now()+MEMORY_LIMITS.timeoutMs:Math.min(Date.now()+MEMORY_LIMITS.timeoutMs,a.before.fixed.budget.deadlineMs)):null;
+  const deadline=administrative?(stopping||unbudgetedRun(a.before.fixed)?Date.now()+ADMINISTRATIVE_TIMEOUT_MS:Math.min(Date.now()+ADMINISTRATIVE_TIMEOUT_MS,a.before.fixed.budget.deadlineMs)):null;
   const operationControl=administrative?createExecution(a.runId,{kind:'deadline',deadlineMs:deadline}):control;
   if(stopping&&a.target.progress!==null){const p=readKnownWork(a.target.progress);closeOwnedWork(p.packet,p.actor);}
   const processResult=await runOwned(argv,{cwd:a.before.source.root,env,maxBuffer:1024*1024},operationControl,services);
   const endedAtMs=Date.now(),stream=(name,b)=>{const file=path.join(evidenceDir,name);fs.writeFileSync(file,b,{flag:'wx'});return{file,sha256:hash(b)};};
-  const supervision={cancelled:processResult.cancelled,timedOut:processResult.timedOut,cleanupComplete:processResult.cleanupComplete,cleanup:processResult.cleanup,operationKind:administrative?'administrative':['freeze','check','accept'].includes(a.kind)?'proof':'work',administrativeTimeoutMs:administrative?MEMORY_LIMITS.timeoutMs:null,workScope:administrative?'direct-administrative-child':'known-fvs-command-group',descendantMapping:'no arbitrary AO descendant guarantee',elapsedMs:performance.now()-started};
+  const supervision={cancelled:processResult.cancelled,timedOut:processResult.timedOut,cleanupComplete:processResult.cleanupComplete,cleanup:processResult.cleanup,operationKind:administrative?'administrative':['freeze','check','accept'].includes(a.kind)?'proof':'work',administrativeTimeoutMs:administrative?ADMINISTRATIVE_TIMEOUT_MS:null,workScope:administrative?'direct-administrative-child':'known-fvs-command-group',descendantMapping:'no arbitrary AO descendant guarantee',elapsedMs:performance.now()-started};
   const command=transitionSave(path.join(evidenceDir,'command.json'),{schema:'fvs/auto-command-receipt',schemaVersion:2,runId:a.runId,transitionId:a.transitionId,actionSha256:memoryHash(a),argv,cwd:a.before.source.root,env,tool,startedAtMs,endedAtMs,exitCode:processResult.status,signal:processResult.signal,error:processResult.error?.code??null,stdout:stream('stdout',processResult.stdout),stderr:stream('stderr',processResult.stderr),execution:control,supervision});
   const unchanged=hash(transitionBytes(tool.file))===tool.sha256;
   let recorded=false;
