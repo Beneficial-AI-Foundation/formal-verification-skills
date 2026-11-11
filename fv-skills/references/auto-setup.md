@@ -67,7 +67,7 @@ extraction and a full pilot are separate from preparing this installation.
    For Claude's Lean MCP tools, the project `.mcp.json` server key must be `lean-lsp`
    (`mcpServers.lean-lsp`); the executable/package name is `lean-lsp-mcp`. FVS agent allowlists use
    that server key. Preserve existing MCP entries and the project's pinned tools/resource caps.
-   Configure it before native startup, or use a supported reload and verify actual tool discovery.
+   Configure it before native startup, or use a normal reload and verify actual tool discovery.
    Dependencies must be available before its first Lean diagnostic; installation alone proves neither.
 5. **Initialize project choices through `/fvs:auto-init`.** Reuse the existing initial agreement.
    Select source/features, roots, worker/resource limits and execution authority only where missing.
