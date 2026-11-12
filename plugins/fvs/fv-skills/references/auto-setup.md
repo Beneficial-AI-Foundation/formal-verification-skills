@@ -107,9 +107,12 @@ Controller permissions in auto mode:
   the FVS driver/CLI, `ao`, `git` and the pinned Lean tools. FVS changes no permission settings.
 - Run one simple, auditable command per step: one driver or CLI operation with its `--input` file, one
   `ao` call or one `git` call. Compound commands (`&&`, `;`, pipes, `cd` plus a command, subshells) can
-  trigger a permission prompt, and an unattended prompt may be aborted. The step then did not run.
-- Treat an aborted or denied command as a held step. Re-read state before acting. Never retry it
-  verbatim or reshape it to avoid review; report the hold if a plain command is also refused.
+  trigger a permission prompt, and an unattended prompt may be aborted.
+- A command denied before it started had no effect: re-read state and hold that step. Any other
+  abort, or an outcome you cannot establish, is uncertain: the effect may have run. Keep its marker,
+  reservation and evidence and follow the uncertain-effect recovery; never assume it did nothing.
+- In both cases, never retry the command verbatim or reshape it to avoid review; report the hold if
+  a plain command is also refused.
 - FVS cannot promise that a host permission classifier allows any command, and it contains nothing
   designed to evade one.
 

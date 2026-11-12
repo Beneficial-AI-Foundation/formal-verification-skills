@@ -75,19 +75,25 @@ capacity; final whole-scope15 currentness stays strict.
 
 ### Bootstrap: agreement to first dispatch
 
-This is the order a real rc1 controller used. It needs no further driver. JS names are
-`fvs-auto-driver.mjs` exports; the CLI operation is in brackets. Write each JSON input to a new
-owned file, run one operation per command, and keep every output.
+This is the order a real rc1 controller used. It needs no further driver. `prepareCurrentRequest`,
+`recordCheckpoint`, `advanceOnce`, `runPairedEffect` and `recordAfter` are `fvs-auto-driver.mjs`
+exports, with the CLI operation in brackets. `redactAOProfile` and `transitionSnapshot` come from
+`fvs-auto-transitions.mjs`; `readState`, `verifyWorkerStartup` and `acknowledgeWorkPacket` come from
+`fvs-auto.mjs`. Write each JSON input to a new owned file, run one operation per command, and keep
+every output.
 
 1. **Agreement.** `/fvs:auto-init` records the agreement and v2 choices; `prepareCurrentRequest`
    refuses without them.
-2. **Run context.** Write `{runId,ao,source,inputs,associations:[],priorAccounting:null}` once:
+2. **Run context.** For a new run, write `{runId,ao,source,inputs,associations:[],priorAccounting:null}`:
    - a new run UUID;
    - `ao:{tool:{file,sha256},stateHome,projectId,coordinatorSessionId}`;
    - `source`: the integration Git root, commit and expected tree;
    - `inputs`: the bound extraction, graph and plan references, with null `baseline` and
      `acceptedStore` for a new run.
-   Every later request reuses this context unchanged.
+   `runId` and `ao` stay fixed for the run. Rebuild the other fields from actual current facts
+   before each request: after a launch, `associations` lists the recorded associations, and
+   `source`, `baseline` and `acceptedStore` change when their effects are recorded. Never reuse a
+   stale copy.
 3. **Start reconciliation.** `prepareCurrentRequest({projectRoot,context,phase:'start',transition:null})`
    [`prepare`], then `recordCheckpoint({projectRoot,request,out})`. A CLI controller records it with
    `fvs-auto.mjs state` (`auto-resume.md`). `start` is valid once only; later requests use `resume`.
@@ -124,8 +130,10 @@ owned file, run one operation per command, and keep every output.
    - Run the `release` paired effect and record its after.
    - The worker starts only when its own `acknowledgeWorkPacket` returns `mayStart:true`.
 
-Stop at the first refusal or partial result. Keep its output and re-read state; never rerun the same
-before.
+After a recorded effect, `recordAfter` normally returns `facts-recorded-partial` with a basis. That
+is the expected result: use the basis for the next step. Stop instead at a refusal or a blocking
+partial result, such as named partial reasons, `facts-unverified` or an uncertain effect. Keep its
+output, re-read state and never rerun the same before.
 
 ### Actors and permissions
 
