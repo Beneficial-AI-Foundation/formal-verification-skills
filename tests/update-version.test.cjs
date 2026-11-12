@@ -36,19 +36,42 @@ async function banner(installed, latest) {
   throw new Error('update check wrote no cache');
 }
 
+// [installed, latest, expected]: the SemVer verdict for moving from installed to latest. Every comparison copy (the
+// update hook, the installer and the installed update command) is checked against this one table.
+const CASES = [
+  ['2.3.11', '2.3.12', 'update'],
+  ['2.3.12', '2.3.12', 'current'],
+  ['3.0.0-rc1', '2.3.12', 'ahead'],
+  ['3.0.0-rc1', '3.0.0', 'update'],
+  ['3.0.0-rc.2', '3.0.0-rc.10', 'update'],
+  ['2.4.0', '2.3.12', 'ahead'],
+  ['1.0.0+build.5', '1.0.0', 'current'],
+  ['3.0.0-rc.9007199254740992', '3.0.0-rc.9007199254740993', 'update'],
+  ['9007199254740993.0.0', '9007199254740992.0.0', 'ahead'],
+  // The SemVer 2.0.0 precedence example, pairwise.
+  ...['1.0.0-alpha', '1.0.0-alpha.1', '1.0.0-alpha.beta', '1.0.0-beta', '1.0.0-beta.2', '1.0.0-beta.11', '1.0.0-rc.1', '1.0.0']
+    .map((v, i, all) => [v, all[i + 1], 'update']).slice(0, -1),
+  ['2.3.12', 'not-a-version', 'unknown'],
+  ['3.0.0-rc..1', '3.0.0', 'unknown'],
+  ['3.0.0-01', '3.0.0', 'unknown'],
+  ['03.0.0', '3.0.0', 'unknown'],
+  ['1.0.0+', '1.0.0', 'unknown'],
+  ['1.0.0+a..b', '1.0.0', 'unknown'],
+  ['', '1.0.0', 'unknown'],
+];
+
 test('the update banner appears only when the published latest is a higher SemVer version', async () => {
-  for (const [installed, latest, expected] of [
-    ['2.3.11', '2.3.12', true],
-    ['2.3.12', '2.3.12', false],
-    ['3.0.0-rc1', '2.3.12', false],
-    ['3.0.0-rc1', '3.0.0', true],
-    ['3.0.0-rc.2', '3.0.0-rc.10', true],
-    ['2.4.0', '2.3.12', false],
-    ['2.3.12', 'not-a-version', false],
-    [null, '2.3.12', false],
-  ]) {
+  for (const [installed, latest, expected] of [...CASES, [null, '2.3.12', 'unknown']]) {
     const result = await banner(installed, latest);
-    assert.equal(result.update_available === true, expected, `installed ${installed}, latest ${latest}`);
+    assert.equal(result.update_available === true, expected === 'update', `installed ${installed}, latest ${latest}`);
+  }
+});
+
+test('the installer comparison matches the shared SemVer table', () => {
+  const { semverCompare } = require('../bin/install.js');
+  assert.equal(typeof semverCompare, 'function');
+  for (const [installed, latest, expected] of CASES) {
+    assert.equal(semverCompare(installed, latest), { update: -1, current: 0, ahead: 1, unknown: null }[expected], `${installed} vs ${latest}`);
   }
 });
 
@@ -91,51 +114,110 @@ for (const runtime of Object.keys(RUNTIMES)) {
     assert.match(g.doc, /If "UNKNOWN": the installed version cannot be determined\. STOP/);
   });
 
-  test(`${runtime}: the installed comparison block orders SemVer prereleases correctly`, () => {
+  test(`${runtime}: the installed comparison block matches the shared SemVer table`, () => {
     const { doc, project } = installed(runtime, 'global');
     const compare = block(doc, 'compare_versions');
-    for (const [installedVersion, latest, expected] of [
-      ['2.3.11', '2.3.12', 'update'],
-      ['2.3.12', '2.3.12', 'current'],
-      ['3.0.0-rc1', '2.3.12', 'ahead'],
-      ['3.0.0-rc1', '3.0.0', 'update'],
-      ['3.0.0-rc.2', '3.0.0-rc.10', 'update'],
-      ['2.4.0', '2.3.12', 'ahead'],
-      ['2.3.12', 'not-a-version', 'unknown'],
-    ]) {
+    for (const [installedVersion, latest, expected] of CASES) {
       const run = bash(compare, project, { INSTALLED: installedVersion, LATEST: latest });
       assert.equal(run.stdout.trim(), expected, `installed ${installedVersion}, latest ${latest}: ${run.stderr}`);
     }
   });
+
+  test(`${runtime}: no installed file keeps the old unknown-as-0.0.0 update route`, () => {
+    const { home } = installed(runtime, 'global');
+    const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)]);
+    for (const file of walk(home).filter((f) => f.endsWith('.md'))) {
+      assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /treat as (version )?0\.0\.0|Running fresh install/, file);
+    }
+  });
 }
 
-test('the update command never downgrades a prerelease to an older latest (text guard)', () => {
+test('the update command pins a verified version and never uses a floating tag (text guard)', () => {
   const doc = fs.readFileSync(path.join(ROOT, 'commands/fvs/update.md'), 'utf8');
-  for (const token of ['npx fv-skills-baif@next', 'npx fv-skills-baif@<version>', 'Never run `@latest` from a prerelease that is ahead of it']) {
-    assert.ok(doc.includes(token), token);
-  }
+  for (const token of ['npm view fv-skills-baif dist-tags.next', 'npx fv-skills-baif@<version>',
+    'Never run `@latest` from a prerelease that is ahead of it', 'never a floating `@next`']) assert.ok(doc.includes(token), token);
+  assert.ok(!doc.includes('npx fv-skills-baif@next'), 'no unchecked @next install');
   assert.ok(/for dir in \.claude \.codex /.test(doc), 'the cache clear covers Codex');
 });
 
-test('the Pi update skill pins prereleases and never treats an unknown version as old (text guard)', () => {
+test('the Pi update skill pins a verified version and never treats an unknown version as old (text guard)', () => {
   const skill = fs.readFileSync(path.join(ROOT, 'pi/skills/fvs-update/SKILL.md'), 'utf8');
-  for (const token of ['pi update npm:fv-skills-baif', 'npm:fv-skills-baif@<version>', 'npm:fv-skills-baif@next',
-    'never the bare `npm:fv-skills-baif`', 'the installed version cannot be determined']) assert.ok(skill.includes(token), token);
+  for (const token of ['pi update npm:fv-skills-baif', 'pi install npm:fv-skills-baif@<version>', 'npm view fv-skills-baif dist-tags',
+    'never the bare `npm:fv-skills-baif` or a floating tag', 'the installed version cannot be determined']) assert.ok(skill.includes(token), token);
+  assert.ok(!skill.includes('npm:fv-skills-baif@next'), 'no unchecked @next source');
 });
 
-test('the installer refuses to replace a higher installed version unless explicitly allowed', () => {
-  const home = tmp('fvs-downgrade-'), project = path.join(home, 'project');
-  fs.mkdirSync(project);
-  const versionFile = path.join(home, '.codex', 'fv-skills', 'VERSION');
-  fs.mkdirSync(path.dirname(versionFile), { recursive: true });
-  fs.writeFileSync(versionFile, '99.0.0\n');
-  const run = (...flags) => spawnSync(process.execPath, [INSTALLER, '--claude', '--codex', '--global', ...flags], { cwd: project, env: env({ HOME: home }), encoding: 'utf8', input: '' });
-  const refused = run();
-  assert.notEqual(refused.status, 0);
-  assert.match(refused.stderr + refused.stdout, /99\.0\.0 is newer than this installer/);
-  assert.equal(fs.readFileSync(versionFile, 'utf8'), '99.0.0\n', 'the higher install is untouched');
-  assert.equal(fs.existsSync(path.join(home, '.claude')), false, 'no other runtime is touched before the refusal');
-  const allowed = run('--allow-downgrade');
-  assert.equal(allowed.status, 0, allowed.stderr);
-  assert.equal(fs.readFileSync(versionFile, 'utf8').trim(), PKG_VERSION);
+const installer = (home, cwd, flags, extra = {}) => spawnSync(process.execPath, [INSTALLER, ...flags], { cwd, env: env({ HOME: home, ...extra }), encoding: 'utf8', input: '' });
+
+test('the installer refuses to replace a higher or unknown installed version unless explicitly allowed', () => {
+  for (const [name, seed, message] of [
+    ['a higher version', (f) => fs.writeFileSync(f, '99.0.0\n'), /99\.0\.0 is newer than this installer/],
+    ['an invalid version', (f) => fs.writeFileSync(f, 'UNKNOWN\n'), /Cannot read a valid installed FVS version/],
+    ['an empty version', (f) => fs.writeFileSync(f, ''), /Cannot read a valid installed FVS version/],
+    ['an unreadable version', (f) => { fs.writeFileSync(f, '1.0.0\n'); fs.chmodSync(f, 0); }, /Cannot read a valid installed FVS version/],
+    ['a version path that is a directory', (f) => fs.mkdirSync(f), /Cannot read a valid installed FVS version/],
+  ]) {
+    const home = tmp('fvs-downgrade-'), project = path.join(home, 'project');
+    fs.mkdirSync(project);
+    const versionFile = path.join(home, '.codex', 'fv-skills', 'VERSION');
+    fs.mkdirSync(path.dirname(versionFile), { recursive: true });
+    seed(versionFile);
+    const before = fs.statSync(versionFile).isDirectory() ? 'dir' : (fs.chmodSync(versionFile, 0o600), fs.readFileSync(versionFile, 'utf8'));
+    if (name === 'an unreadable version') fs.chmodSync(versionFile, 0);
+    const refused = installer(home, project, ['--claude', '--codex', '--global']);
+    assert.notEqual(refused.status, 0, name);
+    assert.match(refused.stderr + refused.stdout, message, name);
+    if (name === 'an unreadable version') fs.chmodSync(versionFile, 0o600);
+    assert.equal(fs.statSync(versionFile).isDirectory() ? 'dir' : fs.readFileSync(versionFile, 'utf8'), before, name + ': the existing install is untouched');
+    assert.equal(fs.existsSync(path.join(home, '.claude')), false, name + ': no other runtime is touched before the refusal');
+    if (name === 'a higher version') {
+      const allowed = installer(home, project, ['--claude', '--codex', '--global', '--allow-downgrade']);
+      assert.equal(allowed.status, 0, allowed.stderr);
+      assert.equal(fs.readFileSync(versionFile, 'utf8').trim(), PKG_VERSION);
+    }
+  }
+});
+
+// A fake `pi` that answers capability checks and logs every mutating call.
+function fakePi(root) {
+  const bin = path.join(root, 'bin'), log = path.join(root, 'pi-argv.jsonl');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(bin, 'pi'), `#!${process.execPath}\nconst fs=require('fs');const a=process.argv.slice(2);\nif(a[0]==='--version'){console.log('0.85.1');process.exit(0)}\nif(a[1]==='--help'){console.log('Usage: pi '+a[0]+' <source> [--local]');process.exit(0)}\nfs.appendFileSync(${JSON.stringify(log)},JSON.stringify(a)+'\\n');\n`, { mode: 0o755 });
+  return { path: `${bin}${path.delimiter}${process.env.PATH}`, calls: () => fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse) : [] };
+}
+const piSettings = (file, ...packages) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify({ packages })); };
+
+test('the Pi installer refuses a lower, unverified or unknown replacement before any Pi call', () => {
+  for (const [name, setup, flags, expected] of [
+    ['floating latest over a pinned prerelease', (h) => piSettings(path.join(h, '.pi/agent/settings.json'), 'npm:fv-skills-baif@99.0.0-rc1'), ['--pi', '--global'], /pinned at 99\.0\.0-rc1/],
+    ['a lower exact version', (h) => piSettings(path.join(h, '.pi/agent/settings.json'), 'npm:fv-skills-baif@99.0.0'), ['--pi', '--global', '--pi-version', '98.0.0'], /99\.0\.0 is newer than the requested 98\.0\.0/],
+    ['a lower exact version in project scope', (h, p) => piSettings(path.join(p, '.pi/settings.json'), 'npm:fv-skills-baif@99.0.0'), ['--pi', '--local', '--pi-version', '98.0.0'], /99\.0\.0 is newer than the requested 98\.0\.0/],
+    ['an unknown pinned tag', (h) => piSettings(path.join(h, '.pi/agent/settings.json'), 'npm:fv-skills-baif@next'), ['--pi', '--global', '--pi-version', '99.0.1'], /cannot be compared/],
+    ['moving away a higher opposite-scope pin', (h) => piSettings(path.join(h, '.pi/agent/settings.json'), 'npm:fv-skills-baif@99.0.0'), ['--pi', '--local', '--pi-version', '98.0.0', '--pi-conflict', 'move'], /99\.0\.0 is newer than the requested 98\.0\.0/],
+    ['a mixed selection', (h) => piSettings(path.join(h, '.pi/agent/settings.json'), 'npm:fv-skills-baif@99.0.0'), ['--pi', '--codex', '--global', '--pi-version', '98.0.0'], /99\.0\.0 is newer than the requested 98\.0\.0/],
+  ]) {
+    const home = tmp('fvs-pi-guard-'), project = path.join(home, 'project');
+    fs.mkdirSync(project);
+    setup(home, project);
+    const pi = fakePi(home), run = installer(home, project, flags, { PATH: pi.path });
+    assert.notEqual(run.status, 0, name);
+    assert.match(run.stderr + run.stdout, expected, name);
+    assert.deepEqual(pi.calls(), [], name + ': no Pi install or remove ran');
+    assert.equal(fs.existsSync(path.join(home, '.codex')), false, name + ': no other runtime was touched');
+  }
+});
+
+test('the Pi installer still installs a verified higher version, a floating update or an explicit override', () => {
+  for (const [name, source, flags, call] of [
+    ['a higher exact version', 'npm:fv-skills-baif@99.0.0', ['--pi', '--global', '--pi-version', '99.0.1'], ['install', 'npm:fv-skills-baif@99.0.1']],
+    ['floating latest over floating latest', 'npm:fv-skills-baif', ['--pi', '--global'], ['install', 'npm:fv-skills-baif']],
+    ['an explicit override', 'npm:fv-skills-baif@99.0.0', ['--pi', '--global', '--pi-version', '98.0.0', '--allow-downgrade'], ['install', 'npm:fv-skills-baif@98.0.0']],
+  ]) {
+    const home = tmp('fvs-pi-ok-'), project = path.join(home, 'project');
+    fs.mkdirSync(project);
+    piSettings(path.join(home, '.pi/agent/settings.json'), source);
+    const pi = fakePi(home), run = installer(home, project, flags, { PATH: pi.path });
+    assert.equal(run.status, 0, name + ': ' + run.stderr);
+    assert.deepEqual(pi.calls(), [call], name);
+  }
 });

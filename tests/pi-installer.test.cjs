@@ -183,7 +183,9 @@ describe('Pi installer adapter', () => {
     const fake = makeFakePi(root);
     const settings = path.join(root, '.pi', 'agent', 'settings.json');
     fs.mkdirSync(path.dirname(settings), { recursive: true });
-    fs.writeFileSync(settings, JSON.stringify({ packages: ['npm:foreign', 'npm:fv-skills-baif@2.3.3'] }));
+    // A floating opposite-scope source: replacing an exact pin with the unverified floating latest is refused
+    // (see update-version.test.cjs), so the move itself is exercised with a source that already tracks latest.
+    fs.writeFileSync(settings, JSON.stringify({ packages: ['npm:foreign', 'npm:fv-skills-baif'] }));
 
     const moved = runInstaller(root, fake, ['--pi', '--local', '--pi-conflict=move']);
     assert.equal(moved.status, 0, moved.stderr);

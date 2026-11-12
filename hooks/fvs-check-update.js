@@ -44,26 +44,26 @@ if (!fs.existsSync(cacheDir)) {
   fs.mkdirSync(cacheDir, { recursive: true });
 }
 
-// True only when version a is strictly higher than version b under SemVer precedence: a prerelease
-// (3.0.0-rc1) sorts below its release (3.0.0) and above every lower version (2.3.12). An unparseable
-// version compares as false, so it never raises an update. bin/install.js keeps the same comparison.
-function semverGreater(a, b) {
-  const parse = (v) => {
-    const m = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(String(v).trim());
-    return m && [Number(m[1]), Number(m[2]), Number(m[3]), m[4] ? m[4].split('.') : []];
-  };
+// SemVer 2.0.0 precedence of a against b: 1, 0 or -1, or null when either is not a valid version (so it
+// never raises an update). A prerelease (3.0.0-rc1) sorts below its release (3.0.0) and above every lower
+// version (2.3.12). Numbers compare exactly. bin/install.js and the update command keep the same comparison.
+function semverCompare(a, b) {
+  const id = "(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)";
+  const re = new RegExp("^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-(" + id + "(?:\\." + id + ")*))?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$");
+  const parse = (v) => { const m = re.exec(String(v).trim()); return m && [BigInt(m[1]), BigInt(m[2]), BigInt(m[3]), m[4] ? m[4].split(".") : []]; };
   const x = parse(a), y = parse(b);
-  if (!x || !y) return false;
-  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i];
+  if (!x || !y) return null;
+  const cmp = (s, t) => (s > t) - (s < t);
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return cmp(x[i], y[i]);
   const p = x[3], q = y[3];
-  if (!p.length || !q.length) return !p.length && q.length > 0;
+  if (!p.length || !q.length) return cmp(!p.length, !q.length);
   for (let i = 0; i < Math.max(p.length, q.length); i++) {
-    if (p[i] === undefined || q[i] === undefined) return q[i] === undefined;
+    if (p[i] === undefined || q[i] === undefined) return p[i] === undefined ? -1 : 1;
     if (p[i] === q[i]) continue;
     const pn = /^\d+$/.test(p[i]), qn = /^\d+$/.test(q[i]);
-    return pn && qn ? Number(p[i]) > Number(q[i]) : pn !== qn ? qn : p[i] > q[i];
+    return pn && qn ? cmp(BigInt(p[i]), BigInt(q[i])) : pn !== qn ? (pn ? -1 : 1) : cmp(p[i], q[i]);
   }
-  return false;
+  return 0;
 }
 
 // Run check in background (spawn background process, windowsHide prevents console flash)
@@ -71,7 +71,7 @@ const child = spawn(process.execPath, ['-e', `
   const fs = require('fs');
   const path = require('path');
   const { execSync } = require('child_process');
-  ${semverGreater.toString()}
+  ${semverCompare.toString()}
 
   const cacheFile = ${JSON.stringify(cacheFile)};
   const projectVersionFile = ${JSON.stringify(projectVersionFile)};
@@ -133,7 +133,7 @@ const child = spawn(process.execPath, ['-e', `
   } catch (e) { /* silent fail */ }
 
   const result = {
-    update_available: !!latest && installed !== null && semverGreater(latest, installed),
+    update_available: !!latest && installed !== null && semverCompare(latest, installed) === 1,
     installed: installed || 'unknown',
     latest: latest || 'unknown',
     checked: Math.floor(Date.now() / 1000),

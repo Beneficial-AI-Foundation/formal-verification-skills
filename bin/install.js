@@ -408,37 +408,69 @@ const hasHelp = args.includes('--help') || args.includes('-h');
 const forceStatusline = args.includes('--force-statusline');
 const allowDowngrade = args.includes('--allow-downgrade');
 
-// True only when version a is strictly higher than version b under SemVer precedence (a prerelease sorts
-// below its release and above every lower version); unparseable versions compare as false. Same comparison
-// as hooks/fvs-check-update.js.
-function semverGreater(a, b) {
-  const parse = (v) => {
-    const m = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(String(v).trim());
-    return m && [Number(m[1]), Number(m[2]), Number(m[3]), m[4] ? m[4].split('.') : []];
-  };
+// SemVer 2.0.0 precedence of a against b: 1, 0 or -1, or null when either is not a valid version. A prerelease
+// sorts below its release and above every lower version; numbers compare exactly. Same comparison as
+// hooks/fvs-check-update.js and the update command.
+function semverCompare(a, b) {
+  const id = "(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)";
+  const re = new RegExp("^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-(" + id + "(?:\\." + id + ")*))?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$");
+  const parse = (v) => { const m = re.exec(String(v).trim()); return m && [BigInt(m[1]), BigInt(m[2]), BigInt(m[3]), m[4] ? m[4].split(".") : []]; };
   const x = parse(a), y = parse(b);
-  if (!x || !y) return false;
-  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i];
+  if (!x || !y) return null;
+  const cmp = (s, t) => (s > t) - (s < t);
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return cmp(x[i], y[i]);
   const p = x[3], q = y[3];
-  if (!p.length || !q.length) return !p.length && q.length > 0;
+  if (!p.length || !q.length) return cmp(!p.length, !q.length);
   for (let i = 0; i < Math.max(p.length, q.length); i++) {
-    if (p[i] === undefined || q[i] === undefined) return q[i] === undefined;
+    if (p[i] === undefined || q[i] === undefined) return p[i] === undefined ? -1 : 1;
     if (p[i] === q[i]) continue;
     const pn = /^\d+$/.test(p[i]), qn = /^\d+$/.test(q[i]);
-    return pn && qn ? Number(p[i]) > Number(q[i]) : pn !== qn ? qn : p[i] > q[i];
+    return pn && qn ? cmp(BigInt(p[i]), BigInt(q[i])) : pn !== qn ? (pn ? -1 : 1) : cmp(p[i], q[i]);
   }
-  return false;
+  return 0;
 }
 
-// Refuse, before anything is written, to replace an installed FVS that is newer than this installer.
+// Refuse, before anything is written, to replace an installed FVS that is newer than this installer, or one whose
+// VERSION exists but cannot be read as a valid version. Only a missing VERSION is a fresh install.
 function refuseDowngrade(runtime, isGlobal) {
   if (allowDowngrade) return;
   const target = isGlobal ? getGlobalDir(runtime, explicitConfigDir) : path.join(process.cwd(), getDirName(runtime));
-  let installed;
-  try { installed = fs.readFileSync(path.join(target, 'fv-skills', 'VERSION'), 'utf8').trim(); } catch { return; }
-  if (semverGreater(installed, pkg.version)) {
+  const file = path.join(target, 'fv-skills', 'VERSION');
+  let installed = null;
+  try { installed = fs.readFileSync(file, 'utf8').trim(); } catch (error) { if (error.code === 'ENOENT') return; }
+  const order = installed === null ? null : semverCompare(installed, pkg.version);
+  if (order === null) {
+    throw new Error(`Cannot read a valid installed FVS version from ${file}. Nothing was changed. ` +
+      'Check that install, or pass --allow-downgrade to replace it anyway.');
+  }
+  if (order === 1) {
     throw new Error(`Installed FVS ${installed} is newer than this installer (${pkg.version}) at ${target}. Nothing was changed. ` +
-      `Use npx fv-skills-baif@${installed} (or @next) to stay current, or pass --allow-downgrade to replace it.`);
+      `Use npx fv-skills-baif@${installed} to keep it, or pass --allow-downgrade to replace it.`);
+  }
+}
+
+// Refuse, before any Pi install or removal, to replace a pinned Pi FVS with a lower or unverified version. Pi
+// records the source of each package; a floating source already tracks npm latest, while a prerelease install is
+// pinned to its exact version. With --pi-conflict move, the opposite-scope pin is checked too.
+function refusePiDowngrade(adapter, plan) {
+  if (allowDowngrade) return;
+  const scopes = adapter.scopes(), floating = `npm:${PI_PACKAGE_NAME}`;
+  const target = plan.isGlobal ? 'user' : 'project', other = plan.isGlobal ? 'project' : 'user';
+  for (const source of [...scopes[target], ...(plan.conflict === 'move' ? scopes[other] : [])]) {
+    if (source === floating) continue;
+    const installed = source.slice(floating.length + 1);
+    if (semverCompare(installed, installed) === null) {
+      throw new Error(`Pi has FVS pinned as ${source}, which cannot be compared with the requested version. Nothing was changed. ` +
+        'Pass --allow-downgrade to replace it anyway.');
+    }
+    if (plan.version === 'latest') {
+      throw new Error(`Pi has FVS pinned at ${installed}; the floating npm latest is not verified to be newer. Nothing was changed. ` +
+        'Pass --pi-version with an exact newer version, or --allow-downgrade.');
+    }
+    if (semverCompare(installed, plan.version) === 1) {
+      throw new Error(`Pi FVS ${installed} is newer than the requested ${plan.version}. Nothing was changed. ` +
+        'Pass --allow-downgrade to replace it.');
+    }
   }
 }
 
@@ -3618,6 +3650,7 @@ function printPiManifest({ action, isGlobal, version = 'latest', conflict = null
 }
 
 function installPi(adapter, plan) {
+  refusePiDowngrade(adapter, plan);
   printPiManifest({ action: 'install', ...plan });
   adapter.run(buildPiCommand('install', plan.version, plan.isGlobal));
   if (plan.conflict === 'move') {
@@ -3907,6 +3940,7 @@ if (args.includes('--gemini')) {
 }
 
 module.exports = {
+  semverCompare,
   saveLocalPatches,
   writeManifest,
   generateCodexConfigBlock,

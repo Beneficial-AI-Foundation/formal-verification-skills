@@ -67,19 +67,26 @@ Compare installed vs latest by SemVer precedence, never by string order: a prere
 
 ```bash
 node -e '
-const parse = (v) => { const m = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(String(v).trim());
-  return m && [Number(m[1]), Number(m[2]), Number(m[3]), m[4] ? m[4].split(".") : []]; };
-const gt = (a, b) => { const x = parse(a), y = parse(b); if (!x || !y) return false;
-  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i];
-  const p = x[3], q = y[3]; if (!p.length || !q.length) return !p.length && q.length > 0;
+function semverCompare(a, b) {
+  const id = "(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)";
+  const re = new RegExp("^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-(" + id + "(?:\\." + id + ")*))?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$");
+  const parse = (v) => { const m = re.exec(String(v).trim()); return m && [BigInt(m[1]), BigInt(m[2]), BigInt(m[3]), m[4] ? m[4].split(".") : []]; };
+  const x = parse(a), y = parse(b);
+  if (!x || !y) return null;
+  const cmp = (s, t) => (s > t) - (s < t);
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return cmp(x[i], y[i]);
+  const p = x[3], q = y[3];
+  if (!p.length || !q.length) return cmp(!p.length, !q.length);
   for (let i = 0; i < Math.max(p.length, q.length); i++) {
-    if (p[i] === undefined || q[i] === undefined) return q[i] === undefined;
+    if (p[i] === undefined || q[i] === undefined) return p[i] === undefined ? -1 : 1;
     if (p[i] === q[i]) continue;
     const pn = /^\d+$/.test(p[i]), qn = /^\d+$/.test(q[i]);
-    return pn && qn ? Number(p[i]) > Number(q[i]) : pn !== qn ? qn : p[i] > q[i]; }
-  return false; };
-const [i, l] = process.argv.slice(1);
-console.log(!parse(i) || !parse(l) ? "unknown" : gt(l, i) ? "update" : gt(i, l) ? "ahead" : "current");
+    return pn && qn ? cmp(BigInt(p[i]), BigInt(q[i])) : pn !== qn ? (pn ? -1 : 1) : cmp(p[i], q[i]);
+  }
+  return 0;
+}
+const c = semverCompare(process.argv[1], process.argv[2]);
+console.log(c === null ? "unknown" : c < 0 ? "update" : c > 0 ? "ahead" : "current");
 ' "$INSTALLED" "$LATEST"
 ```
 
@@ -110,9 +117,10 @@ You're ahead of the latest release (development version?).
 ```
 
 STOP here if ahead. If the installed version is a prerelease (it contains `-`, such as `3.0.0-rc1`),
-also say that `@latest` would downgrade it. Never run `@latest` from a prerelease that is ahead of it.
-To move to a newer prerelease, the user runs `npx fv-skills-baif@next` or pins an exact version with
-`npx fv-skills-baif@<version>`, adding the same runtime and `--local`/`--global` flags as below.
+also say that `@latest` would downgrade it. Never run `@latest` from a prerelease that is ahead of it,
+and never a floating `@next`. To look for a newer prerelease, run `npm view fv-skills-baif dist-tags.next`
+and rerun the comparison with that value as `LATEST`. Only if it prints `update`, offer that exact
+version as `npx fv-skills-baif@<version>`, adding the same runtime and `--local`/`--global` flags as below.
 </step>
 
 <step name="show_changes_and_confirm">
