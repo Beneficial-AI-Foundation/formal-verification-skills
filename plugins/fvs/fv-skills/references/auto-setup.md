@@ -109,9 +109,10 @@ specification composition only.
 
 Known rc1 issue: a released specification author cannot be closed, so its nodes cannot reach review in the
 same run. This manual unblock is an owner-run recovery, not the automatic path from no specifications. It uses
-shipped commands only:
+shipped commands only, and only under the fresh-root conditions above: the old run's work is conclusively
+stopped or absent, existing authorization covers the new attempt, and the old run's accounting is retained.
 1. Create a fresh run root whose primary is the commit with the composed specifications, and complete the
-   rc1 setup above, including `lake exe cache get`.
+   rc1 setup above, including `lake exe cache get` for projects whose pinned packages provide it.
 2. Run `/fvs:auto-init` in that primary, and HOLD continuation after it: `/fvs:auto-init` continues
    automatically once its context is complete. Do not let the controller propose or launch anything until
    steps 3 and 4 are done; otherwise it can launch another specification author.
@@ -121,8 +122,9 @@ shipped commands only:
    Exit 6 with state `needs-review` is the expected result, not a failure.
 4. Read the registry head with the same tool's `status` and the same `--plan`, `--graph`, `--registry` and
    `--spec-root`.
-5. Follow the bootstrap recipe in `auto-transitions.md`. Its first proposal is `review-or-revise`, then the
-   normal review route continues.
+5. Resume the bootstrap recipe in `auto-transitions.md` with the current registry head, the bound plan and
+   graph, and no old assignment. With eligible nodes, a fresh reconciled context and no live assignment, its
+   first proposal is `review-or-revise`, then the normal review route continues.
 
 Each contract file must pass the registry's contract checks against the files at `--spec-root`, and must name
 its real author. The reviewer must be a different session and run. Never hand-write start markers, progress or
@@ -134,7 +136,8 @@ Known rc1 issues, untested in v2:
   reports the effect as `execution-unverified`. The orchestration layer has no typed rejection for it, and the
   node stays unaccepted. Continue only through a conclusive failure route the engine admits; otherwise HOLD and report.
 - After the first acceptances, an action-less reconcile across a registry revision returns `stale-input`. Only
-  an action with a valid basis can proceed past it; otherwise HOLD and report.
+  a real action with its exact before, completion, basis and current head can proceed past it; otherwise HOLD
+  and keep the evidence.
 
 Controller permissions in auto mode:
 - Before the run, the owner approves the controller's commands in the controller's own session. These are
