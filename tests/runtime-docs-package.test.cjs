@@ -229,8 +229,12 @@ if (process.argv.includes('--package-fixture')) {
       "register each node's contract in dependency order", 'fvs-contract-registry.mjs" register --plan',
       'Exit 6 with state `needs-review` is the expected result', 'Its first proposal is `review-or-revise`',
       'The reviewer must be a different session and run', 'Never hand-write start markers, progress or',
-      'Closing a proof worker after a completed proof', 'refuses its receipt as `transition-command-unverified`',
-      'Reconcile with the action instead']) assert.ok(rc.includes(token), token);
+      'Closing a proof worker after a completed proof', 'not the automatic path from no specifications',
+      'HOLD continuation after it', 'Do not let the controller propose or launch anything until',
+      'the checker returns a typed error (for example `audit-failed`)', 'reports the effect as `execution-unverified`',
+      'The orchestration layer has no typed rejection', 'Continue only through a conclusive failure route the engine admits',
+      'an action with a valid basis can proceed past it']) assert.ok(rc.includes(token), token);
+    for (const gone of ['continue with a fresh proof attempt', 'Reconcile with the action instead', 'refuses its receipt as `transition-command-unverified`']) assert.ok(!rc.includes(gone), gone);
     const unblock = rc.slice(rc.indexOf('a released specification author cannot be closed'));
     const steps = ['lake exe cache get', '/fvs:auto-init', 'register each node', 'status', 'Its first proposal is'].map(token => unblock.indexOf(token));
     assert.ok(steps.every((at, i) => at >= 0 && (i === 0 || at > steps[i - 1])), 'manual unblock order ' + steps);

@@ -108,10 +108,13 @@ Rc1 status: rc1 has no tracer acceptance or rejection. Tracer run 3 (engine `91e
 specification composition only.
 
 Known rc1 issue: a released specification author cannot be closed, so its nodes cannot reach review in the
-same run. Manual unblock, with shipped commands only:
+same run. This manual unblock is an owner-run recovery, not the automatic path from no specifications. It uses
+shipped commands only:
 1. Create a fresh run root whose primary is the commit with the composed specifications, and complete the
    rc1 setup above, including `lake exe cache get`.
-2. Run `/fvs:auto-init` in that primary.
+2. Run `/fvs:auto-init` in that primary, and HOLD continuation after it: `/fvs:auto-init` continues
+   automatically once its context is complete. Do not let the controller propose or launch anything until
+   steps 3 and 4 are done; otherwise it can launch another specification author.
 3. Before the first proposal, register each node's contract in dependency order (helpers first), without
    `--review`. `FVS_SCRIPTS` is the trusted engine's installed scripts directory:
    `node "$FVS_SCRIPTS/fvs-contract-registry.mjs" register --plan "$PLAN" --graph "$GRAPH" --registry "$REGISTRY" --spec-root "$PRIMARY" --contract "$CONTRACT"`
@@ -127,10 +130,11 @@ completion records.
 
 Known rc1 issues, untested in v2:
 - Closing a proof worker after a completed proof.
-- A failing canonical check: the engine refuses its receipt as `transition-command-unverified`, and there is no
-  typed rejection. The node stays unaccepted; continue with a fresh proof attempt.
-- After the first acceptances, an action-less reconcile across a registry revision returns `stale-input`.
-  Reconcile with the action instead.
+- A failing canonical check: the checker returns a typed error (for example `audit-failed`), and the driver
+  reports the effect as `execution-unverified`. The orchestration layer has no typed rejection for it, and the
+  node stays unaccepted. Continue only through a conclusive failure route the engine admits; otherwise HOLD and report.
+- After the first acceptances, an action-less reconcile across a registry revision returns `stale-input`. Only
+  an action with a valid basis can proceed past it; otherwise HOLD and report.
 
 Controller permissions in auto mode:
 - Before the run, the owner approves the controller's commands in the controller's own session. These are
