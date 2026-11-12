@@ -55,7 +55,9 @@ npm view fv-skills-baif version 2>/dev/null
 ```
 Couldn't check for updates (offline or npm unavailable).
 
-To update manually: `npx fv-skills-baif --global`
+To update manually, install an exact version with the runtime and scope you use, for example
+`npx fv-skills-baif@<version> --claude --global`. Check the version first:
+a bare `npx fv-skills-baif` installs npm latest, which can be older than an installed prerelease.
 ```
 
 STOP here if npm unavailable.

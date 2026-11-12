@@ -137,6 +137,8 @@ test('the update command pins a verified version and never uses a floating tag (
   for (const token of ['npm view fv-skills-baif dist-tags.next', 'npx fv-skills-baif@<version>',
     'Never run `@latest` from a prerelease that is ahead of it', 'never a floating `@next`']) assert.ok(doc.includes(token), token);
   assert.ok(!doc.includes('npx fv-skills-baif@next'), 'no unchecked @next install');
+  assert.ok(!doc.includes('`npx fv-skills-baif --global`'), 'no bare manual install advice');
+  assert.ok(doc.includes('a bare `npx fv-skills-baif` installs npm latest'));
   assert.ok(/for dir in \.claude \.codex /.test(doc), 'the cache clear covers Codex');
 });
 
@@ -150,30 +152,31 @@ test('the Pi update skill pins a verified version and never treats an unknown ve
 const installer = (home, cwd, flags, extra = {}) => spawnSync(process.execPath, [INSTALLER, ...flags], { cwd, env: env({ HOME: home, ...extra }), encoding: 'utf8', input: '' });
 
 test('the installer refuses to replace a higher or unknown installed version unless explicitly allowed', () => {
+  // Each seed shapes an existing Codex install; the snapshot proves the refusal changed nothing.
+  const MANIFEST = 'fvs-file-manifest.json';
   for (const [name, seed, message] of [
-    ['a higher version', (f) => fs.writeFileSync(f, '99.0.0\n'), /99\.0\.0 is newer than this installer/],
-    ['an invalid version', (f) => fs.writeFileSync(f, 'UNKNOWN\n'), /Cannot read a valid installed FVS version/],
-    ['an empty version', (f) => fs.writeFileSync(f, ''), /Cannot read a valid installed FVS version/],
-    ['an unreadable version', (f) => { fs.writeFileSync(f, '1.0.0\n'); fs.chmodSync(f, 0); }, /Cannot read a valid installed FVS version/],
-    ['a version path that is a directory', (f) => fs.mkdirSync(f), /Cannot read a valid installed FVS version/],
+    ['a higher version', (d) => fs.writeFileSync(path.join(d, 'fv-skills/VERSION'), '99.0.0\n'), /99\.0\.0 is newer than this installer/],
+    ['a higher manifest version without VERSION', (d) => fs.writeFileSync(path.join(d, MANIFEST), JSON.stringify({ version: '99.0.0', files: {} })), /99\.0\.0 is newer than this installer/],
+    ['an invalid version', (d) => fs.writeFileSync(path.join(d, 'fv-skills/VERSION'), 'UNKNOWN\n'), /Cannot read a valid installed FVS version/],
+    ['an empty version', (d) => fs.writeFileSync(path.join(d, 'fv-skills/VERSION'), ''), /Cannot read a valid installed FVS version/],
+    ['an unreadable version', (d) => fs.writeFileSync(path.join(d, 'fv-skills/VERSION'), '1.0.0\n', { mode: 0 }), /Cannot read a valid installed FVS version/],
+    ['a version path that is a directory', (d) => fs.mkdirSync(path.join(d, 'fv-skills/VERSION')), /Cannot read a valid installed FVS version/],
   ]) {
-    const home = tmp('fvs-downgrade-'), project = path.join(home, 'project');
+    const home = tmp('fvs-downgrade-'), project = path.join(home, 'project'), codex = path.join(home, '.codex');
     fs.mkdirSync(project);
-    const versionFile = path.join(home, '.codex', 'fv-skills', 'VERSION');
-    fs.mkdirSync(path.dirname(versionFile), { recursive: true });
-    seed(versionFile);
-    const before = fs.statSync(versionFile).isDirectory() ? 'dir' : (fs.chmodSync(versionFile, 0o600), fs.readFileSync(versionFile, 'utf8'));
-    if (name === 'an unreadable version') fs.chmodSync(versionFile, 0);
+    fs.mkdirSync(path.join(codex, 'fv-skills'), { recursive: true });
+    seed(codex);
+    const snapshot = () => spawnSync('ls', ['-lR', codex], { encoding: 'utf8' }).stdout;
+    const before = snapshot();
     const refused = installer(home, project, ['--claude', '--codex', '--global']);
     assert.notEqual(refused.status, 0, name);
     assert.match(refused.stderr + refused.stdout, message, name);
-    if (name === 'an unreadable version') fs.chmodSync(versionFile, 0o600);
-    assert.equal(fs.statSync(versionFile).isDirectory() ? 'dir' : fs.readFileSync(versionFile, 'utf8'), before, name + ': the existing install is untouched');
+    assert.equal(snapshot(), before, name + ': the existing install is untouched');
     assert.equal(fs.existsSync(path.join(home, '.claude')), false, name + ': no other runtime is touched before the refusal');
     if (name === 'a higher version') {
       const allowed = installer(home, project, ['--claude', '--codex', '--global', '--allow-downgrade']);
       assert.equal(allowed.status, 0, allowed.stderr);
-      assert.equal(fs.readFileSync(versionFile, 'utf8').trim(), PKG_VERSION);
+      assert.equal(fs.readFileSync(path.join(codex, 'fv-skills/VERSION'), 'utf8').trim(), PKG_VERSION);
     }
   }
 });
@@ -194,6 +197,7 @@ test('the Pi installer refuses a lower, unverified or unknown replacement before
     ['a lower exact version in project scope', (h, p) => piSettings(path.join(p, '.pi/settings.json'), 'npm:fv-skills-baif@99.0.0'), ['--pi', '--local', '--pi-version', '98.0.0'], /99\.0\.0 is newer than the requested 98\.0\.0/],
     ['an unknown pinned tag', (h) => piSettings(path.join(h, '.pi/agent/settings.json'), 'npm:fv-skills-baif@next'), ['--pi', '--global', '--pi-version', '99.0.1'], /cannot be compared/],
     ['moving away a higher opposite-scope pin', (h) => piSettings(path.join(h, '.pi/agent/settings.json'), 'npm:fv-skills-baif@99.0.0'), ['--pi', '--local', '--pi-version', '98.0.0', '--pi-conflict', 'move'], /99\.0\.0 is newer than the requested 98\.0\.0/],
+    ['moving away an exact pin for the floating latest', (h) => piSettings(path.join(h, '.pi/agent/settings.json'), 'npm:fv-skills-baif@2.3.3'), ['--pi', '--local', '--pi-conflict', 'move'], /pinned at 2\.3\.3/],
     ['a mixed selection', (h) => piSettings(path.join(h, '.pi/agent/settings.json'), 'npm:fv-skills-baif@99.0.0'), ['--pi', '--codex', '--global', '--pi-version', '98.0.0'], /99\.0\.0 is newer than the requested 98\.0\.0/],
   ]) {
     const home = tmp('fvs-pi-guard-'), project = path.join(home, 'project');
