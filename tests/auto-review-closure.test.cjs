@@ -168,12 +168,13 @@ test('G1-1R: a normalized response closes; a coherent normalized/transformation/
 // Current AO's `session kill` also removes the worker's workspace: the worktree is unregistered and its directory is
 // gone, while the branch stays. `afterKill` runs between the owned kill and its paired after, as AO's cleanup does.
 const unregister = (w, actor) => f.git(w.x.root, 'worktree', 'remove', '--force', actor.worktree.path);
-async function closeWithCleanup(w, actor, progress, afterKill = unregister, stopEvidence = null) {
+async function closeWithCleanup(w, actor, progress, afterKill = unregister, stopEvidence = null, beforeResolve = () => {}) {
   const association = w.context().associations.find(a => w.t.transitionBound(a).sessionId === actor.sessionId);
   const target = operation => ({ sessionId: actor.sessionId, association, progress, operation });
   const stopped = await w.paired({ kind: 'terminate', stage: 'reconcile', sessionId: actor.sessionId, effect: { kind: 'local', operation: 'reconcile' }, target: target('terminate-session'),
     after: () => { afterKill(w, actor); return { sessionId: null, association: null, ...(stopEvidence ? { evidence: stopEvidence } : {}) }; } });
   const evidence = f.json(w.x.owned, 'owned-session-termination', { schema: 'fvs/auto-owned-session-termination', schemaVersion: 1, session: stopped.raw.session, progress, terminationCompletion: stopped.completion });
+  beforeResolve(w, actor);
   const resolved = await w.paired({ kind: 'terminate', stage: 'reconcile', sessionId: actor.sessionId, execute: false, effect: { kind: 'reservation-resolution', targetReservationId: actor.reservationId },
     target: target('resolve-terminated-reservation'), after: () => ({ sessionId: null, association: null, evidence: [evidence], resolution: { reason: 'session-terminated', evidence } }) });
   return { stopped, resolved };
@@ -214,4 +215,34 @@ test('a worktree removed before any owned stop refuses the stop itself', async (
   unregister(w, w.s.actor);
   await assert.rejects(closeWithCleanup(w, w.s.actor, handoff, () => {}), /resume-path-invalid|ENOENT/);
   assert.equal(reservation(w, w.s.actor.reservationId).state, 'active');
+});
+
+test('a recorded absence binds only the exact retained association in later reconciliation', async () => {
+  const w = await reviewed(), handoff = w.completion();
+  const ref = w.context().associations.find(a => w.t.transitionBound(a).sessionId === w.s.actor.sessionId), original = w.t.transitionBound(ref);
+  await closeWithCleanup(w, w.s.actor, handoff);
+  const reconcile = () => w.driver.recordCheckpoint({ projectRoot: w.x.root, request: w.request(), out: w.x.out() });
+  const held = w.auto.readRuntimeState({ projectRoot: w.x.root }).headSha256;
+  for (const [name, change] of [
+    ['a foreign missing path', v => { v.worktree.path = path.join(w.x.owned, 'elsewhere-' + f.uuid().slice(0, 8)); }],
+    ['a traversal of the same path', v => { v.worktree.path = path.dirname(v.worktree.path) + '/sub/../' + path.basename(v.worktree.path); }],
+    ['another assignment', v => { v.assignmentId = f.uuid(); }],
+    ['another reservation', v => { v.reservationId = f.uuid(); }],
+    ['another session', v => { v.sessionId = 'review-worker-other'; }],
+    ['an altered last-known commit', v => { v.worktree.commit = 'a'.repeat(40); }],
+  ]) {
+    const value = structuredClone(original); change(value);
+    w.useAssociations([f.json(w.x.owned, 'forged-association', value)]);
+    await assert.rejects(reconcile(), e => /resume-association-invalid|resume-path-invalid|ENOENT/.test(String(e.code) + ' ' + e.message), name);
+    assert.equal(w.auto.readRuntimeState({ projectRoot: w.x.root }).headSha256, held, name + ' publishes nothing');
+  }
+  w.useAssociations([ref]);
+  await reconcile();
+});
+
+test('a worktree re-added after its stop recorded the removal refuses the resolution', async () => {
+  const w = await reviewed(), handoff = w.completion(), branch = w.s.actor.worktree.branchRef.replace('refs/heads/', '');
+  const readd = (w, actor) => f.git(w.x.root, 'worktree', 'add', '-q', actor.worktree.path, branch);
+  await assert.rejects(closeWithCleanup(w, w.s.actor, handoff, unregister, null, readd), /reappeared/);
+  assert.equal(reservation(w, w.s.actor.reservationId).state, 'active', 'the reservation stays open');
 });

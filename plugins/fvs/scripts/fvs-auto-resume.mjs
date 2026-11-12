@@ -290,17 +290,34 @@ function association(ref, run) {
   }
   return a;
 }
-// A worker's worktree removed by AO's session kill is admitted as absent only after that owned stop: the stop's own
-// after (whose terminate delta then requires the exact kill receipt), or once that stop is a retained successful
-// after. AO must report the same session terminated, and the retained path must be in the run's repository, gone
-// (ENOENT) and no longer a registered worktree. Present-but-changed and every other absence still refuse.
+// The worker worktree recorded by the retained successful owned stop of this exact assignment, or null.
+function recordedStopWorktree(a, history) {
+  for (const row of history?.state?.history ?? []) {
+    if (row.event.position !== 'after' || row.event.outcome !== 'succeeded' || !row.event.intent.request) continue;
+    const old = readTransitionAction(row.event.intent.request);
+    if (!lifecycleOnlyAction(old) || old.target.operation === 'resolve-terminated-reservation' || old.target.sessionId !== a.sessionId) continue;
+    const w = readRuntimeObservation(row.event).transition?.snapshot?.worker;
+    if (w && w.sessionId === a.sessionId && w.reservationId === a.reservationId && w.assignmentId === a.assignmentId) return w.worktree;
+  }
+  return null;
+}
+// A worker's worktree removed by AO's session kill is admitted as absent only after that owned stop. The association
+// must be the exact retained launch/reservation assignment (path, Git dirs, branch, profile), AO must report the same
+// session terminated, and the path must be gone (ENOENT) and no longer a registered worktree. The last-known identity
+// comes from the stop itself: its validated before for the stop's own after (whose terminate delta then requires the
+// exact kill receipt), or the absence its retained after recorded. Once recorded, the absence is final: a worktree at
+// that path again refuses. Present-but-changed and every other absence still refuse. Returns the absent record or null.
 function stoppedWorktreeGone(a, { action, q, ao, history, run, registered }) {
-  const stop = (old) => lifecycleOnlyAction(old) && old.target.operation !== 'resolve-terminated-reservation' && old.target.sessionId === a.sessionId;
-  if (a.scopeRelation !== 'run-assignment' || a.worktree.gitCommonDir !== run.gitCommonDir || !ao.some((s) => s.id === a.sessionId && s.isTerminated === true)) return false;
-  try { fs.lstatSync(a.worktree.path); return false; } catch (e) { if (e.code !== 'ENOENT') throw e; }
-  if (registered.split('\n\n').some((s) => s.split('\n').includes('worktree ' + a.worktree.path))) return false;
-  if (action && stop(action) && q.transition?.position === 'after') return true;
-  return !!history?.state?.history.some((row) => row.event.position === 'after' && row.event.outcome === 'succeeded' && row.event.intent.request && stop(readTransitionAction(row.event.intent.request)));
+  const recorded = recordedStopWorktree(a, history), fixed = ['path', 'gitDir', 'gitCommonDir', 'branchRef'];
+  let present = true;
+  try { fs.lstatSync(a.worktree.path); } catch (e) { if (e.code !== 'ENOENT') throw e; present = false; }
+  if (recorded?.absent === true && present) stop('resume-association-invalid', 'a worktree its owned stop recorded as removed reappeared');
+  if (present || !history || a.scopeRelation !== 'run-assignment' || a.worktree.gitCommonDir !== run.gitCommonDir || !ao.some((s) => s.id === a.sessionId && s.isTerminated === true)) return null;
+  if (registered.split('\n\n').some((s) => s.split('\n').includes('worktree ' + a.worktree.path))) return null;
+  reservedAssociation(a, history, run);
+  const own = action && lifecycleOnlyAction(action) && action.target.operation !== 'resolve-terminated-reservation' && action.target.sessionId === a.sessionId && q.transition?.position === 'after' ? action.before.worker : null;
+  if (own) return own.sessionId === a.sessionId && fixed.every((k) => own.worktree[k] === a.worktree[k]) ? absentWorktree(own.worktree) : null;
+  return recorded?.absent === true && same(recorded, absentWorktree(recorded)) && same(absentWorktree(a.worktree), recorded) ? recorded : null;
 }
 function reservedAssociation(a, view, run, { stage = null, live = false, pending = false } = {}) {
   const r = view.reservations.get(a.reservationId);
@@ -371,7 +388,8 @@ function observe(root, q, services, out, previous, now, memory = null, unanchore
     const a = association(ref, run);
     if (seen.has(a.sessionId)) stop('resume-association-invalid', 'duplicate/conflicting controller association');
     seen.add(a.sessionId);
-    if (stoppedWorktreeGone(a, { action, q, ao, history, run, registered: identity.worktrees })) { gone.set(a.worktree.path, a); associations.push({ reference: ref, value: a }); continue; }
+    const absent = stoppedWorktreeGone(a, { action, q, ao, history, run, registered: identity.worktrees });
+    if (absent) { gone.set(a.worktree.path, { sessionId: a.sessionId, worktree: absent }); associations.push({ reference: ref, value: a }); continue; }
     const actual = git(a.worktree.path, r), expected = { path: actual.root, gitDir: actual.gitDir, gitCommonDir: actual.gitCommonDir, branchRef: actual.branchRef, commit: actual.commit, tree: actual.tree };
     const registered = actual.worktrees.split('\n\n').some((s) => s.split('\n').includes('worktree ' + a.worktree.path) && s.split('\n').includes('branch ' + a.worktree.branchRef));
     if ((!stopping && !same(a.worktree, expected)) || (stopping && ['path','gitDir','gitCommonDir','branchRef'].some(k=>a.worktree[k]!==expected[k])) || actual.gitCommonDir !== run.gitCommonDir || !registered || !ao.some((s) => s.id === a.sessionId)) reasons.push('association-git-or-session-mismatch');
@@ -449,7 +467,7 @@ function observe(root, q, services, out, previous, now, memory = null, unanchore
         const removed = gone.get(expected.path);
         if (removed) {
           if (!lifecycleOnlyAction(action) || action.target.sessionId !== removed.sessionId) stop('resume-association-invalid', 'a removed worktree is observed only by its own owned stop');
-          return absentWorktree(removed.worktree);
+          return removed.worktree;
         }
         const g = git(expected.path, r);
         return { path: g.root, gitDir: g.gitDir, gitCommonDir: g.gitCommonDir, branchRef: g.branchRef, commit: g.commit, tree: g.tree, dirty: g.dirty };
