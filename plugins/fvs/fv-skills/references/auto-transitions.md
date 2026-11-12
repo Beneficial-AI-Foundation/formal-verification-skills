@@ -90,13 +90,16 @@ every output.
    - `source`: the integration Git root, commit and expected tree;
    - `inputs`: the bound extraction, graph and plan references, with null `baseline` and
      `acceptedStore` for a new run.
-   `runId` and `ao` stay fixed for the run. Rebuild the other fields from actual current facts
-   before each request: after a launch, `associations` lists the recorded associations, and
+   `runId` and `ao` stay fixed for the run, including the coordinator session, and the original
+   accounting and policy are kept. Refresh `source`, `inputs` and `associations` from validated
+   effects before each request: after a launch, `associations` lists the recorded associations, and
    `source`, `baseline` and `acceptedStore` change when their effects are recorded. Never reuse a
-   stale copy.
+   stale copy. Prepare every request fresh, with its own current head and memory request.
 3. **Start reconciliation.** `prepareCurrentRequest({projectRoot,context,phase:'start',transition:null})`
-   [`prepare`], then `recordCheckpoint({projectRoot,request,out})`. A CLI controller records it with
-   `fvs-auto.mjs state` (`auto-resume.md`). `start` is valid once only; later requests use `resume`.
+   [`prepare`], then `recordCheckpoint({projectRoot,request,out})`, which records and independently
+   consumes it. A CLI controller records it with `fvs-auto.mjs state`, then still consumes the result
+   with `verifyReconciliation` against its held request (`auto-resume.md`). `start` is valid once
+   only; later requests use `resume`.
 4. **Profile and authorization.**
    - Read `ao project get PROJECT --json` once, and pass its bytes to `redactAOProfile` for the
      profile's `controller`.
@@ -130,10 +133,11 @@ every output.
    - Run the `release` paired effect and record its after.
    - The worker starts only when its own `acknowledgeWorkPacket` returns `mayStart:true`.
 
-After a recorded effect, `recordAfter` normally returns `facts-recorded-partial` with a basis. That
-is the expected result: use the basis for the next step. Stop instead at a refusal or a blocking
-partial result, such as named partial reasons, `facts-unverified` or an uncertain effect. Keep its
-output, re-read state and never rerun the same before.
+After a recorded effect, `recordAfter` normally returns a verified `facts-recorded-partial` with a
+basis. That is not a failure: carry the basis into the next action, which is admitted only by its own
+validation and a fresh before. Stop instead at a refusal or a blocking partial result, such as named
+partial reasons, `facts-unverified`, an uncertain effect or a missing prerequisite. Keep its output,
+re-read state and never rerun the same before.
 
 ### Actors and permissions
 

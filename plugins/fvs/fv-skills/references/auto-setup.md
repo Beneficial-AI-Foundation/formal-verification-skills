@@ -98,9 +98,11 @@ Stop and retain the old run as a partial, preserving failed-attempt history and 
 Start a fresh run root only after the old launch and any created session are conclusively stopped or absent
 and existing authorization covers the new attempt. If termination remains uncertain, HOLD.
 A fresh root is not a same-run resume; do not synthesize an after-event or delete the pending reservation.
-The same applies to a released work packet whose worker never acknowledged its start: rc1 has no route to
-close or re-issue that reservation, so recover in a fresh run root under the rules above. Release preparation
-now refuses a packet whose start marker is not beside the packet file, which was the observed cause.
+The same applies to a released work packet that its worker can never acknowledge, such as one whose start
+marker is not beside the packet file: rc1 has no route to close or re-issue that reservation, so recover in a
+fresh run root under the rules above. Release preparation now refuses such a packet before it is sent. An
+ordinary acknowledgement that is only still pending is not this case: wait, or recover delivery of the same
+handle with `--recover-only`.
 
 Controller permissions in auto mode:
 - Before the run, the owner approves the controller's commands in the controller's own session. These are

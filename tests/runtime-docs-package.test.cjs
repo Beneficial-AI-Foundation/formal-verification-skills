@@ -220,7 +220,7 @@ if (process.argv.includes('--package-fixture')) {
       'Start a fresh run root only after the old launch and any created session are conclusively stopped or absent',
       'existing authorization covers the new attempt', 'If termination remains uncertain, HOLD',
       'not a same-run resume', 'do not synthesize an after-event or delete the pending reservation',
-      'worker never acknowledged its start', 'start marker is not beside the packet file',
+      'its worker can never acknowledge', 'marker is not beside the packet file', 'only still pending is not this case',
       "approves the controller's commands in the controller's own session", 'FVS changes no permission settings',
       'one simple, auditable command per step', 'an unattended prompt may be aborted',
       'reshape it to avoid review', 'denied before it started had no effect', 'is uncertain: the effect may have run',
@@ -228,7 +228,8 @@ if (process.argv.includes('--package-fixture')) {
     const transitions = fs.readFileSync(path.join(ROOT, 'fv-skills/references/auto-transitions.md'), 'utf8');
     const recipe = section(transitions, '### Bootstrap: agreement to first dispatch', '### Actors and permissions');
     for (const token of ['`redactAOProfile` and `transitionSnapshot` come from', '`acknowledgeWorkPacket` come from',
-      '`runId` and `ao` stay fixed for the run', 'Never reuse a', 'normally returns `facts-recorded-partial`',
+      '`runId` and `ao` stay fixed for the run', 'Never reuse a', 'normally returns a verified `facts-recorded-partial`', 'admitted only by its own',
+      'still consumes the result', 'including the coordinator session','Prepare every request fresh',
       'Stop instead at a refusal or a blocking'])assert.ok(recipe.includes(token), token);
     const boot = recipe.slice(recipe.indexOf('1. **Agreement.**'));
     const order =["phase:'start'", 'recordCheckpoint', 'redactAOProfile', 'advanceOnce', 'runPairedEffect', 'recordAfter',
