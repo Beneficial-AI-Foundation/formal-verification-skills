@@ -15,22 +15,13 @@ Provides a better update experience than raw `npx fv-skills-baif` by showing ver
 Detect whether FVS is installed locally or globally by checking both locations:
 
 ```bash
-# Check local first (takes priority), with path canonicalization
-# to prevent misdetection when CWD=$HOME
-LOCAL_DIR="" GLOBAL_DIR=""
-if [ -f "./.claude/fv-skills/VERSION" ]; then
-  LOCAL_DIR="$(cd ./.claude 2>/dev/null && pwd)"
-fi
-if [ -f "$HOME/.claude/fv-skills/VERSION" ]; then
-  GLOBAL_DIR="$(cd "$HOME/.claude" 2>/dev/null && pwd)"
-fi
-
-# Only treat as LOCAL if resolved paths differ (handles CWD=$HOME edge case)
-if [ -n "$LOCAL_DIR" ] && { [ -z "$GLOBAL_DIR" ] || [ "$LOCAL_DIR" != "$GLOBAL_DIR" ]; }; then
-  cat "./.claude/fv-skills/VERSION"
+# A local install takes priority, except when the current directory is $HOME itself:
+# there ./.claude is the global install.
+if [ -f "./.claude/fv-skills/VERSION" ] && [ "$(pwd -P)" != "$(cd "$HOME" && pwd -P)" ]; then
+  printf '%s\n' "$(cat "./.claude/fv-skills/VERSION")"
   echo "LOCAL"
-elif [ -n "$GLOBAL_DIR" ]; then
-  cat "$HOME/.claude/fv-skills/VERSION"
+elif [ -f "$HOME/.claude/fv-skills/VERSION" ]; then
+  printf '%s\n' "$(cat "$HOME/.claude/fv-skills/VERSION")"
   echo "GLOBAL"
 else
   echo "UNKNOWN"
@@ -40,20 +31,17 @@ fi
 Parse output:
 - If last line is "LOCAL": installed version is first line, use `--local` flag for update
 - If last line is "GLOBAL": installed version is first line, use `--global` flag for update
-- If "UNKNOWN": proceed to install step (treat as version 0.0.0)
+- If "UNKNOWN": the installed version cannot be determined. STOP and explain:
 
-**If VERSION file missing:**
 ```
 ## FVS Update
 
 **Installed version:** Unknown
 
-Your installation doesn't include version tracking.
-
-Running fresh install...
+No FVS VERSION file was found for this runtime, so the installed version cannot be compared with
+npm. Nothing was changed. Reinstall explicitly with the runtime and scope you use, for example
+`npx fv-skills-baif@<version> --claude --global`.
 ```
-
-Proceed to install step (treat as version 0.0.0 for comparison).
 </step>
 
 <step name="check_latest_version">
@@ -74,9 +62,32 @@ STOP here if npm unavailable.
 </step>
 
 <step name="compare_versions">
-Compare installed vs latest:
+Compare installed vs latest by SemVer precedence, never by string order: a prerelease such as
+`3.0.0-rc1` is lower than `3.0.0` but higher than `2.3.12`. Set `INSTALLED` and `LATEST`, then run:
 
-**If installed == latest:**
+```bash
+node -e '
+const parse = (v) => { const m = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(String(v).trim());
+  return m && [Number(m[1]), Number(m[2]), Number(m[3]), m[4] ? m[4].split(".") : []]; };
+const gt = (a, b) => { const x = parse(a), y = parse(b); if (!x || !y) return false;
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i];
+  const p = x[3], q = y[3]; if (!p.length || !q.length) return !p.length && q.length > 0;
+  for (let i = 0; i < Math.max(p.length, q.length); i++) {
+    if (p[i] === undefined || q[i] === undefined) return q[i] === undefined;
+    if (p[i] === q[i]) continue;
+    const pn = /^\d+$/.test(p[i]), qn = /^\d+$/.test(q[i]);
+    return pn && qn ? Number(p[i]) > Number(q[i]) : pn !== qn ? qn : p[i] > q[i]; }
+  return false; };
+const [i, l] = process.argv.slice(1);
+console.log(!parse(i) || !parse(l) ? "unknown" : gt(l, i) ? "update" : gt(i, l) ? "ahead" : "current");
+' "$INSTALLED" "$LATEST"
+```
+
+It prints `update`, `current`, `ahead` or `unknown`. Only `update` continues to the next step.
+
+**If unknown:** a version could not be parsed. STOP and show both values; do not install.
+
+**If current:**
 ```
 ## FVS Update
 
@@ -88,7 +99,7 @@ You're already on the latest version.
 
 STOP here if already up to date.
 
-**If installed > latest:**
+**If ahead:**
 ```
 ## FVS Update
 
@@ -98,7 +109,10 @@ STOP here if already up to date.
 You're ahead of the latest release (development version?).
 ```
 
-STOP here if ahead.
+STOP here if ahead. If the installed version is a prerelease (it contains `-`, such as `3.0.0-rc1`),
+also say that `@latest` would downgrade it. Never run `@latest` from a prerelease that is ahead of it.
+To move to a newer prerelease, the user runs `npx fv-skills-baif@next` or pins an exact version with
+`npx fv-skills-baif@<version>`, adding the same runtime and `--local`/`--global` flags as below.
 </step>
 
 <step name="show_changes_and_confirm">
@@ -173,7 +187,7 @@ installer defaults to Claude Code, so an update run inside agy would not update 
 npx fv-skills-baif@latest --local
 ```
 
-**If GLOBAL install (or unknown):**
+**If GLOBAL install:**
 ```bash
 npx fv-skills-baif@latest --global
 ```
@@ -184,7 +198,7 @@ Clear the update cache so statusline indicator disappears:
 
 ```bash
 # Clear update cache across all runtime directories
-for dir in .claude .config/opencode .opencode .gemini/config/plugins/fvs .agents/plugins/fvs; do
+for dir in .claude .codex .config/opencode .opencode .gemini/config/plugins/fvs .agents/plugins/fvs; do
   rm -f "./$dir/cache/fvs-update-check.json"
   rm -f "$HOME/$dir/cache/fvs-update-check.json"
 done

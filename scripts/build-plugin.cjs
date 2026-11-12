@@ -414,9 +414,14 @@ Update the managed FVS Pi package without modifying its installed files directly
 
 <process>
 1. Read the installed version from \`../../../fv-skills/VERSION\`, resolving it against this skill directory.
-2. Run \`npm view fv-skills-baif version\` and report whether an update is available.
+   If it is missing or unreadable, the installed version cannot be determined: stop and say so; never treat it as an old version.
+2. Run \`npm view fv-skills-baif version\`. Compare by SemVer precedence, not string order: a prerelease such as
+   \`3.0.0-rc1\` is lower than \`3.0.0\` but higher than \`2.3.12\`. An update is available only when npm's version is higher.
 3. If an update is available, summarize its changelog entry and ask for confirmation.
-4. On confirmation, run \`pi update npm:fv-skills-baif\`.
+4. On confirmation, run \`pi update npm:fv-skills-baif\`, unless the installed version is a prerelease (it contains \`-\`).
+   For a prerelease use an exact source, never the bare \`npm:fv-skills-baif\`: \`pi install npm:fv-skills-baif@<version>\`
+   for the higher version, or \`pi install npm:fv-skills-baif@next\` for the newest prerelease (add \`--local\` for a project
+   install). If npm's version is not higher than an installed prerelease, report that and stop.
 5. Report the result and ask the user to run \`/reload\` or start a new Pi session.
 </process>
 `;

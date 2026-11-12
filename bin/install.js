@@ -406,6 +406,41 @@ function parseConfigDirArg() {
 const explicitConfigDir = parseConfigDirArg();
 const hasHelp = args.includes('--help') || args.includes('-h');
 const forceStatusline = args.includes('--force-statusline');
+const allowDowngrade = args.includes('--allow-downgrade');
+
+// True only when version a is strictly higher than version b under SemVer precedence (a prerelease sorts
+// below its release and above every lower version); unparseable versions compare as false. Same comparison
+// as hooks/fvs-check-update.js.
+function semverGreater(a, b) {
+  const parse = (v) => {
+    const m = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(String(v).trim());
+    return m && [Number(m[1]), Number(m[2]), Number(m[3]), m[4] ? m[4].split('.') : []];
+  };
+  const x = parse(a), y = parse(b);
+  if (!x || !y) return false;
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i];
+  const p = x[3], q = y[3];
+  if (!p.length || !q.length) return !p.length && q.length > 0;
+  for (let i = 0; i < Math.max(p.length, q.length); i++) {
+    if (p[i] === undefined || q[i] === undefined) return q[i] === undefined;
+    if (p[i] === q[i]) continue;
+    const pn = /^\d+$/.test(p[i]), qn = /^\d+$/.test(q[i]);
+    return pn && qn ? Number(p[i]) > Number(q[i]) : pn !== qn ? qn : p[i] > q[i];
+  }
+  return false;
+}
+
+// Refuse, before anything is written, to replace an installed FVS that is newer than this installer.
+function refuseDowngrade(runtime, isGlobal) {
+  if (allowDowngrade) return;
+  const target = isGlobal ? getGlobalDir(runtime, explicitConfigDir) : path.join(process.cwd(), getDirName(runtime));
+  let installed;
+  try { installed = fs.readFileSync(path.join(target, 'fv-skills', 'VERSION'), 'utf8').trim(); } catch { return; }
+  if (semverGreater(installed, pkg.version)) {
+    throw new Error(`Installed FVS ${installed} is newer than this installer (${pkg.version}) at ${target}. Nothing was changed. ` +
+      `Use npx fv-skills-baif@${installed} (or @next) to stay current, or pass --allow-downgrade to replace it.`);
+  }
+}
 
 if (require.main === module) {
   console.log(banner);
@@ -413,7 +448,7 @@ if (require.main === module) {
 
 // Show help if requested
 if (require.main === module && hasHelp) {
-  console.log(`  ${yellow}Usage:${reset} npx fv-skills-baif [options]\n\n  ${yellow}Options:${reset}\n    ${orange}-g, --global${reset}              Install globally (to config directory)\n    ${orange}-l, --local${reset}               Install locally (to current directory)\n    ${orange}--claude${reset}                  Install for Claude Code only\n    ${orange}--opencode${reset}                Install for OpenCode only\n    ${orange}--antigravity, --agy${reset}      Install for Antigravity (agy) as a native plugin\n    ${orange}--codex${reset}                   Install for Codex only\n    ${orange}--pi${reset}                      Install as a native Pi package only\n    ${orange}--all${reset}                     Install for all runtimes, including Pi\n    ${orange}--pi-version <latest|X.Y.Z>${reset}  Select updateable or pinned Pi package\n    ${orange}--pi-conflict <keep|move>${reset} Resolve an opposite-scope Pi install noninteractively\n    ${orange}-u, --uninstall${reset}           Uninstall FVS (remove all FVS files)\n    ${orange}-c, --config-dir <path>${reset}   Specify custom config directory\n    ${orange}-h, --help${reset}                Show this help message\n    ${orange}--force-statusline${reset}        Replace existing statusline config\n\n  ${yellow}Examples:${reset}\n    ${dim}# Interactive install (prompts for runtime and location)${reset}\n    npx fv-skills-baif\n\n    ${dim}# Install for Claude Code globally${reset}\n    npx fv-skills-baif --claude --global\n\n    ${dim}# Install for Codex globally${reset}\n    npx fv-skills-baif --codex --global\n\n    ${dim}# Install the updateable Pi package globally${reset}\n    npx fv-skills-baif --pi --global\n\n    ${dim}# Pin an exact Pi package in this project${reset}\n    npx fv-skills-baif --pi --local --pi-version ${pkg.version}\n\n    ${dim}# Install for Antigravity globally${reset}\n    npx fv-skills-baif --antigravity --global\n\n    ${dim}# Install for all runtimes globally${reset}\n    npx fv-skills-baif --all --global\n\n    ${dim}# Install to custom config directory${reset}\n    npx fv-skills-baif --claude --global --config-dir ~/.claude-bc\n\n    ${dim}# Install to current project only${reset}\n    npx fv-skills-baif --claude --local\n\n    ${dim}# Uninstall FVS from Claude Code globally${reset}\n    npx fv-skills-baif --claude --global --uninstall\n\n  ${yellow}Notes:${reset}\n    Exact versions must be available in the registry; source version is not publication evidence.\n    The --config-dir option is useful when you have multiple configurations.\n    It takes priority over CLAUDE_CONFIG_DIR / CODEX_HOME environment variables.\n    For Antigravity, --config-dir names agy's config root (default ~/.gemini/config); FVS installs into its plugins/fvs/.\n    Pi uses native fixed user/project settings, so --config-dir is reported and ignored for Pi.\n`);
+  console.log(`  ${yellow}Usage:${reset} npx fv-skills-baif [options]\n\n  ${yellow}Options:${reset}\n    ${orange}-g, --global${reset}              Install globally (to config directory)\n    ${orange}-l, --local${reset}               Install locally (to current directory)\n    ${orange}--claude${reset}                  Install for Claude Code only\n    ${orange}--opencode${reset}                Install for OpenCode only\n    ${orange}--antigravity, --agy${reset}      Install for Antigravity (agy) as a native plugin\n    ${orange}--codex${reset}                   Install for Codex only\n    ${orange}--pi${reset}                      Install as a native Pi package only\n    ${orange}--all${reset}                     Install for all runtimes, including Pi\n    ${orange}--pi-version <latest|X.Y.Z>${reset}  Select updateable or pinned Pi package\n    ${orange}--pi-conflict <keep|move>${reset} Resolve an opposite-scope Pi install noninteractively\n    ${orange}-u, --uninstall${reset}           Uninstall FVS (remove all FVS files)\n    ${orange}-c, --config-dir <path>${reset}   Specify custom config directory\n    ${orange}-h, --help${reset}                Show this help message\n    ${orange}--force-statusline${reset}        Replace existing statusline config\n    ${orange}--allow-downgrade${reset}         Replace an installed FVS newer than this installer\n\n  ${yellow}Examples:${reset}\n    ${dim}# Interactive install (prompts for runtime and location)${reset}\n    npx fv-skills-baif\n\n    ${dim}# Install for Claude Code globally${reset}\n    npx fv-skills-baif --claude --global\n\n    ${dim}# Install for Codex globally${reset}\n    npx fv-skills-baif --codex --global\n\n    ${dim}# Install the updateable Pi package globally${reset}\n    npx fv-skills-baif --pi --global\n\n    ${dim}# Pin an exact Pi package in this project${reset}\n    npx fv-skills-baif --pi --local --pi-version ${pkg.version}\n\n    ${dim}# Install for Antigravity globally${reset}\n    npx fv-skills-baif --antigravity --global\n\n    ${dim}# Install for all runtimes globally${reset}\n    npx fv-skills-baif --all --global\n\n    ${dim}# Install to custom config directory${reset}\n    npx fv-skills-baif --claude --global --config-dir ~/.claude-bc\n\n    ${dim}# Install to current project only${reset}\n    npx fv-skills-baif --claude --local\n\n    ${dim}# Uninstall FVS from Claude Code globally${reset}\n    npx fv-skills-baif --claude --global --uninstall\n\n  ${yellow}Notes:${reset}\n    Exact versions must be available in the registry; source version is not publication evidence.\n    The --config-dir option is useful when you have multiple configurations.\n    It takes priority over CLAUDE_CONFIG_DIR / CODEX_HOME environment variables.\n    For Antigravity, --config-dir names agy's config root (default ~/.gemini/config); FVS installs into its plugins/fvs/.\n    Pi uses native fixed user/project settings, so --config-dir is reported and ignored for Pi.\n`);
   process.exit(0);
 }
 
@@ -3688,6 +3723,7 @@ function startInstall(runtimes, isGlobal, isInteractive) {
   const nonPi = runtimes.filter(runtime => runtime !== 'pi');
   const preflightNonPi = () => {
     for (const runtime of nonPi) preflightNonPiRuntime(runtime, isGlobal);
+    for (const runtime of nonPi) refuseDowngrade(runtime, isGlobal);
   };
   if (!runtimes.includes('pi')) {
     try {

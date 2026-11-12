@@ -44,11 +44,34 @@ if (!fs.existsSync(cacheDir)) {
   fs.mkdirSync(cacheDir, { recursive: true });
 }
 
+// True only when version a is strictly higher than version b under SemVer precedence: a prerelease
+// (3.0.0-rc1) sorts below its release (3.0.0) and above every lower version (2.3.12). An unparseable
+// version compares as false, so it never raises an update. bin/install.js keeps the same comparison.
+function semverGreater(a, b) {
+  const parse = (v) => {
+    const m = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(String(v).trim());
+    return m && [Number(m[1]), Number(m[2]), Number(m[3]), m[4] ? m[4].split('.') : []];
+  };
+  const x = parse(a), y = parse(b);
+  if (!x || !y) return false;
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i];
+  const p = x[3], q = y[3];
+  if (!p.length || !q.length) return !p.length && q.length > 0;
+  for (let i = 0; i < Math.max(p.length, q.length); i++) {
+    if (p[i] === undefined || q[i] === undefined) return q[i] === undefined;
+    if (p[i] === q[i]) continue;
+    const pn = /^\d+$/.test(p[i]), qn = /^\d+$/.test(q[i]);
+    return pn && qn ? Number(p[i]) > Number(q[i]) : pn !== qn ? qn : p[i] > q[i];
+  }
+  return false;
+}
+
 // Run check in background (spawn background process, windowsHide prevents console flash)
 const child = spawn(process.execPath, ['-e', `
   const fs = require('fs');
   const path = require('path');
   const { execSync } = require('child_process');
+  ${semverGreater.toString()}
 
   const cacheFile = ${JSON.stringify(cacheFile)};
   const projectVersionFile = ${JSON.stringify(projectVersionFile)};
@@ -57,7 +80,7 @@ const child = spawn(process.execPath, ['-e', `
   const globalFvSkillsDir = ${JSON.stringify(globalFvSkillsDir)};
 
   // Check project directory first (local install), then global
-  let installed = '0.0.0';
+  let installed = null;
   try {
     if (fs.existsSync(projectVersionFile)) {
       installed = fs.readFileSync(projectVersionFile, 'utf8').trim();
@@ -110,8 +133,8 @@ const child = spawn(process.execPath, ['-e', `
   } catch (e) { /* silent fail */ }
 
   const result = {
-    update_available: latest && installed !== latest,
-    installed,
+    update_available: !!latest && installed !== null && semverGreater(latest, installed),
+    installed: installed || 'unknown',
     latest: latest || 'unknown',
     checked: Math.floor(Date.now() / 1000),
     aeneas_stale,
