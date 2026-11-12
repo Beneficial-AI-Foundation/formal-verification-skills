@@ -32,7 +32,8 @@ if(args[0]==='send'){console.log(JSON.stringify({deliveryHandle:args[args.indexO
     const actorId = sessionId ?? target.sessionId ?? null;
     const before = t.transitionSnapshot({ q, run: x.run(), canonical: x.canonical(), observation: observed.value.observation,
       action: { schemaVersion: 2, kind, before: { registry: registryRoot ? { root: registryRoot } : null }, target: actorId ? { sessionId: actorId } : {}, owner, nodes, authorization: x.auth, profile: x.profile } },
-    { profileObservation: x.profileObservation, observeWorktree: o => worktree(o.path) });
+    // A stop's resolution after AO removed the worker's worktree mirrors the engine's recorded absence; the engine decides.
+    { profileObservation: x.profileObservation, observeWorktree: o => fs.existsSync(o.path) ? worktree(o.path) : t.absentWorktree(o) });
     const action = { schema: 'fvs/auto-transition-request', schemaVersion: 2, runId: x.runId, ...ids, kind, stage, nodes, owner, expectedHeadSha256: q.expectedHeadSha256, before, target, authorization: x.auth, profile: x.profile, basis };
     const actionRef = f.json(x.owned, 'action', action), intent = { ...ids, stage, nodes, owner, effect, request: actionRef };
     const beforeRequest = request({ position: 'before', intent, beforeEventSha256: null, outcome: null, effect: null });

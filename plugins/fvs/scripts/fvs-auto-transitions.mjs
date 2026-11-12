@@ -91,7 +91,11 @@ function snapshotValid(s, version = 1) {
   if (s.store !== null) { closed(s.store, ['root', 'headSha256', 'pending', 'heads'], 'historical store observation'); canonicalStore(s.store.root); }
 }
 export const lifecycleOnlyAction = a => a?.schemaVersion === 2 && a.kind === 'terminate';
-const resolving = (a) => a.kind === 'terminate' && a.target.operation === 'resolve-terminated-reservation';
+// AO's session kill may remove the stopped worker's worktree. A stop or its resolution then records the retained
+// last-known identity with absent:true; a controller building a stop's before uses this same shape. The resume
+// observer alone decides when an absence is admitted. Nothing is deleted or recreated.
+export const absentWorktree = (w) => ({ path: w.path, gitDir: w.gitDir, gitCommonDir: w.gitCommonDir, branchRef: w.branchRef, commit: w.commit, tree: w.tree, dirty: null, absent: true });
+const resolving =(a) => a.kind === 'terminate' && a.target.operation === 'resolve-terminated-reservation';
 function registryInvocation(ref) {
   const i = transitionBound(ref);
   closed(i, ['schema', 'schemaVersion', 'plan', 'graph', 'registry', 'specRoot', 'contract', 'review', 'previous'], 'registry invocation');
@@ -567,7 +571,7 @@ function validateDelta(a, before, actual, evidence, services) {
       services.verifyAccept(a, before, actual, evidence); return 'accept-or-strict';
     }
     case 'release': sameExcept(before, actual, []); services.verifyRelease(a, before, actual, evidence); return null;
-    case 'terminate': if(lifecycleOnlyAction(a)){sameExcept(before,actual,['worker']);const stable=w=>w&&({...w,worktree:{path:w.worktree.path,gitDir:w.worktree.gitDir,gitCommonDir:w.worktree.gitCommonDir,branchRef:w.worktree.branchRef}});if(!same(stable(before.worker),stable(actual.worker)))stop('transition-actor-mismatch','stop changed assigned worker identity');}else sameExcept(before, actual, []); if (resolving(a)) services.verifyResolution(a, actual, evidence); else services.verifyTermination(a, before, actual, evidence); return null;
+    case 'terminate': if(lifecycleOnlyAction(a)){sameExcept(before,actual,['worker']);const stable=w=>w&&({...w,worktree:{path:w.worktree.path,gitDir:w.worktree.gitDir,gitCommonDir:w.worktree.gitCommonDir,branchRef:w.worktree.branchRef}});if(!same(stable(before.worker),stable(actual.worker)))stop('transition-actor-mismatch','stop changed assigned worker identity');if(before.worker?.worktree.absent===true&&actual.worker?.worktree.absent!==true)stop('transition-actor-mismatch','a removed stopped worktree cannot reappear');}else sameExcept(before, actual, []); if (resolving(a)) services.verifyResolution(a, actual, evidence); else services.verifyTermination(a, before, actual, evidence); return null;
     default: sameExcept(before, actual, []); return null;
   }
 }

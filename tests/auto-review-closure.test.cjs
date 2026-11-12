@@ -164,3 +164,54 @@ test('G1-1R: a normalized response closes; a coherent normalized/transformation/
   await assert.rejects(closeAssignment(w, w.s.actor, forged), { code: 'transition-progress-invalid' });
   assert.equal(reservation(w, w.s.actor.reservationId).state, 'active', 'refused before any stop effect');
 });
+
+// Current AO's `session kill` also removes the worker's workspace: the worktree is unregistered and its directory is
+// gone, while the branch stays. `afterKill` runs between the owned kill and its paired after, as AO's cleanup does.
+const unregister = (w, actor) => f.git(w.x.root, 'worktree', 'remove', '--force', actor.worktree.path);
+async function closeWithCleanup(w, actor, progress, afterKill = unregister, stopEvidence = null) {
+  const association = w.context().associations.find(a => w.t.transitionBound(a).sessionId === actor.sessionId);
+  const target = operation => ({ sessionId: actor.sessionId, association, progress, operation });
+  const stopped = await w.paired({ kind: 'terminate', stage: 'reconcile', sessionId: actor.sessionId, effect: { kind: 'local', operation: 'reconcile' }, target: target('terminate-session'),
+    after: () => { afterKill(w, actor); return { sessionId: null, association: null, ...(stopEvidence ? { evidence: stopEvidence } : {}) }; } });
+  const evidence = f.json(w.x.owned, 'owned-session-termination', { schema: 'fvs/auto-owned-session-termination', schemaVersion: 1, session: stopped.raw.session, progress, terminationCompletion: stopped.completion });
+  const resolved = await w.paired({ kind: 'terminate', stage: 'reconcile', sessionId: actor.sessionId, execute: false, effect: { kind: 'reservation-resolution', targetReservationId: actor.reservationId },
+    target: target('resolve-terminated-reservation'), after: () => ({ sessionId: null, association: null, evidence: [evidence], resolution: { reason: 'session-terminated', evidence } }) });
+  return { stopped, resolved };
+}
+const stopSnapshots = (w, sessionId) => w.auto.readRuntimeState({ projectRoot: w.x.root }).state.history.filter(r => r.event.position === 'after' && r.event.intent.request
+  && (a => a.kind === 'terminate' && a.target.sessionId === sessionId)(w.t.readTransitionAction(r.event.intent.request))).map(r => w.t.readRuntimeObservation(r.event).transition.snapshot.worker.worktree);
+
+test('an owned kill that removes the reviewer worktree records its absence and still closes the reservation', async () => {
+  const w = await reviewed(), handoff = w.completion(), branch = w.s.actor.worktree.branchRef;
+  await closeWithCleanup(w, w.s.actor, handoff);
+  assert.equal(reservation(w, w.s.actor.reservationId).state, 'closed');
+  const [stop, resolution] = stopSnapshots(w, w.s.actor.sessionId);
+  for (const worktree of [stop, resolution]) assert.deepEqual(worktree, w.t.absentWorktree(w.t.transitionBound(w.context().associations.find(a => w.t.transitionBound(a).sessionId === w.s.actor.sessionId)).worktree));
+  assert.equal(fs.existsSync(w.s.actor.worktree.path), false, 'nothing recreates the removed worktree');
+  assert.match(f.git(w.x.root, 'rev-parse', '--verify', branch), /^[0-9a-f]{40}$/, 'the branch is kept');
+  const again = await w.releaseReview(w.binding);
+  assert.equal(reservation(w, again.actor.reservationId).state, 'active', 'next intent on node 19 is admitted after closure');
+});
+
+for (const [name, afterKill, code] of [
+  ['the worktree is only deleted and still registered', (w, actor) => fs.rmSync(actor.worktree.path, { recursive: true, force: true }), /resume-path-invalid|ENOENT/],
+  ['AO no longer reports the session terminated', (w, actor) => { unregister(w, actor); const c = JSON.parse(fs.readFileSync(w.x.control, 'utf8')); c.rows.find(r => r.id === actor.sessionId).isTerminated = false; fs.writeFileSync(w.x.control, JSON.stringify(c)); }, /resume-path-invalid|ENOENT/],
+  ['the worktree is still present but on another branch', (w, actor) => f.git(actor.worktree.path, 'checkout', '-q', '-b', 'moved-' + f.uuid().slice(0, 8)), /transition-actor-mismatch|context is unavailable/],
+]) test('a stop after refuses when ' + name, async () => {
+  const w = await reviewed(), handoff = w.completion();
+  await assert.rejects(closeWithCleanup(w, w.s.actor, handoff, afterKill), code);
+  assert.equal(reservation(w, w.s.actor.reservationId).state, 'active', 'the reservation stays open');
+});
+
+test('a removed worktree without the owned kill receipt is not a recorded stop', async () => {
+  const w = await reviewed(), handoff = w.completion();
+  await assert.rejects(closeWithCleanup(w, w.s.actor, handoff, unregister, []), { code: 'transition-completion-required' });
+  assert.equal(reservation(w, w.s.actor.reservationId).state, 'active');
+});
+
+test('a worktree removed before any owned stop refuses the stop itself', async () => {
+  const w = await reviewed(), handoff = w.completion();
+  unregister(w, w.s.actor);
+  await assert.rejects(closeWithCleanup(w, w.s.actor, handoff, () => {}), /resume-path-invalid|ENOENT/);
+  assert.equal(reservation(w, w.s.actor.reservationId).state, 'active');
+});
