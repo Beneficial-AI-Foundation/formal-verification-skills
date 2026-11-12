@@ -73,6 +73,60 @@ before. During ordinary revisions, stale accepted receipts need this explained r
 transition:null proposal can refuse them. Keep the store/history intact. Unknown effects retain
 capacity; final whole-scope15 currentness stays strict.
 
+### Bootstrap: agreement to first dispatch
+
+This is the order a real rc1 controller used. It needs no further driver. JS names are
+`fvs-auto-driver.mjs` exports; the CLI operation is in brackets. Write each JSON input to a new
+owned file, run one operation per command, and keep every output.
+
+1. **Agreement.** `/fvs:auto-init` records the agreement and v2 choices; `prepareCurrentRequest`
+   refuses without them.
+2. **Run context.** Write `{runId,ao,source,inputs,associations:[],priorAccounting:null}` once:
+   - a new run UUID;
+   - `ao:{tool:{file,sha256},stateHome,projectId,coordinatorSessionId}`;
+   - `source`: the integration Git root, commit and expected tree;
+   - `inputs`: the bound extraction, graph and plan references, with null `baseline` and
+     `acceptedStore` for a new run.
+   Every later request reuses this context unchanged.
+3. **Start reconciliation.** `prepareCurrentRequest({projectRoot,context,phase:'start',transition:null})`
+   [`prepare`], then `recordCheckpoint({projectRoot,request,out})`. A CLI controller records it with
+   `fvs-auto.mjs state` (`auto-resume.md`). `start` is valid once only; later requests use `resume`.
+4. **Profile and authorization.**
+   - Read `ao project get PROJECT --json` once, and pass its bytes to `redactAOProfile` for the
+     profile's `controller`.
+   - Build the stage profile from the persisted FVS stage selection (Controller loop, step 2).
+   - Build the action authorization from `readState({projectRoot,requireAgreement:true})`: agreement
+     context hash, approved payload hash, `payload.execution` and one correspondence row per action
+     kind (step 1).
+5. **First proposal.** Prepare a `resume` request with `transition:null`. Then call
+   `advanceOnce({projectRoot,currentRequest:{resume,registry:{root,headSha256},authorization,profile},out})`
+   [`advance`]; a new run's registry head is null. The result is one proposal or named partial
+   reasons, always `executable:false`.
+6. **Launch.**
+   - Build the closed `launch` action for the proposed nodes, with new transition, reservation,
+     assignment, challenge and startup IDs, and `basis:null`.
+   - Take its `before` from `transitionSnapshot` over a fresh `resume` request whose head is the
+     current runtime head.
+   - Prepare the `ao-launch` before request (`sessionId:null`, intended branch, assignment) and run
+     `runPairedEffect` [`effect`].
+   - Observe the actual session and worktree, and write their association. Build the v2 completion
+     from the command receipt, then call `recordAfter` [`after`] with that association.
+7. **Actor readiness.**
+   - Install the actor permissions and send the permission-ready notice (Actors and permissions).
+   - Verify the worker's startup acknowledgement with `verifyWorkerStartup`.
+   - Run `prepare-input` (the exact FF) as a paired effect, and record its after.
+8. **First dispatch.**
+   - Write the work packet to an owned file outside the worker worktree, source root and canonical
+     root.
+   - Set `startMarker` to a not-yet-existing file in the same directory as the packet. Release
+     preparation refuses any other placement (`transition-marker-invalid`) before anything is sent,
+     because the worker could never acknowledge such a packet.
+   - Run the `release` paired effect and record its after.
+   - The worker starts only when its own `acknowledgeWorkPacket` returns `mayStart:true`.
+
+Stop at the first refusal or partial result. Keep its output and re-read state; never rerun the same
+before.
+
 ### Actors and permissions
 
 Resolve each FVS role through the current stage manifest, preserving requested/resolved/observed

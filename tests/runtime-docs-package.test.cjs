@@ -219,7 +219,16 @@ if (process.argv.includes('--package-fixture')) {
       'failed-attempt history and applicable limits/accounting',
       'Start a fresh run root only after the old launch and any created session are conclusively stopped or absent',
       'existing authorization covers the new attempt', 'If termination remains uncertain, HOLD',
-      'not a same-run resume', 'do not synthesize an after-event or delete the pending reservation']) assert.ok(rc.includes(token), token);
+      'not a same-run resume', 'do not synthesize an after-event or delete the pending reservation',
+      'worker never acknowledged its start', 'start marker is not beside the packet file',
+      "approves the controller's commands in the controller's own session", 'FVS changes no permission settings',
+      'one simple, auditable command per step', 'an unattended prompt may be aborted',
+      'reshape it to avoid review','cannot promise that a host permission classifier allows any command']) assert.ok(rc.includes(token), token);
+    const transitions = fs.readFileSync(path.join(ROOT, 'fv-skills/references/auto-transitions.md'), 'utf8');
+    const boot = section(transitions, '### Bootstrap: agreement to first dispatch', '### Actors and permissions');
+    const order = ["phase:'start'", 'recordCheckpoint', 'redactAOProfile', 'advanceOnce', 'runPairedEffect', 'recordAfter',
+      'verifyWorkerStartup', 'same directory as the packet', 'transition-marker-invalid', 'acknowledgeWorkPacket'].map(token => boot.indexOf(token));
+    assert.ok(order.every((at, i) => at >= 0 && (i === 0 || at > order[i - 1])), 'bootstrap recipe order ' + order);
     const help = section(fs.readFileSync(path.join(ROOT, 'commands/fvs/help.md'), 'utf8'),
       '### Auto (`/fvs:auto`)', '### Context (`/fvs:context`)');
     assert.doesNotMatch(help, /milestone 2 functionality not yet available|is safe to rerun/);

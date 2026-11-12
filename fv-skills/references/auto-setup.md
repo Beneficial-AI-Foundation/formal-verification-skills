@@ -98,6 +98,20 @@ Stop and retain the old run as a partial, preserving failed-attempt history and 
 Start a fresh run root only after the old launch and any created session are conclusively stopped or absent
 and existing authorization covers the new attempt. If termination remains uncertain, HOLD.
 A fresh root is not a same-run resume; do not synthesize an after-event or delete the pending reservation.
+The same applies to a released work packet whose worker never acknowledged its start: rc1 has no route to
+close or re-issue that reservation, so recover in a fresh run root under the rules above. Release preparation
+now refuses a packet whose start marker is not beside the packet file, which was the observed cause.
+
+Controller permissions in auto mode:
+- Before the run, the owner approves the controller's commands in the controller's own session. These are
+  the FVS driver/CLI, `ao`, `git` and the pinned Lean tools. FVS changes no permission settings.
+- Run one simple, auditable command per step: one driver or CLI operation with its `--input` file, one
+  `ao` call or one `git` call. Compound commands (`&&`, `;`, pipes, `cd` plus a command, subshells) can
+  trigger a permission prompt, and an unattended prompt may be aborted. The step then did not run.
+- Treat an aborted or denied command as a held step. Re-read state before acting. Never retry it
+  verbatim or reshape it to avoid review; report the hold if a plain command is also refused.
+- FVS cannot promise that a host permission classifier allows any command, and it contains nothing
+  designed to evade one.
 
 For the Beads CLI itself, use its [official versioned installation guide](https://github.com/gastownhall/beads/blob/v1.3.1/docs/getting-started/installation.md).
 A generic latest install may differ from the Beads `1.3.1` version recorded for this adapter. No Beads plugin, MCP server
