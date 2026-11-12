@@ -431,18 +431,21 @@ function semverCompare(a, b) {
 }
 
 // Refuse, before anything is written, to replace an installed FVS that is newer than this installer, or one whose
-// VERSION exists but cannot be read as a valid version. Without VERSION, the file manifest's version is checked;
-// with neither, it is a fresh install (or one older than version tracking).
+// version metadata exists but cannot be read as a valid version. VERSION is read first; without it, the file
+// manifest's version. Only when neither file exists is it a fresh install.
 function refuseDowngrade(runtime, isGlobal) {
   if (allowDowngrade) return;
   const target = isGlobal ? getGlobalDir(runtime, explicitConfigDir) : path.join(process.cwd(), getDirName(runtime));
-  const file = path.join(target, 'fv-skills', 'VERSION');
-  let installed = null;
+  let file = path.join(target, 'fv-skills', 'VERSION'), installed = null;
   try { installed = fs.readFileSync(file, 'utf8').trim(); } catch (error) {
-    if (error.code !== 'ENOENT') installed = null;
-    else if ((installed = readPriorManifestVersion(target)) === null || semverCompare(installed, installed) === null) return;
+    if (error.code === 'ENOENT') {
+      file = path.join(target, MANIFEST_NAME);
+      try { installed = JSON.parse(fs.readFileSync(file, 'utf8')).version ?? null; } catch (manifestError) {
+        if (manifestError.code === 'ENOENT') return;
+      }
+    }
   }
-  const order = installed === null ? null : semverCompare(installed, pkg.version);
+  const order = typeof installed === 'string' ? semverCompare(installed, pkg.version) : null;
   if (order === null) {
     throw new Error(`Cannot read a valid installed FVS version from ${file}. Nothing was changed. ` +
       'Check that install, or pass --allow-downgrade to replace it anyway.');

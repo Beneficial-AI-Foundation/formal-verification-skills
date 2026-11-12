@@ -151,17 +151,21 @@ test('the Pi update skill pins a verified version and never treats an unknown ve
 
 const installer = (home, cwd, flags, extra = {}) => spawnSync(process.execPath, [INSTALLER, ...flags], { cwd, env: env({ HOME: home, ...extra }), encoding: 'utf8', input: '' });
 
-test('the installer refuses to replace a higher or unknown installed version unless explicitly allowed', () => {
-  // Each seed shapes an existing Codex install; the snapshot proves the refusal changed nothing.
-  const MANIFEST = 'fvs-file-manifest.json';
-  for (const [name, seed, message] of [
+// Each seed shapes an existing Codex install; the snapshot proves the refusal changed nothing.
+const MANIFEST = 'fvs-file-manifest.json';
+for (const [name, seed, message] of [
     ['a higher version', (d) => fs.writeFileSync(path.join(d, 'fv-skills/VERSION'), '99.0.0\n'), /99\.0\.0 is newer than this installer/],
     ['a higher manifest version without VERSION', (d) => fs.writeFileSync(path.join(d, MANIFEST), JSON.stringify({ version: '99.0.0', files: {} })), /99\.0\.0 is newer than this installer/],
+    ['a malformed manifest without VERSION', (d) => fs.writeFileSync(path.join(d, MANIFEST), '{not json'), /Cannot read a valid installed FVS version/],
+    ['a manifest without a version and no VERSION', (d) => fs.writeFileSync(path.join(d, MANIFEST), JSON.stringify({ files: {} })), /Cannot read a valid installed FVS version/],
+    ['a manifest with an invalid version and no VERSION', (d) => fs.writeFileSync(path.join(d, MANIFEST), JSON.stringify({ version: 'unknown', files: {} })), /Cannot read a valid installed FVS version/],
+    ['an unreadable manifest without VERSION', (d) => fs.writeFileSync(path.join(d, MANIFEST), JSON.stringify({ version: '1.0.0' }), { mode: 0 }), /Cannot read a valid installed FVS version/],
+    ['a manifest path that is a directory, without VERSION', (d) => fs.mkdirSync(path.join(d, MANIFEST)), /Cannot read a valid installed FVS version/],
     ['an invalid version', (d) => fs.writeFileSync(path.join(d, 'fv-skills/VERSION'), 'UNKNOWN\n'), /Cannot read a valid installed FVS version/],
     ['an empty version', (d) => fs.writeFileSync(path.join(d, 'fv-skills/VERSION'), ''), /Cannot read a valid installed FVS version/],
     ['an unreadable version', (d) => fs.writeFileSync(path.join(d, 'fv-skills/VERSION'), '1.0.0\n', { mode: 0 }), /Cannot read a valid installed FVS version/],
     ['a version path that is a directory', (d) => fs.mkdirSync(path.join(d, 'fv-skills/VERSION')), /Cannot read a valid installed FVS version/],
-  ]) {
+  ]) test('the installer refuses to replace an existing install with ' + name + ' unless explicitly allowed', () => {
     const home = tmp('fvs-downgrade-'), project = path.join(home, 'project'), codex = path.join(home, '.codex');
     fs.mkdirSync(project);
     fs.mkdirSync(path.join(codex, 'fv-skills'), { recursive: true });
@@ -178,6 +182,19 @@ test('the installer refuses to replace a higher or unknown installed version unl
       assert.equal(allowed.status, 0, allowed.stderr);
       assert.equal(fs.readFileSync(path.join(codex, 'fv-skills/VERSION'), 'utf8').trim(), PKG_VERSION);
     }
+});
+
+test('the installer still replaces an older manifest-only install and installs where nothing exists', () => {
+  for (const [name, seed] of [
+    ['an older manifest without VERSION', (codex) => { fs.mkdirSync(codex, { recursive: true }); fs.writeFileSync(path.join(codex, 'fvs-file-manifest.json'), JSON.stringify({ version: '1.0.0', files: {} })); }],
+    ['no existing install', () => {}],
+  ]) {
+    const home = tmp('fvs-fresh-'), project = path.join(home, 'project'), codex = path.join(home, '.codex');
+    fs.mkdirSync(project);
+    seed(codex);
+    const run = installer(home, project, ['--claude', '--codex', '--global']);
+    assert.equal(run.status, 0, name + ': ' + run.stderr);
+    assert.equal(fs.readFileSync(path.join(codex, 'fv-skills/VERSION'), 'utf8').trim(), PKG_VERSION, name);
   }
 });
 
