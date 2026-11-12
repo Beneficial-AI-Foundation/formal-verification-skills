@@ -224,7 +224,16 @@ if (process.argv.includes('--package-fixture')) {
       "approves the controller's commands in the controller's own session", 'FVS changes no permission settings',
       'one simple, auditable command per step', 'an unattended prompt may be aborted',
       'reshape it to avoid review', 'denied before it started had no effect', 'is uncertain: the effect may have run',
-      'never assume it did nothing', 'cannot promise that a host permission classifier allows any command']) assert.ok(rc.includes(token), token);
+      'never assume it did nothing', 'cannot promise that a host permission classifier allows any command',
+      'rc1 has no tracer acceptance or rejection', 'a released specification author cannot be closed',
+      "register each node's contract in dependency order", 'fvs-contract-registry.mjs" register --plan',
+      'Exit 6 with state `needs-review` is the expected result', 'Its first proposal is `review-or-revise`',
+      'The reviewer must be a different session and run', 'Never hand-write start markers, progress or',
+      'Closing a proof worker after a completed proof', 'refuses its receipt as `transition-command-unverified`',
+      'Reconcile with the action instead']) assert.ok(rc.includes(token), token);
+    const unblock = rc.slice(rc.indexOf('a released specification author cannot be closed'));
+    const steps = ['lake exe cache get', '/fvs:auto-init', 'register each node', 'status', 'Its first proposal is'].map(token => unblock.indexOf(token));
+    assert.ok(steps.every((at, i) => at >= 0 && (i === 0 || at > steps[i - 1])), 'manual unblock order ' + steps);
     const transitions = fs.readFileSync(path.join(ROOT, 'fv-skills/references/auto-transitions.md'), 'utf8');
     const recipe = section(transitions, '### Bootstrap: agreement to first dispatch', '### Actors and permissions');
     for (const token of ['`redactAOProfile` and `transitionSnapshot` come from', '`acknowledgeWorkPacket` come from',

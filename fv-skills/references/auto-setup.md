@@ -104,6 +104,34 @@ fresh run root under the rules above. Release preparation now refuses such a pac
 ordinary acknowledgement that is only still pending is not this case: wait, or recover delivery of the same
 handle with `--recover-only`.
 
+Rc1 status: rc1 has no tracer acceptance or rejection. Tracer run 3 (engine `91e9443`) exercised setup through
+specification composition only.
+
+Known rc1 issue: a released specification author cannot be closed, so its nodes cannot reach review in the
+same run. Manual unblock, with shipped commands only:
+1. Create a fresh run root whose primary is the commit with the composed specifications, and complete the
+   rc1 setup above, including `lake exe cache get`.
+2. Run `/fvs:auto-init` in that primary.
+3. Before the first proposal, register each node's contract in dependency order (helpers first), without
+   `--review`. `FVS_SCRIPTS` is the trusted engine's installed scripts directory:
+   `node "$FVS_SCRIPTS/fvs-contract-registry.mjs" register --plan "$PLAN" --graph "$GRAPH" --registry "$REGISTRY" --spec-root "$PRIMARY" --contract "$CONTRACT"`
+   Exit 6 with state `needs-review` is the expected result, not a failure.
+4. Read the registry head with the same tool's `status` and the same `--plan`, `--graph`, `--registry` and
+   `--spec-root`.
+5. Follow the bootstrap recipe in `auto-transitions.md`. Its first proposal is `review-or-revise`, then the
+   normal review route continues.
+
+Each contract file must pass the registry's contract checks against the files at `--spec-root`, and must name
+its real author. The reviewer must be a different session and run. Never hand-write start markers, progress or
+completion records.
+
+Known rc1 issues, untested in v2:
+- Closing a proof worker after a completed proof.
+- A failing canonical check: the engine refuses its receipt as `transition-command-unverified`, and there is no
+  typed rejection. The node stays unaccepted; continue with a fresh proof attempt.
+- After the first acceptances, an action-less reconcile across a registry revision returns `stale-input`.
+  Reconcile with the action instead.
+
 Controller permissions in auto mode:
 - Before the run, the owner approves the controller's commands in the controller's own session. These are
   the FVS driver/CLI, `ao`, `git` and the pinned Lean tools. FVS changes no permission settings.
