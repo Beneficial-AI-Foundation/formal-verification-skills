@@ -389,8 +389,13 @@ new handle alone cannot release work. This closes execution only, with no proof 
 
 After validating immutable candidate artifacts, retire only the exact owned stage session with stock
 `session kill`. A fresh same-project/session get.isTerminated:true plus16 resolution releases its
-capacity; idle/exited never does. Preserve every worktree/branch/uncommitted file. Local effects recover
-through16's typed conclusive completion, not a second effect.
+capacity; idle/exited never does. FVS itself deletes no worktree, branch or file, but AO's `session kill` may
+remove the worker's worktree, so commit or bind anything still needed before the stop. When it does, the
+stop's after and its resolution record the retained last-known worktree with `absent:true`. This is admitted
+only for that owned stop, with AO reporting the session terminated and the path gone and no longer registered;
+any other absence, or a present but changed worktree, still refuses. A controller building the resolution's
+before uses the exported `absentWorktree` shape. Local effects recover through16's typed conclusive
+completion, not a second effect.
 
 ## Existing procedures, without hidden child workers
 

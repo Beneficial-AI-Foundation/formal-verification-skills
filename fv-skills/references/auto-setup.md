@@ -124,7 +124,9 @@ stopped or absent, existing authorization covers the new attempt, and the old ru
    `--spec-root`.
 5. Resume the bootstrap recipe in `auto-transitions.md` with the current registry head, the bound plan and
    graph, and no old assignment. With eligible nodes, a fresh reconciled context and no live assignment, its
-   first proposal is `review-or-revise`, then the normal review route continues.
+   first proposal is `review-or-revise`. The normal review route then continues through the reviewer's close:
+   AO's `session kill` may remove the reviewer's worktree, and the stop records that absence (see the
+   retirement paragraph in `auto-transitions.md`).
 
 Each contract file must pass the registry's contract checks against the files at `--spec-root`, and must name
 its real author. The reviewer must be a different session and run. Never hand-write start markers, progress or
