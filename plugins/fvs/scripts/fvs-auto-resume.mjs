@@ -290,16 +290,21 @@ function association(ref, run) {
   }
   return a;
 }
-// The worker worktree recorded by the retained successful owned stop of this exact assignment, or null.
+// The worker worktree recorded by the latest retained successful owned stop of this exact assignment, or null. Every
+// matching stop is examined: once one recorded the worktree absent, that absence is sticky, and any later stop recording
+// something else is contradictory history and refuses.
 function recordedStopWorktree(a, history) {
+  let recorded = null;
   for (const row of history?.state?.history ?? []) {
     if (row.event.position !== 'after' || row.event.outcome !== 'succeeded' || !row.event.intent.request) continue;
     const old = readTransitionAction(row.event.intent.request);
     if (!lifecycleOnlyAction(old) || old.target.operation === 'resolve-terminated-reservation' || old.target.sessionId !== a.sessionId) continue;
     const w = readRuntimeObservation(row.event).transition?.snapshot?.worker;
-    if (w && w.sessionId === a.sessionId && w.reservationId === a.reservationId && w.assignmentId === a.assignmentId) return w.worktree;
+    if (!w || w.sessionId !== a.sessionId || w.reservationId !== a.reservationId || w.assignmentId !== a.assignmentId) continue;
+    if (recorded?.absent === true && !same(recorded, w.worktree)) stop('resume-association-invalid', 'retained stops contradict a recorded worktree removal');
+    recorded = w.worktree;
   }
-  return null;
+  return recorded;
 }
 // A worker's worktree removed by AO's session kill is admitted as absent only after that owned stop. The association
 // must be the exact retained launch/reservation assignment (path, Git dirs, branch, profile), AO must report the same

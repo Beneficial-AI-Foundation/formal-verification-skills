@@ -168,16 +168,20 @@ test('G1-1R: a normalized response closes; a coherent normalized/transformation/
 // Current AO's `session kill` also removes the worker's workspace: the worktree is unregistered and its directory is
 // gone, while the branch stays. `afterKill` runs between the owned kill and its paired after, as AO's cleanup does.
 const unregister = (w, actor) => f.git(w.x.root, 'worktree', 'remove', '--force', actor.worktree.path);
-async function closeWithCleanup(w, actor, progress, afterKill = unregister, stopEvidence = null, beforeResolve = () => {}) {
-  const association = w.context().associations.find(a => w.t.transitionBound(a).sessionId === actor.sessionId);
-  const target = operation => ({ sessionId: actor.sessionId, association, progress, operation });
-  const stopped = await w.paired({ kind: 'terminate', stage: 'reconcile', sessionId: actor.sessionId, effect: { kind: 'local', operation: 'reconcile' }, target: target('terminate-session'),
-    after: () => { afterKill(w, actor); return { sessionId: null, association: null, ...(stopEvidence ? { evidence: stopEvidence } : {}) }; } });
+const associationOf = (w, actor) => w.context().associations.find(a => w.t.transitionBound(a).sessionId === actor.sessionId);
+const target = (actor, association, progress, operation) => ({ sessionId: actor.sessionId, association, progress, operation });
+const ownedStop = (w, actor, association, progress, afterKill = unregister, stopEvidence = null) => w.paired({ kind: 'terminate', stage: 'reconcile', sessionId: actor.sessionId,
+  effect: { kind: 'local', operation: 'reconcile' }, target: target(actor, association, progress, 'terminate-session'),
+  after: () => { afterKill(w, actor); return { sessionId: null, association: null, ...(stopEvidence ? { evidence: stopEvidence } : {}) }; } });
+function resolveStop(w, actor, association, progress, stopped) {
   const evidence = f.json(w.x.owned, 'owned-session-termination', { schema: 'fvs/auto-owned-session-termination', schemaVersion: 1, session: stopped.raw.session, progress, terminationCompletion: stopped.completion });
+  return w.paired({ kind: 'terminate', stage: 'reconcile', sessionId: actor.sessionId, execute: false, effect: { kind: 'reservation-resolution', targetReservationId: actor.reservationId },
+    target: target(actor, association, progress, 'resolve-terminated-reservation'), after: () => ({ sessionId: null, association: null, evidence: [evidence], resolution: { reason: 'session-terminated', evidence } }) });
+}
+async function closeWithCleanup(w, actor, progress, afterKill = unregister, stopEvidence = null, beforeResolve = () => {}) {
+  const association = associationOf(w, actor), stopped = await ownedStop(w, actor, association, progress, afterKill, stopEvidence);
   beforeResolve(w, actor);
-  const resolved = await w.paired({ kind: 'terminate', stage: 'reconcile', sessionId: actor.sessionId, execute: false, effect: { kind: 'reservation-resolution', targetReservationId: actor.reservationId },
-    target: target('resolve-terminated-reservation'), after: () => ({ sessionId: null, association: null, evidence: [evidence], resolution: { reason: 'session-terminated', evidence } }) });
-  return { stopped, resolved };
+  return { stopped, resolved: await resolveStop(w, actor, association, progress, stopped) };
 }
 const stopSnapshots = (w, sessionId) => w.auto.readRuntimeState({ projectRoot: w.x.root }).state.history.filter(r => r.event.position === 'after' && r.event.intent.request
   && (a => a.kind === 'terminate' && a.target.sessionId === sessionId)(w.t.readTransitionAction(r.event.intent.request))).map(r => w.t.readRuntimeObservation(r.event).transition.snapshot.worker.worktree);
@@ -245,4 +249,21 @@ test('a worktree re-added after its stop recorded the removal refuses the resolu
   const readd = (w, actor) => f.git(w.x.root, 'worktree', 'add', '-q', actor.worktree.path, branch);
   await assert.rejects(closeWithCleanup(w, w.s.actor, handoff, unregister, null, readd), /reappeared/);
   assert.equal(reservation(w, w.s.actor.reservationId).state, 'active', 'the reservation stays open');
+});
+
+// The assignment stays active until its resolution, so a second owned stop is admitted after one that left the worktree
+// present. The later recorded removal must stay final: an earlier present stop cannot hide it.
+for (const readd of [false, true]) test('after a present stop, a later stop recording the removal ' + (readd ? 'refuses a re-added worktree' : 'still resolves while it is gone'), async () => {
+  const w = await reviewed(), handoff = w.completion(), actor = w.s.actor, association = associationOf(w, actor), branch = actor.worktree.branchRef.replace('refs/heads/', '');
+  await ownedStop(w, actor, association, handoff, () => {});
+  const stopped = await ownedStop(w, actor, association, handoff);
+  assert.deepEqual(stopSnapshots(w, actor.sessionId).map(x => x.absent === true), [false, true], 'present stop, then the stop recording the removal');
+  if (!readd) {
+    await resolveStop(w, actor, association, handoff, stopped);
+    assert.equal(reservation(w, actor.reservationId).state, 'closed');
+    return;
+  }
+  f.git(w.x.root, 'worktree', 'add', '-q', actor.worktree.path, branch);
+  await assert.rejects(resolveStop(w, actor, association, handoff, stopped), /reappeared/);
+  assert.equal(reservation(w, actor.reservationId).state, 'active', 'the reservation stays open');
 });
