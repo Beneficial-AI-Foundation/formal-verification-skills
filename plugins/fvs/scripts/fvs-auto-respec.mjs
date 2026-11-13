@@ -436,18 +436,18 @@ export function assertKnownControllerPreparation(raw, read = bound) {
   const eq = (x, y) => x !== undefined && y !== undefined && same(x, y);
   const bad = message => terminationBad('assessed controller profile: ' + message);
   const get = r => { reference(r); return read(r); };
-  const base = '/private/tmp/fvs45-ticket18-native-episode-0c4c1ino', step = '122-e1-accept-20-continuous';
-  const root = '/Users/ada/.ao/data/worktrees/formal-verification-skills/formal-verification-skills-45';
+  // The one retained historical case, pinned by digest so that its host paths and run identity are not shipped:
+  // case root, step, original run and clocks; then the wrapper's working directory, source tuple, snapshot and the
+  // exact controller/wrapper/driver invocation paths. Equal digests mean exactly those values.
   if (c.schema !== 'fvs/auto-controller-termination-context' || c.schemaVersion !== 2 || c.lifecycle !== terminationProfile || c.trustScope !== terminationTrust
-    || c.caseRoot !== base || c.step !== step || a.kind !== 'accept' || a.stage !== 'acceptance' || a.target.node !== 20 || a.nodes.length
-    || a.owner !== 'qualification-controller' || run.runId !== '386aca9c-66af-4a02-be70-6afff41a60d5' || c.runId !== run.runId
-    || run.startedAtMs !== 1793592237017 || run.deadlineMs !== 1793736237017) bad('unsupported case, step, target or original run');
-  if (outer.cwd !== root || outer.head !== '226e540c1e954c2f891f72edb9d86642a4e375f3' || outer.tree !== '0f6cd1105a38e23a64f6473fbcb9b2a4fcac40a9'
-    || c.sourceSnapshot.head !== outer.head || c.sourceSnapshot.tree !== outer.tree
-    || memoryHash(c.sourceSnapshot) !== '404af7b2293e645e0922a2fdc9b9c038711d73463cc180d7e38a6eb6a34bb889'
-    || c.code.controller.file !== '/private/tmp/fvs45-ticket18-continuous-proposal-v34.mjs'
-    || c.code.wrapper.file !== '/private/tmp/fvs45-ticket18-continuous-phase-proposal-v40.py'
-    || c.code.driver.file !== '/private/tmp/fvs45-ticket18-continuous-driver-proposal-v41.py') bad('unsupported wrapper/source invocation');
+    || a.kind !== 'accept' || a.stage !== 'acceptance' || a.target.node !== 20 || a.nodes.length || a.owner !== 'qualification-controller' || c.runId !== run.runId
+    || memoryHash({ caseRoot: c.caseRoot, step: c.step, runId: run.runId, startedAtMs: run.startedAtMs, deadlineMs: run.deadlineMs })
+      !== 'ffd5c5f5640a4a701d90d82e78d27498e62466b46ff5c898d0a4c96ed02a2904') bad('unsupported case, step, target or original run');
+  if (c.sourceSnapshot.head !== outer.head || c.sourceSnapshot.tree !== outer.tree
+    || memoryHash({ cwd: outer.cwd, head: outer.head, tree: outer.tree, sourceSnapshot: memoryHash(c.sourceSnapshot),
+      controller: c.code.controller.file, wrapper: c.code.wrapper.file, driver: c.code.driver.file })
+      !== '4782dd658b17d7689cca2e8da2adc18ccbd98b9f5bc4b80fc98979ec374376dd') bad('unsupported wrapper/source invocation');
+  const base = c.caseRoot, step = c.step, root = outer.cwd;
   if (c.controllerBefore.file !== path.join(base, 'steps', step, 'before.json') || c.caseContext.file !== path.join(base, 'context.json')
     || c.job.file !== path.join(base, 'steps', step, 'producer-request.json') || c.prepared.file !== path.join(c.evidenceRoot, 'prepared-inputs.json')) bad('durable controller input paths disagree');
   closed(p, ['schema', 'version', 'status', 'runId', 'q', 'snapshot', 'runtimeFileSha256', 'closure', 'closureConsumed', 'proposalOrigin', 'beganAtMs', 'endedAtMs', 'authority'], 'controller preparation');

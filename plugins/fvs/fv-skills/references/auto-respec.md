@@ -173,11 +173,11 @@ managed lifecycle on the trusted host, without retrospective full PID lineage
 or an inferred producer result. An unresolved possibility of surviving work
 refuses; it must not be replaced by an empty observer result.
 
-This initial profile is the exact retained A122 controller case at
-`/private/tmp/fvs45-ticket18-native-episode-0c4c1ino`, step
-`122-e1-accept-20-continuous`, node20, originalrun386 and original40h deadline.
-The pinned wrapper's ROOT45 cwd,226 source tuple and complete snapshot identity
-are fixed. This is not a generic parameterization of that case-specific program.
+This initial profile is the exact retained A122 controller case, step
+`122-e1-accept-20-continuous`, node20, its original run and original40h deadline.
+The pinned wrapper's working directory,226 source tuple and complete snapshot identity
+are fixed. The engine pins that case and invocation by digest, so no host path or
+run identity is shipped. This is not a generic parameterization of that case-specific program.
 Context v2 adds required `controllerBefore`, `caseContext`,
 `candidateCheckOrigin` and `recoveryBefore` refs. Its actual durable before
 envelope must bind the action, before request/result/out/manifest and prepared

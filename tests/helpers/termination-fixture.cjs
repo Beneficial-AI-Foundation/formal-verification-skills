@@ -68,7 +68,7 @@ async function fixture(auto, bundle, transitions, api, clock) {
   const marker = write(path.join(x.root, '.formalising/auto-fv/resume/effects', before.result.recordedEventSha256 + '.json'), {
     schema: 'fvs/auto-effect-start', schemaVersion: 1, status: 'execution-uncertain', beforeEventSha256: before.result.recordedEventSha256,
     committedHeadSha256: before.result.recordedEventSha256, action: actionRef, evidenceDir: path.join(caseRoot, 'steps', step, 'command') });
-  const code = Object.fromEntries(['controller', 'wrapper', 'driver'].map(k => [k, f.ref(path.join(f.ROOT, 'fv-skills/references/controller-termination-v1-' + k + '.source.txt'))]));
+  const code = Object.fromEntries(['controller', 'wrapper', 'driver'].map(k => [k, f.ref(path.join(f.ROOT, 'tests/fixtures/auto-respec-controller/controller-termination-v1-' + k + '.source.txt'))]));
   // Generic algorithm metadata retains the qualified historical builder; this never qualifies the current engine.
   code.builder = f.ref(path.join(f.ROOT, 'tests/fixtures/auto-respec-controller/builder-v1-6558.source.txt'));
   if (code.builder.sha256 !== '6558d19c217cd25158e47521e18202e4fecbfd8a09c87c6b4512479577eea246') throw Error('qualified lifecycle builder fixture changed');
