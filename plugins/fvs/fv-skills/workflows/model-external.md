@@ -120,6 +120,14 @@ coverage; compilation is not model evidence.
 a new immutable packet. `BLOCKED` restores and stops. Run at most three model-review rounds. Any
 post-approval model edit invalidates model approval and requires a fresh round within the same cap.
 
+**Fresh child per pass:** every pass or round of this loop that delegates work dispatches a new
+child of the role named here, with the current inputs and the confirmed settings; the parent never
+performs that role's work itself. Wait for the child's terminal result through the runtime's normal
+wait or notification; a spawn acknowledgement or progress message is not a result. If the dispatch
+fails, the child cannot be confirmed, or it ends in a terminal error, stop and report the affected
+pass. Valid results such as a failed build, NOVEL, REJECT, REVISE or FOLLOWUP still route as this
+step describes, and parent-owned baseline, build, revert and report steps stay with the parent.
+
 ## 6. Produce and review the specification
 
 Dispatch the same dedicated executor in mode `specification` with the approved model hashes. Produce
@@ -145,6 +153,14 @@ approval is evidence, not a substitute for this gate.
 Run at most three specification-review rounds. `BLOCKED` or cap exhaustion restores and stops. Any
 post-approval specification edit invalidates specification approval and requires a fresh round.
 Specification edits that also change the model invalidate both gates.
+
+**Fresh child per pass:** every pass or round of this loop that delegates work dispatches a new
+child of the role named here, with the current inputs and the confirmed settings; the parent never
+performs that role's work itself. Wait for the child's terminal result through the runtime's normal
+wait or notification; a spawn acknowledgement or progress message is not a result. If the dispatch
+fails, the child cannot be confirmed, or it ends in a terminal error, stop and report the affected
+pass. Valid results such as a failed build, NOVEL, REJECT, REVISE or FOLLOWUP still route as this
+step describes, and parent-owned baseline, build, revert and report steps stay with the parent.
 
 ## 7. Complete proofs and build
 

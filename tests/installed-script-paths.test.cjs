@@ -71,6 +71,12 @@ for (const runtime of ['claude', 'codex', 'opencode', 'antigravity']) {
       const snippet = styleSnippet(installed);
       for (const cwd of [project, nested]) checkSnippet(snippet, cwd, env);
 
+      const refactor = fs.readFileSync(path.join(installed, 'fv-skills/workflows/lean-refactor.md'), 'utf8');
+      const refactorAssignment = refactor.split('\n').find(line => line.startsWith('REFACTOR_REPORT_TOOL='));
+      const reportTool = run('/bin/bash', ['-c', `${refactorAssignment}\nprintf '%s' "$REFACTOR_REPORT_TOOL"`], nested, env);
+      assert.ok(path.isAbsolute(reportTool));
+      assert.equal(fs.realpathSync(reportTool), fs.realpathSync(path.join(installed, 'scripts/fvs-refactor-report.mjs')));
+
       const auto = fs.readFileSync(path.join(installed, 'fv-skills/workflows/auto-init.md'), 'utf8');
       const assignment = auto.split('\n').find(line => line.startsWith('AUTO='));
       assert.ok(assignment);

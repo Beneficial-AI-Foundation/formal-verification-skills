@@ -8,6 +8,9 @@ const fs = require('fs'), path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const FORBIDDEN = [/\/Users\/[A-Za-z0-9._-]+\//, /\/private\/tmp\//, /\/home\/[A-Za-z0-9._-]+\//, /386aca9c-66af-4a02-be70-6afff41a60d5/];
 
+// The loop-me-in template documents the editor link format with this exact illustrative URL; it names no real machine.
+const EDITOR_URL_EXAMPLE = 'vscode://file/Users/me/proj/src/File.lean:42';
+
 function walk(entry) {
   const full = path.join(ROOT, entry);
   if (!fs.existsSync(full)) return [];
@@ -20,7 +23,7 @@ test('no shipped file contains a development machine path or a private run id', 
   assert.ok(shipped.length > 100, 'the shipped set was found');
   const hits = [];
   for (const file of shipped) {
-    const text = fs.readFileSync(path.join(ROOT, file), 'utf8');
+    const text = fs.readFileSync(path.join(ROOT, file), 'utf8').split(EDITOR_URL_EXAMPLE).join('');
     for (const pattern of FORBIDDEN) if (pattern.test(text)) hits.push(`${file}: ${pattern}`);
   }
   assert.deepEqual(hits, []);

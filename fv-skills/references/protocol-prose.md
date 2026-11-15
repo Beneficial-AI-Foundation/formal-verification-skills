@@ -80,6 +80,40 @@ Choose detail for the reader and the kind of document. Do not impose length quot
 rotation, a universal ban on passive voice or first-person plural, or the conversational register
 of a review comment on final mathematical exposition.
 
+## Plain-English wording pass
+
+After the expository work above, make one light wording pass in the same authoring call. It is a
+plain-English simplification guided by ASD-STE100 Simplified Technical English (Issue 9), applied
+loosely; it does not make the text STE-compliant, so never describe the result as STE.
+
+- Freeze, character for character: quotations, citations and reference keys, code and Lean or code
+  identifiers, file paths, commands and flags, formulas and LaTeX or Unicode mathematics, tool
+  output, and link targets.
+- Prefer the short common word and keep one term for one thing. Technical terms stay; simplify the
+  words around them.
+- Use a verb for an action ("verifies", not "performs a verification of"), active voice when the
+  agent matters, simple tenses, and noun stacks of at most three words.
+- State one claim per sentence and one topic per paragraph, topic first. Use a vertical list for
+  steps or for three or more parallel items.
+- Replace a phrasal verb only with a single verb of exactly the same meaning. "Set up a game" is not
+  "define a game"; keep the original wording when no exact single verb exists.
+- About 20 words per sentence for steps and about 25 for description are soft guidance, never a
+  quota. A definition or theorem may run longer or stay passive when a split would separate a
+  quantifier, hypothesis or bound from its claim.
+- Keep the mathematical register and words that carry logic: "Let", "Suppose", "we", "for every",
+  "there exists", "if and only if", "hence", "in particular", and semicolons between cases. The
+  repository style guide and nearby accepted prose win over this pass.
+- Check meaning sentence by sentence: every claim, quantifier, condition, number, name, citation,
+  link and hedge keeps its strength, and nothing is added. If a rewrite would force one reading of an
+  ambiguous sentence, keep the source wording and flag it.
+
+Keep: "Let $q$ be prime. For every adversary $\mathcal{A}$ running in time $t$, the advantage of
+$\mathcal{A}$ is at most $\varepsilon$." It is already plain, and a split would separate the
+quantifier from its bound.
+
+Reject: rewriting "The reduction probably extends to adaptive queries." as "The reduction extends to
+adaptive queries." The hedge is mathematical content, so the shorter sentence changes the claim.
+
 ## Synthetic examples
 
 These are invented editorial examples, not claims about any particular protocol or paper. Each

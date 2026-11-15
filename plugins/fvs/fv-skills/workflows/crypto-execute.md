@@ -161,6 +161,13 @@ discipline; this workflow does not re-drive a per-goal grind.
 </step>
 
 <step name="green_build_guard">
+Persist the touched-files record. The executor writes its run report to
+`$ROOT/IMPLEMENTATION_$ITER.md`, at the topic root next to `build.log` (the command passes the exact
+path). After the return, check the file exists and carries a `**Files written:**` list; if it is
+missing, the command writes the returned `## IMPLEMENTATION COMPLETE` block there verbatim, never
+overwriting an existing record. `/fvs:loop-me-in` reads it as the authoritative list of files the
+iteration touched.
+
 Persist `Stage settings:` in existing execution build.log/run output under `crypto_execute`, resolved independently of plan/eval, using the single
 Stage settings evidence contract in `model-profiles.md`: requested and resolved
 runtime/provider/model/effort plus selection/launch source, field-wise independently

@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+
+- This branch carries the 3.0.0-rc1 changes on top of the current stable line, so the next release
+  candidate starts from stable 2.3.11 plus the 2.3.12 entry, not from 2.3.9. The version stays at
+  `3.0.0-rc1`. Every stable change below is now part of the branch; each has its own full section
+  further down.
+  - Stable 2.3.12: `/fvs:loop-me-in` and `/fvs:loop-me-in --final` write a self-contained HTML
+    walkthrough of a chunk of work or of the whole formalisation, with its own config block,
+    templates and workflows. `/fvs:crypto-execute` names the executor's run report path explicitly.
+  - Stable 2.3.11: direct installs resolve bundled script paths from the selected installation
+    directory and quote them. The 3.0.0-rc1 installer already reused this fix; the two copies agree.
+  - Stable 2.3.10: Codex sub-agent dispatch fixes (explicit-request dispatch, fresh context on both
+    spawn schemas, no implied sandbox enforcement), one uniform fresh-child-per-pass rule for loop
+    commands, a measured `Thinker wall time` in each `/fvs:crypto-eval`, `/fvs:lean-refactor` for
+    any Lean file whose proofs already compile with the new `scripts/fvs-refactor-report.mjs`
+    helper, and a plain-English pass in the protocol-prose guidance.
+- The merged inventory is 41 commands and 27 workflows: the 40 commands and 25 workflows of
+  3.0.0-rc1 plus `/fvs:loop-me-in` and its two workflows. The Pi and plugin copies are regenerated
+  from the sources.
+- The auto-track engine files are unchanged by this integration, so their file hashes, and with them
+  the engine identity, are the same as in 3.0.0-rc1.
+
 ## [3.0.0-rc1] - 2026-11-10
 
 This is prerelease source metadata for the selected-target SWVF candidate. Use an approved exact
@@ -73,6 +95,118 @@ whole-library verification result.
 - A translation patch changes the program the extractor sees, so a clean extraction of a patched
   function does not prove equivalence with the original source. The correspondence obligations each
   patch records stay open until correspondence evidence closes them.
+
+## [2.3.12] - 2026-11-09
+
+### Added
+
+- `/fvs:loop-me-in` writes a self-contained HTML walkthrough of the last self-contained chunk of
+  work so you can catch up after an automated run: what was established, stated at the level of the
+  mathematics or protocol rather than the files; where that step sits in the topic roadmap, drawn
+  as a milestone track with every status quoted verbatim, this step and the next steps marked; how
+  it was made, as the argument in prose with links to the
+  declarations and statement-only excerpts, never proof scripts; and a multiple-choice quiz
+  with collapsible answers that cite the code. It is offered once after an interactive
+  `/fvs:crypto-eval` ACCEPT and can be run on demand with a plain-language description, an exact
+  `<topic> nN`, `--commit` or `--working-tree`; a bare call ranks the most recently active work and
+  shows one correction screen before anything is written. Audience, documentation and style
+  references come from a new `loop_me_in` config block or flags. Every code and record link opens
+  the file in your editor at the cited line through the editor's URL scheme (`--editor`,
+  `loop_me_in.editor`, or detection from the terminal, `$VISUAL`/`$EDITOR`/`core.editor` and `PATH`,
+  with VS Code as the stated fallback), so a browser never has to read project files. Output goes
+  under `.formalising/loop-me-in/<slug>/` and is never overwritten; the command runs in the current
+  session with no subagent and never commits, edits project files or changes a recorded decision.
+  `/fvs:loop-me-in --final [<topic>]` explains the whole work instead of a chunk, typically at the
+  end of a formalisation: a tutorial at the level of the top-level theorems, every idea stated
+  mathematically and in prose, no Lean beyond a reading table and editor links, and a trust
+  section whose "standard axioms only" claim is made only after a bounded `#print axioms` check.
+  The work is the roadmap plus the branch against the branch it diverged from (pull-request base,
+  then the reflog, then `main` as the stated default), shown with the other candidates and the
+  top-level theorems for correction before anything is written. (#96)
+
+### Changed
+
+- `/fvs:crypto-execute` names the executor's run report path explicitly,
+  `.formalising/fv-plans/<topic>/IMPLEMENTATION_nN.md` next to `build.log` (where it already landed
+  in practice), checks it after the run and writes the returned report there itself when missing.
+  `/fvs:loop-me-in` reads it as the authoritative list of files an iteration touched. (#96)
+
+## [2.3.11] - 2026-11-03
+
+### Fixed
+
+- Direct installs resolve bundled script paths from the selected installation directory, including
+  project-local installs invoked from a nested working directory. Shell examples quote those paths,
+  so spaces and literal shell characters in direct-install paths do not split or expand them.
+  Generated plugin examples keep the plugin root, and Pi examples keep package-relative resources.
+
+## [2.3.10] - 2026-11-02
+
+### Fixed
+
+- Codex: crypto and other FVS commands now dispatch their sub-agents without a manual request. Codex
+  only spawns sub-agents when the user or a skill explicitly asks; the Codex skill adapter now states
+  that invoking an FVS skill is that request, discovers a deferred `spawn_agent` tool first, and stops
+  with an explanation instead of silently doing a delegated role inline when sub-agents are
+  unavailable (#114).
+- Codex: FVS sub-agents start with fresh context on both spawn schemas. The adapter passes
+  `fork_turns: "none"` (MultiAgentV2, used by most current models) or `fork_context: false` (V1)
+  instead of an unconditional `fork_context: false` that V2 rejects or treats as a full-history fork,
+  which also refused the confirmed model and effort (#114).
+- Codex: the adapter no longer implies that a role's `sandbox_mode` is enforced. Codex children run
+  in the parent session's sandbox; the effective sandbox is reported as the parent's, and a child is
+  never called read-only when the parent can write.
+- Loop commands that delegate a sub-agent per pass or round (lean-refactor, lean-verify, aeneas-extract,
+  lean-specify repair passes, lean-formalise researcher re-dispatch, model-external revision rounds, and
+  crypto-plan, crypto-followup and crypto-eval re-authoring or recheck) now state one uniform rule for
+  Claude Code and Codex: a fresh child per pass with current inputs, no inline substitution by the parent,
+  and a stop when a dispatch fails or ends in a terminal error, while valid results keep their routing.
+  lean-refactor no longer starts another pass after a refactorer `## ERROR`. This is an instruction
+  contract; it is not host enforcement of each pass (#114).
+
+### Added
+
+- `/fvs:crypto-eval` records a measured `Thinker wall time` in each eval: the `--codex` helper's
+  measured process time, or the parent's clock from launch to the thinker's terminal response, or
+  `not measured (<reason>)`. Failed or timed-out runs still persist no eval. This is timing
+  instrumentation only, with no change to decisions or reviewer policy (#115).
+- `/fvs:lean-refactor` works on any Lean file whose proofs already compile, an FVS spec or an ordinary
+  Lean project file. Aeneas conventions apply only in Aeneas-extracted projects. Files with `sorry` or
+  build errors go to `/fvs:lean-verify`; statements, signatures, attributes, definition meaning and the
+  axiom policy stay unchanged, and new helpers stay as local as possible. A selected-file gate checks
+  the chosen file with its imports at baseline and after every change (a default build may skip it),
+  with real exit status. Outside configured library roots, `lake lean` rebuilds the actual imports,
+  including non-default libraries, before each direct check. The Mathlib cache preflight runs only
+  in projects that provide it. The argument label is now `<lean_file_path>`. Existing flags remain
+  recognized; legacy mode mappings and pass budgets are described below.
+  Credit: ideas from `/lean4:refactor` in Cameron Freer's
+  lean4-skills (MIT, commit `83582df`), paraphrased.
+- The protocol-prose guidance used by existing authoring calls adds a light plain-English wording pass
+  after the exposition, guided by ASD-STE100 Simplified Technical English (Issue 9) but not
+  STE-compliant. It freezes quotations, citations, code, Lean names, commands and formulas, keeps the
+  mathematical register and house style, treats sentence lengths as soft guidance, and preserves
+  every claim, quantifier and hedge. It adds no agent or review step.
+
+### Changed
+
+- Lean refactoring resolves the effective installed project toolchain, including overrides, and
+  checks Lake's actual compiler path and binary hash before cache/proof work and at baseline/final
+  capture. Targets, inspection, tactics and profiling use the project's available capabilities;
+  unsupported capabilities use explicit project/review routes without upgrading a pin. Dependency-free
+  checks cover Lean/Lake 4.25.2, 4.31.0 and 4.35.0; this is not universal compatibility qualification.
+- Lean refactoring proposes a protected boundary and editable file/module/project scope before
+  editing. It seeks net LoC reduction through reuse and shared lemmas, including new helper/import
+  costs, while preserving useful prose. Broader scope and new public interfaces require proposals.
+- Refactor acceptance records actual comparable build/elaboration samples and stops for an owner
+  trade-off on a repeatable material performance regression. Tactic tiers, fixed reduction targets
+  and unsupported speed guarantees are removed. Legacy mode flags remain explicit search hints
+  warned when explicitly supplied; defaults need no migration prompt. Pass ceilings remain budgets.
+- Parent-only serial compiler gates and a pristine printed-boundary comparison replace child builds.
+  Net-code-LoC reporting excludes comment deletion and known formatting-only packing; operator
+  counts are hints, not a hard acceptance limit or a complete Lean parser. Unsupported printed
+  coverage or interpolation metrics use explicit reviewed comparisons; helper limitations do not
+  block valid refactoring or waive compilation/axiom safeguards. Unavailable counts are not guessed.
+  Printed comparisons support review; they are not kernel identity proofs.
 
 ## [2.3.9] - 2026-10-27
 

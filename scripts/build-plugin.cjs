@@ -46,6 +46,7 @@ const SCRIPT_FILES = [
   'fvs-kb-query.py',
   'fvs-lean-graph.mjs',
   'fvs-lean-style-check.mjs',
+  'fvs-refactor-report.mjs',
   'fvs-model-external.mjs',
   'fvs-model-review.mjs',
   'fvs-probe-inventory.mjs',

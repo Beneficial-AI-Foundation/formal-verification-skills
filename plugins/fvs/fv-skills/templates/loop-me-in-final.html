@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<!--
+  FVS final tutorial template (/fvs:loop-me-in --final). A chapter that tells the whole story of a
+  body of work for the configured audience: the setting, the theorem in mathematical notation, the
+  proof as ideas with their justifications, the boundaries and the trust, then where the Lean
+  lives. Only top-level theorems are named as results; no Lean excerpts outside the reading table.
+  Self-contained: inline CSS/JS only, no remote assets. Keep the section ids: tests rely on them.
+  Links: every {{HREF}} is the chosen editor's URL (vscode://file/...:line and the like) so a click
+  opens the file in the editor at the line; the browser never reads the file. Never file:// links,
+  bare relative paths or permalinks. Math is plain Unicode inline (Adv(A) ≤ q·ε + q·Adv(B)); short
+  aligned <pre> blocks only for an equation chain or a few lines of game pseudo-code.
+-->
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1b1b1b; --muted: #5c5c5c; --rule: #d9d9d9;
+    --accent: #f97316; --ok: #1f7a3a; --bad: #b3261e; --code-bg: #f4f4f4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #121212; --fg: #e8e8e8; --muted: #a3a3a3; --rule: #333; --code-bg: #1e1e1e; }
+  }
+  html, body { background: var(--bg); color: var(--fg); }
+  body { font: 17px/1.6 Georgia, "Times New Roman", serif; max-width: 46rem; margin: 0 auto; padding: 1.5rem 1rem; }
+  .banner { font-family: ui-monospace, monospace; font-size: .9rem; white-space: pre; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); padding: .5rem 0; margin-bottom: 1.5rem; }
+  h1, h2, h3 { font-family: system-ui, sans-serif; line-height: 1.25; }
+  h2 { border-bottom: 1px solid var(--rule); padding-bottom: .25rem; margin-top: 3rem; }
+  h3 { margin-top: 2rem; font-size: 1.05em; }
+  .abstract { font-size: 1.05em; }
+  .snapshot { color: var(--muted); font-family: system-ui, sans-serif; font-size: .95em; }
+  nav.contents ol { columns: 2; padding-left: 1.2rem; font-family: system-ui, sans-serif; font-size: .95em; }
+  code, pre { font-family: ui-monospace, monospace; font-size: .9em; }
+  pre { background: var(--code-bg); padding: .75rem; overflow-x: auto; border-left: 3px solid var(--accent); }
+  .math { font-style: italic; }
+  .display { display: block; text-align: center; font-size: 1.1em; margin: 1rem 0; }
+  .def { border-left: 3px solid var(--rule); padding: .25rem 1rem; margin: 1rem 0; }
+  .def .label, .hop .label { font-family: system-ui, sans-serif; font-weight: 600; }
+  .hop { margin: 1.25rem 0; }
+  .hop .why { color: var(--muted); font-size: .95em; }
+  .takehome { border: 1px solid var(--accent); padding: 1rem; margin: 1.5rem 0; }
+  table { border-collapse: collapse; width: 100%; font-family: system-ui, sans-serif; font-size: .92em; margin: 1rem 0; }
+  th, td { border-bottom: 1px solid var(--rule); padding: .4rem .5rem; text-align: left; vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  .ref { color: var(--muted); font-size: .9em; font-family: system-ui, sans-serif; }
+  .status { font-family: ui-monospace, monospace; }
+  .standing.established { color: var(--ok); }
+  .standing.partial { color: var(--accent); }
+  .standing.open { color: var(--bad); }
+  ul.trust li { margin: .35rem 0; }
+  dl.meta { display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem; font-family: system-ui, sans-serif; font-size: .92em; }
+  dl.meta dt { color: var(--muted); }
+  .quiz .q { border: 1px solid var(--rule); padding: 1rem; margin: 1rem 0; font-family: system-ui, sans-serif; }
+  .quiz button { display: block; width: 100%; text-align: left; margin: .35rem 0; padding: .5rem .75rem; background: var(--code-bg); color: var(--fg); border: 1px solid var(--rule); cursor: pointer; font: inherit; }
+  .quiz button.right { border-color: var(--ok); outline: 2px solid var(--ok); }
+  .quiz button.wrong { border-color: var(--bad); outline: 2px solid var(--bad); }
+  details { margin-top: .5rem; }
+  summary { cursor: pointer; color: var(--muted); }
+  footer { margin-top: 3rem; border-top: 1px solid var(--rule); padding-top: 1rem; color: var(--muted); font-size: .92em; font-family: system-ui, sans-serif; }
+</style>
+</head>
+<body>
+
+<div class="banner">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ FVS >> LOOP ME IN (FINAL)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</div>
+
+<header id="header">
+  <h1>{{TITLE}}</h1>
+  <p class="abstract">{{ABSTRACT}}</p>
+  <p class="snapshot">Snapshot: {{DATE}}. {{STANDING_SENTENCE}}</p>
+  <nav class="contents">
+    <ol>
+      <li><a href="#story">The setting</a></li>
+      <li><a href="#theorem">The theorem</a></li>
+      <li><a href="#proof">The proof</a></li>
+      <li><a href="#limits">What it says, and what it does not</a></li>
+      <li><a href="#reading-the-lean">Reading the Lean</a></li>
+      <li><a href="#quiz">Check your understanding</a></li>
+    </ol>
+  </nav>
+</header>
+
+<section id="story">
+  <h2>1. The setting</h2>
+  <!-- The objects, the parties, what the adversary may do; one table of its operations when that
+       helps; the definition of the quantity the theorem bounds. Prose and notation, no Lean.
+  <p>...</p>
+  <table>
+    <thead><tr><th>Call</th><th>What it does</th></tr></thead>
+    <tbody><tr><td>Chall t</td><td>...</td></tr></tbody>
+  </table>
+  <div class="def"><span class="label">Definition 1.1 (advantage).</span> ...
+    <span class="display math">Adv(A) = |Pr[win] − ½|</span></div>
+  -->
+  {{SETTING}}
+</section>
+
+<section id="theorem">
+  <h2>2. The theorem</h2>
+  <!-- One block per top-level theorem: the statement as a displayed inequality or sentence in
+       mathematical notation, a link to its declaration, then a table of hypotheses and what each
+       one buys. Variants in one paragraph.
+  <p class="display math">Adv(A) ≤ q·ε<sub>cor</sub> + q·Adv<sup>IND-CPA</sup>(B)</p>
+  <p class="ref">(<code>security</code>, <a href="{{HREF}}">OppBiKEM/Security.lean:120</a>)</p>
+  <table>
+    <thead><tr><th>Hypothesis</th><th>Why it is there</th></tr></thead>
+    <tbody><tr><td>...</td><td>...</td></tr></tbody>
+  </table>
+  -->
+  {{THEOREMS}}
+</section>
+
+<section id="proof">
+  <h2>3. The proof</h2>
+  <!-- First the techniques, named once with their principle; then one .hop per idea, phase or
+       hop, each with its justification sentence. Only top-level theorems are named as results;
+       supporting lemmas are described by role and linked. No tactic-level narrative.
+  <h3>Three ways to justify a hop</h3>
+  <p>...</p>
+  <div class="hop">
+    <p><span class="label">Hop 1: real to ideal receive.</span> ...</p>
+    <p class="why">Justification: a bad event (a decapsulation failure), whose probability q·ε is paid. <span class="ref"><a href="{{HREF}}">Security/BadEvent.lean:40</a></span></p>
+  </div>
+  -->
+  {{PROOF}}
+</section>
+
+<section id="limits">
+  <h2>4. What it says, and what it does not</h2>
+  <!-- Boundaries of the model and the roadmap's exclusions, each as a short paragraph with a
+       bold lead; then the trust list; then the take-home message. -->
+  {{BOUNDARIES}}
+  <h3>What you are trusting</h3>
+  <!-- One <li> per item, each found rather than assumed: axioms per top-level theorem from the
+       bounded check (or "axiom audit not run"), every sorry/axiom/native_decide hit with its
+       path:line and the obligation's statement in prose, external models, the trust-audit record.
+  <ul class="trust">
+    <li><code>security</code> depends on <code>propext</code>, <code>Classical.choice</code>, <code>Quot.sound</code> only.</li>
+    <li>One named obligation remains: ... <span class="ref"><a href="{{HREF}}">Security/Eager.lean:77</a></span></li>
+  </ul>
+  -->
+  <ul class="trust">{{TRUST_ITEMS}}</ul>
+  <div class="takehome"><strong>Take-home message.</strong> {{TAKE_HOME}}</div>
+</section>
+
+<section id="reading-the-lean">
+  <h2>5. Reading the Lean</h2>
+  <p>Where each step of the argument lives. Declarations open in the editor at their line; the
+  deeper dives are the per-iteration walkthroughs.</p>
+  <!--
+  <table>
+    <thead><tr><th>Step</th><th>Module</th><th>Headline declaration</th><th>Deeper dive</th></tr></thead>
+    <tbody>
+      <tr><td>The game and the advantage</td><td>SCKA/Security.lean</td><td><a href="{{HREF}}">securityExp</a>, <a href="{{HREF}}">guessAdvantage</a></td><td><a href="{{HREF}}">iteration n2</a></td></tr>
+    </tbody>
+  </table>
+  -->
+  {{READING_TABLE}}
+</section>
+
+<section id="quiz" class="quiz">
+  <h2>6. Check your understanding</h2>
+  <!-- 5 to 8 conceptual questions: why the argument works, what is assumed, where it would break.
+       data-correct is the 0-based index of the right option.
+  <div class="q" data-correct="1">
+    <p><strong>Q1.</strong> {{QUESTION}}</p>
+    <button type="button">{{OPTION_A}}</button>
+    <button type="button">{{OPTION_B}}</button>
+    <button type="button">{{OPTION_C}}</button>
+    <details><summary>Show the full answer</summary>
+      <p>{{LONG_ANSWER}}</p>
+      <p class="ref"><a href="{{HREF}}">{{REL_PATH}}:{{LINE}}</a></p>
+    </details>
+  </div>
+  -->
+  {{QUIZ_QUESTIONS}}
+</section>
+
+<footer id="unverified">
+  <h2>Unverified / not found</h2>
+  <ul>{{UNVERIFIED_ITEMS}}</ul>
+  <details id="provenance">
+    <summary>Provenance</summary>
+    <dl class="meta">
+      <dt>Generated</dt><dd>{{DATE_UTC}}</dd>
+      <dt>Definition</dt><dd>{{DEFINITION}}</dd>
+      <dt>Evidence</dt><dd>{{EVIDENCE}}</dd>
+      <dt>Top-level</dt><dd>{{TOP_LEVEL_THEOREMS}} ({{TOP_LEVEL_SOURCE}})</dd>
+      <dt>Axiom audit</dt><dd>{{AXIOM_AUDIT_OUTCOME}}</dd>
+      <dt>Roadmap</dt><dd>{{ROADMAP_PATH_OR_NONE}}</dd>
+      <dt>Links</dt><dd>open in {{EDITOR_LABEL}} at the cited line</dd>
+      <dt>Audience</dt><dd>{{AUDIENCE}}</dd>
+      <dt>Style</dt><dd>{{STYLE_SUMMARY}}</dd>
+    </dl>
+  </details>
+</footer>
+
+<script>
+  // Static self-checking quiz: highlight the clicked option, reveal the long answer.
+  document.querySelectorAll('.quiz .q').forEach(function (q) {
+    var correct = Number(q.getAttribute('data-correct'));
+    var buttons = Array.prototype.slice.call(q.querySelectorAll('button'));
+    var feedback = document.createElement('p');
+    feedback.setAttribute('role', 'status');
+    q.appendChild(feedback);
+    buttons.forEach(function (b, i) {
+      b.addEventListener('click', function () {
+        buttons.forEach(function (x) { x.classList.remove('right', 'wrong'); });
+        b.classList.add(i === correct ? 'right' : 'wrong');
+        if (i !== correct) buttons[correct].classList.add('right');
+        feedback.textContent = i === correct ? 'Correct.' :
+          'Incorrect. The correct answer is: ' + buttons[correct].textContent.trim();
+        var d = q.querySelector('details'); if (d) d.open = true;
+      });
+    });
+  });
+</script>
+</body>
+</html>

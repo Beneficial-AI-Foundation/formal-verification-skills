@@ -30,7 +30,7 @@ Commands are grouped into six bundles. Each bundle has a router command (e.g. `/
 4. `/fvs:fc-plan` - Select verification targets
 5. `/fvs:lean-specify <function>` - Generate spec with sorry, then choose an adversarial reviewer
 6. `/fvs:lean-verify <spec_path>` - Prove autonomously, then cheat-audit
-7. `/fvs:lean-refactor <spec_path>` - Golf and clean up verified proofs
+7. `/fvs:lean-refactor <lean_file_path>` - Reduce proof code through agreed-scope reuse and shared lemmas
 8. `/fvs:trust-audit <target>` - Audit the sorry/axiom trust surface
 
 **From a paper — paper track:**
@@ -54,7 +54,7 @@ Six router commands group the skills. Invoke a router bare to print its routing 
 - `/fvs:context` — Codebase context (map-code)
 - `/fvs:fc` — Formal-correctness core (fc-plan, model-external, lean-specify, lean-spec-review, lean-verify, natural-language, lean-refactor, trust-audit)
 - `/fvs:formalise` — Paper formalisation (lean-formalise, lean-refactor, protocol-prose, crypto loop)
-- `/fvs:manage` — Management (help, update, checkpoint, pause-work, resume-work, reapply-patches, kb-setup, roadmap, issues-setup, to-issues, ask-baif)
+- `/fvs:manage` — Management (help, update, checkpoint, pause-work, resume-work, reapply-patches, kb-setup, roadmap, issues-setup, to-issues, ask-baif, loop-me-in)
 
 ### Aeneas (`/fvs:aeneas`)
 
@@ -229,18 +229,25 @@ Generate detailed natural-language explanation of a function.
 
 Usage: `/fvs:natural-language scalar_mul`
 
-**`/fvs:lean-refactor <spec_file_path>`** (also in Formalise)
-Refactor, simplify, and decompose verified Lean proofs while preserving compilation.
+**`/fvs:lean-refactor <lean_file_path>`** (also in Formalise)
+Reduce net Lean LoC across an agreed file/module/project scope through reuse, shared lemmas and
+maintainable proofs. Count new helpers/wiring and preserve useful prose.
 
-- Requires fully verified spec (zero sorry) -- run `/fvs:lean-verify` first
-- Three modes: safe (zero-risk cleanup), balanced (default), aggressive (smart automation)
-- Applies tiered heuristics: dead code removal, simp sharpening, tactic golf, automation replacement
-- Verifies compilation after every change
-- Optional --report-only flag for analysis without modification
+- Proposes protected statements/core definitions/public interfaces and editable scope before edits
+- Reuses a matching approved Contract when available; a recall view is not enforcement
+- Shows concrete broader-scope benefit/cost and asks before expanding or adding public API
+- Keeps legacy flags; warns once when an explicit legacy mode maps to a search hint; the default needs no compatibility prompt
+- Resolves the actual installed project toolchain/overrides and checks capabilities; never upgrades a pin
+- Parent runs serial file/project gates, printed type/definition/axiom comparisons and comparable timings
+- Net code LoC excludes comment deletion/format packing; helper/wiring costs remain visible
+- Unavailable printed coverage or metric syntax uses an explicit reviewed comparison; builds and axiom checks remain required
+- Holds material performance/net-cost trade-offs for the owner; stops when worthwhile work ends
+- `--report-only` reports proposals without changing proof sources
 
 Usage: `/fvs:lean-refactor Specs/Backend/Field/Sub.lean`
 Usage: `/fvs:lean-refactor Specs/Backend/Field/Sub.lean --mode aggressive --max-passes 10`
 Usage: `/fvs:lean-refactor Specs/Backend/Field/Sub.lean --theorem sub_spec --report-only`
+Usage: `/fvs:lean-refactor MyProject/Algebra/Lemmas.lean --mode safe`
 
 **`/fvs:trust-audit <target spec file | module subtree>`**
 Build-backed trust audit of an Aeneas-extracted Lean target.
@@ -279,8 +286,8 @@ Formalise mathematical paper content into Lean 4 specifications (paper track).
 Usage: `/fvs:lean-formalise`
 Result: Lean definition and spec files with sorry placeholders
 
-**`/fvs:lean-refactor <spec_file_path>`** (also in Formal-Core)
-Refactor, simplify, and decompose verified Lean proofs while preserving compilation. See the Formal-Core bundle above for full details.
+**`/fvs:lean-refactor <lean_file_path>`** (also in Formal-Core)
+Reduce verified proof code within an agreed scope. See the Formalise entry above for the contract, measurement and legacy-flag policy.
 
 Usage: `/fvs:lean-refactor Specs/Backend/Field/Sub.lean`
 
@@ -426,6 +433,28 @@ another consented batch. Existing track review/proof and publication gates remai
 
 Usage: `/fvs:ask-baif where are we?`
 Usage: `/fvs:ask-baif take next`
+
+**`/fvs:loop-me-in [<description of the change> | <topic> nN] [--commit [<ref>] | --working-tree] [--roadmap <path>] [--docs <path>] [--style <path|url|document>...] [--audience "<text>"]`**
+Catch up after an automated run: one self-contained HTML walkthrough of the last self-contained
+chunk of work, with a quiz.
+
+- Offered once after an interactive `/fvs:crypto-eval` ACCEPT; declining writes nothing
+- Describe the change in plain words, with or without quotes; the matching work is shown for confirmation, with no directory name or iteration number required
+- Bare: picks the most recently active recorded iteration newer than HEAD, regardless of verdict or evaluation availability, else uncommitted changes, else HEAD; confirms the work, roadmap, audience and style before writing
+- Sections: what changed (planned vs observed), where we are on the roadmap (status quoted verbatim), how it was made with `path:line` references, and a multiple-choice quiz with collapsible cited answers
+- Audience and extra documentation come from `loop_me_in` in `fvs-config.json` or flags; the reader's level is never inferred from the code
+- Match a local document, web tutorial or accessible internal document with repeatable `--style` references (or `loop_me_in.style_refs`); attached or pasted style examples also work; both writing and visual style are adapted where available
+- Runs inline (no extra model call); writes `.formalising/loop-me-in/<slug>/<timestamp>-<slug>.html` and never overwrites, commits or edits the roadmap
+- `--final [<topic> | <description>] [--base <branch>] [--commit <range>]`: the whole work instead of a chunk, typically at the end: one tutorial at the level of the top-level theorems, every idea stated mathematically and in prose, no Lean beyond a reading table and editor links, with a trust section (axioms per theorem from a bounded check, named obligations, exclusions). Definition = the roadmap; evidence = the branch against the branch it diverged from (pull-request base, then the reflog, then `main` as the stated default), shown with the other candidates for correction; the top-level theorems are confirmed on the screen
+
+Usage: `/fvs:loop-me-in`
+Usage: `/fvs:loop-me-in the changes to key validation`
+Usage: `/fvs:loop-me-in --final kem-hybrid`
+Usage: `/fvs:loop-me-in the changes to key validation --style docs/example-tutorial.html`
+Usage: `/fvs:loop-me-in --working-tree --style "https://example.com/tutorial"`
+Usage: `/fvs:loop-me-in --working-tree --style "Engineering onboarding guide"`
+Usage: `/fvs:loop-me-in ntt n3`
+Usage: `/fvs:loop-me-in --commit HEAD~2..HEAD --audience "new to Aeneas"`
 
 **`/fvs:roadmap [path/ROADMAP.md | path/] [goal prompt]`**
 Turn the current conversation or a short prompt into a long-horizon verification roadmap.

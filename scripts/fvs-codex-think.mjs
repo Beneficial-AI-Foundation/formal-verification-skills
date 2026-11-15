@@ -339,6 +339,10 @@ async function runAuthoring({ args, topicDir, projectRoot }) {
     'check as blocked; ask the parent for existing build evidence or a separately approved supported route.\n';
   const scratch = fs.mkdtempSync(path.join(topicDir, 'thinker-attempt-'));
   const save = (name, value) => fs.writeFileSync(path.join(scratch, name), value, { flag: 'wx', mode: 0o600 });
+  // invoke() records the authoring child's own clock in process.json; never estimate from model telemetry.
+  const measured = () => {
+    try { return JSON.parse(fs.readFileSync(path.join(scratch, 'process.json'), 'utf8')); } catch { return null; }
+  };
   try {
     const timeoutMs = deadline('FVS_THINKER_TIMEOUT_MS', 1800000);
     const authTimeoutMs = deadline('FVS_REVIEW_AUTH_TIMEOUT_MS', 30000);
@@ -366,7 +370,7 @@ async function runAuthoring({ args, topicDir, projectRoot }) {
       throw new Error('eval requires exactly one decision verb');
     }
     const envelope = { version: 1, stage: `crypto_${args.stage}`, status: 'complete', response,
-      authorRuntime: 'Codex CLI',
+      authorRuntime: 'Codex CLI', durationMs: measured().durationMs,
       role: role.provenance, settings: stageSettings({ runtime: 'codex', model: args.model, effort: args.effort },
         { stage: `crypto_${args.stage}`, route: 'external-codex-read-only', source: 'final-response.md',
           requestedSource: context.selection_source ?? 'confirmed authoring CLI selection', resolvedSource: 'launch.json' }),
@@ -375,6 +379,10 @@ async function runAuthoring({ args, topicDir, projectRoot }) {
     process.stdout.write(JSON.stringify(envelope) + '\n');
   } catch (error) {
     save('error.txt', error.message + '\n');
+    const run = measured();
+    const timing = run ? `; thinker attempt ran ${run.durationMs} ms (${run.timedOut ? 'timed out'
+      : run.reason ?? (run.signal ? `signal ${run.signal}` : `exit ${run.status}`)})` : '; thinker was not launched';
+    error.message += timing;
     const remediation = /codex (version|auth) failed/.test(error.message)
       ? ' Install the official Codex CLI if absent, run codex login, or explicitly reselect the in-runtime thinker without --codex.' : '';
     throw new Error(`${error.message}; authoring attempt preserved at ${scratch}.${remediation}`);

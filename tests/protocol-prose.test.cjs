@@ -205,3 +205,21 @@ test('combined planning and precise-edit routes preserve both contracts and curr
   assert.match(router, /prose-attempt\nrecords exist.*eval_result_resolution.*baseline\/correction\/recheck evidence/s);
   assert.match(router, /never infer acceptance from an older EVAL/);
 });
+
+// The plain-English wording pass is guidance inside the existing authoring call, not a new
+// reviewer, quota or standard-compliance claim.
+test('adds a meaning-preserving plain-English wording pass after exposition', () => {
+  const reference = read('fv-skills/references/protocol-prose.md').replace(/\s+/g, ' ');
+  assert.ok(reference.indexOf('## Plain-English wording pass') > reference.indexOf('## Develop the explanation at the right level'));
+  assert.ok(reference.indexOf('## Plain-English wording pass') < reference.indexOf('## Synthetic examples'));
+  assert.match(reference, /After the expository work above, make one light wording pass in the same authoring call/);
+  assert.match(reference, /it does not make the text STE-compliant, so never describe the result as STE/);
+  assert.match(reference, /Freeze, character for character: quotations, citations and reference keys, code and Lean or code identifiers, file paths, commands and flags, formulas/);
+  assert.match(reference, /"Set up a game" is not "define a game"/);
+  assert.match(reference, /soft guidance, never a quota/);
+  assert.match(reference, /The repository style guide and nearby accepted prose win over this pass/);
+  assert.match(reference, /every claim, quantifier, condition, number, name, citation, link and hedge keeps its strength, and nothing is added/);
+  assert.match(reference, /Keep: "Let \$q\$ be prime\./);
+  assert.match(reference, /The hedge is mathematical content, so the shorter sentence changes the claim/);
+  assert.doesNotMatch(reference, /ada-simple-english|\/Users\/|\.agents\/skills/);
+});
