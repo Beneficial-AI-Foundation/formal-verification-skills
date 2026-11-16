@@ -281,13 +281,19 @@ a fixing subagent:
    write-and-review bullet in Step 3.
 3. HALT and present the rendered 7-field packet to the owner (write it to
    `<extract_workspace>/<target>/equivalence-gate/<change-id>.md`). Section 7 and the ratification
-   token come last, and only from the owner or from someone the owner explicitly delegated to. A
-   delegation is recorded: the stamp's `Reviewed-by:` line names the delegate and its `Delegation:`
-   line says where the owner recorded the delegation (the agreement, or a dated line the owner
-   wrote); the owner's own stamp reads `Delegation: owner`. The delegate is
-   never the writer or the reviewer of that patch, and no model seat stamps. Use `AskUserQuestion`
-   to present the halt; on Codex, degrade to a plain-text question and WAIT (fail-closed -- never
-   auto-pick a default, and no model seat ever stamps a packet).
+   token come last, and only from the owner or from someone the owner explicitly delegated to. The
+   reviewer's verdict is an ordinary review result and never a stamp; ratifying is a separate
+   action. The delegate can be a person, or a model or session the owner named, acting only inside
+   the scope the owner recorded, and independent of the patch author (never the model or session
+   that wrote the patch). A named model that also reviewed the patch may ratify, in its own action
+   after the verdict, working section 7 itself. A delegation is recorded: the stamp's
+   `Reviewed-by:` line names the delegate (a model or session by runtime, model and session id)
+   and its `Delegation:` line says where the owner recorded the delegation and its scope (the
+   agreement, or a dated line the owner wrote); the owner's own stamp reads `Delegation: owner`.
+   The orchestrator records the delegate's stamp lines unchanged. With no delegation on record
+   there is no stamp. Use `AskUserQuestion` to present the halt; on Codex, degrade to a plain-text
+   question and WAIT (fail-closed -- never auto-pick a default, and nothing stamps a packet
+   without the owner or a recorded delegate).
 4. Re-extract only once the token `equivalence-ratified:` is present. Reject -> record the
    reason and a `status: rejected` line in the packet and ESCALATE; never re-submit the identical
    change.
@@ -422,7 +428,7 @@ the same target re-surfaces them from their on-disk records.
 On Codex, every interactive HALT in this command -- the pin-audit warn-and-confirm (Step 2),
 the Category-B gate presentation (Step 4), and the escalation draft offer (Step 6) -- degrades
 to a plain-text question and WAITS for the user. It is fail-closed: it never auto-picks a
-default, never lets a model seat stamp a gate packet, and never writes an upstream artifact. The
+default, never lets anything but the owner or a recorded delegate stamp a gate packet, and never writes an upstream artifact. The
 Before any Codex dispatch, apply the model-profile capability gate: confirm only the actual
 active/inherited model and applicable effort, or fail before dispatch. Never silently ignore a
 confirmed field.

@@ -399,6 +399,41 @@ describe('Owner token and wording', () => {
     assert.match(packet, /a reviewer's "no objection"\s+is not a stamp/);
   });
 
+  it('separates a reviewer verdict from a ratification action that an explicitly named model or session can take', () => {
+    const gate = flatten(step('gate'));
+    assert.match(gate, /The reviewer's verdict of Step 4a is an ordinary review result: it never stamps/);
+    assert.match(gate, /Ratifying is a separate action by an authorized actor/);
+    assert.match(gate, /The delegate can be a person, or a model or session that the owner named, and it acts only inside the scope the owner recorded/);
+    assert.match(gate, /independent of the patch author: never the model or session that wrote the patch/);
+    assert.match(gate, /If the owner named the model that reviewed the patch, that model may ratify, but only in its own action after the verdict, and it works section 7 itself/);
+    assert.match(gate, /`Reviewed-by:` line names the delegate \(a model or session by runtime, model and session id\)/);
+    assert.match(gate, /`Delegation:` line says where the owner recorded the delegation and its scope/);
+    assert.match(gate, /With no delegation on record there is no stamp/);
+    const cmd = flatten(command);
+    assert.match(cmd, /The reviewer's verdict is an ordinary review result and never a stamp; ratifying is a separate action/);
+    assert.match(cmd, /a model or session the owner named, acting only inside the scope the owner recorded, and independent of the patch author/);
+    assert.match(cmd, /A named model that also reviewed the patch may ratify, in its own action after the verdict, working section 7 itself/);
+    assert.match(cmd, /there is no stamp\. Use `AskUserQuestion`/);
+    const pkt = flatten(packet);
+    assert.match(pkt, /someone the owner explicitly delegated to \(a person, or a model or session the owner named\)/);
+    assert.match(pkt, /A model that also reviewed the patch may ratify if the owner named it, but only in its own action after the verdict, and only after working section 7 itself/);
+    assert.match(pkt, /Delegation:` names the place the owner recorded the delegation \(a dated note in the run's escalation file, or the agreement\) and the scope it covers/);
+    assert.match(flatten(assessor), /If the owner named a model as the delegate, that is a separate action taken after your verdict, not part of this dispatch/);
+  });
+
+  it('no longer bans a named model or the reviewer from ratifying, and keeps the token last and the verdict a non-stamp', () => {
+    for (const [name, text] of [['workflow', workflow], ['command', command], ['packet', packet], ['assessor', assessor]]) {
+      const flat = flatten(text);
+      assert.doesNotMatch(flat, /no model seat/i, `${name} still bans a model seat from stamping`);
+      assert.doesNotMatch(flat, /never lets a model seat stamp/i, `${name} still bans a model seat from stamping`);
+      assert.doesNotMatch(flat, /Neither the loop nor either model seat stamps/, `${name} still bans both seats from stamping`);
+      assert.doesNotMatch(flat, /delegate is never the writer or the reviewer/, `${name} still bans the reviewer as delegate`);
+    }
+    assert.match(flatten(step('gate')), /Section 7 \(the stamper's own independent checklist\) and the ratification token come last/);
+    assert.match(flatten(packet), /ratifying is a separate action, taken after the verdict/);
+    assert.match(flatten(step('patch_review')), /"No objection" is not a ratification: it stamps nothing/);
+  });
+
   it('summarises the known-issues outcome in the run end block of both the workflow and the command', () => {
     assert.match(workflow, /^Known issues:/m);
     assert.match(command, /Known issues:/);

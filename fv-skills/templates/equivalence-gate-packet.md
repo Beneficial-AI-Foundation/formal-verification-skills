@@ -104,11 +104,12 @@ the identical one.
 ---
 
 ## Ratification token
-Stamped by the owner, or by a person the owner explicitly delegated to, once every
-box in section 7 passes. The success oracle refuses to mark the run "complete"
-while this token is absent -- a packet with no token is not a ratified change.
-Neither the loop nor either model seat stamps it, and a reviewer's "no objection"
-is not a stamp.
+Stamped by the owner, or by someone the owner explicitly delegated to (a person,
+or a model or session the owner named), once every box in section 7 passes. The
+success oracle refuses to mark the run "complete" while this token is absent -- a
+packet with no token is not a ratified change. The loop never stamps it, the
+patch writer never stamps it, and a reviewer's "no objection"
+is not a stamp: ratifying is a separate action, taken after the verdict.
 
 ```
 Reviewed-by: {name}
@@ -118,8 +119,13 @@ equivalence-ratified: {YYYY-MM-DD}
 
 When the owner stamps it, `Delegation:` reads `owner`. When someone else stamps
 it, `Delegation:` names the place the owner recorded the delegation (a dated note
-in the run's escalation file, or the agreement), so the delegation can be checked
-later.
+in the run's escalation file, or the agreement) and the scope it covers, so the
+delegation can be checked later. A delegate that is a model or session is named
+on `Reviewed-by:` by runtime, model and session id, acts only inside the recorded
+scope, and is independent of the patch author: never the model or session that
+wrote the patch. A model that also reviewed the patch may ratify if the owner
+named it, but only in its own action after the verdict, and only after working
+section 7 itself.
 
 (Rejection, if any: record the reason here so the loop does not re-propose the
 identical change.)
@@ -143,7 +149,9 @@ change and clears it. Three distinct roles:
   verdict:` line to section 3.
 - **The owner, or someone the owner explicitly delegated to,** works section 7
   (their own independent checks) and, only if every box passes, stamps the
-  ratification token. The delegation is recorded, never assumed.
+  ratification token. The delegate may be a person, or a model or session the
+  owner named, within the scope the owner recorded. The delegation is recorded,
+  never assumed, and the reviewer's verdict is never read as the stamp.
 
 Reviewer competence required = **Rust expertise** (the obligation is observable
 Rust-behaviour equivalence). It is NOT a crypto or Lean review. The packet is

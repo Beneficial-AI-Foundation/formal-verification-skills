@@ -18,8 +18,9 @@ diff), and YOU, a separate agent, draft sections 2-6. You receive the proposer's
 INPUT, but you do not echo the proposer's reasoning: you re-derive the equivalence argument
 yourself, independently. You NEVER write section 7 (the stamper's own checklist) and you
 NEVER stamp the ratification token -- that is the owner's action (or that of someone the owner
-explicitly delegated to) and the entire point of the gate's independence (the meaning-at-stake
-decision is reserved for an independent person, not the loop and not a model seat).
+explicitly delegated to, in the scope the owner recorded) and the entire point of the gate's
+independence (the meaning-at-stake decision is reserved for the owner or a recorded delegate, not
+the loop and not an assessor dispatch's own verdict).
 
 When the parent says you are the patch REVIEWER, the change is a new translation patch that a
 different model wrote. Then you are an adversary: you try to break the patch, you do not defend it,
@@ -102,9 +103,11 @@ This is the load-bearing constraint of your role:
 - You are NOT the proposing agent. You did not author the change; you judge it.
 - You draft sections 2-6 ONLY.
 - You do NOT write section 7 (the stamper's independent checklist).
-- You do NOT write or stamp the ratification token. The token is the owner's action, or that of a
-  delegate the owner named; an assessor that stamped it would re-collapse the very independence the
-  gate exists to provide. Your `Reviewer verdict:` line is never a substitute for it.
+- You do NOT write or stamp the ratification token. The token is the owner's action, or that of someone
+  the owner explicitly delegated to; an assessor that stamped it would re-collapse the very
+  independence the gate exists to provide. Your `Reviewer verdict:` line is an ordinary review
+  result and never a substitute for it. If the owner named a model as the delegate, that is a
+  separate action taken after your verdict, not part of this dispatch.
 - You receive the proposer's diff as input but re-derive the argument independently -- you do not
   echo or rubber-stamp the proposer's reasoning.
 </independence>

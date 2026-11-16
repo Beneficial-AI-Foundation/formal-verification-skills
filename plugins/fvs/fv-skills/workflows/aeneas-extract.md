@@ -31,11 +31,13 @@ Hard invariants this workflow preserves:
 - Every source change is recorded reversibly at the crate root: a translation patch in patch
   mode, a ledger hunk in legacy mode. The two never mix in one run.
 - A semantic (Category-B) change is gated by an independent assessor and an owner ratification
-  token (the owner's own, or one from someone the owner explicitly delegated to, recorded on the
-  stamp); the success oracle refuses completion while any token is absent.
+  token (the owner's own, or one from someone the owner explicitly delegated to, a person or a
+  model or session the owner named, recorded on the stamp); the success oracle refuses completion
+  while any token is absent.
 - A tool blocker gets a known-issues check before any patch is written. A patch is written by one
   model and reviewed by a different one, with at most two review rounds before it goes to the
-  owner. A reviewer's "no objection" is never a ratification.
+  owner. A reviewer's "no objection" is an ordinary review result and never a ratification;
+  ratifying is a separate, authorized action.
 - Patches are line-preserving, and every gate checks them against the one observer set the
   target agreed to, panic occurrence and the file and line it reports included.
 - A translation adaptation changes the program the extractor sees. A clean extraction of a
@@ -567,12 +569,20 @@ command body), never by a fixing agent.** The independence is structural:
    of Step 4a is this assessor dispatch; do not dispatch a second one for the same patch bytes.
 3. The orchestrator HALTS and presents the rendered 7-field packet to the owner. **Section 7
    (the stamper's own independent checklist) and the ratification token come last, and only from
-   the owner or from someone the owner has explicitly delegated to.** A delegation is recorded:
-   the stamp's `Reviewed-by:` line names the delegate and its `Delegation:` line says where the
-   owner recorded the delegation (the agreement, or a dated line the owner wrote); the owner's own
-   stamp reads `Delegation: owner`. The delegate is never the writer
-   or the reviewer of that patch, and no model seat from Step 4a stamps. The loop does NOT
-   re-extract until the token is present, and it waits for it synchronously.
+   the owner or from someone the owner has explicitly delegated to.** The reviewer's verdict of
+   Step 4a is an ordinary review result: it never stamps, and the packet's section 7 is not filled
+   from it. Ratifying is a separate action by an authorized actor. The delegate can be a person, or
+   a model or session that the owner named, and it acts only inside the scope the owner recorded
+   (which changes it may decide). It is independent of the patch author: never the model or
+   session that wrote the patch. If the owner named the model that reviewed the patch, that model
+   may ratify, but only in its own action after the verdict, and it works section 7 itself. A
+   delegation is recorded: the stamp's `Reviewed-by:` line names the delegate (a model or session
+   by runtime, model and session id) and its `Delegation:` line says where the owner recorded the
+   delegation and its scope (the agreement, or a dated line the owner wrote); the owner's own stamp
+   reads `Delegation: owner`. The orchestrator records the stamp lines the delegate returns
+   unchanged. With no delegation on record there is no stamp: neither the loop, nor the writer,
+   nor an assessor dispatch stamps on its own. The loop does NOT re-extract until the token is
+   present, and it waits for it synchronously.
 
 The packet is written to `<extract_workspace>/<target>/equivalence-gate/<change-id>.md`; it is
 the reversible record for the B-change (the minimized diff + the stamped token).
