@@ -237,8 +237,14 @@ export function produce({ project: projectArg, roots, out: outArg, lake: lakeArg
   // every other project input must come out of it byte for byte unchanged.
   const sources = (inputs) => Object.fromEntries(Object.entries(inputs).filter(([file]) => !file.startsWith(`${ILEAN_DIR}/`)));
   const baseline = sources(projectInputs(project));
+  const warnings = [];
   const unchanged = () => {
     const built = sources(projectInputs(project));
+    // Lake writes lake-manifest.json on a project's first build; that is its own output, not a user edit.
+    if (baseline['lake-manifest.json'] === undefined && built['lake-manifest.json'] !== undefined) {
+      warnings.push(`Lake created lake-manifest.json during the build (sha256 ${built['lake-manifest.json']})`);
+      baseline['lake-manifest.json'] = built['lake-manifest.json'];
+    }
     const touched = [...new Set([...Object.keys(baseline), ...Object.keys(built)])].filter((file) => baseline[file] !== built[file]).sort();
     if (touched.length > 0) refuse(`the project files changed during the build (only build outputs under .lake may change): ${touched.join(', ')}`);
   };
@@ -253,7 +259,6 @@ export function produce({ project: projectArg, roots, out: outArg, lake: lakeArg
   const reached = new Set(Object.keys(JSON.parse(inventory(step(out, '01a-discover-roots', discoverArgvFor(rootsDiscovery), project), 'discovery').text).modules));
   const unimported = projectModules(baseline).map((module) => module.replaceAll('/', '.'))
     .filter((module) => roots.includes(module.split('.')[0]) && !reached.has(module)).sort();
-  const warnings = [];
   if (unimported.length > 0) {
     // A module name goes into Lean source and Lake's arguments, so only plain identifiers.
     if (!unimported.every((module) => module.split('.').every((part) => ROOT_NAME.test(part)))) {

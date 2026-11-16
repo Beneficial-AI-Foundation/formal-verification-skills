@@ -27,6 +27,7 @@ const env = process.env;
 if (args.includes('build')) {
   if (env.FAKE_EXTRA_OLEAN) fs.writeFileSync(path.join(process.cwd(), '.lake/build/lib/lean/Other.olean'), 'stale');
   if (env.FAKE_BUILD_EDIT) fs.appendFileSync(path.join(process.cwd(), 'Demo.lean'), '-- edited by the build');
+  if (env.FAKE_BUILD_MANIFEST) fs.writeFileSync(path.join(process.cwd(), 'lake-manifest.json'), '{"version": "1.1.0", "packages": []}');
   if (env.FAKE_BUILD_OUTPUT) fs.writeFileSync(path.join(process.cwd(), '.lake/build/lib/lean/Demo/Sub.ilean'), '{ }');
   // A module named with + is built by name, as Lake does for one the roots do not import.
   const named = args.filter((arg) => arg.startsWith('+'));
@@ -94,6 +95,7 @@ function freshProject(env = {}) {
   fs.writeFileSync(path.join(project, '.lake/build/lib/lean/Demo/Sub.ilean'), '{}');
   fs.writeFileSync(path.join(toolchainLib, 'Init.olean'), 'init olean');
   if (env.FAKE_UNIMPORTED) fs.writeFileSync(path.join(project, 'Demo/Extra.lean'), 'def y := 1\n');
+  if (env.FAKE_MANIFEST_PRESENT) fs.writeFileSync(path.join(project, 'lake-manifest.json'), '{"version": "1.1.0"}');
   if (env.FAKE_ODD_NAME) fs.writeFileSync(path.join(project, 'Demo/odd-name.lean'), 'def w := 3\n');
   return project;
 }
@@ -167,6 +169,7 @@ describe('fvs-lean-constants producer', () => {
     ['a project file the build changes', { FAKE_BUILD_EDIT: '1' }, 'Demo', /project files changed during the build \(only build outputs under \.lake may change\): Demo\.lean$/m],
     ['extractor module names that differ from discovery', { FAKE_MODULES: 'Init,Demo,Other' }, 'Demo', /module names differ/],
     ['a compiled file of a module outside the roots', { FAKE_EXTRA_OLEAN: '1' }, 'Demo', /unexpected \.lake\/build\/lib\/lean\/Other\.olean/],
+    ['a lake-manifest.json the build changes', { FAKE_MANIFEST_PRESENT: '1', FAKE_BUILD_MANIFEST: '1' }, 'Demo', /project files changed during the build \(only build outputs under \.lake may change\): lake-manifest\.json$/m],
     ['a module the root does not import that fails to build by name', { FAKE_UNIMPORTED: '1', FAKE_MODULE_BUILD_EXIT: '1' }, 'Demo', /01b-build-modules exited 1/],
     ['a module the root does not import whose name is not a plain identifier', { FAKE_ODD_NAME: '1' }, 'Demo', /do not import Demo\.odd-name: .*`import Demo\.odd-name` to Demo\.lean/],
   ];
@@ -204,6 +207,17 @@ describe('fvs-lean-constants producer', () => {
     assert.match(fs.readFileSync(path.join(out, 'work', 'LeanConstants.lean'), 'utf8'), /^import Demo\nimport Demo\.Extra\nopen Lean\n/);
     assert.match(fs.readFileSync(path.join(out, 'work', 'DiscoverRoots.lean'), 'utf8'), /^import Demo\nopen Lean\n/);
     assert.equal(record.producer.extractorSha256, sha256(fs.readFileSync(path.join(out, 'work', 'LeanConstants.lean'))));
+  });
+
+  it('lets Lake create lake-manifest.json on the first build, records its hash and warns', () => {
+    const { out, result } = produce({ FAKE_BUILD_MANIFEST: '1' });
+    assert.equal(result.status, 0, result.stderr);
+    const hash = sha256(fs.readFileSync(path.join(project, 'lake-manifest.json')));
+    assert.match(result.stderr, new RegExp(`^warning: Lake created lake-manifest\\.json during the build \\(sha256 ${hash}\\)$`, 'm'));
+    const record = JSON.parse(fs.readFileSync(path.join(out, 'constants.json'), 'utf8'));
+    const receipt = JSON.parse(fs.readFileSync(path.join(out, 'constants-run.json'), 'utf8'));
+    assert.equal(record.inputs.files['lake-manifest.json'], hash, 'the record binds the created manifest');
+    assert.deepEqual(receipt.warnings, [`Lake created lake-manifest.json during the build (sha256 ${hash})`]);
   });
 
   it('warns about nothing when the roots import every project module', () => {
