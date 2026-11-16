@@ -61,6 +61,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   and progress facts in `.formalising/CODEMAP.md`, writes qualitative complexity, leverage and risk
   notes to `.formalising/PLAN.md`, and lets you pick a target; the notes do not certify that a
   target's dependencies are proved. (#124, #125)
+- The one-line `/fvs:fc-plan` summary in `/fvs:help`, "Pick next verification targets via dependency
+  graph analysis.", now matches those bullets: "Choose a verification target, with qualitative
+  notes on complexity, leverage and risk." (#124)
 
 ## [2.3.11] - 2026-11-03
 
