@@ -65,12 +65,14 @@ runtime qualification or a whole-library verification result.
 
 - rc2 carries the changes listed in the 2.3.10, 2.3.11 and 2.3.12 sections below, as they stand in
   this tree. 2.3.12 adds `/fvs:loop-me-in` and `/fvs:loop-me-in --final`, which write a
-  self-contained HTML walkthrough of a chunk of work or of the whole formalisation, and makes
-  `/fvs:crypto-execute` name its run report path. 2.3.11 resolves bundled script paths for direct
-  installs from the selected installation directory and quotes them. 2.3.10 brings the Codex
-  sub-agent dispatch fixes, the fresh-child-per-pass rule for loop commands, the measured
-  `Thinker wall time` in `/fvs:crypto-eval` and `/fvs:lean-refactor` for any Lean file whose proofs
-  already compile. The merged inventory is 41 commands and 27 workflows.
+  self-contained HTML walkthrough of a chunk of work or of the whole formalisation, adds a workflow
+  guide (`docs/workflow.md`) with two diagrams in the README, makes `/fvs:crypto-execute` name its run
+  report path and `/fvs:crypto-eval` read it, and corrects the `/fvs:fc-plan` wording in `/fvs:help`
+  and the README. 2.3.11 resolves bundled script paths for direct installs from the selected
+  installation directory and quotes them. 2.3.10 brings the Codex sub-agent dispatch fixes, the
+  fresh-child-per-pass rule for loop commands, the measured `Thinker wall time` in
+  `/fvs:crypto-eval`, and `/fvs:lean-refactor` for any Lean file whose proofs already compile. The
+  merged inventory is 41 commands and 27 workflows.
 - The auto-track engine files changed since 3.0.0-rc1, so the engine identity differs from rc1.
   Keep one engine identity for the whole run and do not update the installation in the middle of one.
 - A missing Aeneas or Charon is a warning once a recorded extraction has succeeded. The first setup,
