@@ -449,10 +449,12 @@ identity for the whole run:
 
 The Claude actor permission helper, `fvs-auto-actor-permissions.py`, writes each actor's rules to a real
 `.claude/settings.local.json` inside that actor's own worktree and refuses a `.claude` that is a link. So
-do not point AO's `--symlink` option at `.claude`. Never share one settings file between actors: one
-actor's grants would become every actor's. A real per-worktree `.claude` folder whose FVS subfolders
-link to a shared install is a candidate, and AO's `--post-create` option (a command that runs after each
-workspace is created) could build it. Both are untested.
+do not point AO's `--symlink` option at `.claude` itself. The one file never to share between actors is
+`settings.local.json`, the per-actor grants file: one actor's grants would become every actor's. A real
+per-worktree `.claude` folder whose entries link to a shared install, including the shared
+`settings.json`, with `settings.local.json` kept a real file in each worktree, was checked end to end on
+AO 0.14.10 in a throwaway project: AO created it from per-entry links and the helper then verified the
+grant. Recheck it on other AO versions.
 
 AO rewrites `.claude/settings.local.json` when a worker starts. After a start, read the merged rules the
 worker really has (in Claude Code, the `/permissions` view) before you rely on them. Whether FVS's actor

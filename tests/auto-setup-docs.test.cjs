@@ -389,8 +389,10 @@ describe('auto-setup reference: running under Agent Orchestrator and Codex', () 
     assert.ok(helper.includes('actor .claude is not a real directory'), 'the helper no longer refuses a linked .claude');
     const text = flat(section(raw, 'Agent Orchestrator setup'));
     assert.match(text, /refuses a `\.claude` that is a link/);
-    assert.match(text, /Never share one settings file between actors/);
-    assert.match(text, /Both are untested/);
+    assert.match(text, /The one file never to share between actors is `settings\.local\.json`, the per-actor grants file/);
+    assert.match(text, /with `settings\.local\.json` kept a real file in each worktree, was checked end to end on AO 0\.14\.10 in a throwaway project/);
+    assert.match(text, /Recheck it on other AO versions/);
+    assert.doesNotMatch(text, /Never share one settings file|Both are untested/);
   });
 
   it('warns that a full config replacement drops what it does not name, and ties the model rule to the config', () => {
