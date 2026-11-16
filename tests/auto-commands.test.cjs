@@ -635,6 +635,81 @@ describe('auto-extract extraction record', () => {
     assert.deepEqual(fs.readFileSync(stateFile(root)), bytes, 'a replay on the same host writes nothing');
   });
 
+  it('a refresh refuses, writing nothing, when another command changed the state after it was read', () => {
+    const root = project();
+    assert.equal(init(root).code, 'created');
+    // Between this refresh's read and its write, a separate process records the
+    // roadmap decision through the real command.
+    const open = fs.openSync;
+    let raced = null;
+    fs.openSync = function (file, ...rest) {
+      if (raced === null && String(file) === `${stateFile(root)}.lock`) {
+        raced = cli('record-roadmap', '--decision', 'declined', '--project-root', root);
+      }
+      return open.call(this, file, ...rest);
+    };
+    let refreshed;
+    try {
+      refreshed = init(root, CHOICES, { bin: binWithout('probe-aeneas') });
+    } finally {
+      fs.openSync = open;
+    }
+    assert.equal(raced.json?.code, 'recorded', raced.stdout + raced.stderr);
+    assert.equal(refreshed.code, 'state-changed', JSON.stringify(refreshed));
+    const state = JSON.parse(fs.readFileSync(stateFile(root), 'utf8'));
+    assert.equal(state.roadmap.decision, 'declined', 'the newer decision survives');
+    assert.equal(state.profile.probes.find((entry) => entry.id === 'probe-aeneas').status, 'present-unqualified', 'the stale refresh wrote nothing');
+    assert.equal(fs.existsSync(`${stateFile(root)}.lock`), false);
+
+    const retried = init(root, CHOICES, { bin: binWithout('probe-aeneas') });
+    assert.equal(retried.code, 'profile-refreshed', 'a rerun starts from the current state');
+    assert.equal(retried.state.roadmap.decision, 'declined');
+    assert.equal(retried.state.profile.probes.find((entry) => entry.id === 'probe-aeneas').status, 'missing');
+  });
+
+  it('a state write refuses while another writer holds the lock, and names the lock file', () => {
+    const root = project();
+    init(root);
+    const bytes = fs.readFileSync(stateFile(root));
+    fs.writeFileSync(`${stateFile(root)}.lock`, '1\n');
+    const refused = init(root, CHOICES, { bin: binWithout('probe-aeneas') });
+    assert.equal(refused.code, 'state-locked');
+    assert.match(refused.nextStep, /state\.json\.lock/);
+    assert.deepEqual(fs.readFileSync(stateFile(root)), bytes);
+    assert.equal(run(() => auto.recordRoadmap({ projectRoot: root, decision: 'declined' })).code, 'state-locked');
+    fs.rmSync(`${stateFile(root)}.lock`);
+    assert.equal(run(() => auto.recordRoadmap({ projectRoot: root, decision: 'declined' })).code, 'recorded');
+  });
+
+  it('a refresh after AO is removed saves the gap, keeps the choices and extraction, then reports the blocker', () => {
+    const root = project();
+    init(root);
+    const { out } = prepared(root);
+    assert.equal(record(root, out, 0).code, 'recorded');
+    const before = auto.readState({ projectRoot: root }).state;
+
+    const noAo = binWithout('ao');
+    const blocked = init(root, CHOICES, { bin: noAo });
+    assert.equal(blocked.code, 'profile-blocked', JSON.stringify(blocked));
+    assert.match(blocked.message, /ao is missing; the recorded profile now holds these facts/);
+    const view = auto.readState({ projectRoot: root });
+    assert.equal(view.state.profile.items.find((entry) => entry.id === 'ao').verdict, 'missing');
+    assert.deepEqual(view.state.extraction, before.extraction);
+    assert.deepEqual(view.state.choices, before.choices);
+    assert.equal(view.state.choicesGeneration, before.choicesGeneration);
+    assert.equal(view.readiness.find((entry) => entry.stage === 'auto-top-specs').status, 'no-route');
+    assert.match(view.nextAction, /^Setup is blocked: ao is missing\. .*Then rerun \/fvs:auto-init\.$/);
+
+    const bytes = fs.readFileSync(stateFile(root));
+    assert.equal(init(root, CHOICES, { bin: noAo }).code, 'profile-blocked', 'a rerun on the same host still reports the blocker');
+    assert.deepEqual(fs.readFileSync(stateFile(root)), bytes);
+    assert.equal(init(root, { ...CHOICES, scope: 'another scope' }, { bin: noAo, confirmOverwrite: true }).code, 'profile-blocked');
+    assert.deepEqual(auto.readState({ projectRoot: root }).state.choices, before.choices, 'a blocked choice change saves no choices');
+
+    assert.equal(init(root).code, 'profile-refreshed', 'restoring AO clears the blocker');
+    assert.doesNotMatch(auto.readState({ projectRoot: root }).nextAction, /^Setup is blocked/);
+  });
+
   it('once the probes are present the next action asks for the agreement, then the grant, then runs with an unverified warning', () => {
     const root = project();
     init(root);

@@ -12,6 +12,7 @@ import {
   CONFINEMENT_UNAVAILABLE,
   PROBE_RELEASE,
   TESTED_TUPLES,
+  acceptedProbeLeanVersions,
   executableFile,
   hostTarget,
   managedProbePath,
@@ -103,25 +104,43 @@ export const PROBE_LOSSES = {
   'probe-lean': 'the Lean atom list for the graph: without it no Lean graph is built, so the closure plan has source order only, no dependency order, and proof acceptance refuses it.',
 };
 
-// Presence and qualification of each probe, found without running any of them.
+// Presence and qualification of each probe. Qualified probes were checked by the
+// resolver for this toolchain tuple. Any other present probe is run once with
+// --version under the read-only confinement: one that does not answer, or a
+// probe-lean whose version the Lean graph step refuses, is unverified-blocked
+// with the reason, because no stage can use its output.
 function probeStatuses(root, probe, resolver, platform) {
-  let helpers = null;
+  let selected = null;
   let unchecked = null;
   try {
-    ({ helpers } = selectProbeToolPaths({ projectRoot: root }));
+    selected = selectProbeToolPaths({ projectRoot: root });
   } catch (error) {
     // An unreadable lean-toolchain or a refused path override leaves the helpers not checked.
     unchecked = error.message;
   }
   const aeneasPath = [managedProbePath(undefined, platform), which('probe-aeneas')].find((file) => file && fs.existsSync(file)) ?? null;
   return Object.keys(PROBE_LOSSES).map((id) => {
-    const found = id === 'probe-aeneas' ? aeneasPath : helpers?.[id] ?? null;
+    const found = id === 'probe-aeneas' ? aeneasPath : selected?.helpers[id] ?? null;
     let status = found ? 'present-unqualified' : 'missing';
-    if (id !== 'probe-aeneas' && helpers === null) status = 'not-checked';
-    if (probe.verdict === GREEN && resolver.status === 'verified') status = 'qualified';
-    return { id, status, path: found, lost: ['missing', 'not-checked'].includes(status) ? PROBE_LOSSES[id] : null,
-      ...(status === 'not-checked' ? { reason: unchecked } : {}) };
+    let reason = null;
+    if (id !== 'probe-aeneas' && selected === null) [status, reason] = ['not-checked', unchecked];
+    if (probe.verdict === GREEN && resolver.status === 'verified') [status, reason] = ['qualified', null];
+    if (status === 'present-unqualified') [status, reason] = probeUsable(id, found, root, selected);
+    return { id, status, path: found, lost: status === 'qualified' || status === 'present-unqualified' ? null : PROBE_LOSSES[id],
+      ...(reason === null ? {} : { reason }) };
   });
+}
+
+function probeUsable(id, bin, root, selected) {
+  const run = readOnlyRun(bin, ['--version'], root, { projectRoot: root, toolPaths: selected });
+  const unavailable = run.confinementError ?? (run.output === CONFINEMENT_UNAVAILABLE ? run.output : null);
+  if (unavailable) return ['not-checked', `${id} --version was not run: ${unavailable}`];
+  if (!run.ok) return ['unverified-blocked', `${id} --version failed: ${firstLine(run.output) || 'no output'}`];
+  if (id !== 'probe-lean') return ['present-unqualified', null];
+  const version = firstLine(run.stdout).split(/\s+/).pop();
+  const accepted = acceptedProbeLeanVersions();
+  if (accepted.includes(version)) return ['present-unqualified', null];
+  return ['unverified-blocked', `the Lean graph step accepts only probe-lean ${accepted.join(' or ')} output and refuses other versions; this probe-lean reports ${JSON.stringify(version)}`];
 }
 
 // What each stage needs on this engine. The AO controller launches spec, review
@@ -148,21 +167,28 @@ function stageGap(need, items, probes) {
   if (!probe) return { need, supplier: 'agent', step: 'rerun /fvs:auto-init with the recorded choices so the recorded profile is refreshed: it did not check the probes' };
   if (probe.status === 'missing') return { need, supplier: 'owner', step: `install ${need} (or set its path override), ${REFRESH}` };
   if (probe.status === 'not-checked') return { need, supplier: 'owner', step: `fix what stopped the probe check (${probe.reason ?? 'reason not recorded'}), ${REFRESH}` };
+  if (probe.status === 'unverified-blocked') return { need, supplier: 'owner', step: `replace ${need} with one this engine can use (${probe.reason}), ${REFRESH}` };
+  if (!['qualified', 'present-unqualified'].includes(probe.status)) return { need, supplier: 'agent', step: `rerun /fvs:auto-init with the recorded choices so the recorded profile is refreshed: its ${need} status ${JSON.stringify(probe.status)} is not one this engine knows` };
   return null;
 }
 
 // One line per stage, computed from a profile (fresh or recorded) so the setup
 // report, the next action and the read state never disagree: full (every probe
-// qualified), ready-unverified (every probe present, some not qualified), or
-// no-route, naming the first missing need and who supplies it.
+// qualified), ready-unverified (every probe present and usable, some not
+// qualified), or no-route, naming the first missing or unverified-blocked need
+// and who supplies it.
 export function readiness(profileResult) {
   const items = Object.fromEntries((profileResult?.items ?? []).map((entry) => [entry.id, entry]));
   const probes = Object.fromEntries((profileResult?.probes ?? []).map((entry) => [entry.id, entry]));
   return Object.entries(STAGES).map(([stage, needs]) => {
     const gaps = needs.map((need) => stageGap(need, items, probes)).filter(Boolean);
     if (gaps.length > 0) {
-      return { stage, status: 'no-route', firstMissing: gaps[0], missing: gaps.map((gap) => gap.need),
-        line: `${stage}: no route here - missing ${gaps.map((gap) => gap.need).join(', ')}; first, the ${gaps[0].supplier} must ${gaps[0].step}` };
+      const blocked = gaps.filter((gap) => probes[gap.need]?.status === 'unverified-blocked').map((gap) => gap.need);
+      const absent = gaps.map((gap) => gap.need).filter((need) => !blocked.includes(need));
+      const what = [absent.length > 0 && `missing ${absent.join(', ')}`,
+        blocked.length > 0 && `blocked by ${blocked.join(', ')}: present but unverified, and no stage can use its output`].filter(Boolean).join('; ');
+      return { stage, status: 'no-route', firstMissing: gaps[0], missing: gaps.map((gap) => gap.need), summary: what,
+        line: `${stage}: no route here - ${what}; first, the ${gaps[0].supplier} must ${gaps[0].step}` };
     }
     const unverified = needs.filter((need) => need in PROBE_LOSSES && probes[need].status !== 'qualified');
     if (unverified.length > 0) {
@@ -958,7 +984,7 @@ export function recordAgreement({ projectRoot, agreement, confirmOverwrite = fal
   state.choicesGeneration ??= 0;
   state.agreements ??= [];
   state.agreements.push({ ...agreement, contextSha256: current.contextSha256, recordedAt: now() });
-  writeAtomic(statePath(root), state);
+  commitState(root, state, state);
   return { code: 'recorded', message: 'initial-scope agreement recorded; no workers or publication authorized by inference', state };
 }
 
@@ -1092,8 +1118,13 @@ function loadRecord(file, code, validate, rerun) {
   }
   const errors = validate(value);
   if (errors.length > 0) refuse(code, `${file} is malformed: ${errors.join('; ')}`, { file, errors, nextStep });
+  RECORD_TEXT.set(value, text);
   return value;
 }
+
+// The exact text each loaded record was parsed from, so a writer can tell
+// whether the file changed after it read it.
+const RECORD_TEXT = new WeakMap();
 
 const loadState = (root) => loadRecord(statePath(root), 'malformed-state', stateErrors, '/fvs:auto-init');
 const loadExternals = (root) => loadRecord(externalsPath(root), 'malformed-externals', externalsFileErrors, '/fvs:auto-extract');
@@ -1121,6 +1152,42 @@ function writeAtomic(file, value) {
   } catch (error) {
     fs.rmSync(temporary, { force: true });
     throw error;
+  }
+}
+
+// Every state write goes through here. An exclusive lock file serializes the
+// writers; under it, a writer whose state file changed since it read `base`
+// (null: no state yet) refuses instead of replacing newer owner choices,
+// agreements, extraction or memory records with its older copy.
+// ponytail: a killed writer leaves the lock behind and the next write refuses
+// naming it; recover it automatically (holder pid liveness) if that ever matters.
+function commitState(root, base, value) {
+  const file = statePath(root), lock = `${file}.lock`;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  let fd;
+  try {
+    fd = fs.openSync(lock, 'wx');
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    refuse('state-locked', `another FVS command is writing ${file}; nothing was written`, { file: lock,
+      nextStep: `Rerun once it has finished. If no FVS command is running, an interrupted one left ${lock} behind: delete that file, then rerun.` });
+  }
+  try {
+    fs.writeSync(fd, `${process.pid}\n`);
+    let current = null;
+    try {
+      current = fs.readFileSync(file, 'utf8');
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    if (current !== (base === null ? null : RECORD_TEXT.get(base))) {
+      refuse('state-changed', `${file} changed after this command read it; nothing was written`, { file,
+        nextStep: 'Rerun the command so it starts from the current state.' });
+    }
+    writeAtomic(file, value);
+  } finally {
+    fs.closeSync(fd);
+    fs.rmSync(lock, { force: true });
   }
 }
 
@@ -1152,21 +1219,25 @@ export function initState({ projectRoot, choices, confirmOverwrite = false, plat
   const refuseBlocked = () => {
     const blocking = result.items.filter(blocks).map(({ id, verdict, reason, nextStep }) => ({ id, verdict, reason, nextStep }));
     if (blocking.length > 0) {
-      refuse('profile-blocked', `the compatibility profile stops auto-init: ${blocking.map((entry) => `${entry.id} is ${entry.verdict}`).join(', ')}`,
+      refuse('profile-blocked', `the compatibility profile stops auto-init: ${blocking.map((entry) => `${entry.id} is ${entry.verdict}`).join(', ')}${recorded ? '; the recorded profile now holds these facts, and the recorded choices are unchanged' : ''}`,
         { blocking, nextStep: blocking.map((entry) => entry.nextStep).join(' ') });
     }
   };
   if (recorded) {
     const changes = choiceChanges(recorded.choices, requested);
+    const profileChanged = canonicalJson(result) !== canonicalJson(recorded.profile);
+    // New host facts (a tool installed or removed) are saved even when they stop
+    // setup, so readiness and the next action never rest on tools the host no
+    // longer has. Only the profile is replaced: choices, generation, agreements
+    // and extraction stay, and requested choice changes are not saved here.
+    if (profileChanged && (changes.length === 0 || result.items.some(blocks))) {
+      commitState(root, recorded, { ...recorded, profiledAt: now(), profile: result });
+    }
+    refuseBlocked();
     if (changes.length === 0) {
-      if (canonicalJson(result) === canonicalJson(recorded.profile)) {
-        return { ...readState({ projectRoot: root }), code: 'unchanged', message: 'the recorded setup state already holds these choices and this profile; nothing was written' };
-      }
-      // Same choices, new host facts (a tool installed or removed): only the
-      // profile is replaced; choices, generation, agreements and extraction stay.
-      refuseBlocked();
-      writeAtomic(statePath(root), { ...recorded, profiledAt: now(), profile: result });
-      return { ...readState({ projectRoot: root }), code: 'profile-refreshed', message: `the recorded profile was refreshed in ${statePath(root)}; the choices are unchanged` };
+      return profileChanged
+        ? { ...readState({ projectRoot: root }), code: 'profile-refreshed', message: `the recorded profile was refreshed in ${statePath(root)}; the choices are unchanged` }
+        : { ...readState({ projectRoot: root }), code: 'unchanged', message: 'the recorded setup state already holds these choices and this profile; nothing was written' };
     }
     if (!confirmOverwrite) {
       refuse('confirmation-required', `the requested choices change recorded owner choices: ${changes.map((change) => change.field).join(', ')}`,
@@ -1189,12 +1260,16 @@ export function initState({ projectRoot, choices, confirmOverwrite = false, plat
     } : {}),
   };
   if ('choicesGeneration' in state && !generationValid(state.choicesGeneration)) refuse('generation-exhausted', 'choices generation cannot advance safely; no state was written');
-  writeAtomic(statePath(root), state);
+  commitState(root, recorded, state);
   // The refreshed view, so the caller sees the pending decisions of the state just written.
   return { ...readState({ projectRoot: root }), code: recorded ? 'updated' : 'created', message: `setup state written to ${statePath(root)}` };
 }
 
 function nextAction(state) {
+  const blocking = state.profile.items.filter(blocks);
+  if (blocking.length > 0) {
+    return `Setup is blocked: ${blocking.map((entry) => `${entry.id} is ${entry.verdict}`).join(', ')}. ${blocking.map((entry) => entry.nextStep).join(' ')} Then rerun /fvs:auto-init.`;
+  }
   const { selected } = state.extraction ?? {};
   if (selected && choiceChanges(selected, state.choices.source).length > 0) {
     return `Rerun /fvs:auto-extract: the recorded extraction is for revision ${selected.revision} (${selected.configuration}), not the selected source.`;
@@ -1203,7 +1278,7 @@ function nextAction(state) {
     // Recomputed from the recorded profile, never read from a stored field.
     const stage = readiness(state.profile).find((entry) => entry.stage === 'auto-top-specs');
     if (stage.status === 'no-route') {
-      return `/fvs:auto-top-specs cannot run here yet: it is missing ${stage.missing.join(', ')}. First, the ${stage.firstMissing.supplier} must ${stage.firstMissing.step}.`;
+      return `/fvs:auto-top-specs cannot run here yet: it is ${stage.summary}. First, the ${stage.firstMissing.supplier} must ${stage.firstMissing.step}.`;
     }
     const agreement = state.agreements?.at(-1);
     if (!agreement) {
@@ -1274,7 +1349,7 @@ export function recordMemory(options) {
     if (!Number.isSafeInteger(bindingRevision)) refuse('generation-exhausted', 'memory binding revision cannot advance safely');
     state.memoryBindings ??= [];
     state.memoryBindings.push({ ...observed.binding, bindingRevision, recordedAt: now() });
-    writeAtomic(statePath(root), state);
+    commitState(root, state, state);
     return { code: 'recorded', message: 'existing primary project memory registered; no store created or workers launched', state, inspection: observed.out };
   });
 }
@@ -1501,7 +1576,7 @@ export function recordRoadmap({ projectRoot, decision, confirmOverwrite = false 
     });
   }
   state.roadmap = { decision, path: decision === 'accepted' ? ROADMAP_PATH : null, decidedAt: now() };
-  writeAtomic(statePath(root), state);
+  commitState(root, state, state);
   return { code: 'recorded', message: `roadmap offer recorded as ${decision}`, state };
 }
 
@@ -1596,7 +1671,7 @@ export function recordExtraction({ projectRoot, out, buildExitCode, oracle, orac
     note: NOT_A_PROOF,
   };
   state.extraction = extraction;
-  writeAtomic(statePath(root), state);
+  commitState(root, state, state);
   if (reasons.length > 0) {
     refuse('extraction-failed', `extraction recorded as failed: ${reasons.join('; ')}`,
       { extraction, nextStep: 'Fix the reasons above and rerun /fvs:auto-extract; a failed extraction is never recorded as success.' });

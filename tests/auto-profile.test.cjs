@@ -484,7 +484,7 @@ describe('fvs-auto profile: probes are optional', () => {
     assert.match(probes['probe-aeneas'].lost, /declared by Aeneas in translation\.json, never exact/);
     assert.match(probes['probe-rust'].lost, /Rust atom inventory/);
     for (const entry of result.probes) {
-      assert.ok(['qualified', 'present-unqualified', 'missing', 'not-checked'].includes(entry.status), entry.id);
+      assert.ok(['qualified', 'present-unqualified', 'unverified-blocked', 'missing', 'not-checked'].includes(entry.status), entry.id);
       assert.equal(entry.lost === null, ['qualified', 'present-unqualified'].includes(entry.status), entry.id);
     }
     const probe = item(result, 'probe');
@@ -591,6 +591,50 @@ describe('fvs-auto readiness: what each stage can do, computed from a profile', 
     const stage = result.readiness.find((entry) => entry.stage === 'auto-top-specs');
     assert.equal(stage.status, 'no-route');
     assert.match(stage.line, /fix what stopped the probe check \(.*FVS_SCIP_PATH/);
+  });
+
+  it('a present probe-lean the graph step refuses is unverified-blocked, and readiness and the graph step agree', async (t) => {
+    if (!CONFINED) return t.skip('read-only confinement is unavailable here, so --version is not run');
+    const { buildLeanGraph } = await import(pathToFileURL(path.join(ROOT, 'scripts', 'fvs-lean-graph.mjs')).href);
+    const graphCodes = (version) => buildLeanGraph({ libraries: [], extractText: JSON.stringify({ schema: 'probe-lean/extract',
+      'schema-version': '3.0', tool: { name: 'probe-lean', command: 'extract', version }, data: {} }) }).blockers.map((entry) => entry.code);
+    const profileWithProbeLean = async (script) => {
+      const stub = path.join(temporaryDirectory(), 'probe-lean');
+      fs.writeFileSync(stub, `#!/bin/sh\n${script}\n`, { mode: 0o755 });
+      process.env.FVS_PROBE_LEAN_PATH = stub;
+      try {
+        return await profileOf(extractedPilot());
+      } finally {
+        delete process.env.FVS_PROBE_LEAN_PATH;
+      }
+    };
+    const leanOf = (result) => result.probes.find((entry) => entry.id === 'probe-lean');
+
+    const refused = await profileWithProbeLean('echo 0.99.0');
+    assert.ok(graphCodes('0.99.0').includes('unqualified-interface'), 'the graph step refuses 0.99.0');
+    assert.equal(leanOf(refused).status, 'unverified-blocked');
+    assert.match(leanOf(refused).reason, /accepts only probe-lean 0\.14\.0 output and refuses other versions; this probe-lean reports "0\.99\.0"/);
+    assert.match(leanOf(refused).lost, /Lean atom list/);
+    const stage = refused.readiness.find((entry) => entry.stage === 'auto-top-specs');
+    assert.equal(stage.status, 'no-route');
+    assert.match(stage.line, /blocked by probe-lean: present but unverified, and no stage can use its output/);
+    assert.doesNotMatch(stage.line, /missing [^;]*probe-lean/);
+
+    const accepted = await profileWithProbeLean('echo 0.14.0');
+    assert.ok(!graphCodes('0.14.0').includes('unqualified-interface'), 'the graph step accepts 0.14.0');
+    assert.equal(leanOf(accepted).status, 'present-unqualified');
+    assert.equal(leanOf(accepted).lost, null);
+
+    const broken = leanOf(await profileWithProbeLean('echo "cannot load library" >&2; exit 1'));
+    assert.equal(broken.status, 'unverified-blocked');
+    assert.match(broken.reason, /^probe-lean --version failed: cannot load library$/);
+  });
+
+  it('treats a recorded probe status it does not know as no route', () => {
+    const stage = topSpecs(profileWith({ probes: { scip: { status: 'usable-somehow' } } }));
+    assert.equal(stage.status, 'no-route');
+    assert.equal(stage.firstMissing.supplier, 'agent');
+    assert.match(stage.firstMissing.step, /scip status "usable-somehow" is not one this engine knows/);
   });
 
   it('keeps the reason a probe check was not made', () => {

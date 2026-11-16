@@ -8,15 +8,10 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { readState, recordedStateErrors } from './fvs-auto.mjs';
 import { isDeepStrictEqual } from 'node:util';
-import { readProvenance } from './fvs-probe-inventory.mjs';
+import { readProvenance, PROBE_LEAN_INTERFACE as QUALIFIED, acceptedProbeLeanVersions } from './fvs-probe-inventory.mjs';
 
-// The only interface qualified so far: probe-lean 0.14.0 `extract` (Lean 4.31.0
-// build), Schema 3.0. Anything else is reported unsupported, never projected.
-const QUALIFIED = { schema: 'probe-lean/extract', schemaVersion: '3.0', tool: 'probe-lean', version: '0.14.0' };
-// probe-lean 0.24.0 is accepted only as metadata beside a version 2 constants
-// record, which is then the dependency authority; its own dependency arrays
-// match 0.14.0's on the qualification fixtures.
-const ORACLE_PROBE_VERSIONS = ['0.14.0', '0.24.0'];
+// Only the probe-lean interface in PROBE_LEAN_INTERFACE is qualified; anything
+// else is reported unsupported, never projected.
 const RECEIPT_SCHEMA = 'fvs/lean-probe-run';
 const MANIFEST_SCHEMA = 'fvs-extract-patches/manifest';
 const CONSTANTS_SCHEMA = 'fvs/lean-constants';
@@ -867,7 +862,7 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
   record.source = envelope.source ?? null;
   record.timestamp = envelope.timestamp ?? null;
   const constants = constantsText === null ? null : parseJson(constantsText);
-  const probeVersions = plainObject(constants) && constants.version === 2 ? ORACLE_PROBE_VERSIONS : [QUALIFIED.version];
+  const probeVersions = acceptedProbeLeanVersions({ constantsVersion2: plainObject(constants) && constants.version === 2 });
   const mismatch = [
     envelope.schema !== QUALIFIED.schema && `schema ${JSON.stringify(envelope.schema)}`,
     envelope['schema-version'] !== QUALIFIED.schemaVersion && `schema-version ${JSON.stringify(envelope['schema-version'])}`,
