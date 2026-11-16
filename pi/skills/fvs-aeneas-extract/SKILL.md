@@ -197,19 +197,23 @@ step describes, and parent-owned baseline, build, revert and report steps stay w
 - **DISPATCH by category + coverage_impact:**
   - Category-A -> `Task(subagent_type="fvs-extract-applier", model="$APPLIER_MODEL", reasoning_effort="$APPLIER_EFFORT", ...)`.
     The coverage-escalation guard: A-opacity on a function inside required coverage is NOT
-    auto-applied -- it becomes Category-B and routes to the gate. The prompt names the mode; in
+    auto-applied -- it becomes Category-B and takes the Category-B route below. The prompt names the mode; in
     patch mode a change to the Rust inputs is a translation patch, never an in-place edit, and
     the applier writes no `src-modifications.*` file for any recipe, including non-Rust repairs
     such as `namespace-cascade` and `refresh-manifest`, which stay ordinary edits.
   - NOVEL -> `Task(subagent_type="fvs-extract-bisector", model="$BISECTOR_MODEL", reasoning_effort="$BISECTOR_EFFORT", ...)` to
     minimize to an MFE, write a schema-conformant candidate, and PROPOSE a fix.
-  - Forced Category-B -> the GATE (Step 4).
+  - Forced Category-B (a matched Category-B recipe such as `ITER-ADAPTER` or `NO-BOTTOMS`, a
+    meaning-judgment, or A-opacity on a coverage target) -> in patch mode, the known-issues check
+    and the write-and-review bullet below first, then the GATE (Step 4); in legacy mode, straight
+    to the gate. The writer is the applier for a matched recipe or a coverage-guard escalation, in
+    staging form (it stages the patch and installs nothing), and the bisector for a NOVEL signature.
   - Escalate conditions (attempt-cap hit, same-signature recurrence, forced
     toolchain-remediation, gate rejection, a patch the reviewer still objects to after the second
     round, or a gap no patch can fix) -> ESCALATE (Step 6).
 - **WRITE AND REVIEW A NEW PATCH (patch mode):** a new patch to the Rust inputs is written by the
-  `WRITER` seat (the applier or bisector dispatch with `model="$WRITER_MODEL"`,
-  `reasoning_effort="$WRITER_EFFORT"`) and staged in `<extract_workspace>/<target>/patch-review/`;
+  `WRITER` seat (the applier dispatch for a matched recipe, Category A or B, or the bisector dispatch
+  for a NOVEL signature, with `model="$WRITER_MODEL"`, `reasoning_effort="$WRITER_EFFORT"`) and staged in `<extract_workspace>/<target>/patch-review/`;
   its prompt inlines the known-issues outcome and link, the header fields, the authoring recipe, the
   line-preserving rule with its zero-context line-count command and the observer set, because
   agents have no @-references. The writer stages the patch with the Write tool and does not run

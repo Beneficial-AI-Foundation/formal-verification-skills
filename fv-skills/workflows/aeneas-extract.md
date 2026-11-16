@@ -356,12 +356,13 @@ a `lean` failure: a Rust identifier that contains a middle dot, repaired by rena
 source, is one. That repair is a new patch like any other and takes this step and Step 4a. The
 `pin_context` from Step 1c names the Aeneas and Charon revisions the answer has to hold for.
 
-| Proposed change | Step 3a | Step 4a |
-|-----------------|---------|---------|
-| A catalog recipe that edits the Rust extraction inputs (a source rewrite, an opacity annotation, a gated build script) | runs | runs |
-| A `NOVEL` signature at any layer (`charon`, `aeneas`, `split`, `tweaks` or `lean`), before any bisecting | runs | runs when the bisector proposes a change to the Rust inputs |
-| A repair of a downstream `lean` failure that lands in the Rust source | runs | runs |
-| A recipe that edits no Rust input: a Lean-side or project edit such as `namespace-cascade`, `refresh-manifest` or a `tweaks-substitution` | skipped | skipped |
+| Proposed change | Step 3a | Step 4a | Writer seat dispatches |
+|-----------------|---------|---------|------------------------|
+| A Category-A catalog recipe that edits the Rust extraction inputs (a source rewrite, an opacity annotation, a gated build script) | runs | runs | `fvs-extract-applier` |
+| A Category-B catalog recipe (`ITER-ADAPTER`, `NO-BOTTOMS`), or an A-opacity recipe on a function inside required coverage | runs | runs, then the gate | `fvs-extract-applier`, staging only: it never installs |
+| A `NOVEL` signature at any layer (`charon`, `aeneas`, `split`, `tweaks` or `lean`), before any bisecting | runs | runs when the bisector proposes a change to the Rust inputs | `fvs-extract-bisector` |
+| A repair of a downstream `lean` failure that lands in the Rust source | runs | runs | the role that proposed it: the applier for a catalog match, the bisector for a `NOVEL` signature |
+| A recipe that edits no Rust input: a Lean-side or project edit such as `namespace-cascade`, `refresh-manifest` or a `tweaks-substitution` | skipped | skipped | none: the applier makes the ordinary edit |
 
 1. **Look in the tools' own trackers.** Search the Aeneas and Charon upstream repositories for the
    stripped `signature` from Step 3: open and closed issues and pull requests, and the release
@@ -424,7 +425,7 @@ Route the classified blocker:
 
   The coverage-escalation guard fires here: **A-opacity applied to a function inside required
   coverage is NOT auto-applied** -- axiomatizing or excluding a verification target is a
-  meaning-affecting decision, so it becomes Category-B and routes to the GATE.
+  meaning-affecting decision, so it becomes Category-B and takes the Category-B route below.
 
   The dispatch prompt names `MODE`. In patch mode a change to the Rust extraction inputs is
   written as a translation patch (Step 6), never edited into the checkout, and the applier writes
@@ -448,9 +449,14 @@ Route the classified blocker:
   inlines the same Step 6 material as the applier's, line-preserving rule included. A NOVEL
   B-fix routes to the GATE after that review.
 
-- **Forced Category-B** (any meaning-judgment: "this branch is unreachable", "these compute
-  the same", an ungated source rewrite, or A-opacity on a coverage target) -> the synchronous
-  GATE (Step 5).
+- **Forced Category-B** (a matched Category-B recipe such as `ITER-ADAPTER` or `NO-BOTTOMS`, or
+  any meaning-judgment: "this branch is unreachable", "these compute the same", an ungated source
+  rewrite, or A-opacity on a coverage target) -> in patch mode, Step 3a and Step 4a first, then the
+  synchronous GATE (Step 5); in legacy mode, straight to the gate with the proposer's section 1.
+  The proposal is written by the writer seat: the applier for a matched recipe or a coverage-guard
+  escalation, in staging form (it authors the patch, writes it to `patch-review/`, and installs
+  nothing, so the applier's ban on installing a Category-B change stands), and the bisector for a
+  `NOVEL` signature. The gate still decides whether anything is installed.
 
 - **Escalate conditions** (attempt-cap hit, same `{layer, signature}` recurrence, forced
   toolchain-remediation, a gate rejection, a patch the reviewer still objects to after the second
@@ -471,14 +477,16 @@ find that the repair lands in the Rust source only after its dispatch (a `lean` 
 out to need a rename in the Rust): stage its result, install nothing, run Step 3a now, and then
 continue here.
 
-1. **Write.** Dispatch the role that proposed the change (the applier for a recipe, the bisector
-   for a NOVEL signature) with the writer seat's settings:
+1. **Write.** Dispatch the role that proposed the change (the applier for a matched recipe,
+   Category A or Category B, the bisector for a NOVEL signature) with the writer seat's settings:
 
    ```
    Task(subagent_type="fvs-extract-applier", model=$WRITER_MODEL, reasoning_effort=$WRITER_EFFORT, ...)
    ```
 
-   (`fvs-extract-bisector` for a NOVEL signature.) The prompt inlines the Step 3a outcome with its
+   (`fvs-extract-bisector` for a NOVEL signature.) For a Category-B recipe the applier is the writer
+   in staging form: the prompt says so, and it stages the proposal and installs nothing. The prompt
+   inlines the Step 3a outcome with its
    link, the Step 6 header fields, the authoring recipe, the line-preserving rule with its
    zero-context line-count command (Step 6) and the observer set, because the child has no
    @-references. The writer authors the patch in a scratch directory inside the extraction workspace

@@ -98,16 +98,16 @@ describe('Known issues come before any new patch', () => {
   });
 });
 
-// The route table of Step 3a as { change, knownIssues, patchReview } rows.
+// The route table of Step 3a as { change, knownIssues, patchReview, writer } rows.
 function routeRows() {
   const lines = step('known_issues').split('\n');
-  const start = lines.findIndex((line) => /^\| Proposed change \| Step 3a \| Step 4a \|/.test(line));
+  const start = lines.findIndex((line) => /^\| Proposed change \| Step 3a \| Step 4a \| Writer seat dispatches \|/.test(line));
   assert.ok(start >= 0, 'Step 3a lost its route table');
   const rows = [];
   for (const line of lines.slice(start + 2)) {
     if (!line.startsWith('|')) break;
-    const [change, knownIssues, patchReview] = line.split('|').slice(1, -1).map((cell) => cell.trim());
-    rows.push({ change, knownIssues, patchReview });
+    const [change, knownIssues, patchReview, writer] = line.split('|').slice(1, -1).map((cell) => cell.trim());
+    rows.push({ change, knownIssues, patchReview, writer });
   }
   return rows;
 }
@@ -168,6 +168,59 @@ describe('The patch route follows the proposed change, not the layer that failed
     assert.match(flat, /whichever layer reported the failure/);
     assert.match(flat, /a source repair for a downstream `lean` error, such as renaming a Rust identifier that contains a middle dot/);
     assert.match(flat, /A recipe that edits no Rust input \(a Lean-side or project edit\) skips this/);
+  });
+});
+
+describe('A matched Category-B recipe has a writer, and nothing installs it before the gate', () => {
+  it('names the applier as the writer in staging form, and sends the recipe through the review before the gate', () => {
+    const row = routeFor(/Category-B catalog recipe/);
+    assert.equal(row.knownIssues, 'runs');
+    assert.match(row.patchReview, /^runs, then the gate$/);
+    assert.match(row.writer, /`fvs-extract-applier`/);
+    assert.match(row.writer, /staging only: it never installs/);
+    for (const recipe of ['ITER-ADAPTER', 'NO-BOTTOMS']) {
+      assert.ok(row.change.includes(`\`${recipe}\``), `the row does not name ${recipe}`);
+    }
+    assert.match(row.change, /A-opacity recipe on a function inside required coverage/);
+  });
+
+  it('a NOVEL signature is written by the bisector, and a Category-A recipe by the applier', () => {
+    assert.match(routeFor(/`NOVEL` signature at any layer/).writer, /`fvs-extract-bisector`/);
+    assert.match(routeFor(/Category-A catalog recipe/).writer, /`fvs-extract-applier`/);
+  });
+
+  it('Step 4 no longer sends a forced Category-B change straight to the gate in patch mode', () => {
+    const dispatch = step('dispatch').replace(/\s+/g, ' ');
+    assert.match(dispatch, /Forced Category-B\*\* \(a matched Category-B recipe such as `ITER-ADAPTER` or `NO-BOTTOMS`/);
+    assert.match(dispatch, /in patch mode, Step 3a and Step 4a first, then the synchronous GATE \(Step 5\); in legacy mode, straight to the gate/);
+    assert.match(dispatch, /so the applier's ban on installing a Category-B change stands/);
+    assert.match(dispatch, /becomes Category-B and takes the Category-B route below/);
+    assert.doesNotMatch(dispatch, /becomes Category-B and routes to the GATE/);
+  });
+
+  it('Step 4a gives the writer dispatch to the applier for a Category-B recipe, in staging form', () => {
+    const review = step('patch_review').replace(/\s+/g, ' ');
+    assert.match(review, /the applier for a matched recipe, Category A or Category B, the bisector for a NOVEL signature/);
+    assert.match(review, /For a Category-B recipe the applier is the writer in staging form/);
+    assert.match(review, /stages the proposal and installs nothing/);
+  });
+
+  it('the applier may stage a Category-B proposal, and still never applies or installs one', () => {
+    const flat = applier.replace(/\s+/g, ' ');
+    assert.match(flat, /You never apply or install a Category-B change/);
+    assert.match(flat, /The one thing you may do with a Category-B recipe is author its proposal when the prompt dispatches you as the patch WRITER/);
+    assert.match(flat, /NEVER apply or install a Category-B change -- route it to the gate\. As the patch WRITER you may stage a proposal for one at the path the prompt names, and nothing else/);
+    assert.match(flat, /`ITER-ADAPTER` or `NO-BOTTOMS`/);
+    assert.match(flat, /## PATCH STAGED/);
+    assert.doesNotMatch(flat, /You never touch a Category-B change/);
+    assert.doesNotMatch(flat, /NEVER apply a Category-B change --/);
+  });
+
+  it('the command routes a forced Category-B change through the review and names the same writers', () => {
+    const flat = command.replace(/\s+/g, ' ');
+    assert.match(flat, /Forced Category-B \(a matched Category-B recipe such as `ITER-ADAPTER` or `NO-BOTTOMS`/);
+    assert.match(flat, /in patch mode, the known-issues check and the write-and-review bullet below first, then the GATE \(Step 4\); in legacy mode, straight to the gate/);
+    assert.match(flat, /the applier dispatch for a matched recipe, Category A or B, or the bisector dispatch for a NOVEL signature/);
   });
 });
 
