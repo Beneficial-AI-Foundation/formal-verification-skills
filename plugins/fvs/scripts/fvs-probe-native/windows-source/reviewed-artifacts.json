@@ -1,0 +1,592 @@
+{
+  "schema": "fvs/windows-reviewed-artifacts/v1",
+  "origin": "Historical, reviewed native source builds. Hashes authorize only these exact complete groups; no caller supplied artifacts are trusted by version.",
+  "groups": {
+    "probe-aeneas": {
+      "source": {
+        "repository": "https://github.com/Beneficial-AI-Foundation/probe-aeneas.git",
+        "commit": "70cbb9b4675d1639721fa60d1e0f2cd2df80cb54",
+        "patch": "probe-aeneas.patch",
+        "lockSha256": "b5bd6e78b63a09c752394a5cc98faff209eef114e27b36804d8d6cd9d415e39e"
+      },
+      "build": "cargo +1.98.1 build --locked --release --offline",
+      "evidenceSha256": "635dd1915c2ddab9db94559a3064ef716bc124aa8614cb88a39a34bb953b0dc4",
+      "files": [
+        {
+          "relativePath": "probe-aeneas.exe",
+          "sha256": "6676a15473d6dd8d7e34d02e705e84b24537b24bb0de81feabf4288e49f5434f",
+          "bytes": 3363328
+        }
+      ]
+    },
+    "probe-rust": {
+      "source": {
+        "repository": "https://github.com/Beneficial-AI-Foundation/probe-rust.git",
+        "commit": "1d2a7c5d0e5a5dd95e55c8d6a51cddae0b3d7572",
+        "patch": "probe-rust.patch",
+        "lockSha256": "d2bdbe69e1414fa9cdc096af7860c93030ae55d52223be70be81fc9bd10088ce"
+      },
+      "build": "cargo +1.98.1 build --locked --release --offline",
+      "evidenceSha256": "360473c60066b5574e8b7a46cede95623b97044a94b1cf39a0fe45eb530c9aee",
+      "files": [
+        {
+          "relativePath": "probe-rust.exe",
+          "sha256": "25457bb1ddcaabc94b4375311dada9053cff3830c59bfd2da8402e7a3455553c",
+          "bytes": 5524992
+        }
+      ]
+    },
+    "rustup": {
+      "source": {
+        "repository": "https://github.com/rust-lang/rustup.git",
+        "commit": "d8c92c6765f85625b20482e165066bf1e98e7297",
+        "lockOriginalSha256": "a7081f4b94a8a9b10422a643a7bd855b541ed7c595cd488e0c86f9580ab4ba1a",
+        "lockSha256": "f60011f494763d3671041aa9c2f434a6e975cd83cdc06cd44f3b754beb4dbfe6",
+        "fsAtPatch": "fs-at.patch",
+        "fsAtWinSha256": "4b7d59cfa7739468f89748c9a947716ced54c088f9a49cebb24baca59dacabc9"
+      },
+      "build": "cargo build --locked --release --offline --config <pinned-fs-at-config> --bin rustup-init",
+      "evidenceSha256": "1798f91ef8dc72205146e393f98a16a56c550de1983697db4c3a0d5e5ae4a0de",
+      "files": [
+        {
+          "relativePath": "rustup-init.exe",
+          "sha256": "561661468f23bf02106274c777a4d90ff77d2d6f4729910486112490a9a83f43",
+          "bytes": 12544512
+        }
+      ]
+    },
+    "scip": {
+      "source": {
+        "repository": "https://github.com/scip-code/scip.git",
+        "commit": "1c2b6db7e560d5233c944f36e4ac1377cc6963fc"
+      },
+      "build": "go build -mod=readonly -ldflags '-X main.Reproducible=true' ./cmd/scip",
+      "evidenceSha256": "f8210a408363c279264da8dc35172f438752919c2a515bf25fb742358259b86c",
+      "files": [
+        {
+          "relativePath": "scip.exe",
+          "sha256": "c1db890cee8cc820f76ed59563c489da83e18eabe990c2e348b4759b1952e850",
+          "bytes": 28440064
+        }
+      ]
+    },
+    "probe-lean": {
+      "source": {
+        "repository": "https://github.com/Beneficial-AI-Foundation/probe-lean.git",
+        "commit": "fa581edfcb3de7eb801580ea183430edaa50cc68",
+        "patch": "probe-lean.patch",
+        "cliCommit": "92564e5770e4d09f2d86dfbf8ada1e9c715b384c"
+      },
+      "build": "lake build probe-lean tests; tests.exe",
+      "evidenceSha256": "f8210a408363c279264da8dc35172f438752919c2a515bf25fb742358259b86c",
+      "files": [
+        {
+          "relativePath": "bin/probe-lean-v4.31.0.exe",
+          "sha256": "254ec59b40094559533cd4615a574fe5b68ef0c638eda0a2faa086d9f40a811a",
+          "bytes": 1771008
+        },
+        {
+          "relativePath": "lib/ProbeLean.ilean",
+          "sha256": "7598d08d5d3fcbd0ebf8ea516383ffcc3db0e96049c5e1d63402218bb322b1c4",
+          "bytes": 656
+        },
+        {
+          "relativePath": "lib/ProbeLean.ilean.hash",
+          "sha256": "7c37528345e729358e0ff555bcd5bcd49f39796ea75fdf5e17b933f8b6afc5a4",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean.olean",
+          "sha256": "9be293bcb586994388db81263921c914ce49ff54cbfda6bbbd493f848abdd899",
+          "bytes": 2984
+        },
+        {
+          "relativePath": "lib/ProbeLean.olean.hash",
+          "sha256": "673c3c16be57eee3d9adf9994cd1d9e96ff19868009d16c84bfc5fa44c6089cc",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/Analysis.ilean",
+          "sha256": "286b6b87d55fc674e355f1851124336a2a579272bdb2e9ba017bfd6e0ca0ce4f",
+          "bytes": 67595
+        },
+        {
+          "relativePath": "lib/ProbeLean/Analysis.ilean.hash",
+          "sha256": "1c3ebd1782c27ee314013fec790f94dab4e203bfdc9835b793a8000e680c6a3e",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/Analysis.olean",
+          "sha256": "64abb0e3830e9bf7f4d0ef901d9a786813d8c3a6ba66bfbb142deeacf1a26f02",
+          "bytes": 1563656
+        },
+        {
+          "relativePath": "lib/ProbeLean/Analysis.olean.hash",
+          "sha256": "6e161e5f1d0f5be9a25d49a288d30b098215aa11b60c7bfff95eefd85f6144fb",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/Atomize.ilean",
+          "sha256": "11a3bb46824a79f004b90ee0733649963ed8d5a58edecf5ec1ad5e1588a8e681",
+          "bytes": 30336
+        },
+        {
+          "relativePath": "lib/ProbeLean/Atomize.ilean.hash",
+          "sha256": "3f189281d226b412016feb1957b1bc553f7add3e8ff78a3eac27338e0f7d176e",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/Atomize.olean",
+          "sha256": "ba5ae8d4e1ba2d51984ad2535d9c7a6a4c3001fbca5d0b48d144699bfa616990",
+          "bytes": 941576
+        },
+        {
+          "relativePath": "lib/ProbeLean/Atomize.olean.hash",
+          "sha256": "96042e1a000eb4a8e20bf673b739a01e3119cf2e627d11926ab3d19028b3256c",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/Attrs.ilean",
+          "sha256": "cf6dfbe0385c4eae7e3c0f2e5edc23a6e22666fdf8168118d01e99a9ff926e5c",
+          "bytes": 2926
+        },
+        {
+          "relativePath": "lib/ProbeLean/Attrs.ilean.hash",
+          "sha256": "704d0d98ad3eee9ebe2c264eb0939bce8c5b642421b88d6a1d59592c04e5139d",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/Attrs.olean",
+          "sha256": "44750cc553b8755532bc0b888bca87ff16e5ac58c1a0f1b8cc5c4e582ca9ea1e",
+          "bytes": 61304
+        },
+        {
+          "relativePath": "lib/ProbeLean/Attrs.olean.hash",
+          "sha256": "3e4dc2f510a5cf6077ebb461ed199dc560a4e5179495c3dd696354ffe52933ee",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/AxiomCheck.ilean",
+          "sha256": "4b84b0a8fd9d14213f012ec22586efad42e0dd3d821a2cbe7624d1fde3317f5d",
+          "bytes": 10411
+        },
+        {
+          "relativePath": "lib/ProbeLean/AxiomCheck.ilean.hash",
+          "sha256": "cdd80f5e6b63ab5e9332d9c16fee6b312f3627b6460ee5cfe54043a84867ec47",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/AxiomCheck.olean",
+          "sha256": "d33e58650d60e16bc666e991cbe517a5aa7b3d2b1481a8ac54a7530d4f759248",
+          "bytes": 152640
+        },
+        {
+          "relativePath": "lib/ProbeLean/AxiomCheck.olean.hash",
+          "sha256": "a8db5697f6a45d330d4f431c5b4c769178d97d3eeab9ba3a8a93e161a51c73c2",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/CheckAxioms.ilean",
+          "sha256": "abdd2e3fad5e1363459e6f6d2441701b05f96fd8ee776fef07340c9e1cf26948",
+          "bytes": 4381
+        },
+        {
+          "relativePath": "lib/ProbeLean/CheckAxioms.ilean.hash",
+          "sha256": "5edebd74d45fa95c436cf97dd51e569d3a565cc3d63b48e5ce155e66e2bd0dc6",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/CheckAxioms.olean",
+          "sha256": "edade32f1cb3d4f7e0c5a2987094f0ab21a78a67948b2e4759d3b3ac33dee3ca",
+          "bytes": 135528
+        },
+        {
+          "relativePath": "lib/ProbeLean/CheckAxioms.olean.hash",
+          "sha256": "59579a1acedc0a84537a01b0545214e2afae3f03a037e555e6c4a8fd11c5182e",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/Coimport.ilean",
+          "sha256": "8d8deb55f315f73086182c54f7fdbae20560d13274835fcf77ea090708dca2a9",
+          "bytes": 15071
+        },
+        {
+          "relativePath": "lib/ProbeLean/Coimport.ilean.hash",
+          "sha256": "fa7f990aebb549d43fb174a7358bc76f7a14796c55925218d5c8041e4d5794ad",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/Coimport.olean",
+          "sha256": "5214e8bf0653bf785388de16a1a0cab2ea3cca613ba257518417c55d8a4fef11",
+          "bytes": 547200
+        },
+        {
+          "relativePath": "lib/ProbeLean/Coimport.olean.hash",
+          "sha256": "9faafa049d073e86ffca1942c2b881a64e5463c7cd05f46662b0e625ddfa2e62",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/Environment.ilean",
+          "sha256": "8206b04ac13d7abfaedcb3a8b470140bbbd458142ec52440f519da58a14ea09e",
+          "bytes": 21506
+        },
+        {
+          "relativePath": "lib/ProbeLean/Environment.ilean.hash",
+          "sha256": "79eff2d5c8a0ca98181a4c265a4a7b9c26e92b68898c5895d1efd7b3da8846f2",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/Environment.olean",
+          "sha256": "5ca954e455df54625d4656029471f3f59eb3b444435cbe753c581d99d5d087e4",
+          "bytes": 703208
+        },
+        {
+          "relativePath": "lib/ProbeLean/Environment.olean.hash",
+          "sha256": "a8ec1a353d9cbe83b6cda0a5f6ce5897d745cbe2ccd781510cf5d6b0228db955",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/Extract.ilean",
+          "sha256": "245cb54cbacc420e17e1549bf40520142f9c380b6c938fc692b5bab273ee8bb3",
+          "bytes": 43297
+        },
+        {
+          "relativePath": "lib/ProbeLean/Extract.ilean.hash",
+          "sha256": "f1732629c870d5cd66797b33bedde2e193ab3274ddfbf640dad2c331522531bc",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/Extract.olean",
+          "sha256": "1b57284eb1014078c93044568f561ed4578ea260ed47a47eb9e81cbf92f96c83",
+          "bytes": 1424664
+        },
+        {
+          "relativePath": "lib/ProbeLean/Extract.olean.hash",
+          "sha256": "a971207291d57d9614617c7e543ba2647f4d38101489db2c64d1e483a0a72f21",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/Loader.ilean",
+          "sha256": "e740e804c2870383aaeaad194a65bac480e0f7b2b1b6a1c4c625a2901838b311",
+          "bytes": 2731
+        },
+        {
+          "relativePath": "lib/ProbeLean/Loader.ilean.hash",
+          "sha256": "269193517a13c529b4f41efeb496969b3b18e288dcaff6d9775f9bbb2316cb9c",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/Loader.olean",
+          "sha256": "b1bd93dad9d3940dab9d4a728d50a947c2bfaacf6c0587f0386a3950550964e7",
+          "bytes": 362136
+        },
+        {
+          "relativePath": "lib/ProbeLean/Loader.olean.hash",
+          "sha256": "d7fe720b8d81ecc2bcd2b306e0fb280a4e2e0af851aa4d394dfafc88777a9b88",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/Main.ilean",
+          "sha256": "0dafe38007ff21a11517570ce98b332adf0cb88ac1c0f28039e4b3ff1ab9ca67",
+          "bytes": 10544
+        },
+        {
+          "relativePath": "lib/ProbeLean/Main.ilean.hash",
+          "sha256": "be0e23d7e5b3b6afb34b16849c39ca21b563df1d517765fe556bdc22565a14bd",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/Main.olean",
+          "sha256": "c48d81348eb60a109f8e65564520bff5e050401fe45f80c10eef514ae6571dda",
+          "bytes": 341984
+        },
+        {
+          "relativePath": "lib/ProbeLean/Main.olean.hash",
+          "sha256": "beecd56f858d14e9ff696dc439141db7a8150740a67daf5674c8d2893839f21b",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/Metadata.ilean",
+          "sha256": "28a3a3f670c46a1f2f469c9332e0f8a5fc20aebc130cd35e3068a966b0765f11",
+          "bytes": 21951
+        },
+        {
+          "relativePath": "lib/ProbeLean/Metadata.ilean.hash",
+          "sha256": "5ca2bbec4d9805da02466bd4081b04869a0f1054b35ebec5546f30909c3e2d9e",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/Metadata.olean",
+          "sha256": "916634fe3611b65ab89f9939473bd424a98b6d70192ea412e610504297ae91d3",
+          "bytes": 723784
+        },
+        {
+          "relativePath": "lib/ProbeLean/Metadata.olean.hash",
+          "sha256": "0de4d236a16d232a39021ef7f6f36329314282b3f2c23fe9ef39d7ecb0dc2e38",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/NixEnv.ilean",
+          "sha256": "deb96f4631914a13046281807fd8711de83404fae611963df185349061ee4e3e",
+          "bytes": 3813
+        },
+        {
+          "relativePath": "lib/ProbeLean/NixEnv.ilean.hash",
+          "sha256": "6d75c735d32ef24c26b0b33894eecdf4ab254c13a253a3f08544d6090eabf8ce",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/NixEnv.olean",
+          "sha256": "e516d72e6a1919428908e71b200377520e7a8d17568a2fd432f243f33f7ca63a",
+          "bytes": 130568
+        },
+        {
+          "relativePath": "lib/ProbeLean/NixEnv.olean.hash",
+          "sha256": "6c8afbab6f93f897d4bc48e7793bdd8dc5d6bb5e8bf535cd0daf18771d332597",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/Transitive.ilean",
+          "sha256": "5214240d50d8cc663ce71b8c94309e0fc373c3406e25683b91970fde9af0216a",
+          "bytes": 13460
+        },
+        {
+          "relativePath": "lib/ProbeLean/Transitive.ilean.hash",
+          "sha256": "e213be4fdb9c414551556e106bf8e47b97250e818ca6238d2c402e956019d7ab",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/Transitive.olean",
+          "sha256": "12b42b9e2179f27f50cf21223726b6a7966b8bd13793f5988371ade01dbc4a90",
+          "bytes": 417888
+        },
+        {
+          "relativePath": "lib/ProbeLean/Transitive.olean.hash",
+          "sha256": "12e10782f20da9337e1cb52868dd8570e277aa40431aed839cafda971d654bea",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/Types.ilean",
+          "sha256": "23a652e7ed34d87cc60841a26814065203c67eeaaed5d63a984ffbb00086641e",
+          "bytes": 75242
+        },
+        {
+          "relativePath": "lib/ProbeLean/Types.ilean.hash",
+          "sha256": "9210c0d9fae716d4873c84f259cca65af934a477b98b66d3d54659806785ff4b",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/Types.olean",
+          "sha256": "da68b2917b926d08804a367a7fff194dd2cc5e68c68ff7cb2ebb0202d85b9526",
+          "bytes": 3548368
+        },
+        {
+          "relativePath": "lib/ProbeLean/Types.olean.hash",
+          "sha256": "fbd7a1677f56d026911b82f9f3cb1d5b9b26b08d3e0b9b21f8ff07aa4a629e9f",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/VerifyInternal.ilean",
+          "sha256": "e61bc1e3e01a5f64c59f4fb5963e24aee7c52d5bb0f85432dd1780e7339cb01e",
+          "bytes": 12206
+        },
+        {
+          "relativePath": "lib/ProbeLean/VerifyInternal.ilean.hash",
+          "sha256": "2435ebde72ee1c7e1403b5b5c70baf44b79f070635aa73d9fe58c11de4fa7d34",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/VerifyInternal.olean",
+          "sha256": "66eb996d20d413b047b21d234de44a739434170cda0cf35a32beb504c91b388e",
+          "bytes": 329720
+        },
+        {
+          "relativePath": "lib/ProbeLean/VerifyInternal.olean.hash",
+          "sha256": "59ea351e9bf379792f37aff98a1e6dd564c0e7e1f1e1f086b537a73bb8778495",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/Version.ilean",
+          "sha256": "3a3cada8784d52684a7db74614ba7751c31babd8c6776a7bc2684c6b5dabb0ea",
+          "bytes": 347
+        },
+        {
+          "relativePath": "lib/ProbeLean/Version.ilean.hash",
+          "sha256": "edb2cad3f445810b003264fb0c7ffa7df2218f2d0cf5814a68f15ba0750fea33",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/Version.olean",
+          "sha256": "fe81aa132137a8de81f368bf36d953186492e13ef740285124e9d3ae62c44fd2",
+          "bytes": 5296
+        },
+        {
+          "relativePath": "lib/ProbeLean/Version.olean.hash",
+          "sha256": "d2e327f7df849add30e08204cabb8ce162c05ca1af8a5bc8d9be87cf7b9dceab",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/View.ilean",
+          "sha256": "12bf7d84432b95d1f70ad5b0cd0b4ae89891297c7d0ba7f056ae8be2a0197475",
+          "bytes": 16481
+        },
+        {
+          "relativePath": "lib/ProbeLean/View.ilean.hash",
+          "sha256": "68030a2ff3ac0d5f4901cdc6e1d63c5c3af83a983213d952ea55a5a8a320247b",
+          "bytes": 16
+        },
+        {
+          "relativePath": "lib/ProbeLean/View.olean",
+          "sha256": "a5a254247898e1765a369dbc0a5016dced4fb8c54ed875483aa8b0aba77e4732",
+          "bytes": 461424
+        },
+        {
+          "relativePath": "lib/ProbeLean/View.olean.hash",
+          "sha256": "1364a9f3eb10ae3b4777332a65d3a839a1c63fe071e5f39e01f7d3904c35dab0",
+          "bytes": 16
+        },
+        {
+          "relativePath": "bin/libc++.dll",
+          "sha256": "8a9deaac6d2f4d2de468a544d1f35cd0dd4bcde03cda3cfb76fb9674749828d4",
+          "bytes": 1659392
+        },
+        {
+          "relativePath": "bin/libclang-cpp.dll",
+          "sha256": "1b32dd58335db4a984237e1fd1993cfd0f0fa413b5d10957290703eb03377ca4",
+          "bytes": 71108608
+        },
+        {
+          "relativePath": "bin/libInit_shared.dll",
+          "sha256": "05c276249845a9d39e202180fb175936cda1cf6e0502550388dabbcaf961fb26",
+          "bytes": 27662336
+        },
+        {
+          "relativePath": "bin/libLake_shared.dll",
+          "sha256": "f2910e72d74919a27ae2dbeb59e3ece4bfb4c9bb6e8cc8c915ac8a0b20b688a4",
+          "bytes": 10568192
+        },
+        {
+          "relativePath": "bin/libleanshared_1.dll",
+          "sha256": "19a6aa7a1ab088b678d843e7fe0a9f0c19a4b4937b8f825f348abc3b04366bbd",
+          "bytes": 51748352
+        },
+        {
+          "relativePath": "bin/libleanshared_2.dll",
+          "sha256": "802312bf16252a12602f6f02eabcba39c109b8906ca46e86cbb28a95d480e863",
+          "bytes": 52523520
+        },
+        {
+          "relativePath": "bin/libleanshared.dll",
+          "sha256": "d5d3bc9156fe3088487fd5d3b4057d1451ad89459d20af7912c7c8ee7e8fa114",
+          "bytes": 71577600
+        },
+        {
+          "relativePath": "bin/libLLVM-22.dll",
+          "sha256": "beaba61b3176e06fc0c4bf87e8bfae094a2405d01fa8e03d78029471555445d2",
+          "bytes": 90563584
+        },
+        {
+          "relativePath": "bin/zlib1.dll",
+          "sha256": "94dd0a72d4da79e25294a91d1edf902d76eade7512d9218609a5fe43e3a7397a",
+          "bytes": 131072
+        }
+      ],
+      "runtimeSelection": {
+        "originalManifestSha256": "96a227ba278429589e5e7b65987ce90629b3777923e9f95be5b0645f490f96a6",
+        "reason": "Runtime-only subset of the unchanged historical build; Lake traces contain transient compiler paths and are not published or reused.",
+        "excludedBuildTraces": [
+          {
+            "relativePath": "lib/ProbeLean.trace",
+            "sha256": "9014113eb473d46c960975a6b561417733400d405c7625db6312d3e9494e737f",
+            "bytes": 4132
+          },
+          {
+            "relativePath": "lib/ProbeLean/Analysis.trace",
+            "sha256": "5c2d54a8bdfa8c452dd3fd0216d56ca9c957f8426dff6dd2a274c1642d7b56cc",
+            "bytes": 2715
+          },
+          {
+            "relativePath": "lib/ProbeLean/Atomize.trace",
+            "sha256": "ce8650334de24c3a1416f5dc21b802d50beef5438ee53757943fc6269bf5985b",
+            "bytes": 2700
+          },
+          {
+            "relativePath": "lib/ProbeLean/Attrs.trace",
+            "sha256": "aacd8375249c661927f9017b97d472d1d11bbf739451d56f55063c3ea483a508",
+            "bytes": 2110
+          },
+          {
+            "relativePath": "lib/ProbeLean/AxiomCheck.trace",
+            "sha256": "0011002150837ddf7310045483a24b9c497a99ecfb86c97bd498b48948e2f50d",
+            "bytes": 2150
+          },
+          {
+            "relativePath": "lib/ProbeLean/CheckAxioms.trace",
+            "sha256": "25bdaa4038d0cf454cb1f6ffc57748c29bcf57e89d2181f991c8c6286f26942e",
+            "bytes": 2588
+          },
+          {
+            "relativePath": "lib/ProbeLean/Coimport.trace",
+            "sha256": "fefd50970769764f66bade140d32cdef7a4e7b400839e468058c25a2d1257d2d",
+            "bytes": 2276
+          },
+          {
+            "relativePath": "lib/ProbeLean/Environment.trace",
+            "sha256": "a4de6b00ebc200ae5a37024e25118a96039b6e502514d4c4f719aea649c7f78a",
+            "bytes": 2281
+          },
+          {
+            "relativePath": "lib/ProbeLean/Extract.trace",
+            "sha256": "802f175528fa8bbc551302cf05dcb4436a6e4d2ed40964479c2fe2ee01ea3af6",
+            "bytes": 3024
+          },
+          {
+            "relativePath": "lib/ProbeLean/Loader.trace",
+            "sha256": "9f760b87a9d5da56aee3adc04fd1824b0aa79914293abf87dc5eac3b318e3ed2",
+            "bytes": 2239
+          },
+          {
+            "relativePath": "lib/ProbeLean/Main.trace",
+            "sha256": "b2e59552e4fef4ed5b8e9c1ff3f1b52868c2048a7be7b70e2a181a1f110a2dd1",
+            "bytes": 2791
+          },
+          {
+            "relativePath": "lib/ProbeLean/Metadata.trace",
+            "sha256": "6eefa14f39b1a6b779d226558dfe86004dbf529630e568f29599525537432a74",
+            "bytes": 2416
+          },
+          {
+            "relativePath": "lib/ProbeLean/NixEnv.trace",
+            "sha256": "a1055f3adf5b9160c554ac8edc4bc9a4564889bddd97138f09af0ef84ec0986d",
+            "bytes": 2118
+          },
+          {
+            "relativePath": "lib/ProbeLean/Transitive.trace",
+            "sha256": "70a4dd7e4cdaef9aeeb20344c066ff1ba2573104c7a775bf7e286a74da12b8c7",
+            "bytes": 2271
+          },
+          {
+            "relativePath": "lib/ProbeLean/Types.trace",
+            "sha256": "847742d2246475ce9a8ab1ddbe6d241959a19d84a5bdf96da258910e0b1070fb",
+            "bytes": 2235
+          },
+          {
+            "relativePath": "lib/ProbeLean/VerifyInternal.trace",
+            "sha256": "7885ec59f414e574b53a6977f4a3d6fe8531325a69d499f975df958f9b0f0283",
+            "bytes": 2449
+          },
+          {
+            "relativePath": "lib/ProbeLean/Version.trace",
+            "sha256": "950772d308ca7ee67f8edebfa9334744982e87f6671554ad21fe192f71c422c6",
+            "bytes": 2126
+          },
+          {
+            "relativePath": "lib/ProbeLean/View.trace",
+            "sha256": "84c8455da0dbf07994e12f4c2aacab829f6914045bfcd4168fb2d50287bfa35b",
+            "bytes": 2511
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,118 @@
+diff --git a/src/win.rs b/src/win.rs
+index 6153e4a..441e538 100644
+--- a/src/win.rs
++++ b/src/win.rs
+@@ -32,16 +32,16 @@ use windows_sys::{
+         },
+         Security::{SECURITY_DESCRIPTOR, SECURITY_QUALITY_OF_SERVICE},
+         Storage::FileSystem::{
+-            FileBasicInfo, FileDispositionInfo, FileDispositionInfoEx, FileIdBothDirectoryInfo,
+-            FileIdBothDirectoryRestartInfo, GetFileInformationByHandleEx,
++            FileAttributeTagInfo, FileBasicInfo, FileDispositionInfo, FileDispositionInfoEx,
++            FileIdBothDirectoryInfo, FileIdBothDirectoryRestartInfo, GetFileInformationByHandleEx,
+             SetFileInformationByHandle, DELETE, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_READONLY,
+-            FILE_BASIC_INFO, FILE_DISPOSITION_FLAG_DELETE,
+-            FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
+-            FILE_DISPOSITION_INFO, FILE_DISPOSITION_INFO_EX, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
+-            FILE_ID_BOTH_DIR_INFO, FILE_INFO_BY_HANDLE_CLASS, FILE_LIST_DIRECTORY,
+-            FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+-            FILE_TRAVERSE, FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA,
+-            MAXIMUM_REPARSE_DATA_BUFFER_SIZE, SYNCHRONIZE,
++            FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TAG_INFO, FILE_BASIC_INFO,
++            FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE,
++            FILE_DISPOSITION_FLAG_POSIX_SEMANTICS, FILE_DISPOSITION_INFO, FILE_DISPOSITION_INFO_EX,
++            FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_ID_BOTH_DIR_INFO,
++            FILE_INFO_BY_HANDLE_CLASS, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES,
++            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE,
++            FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA, MAXIMUM_REPARSE_DATA_BUFFER_SIZE, SYNCHRONIZE,
+         },
+         System::{
+             Ioctl::{FSCTL_GET_REPARSE_POINT, FSCTL_SET_REPARSE_POINT},
+@@ -328,6 +328,7 @@ impl OpenOptionsImpl {
+                 // could be success : we have an FD
+                 // Check if we're opening
+                 let handle: HANDLE = unsafe { handle.assume_init() };
++                let file = unsafe { File::from_raw_handle(handle as *mut c_void) };
+ 
+                 if matches!(open_symlink, OpenSymLink::RaiseError(_)) && Self::is_symlink(handle)? {
+                     // we found a symlink (due to setting
+@@ -338,7 +339,7 @@ impl OpenOptionsImpl {
+                         _ => unreachable!(),
+                     }
+                 } else {
+-                    Ok(unsafe { File::from_raw_handle(handle as *mut c_void) })
++                    Ok(file)
+                 }
+             }
+ 
+@@ -694,6 +695,32 @@ impl OpenOptionsImpl {
+     }
+ 
+     fn is_symlink(handle: HANDLE) -> Result<bool> {
++        // Query the existing handle, preserving no-follow semantics without
++        // requiring the reparse-point filesystem control operation. LPAC
++        // processes can read attributes but may not issue that FSCTL.
++        let mut attributes = MaybeUninit::<FILE_ATTRIBUTE_TAG_INFO>::uninit();
++        let bool_result = unsafe {
++            GetFileInformationByHandleEx(
++                handle,
++                FileAttributeTagInfo,
++                attributes.as_mut_ptr().cast(),
++                size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32,
++            )
++        };
++        if bool_result != 0 {
++            let attributes = unsafe { attributes.assume_init() };
++            return Ok(
++                attributes.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
++                    && matches!(
++                        attributes.ReparseTag,
++                        IO_REPARSE_TAG_SYMLINK | IO_REPARSE_TAG_MOUNT_POINT
++                    ),
++            );
++        }
++
++        // Some callers intentionally open handles without READ_ATTRIBUTES.
++        // Preserve their access contract by trying the original same-handle
++        // query rather than requesting broader permissions.
+         let mut reparse_buffer: Aligned<
+             A8,
+             [MaybeUninit<u8>; MAXIMUM_REPARSE_DATA_BUFFER_SIZE as usize],
+@@ -1379,6 +1406,37 @@ mod tests {
+ 
+     use crate::{os::windows::OpenOptionsExt, testsupport::open_dir, OpenOptions};
+ 
++    #[test]
++    fn reparse_tag_query_preserves_errors() {
++        assert!(super::OpenOptionsImpl::is_symlink(0).is_err());
++    }
++
++    #[test]
++    fn ordinary_directory_is_not_symlink() -> Result<()> {
++        use std::os::windows::io::AsRawHandle;
++        let tmp = TempDir::new()?;
++        let file = open_dir(tmp.path())?;
++        assert!(!super::OpenOptionsImpl::is_symlink(
++            file.as_raw_handle() as isize
++        )?);
++        Ok(())
++    }
++
++    #[test]
++    fn directory_without_read_attributes_retains_fallback() -> Result<()> {
++        use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
++        let tmp = TempDir::new()?;
++        let file = std::fs::OpenOptions::new()
++            .read(true)
++            .access_mode(0)
++            .custom_flags(0x02000000)
++            .open(tmp.path())?;
++        assert!(!super::OpenOptionsImpl::is_symlink(
++            file.as_raw_handle() as isize
++        )?);
++        Ok(())
++    }
++
+     #[test]
+     // #[should_panic(expected = "Cannot create a file when that file already exists.")]
+     fn mkdir_at_case_insensitive() -> Result<()> {
