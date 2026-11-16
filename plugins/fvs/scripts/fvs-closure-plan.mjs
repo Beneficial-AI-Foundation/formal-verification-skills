@@ -40,15 +40,18 @@ const PROVENANCE = [...COMMIT_FIELDS, 'translationSha256', ...VERSION_FIELDS, 'm
 // is a node with authoritative type and value lanes; generated nodes (no probe
 // atom) are dependency evidence only. Kernel kinds as the producer names them.
 const ORACLE_CAPABILITY = 'oracle-lanes';
-// The kinds the producer qualifies: definitions, theorems, structures (an
-// inductive with structure: true), and the constructors and recursors of a
-// structure. Projections are definitions with projection: true.
-const NODE_KINDS = ['def', 'theorem', 'inductive', 'ctor', 'recursor'];
+// The kinds the producer qualifies: definitions, theorems, axioms, inductives
+// (a structure has structure: true), and the constructors and recursors of an
+// inductive. Projections are definitions with projection: true.
+const NODE_KINDS = ['def', 'theorem', 'axiom', 'inductive', 'ctor', 'recursor'];
 const THEOREM_KINDS = ['theorem'];
 const DEFINITION_CLOSURE_RULE = 'from the root item\'s generated family over the nodes lanes: a theorem node follows its type lane only; any other node follows its type and value lanes; a structure adds its fields\' projections and its constructors';
+const OTHER_INDUCTIVE_RULE = '; any other inductive adds its constructors';
 const leanId = (name) => `probe:${name}`;
 // Axiom evidence: the producer records the axiom set of every definition and
-// theorem node (and trust repeats it); any axiom outside this policy is an obligation.
+// theorem node (and trust repeats it). The standard axioms are always allowed;
+// a project axiom is allowed only when the caller names it (allowedAxioms). An
+// item resting on any other axiom is blocked, and so is every item depending on it.
 const AXIOM_KINDS = ['def', 'theorem'];
 const AXIOM_POLICY = ['propext', 'Classical.choice', 'Quot.sound'];
 // How each probe declaration label must look as a node (the producer's rule).
@@ -56,8 +59,13 @@ const PROBE_LABELS = {
   def: (node) => node.kind === 'def' && node.projection !== true,
   projection: (node) => node.kind === 'def' && node.projection === true,
   theorem: (node) => node.kind === 'theorem',
-  structure: (node) => node.kind === 'inductive',
+  structure: (node) => node.kind === 'inductive' && node.structure === true,
+  inductive: (node) => node.kind === 'inductive' && node.structure !== true,
+  axiom: (node) => node.kind === 'axiom',
+  class: (node) => node.kind === 'inductive' && node.structure === true,
+  instance: (node) => node.kind === 'def' && node.projection !== true,
 };
+const fieldsOf = (node) => node.fields ?? [];
 const textList = (value) => Array.isArray(value) && value.every(isText) && new Set(value).size === value.length;
 // Kernel type-level constants: a structure, its projections, constructors and recursors.
 const typeLevel = (node) => ['inductive', 'ctor', 'recursor'].includes(node.kind) || node.projection === true;
@@ -82,7 +90,8 @@ const sortedNumbers = (values) => [...values].sort((a, b) => a - b);
 function usage() {
   process.stdout.write([
     'Usage: node fvs-closure-plan.mjs plan --identity FILE [--graph FILE] --roots DEF_ID[,DEF_ID...]',
-    '         [--failed DEF_ID[,DEF_ID...]] [--llbc FILE] [--out FILE] [--format json|text]',
+    '         [--failed DEF_ID[,DEF_ID...]] [--llbc FILE] [--allow-axioms NAME[,NAME...]]',
+    '         [--out FILE] [--format json|text]',
     '',
     '--identity  the Rust identity record (fvs-rust-identity record --out)',
     '--graph     the Lean graph record (fvs-lean-graph output) of the same extraction. Optional:',
@@ -92,6 +101,10 @@ function usage() {
     '--failed    nodes whose proof failed; every node depending on them is blocked',
     '--llbc      the attempt\'s LLBC (its sha256 must equal both records\' llbcSha256); its',
     '            recursion groups are exposed per node for information only',
+    '--allow-axioms  project axioms (exact Lean names, for example those the agreement\'s',
+    '            boundaries or the recorded externals name) a claim may rest on; propext,',
+    '            Classical.choice and Quot.sound are always allowed. An item resting on any',
+    '            other axiom is blocked, and so is every item that depends on it',
     '',
     'Exit: 0 every requested root is ready; 6 some root is blocked (each is listed with its',
     'reasons); 7 the two records are not admissible together (the requested roots are listed',
@@ -105,8 +118,9 @@ const wrapperValid = (value) => isObject(value) && 'json' in value && isSha(valu
 
 // The shape of every input the planner consumes, including the exported
 // function's wrappers and selections. Anything else is refused.
-function validate({ identity, graph, roots, failed, llbc }) {
+function validate({ identity, graph, roots, failed, llbc, allowedAxioms }) {
   const bad = (label, message) => refuse('invalid-input', `${label}: ${message}`);
+  if (allowedAxioms !== undefined && !textList(allowedAxioms)) bad('allowedAxioms', 'must be an array of distinct axiom names');
   for (const [label, value] of [['identity', identity], ['graph', graph]]) {
     if ((label === 'identity' || (graph !== null && graph !== undefined)) && !wrapperValid(value)) bad(label, 'is required as { json, sha256 } with the sha256 of its bytes');
   }
@@ -153,10 +167,11 @@ function validate({ identity, graph, roots, failed, llbc }) {
     for (const [id, node] of Object.entries(g.nodes)) {
       if (!isObject(node) || !NODE_KINDS.includes(node.kind) || typeof node.source !== 'boolean' || typeof node.probeAtom !== 'boolean'
         || ['type', 'value'].some((lane) => !Array.isArray(node[lane]) || node[lane].some((to) => !isText(to)) || new Set(node[lane]).size !== node[lane].length)
-        || ![undefined, true].includes(node.structure) || ![undefined, true].includes(node.projection) || (node.kind === 'inductive') !== (node.structure === true)
+        || ![undefined, true].includes(node.structure) || ![undefined, true].includes(node.projection) || (node.structure === true && node.kind !== 'inductive')
         || (node.projection === true && node.kind !== 'def')
-        || (node.kind === 'inductive' && !(isObject(node.family) && textList(node.family.ctors) && textList(node.family.recursors)
-          && Array.isArray(node.fields) && node.fields.every((f) => isObject(f) && isText(f.field) && (f.projection === null || isText(f.projection)))))
+        || (node.kind === 'inductive' && !(isObject(node.family) && textList(node.family.ctors) && textList(node.family.recursors)))
+        || (node.structure === true && !(Array.isArray(node.fields) && node.fields.every((f) => isObject(f) && isText(f.field) && (f.projection === null || isText(f.projection)))))
+        || (node.structure !== true && node.fields !== undefined)
         || (node.kind === 'ctor' && !(isObject(node.family) && isText(node.family.inductive)))
         || (node.kind === 'recursor' && !(isObject(node.family) && textList(node.family.inductives)))
         || (!['inductive', 'ctor', 'recursor'].includes(node.kind) && (node.family !== undefined || node.fields !== undefined))
@@ -172,6 +187,9 @@ function validate({ identity, graph, roots, failed, llbc }) {
       || !resolutions.includes(edge.resolution)) bad('graph', 'an edge is malformed');
   }
   if (g.fidelity !== undefined && !(isObject(g.fidelity) && isText(g.fidelity.status))) bad('graph', 'fidelity is malformed');
+  // An allowed axiom is a project axiom of this graph, named exactly.
+  const unknown = (allowedAxioms ?? []).filter((name) => !(oracle && g.nodes[leanId(name)]?.kind === 'axiom'));
+  if (unknown.length > 0) bad('allowedAxioms', `not an axiom of this Lean graph: ${unknown.join(', ')}`);
   return { i, g };
 }
 
@@ -254,27 +272,31 @@ function admissibility(i, g, llbc) {
     if (JSON.stringify(probeNodes) !== JSON.stringify(Object.keys(g.declarations).sort())) {
       block('graph-contradiction', 'the probe declarations are not exactly the nodes marked probeAtom');
     }
-    const split = Object.keys(g.nodes).filter((id) => g.nodes[id].source !== g.nodes[id].probeAtom).sort();
-    if (split.length > 0) block('graph-contradiction', `source and probeAtom disagree for ${split.join(', ')}`);
-    // A structure's family and fields name existing constructors, recursors and
-    // projections; a constructor or recursor belongs to a structure.
+    // probe-lean emits no declaration for the constructors and recursor of an
+    // inductive it emits; those source constants are covered by the inductive.
     const node = (name) => (isText(name) ? g.nodes[leanId(name)] : undefined);
+    const covered = (n) => (n.kind === 'ctor' ? [n.family?.inductive] : n.kind === 'recursor' ? (n.family?.inductives ?? []) : [])
+      .some((owner) => node(owner)?.kind === 'inductive' && node(owner).probeAtom);
+    const split = Object.keys(g.nodes).filter((id) => g.nodes[id].source !== g.nodes[id].probeAtom && !(g.nodes[id].source && covered(g.nodes[id]))).sort();
+    if (split.length > 0) block('graph-contradiction', `source and probeAtom disagree for ${split.join(', ')}`);
+    // An inductive's family and a structure's fields name existing constructors,
+    // recursors and projections; a constructor or recursor belongs to an inductive.
     const malformed = [];
     for (const [id, n] of Object.entries(g.nodes)) {
       const name = id.slice('probe:'.length);
       if (n.kind === 'inductive') {
         const { ctors, recursors } = n.family ?? {};
-        if (!Array.isArray(ctors) || ctors.length === 0 || ctors.some((c) => node(c)?.kind !== 'ctor' || node(c).family?.inductive !== name)
+        if (!Array.isArray(ctors) || (n.structure === true && ctors.length === 0) || ctors.some((c) => node(c)?.kind !== 'ctor' || node(c).family?.inductive !== name)
           || !Array.isArray(recursors) || recursors.some((r) => node(r)?.kind !== 'recursor' || !(node(r).family?.inductives ?? []).includes(name))
-          || n.fields.some((f) => node(f.projection)?.projection !== true)) malformed.push(id);
+          || fieldsOf(n).some((f) => node(f.projection)?.projection !== true)) malformed.push(id);
       } else if (n.kind === 'ctor' && node(n.family?.inductive)?.kind !== 'inductive') malformed.push(id);
       else if (n.kind === 'recursor' && !(Array.isArray(n.family?.inductives) && n.family.inductives.length > 0 && n.family.inductives.every((s) => node(s)?.kind === 'inductive'))) malformed.push(id);
     }
-    if (malformed.length > 0) block('graph-contradiction', `structure family or fields do not resolve for ${malformed.join(', ')}`);
+    if (malformed.length > 0) block('graph-contradiction', `inductive family or structure fields do not resolve for ${malformed.join(', ')}`);
     // Each probe atom's label agrees with its node, and a projection is a field of a structure.
     const mislabelled = Object.keys(g.declarations).filter((id) => Object.hasOwn(g.nodes, id) && !PROBE_LABELS[g.declarations[id]?.kind]?.(g.nodes[id])).sort();
     if (mislabelled.length > 0) block('graph-contradiction', `probe declaration labels disagree with their nodes for ${mislabelled.join(', ')}`);
-    const fieldOf = new Set(Object.values(g.nodes).filter((n) => n.kind === 'inductive').flatMap((n) => n.fields.map((f) => f.projection)).filter(isText).map(leanId));
+    const fieldOf = new Set(Object.values(g.nodes).flatMap((n) => fieldsOf(n).map((f) => f.projection)).filter(isText).map(leanId));
     const orphans = Object.keys(g.nodes).filter((id) => g.nodes[id].projection === true && !fieldOf.has(id)).sort();
     if (orphans.length > 0) block('graph-contradiction', `projections that are no structure's field: ${orphans.join(', ')}`);
     // Axiom evidence: present exactly on definitions and theorems, repeated in trust.
@@ -282,8 +304,7 @@ function admissibility(i, g, llbc) {
       || JSON.stringify(g.trust[id]) !== JSON.stringify(g.nodes[id].axioms));
     const strayTrust = Object.keys(g.trust).filter((id) => !Object.hasOwn(g.nodes, id));
     if (evidence.length + strayTrust.length > 0) block('graph-trust-contradiction', `axiom evidence is missing, misplaced or disagrees with trust for ${[...evidence, ...strayTrust].sort().join(', ')}`);
-    const outside = Object.keys(g.nodes).filter((id) => (g.nodes[id].axioms ?? []).some((axiom) => !AXIOM_POLICY.includes(axiom))).sort();
-    if (outside.length > 0 && g.fidelity?.status === 'verified') block('graph-fidelity-contradiction', `verified fidelity with axioms outside ${AXIOM_POLICY.join(', ')} in ${outside.join(', ')}`);
+    // Which axioms a claim may rest on is decided per item (allowedAxioms), not here.
   }
   // Across the records: an identity generated family member is a source
   // definition of this extraction, so the graph may not hold it as a generated,
@@ -386,8 +407,8 @@ export function definitionClosure(g, starts) {
     seen.add(id);
     const node = g.nodes[id];
     const lanes = THEOREM_KINDS.includes(node.kind) ? node.type : [...node.type, ...node.value];
-    // A structure's lanes record only its type; its fields and constructors carry its meaning.
-    const members = node.kind === 'inductive' ? [...node.fields.map((f) => f.projection), ...node.family.ctors].filter(isText).map(leanId) : [];
+    // An inductive's lanes record only its type; its constructors (and a structure's fields) carry its meaning.
+    const members = node.kind === 'inductive' ? [...fieldsOf(node).map((f) => f.projection), ...node.family.ctors].filter(isText).map(leanId) : [];
     queue.push(...[...lanes, ...members].filter((to) => Object.hasOwn(g.nodes, to)));
   }
   return [...seen].sort();
@@ -447,7 +468,7 @@ export function expandSchedulingDependencies(g, nodes, failed = []) {
         // A structure's fields and constructors carry its meaning, so they are
         // requirements of whoever reaches it (not lane edges: no cycle analysis).
         const members = oracle && g.nodes[id]?.kind === 'inductive'
-          ? [...g.nodes[id].fields.map((f) => f.projection), ...g.nodes[id].family.ctors].filter(isText).map(leanId).filter((m) => Object.hasOwn(g.nodes, m)) : [];
+          ? [...fieldsOf(g.nodes[id]).map((f) => f.projection), ...g.nodes[id].family.ctors].filter(isText).map(leanId).filter((m) => Object.hasOwn(g.nodes, m)) : [];
         for (const to of [...(adjacency.get(id) ?? []), ...members]) {
           if (previous.has(to)) continue;
           previous.set(to, id);
@@ -541,7 +562,7 @@ export function expandSchedulingDependencies(g, nodes, failed = []) {
 
 // The degraded plan: the requested roots and every item in source order, no
 // closure and no scheduling. A blocked identity still claims nothing.
-function degradedPlan({ identity, graph, llbc, i, g, requested, failed }) {
+function degradedPlan({ identity, graph, llbc, i, g, requested, failed, selection }) {
   const codes = [...(g ? [] : ['graph-missing']), ...(i.provenance.discovery === 'translation-only' ? ['identity-translation-only'] : [])];
   const blockers = codes.map((code) => ({ code, message: DEGRADED_LOST[code] }));
   if (i.status === 'blocked') blockers.push({ code: 'identity-blocked', message: 'the Rust identity record is blocked' });
@@ -555,7 +576,7 @@ function degradedPlan({ identity, graph, llbc, i, g, requested, failed }) {
     version: 1,
     status: blocked ? 'blocked' : 'degraded',
     inputs: { identitySha256: identity.sha256, graphSha256: graph?.sha256 ?? null, llbcSha256: llbc?.sha256 ?? null },
-    selection: { requestedRoots: requested, failed: sortedNumbers(failed) },
+    selection,
     provenance: Object.fromEntries(PROVENANCE.map((field) => [field, i.provenance[field] ?? null])),
     qualification: { graphFidelity: g ? (g.fidelity?.status ?? 'not-supplied (a pre-fidelity graph record)') : 'not-supplied (no graph)' },
     admissibility: { status: 'blocked', blockers },
@@ -575,17 +596,21 @@ function degradedPlan({ identity, graph, llbc, i, g, requested, failed }) {
   };
 }
 
-export function buildPlan({ identity, graph = null, roots, failed = [], llbc = null }) {
-  const { i, g } = validate({ identity, graph, roots, failed, llbc });
+// allowedAxioms: project axioms (exact Lean names) a claim may rest on besides
+// the standard ones, for example those the agreement's boundaries or the
+// recorded externals name. Recorded in the plan's selection only when given.
+export function buildPlan({ identity, graph = null, roots, failed = [], llbc = null, allowedAxioms }) {
+  const { i, g } = validate({ identity, graph, roots, failed, llbc, allowedAxioms });
   const requested = sortedNumbers(roots);
-  if (!g || i.provenance.discovery === 'translation-only') return degradedPlan({ identity, graph, llbc, i, g, requested, failed });
+  const selection = { requestedRoots: requested, failed: sortedNumbers(failed), ...(allowedAxioms === undefined ? {} : { allowedAxioms: [...allowedAxioms].sort() }) };
+  if (!g || i.provenance.discovery === 'translation-only') return degradedPlan({ identity, graph, llbc, i, g, requested, failed, selection });
   const { blockers } = admissibility(i, g, llbc);
   const record = {
     schema: 'fvs-closure-plan/record',
     version: 1,
     status: 'blocked',
     inputs: { identitySha256: identity.sha256, graphSha256: graph.sha256, llbcSha256: llbc?.sha256 ?? null },
-    selection: { requestedRoots: requested, failed: sortedNumbers(failed) },
+    selection,
     provenance: Object.fromEntries(PROVENANCE.map((field) => [field, i.provenance[field] ?? null])),
     qualification: {
       graphFidelity: g.fidelity === undefined ? 'not-supplied (a pre-fidelity graph record)' : g.fidelity.status,
@@ -630,6 +655,13 @@ export function buildPlan({ identity, graph = null, roots, failed = [], llbc = n
         reasons.push(...missing.map((id) => `${id} is not in the Lean graph`));
       }
     }
+    // The axioms the item rests on: its declarations' axiom sets, and the item itself when it is an axiom.
+    const restsOn = g.schemaVersion === 2 ? declarations.flatMap((id) => [...(g.nodes[id]?.axioms ?? []), ...(g.nodes[id]?.kind === 'axiom' ? [id.slice('probe:'.length)] : [])]) : [];
+    const unallowed = [...new Set(restsOn)].filter((name) => !AXIOM_POLICY.includes(name) && !(allowedAxioms ?? []).includes(name)).sort();
+    if (unallowed.length > 0 && eligibility === 'eligible') {
+      eligibility = 'blocked-unallowed-axiom';
+      reasons.push(`rests on ${unallowed.join(', ')}, which ${unallowed.length === 1 ? 'is' : 'are'} not an allowed axiom`);
+    }
     nodes.set(item.defId, {
       defId: item.defId,
       rustName: item.rustName ?? null,
@@ -669,7 +701,10 @@ export function buildPlan({ identity, graph = null, roots, failed = [], llbc = n
     const sharedBy = record.roots.filter((root) => root.closure?.includes(node.defId)).map((root) => root.defId);
     record.nodes[node.defId] = { ...node, sharedBy, ownerRoot: ownerRoot.get(node.defId) ?? null };
   }
-  if (oracle) record.definitionClosureRule = DEFINITION_CLOSURE_RULE;
+  if (oracle) {
+    const otherInductive = Object.values(g.nodes).some((n) => n.kind === 'inductive' && n.structure !== true);
+    record.definitionClosureRule = DEFINITION_CLOSURE_RULE + (otherInductive ? OTHER_INDUCTIVE_RULE : '');
+  }
   record.status = record.roots.every((root) => root.status === 'ready') ? 'ready' : 'partial';
   return record;
 }
@@ -695,7 +730,7 @@ function ids(value, flag) {
 }
 
 function parseFlags(argv) {
-  const known = ['identity', 'graph', 'roots', 'failed', 'llbc', 'out', 'format'];
+  const known = ['identity', 'graph', 'roots', 'failed', 'llbc', 'allow-axioms', 'out', 'format'];
   const flags = {};
   const rest = [...argv];
   while (rest.length > 0) {
@@ -734,6 +769,7 @@ function main(argv) {
       roots: ids(flags.roots, '--roots'),
       failed: flags.failed ? ids(flags.failed, '--failed') : [],
       llbc: flags.llbc ? readInput(flags.llbc, 'llbc') : null,
+      ...(flags['allow-axioms'] ? { allowedAxioms: flags['allow-axioms'].split(',') } : {}),
     });
     if (flags.out) writeAtomic(flags.out, `${JSON.stringify(record, null, 2)}\n`);
     const code = record.status === 'ready' ? 'ok' : record.status;
