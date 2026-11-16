@@ -32,7 +32,7 @@ const QUALIFIED_KINDS = ['def', 'theorem', 'structure', 'projection'];
 const ORACLE_KINDS = [...QUALIFIED_KINDS, 'axiom', 'inductive', 'class', 'instance'];
 // Lake writes each module's .ilean, listing the declarations Lean elaborated in
 // it, under this directory of the project's own build.
-const ILEAN_DIR = '.lake/build/lib/lean';
+export const ILEAN_DIR = '.lake/build/lib/lean';
 // The auto-track state holding the recorded extraction attempt (extraction.run).
 const STATE_FILE = '.formalising/auto-fv/state.json';
 
@@ -506,7 +506,7 @@ const importsValid = (value) => plainObject(value) && SHA256.test(value.digest ?
   Number.isInteger(value.modules) && value.modules > 0 && Number.isInteger(value.files) && value.files > 0;
 const textList = (value) => Array.isArray(value) && value.every(isText);
 
-function oracleShapeProblems(constants) {
+export function oracleShapeProblems(constants) {
   const problems = [];
   if (constants.schema !== CONSTANTS_SCHEMA) problems.push(`schema must be ${CONSTANTS_SCHEMA}`);
   const producer = constants.producer;
@@ -564,7 +564,7 @@ function sameDirectory(left, right) {
   catch { return false; }
 }
 
-function constantsRunProblems(run, constantsText, constants, projectRoot) {
+export function constantsRunProblems(run, constantsText, constants, projectRoot) {
   if (!plainObject(run) || run.schema !== CONSTANTS_RUN_SCHEMA || run.version !== 1) return [`not a ${CONSTANTS_RUN_SCHEMA} version 1 receipt`];
   const argv = run.argv;
   const prefix = Array.isArray(argv) && argv.every(isText) && path.basename(argv[0]) === 'lake' && argv[1] === 'env' && argv[2] === 'lean';
