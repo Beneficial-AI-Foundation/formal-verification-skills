@@ -284,10 +284,13 @@ describe('auto-init setup state', () => {
     assert.equal(none.status, 0);
     assert.equal(none.json.code, 'no-state');
     assert.match(none.json.nextAction, /\/fvs:auto-init/);
+    assert.equal(none.json.phase, 'setup');
+    assert.deepEqual(none.json.warnings, []);
     init(root);
     const recorded = cli('read-state', '--project-root', root);
     assert.equal(recorded.json.code, 'ok');
     assert.match(recorded.json.nextAction, /\/fvs:auto-extract/);
+    assert.equal(recorded.json.phase, 'extract');
     assert.deepEqual(recorded.json.pendingDecisions, ['roadmap']);
   });
 });
@@ -617,8 +620,11 @@ describe('auto-extract extraction record', () => {
     assert.equal(record(root, out, 0).code, 'recorded');
     const blocked = auto.readState({ projectRoot: root });
     assert.equal(blocked.readiness.find((entry) => entry.stage === 'auto-top-specs').status, 'ready-reduced');
-    assert.match(blocked.nextAction, /^Before \/fvs:auto-top-specs, the owner approves the initial agreement .* Warning: auto-top-specs: ready, reduced - without probe-aeneas; /);
+    assert.equal(blocked.phase, 'specs');
+    assert.match(blocked.nextAction, /^Run \/fvs:auto-top-specs from the AO orchestrator for the spec phase: .* Warning: auto-top-specs: ready, reduced - without probe-aeneas; /);
     assert.match(blocked.nextAction, /To restore, the owner can install probe-aeneas \(or set its path override\), then rerun \/fvs:auto-init/);
+    assert.match(blocked.warnings[0], /^auto-top-specs: ready, reduced - without probe-aeneas; /);
+    assert.match(blocked.warnings[1], /^no agreement is recorded: .*the spec phase does not wait for it$/);
 
     // The owner installs probe-aeneas; the agent reruns init-state with the same choices.
     const refreshed = init(root);
@@ -628,7 +634,7 @@ describe('auto-extract extraction record', () => {
     assert.deepEqual(after.choices, blocked.state.choices);
     assert.equal(after.choicesGeneration, blocked.state.choicesGeneration, 'a refresh is not a choice change');
     assert.equal(after.profile.probes.find((entry) => entry.id === 'probe-aeneas').status, 'present-unqualified');
-    assert.match(refreshed.nextAction, /^Before \/fvs:auto-top-specs, the owner approves the initial agreement/);
+    assert.match(refreshed.nextAction, /^Run \/fvs:auto-top-specs from the AO orchestrator for the spec phase/);
     assert.doesNotMatch(refreshed.nextAction, /ready, reduced/);
     const bytes = fs.readFileSync(stateFile(root));
     assert.equal(init(root).code, 'unchanged');
@@ -699,6 +705,7 @@ describe('auto-extract extraction record', () => {
     assert.equal(view.state.choicesGeneration, before.choicesGeneration);
     assert.equal(view.readiness.find((entry) => entry.stage === 'auto-top-specs').status, 'no-route');
     assert.match(view.nextAction, /^Setup is blocked: ao is missing\. .*Then rerun \/fvs:auto-init\.$/);
+    assert.equal(view.phase, 'setup');
 
     const bytes = fs.readFileSync(stateFile(root));
     assert.equal(init(root, CHOICES, { bin: noAo }).code, 'profile-blocked', 'a rerun on the same host still reports the blocker');
@@ -710,7 +717,7 @@ describe('auto-extract extraction record', () => {
     assert.doesNotMatch(auto.readState({ projectRoot: root }).nextAction, /^Setup is blocked/);
   });
 
-  it('once the probes are present the next action asks for the agreement, then the grant, then runs with an unverified warning', () => {
+  it('after extraction the next action is the spec phase, with no grant, stage profile or permission install; the agreement is a warning', () => {
     const root = project();
     init(root);
     const { out } = prepared(root);
@@ -722,7 +729,14 @@ describe('auto-extract extraction record', () => {
     state.profile.probes = ['probe-aeneas', 'probe-rust', 'scip', 'rust-analyzer', 'probe-lean']
       .map((id) => ({ id, status: 'present-unqualified', path: `/opt/${id}`, lost: null }));
     fs.writeFileSync(stateFile(root), JSON.stringify(state));
-    assert.match(auto.readState({ projectRoot: root }).nextAction, /^Before \/fvs:auto-top-specs, the owner approves the initial agreement/);
+    const unverified = /^auto-top-specs: ready, unverified - probe-aeneas, probe-rust, scip, rust-analyzer, probe-lean not qualified/;
+    const first = auto.readState({ projectRoot: root });
+    assert.equal(first.phase, 'specs');
+    assert.match(first.nextAction, /^Run \/fvs:auto-top-specs from the AO orchestrator for the spec phase: .*draft spec PR on the project's own repository/);
+    assert.doesNotMatch(first.nextAction, /grants|stage profile \(|permission-ready|Before \/fvs/);
+    assert.equal(first.warnings.length, 2);
+    assert.match(first.warnings[0], unverified);
+    assert.match(first.warnings[1], /^no agreement is recorded/);
 
     const agree = (execution, generation, contextVersion) => {
       const agreement = {
@@ -739,12 +753,18 @@ describe('auto-extract extraction record', () => {
       auto.recordAgreement({ projectRoot: root, agreement, confirmOverwrite: contextVersion > 1 });
     };
     agree(null, 0, 1);
-    assert.match(auto.readState({ projectRoot: root }).nextAction, /^Before \/fvs:auto-top-specs, the owner grants the execution actions/);
-    agree({ actions: ['fixture work'], reference: 'fixture:grant' }, auto.readState({ projectRoot: root }).state.choicesGeneration, 2);
-    const { nextAction } = auto.readState({ projectRoot: root });
-    assert.match(nextAction, /^Run \/fvs:auto-top-specs from the AO orchestrator\./);
-    assert.match(nextAction, /stage profile .*permission-ready receipt/);
-    assert.match(nextAction, /Warning: auto-top-specs: ready, unverified - probe-aeneas, probe-rust, scip, rust-analyzer, probe-lean not qualified/);
+    const agreed = auto.readState({ projectRoot: root });
+    assert.equal(agreed.phase, 'specs', 'an agreement without an execution grant does not hold the spec phase');
+    assert.equal(agreed.warnings.length, 1);
+    assert.match(agreed.warnings[0], unverified);
+    assert.match(agreed.nextAction, /Warning: auto-top-specs: ready, unverified - /);
+
+    const advanced = JSON.parse(fs.readFileSync(stateFile(root), 'utf8'));
+    advanced.choicesGeneration += 1;
+    fs.writeFileSync(stateFile(root), JSON.stringify(advanced));
+    const outdated = auto.readState({ projectRoot: root });
+    assert.equal(outdated.phase, 'specs');
+    assert.match(outdated.warnings[1], /^the recorded agreement covers earlier choices: .*does not wait for it$/);
   });
 
   it('no flag lets a caller state the result', () => {

@@ -1288,36 +1288,38 @@ export function initState({ projectRoot, choices, confirmOverwrite = false, plat
   return { ...readState({ projectRoot: root }), code: recorded ? 'updated' : 'created', message: `setup state written to ${statePath(root)}` };
 }
 
-function nextAction(state) {
+// The phase, the next action and its warnings, derived together so they never
+// disagree. After a successful extraction the next step is the spec phase: the
+// orchestrator spawns stock AO workers and runs the engine steps itself, so no
+// execution grant, stage profile or permission install is asked for. A missing
+// or outdated agreement and a reduced or unverified stage are warnings only.
+function progress(state) {
   const blocking = state.profile.items.filter(blocks);
   if (blocking.length > 0) {
-    return `Setup is blocked: ${blocking.map((entry) => `${entry.id} is ${entry.verdict}`).join(', ')}. ${blocking.map((entry) => entry.nextStep).join(' ')} Then rerun /fvs:auto-init.`;
+    return { phase: 'setup', warnings: [], nextAction: `Setup is blocked: ${blocking.map((entry) => `${entry.id} is ${entry.verdict}`).join(', ')}. ${blocking.map((entry) => entry.nextStep).join(' ')} Then rerun /fvs:auto-init.` };
   }
   const { selected } = state.extraction ?? {};
   if (selected && choiceChanges(selected, state.choices.source).length > 0) {
-    return `Rerun /fvs:auto-extract: the recorded extraction is for revision ${selected.revision} (${selected.configuration}), not the selected source.`;
+    return { phase: 'extract', warnings: [], nextAction: `Rerun /fvs:auto-extract: the recorded extraction is for revision ${selected.revision} (${selected.configuration}), not the selected source.` };
   }
-  if (state.extraction?.status === 'succeeded') {
-    // Recomputed from the recorded profile, never read from a stored field.
-    const stage = readiness(state.profile).find((entry) => entry.stage === 'auto-top-specs');
-    if (stage.status === 'no-route') {
-      return `/fvs:auto-top-specs cannot run here yet: it is ${stage.summary}. First, the ${stage.firstMissing.supplier} must ${stage.firstMissing.step}.`;
-    }
-    const warning = ['ready-unverified', 'ready-reduced'].includes(stage.status) ? ` Warning: ${stage.line}.` : '';
-    const agreement = state.agreements?.at(-1);
-    if (!agreement) {
-      return 'Before /fvs:auto-top-specs, the owner approves the initial agreement (scope, claims, trust, acceptance and the execution grant): the agent drafts it in the roadmap Decisions section, and once the owner has approved its exact content the owner runs record-agreement in their own terminal (the agent never records it).' + warning;
-    }
-    if (agreement.payload.choicesGeneration !== (state.choicesGeneration ?? 0) || choiceChanges(agreement.payload.choices, state.choices).length > 0) {
-      return 'Before /fvs:auto-top-specs, the owner approves a successor agreement: the recorded one covers earlier choices.' + warning;
-    }
-    if (agreement.payload.execution === null) {
-      return 'Before /fvs:auto-top-specs, the owner grants the execution actions in a successor agreement: the recorded one grants none, so no worker can be launched.' + warning;
-    }
-    return 'Run /fvs:auto-top-specs from the AO orchestrator. Each action also needs the stage profile (harness, model and effort per role; the owner approves it, the agent passes it with the request) and, for each actor launch, the permission-ready receipt of the actor permission install, which the owner runs.' + warning;
+  if (state.extraction?.status !== 'succeeded') {
+    return { phase: 'extract', warnings: [], nextAction: state.extraction ? 'Rerun /fvs:auto-extract after fixing the recorded failure reasons.' : 'Run /fvs:auto-extract to extract the selected revision.' };
   }
-  if (state.extraction) return 'Rerun /fvs:auto-extract after fixing the recorded failure reasons.';
-  return 'Run /fvs:auto-extract to extract the selected revision.';
+  // Recomputed from the recorded profile, never read from a stored field.
+  const stage = readiness(state.profile).find((entry) => entry.stage === 'auto-top-specs');
+  if (stage.status === 'no-route') {
+    return { phase: 'setup', warnings: [], nextAction: `/fvs:auto-top-specs cannot run here yet: it is ${stage.summary}. First, the ${stage.firstMissing.supplier} must ${stage.firstMissing.step}.` };
+  }
+  const warnings = ['ready-unverified', 'ready-reduced'].includes(stage.status) ? [stage.line] : [];
+  const agreement = state.agreements?.at(-1);
+  if (!agreement) {
+    warnings.push('no agreement is recorded: the agent can draft one (scope, claims, trust, acceptance) for the owner to approve and record with record-agreement; the spec phase does not wait for it');
+  } else if (agreement.payload.choicesGeneration !== (state.choicesGeneration ?? 0) || choiceChanges(agreement.payload.choices, state.choices).length > 0) {
+    warnings.push('the recorded agreement covers earlier choices: a successor agreement is advised; the spec phase does not wait for it');
+  }
+  return { phase: 'specs', warnings,
+    nextAction: 'Run /fvs:auto-top-specs from the AO orchestrator for the spec phase: the orchestrator lists the public API items in scope, spawns stock AO workers to write the statements and review them adversarially, and opens one draft spec PR on the project\'s own repository for the owner to merge. No execution grant, stage profile or permission install is needed.'
+      + warnings.map((warning) => ` Warning: ${warning}.`).join('') };
 }
 
 export function readState({ projectRoot, requireAgreement = false }) {
@@ -1325,7 +1327,7 @@ export function readState({ projectRoot, requireAgreement = false }) {
   const state = loadState(root);
   if (!state) {
     if (requireAgreement) refuse('agreement-required', 'no recorded setup or initial agreement; run /fvs:auto-init');
-    return { code: 'no-state', message: `no auto-track state in ${statePath(root)}`, nextAction: 'Run /fvs:auto-init to record the setup state.', pendingDecisions: [] };
+    return { code: 'no-state', message: `no auto-track state in ${statePath(root)}`, phase: 'setup', warnings: [], nextAction: 'Run /fvs:auto-init to record the setup state.', pendingDecisions: [] };
   }
   const records = loadExternals(root)?.records ?? [];
   const externals = Object.fromEntries([['total', records.length],
@@ -1338,7 +1340,7 @@ export function readState({ projectRoot, requireAgreement = false }) {
     externals,
     pendingDecisions: requireAgreement || state.roadmap ? [] : ['roadmap'],
     readiness: readiness(state.profile),
-    nextAction: nextAction(state),
+    ...progress(state),
     ...(requireAgreement ? { agreement: requireStoredAgreement(root, state) } : {}),
   };
 }
