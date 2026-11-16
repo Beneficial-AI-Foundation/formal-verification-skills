@@ -402,19 +402,29 @@ in "Controller permissions in auto mode" above.
 - **One simple command per call, for every worker.** No `;`, `&&`, `||`, pipes or subshells, and no `cd`
   followed by a command. Use `git -C <path> status` rather than changing directory first. Compound
   commands are the ones a permission layer most often stops.
-- **Describe commands in words when you write to another session.** A rule that asks before any command
-  starting with a wildcard can match words inside quoted text, such as the message of `ao send`. If that
-  message mentions a delete, a download or a version-control command, the host may prompt although
-  nothing runs it. An allow rule for `ao *` does not help, because an ask rule takes precedence over an
-  allow rule. Say what should happen in plain words ("remove the file", "fetch the branch"), and call
-  `ao` itself directly, not through a wrapper. `ao send` has no option to read its message from a file.
 - **Keep scratch work inside the worktree and plain.** Do not delete or move files, and avoid commands
-  that wait for an answer. Read pull requests with `gh pr view` and `gh pr diff` rather than `gh api`.
+  that wait for an answer.
 - **A prompt nobody answers is aborted.** In one setup, permission prompts and dialogs left unanswered
   were each aborted after about 30 minutes ("Tool use aborted"), five times in a row, and the run
   stalled. The time and wording may differ on your version. An abort is an uncertain outcome, not a
   refusal: treat it as the uncertain-effect case above. Before you leave a run unattended, approve the
   commands each seat needs, or choose the host's permission mode on purpose.
+
+The notes below apply only in the setup each one names. If it is not yours, skip the note.
+
+- **Describe commands in words when you write to another session (optional note).** This applies only if
+  you wrote a permission rule that asks before any command starting with a wildcard. Such a rule can
+  match words inside quoted text, such as the message of `ao send`. If that message mentions a delete, a
+  download or a version-control command, the host may prompt although nothing runs it. An allow rule for
+  `ao *` does not help, because an ask rule takes precedence over an allow rule. Say what should happen
+  in plain words ("remove the file", "fetch the branch"), and call `ao` itself directly, not through a
+  wrapper, so the rule sees the command it was written for. `ao send` has no option to read its message
+  from a file.
+- **Read pull requests without `gh api` (optional note).** This applies only if your permission rules or
+  your project's own rules block `gh api`. Read a pull request with `gh pr view` and `gh pr diff`
+  instead. `/fvs:aeneas-extract`'s read-only known-issues search uses `gh api` with an explicit read
+  method, `gh search` or `curl` on a public page; where `gh api` is blocked it uses the other two, or
+  records the search as `not checked`.
 - **A command-rewriting hook changes what a rule sees (optional note).** Some setups install a hook that
   rewrites every shell command, for example to shorten its output; RTK is one such tool. The permission
   layer then sees the rewritten command. An allow rule written for the original form, such as `ao *`,

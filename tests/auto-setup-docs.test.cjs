@@ -354,6 +354,30 @@ describe('auto-setup reference: running under Agent Orchestrator and Codex', () 
     assert.match(text, /needs a twin for the rewritten form/);
   });
 
+  it('keeps wildcard-message and API-restriction advice out of the default habits and states when each note applies', () => {
+    const bullets = section(raw, 'Permissions and command rules').split(/\n(?=- \*\*)/).filter((b) => b.startsWith('- **'));
+    const optional = bullets.filter((b) => /\(optional note\)/.test(b.split('\n')[0] + b.split('\n')[1]));
+    const defaults = bullets.filter((b) => !optional.includes(b));
+    assert.equal(defaults.length, 3, 'three default habits');
+    assert.equal(optional.length, 3, 'three optional notes');
+    for (const bullet of defaults) {
+      assert.doesNotMatch(flat(bullet), /wildcard|`gh api`|`ao send`|Describe commands in words|wrapper/i, `default habit carries an optional-note topic: ${bullet.slice(0, 60)}`);
+    }
+    const byTitle = (pattern) => optional.find((b) => pattern.test(b));
+    const wildcard = flat(byTitle(/Describe commands in words/));
+    assert.match(wildcard, /This applies only if you wrote a permission rule that asks before any command starting with a wildcard/);
+    assert.match(wildcard, /call `ao` itself directly, not through a wrapper/);
+    const api = flat(byTitle(/Read pull requests without `gh api`/));
+    assert.match(api, /This applies only if your permission rules or your project's own rules block `gh api`/);
+    assert.match(api, /`gh pr view` and `gh pr diff`/);
+    // The advice must agree with the read-only known-issues step, which allows `gh api` with an explicit read method.
+    assert.match(api, /`gh api` with an explicit read method, `gh search` or `curl` on a public page/);
+    assert.match(api, /records the search as `not checked`/);
+    assert.match(flat(fs.readFileSync(path.join(ROOT, 'fv-skills', 'workflows', 'aeneas-extract.md'), 'utf8')),
+      /a `gh api` call with an explicit read method, `gh search`, or `curl` on a public page/);
+    assert.match(flat(section(raw, 'Permissions and command rules')), /The notes below apply only in the setup each one names/);
+  });
+
   it('names the personal command-rewriting tool only inside its optional note', () => {
     const outside = raw.split('\n').filter((line) => /\brtk\b/i.test(line));
     assert.equal(outside.length, 1, 'RTK appears once');
