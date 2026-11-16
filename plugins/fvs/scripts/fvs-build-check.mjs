@@ -26,7 +26,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-export const LABEL_ACCEPTED = 'accepted (build check in a clean copy)';
+export const LABEL_ACCEPTED = 'accepted (build check)';
 export const labelFailed = (reason) => `build check failed: ${reason}`;
 const STANDARD_AXIOMS = ['propext', 'Classical.choice', 'Quot.sound'];
 // What native_decide and bv_decide add to #print axioms: a generated axiom named after the

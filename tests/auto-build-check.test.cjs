@@ -13,7 +13,7 @@ const { spawnSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'fvs-build-check.mjs');
-const LABEL = 'accepted (build check in a clean copy)';
+const LABEL = 'accepted (build check)';
 const STANDARD = '[propext, Classical.choice, Quot.sound]';
 
 const GUARD = (name, axioms = STANDARD) => `/-- ${axioms} -/\n#guard_msgs (whitespace := lax, substring := true) in\n#print axioms ${name}\n`;
