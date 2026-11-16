@@ -236,14 +236,22 @@ describe('fvs-auto profile verdicts', () => {
     assert.equal(probe.evidence.resolver.status, 'incompatible', 'raw resolver evidence is preserved');
   });
 
-  it('reports disagreeing provenance pins as incompatible', async () => {
+  // A provenance conflict is a warning: the run goes on, and a failed recorded build stops it later.
+  it('reports disagreeing provenance pins as a warning that never blocks', async () => {
     const project = copyFixture('tested', {
       files: { 'Lean/translation.json': translation({ aeneas_version: 'deadbeef', charon_version: '0.1.225' }) },
     });
-    const probe = item(await profileOf(project), 'probe');
-    assert.equal(probe.verdict, 'incompatible');
+    const profile = await profileOf(project);
+    const probe = item(profile, 'probe');
+    assert.equal(probe.verdict, 'available-but-unverified');
     assert.match(probe.reason,
-      /^conflict: translation\.json aeneas_version deadbeef does not match lake-manifest\.json aeneas 6e167c9b/);
+      /^warning: conflict: translation\.json aeneas_version deadbeef does not match lake-manifest\.json aeneas 6e167c9b.*probe output stays unverified/);
+    // This fixture ships no Aeneas binaries: absent binaries are reported first, with the conflict carried along.
+    const aeneas = item(profile, 'aeneas');
+    assert.equal(aeneas.verdict, 'missing');
+    assert.match(aeneas.reason, /aeneas and charon not found.*; conflict: translation\.json aeneas_version deadbeef does not match lake-manifest\.json aeneas 6e167c9b/);
+    assert.deepEqual(aeneas.evidence.provenanceConflicts.map((c) => c.slice(0, 50)),
+      ['conflict: translation.json aeneas_version deadbeef']);
   });
 
   // Aeneas release builds report their release tag (nightly-YYYY.MM.DD-<short commit>) as aeneas_version.
@@ -262,9 +270,9 @@ describe('fvs-auto profile verdicts', () => {
       files: { 'Lean/translation.json': translation({ aeneas_version: 'nightly-2026.09.30-deadbee', charon_version: '0.1.225' }) },
     });
     const probe = item(await profileOf(project), 'probe');
-    assert.equal(probe.verdict, 'incompatible');
+    assert.equal(probe.verdict, 'available-but-unverified');
     assert.match(probe.reason,
-      /^conflict: translation\.json aeneas_version nightly-2026\.09\.30-deadbee does not match lake-manifest\.json aeneas 6e167c9b/);
+      /^warning: conflict: translation\.json aeneas_version nightly-2026\.09\.30-deadbee does not match lake-manifest\.json aeneas 6e167c9b/);
   });
 
   it('keeps a release-tagged extraction of the untested pilot tuple unverified, without a conflict', async () => {
@@ -286,8 +294,8 @@ describe('fvs-auto profile verdicts', () => {
         files: { 'Lean/translation.json': translation({ aeneas_version: tag, charon_version: '0.1.225' }) },
       });
       const probe = item(await profileOf(project), 'probe');
-      assert.equal(probe.verdict, 'incompatible', tag);
-      assert.match(probe.reason, /^conflict: translation\.json aeneas_version /, tag);
+      assert.equal(probe.verdict, 'available-but-unverified', tag);
+      assert.match(probe.reason, /^warning: conflict: translation\.json aeneas_version /, tag);
     }
   });
 

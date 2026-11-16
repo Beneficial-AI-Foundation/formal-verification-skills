@@ -474,6 +474,34 @@ describe('auto-extract extraction record', () => {
     assert.match(extraction.reasons.join('\n'), /build exited 1/);
   });
 
+  // The recorded Aeneas versions disagree: setup goes on with a warning, and
+  // only a failed build of the recorded extraction stops the run.
+  it('a provenance conflict warns at setup and stops only when the recorded build fails', () => {
+    const conflicted = () => {
+      const root = project();
+      fs.copyFileSync(path.join(PROFILE_FIXTURES, 'pilot', 'lake-manifest.json'), path.join(root, 'lake-manifest.json'));
+      fs.writeFileSync(path.join(root, 'aeneas-config.yml'), 'aeneas:\n  commit: "deadbeef"\n');
+      git(root, 'add', '-A');
+      git(root, 'commit', '-q', '-m', 'conflicting provenance');
+      return root;
+    };
+    const built = conflicted();
+    assert.equal(init(built).code, 'created');
+    const aeneas = auto.readState({ projectRoot: built }).state.profile.items.find((entry) => entry.id === 'aeneas');
+    assert.equal(aeneas.verdict, 'available-but-unverified');
+    assert.match(aeneas.reason, /^warning: conflict: aeneas-config\.yml aeneas\.commit deadbeef does not match lake-manifest\.json aeneas 0855ce1b/);
+    assert.match(aeneas.reason, /the run goes on if the recorded extraction builds against the pinned Lean library/);
+    assert.match(aeneas.nextStep, /To clear the provenance warning: Regenerate the extraction/);
+    assert.equal(aeneas.evidence.provenanceConflicts.length, 1);
+    assert.equal(record(built, prepared(built).out, 0).code, 'recorded');
+    assert.match(auto.readState({ projectRoot: built }).nextAction, /\/fvs:auto-top-specs/);
+
+    const broken = conflicted();
+    assert.equal(init(broken).code, 'created');
+    assert.equal(record(broken, prepared(broken).out, 1).code, 'extraction-failed');
+    assert.match(auto.readState({ projectRoot: broken }).nextAction, /Rerun \/fvs:auto-extract after fixing the recorded failure reasons/);
+  });
+
   it('a green build whose shared success oracle refused completion is recorded as failure', () => {
     const root = project();
     init(root);
