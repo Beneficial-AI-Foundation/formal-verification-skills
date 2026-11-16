@@ -168,6 +168,22 @@ test('crypto-execute persists the executor run report under reviews/', () => {
   }
 });
 
+test('crypto-eval reads the iteration run report by name as its touched-files source and never writes it', () => {
+  for (const file of ['commands/fvs/crypto-eval.md', 'fv-skills/workflows/crypto-eval.md']) {
+    const text = flat(read(file));
+    assert.match(text, /read by name at `\$ROOT\/IMPLEMENTATION_\$ITER\.md` \(the topic root, next to `build\.log`\)/, file);
+    assert.match(text, /file list from its `\*\*Files written:\*\*` list/, file);
+    assert.match(text, /only reads that report; it never writes or rewrites it/, file);
+    assert.match(text, /take the touched files from `git diff --stat` and `git status --porcelain` instead, and never reconstruct the list from chat context/, file);
+    assert.doesNotMatch(text, /reviews\/IMPLEMENTATION_/, file);
+  }
+  // The command builds a path from the iteration, so it validates it as `n` plus digits only.
+  const command = read('commands/fvs/crypto-eval.md');
+  assert.match(command, /ITER="\$2"\ncase "\$ITER" in\n {2}n\[0-9\]\* \) : ;;/);
+  assert.match(command, /case "\$\{ITER#n\}" in\n {2}\*\[!0-9\]\* \) echo "FVS >> ERROR: iteration must be of the form nN"/);
+  assert.match(flat(read('fv-skills/workflows/crypto-eval.md')), /Validate the iteration arg as `n` followed by digits only \(`nN`\) before it appears in any path/);
+});
+
 test('the HTML template is self-contained with the five parts and a static quiz', () => {
   assert.match(template, /^<!doctype html>/i);
   for (const id of ['header', 'what-changed', 'where-we-are', 'how-it-was-made', 'quiz', 'unverified', 'provenance']) {

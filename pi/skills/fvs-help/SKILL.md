@@ -129,7 +129,7 @@ Usage: `/skill:fvs-map-code` or `/skill:fvs-map-code /path/to/project`
 The functional-correctness track: plan, specify, verify, explain, refactor.
 
 **`/skill:fvs-fc-plan`**
-Pick next verification targets via dependency graph analysis.
+Choose a verification target, with qualitative notes on complexity, leverage and risk.
 
 - Reads `.formalising/CODEMAP.md` (run `/skill:fvs-map-code` first) and refreshes its graph and progress facts
 - Writes qualitative complexity, leverage and risk notes to `.formalising/PLAN.md`
