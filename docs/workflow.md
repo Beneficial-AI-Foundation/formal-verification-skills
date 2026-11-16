@@ -21,9 +21,9 @@ flowchart TD
   once --> batch["/fvs:to-issues<br/>(one batch)"]
   batch --> what{"What does this<br/>piece of work need?"}
   size -- "no" --> what
-  what -- "Rust code" --> rust["Rust track"]
+  what -- "Rust code" --> rust["Functional correctness<br/>(FC)"]
   what -- "Statements from a paper,<br/>proved afterwards" --> paper["/fvs:lean-formalise<br/>/fvs:lean-verify<br/>/fvs:lean-refactor"]
-  what -- "A protocol unit with<br/>independent review" --> iter["Crypto loop"]
+  what -- "A protocol unit with<br/>independent review" --> iter["Crypto formalisation"]
   what -- "Review existing work,<br/>such as a PR" --> review["/fvs:lean-spec-review<br/>/fvs:trust-audit"]
   rust & paper & iter & review --> next["/fvs:ask-baif"]
   next -- "next issue" --> what
@@ -31,11 +31,12 @@ flowchart TD
   next -- "goal met" --> done["Done"]
 ```
 
-Use `/fvs:lean-formalise` when you will check the statements yourself before proving them. Use the
-crypto loop for larger protocol or crypto units, where an independent reviewer checks the plan and
-an adversarial evaluation checks the result. At any point you can also save or restore a session,
-checkpoint your progress, or ask for a walkthrough of recent work; see
-[Between sessions](#between-sessions).
+The README shows the FC and crypto formalisation pipelines on their own; this map also covers the
+paper track and reviewing existing work. Use `/fvs:lean-formalise` when you will check the
+statements yourself before proving them. Use crypto formalisation for larger protocol or crypto
+units, where an independent reviewer checks the plan and an adversarial evaluation checks the
+result. At any point you can also save or restore a session, checkpoint your progress, or ask for a
+walkthrough of recent work; see [Between sessions](#between-sessions).
 
 The table gives the first command for a single target, or for each issue once the project is
 planned.
@@ -43,10 +44,10 @@ planned.
 | You have | Start with | Then |
 |---|---|---|
 | Anything larger than one spec and one proof | `/fvs:roadmap` | [Plan the project](#plan-the-project), then a track for each issue |
-| A Rust crate to verify | `/fvs:aeneas-extract` | [Rust track](#rust-functional-correctness) |
-| Aeneas output already (`Types.lean`, `Funs.lean`) | `/fvs:map-code` | [Rust track](#rust-functional-correctness) |
+| A Rust crate to verify | `/fvs:aeneas-extract` | [Functional correctness](#functional-correctness-fc) |
+| Aeneas output already (`Types.lean`, `Funs.lean`) | `/fvs:lean-specify`, or `/fvs:map-code` first for a dependency graph | [Functional correctness](#functional-correctness-fc) |
 | A section of a paper to state in Lean, then prove | `/fvs:lean-formalise` | [Paper: formalise, then prove](#paper-formalise-then-prove) |
-| A protocol or crypto unit that needs independent review | `/fvs:crypto-plan` | [Crypto loop](#crypto-loop) |
+| A protocol or crypto unit that needs independent review | `/fvs:crypto-plan` | [Crypto formalisation](#crypto-formalisation) |
 | Someone else's specs or pull request to review | `/fvs:lean-spec-review` | [Review commands](#review-commands) |
 | A project in progress and no clear next step | `/fvs:ask-baif where are we?` | The command it suggests |
 
@@ -65,7 +66,7 @@ planning commands work without a Lean project.
 agents goal states while they write Lean, and without it they ask before continuing on compiler
 feedback alone. Optional: `/fvs:configure` saves model defaults, `/fvs:kb-setup` connects a
 NotebookLM knowledge base for paper work, and
-[probe-aeneas](https://github.com/Beneficial-AI-Foundation/probe-aeneas) gives the Rust track its
+[probe-aeneas](https://github.com/Beneficial-AI-Foundation/probe-aeneas) gives the FC track its
 verified dependency graph.
 
 ## Plan the project
@@ -110,9 +111,9 @@ GitHub issues need your consent for that exact batch.
 
 Each issue is one outcome you can review on its own, with its blockers, the evidence that settles
 it, and a "done when" checked by an FVS command where one applies. Pick the track for each issue
-from the work it describes: a Rust function goes through the Rust track, a section of a paper
-through `/fvs:lean-formalise`, and a protocol unit through the crypto loop. One project can use all
-three.
+from the work it describes: a Rust function goes through functional correctness, a section of a
+paper through `/fvs:lean-formalise`, and a protocol unit through crypto formalisation. One project
+can use all three.
 
 `/fvs:ask-baif` reads the roadmap, the issues and the project state, then suggests one next command.
 Run bare or with a question, it only advises. Other modes change your tracker: `reconcile` corrects
@@ -125,31 +126,33 @@ When a batch is finished, `/fvs:ask-baif` compares the evidence so far with the 
 then reports that the goal is met, points to issues that are still ready, or proposes another
 `/fvs:to-issues` batch or a change to the roadmap.
 
-## Rust: functional correctness
+## Functional correctness (FC)
 
 ```mermaid
 flowchart TD
   have{"Types.lean and<br/>Funs.lean already?"}
   have -- no --> extract["/fvs:aeneas-extract"]
-  extract --> map["/fvs:map-code"]
-  have -- yes --> map
-  map --> plan["/fvs:fc-plan<br/>(choose a function)"]
-  plan --> specify["/fvs:lean-specify"]
+  extract --> ask["/fvs:ask-baif<br/>(picks the next issue)"]
+  have -- yes --> ask
+  ask -.-> map["/fvs:map-code<br/>/fvs:fc-plan<br/>(optional)"]
+  map -.-> specify
+  ask --> specify["/fvs:lean-specify"]
   specify --> review["/fvs:lean-spec-review<br/>(starts automatically)"]
   review -- "REVISE or BLOCKED" --> specify
   review -- "PASS; you start the proof" --> verify["/fvs:lean-verify"]
   verify --> refactor["/fvs:lean-refactor"]
   refactor --> audit["/fvs:trust-audit"]
-  audit -- "next function" --> plan
+  audit -- "next issue" --> ask
 ```
 
-The optional steps, `/fvs:model-external` and `/fvs:natural-language`, are left out of the diagram.
+Dotted lines mark optional steps. `/fvs:model-external` and `/fvs:natural-language`, also optional,
+are left out of the diagram.
 
 ```text
 /fvs:aeneas-extract <crate>         # skip if you already have Types.lean and Funs.lean
 /fvs:model-external <stub>          # only when an external Rust function blocks you
-/fvs:map-code
-/fvs:fc-plan                        # repeat from here for each function
+/fvs:map-code                       # optional: dependency graph
+/fvs:fc-plan                        # optional: target recommendations
 /fvs:natural-language <function>    # optional
 /fvs:lean-specify <function>        # statement review starts automatically
 /fvs:lean-verify <spec.lean>
@@ -168,14 +171,17 @@ The optional steps, `/fvs:model-external` and `/fvs:natural-language`, are left 
    as a stub, `/fvs:model-external` writes a Lean model from the locked source, reviews the model and
    its specification separately, proves it and audits it. It stops on unsafe Rust, and asks you to
    rule on functions with observable effects.
-3. **Map.** `/fvs:map-code` lists the functions and their dependencies in `.formalising/CODEMAP.md`.
-   If your probe and toolchain combination isn't a verified one, it offers to set up probe, continue
-   without a graph, or cancel. Without a graph, `map-code` and `fc-plan` write qualitative notes to
-   `.formalising/CODEMAP-exploratory.md` and `.formalising/PLAN-exploratory.md` instead, and
-   `trust-audit` can't build its table or give a verdict.
-4. **Choose a target.** `/fvs:fc-plan` refreshes the graph and progress facts in `CODEMAP.md`, writes
-   recommendations to `.formalising/PLAN.md` and helps you pick a function. The recommendations don't
-   certify that a function's dependencies are already proved.
+3. **Map (optional).** `/fvs:map-code` lists the functions and their dependencies in
+   `.formalising/CODEMAP.md`. If your probe and toolchain combination isn't a verified one, it offers
+   to set up probe, continue without a graph, or cancel. Without a graph, `map-code` and `fc-plan`
+   write qualitative notes to `.formalising/CODEMAP-exploratory.md` and
+   `.formalising/PLAN-exploratory.md` instead, and `trust-audit` can't build its table or give a
+   verdict.
+4. **Choose a target (optional).** `/fvs:fc-plan` refreshes the graph and progress facts in
+   `CODEMAP.md`, writes recommendations to `.formalising/PLAN.md` and helps you pick a function. The
+   recommendations don't certify that a function's dependencies are already proved. You can skip
+   steps 3 and 4: `/fvs:lean-specify` looks the function up in `CODEMAP.md` when it exists and
+   otherwise in `Funs.lean`.
 5. **Explain (optional).** `/fvs:natural-language` writes a plain-English account of a function, with
    its pre- and postconditions, to `.formalising/stubs/`.
 6. **Specify.** `/fvs:lean-specify` writes `Specs/<path>/<Function>.lean` with the theorem and a
@@ -194,11 +200,13 @@ The optional steps, `/fvs:model-external` and `/fvs:natural-language`, are left 
    `sorry` and axiom it depends on in `.formalising/audits/<target>.md`. The result is NOT-CLEAN
    while any project axiom lacks a justification.
 
+After the audit, `/fvs:ask-baif` picks the next issue, and you continue from `/fvs:lean-specify`.
+
 ## Paper: formalise, then prove
 
 Use this path when part of a paper should become Lean definitions and theorem statements that you
 check yourself and then prove. For a protocol or crypto unit that needs an independent reviewer on
-the plan and the result, use the [crypto loop](#crypto-loop).
+the plan and the result, use [crypto formalisation](#crypto-formalisation).
 
 ```mermaid
 flowchart TD
@@ -222,25 +230,29 @@ can be PDFs, images, Markdown or LaTeX, by default from `.formalising/resources/
 definitions, theorems and file layout it plans to write, and writes definition and spec files with
 `sorry` placeholders once you approve. This track has no fresh-reviewer step, so check the statements
 yourself before proving them. Then prove with `/fvs:lean-verify` and shorten with
-`/fvs:lean-refactor`, as in the Rust track.
+`/fvs:lean-refactor`, as in the FC track.
 
-## Crypto loop
+## Crypto formalisation
 
 The crypto loop takes a bounded protocol or crypto unit from plan to proof, in iterations (`n1`,
-`n2`, ...) under a topic name. An independent reviewer checks each plan before it runs, and an
-adversarial evaluation checks the result.
+`n2`, ...) under a topic name. An iteration usually starts from an issue that `/fvs:ask-baif` picks
+and ends back there, where the roadmap decides whether more work remains. An independent reviewer
+checks each plan before it runs, and an adversarial evaluation checks the result.
 
 ```mermaid
 flowchart TD
-  plan["/fvs:crypto-plan"] --> review["/fvs:crypto-review<br/>(starts automatically)"]
+  ask["/fvs:ask-baif<br/>(picks an issue)"] --> plan["/fvs:crypto-plan"]
+  plan --> review["/fvs:crypto-review<br/>(starts automatically)"]
   review -- "REJECT: revised plan<br/>at the next iteration" --> review
   review -- "approved;<br/>you start execution" --> exec["/fvs:crypto-execute"]
-  exec --> evaluate["/fvs:crypto-eval"]
-  evaluate -- ACCEPT --> done["Iteration done<br/>(offers /fvs:loop-me-in)"]
+  exec --> evaluate["/fvs:crypto-eval<br/>(optional)"]
   evaluate -- FOLLOWUP --> follow["/fvs:crypto-followup"]
   follow --> review
   evaluate -- HUMAN_RULING --> ruling["Waits for your decision"]
   evaluate -- BLOCKED --> blocked["Stops until the<br/>prerequisite is fixed"]
+  evaluate -- ACCEPT --> fin{"Roadmap<br/>finished?"}
+  fin -- "no" --> ask
+  fin -- "yes" --> done["Done"]
 ```
 
 ```text
@@ -260,17 +272,19 @@ flowchart TD
   next command the review reports, not the one you started with.
 - **Execute.** `/fvs:crypto-execute` carries out the plan and stops if the build breaks. It runs only
   when you start it.
-- **Evaluate.** `/fvs:crypto-eval` writes `reviews/EVAL_nN.md`, which ends in one verdict:
+- **Evaluate (optional).** `/fvs:crypto-eval` writes `reviews/EVAL_nN.md`, which ends in one
+  verdict. Only ACCEPT closes an iteration; `/fvs:ask-baif` lists an executed iteration without an
+  evaluation as acceptance pending.
 
   | Verdict | What happens next |
   |---|---|
-  | ACCEPT | The iteration is done. FVS offers `/fvs:loop-me-in` to walk you through what changed. |
+  | ACCEPT | The iteration is done. FVS offers `/fvs:loop-me-in` to walk you through what changed, and `/fvs:ask-baif` picks the next issue. |
   | FOLLOWUP | `/fvs:crypto-followup` turns the findings into `FOLLOWUP_PLAN_nN.md`, which is reviewed and executed like the first plan. |
   | HUMAN_RULING | A modeling decision only you can make. The loop waits for you. |
   | BLOCKED | A prerequisite is missing. The loop stops. |
 
-Start the next iteration by running `/fvs:crypto-plan "<topic>"` again. It reads the records and
-picks the next number.
+To start another iteration on the same topic, run `/fvs:crypto-plan "<topic>"` again. It reads the
+records and picks the next number.
 
 `--codex` on `crypto-plan`, `crypto-eval` and `crypto-followup` runs that stage's thinking in the
 Codex CLI and leaves execution where it is. Run from Claude Code, that puts thinking and execution
@@ -315,7 +329,8 @@ stage's own thinking in Codex instead of sending the result to a reviewer.
   anything you staged earlier. New spec files aren't tracked yet, so stage them yourself first. It
   reports the number of open proof gaps once it has committed.
 - `/fvs:loop-me-in` writes an HTML walkthrough of the last chunk of work, with a quiz, to
-  `.formalising/loop-me-in/`. `/fvs:loop-me-in --final` explains the whole project at the end.
+  `.formalising/loop-me-in/`. You can run it at any time. `/fvs:loop-me-in --final` explains the
+  whole project at the end.
 - `/fvs:ask-baif where are we?` summarises the goal, the current state and any blockers.
 
 ## Where FVS stops for you
@@ -340,7 +355,7 @@ your working tree.
 ```text
 .formalising/
 ├── fvs-config.json      # saved settings: models, review defaults, issue tracker, knowledge bases
-├── CODEMAP.md           # Rust track: functions, dependencies, verification status
+├── CODEMAP.md           # FC track: functions, dependencies, verification status
 ├── PLAN.md              # fc-plan recommendations
 ├── stubs/               # natural-language explanations
 ├── spec-reviews/        # statement review records
