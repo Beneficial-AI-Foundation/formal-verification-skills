@@ -339,10 +339,21 @@ describe('derived: completeness needs the requested scope, not one atom or a cac
   });
 
   it('a requested module whose .ilean the run never produced blocks', () => {
-    const projectRoot = projectCopy((directory) => fs.rmSync(path.join(directory, '.lake/build/lib/lean/M1demo/Spec.ilean')));
+    const projectRoot = projectCopy((directory) => {
+      fs.rmSync(path.join(directory, '.lake/build/lib/lean/M1demo/Spec.ilean'));
+      fs.writeFileSync(path.join(directory, '.lake/build/lib/lean/M1demo/Spec.olean'), 'compiled');
+    });
     const record = derived({ projectRoot, receipt: (r) => { r.inputs.files = projectInputs(projectRoot); } });
     assert.deepEqual(codes(record), withUnverified(['missing-ilean', 'atom-outside-scope']));
-    assert.match(record.blockers[0].reason, /add `import M1demo\.Spec` to M1demo\.lean/);
+    // The .olean is there, so the module was compiled: no import advice.
+    assert.doesNotMatch(record.blockers[0].reason, /import/);
+  });
+
+  it('a project module no library root imports blocks with the import to add', () => {
+    const projectRoot = projectCopy((directory) => fs.writeFileSync(path.join(directory, 'M1demo/Extra.lean'), 'def extra : Nat := 1\n'));
+    const record = derived({ projectRoot, receipt: (r) => { r.inputs.files = projectInputs(projectRoot); } });
+    assert.deepEqual(codes(record), withUnverified(['missing-ilean']));
+    assert.match(record.blockers.find((item) => item.code === 'missing-ilean').reason, /add `import M1demo\.Extra` to M1demo\.lean/);
   });
 
   it('a recorded receipt that no longer lists a module .ilean on disk blocks', () => {

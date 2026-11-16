@@ -154,6 +154,8 @@ describe('fvs-lean-constants producer', () => {
       assert.equal(result.status, 1, result.stdout + result.stderr);
       assert.match(result.stderr, message);
       for (const file of ['constants.json', 'constants-run.json', 'imports.json']) assert.ok(!fs.existsSync(path.join(out, file)));
+      // The layout check runs before the extractor starts.
+      if (env.FAKE_UNIMPORTED) assert.ok(!fs.existsSync(path.join(out, '03-constants.log')));
     });
   }
 

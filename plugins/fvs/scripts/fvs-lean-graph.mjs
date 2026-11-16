@@ -1020,7 +1020,9 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
       const ilean = `${ILEAN_DIR}/${module}.ilean`;
       const parsed = has(files, ilean) ? parseJson(fs.readFileSync(path.join(projectRoot, ilean), 'utf8')) : undefined;
       if (!plainObject(parsed) || parsed.module !== name || !plainObject(parsed.decls)) {
-        block('missing-ilean', `module ${name} has no matching ${ilean} in the recorded run${has(files, ilean) ? '' : `; ${notBuiltHint([name], requested)}`}`);
+        // Neither file means Lake never compiled the module, which the hint explains.
+        const unbuilt = !has(files, ilean) && !fs.existsSync(path.join(projectRoot, ILEAN_DIR, `${module}.olean`));
+        block('missing-ilean', `module ${name} has no matching ${ilean} in the recorded run${unbuilt ? `; ${notBuiltHint([name], requested)}` : ''}`);
         continue;
       }
       // decls omits some declarations (a def or theorem whose type has no
