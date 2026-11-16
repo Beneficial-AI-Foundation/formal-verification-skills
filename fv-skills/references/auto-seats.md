@@ -25,6 +25,9 @@ The engine does not authenticate who typed a command. It checks recorded evidenc
 | `record-roadmap` | orchestrator | Records the owner's accepted or declined answer about the roadmap offer. |
 | `record-extraction` | orchestrator | Run by the session that ran `/fvs:auto-extract`; it derives the extraction status itself. |
 | `record-externals` | orchestrator | Records one entry per boundary; it refuses to drop one. |
+| `record-spec` | orchestrator | Records one review round for one spec file, in the project checkout; authors and reviewers never run it. |
+| `spec-status` | any | Reads the recorded spec files and whether the pull request can open; changes nothing. |
+| `record-pr` | orchestrator | Records the draft spec or proof pull request after it is opened, and the owner's merge of the spec pull request after the owner merges it. It never calls GitHub. |
 | `record-memory` | orchestrator | Registers the project memory once. |
 | `refresh-memory` | orchestrator | The coordinator route; it is the only route that may write memory. |
 | `prime-memory` | worker | The read-only route a worker runs at start and on resume. The orchestrator runs it too before dispatch, with the coordinator request. |

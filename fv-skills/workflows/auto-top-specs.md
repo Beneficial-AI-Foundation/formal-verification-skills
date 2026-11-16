@@ -19,12 +19,12 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
    per-item confirmation. Nothing leaves the scope silently: note the items you think are out of scope
    and why, and leave the pruning to the owner in the pull request review.
 2. **Prepare the working branch before any author starts.** Work on a branch of the project's own
-   repository; its pull request is the spec PR. An author's worktree is made from the committed head, so
-   it holds only what is committed. In a fresh project the extraction output, the patches, the Aeneas
-   configuration and the Lake configuration are not committed, and a statement that imports the
-   generated translation fails with a bad import. Commit the generated translation, the patches and the
-   extraction and Lake configuration as the first commit on the branch, and never commit local state
-   and caches (`.formalising/`, `.claude/` and `.lake/`).
+   repository; its pull request is the spec PR. Spawn each author from this branch's head: its worktree
+   is made from the committed head, so it holds only what is committed. In a fresh project the extraction
+   output, the patches, the Aeneas configuration and the Lake configuration are not committed, and a
+   statement that imports the generated translation fails with a bad import. Commit the generated
+   translation, the patches and the extraction and Lake configuration as the first commit on the branch,
+   and never commit local state and caches (`.formalising/`, `.claude/`, `.lake/` and `.aeneas/`).
 
    The build must also reach the new files. A Lake library that keeps its default roots compiles no file
    under `formal/`, so a build can finish while no spec was compiled. Widen the library's module globs
@@ -41,7 +41,9 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
    and its documentation. Is each statement faithful, strong enough to be useful, and free of
    assumptions it should prove? At most three rounds; put anything still open in the pull request body.
    The reviewer is a different agent from the author, and a new reviewer reads each round. After every
-   round the orchestrator records it for each spec file (see "Recording the review rounds").
+   round the orchestrator records it for each spec file (see "Recording the review rounds"). A file that
+   still needs changes after the third round is recorded as `blocked`, so it does not hold the pull
+   request back.
 4. **Put them where an auditor looks.** The default layout for a new project is `formal/specs/Defs`
    for the definitions the statements use and `formal/specs/Specs` with one file per Rust file. Each
    statement is declared once, in a proof file under `formal/proofs` with a placeholder proof (`sorry`),
@@ -58,11 +60,12 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
 5. **Open the SPEC PR as a draft** on the project's own repository: the destination recorded in the
    agreement at `/fvs:auto-init`, never an upstream. If none is recorded, ask the owner which repository
    before opening anything. Open it once the recorded status says the spec files are ready for a pull
-   request. Put in the body what each file covers, the items you left out, the axioms
+   request; if no file passed, open it anyway and say in the body that none did, so the owner decides.
+   Put in the body what each file covers, the items you left out, the axioms
    the statements rest on, the review rounds that were held, and which commit holds the generated
-   translation and the Lake change.
+   translation and the Lake change. Then record the pull request (see "Recording the pull request").
 6. **Stop for the owner.** The owner reviews, prunes, marks the pull request ready and merges it.
-   `/fvs:auto-execute` starts the proofs after that.
+   `/fvs:auto-execute` records the merge and starts the proofs after that.
 
 ## GitHub rule
 
@@ -113,7 +116,9 @@ node "$AUTO" record-spec --project-root . --spec-file PATH --items ID[,ID...] --
 ```
 
 `PATH` is the spec file and `FILE` is the reviewer's report saved as a file; both are existing files
-inside the project, named relative to its root. The IDs are the items' Rust paths without spaces, for
+inside the project, named relative to its root. Reviewers write in their own worktrees, so copy each
+report into the project checkout yourself, under `.formalising/` for example: that folder is never
+committed, so the report stays out of the spec pull request. The IDs are the items' Rust paths without spaces, for
 example `crate::module::function`, and `--out-of-scope` names the items an agent left out. The command
 stores a hash of both files. A later row for the same spec file is the current one, and a round past the
 third is recorded with a warning. Then read where things stand:
@@ -126,8 +131,24 @@ It lists each spec file with its items, round, verdict and label: `spec reviewed
 `spec reviewed: changes requested (round N)`, `spec blocked after N rounds` or
 `out of scope (noted by agent)`. It says whether the file changed since its review (`stale`) and
 reports `readyForPr`: at least one pass, no file still waiting for changes and nothing stale. A blocked
-file does not hold the pull request back; the body names it with its label. When a file is stale, have
-it reviewed again and record that round before opening the pull request.
+file does not hold the pull request back; the body names it with its label. A file that still needs
+changes after the third round never becomes ready on its own, so record that round as `blocked`. When a
+file is stale, have it reviewed again and record that round before opening the pull request.
+
+## Recording the pull request
+
+After you open the draft pull request, record it. `BRANCH` is the pull request's head branch and `SHA`
+the commit at its head:
+
+```bash
+node "$AUTO" record-pr --project-root . --kind spec --url URL --branch BRANCH --head SHA
+```
+
+The step never calls GitHub and does not refuse on content; it warns when no spec file has a reviewed
+pass, when the status is not ready, when `SHA` is not a commit in the checkout (fetch the pull request
+branch first), and when a recorded spec file is missing from the head or differs there from the file
+that was reviewed. Fix what a warning names, or name it in the pull request body. The state stays in the
+spec phase, and its next action says the owner reviews and merges the pull request.
 
 ## Step 3: Run the pipeline, then report
 

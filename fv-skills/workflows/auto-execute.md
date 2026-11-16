@@ -15,7 +15,8 @@ has accepted it in a fresh clean copy. The result is one draft pull request of p
 ## Pipeline
 
 Start only when the owner has merged the spec pull request. If it is not merged, say so and stop;
-the agent never marks it ready or merges it.
+the agent never marks it ready or merges it. Once it is merged, record the merge (see "Recording the
+merge and the proof pull request").
 
 1. **Prove, one proof file per Rust item** (`formal/proofs`). The merged spec pull request holds each
    statement in a stub proof file with `sorry`; a worker replaces the `sorry` and leaves the statement
@@ -38,14 +39,17 @@ the agent never marks it ready or merges it.
 
    It prints `accepted (build check in a clean copy)` or `build check failed: REASON`. Read that label
    from the output. The state reports `done` only once the proof pull request is recorded and its head
-   has passed the check. This text names no step for recording the proof pull request yet, so until it
-   does, stop after opening the proof pull request and report the build-check result. A worker's
-   report, or a green build in its own checkout, is not acceptance.
+   has passed the check, so record that pull request with the commit you checked, and run the check
+   again after any new commit on its branch. A worker's report, or a green build in its own checkout,
+   is not acceptance.
 4. **Open the PROOF PR as a draft** on the project's own repository: the destination recorded in the
    agreement at `/fvs:auto-init`, never an upstream. Put in the body which statements are accepted,
    which are not and why, and what each unproved one is missing. Nothing leaves the scope silently.
+   Then record it (see "Recording the merge and the proof pull request").
 5. **Refactors.** A spec refactor found while proving arrives as a new draft pull request, either
    one per refactor or one cumulative pull request. The owner reviews and merges it like the first.
+   Record its review rounds and the pull request as for the first, and record its merge once the owner
+   merges it; until then the state warns that a spec pull request is still open.
 
 ## GitHub rule
 
@@ -84,6 +88,29 @@ node "$AUTO" read-state --project-root .
 On `malformed-state` or `malformed-externals`, use `message` as the state and `nextStep` as the next
 action. On `no-state`, use `message` and `nextAction`, and stop: run `/fvs:auto-init` first. A missing
 or outdated agreement is a warning to carry into the report, not a stop.
+
+## Recording the merge and the proof pull request
+
+When the owner has merged the spec pull request, read it yourself (`gh pr view` shows its merge commit),
+fetch the merged branch so that commit is in the checkout, and record the merge:
+
+```bash
+node "$AUTO" record-pr --project-root . --kind spec --merged --merge-commit SHA
+```
+
+This moves the state to the proof phase. It refuses only a commit that is not in the checkout. It
+warns when no open draft spec pull request was recorded, and for each spec file the owner removed or
+edited in review; `node "$AUTO" spec-status --project-root .` then labels those files `pruned by owner` or
+`changed by owner in review`. Prove what the owner merged: a pruned file is out of scope.
+
+After you open the draft proof pull request, record it with the commit the build check accepted:
+
+```bash
+node "$AUTO" record-pr --project-root . --kind proof --url URL --branch BRANCH --head SHA
+```
+
+This only records the pull request; it accepts nothing. The state stays in the proof phase until a
+passing build check exists for that head.
 
 ## Step 3: Run the pipeline, then report
 
