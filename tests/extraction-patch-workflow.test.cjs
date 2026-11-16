@@ -93,6 +93,24 @@ describe('Known issues come before any new patch', () => {
     assert.match(text, /This only proposes\. The loop never retires\s+a patch on its own/);
   });
 
+  it('replays the oracle of the layer each patch cleared, including an isolated Lean build for a Lean repair, or reports not checked', () => {
+    const flat = flatten(text);
+    assert.match(flat, /replay the oracle of the layer that patch cleared/);
+    assert.match(flat, /A patch that cleared a Charon or Aeneas failure is replayed by running Charon and Aeneas/);
+    assert.match(flat, /A patch that repairs generated Lean \(an identifier rewrite that makes a generated name valid, a closure rewrite, any patch whose signature failed at the `lean` layer\) is replayed through an isolated Lean build as well/);
+    assert.match(flat, /Publication stays disabled throughout, so nothing is written into the project's `publishDir`, and no patch is retired during the recheck/);
+    assert.match(flat, /reported as `not checked: <why>`, never as no longer needed/);
+    assert.match(flat, /only when the oracle of their own layer passed without them/);
+    // The old recheck ran Charon and Aeneas for every patch and declared a Lean repair unneeded from that alone.
+    assert.doesNotMatch(flat, /run Charon and Aeneas only \(no publication, no Lean build\)/);
+    const cmd = flatten(command);
+    assert.match(cmd, /replay the oracle of the layer that patch cleared/);
+    assert.match(cmd, /also an isolated Lean build .* for a patch that repairs generated Lean, such as an identifier or closure rewrite/);
+    assert.match(cmd, /Publication stays disabled and no patch is retired during the recheck/);
+    assert.match(cmd, /reported as `not checked: <why>`, never as no longer needed/);
+    assert.doesNotMatch(cmd, /Charon and Aeneas only\) and report/);
+  });
+
   it('the command carries the same known-issues rules', () => {
     assert.match(command, /KNOWN ISSUES FIRST/);
     assert.match(command, /`none found` and `not checked` kept apart/);

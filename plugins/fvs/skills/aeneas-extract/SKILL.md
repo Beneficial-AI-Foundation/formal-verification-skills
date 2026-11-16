@@ -288,8 +288,13 @@ step describes, and parent-owned baseline, build, revert and report steps stay w
   `<extract_workspace>/<target>/known-issues/<aeneas-rev>-<charon-rev>.md` (the first twelve
   characters of each revision), keyed by signature, with date, sources, links and result. After the
   owner confirms a pin change, try the patch series with each patch removed in turn (a throwaway
-  copy outside the checkout, Charon and Aeneas only) and report which patches the new tools no
-  longer seem to need; this only proposes, and retirement goes through the retire step and the gate.
+  copy outside the checkout) and replay the oracle of the layer that patch cleared: Charon and
+  Aeneas for a patch that cleared one of them, and also an isolated Lean build (the copy's Aeneas
+  output built in a throwaway Lean project outside the checkout) for a patch that repairs generated
+  Lean, such as an identifier or closure rewrite. Publication stays disabled and no patch is retired
+  during the recheck. A patch whose layer cannot be replayed is reported as `not checked: <why>`,
+  never as no longer needed; report as no longer seeming needed only the patches whose own layer
+  passed without them. This only proposes, and retirement goes through the retire step and the gate.
 - **DISPATCH by category + coverage_impact:**
   - Category-A -> `Task(subagent_type="fvs-extract-applier", model="$APPLIER_MODEL", reasoning_effort="$APPLIER_EFFORT", ...)`.
     The coverage-escalation guard: A-opacity on a function inside required coverage is NOT

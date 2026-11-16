@@ -411,9 +411,19 @@ answer: it is never reused, and the search is retried the next time the signatur
 patches the new tools no longer need before relying on the old series. In a throwaway copy of the
 crate root outside the checkout, committed in its own git repository so `prepare` sees a clean
 original, remove one patch at a time: take its name out of that copy's `series`, move its file out
-of that copy's `translation-patches/`, prepare a fresh extraction copy and run Charon and Aeneas
-only (no publication, no Lean build), then record whether the signature that patch cleared still
-appears. Report the patches that no longer seem needed. This only proposes. The loop never retires
+of that copy's `translation-patches/`, prepare a fresh extraction copy and replay the oracle of the
+layer that patch cleared (the layer in the Step 3a record for its signature and in the patch's
+`Why:` line), then record whether the signature that patch cleared still appears at that layer.
+A patch that cleared a Charon or Aeneas failure is replayed by running Charon and Aeneas. A patch
+that repairs generated Lean (an identifier rewrite that makes a generated name valid, a closure
+rewrite, any patch whose signature failed at the `lean` layer) is replayed through an isolated Lean
+build as well: after Charon and Aeneas, build the Lean that copy's Aeneas output produced in a
+throwaway Lean project outside the checkout, with its own build output. Publication stays disabled
+throughout, so nothing is written into the project's `publishDir`, and no patch is retired during
+the recheck. When the layer's oracle cannot be replayed (no isolated Lean build is available), the
+patch is reported as `not checked: <why>`, never as no longer needed.
+Report the patches that no longer seem needed only when the oracle of their own layer passed
+without them. This only proposes. The loop never retires
 a patch on its own: retirement goes through the retire step in Step 6 and, for a B patch, the gate.
 </step>
 
