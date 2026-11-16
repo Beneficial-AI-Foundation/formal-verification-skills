@@ -240,6 +240,36 @@ describe('auto-init setup state', () => {
     assert.ok(result.blocking[0].nextStep);
   });
 
+  it('a root with no Lean project names the one subfolder that holds it, and writes nothing', () => {
+    const repo = temporaryDirectory('fvs-auto-layout-');
+    fs.cpSync(CRATE, repo, { recursive: true });
+    fs.cpSync(path.join(PROFILE_FIXTURES, 'fresh'), path.join(repo, 'formal'), { recursive: true });
+    const files = () => fs.readdirSync(repo, { recursive: true }).sort();
+    const before = files();
+    const leanOf = () => run(() => auto.profile({ projectRoot: repo, platform: PLATFORM })).items.find((entry) => entry.id === 'lean');
+
+    const lean = leanOf();
+    assert.equal(lean.verdict, 'missing');
+    assert.match(lean.reason, /the Lean project is in formal\//);
+    assert.match(lean.nextStep, /^Rerun with the project root at formal\//);
+    assert.doesNotMatch(lean.nextStep, /Add a lean-toolchain/);
+
+    const blocked = init(repo);
+    assert.equal(blocked.code, 'profile-blocked');
+    assert.deepEqual(blocked.blocking.map((entry) => entry.id), ['lean', 'aeneas']);
+    assert.match(blocked.message, /the Lean project is in formal\/, so rerun with the project root at formal\//);
+    assert.match(blocked.nextStep, /project root at formal\//);
+    assert.doesNotMatch(blocked.nextStep, /Add a lean-toolchain|Require the Aeneas/);
+    assert.deepEqual(files(), before, 'no toolchain, state or other file is written into the project');
+
+    // Two candidate folders name neither: the existing step stays.
+    fs.cpSync(path.join(PROFILE_FIXTURES, 'fresh'), path.join(repo, 'other'), { recursive: true });
+    assert.match(leanOf().nextStep, /Add a lean-toolchain/);
+    fs.rmSync(path.join(repo, 'other'), { recursive: true });
+
+    assert.equal(init(path.join(repo, 'formal')).code, 'created', 'the named root is accepted');
+  });
+
   it('a missing probe never stops auto-init, and an unsupported host stops only for its own missing tools', () => {
     const root = project();
     const result = init(root, CHOICES, { bin: binWithout('probe-aeneas', 'probe-rust') });
@@ -461,6 +491,118 @@ describe('auto-extract extraction record', () => {
     assert.deepEqual(extraction.inputs.patches.map((patch) => patch.file), ['lib-double.patch']);
     assert.equal(extraction.inputs.manifestSha256, sha256(fs.readFileSync(path.join(out, 'manifest.json'))));
     assert.match(extraction.note, /not a proof/);
+  });
+
+  it('a relative --out is read from the project root, not the shell working directory', () => {
+    const root = project();
+    init(root);
+    const { out } = prepared(root);
+    // The CLI runs from the FVS checkout; the copy lies beside the project, so only
+    // resolution against --project-root reaches it.
+    const relative = path.relative(root, out);
+    assert.ok(!path.isAbsolute(relative) && relative.startsWith('..'));
+    const result = cli('record-extraction', '--project-root', root, '--out', relative, '--build-exit-code', '0', '--oracle', 'complete');
+    assert.equal(result.status, 0, result.stdout || result.stderr);
+    assert.equal(result.json.code, 'recorded');
+    const { extraction } = JSON.parse(fs.readFileSync(stateFile(root), 'utf8'));
+    assert.equal(extraction.status, 'succeeded');
+    assert.equal(extraction.inputs.out, out);
+  });
+
+  // One git repository: the crate at its root and the Lean project in formal/.
+  function layout() {
+    const repo = temporaryDirectory('fvs-auto-layout-');
+    fs.cpSync(CRATE, repo, { recursive: true });
+    fs.cpSync(path.join(PROFILE_FIXTURES, 'fresh'), path.join(repo, 'formal'), { recursive: true });
+    git(repo, 'init', '-q');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'fixture');
+    return { repo, lean: path.join(repo, 'formal') };
+  }
+
+  function recordedExtraction(root) {
+    return JSON.parse(fs.readFileSync(stateFile(root), 'utf8')).extraction;
+  }
+
+  it('a crate beside the Lean project in one repository is recorded, bound to the recorded commit', () => {
+    const { repo, lean } = layout();
+    assert.equal(init(lean).code, 'created');
+    const { out, status } = prepared(repo);
+    assert.equal(status, 0);
+    const result = record(lean, out, 0);
+    assert.equal(result.code, 'recorded', JSON.stringify(result));
+    const { extraction } = auto.readState({ projectRoot: lean }).state;
+    assert.equal(extraction.status, 'succeeded');
+    assert.equal(extraction.inputs.crateRoot, repo);
+    assert.equal(extraction.inputs.sourceCommit, git(repo, 'rev-parse', 'HEAD'));
+  });
+
+  it('the revision and uncommitted-change checks still bind a crate outside the Lean root', () => {
+    // Uncommitted extraction inputs fail the record for that reason, not the location.
+    const dirty = layout();
+    init(dirty.lean);
+    fs.appendFileSync(path.join(dirty.repo, 'src', 'lib.rs'), '\n// not committed\n');
+    assert.equal(record(dirty.lean, prepared(dirty.repo, []).out, 0).code, 'extraction-failed');
+    const dirtyReasons = recordedExtraction(dirty.lean).reasons.join('\n');
+    assert.match(dirtyReasons, /uncommitted changes: src\/lib\.rs/);
+    assert.doesNotMatch(dirtyReasons, /git working tree of this project/);
+
+    // A crate at another commit than the recorded revision fails the record.
+    const moved = layout();
+    const first = git(moved.repo, 'rev-parse', 'HEAD');
+    init(moved.lean, { ...CHOICES, source: { revision: first, configuration: 'default features' } });
+    git(moved.repo, 'commit', '-q', '--allow-empty', '-m', 'later');
+    assert.equal(record(moved.lean, prepared(moved.repo, []).out, 0).code, 'extraction-failed');
+    const movedReasons = recordedExtraction(moved.lean).reasons.join('\n');
+    assert.match(movedReasons, new RegExp(`but the recorded revision ${first} is ${first}`));
+    assert.doesNotMatch(movedReasons, /git working tree of this project/);
+  });
+
+  it('a crate in another repository than the Lean project is still refused for its location', () => {
+    const root = project();
+    init(root);
+    const other = project();
+    assert.equal(record(root, prepared(other).out, 0).code, 'extraction-failed');
+    const { reasons, status } = recordedExtraction(root);
+    assert.equal(status, 'failed');
+    assert.match(reasons.join('\n'), new RegExp(`prepared from ${other}, which is not in the git working tree of this project`));
+  });
+
+  // Another checkout inside the Lean root has its own commit history, so a clean copy
+  // of it must not stand for this project at the recorded revision.
+  it('a crate in a nested repository inside the Lean root is refused', () => {
+    const root = project();
+    init(root);
+    const nested = path.join(root, 'vendor', 'crate');
+    fs.mkdirSync(path.dirname(nested), { recursive: true });
+    fs.cpSync(CRATE, nested, { recursive: true });
+    git(nested, 'init', '-q');
+    git(nested, 'add', '-A');
+    git(nested, 'commit', '-q', '-m', 'nested fixture');
+    assert.equal(record(root, prepared(nested, []).out, 0).code, 'extraction-failed');
+    assert.match(recordedExtraction(root).reasons.join('\n'), new RegExp(`prepared from ${fs.realpathSync(nested)}, which is not in the git working tree of this project`));
+  });
+
+  it('a crate in a linked worktree inside the Lean root is refused', () => {
+    const root = project();
+    init(root);
+    const linked = path.join(root, 'linked');
+    git(root, 'worktree', 'add', '-q', '--detach', linked);
+    assert.equal(record(root, prepared(linked, []).out, 0).code, 'extraction-failed');
+    assert.match(recordedExtraction(root).reasons.join('\n'), new RegExp(`prepared from ${fs.realpathSync(linked)}, which is not in the git working tree of this project`));
+  });
+
+  it('a crate in a subfolder of the same repository is recorded', () => {
+    const root = project();
+    init(root);
+    const inner = path.join(root, 'crates', 'inner');
+    fs.mkdirSync(path.dirname(inner), { recursive: true });
+    fs.cpSync(CRATE, inner, { recursive: true });
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'inner crate');
+    const result = record(root, prepared(inner, []).out, 0);
+    assert.equal(result.code, 'recorded', JSON.stringify(result));
+    assert.equal(recordedExtraction(root).inputs.crateRoot, fs.realpathSync(inner));
   });
 
   it('a failed build is recorded as failure, never as success', () => {
