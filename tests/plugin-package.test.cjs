@@ -138,6 +138,7 @@ describe('published FVS plugin package', () => {
         'fvs-contract-registry.mjs',
         'fvs-checker.mjs',
         'fvs-checker-auto.mjs',
+        'fvs-build-check.mjs',
         'fvs-checker-build.mjs',
         'FvsKernelAudit.lean',
         'fvs-codex-think.mjs',
