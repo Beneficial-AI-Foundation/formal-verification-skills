@@ -484,7 +484,8 @@ describe('auto-setup reference: probe statuses and stage lines', () => {
     const own = flat(section(raw, 'Probes and stage lines'));
     assert.match(own, /each need `ao` and `lean` to have a route at all/);
     assert.match(own, /A lost probe does not stop them: the stage runs without that probe's output, and the output is labelled reduced/);
-    assert.match(own, /So reduced output never promises proof acceptance, and without `probe-lean` acceptance refuses until it is usable/);
+    assert.match(own, /So reduced output never promises proof acceptance, and without `probe-lean` the strict lane refuses acceptance until it is usable/);
+    assert.match(own, /The build check that `\/fvs:auto-execute` runs in a fresh clean copy needs none of the probes/);
     assert.doesNotMatch(own, /all five probes|has no route here until/);
     const reduced = rowFor('Probes and stage lines', 'ready, reduced');
     assert.match(reduced, /`ao` and `lean` are present, and only probes are missing, not checked or unusable/);

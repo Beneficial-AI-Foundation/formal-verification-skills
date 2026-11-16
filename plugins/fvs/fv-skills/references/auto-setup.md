@@ -326,9 +326,11 @@ Each probe has one status in the `probes:` list:
 
 The stages `auto-top-specs` and `auto-execute` each need `ao` and `lean` to have a route at all. A lost
 probe does not stop them: the stage runs without that probe's output, and the output is labelled reduced.
-Proof acceptance (freeze, check, accept) needs a verified Lean graph from `probe-lean` and a Rust identity
-confirmed by `probe-aeneas` and `probe-rust`, which in turn needs `scip` and `rust-analyzer`. So reduced
-output never promises proof acceptance, and without `probe-lean` acceptance refuses until it is usable.
+Strict-lane proof acceptance (freeze, check, accept) needs a verified Lean graph from `probe-lean` and a
+Rust identity confirmed by `probe-aeneas` and `probe-rust`, which in turn needs `scip` and
+`rust-analyzer`. So reduced output never promises proof acceptance, and without `probe-lean` the strict
+lane refuses acceptance until it is usable. The build check that `/fvs:auto-execute` runs in a fresh
+clean copy needs none of the probes.
 The `stages:` list has one line for each stage, and the line starts with one of these:
 
 | Stage line | Meaning |

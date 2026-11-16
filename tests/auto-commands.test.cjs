@@ -826,22 +826,60 @@ describe('auto command and workflow text', () => {
     }
   });
 
-  it('top-specs and execute retain legacy stops and gate the authorized v2 driver route', () => {
+  const GITHUB_RULE = 'Agents may open draft pull requests and edit a pull request body. They never post comments or reviews on GitHub, never mark a pull request ready and never merge: only the owner comments, marks ready and merges.';
+  const flat = (value) => value.replace(/\s+/g, ' ');
+
+  it('top-specs and execute state the goal, the pipeline and the GitHub rule in loose terms', () => {
     for (const name of ['auto-top-specs', 'auto-execute']) {
-      const body = text(name);
-      assert.match(body, /milestone 2 functionality not yet available/, name);
-      assert.match(body, /"Auto track" section of the FVS README/, name);
+      const workflow = read(`fv-skills/workflows/${name}.md`);
       const command = read(`commands/fvs/${name}.md`);
-      assert.match(command, /Legacy\/read-only and missing-context invocations retain the reporting stop without dispatch/);
-      assert.match(command, /^ {2}- Write$/m);
-      assert.match(command, /explicit execution grant/);
-      assert.match(body, /Production driver: authorized v2 continuation/);
-      assert.match(body, /runPairedEffect/);
-      assert.match(body, /recordAfter/);
-      assert.match(body, /partial/);
+      const body = flat(`${command}\n${workflow}`);
+      assert.match(workflow, /^## Goal$/m, name);
+      assert.match(workflow, /^## Pipeline$/m, name);
+      assert.match(body, /how (the agents|the workers) get there is theirs to decide/, name);
+      assert.ok(flat(workflow).includes(GITHUB_RULE), `${name} workflow lacks the GitHub rule`);
+      assert.ok(flat(command).includes(GITHUB_RULE), `${name} command lacks the GitHub rule`);
+      assert.match(command, /^ {2}- Write$/m, name);
+      assert.match(body, /draft/, name);
+      assert.match(body, /project's own repository/, name);
+      assert.doesNotMatch(body, /libcrux|celabshq/, `${name} must not name a project`);
+      assert.doesNotMatch(body, /\bgh (pr|issue) (comment|review)\b/, `${name} must not instruct posting`);
+      assert.doesNotMatch(body, /milestone 2 functionality not yet available|Production driver|runPairedEffect|recordAfter|explicit execution grant/, name);
       assert.doesNotMatch(body, /record-(roadmap|extraction|externals)|init-state/, name);
     }
     assert.match(read('README.md'), /^### Auto track$/m);
+  });
+
+  it('top-specs fixes the statement layout, the review limit and the spec pull request stop', () => {
+    const body = flat(text('auto-top-specs'));
+    assert.match(body, /every public API item in the agreed scope/);
+    assert.match(body, /fresh adversarial reviewer/);
+    assert.match(body, /At most three rounds/);
+    assert.match(body, /formal\/specs\/Defs/);
+    assert.match(body, /formal\/specs\/Specs/);
+    assert.match(body, /one file per Rust file/);
+    assert.match(body, /`recall`/);
+    assert.match(body, /guarded `#print axioms` list/);
+    assert.match(body, /formal\/trusted/);
+    assert.match(body, /Nothing leaves the scope silently/);
+    assert.match(body, /marks the pull request ready and merges it/);
+  });
+
+  it('execute keeps statements fixed and lets only the build check in a fresh clean copy accept', () => {
+    const body = flat(text('auto-execute'));
+    assert.match(body, /Start only when the owner has merged the spec pull request/);
+    assert.match(body, /one proof file per Rust item/);
+    assert.match(body, /Complete first/);
+    assert.match(body, /Improve later/);
+    assert.match(body, /The statements do not change in either phase/);
+    assert.match(body, /Lean's three standard axioms/);
+    assert.match(body, /A proof that starts using a new axiom fails the check/);
+    assert.match(body, /`native_decide` and `bv_decide`/);
+    assert.match(body, /fresh clean copy/);
+    assert.match(body, /never in a worker's checkout/);
+    assert.match(body, /warnings as errors, so any `sorry` fails/);
+    assert.match(body, /Open the PROOF PR as a draft/);
+    assert.match(body, /new draft pull request/);
   });
 
   it('top-specs says how agreement boundaries reach the closure plan as allowed axioms', () => {
