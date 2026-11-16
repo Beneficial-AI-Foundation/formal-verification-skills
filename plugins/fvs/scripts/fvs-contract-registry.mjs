@@ -163,7 +163,7 @@ export function validatePlan(plan, graph) {
   }
   if (problems.length > 0) return { problems };
   const expanded = new Map([...nodes].map(([id, node]) => [id, { ...node, reasons: [] }]));
-  const scheduling = expandSchedulingDependencies(g, expanded, p.selection.failed, p.selection.allowedAxioms ?? []);
+  const scheduling = expandSchedulingDependencies(g, expanded, p.selection.failed);
   for (const [id, node] of nodes) {
     const actual = expanded.get(id);
     if (canonical(sorted(node.dependsOn)) !== canonical(sorted(actual.dependsOn))) bad(`node ${id}'s dependsOn disagrees with the bound graph's scheduling expansion`);
