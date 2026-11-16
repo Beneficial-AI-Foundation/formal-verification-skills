@@ -939,7 +939,7 @@ describe('Rust identity record: translation.json only (no probe outputs)', () =>
     assert.deepEqual(rec.items.find((entry) => entry.rustName === 'm1demo::count_down').reasons, ['recursion'], 'translation-derived limits stay');
     assert.equal(rec.unkeyedRustAtoms, null, 'not computed, never an empty list');
     assert.equal(rec.orphanRustAtoms, null);
-    assert.deepEqual(Object.keys(rec.notComputed).sort(), ['dependencies', 'mapping', 'missingGenerated', 'orphanRustAtoms', 'unkeyedRustAtoms']);
+    assert.deepEqual(Object.keys(rec.notComputed).sort(), ['dependencies', 'leanCommit', 'mapping', 'missingGenerated', 'orphanRustAtoms', 'unkeyedRustAtoms']);
     assert.deepEqual(rec.lost, Object.values(rec.notComputed));
     assert.ok(rec.items.every((entry) => entry.generated.every((g) => g.dependencies === null && g.lean === null)));
   });

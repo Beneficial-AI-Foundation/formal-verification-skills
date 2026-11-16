@@ -40,6 +40,7 @@ const NOT_COMPUTED = {
   orphanRustAtoms: 'no probe-rust inventory: Rust functions Aeneas did not translate are not detected',
   missingGenerated: 'no probe-lean output or functions.json: generated Lean families are not checked for completeness',
   dependencies: 'no probe-lean output: Lean dependencies are unknown',
+  leanCommit: 'no probe-lean run receipt: a Lean project commit other than the Rust commit is not reconciled, and the published generated Lean files are not checked against an analysed Lean build',
 };
 
 class Refusal extends Error {
