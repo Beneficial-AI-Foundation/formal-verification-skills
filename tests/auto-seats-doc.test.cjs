@@ -29,7 +29,8 @@ function engineOperations() {
     const match = /fvs-auto\.mjs ([a-z-]+(?:\|[a-z-]+)*)(?: |$)/.exec(line);
     if (match) operations.push(...match[1].split('|'));
   }
-  return operations;
+  // An operation with two usage forms (record-pr) is listed on two lines but has one row.
+  return [...new Set(operations)];
 }
 
 // The driver prints its operations in the one-line usage of a refusal.

@@ -1216,6 +1216,81 @@ describe('auto command and workflow text', () => {
     assert.match(body, /marks the pull request ready and merges it/);
   });
 
+  it('top-specs commits what a spec imports and makes the build reach the new files before authors start', () => {
+    const body = flat(text('auto-top-specs'));
+    assert.match(body, /Prepare the working branch before any author starts/);
+    assert.match(body, /Spawn each author from this branch's head: its worktree is made from the committed head/);
+    assert.match(body, /fails with a bad import/);
+    assert.match(body, /Commit the generated translation, the patches and the extraction and Lake configuration as the first commit on the branch/);
+    assert.match(body, /never commit local state and caches \(`\.formalising\/`, `\.claude\/`, `\.lake\/` and `\.aeneas\/`\)/);
+    assert.match(body, /compiles no file under `formal\/`/);
+    assert.match(body, /Widen the library's module globs so they cover the spec and proof folders/);
+    assert.match(body, /give the `\[\[lean_lib\]\]` entry `globs = \["<Library>\.\+"\]`/);
+    assert.match(body, /add each one the same way/);
+    assert.match(body, /Confirm that the build really compiles a new spec file/);
+    assert.match(body, /Give each worktree its own copy of the primary checkout's Lake packages folder \(a copy-on-write clone is fast where the filesystem supports it\), or fall back to `lake exe cache get` and a dependency build/);
+    assert.match(body, /never share one packages folder between worktrees, because concurrent builds would write the same package outputs/);
+    assert.doesNotMatch(body, /point the worktrees at one shared packages folder/);
+    assert.match(body, /New worker worktrees start from the project's remote base branch, so a commit that exists only in your local checkout never reaches an author or a reviewer/);
+    assert.match(body, /Push the working branch to the project's own repository and make it the base new workers start from; with AO, set the project's default branch to it once it exists on the remote/);
+    assert.match(body, /The spec and proof pull requests use it as their base unless the agreement says otherwise/);
+    assert.match(body, /Spawn one author first\. Check that its worktree head is the working branch head and that a new spec file compiles there, and only then spawn the rest/);
+    assert.match(body, /Read the public items of the in-scope Rust modules and cross-check the list against the generated Lean/);
+    assert.match(body, /only you run the engine's steps, in the project checkout/);
+    assert.match(body, /which commit holds the generated translation and the Lake change/);
+    assert.ok(body.indexOf('Prepare the working branch') < body.indexOf('Write and review, one Rust file at a time'), 'branch preparation comes before authors');
+  });
+
+  it('top-specs records each review round per spec file and reads the status before opening the pull request', () => {
+    const body = flat(text('auto-top-specs'));
+    assert.match(body, /Recording the review rounds/);
+    assert.match(body, /node "\$AUTO" record-spec --project-root \. --spec-file PATH --items ID\[,ID\.\.\.\] --round N --verdict pass\|changes\|blocked --review FILE \[--out-of-scope ID\[,ID\.\.\.\]\]/);
+    assert.match(body, /node "\$AUTO" spec-status --project-root \./);
+    assert.match(body, /after every review round, in the project checkout and once the authors' files are on the working branch/i);
+    for (const label of ['spec reviewed: pass', 'spec reviewed: changes requested (round N)', 'spec blocked after N rounds', 'out of scope (noted by agent)']) {
+      assert.ok(body.includes(label), `top-specs lacks the label ${label}`);
+    }
+    assert.match(body, /`readyForPr`: at least one pass, no file still waiting for changes and nothing stale/);
+    assert.match(body, /A blocked file does not hold the pull request back/);
+    assert.match(body, /a round past the third is recorded with a warning/);
+    assert.match(body, /A file that still needs changes after the third round is recorded as `blocked`, so it does not hold the pull request back/);
+    assert.match(body, /copy each report into the project checkout yourself, under `\.formalising\/` for example: that folder is never committed, so the report stays out of the spec pull request/);
+    assert.match(body, /if no file passed, open it anyway and say in the body that none did, so the owner decides/);
+  });
+
+  it('top-specs records the draft pull request and the owner\'s merge, so the spec-phase state is never a dead end', () => {
+    const body = flat(text('auto-top-specs'));
+    assert.match(body, /Then record the pull request \(see "Recording the pull request"\)/);
+    assert.match(body, /node "\$AUTO" record-pr --project-root \. --kind spec --url URL --branch BRANCH --head SHA/);
+    assert.match(body, /never calls GitHub and does not refuse on content; it warns when no spec file has a reviewed pass, when the status is not ready/);
+    assert.match(body, /fetch the pull request branch first/);
+    assert.match(body, /Once it is merged, record the merge \(see "Recording the pull request"\); `\/fvs:auto-execute` starts the proofs after that/);
+    assert.match(body, /read the pull request yourself \(`gh pr view` shows its merge commit\), fetch the merged branch so that commit is in the checkout/);
+    assert.match(body, /node "\$AUTO" record-pr --project-root \. --kind spec --merged --merge-commit SHA/);
+    assert.match(body, /moves the state to the proof phase, where `\/fvs:auto-execute` takes over/);
+    assert.match(body, /`pruned by owner` or `changed by owner in review`/);
+  });
+
+  it('execute records the owner\'s merge before proving and records the proof pull request with the checked commit', () => {
+    const body = flat(text('auto-execute'));
+    assert.match(body, /Once it is merged, record the merge \(see "Recording the merge and the proof pull request"\)/);
+    assert.match(body, /If the state still says the spec phase, the merge is not recorded yet/);
+    assert.match(body, /read it yourself \(`gh pr view` shows its merge commit\), fetch the merged branch so that commit is in the checkout/);
+    assert.match(body, /node "\$AUTO" record-pr --project-root \. --kind spec --merged --merge-commit SHA/);
+    assert.match(body, /It refuses only a commit that is not in the checkout/);
+    assert.match(body, /`pruned by owner` or `changed by owner in review`/);
+    assert.match(body, /Prove what the owner merged: a pruned file is out of scope/);
+    assert.match(body, /node "\$AUTO" record-pr --project-root \. --kind proof --url URL --branch BRANCH --head SHA/);
+    assert.match(body, /record it with the commit the build check accepted/);
+    assert.match(body, /This only records the pull request; it accepts nothing/);
+    assert.match(body, /After a new commit on the branch, record the new head the same way and run the build check on it again/);
+    assert.match(body, /run the check again after any new commit on its branch/);
+    assert.match(body, /Do not redirect the receipt: the state reads it only from the build check's default location/);
+    assert.match(body, /Record its review rounds and the pull request as for the first, and record its merge once the owner merges it/);
+    assert.doesNotMatch(body, /names no step for recording/);
+    assert.ok(body.indexOf('Recording the merge and the proof pull request') < body.indexOf('## Step 3'), 'recording section comes before the final report step');
+  });
+
   it('execute keeps statements fixed and lets only the build check in a fresh clean copy accept', () => {
     const body = flat(text('auto-execute'));
     assert.match(body, /Start only when the owner has merged the spec pull request/);
@@ -1232,6 +1307,7 @@ describe('auto command and workflow text', () => {
     assert.match(body, /node "\$HOME\/\.claude\/scripts\/fvs-build-check\.mjs" --project-root <root> --commit <SHA>/);
     assert.match(body, /accepted \(build check in a clean copy\)/);
     assert.match(body, /build check failed: REASON/);
+    assert.match(body, /The state reports `done` only once the proof pull request is recorded and its head has passed the check/);
     assert.match(body, /a worker replaces the `sorry` and leaves the statement alone/);
     assert.doesNotMatch(body, /FVS-RC2-PLACEHOLDER/);
     assert.match(body, /Open the PROOF PR as a draft/);

@@ -15,15 +15,47 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
 ## Pipeline
 
 1. **List the items.** After extraction, list every public API item in the agreed scope (the crates,
-   modules and features fixed at `/fvs:auto-init`), with the Rust file each one lives in. There is no
+   modules and features fixed at `/fvs:auto-init`), with the Rust file each one lives in. Read the public
+   items of the in-scope Rust modules and cross-check the list against the generated Lean. There is no
    per-item confirmation. Nothing leaves the scope silently: note the items you think are out of scope
    and why, and leave the pruning to the owner in the pull request review.
-2. **Write and review, one Rust file at a time.** An author agent writes the statements for the
+2. **Prepare the working branch before any author starts.** Work on a branch of the project's own
+   repository; its pull request is the spec PR. Spawn each author from this branch's head: its worktree
+   is made from the committed head, so it holds only what is committed. In a fresh project the extraction
+   output, the patches, the Aeneas configuration and the Lake configuration are not committed, and a
+   statement that imports the generated translation fails with a bad import. Commit the generated
+   translation, the patches and the extraction and Lake configuration as the first commit on the branch,
+   and never commit local state and caches (`.formalising/`, `.claude/`, `.lake/` and `.aeneas/`).
+
+   New worker worktrees start from the project's remote base branch, so a commit that exists only in
+   your local checkout never reaches an author or a reviewer. Push the working branch to the project's
+   own repository and make it the base new workers start from; with AO, set the project's default branch
+   to it once it exists on the remote. The spec and proof pull requests use it as their base unless the
+   agreement says otherwise.
+
+   The build must also reach the new files. A Lake library that keeps its default roots compiles no file
+   under `formal/`, so a build can finish while no spec was compiled. Widen the library's module globs
+   so they cover the spec and proof folders: in `lakefile.toml`, give the `[[lean_lib]]` entry
+   `globs = ["<Library>.+"]`, and if the spec and proof folders are separate module roots, add each one
+   the same way. Confirm that the build really compiles a new spec file before you rely on it; the spec
+   pull request carries this Lake change. A fresh worktree has no Lake
+   packages. Give each worktree its own copy of the primary checkout's Lake packages folder (a
+   copy-on-write clone is fast where the filesystem supports it), or fall back to `lake exe cache get`
+   and a dependency build; never share one packages folder between worktrees, because concurrent builds
+   would write the same package outputs. Authors have no recorded state in their worktrees, so only you
+   run the engine's steps, in the project checkout, after the authors' files are on the branch.
+
+   Spawn one author first. Check that its worktree head is the working branch head and that a new spec
+   file compiles there, and only then spawn the rest.
+3. **Write and review, one Rust file at a time.** An author agent writes the statements for the
    file's items, and a fresh adversarial reviewer (the chosen pair) checks them against the Rust code
    and its documentation. Is each statement faithful, strong enough to be useful, and free of
    assumptions it should prove? At most three rounds; put anything still open in the pull request body.
-   The reviewer is a different agent from the author, and a new reviewer reads each round.
-3. **Put them where an auditor looks.** The default layout for a new project is `formal/specs/Defs`
+   The reviewer is a different agent from the author, and a new reviewer reads each round. After every
+   round the orchestrator records it for each spec file (see "Recording the review rounds"). A file that
+   still needs changes after the third round is recorded as `blocked`, so it does not hold the pull
+   request back.
+4. **Put them where an auditor looks.** The default layout for a new project is `formal/specs/Defs`
    for the definitions the statements use and `formal/specs/Specs` with one file per Rust file. Each
    statement is declared once, in a proof file under `formal/proofs` with a placeholder proof (`sorry`),
    and restated in its spec file with `recall`. `recall` needs the declaration to exist, so this pull
@@ -36,12 +68,16 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
    statement rests on, with Lean's three standard axioms always fine. Until the proofs land that list
    shows `sorryAx`, so this pull request may leave the guards out or mark them pending, and agents
    complete or update them in the proof pull request.
-4. **Open the SPEC PR as a draft** on the project's own repository: the destination recorded in the
+5. **Open the SPEC PR as a draft** on the project's own repository: the destination recorded in the
    agreement at `/fvs:auto-init`, never an upstream. If none is recorded, ask the owner which repository
-   before opening anything. Put in the body what each file covers, the items you left out, the axioms
-   the statements rest on and the review rounds that were held.
-5. **Stop for the owner.** The owner reviews, prunes, marks the pull request ready and merges it.
-   `/fvs:auto-execute` starts the proofs after that.
+   before opening anything. Open it once the recorded status says the spec files are ready for a pull
+   request; if no file passed, open it anyway and say in the body that none did, so the owner decides.
+   Put in the body what each file covers, the items you left out, the axioms
+   the statements rest on, the review rounds that were held, and which commit holds the generated
+   translation and the Lake change. Then record the pull request (see "Recording the pull request").
+6. **Stop for the owner.** The owner reviews, prunes, marks the pull request ready and merges it.
+   Once it is merged, record the merge (see "Recording the pull request"); `/fvs:auto-execute` starts
+   the proofs after that.
 
 ## GitHub rule
 
@@ -81,6 +117,62 @@ On `malformed-state` or `malformed-externals`, use `message` as the state and `n
 action. On `no-state`, use `message` and `nextAction`, and stop: run `/fvs:auto-init` first. A missing
 or outdated agreement is a warning to carry into the report, not a stop: the owner records the
 agreement in their own terminal and the spec phase does not wait for it.
+
+## Recording the review rounds
+
+After every review round, in the project checkout and once the authors' files are on the working
+branch, record the round for each spec file:
+
+```bash
+node "$AUTO" record-spec --project-root . --spec-file PATH --items ID[,ID...] --round N --verdict pass|changes|blocked --review FILE [--out-of-scope ID[,ID...]]
+```
+
+`PATH` is the spec file and `FILE` is the reviewer's report saved as a file; both are existing files
+inside the project, named relative to its root. Reviewers write in their own worktrees, so copy each
+report into the project checkout yourself, under `.formalising/` for example: that folder is never
+committed, so the report stays out of the spec pull request. The IDs are the items' Rust paths without spaces, for
+example `crate::module::function`, and `--out-of-scope` names the items an agent left out. The command
+stores a hash of both files. A later row for the same spec file is the current one, and a round past the
+third is recorded with a warning. Then read where things stand:
+
+```bash
+node "$AUTO" spec-status --project-root .
+```
+
+It lists each spec file with its items, round, verdict and label: `spec reviewed: pass`,
+`spec reviewed: changes requested (round N)`, `spec blocked after N rounds` or
+`out of scope (noted by agent)`. It says whether the file changed since its review (`stale`) and
+reports `readyForPr`: at least one pass, no file still waiting for changes and nothing stale. A blocked
+file does not hold the pull request back; the body names it with its label. A file that still needs
+changes after the third round never becomes ready on its own, so record that round as `blocked`. When a
+file is stale, have it reviewed again and record that round before opening the pull request.
+
+## Recording the pull request
+
+After you open the draft pull request, record it. `BRANCH` is the pull request's head branch and `SHA`
+the commit at its head:
+
+```bash
+node "$AUTO" record-pr --project-root . --kind spec --url URL --branch BRANCH --head SHA
+```
+
+The step never calls GitHub and does not refuse on content; it warns when no spec file has a reviewed
+pass, when the status is not ready, when `SHA` is not a commit in the checkout (fetch the pull request
+branch first), and when a recorded spec file is missing from the head or differs there from the file
+that was reviewed. Fix what a warning names, or name it in the pull request body. The state stays in the
+spec phase, and its next action says the owner reviews and merges the pull request.
+
+When the owner has merged it, read the pull request yourself (`gh pr view` shows its merge commit),
+fetch the merged branch so that commit is in the checkout, and record the merge:
+
+```bash
+node "$AUTO" record-pr --project-root . --kind spec --merged --merge-commit SHA
+```
+
+This moves the state to the proof phase, where `/fvs:auto-execute` takes over. It refuses only a commit
+that is not in the checkout. It warns when no open draft spec pull request was recorded, and for each
+spec file the owner removed or edited in review; `spec-status` then labels those files `pruned by owner`
+or `changed by owner in review`.
 
 ## Step 3: Run the pipeline, then report
 
