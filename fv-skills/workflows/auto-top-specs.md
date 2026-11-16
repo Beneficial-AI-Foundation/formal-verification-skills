@@ -25,11 +25,17 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
    The reviewer is a different agent from the author, and a new reviewer reads each round.
 3. **Put them where an auditor looks.** The default layout for a new project is `formal/specs/Defs`
    for the definitions the statements use and `formal/specs/Specs` with one file per Rust file. Each
-   statement is restated with `recall`, followed by a guarded `#print axioms` list that names the axioms
-   it rests on. Lean's three standard axioms are always fine. Hand-written axioms for code Aeneas does
-   not translate go in `formal/trusted`, and the spec file lists the ones its statement uses. An existing
-   project keeps its layout and follows the same split where it can. Placeholder proofs (`sorry`) are
-   fine in this pull request, because proofs start only after the owner merges it.
+   statement is declared once, in a proof file under `formal/proofs` with a placeholder proof (`sorry`),
+   and restated in its spec file with `recall`. `recall` needs the declaration to exist, so this pull
+   request carries one such stub proof file per Rust item. Hand-written axioms for code Aeneas does not
+   translate go in `formal/trusted`, and the spec file lists the ones its statement uses. An existing
+   project keeps its layout and follows the same split where it can.
+
+   This pull request must build, and it may warn about `sorry`; warnings as errors applies to the proof
+   pull request. After each restatement goes a guarded `#print axioms` list that names the axioms the
+   statement rests on, with Lean's three standard axioms always fine. Until the proofs land that list
+   shows `sorryAx`, so this pull request may leave the guards out or mark them pending, and agents
+   complete or update them in the proof pull request.
 4. **Open the SPEC PR as a draft** on the project's own repository: the destination recorded in the
    agreement at `/fvs:auto-init`, never an upstream. If none is recorded, ask the owner which repository
    before opening anything. Put in the body what each file covers, the items you left out, the axioms
@@ -47,15 +53,12 @@ merges.
 
 No probe is needed for this pipeline, and a missing probe never stops it. Read the `auto-top-specs`
 stage line in the profile first (`auto-setup.md`, "Probes and stage lines", says what each line
-means). When `probe-lean` works, the strict lane stays available: a verified dependency graph, a closure
-plan from `fvs-closure-plan.mjs plan`, and the bounded transition protocol in
+means). When `probe-lean` works, the strict lane stays available as an option: a verified dependency
+graph, a closure plan from `fvs-closure-plan.mjs plan`, and the bounded transition protocol in
 `fv-skills/references/auto-transitions.md`. Prose agreement boundaries do not match axioms
 automatically, so the orchestrator translates them once into exact Lean names and passes them with
-`--allow-axioms`. A plan made without a dependency graph, or from an identity record that rests on
-`translation.json` alone, is degraded: it exits 9, lists every identity item in source order, computes
-no closure and is never admissible. Report the strict lane as partial with that loss, plan again with
-`--graph` and a full identity record once the probes are installed, and never substitute a guess for
-the missing probe output.
+`--allow-axioms`. A plan made without a dependency graph is degraded: it exits 9, computes no closure
+and is never admissible, so plan again with `--graph` once the probes are installed.
 
 ## Step 1: Require Agent Orchestrator
 
@@ -75,7 +78,9 @@ node "$AUTO" read-state --project-root .
 ```
 
 On `malformed-state` or `malformed-externals`, use `message` as the state and `nextStep` as the next
-action. On `no-state`, use `message` and `nextAction`, and stop: run `/fvs:auto-init` first.
+action. On `no-state`, use `message` and `nextAction`, and stop: run `/fvs:auto-init` first. A missing
+or outdated agreement is a warning to carry into the report, not a stop: the owner records the
+agreement in their own terminal and the spec phase does not wait for it.
 
 ## Step 3: Run the pipeline, then report
 

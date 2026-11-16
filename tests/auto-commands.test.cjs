@@ -870,6 +870,9 @@ describe('auto command and workflow text', () => {
     assert.match(body, /one file per Rust file/);
     assert.match(body, /`recall`/);
     assert.match(body, /guarded `#print axioms` list/);
+    assert.match(body, /one such stub proof file per Rust item/);
+    assert.match(body, /must build, and it may warn about `sorry`; warnings as errors applies to the proof pull request/);
+    assert.match(body, /may leave the guards out or mark them pending/);
     assert.match(body, /formal\/trusted/);
     assert.match(body, /Nothing leaves the scope silently/);
     assert.match(body, /marks the pull request ready and merges it/);
@@ -888,6 +891,11 @@ describe('auto command and workflow text', () => {
     assert.match(body, /fresh clean copy/);
     assert.match(body, /never in a worker's checkout/);
     assert.match(body, /warnings as errors, so any `sorry` fails/);
+    assert.match(body, /node "\$HOME\/\.claude\/scripts\/fvs-build-check\.mjs" --project-root <root> --commit <SHA>/);
+    assert.match(body, /accepted \(build check in a clean copy\)/);
+    assert.match(body, /build check failed: REASON/);
+    assert.match(body, /a worker replaces the `sorry` and leaves the statement alone/);
+    assert.doesNotMatch(body, /FVS-RC2-PLACEHOLDER/);
     assert.match(body, /Open the PROOF PR as a draft/);
     assert.match(body, /new draft pull request/);
   });
@@ -957,8 +965,10 @@ describe('auto command and workflow text', () => {
     assert.match(body, /Routine Status log appends outside the fence/);
     assert.match(body, /there is no per-round human contract approval/);
     assert.match(body, /Final PR acceptance remains human/);
-    assert.match(body, /`public-api`\s+mode is not supported in this release: report that refusal without retrying it/);
-    assert.ok(!/visibility join|separately permitted|ticket11/.test(body), 'the public-API sentence names no landing condition');
+    assert.match(body, /Write the scope in the\s+agreement's `boundaries` and `claims`; its `mode` keeps the first-release name `nonpublic-intent`,\s+which does not limit the scope to non-public items/);
+    assert.doesNotMatch(body, /mode is not supported in this release|report that refusal without retrying/);
+    assert.ok(!/visibility join|separately permitted|ticket11/.test(body), 'the mode sentence names no landing condition');
+    assert.match(body, /only `record-agreement` is the owner's, and\s+the orchestrator runs the other state-changing steps itself/);
     assert.match(body, /Agreement storage alone launches no workers/);
     assert.match(body, /fv-skills\/references\/auto-transitions\.md/);
     assert.match(body, /Do not infer dispatch permission from a stored agreement/);
@@ -967,5 +977,19 @@ describe('auto command and workflow text', () => {
     assert.match(read('commands/fvs/roadmap.md'), /`\.formalising\/auto-fv\/ROADMAP\.md`; `\/fvs:auto-init`/);
     assert.match(read('fv-skills/workflows/roadmap.md'), /\*\.md\) FILE=\$ROADMAP_PATH/);
     assert.match(read('fv-skills/workflows/roadmap.md'), /Generic roadmaps outside auto-init require no machine envelope/);
+  });
+
+  it('the relaxed path of init, top-specs and execute never calls the strict lane', () => {
+    const strict = /--require-agreement|record-memory|refresh-memory|prime-memory|verifyReconciliation|verifyMemoryBootstrap|fvs-auto-driver|fvs-auto-respec|run-owned|ack-work|execute-transition|prepare-review|import-review/;
+    for (const name of ['auto-init', 'auto-top-specs', 'auto-execute']) {
+      const workflow = read(`fv-skills/workflows/${name}.md`);
+      const marker = workflow.indexOf('## Optional strict lane');
+      const relaxed = marker === -1 ? workflow : workflow.slice(0, marker);
+      assert.doesNotMatch(relaxed, strict, `${name} relaxed text calls the strict lane`);
+      assert.match(relaxed, /"\$AUTO" read-state --project-root \.\n/, `${name} reads state plainly`);
+      assert.doesNotMatch(read(`commands/fvs/${name}.md`), strict, `${name} command text calls the strict lane`);
+    }
+    assert.doesNotMatch(read('commands/fvs/auto.md'), strict);
+    assert.match(read('fv-skills/workflows/auto-init.md'), /^## Optional strict lane$/m);
   });
 });

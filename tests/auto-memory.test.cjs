@@ -360,7 +360,7 @@ describe('memory bootstrap workflow boundary', () => {
   it('requires fresh memory bootstrap after agreement reuse and consumes actual caller-bound bytes', () => {
     const workflow = fs.readFileSync(path.join(f.ROOT, 'fv-skills/workflows/auto-init.md'), 'utf8');
     const reference = fs.readFileSync(path.join(f.ROOT, 'fv-skills/references/auto-memory.md'), 'utf8');
-    assert.match(workflow, /proceed to Step 6's recorded memory disposition/);
+    assert.match(workflow, /reuses a current agreement it proceeds to the recorded memory disposition below/);
     assert.match(workflow, /Every start\/resume[\s\S]*own current request; enabled memory also needs the fresh prime/);
     assert.match(workflow, /"\$AUTO" refresh-memory --project-root "\$PRIMARY" --request "\$REQUEST" --out "\$MEMORY_OUT"/);
     assert.match(workflow, /"\$AUTO" prime-memory --project-root "\$PRIMARY" --request "\$REQUEST" --out "\$MEMORY_OUT"/);

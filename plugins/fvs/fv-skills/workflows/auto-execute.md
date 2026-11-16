@@ -7,17 +7,6 @@ establish no proof acceptance. Without the orchestrator, reconcile the recorded 
 
 <process>
 
-## Rc1 human-feedback boundary
-
-For AUTO owner feedback that revises previously reviewed contracts after end/partial results,
-report `unsupported: human re-specification is not available in 3.0.0-rc1` and stop before
-state/agreement/registry changes, revision effects or provider dispatch. Apply this to direct
-requests and resumed handoff instructions. Keep the actual feedback, complete selected scope,
-original accounting and each root's failed/unsupported/partial reason. No ready/success claim follows.
-Initial autonomous specify/review/revise/prove and ordinary safe resume remain available under their
-existing gates; stale proofs still need current checker receipts. Internal diagnostic APIs do not
-authorize a public re-specification run.
-
 ## Goal
 
 Every statement in the merged spec pull request has a Lean proof with no `sorry`, and FVS's build check
@@ -28,19 +17,28 @@ has accepted it in a fresh clean copy. The result is one draft pull request of p
 Start only when the owner has merged the spec pull request. If it is not merged, say so and stop;
 the agent never marks it ready or merges it.
 
-1. **Prove, one proof file per Rust item** (`formal/proofs`). Run as many workers as the agreement
-   allows. Complete first: get every statement proved by whatever works. Improve later: once
-   everything is proved, make the proofs shorter, more robust to translation changes and better
-   factored into lemmas. The statements do not change in either phase. A statement that turns out
-   wrong or too weak is noted for a refactor pull request, never edited in a proof.
+1. **Prove, one proof file per Rust item** (`formal/proofs`). The merged spec pull request holds each
+   statement in a stub proof file with `sorry`; a worker replaces the `sorry` and leaves the statement
+   alone. Run as many workers as the agreement allows. Complete first: get every statement proved by
+   whatever works. Improve later: once everything is proved, make the proofs shorter, more robust to
+   translation changes and better factored into lemmas. The statements do not change in either phase.
+   A statement that turns out wrong or too weak is noted for a refactor pull request, never edited in
+   a proof.
 2. **Axioms.** Lean's three standard axioms are always fine, and so are the hand-written axioms that
    the statement's spec file lists. A proof that starts using a new axiom fails the check.
    `native_decide` and `bv_decide` are fine while developing a proof and are flagged by the check, so
    remove them before it runs.
-3. **FVS's build check decides accepted.** Run the check (`FVS-RC2-PLACEHOLDER`) in a fresh clean copy
-   of the integration tree, never in a worker's checkout. The whole project builds with warnings as
-   errors, so any `sorry` fails, and each statement's guarded `#print axioms` list must still match.
-   A worker's report, or a green build in its own checkout, is not acceptance.
+3. **FVS's build check decides accepted.** It runs in a fresh clean copy of the commit, never in a
+   worker's checkout. The whole project builds with warnings as errors, so any `sorry` fails, and each
+   statement's guarded `#print axioms` list must still match. Run it on the integration tree's head:
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/scripts/fvs-build-check.mjs" --project-root <root> --commit <SHA>
+   ```
+
+   It prints `accepted (build check in a clean copy)` or `build check failed: REASON`. Read that label
+   from the output, then read the state again: it reports `done` once the check has passed for the
+   proof pull request's head. A worker's report, or a green build in its own checkout, is not acceptance.
 4. **Open the PROOF PR as a draft** on the project's own repository: the destination recorded in the
    agreement at `/fvs:auto-init`, never an upstream. Put in the body which statements are accepted,
    which are not and why, and what each unproved one is missing. Nothing leaves the scope silently.
@@ -61,7 +59,8 @@ acceptance through the strict lane refuses, and the build check above is the rou
 works, the strict lane stays available: dependency-ready proof units, serial independent acceptance and
 the human review bundle, driven by `fv-skills/references/auto-transitions.md` and
 `fv-skills/references/auto-review-bundle.md`. Keep the agreement's optional budget and its memory
-disposition (`auto-execution.md`, `auto-resume.md`).
+disposition (`auto-execution.md`, `auto-resume.md`). The strict lane's human re-specification command is
+not available in 3.0.0-rc1; in this pipeline a spec refactor is a new draft pull request.
 
 ## Step 1: Require Agent Orchestrator
 
@@ -81,7 +80,8 @@ node "$AUTO" read-state --project-root .
 ```
 
 On `malformed-state` or `malformed-externals`, use `message` as the state and `nextStep` as the next
-action. On `no-state`, use `message` and `nextAction`, and stop: run `/fvs:auto-init` first.
+action. On `no-state`, use `message` and `nextAction`, and stop: run `/fvs:auto-init` first. A missing
+or outdated agreement is a warning to carry into the report, not a stop.
 
 ## Step 3: Run the pipeline, then report
 

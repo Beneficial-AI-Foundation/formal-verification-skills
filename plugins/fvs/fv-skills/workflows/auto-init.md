@@ -2,23 +2,12 @@
 The AO orchestrator's single entry for the auto track: show the compatibility profile with every
 stage's readiness up front, reuse a current applicable agreement, or settle only the missing scope,
 boundaries, conventions and execution choices with a short roadmap conversation, and record the
-agreement. The goal and the pipeline are fixed; how the agents get there is theirs to decide. Persist
-state only through `scripts/fvs-auto.mjs`. A stored agreement is declared owner evidence, not proof
-acceptance.
+agreement. A missing agreement is a warning, never a stop. The goal and the pipeline are fixed; how the
+agents get there is theirs to decide. Persist state only through `scripts/fvs-auto.mjs`. A stored
+agreement is declared owner evidence, not proof acceptance.
 </purpose>
 
 <process>
-
-## Rc1 human-feedback boundary
-
-For AUTO owner feedback that revises previously reviewed contracts after end/partial results,
-report `unsupported: human re-specification is not available in 3.0.0-rc1` and stop before
-state/agreement/registry changes, revision effects or provider dispatch. Apply this to direct
-requests and resumed handoff instructions. Keep the actual feedback, complete selected scope,
-original accounting and each root's failed/unsupported/partial reason. No ready/success claim follows.
-Initial autonomous specify/review/revise/prove and ordinary safe resume remain available under their
-existing gates; stale proofs still need current checker receipts. Internal diagnostic APIs do not
-authorize a public re-specification run.
 
 ## Goal
 
@@ -66,15 +55,18 @@ Stop when this fails. Agreement storage alone launches no workers.
 node "$AUTO" read-state --project-root .
 ```
 
+Read `phase`, `warnings` and `nextAction` from the result. Call it plainly, without the strict
+stored-context flag: the steps below never call the strict lane (see the last section).
+
 - `no-state`: inspect the project and the profile, and synthesize the known facts for Step 3.
 - `ok`: inspect `state.choices`, the extraction history and the latest `state.agreements`, if present.
   Do not ask Keep/Change or repeat an interview when the applicable agreement is current. Reuse the
-  owner's actual earlier responses rather than asking again. Check Step 5 first; if it passes,
-  proceed to Step 6's recorded memory disposition and then Step 7 and Step 8 without re-interviewing.
-  Every start/resume needs its own current request; enabled memory also needs the fresh prime: never
-  reuse an old memory-ready result. A missing or stale agreement blocks continuation; resolve only the
-  affected setup through Steps 3 to 5. When the owner asks for a material change, show only the
-  affected choices and use those steps.
+  owner's actual earlier responses rather than asking again. Read the recorded agreement and the
+  roadmap against the current request, and when they conflict settle only that decision with the owner.
+  A project that already has an agreement goes straight on to the stage `phase` names, with no
+  re-interview. A missing or outdated agreement is a warning: put it in the report, resolve only the
+  affected setup through Steps 3 and 4, and do not hold the stages for it. When the owner asks for a
+  material change, show only the affected choices and use those steps.
 - `malformed-state` or `malformed-externals`: print `message` and `nextStep` verbatim and stop.
   Never repair, delete or overwrite the file.
 
@@ -105,9 +97,9 @@ Keep the conversation short. Read the repository first, then propose a default f
 the owner confirm or change it, instead of interviewing from scratch. Use
 `/fvs:roadmap .formalising/auto-fv/ROADMAP.md <the project goal>` with its existing light/deep/reuse
 route. The owner agrees the scope as crates, modules and features, kept distinct from discovered
-roots. `auto-top-specs` lists the public API items inside that scope later; the agreement itself keeps
-its `nonpublic-intent` mode, and an explicit `public-api`
-mode is not supported in this release: report that refusal without retrying it.
+roots. `auto-top-specs` lists the public API items inside that scope later. Write the scope in the
+agreement's `boundaries` and `claims`; its `mode` keeps the first-release name `nonpublic-intent`,
+which does not limit the scope to non-public items.
 
 Record only the missing owner choices, using the current applicable evidence for known ones:
 
@@ -129,8 +121,7 @@ never raised or reset automatically. The initial owner agreement is the setup hu
 provisional specify/review/revise cycles are autonomous within it;
 there is no per-round human contract approval.
 The owner's merge of the spec pull request is the sign-off before any proof starts.
-Final PR acceptance remains human. Agreement storage does not dispatch; Step 6 handles the recorded
-memory disposition and Step 7 hands off to the stages.
+Final PR acceptance remains human. Agreement storage does not dispatch; Step 5 hands off to the stages.
 
 Write the known and answered choices to a temporary file outside the project:
 
@@ -242,24 +233,64 @@ the roadmap's `## Decisions` as the only current fence, then ask the owner to ru
 in their own terminal: it is `fvs-auto.mjs record-agreement`
 with `--input` the new file and `--project-root` the project. The helper never records the agreement
 and never edits the roadmap or the state. The record step compares actual retained content and never
-treats a supplied hash alone as approval. When the owner has run it, read the state again (Step 5).
-`auto-seats.md` lists which seat (owner, orchestrator or worker) runs each engine operation.
+treats a supplied hash alone as approval. When the owner has run it, read the state again (Step 2);
+until then the missing agreement is a warning and the stages go on. `auto-seats.md` lists which seat
+(owner, orchestrator or worker) runs each engine operation: only `record-agreement` is the owner's, and
+the orchestrator runs the other state-changing steps itself, such as recording the extraction and the
+externals.
 
 A changed successor needs a greater `contextVersion` and explicit confirmation of the exact affected
 agreement before `--confirm-overwrite`; the helper picks the next free version, and the command it
 prints carries `--confirm-overwrite` only for a successor. History is retained. `unchanged` replays write
-nothing. Missing, malformed, unknown/future/public-API mode, mismatched content or stale
-generation/context refuses; show the actual reason and resolve only the affected agreement. No
-operation selects roots or grants publication, launches workers, resets budgets or reinterprets
-`nodeHours`.
+nothing. Missing, malformed, unknown or future mode, mismatched content or stale generation/context
+refuses; show the actual reason and resolve only the affected agreement. No operation selects roots or
+grants publication, launches workers, resets budgets or reinterprets `nodeHours`.
 
-## Step 5: Mandatory stored-context gate AND semantic applicability check
+## Step 5: Hand off to the stages
+
+With a recorded agreement, or its absence reported as a warning, the pipeline above takes over and the
+orchestrator does not ask the owner to launch each stage. `/fvs:auto-extract` comes next, then
+`/fvs:auto-top-specs`, which ends at the draft spec pull request. Fill operational inputs from the
+recorded state and existing decisions; a genuinely missing capability or input is partial, not another
+scope interview. Do not infer dispatch permission from a stored agreement, a remembered grant, a partial
+result or a worker verdict.
+
+## Step 6: Report
+
+Use the refreshed post-init or post-record state, not the pre-init `no-state` result. Print:
+
+```
+FVS >> AUTO-INIT
+
+State:            revision {revision} ({configuration}); scope {scope}; resources {workers} workers; budget {none | original explicitly selected deadline | literal legacy v1 budget}; extraction {not run | succeeded | failed}; agreement {missing | outdated | recorded}
+Next action:      {the next stage, the partial reason, or the standalone extraction continuation}
+Warnings:         {the warnings from read-state, such as a missing agreement, or none}
+Stages:           {the profile's stage lines, one per stage, as printed}
+Draft PRs:        {the recorded destination repository | not recorded}
+Memory:           {explicitly disabled | enabled: its status from the strict lane below}
+Pending decision: {only affected missing initial decisions, or none}
+```
+
+Report the script's actual refusal or next step when blocked. Successful agreement storage is agreement
+and scope readiness only. The engine's `nextAction` string is a suggestion, not executable authority.
+Report only actual current checker receipts and whole-scope gaps.
+
+## Optional strict lane
+
+Everything above works without this section, and the relaxed path never calls what is in it: the
+stored-context gate (`read-state` with its strict flag), the memory commands, owned work, the driver,
+the review bundle and the re-specification command. Use it only when the owner wants the strict graph
+lane and `probe-lean` works, or when the agreement records enabled Beads memory. The strict lane's
+human re-specification is not available in 3.0.0-rc1; on the relaxed path a spec refactor is a new
+draft pull request.
+
+### Stored-context gate AND semantic applicability check
 
 ```bash
 node "$AUTO" read-state --project-root . --require-agreement
 ```
 
-A refusal stops the agreement route; nothing is dispatched without an agreement. `agreement-required`
+A refusal stops the strict route; nothing on it is dispatched without an agreement. `agreement-required`
 means the state has no initial agreement. `stale-agreement` requires an explicitly approved successor
 for the current choices generation; reverting values does not revive an old generation.
 Missing/duplicate/changed, unknown or superseded current context and changed retained owner evidence
@@ -281,13 +312,17 @@ contract/proof revisions and ordinary progress within the agreement do not cause
 Never refresh approval from candidate-generated contracts. Record declared uncertainties and report
 outside/unresolved discovered roots before any later dispatch; never silently add them or reduce scope.
 
-## Step 6: Apply the recorded memory disposition
+### Memory
 
-For disabled memory, retain the explicit disabled disposition and continue to Step 7 with
+When the strict lane reuses a current agreement it proceeds to the recorded memory disposition below.
+Every start/resume needs its own current request; enabled memory also needs the fresh prime: never
+reuse an old memory-ready result.
+
+For disabled memory, retain the explicit disabled disposition and continue with
 `memoryRequest:null`; no backend command or substitute prime receipt is produced. For enabled Beads,
 follow the existing bootstrap path below. Existing v1 records keep their original memory requirements.
 
-Follow `auto-memory.md` after Step 5's stored-context AND semantic applicability checks. Use the recorded
+Follow `auto-memory.md` after the stored-context AND semantic applicability checks. Use the recorded
 canonical primary control root and existing store, never worker-cwd discovery or FVS's development store.
 Register it through the state operation when needed; do not initialize/migrate a missing real store:
 
@@ -297,8 +332,8 @@ node "$AUTO" record-memory --project-root "$PRIMARY" --input "$REGISTRATION"
 
 The caller owns a fresh UUID, actual target project/session/resume identity and expected canonical
 binding/context. Prepare and retain its current request before invoking a route. For a resume, follow
-Step 7 and `auto-resume.md`; its `state` operation performs this fresh memory refresh and independent
-consumption. The standalone coordinator route remains:
+the resume paragraph below and `auto-resume.md`; its `state` operation performs this fresh memory
+refresh and independent consumption. The standalone coordinator route remains:
 
 ```bash
 node "$AUTO" refresh-memory --project-root "$PRIMARY" --request "$REQUEST" --out "$MEMORY_OUT"
@@ -316,42 +351,15 @@ is insufficient. Missing/stale/malformed/foreign store/context, partial output, 
 stops readiness with its actual reason. No automatic setup, task queue, worker launch or receipt/proof
 authority is introduced. Current target IDs come from caller context, never a new owner policy interview;
 if the necessary invocation context is unavailable, report that missing input and stop continuation.
+The configured memory adapter reports current memory-primed; the resume coordinator records checkpoints
+and current observations. Local FVS-development Beads is not target-project memory.
 
-## Step 7: Hand off to the stages
-
-With a current applicable agreement and its verified memory disposition, the pipeline above takes over
-and the orchestrator does not ask the owner to launch each stage. `/fvs:auto-extract` comes next, then
-`/fvs:auto-top-specs`, which ends at the draft spec pull request. Fill operational inputs from the
-recorded state and existing decisions; a genuinely missing capability or input is partial, not another
-scope interview.
+### Resume
 
 On a resume, read `auto-resume.md`: prepare the fresh caller-owned request from the actual AO
 associations, Git inputs and recorded accounting, call `state`, then consume it with
 `verifyReconciliation` against that same independently held request. Stop on partial, missing or
 uncertain context with its actual reason, and preserve all reservations and original budgets. The
-optional strict graph lane, when `probe-lean` works, follows `fv-skills/references/auto-transitions.md`.
-Do not infer dispatch permission from a stored agreement, a remembered grant, a partial result or a
-worker verdict.
-
-## Step 8: Report
-
-Use the refreshed post-init or post-record state, not the pre-init `no-state` result. Print:
-
-```
-FVS >> AUTO-INIT
-
-State:            revision {revision} ({configuration}); scope {scope}; resources {workers} workers; budget {none | original explicitly selected deadline | literal legacy v1 budget}; extraction {not run | succeeded | failed}; agreement {missing | stale | stored-context-current, semantic check passed}
-Next action:      {the next stage, the partial reason, or the standalone extraction/reconciliation continuation}
-Stages:           {the profile's stage lines, one per stage, as printed}
-Draft PRs:        {the recorded destination repository | not recorded}
-Memory:           {explicitly disabled | unregistered | missing | stale | blocked/partial reason | memory-primed for current caller request}
-Pending decision: {only affected missing initial decisions, or none}
-```
-
-Report the script's actual refusal or next step when blocked. Successful agreement storage is agreement
-and scope readiness only. The configured memory adapter reports current memory-primed; the resume
-coordinator records checkpoints and current observations. The engine's `nextAction` string is a
-suggestion, not executable authority. Report only actual current checker receipts and whole-scope gaps.
-Local FVS-development Beads is not target-project memory.
+strict graph lane, when `probe-lean` works, follows `fv-skills/references/auto-transitions.md`.
 
 </process>

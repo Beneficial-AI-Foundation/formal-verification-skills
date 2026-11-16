@@ -104,11 +104,11 @@ for what is missing: the source revision, the agreed scope (crates, modules and 
 conventions, single-crate/monorepo layout, execution choices and the repository the draft pull
 requests go to. A helper drafts the agreement and the owner only confirms it.
 
-Persist choices and the exact declared agreement through `scripts/fvs-auto.mjs`; use the mandatory
-`read-state --require-agreement` stored-context gate AND the workflow's canonical semantic check.
-A roadmap-offer decision alone is not agreement or authorization. Material changes need explicit
-confirmation; routine progress does not reopen setup. Public-API selection is not supported in this
-release.
+Persist choices and the exact declared agreement through `scripts/fvs-auto.mjs`. A missing or outdated
+agreement is a warning, never a stop, and the owner records it in their own terminal. A roadmap-offer
+decision alone is not agreement or authorization. Material changes need explicit confirmation; routine
+progress does not reopen setup. The stored-context gate, the memory routes and the strict graph lane
+are an optional section of the workflow that this entry never calls.
 
 Output: recorded setup and agreement, and the next stage or the exact refusal. Agreement storage alone
 launches no workers or proofs. The pipeline after it is fixed and the agents choose how: extract, a
@@ -133,17 +133,6 @@ see the prerequisite and exact-source installation steps in `auto-setup.md`.
 </context>
 
 <process>
-
-## Rc1 human-feedback boundary
-
-For AUTO owner feedback that revises previously reviewed contracts after end/partial results,
-report `unsupported: human re-specification is not available in 3.0.0-rc1` and stop before
-state/agreement/registry changes, revision effects or provider dispatch. Apply this to direct
-requests and resumed handoff instructions. Keep the actual feedback, complete selected scope,
-original accounting and each root's failed/unsupported/partial reason. No ready/success claim follows.
-Initial autonomous specify/review/revise/prove and ordinary safe resume remain available under their
-existing gates; stale proofs still need current checker receipts. Internal diagnostic APIs do not
-authorize a public re-specification run.
 
 Follow the auto-init workflow end to end. Every state change goes through `fvs-auto.mjs`; never
 write or edit `state.json` by hand, and never pass `--confirm-overwrite` without the owner's
@@ -172,12 +161,11 @@ Applicable existing explicit responses are reused without another question; comp
 - [ ] Owner choices are recorded only through `init-state`; an unchanged rerun writes nothing.
 - [ ] A changed choice is shown to the owner and written only after explicit confirmation.
 - [ ] A current applicable agreement bypasses Keep/Change and repeated interviews; actual evidence is read.
-- [ ] Missing/stale agreement stops the M2 route; legacy M1 offer/extraction records keep their meaning.
+- [ ] A missing or outdated agreement is reported as a warning and does not stop the stages; legacy offer/extraction records keep their meaning.
 - [ ] Actual retained payload and current roadmap fence bind approval; status-only logs do not re-grill.
-- [ ] Stored-context-current is distinguished from the mandatory semantic applicability check.
-- [ ] The configured memory route uses a primary store and fresh caller request/actual prime bytes on start/resume.
-- [ ] Worker prime is read-only; missing real stores are never initialized or migrated automatically.
-- [ ] No public-API classifier, implicit grant or per-round human approval is introduced.
+- [ ] The agreement keeps its `nonpublic-intent` mode and records the public API scope in its boundaries and claims.
+- [ ] The relaxed path reads state plainly and never calls the stored-context gate, the memory routes, owned work, the driver or the re-specification command.
+- [ ] No implicit grant or per-round human approval is introduced.
 - [ ] Agreement storage alone launches no workers; a recorded draft pull request destination is the project's own repository.
 - [ ] The report carries the State, Next action and Pending decision lines.
 </success_criteria>
