@@ -850,6 +850,16 @@ describe('auto command and workflow text', () => {
     assert.match(read('README.md'), /^### Auto track$/m);
   });
 
+  it('the router, help and README carry the GitHub rule and mark no stage unavailable', () => {
+    const router = read('commands/fvs/auto.md');
+    const help = read('commands/fvs/help.md');
+    assert.ok(flat(router).includes(GITHUB_RULE), 'router lacks the GitHub rule');
+    assert.ok(flat(help).includes(GITHUB_RULE), 'help lacks the GitHub rule');
+    assert.match(flat(read('README.md')), /Agents never post comments or reviews on GitHub and never merge: only you do/);
+    assert.doesNotMatch(flat(router), /milestone 2|not yet available/);
+    assert.match(flat(router), /after the owner merges it `auto-execute` proves them and opens the proof pull request as a draft/);
+  });
+
   it('top-specs fixes the statement layout, the review limit and the spec pull request stop', () => {
     const body = flat(text('auto-top-specs'));
     assert.match(body, /every public API item in the agreed scope/);

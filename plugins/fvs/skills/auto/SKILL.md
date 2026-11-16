@@ -118,11 +118,19 @@ Next action:      {nextAction, or the result's nextStep when the state is malfor
 Pending decision: {pendingDecisions, or none}
 ```
 
+The pipeline: `auto-init` records the agreement, `auto-extract` extracts the recorded revision,
+`auto-top-specs` writes and reviews the statements and opens the spec pull request as a draft, and
+after the owner merges it `auto-execute` proves them and opens the proof pull request as a draft.
+
 | User wants | Invoke |
 |---|---|
-| Check the host and record the source revision, scope and limits | fvs:auto-init |
+| Check the host and record the source revision, scope and agreement | fvs:auto-init |
 | Extract the recorded revision and record its externals | fvs:auto-extract |
-| Select roots and freeze top-level specifications (milestone 2, not yet available) | fvs:auto-top-specs |
-| Dispatch and accept proof work (milestone 2, not yet available) | fvs:auto-execute |
+| Write and review the Lean statements for the agreed scope, then open the draft spec pull request | fvs:auto-top-specs |
+| Prove the merged statements, check them in a fresh clean copy and open the draft proof pull request | fvs:auto-execute |
+
+Agents may open draft pull requests and edit a pull request body. They never post comments or reviews
+on GitHub, never mark a pull request ready and never merge: only the owner comments, marks ready and
+merges.
 
 Invoke the matched skill directly using the Skill tool.
