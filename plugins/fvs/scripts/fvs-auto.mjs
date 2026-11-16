@@ -1620,6 +1620,17 @@ function engineCheck(command, out) {
   return { ok, code, message };
 }
 
+// The top of the git working tree that holds a directory, or null when it is in
+// none. The variables that redirect git are cleared, so two unrelated
+// directories cannot be made to report one working tree.
+function gitWorkingTree(directory) {
+  const env = { ...process.env };
+  for (const name of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY']) delete env[name];
+  const run = spawnSync('git', ['--no-optional-locks', '-C', directory, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', env });
+  const top = run.status === 0 ? run.stdout.trim() : '';
+  return top ? fs.realpathSync(top) : null;
+}
+
 function resolveRevision(directory, revision) {
   const run = spawnSync('git', ['--no-optional-locks', '-C', directory, 'rev-parse', '--verify', '--quiet', `${revision}^{commit}`], { encoding: 'utf8' });
   return run.status === 0 ? run.stdout.trim() : null;
@@ -1659,7 +1670,14 @@ export function recordExtraction({ projectRoot, out, buildExitCode, oracle, orac
     const { revision } = state.choices.source;
     const crate = manifest.projectRoot;
     if (manifest.mode !== 'translation-patches') reasons.push(`the copy was prepared in ${manifest.mode} mode; the auto track extracts through translation patches only`);
-    if (crate !== root && !crate.startsWith(`${root}${path.sep}`)) reasons.push(`the copy was prepared from ${crate}, outside this project`);
+    // The crate may sit beside the Lean project in one repository (the Lean root in a
+    // subfolder, the crate at the repository root). Only its location is relaxed; the
+    // revision and uncommitted-change checks below bind it to the recorded commit.
+    const inside = crate === root || crate.startsWith(`${root}${path.sep}`);
+    const rootTree = inside ? null : gitWorkingTree(root);
+    if (!inside && (rootTree === null || rootTree !== gitWorkingTree(crate))) {
+      reasons.push(`the copy was prepared from ${crate}, outside this project and its git working tree`);
+    }
     const resolved = resolveRevision(crate, revision);
     if (!manifest.source.commit) reasons.push(`${crate} is not a git checkout, so the extraction cannot be tied to revision ${revision}`);
     else if (manifest.source.commit !== resolved) {

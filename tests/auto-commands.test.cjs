@@ -509,6 +509,65 @@ describe('auto-extract extraction record', () => {
     assert.equal(extraction.inputs.out, out);
   });
 
+  // One git repository: the crate at its root and the Lean project in formal/.
+  function layout() {
+    const repo = temporaryDirectory('fvs-auto-layout-');
+    fs.cpSync(CRATE, repo, { recursive: true });
+    fs.cpSync(path.join(PROFILE_FIXTURES, 'fresh'), path.join(repo, 'formal'), { recursive: true });
+    git(repo, 'init', '-q');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'fixture');
+    return { repo, lean: path.join(repo, 'formal') };
+  }
+
+  function recordedExtraction(root) {
+    return JSON.parse(fs.readFileSync(stateFile(root), 'utf8')).extraction;
+  }
+
+  it('a crate beside the Lean project in one repository is recorded, bound to the recorded commit', () => {
+    const { repo, lean } = layout();
+    assert.equal(init(lean).code, 'created');
+    const { out, status } = prepared(repo);
+    assert.equal(status, 0);
+    const result = record(lean, out, 0);
+    assert.equal(result.code, 'recorded', JSON.stringify(result));
+    const { extraction } = auto.readState({ projectRoot: lean }).state;
+    assert.equal(extraction.status, 'succeeded');
+    assert.equal(extraction.inputs.crateRoot, repo);
+    assert.equal(extraction.inputs.sourceCommit, git(repo, 'rev-parse', 'HEAD'));
+  });
+
+  it('the revision and uncommitted-change checks still bind a crate outside the Lean root', () => {
+    // Uncommitted extraction inputs fail the record for that reason, not the location.
+    const dirty = layout();
+    init(dirty.lean);
+    fs.appendFileSync(path.join(dirty.repo, 'src', 'lib.rs'), '\n// not committed\n');
+    assert.equal(record(dirty.lean, prepared(dirty.repo, []).out, 0).code, 'extraction-failed');
+    const dirtyReasons = recordedExtraction(dirty.lean).reasons.join('\n');
+    assert.match(dirtyReasons, /uncommitted changes: src\/lib\.rs/);
+    assert.doesNotMatch(dirtyReasons, /outside this project/);
+
+    // A crate at another commit than the recorded revision fails the record.
+    const moved = layout();
+    const first = git(moved.repo, 'rev-parse', 'HEAD');
+    init(moved.lean, { ...CHOICES, source: { revision: first, configuration: 'default features' } });
+    git(moved.repo, 'commit', '-q', '--allow-empty', '-m', 'later');
+    assert.equal(record(moved.lean, prepared(moved.repo, []).out, 0).code, 'extraction-failed');
+    const movedReasons = recordedExtraction(moved.lean).reasons.join('\n');
+    assert.match(movedReasons, new RegExp(`but the recorded revision ${first} is ${first}`));
+    assert.doesNotMatch(movedReasons, /outside this project/);
+  });
+
+  it('a crate in another repository than the Lean project is still refused for its location', () => {
+    const root = project();
+    init(root);
+    const other = project();
+    assert.equal(record(root, prepared(other).out, 0).code, 'extraction-failed');
+    const { reasons, status } = recordedExtraction(root);
+    assert.equal(status, 'failed');
+    assert.match(reasons.join('\n'), new RegExp(`prepared from ${other}, outside this project and its git working tree`));
+  });
+
   it('a failed build is recorded as failure, never as success', () => {
     const root = project();
     init(root);
