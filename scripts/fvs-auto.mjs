@@ -1195,6 +1195,13 @@ const PR_KINDS = ['spec', 'proof'];
 const OWNER_CHANGES = { pruned: 'pruned by owner', 'owner-changed': 'changed by owner in review' };
 const currentSpecRows = (specs) => [...new Map((specs?.specs ?? []).map((row) => [row.specFile, row])).values()];
 const lastPr = (specs, kind) => (specs?.prs ?? []).filter((pr) => pr.kind === kind).at(-1);
+// The owner's change per spec file at the last spec merge; a later review round clears it.
+function ownerChangesOf(specs) {
+  const merge = (specs?.prs ?? []).filter((pr) => pr.kind === 'spec' && pr.merged).at(-1);
+  const rows = new Map(currentSpecRows(specs).map((row) => [row.specFile, row]));
+  return new Map((merge?.ownerChanges ?? []).filter((entry) => rows.get(entry.specFile)?.recordedAt <= merge.recordedAt)
+    .map((entry) => [entry.specFile, entry.change]));
+}
 
 function requireState(root) {
   const state = loadState(root);
@@ -1823,9 +1830,7 @@ export function specStatus({ projectRoot }) {
   const specs = loadSpecs(root);
   const current = new Map();
   for (const row of specs?.specs ?? []) current.set(row.specFile, { row, rounds: (current.get(row.specFile)?.rounds ?? 0) + 1 });
-  // The owner's change at the last spec merge applies until a later review round.
-  const merge = (specs?.prs ?? []).filter((pr) => pr.kind === 'spec' && pr.merged).at(-1);
-  const owner = new Map((merge?.ownerChanges ?? []).map((entry) => [entry.specFile, OWNER_CHANGES[entry.change]]));
+  const owner = ownerChangesOf(specs);
   const specFiles = [...current.values()].map(({ row, rounds }) => {
     let bytes = null;
     try {
@@ -1833,12 +1838,14 @@ export function specStatus({ projectRoot }) {
     } catch {
       // a missing spec file is stale
     }
+    const ownerChange = OWNER_CHANGES[owner.get(row.specFile)] ?? null;
     return { specFile: row.specFile, items: row.items, outOfScope: row.outOfScope.map((id) => ({ id, label: 'out of scope (noted by agent)' })),
-      verdict: row.verdict, round: row.round, label: SPEC_VERDICTS[row.verdict](row.round), rounds, review: row.review,
-      stale: bytes === null || sha256(bytes) !== row.specSha256, missing: bytes === null,
-      ownerChange: row.recordedAt <= merge?.recordedAt ? owner.get(row.specFile) ?? null : null };
+      verdict: row.verdict, round: row.round, label: ownerChange ?? SPEC_VERDICTS[row.verdict](row.round), rounds, review: row.review,
+      stale: bytes === null || sha256(bytes) !== row.specSha256, missing: bytes === null, ownerChange };
   });
-  const readyForPr = specFiles.some((file) => file.verdict === 'pass') && !specFiles.some((file) => file.verdict === 'changes' || file.stale);
+  // A file the owner pruned at the merge never holds a later PR.
+  const live = specFiles.filter((file) => owner.get(file.specFile) !== 'pruned');
+  const readyForPr = live.some((file) => file.verdict === 'pass') && !live.some((file) => file.verdict === 'changes' || file.stale);
   const blocked = specFiles.filter((file) => file.verdict === 'blocked').map((file) => file.specFile);
   return { code: 'ok', message: `${specFiles.length} spec file(s) recorded in ${specsPath(root)}`, specFiles, readyForPr, blocked };
 }
@@ -1865,7 +1872,9 @@ export function recordPr({ projectRoot, kind, url, branch, head, merged = false,
     if (commit === null) {
       warnings.push(`the head ${head} is not a local commit, so the recorded spec files were not compared with it; fetch the PR branch to compare`);
     } else {
-      for (const row of currentSpecRows(loadSpecs(root))) {
+      const specs = loadSpecs(root);
+      const owner = ownerChangesOf(specs);
+      for (const row of currentSpecRows(specs).filter((entry) => owner.get(entry.specFile) !== 'pruned')) {
         const bytes = bytesAt(root, commit, row.specFile);
         if (bytes === null) warnings.push(`${row.specFile} is not in the PR head`);
         else if (sha256(bytes) !== row.specSha256) warnings.push(`${row.specFile} in the PR head differs from the reviewed bytes`);

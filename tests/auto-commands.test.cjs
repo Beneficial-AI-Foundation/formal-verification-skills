@@ -1234,11 +1234,15 @@ describe('spec phase: record-spec and spec-status', () => {
     assert.equal(merge.url, 'https://example.invalid/pr/1', 'the merge names the open PR it closes');
     let view = status(root);
     assert.deepEqual(view.specFiles.map((file) => file.ownerChange), ['changed by owner in review', 'pruned by owner']);
+    assert.deepEqual(view.specFiles.map((file) => file.label), ['changed by owner in review', 'pruned by owner'], 'the owner label is the label shown');
 
     const again = recordSpec(root, 'formal/specs/Specs/Hmac.lean', 'pass', '2');
     assert.equal(again.status, 0);
     view = status(root);
     assert.deepEqual(view.specFiles.map((file) => file.ownerChange), [null, 'pruned by owner'], 'a later review round replaces the owner change');
+    assert.equal(view.specFiles[0].label, 'spec reviewed: pass');
+    assert.equal(view.readyForPr, true, 'a file the owner pruned does not hold a later PR');
+    assert.deepEqual(recordPr(root, 'HEAD').json.warnings, [], 'nor is it compared at a later PR head');
 
     const prs = specsFile(root).prs.length;
     assert.equal(recordMerge(root, 'f'.repeat(40)).json.code, 'invalid-input');
