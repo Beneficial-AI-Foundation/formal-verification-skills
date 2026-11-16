@@ -333,6 +333,89 @@ describe('auto-setup reference: tested matrix', () => {
   });
 });
 
+describe('auto-setup reference: running under Agent Orchestrator and Codex', () => {
+  const topics = ['Permissions and command rules', 'Agent Orchestrator setup', 'Codex trust', 'Owner-run steps',
+    'Starting a run with /goal', 'Reports, links and owner questions', 'Reading the primary checkout safely'];
+
+  it('has one section for each setup topic, before the tested matrix', () => {
+    const at = topics.map((topic) => raw.indexOf(`\n## ${topic}\n`));
+    assert.ok(at.every((index, i) => index >= 0 && index < raw.indexOf('\n## Tested matrix') && (i === 0 || index > at[i - 1])),
+      `sections in order: ${at}`);
+  });
+
+  it('keeps the command habits for every worker and the wildcard-rule warning', () => {
+    const text = flat(section(raw, 'Permissions and command rules'));
+    assert.match(text, /One simple command per call, for every worker/);
+    assert.match(text, /no `cd` followed by a command/);
+    assert.match(text, /words inside quoted text/);
+    assert.match(text, /an ask rule takes precedence over an allow rule/);
+    assert.match(text, /Describe commands in words/);
+    assert.match(text, /about 30 minutes/);
+    assert.match(text, /needs a twin for the rewritten form/);
+  });
+
+  it('names the personal command-rewriting tool only inside its optional note', () => {
+    const outside = raw.split('\n').filter((line) => /\brtk\b/i.test(line));
+    assert.equal(outside.length, 1, 'RTK appears once');
+    assert.match(flat(section(raw, 'Permissions and command rules')), /\(optional note\)[^]*RTK is one such tool/);
+  });
+
+  it('says why a linked .claude folder does not work, as the permission helper itself checks', () => {
+    const helper = fs.readFileSync(path.join(ROOT, 'scripts', 'fvs-auto-actor-permissions.py'), 'utf8');
+    assert.ok(helper.includes('actor .claude is not a real directory'), 'the helper no longer refuses a linked .claude');
+    const text = flat(section(raw, 'Agent Orchestrator setup'));
+    assert.match(text, /refuses a `\.claude` that is a link/);
+    assert.match(text, /Never share one settings file between actors/);
+    assert.match(text, /Both are untested/);
+  });
+
+  it('warns that a full config replacement drops what it does not name, and ties the model rule to the config', () => {
+    const text = flat(section(raw, 'Agent Orchestrator setup'));
+    assert.match(text, /`--config-json` is different: it replaces the whole config/);
+    assert.match(text, /Read the saved config first, change one field, send the whole object back/);
+    assert.match(text, /Model aliases: writer = <model id>/);
+    assert.match(text, /FVS names no model/);
+    assert.match(text, /separate from FVS's own model settings \(`\/fvs:configure`, `model-profiles\.md`\)/);
+    assert.ok(fs.existsSync(path.join(ROOT, 'fv-skills', 'references', 'model-profiles.md')));
+  });
+
+  it('says rule changes reach only later sessions, and how a live session re-reads them', () => {
+    const text = flat(section(raw, 'Agent Orchestrator setup'));
+    assert.match(text, /Rule changes reach only sessions that start afterwards/);
+    assert.match(text, /message every live session/);
+    assert.match(text, /re-read them with `ao project get <id> --json`/);
+  });
+
+  it('marks the Codex facts as seen in one setup and gives the model-free check', () => {
+    const text = flat(section(raw, 'Codex trust'));
+    assert.match(text, /seen in one setup; re-check it on your version/);
+    assert.match(text, /`trust_level = "trusted"`/);
+    assert.match(text, /`trusted_hash`/);
+    assert.match(text, /`codex debug prompt-input`/);
+  });
+
+  it('names the owner-run steps and points the agreement to the helper and the seat page', () => {
+    const text = flat(section(raw, 'Owner-run steps'));
+    assert.match(text, /`auto-seats\.md`/);
+    assert.match(text, /`fvs-auto-agreement\.mjs`/);
+    assert.match(text, /The helper never records anything/);
+    assert.ok(fs.existsSync(path.join(ROOT, 'scripts', 'fvs-auto-agreement.mjs')));
+  });
+
+  it('gives a goal wording that accepts an owner gate as done', () => {
+    const text = flat(section(raw, 'Starting a run with /goal'));
+    assert.match(text, /\/goal Run the auto track under the current agreement until the first checked proof\. Reaching an owner gate, reported once in plain chat, counts as done for now\./);
+    assert.match(text, /say so once in plain chat and stop/);
+  });
+
+  it('follows an app-only link with the plain absolute path and asks owner questions in plain words', () => {
+    const text = flat(section(raw, 'Reports, links and owner questions'));
+    assert.match(text, /always followed by the plain absolute path/);
+    assert.match(text, /what happens next, what it costs and what stays blocked/);
+    assert.match(text, /recommended, with a one-line reason/);
+  });
+});
+
 describe('README pointer', () => {
   it('links the setup reference', () => {
     const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');

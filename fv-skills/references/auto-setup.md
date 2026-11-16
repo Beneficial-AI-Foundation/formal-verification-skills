@@ -3,7 +3,11 @@
 How to get from a clean host to a recorded auto-init state when you are new to functional-correctness
 verification: what you install yourself, how to check each tool, what each compatibility verdict means
 and what the single next step is, how to keep `.formalising/` out of git, and which operation, tuple
-and platforms have a recorded run. The guide separates explicit owner-run FVS setup from read-only
+and platforms have a recorded run. It also covers running the auto track under Agent Orchestrator and
+Codex: permission and command habits that keep a run from stalling, worktrees and per-worktree installs,
+the project config and the model rule, Codex trust, which steps only the owner runs, a `/goal` wording
+that accepts an owner gate as done, rule changes reaching live sessions, and how reports link
+artifacts. The guide separates explicit owner-run FVS setup from read-only
 prerequisite checks and makes no claim beyond the tested matrix at the end. `TESTED_TUPLES` in `scripts/fvs-probe-inventory.mjs` is the authority; the
 matrix mirrors it and a test keeps the two in step.
 
@@ -61,7 +65,7 @@ extraction and a full pilot are separate from preparing this installation.
 4. **Verify every actor installation.** Reload/start the normal session when the owner is ready.
    Read its installed version and manifest, compare the actual scripts to the selected source, and
    check role/tool access from that actor. Repeat for each AO worker worktree: ignored local installs
-   do not propagate through Git. Keep one fixed trusted engine identity across the run. Local shell
+   do not propagate through Git ("Agent Orchestrator setup" below covers worktree installs). Keep one fixed trusted engine identity across the run. Local shell
    paths resolve to the selected installation even from a nested cwd; plugin resources remain rooted
    at the plugin, and Pi resolves package-relative resources from its skill directory.
    For Claude's Lean MCP tools, the project `.mcp.json` server key must be `lean-lsp`
@@ -144,7 +148,8 @@ Known rc1 issues, untested in v2:
 Controller permissions in auto mode:
 - Before the run, the owner approves the controller's commands in the controller's own session. These are
   the FVS driver/CLI, `ao`, `git` and the pinned Lean tools. FVS changes no permission settings.
-  `auto-seats.md` says which seat (owner, orchestrator or worker) runs each operation.
+  `auto-seats.md` says which seat (owner, orchestrator or worker) runs each operation. "Permissions and
+  command rules" below gives the general habits for every session.
 - Run one simple, auditable command per step: one driver or CLI operation with its `--input` file, one
   `ao` call or one `git` call. Compound commands (`&&`, `;`, pipes, `cd` plus a command, subshells) can
   trigger a permission prompt, and an unattended prompt may be aborted.
@@ -298,6 +303,155 @@ The second command prints the rule that matches; no output means the path is not
 rule does not untrack files already committed: if `git ls-files .formalising/` lists anything, remove
 it from the index yourself with `git rm -r --cached .formalising/`. Use `.gitignore` instead only if
 your team agrees to share the rule.
+
+## Permissions and command rules
+
+These habits apply to every session in a run: the owner's, the orchestrator's and each worker's. FVS
+changes no permission settings. The habits keep a run from stalling on a prompt nobody answers. The
+FVS-specific part, what the controller needs approved and how to treat a denied or aborted command, is
+in "Controller permissions in auto mode" above.
+
+- **One simple command per call, for every worker.** No `;`, `&&`, `||`, pipes or subshells, and no `cd`
+  followed by a command. Use `git -C <path> status` rather than changing directory first. Compound
+  commands are the ones a permission layer most often stops.
+- **Describe commands in words when you write to another session.** A rule that asks before any command
+  starting with a wildcard can match words inside quoted text, such as the message of `ao send`. If that
+  message mentions a delete, a download or a version-control command, the host may prompt although
+  nothing runs it. An allow rule for `ao *` does not help, because an ask rule takes precedence over an
+  allow rule. Say what should happen in plain words ("remove the file", "fetch the branch"), and call
+  `ao` itself directly, not through a wrapper. `ao send` has no option to read its message from a file.
+- **Keep scratch work inside the worktree and plain.** Do not delete or move files, and avoid commands
+  that wait for an answer. Read pull requests with `gh pr view` and `gh pr diff` rather than `gh api`.
+- **A prompt nobody answers is aborted.** In one setup, permission prompts and dialogs left unanswered
+  were each aborted after about 30 minutes ("Tool use aborted"), five times in a row, and the run
+  stalled. The time and wording may differ on your version. An abort is an uncertain outcome, not a
+  refusal: treat it as the uncertain-effect case above. Before you leave a run unattended, approve the
+  commands each seat needs, or choose the host's permission mode on purpose.
+- **A command-rewriting hook changes what a rule sees (optional note).** Some setups install a hook that
+  rewrites every shell command, for example to shorten its output; RTK is one such tool. The permission
+  layer then sees the rewritten command. An allow rule written for the original form, such as `ao *`,
+  no longer covers it, and every ask rule anchored on the start of a command needs a twin for the
+  rewritten form. Such hooks have also been seen cutting JSON output short, which breaks any step that
+  parses it. If a result looks cut off, exempt that command from the hook or switch the hook off for
+  the run.
+
+## Agent Orchestrator setup
+
+Stock Agent Orchestrator (AO) needs nothing from FVS except the `ao` command, which the profile checks.
+The settings below belong to AO and to your project. Run `ao <command> --help` on your version: it is
+the authority, and this section can lag behind it.
+
+**Worktrees.** Every worker runs in its own linked git worktree. Ignored local files do not follow it: a
+project-level FVS install (the `.claude` or `.codex` folder), `.formalising/` and local settings live
+only in the checkout where they were made. Choose one route per runtime and keep one trusted engine
+identity for the whole run:
+- Install FVS in each worker worktree once the worktree exists, repeating the exact-source steps above.
+- Or install FVS once for your user account (`bin/install.js` with `--global`) so every worktree finds
+  the same scripts.
+
+The Claude actor permission helper, `fvs-auto-actor-permissions.py`, writes each actor's rules to a real
+`.claude/settings.local.json` inside that actor's own worktree and refuses a `.claude` that is a link. So
+do not point AO's `--symlink` option at `.claude`. Never share one settings file between actors: one
+actor's grants would become every actor's. A real per-worktree `.claude` folder whose FVS subfolders
+link to a shared install is a candidate, and AO's `--post-create` option (a command that runs after each
+workspace is created) could build it. Both are untested.
+
+AO rewrites `.claude/settings.local.json` when a worker starts. After a start, read the merged rules the
+worker really has (in Claude Code, the `/permissions` view) before you rely on them. Whether FVS's actor
+rules survive that rewrite is untested. Rules held in a `.claude` folder that is a link also wait until
+that folder is trusted.
+
+**Project config.** `ao project set-config <id>` changes only the fields whose flags you pass:
+`--agent-rules` or `--agent-rules-file` (standing instructions for workers), `--orchestrator-rules` or
+`--orchestrator-rules-file` (the same for the orchestrator; a rules file is a path inside the repository),
+`--model`, `--permission` (`default`, `accept-edits`, `auto` or `bypass-permissions`), `--worker-agent`,
+`--orchestrator-agent`, `--env`, `--symlink`, `--post-create` and `--pre-remove`. `ao project get <id>
+--json` prints what is saved. `--config-json` is different: it replaces the whole config, and a key it
+does not know is ignored without a message, so a typo can leave the config nearly empty. Read the saved
+config first, change one field, send the whole object back, and read it again.
+
+**Model aliases and the model rule.** Put short aliases and one rule into the project's standing rules, so
+every session picks models the same way: which job, which model, which effort. A shape to adapt:
+
+```text
+Model aliases: writer = <model id>; deep-review = <model id>; quick-review = <model id>.
+Rule: start implementation workers with writer at <effort>. Start a hard review with deep-review at
+<effort> and an easy review with quick-review at <effort>. A reviewer is never the model that wrote
+the work it reviews.
+```
+
+FVS names no model: use ids and efforts your harness offers. `--model <id>` sets the project default and
+`ao spawn --model <id>` overrides it for one session. A reasoning effort has no field flag of its own: it
+sits in the agent's `agentConfig` and needs `--config-json`, with the warning above. This is separate from
+FVS's own model settings (`/fvs:configure`, `model-profiles.md`), which choose models for FVS's stages.
+
+**Rule changes reach only sessions that start afterwards.** AO resolves the config when a session
+spawns, and a session reads its rules once, at its start. After you change rules, message every live
+session in plain words that the rules changed and that it should re-read them with `ao project get <id>
+--json`, or restart it. A session re-reads the saved rules the same way when it resumes and after its
+context is compacted.
+
+## Codex trust
+
+This applies when a seat runs Codex. What follows was seen in one setup; re-check it on your version.
+- Skills load without trust. A project-level `.codex` install (its config and hooks) loads only when the
+  project's exact path is trusted in `~/.codex/config.toml`: a `[projects."<absolute path>"]` table with
+  `trust_level = "trusted"`. The owner makes that edit; FVS never writes it.
+- An AO worktree resolves to its main repository root for this purpose, so one entry covers every
+  worktree of the project. A parent folder does not pass trust to a child path, there is no wildcard
+  form, and the `-c` command-line option cannot grant trust.
+- A project hook also needs its own trusted hash: a
+  `[hooks.state."<clone>/.codex/hooks.json:session_start:0:0"]` table holding `trusted_hash`. A reinstall
+  at another path changes both the key and the hash, so trust it again after any move.
+- Check without a model call: `codex debug prompt-input` prints what a session would load.
+
+## Owner-run steps
+
+Some steps belong to the owner alone. The owner types them in a terminal of their own; an orchestrator or
+worker only prepares them or hands over the exact command. `auto-seats.md` lists every operation by seat.
+- Installing FVS in a scope, and installing the prerequisites.
+- Changing host trust or permissions: the Codex trust entry, the project's AO config
+  (`ao project set-config`), a permission mode.
+- Recording the scope agreement. The orchestrator drafts it with `fvs-auto-agreement.mjs`, which prints
+  the fence, its digest and the one record command. The owner compares the digest with what they
+  approved, then runs that command. A later agreement for a changed scope needs the overwrite
+  confirmation, which is owner-run as well: in one setup the host's permission classifier refused it from
+  the orchestrator, and the owner ran it. The helper never records anything.
+- The final decision on a pull request.
+
+If the owner explicitly delegates one of these steps to a session, that session writes the delegation and
+the step it covers into its report.
+
+## Starting a run with /goal
+
+In Claude Code, `/goal` keeps a session working until a condition holds. An owner gate, such as waiting
+for the owner to record the agreement, means the session cannot finish on its own. A goal that does not
+accept the gate as done keeps the stop hook from ending the turn: in one setup the session sent nine
+near-identical messages and then hit the cap of nine, twice. Use wording that accepts the gate:
+
+```text
+/goal Run the auto track under the current agreement until the first checked proof. Reaching an owner
+gate, reported once in plain chat, counts as done for now.
+```
+
+Add a standing rule next to it: at an owner gate, say so once in plain chat and stop. If the session has
+already started repeating itself, clear the goal and set it again with this wording.
+
+## Reports, links and owner questions
+
+- **Links and paths.** A link that only one app opens, for example an in-app `ao://` link, is always
+  followed by the plain absolute path of the file it points to. Every report and every next action that
+  points to an artifact gives that path.
+- **Owner questions in plain words.** Offer a short menu and leave room for free text. Each option says
+  what happens next, what it costs and what stays blocked. Mark one option as recommended, with a
+  one-line reason.
+
+## Reading the primary checkout safely
+
+While a run is going, look at the primary checkout through a read-only worktree at the same commit
+rather than opening it in an editor. An editor's Rust language server can re-resolve `Cargo.lock` and
+silently change an extraction input. Making Cargo fail instead of changing the lock file (its
+`--locked` option) is an idea, not a tested rule: FVS has not checked that the extraction tools accept it.
 
 ## Tested matrix
 
