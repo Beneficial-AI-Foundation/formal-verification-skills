@@ -19,6 +19,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
+require('./helpers/ensure-hooks-dist.cjs')();
 const INSTALLER = path.join(ROOT, 'bin', 'install.js');
 
 const tempDirs = [];

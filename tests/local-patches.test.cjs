@@ -10,6 +10,7 @@ const {
   saveLocalPatches,
   writeManifest,
 } = require('../bin/install.js');
+require('./helpers/ensure-hooks-dist.cjs')();
 
 test('updates preserve additions, tracked edits, legacy orphans and earlier complete bundles', () => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-patches-')));

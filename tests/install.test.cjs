@@ -9,6 +9,7 @@ const path = require('path');
 const { execFileSync, spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
+require('./helpers/ensure-hooks-dist.cjs')();
 const COMMAND_COUNT = fs.readdirSync(path.join(ROOT, 'commands/fvs')).filter(name => name.endsWith('.md')).length;
 const INSTALLER = path.join(ROOT, 'bin', 'install.js');
 

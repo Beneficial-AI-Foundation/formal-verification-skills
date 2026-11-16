@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
+require('./helpers/ensure-hooks-dist.cjs')();
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-script-paths-'));
 after(() => fs.rmSync(temporary, { recursive: true, force: true }));
 const envFor = home => ({
