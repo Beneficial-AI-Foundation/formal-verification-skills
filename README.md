@@ -119,7 +119,47 @@ for selection rules and runtime limitations.
 
 ## Workflows
 
-[A typical FVS project](docs/workflow.md) walks through a whole project and where FVS stops for you.
+`/fvs:ask-baif` picks the next move. [A typical FVS project](docs/workflow.md) explains each step.
+
+```mermaid
+---
+title: Functional correctness
+---
+flowchart TD
+  extract["/fvs:aeneas-extract<br/>(optional)"] -.-> roadmap["/fvs:roadmap"]
+  roadmap --> setup["/fvs:issues-setup<br/>(once)"]
+  setup --> issues["/fvs:to-issues"]
+  issues -.-> map["/fvs:map-code<br/>/fvs:fc-plan<br/>(optional)"]
+  map -.-> ask
+  issues --> ask{"/fvs:ask-baif"}
+  ask --> specify["/fvs:lean-specify"]
+  specify --> review["/fvs:lean-spec-review<br/>(automatic)"]
+  review --> verify["/fvs:lean-verify"]
+  verify --> fin{"Roadmap<br/>finished?"}
+  fin -- "no" --> ask
+  fin -- "yes" --> done["Done"]
+  configure["/fvs:configure<br/>models and effort"]
+  loop["/fvs:loop-me-in<br/>(any time; --final at the end)"]
+```
+
+```mermaid
+---
+title: Crypto formalisation
+---
+flowchart TD
+  roadmap["/fvs:roadmap"] --> setup["/fvs:issues-setup<br/>(once)"]
+  setup --> issues["/fvs:to-issues"]
+  issues --> ask{"/fvs:ask-baif"}
+  ask --> plan["/fvs:crypto-plan<br/>(one issue)"]
+  plan --> review["/fvs:crypto-review<br/>(automatic)"]
+  review --> exec["/fvs:crypto-execute"]
+  exec --> eval["/fvs:crypto-eval<br/>(optional)"]
+  eval --> fin{"Roadmap<br/>finished?"}
+  fin -- "no" --> ask
+  fin -- "yes" --> done["Done"]
+  configure["/fvs:configure<br/>models and effort"]
+  loop["/fvs:loop-me-in<br/>(any time; --final at the end)"]
+```
 
 ### Functional correctness
 
