@@ -882,7 +882,8 @@ describe('auto command and workflow text', () => {
     assert.match(body, /Routine Status log appends outside the fence/);
     assert.match(body, /there is no per-round human contract approval/);
     assert.match(body, /Final PR acceptance remains human/);
-    assert.match(body, /public-api[\s\S]*unsupported until the separately permitted Rust visibility join lands/);
+    assert.match(body, /`public-api`\s+mode is not supported in this release: report that refusal without retrying it/);
+    assert.ok(!/visibility join|separately permitted|ticket11/.test(body), 'the public-API sentence names no landing condition');
     assert.match(body, /Agreement storage alone launches no workers/);
     assert.match(body, /Without that complete opt-in context[\s\S]*stop/);
     assert.match(body, /fv-skills\/references\/auto-transitions\.md/);

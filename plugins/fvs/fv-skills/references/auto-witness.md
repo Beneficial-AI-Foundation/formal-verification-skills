@@ -4,8 +4,8 @@
 The graph reader keeps extraction facts separate from project setup. This is a bounded interface
 for the qualified Lean 4.31 constants-v2/probe-lean lane; no new extraction or proof is implied.
 That lane is the one tested route. Without probe-lean no Lean graph is built: setup and extraction
-still go on, but the closure plan is degraded and the spec and proof stages have no route (see
-`auto-top-specs.md` and `auto-setup.md`).
+still go on, but the closure plan is degraded; `auto-setup.md` ("Probes and stage lines") says what the
+stages need.
 </overview>
 
 `fvs-lean-graph.mjs ... --extraction-state ORIGINAL_STATE.json` reads the raw original state outside

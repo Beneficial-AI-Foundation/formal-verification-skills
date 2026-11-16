@@ -75,8 +75,8 @@ Synthesize the repository facts and applicable decisions from sources first. Use
 `/fvs:roadmap .formalising/auto-fv/ROADMAP.md <the project goal>` with its existing light/deep/reuse
 route. Initial scope is whatever the owner actually agrees, kept distinct from discovered roots;
 there is no automatic public-API or natural-language scope classifier here. An explicit `public-api`
-mode is unsupported until the separately permitted Rust visibility join lands: report that held branch without
-retrying it. Nonpublic intent can proceed independently, without top-level specifications.
+mode is not supported in this release: report that refusal without retrying it. Nonpublic intent can
+proceed independently, without top-level specifications.
 
 Record only missing owner choices, using the current applicable evidence for known ones:
 

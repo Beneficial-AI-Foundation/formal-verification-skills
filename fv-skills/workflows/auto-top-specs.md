@@ -23,8 +23,8 @@ Without this context retain the standalone read-only report below.
    producers under those grants. Run `fvs-closure-plan.mjs plan --identity ... --graph ... --roots ...`
    for the actual same-extraction IDs corresponding to the agreed targets. Retain the full
    applicability/omission inventory and all unsupported groups; no name-only or public-API classifier.
-   **Probes unavailable.** No probe is needed for setup or extraction, but this stage needs them
-   all (see `auto-setup.md`). Read the `auto-top-specs` stage line of the profile first: `no route`
+   **Probes unavailable.** No probe is needed for setup or extraction. Read the `auto-top-specs` stage
+   line of the profile first (`auto-setup.md`, "Probes and stage lines", says what each line means): it
    names what is missing and who supplies it. The plan command still records the loss. Run without
    `--graph` when no dependency graph can be built. A plan made without a graph, or from an identity
    record that rests on `translation.json` alone, is degraded and exits 9 (a blocked identity record

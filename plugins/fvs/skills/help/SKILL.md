@@ -216,9 +216,9 @@ With complete authorized v2 controller context, run the production driver throug
 and review, then bottom-up proof/checker acceptance. Agreement, profile, memory, invocation and
 currentness gates still apply; v2 alone grants no dispatch permission. Legacy/read-only or missing-grant
 routes report the recorded continuation and stop. Final human review and partial reporting remain.
-Both stages need `ao`, Lean and all five probes (probe-aeneas, probe-rust, scip, rust-analyzer and
-probe-lean). The `stages:` lines of the profile say `no route here`, what is missing and who supplies
-it; a closure plan made without the probe output is degraded and no review or proof starts from it.
+The `stages:` lines of the profile say whether each stage has a route and what is missing (the
+`auto-setup.md` reference, "Probes and stage lines", explains them); a closure plan made without the
+probe output is degraded and no review or proof starts from it.
 
 ### Context (`/fvs:context`)
 

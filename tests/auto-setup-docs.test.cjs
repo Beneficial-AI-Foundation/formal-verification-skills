@@ -440,6 +440,70 @@ describe('auto-setup reference: running under Agent Orchestrator and Codex', () 
   });
 });
 
+describe('auto-setup reference: probe statuses and stage lines', () => {
+  const rowFor = (heading, key) => {
+    const row = section(raw, heading).split('\n').find((line) => line.startsWith(`| \`${key}\` |`));
+    assert.ok(row, `row ${key}`);
+    return flat(row);
+  };
+
+  it('names every probe status as a row', () => {
+    for (const status of ['qualified', 'present-unqualified', 'unverified-blocked', 'missing', 'not-checked']) {
+      rowFor('Probes and stage lines', status);
+    }
+  });
+
+  it('says when a probe is unverified-blocked and which probe-lean version stays blocked', () => {
+    const row = rowFor('Probes and stage lines', 'unverified-blocked');
+    assert.match(row, /its `--version` run fails/);
+    assert.match(row, /`probe-lean` at a version the Lean graph step refuses/);
+    assert.match(row, /has no route here until you replace it/);
+    assert.match(row, /accepts `probe-lean` 0\.14\.0/);
+    assert.match(row, /0\.24\.0 is accepted by the Lean graph step only beside a version 2 Lean constants record/);
+    assert.match(row, /prints `unverified-blocked` for 0\.24\.0/);
+  });
+
+  it('says not-checked covers a host with no read-only confinement', () => {
+    const row = rowFor('Probes and stage lines', 'not-checked');
+    assert.match(row, /no read-only confinement on this host to run the `--version` check in/);
+    assert.match(row, /has no route here until the check can run/);
+  });
+
+  it('reads the provenance disagreement as a warning that the next step only clears', () => {
+    const row = flat(raw.split('\n').find((line) => line.startsWith('| `translation.json`, `lake-manifest.json` and `aeneas-config.yml` disagree')));
+    assert.match(row, /\(a warning: the run goes on\)/);
+    assert.match(row, /Nothing here blocks the run: To clear the provenance warning: Regenerate the extraction so/);
+    assert.doesNotMatch(row, /unblock/i);
+  });
+
+  it('keeps the statement that a stage has no route without a probe in the stage-readiness section only', () => {
+    const own = section(raw, 'Probes and stage lines');
+    assert.match(flat(own), /The stages `auto-top-specs` and `auto-execute` each need `ao`, `lean` and all five probes/);
+    assert.match(rowFor('Probes and stage lines', 'no route here'), /a probe is missing, not checked or blocked/);
+    assert.ok(!raw.replace(own, '').includes('no route here'), 'auto-setup.md says it outside its own stage-readiness section');
+    const others = [
+      path.join('fv-skills', 'workflows', 'auto-top-specs.md'),
+      path.join('fv-skills', 'workflows', 'auto-init.md'),
+      path.join('fv-skills', 'references', 'auto-witness.md'),
+      path.join('fv-skills', 'references', 'auto-resume.md'),
+      path.join('fv-skills', 'references', 'auto-transitions.md'),
+      path.join('commands', 'fvs', 'help.md'),
+      path.join('commands', 'fvs', 'auto-init.md'),
+    ];
+    for (const file of others) {
+      const text = flat(fs.readFileSync(path.join(ROOT, file), 'utf8'));
+      assert.doesNotMatch(text, /no route here|has no route|all five probes/, `${file} restates the stage-readiness rule`);
+    }
+    for (const file of others.slice(0, 3).concat(others[5])) {
+      assert.match(flat(fs.readFileSync(path.join(ROOT, file), 'utf8')), /auto-setup\.md|Probes and stage lines/, `${file} points to the stage-readiness section`);
+    }
+  });
+
+  it('does not quote the engine messages it describes', () => {
+    assert.doesNotMatch(flat(section(raw, 'Probes and stage lines')), /Optional|nothing stops without it|degraded route/);
+  });
+});
+
 describe('README pointer', () => {
   it('links the setup reference', () => {
     const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');

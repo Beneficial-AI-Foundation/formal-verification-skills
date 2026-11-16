@@ -249,8 +249,8 @@ Ordinary standalone commands retain their own interactive routes.
 The initial roadmap agreement is the setup human gate. Reuse existing answers and grants.
 Later author/review/revise/proof cycles are autonomous within them; final PR acceptance stays
 human. Missing operational context, unsupported shape, profile or capability is a named partial
-condition, not another scope interview. Public-API mode remains unsupported until the Rust visibility join lands; this
-nonpublic route does not waive that hold. Worktrees and instruction acknowledgements are not
+condition, not another scope interview. Public-API mode is not supported in this release; this
+nonpublic route does not change that. Worktrees and instruction acknowledgements are not
 OS security or suspension boundaries.
 
 ## Controller loop

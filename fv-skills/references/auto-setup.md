@@ -193,7 +193,7 @@ example above is an explicit owner-run step after permission for its local write
 | Rust toolchain | https://rustup.rs | `rustup --version`, `cargo --version`, `rustc -vV` | `cargo` and `rustc` on PATH, any `rust-toolchain` pin, and `rustc -vV` run in the crate directory, where a pinned toolchain applies. |
 | Lean through elan | https://github.com/leanprover/elan | `elan --version`, `lake --version` | `lean-toolchain`, a `lakefile.toml` or `lakefile.lean`, and `lake --version` run in the project root. |
 | Aeneas and Charon | https://github.com/AeneasVerif/aeneas/releases | `aeneas -version`, `charon version` | The Aeneas revision your project pins, and the `aeneas` and `charon` executables for this host. |
-| probe-aeneas | https://github.com/Beneficial-AI-Foundation/probe-aeneas/releases | `probe-aeneas --version` | Only after an extraction exists; judged together with the helpers below. Not needed for setup or extraction; the spec and proof stages need it. |
+| probe-aeneas | https://github.com/Beneficial-AI-Foundation/probe-aeneas/releases | `probe-aeneas --version` | Only after an extraction exists; judged together with the helpers below. Not needed for setup or extraction; "Probes and stage lines" below says what needs it. |
 
 Aeneas and Charon come in one release archive per CPU and OS (asset names look like
 `aeneas-macos-aarch64.tar.gz`). It holds `aeneas`, `charon`, `charon-driver`, a `rust-toolchain` file and
@@ -267,7 +267,7 @@ lines" below explains them.
 | `available-but-unverified` | Present, but no recorded FVS run covers it. The reason says exactly why. This is not a failure. A reason that starts with `warning:` (pins that contradict each other, or a Charon or Lean that contradicts a tested Aeneas revision) is also this verdict and never stops setup. |
 | `incompatible` | A concrete mismatch. Only the `probe` item prints it, and it never stops setup. Either `translation.json` records an Aeneas revision that was tested with a different Charon or Lean, or the project is on a tested tuple and probe-aeneas or one of its helpers is at a different version than the tested one, or this host cannot confine the run. Being absent from the tested list is never enough. |
 | `missing` | A component is actually absent. For `ao`, `rust`, `lean` and `aeneas` this stops `/fvs:auto-init`. A missing `probe` is only noted, because no probe is needed for setup or extraction. |
-| `unsupported-platform` | This host's target has no recorded confined run, or no official probe-aeneas asset. Setup and extraction go on here. Without the probes the spec and proof stages have no route here, and the stage lines say so. |
+| `unsupported-platform` | This host's target has no recorded confined run, or no official probe-aeneas asset. Setup and extraction go on here. "Probes and stage lines" below says what the stages then need. |
 | `not-extracted-yet` | The expected state of a fresh project: no `translation.json` and no Aeneas-generated Lean file yet. This is not a failure. |
 
 The single next step is the `next:` line. These are printed verbatim; where the profile adds a lead-in
@@ -283,7 +283,7 @@ or a second sentence, the cell shows it:
 | `lake` is not on PATH | `lean` | Install elan (https://github.com/leanprover/elan); it provides lake and the pinned Lean toolchain. |
 | The Lake version could not be checked on this host | `lean` | Run lake --version in the project root yourself to confirm the pinned toolchain. |
 | No Aeneas requirement in the project | `aeneas` | Require the Aeneas Lean backend in lakefile.toml ([[require]] name = "aeneas" with a pinned rev). |
-| `translation.json`, `lake-manifest.json` and `aeneas-config.yml` disagree (a warning, not a stop) | `aeneas` | The usual step for the verdict, then: To clear the provenance warning: Regenerate the extraction so translation.json, lake-manifest.json and aeneas-config.yml agree, then rerun the profile. |
+| `translation.json`, `lake-manifest.json` and `aeneas-config.yml` disagree (a warning: the run goes on) | `aeneas` | The usual step for the verdict, then the sentence that only clears the warning. Nothing here blocks the run: To clear the provenance warning: Regenerate the extraction so translation.json, lake-manifest.json and aeneas-config.yml agree, then rerun the profile. |
 | Charon or Lean contradicts a tested Aeneas revision (a warning, not a stop) | `aeneas` | None required; the tuple is recorded as evidence, not a gate. To match the tested tuple instead: Install the Charon and Lean versions this Aeneas revision was tested with, or move to another Aeneas revision. |
 | The installed toolchain matches no tested tuple | `aeneas` | None required to extract; results with this tuple stay unverified until a confined run is recorded for it. |
 | The project has not been extracted | `probe` | Extract the crate with the shared aeneas-extract workflow (/fvs:aeneas-extract), then rerun the profile. |
@@ -294,8 +294,8 @@ Aeneas and Charon for the pinned revision under `.aeneas/releases/<rev>/<platfor
 above for a missing or drifted probe-aeneas or helper. On an `unsupported-platform` host, setup and
 extraction go on, and a host with recorded confined-run evidence can also run the confined probe
 inventory. Every `probe` step except the one for a project that is not extracted yet, and the `host`
-step on an `unsupported-platform` host, starts with "Not needed for setup or extraction:", because the
-probes are optional until the spec and proof stages. For an untested tuple the
+step on an `unsupported-platform` host, starts with "Not needed for setup or extraction:", because no
+probe is needed for setup or extraction. For an untested tuple the
 `probe` step describes how to qualify it: run probe-aeneas confined against your project with its own
 Aeneas, Charon and Lean, record the envelope, helper versions and platform, and add the tuple to
 `TESTED_TUPLES` in a reviewed change. Until then it stays `available-but-unverified`.
@@ -320,9 +320,9 @@ Each probe has one status in the `probes:` list:
 |---|---|
 | `qualified` | The resolver checked it for the exact tested tuple of this project. |
 | `present-unqualified` | Found, and it answers `--version`, but no tested tuple covers this project. Its output is used and labelled unverified. |
-| `unverified-blocked` | Found, but no stage can use its output: it does not answer `--version`, or it is a `probe-lean` at a version the Lean graph step refuses. The reason is printed. |
+| `unverified-blocked` | Found, but no stage can use its output: its `--version` run fails, or it is a `probe-lean` at a version the Lean graph step refuses. A stage that needs it has no route here until you replace it with one this engine accepts. The reason is printed. The profile accepts `probe-lean` 0.14.0. Version 0.24.0 is accepted by the Lean graph step only beside a version 2 Lean constants record, and the profile does not look for that record, so it prints `unverified-blocked` for 0.24.0. |
 | `missing` | Not found. A `rust-analyzer` that is only the rustup proxy and fails to run counts as missing. |
-| `not-checked` | The check did not run, and the reason is printed: an unreadable `lean-toolchain`, a refused path override, or no confinement on this host. |
+| `not-checked` | The check did not run, and the reason is printed: an unreadable `lean-toolchain`, a refused path override, or no read-only confinement on this host to run the `--version` check in. A stage that needs it has no route here until the check can run. |
 
 The stages `auto-top-specs` and `auto-execute` each need `ao`, `lean` and all five probes. The AO
 controller starts spec, review and proof work only on a closure plan the contract registry accepts. That

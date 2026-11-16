@@ -25,7 +25,7 @@ authorize a public re-specification run.
 
 Read the actual owner response and current canonical scope, claims, trust, conventions and reserved
 decisions. Apply the agreement workflow's applicability check as well as `read-state --require-agreement`.
-Preserve current grants; null execution/publication remains ungranted. Public-API mode stays held until the Rust visibility join lands.
+Preserve current grants; null execution/publication remains ungranted. Public-API mode is not supported in this release.
 
 The caller prepares and retains this closed JSON, using actual selected context. Schema examples are
 not answers, grants, identities or evidence. Missing context is an explicit partial condition.
