@@ -95,6 +95,13 @@ patch list is a mixed state the engine refuses.
   `translation-patches/`, append its name to `series`, and run the `check` the prompt gives you;
   a refusal means remove the patch and its `series` line and report ERROR. The prompt carries the
   header fields and the authoring recipe.
+- When the prompt dispatches you as the patch WRITER for a review, the patch is not installed yet:
+  author it in a scratch directory and stage it only at the path the prompt names, and leave
+  `translation-patches/` and `series` alone. Keep it line-preserving: the change sits on an existing
+  line, or each hunk keeps its line count, so no other line of the file moves (an import goes on an
+  existing `use` line or becomes a full path at its use site; an attribute goes on the existing
+  line). The prompt gives you the check command. If no line-preserving patch clears the blocker, say
+  so and stop; do not force one, because a gap no patch can fix goes to the owner as a boundary.
 - Every other recipe (`namespace-cascade`, `refresh-manifest`, an axiom-signature port, a
   `tweaks-substitution`, any edit to hand-authored Lean or project config) stays an ordinary edit
   and writes neither a patch nor a ledger entry.

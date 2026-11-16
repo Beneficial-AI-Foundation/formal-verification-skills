@@ -82,6 +82,9 @@ Record only missing owner choices, using the current applicable evidence for kno
 
 - source revision and configuration/features (prefer an exact full commit; moving refs are not immutable);
 - initial scope, boundaries, conventions and single-crate/monorepo layout;
+- the observer set, named once: what a caller or user of the target can see and therefore must not be
+  able to tell apart after a source patch (return values, errors as callers match them, external
+  effects, panic occurrence and the file and line a panic reports), and what is deliberately not observed;
 - concurrent workers (default 3), optional explicitly chosen total budget, and optional memory disposition; new v2 uses no elapsed budget and explicit disabled memory unless a backend is configured;
 - actual delegated execution actions/limits and any draft-PR destination/authority, separately.
 
@@ -154,6 +157,12 @@ text lists require at least one entry. An execution grant is null or
 `{"actions":["<explicit delegated action>"],"reference":"<actual grant evidence>"}`; a draft-PR grant is
 null or `{"destination":"<explicit destination>","reference":"<actual grant evidence>"}`. Null remains
 ungranted; an owner-response reference, roadmap offer or passing check grants neither by inference.
+
+The observer set has no payload key of its own, and none may be added. Record it as one `conventions`
+entry that starts with the fixed prefix `Observer set:`, listing what is observed and, after `Not
+observed:`, what is not. Name it once, here; later equivalence gates and patch reviews cite this entry
+instead of defining "observable" again. A project that has no auto agreement states the same set in an
+`observer-set.md` file in the target's extraction workspace directory (`<extract_workspace>/<target>/`).
 
 Prepare the actual payload and present its exact content/version in the initial discussion. The
 drafting helper `fvs-auto-agreement.mjs`, installed next to the engine, builds it: the choices, the

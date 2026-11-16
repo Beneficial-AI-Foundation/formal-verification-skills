@@ -132,6 +132,26 @@ describe('agreement drafting helper', () => {
     assert.equal(JSON.parse(recorded.stdout).code, 'recorded');
   });
 
+  it('carries the observer set as one conventions entry, adds no payload key, and the record step accepts it', () => {
+    const root = project();
+    const observerSet = 'Observer set: return values, error results as callers match them, external effects, panic occurrence and the file and line a panic reports. Not observed: log text, internal variable names.';
+    const fields = { ...draftFields, conventions: [...draftFields.conventions, observerSet] };
+    const plain = printedFence(helper(root, { ...draftFields, ownerEvidence }, '--out', path.join(temporary('fvs-agreement-out-'), 'plain.json')).stdout);
+    const out = path.join(temporary('fvs-agreement-out-'), 'agreement.json');
+    const result = helper(root, { ...fields, ownerEvidence }, '--out', out);
+    assert.equal(result.status, 0, result.stderr);
+    const envelope = printedFence(result.stdout);
+    assert.equal(envelope.payload.conventions.filter((entry) => entry.startsWith('Observer set:')).length, 1);
+    assert.ok(envelope.payload.conventions.includes(observerSet), 'the entry is kept word for word');
+    assert.deepEqual(Object.keys(envelope.payload).sort(), Object.keys(plain.payload).sort(), 'the observer set adds no payload key');
+    assert.equal(envelope.approvedPayloadSha256, digestOf(envelope));
+
+    fs.writeFileSync(roadmapFile(root), roadmapWith(envelope));
+    const recorded = spawnSync(process.execPath, [ENGINE, 'record-agreement', '--input', out, '--project-root', root], { encoding: 'utf8' });
+    assert.equal(recorded.status, 0, recorded.stdout + recorded.stderr);
+    assert.equal(JSON.parse(recorded.stdout).code, 'recorded');
+  });
+
   it('drafts a successor with the next context version and names the overwrite confirmation', () => {
     const root = project();
     const first = path.join(temporary('fvs-agreement-out-'), 'first.json');
