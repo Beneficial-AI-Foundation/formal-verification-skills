@@ -406,12 +406,24 @@ function cpuAndOs(name) {
   return cpu && system ? `${cpu}-${system}` : null;
 }
 
+// Where installed releases are looked for: the project root's own .aeneas, then,
+// when the root is a subfolder of a git working tree, the top of that working
+// tree (a Lean project in formal/ beside an install at the repository root). The
+// repository-top folder counts only while it is itself in the working tree of the
+// root: a link out of the tree, or a nested repository, hides it.
+function releaseBases(root) {
+  const bases = [path.join(root, '.aeneas', 'releases')];
+  const top = gitWorkingTree(root);
+  const above = top === null || top === root ? null : path.join(top, '.aeneas', 'releases');
+  if (above !== null && fs.existsSync(above) && gitWorkingTree(above) === top) bases.push(above);
+  return bases;
+}
+
 // Installed releases under .aeneas/releases/<tag>/<platform>/. Only a
 // release whose directory name clearly matches the host counts as usable.
-function aeneasReleases(root, platform) {
+function aeneasReleases(bases, platform) {
   const host = cpuAndOs(platform);
-  const base = path.join(root, '.aeneas', 'releases');
-  return sortedDirectories(base).flatMap((tag) => sortedDirectories(path.join(base, tag)).map((name) => {
+  return bases.flatMap((base) => sortedDirectories(base).flatMap((tag) => sortedDirectories(path.join(base, tag)).map((name) => {
     const directory = path.join(base, tag, name);
     return {
       tag,
@@ -420,14 +432,15 @@ function aeneasReleases(root, platform) {
       aeneas: executableFile(path.join(directory, 'aeneas')),
       charon: executableFile(path.join(directory, 'charon')),
     };
-  }));
+  })));
 }
 
 function aeneasItem(root, platform, provenance) {
   const lakefile = lakefileAeneas(root);
   const inputRev = manifestInputRev(root);
   const pins = [...new Set([lakefile.rev, inputRev, provenance.aeneasRev].filter(Boolean))];
-  const releases = aeneasReleases(root, platform);
+  const bases = releaseBases(root);
+  const releases = aeneasReleases(bases, platform);
   // With no pin at all, any installed release for this host counts as
   // present; which Aeneas Lake would use is then reported as uncertain.
   const pinned = releases.filter((entry) => pins.length === 0 || pins.includes(entry.tag));
@@ -471,7 +484,7 @@ function aeneasItem(root, platform, provenance) {
     .filter(([, found]) => !found).map(([name]) => name);
   if (absent.length > 0) {
     const rev = lakefile.rev ?? inputRev ?? provenance.aeneasRev;
-    const install = `Aeneas and Charon for ${rev ?? 'it'} built for ${platform} (an Aeneas release from https://github.com/AeneasVerif/aeneas/releases bundles both) under .aeneas/releases/${rev ?? '<rev>'}/<platform>/, or put aeneas and charon on PATH.`;
+    const install = `Aeneas and Charon for ${rev ?? 'it'} built for ${platform} (an Aeneas release from https://github.com/AeneasVerif/aeneas/releases bundles both) under .aeneas/releases/${rev ?? '<rev>'}/<platform>/ in the project root or at the top of its git working tree, or put aeneas and charon on PATH.`;
     let step = `Install ${install}`;
     if (!rev) step = `Pin the Aeneas rev in the lakefile, then install ${install}`;
     else if (uncertainty) step = `Run lake update so lake-manifest.json matches the lakefile, then install ${install}`;
