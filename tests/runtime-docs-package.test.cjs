@@ -225,7 +225,8 @@ if (process.argv.includes('--package-fixture')) {
       'one simple, auditable command per step', 'an unattended prompt may be aborted',
       'reshape it to avoid review', 'denied before it started had no effect', 'is uncertain: the effect may have run',
       'never assume it did nothing', 'cannot promise that a host permission classifier allows any command',
-      'no run of the strict lane has reached a checker acceptance or rejection', 'a released specification author cannot be closed',
+      'no run of the strict lane has reached a checker acceptance or rejection', 'belong to the optional strict lane',
+      'a missing Aeneas or Charon is a warning', 'a released specification author cannot be closed',
       "register each node's contract in dependency order", 'fvs-contract-registry.mjs" register --plan',
       'Exit 6 with state `needs-review` is the expected result', 'first proposal is `review-or-revise`',
       'only under the fresh-root conditions above', 'for projects whose pinned packages provide it',
@@ -263,6 +264,7 @@ if (process.argv.includes('--package-fixture')) {
       assert.match(body, /externally\s+prepared/);
       assert.match(body, /profile-blocked/);
     }
+    assert.match(fs.readFileSync(path.join(ROOT, 'fv-skills/workflows/auto-init.md'), 'utf8'), /a missing Aeneas or Charon is a warning/);
   });
 
   it('rc2 source status guard stops a failed Git command before the installation sentinel', () => {

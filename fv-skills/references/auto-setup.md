@@ -95,6 +95,8 @@ extraction and a full pilot are separate from preparing this installation.
    the retained witness does not bypass that presence check. Installing them does not qualify the
    tuple or replace the extraction's identity, correspondence and eligibility checks. Rerun the profile,
    not the extraction, when the only missing prerequisite was executable presence.
+   Once a recorded extraction has succeeded, a missing Aeneas or Charon is a warning, and the run goes on to
+   the spec phase.
 6. **Choose optional memory.** Explicit `memory:{mode:"disabled"}` needs no Beads installation or
    prime. Enabled memory currently uses an existing Beads `1.3.1` embedded/direct store in one primary
    control checkout. Follow `auto-memory.md` to inspect/register that actual store, coordinator-refresh
@@ -109,6 +111,10 @@ extraction and a full pilot are separate from preparing this installation.
    Report which checks used real tools and which used doubles. This setup grants neither publication
    nor the held public-API path. Keep Lean threads at the agreed cap (here `LEAN_NUM_THREADS=2`),
    serialize heavy work and use only controls available in the project's pinned build tools.
+
+The issues below belong to the optional strict lane: the controller driver, owned work and the review
+bundle. The strict lane needs probe-lean or enabled Beads memory. The default path of `/fvs:auto-init`
+does not call any of them.
 
 Known issue seen in rc1 and still present in rc2: a failed worker launch can leave an uncertain reservation with no closure route.
 Stop and retain the old run as a partial, preserving failed-attempt history and applicable limits/accounting.

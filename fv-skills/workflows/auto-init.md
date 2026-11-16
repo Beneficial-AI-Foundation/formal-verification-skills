@@ -92,6 +92,8 @@ prepared, validated extraction. A missing executable still blocks `init-state`; 
 its `profile-blocked` next step. After separately authorized prerequisite setup, rerun the profile and
 resume this workflow. Executable presence does not qualify a tuple or replace the bound extraction's
 identity, correspondence and eligibility checks; it does not require repeating a valid extraction.
+Once a recorded extraction has succeeded, a missing Aeneas or Charon is a warning, and the run goes on to the
+spec phase.
 
 Keep the conversation short. Read the repository first, then propose a default for every choice and let
 the owner confirm or change it, instead of interviewing from scratch. Use
