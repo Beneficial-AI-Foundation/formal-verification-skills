@@ -332,6 +332,11 @@ stage's own thinking in Codex instead of sending the result to a reviewer.
   `.formalising/loop-me-in/`. You can run it at any time. `/fvs:loop-me-in --final` explains the
   whole project at the end.
 - `/fvs:ask-baif where are we?` summarises the goal, the current state and any blockers.
+- Two tools outside FVS also help in Claude Code. [`/goal`](https://code.claude.com/docs/en/goal)
+  sets a completion condition that Claude keeps working toward without a prompt at each step. The
+  [`retro`](https://github.com/mattpocock/skills/tree/main/skills/engineering/retro) skill from Matt
+  Pocock's skills collection runs a retrospective on a session and suggests changes to the agent's
+  setup for future runs.
 
 ## Where FVS stops for you
 
