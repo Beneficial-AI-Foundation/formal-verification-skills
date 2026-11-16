@@ -144,6 +144,7 @@ Known rc1 issues, untested in v2:
 Controller permissions in auto mode:
 - Before the run, the owner approves the controller's commands in the controller's own session. These are
   the FVS driver/CLI, `ao`, `git` and the pinned Lean tools. FVS changes no permission settings.
+  `auto-seats.md` says which seat (owner, orchestrator or worker) runs each operation.
 - Run one simple, auditable command per step: one driver or CLI operation with its `--input` file, one
   `ao` call or one `git` call. Compound commands (`&&`, `;`, pipes, `cd` plus a command, subshells) can
   trigger a permission prompt, and an unattended prompt may be aborted.

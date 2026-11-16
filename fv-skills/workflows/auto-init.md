@@ -188,7 +188,8 @@ the roadmap's `## Decisions` as the only current fence, then ask the owner to ru
 in their own terminal: it is `fvs-auto.mjs record-agreement`
 with `--input` the new file and `--project-root` the project. The helper never records the agreement
 and never edits the roadmap or the state. The record step compares actual retained content and never
-treats a supplied hash alone as approval. When the owner has run it, read the state again (Step 5).
+treats a supplied hash alone as approval. When the owner has run it, read the state again (Step 5). `auto-seats.md` lists which seat (owner,
+orchestrator or worker) runs each engine operation.
 
 A changed successor needs a greater `contextVersion` and explicit confirmation of the exact affected
 agreement before `--confirm-overwrite`; the helper picks the next free version, and the command it
