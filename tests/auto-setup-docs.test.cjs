@@ -499,6 +499,19 @@ describe('auto-setup reference: probe statuses and stage lines', () => {
     }
   });
 
+  it('says an empty override variable counts as unset and only an unusable value is refused', () => {
+    const text = flat(section(raw, 'Probes and stage lines'));
+    assert.match(text, /An empty variable counts as unset, and the default place is used\./);
+    assert.match(text, /A variable with a value that is unusable is refused with its name in the reason, and the lookup never falls back to the default place/);
+    assert.doesNotMatch(text, /is set but unusable/);
+  });
+
+  it('says a refused override leaves the helpers not-checked with the reason and does not abort setup', () => {
+    const text = flat(section(raw, 'Probes and stage lines'));
+    assert.match(text, /The profile then still prints its table, with the helpers `not-checked` and the refusal as the reason, and setup does not abort\./);
+    assert.doesNotMatch(text, /stops with the refusal|only output/);
+  });
+
   it('does not quote the engine messages it describes', () => {
     assert.doesNotMatch(flat(section(raw, 'Probes and stage lines')), /Optional|nothing stops without it|degraded route/);
   });

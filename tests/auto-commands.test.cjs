@@ -847,7 +847,7 @@ describe('auto command and workflow text', () => {
   it('top-specs says how agreement boundaries reach the closure plan as allowed axioms', () => {
     const body = text('auto-top-specs').replace(/\s+/g, ' ');
     assert.match(body, /Prose agreement boundaries do not match axioms automatically, so the orchestrator translates them once into exact Lean names and passes them with `--allow-axioms`/);
-    assert.match(body, /Recorded externals with status `assumption-accepted` are allowed automatically, and the plan records which allowed axioms came from where/);
+    assert.doesNotMatch(body, /assumption-accepted|allowed automatically|came from where/, 'the planner does not yet allow recorded externals or record where an allowed axiom came from');
     assert.doesNotMatch(body, /Run13|\bticket\b/);
   });
 
