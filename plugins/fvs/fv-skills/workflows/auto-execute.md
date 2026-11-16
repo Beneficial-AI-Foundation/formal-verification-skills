@@ -37,7 +37,7 @@ merge and the proof pull request").
    node "${CLAUDE_PLUGIN_ROOT}/scripts/fvs-build-check.mjs" --project-root <root> --commit <SHA>
    ```
 
-   It prints `accepted (build check in a clean copy)` or `build check failed: REASON`. Read that label
+   It prints `accepted (build check)` or `build check failed: REASON`. Read that label
    from the output. The state reports `done` only once the proof pull request is recorded and its head
    has passed the check, so record that pull request with the commit you checked, and run the check
    again after any new commit on its branch. Do not redirect the receipt: the state reads it only from

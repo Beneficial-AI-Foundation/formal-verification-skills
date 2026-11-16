@@ -1305,7 +1305,7 @@ describe('auto command and workflow text', () => {
     assert.match(body, /never in a worker's checkout/);
     assert.match(body, /warnings as errors, so any `sorry` fails/);
     assert.match(body, /node "\$HOME\/\.claude\/scripts\/fvs-build-check\.mjs" --project-root <root> --commit <SHA>/);
-    assert.match(body, /accepted \(build check in a clean copy\)/);
+    assert.match(body, /accepted \(build check\)/);
     assert.match(body, /build check failed: REASON/);
     assert.match(body, /The state reports `done` only once the proof pull request is recorded and its head has passed the check/);
     assert.match(body, /a worker replaces the `sorry` and leaves the statement alone/);
@@ -1691,10 +1691,10 @@ describe('spec phase: record-spec and spec-status', () => {
     fs.writeFileSync(path.join(receipts, `${head}.json`), '{not json');
     assert.equal(auto.readState({ projectRoot: root }).phase, 'proofs', 'an unreadable receipt is no receipt');
 
-    receipt({ accepted: true, label: 'accepted (build check in a clean copy)' });
+    receipt({ accepted: true, label: 'accepted (build check)' });
     view = auto.readState({ projectRoot: root });
     assert.equal(view.phase, 'done');
-    assert.match(view.nextAction, new RegExp(`^The build check accepted the draft proof PR https://example\\.invalid/pr/3 at ${head}: accepted \\(build check in a clean copy\\)\\. The owner reviews and merges it;`));
+    assert.match(view.nextAction, new RegExp(`^The build check accepted the draft proof PR https://example\\.invalid/pr/3 at ${head}: accepted \\(build check\\)\\. The owner reviews and merges it;`));
     assert.equal(recordMerge(root, 'HEAD', 'proof').status, 0);
     assert.match(auto.readState({ projectRoot: root }).nextAction, /The proof PR merge is recorded at [0-9a-f]{40}\./);
 

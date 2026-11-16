@@ -26,7 +26,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-export const LABEL_ACCEPTED = 'accepted (build check in a clean copy)';
+export const LABEL_ACCEPTED = 'accepted (build check)';
 export const labelFailed = (reason) => `build check failed: ${reason}`;
 const STANDARD_AXIOMS = ['propext', 'Classical.choice', 'Quot.sound'];
 // What native_decide and bv_decide add to #print axioms: a generated axiom named after the
@@ -297,7 +297,10 @@ function runLake(args, { cwd, env, log, timeoutSeconds }) {
   const argv = [...wrapper, 'nice', '-n', '19', 'lake', ...args];
   const out = fs.openSync(log, 'w');
   try {
-    const run = spawnSync(argv[0], argv.slice(1), { cwd, env, stdio: ['ignore', out, out], timeout: timeoutSeconds * 1000 });
+    // The child leads its own process group. A timeout kills only that child, so the whole group is
+    // killed once the run returns: no Lean worker may outlive the check and overlap the next build.
+    const run = spawnSync(argv[0], argv.slice(1), { cwd, env, stdio: ['ignore', out, out], timeout: timeoutSeconds * 1000, detached: true });
+    if (run.pid) { try { process.kill(-run.pid, 'SIGKILL'); } catch { /* the group is already gone */ } }
     return { argv, status: run.status ?? (run.error ? 124 : 1) };
   } finally { fs.closeSync(out); }
 }
