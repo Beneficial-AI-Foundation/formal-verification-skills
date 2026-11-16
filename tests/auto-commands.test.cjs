@@ -1383,3 +1383,248 @@ describe('a missing Aeneas once an extraction is recorded', () => {
     assert.equal(init(succeeded, CHOICES, { bin: binWithout('aeneas', 'charon', 'ao') }).code, 'profile-blocked');
   });
 });
+
+describe('spec phase: record-spec and spec-status', () => {
+  // A project with two spec files and a review, committed once; no state is needed.
+  function specProject() {
+    const root = temporaryDirectory('fvs-auto-specs-');
+    fs.mkdirSync(path.join(root, 'formal', 'specs', 'Specs'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'formal/specs/Specs/Hmac.lean'), 'recall hmac_spec\n');
+    fs.writeFileSync(path.join(root, 'formal/specs/Specs/Hkdf.lean'), 'recall hkdf_spec\n');
+    fs.writeFileSync(path.join(root, 'review.md'), 'round 1: pass\n');
+    git(root, 'init', '-q');
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'specs');
+    return root;
+  }
+  const recordSpec = (root, file, verdict, round = '1', ...extra) => cli('record-spec', '--project-root', root, '--spec-file', file,
+    '--items', 'libcrux_hmac::hmac, libcrux_hmac::hmac', '--round', round, '--verdict', verdict, '--review', 'review.md', ...extra);
+  const status = (root) => cli('spec-status', '--project-root', root).json;
+
+  it('records rounds per spec file, keeps history, and derives labels and readiness from the current rows', () => {
+    const root = specProject();
+    assert.deepEqual(status(root), { ok: true, command: 'spec-status', code: 'ok', message: `0 spec file(s) recorded in ${path.join(root, '.formalising/auto-fv/specs.json')}`,
+      specFiles: [], readyForPr: false, blocked: [] }, 'no rows is never ready');
+
+    const first = recordSpec(root, 'formal/specs/Specs/Hmac.lean', 'changes', '1', '--out-of-scope', 'libcrux_hmac::internal');
+    assert.equal(first.status, 0, first.stdout);
+    assert.deepEqual(first.json.row.items, ['libcrux_hmac::hmac'], 'items are trimmed and deduplicated');
+    assert.equal(first.json.row.specSha256, sha256('recall hmac_spec\n'));
+    assert.equal(first.json.message, 'spec reviewed: changes requested (round 1): formal/specs/Specs/Hmac.lean');
+    let view = status(root);
+    assert.equal(view.readyForPr, false, 'a file waiting for changes holds the PR');
+    assert.equal(view.specFiles[0].label, 'spec reviewed: changes requested (round 1)');
+    assert.deepEqual(view.specFiles[0].outOfScope, [{ id: 'libcrux_hmac::internal', label: 'out of scope (noted by agent)' }]);
+
+    assert.equal(recordSpec(root, path.join(root, 'formal/specs/Specs/Hmac.lean'), 'pass', '2').status, 0, 'an absolute path inside the root keys on the same file');
+    assert.equal(recordSpec(root, 'formal/specs/Specs/Hkdf.lean', 'blocked', '3').status, 0);
+    view = status(root);
+    assert.deepEqual(view.specFiles.map((file) => [file.specFile, file.label, file.rounds, file.stale]), [
+      ['formal/specs/Specs/Hmac.lean', 'spec reviewed: pass', 2, false],
+      ['formal/specs/Specs/Hkdf.lean', 'spec blocked after 3 rounds', 1, false],
+    ]);
+    assert.equal(view.readyForPr, true, 'blocked files do not hold the PR');
+    assert.deepEqual(view.blocked, ['formal/specs/Specs/Hkdf.lean']);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, '.formalising/auto-fv/specs.json'), 'utf8')).specs.length, 3, 'earlier rows stay as history');
+
+    fs.appendFileSync(path.join(root, 'formal/specs/Specs/Hmac.lean'), '-- edited\n');
+    view = status(root);
+    assert.equal(view.specFiles[0].stale, true);
+    assert.equal(view.readyForPr, false, 'a spec file edited after its review is stale and holds the PR');
+    fs.rmSync(path.join(root, 'formal/specs/Specs/Hmac.lean'));
+    assert.deepEqual([status(root).specFiles[0].stale, status(root).specFiles[0].missing], [true, true]);
+
+    const late = recordSpec(root, 'formal/specs/Specs/Hkdf.lean', 'pass', '4');
+    assert.equal(late.status, 0);
+    assert.match(late.json.warnings[0], /^round 4 is past the three agreed review rounds; it is recorded$/);
+  });
+
+  it('refuses paths outside the project root, bad verdicts and rounds, and a malformed record', () => {
+    const root = specProject();
+    const outside = path.join(temporaryDirectory(), 'Outside.lean');
+    fs.writeFileSync(outside, 'x\n');
+    for (const [args, code] of [
+      [[outside, 'pass'], 'invalid-input'],
+      [['../Outside.lean', 'pass'], 'invalid-input'],
+      [['formal/specs/Specs', 'pass'], 'invalid-input'],
+      [['formal/specs/Specs/Missing.lean', 'pass'], 'invalid-input'],
+      [['formal/specs/Specs/Hmac.lean', 'accepted'], 'usage'],
+      [['formal/specs/Specs/Hmac.lean', 'pass', '0'], 'usage'],
+    ]) {
+      const result = recordSpec(root, ...args);
+      assert.equal(result.json.code, code, args.join(' '));
+      assert.equal(fs.existsSync(path.join(root, '.formalising/auto-fv/specs.json')), false, 'a refusal writes nothing');
+    }
+    fs.mkdirSync(path.join(root, '.formalising/auto-fv'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.formalising/auto-fv/specs.json'), '{"schema":"fvs/auto-specs","schemaVersion":1,"specs":[{}]}');
+    const malformed = cli('spec-status', '--project-root', root);
+    assert.equal(malformed.status, 3);
+    assert.equal(malformed.json.code, 'malformed-specs');
+    assert.equal(recordSpec(root, 'formal/specs/Specs/Hmac.lean', 'pass').json.code, 'malformed-specs', 'never overwritten');
+  });
+
+  const recordPr = (root, head, ...extra) => cli('record-pr', '--project-root', root, '--kind', 'spec',
+    '--url', 'https://example.invalid/pr/1', '--branch', 'specs', '--head', head, ...extra);
+
+  it('records an open spec PR, warning (never refusing) when the head differs from the reviewed spec files', () => {
+    const root = specProject();
+    const none = recordPr(root, 'HEAD');
+    assert.equal(none.status, 0, none.stdout);
+    assert.deepEqual(none.json.warnings, ['no reviewed spec file is recorded']);
+    assert.equal(none.json.pr.head, git(root, 'rev-parse', 'HEAD'), 'a local head is stored as the full commit');
+
+    recordSpec(root, 'formal/specs/Specs/Hmac.lean', 'pass');
+    recordSpec(root, 'formal/specs/Specs/Hkdf.lean', 'pass');
+    assert.deepEqual(recordPr(root, 'HEAD').json.warnings, [], 'the reviewed bytes are the committed ones');
+
+    fs.appendFileSync(path.join(root, 'formal/specs/Specs/Hmac.lean'), '-- edited after review\n');
+    git(root, 'rm', '-q', 'formal/specs/Specs/Hkdf.lean');
+    git(root, 'commit', '-qam', 'edit');
+    assert.deepEqual(recordPr(root, 'HEAD').json.warnings, [
+      'spec-status is not ready for the PR (a file is waiting for changes or changed after its review)',
+      'formal/specs/Specs/Hmac.lean in the PR head differs from the reviewed bytes',
+      'formal/specs/Specs/Hkdf.lean is not in the PR head',
+    ]);
+    const remote = recordPr(root, 'f'.repeat(40));
+    assert.equal(remote.status, 0);
+    assert.match(remote.json.warnings.at(-1), /^the head f{40} is not a local commit, so the recorded spec files were not compared with it; fetch the PR branch to compare$/);
+    assert.equal(remote.json.pr.head, 'f'.repeat(40));
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, '.formalising/auto-fv/specs.json'), 'utf8')).prs.length, 4);
+
+    assert.equal(cli('record-pr', '--project-root', root, '--kind', 'spec', '--url', 'u', '--branch', 'b').json.code, 'usage');
+    assert.equal(cli('record-pr', '--project-root', root, '--kind', 'release', '--url', 'u', '--branch', 'b', '--head', 'HEAD').json.code, 'usage');
+  });
+
+  it('compares spec files at the PR head when the project root is a subdirectory of the repository', () => {
+    const repository = temporaryDirectory('fvs-auto-specs-repo-');
+    const root = path.join(repository, 'verify');
+    fs.mkdirSync(path.join(root, 'Specs'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'Specs/Hmac.lean'), 'recall hmac_spec\n');
+    fs.writeFileSync(path.join(root, 'review.md'), 'pass\n');
+    git(repository, 'init', '-q');
+    git(repository, 'add', '-A');
+    git(repository, 'commit', '-q', '-m', 'specs');
+    assert.equal(recordSpec(root, 'Specs/Hmac.lean', 'pass').status, 0);
+    assert.deepEqual(recordPr(root, 'HEAD').json.warnings, []);
+  });
+
+  const recordMerge = (root, commit, kind = 'spec') => cli('record-pr', '--project-root', root, '--kind', kind, '--merged', '--merge-commit', commit);
+  const specsFile = (root) => JSON.parse(fs.readFileSync(path.join(root, '.formalising/auto-fv/specs.json'), 'utf8'));
+
+  it('records the owner\'s merge, marking spec files the owner changed or pruned, and refuses only a non-local merge commit', () => {
+    const root = specProject();
+    recordSpec(root, 'formal/specs/Specs/Hmac.lean', 'pass');
+    recordSpec(root, 'formal/specs/Specs/Hkdf.lean', 'pass');
+    assert.equal(recordPr(root, 'HEAD').status, 0);
+
+    fs.appendFileSync(path.join(root, 'formal/specs/Specs/Hmac.lean'), '-- owner edit\n');
+    git(root, 'rm', '-q', 'formal/specs/Specs/Hkdf.lean');
+    git(root, 'commit', '-qam', 'owner review');
+    const merged = recordMerge(root, 'HEAD');
+    assert.equal(merged.status, 0, merged.stdout);
+    assert.equal(merged.json.pr.mergeCommit, git(root, 'rev-parse', 'HEAD'), 'stored as the full commit');
+    assert.deepEqual(merged.json.warnings, ['formal/specs/Specs/Hmac.lean: changed by owner in review', 'formal/specs/Specs/Hkdf.lean: pruned by owner']);
+    assert.deepEqual(merged.json.pr.ownerChanges.map((entry) => entry.label), ['changed by owner in review', 'pruned by owner']);
+    const merge = specsFile(root).prs.at(-1);
+    assert.deepEqual(merge.ownerChanges, [
+      { specFile: 'formal/specs/Specs/Hmac.lean', change: 'owner-changed' },
+      { specFile: 'formal/specs/Specs/Hkdf.lean', change: 'pruned' },
+    ], 'the record keeps the change, labels are derived');
+    assert.equal(merge.url, 'https://example.invalid/pr/1', 'the merge names the open PR it closes');
+    let view = status(root);
+    assert.deepEqual(view.specFiles.map((file) => file.ownerChange), ['changed by owner in review', 'pruned by owner']);
+    assert.deepEqual(view.specFiles.map((file) => file.label), ['changed by owner in review', 'pruned by owner'], 'the owner label is the label shown');
+
+    const again = recordSpec(root, 'formal/specs/Specs/Hmac.lean', 'pass', '2');
+    assert.equal(again.status, 0);
+    view = status(root);
+    assert.deepEqual(view.specFiles.map((file) => file.ownerChange), [null, 'pruned by owner'], 'a later review round replaces the owner change');
+    assert.equal(view.specFiles[0].label, 'spec reviewed: pass');
+    assert.equal(view.readyForPr, true, 'a file the owner pruned does not hold a later PR');
+    assert.deepEqual(recordPr(root, 'HEAD').json.warnings, [], 'nor is it compared at a later PR head');
+
+    const prs = specsFile(root).prs.length;
+    assert.equal(recordMerge(root, 'f'.repeat(40)).json.code, 'invalid-input');
+    assert.match(recordMerge(root, 'f'.repeat(40)).json.message, /is not a local commit: fetch the merged branch, then rerun record-pr$/);
+    assert.equal(cli('record-pr', '--project-root', root, '--kind', 'spec', '--merged').json.code, 'usage');
+    assert.equal(specsFile(root).prs.length, prs, 'a refusal writes nothing');
+  });
+
+  it('a merge with no open PR on record is recorded with a warning; a proof merge is record-only', () => {
+    const root = specProject();
+    recordSpec(root, 'formal/specs/Specs/Hmac.lean', 'pass');
+    const spec = recordMerge(root, 'HEAD');
+    assert.equal(spec.status, 0, spec.stdout);
+    assert.deepEqual(spec.json.warnings, ['no open draft spec PR is recorded; the merge is recorded on its own']);
+    assert.deepEqual(spec.json.pr.ownerChanges, []);
+    const proof = recordMerge(root, 'HEAD', 'proof');
+    assert.equal(proof.status, 0);
+    assert.equal(proof.json.message, `proof PR merge recorded at ${git(root, 'rev-parse', 'HEAD')}`);
+    assert.equal('ownerChanges' in proof.json.pr, false);
+  });
+
+  it('after a spec PR is recorded the next action is the owner\'s merge, not another spec phase', () => {
+    const root = project();
+    init(root);
+    const { out } = prepared(root);
+    assert.equal(record(root, out, 0).code, 'recorded');
+    assert.match(auto.readState({ projectRoot: root }).nextAction, /^Run \/fvs:auto-top-specs from the AO orchestrator/);
+    assert.equal(recordPr(root, 'HEAD').status, 0);
+    const view = auto.readState({ projectRoot: root });
+    assert.equal(view.phase, 'specs');
+    assert.match(view.nextAction, /^The draft spec PR https:\/\/example\.invalid\/pr\/1 is recorded: the owner reviews and merges it\. After the merge, .*record-pr --kind spec --merged --merge-commit SHA\./);
+    assert.match(view.nextAction, / Warning: no agreement is recorded/);
+
+    assert.equal(recordMerge(root, 'HEAD').status, 0);
+    const proofs = auto.readState({ projectRoot: root });
+    assert.equal(proofs.phase, 'proofs');
+    assert.match(proofs.nextAction, /^The spec PR merge is recorded at [0-9a-f]{40}\. Run \/fvs:auto-execute from the AO orchestrator for the proof phase: .*No execution grant, stage profile or permission install is needed\./);
+    assert.doesNotMatch(proofs.nextAction, /refactor/);
+    assert.equal(cli('record-pr', '--project-root', root, '--kind', 'spec', '--url', 'https://example.invalid/pr/2', '--branch', 'refactor', '--head', 'HEAD').status, 0);
+    const refactor = auto.readState({ projectRoot: root });
+    assert.equal(refactor.phase, 'proofs', 'a spec refactor PR does not leave the proof phase');
+    assert.match(refactor.warnings.at(-1), /^the spec refactor PR https:\/\/example\.invalid\/pr\/2 is open: after the owner merges it/);
+  });
+
+  it('a recorded proof PR reaches done only with an accepting build-check receipt for its head', () => {
+    const root = project();
+    init(root);
+    const { out } = prepared(root);
+    assert.equal(record(root, out, 0).code, 'recorded');
+    const spec = recordMerge(root, 'HEAD');
+    assert.match(spec.json.warnings.at(-1), /^no reviewed spec file is recorded, so the merged statements were not compared with reviewed bytes$/);
+    const proofPr = (url) => cli('record-pr', '--project-root', root, '--kind', 'proof', '--url', url, '--branch', 'proofs', '--head', 'HEAD');
+    assert.equal(proofPr('https://example.invalid/pr/3').status, 0);
+    const head = git(root, 'rev-parse', 'HEAD');
+    let view = auto.readState({ projectRoot: root });
+    assert.equal(view.phase, 'proofs');
+    assert.match(view.nextAction, new RegExp(`^The draft proof PR https://example\\.invalid/pr/3 is recorded at ${head}\\. Run the build check on that commit: node fvs-build-check\\.mjs --project-root .* --commit ${head}; read-state reports done when it accepts\\.`));
+
+    const receipts = path.join(root, '.formalising/auto-fv/build-check');
+    fs.mkdirSync(receipts, { recursive: true });
+    const receipt = (fields) => fs.writeFileSync(path.join(receipts, `${head}.json`), JSON.stringify({ schema: 1, kind: 'fvs-build-check', commit: head, ...fields }));
+    receipt({ accepted: false, label: 'build check failed: a new axiom' });
+    view = auto.readState({ projectRoot: root });
+    assert.equal(view.phase, 'proofs');
+    assert.match(view.nextAction, /^The build check failed for the draft proof PR .* build check failed: a new axiom\. Fix the proofs, push, record the new head with record-pr --kind proof/);
+
+    for (const forged of [{ accepted: true, label: 'x', commit: 'f'.repeat(40) }, { accepted: 'yes', label: 'x' }, { accepted: true, label: 'x', kind: 'other' }, { accepted: true, label: 7 }]) {
+      receipt(forged);
+      assert.equal(auto.readState({ projectRoot: root }).phase, 'proofs', JSON.stringify(forged));
+    }
+    fs.writeFileSync(path.join(receipts, `${head}.json`), '{not json');
+    assert.equal(auto.readState({ projectRoot: root }).phase, 'proofs', 'an unreadable receipt is no receipt');
+
+    receipt({ accepted: true, label: 'accepted (build check in a clean copy)' });
+    view = auto.readState({ projectRoot: root });
+    assert.equal(view.phase, 'done');
+    assert.match(view.nextAction, new RegExp(`^The build check accepted the draft proof PR https://example\\.invalid/pr/3 at ${head}: accepted \\(build check in a clean copy\\)\\. The owner reviews and merges it;`));
+    assert.equal(recordMerge(root, 'HEAD', 'proof').status, 0);
+    assert.match(auto.readState({ projectRoot: root }).nextAction, /The proof PR merge is recorded at [0-9a-f]{40}\./);
+
+    assert.equal(recordMerge(root, 'HEAD').status, 0);
+    view = auto.readState({ projectRoot: root });
+    assert.equal(view.phase, 'proofs', 'a later spec merge needs its own proof PR');
+    assert.match(view.nextAction, /^The spec PR merge is recorded at/);
+  });
+});
