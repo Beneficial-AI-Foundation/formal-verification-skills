@@ -26,7 +26,8 @@ const args = process.argv.slice(2);
 const env = process.env;
 if (args.includes('build')) {
   if (env.FAKE_EXTRA_OLEAN) fs.writeFileSync(path.join(process.cwd(), '.lake/build/lib/lean/Other.olean'), 'stale');
-  if (env.FAKE_UNIMPORTED) fs.writeFileSync(path.join(process.cwd(), 'Demo/Extra.lean'), 'def y := 1\\n');
+  if (env.FAKE_BUILD_EDIT) fs.appendFileSync(path.join(process.cwd(), 'Demo.lean'), '-- edited by the build');
+  if (env.FAKE_BUILD_OUTPUT) fs.writeFileSync(path.join(process.cwd(), '.lake/build/lib/lean/Demo/Sub.ilean'), '{ }');
   process.exit(Number(env.FAKE_BUILD_EXIT || 0));
 }
 const file = args[args.length - 1];
@@ -61,7 +62,7 @@ let lake;
 let toolchainLib;
 let counter = 0;
 
-function freshProject() {
+function freshProject(env = {}) {
   project = fs.mkdtempSync(path.join(tmp, 'project-'));
   fs.writeFileSync(path.join(project, 'lean-toolchain'), 'leanprover/lean4:v4.35.0\n');
   fs.writeFileSync(path.join(project, 'Demo.lean'), 'def x := Nat.succ 0\n');
@@ -75,6 +76,7 @@ function freshProject() {
   fs.writeFileSync(path.join(project, '.lake/build/lib/lean/Demo/Sub.olean'), 'sub olean');
   fs.writeFileSync(path.join(project, '.lake/build/lib/lean/Demo/Sub.ilean'), '{}');
   fs.writeFileSync(path.join(toolchainLib, 'Init.olean'), 'init olean');
+  if (env.FAKE_UNIMPORTED) fs.writeFileSync(path.join(project, 'Demo/Extra.lean'), 'def y := 1\n');
   return project;
 }
 
@@ -88,7 +90,7 @@ function run(args, env = {}) {
 const freshOut = () => path.join(tmp, `out-${counter++}`);
 const produce = (env, roots = 'Demo') => {
   const out = freshOut();
-  return { out, result: run(['run', '--project', freshProject(), '--roots', roots, '--out', out, '--lake', lake], env) };
+  return { out, result: run(['run', '--project', freshProject(env), '--roots', roots, '--out', out, '--lake', lake], env) };
 };
 
 describe('fvs-lean-constants producer', () => {
@@ -144,6 +146,7 @@ describe('fvs-lean-constants producer', () => {
     ['two extractor outputs', { FAKE_TWO_LINES: '1' }, 'Demo', /printed 2 JSON values/],
     ['an import inventory that changes during the run', { FAKE_INVENTORY_CHANGE: '1' }, 'Demo', /import inventory changed/],
     ['a project file that changes during the run', { FAKE_INPUT_CHANGE: '1' }, 'Demo', /project files or compiled modules changed/],
+    ['a project file the build changes', { FAKE_BUILD_EDIT: '1' }, 'Demo', /project files changed during the build \(only build outputs under \.lake may change\): Demo\.lean$/m],
     ['extractor module names that differ from discovery', { FAKE_MODULES: 'Init,Demo,Other' }, 'Demo', /module names differ/],
     ['a compiled file of a module outside the roots', { FAKE_EXTRA_OLEAN: '1' }, 'Demo', /unexpected \.lake\/build\/lib\/lean\/Other\.olean/],
     ['a project module the library root does not import', { FAKE_UNIMPORTED: '1' }, 'Demo', /do not import Demo\.Extra: .*`import Demo\.Extra` to Demo\.lean/],
@@ -158,6 +161,13 @@ describe('fvs-lean-constants producer', () => {
       if (env.FAKE_UNIMPORTED) assert.ok(!fs.existsSync(path.join(out, '03-constants.log')));
     });
   }
+
+  it('accepts build outputs the build rewrites under .lake', () => {
+    const { out, result } = produce({ FAKE_BUILD_OUTPUT: '1' });
+    assert.equal(result.status, 0, result.stderr);
+    const record = JSON.parse(fs.readFileSync(path.join(out, 'constants.json'), 'utf8'));
+    assert.equal(record.inputs.files['.lake/build/lib/lean/Demo/Sub.ilean'], sha256('{ }'), 'the record binds the built .ilean');
+  });
 
   it('refuses an output directory that exists or lies inside the project', () => {
     const existing = freshOut();

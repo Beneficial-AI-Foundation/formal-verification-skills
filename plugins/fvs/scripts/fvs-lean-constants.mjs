@@ -241,8 +241,16 @@ export function produce({ project: projectArg, roots, out: outArg, lake: lakeArg
   const oracleArgv = [tools.lake, 'env', 'lean', '--threads=2', extractor];
   const discoverArgv = [tools.lake, 'env', 'lean', '--threads=2', discovery];
 
+  // The build runs in place, so the inputs are fixed before it starts. It may
+  // write only build outputs under .lake (the compiled files and .ilean files);
+  // every other project input must come out of it byte for byte unchanged.
+  const sources = (inputs) => Object.fromEntries(Object.entries(inputs).filter(([file]) => !file.startsWith(`${ILEAN_DIR}/`)));
+  const baseline = sources(projectInputs(project));
   step(out, '01-build', [tools.lake, '--no-cache', '--rehash', '--verbose', 'build', ...roots], project);
   const files = projectInputs(project);
+  const built = sources(files);
+  const touched = [...new Set([...Object.keys(baseline), ...Object.keys(built)])].filter((file) => baseline[file] !== built[file]).sort();
+  if (touched.length > 0) refuse(`the project files changed during the build (only build outputs under .lake may change): ${touched.join(', ')}`);
   const compiled = compiledFiles(project);
   const before = inventory(step(out, '02-discover-before', discoverArgv, project), 'discovery');
   // A project module outside the roots' import closure is never compiled, and
