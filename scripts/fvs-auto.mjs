@@ -19,6 +19,7 @@ import {
   resolveProbe,
   which,
 } from './fvs-probe-inventory.mjs';
+import { selectProbeToolPaths } from './fvs-probe-linux.mjs';
 
 import {
   MemoryError, memoryHash, memoryOwnData, memoryDataSnapshot, memoryBindingsErrors, bindingIdentity, inspectMemoryRegistration, memoryJson,
@@ -90,6 +91,35 @@ function versionCheck(bin, args, cwd, root) {
   return { ...run, skipped: unavailable ? `not checked: ${unavailable}` : null };
 }
 
+// Probes and the host they were tested on add evidence; none of them stops the
+// auto track. Each missing probe costs what PROBE_LOSSES says.
+const OPTIONAL = 'Optional, nothing stops without it:';
+export const PROBE_LOSSES = {
+  'probe-aeneas': 'Rust-to-Lean mappings confirmed independently of Aeneas: without it every mapping is declared by Aeneas in translation.json, never exact, and generated Lean functions are not checked against functions.json.',
+  'probe-rust': 'the Rust atom inventory: without it Rust names and spans come from translation.json alone, and Rust functions Aeneas did not translate are not detected.',
+  scip: 'the code index probe-rust reads: without it probe-rust cannot run.',
+  'rust-analyzer': 'the indexer probe-rust uses: without it probe-rust cannot run.',
+  'probe-lean': 'the Lean atom list for the graph: without it no Lean graph is built, so the closure plan has source order only, no dependency order, and proof acceptance refuses it.',
+};
+
+// Presence and qualification of each probe, found without running any of them.
+function probeStatuses(root, probe, resolver, platform) {
+  let helpers = null;
+  try {
+    ({ helpers } = selectProbeToolPaths({ projectRoot: root }));
+  } catch {
+    // An unreadable lean-toolchain leaves the helpers not checked.
+  }
+  const aeneasPath = [managedProbePath(undefined, platform), which('probe-aeneas')].find((file) => file && fs.existsSync(file)) ?? null;
+  return Object.keys(PROBE_LOSSES).map((id) => {
+    const found = id === 'probe-aeneas' ? aeneasPath : helpers?.[id] ?? null;
+    let status = found ? 'present-unqualified' : 'missing';
+    if (id !== 'probe-aeneas' && helpers === null) status = 'not-checked';
+    if (probe.verdict === GREEN && resolver.status === 'verified') status = 'qualified';
+    return { id, status, path: found, lost: ['missing', 'not-checked'].includes(status) ? PROBE_LOSSES[id] : null };
+  });
+}
+
 function item(id, verdict, reason, nextStep, evidence, scope = null) {
   return {
     id,
@@ -140,7 +170,7 @@ function hostItem(platform) {
     const probeReason = asset?.reason ?? `no official probe-aeneas ${PROBE_RELEASE.tag} asset exists for it`;
     const hosts = [...new Set(TESTED_TUPLES.flatMap((tuple) => Object.keys(tuple.platforms)))].join(', ');
     return item('host', 'unsupported-platform', `${platform} has no recorded FVS confined run: ${probeReason}`,
-      `Use a host with recorded evidence (${hosts}) for the auto track; here only exploratory work without a graph is possible.`,
+      `${OPTIONAL} the auto track goes on here on the degraded route listed under probes; a host with recorded evidence (${hosts}) can also run the confined probe inventory.`,
       evidence);
   }
   return item('host', 'available-but-unverified',
@@ -363,9 +393,11 @@ function aeneasItem(root, platform, provenance) {
     charon: charon.version,
     lean: provenance.leanToolchain,
   });
+  // A tuple is evidence, never a gate: if this Aeneas works with the project's
+  // Lean, the run goes on and the difference stays on record as a warning.
   if (tuples.contradictions.length > 0) {
-    return item('aeneas', 'incompatible', tuples.contradictions.join('; '),
-      'Install the Charon and Lean versions this Aeneas revision was tested with, or move to another Aeneas revision.', evidence);
+    return item('aeneas', 'available-but-unverified', `warning: ${tuples.contradictions.join('; ')}`,
+      'None required; the tuple is recorded as evidence, not a gate. To match the tested tuple instead: Install the Charon and Lean versions this Aeneas revision was tested with, or move to another Aeneas revision.', evidence);
   }
   if (tuples.exact) {
     return item('aeneas', 'available-but-unverified',
@@ -425,7 +457,7 @@ function probeItem(root, platform, resolver) {
   const { provenance } = resolver;
   if (resolver.status === 'unsupported-platform') {
     return item('probe', 'unsupported-platform', resolver.reasons.join('; '),
-      resolver.manual[0] ?? 'Continue without a graph for exploratory work.', evidence);
+      `${OPTIONAL} the auto track goes on without probes on the degraded route listed under probes.`, evidence);
   }
   const conflicts = provenance.problems.filter((problem) => problem.startsWith('conflict:'));
   const malformed = provenance.problems.some((problem) => problem.includes('escapes the project root'));
@@ -445,7 +477,7 @@ function probeItem(root, platform, resolver) {
   const verdict = installed ? 'available-but-unverified' : 'missing';
   if (resolver.status === 'unknown') {
     return item('probe', verdict, presence(`provenance unknown: ${provenance.problems.join('; ')}`),
-      resolver.manual[0], evidence);
+      `${OPTIONAL} ${resolver.manual[0]}`, evidence);
   }
   if (resolver.tuple === null) {
     // The resolver stops at the tuple check and reports any untested tuple
@@ -457,15 +489,15 @@ function probeItem(root, platform, resolver) {
     });
     if (tuples.contradictions.length > 0) {
       return item('probe', 'incompatible', tuples.contradictions.join('; '),
-        'Pin the Charon and Lean versions this Aeneas revision was tested with (or move to another Aeneas revision), then re-extract.',
+        `${OPTIONAL} Pin the Charon and Lean versions this Aeneas revision was tested with (or move to another Aeneas revision), then re-extract.`,
         evidence);
     }
     const qualify = `qualify this tuple: run probe-aeneas ${PROBE_RELEASE.tag} confined against this project with its own Aeneas, Charon and Lean, record the envelope, helper versions and platform, and add the tuple to TESTED_TUPLES in a reviewed PR citing that evidence.`;
     return item('probe', verdict,
       presence(`no tested tuple matches this extraction: differs from ${tuples.differences.join('; ')}`),
       installed
-        ? `To verify, ${qualify}`
-        : `Install probe-aeneas ${PROBE_RELEASE.tag} by hand from ${PROBE_RELEASE.baseUrl} (FVS installs it only for a tested tuple), then ${qualify}`,
+        ? `${OPTIONAL} to verify, ${qualify}`
+        : `${OPTIONAL} install probe-aeneas ${PROBE_RELEASE.tag} by hand from ${PROBE_RELEASE.baseUrl} (FVS installs it only for a tested tuple), then ${qualify}`,
       evidence);
   }
   if (resolver.status === 'verified') {
@@ -474,13 +506,14 @@ function probeItem(root, platform, resolver) {
       null, evidence, { operation: 'probe-aeneas inventory (confined)', tuple: resolver.tuple, platform });
   }
   // A tested tuple with a drifted or absent probe or helper.
-  return item('probe', resolver.status, resolver.reasons.join('; '), resolver.manual[0], evidence);
+  return item('probe', resolver.status, resolver.reasons.join('; '), `${OPTIONAL} ${resolver.manual[0]}`, evidence);
 }
 
 export function profile({ projectRoot, platform = hostTarget() }) {
   const root = path.resolve(projectRoot);
   if (!fs.statSync(root, { throwIfNoEntry: false })?.isDirectory()) fatal(`project root is not a directory: ${root}`);
   const resolver = resolveProbe({ projectRoot: root, platform });
+  const probe = probeItem(root, platform, resolver);
   return {
     schema: 'fvs/auto-profile',
     schemaVersion: 1,
@@ -492,8 +525,9 @@ export function profile({ projectRoot, platform = hostTarget() }) {
       rustItem(root, resolver.provenance.rustProject),
       leanItem(root),
       aeneasItem(root, platform, resolver.provenance),
-      probeItem(root, platform, resolver),
+      probe,
     ],
+    probes: probeStatuses(root, probe, resolver, platform),
   };
 }
 
@@ -503,6 +537,10 @@ function renderText(result) {
     lines.push(`${entry.id}: ${entry.verdict} - ${entry.reason}`);
     if (entry.scope) lines.push(`  scope: ${entry.scope.operation}, tuple ${entry.scope.tuple}, ${entry.scope.platform} only`);
     if (entry.nextStep) lines.push(`  next: ${entry.nextStep}`);
+  }
+  lines.push('probes (optional; the auto track goes on without any of them):');
+  for (const entry of result.probes ?? []) {
+    lines.push(`  ${entry.id}: ${entry.status}${entry.lost ? `; loses ${entry.lost}` : ''}`);
   }
   return `${lines.join('\n')}\n`;
 }
@@ -1034,10 +1072,11 @@ function choiceChanges(recorded, requested) {
     .map((field) => ({ field, recorded: before[field], requested: after[field] }));
 }
 
-// Verdicts that stop auto-init. A missing probe is expected until extraction,
-// and probe-aeneas is first needed by milestone 2.
-const blocks = (entry) => ['incompatible', 'unsupported-platform'].includes(entry.verdict)
-  || (entry.verdict === 'missing' && entry.id !== 'probe');
+// Verdicts that stop auto-init. Probes are optional, so neither the probe item
+// nor the host it was tested on ever stops it; a provenance conflict still does,
+// through the aeneas item, because then the extraction disagrees with itself.
+const blocks = (entry) => !['host', 'probe'].includes(entry.id)
+  && ['incompatible', 'unsupported-platform', 'missing'].includes(entry.verdict);
 
 export function initState({ projectRoot, choices, confirmOverwrite = false, platform = hostTarget(), schemaVersion }) {
   const root = projectDirectory(projectRoot);
@@ -1088,7 +1127,9 @@ function nextAction(state) {
     return `Rerun /fvs:auto-extract: the recorded extraction is for revision ${selected.revision} (${selected.configuration}), not the selected source.`;
   }
   if (state.extraction?.status === 'succeeded') {
-    return 'Run /fvs:auto-top-specs; milestone 2 functionality not yet available, so the auto track stops after extraction for now.';
+    const probe = state.profile?.items?.find((entry) => entry.id === 'probe');
+    const degraded = probe?.verdict === GREEN ? '' : ' Without qualified probes the run takes the degraded route: an identity declared by Aeneas in translation.json (never exact) and a closure plan in source order without dependency order; proof acceptance refuses both.';
+    return `Run /fvs:auto-top-specs; milestone 2 functionality not yet available, so the auto track stops after extraction for now.${degraded}`;
   }
   if (state.extraction) return 'Rerun /fvs:auto-extract after fixing the recorded failure reasons.';
   return 'Run /fvs:auto-extract to extract the selected revision.';

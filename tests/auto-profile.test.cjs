@@ -463,3 +463,58 @@ describe('fvs-auto profile output', () => {
     assert.match(unknown.stderr, /unknown subcommand "roots"; available: profile/);
   });
 });
+
+describe('fvs-auto profile: probes are optional', () => {
+  it('lists every probe with its status and states what a missing one loses', async () => {
+    const result = await profileOf(extractedPilot(), { bin: binWithout('probe-aeneas', 'probe-rust') });
+    const probes = Object.fromEntries(result.probes.map((entry) => [entry.id, entry]));
+    assert.deepEqual(Object.keys(probes), ['probe-aeneas', 'probe-rust', 'scip', 'rust-analyzer', 'probe-lean']);
+    for (const id of ['probe-aeneas', 'probe-rust']) {
+      assert.equal(probes[id].status, 'missing', id);
+      assert.equal(probes[id].path, null, id);
+    }
+    assert.match(probes['probe-aeneas'].lost, /declared by Aeneas in translation\.json, never exact/);
+    assert.match(probes['probe-rust'].lost, /Rust atom inventory/);
+    for (const entry of result.probes) {
+      assert.ok(['qualified', 'present-unqualified', 'missing', 'not-checked'].includes(entry.status), entry.id);
+      assert.equal(entry.lost === null, ['qualified', 'present-unqualified'].includes(entry.status), entry.id);
+    }
+    const probe = item(result, 'probe');
+    assert.equal(probe.verdict, 'missing');
+    assert.match(probe.nextStep, /^Optional, nothing stops without it: /);
+  });
+
+  it('reports an unsupported host as optional, naming the degraded route', async () => {
+    const result = await profileOf(path.join(FIXTURES, 'fresh'), { platform: 'x86_64-pc-windows-msvc' });
+    const host = item(result, 'host');
+    assert.equal(host.verdict, 'unsupported-platform');
+    assert.match(host.nextStep, /^Optional, nothing stops without it: the auto track goes on here on the degraded route/);
+    assert.doesNotMatch(host.nextStep, /only exploratory work/);
+  });
+
+  it('keeps a tuple contradiction on the aeneas item as a non-blocking warning', async () => {
+    const project = copyFixture('tested', { files: { 'lean-toolchain': 'leanprover/lean4:v4.35.0\n' } });
+    fs.cpSync(path.join(FIXTURES, 'fresh', '.aeneas', 'releases', 'nightly-2026.09.30-0855ce1', 'darwin-arm64'),
+      path.join(project, '.aeneas', 'releases', '6e167c9b63a4dafd66d0e0edd9d94669f957ff7b', 'darwin-arm64'), { recursive: true });
+    const result = await profileOf(project);
+    const aeneas = item(result, 'aeneas');
+    assert.equal(aeneas.verdict, 'available-but-unverified', aeneas.reason);
+    assert.match(aeneas.reason, /^warning: Aeneas 6e167c9b/);
+    assert.match(aeneas.reason, /was tested with leanprover\/lean4:v4\.31\.0 \([^)]*\); this project pins leanprover\/lean4:v4\.35\.0/);
+    assert.match(aeneas.nextStep, /^None required; the tuple is recorded as evidence, not a gate\./);
+    const probe = item(result, 'probe');
+    assert.equal(probe.verdict, 'incompatible', 'the probe item still shows the contradiction');
+    assert.match(probe.nextStep, /^Optional, nothing stops without it: /);
+  });
+
+  it('prints the probes and their losses as text, outside the next-step lines', () => {
+    const text = spawnSync(process.execPath, [SCRIPT, 'profile', '--project-root', path.join(FIXTURES, 'pilot'), '--format', 'text'],
+      { cwd: ROOT, env: stubEnvironment(), encoding: 'utf8' });
+    assert.equal(text.status, 0, text.stderr);
+    const lines = text.stdout.split('\n');
+    const start = lines.indexOf('probes (optional; the auto track goes on without any of them):');
+    assert.ok(start > 0, text.stdout);
+    assert.deepEqual(lines.slice(start + 1).filter(Boolean).map((line) => line.split(':')[0].trim()),
+      ['probe-aeneas', 'probe-rust', 'scip', 'rust-analyzer', 'probe-lean']);
+  });
+});

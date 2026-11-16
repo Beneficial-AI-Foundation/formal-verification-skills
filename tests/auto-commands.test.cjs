@@ -240,6 +240,17 @@ describe('auto-init setup state', () => {
     assert.ok(result.blocking[0].nextStep);
   });
 
+  it('a missing probe never stops auto-init, and an unsupported host stops only for its own missing tools', () => {
+    const root = project();
+    const result = init(root, CHOICES, { bin: binWithout('probe-aeneas', 'probe-rust') });
+    assert.equal(result.code, 'created', JSON.stringify(result.blocking ?? result.message));
+    assert.ok(fs.existsSync(stateFile(root)));
+    // This fixture ships Aeneas binaries for macOS arm64 only; host and probe never block.
+    const windows = init(project(), CHOICES, { platform: 'x86_64-pc-windows-msvc' });
+    assert.equal(windows.code, 'profile-blocked');
+    assert.deepEqual(windows.blocking.map((entry) => [entry.id, entry.verdict]), [['aeneas', 'missing']]);
+  });
+
   it('malformed state is an actionable failure, never a crash or an overwrite', () => {
     const root = project();
     fs.mkdirSync(path.dirname(stateFile(root)), { recursive: true });
@@ -569,6 +580,16 @@ describe('auto-extract extraction record', () => {
     assert.match(auto.readState({ projectRoot: root }).nextAction, /\/fvs:auto-top-specs/);
     assert.equal(record(root, out, 2).code, 'extraction-failed');
     assert.match(auto.readState({ projectRoot: root }).nextAction, /\/fvs:auto-extract/);
+  });
+
+  it('after a success without qualified probes the next action names the degraded route', () => {
+    const root = project();
+    init(root);
+    const { out } = prepared(root);
+    assert.equal(record(root, out, 0).code, 'recorded');
+    const { nextAction } = auto.readState({ projectRoot: root });
+    assert.match(nextAction, /degraded route: an identity declared by Aeneas in translation\.json \(never exact\)/);
+    assert.match(nextAction, /proof acceptance refuses both/);
   });
 
   it('no flag lets a caller state the result', () => {
