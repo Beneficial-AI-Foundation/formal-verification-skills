@@ -918,7 +918,27 @@ describe('auto command and workflow text', () => {
       'the shared extractor reports the copy and the build status the handoff records');
   });
 
-  it('auto-init reuses current evidence and gates M2 on stored AND semantic agreement checks', () => {
+  it('auto-init shows every stage up front, records the draft pull request destination and carries the GitHub rule', () => {
+    const workflow = read('fv-skills/workflows/auto-init.md');
+    const command = read('commands/fvs/auto-init.md');
+    const body = flat(`${command}\n${workflow}`);
+    assert.match(workflow, /^## Goal$/m);
+    assert.match(workflow, /^## Pipeline$/m);
+    assert.match(body, /how the agents get there is theirs to decide/);
+    assert.match(body, /Its `stages:` lines say up front whether each stage has a route/);
+    assert.match(body, /Keep the conversation short/);
+    assert.match(body, /the owner only confirms it/);
+    assert.match(body, /the project's own repository, never an upstream/);
+    assert.match(body, /At most three rounds|at most three rounds/);
+    assert.match(body, /FVS's build check in a fresh clean copy decides what is accepted/);
+    assert.ok(flat(workflow).includes(GITHUB_RULE), 'init workflow lacks the GitHub rule');
+    assert.ok(flat(command).includes(GITHUB_RULE), 'init command lacks the GitHub rule');
+    assert.doesNotMatch(body, /libcrux|celabshq/);
+    assert.match(workflow, /^Stages: /m);
+    assert.match(workflow, /^Draft PRs: /m);
+  });
+
+  it('auto-init reuses current evidence and gates the agreement on stored AND semantic checks', () => {
     const body = text('auto-init');
     assert.match(body, /"\$AUTO" init-state --project-root \. --input "\$CHOICES"/);
     assert.match(body, /Only on an explicit yes rerun\s+the same command with `--confirm-overwrite`/);
@@ -940,10 +960,10 @@ describe('auto command and workflow text', () => {
     assert.match(body, /`public-api`\s+mode is not supported in this release: report that refusal without retrying it/);
     assert.ok(!/visibility join|separately permitted|ticket11/.test(body), 'the public-API sentence names no landing condition');
     assert.match(body, /Agreement storage alone launches no workers/);
-    assert.match(body, /Without that complete opt-in context[\s\S]*stop/);
     assert.match(body, /fv-skills\/references\/auto-transitions\.md/);
-    assert.match(body, /Actual live provider execution[\s\S]*separately granted concrete setup\/permission/);
+    assert.match(body, /Do not infer dispatch permission from a stored agreement/);
     assert.match(body, /verifyReconciliation/);
+    assert.doesNotMatch(body, /Production driver|prepareCurrentRequest|advanceOnce|runPairedEffect/);
     assert.match(read('commands/fvs/roadmap.md'), /`\.formalising\/auto-fv\/ROADMAP\.md`; `\/fvs:auto-init`/);
     assert.match(read('fv-skills/workflows/roadmap.md'), /\*\.md\) FILE=\$ROADMAP_PATH/);
     assert.match(read('fv-skills/workflows/roadmap.md'), /Generic roadmaps outside auto-init require no machine envelope/);

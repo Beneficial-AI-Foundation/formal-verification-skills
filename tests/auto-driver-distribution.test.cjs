@@ -11,7 +11,7 @@ test('generated plugin carries both actual helpers and resolves driver dependenc
   assert.equal(result.status, 1); assert.match(result.stderr, /driver-invalid-input.*Usage:/);
   assert.doesNotMatch(result.stderr, /ERR_MODULE_NOT_FOUND|ENOENT/);
   for (const name of ['auto-init', 'auto-top-specs', 'auto-execute']) {
-    assert.match(fs.readFileSync(path.join(ROOT, 'plugins/fvs/skills', name, 'SKILL.md'), 'utf8'), /authorized v2|actual v2 AO/);
-    assert.match(fs.readFileSync(path.join(ROOT, 'pi/skills/fvs-' + name, 'SKILL.md'), 'utf8'), /production driver/);
+    assert.match(fs.readFileSync(path.join(ROOT, 'plugins/fvs/skills', name, 'SKILL.md'), 'utf8'), /They never post comments or reviews\s+on GitHub/, name);
+    assert.match(fs.readFileSync(path.join(ROOT, 'pi/skills/fvs-' + name, 'SKILL.md'), 'utf8'), /They never post comments or reviews\s+on GitHub/, name);
   }
 });

@@ -1,8 +1,10 @@
 <purpose>
-The AO orchestrator's master entry for the auto track: inspect tools and existing state, reuse a
-current applicable initial agreement, or use `/fvs:roadmap` light/deep/reuse to settle only missing
-initial scope, boundaries, conventions, layout and execution choices. Persist state only through
-`scripts/fvs-auto.mjs`. A stored agreement is declared owner evidence, not proof acceptance.
+The AO orchestrator's single entry for the auto track: show the compatibility profile with every
+stage's readiness up front, reuse a current applicable agreement, or settle only the missing scope,
+boundaries, conventions and execution choices with a short roadmap conversation, and record the
+agreement. The goal and the pipeline are fixed; how the agents get there is theirs to decide. Persist
+state only through `scripts/fvs-auto.mjs`. A stored agreement is declared owner evidence, not proof
+acceptance.
 </purpose>
 
 <process>
@@ -18,6 +20,32 @@ Initial autonomous specify/review/revise/prove and ordinary safe resume remain a
 existing gates; stale proofs still need current checker receipts. Internal diagnostic APIs do not
 authorize a public re-specification run.
 
+## Goal
+
+The project's source revision, scope, execution choices and agreement are recorded, the owner knows
+up front which stages have a route, and the later stages need no further owner decision until the
+spec pull request. Initial scope is what the owner actually agrees: the crates, modules and features
+to verify.
+
+## Pipeline
+
+The whole auto track, so the owner sees where this entry leads:
+
+1. `/fvs:auto-init` records the agreement (this command).
+2. `/fvs:auto-extract` extracts the recorded revision with FVS's extraction and translation patches.
+3. `/fvs:auto-top-specs` lists every public API item in the agreed scope, has an author write the
+   statements per Rust file and a fresh adversarial reviewer check them (at most three rounds), and
+   opens the spec pull request as a draft.
+4. The owner reviews the spec pull request, marks it ready and merges it.
+5. `/fvs:auto-execute` has workers prove one file per Rust item, complete first and improve later.
+6. FVS's build check in a fresh clean copy decides what is accepted.
+7. The proof pull request follows as a draft. Spec refactors found later arrive as new draft pull requests.
+
+## GitHub rule
+
+Agents may open draft pull requests and edit a pull request body. They never post comments or reviews
+on GitHub, never mark a pull request ready and never merge: only the owner comments, marks ready and
+merges.
 
 ## Step 1: Require Agent Orchestrator
 
@@ -30,8 +58,7 @@ command -v ao >/dev/null 2>&1 || {
 }
 ```
 
-Stop when this fails. Agreement storage alone launches no workers; the opt-in controller continuation
-below requires its actual current execution/invocation context.
+Stop when this fails. Agreement storage alone launches no workers.
 
 ## Step 2: Inspect existing state and evidence before asking anything
 
@@ -39,31 +66,34 @@ below requires its actual current execution/invocation context.
 node "$AUTO" read-state --project-root .
 ```
 
-- `no-state`: inspect the project/profile and synthesize known facts for Step 3.
-- `ok`: inspect `state.choices`, extraction history and the latest `state.agreements`, if present.
-  Do not ask Keep/Change or repeat an interview when the applicable agreement is current. Reuse actual
-  existing owner responses/grants rather than asking for them again. Check Step 5 first; if it passes,
-  proceed to Step 6's recorded memory disposition and then Step 7 reconciliation and Step 8 report without re-interviewing. Every start/resume
-  needs its own current request; enabled memory also needs the fresh prime; never reuse an old memory-ready result. Missing/stale agreement blocks continuation;
-  resolve only the affected setup through Steps 3–5. When the owner requests a material change,
-  show only the affected choices and use those steps.
+- `no-state`: inspect the project and the profile, and synthesize the known facts for Step 3.
+- `ok`: inspect `state.choices`, the extraction history and the latest `state.agreements`, if present.
+  Do not ask Keep/Change or repeat an interview when the applicable agreement is current. Reuse the
+  owner's actual earlier responses rather than asking again. Check Step 5 first; if it passes,
+  proceed to Step 6's recorded memory disposition and then Step 7 and Step 8 without re-interviewing.
+  Every start/resume needs its own current request; enabled memory also needs the fresh prime: never
+  reuse an old memory-ready result. A missing or stale agreement blocks continuation; resolve only the
+  affected setup through Steps 3 to 5. When the owner asks for a material change, show only the
+  affected choices and use those steps.
 - `malformed-state` or `malformed-externals`: print `message` and `nextStep` verbatim and stop.
   Never repair, delete or overwrite the file.
 
-The M1 roadmap offer (`state.roadmap`, accepted/declined) is historical preference, not an agreement
-or authorization. A recorded decline is not asked again as an optional offer. The M2 route still
-needs its actual initial agreement. Default M1 `read-state`, `record-roadmap` and extraction semantics
-remain available; the new opt-in gate does not reinterpret their existing records. The updated reader
-accepts legacy files without writing; old strict binaries may refuse the optional extension. Never
-strip history or downgrade state to satisfy an older binary.
+The roadmap offer (`state.roadmap`, accepted or declined) is a historical preference, not an agreement
+or authorization. A recorded decline is not asked again as an optional offer. The updated reader
+accepts older state files without writing; an older strict binary may refuse the optional extension.
+Never strip history or downgrade state to satisfy an older binary.
 
-## Step 3: Establish only the missing initial agreement
+## Step 3: Establish only the missing agreement
 
-For a fresh project, show the compatibility profile:
+For a fresh project, show the compatibility profile first:
 
 ```bash
 node "$AUTO" profile --project-root . --format text
 ```
+
+Its `stages:` lines say up front whether each stage has a route and what is missing, so the owner
+learns of a gap before answering anything (`auto-setup.md`, "Probes and stage lines", explains them).
+No probe is needed for setup or extraction, and a missing probe never stops it.
 
 Fresh rc1 setup requires the declared Aeneas and Charon executables locally even for an externally
 prepared, validated extraction. A missing executable still blocks `init-state`; preserve and report
@@ -71,30 +101,38 @@ its `profile-blocked` next step. After separately authorized prerequisite setup,
 resume this workflow. Executable presence does not qualify a tuple or replace the bound extraction's
 identity, correspondence and eligibility checks; it does not require repeating a valid extraction.
 
-Synthesize the repository facts and applicable decisions from sources first. Use
+Keep the conversation short. Read the repository first, then propose a default for every choice and let
+the owner confirm or change it, instead of interviewing from scratch. Use
 `/fvs:roadmap .formalising/auto-fv/ROADMAP.md <the project goal>` with its existing light/deep/reuse
-route. Initial scope is whatever the owner actually agrees, kept distinct from discovered roots;
-there is no automatic public-API or natural-language scope classifier here. An explicit `public-api`
-mode is not supported in this release: report that refusal without retrying it. Nonpublic intent can
-proceed independently, without top-level specifications.
+route. The owner agrees the scope as crates, modules and features, kept distinct from discovered
+roots. `auto-top-specs` lists the public API items inside that scope later; the agreement itself keeps
+its `nonpublic-intent` mode, and an explicit `public-api`
+mode is not supported in this release: report that refusal without retrying it.
 
-Record only missing owner choices, using the current applicable evidence for known ones:
+Record only the missing owner choices, using the current applicable evidence for known ones:
 
 - source revision and configuration/features (prefer an exact full commit; moving refs are not immutable);
-- initial scope, boundaries, conventions and single-crate/monorepo layout;
+- the agreed scope, boundaries, conventions and single-crate/monorepo layout;
 - the observer set, named once: what a caller or user of the target can see and therefore must not be
   able to tell apart after a source patch (return values, errors as callers match them, external
   effects, panic occurrence and the file and line a panic reports), and what is deliberately not observed;
-- concurrent workers (default 3), optional explicitly chosen total budget, and optional memory disposition; new v2 uses no elapsed budget and explicit disabled memory unless a backend is configured;
-- actual delegated execution actions/limits and any draft-PR destination/authority, separately.
+- concurrent workers (default 3), an optional explicitly chosen total budget, and an optional memory
+  disposition (new choices use no elapsed budget and explicitly disabled memory unless a backend is configured);
+- the repository the draft pull requests go to: the project's own repository, never an upstream, and
+  separately from any delegated execution actions and limits.
 
-New v2 choices use `limits:{workers}`, `budget:{kind:"none"}` or an explicitly selected wall budget, and `memory:{mode:"disabled"|"beads"}`. Follow `auto-execution.md` for cancellation and small-proof progress diagnosis. There is no arbitrary per-node proof timeout. Existing v1 `nodeHours` stays inactive metadata, not enforced; retain its original finite budget unchanged. Existing resource and
-spending limits are never raised or reset automatically. The initial owner scope/execution agreement
-is the setup human gate. Later provisional specify/review/revise cycles are autonomous within it;
-there is no per-round human contract approval. Final PR acceptance remains human. Agreement storage
-does not dispatch; Step 6 handles the recorded memory disposition and Step 7 selects the configured controller continuation.
+New choices use `limits:{workers}`, `budget:{kind:"none"}` or an explicitly selected wall budget, and
+`memory:{mode:"disabled"|"beads"}`. Follow `auto-execution.md` for cancellation and small-proof progress
+diagnosis. There is no arbitrary per-node proof timeout. Existing v1 `nodeHours` stays inactive metadata,
+not enforced; retain its original finite budget unchanged. Existing resource and spending limits are
+never raised or reset automatically. The initial owner agreement is the setup human gate. Later
+provisional specify/review/revise cycles are autonomous within it;
+there is no per-round human contract approval.
+The owner's merge of the spec pull request is the sign-off before any proof starts.
+Final PR acceptance remains human. Agreement storage does not dispatch; Step 6 handles the recorded
+memory disposition and Step 7 hands off to the stages.
 
-Write the known/answered choices to a temporary file outside the project:
+Write the known and answered choices to a temporary file outside the project:
 
 ```bash
 node "$AUTO" init-state --project-root . --input "$CHOICES"
@@ -105,7 +143,7 @@ show every `blocking` item's verdict, reason and next step and stop. On `invalid
 the named fields. On `confirmation-required`, show every listed change. Only on an explicit yes rerun
 the same command with `--confirm-overwrite`; otherwise keep the recorded state. Existing applicable
 explicit confirmation may be cited; never infer it. A confirmed material choice change advances the
-persistent generation when the M2 extension exists. Changing A→B→A cannot revive approval of A0.
+persistent generation. Changing A→B→A cannot revive approval of A0.
 
 ## Step 4: Retain the exact approved context in the existing roadmap
 
@@ -151,12 +189,13 @@ The closed envelope is:
 ```
 
 This is a schema example, **not** an owner answer, limit or grant. Copy exact normalized choices and
-`choicesGeneration` from the post-init state; absent generation means 0 for the first M2 agreement.
+`choicesGeneration` from the post-init state; absent generation means 0 for the first agreement.
 `layout` is `single-crate` or `monorepo`. Boundaries/conventions may be explicit empty arrays; the other
 text lists require at least one entry. An execution grant is null or
 `{"actions":["<explicit delegated action>"],"reference":"<actual grant evidence>"}`; a draft-PR grant is
-null or `{"destination":"<explicit destination>","reference":"<actual grant evidence>"}`. Null remains
-ungranted; an owner-response reference, roadmap offer or passing check grants neither by inference.
+null or `{"destination":"<the project's own repository>","reference":"<actual grant evidence>"}`. Null
+remains ungranted; an owner-response reference, roadmap offer or passing check grants neither by
+inference. The draft pull requests of the later stages go to that recorded destination and nowhere else.
 
 The observer set has no payload key of its own, and none may be added. Record it as one `conventions`
 entry that starts with the fixed prefix `Observer set:`, listing what is observed and, after `Not
@@ -181,7 +220,7 @@ node "$HELPER" --project-root . --input "$DRAFT"
 Without `ownerEvidence` the helper prints the payload and its digest and nothing else. It checks the
 payload against the engine's own record rules on a scratch copy in a temporary directory outside the
 project (a project-local `TMPDIR` is skipped), so a refusal appears now, naming the field. This dry run
-writes nothing in the project. Show the owner the printed payload.
+writes nothing in the project. Show the owner the printed payload: the owner only confirms it.
 
 Only after reading the actual applicable response/grants associate them with that exact payload: add
 the owner's reply, word for word, to `$DRAFT` as `"ownerEvidence": {"reference": "<where the reply
@@ -203,15 +242,16 @@ the roadmap's `## Decisions` as the only current fence, then ask the owner to ru
 in their own terminal: it is `fvs-auto.mjs record-agreement`
 with `--input` the new file and `--project-root` the project. The helper never records the agreement
 and never edits the roadmap or the state. The record step compares actual retained content and never
-treats a supplied hash alone as approval. When the owner has run it, read the state again (Step 5). `auto-seats.md` lists which seat (owner,
-orchestrator or worker) runs each engine operation.
+treats a supplied hash alone as approval. When the owner has run it, read the state again (Step 5).
+`auto-seats.md` lists which seat (owner, orchestrator or worker) runs each engine operation.
 
 A changed successor needs a greater `contextVersion` and explicit confirmation of the exact affected
 agreement before `--confirm-overwrite`; the helper picks the next free version, and the command it
-prints carries `--confirm-overwrite` only for a successor. History is retained. `unchanged` replays write nothing. Missing,
-malformed, unknown/future/public-API mode, mismatched content or stale generation/context refuses;
-show the actual reason and resolve only the affected agreement. No operation selects roots or grants
-publication, launches workers, resets budgets or reinterprets `nodeHours`.
+prints carries `--confirm-overwrite` only for a successor. History is retained. `unchanged` replays write
+nothing. Missing, malformed, unknown/future/public-API mode, mismatched content or stale
+generation/context refuses; show the actual reason and resolve only the affected agreement. No
+operation selects roots or grants publication, launches workers, resets budgets or reinterprets
+`nodeHours`.
 
 ## Step 5: Mandatory stored-context gate AND semantic applicability check
 
@@ -219,11 +259,11 @@ publication, launches workers, resets budgets or reinterprets `nodeHours`.
 node "$AUTO" read-state --project-root . --require-agreement
 ```
 
-A refusal stops the M2 route; no dispatch without agreement. `agreement-required` means the M1 state
-has no initial agreement. `stale-agreement` requires an explicitly approved successor for the current
-choices generation; reverting values does not revive an old generation. Missing/duplicate/changed,
-unknown or superseded current context and changed retained owner evidence also refuse. Malformed
-state never gets repaired. Default M1 extraction records remain readable.
+A refusal stops the agreement route; nothing is dispatched without an agreement. `agreement-required`
+means the state has no initial agreement. `stale-agreement` requires an explicitly approved successor
+for the current choices generation; reverting values does not revive an old generation.
+Missing/duplicate/changed, unknown or superseded current context and changed retained owner evidence
+also refuse. Malformed state never gets repaired. Earlier extraction records remain readable.
 
 Success is narrowly `agreement.status: stored-context-current`. Before reporting **applicable**
 agreement readiness or using it, read the actual referenced owner response and the current roadmap
@@ -243,7 +283,7 @@ outside/unresolved discovered roots before any later dispatch; never silently ad
 
 ## Step 6: Apply the recorded memory disposition
 
-For v2 disabled memory, retain the explicit disabled disposition and continue to Step 7 with
+For disabled memory, retain the explicit disabled disposition and continue to Step 7 with
 `memoryRequest:null`; no backend command or substitute prime receipt is produced. For enabled Beads,
 follow the existing bootstrap path below. Existing v1 records keep their original memory requirements.
 
@@ -256,7 +296,9 @@ node "$AUTO" record-memory --project-root "$PRIMARY" --input "$REGISTRATION"
 ```
 
 The caller owns a fresh UUID, actual target project/session/resume identity and expected canonical
-binding/context. Prepare and retain its current request before invoking a route. For a configured coordinator continuation, follow Step 7/`auto-resume.md`; its `state` operation performs this fresh memory refresh and independent consumption. The standalone coordinator route remains:
+binding/context. Prepare and retain its current request before invoking a route. For a resume, follow
+Step 7 and `auto-resume.md`; its `state` operation performs this fresh memory refresh and independent
+consumption. The standalone coordinator route remains:
 
 ```bash
 node "$AUTO" refresh-memory --project-root "$PRIMARY" --request "$REQUEST" --out "$MEMORY_OUT"
@@ -275,52 +317,41 @@ stops readiness with its actual reason. No automatic setup, task queue, worker l
 authority is introduced. Current target IDs come from caller context, never a new owner policy interview;
 if the necessary invocation context is unavailable, report that missing input and stop continuation.
 
-## Step 7: Reconcile configured continuation
+## Step 7: Hand off to the stages
 
-For a current applicable agreement and its verified enabled/disabled memory disposition, read `auto-resume.md`. Prepare the fresh
-caller-owned request from actual AO/controller associations, Git inputs, existing runtime head and
-accounting. Call `state`, then consume it with `verifyReconciliation` against that same independently
-held request. Stop continuation on partial/missing/uncertain context with its actual reason; preserve
-all reservations and original budgets. Missing invocation context is a technical partial condition,
-not another scope interview. Legacy M1 reads and the standalone worker prime remain available.
+With a current applicable agreement and its verified memory disposition, the pipeline above takes over
+and the orchestrator does not ask the owner to launch each stage. `/fvs:auto-extract` comes next, then
+`/fvs:auto-top-specs`, which ends at the draft spec pull request. Fill operational inputs from the
+recorded state and existing decisions; a genuinely missing capability or input is partial, not another
+scope interview.
 
-When the actual AO orchestrator has the complete current execution grant, stage manifest, controller
-request and original accounting, continue directly through `fv-skills/references/auto-transitions.md`. It owns the bounded
-proposal/before/effect/after loop through specification, fresh review, proof and serial independent
-checks to the draft-PR reference handoff. Do not ask the owner to launch each stage. Fill operational inputs
-from actual state and existing decisions; a genuinely missing capability/input is partial. Initial
-scope agreement and final human PR decision remain the human gates. Actual live provider execution
-requires separately granted concrete setup/permission; fixture qualification supplies no such grant.
+On a resume, read `auto-resume.md`: prepare the fresh caller-owned request from the actual AO
+associations, Git inputs and recorded accounting, call `state`, then consume it with
+`verifyReconciliation` against that same independently held request. Stop on partial, missing or
+uncertain context with its actual reason, and preserve all reservations and original budgets. The
+optional strict graph lane, when `probe-lean` works, follows `fv-skills/references/auto-transitions.md`.
+Do not infer dispatch permission from a stored agreement, a remembered grant, a partial result or a
+worker verdict.
 
-Use that reference's **Production driver: authorized v2 continuation** recipe: resolve its one
-trusted engine and closed caller context, then use `prepareCurrentRequest`/`advanceOnce` and the
-actual paired effect/after APIs. Continue extraction/discovery → `auto-top-specs` actual author and
-fresh contract-bound review → `auto-execute` dependency-ready proof, serial checker acceptance and the human review bundle.
-Existing input/grant/profile/capability gaps remain partial; v2 or agreement storage alone enables
-nothing. Keep the original run on resume and explain stale-store revisions through the finite
-v2 basis route. Do not ask the owner to manually launch the next stage.
+## Step 8: Report
 
-Without that complete opt-in context, report the available continuation below and stop. Do not
-infer dispatch permission from a stored agreement, remembered grant, partial result or worker verdict.
-
-## Step 8: Report the available continuation
-
-Use the refreshed post-init/post-record state, not the pre-init `no-state` result. Print:
+Use the refreshed post-init or post-record state, not the pre-init `no-state` result. Print:
 
 ```
 FVS >> AUTO-INIT
 
 State:            revision {revision} ({configuration}); scope {scope}; resources {workers} workers; budget {none | original explicitly selected deadline | literal legacy v1 budget}; extraction {not run | succeeded | failed}; agreement {missing | stale | stored-context-current, semantic check passed}
-Next action:      {opt-in controller proposal/partial reason, or existing standalone extraction/reconciliation continuation}
+Next action:      {the next stage, the partial reason, or the standalone extraction/reconciliation continuation}
+Stages:           {the profile's stage lines, one per stage, as printed}
+Draft PRs:        {the recorded destination repository | not recorded}
 Memory:           {explicitly disabled | unregistered | missing | stale | blocked/partial reason | memory-primed for current caller request}
 Pending decision: {only affected missing initial decisions, or none}
 ```
 
-Report the script's actual refusal/next step when blocked. Successful agreement storage is agreement-and-scope
-readiness only. The configured memory adapter reports current memory-primed; the resume coordinator records checkpoints and
-current observations, while the opt-in controller uses the separate current transition protocol.
-The legacy `nextAction` string may name an extraction or M2 placeholder; it is not executable authority.
-Report only actual current checker receipts and whole-scope gaps. Local FVS-development Beads is not
-target-project memory.
+Report the script's actual refusal or next step when blocked. Successful agreement storage is agreement
+and scope readiness only. The configured memory adapter reports current memory-primed; the resume
+coordinator records checkpoints and current observations. The engine's `nextAction` string is a
+suggestion, not executable authority. Report only actual current checker receipts and whole-scope gaps.
+Local FVS-development Beads is not target-project memory.
 
 </process>

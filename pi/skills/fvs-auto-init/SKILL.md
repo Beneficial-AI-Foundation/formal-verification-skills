@@ -1,6 +1,6 @@
 ---
 name: fvs-auto-init
-description: Reuse or record the initial roadmap agreement and setup state for the auto track
+description: Single entry for the auto track: show every stage's readiness, then reuse or record the agreement
 ---
 
 <pi_package_runtime>
@@ -12,11 +12,12 @@ description: Reuse or record the initial roadmap agreement and setup state for t
 </pi_package_runtime>
 
 <objective>
-Start or resume the auto track through the AO orchestrator master entry. Inspect the compatibility
-profile and existing state, then reuse a current applicable initial roadmap agreement without
-Keep/Change or repeated interviewing. Use `/fvs:roadmap` light/deep/reuse only for missing initial
-scope, boundaries, conventions, single-crate/monorepo layout and execution choices. No top-level
-specifications are required initially.
+Start or resume the auto track through the AO orchestrator, the single entry. Show the compatibility
+profile with every stage's readiness up front, then reuse a current applicable agreement without
+Keep/Change or repeated interviewing. Use a short `/fvs:roadmap` light/deep/reuse conversation only
+for what is missing: the source revision, the agreed scope (crates, modules and features), boundaries,
+conventions, single-crate/monorepo layout, execution choices and the repository the draft pull
+requests go to. A helper drafts the agreement and the owner only confirms it.
 
 Persist choices and the exact declared agreement through `scripts/fvs-auto.mjs`; use the mandatory
 `read-state --require-agreement` stored-context gate AND the workflow's canonical semantic check.
@@ -24,11 +25,11 @@ A roadmap-offer decision alone is not agreement or authorization. Material chang
 confirmation; routine progress does not reopen setup. Public-API selection is not supported in this
 release.
 
-Output: recorded setup/agreement and the available continuation or exact refusal. Agreement storage
-alone launches no workers or proofs. With complete authorized v2 controller context, continue the
-production driver automatically through the agreed stages. Legacy/read-only or missing-grant routes
-stop at their recorded continuation. Later provisional cycles stay autonomous within the agreement
-and final PR acceptance stays human.
+Output: recorded setup and agreement, and the next stage or the exact refusal. Agreement storage alone
+launches no workers or proofs. The pipeline after it is fixed and the agents choose how: extract, a
+draft spec pull request the owner merges, proofs, FVS's build check in a fresh clean copy, a draft proof
+pull request. Later provisional cycles stay autonomous within the agreement and final PR acceptance
+stays human.
 </objective>
 
 <execution_context>
@@ -63,6 +64,10 @@ Follow the auto-init workflow end to end. Every state change goes through `fvs-a
 write or edit `state.json` by hand, and never pass `--confirm-overwrite` without the owner's
 explicit confirmation of the listed changes.
 
+Agents may open draft pull requests and edit a pull request body. They never post comments or reviews
+on GitHub, never mark a pull request ready and never merge: only the owner comments, marks ready and
+merges.
+
 Finish with the workflow's report block, which always carries the `State:`, `Next action:` and
 `Pending decision:` lines.
 </process>
@@ -78,7 +83,7 @@ Applicable existing explicit responses are reused without another question; comp
 <success_criteria>
 - [ ] Stops with an actionable message when `ao` is not on PATH.
 - [ ] Malformed state stops with the script's message and next step; it is never overwritten.
-- [ ] The profile is shown; a `profile-blocked` result stops with every blocking item's next step.
+- [ ] The profile is shown with its stage lines before any question; a `profile-blocked` result stops with every blocking item's next step.
 - [ ] Owner choices are recorded only through `init-state`; an unchanged rerun writes nothing.
 - [ ] A changed choice is shown to the owner and written only after explicit confirmation.
 - [ ] A current applicable agreement bypasses Keep/Change and repeated interviews; actual evidence is read.
@@ -88,6 +93,6 @@ Applicable existing explicit responses are reused without another question; comp
 - [ ] The configured memory route uses a primary store and fresh caller request/actual prime bytes on start/resume.
 - [ ] Worker prime is read-only; missing real stores are never initialized or migrated automatically.
 - [ ] No public-API classifier, implicit grant or per-round human approval is introduced.
-- [ ] Worker dispatch requires actual authorized v2 controller context and the driver/current effect gates.
+- [ ] Agreement storage alone launches no workers; a recorded draft pull request destination is the project's own repository.
 - [ ] The report carries the State, Next action and Pending decision lines.
 </success_criteria>
