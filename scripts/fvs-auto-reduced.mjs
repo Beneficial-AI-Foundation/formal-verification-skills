@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-// The reduced lane: proof work for a degraded closure plan (no Lean graph, or
-// a translation-only identity). Proof acceptance needs the Lean graph, so here
-// nothing is ever accepted. The engine itself builds each item's proof file
-// with Lean, asks Lean which axioms the file's declarations use, and records
-// one terminal, labelled outcome; the run then moves on to the next item and
-// ends with a plain summary.
+// The proof-phase progress helper for a degraded closure plan (no Lean graph,
+// or a translation-only identity). It builds each item's proof file with Lean,
+// asks Lean which axioms the file's declarations use, and records one labelled
+// outcome; the run then moves on to the next item and ends with a summary.
+// These are progress observations only: the proof file is executable Lean, so
+// it can influence its own build and audit. Acceptance is the build check of
+// the proof PR head in a clean copy, or the strict lane where a Lean graph exists.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -21,14 +22,14 @@ export const LEDGER_DIR = '.formalising/auto-fv/reduced';
 const LEDGER = `${LEDGER_DIR}/outcomes.json`;
 const STANDARD_AXIOMS = ['propext', 'Classical.choice', 'Quot.sound'];
 export const LABELS = {
-  built: 'built by Lean, not accepted (reduced)',
-  'built-with-axioms': 'built by Lean using axioms beyond propext, Classical.choice and Quot.sound, not accepted (reduced)',
-  'built-unaudited': 'built by Lean, axioms not audited, not accepted (reduced)',
-  'built-with-sorry': 'built by Lean with sorry, not accepted (reduced)',
-  'build-failed': 'Lean build failed, not accepted (reduced)',
-  'no-proof': 'no proof produced, not accepted (reduced)',
+  built: 'built by Lean, not yet build-checked',
+  'built-with-axioms': 'built using axioms beyond the standard three, not yet build-checked',
+  'built-unaudited': 'built by Lean, axioms not audited, not yet build-checked',
+  'built-with-sorry': 'built with sorry',
+  'build-failed': 'Lean build failed',
+  'no-proof': 'no proof produced',
 };
-const NOT_ACCEPTED = 'Nothing in this lane is accepted: proof acceptance (freeze, check, accept) needs the Lean graph and the strict lane, so the reduced lane never promises it.';
+const NOT_ACCEPTED = 'Progress only: nothing here is accepted. Acceptance is the build check of the proof PR head in a clean copy, or the strict lane (freeze, check, accept) where a Lean graph exists.';
 
 function readPlan(planArg) {
   if (!planArg || !fs.statSync(planArg, { throwIfNoEntry: false })?.isFile()) refuse('--plan must be an existing closure plan file');
@@ -38,6 +39,8 @@ function readPlan(planArg) {
   if (plan?.schema !== 'fvs-closure-plan/record') refuse('--plan is not a closure plan record');
   if (plan.status !== 'degraded') refuse(`the plan is ${plan.status}, not degraded: use the strict lane (freeze, check, accept)`);
   if (!Array.isArray(plan.degraded?.sourceOrder)) refuse('the degraded plan has no source order');
+  const ids = plan.degraded.sourceOrder.map((item) => item?.defId);
+  if (!ids.every(Number.isInteger) || new Set(ids).size !== ids.length) refuse('the degraded plan source order needs unique integer def_ids');
   return { plan, sha256: sha256(bytes) };
 }
 
@@ -49,8 +52,9 @@ function directory(arg, flag) {
 function readLedger(root) {
   const file = path.join(root, LEDGER);
   if (!fs.existsSync(file)) return { schema: 'fvs/auto-reduced-outcomes', version: 1, records: [] };
-  const ledger = JSON.parse(fs.readFileSync(file, 'utf8'));
-  if (ledger.schema !== 'fvs/auto-reduced-outcomes' || ledger.version !== 1 || !Array.isArray(ledger.records)) refuse(`${LEDGER} is not a reduced outcome ledger`);
+  let ledger;
+  try { ledger = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { refuse(`${LEDGER} is not JSON: move it aside to start a new ledger`); }
+  if (ledger?.schema !== 'fvs/auto-reduced-outcomes' || ledger.version !== 1 || !Array.isArray(ledger.records)) refuse(`${LEDGER} is not a reduced outcome ledger`);
   return ledger;
 }
 
@@ -60,40 +64,69 @@ const publish = (file, text) => {
   fs.renameSync(`${file}.tmp`, file);
 };
 
-// The latest record of each item for this plan; a later record replaces an earlier one.
-function latest(ledger, planSha256) {
-  const map = new Map();
-  for (const record of ledger.records) if (record.planSha256 === planSha256) map.set(record.defId, record);
-  return map;
+const relativeLean = (file) => typeof file === 'string' && file.endsWith('.lean') && !path.isAbsolute(file) && !path.normalize(file).split(path.sep).includes('..');
+// The ledger is an ordinary project file, so a row is checked before it counts.
+function validRow(record, ids) {
+  if (record?.schema !== 'fvs/auto-reduced-outcome' || record.version !== 1 || !ids.has(record.defId) || !Object.keys(LABELS).includes(record.outcome)) return false;
+  if (record.outcome === 'no-proof') return record.file === null;
+  if (!relativeLean(record.file) || typeof record.fileSha256 !== 'string') return false;
+  return record.source === undefined || (typeof record.source?.worktree === 'string' && path.isAbsolute(record.source.worktree));
 }
 
-const fileSha = (absolute) => (fs.existsSync(absolute) ? sha256(fs.readFileSync(absolute)) : null);
+// The latest valid record of each item for this plan; a later record replaces an earlier one.
+function latest(ledger, planSha256, ids) {
+  const map = new Map();
+  let invalid = 0;
+  for (const record of ledger.records.filter((entry) => entry?.planSha256 === planSha256)) {
+    if (validRow(record, ids)) map.set(record.defId, record);
+    else invalid += 1;
+  }
+  return { recorded: map, invalid };
+}
+
+const fileSha = (absolute) => (fs.statSync(absolute, { throwIfNoEntry: false })?.isFile() ? sha256(fs.readFileSync(absolute)) : null);
+const git = (dir, args) => spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
+const headOf = (dir) => { const head = git(dir, ['rev-parse', 'HEAD']); return head.status === 0 ? head.stdout.trim() : null; };
 
 export function next({ projectRoot: rootArg, plan: planArg }) {
   const root = directory(rootArg, '--project-root');
   const { plan, sha256: planSha256 } = readPlan(planArg);
   const ledger = readLedger(root);
-  const recorded = latest(ledger, planSha256);
-  const other = ledger.records.filter((record) => record.planSha256 !== planSha256).length;
+  const items = plan.degraded.sourceOrder;
+  const { recorded, invalid } = latest(ledger, planSha256, new Set(items.map((item) => item.defId)));
+  const other = ledger.records.filter((record) => record?.planSha256 !== planSha256).length;
   // Outcomes are bound to the plan's bytes: a regenerated plan starts again, and says so.
   const warnings = other > 0 ? [`${other} recorded outcomes belong to another plan (the plan file changed since they were recorded); they do not count for this plan.`] : [];
-  const items = plan.degraded.sourceOrder;
+  if (invalid > 0) warnings.push(`${invalid} recorded rows for this plan are not valid outcomes (unknown item, outcome or file path); they are ignored and kept in the ledger.`);
+  // Currentness is reported on every call, not only in the summary; an outcome
+  // stays recorded as history and is never retried automatically.
+  const heads = new Map();
+  const currentHead = (dir) => { if (!heads.has(dir)) heads.set(dir, headOf(dir)); return heads.get(dir); };
+  const currency = new Map([...recorded].map(([defId, record]) => {
+    const dir = record.source?.worktree ?? root;
+    const changed = record.file !== null && fileSha(path.join(dir, record.file)) !== record.fileSha256;
+    const commit = record.source?.commit ?? record.commit ?? null;
+    return [defId, { changed, commit, earlier: record.file !== null && commit !== null && currentHead(dir) !== commit }];
+  }));
+  const ids = (key) => [...currency].filter(([, entry]) => entry[key]).map(([defId]) => defId);
+  if (ids('changed').length > 0) warnings.push(`the proof files of def_ids ${ids('changed').join(', ')} changed or are gone since they were recorded: those outcomes are history, not current.`);
+  if (ids('earlier').length > 0) warnings.push(`the outcomes of def_ids ${ids('earlier').join(', ')} are observations of an earlier commit of their checkout; the build check decides.`);
   const index = items.findIndex((item) => !recorded.has(item.defId));
   if (index >= 0) {
     return { status: 'item', item: items[index], position: { index: index + 1, total: items.length, recorded: recorded.size },
       lost: plan.degraded.lost, warnings,
-      note: `Give this item to one worker, who writes its spec and proof in one Lean file and commits it in its own checkout. Then, from this project root, record it with: record --def-id ${items[index].defId} --lean FILE --worktree WORKER_CHECKOUT --out SCRATCH_DIR (or --no-proof REASON). This lane has no spec review. ${NOT_ACCEPTED}` };
+      note: `Give this item to one worker, who writes its spec and proof in one Lean file and commits it in its own checkout. Then, from this project root, record it with: record --def-id ${items[index].defId} --lean FILE --worktree WORKER_CHECKOUT --out SCRATCH_DIR (or --no-proof REASON). ${NOT_ACCEPTED}` };
   }
   const rows = items.map((item) => {
     const record = recorded.get(item.defId);
-    const stale = record.file !== null && fileSha(path.join(record.source?.worktree ?? root, record.file)) !== record.fileSha256;
-    return { defId: item.defId, rustName: item.rustName, outcome: record.outcome, label: record.label, file: record.file,
-      ...(record.source ? { worktree: record.source.worktree } : {}), axioms: record.axioms ?? null,
+    const { changed: stale, commit } = currency.get(item.defId);
+    return { defId: item.defId, rustName: item.rustName, outcome: record.outcome, label: LABELS[record.outcome], file: record.file,
+      ...(record.source ? { worktree: record.source.worktree } : {}), commit, axioms: record.axioms ?? null,
       ...(stale ? { stale: 'the proof file changed or is gone since it was recorded' } : {}) };
   });
   const counts = Object.fromEntries(Object.keys(LABELS).map((outcome) => [outcome, rows.filter((row) => row.outcome === outcome).length]));
   const stale = rows.filter((row) => row.stale).length;
-  const line = `Reduced run finished: ${items.length} items. ${Object.entries(counts).filter(([, n]) => n > 0).map(([outcome, n]) => `${LABELS[outcome]}: ${n}`).join('; ')}.${stale ? ` Warning: ${stale} proof files changed after recording (stale).` : ''} ${NOT_ACCEPTED}`;
+  const line = `Proof progress finished: ${items.length} items. ${Object.entries(counts).filter(([, n]) => n > 0).map(([outcome, n]) => `${LABELS[outcome]}: ${n}`).join('; ')}.${stale ? ` Warning: ${stale} proof files changed after recording (stale).` : ''} ${NOT_ACCEPTED}`;
   return { status: 'summary', planSha256, counts, items: rows, warnings, line };
 }
 
@@ -152,8 +185,6 @@ export function record({ projectRoot: rootArg, plan: planArg, defId: defIdArg, l
   const item = plan.degraded.sourceOrder.find((entry) => entry.defId === defId);
   if (!item) refuse(`def_id ${defIdArg} is not an item of this degraded plan`);
   if ((lean === undefined) === (noProof === undefined)) refuse('give exactly one of --lean FILE or --no-proof REASON');
-  const git = (dir, args) => spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
-  const headOf = (dir) => { const head = git(dir, ['rev-parse', 'HEAD']); return head.status === 0 ? head.stdout.trim() : null; };
   const base = { schema: 'fvs/auto-reduced-outcome', version: 1, planSha256, defId, rustName: item.rustName, commit: headOf(root), recordedAt: new Date().toISOString() };
   let entry;
   if (noProof !== undefined) {
@@ -182,7 +213,9 @@ export function record({ projectRoot: rootArg, plan: planArg, defId: defIdArg, l
       const auditFile = path.join(out, 'audit.lean');
       fs.writeFileSync(auditFile, auditSource(bytes.toString('utf8'), nonce));
       const run = leanStep(root, out, 'audit', [tools.lake, 'env', 'lean', '--threads=2', auditFile]);
-      audit = { ...readAudit(run.text, nonce), ...run.evidence };
+      // An audit that did not finish cleanly is never trusted, whatever it printed.
+      const finished = run.evidence.exitCode === 0 && run.evidence.signal === null;
+      audit = { ...(finished ? readAudit(run.text, nonce) : { status: 'not-audited', reason: `the audit exited with ${run.evidence.signal ?? `code ${run.evidence.exitCode}`}` }), ...run.evidence };
     }
     const after = sources(projectInputs(root));
     const warnings = [];
@@ -208,11 +241,13 @@ export function record({ projectRoot: rootArg, plan: planArg, defId: defIdArg, l
       : sorryWarning || (audited && audit.axioms.includes('sorryAx')) ? 'built-with-sorry'
         : !audited ? 'built-unaudited'
           : audit.axioms.some((axiom) => !STANDARD_AXIOMS.includes(axiom)) ? 'built-with-axioms' : 'built';
-    const dirty = git(worktree, ['status', '--porcelain', '--', file]);
+    // Committed means these bytes are the file in HEAD; git status hides ignored files.
+    const inHead = git(worktree, ['rev-parse', '--verify', '--quiet', `HEAD:./${file}`]);
+    const onDisk = git(worktree, ['hash-object', '--', file]);
     const sourceHead = headOf(worktree);
     entry = { ...base, ...(worktree === root ? {} : { source: { worktree, commit: sourceHead } }),
       outcome, label: LABELS[outcome], file, fileSha256: sha256(bytes),
-      fileCommitted: sourceHead !== null && dirty.status === 0 && dirty.stdout.trim() === '',
+      fileCommitted: sourceHead !== null && inHead.status === 0 && onDisk.status === 0 && inHead.stdout.trim() === onDisk.stdout.trim(),
       axioms: audited ? audit.axioms : null,
       build: { ...build.evidence, toolchain: tools.name, leanSha256: sha256(fs.readFileSync(tools.lean)), lakeSha256: sha256(fs.readFileSync(tools.lake)) },
       audit, warnings };
@@ -229,7 +264,7 @@ function usage() {
     '       node fvs-auto-reduced.mjs record --project-root DIR --plan FILE --def-id N',
     '            (--lean FILE [--worktree DIR] --out DIR [--lake FILE] | --no-proof REASON)',
     '',
-    'The reduced lane for a degraded closure plan. next prints the next item without an outcome, or the',
+    'The proof-phase progress helper for a degraded closure plan. next prints the next item without an outcome, or the',
     'final summary. record builds FILE (relative to --worktree, the worker\'s checkout; by default the',
     'project root) with `lake lean` in the project root, asks Lean which axioms its declarations use, and',
     `records one outcome in ${LEDGER}: ${Object.values(LABELS).join('; ')}.`,

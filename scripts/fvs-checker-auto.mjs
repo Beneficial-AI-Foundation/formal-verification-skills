@@ -59,7 +59,7 @@ function captureInput(job, out, engine) {
   return { controllerInput: { file, sha256: hash(file) }, adapterInput: save(out, 'adapter-input.json', job) };
 }
 
-const REDUCED_LANE = 'Proof acceptance needs the Lean graph; a degraded plan runs reduced and cannot freeze. Record each item with fvs-auto-reduced.mjs record instead (labelled not accepted).';
+const REDUCED_LANE = 'Strict acceptance needs the Lean graph; a degraded plan cannot freeze. Record proof progress with fvs-auto-reduced.mjs record instead; acceptance is the build check of the proof PR head.';
 // Re-run the existing producers; a self-consistent supplied plan is insufficient.
 export function extractionContext(extraction) {
   closed(extraction, ['identity', 'graph', 'plan', 'rust', 'lean'], 'extraction inputs');

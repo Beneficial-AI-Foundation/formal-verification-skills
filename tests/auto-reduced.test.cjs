@@ -1,8 +1,8 @@
 'use strict';
 
-// The reduced lane on a degraded closure plan, with a stub Lake: every item
-// gets one terminal, labelled outcome, the run moves on and ends with a
-// summary, and nothing ever reads as accepted.
+// The proof-phase progress helper on a degraded closure plan, with a stub
+// Lake: every item gets one terminal, labelled outcome, the run moves on and
+// ends with a summary, and nothing ever reads as accepted.
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
@@ -23,8 +23,8 @@ const load = (name) => { const text = fs.readFileSync(path.join(FIXTURES, name),
 // edits a project file on TOUCH and creates lake-manifest.json on MANIFEST.
 // `lake env lean --threads=2 AUDIT`: prints the audit result for the nonce in
 // the appended program, with sorryAx on SORRY or HIDDEN and myAxiom on
-// MYAXIOM; nothing on NOAUDIT, no canary row on NOCANARY, and a result under
-// a wrong nonce on FORGE.
+// MYAXIOM; nothing on NOAUDIT, no canary row on NOCANARY, a result under
+// a wrong nonce on FORGE, and a correct result then exit 3 on AUDITEXIT.
 const STUB = `#!/bin/sh
 if [ "$1" = env ]; then
   f="$4"
@@ -37,6 +37,7 @@ if [ "$1" = env ]; then
   canary="{\\"name\\":\\"fvsReducedCanary_$n\\",\\"axioms\\":[\\"sorryAx\\"]},"
   grep -q NOCANARY "$f" && canary=""
   echo "FVS-REDUCED-AUDIT-$n [$canary{\\"name\\":\\"T.x\\",\\"axioms\\":[$ax]}]"
+  grep -q AUDITEXIT "$f" && exit 3
   exit 0
 fi
 f="$2"
@@ -87,13 +88,14 @@ describe('reduced lane (degraded plan, no Lean graph)', () => {
     const first = next();
     assert.equal(first.status, 'item');
     assert.equal(first.item.defId, items[0].defId);
-    assert.match(first.note, /no spec review/);
+    assert.doesNotMatch(first.note, /no spec review/);
+    assert.match(first.note, /Progress only: nothing here is accepted/);
     assert.deepEqual(first.warnings, []);
 
     write('Proofs/One.lean', 'theorem one : True := by FAIL\n');
     const failed = json(record(items[0].defId, 'Proofs/One.lean'));
     assert.equal(failed.outcome, 'build-failed');
-    assert.equal(failed.label, 'Lean build failed, not accepted (reduced)');
+    assert.equal(failed.label, 'Lean build failed');
     assert.equal(failed.build.exitCode, 1);
     assert.equal(failed.audit, null, 'a failed build is not audited');
     assert.equal(failed.fileCommitted, false);
@@ -107,7 +109,7 @@ describe('reduced lane (degraded plan, no Lean graph)', () => {
     commit('Proofs/Two.lean');
     const built = json(record(items[1].defId, 'Proofs/Two.lean'));
     assert.equal(built.outcome, 'built');
-    assert.equal(built.label, 'built by Lean, not accepted (reduced)');
+    assert.equal(built.label, 'built by Lean, not yet build-checked');
     assert.equal(built.audit.status, 'audited');
     assert.deepEqual(built.axioms, ['propext']);
     assert.equal(built.fileCommitted, true);
@@ -116,23 +118,28 @@ describe('reduced lane (degraded plan, no Lean graph)', () => {
     assert.equal(sha(fs.readFileSync(path.join(project, built.audit.log))), built.audit.logSha256);
 
     assert.equal(next().item.defId, items[2].defId);
+    // A recorded file that changes is reported while items remain, not only in the summary.
+    write('Proofs/Two.lean', 'theorem two : True := by trivial\n');
+    assert.deepEqual(next().warnings, [`the proof files of def_ids ${items[1].defId} changed or are gone since they were recorded: those outcomes are history, not current.`]);
+    write('Proofs/Two.lean', 'theorem two : True := trivial\n');
+    assert.deepEqual(next().warnings, []);
     write('Proofs/Three.lean', 'theorem three : True := SORRY\n');
     const sorry = json(record(items[2].defId, 'Proofs/Three.lean'));
-    assert.equal(sorry.label, 'built by Lean with sorry, not accepted (reduced)');
+    assert.equal(sorry.label, 'built with sorry');
     assert.equal(sorry.fileCommitted, false, 'an uncommitted file is recorded as uncommitted');
     if (items.length > 3) assert.equal(next().item.defId, items[3].defId);
     for (const item of items.slice(3)) {
       const entry = json(cli('record', '--project-root', project, '--plan', planFile, '--def-id', String(item.defId), '--no-proof', 'the worker gave up'));
-      assert.equal(entry.label, 'no proof produced, not accepted (reduced)');
+      assert.equal(entry.label, 'no proof produced');
     }
 
     const summary = next();
     assert.equal(summary.status, 'summary');
     assert.equal(summary.items.length, items.length);
     assert.deepEqual(summary.counts, { built: 1, 'built-with-axioms': 0, 'built-unaudited': 0, 'built-with-sorry': 1, 'build-failed': 1, 'no-proof': items.length - 3 });
-    assert.match(summary.line, /^Reduced run finished: \d+ items\. built by Lean, not accepted \(reduced\): 1;/);
-    assert.match(summary.line, /Nothing in this lane is accepted/);
-    assert.ok(summary.items.every((row) => /not accepted \(reduced\)$/.test(row.label)), 'nothing reads as accepted');
+    assert.match(summary.line, /^Proof progress finished: \d+ items\. built by Lean, not yet build-checked: 1;/);
+    assert.match(summary.line, /Progress only: nothing here is accepted/);
+    assert.ok(summary.items.every((row) => !/accepted/.test(row.label)), 'nothing reads as accepted');
     assert.deepEqual(summary.items[1].axioms, ['propext'], 'the summary lists each item\'s axioms');
     assert.equal(summary.items[1].file, 'Proofs/Two.lean');
     assert.equal(summary.line.includes('stale'), false);
@@ -148,7 +155,7 @@ describe('reduced lane (degraded plan, no Lean graph)', () => {
     const label = (name, text) => { write(`Proofs/${name}.lean`, text); return json(record(id, `Proofs/${name}.lean`)); };
     const axioms = label('Ax', 'axiom myAxiom : False\ntheorem t : True := trivial -- MYAXIOM\n');
     assert.equal(axioms.outcome, 'built-with-axioms');
-    assert.equal(axioms.label, 'built by Lean using axioms beyond propext, Classical.choice and Quot.sound, not accepted (reduced)');
+    assert.equal(axioms.label, 'built using axioms beyond the standard three, not yet build-checked');
     assert.deepEqual(axioms.axioms, ['myAxiom', 'propext']);
     assert.equal(label('Hidden', 'theorem t : True := HIDDEN\n').outcome, 'built-with-sorry', 'sorry the build log does not show still counts');
     const disagree = label('WarnOnly', 'theorem t : True := trivial -- WARNONLY\n');
@@ -160,11 +167,14 @@ describe('reduced lane (degraded plan, no Lean graph)', () => {
     assert.equal(imported.audit.status, 'audited');
     const silent = label('NoAudit', 'theorem t : True := trivial -- NOAUDIT\n');
     assert.equal(silent.outcome, 'built-unaudited');
-    assert.equal(silent.label, 'built by Lean, axioms not audited, not accepted (reduced)');
+    assert.equal(silent.label, 'built by Lean, axioms not audited, not yet build-checked');
     assert.equal(silent.axioms, null);
     assert.match(label('NoCanary', 'theorem t : True := trivial -- NOCANARY\n').audit.reason, /missed its own sorry canary/);
     const forged = label('Forge', 'theorem t : True := trivial -- FORGE NOAUDIT\n');
     assert.equal(forged.outcome, 'built-unaudited', 'a result under another nonce is ignored');
+    const failedAudit = label('AuditExit', 'theorem t : True := trivial -- AUDITEXIT\n');
+    assert.equal(failedAudit.outcome, 'built-unaudited', 'a matching result from an audit that exited nonzero is not trusted');
+    assert.match(failedAudit.audit.reason, /^the audit exited with code 3$/);
     const auditText = fs.readFileSync(path.join(tmp, `out-${run - 1}`, 'audit.lean'), 'utf8');
     assert.ok(auditText.startsWith('import Lean theorem t'), 'the audit copy is the file with Lean imported');
   });
@@ -185,6 +195,23 @@ describe('reduced lane (degraded plan, no Lean graph)', () => {
     assert.ok(fs.existsSync(path.join(project, entry.build.log)), 'logs and ledger stay in the project root');
     assert.ok(!fs.existsSync(path.join(worker, '.formalising')), 'nothing is written into the worker checkout');
     assert.match(record(id, '../escape.lean', '--worktree', worker).stderr, /relative to the worker checkout/);
+    write('Proofs/Later.lean', 'theorem l : True := trivial\n', worker);
+    commit('Proofs/Later.lean', worker);
+    assert.ok(next().warnings.includes(`the outcomes of def_ids ${id} are observations of an earlier commit of their checkout; the build check decides.`));
+  });
+
+  it('records a proof under an ignored, never-tracked path as not committed', () => {
+    const id = plan.degraded.sourceOrder[0].defId;
+    const worker = path.join(tmp, 'ignored-worker');
+    fs.mkdirSync(worker);
+    spawnSync('git', ['init', '-q'], { cwd: worker });
+    write('.gitignore', 'Proofs/\n', worker);
+    commit('.gitignore', worker);
+    write('Proofs/I.lean', 'theorem i : True := trivial\n', worker);
+    assert.equal(gitIn(worker, 'status', '--porcelain', '--', 'Proofs/I.lean').stdout, '', 'git status hides the ignored file');
+    const entry = json(record(id, 'Proofs/I.lean', '--worktree', worker));
+    assert.equal(entry.outcome, 'built');
+    assert.equal(entry.fileCommitted, false);
   });
 
   it('records Lake creating lake-manifest.json as a warning, and refuses a build that edits other project files', () => {
@@ -218,14 +245,40 @@ describe('reduced lane (degraded plan, no Lean graph)', () => {
     assert.match(record(id, '../escape.lean').stderr, /relative to the worker checkout/);
     assert.match(record(id, '/abs/x.lean').stderr, /relative to the worker checkout/);
     assert.match(cli('record', '--project-root', project, '--plan', planFile, '--def-id', String(id)).stderr, /exactly one of --lean FILE or --no-proof REASON/);
+    const duplicate = path.join(tmp, 'duplicate.json');
+    fs.writeFileSync(duplicate, JSON.stringify({ ...plan, degraded: { ...plan.degraded, sourceOrder: [...plan.degraded.sourceOrder, plan.degraded.sourceOrder[0]] } }));
+    assert.match(cli('next', '--project-root', project, '--plan', duplicate).stderr, /unique integer def_ids/);
   });
 
   it('freeze, check and accept refuse a degraded plan with a reason that names the record step', async () => {
     const { extractionContext, inspectAutoBaselineArtifacts } = await import(pathToFileURL(path.join(ROOT, 'scripts', 'fvs-checker-auto.mjs')).href);
     const text = fs.readFileSync(planFile);
     assert.throws(() => extractionContext({ identity: null, graph: null, plan: { file: planFile, sha256: sha(text) }, rust: null, lean: null }),
-      (error) => error.code === 'unsupported' && /Proof acceptance needs the Lean graph; a degraded plan runs reduced .*fvs-auto-reduced\.mjs record/.test(error.message));
+      (error) => error.code === 'unsupported' && /Strict acceptance needs the Lean graph; a degraded plan cannot freeze\. .*fvs-auto-reduced\.mjs record/.test(error.message));
     assert.throws(() => inspectAutoBaselineArtifacts({ baseline: null, deadlineMs: Date.now() + 60000 }),
-      (error) => /no frozen baseline: freeze first\. Proof acceptance needs the Lean graph/.test(error.message));
+      (error) => /no frozen baseline: freeze first\. Strict acceptance needs the Lean graph/.test(error.message));
+  });
+
+  // Last: these rows are written straight into the ledger, as authored code could.
+  it('ignores invalid ledger rows, derives labels from the outcome, and refuses a corrupt ledger', () => {
+    const ledgerFile = path.join(project, '.formalising/auto-fv/reduced/outcomes.json');
+    const saved = fs.readFileSync(ledgerFile);
+    const ledger = JSON.parse(saved);
+    const items = plan.degraded.sourceOrder;
+    const row = { schema: 'fvs/auto-reduced-outcome', version: 1, planSha256: sha(fs.readFileSync(planFile)), defId: items[0].defId, file: 'Proofs/Two.lean', fileSha256: 'x', axioms: [] };
+    ledger.records.push({ ...row, outcome: 'accepted' }, { ...row, outcome: 'constructor' }, { ...row, outcome: 'built', defId: 999999 },
+      { ...row, outcome: 'built', file: '../x.lean' }, { ...row, outcome: 'built', label: 'accepted' });
+    fs.writeFileSync(ledgerFile, JSON.stringify(ledger));
+    const summary = next();
+    assert.equal(summary.status, 'summary');
+    assert.ok(summary.warnings.includes('4 recorded rows for this plan are not valid outcomes (unknown item, outcome or file path); they are ignored and kept in the ledger.'));
+    assert.equal(summary.items[0].label, 'built by Lean, not yet build-checked', 'the stored label is never shown');
+    assert.ok(summary.items.every((entry) => !/accepted/.test(entry.label)));
+
+    fs.writeFileSync(ledgerFile, '{not json');
+    const corrupt = cli('next', '--project-root', project, '--plan', planFile);
+    assert.equal(corrupt.status, 1);
+    assert.match(corrupt.stderr, /^refused: \.formalising\/auto-fv\/reduced\/outcomes\.json is not JSON/);
+    fs.writeFileSync(ledgerFile, saved);
   });
 });
