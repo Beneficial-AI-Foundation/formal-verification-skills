@@ -39,6 +39,7 @@ const SCRIPT_FILES = [
   'fvs-project-memory.mjs',
   'fvs-checker.mjs',
   'fvs-checker-auto.mjs',
+  'fvs-build-check.mjs',
   'fvs-checker-build.mjs',
   'FvsKernelAudit.lean',
   'fvs-closure-plan.mjs',
