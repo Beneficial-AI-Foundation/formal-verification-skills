@@ -446,6 +446,19 @@ export function moduleHeader(source) {
 // compiles to .olean, .olean.private and .olean.server, any other module to
 // .olean. Besides those, only the optional companions of analysed modules and
 // .hash sidecars may appear. Returns the problems found.
+// The project's own Lean modules, as slash paths, from a project inputs map.
+export const projectModules = (files) => Object.keys(files)
+  .filter((file) => file.endsWith('.lean') && !file.startsWith('.lake/') && path.posix.basename(file) !== 'lakefile.lean')
+  .map((file) => file.slice(0, -'.lean'.length));
+
+// What to do when Lake never compiled a project module: a library compiles only
+// what its root file imports.
+export const notBuiltHint = (modules, roots) => {
+  const byRoot = (module) => roots.find((root) => module === root || module.startsWith(`${root}.`)) ?? module.split('.')[0];
+  const imports = modules.map((module) => `\`import ${module}\` to ${byRoot(module)}.lean`).join(', ');
+  return `lake build compiles only what a library root imports, so add ${imports} (or move a file that is not part of the library out of its directory), then build again`;
+};
+
 export function compiledProblems(compiled, modules, projectRoot) {
   const problems = [];
   const allowed = new Set();
@@ -998,9 +1011,7 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
   // project declaration is expected and an omitted one cannot pass as external.
   const expected = new Set();
   if (files) {
-    const modules = Object.keys(files)
-      .filter((file) => file.endsWith('.lean') && !file.startsWith('.lake/') && path.posix.basename(file) !== 'lakefile.lean')
-      .map((file) => file.slice(0, -'.lean'.length));
+    const modules = projectModules(files);
     const outside = modules.filter((module) => !requested.includes(module.split('/')[0]));
     if (outside.length > 0) block('modules-outside-scope', `project modules outside the requested libraries: ${outside.map((m) => m.replaceAll('/', '.')).join(', ')}`);
     record.completeness.modules = {};
@@ -1009,7 +1020,7 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
       const ilean = `${ILEAN_DIR}/${module}.ilean`;
       const parsed = has(files, ilean) ? parseJson(fs.readFileSync(path.join(projectRoot, ilean), 'utf8')) : undefined;
       if (!plainObject(parsed) || parsed.module !== name || !plainObject(parsed.decls)) {
-        block('missing-ilean', `module ${name} has no matching ${ilean} in the recorded run`);
+        block('missing-ilean', `module ${name} has no matching ${ilean} in the recorded run${has(files, ilean) ? '' : `; ${notBuiltHint([name], requested)}`}`);
         continue;
       }
       // decls omits some declarations (a def or theorem whose type has no

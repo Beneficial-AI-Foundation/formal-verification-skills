@@ -342,6 +342,7 @@ describe('derived: completeness needs the requested scope, not one atom or a cac
     const projectRoot = projectCopy((directory) => fs.rmSync(path.join(directory, '.lake/build/lib/lean/M1demo/Spec.ilean')));
     const record = derived({ projectRoot, receipt: (r) => { r.inputs.files = projectInputs(projectRoot); } });
     assert.deepEqual(codes(record), withUnverified(['missing-ilean', 'atom-outside-scope']));
+    assert.match(record.blockers[0].reason, /add `import M1demo\.Spec` to M1demo\.lean/);
   });
 
   it('a recorded receipt that no longer lists a module .ilean on disk blocks', () => {

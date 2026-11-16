@@ -9,7 +9,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { ILEAN_DIR, projectInputs, oracleShapeProblems, constantsRunProblems, compiledProblems, importProblems } from './fvs-lean-graph.mjs';
+import { ILEAN_DIR, projectInputs, oracleShapeProblems, constantsRunProblems, compiledProblems, importProblems, projectModules, notBuiltHint } from './fvs-lean-graph.mjs';
 
 const sha256 = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
 // A library root is interpolated into Lean source that #eval runs, and the
@@ -245,6 +245,12 @@ export function produce({ project: projectArg, roots, out: outArg, lake: lakeArg
   const files = projectInputs(project);
   const compiled = compiledFiles(project);
   const before = inventory(step(out, '02-discover-before', discoverArgv, project), 'discovery');
+  // A project module outside the roots' import closure is never compiled, and
+  // the record would silently leave it out.
+  const loaded = new Set(Object.keys(JSON.parse(before.text).modules));
+  const unbuilt = projectModules(files).map((module) => module.replaceAll('/', '.'))
+    .filter((module) => roots.includes(module.split('.')[0]) && !loaded.has(module)).sort();
+  if (unbuilt.length > 0) refuse(`the library roots do not import ${unbuilt.join(', ')}: ${notBuiltHint(unbuilt, roots)}`);
   const body = lastLine(step(out, '03-constants', oracleArgv, project), '{', 'the extractor');
   const after = inventory(step(out, '04-discover-after', discoverArgv, project), 'discovery');
   if (before.summary.digest !== after.summary.digest) refuse('the import inventory changed during the extractor run');

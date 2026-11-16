@@ -26,13 +26,16 @@ const args = process.argv.slice(2);
 const env = process.env;
 if (args.includes('build')) {
   if (env.FAKE_EXTRA_OLEAN) fs.writeFileSync(path.join(process.cwd(), '.lake/build/lib/lean/Other.olean'), 'stale');
+  if (env.FAKE_UNIMPORTED) fs.writeFileSync(path.join(process.cwd(), 'Demo/Extra.lean'), 'def y := 1\\n');
   process.exit(Number(env.FAKE_BUILD_EXIT || 0));
 }
 const file = args[args.length - 1];
 const olean = (root, module) => path.join(root, module.replaceAll('.', '/') + '.olean');
+const build = path.join(process.cwd(), '.lake/build/lib/lean');
 const rows = [
   { module: 'Init', olean: olean(env.FAKE_TOOLCHAIN_LIB, 'Init'), parts: [''] },
-  { module: 'Demo', olean: olean(path.join(process.cwd(), '.lake/build/lib/lean'), 'Demo'), parts: [''] },
+  { module: 'Demo', olean: olean(build, 'Demo'), parts: [''] },
+  { module: 'Demo.Sub', olean: olean(build, 'Demo.Sub'), parts: [''] },
 ];
 if (path.basename(file) === 'Discover.lean') {
   console.log('info: discovery');
@@ -43,7 +46,7 @@ const body = {
   nodes: [{ name: 'Demo.x', module: 'Demo', kind: 'def', hasDeclarationRange: true, isStructure: false, isProjection: false,
     isClass: false, isInstance: false, type: ['Nat'], value: ['Nat.succ'], axioms: [] }],
   referenced: [{ name: 'Nat', module: 'Init' }, { name: 'Nat.succ', module: 'Init' }],
-  moduleNames: env.FAKE_MODULES ? env.FAKE_MODULES.split(',') : ['Init', 'Demo'],
+  moduleNames: env.FAKE_MODULES ? env.FAKE_MODULES.split(',') : ['Init', 'Demo', 'Demo.Sub'],
 };
 console.log(JSON.stringify(body));
 if (env.FAKE_TWO_LINES) console.log(JSON.stringify(body));
@@ -65,6 +68,12 @@ function freshProject() {
   fs.mkdirSync(path.join(project, '.lake/build/lib/lean'), { recursive: true });
   fs.writeFileSync(path.join(project, '.lake/build/lib/lean/Demo.olean'), 'demo olean');
   fs.writeFileSync(path.join(project, '.lake/build/lib/lean/Demo.ilean'), '{}');
+  // A nested module the root imports, as an extraction inside a library is.
+  fs.mkdirSync(path.join(project, 'Demo'));
+  fs.writeFileSync(path.join(project, 'Demo/Sub.lean'), 'def z := 2\n');
+  fs.mkdirSync(path.join(project, '.lake/build/lib/lean/Demo'));
+  fs.writeFileSync(path.join(project, '.lake/build/lib/lean/Demo/Sub.olean'), 'sub olean');
+  fs.writeFileSync(path.join(project, '.lake/build/lib/lean/Demo/Sub.ilean'), '{}');
   fs.writeFileSync(path.join(toolchainLib, 'Init.olean'), 'init olean');
   return project;
 }
@@ -106,15 +115,16 @@ describe('fvs-lean-constants producer', () => {
     const importsText = fs.readFileSync(path.join(out, 'imports.json'), 'utf8');
     assert.deepEqual(graph.oracleShapeProblems(record), []);
     assert.deepEqual(graph.constantsRunProblems(receipt, recordText, record, project), []);
-    assert.deepEqual(graph.compiledProblems(record.inputs.compiled, ['Demo'], project), []);
-    assert.deepEqual(graph.importProblems(importsText, record.inputs.imports, record.inputs.compiled, ['Demo'], record.referenced), []);
+    const analysed = ['Demo', 'Demo.Sub'];
+    assert.deepEqual(graph.compiledProblems(record.inputs.compiled, analysed, project), []);
+    assert.deepEqual(graph.importProblems(importsText, record.inputs.imports, record.inputs.compiled, analysed, record.referenced), []);
     assert.equal(record.version, 2);
     assert.equal(record.producer.toolchain, 'leanprover/lean4:v4.35.0');
     assert.equal(record.producer.lakeSha256, sha256(fs.readFileSync(lake)));
     assert.equal(record.producer.harnessSha256, sha256(fs.readFileSync(SCRIPT)));
     assert.equal(sha256(fs.readFileSync(path.join(out, 'imports.json'))), record.inputs.imports.digest);
-    assert.deepEqual([record.inputs.imports.modules, record.inputs.imports.files], [2, 2]);
-    assert.deepEqual(Object.keys(record.inputs.compiled), ['.lake/build/lib/lean/Demo.olean']);
+    assert.deepEqual([record.inputs.imports.modules, record.inputs.imports.files], [3, 3]);
+    assert.deepEqual(Object.keys(record.inputs.compiled).sort(), ['.lake/build/lib/lean/Demo.olean', '.lake/build/lib/lean/Demo/Sub.olean']);
     assert.ok(Object.hasOwn(record.inputs.files, 'Demo.lean'));
     assert.equal(receipt.argv[4], path.join(out, 'work', 'LeanConstants.lean'));
     for (const log of ['01-build', '02-discover-before', '03-constants', '04-discover-after']) assert.ok(fs.existsSync(path.join(out, `${log}.log`)));
@@ -136,6 +146,7 @@ describe('fvs-lean-constants producer', () => {
     ['a project file that changes during the run', { FAKE_INPUT_CHANGE: '1' }, 'Demo', /project files or compiled modules changed/],
     ['extractor module names that differ from discovery', { FAKE_MODULES: 'Init,Demo,Other' }, 'Demo', /module names differ/],
     ['a compiled file of a module outside the roots', { FAKE_EXTRA_OLEAN: '1' }, 'Demo', /unexpected \.lake\/build\/lib\/lean\/Other\.olean/],
+    ['a project module the library root does not import', { FAKE_UNIMPORTED: '1' }, 'Demo', /do not import Demo\.Extra: .*`import Demo\.Extra` to Demo\.lean/],
   ];
   for (const [label, env, roots, message] of refusals) {
     it(`refuses ${label} and publishes nothing`, () => {
