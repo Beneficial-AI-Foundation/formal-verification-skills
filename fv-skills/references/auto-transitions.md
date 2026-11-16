@@ -166,9 +166,11 @@ Literal wildcard/pattern characters (`*`, `?`, or line breaks) in node/gate path
 before output or settings writes. Shell quoting does not make a permission wildcard literal.
 The merger writes only that actor worktree's own `.claude/settings.local.json`, so it needs a real
 `.claude` folder there. Links inside a real `.claude` folder, such as the entries of one shared
-project-local FVS install, are fine, but `settings.local.json` must stay a real per-worktree file with
-no `permissions` key. A linked `.claude` folder, or a linked or hard linked `settings.local.json`, is
-refused without changing any settings, because the grant would reach every worktree that shares the file.
+project-local FVS install (including the shared `settings.json`), are fine. The one file that must
+never be shared is `settings.local.json`: it receives the grant, so it must stay a real, single-link
+per-worktree file with no `permissions` key. A linked `.claude` folder, or a linked or hard linked
+`settings.local.json`, is refused without changing any settings, because the grant would reach every
+worktree that shares the file. This layout was checked end to end on AO 0.14.10 in a throwaway project.
 
 Only after verified association/profile/install readback, send one permission-ready notice naming
 the launch, actor/worktree and retained installation receipt. This is trusted instruction coordination,

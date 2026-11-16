@@ -62,11 +62,16 @@ extraction and a full pilot are separate from preparing this installation.
    Read its installed version and manifest, compare the actual scripts to the selected source, and
    check role/tool access from that actor. Repeat for each AO worker worktree: ignored local installs
    do not propagate through Git. To share one local install instead, link each entry the install put
-   under `.claude`, one by one, into a real per-worktree `.claude` folder; never link `.claude` itself
-   or `settings.local.json`. The
-   actor permission helper refuses a linked `.claude` folder, because a grant written there would be
-   shared by every worktree. Check that your AO version creates links at nested paths before relying
-   on this layout. Keep one fixed trusted engine identity across the run. Local shell
+   under `.claude`, one by one, into a real per-worktree `.claude` folder. Linking the project's shared
+   `settings.json` this way is fine: it holds the hooks, status line and project-wide rules, like a
+   committed project settings file. Never link `.claude` itself or `settings.local.json`: that file
+   receives each actor's permission grant, so it must stay a real, single-link file in each worktree
+   (AO writes it there). The actor permission helper refuses a linked `.claude` folder or a linked
+   `settings.local.json`, because a grant written there would reach every worktree that shares it.
+   AO created this nested layout from per-entry links on AO 0.14.10 in a throwaway project, and the
+   helper then verified the grant; recheck on another AO version. Rules kept in the main clone's
+   `settings.local.json` stop reaching worktrees under this layout, and only worktrees created after
+   the change get it. Keep one fixed trusted engine identity across the run. Local shell
    paths resolve to the selected installation even from a nested cwd; plugin resources remain rooted
    at the plugin, and Pi resolves package-relative resources from its skill directory.
    For Claude's Lean MCP tools, the project `.mcp.json` server key must be `lean-lsp`
