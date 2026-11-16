@@ -240,6 +240,36 @@ describe('auto-init setup state', () => {
     assert.ok(result.blocking[0].nextStep);
   });
 
+  it('a root with no Lean project names the one subfolder that holds it, and writes nothing', () => {
+    const repo = temporaryDirectory('fvs-auto-layout-');
+    fs.cpSync(CRATE, repo, { recursive: true });
+    fs.cpSync(path.join(PROFILE_FIXTURES, 'fresh'), path.join(repo, 'formal'), { recursive: true });
+    const files = () => fs.readdirSync(repo, { recursive: true }).sort();
+    const before = files();
+    const leanOf = () => run(() => auto.profile({ projectRoot: repo, platform: PLATFORM })).items.find((entry) => entry.id === 'lean');
+
+    const lean = leanOf();
+    assert.equal(lean.verdict, 'missing');
+    assert.match(lean.reason, /the Lean project is in formal\//);
+    assert.match(lean.nextStep, /^Rerun with the project root at formal\//);
+    assert.doesNotMatch(lean.nextStep, /Add a lean-toolchain/);
+
+    const blocked = init(repo);
+    assert.equal(blocked.code, 'profile-blocked');
+    assert.deepEqual(blocked.blocking.map((entry) => entry.id), ['lean', 'aeneas']);
+    assert.match(blocked.message, /the Lean project is in formal\/, so rerun with the project root at formal\//);
+    assert.match(blocked.nextStep, /project root at formal\//);
+    assert.doesNotMatch(blocked.nextStep, /Add a lean-toolchain|Require the Aeneas/);
+    assert.deepEqual(files(), before, 'no toolchain, state or other file is written into the project');
+
+    // Two candidate folders name neither: the existing step stays.
+    fs.cpSync(path.join(PROFILE_FIXTURES, 'fresh'), path.join(repo, 'other'), { recursive: true });
+    assert.match(leanOf().nextStep, /Add a lean-toolchain/);
+    fs.rmSync(path.join(repo, 'other'), { recursive: true });
+
+    assert.equal(init(path.join(repo, 'formal')).code, 'created', 'the named root is accepted');
+  });
+
   it('a missing probe never stops auto-init, and an unsupported host stops only for its own missing tools', () => {
     const root = project();
     const result = init(root, CHOICES, { bin: binWithout('probe-aeneas', 'probe-rust') });

@@ -317,6 +317,12 @@ function leanItem(root) {
     lakeVersion: null,
   };
   if (!evidence.toolchain) {
+    const nested = evidence.lakefile ? null : nestedLeanProject(root);
+    if (nested) {
+      evidence.nestedProject = nested;
+      return item('lean', 'missing', `lean-toolchain is missing or empty at the project root; the Lean project is in ${nested}/`,
+        `Rerun with the project root at ${nested}/, where the Lean project is.`, evidence);
+    }
     return item('lean', 'missing', 'lean-toolchain is missing or empty',
       'Add a lean-toolchain file to the project root pinning the Lean version your Aeneas backend uses.', evidence);
   }
@@ -350,6 +356,16 @@ function sortedDirectories(directory) {
   } catch {
     return [];
   }
+}
+
+// The one visible subfolder holding a Lean project (a lean-toolchain and a
+// lakefile), for a project root that holds none. With none or several
+// candidates nothing is named. Only read; the user's project is never written.
+function nestedLeanProject(root) {
+  const found = sortedDirectories(root).filter((name) => !name.startsWith('.')
+    && readText(path.join(root, name, 'lean-toolchain'))?.trim()
+    && ['lakefile.toml', 'lakefile.lean'].some((file) => fs.existsSync(path.join(root, name, file))));
+  return found.length === 1 ? found[0] : null;
 }
 
 // The Aeneas requirement as written in the lakefile. Nothing is guessed: an
@@ -425,6 +441,11 @@ function aeneasItem(root, platform, provenance) {
     charon: { path: release?.charon ?? which('charon'), version: null, output: null },
   };
   if (pins.length === 0 && !lakefile.required) {
+    const nested = lakefile.file ? null : nestedLeanProject(root);
+    if (nested) {
+      return item('aeneas', 'missing', `no lakefile at the project root, so no Aeneas requirement; the Lean project is in ${nested}/`,
+        `The Aeneas requirement is read from the Lean project's lakefile, so it is checked once the project root is at ${nested}/.`, evidence);
+    }
     return item('aeneas', 'missing', 'no Aeneas requirement in the lakefile or lake-manifest.json',
       'Require the Aeneas Lean backend in lakefile.toml ([[require]] name = "aeneas" with a pinned rev).', evidence);
   }
@@ -1221,7 +1242,9 @@ export function initState({ projectRoot, choices, confirmOverwrite = false, plat
   const refuseBlocked = () => {
     const blocking = result.items.filter(blocks).map(({ id, verdict, reason, nextStep }) => ({ id, verdict, reason, nextStep }));
     if (blocking.length > 0) {
-      refuse('profile-blocked', `the compatibility profile stops auto-init: ${blocking.map((entry) => `${entry.id} is ${entry.verdict}`).join(', ')}${recorded ? '; the recorded profile now holds these facts, and the recorded choices are unchanged' : ''}`,
+      const nested = result.items.find((entry) => entry.id === 'lean')?.evidence.nestedProject;
+      const where = nested ? `; the Lean project is in ${nested}/, so rerun with the project root at ${nested}/` : '';
+      refuse('profile-blocked', `the compatibility profile stops auto-init: ${blocking.map((entry) => `${entry.id} is ${entry.verdict}`).join(', ')}${where}${recorded ? '; the recorded profile now holds these facts, and the recorded choices are unchanged' : ''}`,
         { blocking, nextStep: blocking.map((entry) => entry.nextStep).join(' ') });
     }
   };
