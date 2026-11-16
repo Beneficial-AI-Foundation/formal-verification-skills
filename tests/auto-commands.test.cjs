@@ -1084,3 +1084,83 @@ describe('auto command and workflow text', () => {
     assert.match(read('fv-skills/workflows/roadmap.md'), /Generic roadmaps outside auto-init require no machine envelope/);
   });
 });
+
+describe('spec phase: record-spec and spec-status', () => {
+  // A project with two spec files and a review, committed once; no state is needed.
+  function specProject() {
+    const root = temporaryDirectory('fvs-auto-specs-');
+    fs.mkdirSync(path.join(root, 'formal', 'specs', 'Specs'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'formal/specs/Specs/Hmac.lean'), 'recall hmac_spec\n');
+    fs.writeFileSync(path.join(root, 'formal/specs/Specs/Hkdf.lean'), 'recall hkdf_spec\n');
+    fs.writeFileSync(path.join(root, 'review.md'), 'round 1: pass\n');
+    git(root, 'init', '-q');
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'specs');
+    return root;
+  }
+  const recordSpec = (root, file, verdict, round = '1', ...extra) => cli('record-spec', '--project-root', root, '--spec-file', file,
+    '--items', 'libcrux_hmac::hmac, libcrux_hmac::hmac', '--round', round, '--verdict', verdict, '--review', 'review.md', ...extra);
+  const status = (root) => cli('spec-status', '--project-root', root).json;
+
+  it('records rounds per spec file, keeps history, and derives labels and readiness from the current rows', () => {
+    const root = specProject();
+    assert.deepEqual(status(root), { ok: true, command: 'spec-status', code: 'ok', message: `0 spec file(s) recorded in ${path.join(root, '.formalising/auto-fv/specs.json')}`,
+      specFiles: [], readyForPr: false, blocked: [] }, 'no rows is never ready');
+
+    const first = recordSpec(root, 'formal/specs/Specs/Hmac.lean', 'changes', '1', '--out-of-scope', 'libcrux_hmac::internal');
+    assert.equal(first.status, 0, first.stdout);
+    assert.deepEqual(first.json.row.items, ['libcrux_hmac::hmac'], 'items are trimmed and deduplicated');
+    assert.equal(first.json.row.specSha256, sha256('recall hmac_spec\n'));
+    assert.equal(first.json.message, 'spec reviewed: changes requested (round 1): formal/specs/Specs/Hmac.lean');
+    let view = status(root);
+    assert.equal(view.readyForPr, false, 'a file waiting for changes holds the PR');
+    assert.equal(view.specFiles[0].label, 'spec reviewed: changes requested (round 1)');
+    assert.deepEqual(view.specFiles[0].outOfScope, [{ id: 'libcrux_hmac::internal', label: 'out of scope (noted by agent)' }]);
+
+    assert.equal(recordSpec(root, path.join(root, 'formal/specs/Specs/Hmac.lean'), 'pass', '2').status, 0, 'an absolute path inside the root keys on the same file');
+    assert.equal(recordSpec(root, 'formal/specs/Specs/Hkdf.lean', 'blocked', '3').status, 0);
+    view = status(root);
+    assert.deepEqual(view.specFiles.map((file) => [file.specFile, file.label, file.rounds, file.stale]), [
+      ['formal/specs/Specs/Hmac.lean', 'spec reviewed: pass', 2, false],
+      ['formal/specs/Specs/Hkdf.lean', 'spec blocked after 3 rounds', 1, false],
+    ]);
+    assert.equal(view.readyForPr, true, 'blocked files do not hold the PR');
+    assert.deepEqual(view.blocked, ['formal/specs/Specs/Hkdf.lean']);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, '.formalising/auto-fv/specs.json'), 'utf8')).specs.length, 3, 'earlier rows stay as history');
+
+    fs.appendFileSync(path.join(root, 'formal/specs/Specs/Hmac.lean'), '-- edited\n');
+    view = status(root);
+    assert.equal(view.specFiles[0].stale, true);
+    assert.equal(view.readyForPr, false, 'a spec file edited after its review is stale and holds the PR');
+    fs.rmSync(path.join(root, 'formal/specs/Specs/Hmac.lean'));
+    assert.deepEqual([status(root).specFiles[0].stale, status(root).specFiles[0].missing], [true, true]);
+
+    const late = recordSpec(root, 'formal/specs/Specs/Hkdf.lean', 'pass', '4');
+    assert.equal(late.status, 0);
+    assert.match(late.json.warnings[0], /^round 4 is past the three agreed review rounds; it is recorded$/);
+  });
+
+  it('refuses paths outside the project root, bad verdicts and rounds, and a malformed record', () => {
+    const root = specProject();
+    const outside = path.join(temporaryDirectory(), 'Outside.lean');
+    fs.writeFileSync(outside, 'x\n');
+    for (const [args, code] of [
+      [[outside, 'pass'], 'invalid-input'],
+      [['../Outside.lean', 'pass'], 'invalid-input'],
+      [['formal/specs/Specs', 'pass'], 'invalid-input'],
+      [['formal/specs/Specs/Missing.lean', 'pass'], 'invalid-input'],
+      [['formal/specs/Specs/Hmac.lean', 'accepted'], 'usage'],
+      [['formal/specs/Specs/Hmac.lean', 'pass', '0'], 'usage'],
+    ]) {
+      const result = recordSpec(root, ...args);
+      assert.equal(result.json.code, code, args.join(' '));
+      assert.equal(fs.existsSync(path.join(root, '.formalising/auto-fv/specs.json')), false, 'a refusal writes nothing');
+    }
+    fs.mkdirSync(path.join(root, '.formalising/auto-fv'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.formalising/auto-fv/specs.json'), '{"schema":"fvs/auto-specs","schemaVersion":1,"specs":[{}]}');
+    const malformed = cli('spec-status', '--project-root', root);
+    assert.equal(malformed.status, 3);
+    assert.equal(malformed.json.code, 'malformed-specs');
+    assert.equal(recordSpec(root, 'formal/specs/Specs/Hmac.lean', 'pass').json.code, 'malformed-specs', 'never overwritten');
+  });
+});

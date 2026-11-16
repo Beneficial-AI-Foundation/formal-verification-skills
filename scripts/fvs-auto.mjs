@@ -51,6 +51,8 @@ function usage() {
     '       node fvs-auto.mjs record-roadmap --decision accepted|declined [--project-root DIR] [--confirm-overwrite]',
     '       node fvs-auto.mjs record-extraction --out OUT --build-exit-code N --oracle complete|refused|unknown [--oracle-reason TEXT] [--project-root DIR]',
     '       node fvs-auto.mjs record-externals --input RECORDS.json [--project-root DIR]',
+    '       node fvs-auto.mjs record-spec --spec-file PATH --items ID[,ID...] --round N --verdict pass|changes|blocked --review FILE [--out-of-scope ID[,ID...]] [--project-root DIR]',
+    '       node fvs-auto.mjs spec-status [--project-root DIR]',
     '       node fvs-auto.mjs freeze|check|accept --request FILE --out EXCLUSIVE_DIR',
     '',
     'profile reports what this host and project can do for the FVS auto track,',
@@ -60,8 +62,9 @@ function usage() {
     '',
     'The state subcommands keep the milestone 1 auto-track state under',
     '.formalising/auto-fv/ in the project root: state.json (profile, owner choices,',
-    'roadmap offer, extraction, optional M2 agreement) and externals.json (one record per',
-    'boundary). Every write is atomic; malformed files are reported, never',
+    'roadmap offer, extraction, optional M2 agreement), externals.json (one record per',
+    'boundary) and specs.json (one row per spec review round; PATH and FILE are',
+    'files inside the project root, relative to it). Every write is atomic; malformed files are reported, never',
     'overwritten. They print one JSON result. Exit codes: 0 ok; 1 refused',
     '(confirmation required, blocked profile, failed extraction, record loss,',
     'invalid input, no state); 2 usage or internal error; 3 malformed state.',
@@ -1152,6 +1155,30 @@ const RECORD_TEXT = new WeakMap();
 
 const loadState = (root) => loadRecord(statePath(root), 'malformed-state', stateErrors, '/fvs:auto-init');
 const loadExternals = (root) => loadRecord(externalsPath(root), 'malformed-externals', externalsFileErrors, '/fvs:auto-extract');
+const specsPath = (root) => path.join(root, STATE_DIR, 'specs.json');
+const loadSpecs = (root) => loadRecord(specsPath(root), 'malformed-specs', specsFileErrors, 'the spec-phase command');
+
+// One row per review round of a spec file; the last row for a file is its
+// current verdict, earlier rows are history. Labels come from the verdict.
+const SPEC_VERDICTS = {
+  pass: () => 'spec reviewed: pass',
+  changes: (round) => `spec reviewed: changes requested (round ${round})`,
+  blocked: (round) => `spec blocked after ${round} round${round === 1 ? '' : 's'}`,
+};
+const HEX64 = /^[0-9a-f]{64}$/;
+
+function specsFileErrors(value) {
+  if (!plainObject(value) || value.schema !== 'fvs/auto-specs' || value.schemaVersion !== 1 || !Array.isArray(value.specs)) {
+    return ['schema must be fvs/auto-specs version 1 with a specs list'];
+  }
+  return value.specs.flatMap((row, index) => {
+    const ids = (list) => Array.isArray(list) && list.every((id) => typeof id === 'string' && id.length > 0);
+    const ok = plainObject(row) && typeof row.specFile === 'string' && typeof row.review === 'string'
+      && ids(row.items) && row.items.length > 0 && ids(row.outOfScope) && Number.isInteger(row.round) && row.round >= 1
+      && Object.hasOwn(SPEC_VERDICTS, row.verdict) && HEX64.test(row.specSha256) && HEX64.test(row.reviewSha256);
+    return ok ? [] : [`specs[${index}] must name a spec file, items, a round, a verdict (${Object.keys(SPEC_VERDICTS).join(', ')}) and both hashes`];
+  });
+}
 
 function requireState(root) {
   const state = loadState(root);
@@ -1185,8 +1212,8 @@ function writeAtomic(file, value) {
 // agreements, extraction or memory records with its older copy.
 // ponytail: a killed writer leaves the lock behind and the next write refuses
 // naming it; recover it automatically (holder pid liveness) if that ever matters.
-function commitState(root, base, value) {
-  const file = statePath(root), lock = `${file}.lock`;
+function commitState(root, base, value, file = statePath(root)) {
+  const lock = `${file}.lock`;
   fs.mkdirSync(path.dirname(file), { recursive: true });
   let fd;
   try {
@@ -1720,6 +1747,69 @@ export function recordExternals({ projectRoot, records }) {
   return { code: 'recorded', message: `${records.length} boundary record(s) written to ${externalsPath(root)}` };
 }
 
+// A path relative to the project root (or absolute) naming an existing file
+// inside it, returned root-relative with forward slashes so rows key on it.
+function projectFile(root, file, flag) {
+  let real;
+  try {
+    real = fs.realpathSync(path.resolve(root, file));
+  } catch {
+    refuse('invalid-input', `${flag} ${file} does not exist under ${root}`);
+  }
+  if (!real.startsWith(root + path.sep) || !fs.statSync(real).isFile()) {
+    refuse('invalid-input', `${flag} must name a file inside the project root ${root}: ${file}`);
+  }
+  return { relative: path.relative(root, real).split(path.sep).join('/'), real };
+}
+
+const idList = (text, flag) => {
+  const ids = (text ?? '').split(',').map((id) => id.trim()).filter(Boolean);
+  if (ids.some((id) => /\s/.test(id))) refuse('usage', `${flag} takes comma-separated Rust paths without spaces`);
+  return [...new Set(ids)];
+};
+
+export function recordSpec({ projectRoot, specFile, items, round, verdict, review, outOfScope }) {
+  const root = projectDirectory(projectRoot);
+  if (!Object.hasOwn(SPEC_VERDICTS, verdict)) refuse('usage', `--verdict must be ${Object.keys(SPEC_VERDICTS).join(', ')}`);
+  if (!Number.isInteger(round) || round < 1) refuse('usage', '--round must be a positive integer');
+  const ids = idList(items, '--items');
+  if (ids.length === 0) refuse('usage', '--items must name at least one item');
+  const spec = projectFile(root, specFile, '--spec-file');
+  const reviewFile = projectFile(root, review, '--review');
+  const row = {
+    specFile: spec.relative, items: ids, outOfScope: idList(outOfScope, '--out-of-scope'), round, verdict,
+    specSha256: sha256(fs.readFileSync(spec.real)), review: reviewFile.relative, reviewSha256: sha256(fs.readFileSync(reviewFile.real)),
+    recordedAt: new Date().toISOString(),
+  };
+  const base = loadSpecs(root);
+  commitState(root, base, { ...(base ?? { schema: 'fvs/auto-specs', schemaVersion: 1 }), specs: [...(base?.specs ?? []), row] }, specsPath(root));
+  const warnings = round > 3 ? [`round ${round} is past the three agreed review rounds; it is recorded`] : [];
+  return { code: 'recorded', message: `${SPEC_VERDICTS[verdict](round)}: ${row.specFile}`, row, warnings };
+}
+
+// Current verdict per spec file, recomputed against the bytes on disk. Ready
+// for the PR: at least one pass, no file waiting for changes, none stale.
+// Blocked files do not hold the PR; its body names them.
+export function specStatus({ projectRoot }) {
+  const root = projectDirectory(projectRoot);
+  const current = new Map();
+  for (const row of loadSpecs(root)?.specs ?? []) current.set(row.specFile, { row, rounds: (current.get(row.specFile)?.rounds ?? 0) + 1 });
+  const specFiles = [...current.values()].map(({ row, rounds }) => {
+    let bytes = null;
+    try {
+      bytes = fs.readFileSync(path.join(root, row.specFile));
+    } catch {
+      // a missing spec file is stale
+    }
+    return { specFile: row.specFile, items: row.items, outOfScope: row.outOfScope.map((id) => ({ id, label: 'out of scope (noted by agent)' })),
+      verdict: row.verdict, round: row.round, label: SPEC_VERDICTS[row.verdict](row.round), rounds, review: row.review,
+      stale: bytes === null || sha256(bytes) !== row.specSha256, missing: bytes === null };
+  });
+  const readyForPr = specFiles.some((file) => file.verdict === 'pass') && !specFiles.some((file) => file.verdict === 'changes' || file.stale);
+  const blocked = specFiles.filter((file) => file.verdict === 'blocked').map((file) => file.specFile);
+  return { code: 'ok', message: `${specFiles.length} spec file(s) recorded in ${specsPath(root)}`, specFiles, readyForPr, blocked };
+}
+
 function readInput(file) {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -1803,6 +1893,13 @@ const STATE_COMMANDS = {
     const flags = stateFlags(argv, ['input']);
     return recordExternals({ projectRoot: flags['project-root'], records: readInput(flags.input) });
   },
+  'record-spec': (argv) => {
+    const flags = stateFlags(argv, ['spec-file', 'items', 'round', 'verdict', 'review'], [], ['out-of-scope']);
+    if (!/^\d+$/.test(flags.round)) refuse('usage', '--round must be a positive integer');
+    return recordSpec({ projectRoot: flags['project-root'], specFile: flags['spec-file'], items: flags.items, round: Number(flags.round),
+      verdict: flags.verdict, review: flags.review, outOfScope: flags['out-of-scope'] });
+  },
+  'spec-status': (argv) => specStatus({ projectRoot: stateFlags(argv, [])['project-root'] }),
 };
 
 async function stateMain(command, argv) {
@@ -1828,7 +1925,7 @@ async function stateMain(command, argv) {
   }
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   if (!result.ok) process.stderr.write(`FVS >> ${result.code}: ${result.message}\n`);
-  const malformed = ['malformed-state', 'malformed-externals'].includes(result.code);
+  const malformed = ['malformed-state', 'malformed-externals', 'malformed-specs'].includes(result.code);
   process.exitCode = result.code === 'cancelled' ? 130 : result.ok ? 0 : malformed ? 3 : ['usage', 'internal'].includes(result.code) ? 2 : 1;
 }
 
