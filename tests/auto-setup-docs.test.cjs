@@ -459,7 +459,8 @@ describe('auto-setup reference: probe statuses and stage lines', () => {
     const row = rowFor('Probes and stage lines', 'unverified-blocked');
     assert.match(row, /its `--version` run fails/);
     assert.match(row, /`probe-lean` at a version the Lean graph step refuses/);
-    assert.match(row, /has no route here until you replace it/);
+    assert.match(row, /runs reduced, without it, until you replace it/);
+    assert.doesNotMatch(row, /no route/);
     assert.match(row, /accepts `probe-lean` 0\.14\.0/);
     assert.match(row, /0\.24\.0 is accepted by the Lean graph step only beside a version 2 Lean constants record/);
     assert.match(row, /prints `unverified-blocked` for 0\.24\.0/);
@@ -468,7 +469,8 @@ describe('auto-setup reference: probe statuses and stage lines', () => {
   it('says not-checked covers a host with no read-only confinement', () => {
     const row = rowFor('Probes and stage lines', 'not-checked');
     assert.match(row, /no read-only confinement on this host to run the `--version` check in/);
-    assert.match(row, /has no route here until the check can run/);
+    assert.match(row, /runs reduced, without it, until the check can run/);
+    assert.doesNotMatch(row, /no route/);
   });
 
   it('reads the provenance disagreement as a warning that the next step only clears', () => {
@@ -478,10 +480,25 @@ describe('auto-setup reference: probe statuses and stage lines', () => {
     assert.doesNotMatch(row, /unblock/i);
   });
 
-  it('keeps the statement that a stage has no route without a probe in the stage-readiness section only', () => {
+  it('says a stage runs reduced when only probes are lost, and has no route only without ao, lean or a recorded probe check', () => {
+    const own = flat(section(raw, 'Probes and stage lines'));
+    assert.match(own, /each need `ao` and `lean` to have a route at all/);
+    assert.match(own, /A lost probe does not stop them: the stage runs without that probe's output, and the output is labelled reduced/);
+    assert.match(own, /So reduced output never promises proof acceptance, and without `probe-lean` acceptance refuses until it is usable/);
+    assert.doesNotMatch(own, /all five probes|has no route here until/);
+    const reduced = rowFor('Probes and stage lines', 'ready, reduced');
+    assert.match(reduced, /`ao` and `lean` are present, and only probes are missing, not checked or unusable/);
+    assert.match(reduced, /The line names each lost probe and what that costs, says reduced output never promises proof acceptance/);
+    assert.match(reduced, /`To restore, the owner can \.\.\.` and `\(warning, not a stop\)`/);
+    assert.doesNotMatch(reduced, /agent can/);
+    const noRoute = rowFor('Probes and stage lines', 'no route here');
+    assert.match(noRoute, /`ao` or `lean` is missing, or the recorded profile has no usable status for a probe/);
+    assert.doesNotMatch(noRoute, /a probe is missing/);
+    assert.match(own, /repeats a `ready, unverified` or `ready, reduced` line as a warning/);
+  });
+
+  it('keeps the stage-readiness rule in the stage-readiness section only', () => {
     const own = section(raw, 'Probes and stage lines');
-    assert.match(flat(own), /The stages `auto-top-specs` and `auto-execute` each need `ao`, `lean` and all five probes/);
-    assert.match(rowFor('Probes and stage lines', 'no route here'), /a probe is missing, not checked or blocked/);
     assert.ok(!raw.replace(own, '').includes('no route here'), 'auto-setup.md says it outside its own stage-readiness section');
     const others = [
       path.join('fv-skills', 'workflows', 'auto-top-specs.md'),
@@ -511,7 +528,7 @@ describe('auto-setup reference: probe statuses and stage lines', () => {
   it('says a refused override leaves the helpers not-checked with the reason and does not abort setup', () => {
     const text = flat(section(raw, 'Probes and stage lines'));
     assert.match(text, /The profile then still prints its table, with the helpers `not-checked` and the refusal as the reason, and setup does not abort\./);
-    assert.doesNotMatch(text, /stops with the refusal|only output/);
+    assert.doesNotMatch(text, /stops with the refusal|refusal as its only output/);
   });
 
   it('does not quote the engine messages it describes', () => {

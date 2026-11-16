@@ -26,8 +26,8 @@ Without this context retain the standalone read-only report below.
    Prose agreement boundaries do not match axioms automatically, so the orchestrator translates them
    once into exact Lean names and passes them with `--allow-axioms`.
    **Probes unavailable.** No probe is needed for setup or extraction. Read the `auto-top-specs` stage
-   line of the profile first (`auto-setup.md`, "Probes and stage lines", says what each line means): it
-   names what is missing and who supplies it. The plan command still records the loss. Run without
+   line of the profile first (`auto-setup.md`, "Probes and stage lines", says what each line means): a
+   `ready, reduced` line names each lost probe and who can restore it. The plan command still records the loss. Run without
    `--graph` when no dependency graph can be built. A plan made without a graph, or from an identity
    record that rests on `translation.json` alone, is degraded and exits 9 (a blocked identity record
    exits 7 instead). It lists every identity item in source order, computes no closure, puts a

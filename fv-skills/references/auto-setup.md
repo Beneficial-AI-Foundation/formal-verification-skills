@@ -331,25 +331,28 @@ Each probe has one status in the `probes:` list:
 |---|---|
 | `qualified` | The resolver checked it for the exact tested tuple of this project. |
 | `present-unqualified` | Found, and it answers `--version`, but no tested tuple covers this project. Its output is used and labelled unverified. |
-| `unverified-blocked` | Found, but the profile does not count its output as usable: its `--version` run fails, or it is a `probe-lean` at a version the Lean graph step refuses. A stage that needs it has no route here until you replace it with one this engine accepts. The reason is printed. The profile accepts `probe-lean` 0.14.0. Version 0.24.0 is accepted by the Lean graph step only beside a version 2 Lean constants record, and the profile does not look for that record, so it prints `unverified-blocked` for 0.24.0. |
+| `unverified-blocked` | Found, but the profile does not count its output as usable: its `--version` run fails, or it is a `probe-lean` at a version the Lean graph step refuses. A stage that needs it runs reduced, without it, until you replace it with one this engine accepts. The reason is printed. The profile accepts `probe-lean` 0.14.0. Version 0.24.0 is accepted by the Lean graph step only beside a version 2 Lean constants record, and the profile does not look for that record, so it prints `unverified-blocked` for 0.24.0. |
 | `missing` | Not found. A `rust-analyzer` that is only the rustup proxy and fails to run counts as missing. |
-| `not-checked` | The check did not run, and the reason is printed: an unreadable `lean-toolchain`, a refused path override, or no read-only confinement on this host to run the `--version` check in. A stage that needs it has no route here until the check can run. |
+| `not-checked` | The check did not run, and the reason is printed: an unreadable `lean-toolchain`, a refused path override, or no read-only confinement on this host to run the `--version` check in. A stage that needs it runs reduced, without it, until the check can run. |
 
-The stages `auto-top-specs` and `auto-execute` each need `ao`, `lean` and all five probes. The AO
-controller starts spec, review and proof work only on a closure plan the contract registry accepts. That
-needs a verified Lean graph from `probe-lean` and a Rust identity confirmed by `probe-aeneas` and
-`probe-rust`, which in turn needs `scip` and `rust-analyzer`. The `stages:` list has one line for each
-stage, and the line starts with one of these:
+The stages `auto-top-specs` and `auto-execute` each need `ao` and `lean` to have a route at all. A lost
+probe does not stop them: the stage runs without that probe's output, and the output is labelled reduced.
+Proof acceptance (freeze, check, accept) needs a verified Lean graph from `probe-lean` and a Rust identity
+confirmed by `probe-aeneas` and `probe-rust`, which in turn needs `scip` and `rust-analyzer`. So reduced
+output never promises proof acceptance, and without `probe-lean` acceptance refuses until it is usable.
+The `stages:` list has one line for each stage, and the line starts with one of these:
 
 | Stage line | Meaning |
 |---|---|
 | `full` | Every probe is qualified for this toolchain tuple. |
 | `ready, unverified` | Every probe is present and usable, and some are not qualified for this toolchain tuple. Their output is used and labelled unverified: a warning, not a stop. |
-| `no route here` | `ao` or `lean` is missing, or a probe is missing, not checked or blocked. The line names what, then `first, the owner must ...` or `first, the agent must ...`: the first step and who does it. The owner installs software or fixes the host. The agent only reruns `/fvs:auto-init` with the recorded choices, when the recorded profile did not check the probes. |
+| `ready, reduced` | `ao` and `lean` are present, and only probes are missing, not checked or unusable. The stage runs without them, and its output is labelled reduced. The line names each lost probe and what that costs, says reduced output never promises proof acceptance, and ends with `To restore, the owner can ...` and `(warning, not a stop)`. |
+| `no route here` | `ao` or `lean` is missing, or the recorded profile has no usable status for a probe. The line names what, then `first, the owner must ...` or `first, the agent must ...`: the first step and who does it. The owner installs software or fixes the host. The agent only reruns `/fvs:auto-init` with the recorded choices. |
 
 The recorded profile changes only when `init-state` runs again, so each step ends by naming that rerun.
-Read the stage line before you start a stage: a `no route here` line says what is missing and who
-supplies it, and the stage reports partial work with that loss instead of guessing.
+Read the stage line before you start a stage. A `ready, reduced` line says what you lose and who can
+restore it, and a `no route here` line says what is missing and who supplies it. The next step after
+setup goes on as usual and repeats a `ready, unverified` or `ready, reduced` line as a warning.
 
 FVS looks for each helper in a fixed place: `probe-rust` on PATH or in `~/.cargo/bin`, `scip` in
 `~/.probe-rust/tools` or on PATH, `rust-analyzer` on PATH, and `probe-lean` only as
