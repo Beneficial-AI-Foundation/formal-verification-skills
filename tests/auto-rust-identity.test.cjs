@@ -495,6 +495,34 @@ describe('Rust identity record: claims stay bounded by the evidence', () => {
     assert.equal(result.record.provenance.rustSha256, null, 'an unused input is never treated as joined');
     assert.ok(result.record.items.every((entry) => entry.missingGenerated === null && entry.candidates === null));
   });
+
+  // A named probe output that does not exist is a missing probe, not invalid input.
+  it('takes the labelled translation-only route for a named probe output file that does not exist, and names it', () => {
+    const dir = inputs({ 'lean.json': null });
+    const absent = path.join(dir, 'lean.json');
+    const { status, result } = record(dir, ['--lean', absent]);
+    assert.equal(status, 9);
+    assert.equal(result.code, 'degraded');
+    assert.equal(result.record.provenance.discovery, 'translation-only');
+    assert.deepEqual(result.record.provenance.missingOutputs, [{ flag: '--lean', reason: 'file not found' }]);
+    assert.ok(result.message.includes(`missing: --lean ${absent} (file not found)`), result.message);
+    assert.ok(!JSON.stringify(result.record).includes(absent), 'the local path stays out of the record');
+  });
+
+  it('lists every named probe output that does not exist', () => {
+    const dir = inputs({ 'lean.json': null, 'rust.json': null });
+    const { status, result } = record(dir, ['--rust', path.join(dir, 'rust.json'), '--lean', path.join(dir, 'lean.json')]);
+    assert.equal(status, 9);
+    assert.deepEqual(result.record.provenance.missingOutputs.map((entry) => entry.flag), ['--rust', '--lean']);
+    assert.deepEqual(result.record.provenance.unusedInputs.map((entry) => entry.flag), ['--mappings', '--functions']);
+  });
+
+  it('still refuses a probe output file that exists but is not valid JSON', () => {
+    const { status, result } = record(inputs({ 'lean.json': '{"truncated": ' }));
+    assert.equal(status, 5);
+    assert.equal(result.code, 'invalid-input');
+    assert.match(result.message, /probe-lean output .* is not valid JSON/);
+  });
 });
 
 describe('Rust identity record: binding to a recorded extraction attempt', () => {

@@ -436,6 +436,7 @@ function buildTranslationOnly(input) {
     gaps: llbc ? [] : ['type-genericity-not-exposed'],
     discovery: 'translation-only',
     unusedInputs,
+    missingOutputs: input.missingOutputs ?? [],
   };
   const { binding, blocks: bindingBlocks, decls } = bindRun({ state, manifest, translation, llbc, t });
   if (binding.status === 'bound') {
@@ -759,18 +760,31 @@ function writeAtomic(file, text) {
 }
 
 function record(flags) {
+  // A named probe output that does not exist takes the translation-only route
+  // and is listed; an unreadable or malformed one is still invalid input.
+  const missingOutputs = [];
+  const probeOutput = (key, label) => {
+    const file = flags[key];
+    if (!file) return null;
+    if (fs.statSync(file, { throwIfNoEntry: false }) === undefined) {
+      missingOutputs.push({ flag: PROBE_INPUTS[key], file, reason: 'file not found' });
+      return null;
+    }
+    return readInput(file, label);
+  };
   const inputs = {
     sourceCommit: flags['source-commit'],
     translation: readInput(flags.translation, 'translation.json'),
     manifest: fs.existsSync(flags.manifest) ? readInput(flags.manifest, 'manifest') : null,
-    rust: flags.rust ? readInput(flags.rust, 'probe-rust output') : null,
-    mappings: flags.mappings ? readInput(flags.mappings, 'probe-aeneas translate output') : null,
-    lean: flags.lean ? readInput(flags.lean, 'probe-lean output') : null,
-    functions: flags.functions ? readInput(flags.functions, 'functions.json') : null,
+    rust: probeOutput('rust', 'probe-rust output'),
+    mappings: probeOutput('mappings', 'probe-aeneas translate output'),
+    lean: probeOutput('lean', 'probe-lean output'),
+    functions: probeOutput('functions', 'functions.json'),
     state: flags.state ? readInput(flags.state, 'state') : null,
     llbc: flags.llbc ? readInput(flags.llbc, 'llbc') : null,
     leanReceipt: flags['lean-receipt'] ? readInput(flags['lean-receipt'], 'lean receipt') : null,
     configSha256: flags.config ? sha256File(flags.config) : null,
+    missingOutputs: missingOutputs.map(({ flag, reason }) => ({ flag, reason })),
   };
   const rec = buildRecord(inputs);
   if (flags.out) writeAtomic(flags.out, `${JSON.stringify(rec, null, 2)}\n`);
@@ -778,10 +792,11 @@ function record(flags) {
   for (const entry of rec.items) counts[entry.correspondence] = (counts[entry.correspondence] ?? 0) + 1;
   const tally = Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', ') || 'no functions';
   const unused = rec.provenance.unusedInputs?.length ? `; unused: ${rec.provenance.unusedInputs.map((entry) => entry.flag).join(', ')}` : '';
+  const missing = missingOutputs.length ? `; missing: ${missingOutputs.map((entry) => `${entry.flag} ${entry.file} (${entry.reason})`).join(', ')}` : '';
   const message = rec.status === 'blocked'
     ? rec.blockers.map((b) => b.code).join(', ')
     : rec.status === 'degraded'
-      ? `${tally} in translation.json, none exact; not computed without probes: ${Object.keys(rec.notComputed).join(', ')}${unused}; same-extraction binding: ${rec.binding.status}`
+      ? `${tally} in translation.json, none exact; not computed without probes: ${Object.keys(rec.notComputed).join(', ')}${missing}${unused}; same-extraction binding: ${rec.binding.status}`
       : `${tally}; ${rec.unkeyedRustAtoms.length} unkeyed, ${rec.orphanRustAtoms.length} orphan Rust atom(s); same-extraction binding: ${rec.binding.status}`;
   return { code: rec.status === 'complete' ? 'ok' : rec.status, message, record: rec };
 }
