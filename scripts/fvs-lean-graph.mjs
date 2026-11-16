@@ -459,6 +459,40 @@ export const notBuiltHint = (modules, roots) => {
   return `lake build compiles only what a library root imports, so add ${imports} (or move a file that is not part of the library out of its directory), then build again`;
 };
 
+// The declarations each module's .ilean records (files: the recorded project
+// inputs; modules: slash paths). The constants producer runs the same check, so it
+// never publishes a record whose .ilean files the graph step rejects.
+export function ileanDeclarations(projectRoot, files, modules, requested) {
+  const problems = [];
+  const declarations = {};
+  for (const module of modules) {
+    const name = module.replaceAll('/', '.');
+    const ilean = `${ILEAN_DIR}/${module}.ilean`;
+    const parsed = has(files, ilean) ? parseJson(fs.readFileSync(path.join(projectRoot, ilean), 'utf8')) : undefined;
+    if (!plainObject(parsed) || parsed.module !== name || !plainObject(parsed.decls)) {
+      // Neither file means Lake never compiled the module, which the hint explains.
+      const unbuilt = !has(files, ilean) && !fs.existsSync(path.join(projectRoot, ILEAN_DIR, `${module}.olean`));
+      problems.push({ code: 'missing-ilean', message: `module ${name} has no matching ${ilean} in the recorded run${unbuilt ? `; ${notBuiltHint([name], requested)}` : ''}` });
+      continue;
+    }
+    // decls omits some declarations (a def or theorem whose type has no
+    // constants, projections); every declaration made in the module is a
+    // reference key {c: {m: module, n}} with a definition position.
+    // Without that map the module's declarations are not established; a
+    // present empty map (an import-only module) is fine.
+    const references = plainObject(parsed.references) ? parsed.references : null;
+    if (references === null) {
+      problems.push({ code: 'ilean-references-missing', message: `${ilean} has no references map, so the declarations module ${name} defines are not established` });
+    }
+    const defined = Object.entries(references ?? {}).flatMap(([key, value]) => {
+      const target = parseJson(key)?.c;
+      return plainObject(target) && target.m === name && isText(target.n) && value?.definition != null ? [target.n] : [];
+    });
+    declarations[name] = sorted([...Object.keys(parsed.decls), ...defined]);
+  }
+  return { problems, declarations };
+}
+
 export function compiledProblems(compiled, modules, projectRoot) {
   const problems = [];
   const allowed = new Set();
@@ -1014,33 +1048,10 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
     const modules = projectModules(files);
     const outside = modules.filter((module) => !requested.includes(module.split('/')[0]));
     if (outside.length > 0) block('modules-outside-scope', `project modules outside the requested libraries: ${outside.map((m) => m.replaceAll('/', '.')).join(', ')}`);
-    record.completeness.modules = {};
-    for (const module of modules.filter((name) => !outside.includes(name))) {
-      const name = module.replaceAll('/', '.');
-      const ilean = `${ILEAN_DIR}/${module}.ilean`;
-      const parsed = has(files, ilean) ? parseJson(fs.readFileSync(path.join(projectRoot, ilean), 'utf8')) : undefined;
-      if (!plainObject(parsed) || parsed.module !== name || !plainObject(parsed.decls)) {
-        // Neither file means Lake never compiled the module, which the hint explains.
-        const unbuilt = !has(files, ilean) && !fs.existsSync(path.join(projectRoot, ILEAN_DIR, `${module}.olean`));
-        block('missing-ilean', `module ${name} has no matching ${ilean} in the recorded run${unbuilt ? `; ${notBuiltHint([name], requested)}` : ''}`);
-        continue;
-      }
-      // decls omits some declarations (a def or theorem whose type has no
-      // constants, projections); every declaration made in the module is a
-      // reference key {c: {m: module, n}} with a definition position.
-      // Without that map the module's declarations are not established; a
-      // present empty map (an import-only module) is fine.
-      const references = plainObject(parsed.references) ? parsed.references : null;
-      if (references === null) {
-        block('ilean-references-missing', `${ilean} has no references map, so the declarations module ${name} defines are not established`);
-      }
-      const defined = Object.entries(references ?? {}).flatMap(([key, value]) => {
-        const target = parseJson(key)?.c;
-        return plainObject(target) && target.m === name && isText(target.n) && value?.definition != null ? [target.n] : [];
-      });
-      record.completeness.modules[name] = sorted([...Object.keys(parsed.decls), ...defined]);
-      for (const decl of record.completeness.modules[name]) expected.add(`probe:${decl}`);
-    }
+    const ileans = ileanDeclarations(projectRoot, files, modules.filter((name) => !outside.includes(name)), requested);
+    for (const { code, message } of ileans.problems) block(code, message);
+    record.completeness.modules = ileans.declarations;
+    for (const decls of Object.values(ileans.declarations)) for (const decl of decls) expected.add(`probe:${decl}`);
     record.completeness.expectedDeclarations = expected.size;
     const extra = ids.filter((id) => !expected.has(id));
     if (extra.length > 0) block('atom-outside-scope', `declarations no requested module's .ilean lists: ${extra.join(', ')}`);
