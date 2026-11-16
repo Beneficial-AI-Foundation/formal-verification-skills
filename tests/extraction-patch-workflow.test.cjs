@@ -98,6 +98,79 @@ describe('Known issues come before any new patch', () => {
   });
 });
 
+// The route table of Step 3a as { change, knownIssues, patchReview } rows.
+function routeRows() {
+  const lines = step('known_issues').split('\n');
+  const start = lines.findIndex((line) => /^\| Proposed change \| Step 3a \| Step 4a \|/.test(line));
+  assert.ok(start >= 0, 'Step 3a lost its route table');
+  const rows = [];
+  for (const line of lines.slice(start + 2)) {
+    if (!line.startsWith('|')) break;
+    const [change, knownIssues, patchReview] = line.split('|').slice(1, -1).map((cell) => cell.trim());
+    rows.push({ change, knownIssues, patchReview });
+  }
+  return rows;
+}
+
+function routeFor(pattern) {
+  const hits = routeRows().filter((row) => pattern.test(row.change));
+  assert.equal(hits.length, 1, `expected exactly one route row matching ${pattern}, found ${hits.length}`);
+  return hits[0];
+}
+
+describe('The patch route follows the proposed change, not the layer that failed', () => {
+  it('sends a Rust repair for a downstream Lean failure through the known-issues check and the two-model review', () => {
+    const row = routeFor(/downstream `lean` failure that lands in the Rust source/);
+    assert.equal(row.knownIssues, 'runs');
+    assert.equal(row.patchReview, 'runs');
+  });
+
+  it('checks a NOVEL signature at every layer before bisecting, not only charon and aeneas', () => {
+    const row = routeFor(/`NOVEL` signature at any layer/);
+    for (const layer of ['charon', 'aeneas', 'split', 'tweaks', 'lean']) {
+      assert.ok(row.change.includes(`\`${layer}\``), `the NOVEL row leaves out the ${layer} layer`);
+    }
+    assert.equal(row.knownIssues, 'runs');
+    assert.match(row.change, /before any bisecting/);
+  });
+
+  it('sends a recipe that edits the Rust inputs through both steps and skips both for an edit that touches no Rust input', () => {
+    const rust = routeFor(/catalog recipe that edits the Rust extraction inputs/);
+    assert.deepEqual([rust.knownIssues, rust.patchReview], ['runs', 'runs']);
+    const lean = routeFor(/recipe that edits no Rust input/);
+    assert.deepEqual([lean.knownIssues, lean.patchReview], ['skipped', 'skipped']);
+    for (const recipe of ['namespace-cascade', 'refresh-manifest', 'tweaks-substitution']) {
+      assert.ok(lean.change.includes(`\`${recipe}\``), `the skipped row does not name ${recipe}`);
+    }
+  });
+
+  it('names the middle-dot identifier as the example of a Lean failure repaired in the Rust source', () => {
+    assert.match(step('known_issues').replace(/\s+/g, ' '), /a Rust identifier that contains a middle dot, repaired by renaming it in the Rust source/);
+  });
+
+  it('no routing sentence still limits the check to the charon and aeneas layers', () => {
+    const known = step('known_issues');
+    assert.doesNotMatch(known, /`layer` is `charon` or `aeneas`/);
+    assert.doesNotMatch(known, /Other layers/);
+    assert.doesNotMatch(step('dispatch'), /at the `charon` or `aeneas` layer/);
+    assert.doesNotMatch(command, /at the `charon` or `aeneas` layer, before a new patch/);
+  });
+
+  it('the patch review needs the known-issues record first and catches a repair found late', () => {
+    const review = step('patch_review').replace(/\s+/g, ' ');
+    assert.match(review, /Step 3a has recorded an outcome for the signature before the first writer dispatch/);
+    assert.match(review, /stage its result, install nothing, run Step 3a now/);
+    assert.match(review, /whichever layer's failure prompted it/);
+  });
+
+  it('the command names the downstream Lean case and the skip for an edit that touches no Rust input', () => {
+    const flat = command.replace(/\s+/g, ' ');
+    assert.match(flat, /whichever layer reported the failure/);
+    assert.match(flat, /a source repair for a downstream `lean` error, such as renaming a Rust identifier that contains a middle dot/);
+    assert.match(flat, /A recipe that edits no Rust input \(a Lean-side or project edit\) skips this/);
+  });
+});
+
 describe('A new patch is written and reviewed by two different models', () => {
   const text = step('patch_review');
 

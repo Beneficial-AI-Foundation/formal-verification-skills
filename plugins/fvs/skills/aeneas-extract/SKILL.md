@@ -259,11 +259,15 @@ step describes, and parent-owned baseline, build, revert and report steps stay w
   - Legacy mode: extract and edit in place, as before.
 - **CLASSIFY:** `Task(subagent_type="fvs-extract-classifier", model="$CLASSIFIER_MODEL", reasoning_effort="$CLASSIFIER_EFFORT", ...)`
   -> `{ layer, symbol, signature, match }`.
-- **KNOWN ISSUES FIRST:** at the `charon` or `aeneas` layer, before a new patch (a NOVEL signature
-  before bisecting, or a recipe that is a source change), look for an existing fix in the tools'
-  own trackers. Search open and closed issues and pull requests, release notes and the changelog,
-  at the pinned revisions and at the newest release, using the stripped `signature` only: never a
-  project name, path or source text, because a search leaves this machine. Reads only (`gh api`
+- **KNOWN ISSUES FIRST:** before any new patch to the Rust extraction inputs, whichever layer
+  reported the failure (a NOVEL signature before bisecting, a recipe that edits the Rust inputs, or
+  a source repair for a downstream `lean` error, such as renaming a Rust identifier that contains
+  a middle dot), look for an existing fix in the tools' own trackers. A recipe that edits no Rust
+  input (a Lean-side or project edit) skips this. Search open and closed issues and pull requests,
+  release notes and the changelog, at the pinned revisions and at the newest release, using the
+  stripped `signature` only (for a later layer's failure, the stripped error and the kind of Rust
+  construct behind it): never a project name, path, source text or construct name, because a
+  search leaves this machine. Reads only (`gh api`
   with an explicit read method, `gh search`, `curl` on a public page); never post, comment, label
   or open anything. Record one outcome per signature, with its link:
   `fix, no source change` (use it, write no patch; a result that makes a coverage target opaque

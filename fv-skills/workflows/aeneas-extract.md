@@ -349,17 +349,27 @@ catalog id or `NOVEL`. A miss returns `NOVEL` -- never a forced nearest-match.
 <step name="known_issues">
 ## Step 3a: KNOWN ISSUES FIRST -- look for an existing fix before writing a patch
 
-This step runs when the blocker's `layer` is `charon` or `aeneas` and the next move would be a new
-patch to the Rust extraction inputs: a `NOVEL` signature (before any bisecting) or a catalog match
-whose recipe is a source change. Other layers, and a blocker a catalog recipe already clears without
-a source change, skip it. The `pin_context` from Step 1c names the Aeneas and Charon revisions the
-answer has to hold for.
+This step follows the proposed change, not the layer that failed. It runs whenever the next move is a
+new or changed patch to the Rust extraction inputs, whichever layer reported the blocker. Aeneas can
+exit cleanly and emit Lean that does not build, so a repair in the Rust source is often prompted by
+a `lean` failure: a Rust identifier that contains a middle dot, repaired by renaming it in the Rust
+source, is one. That repair is a new patch like any other and takes this step and Step 4a. The
+`pin_context` from Step 1c names the Aeneas and Charon revisions the answer has to hold for.
+
+| Proposed change | Step 3a | Step 4a |
+|-----------------|---------|---------|
+| A catalog recipe that edits the Rust extraction inputs (a source rewrite, an opacity annotation, a gated build script) | runs | runs |
+| A `NOVEL` signature at any layer (`charon`, `aeneas`, `split`, `tweaks` or `lean`), before any bisecting | runs | runs when the bisector proposes a change to the Rust inputs |
+| A repair of a downstream `lean` failure that lands in the Rust source | runs | runs |
+| A recipe that edits no Rust input: a Lean-side or project edit such as `namespace-cascade`, `refresh-manifest` or a `tweaks-substitution` | skipped | skipped |
 
 1. **Look in the tools' own trackers.** Search the Aeneas and Charon upstream repositories for the
    stripped `signature` from Step 3: open and closed issues and pull requests, and the release
    notes and changelog, at the pinned revisions and at the newest release. Search with the
-   stripped signature only. Never put a project name, a path, source text or a line of the code
-   being verified in a query: a search leaves this machine.
+   stripped signature only. For a failure a later layer reported, that is the stripped error plus
+   the kind of Rust construct behind it (an identifier with a middle dot, say), never the
+   construct's name. Never put a project name, a path, source text or a line of the code being
+   verified in a query: a search leaves this machine.
 2. **Read only.** Use the tracker's read interface, as the draft investigator does: a `gh api`
    call with an explicit read method, `gh search`, or `curl` on a public page. This step never
    posts, comments, labels, reacts or opens anything.
@@ -421,10 +431,10 @@ Route the classified blocker:
   no `src-modifications.*` file for any recipe, including non-Rust repairs such as
   `namespace-cascade` and `refresh-manifest`, which stay ordinary edits; the prompt inlines the
   Step 6 header fields, the authoring recipe, the line-preserving rule and the `check` command,
-  because the applier has no @-references. A recipe that is a source change at the `charon` or
-  `aeneas` layer starts with Step 3a, and the applier then runs as the writer seat of Step 4a.
+  because the applier has no @-references. A recipe that edits the Rust extraction inputs, at any
+  layer, starts with Step 3a, and the applier then runs as the writer seat of Step 4a.
 
-- **NOVEL** -> at the `charon` or `aeneas` layer, run Step 3a first. Then dispatch the bisector
+- **NOVEL** -> whichever layer failed, run Step 3a first. Then dispatch the bisector
   to shrink/grow to a minimal failing example (MFE) under the variant-budget, emit a
   schema-conformant `candidate` (real evidence = the MFE path + observed `pin_context`) to
   `catalog-candidates/`, and a PROPOSED fix. The bisector proposes, never disposes:
@@ -451,9 +461,15 @@ Route the classified blocker:
 ## Step 4a: WRITE AND REVIEW A PATCH -- two different models, at most two rounds
 
 This step takes over when Step 3a leaves a patch route and the change is a new or changed patch to
-the Rust extraction inputs (patch mode only; legacy mode keeps its own steps). It reuses the
-proposer dispatches of Step 4 and the assessor dispatch of Step 5 under the `WRITER` and `REVIEWER`
-seats from `resolve_models`. It adds no agent and no stage. Each round dispatches a new child.
+the Rust extraction inputs, whichever layer's failure prompted it (patch mode only; legacy mode
+keeps its own steps). It reuses the proposer dispatches of Step 4 and the assessor dispatch of
+Step 5 under the `WRITER` and `REVIEWER` seats from `resolve_models`. It adds no agent and no stage.
+Each round dispatches a new child.
+
+Step 3a has recorded an outcome for the signature before the first writer dispatch. A proposer can
+find that the repair lands in the Rust source only after its dispatch (a `lean` failure that turns
+out to need a rename in the Rust): stage its result, install nothing, run Step 3a now, and then
+continue here.
 
 1. **Write.** Dispatch the role that proposed the change (the applier for a recipe, the bisector
    for a NOVEL signature) with the writer seat's settings:
