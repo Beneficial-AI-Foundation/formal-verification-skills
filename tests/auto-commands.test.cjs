@@ -582,14 +582,58 @@ describe('auto-extract extraction record', () => {
     assert.match(auto.readState({ projectRoot: root }).nextAction, /\/fvs:auto-extract/);
   });
 
-  it('after a success without qualified probes the next action names the degraded route', () => {
+  it('after a success without the probes the next action says the spec stage has no route and who supplies the first gap', () => {
     const root = project();
     init(root);
     const { out } = prepared(root);
     assert.equal(record(root, out, 0).code, 'recorded');
+    // The stub tools provide every probe; record the profile of a host without probe-lean.
+    const state = JSON.parse(fs.readFileSync(stateFile(root), 'utf8'));
+    state.profile.probes = state.profile.probes.map((entry) => (entry.id === 'probe-lean' ? { ...entry, status: 'missing', path: null } : entry));
+    fs.writeFileSync(stateFile(root), JSON.stringify(state));
+    const { nextAction, readiness } = auto.readState({ projectRoot: root });
+    const stage = readiness.find((entry) => entry.stage === 'auto-top-specs');
+    assert.equal(stage.status, 'no-route');
+    assert.match(nextAction, /^\/fvs:auto-top-specs cannot run here yet\. First, the owner must install probe-lean \(or set its path override\)/);
+    assert.ok(nextAction.includes(stage.line), nextAction);
+    assert.doesNotMatch(nextAction, /approves/, 'nothing is put to the owner for approval before the stage can run');
+  });
+
+  it('once the probes are present the next action asks for the agreement, then the grant, then runs with an unverified warning', () => {
+    const root = project();
+    init(root);
+    const { out } = prepared(root);
+    assert.equal(record(root, out, 0).code, 'recorded');
+    const state = JSON.parse(fs.readFileSync(stateFile(root), 'utf8'));
+    for (const entry of state.profile.items) {
+      if (['ao', 'lean'].includes(entry.id)) entry.verdict = 'available-but-unverified';
+    }
+    state.profile.probes = ['probe-aeneas', 'probe-rust', 'scip', 'rust-analyzer', 'probe-lean']
+      .map((id) => ({ id, status: 'present-unqualified', path: `/opt/${id}`, lost: null }));
+    fs.writeFileSync(stateFile(root), JSON.stringify(state));
+    assert.match(auto.readState({ projectRoot: root }).nextAction, /^Before \/fvs:auto-top-specs, the owner approves the initial agreement/);
+
+    const agree = (execution, generation, contextVersion) => {
+      const agreement = {
+        schema: 'fvs/auto-agreement', schemaVersion: 1, mode: 'nonpublic-intent',
+        payload: { choicesGeneration: generation, choices: auto.readState({ projectRoot: root }).state.choices,
+          contextVersion, boundaries: [], conventions: [], layout: 'single-crate', claims: ['fixture'],
+          trust: ['fixture policy'], acceptance: ['fixture evidence'], ownerReserved: ['human final decision'],
+          execution, draftPr: null },
+        ownerEvidence: { reference: 'fixture:response', response: 'Fixture agreement' },
+      };
+      agreement.approvedPayloadSha256 = auto.agreementPayloadSha256(agreement);
+      fs.writeFileSync(path.join(root, '.formalising/auto-fv/ROADMAP.md'),
+        '## Decisions\n```fvs-auto-agreement\n' + JSON.stringify(agreement) + '\n```\n');
+      auto.recordAgreement({ projectRoot: root, agreement, confirmOverwrite: contextVersion > 1 });
+    };
+    agree(null, 0, 1);
+    assert.match(auto.readState({ projectRoot: root }).nextAction, /^Before \/fvs:auto-top-specs, the owner grants the execution actions/);
+    agree({ actions: ['fixture work'], reference: 'fixture:grant' }, auto.readState({ projectRoot: root }).state.choicesGeneration, 2);
     const { nextAction } = auto.readState({ projectRoot: root });
-    assert.match(nextAction, /degraded route: an identity declared by Aeneas in translation\.json \(never exact\)/);
-    assert.match(nextAction, /proof acceptance refuses both/);
+    assert.match(nextAction, /^Run \/fvs:auto-top-specs from the AO orchestrator\./);
+    assert.match(nextAction, /stage profile .*permission-ready receipt/);
+    assert.match(nextAction, /Warning: auto-top-specs: ready, unverified - probe-aeneas, probe-rust, scip, rust-analyzer, probe-lean not qualified/);
   });
 
   it('no flag lets a caller state the result', () => {

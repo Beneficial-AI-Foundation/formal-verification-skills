@@ -481,14 +481,19 @@ describe('fvs-auto profile: probes are optional', () => {
     }
     const probe = item(result, 'probe');
     assert.equal(probe.verdict, 'missing');
-    assert.match(probe.nextStep, /^Optional, nothing stops without it: /);
+    assert.match(probe.nextStep, /^Not needed for setup or extraction: /);
+    const stages = Object.fromEntries(result.readiness.map((entry) => [entry.stage, entry]));
+    assert.deepEqual(Object.keys(stages), ['auto-top-specs', 'auto-execute']);
+    assert.equal(stages['auto-top-specs'].status, 'no-route');
+    assert.match(stages['auto-top-specs'].line, /no route here - missing [^;]*probe-aeneas, probe-rust/);
   });
 
-  it('reports an unsupported host as optional, naming the degraded route', async () => {
+  it('reports an unsupported host as not needed for setup, pointing to the stage lines', async () => {
     const result = await profileOf(path.join(FIXTURES, 'fresh'), { platform: 'x86_64-pc-windows-msvc' });
     const host = item(result, 'host');
     assert.equal(host.verdict, 'unsupported-platform');
-    assert.match(host.nextStep, /^Optional, nothing stops without it: the auto track goes on here on the degraded route/);
+    assert.match(host.nextStep, /^Not needed for setup or extraction: setup and extraction go on here, and the stage lines say/);
+    assert.doesNotMatch(host.nextStep, /degraded route/);
     assert.doesNotMatch(host.nextStep, /only exploratory work/);
   });
 
@@ -504,7 +509,7 @@ describe('fvs-auto profile: probes are optional', () => {
     assert.match(aeneas.nextStep, /^None required; the tuple is recorded as evidence, not a gate\./);
     const probe = item(result, 'probe');
     assert.equal(probe.verdict, 'incompatible', 'the probe item still shows the contradiction');
-    assert.match(probe.nextStep, /^Optional, nothing stops without it: /);
+    assert.match(probe.nextStep, /^Not needed for setup or extraction: /);
   });
 
   it('prints the probes and their losses as text, outside the next-step lines', () => {
@@ -512,9 +517,68 @@ describe('fvs-auto profile: probes are optional', () => {
       { cwd: ROOT, env: stubEnvironment(), encoding: 'utf8' });
     assert.equal(text.status, 0, text.stderr);
     const lines = text.stdout.split('\n');
-    const start = lines.indexOf('probes (optional; the auto track goes on without any of them):');
-    assert.ok(start > 0, text.stdout);
-    assert.deepEqual(lines.slice(start + 1).filter(Boolean).map((line) => line.split(':')[0].trim()),
+    const start = lines.indexOf('probes (none is needed for setup or extraction; the stage lines below say what each stage needs):');
+    const stages = lines.indexOf('stages:');
+    assert.ok(start > 0 && stages > start, text.stdout);
+    assert.deepEqual(lines.slice(start + 1, stages).filter(Boolean).map((line) => line.split(':')[0].trim()),
       ['probe-aeneas', 'probe-rust', 'scip', 'rust-analyzer', 'probe-lean']);
+    assert.deepEqual(lines.slice(stages + 1).filter(Boolean).map((line) => line.split(':')[0].trim()),
+      ['auto-top-specs', 'auto-execute']);
+  });
+});
+
+describe('fvs-auto readiness: what each stage can do, computed from a profile', () => {
+  let readiness;
+  before(async () => { ({ readiness } = await import(pathToFileURL(SCRIPT).href)); });
+
+  const ids = ['probe-aeneas', 'probe-rust', 'scip', 'rust-analyzer', 'probe-lean'];
+  const profileWith = ({ ao = 'available-but-unverified', lean = 'available-but-unverified', probes = {} } = {}) => ({
+    items: [
+      { id: 'ao', verdict: ao, nextStep: 'Install Agent Orchestrator and put its ao CLI on PATH, then rerun the profile.' },
+      { id: 'lean', verdict: lean, nextStep: 'None required now.' },
+    ],
+    probes: ids.map((id) => ({ id, status: 'qualified', ...(probes[id] ?? {}) })),
+  });
+  const topSpecs = (profile) => readiness(profile).find((entry) => entry.stage === 'auto-top-specs');
+
+  it('is full only when every probe is qualified', () => {
+    for (const entry of readiness(profileWith())) assert.equal(entry.status, 'full', entry.stage);
+  });
+
+  it('is ready but unverified when a probe is present but not qualified, as a warning', () => {
+    const stage = topSpecs(profileWith({ probes: { 'probe-lean': { status: 'present-unqualified' } } }));
+    assert.equal(stage.status, 'ready-unverified');
+    assert.equal(stage.firstMissing, null);
+    assert.match(stage.line, /ready, unverified - probe-lean not qualified .*warning, not a stop/);
+  });
+
+  it('has no route when a probe is missing, and names the owner and the step', () => {
+    const stage = topSpecs(profileWith({ probes: { 'probe-aeneas': { status: 'missing' }, 'probe-lean': { status: 'missing' } } }));
+    assert.equal(stage.status, 'no-route');
+    assert.deepEqual(stage.firstMissing, { need: 'probe-aeneas', supplier: 'owner',
+      step: 'install probe-aeneas (or set its path override), then rerun the profile' });
+    assert.match(stage.line, /missing probe-aeneas, probe-lean; first, the owner must install probe-aeneas/);
+  });
+
+  it('has no route without ao, using the ao item next step', () => {
+    const stage = topSpecs(profileWith({ ao: 'missing' }));
+    assert.equal(stage.status, 'no-route');
+    assert.equal(stage.firstMissing.need, 'ao');
+    assert.equal(stage.firstMissing.step, 'install Agent Orchestrator and put its ao CLI on PATH, then rerun the profile');
+  });
+
+  it('keeps the reason a probe check was not made', () => {
+    const stage = topSpecs(profileWith({ probes: { scip: { status: 'not-checked', reason: 'FVS_SCIP_PATH is not absolute' } } }));
+    assert.equal(stage.status, 'no-route');
+    assert.match(stage.firstMissing.step, /fix what stopped the probe check \(FVS_SCIP_PATH is not absolute\)/);
+  });
+
+  it('never shows a recorded profile without probes as full', () => {
+    for (const legacy of [{ items: profileWith().items }, undefined]) {
+      const stage = topSpecs(legacy);
+      assert.equal(stage.status, 'no-route');
+      assert.notEqual(stage.firstMissing, null);
+    }
+    assert.equal(topSpecs({ items: profileWith().items }).firstMissing.supplier, 'agent');
   });
 });

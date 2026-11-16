@@ -91,9 +91,10 @@ function versionCheck(bin, args, cwd, root) {
   return { ...run, skipped: unavailable ? `not checked: ${unavailable}` : null };
 }
 
-// Probes and the host they were tested on add evidence; none of them stops the
-// auto track. Each missing probe costs what PROBE_LOSSES says.
-const OPTIONAL = 'Optional, nothing stops without it:';
+// Probes and the host they were tested on add evidence; none of them stops setup
+// or extraction. Each missing probe costs what PROBE_LOSSES says, and what each
+// stage can still do is in `readiness`.
+const OPTIONAL = 'Not needed for setup or extraction:';
 export const PROBE_LOSSES = {
   'probe-aeneas': 'Rust-to-Lean mappings confirmed independently of Aeneas: without it every mapping is declared by Aeneas in translation.json, never exact, and generated Lean functions are not checked against functions.json.',
   'probe-rust': 'the Rust atom inventory: without it Rust names and spans come from translation.json alone, and Rust functions Aeneas did not translate are not detected.',
@@ -105,10 +106,12 @@ export const PROBE_LOSSES = {
 // Presence and qualification of each probe, found without running any of them.
 function probeStatuses(root, probe, resolver, platform) {
   let helpers = null;
+  let unchecked = null;
   try {
     ({ helpers } = selectProbeToolPaths({ projectRoot: root }));
-  } catch {
-    // An unreadable lean-toolchain leaves the helpers not checked.
+  } catch (error) {
+    // An unreadable lean-toolchain or a refused path override leaves the helpers not checked.
+    unchecked = error.message;
   }
   const aeneasPath = [managedProbePath(undefined, platform), which('probe-aeneas')].find((file) => file && fs.existsSync(file)) ?? null;
   return Object.keys(PROBE_LOSSES).map((id) => {
@@ -116,7 +119,53 @@ function probeStatuses(root, probe, resolver, platform) {
     let status = found ? 'present-unqualified' : 'missing';
     if (id !== 'probe-aeneas' && helpers === null) status = 'not-checked';
     if (probe.verdict === GREEN && resolver.status === 'verified') status = 'qualified';
-    return { id, status, path: found, lost: ['missing', 'not-checked'].includes(status) ? PROBE_LOSSES[id] : null };
+    return { id, status, path: found, lost: ['missing', 'not-checked'].includes(status) ? PROBE_LOSSES[id] : null,
+      ...(status === 'not-checked' ? { reason: unchecked } : {}) };
+  });
+}
+
+// What each stage needs on this engine. The AO controller launches spec, review
+// and proof work only on a closure plan the registry accepts: a verified Lean
+// graph from probe-lean, and an identity confirmed by probe-aeneas and probe-rust
+// (which needs scip and rust-analyzer). Without any one of them a stage has no
+// route. Probes that are present but not qualified for this tuple give a route
+// whose output is labelled unverified.
+const STAGE_NEEDS = ['ao', 'lean', ...Object.keys(PROBE_LOSSES)];
+const STAGES = { 'auto-top-specs': STAGE_NEEDS, 'auto-execute': STAGE_NEEDS };
+
+function stageGap(need, items, probes) {
+  if (!(need in PROBE_LOSSES)) {
+    const entry = items[need];
+    if (entry && entry.verdict !== 'missing') return null;
+    const step = entry?.nextStep ? entry.nextStep[0].toLowerCase() + entry.nextStep.slice(1).replace(/\.$/, '') : `install ${need}, then rerun the profile`;
+    return { need, supplier: 'owner', step };
+  }
+  const probe = probes[need];
+  if (!probe) return { need, supplier: 'agent', step: 'rerun the profile: the recorded profile did not check the probes' };
+  if (probe.status === 'missing') return { need, supplier: 'owner', step: `install ${need} (or set its path override), then rerun the profile` };
+  if (probe.status === 'not-checked') return { need, supplier: 'owner', step: `fix what stopped the probe check (${probe.reason ?? 'reason not recorded'}), then rerun the profile` };
+  return null;
+}
+
+// One line per stage, computed from a profile (fresh or recorded) so the setup
+// report, the next action and the read state never disagree: full (every probe
+// qualified), ready-unverified (every probe present, some not qualified), or
+// no-route, naming the first missing need and who supplies it.
+export function readiness(profileResult) {
+  const items = Object.fromEntries((profileResult?.items ?? []).map((entry) => [entry.id, entry]));
+  const probes = Object.fromEntries((profileResult?.probes ?? []).map((entry) => [entry.id, entry]));
+  return Object.entries(STAGES).map(([stage, needs]) => {
+    const gaps = needs.map((need) => stageGap(need, items, probes)).filter(Boolean);
+    if (gaps.length > 0) {
+      return { stage, status: 'no-route', firstMissing: gaps[0],
+        line: `${stage}: no route here - missing ${gaps.map((gap) => gap.need).join(', ')}; first, the ${gaps[0].supplier} must ${gaps[0].step}` };
+    }
+    const unverified = needs.filter((need) => need in PROBE_LOSSES && probes[need].status !== 'qualified');
+    if (unverified.length > 0) {
+      return { stage, status: 'ready-unverified', firstMissing: null,
+        line: `${stage}: ready, unverified - ${unverified.join(', ')} not qualified for this toolchain tuple; their output is used and labelled unverified (warning, not a stop)` };
+    }
+    return { stage, status: 'full', firstMissing: null, line: `${stage}: full - every probe qualified for this toolchain tuple` };
   });
 }
 
@@ -170,7 +219,7 @@ function hostItem(platform) {
     const probeReason = asset?.reason ?? `no official probe-aeneas ${PROBE_RELEASE.tag} asset exists for it`;
     const hosts = [...new Set(TESTED_TUPLES.flatMap((tuple) => Object.keys(tuple.platforms)))].join(', ');
     return item('host', 'unsupported-platform', `${platform} has no recorded FVS confined run: ${probeReason}`,
-      `${OPTIONAL} the auto track goes on here on the degraded route listed under probes; a host with recorded evidence (${hosts}) can also run the confined probe inventory.`,
+      `${OPTIONAL} setup and extraction go on here, and the stage lines say what each later stage can do; a host with recorded evidence (${hosts}) can also run the confined probe inventory.`,
       evidence);
   }
   return item('host', 'available-but-unverified',
@@ -457,7 +506,7 @@ function probeItem(root, platform, resolver) {
   const { provenance } = resolver;
   if (resolver.status === 'unsupported-platform') {
     return item('probe', 'unsupported-platform', resolver.reasons.join('; '),
-      `${OPTIONAL} the auto track goes on without probes on the degraded route listed under probes.`, evidence);
+      `${OPTIONAL} setup and extraction go on without probes, and the stage lines say what each later stage can do.`, evidence);
   }
   const conflicts = provenance.problems.filter((problem) => problem.startsWith('conflict:'));
   const malformed = provenance.problems.some((problem) => problem.includes('escapes the project root'));
@@ -514,7 +563,7 @@ export function profile({ projectRoot, platform = hostTarget() }) {
   if (!fs.statSync(root, { throwIfNoEntry: false })?.isDirectory()) fatal(`project root is not a directory: ${root}`);
   const resolver = resolveProbe({ projectRoot: root, platform });
   const probe = probeItem(root, platform, resolver);
-  return {
+  const result = {
     schema: 'fvs/auto-profile',
     schemaVersion: 1,
     projectRoot: root,
@@ -529,6 +578,7 @@ export function profile({ projectRoot, platform = hostTarget() }) {
     ],
     probes: probeStatuses(root, probe, resolver, platform),
   };
+  return { ...result, readiness: readiness(result) };
 }
 
 function renderText(result) {
@@ -538,10 +588,12 @@ function renderText(result) {
     if (entry.scope) lines.push(`  scope: ${entry.scope.operation}, tuple ${entry.scope.tuple}, ${entry.scope.platform} only`);
     if (entry.nextStep) lines.push(`  next: ${entry.nextStep}`);
   }
-  lines.push('probes (optional; the auto track goes on without any of them):');
+  lines.push('probes (none is needed for setup or extraction; the stage lines below say what each stage needs):');
   for (const entry of result.probes ?? []) {
-    lines.push(`  ${entry.id}: ${entry.status}${entry.lost ? `; loses ${entry.lost}` : ''}`);
+    lines.push(`  ${entry.id}: ${entry.status}${entry.reason ? ` (${entry.reason})` : ''}${entry.lost ? `; loses ${entry.lost}` : ''}`);
   }
+  lines.push('stages:');
+  for (const entry of readiness(result)) lines.push(`  ${entry.line}`);
   return `${lines.join('\n')}\n`;
 }
 
@@ -1127,9 +1179,23 @@ function nextAction(state) {
     return `Rerun /fvs:auto-extract: the recorded extraction is for revision ${selected.revision} (${selected.configuration}), not the selected source.`;
   }
   if (state.extraction?.status === 'succeeded') {
-    const probe = state.profile?.items?.find((entry) => entry.id === 'probe');
-    const degraded = probe?.verdict === GREEN ? '' : ' Without qualified probes the run takes the degraded route: an identity declared by Aeneas in translation.json (never exact) and a closure plan in source order without dependency order; proof acceptance refuses both.';
-    return `Run /fvs:auto-top-specs; milestone 2 functionality not yet available, so the auto track stops after extraction for now.${degraded}`;
+    // Recomputed from the recorded profile, never read from a stored field.
+    const stage = readiness(state.profile).find((entry) => entry.stage === 'auto-top-specs');
+    if (stage.status === 'no-route') {
+      return `/fvs:auto-top-specs cannot run here yet. First, the ${stage.firstMissing.supplier} must ${stage.firstMissing.step}. (${stage.line})`;
+    }
+    const agreement = state.agreements?.at(-1);
+    if (!agreement) {
+      return 'Before /fvs:auto-top-specs, the owner approves the initial agreement (scope, claims, trust, acceptance and the execution grant): the agent drafts it in the roadmap Decisions section and records it with record-agreement once the owner has approved its exact content.';
+    }
+    if (agreement.payload.choicesGeneration !== (state.choicesGeneration ?? 0) || choiceChanges(agreement.payload.choices, state.choices).length > 0) {
+      return 'Before /fvs:auto-top-specs, the owner approves a successor agreement: the recorded one covers earlier choices.';
+    }
+    if (agreement.payload.execution === null) {
+      return 'Before /fvs:auto-top-specs, the owner grants the execution actions in a successor agreement: the recorded one grants none, so no worker can be launched.';
+    }
+    const warning = stage.status === 'ready-unverified' ? ` Warning: ${stage.line}.` : '';
+    return 'Run /fvs:auto-top-specs from the AO orchestrator. Each action also needs the stage profile (harness, model and effort per role; the owner approves it, the agent passes it with the request) and, for each actor launch, the permission-ready receipt of the actor permission install, which the owner runs.' + warning;
   }
   if (state.extraction) return 'Rerun /fvs:auto-extract after fixing the recorded failure reasons.';
   return 'Run /fvs:auto-extract to extract the selected revision.';
@@ -1152,6 +1218,7 @@ export function readState({ projectRoot, requireAgreement = false }) {
     roadmapPresent: state.roadmap?.path ? fs.existsSync(path.join(root, state.roadmap.path)) : false,
     externals,
     pendingDecisions: requireAgreement || state.roadmap ? [] : ['roadmap'],
+    readiness: readiness(state.profile),
     nextAction: nextAction(state),
     ...(requireAgreement ? { agreement: requireStoredAgreement(root, state) } : {}),
   };
