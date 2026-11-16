@@ -101,7 +101,7 @@ export const PROBE_LOSSES = {
   'probe-rust': 'the Rust atom inventory: without it Rust names and spans come from translation.json alone, and Rust functions Aeneas did not translate are not detected.',
   scip: 'the code index probe-rust reads: without it probe-rust cannot run.',
   'rust-analyzer': 'the indexer probe-rust uses: without it probe-rust cannot run.',
-  'probe-lean': 'the Lean atom list for the graph: without it no Lean graph is built, so the closure plan has source order only, no dependency order, and proof acceptance refuses it.',
+  'probe-lean': 'the Lean atom list for the graph: without it no Lean graph is built, so the closure plan has source order only, no dependency order, and proof acceptance refuses it; a Lean project commit other than the Rust commit is not reconciled with the published generated Lean files.',
 };
 
 // Presence and qualification of each probe. Qualified probes were checked by the

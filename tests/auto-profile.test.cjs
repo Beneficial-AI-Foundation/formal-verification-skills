@@ -615,6 +615,7 @@ describe('fvs-auto readiness: what each stage can do, computed from a profile', 
     assert.equal(leanOf(refused).status, 'unverified-blocked');
     assert.match(leanOf(refused).reason, /accepts only probe-lean 0\.14\.0 output and refuses other versions; this probe-lean reports "0\.99\.0"/);
     assert.match(leanOf(refused).lost, /Lean atom list/);
+    assert.match(leanOf(refused).lost, /commit other than the Rust commit is not reconciled/);
     const stage = refused.readiness.find((entry) => entry.stage === 'auto-top-specs');
     assert.equal(stage.status, 'no-route');
     assert.match(stage.line, /blocked by probe-lean: present but unverified, and no stage can use its output/);
