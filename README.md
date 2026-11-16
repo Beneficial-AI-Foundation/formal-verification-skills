@@ -14,9 +14,9 @@ directly from papers. You choose the targets, review the statements and decide w
 Use a reviewed full commit SHA and the [rc2 setup checklist](fv-skills/references/auto-setup.md#rc2-exact-source-installation)
 for SWVF. The version label alone does not establish qualification or publication. The npm and
 marketplace commands below select their published versions; they do not select this preview.
-Each AO worker needs the same complete source pin and a checked installation. Initial scope and
-execution grants remain explicit. Project memory is optional and uses one existing primary Beads
-store; it is separate from the local issue tracker.
+Each AO worker needs the same complete source pin and a checked installation. The agreed scope stays
+explicit. The optional strict lane also needs an execution grant. Project memory is optional and uses
+one existing primary Beads store; it is separate from the local issue tracker.
 
 ## Getting started
 
@@ -149,8 +149,8 @@ project and records the scope and the agreement. After extraction, an author wri
 for every public API item in that scope, one file per Rust file, and a fresh adversarial reviewer
 checks it. The spec pull request opens as a draft; you review, prune, mark it ready and merge it.
 Workers then prove one file per Rust item, and FVS's build check in a fresh clean copy decides what
-is accepted. The proof pull request follows as a draft. Agents never post comments or reviews on
-GitHub and never merge: only you do.
+is accepted on the default path. The proof pull request follows as a draft. Agents never post
+comments or reviews on GitHub and never merge: only you do.
 
 ### Functional correctness
 

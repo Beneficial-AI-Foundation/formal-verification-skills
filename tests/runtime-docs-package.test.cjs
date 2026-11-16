@@ -194,6 +194,10 @@ if (process.argv.includes('--package-fixture')) {
     assert.doesNotMatch(readme, /#\d+|FULL_PUBLIC_SHA|UNRUN|UNKNOWN|UNPERFORMED|UNDECIDED|sourceRoot|integrator-generated|Qualified local discovery/);
     assert.ok(readme.includes('https://github.com/open-gsd/gsd-core'));
     assert.ok(readme.includes('https://pi.dev/packages/fv-skills-baif'));
+    const flatReadme = readme.replace(/\s+/g, ' ');
+    assert.ok(flatReadme.includes('The agreed scope stays explicit. The optional strict lane also needs an execution grant.'));
+    assert.ok(flatReadme.includes('decides what is accepted on the default path.'));
+    assert.ok(!flatReadme.includes('Initial scope and execution grants remain explicit'));
   });
   it('rc2 onboarding separates exact source installation from optional project memory', () => {
     const setup = fs.readFileSync(path.join(ROOT, 'fv-skills/references/auto-setup.md'), 'utf8');
