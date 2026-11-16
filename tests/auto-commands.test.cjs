@@ -867,7 +867,12 @@ describe('auto command and workflow text', () => {
     const body = text('auto-init');
     assert.match(body, /"\$AUTO" init-state --project-root \. --input "\$CHOICES"/);
     assert.match(body, /Only on an explicit yes rerun\s+the same command with `--confirm-overwrite`/);
-    assert.match(body, /"\$AUTO" record-agreement --project-root \. --input "\$AGREEMENT"/);
+    assert.match(body, /node "\$HELPER" --project-root \. --input "\$DRAFT"\n/, 'the helper drafts without recording');
+    assert.match(body, /node "\$HELPER" --project-root \. --input "\$DRAFT" --out "\$AGREEMENT"/);
+    assert.match(body, /ask the owner to run the printed command\s+in their own terminal: it is `fvs-auto\.mjs record-agreement`/,
+      'the record step is named as owner-run');
+    assert.match(body, /The helper never records the agreement\s+and never edits the roadmap or the state/);
+    assert.match(body, /Never write that reply yourself/);
     assert.match(body, /"\$AUTO" read-state --project-root \. --require-agreement/);
     assert.match(body, /Do not ask Keep\/Change/);
     assert.match(body, /A recorded decline is not asked again/);

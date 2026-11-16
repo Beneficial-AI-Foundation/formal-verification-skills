@@ -156,31 +156,43 @@ null or `{"destination":"<explicit destination>","reference":"<actual grant evid
 ungranted; an owner-response reference, roadmap offer or passing check grants neither by inference.
 
 Prepare the actual payload and present its exact content/version in the initial discussion. The
-exported `agreementPayloadSha256` computes compact UTF-8 JSON of `{schema,schemaVersion,mode,payload}`
-with recursively sorted keys, preserved array order/string bytes and no newline. For a temporary
-`$AGREEMENT` envelope, compute its digest without creating an approval:
+drafting helper `fvs-auto-agreement.mjs`, installed next to the engine, builds it: the choices, the
+choices generation and the state schema version come from the recorded state, so they are never
+retyped, and the digest is computed by the engine's own `agreementPayloadSha256` (compact UTF-8 JSON of
+`{schema,schemaVersion,mode,payload}` with recursively sorted keys, preserved array order and string
+bytes, no newline). Write the owner-visible fields to a temporary `$DRAFT` JSON file: `layout`,
+`claims`, `trust`, `acceptance`, `ownerReserved`, plus `boundaries`, `conventions`, `execution` and
+`draftPr` where agreed. Then draft without creating an approval:
 
 ```bash
-node --input-type=module - "$AUTO" "$AGREEMENT" <<'NODE'
-import fs from 'node:fs';
-import { pathToFileURL } from 'node:url';
-const { agreementPayloadSha256 } = await import(pathToFileURL(process.argv[2]).href);
-console.log(agreementPayloadSha256(JSON.parse(fs.readFileSync(process.argv[3], 'utf8'))));
-NODE
+HELPER="$(dirname "$AUTO")/fvs-auto-agreement.mjs"
+node "$HELPER" --project-root . --input "$DRAFT"
 ```
 
-Only after reading the actual applicable response/grants associate them with that exact payload and
-retain the response text/reference. Human authenticity is declared workflow evidence, not independent
-authentication. The operation compares actual retained content and never treats a supplied hash alone
-as approval. After writing this envelope into the existing roadmap Decisions section, pass an exact
-copy as temporary input:
+Without `ownerEvidence` the helper prints the payload and its digest and nothing else. It checks the
+payload against the engine's own record rules on a scratch copy, so a refusal appears now, naming the
+field, and nothing in the project is written. Show the owner the printed payload.
+
+Only after reading the actual applicable response/grants associate them with that exact payload: add
+the owner's reply, word for word, to `$DRAFT` as `"ownerEvidence": {"reference": "<where the reply
+is>", "response": "<the reply text>"}`. Never write that reply yourself. Human authenticity is declared
+workflow evidence, not independent authentication. Run the helper again with `--out "$AGREEMENT"`, a
+new file it never overwrites:
 
 ```bash
-node "$AUTO" record-agreement --project-root . --input "$AGREEMENT"
+node "$HELPER" --project-root . --input "$DRAFT" --out "$AGREEMENT"
 ```
+
+The helper then prints the finished fence and the one command only the owner runs. Put the fence under
+the roadmap's `## Decisions` as the only current fence, then ask the owner to run the printed command
+in their own terminal: it is `fvs-auto.mjs record-agreement`
+with `--input` the new file and `--project-root` the project. The helper never records the agreement
+and never edits the roadmap or the state. The record step compares actual retained content and never
+treats a supplied hash alone as approval. When the owner has run it, read the state again (Step 5).
 
 A changed successor needs a greater `contextVersion` and explicit confirmation of the exact affected
-agreement before `--confirm-overwrite`. History is retained. `unchanged` replays write nothing. Missing,
+agreement before `--confirm-overwrite`; the helper picks the next free version, and the command it
+prints carries `--confirm-overwrite` only for a successor. History is retained. `unchanged` replays write nothing. Missing,
 malformed, unknown/future/public-API mode, mismatched content or stale generation/context refuses;
 show the actual reason and resolve only the affected agreement. No operation selects roots or grants
 publication, launches workers, resets budgets or reinterprets `nodeHours`.
