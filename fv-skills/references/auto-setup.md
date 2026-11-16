@@ -356,10 +356,9 @@ command that runs the profile, the resolver or the engine:
 Each path must be absolute and name an executable file (a directory, for the library). An empty
 variable counts as unset, and the default place is used. A variable with a value that is unusable is
 refused with its name in the reason, and the lookup never falls back to the default place, so you
-cannot get a different binary than the one you named. Depending on the project,
-the profile then shows the helpers as `not-checked` or stops with the refusal as its only output. In
-both cases fix or unset the variable and rerun. `rust-analyzer` and `probe-aeneas` have no override: put
-them on PATH.
+cannot get a different binary than the one you named. The profile then still prints its table, with
+the helpers `not-checked` and the refusal as the reason, and setup does not abort. Fix or unset the
+variable and rerun. `rust-analyzer` and `probe-aeneas` have no override: put them on PATH.
 
 Without probe output the Rust identity record rests on `translation.json` alone. The
 `fvs-rust-identity.mjs record` command takes the probe outputs as optional inputs (`--rust`,
