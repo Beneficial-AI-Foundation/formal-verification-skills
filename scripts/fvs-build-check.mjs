@@ -145,7 +145,7 @@ export function readSpecSource(text) {
       .map((name) => (name.includes('bv_decide') ? 'bv_decide' : name.includes('native_decide') ? 'native_decide' : 'native_decide or bv_decide'));
     statement.beyondStandard = (statement.axioms ?? []).filter((name) => !STANDARD_AXIOMS.includes(name) && !NATIVE_AXIOM.test(name));
   }
-  return { statements: [...statements.values()], silencedSorry: /\bwarn\.sorry\b/.test(code) };
+  return { statements: [...statements.values()] };
 }
 
 // ---- reading a Lake log --------------------------------------------------------------------
@@ -184,29 +184,19 @@ function leanFiles(root) {
 
 const LEAN_FILE_NAME = /\.lean$|^lakefile\.|^lake-manifest\.json$|^lean-toolchain$/;
 
-function holdsLean(directory) {
-  for (const item of fs.readdirSync(directory, { withFileTypes: true })) {
-    if (item.name === '.git') continue;
-    if (LEAN_FILE_NAME.test(item.name) && !item.isDirectory()) return true;
-    if (item.isDirectory() && holdsLean(path.join(directory, item.name))) return true;
-  }
-  return false;
-}
-
-// A symbolic link whose target stays inside the commit is covered by the commit's tree. One that
-// points out of it lets the build read something the commit does not record: that fails the check
-// when Lake could read it as Lean source or configuration, and is only a warning otherwise.
+// A symbolic link whose final target stays inside the commit is covered by the commit's tree. One
+// that leaves it lets the build read something the commit does not record: that fails the check
+// when the target is a folder or a Lean file or lakefile, and is only a warning for other files.
+// A link that cannot be resolved (dangling, looping) cannot be read by the build either.
 function checkSymlinks(cleanRoot, leanRoot, links) {
+  const root = fs.realpathSync(cleanRoot);
   const hard = [];
   const soft = [];
   for (const rel of links) {
-    const link = path.join(leanRoot, rel);
-    const resolved = path.resolve(path.dirname(link), fs.readlinkSync(link));
-    if (resolved === cleanRoot || resolved.startsWith(`${cleanRoot}${path.sep}`)) continue;
-    let stat = null;
-    try { stat = fs.statSync(link); } catch { /* dangling: nothing to read */ }
-    const readable = stat !== null && (stat.isDirectory() ? holdsLean(link) : LEAN_FILE_NAME.test(path.basename(link)));
-    (readable ? hard : soft).push(rel);
+    let real;
+    try { real = fs.realpathSync(path.join(leanRoot, rel)); } catch { continue; }
+    if (real === root || real.startsWith(`${root}${path.sep}`)) continue;
+    (fs.statSync(real).isDirectory() || LEAN_FILE_NAME.test(path.basename(rel)) ? hard : soft).push(rel);
   }
   return { hard, soft };
 }
@@ -243,6 +233,9 @@ function checkPackages({ packages, source, cleanRoot, leanRoot }) {
     if (found === null) refuse('packages-missing', `the dependency ${item.name} is not prebuilt in ${source}; no build ran, to avoid rebuilding it`);
     if (found.toLowerCase() !== String(item.rev).toLowerCase()) {
       refuse('packages-differ', `the dependency ${item.name} is at ${found.slice(0, 12)} in ${source} but the commit's manifest needs ${String(item.rev).slice(0, 12)}; no build ran, to avoid rebuilding it`);
+    }
+    if (git(directory, ['status', '--porcelain', '--untracked-files=no']) !== '') {
+      refuse('packages-modified', `the dependency ${item.name} in ${source} has modified tracked files, so it is not the revision the manifest names; no build ran`);
     }
     revisions[item.name] = found;
   }
@@ -309,9 +302,9 @@ function runLake(args, { cwd, env, log, timeoutSeconds }) {
   } finally { fs.closeSync(out); }
 }
 
-function acquireLock(receiptDir) {
-  fs.mkdirSync(receiptDir, { recursive: true });
-  const lock = path.join(receiptDir, '.lock');
+// One build at a time on this machine, whatever the project or the receipt folder.
+function acquireLock() {
+  const lock = path.join(os.tmpdir(), 'fvs-build-check.lock');
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       fs.mkdirSync(lock);
@@ -319,10 +312,11 @@ function acquireLock(receiptDir) {
       return () => fs.rmSync(lock, { recursive: true, force: true });
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
-      const pid = Number(fs.readFileSync(path.join(lock, 'pid'), 'utf8').trim());
-      let alive = Number.isInteger(pid) && pid > 0;
-      if (alive) { try { process.kill(pid, 0); } catch (killed) { alive = killed.code === 'EPERM'; } }
-      if (alive) refuse('build-check-running', `another build check is running (process ${pid}); one build runs at a time`);
+      let pid = NaN;
+      try { pid = Number(fs.readFileSync(path.join(lock, 'pid'), 'utf8').trim()); } catch { /* being taken or released */ }
+      let alive = !Number.isInteger(pid) && fs.existsSync(lock) && Date.now() - fs.statSync(lock).mtimeMs < 5000;
+      if (Number.isInteger(pid) && pid > 0) { alive = true; try { process.kill(pid, 0); } catch (killed) { alive = killed.code === 'EPERM'; } }
+      if (alive) refuse('build-check-running', `another build check is running${Number.isInteger(pid) ? ` (process ${pid})` : ''}; one build runs at a time`);
       fs.rmSync(lock, { recursive: true, force: true });
     }
   }
@@ -343,7 +337,7 @@ export function buildCheck({ projectRoot, commit, packages, receiptDir, workdir,
   if (full === null || tree === null) refuse('commit-not-found', `${commit} is not a commit of this repository`);
 
   const receipts = path.resolve(receiptDir ?? path.join(root, '.formalising', 'auto-fv', 'build-check'));
-  const release = acquireLock(receipts);
+  const release = acquireLock();
   const work = fs.mkdtempSync(path.join(workdir ? path.resolve(workdir) : os.tmpdir(), `fvs-build-check-${full.slice(0, 12)}-`));
   try {
     const cleanRoot = path.join(work, 'tree');
@@ -381,9 +375,12 @@ export function buildCheck({ projectRoot, commit, packages, receiptDir, workdir,
     const tampered = [];
     for (const rel of files.files) {
       const bytes = fs.readFileSync(path.join(leanRoot, rel));
-      const spec = readSpecSource(bytes.toString('utf8'));
-      if (spec.silencedSorry) tampered.push(`${rel} switches off the sorry warning`);
-      if (spec.statements.length === 0 || !rel.endsWith('.lean')) continue;
+      const text = bytes.toString('utf8');
+      // Raw text, so an option passed as a string in a lakefile is seen too.
+      if (/warn\.sorry/.test(text)) tampered.push(`${rel} mentions warn.sorry, which switches off the sorry warning`);
+      if (!rel.endsWith('.lean')) continue;
+      const spec = readSpecSource(text);
+      if (spec.statements.length === 0) continue;
       const olean = path.join(leanRoot, '.lake', 'build', 'lib', 'lean', `${rel.slice(0, -'.lean'.length)}.olean`);
       const own = log.messages.filter((m) => m.file === rel && m.severity !== 'info');
       const built = fs.existsSync(olean);
@@ -400,7 +397,7 @@ export function buildCheck({ projectRoot, commit, packages, receiptDir, workdir,
     const symlinks = checkSymlinks(cleanRoot, leanRoot, files.links);
     let reason = null;
     if (build.status !== 0) reason = problem ? describe(problem) : `lake exited with status ${build.status}`;
-    else if (symlinks.hard.length > 0) reason = `the commit has symbolic links that lead out of the commit to Lean files: ${symlinks.hard.slice(0, 3).join(', ')}`;
+    else if (symlinks.hard.length > 0) reason = `the commit has symbolic links that lead out of the commit to a folder or a Lean file: ${symlinks.hard.slice(0, 3).join(', ')}`;
     else if (tampered.length > 0) reason = tampered[0];
     else if (statements.length === 0) reason = 'no spec file restates a statement with recall and guards its axioms';
     else {
@@ -408,7 +405,7 @@ export function buildCheck({ projectRoot, commit, packages, receiptDir, workdir,
       if (failing) reason = `${failing.path}: ${failing.reason ?? failing.statements.find((s) => s.status === 'failing').reason}`;
     }
     const flags = statements.filter((s) => s.flags.length > 0).map((s) => `${s.name} uses ${s.flags.join(', ')}`);
-    const warnings = symlinks.soft.length === 0 ? [] : [`${symlinks.soft.length} symbolic links lead out of the commit, to files Lake does not read as Lean sources (first: ${symlinks.soft.slice(0, 3).join(', ')})`];
+    const warnings = symlinks.soft.length === 0 ? [] : [`symbolic links lead out of the commit to files Lake does not read as Lean sources: ${symlinks.soft.slice(0, 3).join(', ')}${symlinks.soft.length > 3 ? ` and ${symlinks.soft.length - 3} more` : ''}`];
     const accepted = reason === null;
     const label = accepted ? LABEL_ACCEPTED : labelFailed(reason);
     const receipt = {

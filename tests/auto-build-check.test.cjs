@@ -92,7 +92,7 @@ function check(fx, { args = [], root = fx.repo, commit = fx.commit, preflight, o
   if (out) write(path.join(fx.stub, 'build.out'), out);
   if (status !== undefined) write(path.join(fx.stub, 'status'), String(status));
   write(path.join(fx.stub, 'oleans'), oleans.map((name) => `${name}\n`).join(''));
-  const run = sh(fx.base, process.execPath, [SCRIPT, '--project-root', root, '--commit', commit, '--receipt-dir', fx.receipts, '--workdir', fx.work, ...args], { PATH: `${fx.bin}${path.delimiter}${process.env.PATH}`, STUB: fx.stub, ...env });
+  const run = sh(fx.base, process.execPath, [SCRIPT, '--project-root', root, '--commit', commit, '--receipt-dir', fx.receipts, '--workdir', fx.work, ...args], { PATH: `${fx.bin}${path.delimiter}${process.env.PATH}`, STUB: fx.stub, TMPDIR: fx.base, ...env });
   let json = null;
   try { json = JSON.parse(run.stdout); } catch { /* reported by the assertions */ }
   return { status: run.status, json, stderr: run.stderr };
@@ -266,6 +266,15 @@ describe('a build that does not pass', () => {
     assert.match(result.json.label, /switches off the sorry warning/);
   });
 
+  test('switching off the sorry warning in a lakefile option is not accepted, however it is written', () => {
+    for (const option of ['moreLeanArgs = ["-Dwarn.sorry=false"]', 'leanOptions = { "warn.sorry" = false }']) {
+      const lakefile = `name = "fixture"\n\n[[lean_lib]]\nname = "Specs"\n${option}\n`;
+      const result = check(fixture({ files: { 'lakefile.toml': lakefile } }));
+      assert.equal(result.json.accepted, false, option);
+      assert.match(result.json.label, /lakefile\.toml mentions warn\.sorry/, option);
+    }
+  });
+
   test('a symbolic link that leaves the commit for a Lean file or a Lean folder is not accepted', () => {
     const fx = fixture();
     write(path.join(fx.base, 'elsewhere', 'Extra.lean'), 'def y := 2\n');
@@ -274,7 +283,7 @@ describe('a build that does not pass', () => {
     git(fx.repo, 'commit', '-q', '-m', 'link');
     const result = check(fx, { commit: git(fx.repo, 'rev-parse', 'HEAD') });
     assert.equal(result.json.accepted, false);
-    assert.match(result.json.label, /lead out of the commit to Lean files: Specs\/Link\.lean/);
+    assert.match(result.json.label, /lead out of the commit to a folder or a Lean file: Specs\/Link\.lean/);
 
     const folder = fixture();
     write(path.join(folder.base, 'elsewhere', 'Extra.lean'), 'def y := 2\n');
@@ -284,6 +293,16 @@ describe('a build that does not pass', () => {
     const second = check(folder, { commit: git(folder.repo, 'rev-parse', 'HEAD') });
     assert.equal(second.json.accepted, false);
     assert.match(second.json.label, /Linked/);
+
+    const chain = fixture();
+    write(path.join(chain.base, 'elsewhere', 'data.txt'), 'x\n');
+    fs.symlinkSync(path.join(chain.base, 'elsewhere'), path.join(chain.repo, 'second'));
+    fs.symlinkSync('second', path.join(chain.repo, 'first'));
+    git(chain.repo, 'add', '-A');
+    git(chain.repo, 'commit', '-q', '-m', 'chain');
+    const third = check(chain, { commit: git(chain.repo, 'rev-parse', 'HEAD') });
+    assert.equal(third.json.accepted, false, 'a link to a link that leaves the commit is followed to its end');
+    assert.match(third.json.label, /first, second|second, first/);
   });
 
   test('other symbolic links only warn, and links inside the commit are fine', () => {
@@ -297,8 +316,8 @@ describe('a build that does not pass', () => {
     const result = check(fx, { commit: git(fx.repo, 'rev-parse', 'HEAD') });
     assert.equal(result.json.accepted, true, JSON.stringify(result.json.label));
     assert.equal(result.json.warnings.length, 1);
-    assert.match(result.json.warnings[0], /2 symbolic links lead out of the commit/);
-    assert.match(result.json.report.join('\n'), /^warning: 2 symbolic links/m);
+    assert.match(result.json.warnings[0], /lead out of the commit to files Lake does not read as Lean sources: notes\/hosts$/);
+    assert.match(result.json.report.join('\n'), /^warning: symbolic links lead out/m);
   });
 });
 
@@ -348,6 +367,7 @@ describe('refusals', () => {
     assert.equal(result.json.ok, false);
     assert.equal(result.json.code, code);
     assert.equal(receipts(fx).length, 0);
+    assert.equal(fs.existsSync(fx.receipts), false, 'nothing was written for a refusal');
     assert.equal(fs.existsSync(path.join(fx.stub, 'build-cwd')), false, 'no build ran');
     assert.deepEqual(fs.readdirSync(fx.work), []);
   };
@@ -402,14 +422,23 @@ describe('refusals', () => {
     refused(fx, check(fx, { commit: git(fx.repo, 'rev-parse', 'HEAD') }), 'no-lean-project');
   });
 
-  test('a build check already running, but not a stale lock of a dead process', () => {
+  test('a build check already running anywhere on the machine, but not a stale lock of a dead process', () => {
     const fx = fixture();
-    write(path.join(fx.receipts, '.lock', 'pid'), String(process.pid));
-    refused(fx, check(fx), 'build-check-running');
+    const lock = path.join(fx.base, 'fvs-build-check.lock');
+    write(path.join(lock, 'pid'), String(process.pid));
+    refused(fx, check(fx, { args: ['--receipt-dir', path.join(fx.base, 'another-receipts')] }), 'build-check-running');
     const dead = spawnSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' }).stdout;
-    write(path.join(fx.receipts, '.lock', 'pid'), dead);
+    write(path.join(lock, 'pid'), dead);
     assert.equal(check(fx).json.accepted, true);
-    assert.equal(fs.existsSync(path.join(fx.receipts, '.lock')), false, 'the lock is released');
+    assert.equal(fs.existsSync(lock), false, 'the lock is released');
+  });
+
+  test('a prebuilt package whose tracked files were changed', () => {
+    const fx = fixture();
+    fs.appendFileSync(path.join(fx.dep, 'Dep.lean'), 'def Dep.edited := 2\n');
+    const result = check(fx);
+    refused(fx, result, 'packages-modified');
+    assert.match(result.json.message, /dep .* modified tracked files/);
   });
 });
 
