@@ -61,7 +61,12 @@ extraction and a full pilot are separate from preparing this installation.
 4. **Verify every actor installation.** Reload/start the normal session when the owner is ready.
    Read its installed version and manifest, compare the actual scripts to the selected source, and
    check role/tool access from that actor. Repeat for each AO worker worktree: ignored local installs
-   do not propagate through Git. Keep one fixed trusted engine identity across the run. Local shell
+   do not propagate through Git. To share one local install instead, link its individual entries
+   (for example the skills, commands, agents, hooks and `settings.json` it put under `.claude`) into
+   a real per-worktree `.claude` folder; never link `.claude` itself or `settings.local.json`. The
+   actor permission helper refuses a linked `.claude` folder, because a grant written there would be
+   shared by every worktree. Check that your AO version creates links at nested paths before relying
+   on this layout. Keep one fixed trusted engine identity across the run. Local shell
    paths resolve to the selected installation even from a nested cwd; plugin resources remain rooted
    at the plugin, and Pi resolves package-relative resources from its skill directory.
    For Claude's Lean MCP tools, the project `.mcp.json` server key must be `lean-lsp`

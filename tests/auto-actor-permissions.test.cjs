@@ -57,6 +57,55 @@ for (const [label, change] of [
   const f = fixture(); change(f); const before = fs.readFileSync(f.file), result = invoke(f);
   assert.notEqual(result.status, 0); assert.deepEqual(fs.readFileSync(f.file), before);
 });
+// A project-local install shared by several worktrees: the project's own .claude holds the FVS entries and its own
+// settings.local.json. The snapshot records every entry and each regular file's digest so a test can prove nothing shared changed.
+function sharedInstall(f) {
+  const shared = path.join(f.root, 'project', '.claude');
+  fs.mkdirSync(path.join(shared, 'commands'), { recursive: true });
+  fs.writeFileSync(path.join(shared, 'commands', 'run.md'), 'shared command\n');
+  fs.writeFileSync(path.join(shared, 'settings.json'), '{"statusLine":{}}\n');
+  fs.writeFileSync(path.join(shared, 'settings.local.json'), JSON.stringify({ hooks: {} }));
+  return shared;
+}
+function snapshot(dir) {
+  return fs.readdirSync(dir).sort().flatMap(name => {
+    const entry = path.join(dir, name), st = fs.lstatSync(entry);
+    if (st.isDirectory()) return [[name, 'dir'], ...snapshot(entry).map(([n, d]) => [path.join(name, n), d])];
+    return [[name, st.isFile() ? sha(fs.readFileSync(entry)) : 'link']];
+  });
+}
+test('nested-link layout: real per-worktree .claude with linked FVS entries takes the grant only in its own settings file', () => {
+  const f = fixture(), shared = sharedInstall(f), actorClaude = path.join(f.actor, '.claude');
+  for (const entry of ['commands', 'settings.json']) fs.symlinkSync(path.join(shared, entry), path.join(actorClaude, entry));
+  const before = snapshot(shared), result = invoke(f); assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(fs.readFileSync(f.file)).permissions.allow.length, 2);
+  const st = fs.lstatSync(f.file); assert.equal(st.isFile() && st.nlink === 1, true);
+  assert.equal(fs.lstatSync(actorClaude).isDirectory(), true);
+  for (const entry of ['commands', 'settings.json']) assert.equal(fs.lstatSync(path.join(actorClaude, entry)).isSymbolicLink(), true);
+  assert.deepEqual(snapshot(shared), before);
+  assert.deepEqual(fs.readdirSync(actorClaude).sort(), ['commands', 'settings.json', 'settings.local.json']);
+});
+test('whole-folder link: a linked .claude is refused with the supported layout named; the shared folder stays unchanged', () => {
+  const f = fixture(), shared = sharedInstall(f);
+  fs.rmSync(path.join(f.actor, '.claude'), { recursive: true }); fs.symlinkSync(shared, path.join(f.actor, '.claude'));
+  const before = snapshot(shared), result = invoke(f);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /\.claude is a link/); assert.match(result.stderr, /real \.claude folder per worktree/);
+  assert.match(result.stderr, /link only the FVS entries/);
+  assert.deepEqual(snapshot(shared), before); assert.equal(fs.existsSync(f.request.out), false);
+});
+for (const [label, share] of [
+  ['symlinked', (file, target) => fs.symlinkSync(target, file)],
+  ['hard linked', (file, target) => fs.linkSync(target, file)],
+]) test('shared settings file: a ' + label + ' settings.local.json pointing at the project file is refused and nothing changes', () => {
+  const f = fixture(), shared = sharedInstall(f), target = path.join(shared, 'settings.local.json');
+  fs.rmSync(f.file); share(f.file, target);
+  const before = snapshot(shared), actorBefore = fs.readFileSync(f.file), result = invoke(f);
+  assert.notEqual(result.status, 0);
+  if (label === 'symlinked') assert.match(result.stderr, /settings\.local\.json is a link/);
+  assert.deepEqual(snapshot(shared), before); assert.deepEqual(fs.readFileSync(f.file), actorBefore);
+  assert.deepEqual(fs.readdirSync(path.join(f.actor, '.claude')).filter(n => n.startsWith('.settings.local.')), []);
+});
 test('compare-then-replace refuses detected drift and retains the before evidence', () => {
   const f = fixture(), code = `import importlib.util, json, pathlib\ns=importlib.util.spec_from_file_location('permissions',${JSON.stringify(SCRIPT)}); m=importlib.util.module_from_spec(s); s.loader.exec_module(m)\nout=${JSON.stringify(path.join(f.root, 'drift-evidence'))}; pathlib.Path(out).mkdir()\nf=${JSON.stringify(f.file)}\ntry: m.merge(f,['Bash(node trusted *)'],out,before_commit=lambda:pathlib.Path(f).write_text('new writer bytes'))\nexcept m.Refused: pass\nelse: raise AssertionError('drift must refuse')\nassert pathlib.Path(f).read_text()=='new writer bytes'\nassert pathlib.Path(out,'before.json').is_file()\n`;
   const result = spawnSync(PYTHON, ['-c', code], { encoding: 'utf8', env: { PATH: process.env.PATH, PYTHONDONTWRITEBYTECODE: '1' } }); assert.equal(result.status, 0, result.stderr);

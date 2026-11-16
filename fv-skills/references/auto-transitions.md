@@ -164,6 +164,11 @@ permission handling require their own qualification. Other harnesses need their 
 permission route; Claude settings are not portable authorization.
 Literal wildcard/pattern characters (`*`, `?`, or line breaks) in node/gate paths are refused
 before output or settings writes. Shell quoting does not make a permission wildcard literal.
+The merger writes only that actor worktree's own `.claude/settings.local.json`, so it needs a real
+`.claude` folder there. Links inside a real `.claude` folder, such as the entries of one shared
+project-local FVS install, are fine, but `settings.local.json` must stay a real per-worktree file with
+no `permissions` key. A linked `.claude` folder, or a linked or hard linked `settings.local.json`, is
+refused without changing any settings, because the grant would reach every worktree that shares the file.
 
 Only after verified association/profile/install readback, send one permission-ready notice naming
 the launch, actor/worktree and retained installation receipt. This is trusted instruction coordination,

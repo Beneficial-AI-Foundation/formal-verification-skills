@@ -93,10 +93,17 @@ def actor_settings(project_root, association):
          and git(wt, 'symbolic-ref', '-q', 'HEAD') == w['branchRef'], 'actor Git identity drifted')
     descriptor, _ = read_regular(os.path.join(wt, '.git'))
     need(descriptor.decode().strip() == 'gitdir: ' + w['gitDir'], 'actor Git descriptor differs')
+    # The grant is written to this worktree's own settings.local.json. Links to FVS entries inside a real
+    # .claude folder are fine; a linked .claude folder or settings.local.json would put the grant in a shared file.
     directory = os.path.join(wt, '.claude')
+    need(not os.path.islink(directory), 'actor .claude is a link, so its settings.local.json would be shared with other '
+         'worktrees; use a real .claude folder per worktree and link only the FVS entries inside it, never settings.local.json')
     canonical(directory)
     need(stat.S_ISDIR(os.lstat(directory).st_mode), 'actor .claude is not a real directory')
-    return canonical(os.path.join(directory, 'settings.local.json'))
+    file = os.path.join(directory, 'settings.local.json')
+    need(not os.path.islink(file), 'actor settings.local.json is a link to a file shared with other worktrees; '
+         'keep it a real per-worktree file')
+    return canonical(file)
 
 
 def write_exclusive(file, data):
