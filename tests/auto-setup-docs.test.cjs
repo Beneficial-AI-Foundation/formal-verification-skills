@@ -489,10 +489,10 @@ describe('auto-setup reference: probe statuses and stage lines', () => {
     const reduced = rowFor('Probes and stage lines', 'ready, reduced');
     assert.match(reduced, /`ao` and `lean` are present, and only probes are missing, not checked or unusable/);
     assert.match(reduced, /The line names each lost probe and what that costs, says reduced output never promises proof acceptance/);
-    assert.match(reduced, /`To restore, the owner can \.\.\.` or `To restore, the agent can \.\.\.`/);
-    assert.match(reduced, /`\(warning, not a stop\)`/);
+    assert.match(reduced, /`To restore, the owner can \.\.\.` and `\(warning, not a stop\)`/);
+    assert.doesNotMatch(reduced, /agent can/);
     const noRoute = rowFor('Probes and stage lines', 'no route here');
-    assert.match(noRoute, /`ao` or `lean` is missing, or the recorded profile did not check the probes/);
+    assert.match(noRoute, /`ao` or `lean` is missing, or the recorded profile has no usable status for a probe/);
     assert.doesNotMatch(noRoute, /a probe is missing/);
     assert.match(own, /repeats a `ready, unverified` or `ready, reduced` line as a warning/);
   });

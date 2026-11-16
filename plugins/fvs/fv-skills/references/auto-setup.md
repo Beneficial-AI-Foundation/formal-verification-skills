@@ -335,8 +335,8 @@ The `stages:` list has one line for each stage, and the line starts with one of 
 |---|---|
 | `full` | Every probe is qualified for this toolchain tuple. |
 | `ready, unverified` | Every probe is present and usable, and some are not qualified for this toolchain tuple. Their output is used and labelled unverified: a warning, not a stop. |
-| `ready, reduced` | `ao` and `lean` are present, and only probes are missing, not checked or unusable. The stage runs without them, and its output is labelled reduced. The line names each lost probe and what that costs, says reduced output never promises proof acceptance, and ends with `To restore, the owner can ...` or `To restore, the agent can ...` and `(warning, not a stop)`. |
-| `no route here` | `ao` or `lean` is missing, or the recorded profile did not check the probes. The line names what, then `first, the owner must ...` or `first, the agent must ...`: the first step and who does it. The owner installs software or fixes the host. The agent only reruns `/fvs:auto-init` with the recorded choices. |
+| `ready, reduced` | `ao` and `lean` are present, and only probes are missing, not checked or unusable. The stage runs without them, and its output is labelled reduced. The line names each lost probe and what that costs, says reduced output never promises proof acceptance, and ends with `To restore, the owner can ...` and `(warning, not a stop)`. |
+| `no route here` | `ao` or `lean` is missing, or the recorded profile has no usable status for a probe. The line names what, then `first, the owner must ...` or `first, the agent must ...`: the first step and who does it. The owner installs software or fixes the host. The agent only reruns `/fvs:auto-init` with the recorded choices. |
 
 The recorded profile changes only when `init-state` runs again, so each step ends by naming that rerun.
 Read the stage line before you start a stage. A `ready, reduced` line says what you lose and who can
