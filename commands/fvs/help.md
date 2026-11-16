@@ -131,8 +131,7 @@ and review, then bottom-up proof/checker acceptance. Agreement, profile, memory,
 currentness gates still apply; v2 alone grants no dispatch permission. Legacy/read-only or missing-grant
 routes report the recorded continuation and stop. Final human review and partial reporting remain.
 The `stages:` lines of the profile say whether each stage has a route and what is missing (the
-`auto-setup.md` reference, "Probes and stage lines", explains them); a closure plan made without the
-probe output is degraded and no review or proof starts from it.
+`auto-setup.md` reference, "Probes and stage lines", explains them).
 
 ### Context (`/fvs:context`)
 

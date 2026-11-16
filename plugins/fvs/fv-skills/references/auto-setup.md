@@ -320,7 +320,7 @@ Each probe has one status in the `probes:` list:
 |---|---|
 | `qualified` | The resolver checked it for the exact tested tuple of this project. |
 | `present-unqualified` | Found, and it answers `--version`, but no tested tuple covers this project. Its output is used and labelled unverified. |
-| `unverified-blocked` | Found, but no stage can use its output: its `--version` run fails, or it is a `probe-lean` at a version the Lean graph step refuses. A stage that needs it has no route here until you replace it with one this engine accepts. The reason is printed. The profile accepts `probe-lean` 0.14.0. Version 0.24.0 is accepted by the Lean graph step only beside a version 2 Lean constants record, and the profile does not look for that record, so it prints `unverified-blocked` for 0.24.0. |
+| `unverified-blocked` | Found, but the profile does not count its output as usable: its `--version` run fails, or it is a `probe-lean` at a version the Lean graph step refuses. A stage that needs it has no route here until you replace it with one this engine accepts. The reason is printed. The profile accepts `probe-lean` 0.14.0. Version 0.24.0 is accepted by the Lean graph step only beside a version 2 Lean constants record, and the profile does not look for that record, so it prints `unverified-blocked` for 0.24.0. |
 | `missing` | Not found. A `rust-analyzer` that is only the rustup proxy and fails to run counts as missing. |
 | `not-checked` | The check did not run, and the reason is printed: an unreadable `lean-toolchain`, a refused path override, or no read-only confinement on this host to run the `--version` check in. A stage that needs it has no route here until the check can run. |
 

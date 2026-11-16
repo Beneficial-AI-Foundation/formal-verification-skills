@@ -844,6 +844,13 @@ describe('auto command and workflow text', () => {
     assert.match(read('README.md'), /^### Auto track$/m);
   });
 
+  it('top-specs says how agreement boundaries reach the closure plan as allowed axioms', () => {
+    const body = text('auto-top-specs').replace(/\s+/g, ' ');
+    assert.match(body, /Prose agreement boundaries do not match axioms automatically, so the orchestrator translates them once into exact Lean names and passes them with `--allow-axioms`/);
+    assert.match(body, /Recorded externals with status `assumption-accepted` are allowed automatically, and the plan records which allowed axioms came from where/);
+    assert.doesNotMatch(body, /Run13|\bticket\b/);
+  });
+
   it('auto-extract hands off to the shared extractor and records every attempt through the script', () => {
     const body = text('auto-extract');
     assert.match(body, /\/fvs:aeneas-extract "\$CRATE_ROOT"/);
