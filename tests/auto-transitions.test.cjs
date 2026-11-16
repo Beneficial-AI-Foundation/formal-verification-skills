@@ -669,8 +669,11 @@ function lifecycle(x, { noOp = false, crashPublication = false, stalePreparation
       attempt({ ...terminal, artifacts: [x.profile] });
       attempt({ ...terminal, artifacts: [...terminal.artifacts, f.json(x.owned, 'second-result', typed)] });
       for (const patch of [{ schemaVersion: 2 }, { kind: 'future-kind' }, { actionSha256: 'f'.repeat(64) }, { prepared: terminal.sourceAfter },
-        { controllerObservedAtMs: delivered.result.observation.transition.snapshot.fixed.startedAtMs - 1 }, { controllerObservedAtMs: auto.readRuntimeState({ projectRoot: x.root }).lastObservedAtMs - 1 }, { controllerObservedAtMs: Date.now() + 10000 }, { actor: progressActor }]) {
-        attempt({ ...terminal, artifacts: [f.json(x.owned, 'bad-typed-result', { ...typed, ...patch })] });
+        { controllerObservedAtMs: delivered.result.observation.transition.snapshot.fixed.startedAtMs - 1 }, { controllerObservedAtMs: auto.readRuntimeState({ projectRoot: x.root }).lastObservedAtMs - 1 },
+        // The future timestamp is computed when its own attempt starts: each earlier attempt takes seconds, so a value
+        // fixed when this list is built would already be in the past by the time the verifier compares it with now.
+        () => ({ controllerObservedAtMs: Date.now() + 10000 }), { actor: progressActor }]) {
+        attempt({ ...terminal, artifacts: [f.json(x.owned, 'bad-typed-result', { ...typed, ...(typeof patch === 'function' ? patch() : patch) })] });
       }
       const wrongAssignment = f.json(x.owned, 'wrong-assignment', { ...t.transitionBound(progressed), assignmentId: f.uuid() });
       attempt({ ...terminal, artifacts: [f.json(x.owned, 'foreign-assignment-result', { ...typed, result: { ...candidate, assignment: wrongAssignment } })] });
