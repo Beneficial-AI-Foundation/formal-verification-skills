@@ -349,3 +349,30 @@ describe('Linux x64 confinement', {
     assert.ok(!fs.existsSync(blocked));
   });
 });
+
+// Helper selection is plain path logic, so it runs on every host.
+describe('probe helper selection: absolute path overrides', () => {
+  it('select helpers anywhere, and an unusable override is refused', async () => {
+    const { selectProbeToolPaths } = await import('../scripts/fvs-probe-linux.mjs');
+    const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'fvs-probe-select-'));
+    try {
+      const env = { HOME: path.join(root, 'home'), PATH: '/usr/bin:/bin' };
+      const tools = path.join(root, 'elsewhere');
+      const write = (file) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, '#!/bin/sh\nexit 0\n', { mode: 0o755 }); return file; };
+      const [lean, scip, rust] = ['probe-lean', 'scip', 'probe-rust'].map((name) => write(path.join(tools, name)));
+      const library = path.join(tools, 'lib');
+      fs.mkdirSync(library);
+      const overrides = { FVS_PROBE_LEAN_PATH: lean, FVS_SCIP_PATH: scip, FVS_PROBE_RUST_PATH: rust, FVS_PROBE_LEAN_LIBRARY_PATH: library };
+      const selected = selectProbeToolPaths({ sourceEnv: { ...env, ...overrides } });
+      assert.deepEqual([selected.helpers['probe-lean'], selected.helpers.scip, selected.helpers['probe-rust']], [lean, scip, rust]);
+      assert.deepEqual(selected.libraries, [library]);
+      assert.ok([lean, scip, rust].every((file) => selected.executables.includes(file)));
+      assert.equal(selectProbeToolPaths({ sourceEnv: env }).helpers['probe-lean'], null, 'no override and no toolchain: nothing selected');
+      assert.throws(() => selectProbeToolPaths({ sourceEnv: { ...env, FVS_PROBE_LEAN_PATH: 'probe-lean' } }), /FVS_PROBE_LEAN_PATH must be an absolute path/);
+      assert.throws(() => selectProbeToolPaths({ sourceEnv: { ...env, FVS_SCIP_PATH: path.join(tools, 'missing') } }), /FVS_SCIP_PATH is not an executable file/);
+      assert.throws(() => selectProbeToolPaths({ sourceEnv: { ...env, FVS_PROBE_LEAN_LIBRARY_PATH: lean } }), /FVS_PROBE_LEAN_LIBRARY_PATH is not a directory/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
