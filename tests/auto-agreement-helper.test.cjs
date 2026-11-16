@@ -72,8 +72,25 @@ function writeDraft(fields) {
   return file;
 }
 
-function helper(root, draft, ...extra) {
-  return spawnSync(process.execPath, [HELPER, '--input', writeDraft(draft), '--project-root', root, ...extra], { encoding: 'utf8' });
+function helperWithEnv(env, root, draft, ...extra) {
+  return spawnSync(process.execPath, [HELPER, '--input', writeDraft(draft), '--project-root', root, ...extra], { encoding: 'utf8', env: { ...process.env, ...env } });
+}
+const helper = (root, draft, ...extra) => helperWithEnv({}, root, draft, ...extra);
+
+// Every path below `directory` (except .git) with its size and modification time, to show nothing changed.
+function snapshot(directory) {
+  const entries = [];
+  const walk = (current) => {
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      if (entry.name === '.git' && current === directory) continue;
+      const full = path.join(current, entry.name);
+      const stat = fs.lstatSync(full);
+      entries.push(`${path.relative(directory, full)} ${stat.size} ${stat.mtimeMs}`);
+      if (entry.isDirectory()) walk(full);
+    }
+  };
+  walk(directory);
+  return entries.sort();
 }
 
 // The fenced JSON block printed by the helper.
@@ -199,6 +216,75 @@ describe('agreement drafting helper', () => {
     assert.equal(result.status, 2);
     assert.match(result.stderr, /already exists and is never overwritten/);
     assert.equal(fs.readFileSync(out, 'utf8'), 'keep me');
+  });
+
+  it('refuses an output that would create a control-state file, directly or through a link, and writes nothing', () => {
+    const root = project();
+    fs.rmSync(roadmapFile(root), { force: true });
+    const controlDirectory = path.dirname(stateFile(root));
+    const alias = path.join(temporary('fvs-agreement-alias-'), 'control');
+    fs.symlinkSync(path.join(root, '.formalising'), alias);
+    const destinations = [
+      path.join(controlDirectory, 'externals.json'),
+      roadmapFile(root),
+      path.join(root, '.formalising', 'other-note.json'),
+      path.join(alias, 'auto-fv', 'externals.json'),
+      path.join(alias, 'auto-fv', 'ROADMAP.md'),
+      path.join(controlDirectory, '..', 'auto-fv', 'externals.json'),
+    ];
+    const before = snapshot(root);
+    for (const destination of destinations) {
+      assert.ok(!fs.existsSync(destination), `${destination} must start absent`);
+      const result = helper(root, { ...draftFields, ownerEvidence }, '--out', destination);
+      assert.equal(result.status, 2, `${destination}: ${result.stderr}`);
+      assert.match(result.stderr, /refusing --out .*inside the \.formalising control area/);
+      assert.ok(!fs.existsSync(destination), `${destination} must not be created`);
+    }
+    assert.deepEqual(snapshot(root), before, 'nothing in the project changed');
+  });
+
+  it('refuses an output among the engine scripts and one whose directory is missing', () => {
+    const root = project();
+    const inEngine = path.join(path.dirname(ENGINE), 'fvs-agreement-never-created.json');
+    const refused = helper(root, { ...draftFields, ownerEvidence }, '--out', inEngine);
+    assert.equal(refused.status, 2, refused.stderr);
+    assert.match(refused.stderr, /refusing --out .*inside the engine scripts/);
+    assert.ok(!fs.existsSync(inEngine));
+    const missing = helper(root, { ...draftFields, ownerEvidence }, '--out', path.join(temporary('fvs-agreement-out-'), 'absent', 'agreement.json'));
+    assert.equal(missing.status, 2, missing.stderr);
+    assert.match(missing.stderr, /its directory is not readable/);
+  });
+
+  it('writes to a new file reached through a link that leads outside the project', () => {
+    const root = project();
+    const real = temporary('fvs-agreement-out-');
+    const alias = path.join(temporary('fvs-agreement-alias-'), 'link');
+    fs.symlinkSync(real, alias);
+    const result = helper(root, { ...draftFields, ownerEvidence }, '--out', path.join(alias, 'agreement.json'));
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(printedFence(result.stdout), JSON.parse(fs.readFileSync(path.join(real, 'agreement.json'), 'utf8')));
+    assert.ok(result.stdout.includes(`--input '${path.join(real, 'agreement.json')}'`), 'the printed command names the resolved file');
+  });
+
+  it('keeps the dry-run scratch copy outside the project when TMPDIR is inside it', () => {
+    const root = project();
+    const local = path.join(root, 'tmp-local');
+    fs.mkdirSync(local);
+    const outside = path.join(temporary('fvs-agreement-alias-'), 'tmp-link');
+    fs.symlinkSync(local, outside);
+    const out = path.join(temporary('fvs-agreement-out-'), 'agreement.json');
+    const before = snapshot(root);
+    const stateBefore = fs.readFileSync(stateFile(root));
+    for (const tmpdir of [local, outside]) {
+      const result = helperWithEnv({ TMPDIR: tmpdir }, root, draftFields);
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /The engine accepts this payload/);
+      assert.deepEqual(snapshot(root), before, `nothing was written under the project with TMPDIR=${tmpdir}`);
+    }
+    const written = helperWithEnv({ TMPDIR: local }, root, { ...draftFields, ownerEvidence }, '--out', out);
+    assert.equal(written.status, 0, written.stderr);
+    assert.deepEqual(snapshot(root), before);
+    assert.deepEqual(fs.readFileSync(stateFile(root)), stateBefore);
   });
 
   it('asks for --out once the owner reply is present, and rejects fields that belong to the state', () => {

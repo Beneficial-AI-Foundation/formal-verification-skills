@@ -28,7 +28,9 @@ const USAGE = [
   'Without ownerEvidence the helper prints the payload and its digest for you to show the owner.',
   'With ownerEvidence ({"reference": ..., "response": ...}, the owner\'s own reply word for word) it also',
   'needs --out, writes that new file, and prints the roadmap fence and the owner-run record command.',
-  'It never records the agreement and never overwrites a file.',
+  '--out must be a new file outside the project\'s .formalising directory and the engine scripts (links are',
+  'resolved first). The helper never records the agreement, never overwrites a file, and writes nothing inside',
+  'the project: its scratch copy lives in a temporary directory outside the project root.',
 ].join('\n') + '\n';
 
 class UsageError extends Error {}
@@ -77,10 +79,33 @@ function buildEnvelope(state, draft) {
   return { payload, digest: agreementPayloadSha256({ ...header, payload }), withEvidence, previous };
 }
 
+// True when `file` is `base` or lies below it. Both are real paths; the comparison ignores case so a
+// case-insensitive filesystem cannot reach a protected directory under another spelling.
+function within(base, file) {
+  const relative = path.relative(base.toLowerCase(), file.toLowerCase());
+  return relative === '' || (relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative));
+}
+
+// A new scratch directory whose real path is outside the project. A project-local TMPDIR (or a link into
+// the project) must not receive the dry-run state, so an unsafe candidate is skipped and the helper
+// refuses when none is left.
+function makeScratch(root) {
+  for (const candidate of [os.tmpdir(), '/tmp', '/var/tmp']) {
+    try {
+      const base = fs.realpathSync.native(candidate);
+      if (within(root, base)) continue;
+      const scratch = fs.mkdtempSync(path.join(base, 'fvs-agreement-draft-'));
+      if (!within(root, fs.realpathSync.native(scratch))) return scratch;
+      fs.rmSync(scratch, { recursive: true, force: true });
+    } catch { /* an unreadable or unwritable candidate is skipped */ }
+  }
+  throw new UsageError('no scratch directory outside the project root is available; set TMPDIR to a directory outside the project and run again');
+}
+
 // The engine's own record step, run on a scratch copy of the state with the fence in a scratch roadmap, so
-// the answer cannot drift from what recording will accept. The real project is never touched.
+// the answer cannot drift from what recording will accept. Nothing is written inside the real project.
 function checkWithEngine(root, envelope) {
-  const scratch = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'fvs-agreement-draft-'));
+  const scratch = makeScratch(root);
   try {
     for (const file of [STATE_FILE, ROADMAP_FILE]) fs.mkdirSync(path.dirname(path.join(scratch, file)), { recursive: true });
     fs.copyFileSync(path.join(root, STATE_FILE), path.join(scratch, STATE_FILE));
@@ -91,6 +116,25 @@ function checkWithEngine(root, envelope) {
   }
 }
 
+// The real path of a file that does not exist yet (its parent resolved through every link, plus its own
+// name), refused when it would land in the control area, anywhere else in .formalising, or among the
+// engine's own scripts. The agreement goes to a new file in an ordinary place; it is never able to create
+// or replace the state, the externals record, the roadmap or an engine file.
+function checkDestination(root, out) {
+  const target = path.resolve(out);
+  let real;
+  try { real = path.join(fs.realpathSync.native(path.dirname(target)), path.basename(target)); }
+  catch (error) { throw new UsageError(`cannot create ${target}: its directory is not readable (${error.code})`); }
+  const protectedAreas = [
+    [path.join(root, '.formalising'), 'the .formalising control area, which only the engine writes'],
+    [fs.realpathSync.native(path.dirname(ENGINE)), 'the engine scripts'],
+  ];
+  for (const [area, name] of protectedAreas) {
+    if (within(area, real)) throw new UsageError(`refusing --out ${target}: it resolves to ${real}, inside ${name}; choose a new file elsewhere`);
+  }
+  return real;
+}
+
 const fence = (envelope) => '```fvs-auto-agreement\n' + JSON.stringify(envelope, null, 2) + '\n```';
 // Single quotes are literal in bash, zsh and dash; an embedded quote is closed, escaped and reopened.
 const quote = (text) => "'" + text.replaceAll("'", "'\\''") + "'";
@@ -99,7 +143,8 @@ function run(argv) {
   const flags = parseArguments(argv);
   const view = readState({ projectRoot: flags['project-root'] });
   if (view.code === 'no-state') throw new UsageError(`${view.message}; run /fvs:auto-init first`);
-  const root = fs.realpathSync(flags['project-root']);
+  const root = fs.realpathSync.native(flags['project-root']);
+  const out = flags.out ? checkDestination(root, flags.out) : undefined;
   const draft = readDraft(flags.input);
   const built = buildEnvelope(view.state, draft);
   const checked = built.withEvidence(draft.ownerEvidence ?? { reference: 'scratch-check', response: 'scratch check only; the owner has not replied' });
@@ -115,8 +160,7 @@ function run(argv) {
       'then run this helper again with --out. Do not write the reply yourself.');
     return lines.join('\n') + '\n';
   }
-  if (!flags.out) throw new UsageError('--out is required once ownerEvidence is present: a new file for the agreement JSON');
-  const out = path.resolve(flags.out);
+  if (!out) throw new UsageError('--out is required once ownerEvidence is present: a new file for the agreement JSON');
   try { fs.writeFileSync(out, JSON.stringify(checked, null, 2) + '\n', { flag: 'wx' }); }
   catch (error) { throw new UsageError(`cannot create ${out}: ${error.code === 'EEXIST' ? 'it already exists and is never overwritten' : error.message}`); }
   const successor = Boolean(built.previous);
