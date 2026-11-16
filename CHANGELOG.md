@@ -181,40 +181,64 @@ whole-library verification result.
   function does not prove equivalence with the original source. The correspondence obligations each
   patch records stay open until correspondence evidence closes them.
 
-## [2.3.12] - 2026-11-09
+## [2.3.12] - 2026-11-16
 
 ### Added
 
-- `/fvs:loop-me-in` writes a self-contained HTML walkthrough of the last self-contained chunk of
-  work so you can catch up after an automated run: what was established, stated at the level of the
-  mathematics or protocol rather than the files; where that step sits in the topic roadmap, drawn
-  as a milestone track with every status quoted verbatim, this step and the next steps marked; how
-  it was made, as the argument in prose with links to the
-  declarations and statement-only excerpts, never proof scripts; and a multiple-choice quiz
-  with collapsible answers that cite the code. It is offered once after an interactive
-  `/fvs:crypto-eval` ACCEPT and can be run on demand with a plain-language description, an exact
-  `<topic> nN`, `--commit` or `--working-tree`; a bare call ranks the most recently active work and
-  shows one correction screen before anything is written. Audience, documentation and style
-  references come from a new `loop_me_in` config block or flags. Every code and record link opens
-  the file in your editor at the cited line through the editor's URL scheme (`--editor`,
-  `loop_me_in.editor`, or detection from the terminal, `$VISUAL`/`$EDITOR`/`core.editor` and `PATH`,
-  with VS Code as the stated fallback), so a browser never has to read project files. Output goes
-  under `.formalising/loop-me-in/<slug>/` and is never overwritten; the command runs in the current
-  session with no subagent and never commits, edits project files or changes a recorded decision.
-  `/fvs:loop-me-in --final [<topic>]` explains the whole work instead of a chunk, typically at the
-  end of a formalisation: a tutorial at the level of the top-level theorems, every idea stated
-  mathematically and in prose, no Lean beyond a reading table and editor links, and a trust
+- `/fvs:loop-me-in` writes a self-contained HTML walkthrough of the last chunk of work, so you can
+  catch up after an automated run. It states what was established in terms of the mathematics or
+  protocol rather than the files. It shows where that step sits on the topic roadmap, as a
+  milestone track with every status quoted verbatim and this step and the next steps marked. It
+  explains how the work was made as an argument in prose, with links to the declarations and
+  statement-only excerpts, never proof scripts. It ends with a multiple-choice quiz whose
+  collapsible answers cite the code. (#96, #120)
+- The command is offered once after an interactive `/fvs:crypto-eval` ACCEPT. You can also run it
+  on demand with a plain-language description, an exact `<topic> nN`, `--commit` or
+  `--working-tree`; a bare call ranks the most recently active work and shows one correction screen
+  before anything is written. (#96, #120)
+- Audience, documentation and style references come from a new `loop_me_in` block in the FVS config
+  or from flags. Every code and record link opens the file in your editor at the cited line through
+  the editor's URL scheme (`--editor`, `loop_me_in.editor`, or detection from the terminal,
+  `$VISUAL`/`$EDITOR`/`core.editor` and `PATH`, with VS Code as the stated fallback), so a browser
+  never has to read project files. (#96, #120)
+- Output goes under `.formalising/loop-me-in/<slug>/` and is never overwritten. The command runs in
+  the current session with no subagent, and never commits, edits project files or changes a
+  recorded decision. (#96, #120)
+- `/fvs:loop-me-in --final [<topic>]` explains the whole work instead of a chunk, typically at the
+  end of a formalisation. It is a tutorial at the level of the top-level theorems, with every idea
+  stated mathematically and in prose, no Lean beyond a reading table and editor links, and a trust
   section whose "standard axioms only" claim is made only after a bounded `#print axioms` check.
   The work is the roadmap plus the branch against the branch it diverged from (pull-request base,
   then the reflog, then `main` as the stated default), shown with the other candidates and the
-  top-level theorems for correction before anything is written. (#96)
+  top-level theorems for correction before anything is written. (#96, #120)
+- A workflow guide, `docs/workflow.md`, follows a project from planning through the Rust, paper and
+  crypto tracks, the review commands and the session commands, with a diagram for each flow. The
+  README shows the functional-correctness and crypto-formalisation pipelines as two diagrams and
+  links to the guide, and `/fvs:help` links to it too. The guide lives in the repository and is not
+  part of the npm package. (#121, #125)
 
 ### Changed
 
 - `/fvs:crypto-execute` names the executor's run report path explicitly,
   `.formalising/fv-plans/<topic>/IMPLEMENTATION_nN.md` next to `build.log` (where it already landed
   in practice), checks it after the run and writes the returned report there itself when missing.
-  `/fvs:loop-me-in` reads it as the authoritative list of files an iteration touched. (#96)
+  `/fvs:loop-me-in` reads it as the authoritative list of files an iteration touched. (#96, #120)
+- `/fvs:crypto-eval` reads that same report by name, `.formalising/fv-plans/<topic>/IMPLEMENTATION_nN.md`,
+  as its source for the files the iteration touched, and checks that the iteration argument is `n`
+  followed by digits before it builds the path. When the report is missing, as for an iteration run
+  before it was persisted, the eval says so and takes the files from `git diff --stat` and
+  `git status --porcelain` instead of rebuilding the list from chat context. (#119)
+
+### Fixed
+
+- `/fvs:help` and the README no longer say that `/fvs:fc-plan` computes a bottom-up verification
+  order or sorts functions into "ready now" and "blocked". They now say that it refreshes the graph
+  and progress facts in `.formalising/CODEMAP.md`, writes qualitative complexity, leverage and risk
+  notes to `.formalising/PLAN.md`, and lets you pick a target; the notes do not certify that a
+  target's dependencies are proved. (#124, #125)
+- The one-line `/fvs:fc-plan` summary in `/fvs:help`, "Pick next verification targets via dependency
+  graph analysis.", now matches those bullets: "Choose a verification target, with qualitative
+  notes on complexity, leverage and risk." (#124)
 
 ## [2.3.11] - 2026-11-03
 

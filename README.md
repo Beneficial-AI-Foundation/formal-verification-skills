@@ -135,6 +135,48 @@ for selection rules and runtime limitations.
 
 ## Workflows
 
+`/fvs:ask-baif` picks the next move. [A typical FVS project](docs/workflow.md) explains each step.
+
+```mermaid
+---
+title: Functional correctness
+---
+flowchart TD
+  extract["/fvs:aeneas-extract<br/>(optional)"] -.-> roadmap["/fvs:roadmap"]
+  roadmap --> setup["/fvs:issues-setup<br/>(once)"]
+  setup --> issues["/fvs:to-issues"]
+  issues -.-> map["/fvs:map-code<br/>/fvs:fc-plan<br/>(optional)"]
+  map -.-> ask
+  issues --> ask{"/fvs:ask-baif"}
+  ask --> specify["/fvs:lean-specify"]
+  specify --> review["/fvs:lean-spec-review<br/>(automatic)"]
+  review --> verify["/fvs:lean-verify"]
+  verify --> fin{"Roadmap<br/>finished?"}
+  fin -- "no" --> ask
+  fin -- "yes" --> done["Done"]
+  configure["/fvs:configure<br/>models and effort"]
+  loop["/fvs:loop-me-in<br/>(any time; --final at the end)"]
+```
+
+```mermaid
+---
+title: Crypto formalisation
+---
+flowchart TD
+  roadmap["/fvs:roadmap"] --> setup["/fvs:issues-setup<br/>(once)"]
+  setup --> issues["/fvs:to-issues"]
+  issues --> ask{"/fvs:ask-baif"}
+  ask --> plan["/fvs:crypto-plan<br/>(one issue)"]
+  plan --> review["/fvs:crypto-review<br/>(automatic)"]
+  review --> exec["/fvs:crypto-execute"]
+  exec --> eval["/fvs:crypto-eval<br/>(optional)"]
+  eval --> fin{"Roadmap<br/>finished?"}
+  fin -- "no" --> ask
+  fin -- "yes" --> done["Done"]
+  configure["/fvs:configure<br/>models and effort"]
+  loop["/fvs:loop-me-in<br/>(any time; --final at the end)"]
+```
+
 ### Auto track
 
 Human re-specification is unsupported in 3.0.0-rc2; keep feedback and whole-scope partial reasons.
@@ -160,7 +202,7 @@ comments or reviews on GitHub and never merge: only you do.
                                              /fvs:lean-verify → repeat
 ```
 
-Use `/fvs:map-code` to map dependencies and `/fvs:fc-plan` to choose targets in dependency order.
+Use `/fvs:map-code` to map dependencies and `/fvs:fc-plan` to choose a target.
 The FC prover works on its own within a wall-clock budget, checks its own builds and reports
 VERIFIED only after a cheat audit. Finish with `/fvs:lean-refactor` and `/fvs:trust-audit`.
 `/fvs:model-external` handles external Rust stubs with separate model and specification reviews,

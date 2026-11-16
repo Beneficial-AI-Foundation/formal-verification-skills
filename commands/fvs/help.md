@@ -165,13 +165,11 @@ Usage: `/fvs:map-code` or `/fvs:map-code /path/to/project`
 The functional-correctness track: plan, specify, verify, explain, refactor.
 
 **`/fvs:fc-plan`**
-Pick next verification targets via dependency graph analysis.
+Choose a verification target, with qualitative notes on complexity, leverage and risk.
 
-- Reads `.formalising/CODEMAP.md` (run `/fvs:map-code` first)
-- Computes bottom-up verification order from dependency graph
-- Evaluates candidates for complexity, leverage, and risk
-- Presents interactive ranked selection
-- Identifies "ready now" vs "blocked" functions
+- Reads `.formalising/CODEMAP.md` (run `/fvs:map-code` first) and refreshes its graph and progress facts
+- Writes qualitative complexity, leverage and risk notes to `.formalising/PLAN.md`
+- Lets you pick a target; the notes don't certify that its dependencies are proved
 
 Usage: `/fvs:fc-plan` or `/fvs:fc-plan <function_name>`
 
@@ -600,6 +598,7 @@ Rust → Charon → LLBC → Aeneas → Lean 4
 
 ## Getting Help
 
+- Follow a whole project step by step: https://github.com/Beneficial-AI-Foundation/formal-verification-skills/blob/main/docs/workflow.md
 - Run `/fvs:map-code` to analyze your project
 - Check `.formalising/CODEMAP.md` for verification status
 - Inspect `~/.claude/fv-skills/references/` for domain knowledge

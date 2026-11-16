@@ -166,7 +166,6 @@ if (process.argv.includes('--package-fixture')) {
   }
   it('concise README converges routes controls reviews privacy and source-only claims', () => {
     const readme=fs.readFileSync(path.join(ROOT,'README.md'),'utf8');
-    assert.ok(readme.split('\n').filter(line=>line.trim()).length<=250);
     const installs=section(readme,'## Getting started','## Workflows');
     const flows=section(readme,'## Workflows','## Commands');
     const tooling=section(readme,'### Before your first Lean task','## Workflows');

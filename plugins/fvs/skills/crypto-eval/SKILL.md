@@ -143,6 +143,14 @@ case "$TOPIC_RAW" in
   *..*|*/* ) echo "FVS >> ERROR: topic contains '..' or '/' (path traversal); refusing" >&2; exit 1 ;;
   *[![:alnum:]_[:space:]-]* ) echo "FVS >> ERROR: topic contains unsupported characters" >&2; exit 1 ;;
 esac
+ITER="$2"
+case "$ITER" in
+  n[0-9]* ) : ;;
+  * ) echo "FVS >> ERROR: iteration must be of the form nN" >&2; exit 1 ;;
+esac
+case "${ITER#n}" in
+  *[!0-9]* ) echo "FVS >> ERROR: iteration must be of the form nN" >&2; exit 1 ;;
+esac
 SLUG=$(printf '%s' "$TOPIC_RAW" | tr -s '[:space:]' '-')
 ROOT=".formalising/fv-plans/$SLUG"
 ```
@@ -187,7 +195,13 @@ the command-level selection manifest, including the actual runner; notes rebuild
 reconfirmation. A one-run adjustment is not persisted, while Save override writes the exact
 runtime+stage entry. Missing preferred models or unsupported efforts prompt interactively and fail
 with exact remediation in noninteractive mode. `cat` the iteration's bounded plan + executed
-artifacts (touched files, `build.log`) + cached KB sources, and INLINE them into the prompt. Without
+artifacts (touched files, `build.log`) + cached KB sources, and INLINE them into the prompt. The
+touched-files source is the iteration's run report, read by name at `$ROOT/IMPLEMENTATION_$ITER.md`
+(the topic root, next to `build.log`): take the file list from its `**Files written:**` list and
+`cat` those files. This command only reads that report; it never writes or rewrites it. If the
+report is missing or carries no such list (an iteration executed before the report was persisted),
+inline that fact as degraded evidence, take the touched files from `git diff --stat` and
+`git status --porcelain` instead, and never reconstruct the list from chat context. Without
 `--codex`, dispatch the in-runtime thinker:
 
 For the opted-in baseline only, read the actual bundled protocol-prose reference from the trusted
