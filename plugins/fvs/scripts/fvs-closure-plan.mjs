@@ -20,8 +20,18 @@ import { fileURLToPath } from 'node:url';
 // information only. A ticket 21 record of schema version 2 (oracle lanes) is
 // planned from its nodes lanes: generated nodes are passed through as
 // dependency evidence and are never given a def_id, an owner or a task.
+//
+// Without a graph, or with an identity record built from translation.json
+// alone, the plan is degraded: no closure is computed, the roots are listed in
+// source order without dependency order, and admissibility is blocked, so no
+// consumer that needs an admissible plan accepts it.
 
-const EXIT = { ok: 0, usage: 2, internal: 2, 'invalid-input': 5, partial: 6, blocked: 7 };
+const EXIT = { ok: 0, usage: 2, internal: 2, 'invalid-input': 5, partial: 6, blocked: 7, degraded: 9 };
+const DEGRADED_ORDER = 'source order (file, begin line); no dependency order';
+const DEGRADED_LOST = {
+  'graph-missing': 'no Lean graph: dependencies between items are unknown, so no closure, no helper and no dependency order is computed',
+  'identity-translation-only': 'the identity is declared by Aeneas in translation.json, never exact: no item is confirmed independently, so none is eligible for proof acceptance',
+};
 const COMMIT_FIELDS = ['sourceCommit', 'leanProjectCommit'];
 const DIGEST_FIELDS = ['translationSha256', 'manifestSha256', 'llbcSha256', 'configSha256'];
 const VERSION_FIELDS = ['charonVersion', 'aeneasVersion'];
@@ -71,11 +81,13 @@ const sortedNumbers = (values) => [...values].sort((a, b) => a - b);
 
 function usage() {
   process.stdout.write([
-    'Usage: node fvs-closure-plan.mjs plan --identity FILE --graph FILE --roots DEF_ID[,DEF_ID...]',
+    'Usage: node fvs-closure-plan.mjs plan --identity FILE [--graph FILE] --roots DEF_ID[,DEF_ID...]',
     '         [--failed DEF_ID[,DEF_ID...]] [--llbc FILE] [--out FILE] [--format json|text]',
     '',
     '--identity  the ticket 10 record (fvs-rust-identity record --out)',
-    '--graph     the ticket 21 record (fvs-lean-graph output) of the same extraction',
+    '--graph     the ticket 21 record (fvs-lean-graph output) of the same extraction. Optional:',
+    '            without it, or with a translation.json-only identity record, the plan is',
+    '            degraded (roots in source order, no closure, not admissible)',
     '--roots     the requested roots, by ticket 10 def_id',
     '--failed    nodes whose proof failed; every node depending on them is blocked',
     '--llbc      the attempt\'s LLBC (its sha256 must equal both records\' llbcSha256); its',
@@ -83,7 +95,8 @@ function usage() {
     '',
     'Exit: 0 every requested root is ready; 6 some root is blocked (each is listed with its',
     'reasons); 7 the two records are not admissible together (the requested roots are listed',
-    'as blocked, no closure is claimed); 5 invalid input; 2 usage.',
+    'as blocked, no closure is claimed); 9 degraded (no graph or a translation.json-only',
+    'identity: source order only, not admissible); 5 invalid input; 2 usage.',
     '',
   ].join('\n'));
 }
@@ -95,7 +108,7 @@ const wrapperValid = (value) => isObject(value) && 'json' in value && isSha(valu
 function validate({ identity, graph, roots, failed, llbc }) {
   const bad = (label, message) => refuse('invalid-input', `${label}: ${message}`);
   for (const [label, value] of [['identity', identity], ['graph', graph]]) {
-    if (!wrapperValid(value)) bad(label, 'is required as { json, sha256 } with the sha256 of its bytes');
+    if ((label === 'identity' || (graph !== null && graph !== undefined)) && !wrapperValid(value)) bad(label, 'is required as { json, sha256 } with the sha256 of its bytes');
   }
   if (llbc !== null && llbc !== undefined && !wrapperValid(llbc)) bad('llbc', 'must be { json, sha256 } or null');
   for (const [label, list, nonEmpty] of [['roots', roots, true], ['failed', failed, false]]) {
@@ -105,7 +118,7 @@ function validate({ identity, graph, roots, failed, llbc }) {
   }
   const i = identity.json;
   if (!isObject(i) || i.schema !== 'fvs-rust-identity/record' || i.version !== 1 || !isObject(i.provenance) || !isObject(i.binding)
-    || !Array.isArray(i.items) || !Array.isArray(i.blockers) || !['complete', 'partial', 'blocked', 'unbound'].includes(i.status)
+    || !Array.isArray(i.items) || !Array.isArray(i.blockers) || !['complete', 'partial', 'blocked', 'unbound', 'degraded'].includes(i.status)
     || !['bound', 'unbound'].includes(i.binding.status) || !Array.isArray(i.binding.reasons ?? [])) {
     bad('identity', 'is not a fvs-rust-identity/record version 1');
   }
@@ -117,6 +130,15 @@ function validate({ identity, graph, roots, failed, llbc }) {
     }
   }
   if (new Set(i.items.map((item) => item.defId)).size !== i.items.length) bad('identity', 'def_ids are not unique');
+  // A translation.json-only record is degraded or blocked, and only ever declares items; nothing else is degraded.
+  const declaredOnly = i.provenance.discovery === 'translation-only';
+  if (declaredOnly !== (i.status === 'degraded' || (declaredOnly && i.status === 'blocked'))
+    || (declaredOnly && i.items.some((item) => item.correspondence !== 'declared-by-aeneas'))
+    || (!declaredOnly && i.items.some((item) => item.correspondence === 'declared-by-aeneas'))) {
+    bad('identity', 'a degraded record must be translation.json-only with only declared-by-aeneas items, and only such a record may hold them');
+  }
+  if (llbc && !Array.isArray(llbc.json?.translated?.ordered_decls)) bad('llbc', 'has no translated.ordered_decls list');
+  if (graph === null || graph === undefined) return { i, g: null };
   const g = graph.json;
   if (!isObject(g) || g.schema !== 'fvs/lean-graph'
     || !((g.schemaVersion === 1 && g.capability === undefined) || (g.schemaVersion === 2 && g.capability === ORACLE_CAPABILITY))
@@ -150,7 +172,6 @@ function validate({ identity, graph, roots, failed, llbc }) {
       || !resolutions.includes(edge.resolution)) bad('graph', 'an edge is malformed');
   }
   if (g.fidelity !== undefined && !(isObject(g.fidelity) && isText(g.fidelity.status))) bad('graph', 'fidelity is malformed');
-  if (llbc && !Array.isArray(llbc.json?.translated?.ordered_decls)) bad('llbc', 'has no translated.ordered_decls list');
   return { i, g };
 }
 
@@ -518,9 +539,46 @@ export function expandSchedulingDependencies(g, nodes, failed = []) {
   return { observedCycles, closureOf };
 }
 
-export function buildPlan({ identity, graph, roots, failed = [], llbc = null }) {
+// The degraded plan: the requested roots and every item in source order, no
+// closure and no scheduling. A blocked identity still claims nothing.
+function degradedPlan({ identity, graph, llbc, i, g, requested, failed }) {
+  const codes = [...(g ? [] : ['graph-missing']), ...(i.provenance.discovery === 'translation-only' ? ['identity-translation-only'] : [])];
+  const blockers = codes.map((code) => ({ code, message: DEGRADED_LOST[code] }));
+  if (i.status === 'blocked') blockers.push({ code: 'identity-blocked', message: 'the ticket 10 record is blocked' });
+  const items = new Map(i.items.map((item) => [item.defId, item]));
+  const sourceOrder = [...i.items]
+    .sort((a, b) => String(a.source?.file ?? '').localeCompare(String(b.source?.file ?? '')) || (a.source?.begin_line ?? 0) - (b.source?.begin_line ?? 0) || a.defId - b.defId)
+    .map((item) => ({ defId: item.defId, rustName: item.rustName ?? null, target: item.target, file: item.source?.file ?? null, beginLine: item.source?.begin_line ?? null, reasons: item.reasons }));
+  const blocked = i.status === 'blocked';
+  return {
+    schema: 'fvs-closure-plan/record',
+    version: 1,
+    status: blocked ? 'blocked' : 'degraded',
+    inputs: { identitySha256: identity.sha256, graphSha256: graph?.sha256 ?? null, llbcSha256: llbc?.sha256 ?? null },
+    selection: { requestedRoots: requested, failed: sortedNumbers(failed) },
+    provenance: Object.fromEntries(PROVENANCE.map((field) => [field, i.provenance[field] ?? null])),
+    qualification: { graphFidelity: g ? (g.fidelity?.status ?? 'not-supplied (a pre-fidelity graph record)') : 'not-supplied (no graph)' },
+    admissibility: { status: 'blocked', blockers },
+    upstream: { identityStatus: i.status, identityBlockers: i.blockers, graphState: g?.state ?? null, graphBlockers: g?.blockers ?? null },
+    nodes: {},
+    observedCycles: [],
+    roots: requested.map((defId) => (blocked || !items.has(defId)
+      ? { defId, status: 'blocked', closure: null, blockers: [blocked ? { code: 'not-admissible', message: 'the ticket 10 record is blocked' } : { code: 'unknown-root', message: `def_id ${defId} is not a ticket 10 item` }] }
+      : { defId, rustName: items.get(defId).rustName ?? null, status: 'degraded', closure: null, scope: 'every item in degraded.sourceOrder; the closure is not computed',
+        blockers: [{ code: 'closure-not-computed', message: `the dependency closure needs ${codes.map((code) => (code === 'graph-missing' ? 'a Lean graph' : 'an exact identity')).join(' and ')}` }] })),
+    degraded: {
+      reasons: codes,
+      lost: codes.map((code) => DEGRADED_LOST[code]),
+      order: DEGRADED_ORDER,
+      sourceOrder: blocked ? [] : sourceOrder,
+    },
+  };
+}
+
+export function buildPlan({ identity, graph = null, roots, failed = [], llbc = null }) {
   const { i, g } = validate({ identity, graph, roots, failed, llbc });
   const requested = sortedNumbers(roots);
+  if (!g || i.provenance.discovery === 'translation-only') return degradedPlan({ identity, graph, llbc, i, g, requested, failed });
   const { blockers } = admissibility(i, g, llbc);
   const record = {
     schema: 'fvs-closure-plan/record',
@@ -648,7 +706,7 @@ function parseFlags(argv) {
     if (!value || value.startsWith('--')) refuse('usage', `${flag} requires a value`);
     flags[key] = value;
   }
-  for (const key of ['identity', 'graph', 'roots']) if (!flags[key]) refuse('usage', `--${key} is required`);
+  for (const key of ['identity', 'roots']) if (!flags[key]) refuse('usage', `--${key} is required`);
   if (flags.format && !['json', 'text'].includes(flags.format)) refuse('usage', '--format must be json or text');
   return flags;
 }
@@ -672,7 +730,7 @@ function main(argv) {
     format = flags.format ?? 'json';
     const record = buildPlan({
       identity: readInput(flags.identity, 'identity'),
-      graph: readInput(flags.graph, 'graph'),
+      graph: flags.graph ? readInput(flags.graph, 'graph') : null,
       roots: ids(flags.roots, '--roots'),
       failed: flags.failed ? ids(flags.failed, '--failed') : [],
       llbc: flags.llbc ? readInput(flags.llbc, 'llbc') : null,
@@ -681,7 +739,9 @@ function main(argv) {
     const code = record.status === 'ready' ? 'ok' : record.status;
     const message = record.status === 'blocked'
       ? `not admissible: ${record.admissibility.blockers.map((b) => b.code).join(', ')}`
-      : record.roots.map((root) => `${root.defId} ${root.status}`).join(', ');
+      : record.status === 'degraded'
+        ? `degraded (${record.degraded.reasons.join(', ')}): ${record.degraded.sourceOrder.length} item(s) in ${record.degraded.order}; no closure is claimed and proof acceptance refuses this plan`
+        : record.roots.map((root) => `${root.defId} ${root.status}`).join(', ');
     result = { ok: code === 'ok', command: 'plan', code, message, record };
   } catch (error) {
     result = error instanceof Refusal
@@ -697,7 +757,7 @@ function main(argv) {
   } else {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   }
-  if (!['ok', 'partial', 'blocked'].includes(result.code)) process.stderr.write(`FVS >> ${result.code}: ${result.message}\n`);
+  if (!['ok', 'partial', 'blocked', 'degraded'].includes(result.code)) process.stderr.write(`FVS >> ${result.code}: ${result.message}\n`);
   process.exitCode = EXIT[result.code];
 }
 
