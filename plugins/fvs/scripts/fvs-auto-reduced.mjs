@@ -105,7 +105,8 @@ export function next({ projectRoot: rootArg, plan: planArg }) {
   const currency = new Map([...recorded].map(([defId, record]) => {
     const dir = record.source?.worktree ?? root;
     const changed = record.file !== null && fileSha(path.join(dir, record.file)) !== record.fileSha256;
-    const commit = record.source?.commit ?? record.commit ?? null;
+    // A worker checkout's own commit only: the project root's commit says nothing about it.
+    const commit = (record.source ? record.source.commit : record.commit) ?? null;
     return [defId, { changed, commit, earlier: record.file !== null && commit !== null && currentHead(dir) !== commit }];
   }));
   const ids = (key) => [...currency].filter(([, entry]) => entry[key]).map(([defId]) => defId);

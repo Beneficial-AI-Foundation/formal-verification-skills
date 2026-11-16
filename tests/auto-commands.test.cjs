@@ -1309,7 +1309,7 @@ describe('spec phase: record-spec and spec-status', () => {
     assert.equal(view.phase, 'proofs');
     assert.match(view.nextAction, /^The build check failed for the draft proof PR .* build check failed: a new axiom\. Fix the proofs, push, record the new head with record-pr --kind proof/);
 
-    for (const forged of [{ accepted: true, label: 'x', commit: 'f'.repeat(40) }, { accepted: 'yes', label: 'x' }, { accepted: true, label: 'x', kind: 'other' }]) {
+    for (const forged of [{ accepted: true, label: 'x', commit: 'f'.repeat(40) }, { accepted: 'yes', label: 'x' }, { accepted: true, label: 'x', kind: 'other' }, { accepted: true, label: 7 }]) {
       receipt(forged);
       assert.equal(auto.readState({ projectRoot: root }).phase, 'proofs', JSON.stringify(forged));
     }

@@ -1201,7 +1201,7 @@ function buildCheckReceipt(root, head) {
   if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(head ?? '')) return null;
   try {
     const receipt = JSON.parse(fs.readFileSync(path.join(root, '.formalising', 'auto-fv', 'build-check', `${head}.json`), 'utf8'));
-    return receipt?.kind === 'fvs-build-check' && receipt.commit === head && typeof receipt.accepted === 'boolean' ? receipt : null;
+    return receipt?.kind === 'fvs-build-check' && receipt.commit === head && typeof receipt.accepted === 'boolean' && typeof receipt.label === 'string' ? receipt : null;
   } catch {
     return null;
   }
