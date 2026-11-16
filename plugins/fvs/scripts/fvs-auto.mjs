@@ -140,9 +140,12 @@ function probeUsable(id, bin, root, selected) {
   if (!run.ok) return [id === 'rust-analyzer' ? 'missing' : 'unverified-blocked', `${id} --version failed: ${firstLine(run.output) || 'no output'}`];
   if (id !== 'probe-lean') return ['present-unqualified', null];
   const version = firstLine(run.stdout).split(/\s+/).pop();
-  const accepted = acceptedProbeLeanVersions();
-  if (accepted.includes(version)) return ['present-unqualified', null];
-  return ['unverified-blocked', `the Lean graph step accepts only probe-lean ${accepted.join(' or ')} output and refuses other versions; this probe-lean reports ${JSON.stringify(version)}`];
+  // Which constants record a run produces is known only after it runs, so every
+  // version the graph step can take is a route; the graph step checks the pairing.
+  const plain = acceptedProbeLeanVersions();
+  const withConstants = acceptedProbeLeanVersions({ constantsVersion2: true }).filter((v) => !plain.includes(v));
+  if ([...plain, ...withConstants].includes(version)) return ['present-unqualified', null];
+  return ['unverified-blocked', `the Lean graph step accepts only probe-lean ${plain.join(' or ')} output${withConstants.length ? `, or ${withConstants.join(' or ')} output with a version 2 constants record,` : ''} and refuses other versions; this probe-lean reports ${JSON.stringify(version)}`];
 }
 
 // What each stage needs on this engine. The AO controller launches spec, review

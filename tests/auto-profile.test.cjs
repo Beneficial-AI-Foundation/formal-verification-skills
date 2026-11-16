@@ -643,7 +643,7 @@ describe('fvs-auto readiness: what each stage can do, computed from a profile', 
   it('a present probe-lean the graph step refuses is unverified-blocked, and readiness and the graph step agree', async (t) => {
     if (!CONFINED) return t.skip('read-only confinement is unavailable here, so --version is not run');
     const { buildLeanGraph } = await import(pathToFileURL(path.join(ROOT, 'scripts', 'fvs-lean-graph.mjs')).href);
-    const graphCodes = (version) => buildLeanGraph({ libraries: [], extractText: JSON.stringify({ schema: 'probe-lean/extract',
+    const graphCodes = (version, constantsText = null) => buildLeanGraph({ libraries: [], constantsText, extractText: JSON.stringify({ schema: 'probe-lean/extract',
       'schema-version': '3.0', tool: { name: 'probe-lean', command: 'extract', version }, data: {} }) }).blockers.map((entry) => entry.code);
     const profileWithProbeLean = async (script) => {
       const stub = path.join(temporaryDirectory(), 'probe-lean');
@@ -660,7 +660,7 @@ describe('fvs-auto readiness: what each stage can do, computed from a profile', 
     const refused = await profileWithProbeLean('echo 0.99.0');
     assert.ok(graphCodes('0.99.0').includes('unqualified-interface'), 'the graph step refuses 0.99.0');
     assert.equal(leanOf(refused).status, 'unverified-blocked');
-    assert.match(leanOf(refused).reason, /accepts only probe-lean 0\.14\.0 output and refuses other versions; this probe-lean reports "0\.99\.0"/);
+    assert.match(leanOf(refused).reason, /accepts only probe-lean 0\.14\.0 output, or 0\.24\.0 output with a version 2 constants record, and refuses other versions; this probe-lean reports "0\.99\.0"/);
     assert.match(leanOf(refused).lost, /Lean atom list/);
     assert.match(leanOf(refused).lost, /commit other than the Rust commit is not reconciled/);
     const stage = refused.readiness.find((entry) => entry.stage === 'auto-top-specs');
@@ -672,6 +672,13 @@ describe('fvs-auto readiness: what each stage can do, computed from a profile', 
     assert.ok(!graphCodes('0.14.0').includes('unqualified-interface'), 'the graph step accepts 0.14.0');
     assert.equal(leanOf(accepted).status, 'present-unqualified');
     assert.equal(leanOf(accepted).lost, null);
+
+    // 0.24.0 is a route: the graph step takes its output with a version 2 constants record.
+    const paired = await profileWithProbeLean('echo 0.24.0');
+    assert.ok(graphCodes('0.24.0').includes('unqualified-interface'), 'without constants the graph step refuses 0.24.0');
+    assert.ok(!graphCodes('0.24.0', JSON.stringify({ version: 2 })).includes('unqualified-interface'), 'with version 2 constants the graph step takes 0.24.0');
+    assert.equal(leanOf(paired).status, 'present-unqualified');
+    assert.equal(leanOf(paired).lost, null);
 
     const broken = leanOf(await profileWithProbeLean('echo "cannot load library" >&2; exit 1'));
     assert.equal(broken.status, 'unverified-blocked');
