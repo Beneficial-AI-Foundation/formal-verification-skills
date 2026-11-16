@@ -33,7 +33,7 @@ memory I/O have separately named finite limits; long build/proof work is not adm
 
 For disabled memory, the v2 coordinator request has `memoryRequest:null`, the runtime records the
 explicit disabled disposition, and workers use `fvs/auto-memory-disabled-request` version2. There is
-no backend prime or substitute20 receipt. With Beads enabled, follow `auto-memory.md`: the caller's
+no backend prime or substitute memory receipt. With Beads enabled, follow `auto-memory.md`: the caller's
 fresh request, canonical primary store/Git identity and actual prime/result checks remain mandatory.
 Local FVS-development memory is separate from a target project's chosen backend.
 
@@ -81,7 +81,7 @@ or independent-specification-review. Evidence is immutable `{file,sha256}` data;
 not meaningful progress. `observe-progress` takes `{packet,marker,progress,out}`. `read-progress` takes
 `{progress}`. These operations establish scheduling facts, never proof or effect permission.
 
-For a small proof unit from the roadmap, roughly1h unresolved prompts diagnosis: inspect the exact
+For a small proof unit from the roadmap, roughly one hour unresolved prompts diagnosis: inspect the exact
 goal, last meaningful progress and failed approaches. Useful progress may justify continuation.
 A concrete missing lemma, bad specification or other blocker may justify earlier intervention.
 This threshold is neither an automatic kill nor a build/total-proof deadline. Keep the original task
@@ -109,7 +109,7 @@ start distinct from the current attempt start; a replacement cannot erase either
 
 A persistent same blocker requires grounded decomposition/helper/specification review before another
 same-context replacement. The workflow compares the actual blocker and evidence; there is no language
-classifier or blind restart loop. The strict15 inspector and dependency-ready proof-launch guards
+classifier or blind restart loop. The strict checker inspector and dependency-ready proof-launch guards
 remain unchanged. Stop-only snapshots leave proof heads/nodes unknown and cannot authorize work.
 If actual supported AO observations cannot establish the known scope, report the precise missing
 capability and use cooperative checkpoint/cancel/handoff assistance; retain uncertainty and capacity.

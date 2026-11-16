@@ -1,7 +1,7 @@
 <purpose>
-For the configured AO orchestrator, continue the bounded transition protocol to authoritative17
+For the configured AO orchestrator, continue the bounded transition protocol to authoritative review-bundle
 references. Otherwise reconcile the recorded state and report the standalone continuation. Worker
-reports establish no proof acceptance; trusted15 remains the sole publication authority.
+reports establish no proof acceptance; the trusted checker remains the sole publication authority.
 </purpose>
 
 <process>
@@ -28,8 +28,8 @@ report unsupported known-work stop scope honestly and retain the cooperative han
 
 For an actual orchestrator with a complete current controller request, execution grant and resolved
 stage manifest, follow `fv-skills/references/auto-transitions.md` through the bounded proposal/effect/checkpoint loop to
-the17 reference handoff. Reuse initial agreement; no routine per-round human gate or hidden provider
-children. Actual live provider execution requires the concrete19 setup/permission. Missing context
+the draft-PR reference handoff. Reuse initial agreement; no routine per-round human gate or hidden provider
+children. Actual live provider execution requires separately granted concrete setup/permission. Missing context
 stays partial. Otherwise use the standalone reconciliation/report path below; it dispatches nothing.
 
 Use that reference's **Production driver: authorized v2 continuation** recipe and closed adapter
@@ -44,7 +44,7 @@ For each actual proposal/action:
 1. Missing construction or contract readiness continues the shared extractor/discovery or
    `auto-top-specs` author/fresh-review loop under the same initial grant; unsupported roots remain
    in the whole-scope inventory. No owner-supplied top-level specs or routine mid-run approval.
-2. Freeze15's pristine reviewed context with mutable proof overlays absent. Launch only a dependency-ready
+2. Freeze the pristine reviewed context with mutable proof overlays absent. Launch only a dependency-ready
    proof unit through the selected `fc_proof_plan` / `fc_proof_execution` profile. Use the actor
    permission-ready/startup/prepare/release guard and fresh start marker. Split distinct tuples;
    the combined `lean-verify/controller-direct` route needs equal role tuples.
@@ -53,13 +53,13 @@ For each actual proposal/action:
    For replacement, preserve drafts, stop known owned commands, verify actual termination and
    resolve the old reservation before a fresh linked assignment. Unknown scope retains capacity.
 4. Compose only the exact allowed candidate bytes via the existing materialization procedure.
-   Run paired15 check and serial bottom-up accept at one fixed integration tree. Call
+   Run the paired check and serial bottom-up accept at one fixed integration tree. Call
    `runPairedEffect`, retain real command/result/completion, then prepare the actual post-state and
    `recordAfter`. Typed command/facts partial outcomes authorize no work or proof by themselves.
 5. Revalidate each concrete successor through the engine's finite v2basis rules when old accepted
    entries are stale. Keep history/store and original execution/memory policy intact; no unconditional
-   strict proposal, fresh run, cache flag or worker PASS bypass. Final whole-scope15 currentness stays strict.
-6. On end or precise partial status, build and verify17 with the independently held complete scope,
+   strict proposal, fresh run, cache flag or worker PASS bypass. Final whole-scope currentness stays strict.
+6. On end or precise partial status, build and verify the review bundle with the independently held complete scope,
    current facts and required historical captures. List every root's current checked PASS or exact
    failed/unsupported/partial reason. Human review remains pending; the driver never merges/publishes.
 
@@ -68,8 +68,8 @@ separately explicit draft-PR grant may authorize its trusted publication route. 
 fall through to the legacy unavailable message below; missing authority retains that reporting path.
 
 At an end-of-run or partial-results boundary, use `fv-skills/references/auto-review-bundle.md`
-to build and verify the17 local human-review artifact. Supply the independently held full scope
-inventory and current source/context references, including failed/unmapped items; the22 proposal
+to build and verify the local human-review artifact. Supply the independently held full scope
+inventory and current source/context references, including failed/unmapped items; the controller proposal
 alone is not complete coverage evidence. Capture pending/expired/unfinished reasons without restarting
 work. Bundle integrity, historical proof facts, fresh currentness and human approval are separate.
 This step writes no PR, checker receipt, registry, runtime or memory state. Human re-specification
@@ -103,7 +103,7 @@ When current agreement, the recorded memory disposition and caller invocation co
 Perform the mandatory canonical semantic applicability/actions check, prepare a fresh request and
 run `state` with exclusive output, then `verifyReconciliation` against the independently held request.
 Preserve partial reasons, reservations and original limits. The adapter may update only its runtime
-history and the owned20 context; a read-only M1 invocation still reports its recorded continuation.
+history and the owned memory context; a read-only M1 invocation still reports its recorded continuation.
 Missing agreement/store/association/accounting/context stops that affected route without setup,
 budget reset, guessed identities or a new scope interview. This is no dispatch/publication grant.
 

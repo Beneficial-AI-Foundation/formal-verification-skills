@@ -877,11 +877,11 @@ describe('auto command and workflow text', () => {
     assert.match(body, /Routine Status log appends outside the fence/);
     assert.match(body, /there is no per-round human contract approval/);
     assert.match(body, /Final PR acceptance remains human/);
-    assert.match(body, /public-api[\s\S]*unsupported pending separately permitted ticket11/);
+    assert.match(body, /public-api[\s\S]*unsupported until the separately permitted Rust visibility join lands/);
     assert.match(body, /Agreement storage alone launches no workers/);
     assert.match(body, /Without that complete opt-in context[\s\S]*stop/);
     assert.match(body, /fv-skills\/references\/auto-transitions\.md/);
-    assert.match(body, /Actual live provider execution[\s\S]*concrete19 setup\/permission/);
+    assert.match(body, /Actual live provider execution[\s\S]*separately granted concrete setup\/permission/);
     assert.match(body, /verifyReconciliation/);
     assert.match(read('commands/fvs/roadmap.md'), /`\.formalising\/auto-fv\/ROADMAP\.md`; `\/fvs:auto-init`/);
     assert.match(read('fv-skills/workflows/roadmap.md'), /\*\.md\) FILE=\$ROADMAP_PATH/);

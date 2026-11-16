@@ -5,7 +5,7 @@ For v2 resume and checkpoint requests, read `auto-execution.md` first. It define
 <purpose>
 Use this reference from auto-init/auto-execute when continuing an agreed nonpublic project. The
 coordinator reconciles before any later transition; workers use the separate read-only memory route
-in `auto-memory.md`. This adapter records observations and effects. Ticket22 owns dispatch and stage
+in `auto-memory.md`. This adapter records observations and effects. The orchestration controller owns dispatch and stage
 ordering. A `reconciled` result is neither execution permission nor a proof receipt.
 
 </purpose>
@@ -24,8 +24,8 @@ authorize a public re-specification run.
 ## Prepare the current request
 
 Read the actual owner response and current canonical scope, claims, trust, conventions and reserved
-decisions. Apply12's workflow applicability check as well as `read-state --require-agreement`.
-Preserve current grants; null execution/publication remains ungranted. Public-API mode stays held11.
+decisions. Apply the agreement workflow's applicability check as well as `read-state --require-agreement`.
+Preserve current grants; null execution/publication remains ungranted. Public-API mode stays held until the Rust visibility join lands.
 
 The caller prepares and retains this closed JSON, using actual selected context. Schema examples are
 not answers, grants, identities or evidence. Missing context is an explicit partial condition.
@@ -42,7 +42,7 @@ not answers, grants, identities or evidence. Missing context is an explicit part
 | `inputs` | `{extraction,graph,plan,baseline,acceptedStore}`; unavailable stages null, other files `{file,sha256}`; extraction is the identity-record reference; store is `{root,expectedHeadSha256}` |
 | `associations` | Controller association file references described below |
 | `priorAccounting` | Null for established runtime or verified no-prior-execution start; otherwise an existing bound accounting record |
-| `memoryRequest` | Independently prepared20 request for this same attempt/phase/project/coordinator/resume, operation `coordinator-refresh` |
+| `memoryRequest` | Independently prepared memory request for this same attempt/phase/project/coordinator/resume, operation `coordinator-refresh` |
 | `transition` | Null for reconciliation; paired intent/effect for a checkpoint |
 
 AO requires its existing HOME controller-state locator. `stateHome` is explicit invocation context,
@@ -60,7 +60,7 @@ commit are distinct identities; preserve each. An initial pristine tree has no a
 node "$AUTO" state --project-root "$PRIMARY" --request "$CURRENT_REQUEST" --out "$EXCLUSIVE_OUT"
 ```
 
-The coordinator route refreshes/consumes its configured20 primary memory and reads actual local AO/Git
+The coordinator route refreshes/consumes its configured primary memory and reads actual local AO/Git
 and checker evidence. It initializes no store and launches no session. On `partial`, preserve the
 reasons and unfinished scope. Missing prior accounting creates no new start time or runtime. Pending
 runtime markers remain evidence requiring reconciliation, not permission to delete/reset them.
@@ -82,7 +82,7 @@ Worker reports, AO completion and Beads context establish no acceptance.
 
 Every returned accepted node must match the requested integrated commit/tree, frozen/registry context
 and current dependency receipt heads. An unrelated later acceptance does not refresh old node proofs.
-Older trees or superseded helpers conservatively require15 recheck; the accepted-baseline summary must
+Older trees or superseded helpers conservatively require a checker recheck; the accepted-baseline summary must
 belong to the selected context. Inspection neither rebases nor publishes a receipt.
 
 ## Controller session association
@@ -126,7 +126,7 @@ retains the identical intent, outcome `succeeded|failed|uncertain`, and actual e
 bound association; other unused fields are null and evidence is an array. Local actions cannot claim
 launch effects. An orphan or changed/conflicting after refuses.
 
-Only a before newly committed by this invocation can precede that invocation's later22 effect.
+Only a before newly committed by this invocation can precede that invocation's later controller effect.
 Replay returns `already-recorded`/`uncertain`, no committed head and no execution opportunity.
 An unfinished/failed/unknown launch retains capacity, including when AO shows no row, idle or exited.
 Pending/active/uncertain reservations and live unreserved associated workers count conservatively
@@ -145,7 +145,7 @@ effectEvidence:[...]}`. `terminalOutcome` is succeeded/failed; nonempty effectEv
 retained bytes. The run/reservation/before/action must exactly match a pending/uncertain **local**
 effect. The resolution appends history and closes only execution uncertainty; a failed operation stays
 failed, and even a successful completion grants no proof acceptance. Launch/local substitution refuses.
-16 performs no launch or termination.
+The resume coordinator performs no launch or termination.
 
 ## Runtime and limits
 

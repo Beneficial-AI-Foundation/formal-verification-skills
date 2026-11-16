@@ -360,7 +360,7 @@ describe('memory bootstrap workflow boundary', () => {
   it('requires fresh memory bootstrap after agreement reuse and consumes actual caller-bound bytes', () => {
     const workflow = fs.readFileSync(path.join(f.ROOT, 'fv-skills/workflows/auto-init.md'), 'utf8');
     const reference = fs.readFileSync(path.join(f.ROOT, 'fv-skills/references/auto-memory.md'), 'utf8');
-    assert.match(workflow, /proceed to Step6's recorded memory disposition/);
+    assert.match(workflow, /proceed to Step 6's recorded memory disposition/);
     assert.match(workflow, /Every start\/resume[\s\S]*own current request; enabled memory also needs the fresh prime/);
     assert.match(workflow, /"\$AUTO" refresh-memory --project-root "\$PRIMARY" --request "\$REQUEST" --out "\$MEMORY_OUT"/);
     assert.match(workflow, /"\$AUTO" prime-memory --project-root "\$PRIMARY" --request "\$REQUEST" --out "\$MEMORY_OUT"/);
@@ -368,7 +368,7 @@ describe('memory bootstrap workflow boundary', () => {
     assert.match(reference, /actualWorkerContext = current\.primeText/);
     assert.match(reference, /not OS\/provider authentication/);
     assert.match(reference, /No memory result[\s\S]*proves a theorem/);
-    assert.match(reference, /16 coordinator consumer[\s\S]*auto-resume\.md[\s\S]*22 dispatch wiring/);
+    assert.match(reference, /resume coordinator's consumer[\s\S]*auto-resume\.md[\s\S]*controller's dispatch wiring/);
     assert.match(reference, /This memory adapter itself establishes neither/);
   });
 });

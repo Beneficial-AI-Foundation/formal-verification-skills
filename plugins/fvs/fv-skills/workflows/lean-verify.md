@@ -34,13 +34,13 @@ sequentially in this assigned seat under the supplied applicable manifest. Plan-
 bound research/strategy; prove-direct consumes it and proves. Combine only identical role tuples.
 Keep the same bound invocation/execution policy across split roles; no nested provider or
 new model interview. Keep style/build/cheat-audit gates. For v2, use configured network-enabled research/acquisition under existing grants before freezing stable check inputs; preserve pins. V1
-retains its literal frozen-dependency policy. The controller's auto pristine B/14 statement/semantic identity is the
+retains its literal frozen-dependency policy. The controller's auto pristine B/registry statement/semantic identity is the
 fixed target: do not create a candidate-derived or standalone replacement expectation. Only the legacy v1 invocation has the recorded
 four-hour bound capped by original project time; v2 follows its optional chosen budget; a cap/three-review-round
 exit becomes PARTIAL with a linked resume, never a new total budget. Do not weaken statements.
 Return immutable candidate/audit/build references, including unresolved findings, and preserve
 controller receipts instead of standalone cleanup. Worker VERIFIED is candidate evidence only;
-the controller's trusted15 check/integrated serial acceptance alone can publish a proof receipt.
+the controller's trusted checker run and integrated serial acceptance alone can publish a proof receipt.
 Without this verified packet, the ordinary standalone pre-edit baseline and steps below apply.
 </controller_mode>
 
