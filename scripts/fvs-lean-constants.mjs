@@ -9,7 +9,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { ILEAN_DIR, projectInputs, oracleShapeProblems, constantsRunProblems } from './fvs-lean-graph.mjs';
+import { ILEAN_DIR, projectInputs, oracleShapeProblems, constantsRunProblems, compiledProblems, importProblems } from './fvs-lean-graph.mjs';
 
 const sha256 = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
 // A library root is interpolated into Lean source that #eval runs, and the
@@ -271,6 +271,12 @@ export function produce({ project: projectArg, roots, out: outArg, lake: lakeArg
   };
   const runProblems = constantsRunProblems(run, recordText, record, project);
   if (runProblems.length > 0) refuse(`the run receipt would not be accepted: ${runProblems.join('; ')}`);
+  // The analysed modules are the project's own: those under the given roots.
+  // A compiled file of any other module (another library, stale build output)
+  // would make the graph step reject the record, so it is named here instead.
+  const analysed = modules.filter((module) => roots.includes(module.split('.')[0]));
+  const bound = [...compiledProblems(compiled, analysed, project), ...importProblems(before.text, before.summary, compiled, analysed, record.referenced)];
+  if (bound.length > 0) refuse(`the compiled modules or import manifest would not be accepted: ${bound.join('; ')}`);
   publish(path.join(out, 'imports.json'), before.text);
   publish(path.join(out, 'constants.json'), recordText);
   publish(path.join(out, 'constants-run.json'), `${JSON.stringify(run, null, 1)}\n`);

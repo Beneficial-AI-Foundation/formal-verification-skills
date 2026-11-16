@@ -24,7 +24,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const args = process.argv.slice(2);
 const env = process.env;
-if (args.includes('build')) process.exit(Number(env.FAKE_BUILD_EXIT || 0));
+if (args.includes('build')) {
+  if (env.FAKE_EXTRA_OLEAN) fs.writeFileSync(path.join(process.cwd(), '.lake/build/lib/lean/Other.olean'), 'stale');
+  process.exit(Number(env.FAKE_BUILD_EXIT || 0));
+}
 const file = args[args.length - 1];
 const olean = (root, module) => path.join(root, module.replaceAll('.', '/') + '.olean');
 const rows = [
@@ -88,19 +91,23 @@ describe('fvs-lean-constants producer', () => {
     fs.mkdirSync(toolchainLib, { recursive: true });
     lake = path.join(bin, 'lake');
     fs.writeFileSync(lake, FAKE_LAKE, { mode: 0o755 });
-    fs.writeFileSync(path.join(bin, 'lean'), 'fake lean binary');
+    // Answers only --print-prefix, as the toolchain's lean does.
+    fs.writeFileSync(path.join(bin, 'lean'), `#!/usr/bin/env node\nconsole.log(${JSON.stringify(path.join(tmp, 'toolchain'))});\n`, { mode: 0o755 });
   });
   after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
   it('publishes a record and receipt the graph step accepts', async () => {
     const { out, result } = produce();
     assert.equal(result.status, 0, result.stderr);
-    const { oracleShapeProblems, constantsRunProblems } = await import(pathToFileURL(path.join(ROOT, 'scripts', 'fvs-lean-graph.mjs')).href);
+    const graph = await import(pathToFileURL(path.join(ROOT, 'scripts', 'fvs-lean-graph.mjs')).href);
     const recordText = fs.readFileSync(path.join(out, 'constants.json'), 'utf8');
     const record = JSON.parse(recordText);
     const receipt = JSON.parse(fs.readFileSync(path.join(out, 'constants-run.json'), 'utf8'));
-    assert.deepEqual(oracleShapeProblems(record), []);
-    assert.deepEqual(constantsRunProblems(receipt, recordText, record, project), []);
+    const importsText = fs.readFileSync(path.join(out, 'imports.json'), 'utf8');
+    assert.deepEqual(graph.oracleShapeProblems(record), []);
+    assert.deepEqual(graph.constantsRunProblems(receipt, recordText, record, project), []);
+    assert.deepEqual(graph.compiledProblems(record.inputs.compiled, ['Demo'], project), []);
+    assert.deepEqual(graph.importProblems(importsText, record.inputs.imports, record.inputs.compiled, ['Demo'], record.referenced), []);
     assert.equal(record.version, 2);
     assert.equal(record.producer.toolchain, 'leanprover/lean4:v4.35.0');
     assert.equal(record.producer.lakeSha256, sha256(fs.readFileSync(lake)));
@@ -128,6 +135,7 @@ describe('fvs-lean-constants producer', () => {
     ['an import inventory that changes during the run', { FAKE_INVENTORY_CHANGE: '1' }, 'Demo', /import inventory changed/],
     ['a project file that changes during the run', { FAKE_INPUT_CHANGE: '1' }, 'Demo', /project files or compiled modules changed/],
     ['extractor module names that differ from discovery', { FAKE_MODULES: 'Init,Demo,Other' }, 'Demo', /module names differ/],
+    ['a compiled file of a module outside the roots', { FAKE_EXTRA_OLEAN: '1' }, 'Demo', /unexpected \.lake\/build\/lib\/lean\/Other\.olean/],
   ];
   for (const [label, env, roots, message] of refusals) {
     it(`refuses ${label} and publishes nothing`, () => {
@@ -148,6 +156,15 @@ describe('fvs-lean-constants producer', () => {
     assert.equal(inside.status, 1);
     assert.match(inside.stderr, /outside the project/);
     assert.ok(!fs.existsSync(path.join(project, 'evidence')));
+  });
+
+  it('finds the toolchain beside the project\'s lean when no lake is given', () => {
+    const out = freshOut();
+    const result = run(['run', '--project', freshProject(), '--roots', 'Demo', '--out', out],
+      { PATH: `${path.dirname(lake)}${path.delimiter}${process.env.PATH}` });
+    assert.equal(result.status, 0, result.stderr);
+    const receipt = JSON.parse(fs.readFileSync(path.join(out, 'constants-run.json'), 'utf8'));
+    assert.equal(receipt.argv[0], lake);
   });
 
   it('prints usage with exit 2 for a malformed call', () => {

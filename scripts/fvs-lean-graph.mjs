@@ -446,7 +446,7 @@ export function moduleHeader(source) {
 // compiles to .olean, .olean.private and .olean.server, any other module to
 // .olean. Besides those, only the optional companions of analysed modules and
 // .hash sidecars may appear. Returns the problems found.
-function compiledProblems(compiled, modules, projectRoot) {
+export function compiledProblems(compiled, modules, projectRoot) {
   const problems = [];
   const allowed = new Set();
   for (const name of modules) {
@@ -589,7 +589,7 @@ export function constantsRunProblems(run, constantsText, constants, projectRoot)
 // the record's, each analysed module's compiled parts must be the bytes Lean
 // resolved for it, from a project build directory, and every module a
 // referenced constant is placed in must be one Lean loaded.
-function importProblems(importsText, summary, compiled, modules, referenced) {
+export function importProblems(importsText, summary, compiled, modules, referenced) {
   if (importsText === null) return ['no import manifest'];
   if (sha256(importsText) !== summary.digest) return ['the import manifest is not the one the record summarises'];
   const manifest = parseJson(importsText);
