@@ -1195,6 +1195,17 @@ const PR_KINDS = ['spec', 'proof'];
 const OWNER_CHANGES = { pruned: 'pruned by owner', 'owner-changed': 'changed by owner in review' };
 const currentSpecRows = (specs) => [...new Map((specs?.specs ?? []).map((row) => [row.specFile, row])).values()];
 const lastPr = (specs, kind) => (specs?.prs ?? []).filter((pr) => pr.kind === kind).at(-1);
+// The build check's receipt for a full commit SHA, or null when it is missing,
+// unreadable or for another commit. Only the receipt decides acceptance.
+function buildCheckReceipt(root, head) {
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(head ?? '')) return null;
+  try {
+    const receipt = JSON.parse(fs.readFileSync(path.join(root, '.formalising', 'auto-fv', 'build-check', `${head}.json`), 'utf8'));
+    return receipt?.kind === 'fvs-build-check' && receipt.commit === head && typeof receipt.accepted === 'boolean' ? receipt : null;
+  } catch {
+    return null;
+  }
+}
 // The owner's change per spec file at the last spec merge; a later review round clears it.
 function ownerChangesOf(specs) {
   const merge = (specs?.prs ?? []).filter((pr) => pr.kind === 'spec' && pr.merged).at(-1);
@@ -1344,7 +1355,7 @@ export function initState({ projectRoot, choices, confirmOverwrite = false, plat
 // orchestrator spawns stock AO workers and runs the engine steps itself, so no
 // execution grant, stage profile or permission install is asked for. A missing
 // or outdated agreement and a reduced or unverified stage are warnings only.
-function progress(state, specs = null) {
+function progress(root, state, specs = null) {
   const blocking = state.profile.items.filter(blocks);
   if (blocking.length > 0) {
     return { phase: 'setup', warnings: [], nextAction: `Setup is blocked: ${blocking.map((entry) => `${entry.id} is ${entry.verdict}`).join(', ')}. ${blocking.map((entry) => entry.nextStep).join(' ')} Then rerun /fvs:auto-init.` };
@@ -1374,9 +1385,25 @@ function progress(state, specs = null) {
   const specPr = lastPr(specs, 'spec');
   if (specMerge) {
     if (!specPr.merged) warnings.push(`the spec refactor PR ${specPr.url} is open: after the owner merges it, record the merge with record-pr --kind spec --merged --merge-commit SHA`);
+    const suffix = warnings.map((warning) => ` Warning: ${warning}.`).join('');
+    // Only proof PRs recorded after the latest spec merge prove its statements.
+    const proofs = specs.prs.slice(specs.prs.lastIndexOf(specMerge) + 1).filter((pr) => pr.kind === 'proof');
+    const proofPr = proofs.filter((pr) => !pr.merged).at(-1);
+    const proofMerge = proofs.at(-1)?.merged ? proofs.at(-1) : null;
+    if (!proofPr) {
+      return { phase: 'proofs', warnings,
+        nextAction: `The spec PR merge is recorded at ${specMerge.mergeCommit}. Run /fvs:auto-execute from the AO orchestrator for the proof phase: stock AO workers prove the merged statements, and the orchestrator opens one draft proof PR on the project's own repository and records it with record-pr --kind proof. No execution grant, stage profile or permission install is needed.` + suffix };
+    }
+    const receipt = buildCheckReceipt(root, proofPr.head);
+    if (receipt?.accepted) {
+      return { phase: 'done', warnings,
+        nextAction: `The build check accepted the draft proof PR ${proofPr.url} at ${proofPr.head}: ${receipt.label}. `
+          + (proofMerge ? `The proof PR merge is recorded at ${proofMerge.mergeCommit}.` : 'The owner reviews and merges it; then record the merge with record-pr --kind proof --merged --merge-commit SHA.') + suffix };
+    }
     return { phase: 'proofs', warnings,
-      nextAction: `The spec PR merge is recorded at ${specMerge.mergeCommit}. Run /fvs:auto-execute from the AO orchestrator for the proof phase: stock AO workers prove the merged statements, and the orchestrator opens one draft proof PR on the project's own repository and records it with record-pr --kind proof. No execution grant, stage profile or permission install is needed.`
-        + warnings.map((warning) => ` Warning: ${warning}.`).join('') };
+      nextAction: (receipt
+        ? `The build check failed for the draft proof PR ${proofPr.url} at ${proofPr.head}: ${receipt.label}. Fix the proofs, push, record the new head with record-pr --kind proof, and rerun the build check on it.`
+        : `The draft proof PR ${proofPr.url} is recorded at ${proofPr.head}. Run the build check on that commit: node fvs-build-check.mjs --project-root ${root} --commit ${proofPr.head}; read-state reports done when it accepts.`) + suffix };
   }
   return { phase: 'specs', warnings,
     nextAction: (specPr
@@ -1403,7 +1430,7 @@ export function readState({ projectRoot, requireAgreement = false }) {
     externals,
     pendingDecisions: requireAgreement || state.roadmap ? [] : ['roadmap'],
     readiness: readiness(state.profile),
-    ...progress(state, loadSpecs(root)),
+    ...progress(root, state, loadSpecs(root)),
     ...(requireAgreement ? { agreement: requireStoredAgreement(root, state) } : {}),
   };
 }
@@ -1905,6 +1932,7 @@ function recordMerge(root, kind, mergeCommit) {
       if (bytes === null) return [{ specFile: row.specFile, change: 'pruned' }];
       return sha256(bytes) === row.specSha256 ? [] : [{ specFile: row.specFile, change: 'owner-changed' }];
     });
+    if (currentSpecRows(base).length === 0) warnings.push('no reviewed spec file is recorded, so the merged statements were not compared with reviewed bytes');
     warnings.push(...pr.ownerChanges.map((entry) => `${entry.specFile}: ${OWNER_CHANGES[entry.change]}`));
   }
   commitState(root, base, { ...(base ?? { schema: 'fvs/auto-specs', schemaVersion: 1, specs: [] }), prs: [...(base?.prs ?? []), pr] }, specsPath(root));

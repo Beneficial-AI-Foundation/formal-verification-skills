@@ -1286,4 +1286,46 @@ describe('spec phase: record-spec and spec-status', () => {
     assert.equal(refactor.phase, 'proofs', 'a spec refactor PR does not leave the proof phase');
     assert.match(refactor.warnings.at(-1), /^the spec refactor PR https:\/\/example\.invalid\/pr\/2 is open: after the owner merges it/);
   });
+
+  it('a recorded proof PR reaches done only with an accepting build-check receipt for its head', () => {
+    const root = project();
+    init(root);
+    const { out } = prepared(root);
+    assert.equal(record(root, out, 0).code, 'recorded');
+    const spec = recordMerge(root, 'HEAD');
+    assert.match(spec.json.warnings.at(-1), /^no reviewed spec file is recorded, so the merged statements were not compared with reviewed bytes$/);
+    const proofPr = (url) => cli('record-pr', '--project-root', root, '--kind', 'proof', '--url', url, '--branch', 'proofs', '--head', 'HEAD');
+    assert.equal(proofPr('https://example.invalid/pr/3').status, 0);
+    const head = git(root, 'rev-parse', 'HEAD');
+    let view = auto.readState({ projectRoot: root });
+    assert.equal(view.phase, 'proofs');
+    assert.match(view.nextAction, new RegExp(`^The draft proof PR https://example\\.invalid/pr/3 is recorded at ${head}\\. Run the build check on that commit: node fvs-build-check\\.mjs --project-root .* --commit ${head}; read-state reports done when it accepts\\.`));
+
+    const receipts = path.join(root, '.formalising/auto-fv/build-check');
+    fs.mkdirSync(receipts, { recursive: true });
+    const receipt = (fields) => fs.writeFileSync(path.join(receipts, `${head}.json`), JSON.stringify({ schema: 1, kind: 'fvs-build-check', commit: head, ...fields }));
+    receipt({ accepted: false, label: 'build check failed: a new axiom' });
+    view = auto.readState({ projectRoot: root });
+    assert.equal(view.phase, 'proofs');
+    assert.match(view.nextAction, /^The build check failed for the draft proof PR .* build check failed: a new axiom\. Fix the proofs, push, record the new head with record-pr --kind proof/);
+
+    for (const forged of [{ accepted: true, label: 'x', commit: 'f'.repeat(40) }, { accepted: 'yes', label: 'x' }, { accepted: true, label: 'x', kind: 'other' }]) {
+      receipt(forged);
+      assert.equal(auto.readState({ projectRoot: root }).phase, 'proofs', JSON.stringify(forged));
+    }
+    fs.writeFileSync(path.join(receipts, `${head}.json`), '{not json');
+    assert.equal(auto.readState({ projectRoot: root }).phase, 'proofs', 'an unreadable receipt is no receipt');
+
+    receipt({ accepted: true, label: 'accepted (build check in a clean copy)' });
+    view = auto.readState({ projectRoot: root });
+    assert.equal(view.phase, 'done');
+    assert.match(view.nextAction, new RegExp(`^The build check accepted the draft proof PR https://example\\.invalid/pr/3 at ${head}: accepted \\(build check in a clean copy\\)\\. The owner reviews and merges it;`));
+    assert.equal(recordMerge(root, 'HEAD', 'proof').status, 0);
+    assert.match(auto.readState({ projectRoot: root }).nextAction, /The proof PR merge is recorded at [0-9a-f]{40}\./);
+
+    assert.equal(recordMerge(root, 'HEAD').status, 0);
+    view = auto.readState({ projectRoot: root });
+    assert.equal(view.phase, 'proofs', 'a later spec merge needs its own proof PR');
+    assert.match(view.nextAction, /^The spec PR merge is recorded at/);
+  });
 });
