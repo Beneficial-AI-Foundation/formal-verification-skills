@@ -202,7 +202,8 @@ Run the compatibility profile and reuse or record the initial roadmap agreement,
 configuration, bounded scope and worker limit. V2 supports an optional total budget; legacy per-node
 hours are recorded but not enforced, as there is no arbitrary per-node proof timeout. Reuse current
 owner choices without repeated interviewing; material changes need confirmation. Fresh rc1 setup
-requires the declared Aeneas/Charon locally even for a prepared extraction; see `auto-setup.md`.
+requires the declared Aeneas/Charon locally even for a prepared extraction; see `auto-setup.md`. No
+probe is needed for setup or extraction, and a missing probe never stops it.
 
 **`/fvs:auto-extract <crate path>`**
 Extract the recorded revision through `/fvs:aeneas-extract` in translation-patch mode, record the
@@ -215,6 +216,9 @@ With complete authorized v2 controller context, run the production driver throug
 and review, then bottom-up proof/checker acceptance. Agreement, profile, memory, invocation and
 currentness gates still apply; v2 alone grants no dispatch permission. Legacy/read-only or missing-grant
 routes report the recorded continuation and stop. Final human review and partial reporting remain.
+Both stages need `ao`, Lean and all five probes (probe-aeneas, probe-rust, scip, rust-analyzer and
+probe-lean). The `stages:` lines of the profile say `no route here`, what is missing and who supplies
+it; a closure plan made without the probe output is degraded and no review or proof starts from it.
 
 ### Context (`/fvs:context`)
 

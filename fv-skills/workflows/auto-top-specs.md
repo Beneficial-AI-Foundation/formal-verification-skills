@@ -23,6 +23,17 @@ Without this context retain the standalone read-only report below.
    producers under those grants. Run `fvs-closure-plan.mjs plan --identity ... --graph ... --roots ...`
    for the actual same-extraction IDs corresponding to the agreed targets. Retain the full
    applicability/omission inventory and all unsupported groups; no name-only or public-API classifier.
+   **Probes unavailable.** No probe is needed for setup or extraction, but this stage needs them
+   all (see `auto-setup.md`). Read the `auto-top-specs` stage line of the profile first: `no route`
+   names what is missing and who supplies it. The plan command still records the loss. Run without
+   `--graph` when no dependency graph can be built. A plan made without a graph, or from an identity
+   record that rests on `translation.json` alone, is degraded and exits 9 (a blocked identity record
+   exits 7 instead). It lists every identity item in source order, computes no closure, puts a
+   `closure-not-computed` blocker on each requested root, and a `degraded` field names what was lost.
+   A degraded plan is never admissible, so the contract registry refuses it and no review or proof
+   work can start from it. Report the stage as partial with that loss, and plan again with `--graph`
+   and a full identity record once the probes are installed. Do not substitute a graph, a closure or
+   a public-name guess for the missing probe output.
 3. Prepare fresh requests through `prepareCurrentRequest`. Use `advanceOnce` for ordinary proposals.
    For an existing executable effect, call `runPairedEffect` directly with its concrete before
    request and retained v2 basis when needed; it records its own before exactly once. Use

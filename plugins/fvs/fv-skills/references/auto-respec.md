@@ -190,10 +190,10 @@ A122 or renews proof. No missing timing or producer outcome is reconstructed.
 Executable refs are SHA-256 identities, separate from JSON/source documents.
 They use the existing builder's bounded fd-stream/stat-drift pattern, adapted
 inside the re-spec helper because that engine routine is private. No executable is loaded as a
-whole buffer or copied as metadata. The finite142769104B ceiling is exactly the
-largest executable in the supported pinned cohort (Beads1.3.1); Node24.21,
-Lean/Lake4.31, systemPS and systemGit are smaller. There is no headroom for an
-unqualified tool upgrade. The32MiB document/source and512MiB copied-artifact
+whole buffer or copied as metadata. The finite 142769104 B ceiling is exactly the
+largest executable in the supported pinned cohort (Beads 1.3.1); Node 24.21,
+Lean/Lake 4.31, system ps and system Git are smaller. There is no headroom for an
+unqualified tool upgrade. The 32 MiB document/source and 512 MiB copied-artifact
 limits are unchanged. Every call rehashes bytes under its caller deadline;
 canonical component paths, regular/executable mode, aliases, fd/path identity,
 size/EOF, byte/stat drift, rollback and deadline checks remain mandatory.

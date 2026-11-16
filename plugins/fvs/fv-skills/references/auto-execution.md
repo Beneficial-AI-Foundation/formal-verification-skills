@@ -125,7 +125,7 @@ are versioned test conditions.
 V2 records the actual host/architecture and pinned tools; the compiler runs with ordinary trusted-host
 permissions, without nested macOS Seatbelt policy. This is not host/tenant/credential isolation
 attestation. A dedicated host/container may supply that boundary. No cloud deployment is implicit.
-The earlier macOS arm64/Lean4.31 lane is historical evidence for its exact engine. The new v2 engine,
+The earlier macOS arm64/Lean 4.31 lane is historical evidence for its exact engine. The new v2 engine,
 actual AO stop/replacement and full flow still require fresh qualification. Linux probe/tool inventory
 is not full factory qualification; incidental probe/distribution constraints remain per tool. Windows
 and other tuples gain no supported-runner claim. Report actual installed/missing tools rather than

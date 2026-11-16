@@ -3,7 +3,7 @@
 <purpose>
 One permanent primary store belongs to one verification project. The local Beads store used to develop
 FVS is not the target project's memory. This adapter supports an explicitly registered local embedded
-Beads1.3.1 store; it is not an installation requirement for other FVS commands or legacy M1 state reads.
+Beads 1.3.1 store; it is not an installation requirement for other FVS commands or legacy M1 state reads.
 Missing/unsupported tools or stores stop the bootstrap with the actual reason, without installation,
 migration, ancestor/global fallback or automatic `bd init`.
 
