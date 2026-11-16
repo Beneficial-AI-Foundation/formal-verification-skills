@@ -1670,13 +1670,14 @@ export function recordExtraction({ projectRoot, out, buildExitCode, oracle, orac
     const { revision } = state.choices.source;
     const crate = manifest.projectRoot;
     if (manifest.mode !== 'translation-patches') reasons.push(`the copy was prepared in ${manifest.mode} mode; the auto track extracts through translation patches only`);
-    // The crate may sit beside the Lean project in one repository (the Lean root in a
-    // subfolder, the crate at the repository root). Only its location is relaxed; the
-    // revision and uncommitted-change checks below bind it to the recorded commit.
-    const inside = crate === root || crate.startsWith(`${root}${path.sep}`);
-    const rootTree = inside ? null : gitWorkingTree(root);
-    if (!inside && (rootTree === null || rootTree !== gitWorkingTree(crate))) {
-      reasons.push(`the copy was prepared from ${crate}, outside this project and its git working tree`);
+    // The crate must be in the git working tree that holds the project root: beside the
+    // Lean project (the Lean root in a subfolder, the crate at the repository root) or
+    // inside it. A nested repository or linked worktree is another checkout, so its
+    // commit says nothing about this project, wherever it sits. The revision and
+    // uncommitted-change checks below bind the crate to the recorded commit.
+    const rootTree = crate === root ? null : gitWorkingTree(root);
+    if (crate !== root && (rootTree === null || rootTree !== gitWorkingTree(crate))) {
+      reasons.push(`the copy was prepared from ${crate}, which is not in the git working tree of this project`);
     }
     const resolved = resolveRevision(crate, revision);
     if (!manifest.source.commit) reasons.push(`${crate} is not a git checkout, so the extraction cannot be tied to revision ${revision}`);

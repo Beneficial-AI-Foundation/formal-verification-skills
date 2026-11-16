@@ -545,7 +545,7 @@ describe('auto-extract extraction record', () => {
     assert.equal(record(dirty.lean, prepared(dirty.repo, []).out, 0).code, 'extraction-failed');
     const dirtyReasons = recordedExtraction(dirty.lean).reasons.join('\n');
     assert.match(dirtyReasons, /uncommitted changes: src\/lib\.rs/);
-    assert.doesNotMatch(dirtyReasons, /outside this project/);
+    assert.doesNotMatch(dirtyReasons, /git working tree of this project/);
 
     // A crate at another commit than the recorded revision fails the record.
     const moved = layout();
@@ -555,7 +555,7 @@ describe('auto-extract extraction record', () => {
     assert.equal(record(moved.lean, prepared(moved.repo, []).out, 0).code, 'extraction-failed');
     const movedReasons = recordedExtraction(moved.lean).reasons.join('\n');
     assert.match(movedReasons, new RegExp(`but the recorded revision ${first} is ${first}`));
-    assert.doesNotMatch(movedReasons, /outside this project/);
+    assert.doesNotMatch(movedReasons, /git working tree of this project/);
   });
 
   it('a crate in another repository than the Lean project is still refused for its location', () => {
@@ -565,7 +565,44 @@ describe('auto-extract extraction record', () => {
     assert.equal(record(root, prepared(other).out, 0).code, 'extraction-failed');
     const { reasons, status } = recordedExtraction(root);
     assert.equal(status, 'failed');
-    assert.match(reasons.join('\n'), new RegExp(`prepared from ${other}, outside this project and its git working tree`));
+    assert.match(reasons.join('\n'), new RegExp(`prepared from ${other}, which is not in the git working tree of this project`));
+  });
+
+  // Another checkout inside the Lean root has its own commit history, so a clean copy
+  // of it must not stand for this project at the recorded revision.
+  it('a crate in a nested repository inside the Lean root is refused', () => {
+    const root = project();
+    init(root);
+    const nested = path.join(root, 'vendor', 'crate');
+    fs.mkdirSync(path.dirname(nested), { recursive: true });
+    fs.cpSync(CRATE, nested, { recursive: true });
+    git(nested, 'init', '-q');
+    git(nested, 'add', '-A');
+    git(nested, 'commit', '-q', '-m', 'nested fixture');
+    assert.equal(record(root, prepared(nested, []).out, 0).code, 'extraction-failed');
+    assert.match(recordedExtraction(root).reasons.join('\n'), new RegExp(`prepared from ${fs.realpathSync(nested)}, which is not in the git working tree of this project`));
+  });
+
+  it('a crate in a linked worktree inside the Lean root is refused', () => {
+    const root = project();
+    init(root);
+    const linked = path.join(root, 'linked');
+    git(root, 'worktree', 'add', '-q', '--detach', linked);
+    assert.equal(record(root, prepared(linked, []).out, 0).code, 'extraction-failed');
+    assert.match(recordedExtraction(root).reasons.join('\n'), new RegExp(`prepared from ${fs.realpathSync(linked)}, which is not in the git working tree of this project`));
+  });
+
+  it('a crate in a subfolder of the same repository is recorded', () => {
+    const root = project();
+    init(root);
+    const inner = path.join(root, 'crates', 'inner');
+    fs.mkdirSync(path.dirname(inner), { recursive: true });
+    fs.cpSync(CRATE, inner, { recursive: true });
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'inner crate');
+    const result = record(root, prepared(inner, []).out, 0);
+    assert.equal(result.code, 'recorded', JSON.stringify(result));
+    assert.equal(recordedExtraction(root).inputs.crateRoot, fs.realpathSync(inner));
   });
 
   it('a failed build is recorded as failure, never as success', () => {
