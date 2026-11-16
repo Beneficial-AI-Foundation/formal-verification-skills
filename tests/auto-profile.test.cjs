@@ -595,10 +595,11 @@ describe('fvs-auto readiness: what each stage can do, computed from a profile', 
     assert.deepEqual(stage.firstMissing, { need: 'probe-aeneas', supplier: 'owner',
       step: 'install probe-aeneas (or set its path override), then rerun /fvs:auto-init with the recorded choices so the recorded profile is refreshed' });
     assert.match(stage.line, /^auto-top-specs: ready, reduced - without probe-aeneas, probe-lean; output labelled reduced\. Lost: probe-aeneas: .*probe-lean: the Lean atom list/);
-    assert.match(stage.line, /Proof acceptance \(freeze, check, accept\) needs the Lean graph, so it refuses until probe-lean is usable; until then fvs-auto-reduced\.mjs \(next, record\) builds each item with Lean and records it, labelled not accepted\./);
+    assert.match(stage.line, /Reduced output never promises proof acceptance \(freeze, check, accept\), even when probe-lean is present\. Proof acceptance needs the Lean graph, so it refuses until probe-lean is usable; until then fvs-auto-reduced\.mjs \(next, record\) builds each item with Lean and records it, labelled not accepted\./);
     assert.match(stage.line, /To restore, the owner can install probe-aeneas .*\(warning, not a stop\)$/);
-    assert.doesNotMatch(topSpecs(profileWith({ probes: { 'probe-rust': { status: 'missing' } } })).line, /Proof acceptance/,
-      'acceptance is named only when probe-lean is lost');
+    const rustOnly = topSpecs(profileWith({ probes: { 'probe-rust': { status: 'missing' } } })).line;
+    assert.match(rustOnly, /Reduced output never promises proof acceptance/, 'any reduced stage disclaims acceptance');
+    assert.doesNotMatch(rustOnly, /refuses until probe-lean/, 'the probe-lean refusal is named only when probe-lean is lost');
   });
 
   it('labels present but unqualified probes alongside a reduced route', () => {
@@ -665,7 +666,7 @@ describe('fvs-auto readiness: what each stage can do, computed from a profile', 
     const stage = refused.readiness.find((entry) => entry.stage === 'auto-top-specs');
     assert.equal(stage.status, 'ready-reduced');
     assert.match(stage.line, /probe-lean \(present but unusable: the Lean graph step accepts only/);
-    assert.match(stage.line, /Proof acceptance \(freeze, check, accept\) needs the Lean graph/);
+    assert.match(stage.line, /Proof acceptance needs the Lean graph/);
 
     const accepted = await profileWithProbeLean('echo 0.14.0');
     assert.ok(!graphCodes('0.14.0').includes('unqualified-interface'), 'the graph step accepts 0.14.0');

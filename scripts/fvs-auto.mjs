@@ -196,7 +196,8 @@ export function readiness(profileResult) {
         return `${need} (${status === 'not-checked' ? 'not checked' : 'present but unusable'}${reason ? `: ${reason}` : ''})`;
       });
       const unverified = needs.filter((need) => probes[need]?.status === 'present-unqualified');
-      const acceptance = lost.includes('probe-lean') ? ' Proof acceptance (freeze, check, accept) needs the Lean graph, so it refuses until probe-lean is usable; until then fvs-auto-reduced.mjs (next, record) builds each item with Lean and records it, labelled not accepted.' : '';
+      // Any lost probe output can leave the identity or the plan unaccepted, so the promise is never made.
+      const acceptance = ` Reduced output never promises proof acceptance (freeze, check, accept), even when probe-lean is present.${lost.includes('probe-lean') ? ' Proof acceptance needs the Lean graph, so it refuses until probe-lean is usable; until then fvs-auto-reduced.mjs (next, record) builds each item with Lean and records it, labelled not accepted.' : ''}`;
       const labelled = unverified.length > 0 ? ` ${unverified.join(', ')} not qualified for this toolchain tuple: output labelled unverified.` : '';
       return { stage, status: 'ready-reduced', firstMissing: gaps[0], missing: lost,
         line: `${stage}: ready, reduced - without ${named.join(', ')}; output labelled reduced. Lost: ${lost.map((need) => `${need}: ${PROBE_LOSSES[need]}`).join(' ')}${acceptance}${labelled} To restore, the ${gaps[0].supplier} can ${gaps[0].step} (warning, not a stop)` };
