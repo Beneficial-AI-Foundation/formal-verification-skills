@@ -122,7 +122,7 @@ an unresolved/uninstalled pin stops without downloads or substitution.
 
 Keep the file pin, effective selection and override origin visible. If an ambient override conflicts
 with the requested project pin, resolve that mismatch before edits; do not reset it or silently
-choose4.31. Record relevant configuration/environment overrides, actual `lean`/`lake` version output,
+choose 4.31. Record relevant configuration/environment overrides, actual `lean`/`lake` version output,
 absolute executable paths/hashes, dependency revisions, actual source roots and package Lean arguments.
 Validate Lake's actual selected compiler against this context too. On the checked pins its exported
 `LEAN` value identifies that compiler; `command -v lean` does not, because Lake may put its own bin
@@ -327,7 +327,7 @@ not run Lake, Lean or compiler-backed scripts in the shared workspace. The paren
 edit workers are terminal, then runs every `FILE_GATE`, boundary query, measurement and project
 gate strictly one at a time. This avoids relying on a shared build lock; Lake 4.31
 [does not use one](https://github.com/leanprover/lean4/blob/v4.31.0/src/lake/Lake/Util/Lock.lean#L18-L20).
-This serial policy does not depend on other pins sharing4.31 lock behavior. Check the project pin's
+This serial policy does not depend on other pins sharing 4.31 lock behavior. Check the project pin's
 LSP/import setup before assuming feedback is build-free. If child LSP feedback is unavailable, use serial edit/parent-gate cycles with one child. Honour
 required-live stops and the existing consent for degraded feedback. Do not call parallel edits
 or compiler fallback safe merely because files are disjoint.
@@ -419,7 +419,7 @@ time, cache/rebuilt state and the profiling phases the pin reports. The checked 
 reported cumulative phases, not a complete per-declaration table. On that pin,
 `profiler.threshold` defaults to 100 ms; declarations below it have no individual profile message.
 Record the threshold actually used by the selected pin/project and keep it unchanged for comparable
-runs; do not apply this4.31 default to another toolchain or override a project setting. Do not invent missing timings.
+runs; do not apply this 4.31 default to another toolchain or override a project setting. Do not invent missing timings.
 See the [pinned profiler option](https://github.com/leanprover/lean4/blob/v4.31.0/src/Lean/Util/Profile.lean#L23-L26). The syntax
 is documented in [Lake 4.31 help](https://github.com/leanprover/lean4/blob/v4.31.0/src/lake/Lake/CLI/Help.lean#L679-L687)
 and the pinned `lean --help`.
@@ -435,18 +435,18 @@ assume decomposition is faster. Never delete global caches or acquire tools just
 Dependency-free tests exercised installed Lean/Lake **4.25.2, 4.31.0 and 4.35.0**, with network denied
 and isolated temporary profiles. Each ran the file/import gates, protected type/body/axiom and
 coverage-regression cases, reporting-helper limits, worked proof examples and timing-log recipe.
-Installed Elan4.2.3 tests covered file, environment and directory overrides, rejection of an
+Installed Elan 4.2.3 tests covered file, environment and directory overrides, rejection of an
 uninstalled pin without installing, unchanged pin/toolchain identities, and actual Lake sysroot
 overrides where PATH still points at the other installation. The mismatch is rejected before
 cache/proof work and selected compiler identity is rechecked in baseline/final captures. These are bounded
 fixtures, not a real consumer refactor, benchmark or universal compatibility claim.
 
-Older4.19 source documents import-building `lake lean`, but its build-target parser differs from
+Older 4.19 source documents import-building `lake lean`, but its build-target parser differs from
 the newer source-path selector. That version was not installed/tested here. Compare official
 [4.19 target parsing](https://github.com/leanprover/lean4/blob/v4.19.0/src/lake/Lake/CLI/Build.lean),
 [4.19 Lean command](https://github.com/leanprover/lean4/blob/v4.19.0/src/lake/Lake/CLI/Help.lean), and
 [4.35 Lean command](https://github.com/leanprover/lean4/blob/v4.35.0/src/lake/Lake/CLI/Help.lean).
-Keep4.31-specific printer/profiler/tactic citations scoped to their checked pin; another project
+Keep 4.31-specific printer/profiler/tactic citations scoped to their checked pin; another project
 still needs its own capability/context validation. Custom parsers, private/module contexts and
 other Elan state schemas may need the explicit project/review route. Never upgrade a project to
 fit this matrix.

@@ -28,6 +28,7 @@ const MARKETPLACE_ID = 'beneficial-ai-foundation';
 const SCRIPT_FILES = [
   'fvs-auto.mjs',
   'fvs-auto-driver.mjs',
+  'fvs-auto-agreement.mjs',
   'fvs-auto-actor-permissions.py',
   'fvs-execution.mjs',
   'fvs-auto-resume.mjs',

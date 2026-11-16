@@ -1,7 +1,8 @@
 <purpose>
 Drive a Rust crate, folder, or file through the bounded Aeneas extraction repair loop:
-PRE-FLIGHT (pin audit + clone resolution + mode selection) -> EXTRACT -> CLASSIFY -> DISPATCH
-(A-apply / bisect / propose-B-gate / escalate) -> DOCUMENT (reversible records) ->
+PRE-FLIGHT (pin audit + clone resolution + mode selection) -> EXTRACT -> CLASSIFY -> KNOWN ISSUES
+(look for an existing fix first) -> DISPATCH (A-apply / bisect / propose-B-gate / escalate) ->
+WRITE AND REVIEW A PATCH (two different models) -> DOCUMENT (reversible records) ->
 re-EXTRACT, until the build is clean or a blocker is escalated to the human.
 
 There are two extraction modes, selected by `scripts/fvs-extract-patches.mjs` (never by this
@@ -29,8 +30,16 @@ Hard invariants this workflow preserves:
   over source edits.
 - Every source change is recorded reversibly at the crate root: a translation patch in patch
   mode, a ledger hunk in legacy mode. The two never mix in one run.
-- A semantic (Category-B) change is gated by an independent assessor and a human ratification
-  token; the success oracle refuses completion while any token is absent.
+- A semantic (Category-B) change is gated by an independent assessor and an owner ratification
+  token (the owner's own, or one from someone the owner explicitly delegated to, a person or a
+  model or session the owner named, recorded on the stamp); the success oracle refuses completion
+  while any token is absent.
+- A tool blocker gets a known-issues check before any patch is written. A patch is written by one
+  model and reviewed by a different one, with at most two review rounds before it goes to the
+  owner. A reviewer's "no objection" is an ordinary review result and never a ratification;
+  ratifying is a separate, authorized action.
+- Patches are line-preserving, and every gate checks them against the one observer set the
+  target agreed to, panic occurrence and the file and line it reports included.
 - A translation adaptation changes the program the extractor sees. A clean extraction of a
   patched function does not prove equivalence with the original source; the correspondence
   obligations each patch records stay open until correspondence evidence closes them.
@@ -48,6 +57,36 @@ Use the command's confirmed selection manifest from `model-profiles.md` with exa
 bisector, `extract_assess` for the independent assessor, and `extract_investigate` for the draft
 investigator. If any stage needed by the chosen path is absent, rebuild and reconfirm the manifest
 before dispatch. Never derive tiers from agent names or silently fall back.
+
+**Patch pair.** A new patch for a tool blocker (Step 4a) is written by one model and checked by a
+different one. The manifest shows two seats, `WRITER` and `REVIEWER`; a seat here is a model role
+in this loop, not the orchestrator, worker or owner seat that `auto-seats.md` assigns to engine
+operations. The user chooses the two at confirmation. The default writer is the user's saved
+spec-writing selection (stage `fc_spec`); the default reviewer is the user's saved spec-review
+selection (`spec_review`). The seats replace the
+`extract_apply` / `extract_bisect` settings (for the writer) and the `extract_assess` settings (for
+the reviewer) only for the dispatches in Step 4a; every other dispatch keeps its own stage.
+
+- Each seat records its runtime and its model (and effort), because a model id means nothing
+  without the runtime that serves it. The two seats must resolve to different models. If they
+  resolve to the same one, stop and ask for a different pair; a noninteractive run stops and
+  prints the exact remediation. Never pick one silently.
+- A seat whose runtime is this one, and whose child dispatch can set the model, runs as a child of
+  this session (the `Task` calls of Step 4a). A seat on another runtime, or on a runtime whose child
+  dispatch cannot set a per-child model, runs through an external runner: that runtime's own
+  authenticated command-line client (for example Claude Code CLI or Codex CLI, as `model-profiles.md`
+  routes reviews), or an Agent Orchestrator worker session started with the seat's model. The
+  brief is the same as the child's: the prompt inlines everything, the writer returns the staged
+  patch file, and the reviewer returns the review record that ends in the `Reviewer verdict:` line.
+  Record the runner, model and effort the run reports in the review record; never copy them from the
+  request. A saved pair of a Claude writer and a Codex reviewer, or the other way round, therefore
+  works as the default: it needs no change to the pair.
+- Show a seat as unresolved, and ask the user for a replacement that differs from the other seat,
+  only when the chosen runner is really unavailable: its client is not installed or not
+  authenticated, no worker route can start it, or the saved selection leaves its model unset. A
+  seat on another runtime is not unresolved for that reason alone. A noninteractive run stops with
+  the exact remediation. Never switch to another runner silently.
+- No model name is built into this workflow. The pair is whatever the user's manifest says.
 </step>
 
 <step name="pre_flight">
@@ -96,10 +135,10 @@ cat .formalising/fvs-config.json 2>/dev/null
 ```
 
 A missing clone is reported gracefully: precedent mining and the pin audit degrade, but the
-loop can still run (EXTR-08). Validate that a resolved clone path is a directory before any
+loop can still run. Validate that a resolved clone path is a directory before any
 `git -C <clone>` call.
 
-### 1c. Pin audit (EXTR-03) -- warn-and-confirm, never silent, never hard-block
+### 1c. Pin audit -- warn-and-confirm, never silent, never hard-block
 
 Read the Aeneas `charon-pin` (strip comments and whitespace) and compare it against:
 (a) the Charon clone HEAD, (b) the project `lakefile.toml` Charon/Aeneas rev, and
@@ -117,7 +156,7 @@ git -C "$CHARON_CLONE" merge-base --is-ancestor "$AENEAS_PIN" "$CHARON_HEAD" \
 On ANY drift: report LOUDLY which pins moved, and -- following the catalog
 `needs-manual-check` discipline -- whether a fix may or may not already be present in the
 pinned Charon ("fixed in upstream main" is NOT "fixed for us" until the pin is diffed against
-the fix). Then REQUIRE explicit user confirmation to proceed (D-10 warn-and-confirm: never
+the fix). Then REQUIRE explicit user confirmation to proceed (warn-and-confirm: never
 silent, never a hard block). Record the acknowledgment as `pin_context` -- it is stamped into
 the reversible records so every later change carries the pin it was made against.
 
@@ -134,9 +173,26 @@ conservative posture: **all extracted functions are required coverage** -- so ev
 decision on a target then escalates to the gate via the coverage-escalation guard. A narrower
 coverage set is the user's explicit choice.
 
+### Observer set -- named once, cited by every gate
+
+The observer set is the list of behaviours a patch may be checked against: what a caller or a
+user can observe of a function. It is agreed once per target. Every Category-B gate packet and
+every reviewer check cites it; none defines "observable" again.
+
+- Under the auto track the agreement names it, as one entry in the agreement's `conventions` list
+  that starts with `Observer set:` (see `auto-init.md`). Read it from the agreement.
+- Standalone, with no agreement, ask the user once and offer this proposal: `Observer set: return
+  values, error results as callers distinguish them, external effects, panic occurrence and the
+  file and line it reports. Not observed: timing, backtrace contents, debug formatting.` Write the
+  answer to `<extract_workspace>/<target>/observer-set.md`, outside `equivalence-gate/`, and read
+  that file on later runs. A change to it is recorded in the file with its date.
+- A gate ratified before a change of the set was checked against the old set. The owner decides
+  whether to fire that gate again.
+
 **Outputs:** `SHAPE`, crate ROOT, resolved clone paths + workspace, `pin_context`, coverage
-policy. Initialise the workspace tree `<extract_workspace>/<target>/` with subdirs
-`equivalence-gate/`, `mwe/`, `drafts/`, `catalog-candidates/`, `escalations/`.
+policy, observer set. Initialise the workspace tree `<extract_workspace>/<target>/` with subdirs
+`equivalence-gate/`, `mwe/`, `drafts/`, `catalog-candidates/`, `escalations/`, `known-issues/`,
+`patch-review/`.
 </step>
 
 <step name="cache_preflight">
@@ -305,6 +361,72 @@ Aeneas-facing match key (crate/module/function names, user line numbers, temp pa
 catalog id or `NOVEL`. A miss returns `NOVEL` -- never a forced nearest-match.
 </step>
 
+<step name="known_issues">
+## Step 3a: KNOWN ISSUES FIRST -- look for an existing fix before writing a patch
+
+This step follows the proposed change, not the layer that failed. It runs whenever the next move is a
+new or changed patch to the Rust extraction inputs, whichever layer reported the blocker. Aeneas can
+exit cleanly and emit Lean that does not build, so a repair in the Rust source is often prompted by
+a `lean` failure: a Rust identifier that contains a middle dot, repaired by renaming it in the Rust
+source, is one. That repair is a new patch like any other and takes this step and Step 4a. The
+`pin_context` from Step 1c names the Aeneas and Charon revisions the answer has to hold for.
+
+| Proposed change | Step 3a | Step 4a | Writer seat dispatches |
+|-----------------|---------|---------|------------------------|
+| A Category-A catalog recipe that edits the Rust extraction inputs (a source rewrite, an opacity annotation, a gated build script) | runs | runs | `fvs-extract-applier` |
+| A Category-B catalog recipe (`ITER-ADAPTER`, `NO-BOTTOMS`), or an A-opacity recipe on a function inside required coverage | runs | runs, then the gate | `fvs-extract-applier`, staging only: it never installs |
+| A `NOVEL` signature at any layer (`charon`, `aeneas`, `split`, `tweaks` or `lean`), before any bisecting | runs | runs when the bisector proposes a change to the Rust inputs | `fvs-extract-bisector` |
+| A repair of a downstream `lean` failure that lands in the Rust source | runs | runs | the role that proposed it: the applier for a catalog match, the bisector for a `NOVEL` signature |
+| A recipe that edits no Rust input: a Lean-side or project edit such as `namespace-cascade`, `refresh-manifest` or a `tweaks-substitution` | skipped | skipped | none: the applier makes the ordinary edit |
+
+1. **Look in the tools' own trackers.** Search the Aeneas and Charon upstream repositories for the
+   stripped `signature` from Step 3: open and closed issues and pull requests, and the release
+   notes and changelog, at the pinned revisions and at the newest release. Search with the
+   stripped signature only. For a failure a later layer reported, that is the stripped error plus
+   the kind of Rust construct behind it (an identifier with a middle dot, say), never the
+   construct's name. Never put a project name, a path, source text or a line of the code being
+   verified in a query: a search leaves this machine.
+2. **Read only.** Use the tracker's read interface, as the draft investigator does: a `gh api`
+   call with an explicit read method, `gh search`, or `curl` on a public page. This step never
+   posts, comments, labels, reacts or opens anything.
+3. **Record one outcome for the signature.** Every outcome except the last two carries a link.
+
+   | Outcome | Meaning | Next |
+   |---------|---------|------|
+   | `fix, no source change` | an option, flag or configuration the pinned tools already accept | Use it and write no patch. If it makes a coverage target opaque, the coverage-escalation guard in Step 4 still sends it to the gate |
+   | `workaround that edits source` | an issue or release note gives a source-level rewrite | Take the patch route (Step 4a). The patch's `Why:` line and the gate packet cite the link. A known workaround is still a patch: it is written, reviewed and gated like any other |
+   | `fix only in a newer version` | the fix landed after the pinned revisions | Report it to the owner as a pin-change option, with the link. Never change a pin on your own. The patch route (Step 4a) continues for the current pin |
+   | `none found` | the search ran and found nothing relevant | Take the patch route (Step 4a) |
+   | `not checked: <why>` | the tracker was unreachable or the search could not run | Take the patch route (Step 4a). The record says `not checked`, never `none found` |
+
+**Cached record.** Keep one short record per pin pair at
+`<extract_workspace>/<target>/known-issues/<aeneas-rev>-<charon-rev>.md`, using the first twelve
+characters of each revision. Each entry is keyed by the stripped signature and holds the date, the
+sources searched with their links, the outcome, and the option or workaround that was used. A later
+cycle or run on the same pin pair reads the record instead of searching again; a new pin pair starts
+a new record file; the owner can ask for a fresh search at any time. A `not checked` entry is not an
+answer: it is never reused, and the search is retried the next time the signature comes up.
+
+**When the pin changes.** After the owner has confirmed a pin change (Step 1c), find out which
+patches the new tools no longer need before relying on the old series. In a throwaway copy of the
+crate root outside the checkout, committed in its own git repository so `prepare` sees a clean
+original, remove one patch at a time: take its name out of that copy's `series`, move its file out
+of that copy's `translation-patches/`, prepare a fresh extraction copy and replay the oracle of the
+layer that patch cleared (the layer in the Step 3a record for its signature and in the patch's
+`Why:` line), then record whether the signature that patch cleared still appears at that layer.
+A patch that cleared a Charon or Aeneas failure is replayed by running Charon and Aeneas. A patch
+that repairs generated Lean (an identifier rewrite that makes a generated name valid, a closure
+rewrite, any patch whose signature failed at the `lean` layer) is replayed through an isolated Lean
+build as well: after Charon and Aeneas, build the Lean that copy's Aeneas output produced in a
+throwaway Lean project outside the checkout, with its own build output. Publication stays disabled
+throughout, so nothing is written into the project's `publishDir`, and no patch is retired during
+the recheck. When the layer's oracle cannot be replayed (no isolated Lean build is available), the
+patch is reported as `not checked: <why>`, never as no longer needed.
+Report the patches that no longer seem needed only when the oracle of their own layer passed
+without them. This only proposes. The loop never retires
+a patch on its own: retirement goes through the retire step in Step 6 and, for a B patch, the gate.
+</step>
+
 <step name="dispatch">
 ## Step 4: DISPATCH -- route by category + coverage_impact
 
@@ -328,36 +450,114 @@ Route the classified blocker:
 
   The coverage-escalation guard fires here: **A-opacity applied to a function inside required
   coverage is NOT auto-applied** -- axiomatizing or excluding a verification target is a
-  meaning-affecting decision, so it becomes Category-B and routes to the GATE.
+  meaning-affecting decision, so it becomes Category-B and takes the Category-B route below.
 
   The dispatch prompt names `MODE`. In patch mode a change to the Rust extraction inputs is
   written as a translation patch (Step 6), never edited into the checkout, and the applier writes
   no `src-modifications.*` file for any recipe, including non-Rust repairs such as
   `namespace-cascade` and `refresh-manifest`, which stay ordinary edits; the prompt inlines the
-  Step 6 header fields, the authoring recipe and the `check` command, because the applier has no
-  @-references.
+  Step 6 header fields, the authoring recipe, the line-preserving rule and the `check` command,
+  because the applier has no @-references. A recipe that edits the Rust extraction inputs, at any
+  layer, starts with Step 3a, and the applier then runs as the writer seat of Step 4a.
 
-- **NOVEL** -> dispatch the bisector to shrink/grow to a minimal failing example (MFE) under
-  the variant-budget, emit a schema-conformant `candidate` (real evidence = the MFE path +
-  observed `pin_context`) to `catalog-candidates/`, and a PROPOSED fix. The bisector proposes,
-  never disposes:
+- **NOVEL** -> whichever layer failed, run Step 3a first. Then dispatch the bisector
+  to shrink/grow to a minimal failing example (MFE) under the variant-budget, emit a
+  schema-conformant `candidate` (real evidence = the MFE path + observed `pin_context`) to
+  `catalog-candidates/`, and a PROPOSED fix. The bisector proposes, never disposes:
 
   ```
   Task(subagent_type="fvs-extract-bisector", model=$BISECTOR_MODEL, reasoning_effort=$BISECTOR_EFFORT, ...)
   ```
 
-  A NOVEL B-fix routes to the GATE.
+  The bisector's isolation work runs with the `extract_bisect` settings. When it proposes a
+  patch, the writing and the review of that patch follow Step 4a, and the bisector's prompt
+  inlines the same Step 6 material as the applier's, line-preserving rule included. A NOVEL
+  B-fix routes to the GATE after that review.
 
-- **Forced Category-B** (any meaning-judgment: "this branch is unreachable", "these compute
-  the same", an ungated source rewrite, or A-opacity on a coverage target) -> the synchronous
-  GATE (Step 5).
+- **Forced Category-B** (a matched Category-B recipe such as `ITER-ADAPTER` or `NO-BOTTOMS`, or
+  any meaning-judgment: "this branch is unreachable", "these compute the same", an ungated source
+  rewrite, or A-opacity on a coverage target) -> in patch mode, Step 3a and Step 4a first, then the
+  synchronous GATE (Step 5); in legacy mode, straight to the gate with the proposer's section 1.
+  The proposal is written by the writer seat: the applier for a matched recipe or a coverage-guard
+  escalation, in staging form (it authors the patch, writes it to `patch-review/`, and installs
+  nothing, so the applier's ban on installing a Category-B change stands), and the bisector for a
+  `NOVEL` signature. The gate still decides whether anything is installed.
 
 - **Escalate conditions** (attempt-cap hit, same `{layer, signature}` recurrence, forced
-  toolchain-remediation, or gate rejection) -> ESCALATE (Step 6).
+  toolchain-remediation, a gate rejection, a patch the reviewer still objects to after the second
+  round, or a gap no patch can fix) -> ESCALATE (Step 8).
+</step>
+
+<step name="patch_review">
+## Step 4a: WRITE AND REVIEW A PATCH -- two different models, at most two rounds
+
+This step takes over when Step 3a leaves a patch route and the change is a new or changed patch to
+the Rust extraction inputs, whichever layer's failure prompted it (patch mode only; legacy mode
+keeps its own steps). It reuses the proposer dispatches of Step 4 and the assessor dispatch of
+Step 5 under the `WRITER` and `REVIEWER` seats from `resolve_models`. It adds no agent and no stage.
+Each round dispatches a new child, or a new run of the seat's external runner when `resolve_models`
+routes the seat there: the `Task` calls below show the child form, and the runner gets the same
+prompt and returns the same files.
+
+Step 3a has recorded an outcome for the signature before the first writer dispatch. A proposer can
+find that the repair lands in the Rust source only after its dispatch (a `lean` failure that turns
+out to need a rename in the Rust): stage its result, install nothing, run Step 3a now, and then
+continue here.
+
+1. **Write.** Dispatch the role that proposed the change (the applier for a matched recipe,
+   Category A or Category B, the bisector for a NOVEL signature) with the writer seat's settings:
+
+   ```
+   Task(subagent_type="fvs-extract-applier", model=$WRITER_MODEL, reasoning_effort=$WRITER_EFFORT, ...)
+   ```
+
+   (`fvs-extract-bisector` for a NOVEL signature.) For a Category-B recipe the applier is the writer
+   in staging form: the prompt says so, and it stages the proposal and installs nothing. The prompt
+   inlines the Step 3a outcome with its
+   link, the Step 6 header fields, the authoring recipe, the line-preserving rule with its
+   zero-context line-count command (Step 6) and the observer set, because the child has no
+   @-references. The writer authors the patch in a scratch directory inside the extraction workspace
+   and stages it, with the Write tool, as
+   `<extract_workspace>/<target>/patch-review/<change-id>.patch`. It does not touch
+   `translation-patches/` or `series`, and it does not run the patch engine's `check`: that check
+   reads only patches listed in `series`, so it cannot see a staged patch and runs after
+   installation (Step 6).
+2. **Review.** Dispatch a new `fvs-equivalence-assessor` with the reviewer seat's settings:
+
+   ```
+   Task(subagent_type="fvs-equivalence-assessor", model=$REVIEWER_MODEL, reasoning_effort=$REVIEWER_EFFORT, ...)
+   ```
+
+   The prompt gives it the staged patch, the stripped signature, the Step 3a record, the observer
+   set and the gate packet template. It reads as an adversary and tries to break the patch. It runs
+   the "Patch checks" in its brief (line preservation per hunk, each observer-set member against
+   the change, panic occurrence and the file and line it reports); for a Category-B patch it also
+   drafts sections 2-6 of the packet, which is the assessor dispatch Step 5 describes. It ends with
+   one line: `Reviewer verdict: no objection` or `Reviewer verdict: objection: <observer or line>`.
+   "No objection" is not a ratification: it stamps nothing and leaves the token rule of Step 5
+   unchanged. The review record is kept as `patch-review/<change-id>.round-<n>.md`, outside
+   `equivalence-gate/`.
+3. **Round rule.** An objection goes back to a new writer dispatch together with the reviewer's
+   text (round two). A second objection stops work on this patch: ESCALATE (Step 8) with both
+   rounds and the staged patch. There is no third round. A patch the reviewer objects to is never
+   installed and never gets a gate packet, so a review round is not a patch attempt against the
+   attempt-cap (Step 7); review rounds have their own bound there. This differs from a human
+   rejection at the gate (Step 5): a rejected packet is recorded as `status: rejected` and
+   escalated, and the identical change is never re-submitted.
+4. **After "no objection".** Category B: write the packet to `equivalence-gate/<change-id>.md` from
+   the reviewer's sections 2-6, with the `Reviewer verdict:` line, hold the patch beside it as
+   Step 5 describes, and go to the GATE. Category A: install the patch byte for byte as
+   `translation-patches/<name>.patch`, append it to `series`, run `check`, and re-EXTRACT (Step 2)
+   with a new `prepare`.
+5. **A gap no patch can fix.** When the writer reports that no line-preserving patch clears the
+   blocker, or the reviewer's objection is one no rewrite can meet, do not keep trying. Record the
+   function as a boundary (Step 8): its reason, the roots that reach it, and the tool issue it
+   waits for, or `none found` when Step 3a found none. Whether the coverage target stays
+   verified, becomes an accepted assumption, or blocks the run is the owner's explicit decision.
 </step>
 
 <step name="gate">
-## Step 5: GATE -- the EXTR-05 invariant (orchestrator-fired, independent assessor)
+## Step 5: GATE -- the independence invariant (orchestrator-fired, independent assessor)
 
 This is the synchronous Category-B equivalence gate. **It is fired by the ORCHESTRATOR (the
 command body), never by a fixing agent.** The independence is structural:
@@ -375,10 +575,24 @@ command body), never by a fixing agent.** The independence is structural:
 
    (The bisector dispatch `subagent_type="fvs-extract-bisector"` and this assessor dispatch
    `subagent_type="fvs-equivalence-assessor"` are deliberately different agents -- the gate's
-   independence is enforced by topology, not convention.)
-3. The orchestrator HALTS and presents the rendered 7-field packet to the human. **Section 7
-   (the human's own independent checklist) and the ratification token are stamped by the human
-   alone.** The loop does NOT re-extract until the token is present (D-03 synchronous).
+   independence is enforced by topology, not convention.) For a new patch the reviewer dispatch
+   of Step 4a is this assessor dispatch; do not dispatch a second one for the same patch bytes.
+3. The orchestrator HALTS and presents the rendered 7-field packet to the owner. **Section 7
+   (the stamper's own independent checklist) and the ratification token come last, and only from
+   the owner or from someone the owner has explicitly delegated to.** The reviewer's verdict of
+   Step 4a is an ordinary review result: it never stamps, and the packet's section 7 is not filled
+   from it. Ratifying is a separate action by an authorized actor. The delegate can be a person, or
+   a model or session that the owner named, and it acts only inside the scope the owner recorded
+   (which changes it may decide). It is independent of the patch author: never the model or
+   session that wrote the patch. If the owner named the model that reviewed the patch, that model
+   may ratify, but only in its own action after the verdict, and it works section 7 itself. A
+   delegation is recorded: the stamp's `Reviewed-by:` line names the delegate (a model or session
+   by runtime, model and session id) and its `Delegation:` line says where the owner recorded the
+   delegation and its scope (the agreement, or a dated line the owner wrote); the owner's own stamp
+   reads `Delegation: owner`. The orchestrator records the stamp lines the delegate returns
+   unchanged. With no delegation on record there is no stamp: neither the loop, nor the writer,
+   nor an assessor dispatch stamps on its own. The loop does NOT re-extract until the token is
+   present, and it waits for it synchronously.
 
 The packet is written to `<extract_workspace>/<target>/equivalence-gate/<change-id>.md`; it is
 the reversible record for the B-change (the minimized diff + the stamped token).
@@ -409,12 +623,12 @@ only; retained packets stay in `equivalence-gate/` as the audit trail and are ne
   and re-EXTRACT (Step 2).
 - **Rejected** -> record the rejection reason and a `status: rejected` line in the packet (it is
   kept, and the checks skip it) and ESCALATE; NEVER re-submit the identical change (the loop must
-  propose a smaller/different one). When the loop later replaces or removes an installed patch,
-  it retires the patch as Step 6 describes.
+  propose a smaller/different one, and that one goes through Step 4a again). When the loop later
+  replaces or removes an installed patch, it retires the patch as Step 6 describes.
 </step>
 
 <step name="document">
-## Step 6: DOCUMENT -- reversible records at the crate root (D-08)
+## Step 6: DOCUMENT -- reversible records at the crate root
 
 After any applied change, write the reversible records at the CRATE ROOT (not the workspace).
 
@@ -425,15 +639,16 @@ ledger, and an active ledger beside a patch list is a mixed state the engine ref
 are:
 
 - `translation-patches/<name>.patch` -- one patch per function by default; a classified
-  supporting patch is allowed when a change cannot stand alone (an import a rewrite needs). The
-  engine requires the first four header lines below; the rest is the record that replaces the
-  ledger's `.md` narrative and `.json` index:
+  supporting patch is allowed when a change cannot stand alone (for example an existing `use`
+  line that the rewrite's new path needs, changed in place). The engine requires the first four
+  header lines below; the rest is the record that replaces the ledger's `.md` narrative and
+  `.json` index:
 
   ```
   Translation patch: <item>           (or "Supporting patch: <item>")
 
   Change: <what is rewritten>
-  Why: <the blocker it clears>
+  Why: <the blocker it clears; the issue or release-note link from Step 3a when a known workaround applies>
   Behaviour: <what the rewrite preserves or changes>
   Classification: A-mechanical | A-opacity | B
   Assumptions: <trust assumptions it introduces; omit when none>
@@ -475,8 +690,28 @@ git -C "$SCRATCH" -c user.name=fvs -c user.email=fvs@localhost commit -qm base
 git -C "$SCRATCH" add -A && git -C "$SCRATCH" diff --cached
 ```
 
-Write the header followed by that diff body with the Write tool as
-`translation-patches/<name>.patch`, and append `<name>.patch` to `series`. Then run
+**Line-preserving patches.** A patch changes a function without moving any other line of the file:
+the change goes on an existing line, or each hunk keeps its line count (it removes as many lines
+as it adds). Line numbers the extraction reports, panic locations among them, then keep pointing
+at the same lines. An import goes on an existing `use` line, or the item is written as a full path
+at its use site; an attribute goes on the existing line it belongs to. This rule is always in
+force, whatever the classification. Check it with a separate zero-context diff (the default-context
+diff above is the patch body):
+
+```bash
+git -C "$SCRATCH" diff --cached -U0 | awk '/^@@/ { split($2, o, ","); split($3, n, ","); if ((o[2] == "" ? 1 : o[2]) != (n[2] == "" ? 1 : n[2])) bad = 1 } END { exit bad }'
+```
+
+A nonzero exit means a hunk changes its line count: rewrite the patch. The check is necessary, not
+sufficient. It shows each hunk keeps its line count; it does not show that a panic still occurs on
+the same line, and nothing in the patch engine enforces the rule. The reviewer in Step 4a checks the
+panic occurrence and the file and line it reports. A patch that cannot be made line-preserving is
+not installed: it is a gap that goes to the owner (Step 8).
+
+Write the header followed by that diff body with the Write tool. A patch from Step 4a is staged
+in `patch-review/` first and installed only after the reviewer's "no objection" (Category A) or the
+ratification (Category B); installing means writing it as
+`translation-patches/<name>.patch` and appending `<name>.patch` to `series`. Then run
 `node "$PATCH_ENGINE" check --project-root "$CRATE_ROOT"`. A refusal (it does not apply, it does
 not undo cleanly, the header is incomplete, a path is outside the extraction inputs) means remove
 the patch and its `series` line and report the message; an unchecked patch is never left in the
@@ -516,9 +751,9 @@ stay confined to the crate root.
 </step>
 
 <step name="loop_bounds">
-## Step 7: LOOP BOUNDS (EXTR-06) -- caps and the no-progress rule
+## Step 7: LOOP BOUNDS -- caps and the no-progress rule
 
-All four bounds are config-tunable; the documented defaults and rationale:
+All bounds are config-tunable; the documented defaults and rationale:
 
 | Bound | Default | Rationale |
 |-------|---------|-----------|
@@ -526,6 +761,7 @@ All four bounds are config-tunable; the documented defaults and rationale:
 | Per-run cycle hard-cap | `~25` | Bounds a whole run; on exhaustion ESCALATE with the full transcript. |
 | Bisection variant-budget | `~12` | Comfortably covers the worked NO-BOTTOMS example (6 rows) with headroom; on exhaustion emit best partial isolation + ESCALATE. |
 | No-progress key | `sha256(layer || signature)` | `symbol` is kept for the escalation report (the fix site), NOT the match key. |
+| Patch review rounds | `2` | Step 4a: a writer and a reviewer on different models settle a patch in two rounds; a second objection goes to the owner, never a third round. Review rounds are not patch attempts, so they do not count against the attempt-cap. |
 
 **No-progress rule:** if the same `sha256(layer || signature)` key recurs AFTER a fix was
 applied for it, the fix did not work -> IMMEDIATE escalate. Do NOT consume the remaining
@@ -533,14 +769,23 @@ attempt budget on a known-stuck fix.
 </step>
 
 <step name="escalate">
-## Step 8: ESCALATE (D-04) -- a human decision point, never an automatic disposition
+## Step 8: ESCALATE -- a human decision point, never an automatic disposition
 
 Escalation is always a HUMAN decision point and a VALID outcome -- not a failure. On any
 escalate condition:
 
 1. Persist the escalated blocker to `<extract_workspace>/<target>/escalations/<id>.md` with the
    full context: the stripped `signature`, the `symbol` (fix site), the attempt history, and the
-   MFE.
+   MFE. Two exits from Step 4a are recorded here too:
+   - **A patch the reviewer still objects to after the second round.** The record holds both
+     rounds, the staged patch and the Step 3a outcome. The owner decides: another writer and
+     reviewer pair, a different patch, or a boundary.
+   - **A gap no patch can fix.** The record is a boundary: the function (`symbol`), the reason no
+     line-preserving patch clears it, the roots that reach it, and the tool issue it waits for (the
+     Step 3a link, or `none found`). Add a matching entry to `src-assumptions.md`. The consequence
+     for coverage is the owner's explicit decision (accept the function as an assumption, or block
+     the run); a boundary is never skipped without that decision on record. Under the auto track,
+     `auto-extract.md` lifts the record into the externals record.
 2. Surface it to the user.
 3. OFFER a draft. **Drafting runs only on the user's acceptance** -- on acceptance, dispatch the
    draft-investigator (dedup-first precedent mining + an evidence-cited HTML+MD draft to disk):
@@ -708,7 +953,7 @@ If any clause fails, the run is NOT complete -- return to the loop or HALT for t
 </step>
 
 <step name="run_end_summary">
-## Step 10: RUN-END SUMMARY (D-07)
+## Step 10: RUN-END SUMMARY
 
 At run end (clean or paused), re-remind the user of any outstanding escalations and re-offer
 drafting for each. Note that a later run on the same target re-surfaces the escalations from
@@ -742,6 +987,7 @@ Restored source:       {verify-restore ok | refused: <message>}
 Evidence:              tree check {ok | refused}; B patches {N} ratified and bound to their hashes; diff-to-record check {ok | failed}
 Obligations remaining: {the open `Obligations:` lines of the patches, grouped by patch file}
 Escalations:           {M} outstanding (re-offer drafts: {ids})
+Known issues:          {per signature: fix used | workaround cited | newer-version option reported | none found | not checked}; record known-issues/{aeneas-rev}-{charon-rev}.md
 Pin context:           {pin_context summary}
 Records:               translation-patches/ and series, src-assumptions.md (crate root)
 ```
@@ -755,11 +1001,14 @@ Records:               translation-patches/ and series, src-assumptions.md (crat
 - [ ] EXTRACT reads the tool's real exit status (`set -o pipefail` / `${PIPESTATUS[0]}`), never the pipe; always `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`.
 - [ ] Patch-mode EXTRACT runs `prepare`, `verify-tree`, Charon inside `"$OUT/tree"` with its output outside the tree, `verify-tree`, Aeneas, then `verify-restore`; an engine refusal stops the run and is never classified or repaired in the copy.
 - [ ] CLASSIFY reduces the log to `{layer, symbol, signature, match}`; NOVEL on a miss.
+- [ ] KNOWN ISSUES (Step 3a) runs before any new or changed patch to the Rust extraction inputs, whichever layer reported the blocker: read-only search of the tools' trackers with the stripped signature only, one recorded outcome per signature (`fix, no source change`, `workaround that edits source`, `fix only in a newer version`, `none found`, `not checked`), a cached record per pin pair, and no pin change without the owner. An unreachable tracker is `not checked`, never `none found`.
 - [ ] DISPATCH routes A -> applier, NOVEL -> bisector, forced-B -> gate, escalate-conditions -> escalate; the coverage-escalation guard turns A-opacity on a coverage target into B.
-- [ ] GATE is fired by the orchestrator; the assessor (`fvs-equivalence-assessor`) is a distinct dispatch from the proposer (`fvs-extract-bisector`) and never writes the token; the human stamps `equivalence-ratified:`.
+- [ ] WRITE AND REVIEW (Step 4a): the writer and reviewer seats resolve to different models; the reviewer is a fresh `fvs-equivalence-assessor` dispatch (or a fresh run of its brief through the seat's external runner) that returns a `Reviewer verdict:` line; a second objection escalates and there is no third round; "no objection" stamps nothing.
+- [ ] GATE is fired by the orchestrator; the assessor (`fvs-equivalence-assessor`) is a distinct dispatch from the proposer (`fvs-extract-bisector`) and never writes the token; the owner, or a delegate the owner named and recorded on the stamp, stamps `equivalence-ratified:` last.
 - [ ] DOCUMENT (patch mode) writes `translation-patches/<name>.patch` + `series` + `src-assumptions.md` at the crate root and never `src-modifications.*`; (legacy mode) writes `src-modifications.diff` + derived `.json` + `src-modifications.md` + `src-assumptions.md`; generated Lean never written; annotations preferred.
-- [ ] LOOP BOUNDS: attempt-cap 3, cycle hard-cap ~25, variant-budget ~12, no-progress key `sha256(layer || signature)`; same-key recurrence after a fix -> immediate escalate.
-- [ ] ESCALATE persists to the workspace, surfaces to the user, offers a draft (drafting only on acceptance), and "skip" is an explicit human choice.
+- [ ] LOOP BOUNDS: attempt-cap 3, cycle hard-cap ~25, variant-budget ~12, patch review rounds 2, no-progress key `sha256(layer || signature)`; same-key recurrence after a fix -> immediate escalate.
+- [ ] ESCALATE persists to the workspace, surfaces to the user, offers a draft (drafting only on acceptance), and "skip" is an explicit human choice. A gap no patch can fix is recorded as a boundary with its reason, roots and the tool issue it waits for; the coverage consequence is the owner's explicit decision.
+- [ ] Patches are line-preserving (the zero-context diff check plus the reviewer's panic check), and a pin change only proposes which patches the new tools no longer need; retirement goes through the retire step and the gate.
 - [ ] SUCCESS ORACLE (patch mode): clean build AND `verify-tree` AND `verify-restore` AND every B patch, migrated ones included, has a ratification bound to its `patch-sha256:` (the ratification check) AND the diff-to-record check over patch identities holds; (legacy mode) clean build AND every B-change has a present token AND diff <-> record 1:1; refuses completion otherwise.
 - [ ] Retired legacy records are inactive and never read as patch evidence; the run-end summary reports extraction, restored source, evidence and remaining obligations separately.
 - [ ] No `gh` open/create call appears in the draft or escalation steps.

@@ -844,6 +844,13 @@ describe('auto command and workflow text', () => {
     assert.match(read('README.md'), /^### Auto track$/m);
   });
 
+  it('top-specs says how agreement boundaries reach the closure plan as allowed axioms', () => {
+    const body = text('auto-top-specs').replace(/\s+/g, ' ');
+    assert.match(body, /Prose agreement boundaries do not match axioms automatically, so the orchestrator translates them once into exact Lean names and passes them with `--allow-axioms`/);
+    assert.match(body, /Recorded externals with status `assumption-accepted` are allowed automatically, and the plan records which allowed axioms came from where/);
+    assert.doesNotMatch(body, /Run13|\bticket\b/);
+  });
+
   it('auto-extract hands off to the shared extractor and records every attempt through the script', () => {
     const body = text('auto-extract');
     assert.match(body, /\/fvs:aeneas-extract "\$CRATE_ROOT"/);
@@ -867,7 +874,12 @@ describe('auto command and workflow text', () => {
     const body = text('auto-init');
     assert.match(body, /"\$AUTO" init-state --project-root \. --input "\$CHOICES"/);
     assert.match(body, /Only on an explicit yes rerun\s+the same command with `--confirm-overwrite`/);
-    assert.match(body, /"\$AUTO" record-agreement --project-root \. --input "\$AGREEMENT"/);
+    assert.match(body, /node "\$HELPER" --project-root \. --input "\$DRAFT"\n/, 'the helper drafts without recording');
+    assert.match(body, /node "\$HELPER" --project-root \. --input "\$DRAFT" --out "\$AGREEMENT"/);
+    assert.match(body, /ask the owner to run the printed command\s+in their own terminal: it is `fvs-auto\.mjs record-agreement`/,
+      'the record step is named as owner-run');
+    assert.match(body, /The helper never records the agreement\s+and never edits the roadmap or the state/);
+    assert.match(body, /Never write that reply yourself/);
     assert.match(body, /"\$AUTO" read-state --project-root \. --require-agreement/);
     assert.match(body, /Do not ask Keep\/Change/);
     assert.match(body, /A recorded decline is not asked again/);
@@ -877,11 +889,12 @@ describe('auto command and workflow text', () => {
     assert.match(body, /Routine Status log appends outside the fence/);
     assert.match(body, /there is no per-round human contract approval/);
     assert.match(body, /Final PR acceptance remains human/);
-    assert.match(body, /public-api[\s\S]*unsupported pending separately permitted ticket11/);
+    assert.match(body, /`public-api`\s+mode is not supported in this release: report that refusal without retrying it/);
+    assert.ok(!/visibility join|separately permitted|ticket11/.test(body), 'the public-API sentence names no landing condition');
     assert.match(body, /Agreement storage alone launches no workers/);
     assert.match(body, /Without that complete opt-in context[\s\S]*stop/);
     assert.match(body, /fv-skills\/references\/auto-transitions\.md/);
-    assert.match(body, /Actual live provider execution[\s\S]*concrete19 setup\/permission/);
+    assert.match(body, /Actual live provider execution[\s\S]*separately granted concrete setup\/permission/);
     assert.match(body, /verifyReconciliation/);
     assert.match(read('commands/fvs/roadmap.md'), /`\.formalising\/auto-fv\/ROADMAP\.md`; `\/fvs:auto-init`/);
     assert.match(read('fv-skills/workflows/roadmap.md'), /\*\.md\) FILE=\$ROADMAP_PATH/);

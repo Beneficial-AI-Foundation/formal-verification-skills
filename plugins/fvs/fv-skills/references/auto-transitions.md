@@ -4,7 +4,7 @@ For v2 actions, worker packets, cancellation and handoffs, read `auto-execution.
 
 <purpose>
 Bind the existing AO/FVS stage loop to current agreement, memory, source and checker evidence.
-Keep uncertain effects partial and preserve whole-scope gaps for the17 handoff.
+Keep uncertain effects partial and preserve whole-scope gaps for the review-bundle handoff.
 </purpose>
 
 ## Production driver: authorized v2 continuation
@@ -17,7 +17,7 @@ qualification. Existing receipts remain bound to their original engine bytes.
 The actual AO orchestrator reads the current canonical agreement and applies its semantic scope,
 claims, trust and execution grants. V2 alone, a source-review PASS or a saved ready label grants
 nothing. Keep the legacy/read-only reporting route when this context is absent. Current live actor
-execution needs the concrete19 capability/profile/permission setup; fixture tests supply no grant.
+execution needs separately granted concrete capability/profile/permission setup; fixture tests supply no grant.
 Initial setup and final human review remain the human gates; routine source-grounded iterations
 continue under the existing grant. A missing capability is a precise partial result.
 
@@ -32,11 +32,11 @@ The closed JS/CLI inputs are:
 
 | Export / operation | Exact fields |
 |---|---|
-| `prepareCurrentRequest` / `prepare` | `{projectRoot,context,phase,transition}`. `context` is exactly `{runId,ao,source,inputs,associations,priorAccounting}` with the existing16 nested schemas; `phase` is `start` only for a genuinely new run, otherwise `resume`. `transition` is null or the existing exact before/after envelope. |
-| `recordCheckpoint` (JS) | `{projectRoot,request,out}`; returns `{request:ref,result:ref,out,value,verification}` after the actual16 producer and independent consumer. |
-| `advanceOnce` / `advance` | `{projectRoot,currentRequest,out}`, with existing closed `currentRequest:{resume,registry,authorization,profile}`. Ordinary `resume.transition:null` calls22's strict proposal. A concrete before request takes the action-specific path directly; it records/verifies that action, without an unconditional strict proposal first. |
-| `runPairedEffect` / `effect` | `{projectRoot,request,out}` with an exact v2 before request. Creates exclusive `out/before`, `out/producer`, `out/effect`; awaits16 verification and22 execution. Returns command evidence, before and status, **not** an invented after-state. |
-| `recordAfter` / `after` | `{projectRoot,request,out}` with the fresh actual after request, original intent/before hash and real completion/effect evidence. Independently verifies16; returns checkpoint and a v2basis template only for `facts-recorded-partial`. |
+| `prepareCurrentRequest` / `prepare` | `{projectRoot,context,phase,transition}`. `context` is exactly `{runId,ao,source,inputs,associations,priorAccounting}` with the existing nested schemas; `phase` is `start` only for a genuinely new run, otherwise `resume`. `transition` is null or the existing exact before/after envelope. |
+| `recordCheckpoint` (JS) | `{projectRoot,request,out}`; returns `{request:ref,result:ref,out,value,verification}` after the actual producer and independent consumer. |
+| `advanceOnce` / `advance` | `{projectRoot,currentRequest,out}`, with existing closed `currentRequest:{resume,registry,authorization,profile}`. Ordinary `resume.transition:null` calls the controller's strict proposal. A concrete before request takes the action-specific path directly; it records/verifies that action, without an unconditional strict proposal first. |
+| `runPairedEffect` / `effect` | `{projectRoot,request,out}` with an exact v2 before request. Creates exclusive `out/before`, `out/producer`, `out/effect`; awaits verification and controller execution. Returns command evidence, before and status, **not** an invented after-state. |
+| `recordAfter` / `after` | `{projectRoot,request,out}` with the fresh actual after request, original intent/before hash and real completion/effect evidence. Independently verifies the resume checkpoint; returns checkpoint and a v2 basis template only for `facts-recorded-partial`. |
 
 Choose one before-producing route per action. `runPairedEffect` records its own before; call it
 directly with the concrete request. `advanceOnce`'s concrete-before route is for the existing
@@ -51,11 +51,11 @@ run ID on resume. The preparer allocates fresh attempt/resume IDs, reads the rea
 head and prepares the current Beads request when enabled; disabled memory stays null. It neither
 discovers source nor resets policy. Re-read actual input/store heads at every boundary.
 
-For one concrete effect, build the existing closed22 action and intent from that fresh snapshot,
+For one concrete effect, build the existing closed action and intent from that fresh snapshot,
 with its exact authorization/profile and existing target schema. Run `effect`. Preserve the returned
 command receipt and its actual stdout/stderr/result; build the existing
 `fvs/auto-transition-completion` v2 from that exact command, action hash and recorded before hash.
-Observe actual post-Git/AO/14/15 inputs; prepare the new after request and call `after`.
+Observe actual post-Git/AO/registry/checker inputs; prepare the new after request and call `after`.
 Launch completion joins the real association; do not list that same association twice in the after
 request. Construct/composition and reservation resolution keep their existing procedures and checked
 command/evidence paths; `effect` does not execute arbitrary worker shell text for them.
@@ -71,7 +71,7 @@ successor. Only an exact published release's conclusive typed actor result may s
 `workCompletion`. The existing finite validators below admit or refuse a fresh action-specific
 before. During ordinary revisions, stale accepted receipts need this explained route; a strict
 transition:null proposal can refuse them. Keep the store/history intact. Unknown effects retain
-capacity; final whole-scope15 currentness stays strict.
+capacity; final whole-scope currentness stays strict.
 
 ### Bootstrap: agreement to first dispatch
 
@@ -190,7 +190,7 @@ startup instructions.
 
 ### Actual specification review bridge
 
-Use10/21/13 to bind the agreed nonpublic targets and entire closure, with one helper owner. Keep
+Use discovery, dependency records and closure ownership to bind the agreed nonpublic targets and entire closure, with one helper owner. Keep
 unsupported/missing/failed targets in the separate full scope inventory. A name/graph root is not
 scope approval or public-API discovery. Author through `lean-specify/controller-direct`, or split
 research/author roles, using full actual source/type/body/dependency/standard context. Compose only
@@ -199,12 +199,12 @@ the allowed exact candidate bytes before review.
 Export the existing grounded Other packet through `fvs-spec-review.mjs preflight` then `run` with
 runtime `other`; export invokes no reviewer. `prepareReviewBinding` / `prepare-review` takes exactly
 `{projectRoot,source,plan,graph,registry,contract,packet,prompt,out}`. `projectRoot` is the canonical
-primary runtime/agreement/memory root. `source` is the actual existing16 Git source identity
+primary runtime/agreement/memory root. `source` is the actual existing Git source identity
 `{kind:"git",root,commit,expectedTree}`; its root is the integration/spec root, not a guessed cwd.
 Export the Other packet in that source root and keep new specDefinitions there. The binding checks
 the common Git store, actual clean commit/tree/branch and the issued/prepared source before review
 publication. Keep distinct worktrees distinct; do not copy specs into the primary to satisfy a check.
-It computes the actual14 candidate
+It computes the actual registry candidate
 fingerprint/current global head and freezes the contract/context, author, exported packet/prompt and
 source hashes. It returns `{binding,input}` references. Include **both** in the new review work packet;
 the reviewer reads the full binding/contract and exported prompt. `input` is the existing six-field
@@ -225,12 +225,12 @@ original policy/current memory and held candidate/head, then seals the exact ret
 an exclusive response snapshot and calls the actual Other importer on that snapshot in the bound
 integration/spec root. Retain the importer's actual raw, normalized, transformation and review
 artifacts. Revalidate the sealed bytes through the existing normalizer, compare the imported outputs
-and rehash relevant inputs before publication. The14 verdict comes from the validated normalized
+and rehash relevant inputs before publication. The review verdict comes from the validated normalized
 import, never a cached read of a path the child later reopens. Substituted/tampered responses hold
 the route; supported normalization keeps its raw and normalized hashes distinct.
-It constructs14's existing review envelope from the prior binding and fresh invocation/provenance:
+It constructs the registry's existing review envelope from the prior binding and fresh invocation/provenance:
 clean PASS → `pass`; APPROVE-WITH-EDITS/REVISE → `changes-requested`; BLOCKED/malformed/unavailable
-evidence → held/no PASS. Other stays externally supplied/unverified;14 independence stays declared
+evidence → held/no PASS. Other stays externally supplied/unverified; registry independence stays declared
 distinct session/run, `verified:false`. Submit the actual resulting envelope through the paired
 registry-revise action. Any append or semantic/context edit needs a fresh bound review. Serialize
 review preparation/publication. Three rounds checkpoint under the original run; do not add a
@@ -238,18 +238,18 @@ routine human approval or weaken a statement to obtain PASS.
 
 ### Proof and final handoff
 
-After current14 readiness, freeze15 with mutable overlays absent. Use22's ready frontier for actual
+After current registry readiness, freeze the checker context with mutable overlays absent. Use the controller's ready frontier for actual
 `lean-verify/controller-direct` work (or separate plan/prove roles), original budgets and meaningful
 progress. Integrate only allowed exact candidate bytes and retain the actual typed work completion.
-Check independently through15, then accept dependency-first and serially at the fixed tree. During
+Check independently through the checker, then accept dependency-first and serially at the fixed tree. During
 revisions use the finite basis route above. Worker VERIFIED and driver command success accept nothing.
 
 At complete or precise partial status, inspect the entire original selected scope, reconcile current
-state and build/verify17 using the actual current request and historical captures. The artifact keeps
+state and build/verify the review bundle using the actual current request and historical captures. The artifact keeps
 integrity, live currentness, unavailable inputs, each root's PASS/partial reason and pending human
 review separate. A draft PR requires its separately recorded publication grant/trusted publisher.
 Human feedback revising reviewed contracts is unsupported in rc1; stop before revision effects or
-provider dispatch, preserving whole-scope partial reasons. Internal18 diagnostics grant no continuation.
+provider dispatch, preserving whole-scope partial reasons. Internal re-spec diagnostics grant no continuation.
 An all-fail run is not a successful pilot.
 No public-API/whole-crate/platform/side-channel claim follows from this bounded route.
 
@@ -263,15 +263,15 @@ Ordinary standalone commands retain their own interactive routes.
 The initial roadmap agreement is the setup human gate. Reuse existing answers and grants.
 Later author/review/revise/proof cycles are autonomous within them; final PR acceptance stays
 human. Missing operational context, unsupported shape, profile or capability is a named partial
-condition, not another scope interview. Public-API mode remains unsupported pending11; this
-nonpublic route does not waive that hold. Worktrees and instruction acknowledgements are not
+condition, not another scope interview. Public-API mode is not supported in this release; this
+nonpublic route does not change that. Worktrees and instruction acknowledgements are not
 OS security or suspension boundaries.
 
 ## Controller loop
 
 1. Follow the installed `fv-skills/references/auto-memory.md` and `auto-resume.md`. Read the actual current canonical agreement,
    including semantic applicability of the whole payload, scope/claims/trust and delegated actions.
-   Store12's current result alone does not establish applicability. Bind each concrete action to
+   The agreement store's current result alone does not establish applicability. Bind each concrete action to
    the existing execution grant with `fvs/auto-action-authorization` version1: exact agreement
    context and approved-payload hashes, actual `execution`, and finite `{kind, action, reference}`
    correspondence rows. Null execution is ungranted. No natural-language classifier supplies it.
@@ -286,9 +286,9 @@ OS security or suspension boundaries.
    `research` or `fc_spec`, review `spec_review`, and proof `fc_proof_plan` or `fc_proof_execution`.
    Differently configured research/execution run in separate sequential AO stages with bound
    artifact handoff and owned retirement. Combined direct procedures require exactly equal tuples.
-3. Prepare the fresh caller-owned16 request. `nextTransition({projectRoot,currentRequest,out})`
+3. Prepare the fresh caller-owned request. `nextTransition({projectRoot,currentRequest,out})`
    accepts closed `currentRequest:{resume,registry:{root,headSha256},authorization,profile}`.
-   It reconciles and independently consumes its own fresh result, reads13/14/current15 facts and
+   It reconciles and independently consumes its own fresh result, reads closure, registry and current checker facts and
    returns one proposal or explicit partial reasons, always `executable:false`. A request with a
    transition is refused here. Proposal computation does not reserve or execute work.
 4. For that one action, retain an immutable `fvs/auto-transition-request` version1 file. Required
@@ -297,11 +297,11 @@ OS security or suspension boundaries.
    worker/registry/baseline/store snapshot; nullable inputs mean no current proof. `basis` is null
    or the exact prior before/after hashes and completion reference that explain expected staleness.
    The implementation's closed targets are the schema; use existing actual paths, never examples
-   as execution inputs. Add its `{file,sha256}` as16 `intent.request`; old16 histories stay valid.
-5. Record the16 before under current expected head/CAS and original capacity. Immediately before
+   as execution inputs. Add its `{file,sha256}` as `intent.request`; old histories stay valid.
+5. Record the before under current expected head/CAS and original capacity. Immediately before
    an effect, independently consume with `verifyTransition` against the same held request/output.
    `executeTransition({projectRoot,request,beforeOut,producerOut,evidenceDir})` supports fixed argv
-   for stock AO spawn/send/kill, exact owned FF,14 register/revise and15 freeze/check/accept.
+   for stock AO spawn/send/kill, exact owned FF, registry register/revise and checker freeze/check/accept.
    It durably creates exclusive effect evidence under that before **before** invocation. Replay
    cannot run it again; unknown outcome retains the marker/reservation. No worker shell command
    is accepted. Construction and sibling composition use their existing controller procedures;
@@ -310,7 +310,7 @@ OS security or suspension boundaries.
    action hash, actual before hash, bound command receipt and bound producer result. Command
    receipts bind actual argv/cwd/allowlisted environment/tool/input-output hashes, wall times,
    exit/signal/error and complete stdout/stderr. Metadata is trusted controller evidence, not OS
-   attestation. Record after with its own fresh20 request, actual post-Git/14/15 observations and
+   attestation. Record after with its own fresh memory request, actual post-Git/registry/checker observations and
    current runtime predecessor. No success from an uncertain command or worker verdict.
 7. `facts-recorded-partial` explains only the finite permitted delta and names a possible next row;
    it grants nothing. A new `next-action-eligible` result requires a matching retained successful
@@ -321,14 +321,14 @@ OS security or suspension boundaries.
 
 The runtime keeps its existing1MiB byte limit and every historical field/event. Compact JSON
 encoding removes whitespace only; it neither resets history nor changes event hashes. Reaching
-the bound remains partial. New22 events additionally set `observation:null` and retain an
+the bound remains partial. New controller events additionally set `observation:null` and retain an
 `observationInput:{file,sha256}` for their immutable owned observation file. Updated consumers use
 `readRuntimeObservation(event)` from the installed transition helper; legacy inline observations
 remain unchanged and readable without writes. Replay validates each reference/closed body under
 the same1MiB per-observation limit, with no cross-run cache. The recorded event hash binds the wire
 reference; full results/receipts remain separate retained evidence. Missing/altered/oversized/aliased
 observations refuse before effects. Keep these files just like the already required request/tool
-receipts; no frozen M1 record, logical history or old evidence is removed.14 exit6 with a verified actual `recorded` event is a conclusive
+receipts; no frozen M1 record, logical history or old evidence is removed. A registry exit 6 with a verified actual `recorded` event is a conclusive
 unready/recheck result, not a failed command to retry or a review/proof PASS. Other unfamiliar
 exit/result combinations remain unverified.
 
@@ -339,15 +339,15 @@ the protected project. Preserve failures; never reset history or rebind old evid
 
 ## Actor startup, preparation and release
 
-Reserve a node/slot with16's ao-launch discriminator, null future session and exact branch/assignment.
-Allocate the startup challenge and worker20 attempt/phase/resume IDs in the action before launching.
+Reserve a node/slot with the resume coordinator's ao-launch discriminator, null future session and exact branch/assignment.
+Allocate the startup challenge and worker memory attempt/phase/resume IDs in the action before launching.
 The launch prompt says prime/acknowledge/wait before source or task work. This is a trusted prompt
 contract; idle activity and clean Git do not establish suspension. Serialize launch correlation:
 retain actual spawn output plus fresh AO ls/get and Git worktree porcelain. Use an identified
 returned session or one unambiguous inventory delta with exact branch/project. Neither AO ls nor
 get supplies a worktree path. Unknown/conflicting correlation stays uncertain and holds capacity.
 
-The worker uses its actual session/worktree and independently retains the allocated20 request,
+The worker uses its actual session/worktree and independently retains the allocated memory request,
 primes through worker-readonly, and returns a `fvs/auto-startup-ack` version1 with run/action/before
 hash, challenge, exact actor, own memory request/output and `waiting:true`. The controller reconstructs
 its expected request from its allocated IDs and current canonical binding; it does not adopt the ack's
@@ -367,11 +367,11 @@ explicit path/content hashes, exact expected S0 parent, independently verified r
 
 Release is its own paired effect. First persist the exact `fvs/auto-work-packet` version1 and one
 stable `deliveryHandle`; bind its reference/handle in the release action/before. The packet binds its
-launch/action/before, actual actor/prepared source, new challenge, **new separately allocated** worker20
+launch/action/before, actual actor/prepared source, new challenge, **new separately allocated** worker memory
 request, direct procedure, bound input refs, nullable explicit resume link and canonical start-marker
 path. Then use stock `ao send --steer --client-message-id`. Unknown delivery recovers **that handle**
 with `--recover-only`; delivery proves no execution. Never send/spawn again under a different handle.
-First release always derives its exact successful preparation/startup chain from16 history, even
+First release always derives its exact successful preparation/startup chain from resume history, even
 with a current cache or `basis:null`. A no-op FF still records this barrier. Worker consumption
 independently restores the same prerequisite; resume also retains that original chain and its
 separate conclusive source/artifact link.
@@ -395,14 +395,14 @@ rollback after marker allocation preserves uncertainty and grants no work; an ex
 never evidence of nonexecution.
 
 A later release for that assignment requires `resumeOf` pointing to a conclusive
-`fvs/auto-work-completion` version1 already retained in a succeeded16 after-event: exact run,
+`fvs/auto-work-completion` version1 already retained in a succeeded after-event: exact run,
 old packet/start-marker references, actual recorded `sourceAfter:{commit,tree}`, finite
 completed/partial/failed outcome, nonempty bound artifacts and the controller session. Match the
 recorded actor/reservation/assignment and original marker path. An unrecorded declaration or a
 new handle alone cannot release work. This closes execution only, with no proof authority.
 
 After validating immutable candidate artifacts, retire only the exact owned stage session with stock
-`session kill`. A fresh same-project/session get.isTerminated:true plus16 resolution releases its
+`session kill`. A fresh same-project/session get.isTerminated:true plus the resume resolution releases its
 capacity; idle/exited never does. FVS itself deletes no worktree, branch or file, but AO's `session kill` may
 remove the worker's worktree. Before the stop, commit needed source and copy needed evidence to owned storage
 outside the worktree, keeping its bytes readable; a `{file,sha256}` reference into the worktree does not keep
@@ -411,12 +411,12 @@ by that stop with `absent:true`. This is admitted only for the exact retained as
 with AO reporting the session terminated and the path gone and no longer registered. Once recorded, the absence
 is final: a worktree at that path again refuses. Any other absence, or a present but changed worktree, still
 refuses. A controller building the resolution's before uses the exported `absentWorktree` shape of the
-association it keeps current. Local effects recover through16's typed conclusive completion, not a second
+association it keeps current. Local effects recover through the resume coordinator's typed conclusive completion, not a second
 effect.
 
 ## Existing procedures, without hidden child workers
 
-Start without owner-supplied specs. Run existing auto-extract/repair and10/21/13 producers with exact
+Start without owner-supplied specs. Run existing auto-extract/repair, discovery, dependency-record and closure producers with exact
 source/configuration. Initial construction may establish previously null extraction/graph/plan refs
 only from reproduced producer receipts; it invents no accepted baseline. Unsupported groups remain
 explicit while independent families continue. Bind the agreed nonpublic scope to selected obligations
@@ -432,12 +432,12 @@ The controller composes allowed spec/context changes, then prepares `lean-spec-r
 `other` using the existing preflight/export. It launches a fresh read-only AO review actor, gives it
 the complete exported prompt/context and imports its response through the existing `import` validator.
 Preserve actual session/model/effort evidence and honest Other/unverified labels; a packet export is
-not review. Distinct reviewer run/session and exact candidate/global14 head are mandatory. Only fresh
-PASS reaches14; rejection/APPROVE-WITH-EDITS revises, never weakens intent or marks human approval.
-Serialize review preparation/publication because any14 append stales unused review. Three rounds
+not review. Distinct reviewer run/session and exact candidate/global registry head are mandatory. Only fresh
+PASS reaches the registry; rejection/APPROVE-WITH-EDITS revises, never weakens intent or marks human approval.
+Serialize review preparation/publication because any registry append stales unused review. Three rounds
 become a resumable checkpoint under the original global budget, not a mid-run owner gate.
 
-When14 contexts are ready,15 freezes pristine context with overlays absent. Changed node and all
+When registry contexts are ready, the checker freezes pristine context with overlays absent. Changed node and all
 consumers invalidate/review/reprove/recheck; proof-only edits recheck without semantic re-review. Never
 refresh expectations from a candidate. For bottom-up proof actors use `lean-verify/controller-direct`:
 research and execute in that actor, fixed frozen statement/definitions, ordinary style/build/audit
@@ -453,17 +453,17 @@ invocation IDs, original `startedAtMs`, whole-minute `budgetMs` up to four hours
 packet's inputs. Expiry checkpoints; only a conclusive linked outcome permits another invocation
 within the unchanged project budget. The helper and existing proof loop use this same deadline.
 
-The controller runs15 provisional check, composes one ready proof frontier into fixed integration S,
+The controller runs the checker's provisional check, composes one ready proof frontier into fixed integration S,
 then serially checks/refreshes helpers and publishes consumers bottom-up at that same tree. No source
 change mid-batch. Older node/tree/helper-generation heads remain stale until actually rechecked;
-standalone/worker verdicts and14 provisional/declared-independence records unblock nothing. Once whole
-selected-scope currentness is recomputed, return only the typed authoritative-reference handoff to17,
-including every unfinished/unsupported reason.17 materializes the bundle; human re-spec is unsupported in rc1;
-19 qualifies actual stock-AO end-to-end behavior. This protocol does not open a PR or complete them.
+standalone/worker verdicts and registry provisional/declared-independence records unblock nothing. Once whole
+selected-scope currentness is recomputed, return only the typed authoritative-reference handoff to the bundle builder,
+including every unfinished/unsupported reason. The builder materializes the bundle; human re-spec is unsupported in rc1;
+The concrete tracer run qualifies actual stock-AO end-to-end behavior. This protocol does not open a PR or complete them.
 
 Before any live provider tracer, bind its concrete owned project/source/scope, actual complete
 capability/profile/standing-override manifest, execution/resource limits, memory/paths and evidence
-matrix under19's separately authorized gate. Component doubles, simulation and real15/16 qualification
+matrix under a separately authorized gate. Component doubles, simulation and real checker and resume qualification
 are distinct; none silently grants live provider execution, publication or target proof promotion.
 
 ## Retained-store revision continuations
@@ -478,12 +478,12 @@ Only an exact published release may set `workCompletion`; other rows require nul
 The finite successors are: current-source freeze to a protected-target recheck or
 dependency-ready proof launch; fresh accept to another accept, protected recheck or
 dependency-ready proof/review launch; actual registry revision to a fresh qualified
-publication, needed specification/review launch or freeze when all14 nodes are ready.
+publication, needed specification/review launch or freeze when all registry nodes are ready.
 A protected recheck requires prior integrated proof evidence with the same target/module,
 exact frozen protected source bytes and current accepted helper dependencies. Mutable or
 future overlay targets do not qualify. All other successors retain the legacy restrictions.
 Unrelated stale heads stay historical: neither a continuation nor provisional check makes
-them current, and the full15 currentness inspector is unchanged.
+them current, and the full checker currentness inspector is unchanged.
 
 A release successor to candidate composition/materialization or review publication needs
 the unchanged closed nine-key `fvs/auto-work-completion` v1 envelope, outcome completed,
@@ -497,7 +497,7 @@ missing/multiple typed results or another actor/packet/result refuse.
 
 The controller independently observes the assigned actor's clean Git identity and candidate
 FF ancestry/allowed paths, or unchanged reviewer source plus exact candidate/head-bound
-independent unused14 packet. Its new before binds the completion; its succeeded after must
+independent unused registry packet. Its new before binds the completion; its succeeded after must
 retain that same completion in effect evidence, including the observed association. This
 retention supports the existing legacy linked-resume reader; it grants no automatic resend
 or retry. The issued packet/start marker identifies the reserved consumer; copying or freshly observing
@@ -508,12 +508,12 @@ not measured worker start/runtime. The published release-after observation and o
 invocation/run/last controller observation supply the lower bound for the newly retained
 controllerObservedAtMs, which must be no later than the current observation and inside
 the original limits. A fresh clock fence after all reads refuses rollback or exhaustion.
-All before-CAS, capacity, fresh20/16, proof-dependency and strict final-inspection gates remain.
+All before-CAS, capacity, fresh memory/resume, proof-dependency and strict final-inspection gates remain.
 These files are trusted controller evidence, not process isolation or proof receipts.
 
 ### Exact review input and stale-store retirement
 
-Specification/review launch nodes must belong to the supported selected13 union. A known
+Specification/review launch nodes must belong to the supported selected closure union. A known
 selected node without a contract is distinct from an unknown/out-of-scope ID. Local
 controller actions can retain empty control-node reservations; no second actor owns a node.
 For a v2 review-result continuation, put exactly one typed `fvs/auto-review-input` v1
@@ -523,14 +523,14 @@ candidate/head must match the issued work and returned review. The node must be 
 launch's assignment. A valid review for another node or a newly chosen candidate does not
 qualify; issue a separately linked fresh packet instead. Legacy work envelopes stay readable.
 Registry invocation shape/schema/version and referenced input bytes are checked before intent/command creation as well
-as after execution, through one shared reader; unknown keys/versions cannot append14 first.
+as after execution, through one shared reader; unknown keys/versions cannot append to the registry first.
 
 After an actor's completed materialization/composition/review publication, v2 may retire
 only that exact issued actor, preserving S/R/B/store and the original clocks. Use the normal
 terminate action with empty control nodes, exact association and completed output basis.
 A terminated session alone still holds its original reservation. Resolve it using the same
 terminate kind with closed target `{sessionId,association,operation:resolve-terminated-reservation}`
-(the operation is a JSON string), and the existing16 reconcile-stage reservation-resolution intent targeting
+(the operation is a JSON string), and the existing reconcile-stage reservation-resolution intent targeting
 that exact original reservation. This operation has no executable command. Its paired after
 uses reason session-terminated and the real terminated observation reference both in
 resolution.evidence and effect.evidence. For this explicit operation only, that reference is
@@ -541,5 +541,5 @@ output basis; otherwise retain the successful terminate before/completion/after 
 Unknown/uncertain effects, unrelated actors/reservations, idle sessions, drift or exhausted
 limits grant nothing. The fresh AO observation must match the project/session and actual
 owned association before capacity is freed. A completed resolution permits only the original
-output row's finite frontier, with its canonical projection unchanged; the strict15 inspector
+output row's finite frontier, with its canonical projection unchanged; the strict checker inspector
 continues to refuse stale proof. No store clearing, current-cache flag, new run or new queue.

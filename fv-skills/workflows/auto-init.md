@@ -43,7 +43,7 @@ node "$AUTO" read-state --project-root .
 - `ok`: inspect `state.choices`, extraction history and the latest `state.agreements`, if present.
   Do not ask Keep/Change or repeat an interview when the applicable agreement is current. Reuse actual
   existing owner responses/grants rather than asking for them again. Check Step 5 first; if it passes,
-  proceed to Step6's recorded memory disposition and then Step7 reconciliation and Step8 report without re-interviewing. Every start/resume
+  proceed to Step 6's recorded memory disposition and then Step 7 reconciliation and Step 8 report without re-interviewing. Every start/resume
   needs its own current request; enabled memory also needs the fresh prime; never reuse an old memory-ready result. Missing/stale agreement blocks continuation;
   resolve only the affected setup through Steps 3–5. When the owner requests a material change,
   show only the affected choices and use those steps.
@@ -75,21 +75,24 @@ Synthesize the repository facts and applicable decisions from sources first. Use
 `/fvs:roadmap .formalising/auto-fv/ROADMAP.md <the project goal>` with its existing light/deep/reuse
 route. Initial scope is whatever the owner actually agrees, kept distinct from discovered roots;
 there is no automatic public-API or natural-language scope classifier here. An explicit `public-api`
-mode is unsupported pending separately permitted ticket11 landing: report that held branch without
-retrying it. Nonpublic intent can proceed independently, without top-level specifications.
+mode is not supported in this release: report that refusal without retrying it. Nonpublic intent can
+proceed independently, without top-level specifications.
 
 Record only missing owner choices, using the current applicable evidence for known ones:
 
 - source revision and configuration/features (prefer an exact full commit; moving refs are not immutable);
 - initial scope, boundaries, conventions and single-crate/monorepo layout;
-- concurrent workers (default3), optional explicitly chosen total budget, and optional memory disposition; new v2 uses no elapsed budget and explicit disabled memory unless a backend is configured;
+- the observer set, named once: what a caller or user of the target can see and therefore must not be
+  able to tell apart after a source patch (return values, errors as callers match them, external
+  effects, panic occurrence and the file and line a panic reports), and what is deliberately not observed;
+- concurrent workers (default 3), optional explicitly chosen total budget, and optional memory disposition; new v2 uses no elapsed budget and explicit disabled memory unless a backend is configured;
 - actual delegated execution actions/limits and any draft-PR destination/authority, separately.
 
 New v2 choices use `limits:{workers}`, `budget:{kind:"none"}` or an explicitly selected wall budget, and `memory:{mode:"disabled"|"beads"}`. Follow `auto-execution.md` for cancellation and small-proof progress diagnosis. There is no arbitrary per-node proof timeout. Existing v1 `nodeHours` stays inactive metadata, not enforced; retain its original finite budget unchanged. Existing resource and
 spending limits are never raised or reset automatically. The initial owner scope/execution agreement
 is the setup human gate. Later provisional specify/review/revise cycles are autonomous within it;
 there is no per-round human contract approval. Final PR acceptance remains human. Agreement storage
-does not dispatch; Step6 handles the recorded memory disposition and Step7 selects the configured controller continuation.
+does not dispatch; Step 6 handles the recorded memory disposition and Step 7 selects the configured controller continuation.
 
 Write the known/answered choices to a temporary file outside the project:
 
@@ -148,39 +151,64 @@ The closed envelope is:
 ```
 
 This is a schema example, **not** an owner answer, limit or grant. Copy exact normalized choices and
-`choicesGeneration` from the post-init state; absent generation means0 for the first M2 agreement.
+`choicesGeneration` from the post-init state; absent generation means 0 for the first M2 agreement.
 `layout` is `single-crate` or `monorepo`. Boundaries/conventions may be explicit empty arrays; the other
 text lists require at least one entry. An execution grant is null or
 `{"actions":["<explicit delegated action>"],"reference":"<actual grant evidence>"}`; a draft-PR grant is
 null or `{"destination":"<explicit destination>","reference":"<actual grant evidence>"}`. Null remains
 ungranted; an owner-response reference, roadmap offer or passing check grants neither by inference.
 
+The observer set has no payload key of its own, and none may be added. Record it as one `conventions`
+entry that starts with the fixed prefix `Observer set:`, listing what is observed and, after `Not
+observed:`, what is not. Name it once, here; later equivalence gates and patch reviews cite this entry
+instead of defining "observable" again. A project that has no auto agreement states the same set in an
+`observer-set.md` file in the target's extraction workspace directory (`<extract_workspace>/<target>/`).
+
 Prepare the actual payload and present its exact content/version in the initial discussion. The
-exported `agreementPayloadSha256` computes compact UTF-8 JSON of `{schema,schemaVersion,mode,payload}`
-with recursively sorted keys, preserved array order/string bytes and no newline. For a temporary
-`$AGREEMENT` envelope, compute its digest without creating an approval:
+drafting helper `fvs-auto-agreement.mjs`, installed next to the engine, builds it: the choices, the
+choices generation and the state schema version come from the recorded state, so they are never
+retyped, and the digest is computed by the engine's own `agreementPayloadSha256` (compact UTF-8 JSON of
+`{schema,schemaVersion,mode,payload}` with recursively sorted keys, preserved array order and string
+bytes, no newline). Write the owner-visible fields to a temporary `$DRAFT` JSON file: `layout`,
+`claims`, `trust`, `acceptance`, `ownerReserved`, plus `boundaries`, `conventions`, `execution` and
+`draftPr` where agreed. Then draft without creating an approval:
 
 ```bash
-node --input-type=module - "$AUTO" "$AGREEMENT" <<'NODE'
-import fs from 'node:fs';
-import { pathToFileURL } from 'node:url';
-const { agreementPayloadSha256 } = await import(pathToFileURL(process.argv[2]).href);
-console.log(agreementPayloadSha256(JSON.parse(fs.readFileSync(process.argv[3], 'utf8'))));
-NODE
+HELPER="$(dirname "$AUTO")/fvs-auto-agreement.mjs"
+node "$HELPER" --project-root . --input "$DRAFT"
 ```
 
-Only after reading the actual applicable response/grants associate them with that exact payload and
-retain the response text/reference. Human authenticity is declared workflow evidence, not independent
-authentication. The operation compares actual retained content and never treats a supplied hash alone
-as approval. After writing this envelope into the existing roadmap Decisions section, pass an exact
-copy as temporary input:
+Without `ownerEvidence` the helper prints the payload and its digest and nothing else. It checks the
+payload against the engine's own record rules on a scratch copy in a temporary directory outside the
+project (a project-local `TMPDIR` is skipped), so a refusal appears now, naming the field. This dry run
+writes nothing in the project. Show the owner the printed payload.
+
+Only after reading the actual applicable response/grants associate them with that exact payload: add
+the owner's reply, word for word, to `$DRAFT` as `"ownerEvidence": {"reference": "<where the reply
+is>", "response": "<the reply text>"}`. Never write that reply yourself. Human authenticity is declared
+workflow evidence, not independent authentication. Run the helper again with `--out "$AGREEMENT"`, a
+new file it never overwrites. Choose it outside the project's `.formalising` directory (a temporary
+file is fine); the helper resolves links on both the destination and the `.formalising` directory (a
+linked `.formalising` or `auto-fv` counts where it really lives) and refuses a destination under
+`.formalising` or among the engine scripts, so it does not create or replace the state, the externals
+record or the roadmap. A new file elsewhere, even inside the project, is allowed. These checks are
+static; `auto-seats.md` says what they do not cover:
 
 ```bash
-node "$AUTO" record-agreement --project-root . --input "$AGREEMENT"
+node "$HELPER" --project-root . --input "$DRAFT" --out "$AGREEMENT"
 ```
+
+The helper then prints the finished fence and the one command only the owner runs. Put the fence under
+the roadmap's `## Decisions` as the only current fence, then ask the owner to run the printed command
+in their own terminal: it is `fvs-auto.mjs record-agreement`
+with `--input` the new file and `--project-root` the project. The helper never records the agreement
+and never edits the roadmap or the state. The record step compares actual retained content and never
+treats a supplied hash alone as approval. When the owner has run it, read the state again (Step 5). `auto-seats.md` lists which seat (owner,
+orchestrator or worker) runs each engine operation.
 
 A changed successor needs a greater `contextVersion` and explicit confirmation of the exact affected
-agreement before `--confirm-overwrite`. History is retained. `unchanged` replays write nothing. Missing,
+agreement before `--confirm-overwrite`; the helper picks the next free version, and the command it
+prints carries `--confirm-overwrite` only for a successor. History is retained. `unchanged` replays write nothing. Missing,
 malformed, unknown/future/public-API mode, mismatched content or stale generation/context refuses;
 show the actual reason and resolve only the affected agreement. No operation selects roots or grants
 publication, launches workers, resets budgets or reinterprets `nodeHours`.
@@ -215,11 +243,11 @@ outside/unresolved discovered roots before any later dispatch; never silently ad
 
 ## Step 6: Apply the recorded memory disposition
 
-For v2 disabled memory, retain the explicit disabled disposition and continue to Step7 with
+For v2 disabled memory, retain the explicit disabled disposition and continue to Step 7 with
 `memoryRequest:null`; no backend command or substitute prime receipt is produced. For enabled Beads,
 follow the existing bootstrap path below. Existing v1 records keep their original memory requirements.
 
-Follow `auto-memory.md` after Step5's stored-context AND semantic applicability checks. Use the recorded
+Follow `auto-memory.md` after Step 5's stored-context AND semantic applicability checks. Use the recorded
 canonical primary control root and existing store, never worker-cwd discovery or FVS's development store.
 Register it through the state operation when needed; do not initialize/migrate a missing real store:
 
@@ -228,7 +256,7 @@ node "$AUTO" record-memory --project-root "$PRIMARY" --input "$REGISTRATION"
 ```
 
 The caller owns a fresh UUID, actual target project/session/resume identity and expected canonical
-binding/context. Prepare and retain its current request before invoking a route. For a configured coordinator continuation, follow Step7/`auto-resume.md`; its `state` operation performs this fresh20 refresh and independent consumption. The standalone coordinator route remains:
+binding/context. Prepare and retain its current request before invoking a route. For a configured coordinator continuation, follow Step 7/`auto-resume.md`; its `state` operation performs this fresh memory refresh and independent consumption. The standalone coordinator route remains:
 
 ```bash
 node "$AUTO" refresh-memory --project-root "$PRIMARY" --request "$REQUEST" --out "$MEMORY_OUT"
@@ -259,20 +287,20 @@ not another scope interview. Legacy M1 reads and the standalone worker prime rem
 When the actual AO orchestrator has the complete current execution grant, stage manifest, controller
 request and original accounting, continue directly through `fv-skills/references/auto-transitions.md`. It owns the bounded
 proposal/before/effect/after loop through specification, fresh review, proof and serial independent
-checks to the17 reference handoff. Do not ask the owner to launch each stage. Fill operational inputs
+checks to the draft-PR reference handoff. Do not ask the owner to launch each stage. Fill operational inputs
 from actual state and existing decisions; a genuinely missing capability/input is partial. Initial
 scope agreement and final human PR decision remain the human gates. Actual live provider execution
-requires the separately concrete19 setup/permission; fixture qualification supplies no such grant.
+requires separately granted concrete setup/permission; fixture qualification supplies no such grant.
 
 Use that reference's **Production driver: authorized v2 continuation** recipe: resolve its one
 trusted engine and closed caller context, then use `prepareCurrentRequest`/`advanceOnce` and the
 actual paired effect/after APIs. Continue extraction/discovery → `auto-top-specs` actual author and
-fresh bound14 review → `auto-execute` dependency-ready proof, serial15 acceptance and17 human bundle.
+fresh contract-bound review → `auto-execute` dependency-ready proof, serial checker acceptance and the human review bundle.
 Existing input/grant/profile/capability gaps remain partial; v2 or agreement storage alone enables
 nothing. Keep the original run on resume and explain stale-store revisions through the finite
-v2basis route. Do not ask the owner to manually launch the next stage.
+v2 basis route. Do not ask the owner to manually launch the next stage.
 
-Without that complete opt-in context, report the available16 continuation below and stop. Do not
+Without that complete opt-in context, report the available continuation below and stop. Do not
 infer dispatch permission from a stored agreement, remembered grant, partial result or worker verdict.
 
 ## Step 8: Report the available continuation
@@ -288,9 +316,9 @@ Memory:           {explicitly disabled | unregistered | missing | stale | blocke
 Pending decision: {only affected missing initial decisions, or none}
 ```
 
-Report the script's actual refusal/next step when blocked. Successful agreement storage is ticket12
-slice readiness only. The configured20 adapter reports current memory-primed;16 records checkpoints and
-current observations, while the opt-in controller uses the separate current22 transition protocol.
+Report the script's actual refusal/next step when blocked. Successful agreement storage is agreement-and-scope
+readiness only. The configured memory adapter reports current memory-primed; the resume coordinator records checkpoints and
+current observations, while the opt-in controller uses the separate current transition protocol.
 The legacy `nextAction` string may name an extraction or M2 placeholder; it is not executable authority.
 Report only actual current checker receipts and whole-scope gaps. Local FVS-development Beads is not
 target-project memory.

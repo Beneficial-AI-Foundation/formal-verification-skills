@@ -31,7 +31,7 @@ Follow the auto-top-specs workflow. Finish with its report block, which always c
 - [ ] Reports the recorded state read through `fvs-auto.mjs read-state`, or why it cannot.
 - [ ] Legacy/read-only routes stop with "milestone 2 functionality not yet available" without writes or dispatch.
 - [ ] V2 alone grants nothing: missing agreement/grant/profile/controller/capability remains partial.
-- [ ] Authorized selection uses actual10/21/13 identities; public-API mode stays held.
-- [ ] An actual author and fresh reviewer use distinct issued assignments; Other responses are bound to14 before dispatch.
+- [ ] Authorized selection uses the real discovery, dependency-record and closure-ownership identities; public-API mode stays held.
+- [ ] An actual author and fresh reviewer use distinct issued assignments; Other responses are bound to the contract registry before dispatch.
 - [ ] Edits/failed reviews iterate within the original agreement; changed candidate/head requires fresh review.
 </success_criteria>

@@ -3,7 +3,7 @@
 <purpose>
 One permanent primary store belongs to one verification project. The local Beads store used to develop
 FVS is not the target project's memory. This adapter supports an explicitly registered local embedded
-Beads1.3.1 store; it is not an installation requirement for other FVS commands or legacy M1 state reads.
+Beads 1.3.1 store; it is not an installation requirement for other FVS commands or legacy M1 state reads.
 Missing/unsupported tools or stores stop the bootstrap with the actual reason, without installation,
 migration, ancestor/global fallback or automatic `bd init`.
 
@@ -75,7 +75,7 @@ fs.writeFileSync(requestFile, JSON.stringify(request, null, 2) + '\n', { flag: '
 
 The helper derives the expected binding revision/hash, choices generation, agreement context hash and
 canonical memory-context hash. It computes no caller nonce and grants no readiness. Both the registered
-binding and12's current agreement plus its mandatory canonical/owner semantic check remain required.
+binding and the current agreement, plus its mandatory canonical/owner semantic check, remain required.
 
 ## Coordinator refresh and worker read-only prime
 
@@ -122,7 +122,7 @@ without resetting or pretending it primed. Do not overwrite earlier evidence or 
 
 Runtime prime observations stay in their exclusive evidence directory, not auto-state or memory content;
 only explicit registration changes state. Refresh does not reset budgets or gratuitously alter proof-
-bound state bytes.16 must reconcile its canonical checkpoints/sessions/receipts and refresh this context;
-22 must invoke the fresh gate before dispatch, and workers prime again before verification actions.
-The16 coordinator consumer is documented in `auto-resume.md`;22 dispatch wiring and the live stock-AO
+bound state bytes. The resume coordinator must reconcile its canonical checkpoints/sessions/receipts and refresh this context;
+the orchestration controller must invoke the fresh gate before dispatch, and workers prime again before verification actions.
+The resume coordinator's consumer is documented in `auto-resume.md`; the controller's dispatch wiring and the live stock-AO
 qualification remain separate. This memory adapter itself establishes neither.

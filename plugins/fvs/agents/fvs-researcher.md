@@ -103,7 +103,7 @@ execution. If the feedback path may launch builds, use the parent's conservative
 For metric/printed-view limitations identify the exact gap and an existing project check or explicit
 review route. A helper limitation alone is not evidence that valid Lean cannot be refactored.
 Use the parent's resolved effective project pin/override, installed executables and capability plan.
-Check reuse/tactic/linter claims against that context; a4.31 example is not universal support.
+Check reuse/tactic/linter claims against that context; a Lean 4.31 example is not universal support.
 Report missing capability separately from proof errors; do not install or change pins.
 
 1. Identify complete proofs, existing helper/results and actual declaration types/assumptions.

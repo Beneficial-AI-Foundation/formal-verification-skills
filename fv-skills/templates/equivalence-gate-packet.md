@@ -17,6 +17,8 @@ only what changed, with a line or two of context.}
 
 **Site:** `{file}:{line-range}` -- `{function or item name}`
 **Blocker cleared:** `{catalog id or NOVEL}` -- {one line on what was failing}
+**Line-preserving:** {yes -- the change sits on an existing line, or each hunk keeps its line count}
+**Known issues:** {the tracker link and outcome the loop recorded before writing this patch, or `none found`, or `not checked: <why>`}
 
 ## 2. Obligation
 The specific equivalence this change relies on. Tick exactly one:
@@ -27,9 +29,10 @@ The specific equivalence this change relies on. Tick exactly one:
 - [ ] **fork === upstream** (ungated source rewrite -- the production source
       itself changed; the rewritten body must behave identically to the original)
 
-"Observable" = return values, errors as callers distinguish them, external
-effects. Differences invisible to every caller (a log string, an internal
-variable name) are not observable; differences a caller can branch on are.
+What counts as observable is the target's observer set, agreed once (the
+agreement's `Observer set:` entry, or `observer-set.md` for a standalone run).
+Cite it here; do not define "observable" again. Differences outside the set are
+not observed; differences a caller can branch on inside it are.
 
 **Instantiated obligation:** {state the equivalence concretely for THIS change,
 e.g. "on a non-canonical input, the rewritten function's observable behaviour
@@ -41,11 +44,19 @@ independent assessor (NOT the agent that proposed the change). Be honest about
 every assumption it rests on -- name the inputs, the callers, and the error
 paths it depends on. State what would make the argument false.}
 
+**Reviewer verdict:** {no objection | objection: <observer or line>} -- the
+assessor's verdict as patch reviewer. "No objection" is not a ratification.
+
 ## 4. Blast radius
 {What a caller could distinguish between before and after. List the observers:
 direct callers, error matchers, any external interface. For each, say whether it
 can branch on the difference. The classic miss: "this error variant is
 equivalent" when some caller pattern-matches the specific variant.}
+
+- **Panic occurrence and the file and line it reports:** {does the rewritten code
+  panic in exactly the cases the original did, and does the panic still report the
+  same file and line? A rewrite kept on the same line can still change the column
+  or the message; say whether the observer set covers them.}
 
 ## 5. Alternatives considered
 {Could this have been a lower-cost, non-meaning-bearing change?}
@@ -64,8 +75,9 @@ have been to make the item opaque, say what that would have erased from the
 verified deliverable.}
 
 ## 7. Independent checklist
-The reviewer's OWN checks. Do NOT simply accept the drafted argument in
-section 3 -- that would re-collapse the independent judgment the gate exists to
+The stamper's OWN checks (the owner, or someone the owner explicitly delegated
+to). Do NOT simply accept the drafted argument in section 3, or the reviewer's
+verdict -- that would re-collapse the independent judgment the gate exists to
 provide. Tick each only after checking it yourself:
 
 - [ ] **Is the obligation the right one?** Does section 2 name the correct
@@ -73,7 +85,12 @@ provide. Tick each only after checking it yourself:
 - [ ] **Is the argument sound?** Not just plausible -- does it actually hold,
       including edge cases and error paths?
 - [ ] **Are there observers the assessor missed?** Any caller, error matcher, or
-      external interface that *can* distinguish before/after?
+      external interface that *can* distinguish before/after? Was every member
+      of the observer set checked?
+- [ ] **Is the patch line-preserving?** The change sits on an existing line, or
+      each hunk keeps its line count, so no other line of the file moved.
+- [ ] **Panic occurrence and the file and line it reports: unchanged?** Checked
+      against the rewritten code, not only against the drafted argument.
 - [ ] **Is there a cheaper alternative overlooked?** A config-only route, a
       tighter opacity that keeps coverage?
 - [ ] **Is the divergence acceptable and reversible?** For a fork === upstream
@@ -87,14 +104,28 @@ the identical one.
 ---
 
 ## Ratification token
-Stamped by the human reviewer once every box in section 7 passes. The success
-oracle refuses to mark the run "complete" while this token is absent -- a packet
-with no token is not a ratified change.
+Stamped by the owner, or by someone the owner explicitly delegated to (a person,
+or a model or session the owner named), once every box in section 7 passes. The
+success oracle refuses to mark the run "complete" while this token is absent -- a
+packet with no token is not a ratified change. The loop never stamps it, the
+patch writer never stamps it, and a reviewer's "no objection"
+is not a stamp: ratifying is a separate action, taken after the verdict.
 
 ```
 Reviewed-by: {name}
+Delegation: {owner | recorded in <where the owner wrote the delegation>}
 equivalence-ratified: {YYYY-MM-DD}
 ```
+
+When the owner stamps it, `Delegation:` reads `owner`. When someone else stamps
+it, `Delegation:` names the place the owner recorded the delegation (a dated note
+in the run's escalation file, or the agreement) and the scope it covers, so the
+delegation can be checked later. A delegate that is a model or session is named
+on `Reviewed-by:` by runtime, model and session id, acts only inside the recorded
+scope, and is independent of the patch author: never the model or session that
+wrote the patch. A model that also reviewed the patch may ratify if the owner
+named it, but only in its own action after the verdict, and only after working
+section 7 itself.
 
 (Rejection, if any: record the reason here so the loop does not re-propose the
 identical change.)
@@ -112,9 +143,15 @@ change and clears it. Three distinct roles:
 - **A separate, high-effort assessor agent** drafts sections 2-6 (the obligation,
   the equivalence argument, blast radius, alternatives, coverage rationale). It
   is NOT the proposing agent: a party that authored a change cannot be the
-  independent judge of whether the change preserves meaning.
-- **The human reviewer** works section 7 (their own independent checks) and, only
-  if every box passes, stamps the ratification token.
+  independent judge of whether the change preserves meaning. When the change is a
+  new patch that a model wrote, the assessor is also the patch reviewer: a model
+  other than the writer, which tries to break the patch and adds the `Reviewer
+  verdict:` line to section 3.
+- **The owner, or someone the owner explicitly delegated to,** works section 7
+  (their own independent checks) and, only if every box passes, stamps the
+  ratification token. The delegate may be a person, or a model or session the
+  owner named, within the scope the owner recorded. The delegation is recorded,
+  never assumed, and the reviewer's verdict is never read as the stamp.
 
 Reviewer competence required = **Rust expertise** (the obligation is observable
 Rust-behaviour equivalence). It is NOT a crypto or Lean review. The packet is
@@ -142,6 +179,8 @@ equivalent" is not. State what input or caller would break the argument.
 ### 4. Blast radius
 Enumerate observers, do not hand-wave "no one cares". A single caller that
 pattern-matches a discarded error variant is enough to falsify the obligation.
+State separately whether the rewritten code still panics in exactly the cases the
+original did, and whether the panic still reports the same file and line.
 
 ### 5. Alternatives considered
 This is where the assessor must justify NOT taking a cheap opacity escape when
@@ -173,16 +212,16 @@ record for the change it gates. Audit trail and gate are one artifact.
    -- the obligation, the equivalence argument, blast radius, alternatives, and
    coverage rationale. The proposer does not write these.
 
-3. **Ratified (or rejected).** The human reviewer works section 7's checklist
-   independently. If every box passes, they stamp the ratification token; the
-   change is now a ratified Category-B change. If any box fails, they record the
-   rejection reason; the loop must propose a different/smaller change and never
-   re-submit the identical one.
+3. **Ratified (or rejected).** The owner, or the person the owner delegated to,
+   works section 7's checklist independently. If every box passes, they stamp the
+   ratification token; the change is now a ratified Category-B change. If any box
+   fails, they record the rejection reason; the loop must propose a
+   different/smaller change and never re-submit the identical one.
 
 4. **Becomes the reversible record.** The ratified packet -- its minimized diff
    plus the stamped token -- IS the reversible record for this B-change. The diff
-   is machine-reversible (revert the exact lines); the token proves a human judged
-   the meaning preserved. There is no second audit document: the gate artifact and
+   is machine-reversible (revert the exact lines); the token proves an
+   independent person judged the meaning preserved. There is no second audit document: the gate artifact and
    the audit trail are the same file.
 
 5. **Reconciled on re-extraction / pin bump.** When the toolchain pin advances or
@@ -217,14 +256,17 @@ proposed fix replaced that one statement with a payload-free error variant.
 **Site:** the recipient-side accept entry function -- the early-return error path.
 **Blocker cleared:** `NO-BOTTOMS` -- the symbolic interpreter aborts on the
 early-return `Err` whose variant carries a `&'static str` literal payload.
+**Line-preserving:** yes -- the one statement is replaced on its own line.
+**Known issues:** none found (tracker searched before the patch was written).
 
 ## 2. Obligation
 - [ ] **extraction === production**
 - [x] **fork === upstream** (ungated source rewrite -- the shared source itself
       changed; production now uses the rewritten error path)
 
-"Observable" = return values, errors as callers distinguish them, external
-effects.
+Observable here means what the target's observer set lists (the agreement's
+`Observer set:` entry): the error a caller receives and can branch on, and the
+panic occurrence and the file and line a panic reports.
 
 **Instantiated obligation:** on the exact non-canonical input that reaches this
 early return, the rewritten function's observable behaviour (the error a caller
@@ -243,11 +285,19 @@ precisely what the original would have produced anyway, one step earlier.
 **Assumption it rests on:** no in-scope caller branches on the specific
 `InvalidMessage(PreKeyKind, _)` variant; if one did, the argument is false.
 
+**Reviewer verdict:** no objection -- the reviewer found no caller that tells the
+two variants apart and no change to where the function can panic.
+
 ## 4. Blast radius
 Observers: the callers of the accept entry function and their error matchers. All
 treat both variants as the same "key agreement failed" class. No caller in scope
 pattern-matches the discarded `InvalidMessage(PreKeyKind, _)` variant distinctly.
 No external interface serializes the discarded string.
+
+- **Panic occurrence and the file and line it reports:** the rewritten statement
+  contains no panicking operation, and every other line of the file keeps its
+  number, so any panic elsewhere in the function reports the same file and line
+  as before.
 
 ## 5. Alternatives considered
 - Make the function opaque (`charon::opaque`)? Rejected: this is the single most
@@ -271,7 +321,12 @@ for doing source work here instead of trusting the function.
       distinguishes the two variants, and the downstream agreement step would
       itself yield `InvalidKeyAgreement`.
 - [x] **Are there observers the assessor missed?** No caller, matcher, or external
-      interface distinguishes before/after within scope.
+      interface distinguishes before/after within scope; every entry of the
+      observer set was checked.
+- [x] **Is the patch line-preserving?** Yes -- one statement replaced on its own
+      line, no line added or removed.
+- [x] **Panic occurrence and the file and line it reports: unchanged?** Yes,
+      checked against the rewritten function body.
 - [x] **Is there a cheaper alternative overlooked?** The only cheaper route was
       opacity, which would destroy required coverage -- correctly rejected.
 - [x] **Is the divergence acceptable and reversible?** Yes -- a discarded log
@@ -283,6 +338,7 @@ for doing source work here instead of trusting the function.
 
 ```
 Reviewed-by: reviewer (Rust)
+Delegation: recorded in the escalation note dated 2026-05-07
 equivalence-ratified: 2026-05-08
 ```
 

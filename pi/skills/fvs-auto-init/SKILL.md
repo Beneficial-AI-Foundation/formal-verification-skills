@@ -21,8 +21,8 @@ specifications are required initially.
 Persist choices and the exact declared agreement through `scripts/fvs-auto.mjs`; use the mandatory
 `read-state --require-agreement` stored-context gate AND the workflow's canonical semantic check.
 A roadmap-offer decision alone is not agreement or authorization. Material changes need explicit
-confirmation; routine progress does not reopen setup. Public-API selection remains unsupported
-pending separately permitted visibility landing.
+confirmation; routine progress does not reopen setup. Public-API selection is not supported in this
+release.
 
 Output: recorded setup/agreement and the available continuation or exact refusal. Agreement storage
 alone launches no workers or proofs. With complete authorized v2 controller context, continue the

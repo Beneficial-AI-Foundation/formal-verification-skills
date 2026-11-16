@@ -82,7 +82,7 @@ run Lake in the shared workspace.
 Run from the validated project root. Preserve toolchain/dependency pins. First apply the inlined
 reference's project-toolchain/capability preflight. Resolve file/env/directory overrides, require the
 exact toolchain already installed, and bind `PROJECT_LEAN`/`PROJECT_LAKE` to its actual executables.
-Never use a global/default4.31, install/download a missing toolchain, reset an override or change a
+Never use a global/default 4.31, install/download a missing toolchain, reset an override or change a
 pin to make an example work. If no supported no-network resolver exists, validate the project's
 existing installed setup explicitly; do not fall back to `elan show`/`which` or a guessed global.
 Record actual versions, relevant config/environment overrides and dependency identities. Check

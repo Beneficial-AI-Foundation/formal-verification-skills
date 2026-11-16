@@ -333,6 +333,177 @@ describe('auto-setup reference: tested matrix', () => {
   });
 });
 
+describe('auto-setup reference: running under Agent Orchestrator and Codex', () => {
+  const topics = ['Permissions and command rules', 'Agent Orchestrator setup', 'Codex trust', 'Owner-run steps',
+    'Starting a run with /goal', 'Reports, links and owner questions', 'Reading the primary checkout safely'];
+
+  it('has one section for each setup topic, before the tested matrix', () => {
+    const at = topics.map((topic) => raw.indexOf(`\n## ${topic}\n`));
+    assert.ok(at.every((index, i) => index >= 0 && index < raw.indexOf('\n## Tested matrix') && (i === 0 || index > at[i - 1])),
+      `sections in order: ${at}`);
+  });
+
+  it('keeps the command habits for every worker and the wildcard-rule warning', () => {
+    const text = flat(section(raw, 'Permissions and command rules'));
+    assert.match(text, /One simple command per call, for every worker/);
+    assert.match(text, /no `cd` followed by a command/);
+    assert.match(text, /words inside quoted text/);
+    assert.match(text, /an ask rule takes precedence over an allow rule/);
+    assert.match(text, /Describe commands in words/);
+    assert.match(text, /about 30 minutes/);
+    assert.match(text, /needs a twin for the rewritten form/);
+  });
+
+  it('keeps wildcard-message and API-restriction advice out of the default habits and states when each note applies', () => {
+    const bullets = section(raw, 'Permissions and command rules').split(/\n(?=- \*\*)/).filter((b) => b.startsWith('- **'));
+    const optional = bullets.filter((b) => /\(optional note\)/.test(b.split('\n')[0] + b.split('\n')[1]));
+    const defaults = bullets.filter((b) => !optional.includes(b));
+    assert.equal(defaults.length, 3, 'three default habits');
+    assert.equal(optional.length, 3, 'three optional notes');
+    for (const bullet of defaults) {
+      assert.doesNotMatch(flat(bullet), /wildcard|`gh api`|`ao send`|Describe commands in words|wrapper/i, `default habit carries an optional-note topic: ${bullet.slice(0, 60)}`);
+    }
+    const byTitle = (pattern) => optional.find((b) => pattern.test(b));
+    const wildcard = flat(byTitle(/Describe commands in words/));
+    assert.match(wildcard, /This applies only if you wrote a permission rule that asks before any command starting with a wildcard/);
+    assert.match(wildcard, /call `ao` itself directly, not through a wrapper/);
+    const api = flat(byTitle(/Read pull requests without `gh api`/));
+    assert.match(api, /This applies only if your permission rules or your project's own rules block `gh api`/);
+    assert.match(api, /`gh pr view` and `gh pr diff`/);
+    // The advice must agree with the read-only known-issues step, which allows `gh api` with an explicit read method.
+    assert.match(api, /`gh api` with an explicit read method, `gh search` or `curl` on a public page/);
+    assert.match(api, /records the search as `not checked`/);
+    assert.match(flat(fs.readFileSync(path.join(ROOT, 'fv-skills', 'workflows', 'aeneas-extract.md'), 'utf8')),
+      /a `gh api` call with an explicit read method, `gh search`, or `curl` on a public page/);
+    assert.match(flat(section(raw, 'Permissions and command rules')), /The notes below apply only in the setup each one names/);
+  });
+
+  it('names the personal command-rewriting tool only inside its optional note', () => {
+    const outside = raw.split('\n').filter((line) => /\brtk\b/i.test(line));
+    assert.equal(outside.length, 1, 'RTK appears once');
+    assert.match(flat(section(raw, 'Permissions and command rules')), /\(optional note\)[^]*RTK is one such tool/);
+  });
+
+  it('says why a linked .claude folder does not work, as the permission helper itself checks', () => {
+    const helper = fs.readFileSync(path.join(ROOT, 'scripts', 'fvs-auto-actor-permissions.py'), 'utf8');
+    assert.ok(helper.includes('actor .claude is not a real directory'), 'the helper no longer refuses a linked .claude');
+    const text = flat(section(raw, 'Agent Orchestrator setup'));
+    assert.match(text, /refuses a `\.claude` that is a link/);
+    assert.match(text, /Never share one settings file between actors/);
+    assert.match(text, /Both are untested/);
+  });
+
+  it('warns that a full config replacement drops what it does not name, and ties the model rule to the config', () => {
+    const text = flat(section(raw, 'Agent Orchestrator setup'));
+    assert.match(text, /`--config-json` is different: it replaces the whole config/);
+    assert.match(text, /Read the saved config first, change one field, send the whole object back/);
+    assert.match(text, /Model aliases: writer = <model id>/);
+    assert.match(text, /FVS names no model/);
+    assert.match(text, /separate from FVS's own model settings \(`\/fvs:configure`, `model-profiles\.md`\)/);
+    assert.ok(fs.existsSync(path.join(ROOT, 'fv-skills', 'references', 'model-profiles.md')));
+  });
+
+  it('says rule changes reach only later sessions, and how a live session re-reads them', () => {
+    const text = flat(section(raw, 'Agent Orchestrator setup'));
+    assert.match(text, /Rule changes reach only sessions that start afterwards/);
+    assert.match(text, /message every live session/);
+    assert.match(text, /re-read them with `ao project get <id> --json`/);
+  });
+
+  it('marks the Codex facts as seen in one setup and gives the model-free check', () => {
+    const text = flat(section(raw, 'Codex trust'));
+    assert.match(text, /seen in one setup; re-check it on your version/);
+    assert.match(text, /`trust_level = "trusted"`/);
+    assert.match(text, /`trusted_hash`/);
+    assert.match(text, /`codex debug prompt-input`/);
+  });
+
+  it('names the owner-run steps and points the agreement to the helper and the seat page', () => {
+    const text = flat(section(raw, 'Owner-run steps'));
+    assert.match(text, /`auto-seats\.md`/);
+    assert.match(text, /`fvs-auto-agreement\.mjs`/);
+    assert.match(text, /The helper never records anything/);
+    assert.ok(fs.existsSync(path.join(ROOT, 'scripts', 'fvs-auto-agreement.mjs')));
+  });
+
+  it('gives a goal wording that accepts an owner gate as done', () => {
+    const text = flat(section(raw, 'Starting a run with /goal'));
+    assert.match(text, /\/goal Run the auto track under the current agreement until the first checked proof\. Reaching an owner gate, reported once in plain chat, counts as done for now\./);
+    assert.match(text, /say so once in plain chat and stop/);
+  });
+
+  it('follows an app-only link with the plain absolute path and asks owner questions in plain words', () => {
+    const text = flat(section(raw, 'Reports, links and owner questions'));
+    assert.match(text, /always followed by the plain absolute path/);
+    assert.match(text, /what happens next, what it costs and what stays blocked/);
+    assert.match(text, /recommended, with a one-line reason/);
+  });
+});
+
+describe('auto-setup reference: probe statuses and stage lines', () => {
+  const rowFor = (heading, key) => {
+    const row = section(raw, heading).split('\n').find((line) => line.startsWith(`| \`${key}\` |`));
+    assert.ok(row, `row ${key}`);
+    return flat(row);
+  };
+
+  it('names every probe status as a row', () => {
+    for (const status of ['qualified', 'present-unqualified', 'unverified-blocked', 'missing', 'not-checked']) {
+      rowFor('Probes and stage lines', status);
+    }
+  });
+
+  it('says when a probe is unverified-blocked and which probe-lean version stays blocked', () => {
+    const row = rowFor('Probes and stage lines', 'unverified-blocked');
+    assert.match(row, /its `--version` run fails/);
+    assert.match(row, /`probe-lean` at a version the Lean graph step refuses/);
+    assert.match(row, /has no route here until you replace it/);
+    assert.match(row, /accepts `probe-lean` 0\.14\.0/);
+    assert.match(row, /0\.24\.0 is accepted by the Lean graph step only beside a version 2 Lean constants record/);
+    assert.match(row, /prints `unverified-blocked` for 0\.24\.0/);
+  });
+
+  it('says not-checked covers a host with no read-only confinement', () => {
+    const row = rowFor('Probes and stage lines', 'not-checked');
+    assert.match(row, /no read-only confinement on this host to run the `--version` check in/);
+    assert.match(row, /has no route here until the check can run/);
+  });
+
+  it('reads the provenance disagreement as a warning that the next step only clears', () => {
+    const row = flat(raw.split('\n').find((line) => line.startsWith('| `translation.json`, `lake-manifest.json` and `aeneas-config.yml` disagree')));
+    assert.match(row, /\(a warning: the run goes on\)/);
+    assert.match(row, /Nothing here blocks the run: To clear the provenance warning: Regenerate the extraction so/);
+    assert.doesNotMatch(row, /unblock/i);
+  });
+
+  it('keeps the statement that a stage has no route without a probe in the stage-readiness section only', () => {
+    const own = section(raw, 'Probes and stage lines');
+    assert.match(flat(own), /The stages `auto-top-specs` and `auto-execute` each need `ao`, `lean` and all five probes/);
+    assert.match(rowFor('Probes and stage lines', 'no route here'), /a probe is missing, not checked or blocked/);
+    assert.ok(!raw.replace(own, '').includes('no route here'), 'auto-setup.md says it outside its own stage-readiness section');
+    const others = [
+      path.join('fv-skills', 'workflows', 'auto-top-specs.md'),
+      path.join('fv-skills', 'workflows', 'auto-init.md'),
+      path.join('fv-skills', 'references', 'auto-witness.md'),
+      path.join('fv-skills', 'references', 'auto-resume.md'),
+      path.join('fv-skills', 'references', 'auto-transitions.md'),
+      path.join('commands', 'fvs', 'help.md'),
+      path.join('commands', 'fvs', 'auto-init.md'),
+    ];
+    for (const file of others) {
+      const text = flat(fs.readFileSync(path.join(ROOT, file), 'utf8'));
+      assert.doesNotMatch(text, /no route here|has no route|all five probes/, `${file} restates the stage-readiness rule`);
+    }
+    for (const file of others.slice(0, 3).concat(others[5])) {
+      assert.match(flat(fs.readFileSync(path.join(ROOT, file), 'utf8')), /auto-setup\.md|Probes and stage lines/, `${file} points to the stage-readiness section`);
+    }
+  });
+
+  it('does not quote the engine messages it describes', () => {
+    assert.doesNotMatch(flat(section(raw, 'Probes and stage lines')), /Optional|nothing stops without it|degraded route/);
+  });
+});
+
 describe('README pointer', () => {
   it('links the setup reference', () => {
     const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');

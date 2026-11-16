@@ -14,7 +14,7 @@ description: Continue authorized dependency-ready proof work through checked acc
 <objective>
 For the actual v2 AO orchestrator with current applicable agreement, explicit execution grant,
 resolved role profile and controller context, run the production driver through dependency-ready
-proof work, serial independent15 acceptance and the17 human bundle. Each effect needs its exact
+proof work, serial independent acceptance and the human review bundle. Each effect needs its exact
 paired current checks; worker reports and driver results establish no proof acceptance.
 Legacy/read-only and missing-context invocations retain the reporting stop without dispatch.
 </objective>
@@ -47,7 +47,7 @@ Follow the auto-execute workflow. Finish with its report block, which always car
 - [ ] Reconciles configured continuation through the current caller request, or reports the actual partial reason.
 - [ ] Preserves original scope, execution policy and reservations; v2 alone grants no dispatch.
 - [ ] Stale accepted stores use only existing validated v2basis continuations, never cleared history.
-- [ ] Only current15 receipts count as accepted proofs; whole-scope currentness remains strict.
-- [ ] Final17 output lists every failed/unsupported root and leaves human approval pending.
+- [ ] Only current checker receipts count as accepted proofs; whole-scope currentness remains strict.
+- [ ] Final bundle output lists every failed/unsupported root and leaves human approval pending.
 - [ ] PR publication requires its separate explicit grant.
 </success_criteria>

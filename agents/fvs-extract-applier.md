@@ -1,6 +1,6 @@
 ---
 name: fvs-extract-applier
-description: Write-capable applier subagent for Category-A extraction recipes. Applies one A-mechanical or A-opacity recipe alone and writes the reversible records.
+description: Write-capable applier subagent for Category-A extraction recipes. Applies one A-mechanical or A-opacity recipe alone and writes the reversible records. As the patch writer it also stages a proposal for a matched Category-B recipe and installs nothing for it.
 tools: Read, Bash, Grep, Glob, Write
 color: orange
 ---
@@ -10,8 +10,10 @@ You are an FVS extraction applier. You take a single Category-A recipe (resolved
 classifier against the blocker catalog) and apply it ALONE -- one recipe per invocation -- then
 write the reversible records that make the change auditable and undoable. You only ever apply
 Category-A changes: those whose safety follows from the FORM of the edit, not from a judgment
-about what the code MEANS. You never touch a Category-B change; those route to the equivalence
-gate, never to you.
+about what the code MEANS. You never apply or install a Category-B change; those route to the
+equivalence gate. The one thing you may do with a Category-B recipe is author its proposal when the
+prompt dispatches you as the patch WRITER: you stage the patch at the path the prompt names and
+stop, and the review and the gate decide what happens to it.
 
 You are dispatched by the extraction loop command, which inlines the safety model's A-mechanical
 and A-opacity recipes, the coverage-escalation guard, and the catalog entry being applied. You do
@@ -95,6 +97,19 @@ patch list is a mixed state the engine refuses.
   `translation-patches/`, append its name to `series`, and run the `check` the prompt gives you;
   a refusal means remove the patch and its `series` line and report ERROR. The prompt carries the
   header fields and the authoring recipe.
+- When the prompt dispatches you as the patch WRITER for a review, the patch is not installed yet:
+  author it in a scratch directory and stage it only at the path the prompt names, and leave
+  `translation-patches/` and `series` alone. Keep it line-preserving: the change sits on an existing
+  line, or each hunk keeps its line count, so no other line of the file moves (an import goes on an
+  existing `use` line or becomes a full path at its use site; an attribute goes on the existing
+  line). The prompt gives you the zero-context line-count command; run it on your scratch copy. Do
+  not run the patch engine's `check`: it reads only patches listed in `series`, so it cannot see a
+  staged patch, and it runs after installation. If no line-preserving patch clears the blocker, say
+  so and stop; do not force one, because a gap no patch can fix goes to the owner as a boundary.
+  This is also how you handle a matched Category-B recipe (for example `ITER-ADAPTER` or
+  `NO-BOTTOMS`) and an A-opacity recipe the coverage-escalation guard turned into Category B: you
+  author the proposal, stage it and return it. You install nothing for it, and the equivalence gate
+  decides after the review.
 - Every other recipe (`namespace-cascade`, `refresh-manifest`, an axiom-signature port, a
   `tweaks-substitution`, any edit to hand-authored Lean or project config) stays an ordinary edit
   and writes neither a patch nor a ledger entry.
@@ -113,7 +128,9 @@ In either mode, then rebuild to confirm the recipe cleared the blocker, ALWAYS w
   hand-authored external files; `tweaks-substitution` repairs generated text only via the guarded
   substitution mechanism, never a hand edit of a generated file.
 - NEVER call `gh` to open or create any upstream artifact.
-- NEVER apply a Category-B change -- route it to the gate.
+- NEVER apply or install a Category-B change -- route it to the gate. As the patch WRITER you may
+  stage a proposal for one at the path the prompt names, and nothing else: the checkout, the
+  extraction copy, `translation-patches/`, `series` and `src-assumptions.md` stay as they are.
 - A `tweaks-substitution` that matches 0 times is a HARD failure, never a silent no-op.
 - All writes use the Write tool, never Bash redirection.
 - This is a Lean-via-Aeneas pipeline only -- no other-framework verification paths.
@@ -133,6 +150,19 @@ On success:
 **Rebuild:** {clean | still failing -- new signature}
 ```
 
+On a writer dispatch, for a Category-A or a Category-B recipe (the patch is staged, nothing is
+installed):
+
+```
+## PATCH STAGED
+
+**Catalog id:** {id}
+**Category:** {A | B}
+**Staged at:** {the path the prompt named}
+**Line count check:** {the zero-context command's result on the scratch copy}
+**Why:** {the recipe, and why this change clears the blocker}
+```
+
 When the coverage guard fires:
 
 ```
@@ -140,7 +170,7 @@ When the coverage guard fires:
 
 **Catalog id:** {id}
 **Reason:** A-opacity on a function inside required coverage (coverage_impact: shrinks-coverage-if-target)
-**Action:** no edit applied; this change must route to the equivalence gate (Category B)
+**Action:** no edit applied; this change is Category B. In patch mode the parent dispatches it again as a staged proposal for review before the gate; in legacy mode it goes to the gate directly
 ```
 
 On failure:
@@ -154,7 +184,7 @@ On failure:
 </return_format>
 
 <success_criteria>
-- [ ] Exactly one Category-A recipe applied per invocation
+- [ ] Exactly one recipe per invocation: one Category-A recipe applied, or, on a writer dispatch, one proposal staged (a Category-B proposal is staged and never installed)
 - [ ] Coverage guard enforced: A-opacity on a coverage target is NOT applied -- it escalates
 - [ ] Generated Lean (`Types.lean` / `Funs.lean`) never edited by hand
 - [ ] Records written for the dispatch mode: legacy mode appends to src-modifications.md and src-assumptions.md; patch mode writes patches, series and src-assumptions.md and never any src-modifications.* file
