@@ -353,9 +353,10 @@ command that runs the profile, the resolver or the engine:
 | `FVS_PROBE_LEAN_PATH` | The `probe-lean` executable. |
 | `FVS_PROBE_LEAN_LIBRARY_PATH` | The directory that holds the probe-lean libraries. |
 
-Each path must be absolute and name an executable file (a directory, for the library). A variable that
-is set but unusable is refused with its name in the reason, and the lookup never falls back to the
-default place, so you cannot get a different binary than the one you named. Depending on the project,
+Each path must be absolute and name an executable file (a directory, for the library). An empty
+variable counts as unset, and the default place is used. A variable with a value that is unusable is
+refused with its name in the reason, and the lookup never falls back to the default place, so you
+cannot get a different binary than the one you named. Depending on the project,
 the profile then shows the helpers as `not-checked` or stops with the refusal as its only output. In
 both cases fix or unset the variable and rerun. `rust-analyzer` and `probe-aeneas` have no override: put
 them on PATH.
