@@ -129,7 +129,7 @@ for selection rules and runtime limitations.
                                              /fvs:lean-verify → repeat
 ```
 
-Use `/fvs:map-code` to map dependencies and `/fvs:fc-plan` to choose targets in dependency order.
+Use `/fvs:map-code` to map dependencies and `/fvs:fc-plan` to choose a target.
 The FC prover works on its own within a wall-clock budget, checks its own builds and reports
 VERIFIED only after a cheat audit. Finish with `/fvs:lean-refactor` and `/fvs:trust-audit`.
 `/fvs:model-external` handles external Rust stubs with separate model and specification reviews,
