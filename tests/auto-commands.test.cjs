@@ -897,6 +897,21 @@ describe('auto command and workflow text', () => {
     assert.ok(body.indexOf('Prepare the working branch') < body.indexOf('Write and review, one Rust file at a time'), 'branch preparation comes before authors');
   });
 
+  it('top-specs records each review round per spec file and reads the status before opening the pull request', () => {
+    const body = flat(text('auto-top-specs'));
+    assert.match(body, /Recording the review rounds/);
+    assert.match(body, /node "\$AUTO" record-spec --project-root \. --spec-file PATH --items ID\[,ID\.\.\.\] --round N --verdict pass\|changes\|blocked --review FILE \[--out-of-scope ID\[,ID\.\.\.\]\]/);
+    assert.match(body, /node "\$AUTO" spec-status --project-root \./);
+    assert.match(body, /after every review round, in the project checkout and once the authors' files are on the working branch/i);
+    for (const label of ['spec reviewed: pass', 'spec reviewed: changes requested (round N)', 'spec blocked after N rounds', 'out of scope (noted by agent)']) {
+      assert.ok(body.includes(label), `top-specs lacks the label ${label}`);
+    }
+    assert.match(body, /`readyForPr`: at least one pass, no file still waiting for changes and nothing stale/);
+    assert.match(body, /A blocked file does not hold the pull request back/);
+    assert.match(body, /a round past the third is recorded with a warning/);
+    assert.doesNotMatch(body, /record-pr/, 'the pull request recording step is not written until the engine has it');
+  });
+
   it('execute keeps statements fixed and lets only the build check in a fresh clean copy accept', () => {
     const body = flat(text('auto-execute'));
     assert.match(body, /Start only when the owner has merged the spec pull request/);
