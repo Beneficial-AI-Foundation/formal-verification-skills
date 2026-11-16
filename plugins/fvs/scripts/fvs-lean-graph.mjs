@@ -26,6 +26,10 @@ const EXTERNAL_FIELDS = ['type-dependencies-external', 'term-dependencies-extern
 // defined for these only. Instances are emitted as def. Inductive types are not
 // qualified: their constructors are never emitted as declarations.
 const QUALIFIED_KINDS = ['def', 'theorem', 'structure', 'projection'];
+// With a version 2 constants record, Lean's kernel facts cross-check every
+// label, so axioms, plain inductives (enums), classes and instances are
+// accepted too. Without it these kinds still stop the graph.
+const ORACLE_KINDS = [...QUALIFIED_KINDS, 'axiom', 'inductive', 'class', 'instance'];
 // Lake writes each module's .ilean, listing the declarations Lean elaborated in
 // it, under this directory of the project's own build.
 const ILEAN_DIR = '.lake/build/lib/lean';
@@ -482,7 +486,6 @@ const constantsShapeValid = (constants) => plainObject(constants) && constants.s
 // constants for every project constant are the dependency authority, and
 // probe-lean's declarations stay metadata that is cross-checked against them.
 const CONSTANTS_RUN_SCHEMA = 'fvs/lean-constants-run';
-const AXIOM_POLICY = ['propext', 'Classical.choice', 'Quot.sound'];
 const AXIOM_KINDS = ['def', 'theorem', 'opaque'];
 const SHA256 = /^[0-9a-f]{64}$/;
 // How each probe-lean label must look in Lean's kernel facts.
@@ -491,11 +494,13 @@ const PROBE_KINDS = {
   projection: (node) => node.kind === 'def' && node.isProjection,
   theorem: (node) => node.kind === 'theorem',
   structure: (node) => node.kind === 'inductive' && node.isStructure,
+  inductive: (node) => node.kind === 'inductive' && !node.isStructure,
+  axiom: (node) => node.kind === 'axiom',
   // probe-lean 0.24 labels from Lean's registries.
   class: (node) => node.kind === 'inductive' && node.isStructure && node.isClass === true,
   instance: (node) => node.kind === 'def' && !node.isProjection && node.isInstance === true,
 };
-const ORACLE_CLOSURE_RULE = 'root: type lane; theorem: type lane; other kinds: type + value lanes; structure: + its fields\' projections and constructors';
+const ORACLE_CLOSURE_RULE = 'root: type lane; theorem: type lane; other kinds: type + value lanes; structure: + its fields\' projections and constructors; other inductive: + its constructors';
 
 const importsValid = (value) => plainObject(value) && SHA256.test(value.digest ?? '') &&
   Number.isInteger(value.modules) && value.modules > 0 && Number.isInteger(value.files) && value.files > 0;
@@ -663,7 +668,7 @@ function components(names, successors) {
   return result;
 }
 
-function oracleLanes({ constants, data, ids, defined, modules, libraries, issue }) {
+function oracleLanes({ constants, data, ids, defined, covered, modules, libraries, issue }) {
   const idOf = (name) => `probe:${name}`;
   const byName = new Map(constants.nodes.map((node) => [node.name, node]));
   // A lane target that is no node is external only when Lean places it in a
@@ -676,15 +681,15 @@ function oracleLanes({ constants, data, ids, defined, modules, libraries, issue 
   }
   const atoms = new Set(ids.map((id) => id.slice('probe:'.length)));
   const isSource = (node) => defined.has(node.name);
-  const supportedStructure = (name) => {
+  const supportedInductive = (name) => {
     const node = byName.get(name);
-    return Boolean(node) && node.kind === 'inductive' && node.isStructure && isSource(node) && atoms.has(name);
+    return Boolean(node) && node.kind === 'inductive' && isSource(node) && atoms.has(name);
   };
   const fieldProjections = new Set(constants.nodes.filter((node) => node.kind === 'inductive' && node.isStructure)
     .flatMap((node) => node.fields.map((field) => field.projection)));
   for (const node of constants.nodes) {
     if (!modules.includes(node.module)) issue('node-outside-inventory', `${node.name} is in ${node.module}, not an analysed module`, node.name);
-    if (isSource(node) && !atoms.has(node.name)) issue('unmapped-source-node', `${node.name} is defined in source but is no probe-lean declaration`, node.name);
+    if (isSource(node) && !atoms.has(node.name) && !covered.has(idOf(node.name))) issue('unmapped-source-node', `${node.name} is defined in source but is no probe-lean declaration`, node.name);
     // Only definition projections are qualified. Lean compiles a Prop-valued field's projection as a theorem, which
     // probe-lean 0.14.0 labels theorem and 0.24.0 labels projection; it blocks under both.
     if (node.isProjection && node.kind !== 'def') issue('unsupported-projection', `${node.name} is a projection of kind ${node.kind}, which is not qualified`, node.name);
@@ -703,27 +708,23 @@ function oracleLanes({ constants, data, ids, defined, modules, libraries, issue 
     if (!isSource(node)) {
       const owners = node.kind === 'ctor' ? [node.family?.inductive] : node.kind === 'recursor' ? (node.family?.inductives ?? []) : [];
       const qualified = ['def', 'theorem'].includes(node.kind) ||
-        (['ctor', 'recursor'].includes(node.kind) && owners.length > 0 && owners.every(supportedStructure));
+        (['ctor', 'recursor'].includes(node.kind) && owners.length > 0 && owners.every(supportedInductive));
       if (!qualified) issue('unsupported-generated-kind', `generated ${node.name} has kind ${node.kind}${owners.length ? ` of ${owners.join(', ')}` : ''}, which is not qualified`, node.name);
     }
-    if (node.kind === 'inductive' && node.isStructure) {
+    if (node.kind === 'inductive') {
       const ctors = node.family?.ctors;
       const recursors = node.family?.recursors;
       const bad = [
-        !textList(ctors) || ctors.length === 0 ? 'no constructors' : null,
+        !textList(ctors) || (node.isStructure && ctors.length === 0) ? 'no constructors' : null,
         ...(textList(ctors) ? ctors.filter((ctor) => byName.get(ctor)?.kind !== 'ctor' || byName.get(ctor).family?.inductive !== node.name).map((ctor) => `constructor ${ctor}`) : []),
         ...(textList(recursors) ? recursors.filter((r) => byName.get(r)?.kind !== 'recursor' || !(byName.get(r).family?.inductives ?? []).includes(node.name)).map((r) => `recursor ${r}`) : ['no recursor list']),
         ...(node.fields ?? []).filter((field) => !field.projection || !byName.get(field.projection)?.isProjection).map((field) => `field ${field.field}`),
       ].filter(Boolean);
-      if (bad.length > 0) issue('invalid-structure-family', `structure ${node.name}: ${bad.join(', ')}`, node.name);
+      if (bad.length > 0) issue('invalid-structure-family', `${node.isStructure ? 'structure' : 'inductive'} ${node.name}: ${bad.join(', ')}`, node.name);
     }
-    if (AXIOM_KINDS.includes(node.kind)) {
-      if (!Array.isArray(node.axioms)) issue('axioms-missing', `${node.name} has no axiom set`, node.name);
-      else {
-        const outside = node.axioms.filter((axiom) => !AXIOM_POLICY.includes(axiom));
-        if (outside.length > 0) issue('non-policy-axiom', `${node.name} depends on ${sorted(outside).join(', ')}, outside ${AXIOM_POLICY.join(', ')}`, node.name);
-      }
-    }
+    // The graph records each axiom set as a fact (trust); which axioms a claim
+    // may rest on is the closure plan's policy, so no axiom blocks here.
+    if (AXIOM_KINDS.includes(node.kind) && !Array.isArray(node.axioms)) issue('axioms-missing', `${node.name} has no axiom set`, node.name);
   }
   // Edges: exactly one per lane entry.
   const edges = [];
@@ -744,7 +745,11 @@ function oracleLanes({ constants, data, ids, defined, modules, libraries, issue 
       }
     }
   }
-  // probe-lean against the lanes, lane for lane.
+  // probe-lean against the lanes, lane for lane. A match on an inductive
+  // reaches Lean's lane as the inductive and its matcher; probe-lean names the
+  // matched constructors, which are excused when their inductive is in the lane.
+  const coverOf = new Map(constants.nodes.filter((node) => node.kind === 'inductive' && atoms.has(node.name))
+    .flatMap((node) => [...(node.family?.ctors ?? []), ...(node.family?.recursors ?? [])].map((member) => [member, node.name])));
   const probeUnderReport = [];
   for (const id of ids) {
     const name = id.slice('probe:'.length);
@@ -753,7 +758,7 @@ function oracleLanes({ constants, data, ids, defined, modules, libraries, issue 
     for (const [lane, fields] of [['type', ['type-dependencies', 'type-dependencies-external']], ['value', ['term-dependencies', 'term-dependencies-external']]]) {
       const reported = new Set(fields.flatMap((field) => deps(data[id], field)).map((dep) => dep.slice('probe:'.length)));
       const authoritative = new Set(node[lane]);
-      const missing = [...reported].filter((dep) => !authoritative.has(dep));
+      const missing = [...reported].filter((dep) => !authoritative.has(dep) && !authoritative.has(coverOf.get(dep)));
       if (missing.length > 0) issue('probe-dependency-not-in-lane', `${id}: probe-lean reports ${sorted(missing).join(', ')} in its ${lane} lists, absent from Lean's ${lane} lane`, name);
       const extra = [...authoritative].filter((dep) => !reported.has(dep));
       if (extra.length > 0) probeUnderReport.push({ declaration: id, lane, constants: sorted(extra) });
@@ -806,7 +811,7 @@ function oracleClosure(root, byName, flagged) {
     declarations.add(name);
     queue.push(...node.type);
     if (node.kind !== 'theorem') queue.push(...node.value);
-    if (node.kind === 'inductive' && node.isStructure) {
+    if (node.kind === 'inductive') {
       queue.push(...(node.fields ?? []).map((field) => field.projection).filter(Boolean), ...(node.family?.ctors ?? []));
     }
   }
@@ -883,6 +888,20 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
   const ids = Object.keys(data).sort();
   record.completeness.atomCount = ids.length;
   if (ids.length === 0) block('empty-extract', 'the extract holds no declarations');
+  const constantsVersion2 = plainObject(constants) && constants.version === 2;
+  const atomKinds = constantsVersion2 ? ORACLE_KINDS : QUALIFIED_KINDS;
+  // probe-lean emits no declaration for the constructors and recursor of an
+  // inductive it emits; with Lean's kernel facts these are covered by it.
+  const covered = new Set();
+  if (constantsVersion2 && Array.isArray(constants.nodes)) {
+    for (const node of constants.nodes) {
+      if (plainObject(node) && node.kind === 'inductive' && isText(node.name) && has(data, `probe:${node.name}`) && plainObject(node.family)) {
+        for (const list of [node.family.ctors, node.family.recursors]) {
+          if (textList(list)) for (const member of list) covered.add(`probe:${member}`);
+        }
+      }
+    }
+  }
 
   // Every field the graph is built from must be present and well typed: a
   // missing dependency list is absent evidence, never zero dependencies.
@@ -898,8 +917,8 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
         atom[field].some((dep) => typeof dep !== 'string' || !/^probe:./.test(dep)))),
     ].filter(Boolean);
     if (problems.length > 0) block('malformed-atom', `${id} has missing or ill-typed ${problems.join(', ')}`, { declaration: id });
-    else if (!QUALIFIED_KINDS.includes(atom.kind)) {
-      block('unqualified-kind', `${id} has kind ${JSON.stringify(atom.kind)}; only ${QUALIFIED_KINDS.join(', ')} are qualified for closure traversal`, { declaration: id });
+    else if (!atomKinds.includes(atom.kind)) {
+      block('unqualified-kind', `${id} has kind ${JSON.stringify(atom.kind)}; only ${atomKinds.join(', ')} are qualified for closure traversal`, { declaration: id });
     }
   }
   // JSON.parse keeps only the last of duplicate keys, so a repeated key anywhere
@@ -1039,7 +1058,7 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
     block('no-translation', 'no --project-root: translation.json provenance and declaration coverage are not established');
   }
   for (const id of translation) expected.add(id);
-  record.completeness.missingDeclarations = [...expected].filter((id) => !has(data, id)).sort();
+  record.completeness.missingDeclarations = [...expected].filter((id) => !has(data, id) && !covered.has(id)).sort();
   if (record.completeness.missingDeclarations.length > 0) {
     block('missing-declarations', `declarations listed by translation.json or a requested module's .ilean are not in the extract: ${record.completeness.missingDeclarations.join(', ')}`);
   }
@@ -1096,7 +1115,7 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
     const atom = data[from];
     for (const kind of ['type', 'term']) {
       for (const to of atom[`${kind}-dependencies`]) {
-        const resolution = has(data, to) ? 'local' : 'unresolved';
+        const resolution = has(data, to) || covered.has(to) ? 'local' : 'unresolved';
         if (resolution === 'unresolved') unresolvedFrom.add(from);
         record.edges.push({ from, to, kind, resolution });
       }
@@ -1152,7 +1171,7 @@ export function buildLeanGraph({ extractText, logText = null, receiptText = null
         block(code, reason, node ? { declaration: `probe:${node}` } : {});
       };
       const defined = new Set([...expected].map((id) => id.slice('probe:'.length)));
-      oracle = { ...oracleLanes({ constants, data, ids, defined, modules: Object.keys(record.completeness.modules ?? {}), libraries: requested, issue }), flagged };
+      oracle = { ...oracleLanes({ constants, data, ids, defined, covered, modules: Object.keys(record.completeness.modules ?? {}), libraries: requested, issue }), flagged };
       record.nodes = oracle.nodes;
       record.edges = oracle.edges;
       record.external = sorted(oracle.edges.filter((edge) => edge.resolution === 'external').map((edge) => edge.to));
