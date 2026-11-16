@@ -8,11 +8,11 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import secrets
 import shlex
 import stat
 import subprocess
 import sys
-import tempfile
 
 
 class Refused(Exception):
@@ -48,11 +48,13 @@ def canonical(path):
     return path
 
 
-def read_regular(path):
-    canonical(path)
-    st = os.lstat(path)
+def read_regular(path, dir_fd=None):
+    # With dir_fd, path is a leaf name inside that already pinned directory and is resolved only through it.
+    if dir_fd is None:
+        canonical(path)
+    st = os.lstat(path, dir_fd=dir_fd)
     need(stat.S_ISREG(st.st_mode) and st.st_nlink == 1, 'expected a single-link regular file')
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
     try:
         now = os.fstat(fd)
         need((now.st_dev, now.st_ino) == (st.st_dev, st.st_ino), 'file changed while opening')
@@ -93,10 +95,17 @@ def actor_settings(project_root, association):
          and git(wt, 'symbolic-ref', '-q', 'HEAD') == w['branchRef'], 'actor Git identity drifted')
     descriptor, _ = read_regular(os.path.join(wt, '.git'))
     need(descriptor.decode().strip() == 'gitdir: ' + w['gitDir'], 'actor Git descriptor differs')
+    # The grant is written to this worktree's own settings.local.json. Links to FVS entries inside a real
+    # .claude folder are fine; a linked .claude folder or settings.local.json would put the grant in a shared file.
     directory = os.path.join(wt, '.claude')
+    need(not os.path.islink(directory), 'actor .claude is a link, so its settings.local.json would be shared with other '
+         'worktrees; use a real .claude folder per worktree and link only the FVS entries inside it, never settings.local.json')
     canonical(directory)
     need(stat.S_ISDIR(os.lstat(directory).st_mode), 'actor .claude is not a real directory')
-    return canonical(os.path.join(directory, 'settings.local.json'))
+    file = os.path.join(directory, 'settings.local.json')
+    need(not os.path.islink(file), 'actor settings.local.json is a link to a file shared with other worktrees; '
+         'keep it a real per-worktree file')
+    return canonical(file)
 
 
 def write_exclusive(file, data):
@@ -106,32 +115,61 @@ def write_exclusive(file, data):
         os.fsync(stream.fileno())
 
 
-def merge(file, rules, out, before_commit=None):
-    before, st = read_regular(file)
-    settings = decode(before)
-    need(isinstance(settings, dict) and isinstance(settings.get('hooks'), dict), 'missing AO hooks')
-    need('permissions' not in settings, 'existing permissions require explicit reconciliation')
-    after = (json.dumps({**settings, 'permissions': {'allow': rules}}, indent=2) + '\n').encode()
-    write_exclusive(os.path.join(out, 'before.json'), before)
-    fd, temporary = tempfile.mkstemp(prefix='.settings.local.', dir=os.path.dirname(file))
-    committed = False
+def open_directory(path):
+    # O_NOFOLLOW covers only the last component, so also require that the opened directory is the one the
+    # canonical path names now. Every later step goes through the descriptor, never back through the path.
+    canonical(path)
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
-        with os.fdopen(fd, 'wb') as stream:
-            stream.write(after)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.chmod(temporary, stat.S_IMODE(st.st_mode))
-        if before_commit:
-            before_commit()
-        current, now = read_regular(file)
-        need(current == before and (now.st_dev, now.st_ino, now.st_size, now.st_mtime_ns)
-             == (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns), 'settings drifted; not overwritten')
-        os.replace(temporary, file)
-        committed = True
+        opened, named = os.fstat(fd), os.lstat(path)
+        need((opened.st_dev, opened.st_ino) == (named.st_dev, named.st_ino), 'directory changed while opening')
+        canonical(path)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def merge(file, rules, out, before_commit=None):
+    # The staged file, the final checks and the replace all go through one pinned directory descriptor, so a
+    # swapped path or link cannot redirect the write into another directory. The guarantee is about that
+    # directory object, not its name; a concurrent same-user process that relocates it or links files at that
+    # instant is outside the boundary.
+    directory, name = os.path.split(canonical(file))
+    dir_fd = open_directory(directory)
+    try:
+        before, st = read_regular(name, dir_fd)
+        settings = decode(before)
+        need(isinstance(settings, dict) and isinstance(settings.get('hooks'), dict), 'missing AO hooks')
+        need('permissions' not in settings, 'existing permissions require explicit reconciliation')
+        after = (json.dumps({**settings, 'permissions': {'allow': rules}}, indent=2) + '\n').encode()
+        write_exclusive(os.path.join(out, 'before.json'), before)
+        temporary = '.settings.local.' + secrets.token_hex(8)
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dir_fd)
+        committed = False
+        try:
+            with os.fdopen(fd, 'wb') as stream:
+                need(os.fstat(stream.fileno()).st_nlink == 1, 'staged settings file is linked elsewhere; nothing written')
+                stream.write(after)
+                stream.flush()
+                os.fsync(stream.fileno())
+                os.fchmod(stream.fileno(), stat.S_IMODE(st.st_mode))
+            if before_commit:
+                before_commit()
+            current, now = read_regular(name, dir_fd)
+            need(current == before and (now.st_dev, now.st_ino, now.st_size, now.st_mtime_ns)
+                 == (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns), 'settings drifted; not overwritten')
+            os.replace(temporary, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+            committed = True
+        finally:
+            if not committed:
+                try:
+                    os.unlink(temporary, dir_fd=dir_fd)
+                except FileNotFoundError:
+                    pass
+        installed, _ = read_regular(name, dir_fd)
     finally:
-        if not committed and os.path.lexists(temporary):
-            os.unlink(temporary)
-    installed, _ = read_regular(file)
+        os.close(dir_fd)
     write_exclusive(os.path.join(out, 'after.json'), installed)
     need(installed == after and {k: v for k, v in json.loads(installed).items() if k != 'permissions'} == settings,
          'installed readback differs; hold actor')
