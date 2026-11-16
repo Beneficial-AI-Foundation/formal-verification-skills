@@ -630,6 +630,22 @@ describe('fvs-auto readiness: what each stage can do, computed from a profile', 
     assert.match(broken.reason, /^probe-lean --version failed: cannot load library$/);
   });
 
+  it('a rust-analyzer rustup proxy without the component is missing, not blocked', async (t) => {
+    if (!CONFINED) return t.skip('read-only confinement is unavailable here, so --version is not run');
+    const bin = temporaryDirectory();
+    for (const name of fs.readdirSync(BIN)) fs.copyFileSync(path.join(BIN, name), path.join(bin, name));
+    fs.writeFileSync(path.join(bin, 'rust-analyzer'),
+      "#!/bin/sh\necho \"error: Unknown binary 'rust-analyzer' in official toolchain\" >&2\nexit 1\n", { mode: 0o755 });
+    const result = await profileOf(extractedPilot(), { bin });
+    const analyzer = result.probes.find((entry) => entry.id === 'rust-analyzer');
+    assert.equal(analyzer.status, 'missing');
+    assert.match(analyzer.reason, /^rust-analyzer --version failed: error: Unknown binary/);
+    assert.match(analyzer.lost, /indexer probe-rust uses/);
+    const stage = result.readiness.find((entry) => entry.stage === 'auto-top-specs');
+    assert.match(stage.line, /missing [^;]*rust-analyzer/);
+    assert.doesNotMatch(stage.line, /blocked by [^;]*rust-analyzer/);
+  });
+
   it('treats a recorded probe status it does not know as no route', () => {
     const stage = topSpecs(profileWith({ probes: { scip: { status: 'usable-somehow' } } }));
     assert.equal(stage.status, 'no-route');

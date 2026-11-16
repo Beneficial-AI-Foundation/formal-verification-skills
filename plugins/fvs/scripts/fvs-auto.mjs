@@ -135,7 +135,9 @@ function probeUsable(id, bin, root, selected) {
   const run = readOnlyRun(bin, ['--version'], root, { projectRoot: root, toolPaths: selected });
   const unavailable = run.confinementError ?? (run.output === CONFINEMENT_UNAVAILABLE ? run.output : null);
   if (unavailable) return ['not-checked', `${id} --version was not run: ${unavailable}`];
-  if (!run.ok) return ['unverified-blocked', `${id} --version failed: ${firstLine(run.output) || 'no output'}`];
+  // rustup installs a rust-analyzer proxy that fails until the component is
+  // added, so a failing one is missing, as the resolver also counts it.
+  if (!run.ok) return [id === 'rust-analyzer' ? 'missing' : 'unverified-blocked', `${id} --version failed: ${firstLine(run.output) || 'no output'}`];
   if (id !== 'probe-lean') return ['present-unqualified', null];
   const version = firstLine(run.stdout).split(/\s+/).pop();
   const accepted = acceptedProbeLeanVersions();
