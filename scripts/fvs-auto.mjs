@@ -53,6 +53,7 @@ function usage() {
     '       node fvs-auto.mjs record-externals --input RECORDS.json [--project-root DIR]',
     '       node fvs-auto.mjs record-spec --spec-file PATH --items ID[,ID...] --round N --verdict pass|changes|blocked --review FILE [--out-of-scope ID[,ID...]] [--project-root DIR]',
     '       node fvs-auto.mjs spec-status [--project-root DIR]',
+    '       node fvs-auto.mjs record-pr --kind spec|proof --url URL --branch B --head SHA [--project-root DIR]',
     '       node fvs-auto.mjs freeze|check|accept --request FILE --out EXCLUSIVE_DIR',
     '',
     'profile reports what this host and project can do for the FVS auto track,',
@@ -1168,17 +1169,24 @@ const SPEC_VERDICTS = {
 const HEX64 = /^[0-9a-f]{64}$/;
 
 function specsFileErrors(value) {
-  if (!plainObject(value) || value.schema !== 'fvs/auto-specs' || value.schemaVersion !== 1 || !Array.isArray(value.specs)) {
-    return ['schema must be fvs/auto-specs version 1 with a specs list'];
+  if (!plainObject(value) || value.schema !== 'fvs/auto-specs' || value.schemaVersion !== 1 || !Array.isArray(value.specs)
+    || !(value.prs === undefined || Array.isArray(value.prs))) {
+    return ['schema must be fvs/auto-specs version 1 with a specs list and an optional prs list'];
   }
-  return value.specs.flatMap((row, index) => {
+  const prErrors = (value.prs ?? []).flatMap((pr, index) => {
+    const text = (field) => typeof pr[field] === 'string' && pr[field].length > 0;
+    const ok = plainObject(pr) && PR_KINDS.includes(pr.kind) && (pr.merged === true ? text('mergeCommit') : text('url') && text('branch') && text('head'));
+    return ok ? [] : [`prs[${index}] must be a ${PR_KINDS.join(' or ')} PR with url, branch and head, or a merge with its merge commit`];
+  });
+  return [...prErrors, ...value.specs.flatMap((row, index) => {
     const ids = (list) => Array.isArray(list) && list.every((id) => typeof id === 'string' && id.length > 0);
     const ok = plainObject(row) && typeof row.specFile === 'string' && typeof row.review === 'string'
       && ids(row.items) && row.items.length > 0 && ids(row.outOfScope) && Number.isInteger(row.round) && row.round >= 1
       && Object.hasOwn(SPEC_VERDICTS, row.verdict) && HEX64.test(row.specSha256) && HEX64.test(row.reviewSha256);
     return ok ? [] : [`specs[${index}] must name a spec file, items, a round, a verdict (${Object.keys(SPEC_VERDICTS).join(', ')}) and both hashes`];
-  });
+  })];
 }
+const PR_KINDS = ['spec', 'proof'];
 
 function requireState(root) {
   const state = loadState(root);
@@ -1321,7 +1329,7 @@ export function initState({ projectRoot, choices, confirmOverwrite = false, plat
 // orchestrator spawns stock AO workers and runs the engine steps itself, so no
 // execution grant, stage profile or permission install is asked for. A missing
 // or outdated agreement and a reduced or unverified stage are warnings only.
-function progress(state) {
+function progress(state, specs = null) {
   const blocking = state.profile.items.filter(blocks);
   if (blocking.length > 0) {
     return { phase: 'setup', warnings: [], nextAction: `Setup is blocked: ${blocking.map((entry) => `${entry.id} is ${entry.verdict}`).join(', ')}. ${blocking.map((entry) => entry.nextStep).join(' ')} Then rerun /fvs:auto-init.` };
@@ -1345,8 +1353,11 @@ function progress(state) {
   } else if (agreement.payload.choicesGeneration !== (state.choicesGeneration ?? 0) || choiceChanges(agreement.payload.choices, state.choices).length > 0) {
     warnings.push('the recorded agreement covers earlier choices: a successor agreement is advised; the spec phase does not wait for it');
   }
+  const specPr = (specs?.prs ?? []).filter((pr) => pr.kind === 'spec').at(-1);
   return { phase: 'specs', warnings,
-    nextAction: 'Run /fvs:auto-top-specs from the AO orchestrator for the spec phase: the orchestrator lists the public API items in scope, spawns stock AO workers to write the statements and review them adversarially, and opens one draft spec PR on the project\'s own repository for the owner to merge. No execution grant, stage profile or permission install is needed.'
+    nextAction: (specPr
+      ? `The draft spec PR ${specPr.url} is recorded: the owner reviews and merges it. After the merge, read the merge commit with gh pr view and record it with record-pr --kind spec --merged --merge-commit SHA. A spec refactor is another review round recorded with record-spec, then another record-pr.`
+      : 'Run /fvs:auto-top-specs from the AO orchestrator for the spec phase: the orchestrator lists the public API items in scope, spawns stock AO workers to write the statements and review them adversarially, and opens one draft spec PR on the project\'s own repository for the owner to merge. No execution grant, stage profile or permission install is needed.')
       + warnings.map((warning) => ` Warning: ${warning}.`).join('') };
 }
 
@@ -1368,7 +1379,7 @@ export function readState({ projectRoot, requireAgreement = false }) {
     externals,
     pendingDecisions: requireAgreement || state.roadmap ? [] : ['roadmap'],
     readiness: readiness(state.profile),
-    ...progress(state),
+    ...progress(state, loadSpecs(root)),
     ...(requireAgreement ? { agreement: requireStoredAgreement(root, state) } : {}),
   };
 }
@@ -1810,6 +1821,41 @@ export function specStatus({ projectRoot }) {
   return { code: 'ok', message: `${specFiles.length} spec file(s) recorded in ${specsPath(root)}`, specFiles, readyForPr, blocked };
 }
 
+// The bytes of a project-root-relative file at a commit, or null when the
+// commit does not have it. The project root may be a subdirectory of the repository.
+function bytesAt(root, commit, relative) {
+  const run = spawnSync('git', ['--no-optional-locks', '-C', root, 'show', `${commit}:./${relative}`], { maxBuffer: 64 * 1024 * 1024 });
+  return run.status === 0 ? run.stdout : null;
+}
+
+// Records a draft PR the orchestrator opened. Only a mismatch the engine can
+// see is reported, as a warning: it never calls GitHub and never refuses a PR.
+export function recordPr({ projectRoot, kind, url, branch, head }) {
+  const root = projectDirectory(projectRoot);
+  if (!PR_KINDS.includes(kind)) refuse('usage', `--kind must be ${PR_KINDS.join(' or ')}`);
+  for (const [flag, value] of [['--url', url], ['--branch', branch], ['--head', head]]) if (!value) refuse('usage', `${flag} is required`);
+  const warnings = [];
+  const commit = resolveRevision(root, head);
+  if (kind === 'spec') {
+    const status = specStatus({ projectRoot: root });
+    if (!status.readyForPr) warnings.push(status.specFiles.length === 0 ? 'no reviewed spec file is recorded' : 'spec-status is not ready for the PR (a file is waiting for changes or changed after its review)');
+    if (commit === null) {
+      warnings.push(`the head ${head} is not a local commit, so the recorded spec files were not compared with it; fetch the PR branch to compare`);
+    } else {
+      const rows = new Map((loadSpecs(root)?.specs ?? []).map((row) => [row.specFile, row]));
+      for (const row of rows.values()) {
+        const bytes = bytesAt(root, commit, row.specFile);
+        if (bytes === null) warnings.push(`${row.specFile} is not in the PR head`);
+        else if (sha256(bytes) !== row.specSha256) warnings.push(`${row.specFile} in the PR head differs from the reviewed bytes`);
+      }
+    }
+  }
+  const base = loadSpecs(root);
+  const pr = { kind, url, branch, head: commit ?? head, recordedAt: new Date().toISOString() };
+  commitState(root, base, { ...(base ?? { schema: 'fvs/auto-specs', schemaVersion: 1, specs: [] }), prs: [...(base?.prs ?? []), pr] }, specsPath(root));
+  return { code: 'recorded', message: `draft ${kind} PR recorded: ${url}`, pr, warnings };
+}
+
 function readInput(file) {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -1900,6 +1946,10 @@ const STATE_COMMANDS = {
       verdict: flags.verdict, review: flags.review, outOfScope: flags['out-of-scope'] });
   },
   'spec-status': (argv) => specStatus({ projectRoot: stateFlags(argv, [])['project-root'] }),
+  'record-pr': (argv) => {
+    const flags = stateFlags(argv, ['kind'], [], ['url', 'branch', 'head']);
+    return recordPr({ projectRoot: flags['project-root'], kind: flags.kind, url: flags.url, branch: flags.branch, head: flags.head });
+  },
 };
 
 async function stateMain(command, argv) {
