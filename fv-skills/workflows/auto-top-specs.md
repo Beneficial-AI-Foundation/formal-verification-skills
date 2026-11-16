@@ -24,8 +24,7 @@ Without this context retain the standalone read-only report below.
    for the actual same-extraction IDs corresponding to the agreed targets. Retain the full
    applicability/omission inventory and all unsupported groups; no name-only or public-API classifier.
    Prose agreement boundaries do not match axioms automatically, so the orchestrator translates them
-   once into exact Lean names and passes them with `--allow-axioms`. Recorded externals with status
-   `assumption-accepted` are allowed automatically, and the plan records which allowed axioms came from where.
+   once into exact Lean names and passes them with `--allow-axioms`.
    **Probes unavailable.** No probe is needed for setup or extraction. Read the `auto-top-specs` stage
    line of the profile first (`auto-setup.md`, "Probes and stage lines", says what each line means): it
    names what is missing and who supplies it. The plan command still records the loss. Run without
