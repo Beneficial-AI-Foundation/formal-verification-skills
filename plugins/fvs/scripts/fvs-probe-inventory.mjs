@@ -1058,7 +1058,15 @@ export function resolveProbe({ projectRoot, probe = null, platform = hostTarget(
     return finish('unsupported-platform');
   }
 
-  const selected = selectProbeToolPaths({ leanToolchain: provenance.leanToolchain });
+  let selected;
+  try {
+    selected = selectProbeToolPaths({ leanToolchain: provenance.leanToolchain });
+  } catch (error) {
+    // A refused path override leaves the probe unchecked; the caller still reports.
+    result.reasons.push(`probe helpers not checked: ${error.message}`);
+    result.manual.push('Fix or unset the helper path override, then rerun the profile.');
+    return finish('not-checked');
+  }
   if (process.platform === 'linux') {
     try {
       validateLinuxToolPaths(selected, { projectRoot: root });

@@ -404,6 +404,34 @@ describe('fvs-auto profile verdicts', () => {
       ['probe'], 'one tested operation qualifies nothing else');
   });
 
+  it('on a tested tuple, a bad helper path override leaves the probe not checked and init-state still runs', async (t) => {
+    // The tuple's evidence is per platform, so the helper lookup is reached only on this host.
+    if (process.platform !== 'darwin' || process.arch !== 'arm64') return t.skip('requires the macOS arm64 host');
+    const root = copyFixture('tested');
+    process.env.FVS_SCIP_PATH = '/nonexistent/scip';
+    try {
+      const result = await profileOf(root);
+      const probe = item(result, 'probe');
+      assert.equal(probe.verdict, 'not-checked', probe.reason);
+      assert.match(probe.reason, /FVS_SCIP_PATH is not an executable file/);
+      assert.equal(probe.evidence.resolver.tuple, 'aeneas-6e167c9b-charon-0.1.225-lean-v4.31.0');
+      assert.equal(result.probes.find((entry) => entry.id === 'scip').status, 'not-checked');
+      const { initState, Refusal } = await import(pathToFileURL(SCRIPT).href);
+      const choices = { source: { revision: 'HEAD', configuration: 'default features' }, scope: 'one module', limits: {} };
+      let state;
+      try {
+        state = withStubEnvironment(undefined, () => initState({ projectRoot: root, choices, platform: PLATFORM }));
+      } catch (error) {
+        assert.ok(error instanceof Refusal, error.stack);
+        assert.doesNotMatch(JSON.stringify(error.details ?? {}), /"id":"probe"/, 'the probe never blocks init-state');
+        state = error;
+      }
+      assert.ok(state, 'init-state returned or refused cleanly');
+    } finally {
+      delete process.env.FVS_SCIP_PATH;
+    }
+  });
+
   it('reports malformed or missing provenance as unknown, with the raw evidence and no invented values', async () => {
     for (const [variant, problem, unknownField] of [
       [{ files: { 'Lean/translation.json': '{ not json' } }, /cannot read translation\.json/, 'charonVersion'],
