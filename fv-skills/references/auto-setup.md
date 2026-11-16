@@ -24,8 +24,8 @@ extraction and a full pilot are separate from preparing this installation.
 
 1. **Prepare the host.** Install AO and make `ao` available. Keep the selected harness's existing
    authentication and inspect its actual roles, model/effort and permissions. The source installer
-   needs Node and Git; the current Claude actor permission helper also needs Python 3 and
-   `/usr/bin/git`. The package's declared Node floor is not a tested SWVF compatibility matrix.
+   needs Node and Git; the Claude actor permission helper, which only the strict lane uses, also needs
+   Python 3 and `/usr/bin/git`. The package's declared Node floor is not a tested SWVF compatibility matrix.
    Install/update only through the owner's chosen route and consent. Use the prerequisites below for
    user-assisted Aeneas/Charon, Rust and Lean setup; keep every project pin unchanged. Run the
    read-only profile and resolver before extraction. FVS installs none of those tools.
@@ -337,9 +337,11 @@ Each probe has one status in the `probes:` list:
 
 The stages `auto-top-specs` and `auto-execute` each need `ao` and `lean` to have a route at all. A lost
 probe does not stop them: the stage runs without that probe's output, and the output is labelled reduced.
-Proof acceptance (freeze, check, accept) needs a verified Lean graph from `probe-lean` and a Rust identity
-confirmed by `probe-aeneas` and `probe-rust`, which in turn needs `scip` and `rust-analyzer`. So reduced
-output never promises proof acceptance, and without `probe-lean` acceptance refuses until it is usable.
+Strict-lane proof acceptance (freeze, check, accept) needs a verified Lean graph from `probe-lean` and a
+Rust identity confirmed by `probe-aeneas` and `probe-rust`, which in turn needs `scip` and
+`rust-analyzer`. So reduced output never promises proof acceptance, and without `probe-lean` the strict
+lane refuses acceptance until it is usable. The build check that `/fvs:auto-execute` runs in a fresh
+clean copy needs none of the probes.
 The `stages:` list has one line for each stage, and the line starts with one of these:
 
 | Stage line | Meaning |
@@ -461,8 +463,10 @@ identity for the whole run:
 - Or install FVS once for your user account (`bin/install.js` with `--global`) so every worktree finds
   the same scripts.
 
-The Claude actor permission helper, `fvs-auto-actor-permissions.py`, writes each actor's rules to a real
-`.claude/settings.local.json` inside that actor's own worktree and refuses a `.claude` that is a link. So
+Only the strict lane needs the Claude actor permission helper, `fvs-auto-actor-permissions.py`; the
+spec and proof pipeline runs stock AO workers without any permission install. The helper writes each
+actor's rules to a real `.claude/settings.local.json` inside that actor's own worktree and refuses a
+`.claude` that is a link. So
 do not point AO's `--symlink` option at `.claude` itself. The one file never to share between actors is
 `settings.local.json`, the per-actor grants file: one actor's grants would become every actor's. A real
 per-worktree `.claude` folder whose entries link to a shared install, including the shared

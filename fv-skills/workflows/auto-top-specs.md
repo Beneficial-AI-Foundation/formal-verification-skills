@@ -1,71 +1,64 @@
 <purpose>
-For the configured AO orchestrator, advance nonpublic specification and fresh review through the
-bounded transition protocol. Otherwise explain the recorded state and stop without writes. Public
-API discovery is separately held; graph roots do not select scope automatically.
+For the AO orchestrator: turn the agreed scope into reviewed Lean statements, one draft pull request
+for the owner. The goal and the pipeline are fixed; how the agents get there is theirs to decide.
+Without the orchestrator, report the recorded state and stop without writes.
 </purpose>
 
 <process>
 
-## Opt-in AO controller continuation
+## Goal
 
-With the actual orchestrator's current controller request, execution grant and complete stage
-manifest, use the **Production driver: authorized v2 continuation** recipe in
-`fv-skills/references/auto-transitions.md`, then perform these steps. Start without
-owner-supplied specs; ground selected nonpublic obligations in the actual closure and agreed scope,
-never a public-name classifier. The controller resumes proof through auto-execute after readiness.
-Missing capability/context is partial; actual providers require separately granted concrete setup/permission.
-Without this context retain the standalone read-only report below.
+Every public API item in the agreed scope has a statement in Lean that an author agent wrote and a
+fresh adversarial reviewer checked, and all statements sit in one draft pull request that the owner
+reviews and merges. The statements are what an auditor trusts, so they matter more than the proofs.
 
-1. Read the current applicable agreement and original source/configuration, roles, memory and
-   execution authority. V2 alone is insufficient. Resolve the one trusted engine path from this
-   context; installed workflow copies are not independent checker authorities.
-2. If extraction/discovery is missing, continue the existing shared auto-extract/repair, discovery and dependency-record
-   producers under those grants. Run `fvs-closure-plan.mjs plan --identity ... --graph ... --roots ...`
-   for the actual same-extraction IDs corresponding to the agreed targets. Retain the full
-   applicability/omission inventory and all unsupported groups; no name-only or public-API classifier.
-   Prose agreement boundaries do not match axioms automatically, so the orchestrator translates them
-   once into exact Lean names and passes them with `--allow-axioms`.
-   **Probes unavailable.** No probe is needed for setup or extraction. Read the `auto-top-specs` stage
-   line of the profile first (`auto-setup.md`, "Probes and stage lines", says what each line means): a
-   `ready, reduced` line names each lost probe and who can restore it. The plan command still records the loss. Run without
-   `--graph` when no dependency graph can be built. A plan made without a graph, or from an identity
-   record that rests on `translation.json` alone, is degraded and exits 9 (a blocked identity record
-   exits 7 instead). It lists every identity item in source order, computes no closure, puts a
-   `closure-not-computed` blocker on each requested root, and a `degraded` field names what was lost.
-   A degraded plan is never admissible, so the contract registry refuses it and no review or proof
-   work can start from it. Report the stage as partial with that loss, and plan again with `--graph`
-   and a full identity record once the probes are installed. Do not substitute a graph, a closure or
-   a public-name guess for the missing probe output.
-3. Prepare fresh requests through `prepareCurrentRequest`. Use `advanceOnce` for ordinary proposals.
-   For an existing executable effect, call `runPairedEffect` directly with its concrete before
-   request and retained v2 basis when needed; it records its own before exactly once. Use
-   `advanceOnce`'s concrete-before route for externally managed construction/composition/resolution,
-   then the existing producer procedure. Finish each route with actual `recordAfter` evidence.
-4. For author work, launch the actual selected `fc_spec` actor, or sequential `research` then
-   `fc_spec` when tuples differ. Merge only its explicitly granted actor gate profile, publish the
-   permission-ready notice, verify startup, prepare/release the exact `lean-specify/controller-direct`
-   (or split direct) packet and wait for conclusive results. Preserve all branches/drafts. Compose
-   only the checked allowed paths/content, with one owner for each shared helper.
-5. Export a grounded Other review packet in the actual integration/spec root. Before reviewer
-   dispatch, call `prepareReviewBinding` with the canonical primary `projectRoot` and the explicit
-   current `{kind:"git",root,commit,expectedTree}` source identity;
-   include the returned binding/input in the actual fresh review packet. After the read-only reviewer
-   returns, call `importReviewedContract` with its exact response/start/session/settings evidence.
-   Its sealed response and actual imported normalized artifact determine the verdict; response
-   substitution or a different integration source remains held.
-   A packet export is not a review, and Other import alone is not the contract registry's candidate/head envelope.
-6. Publish the fresh envelope through the existing paired registry register/revise action. Clean PASS may
-   establish machine readiness only. Changes/blocked evidence returns to the grounded author loop;
-   changed semantics invalidate consumers. Serialize review preparation/publication because every registry
-   append stales unused review. Keep the original run/grants; no routine owner approval or weakened
-   contracts. At three rounds checkpoint/resume with the actual reasons.
-7. Continue directly into `auto-execute`'s authorized proof loop when registry contexts are ready. Missing
-   capability or unsupported target remains partial while independent supported families continue.
-   Initial material scope changes and final human review retain their separate authority.
+## Pipeline
 
-After this authorized branch, report actual current spec/review/registry references and pending
-items. Do not fall through to the legacy unavailable message. If authority/context is absent, the
-standalone path below remains read-only and performs no partial authoring or dispatch.
+1. **List the items.** After extraction, list every public API item in the agreed scope (the crates,
+   modules and features fixed at `/fvs:auto-init`), with the Rust file each one lives in. There is no
+   per-item confirmation. Nothing leaves the scope silently: note the items you think are out of scope
+   and why, and leave the pruning to the owner in the pull request review.
+2. **Write and review, one Rust file at a time.** An author agent writes the statements for the
+   file's items, and a fresh adversarial reviewer (the chosen pair) checks them against the Rust code
+   and its documentation. Is each statement faithful, strong enough to be useful, and free of
+   assumptions it should prove? At most three rounds; put anything still open in the pull request body.
+   The reviewer is a different agent from the author, and a new reviewer reads each round.
+3. **Put them where an auditor looks.** The default layout for a new project is `formal/specs/Defs`
+   for the definitions the statements use and `formal/specs/Specs` with one file per Rust file. Each
+   statement is declared once, in a proof file under `formal/proofs` with a placeholder proof (`sorry`),
+   and restated in its spec file with `recall`. `recall` needs the declaration to exist, so this pull
+   request carries one such stub proof file per Rust item. Hand-written axioms for code Aeneas does not
+   translate go in `formal/trusted`, and the spec file lists the ones its statement uses. An existing
+   project keeps its layout and follows the same split where it can.
+
+   This pull request must build, and it may warn about `sorry`; warnings as errors applies to the proof
+   pull request. After each restatement goes a guarded `#print axioms` list that names the axioms the
+   statement rests on, with Lean's three standard axioms always fine. Until the proofs land that list
+   shows `sorryAx`, so this pull request may leave the guards out or mark them pending, and agents
+   complete or update them in the proof pull request.
+4. **Open the SPEC PR as a draft** on the project's own repository: the destination recorded in the
+   agreement at `/fvs:auto-init`, never an upstream. If none is recorded, ask the owner which repository
+   before opening anything. Put in the body what each file covers, the items you left out, the axioms
+   the statements rest on and the review rounds that were held.
+5. **Stop for the owner.** The owner reviews, prunes, marks the pull request ready and merges it.
+   `/fvs:auto-execute` starts the proofs after that.
+
+## GitHub rule
+
+Agents may open draft pull requests and edit a pull request body. They never post comments or reviews
+on GitHub, never mark a pull request ready and never merge: only the owner comments, marks ready and
+merges.
+
+## Probes and the strict lane
+
+No probe is needed for this pipeline, and a missing probe never stops it. Read the `auto-top-specs`
+stage line in the profile first (`auto-setup.md`, "Probes and stage lines", says what each line
+means). When `probe-lean` works, the strict lane stays available as an option: a verified dependency
+graph, a closure plan from `fvs-closure-plan.mjs plan`, and the bounded transition protocol in
+`fv-skills/references/auto-transitions.md`. Prose agreement boundaries do not match axioms
+automatically, so the orchestrator translates them once into exact Lean names and passes them with
+`--allow-axioms`. A plan made without a dependency graph is degraded: it exits 9, computes no closure
+and is never admissible, so plan again with `--graph` once the probes are installed.
 
 ## Step 1: Require Agent Orchestrator
 
@@ -85,21 +78,23 @@ node "$AUTO" read-state --project-root .
 ```
 
 On `malformed-state` or `malformed-externals`, use `message` as the state and `nextStep` as the next
-action. On `no-state`, use `message` and `nextAction`.
+action. On `no-state`, use `message` and `nextAction`, and stop: run `/fvs:auto-init` first. A missing
+or outdated agreement is a warning to carry into the report, not a stop: the owner records the
+agreement in their own terminal and the spec phase does not wait for it.
 
-## Step 3: Report and stop
+## Step 3: Run the pipeline, then report
+
+Run the pipeline above for the recorded scope, then print:
 
 ```
 FVS >> AUTO-TOP-SPECS
 
-State:            {recorded choices, extraction status and externals counts, or the reason above}
-Next action:      {nextAction}
+State:            {recorded choices, extraction status, items listed, files authored and reviewed}
+Next action:      {nextAction, or the owner's review of the spec pull request}
 Pending decision: {pendingDecisions, or none}
-
-Root selection and top-level specifications: milestone 2 functionality not yet available.
-See the "Auto track" section of the FVS README for what milestone 1 provides.
+Spec PR:          {draft pull request URL, or not opened and why}
 ```
 
-Stop here on the legacy/read-only path; it selects nothing and dispatches no actor.
+Without the orchestrator or the recorded state, report and stop; write nothing and dispatch no agent.
 
 </process>

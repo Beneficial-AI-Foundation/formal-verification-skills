@@ -145,14 +145,12 @@ Initial cycles and safe resume keep their gates; feedback starts no revision wor
 ```
 
 The auto track uses stock Agent Orchestrator and needs its `ao` CLI. `/fvs:auto-init` checks the
-project, records the initial scope and execution choices, and reuses a current applicable roadmap
-agreement. With complete authorized v2 controller context, the driver continues through extraction,
-specification, fresh review, dependency-ready proof construction and independent checker acceptance.
-It preserves the original run policy on resume. Missing grants, profiles, installed capabilities or
-current evidence produce an explicit blocked/partial result; agreement storage alone starts no work.
-Legacy/read-only routes retain their stops. Final results separate extraction, reviewed contracts,
-checked proofs and open assumptions, and end in a bundle for human review. Source/component checks
-and AO/reviewer doubles do not establish real-provider or whole-library qualification.
+project and records the scope and the agreement. After extraction, an author writes a Lean statement
+for every public API item in that scope, one file per Rust file, and a fresh adversarial reviewer
+checks it. The spec pull request opens as a draft; you review, prune, mark it ready and merge it.
+Workers then prove one file per Rust item, and FVS's build check in a fresh clean copy decides what
+is accepted. The proof pull request follows as a draft. Agents never post comments or reviews on
+GitHub and never merge: only you do.
 
 ### Functional correctness
 

@@ -211,13 +211,22 @@ result (derived by the script from the build exit status and the patch engine's 
 extraction is never recorded as success), the externals record and regeneration instructions.
 Extraction success is not a proof.
 
-**`/fvs:auto-top-specs`**, **`/fvs:auto-execute`**
-With complete authorized v2 controller context, run the production driver through fresh specification
-and review, then bottom-up proof/checker acceptance. Agreement, profile, memory, invocation and
-currentness gates still apply; v2 alone grants no dispatch permission. Legacy/read-only or missing-grant
-routes report the recorded continuation and stop. Final human review and partial reporting remain.
-The `stages:` lines of the profile say whether each stage has a route and what is missing (the
-`auto-setup.md` reference, "Probes and stage lines", explains them).
+**`/fvs:auto-top-specs`**
+List every public API item in the agreed scope. Per Rust file, an author writes the statements and a
+fresh adversarial reviewer checks them (at most three rounds). They go in `formal/specs/Defs` and
+`formal/specs/Specs`, one file per Rust file, each restated with `recall` and a guarded
+`#print axioms` list; hand-written axioms go in `formal/trusted`. Opens the spec pull request as a
+draft on the project's own repository and stops: the owner reviews, prunes, marks it ready and merges.
+
+**`/fvs:auto-execute`**
+After the owner merges the spec pull request, workers prove one file per Rust item (complete first,
+improve later). FVS's build check in a fresh clean copy decides what is accepted. Opens the proof pull
+request as a draft; spec refactors found later arrive as new draft pull requests.
+
+Agents may open draft pull requests and edit a pull request body. They never post comments or reviews
+on GitHub, never mark a pull request ready and never merge: only the owner comments, marks ready and
+merges. The `stages:` lines of the profile say whether each stage has a route and what is missing
+(the `auto-setup.md` reference, "Probes and stage lines", explains them).
 
 ### Context (`/fvs:context`)
 

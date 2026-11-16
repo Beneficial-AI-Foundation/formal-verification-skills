@@ -254,8 +254,9 @@ if (process.argv.includes('--package-fixture')) {
     const help = section(fs.readFileSync(path.join(ROOT, 'commands/fvs/help.md'), 'utf8'),
       '### Auto (`/fvs:auto`)', '### Context (`/fvs:context`)');
     assert.doesNotMatch(help, /milestone 2 functionality not yet available|is safe to rerun/);
-    for (const token of ['authorized v2 controller context', 'v2 alone grants no dispatch permission',
-      'Legacy/read-only or missing-grant', 'uncertain effect']) assert.ok(help.includes(token), token);
+    for (const token of ['fresh adversarial reviewer', 'formal/specs/Specs', 'fresh clean copy',
+      'new draft pull requests', 'uncertain effect']) assert.ok(help.includes(token), token);
+    assert.doesNotMatch(help, /authorized v2 controller context|production driver/);
     for (const file of ['commands/fvs/auto-init.md', 'fv-skills/workflows/auto-init.md']) {
       const body = fs.readFileSync(path.join(ROOT, file), 'utf8');
       assert.match(body, /Fresh rc1 setup requires the declared Aeneas/);

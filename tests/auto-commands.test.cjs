@@ -1164,22 +1164,78 @@ describe('auto command and workflow text', () => {
     }
   });
 
-  it('top-specs and execute retain legacy stops and gate the authorized v2 driver route', () => {
+  const GITHUB_RULE = 'Agents may open draft pull requests and edit a pull request body. They never post comments or reviews on GitHub, never mark a pull request ready and never merge: only the owner comments, marks ready and merges.';
+  const flat = (value) => value.replace(/\s+/g, ' ');
+
+  it('top-specs and execute state the goal, the pipeline and the GitHub rule in loose terms', () => {
     for (const name of ['auto-top-specs', 'auto-execute']) {
-      const body = text(name);
-      assert.match(body, /milestone 2 functionality not yet available/, name);
-      assert.match(body, /"Auto track" section of the FVS README/, name);
+      const workflow = read(`fv-skills/workflows/${name}.md`);
       const command = read(`commands/fvs/${name}.md`);
-      assert.match(command, /Legacy\/read-only and missing-context invocations retain the reporting stop without dispatch/);
-      assert.match(command, /^ {2}- Write$/m);
-      assert.match(command, /explicit execution grant/);
-      assert.match(body, /Production driver: authorized v2 continuation/);
-      assert.match(body, /runPairedEffect/);
-      assert.match(body, /recordAfter/);
-      assert.match(body, /partial/);
+      const body = flat(`${command}\n${workflow}`);
+      assert.match(workflow, /^## Goal$/m, name);
+      assert.match(workflow, /^## Pipeline$/m, name);
+      assert.match(body, /how (the agents|the workers) get there is theirs to decide/, name);
+      assert.ok(flat(workflow).includes(GITHUB_RULE), `${name} workflow lacks the GitHub rule`);
+      assert.ok(flat(command).includes(GITHUB_RULE), `${name} command lacks the GitHub rule`);
+      assert.match(command, /^ {2}- Write$/m, name);
+      assert.match(body, /draft/, name);
+      assert.match(body, /project's own repository/, name);
+      assert.doesNotMatch(body, /libcrux|celabshq/, `${name} must not name a project`);
+      assert.doesNotMatch(body, /\bgh (pr|issue) (comment|review)\b/, `${name} must not instruct posting`);
+      assert.doesNotMatch(body, /milestone 2 functionality not yet available|Production driver|runPairedEffect|recordAfter|explicit execution grant/, name);
       assert.doesNotMatch(body, /record-(roadmap|extraction|externals)|init-state/, name);
     }
     assert.match(read('README.md'), /^### Auto track$/m);
+  });
+
+  it('the router, help and README carry the GitHub rule and mark no stage unavailable', () => {
+    const router = read('commands/fvs/auto.md');
+    const help = read('commands/fvs/help.md');
+    assert.ok(flat(router).includes(GITHUB_RULE), 'router lacks the GitHub rule');
+    assert.ok(flat(help).includes(GITHUB_RULE), 'help lacks the GitHub rule');
+    assert.match(flat(read('README.md')), /Agents never post comments or reviews on GitHub and never merge: only you do/);
+    assert.doesNotMatch(flat(router), /milestone 2|not yet available/);
+    assert.match(flat(router), /after the owner merges it `auto-execute` proves them and opens the proof pull request as a draft/);
+  });
+
+  it('top-specs fixes the statement layout, the review limit and the spec pull request stop', () => {
+    const body = flat(text('auto-top-specs'));
+    assert.match(body, /every public API item in the agreed scope/);
+    assert.match(body, /fresh adversarial reviewer/);
+    assert.match(body, /At most three rounds/);
+    assert.match(body, /formal\/specs\/Defs/);
+    assert.match(body, /formal\/specs\/Specs/);
+    assert.match(body, /one file per Rust file/);
+    assert.match(body, /`recall`/);
+    assert.match(body, /guarded `#print axioms` list/);
+    assert.match(body, /one such stub proof file per Rust item/);
+    assert.match(body, /must build, and it may warn about `sorry`; warnings as errors applies to the proof pull request/);
+    assert.match(body, /may leave the guards out or mark them pending/);
+    assert.match(body, /formal\/trusted/);
+    assert.match(body, /Nothing leaves the scope silently/);
+    assert.match(body, /marks the pull request ready and merges it/);
+  });
+
+  it('execute keeps statements fixed and lets only the build check in a fresh clean copy accept', () => {
+    const body = flat(text('auto-execute'));
+    assert.match(body, /Start only when the owner has merged the spec pull request/);
+    assert.match(body, /one proof file per Rust item/);
+    assert.match(body, /Complete first/);
+    assert.match(body, /Improve later/);
+    assert.match(body, /The statements do not change in either phase/);
+    assert.match(body, /Lean's three standard axioms/);
+    assert.match(body, /A proof that starts using a new axiom fails the check/);
+    assert.match(body, /`native_decide` and `bv_decide`/);
+    assert.match(body, /fresh clean copy/);
+    assert.match(body, /never in a worker's checkout/);
+    assert.match(body, /warnings as errors, so any `sorry` fails/);
+    assert.match(body, /node "\$HOME\/\.claude\/scripts\/fvs-build-check\.mjs" --project-root <root> --commit <SHA>/);
+    assert.match(body, /accepted \(build check in a clean copy\)/);
+    assert.match(body, /build check failed: REASON/);
+    assert.match(body, /a worker replaces the `sorry` and leaves the statement alone/);
+    assert.doesNotMatch(body, /FVS-RC2-PLACEHOLDER/);
+    assert.match(body, /Open the PROOF PR as a draft/);
+    assert.match(body, /new draft pull request/);
   });
 
   it('top-specs says how agreement boundaries reach the closure plan as allowed axioms', () => {
@@ -1208,7 +1264,27 @@ describe('auto command and workflow text', () => {
       'the shared extractor reports the copy and the build status the handoff records');
   });
 
-  it('auto-init reuses current evidence and gates M2 on stored AND semantic agreement checks', () => {
+  it('auto-init shows every stage up front, records the draft pull request destination and carries the GitHub rule', () => {
+    const workflow = read('fv-skills/workflows/auto-init.md');
+    const command = read('commands/fvs/auto-init.md');
+    const body = flat(`${command}\n${workflow}`);
+    assert.match(workflow, /^## Goal$/m);
+    assert.match(workflow, /^## Pipeline$/m);
+    assert.match(body, /how the agents get there is theirs to decide/);
+    assert.match(body, /Its `stages:` lines say up front whether each stage has a route/);
+    assert.match(body, /Keep the conversation short/);
+    assert.match(body, /the owner only confirms it/);
+    assert.match(body, /the project's own repository, never an upstream/);
+    assert.match(body, /At most three rounds|at most three rounds/);
+    assert.match(body, /FVS's build check in a fresh clean copy decides what is accepted/);
+    assert.ok(flat(workflow).includes(GITHUB_RULE), 'init workflow lacks the GitHub rule');
+    assert.ok(flat(command).includes(GITHUB_RULE), 'init command lacks the GitHub rule');
+    assert.doesNotMatch(body, /libcrux|celabshq/);
+    assert.match(workflow, /^Stages: /m);
+    assert.match(workflow, /^Draft PRs: /m);
+  });
+
+  it('auto-init reuses current evidence and gates the agreement on stored AND semantic checks', () => {
     const body = text('auto-init');
     assert.match(body, /"\$AUTO" init-state --project-root \. --input "\$CHOICES"/);
     assert.match(body, /Only on an explicit yes rerun\s+the same command with `--confirm-overwrite`/);
@@ -1227,16 +1303,32 @@ describe('auto command and workflow text', () => {
     assert.match(body, /Routine Status log appends outside the fence/);
     assert.match(body, /there is no per-round human contract approval/);
     assert.match(body, /Final PR acceptance remains human/);
-    assert.match(body, /`public-api`\s+mode is not supported in this release: report that refusal without retrying it/);
-    assert.ok(!/visibility join|separately permitted|ticket11/.test(body), 'the public-API sentence names no landing condition');
+    assert.match(body, /Write the scope in the\s+agreement's `boundaries` and `claims`; its `mode` keeps the first-release name `nonpublic-intent`,\s+which does not limit the scope to non-public items/);
+    assert.doesNotMatch(body, /mode is not supported in this release|report that refusal without retrying/);
+    assert.ok(!/visibility join|separately permitted|ticket11/.test(body), 'the mode sentence names no landing condition');
+    assert.match(body, /only `record-agreement` is the owner's, and\s+the orchestrator runs the other state-changing steps itself/);
     assert.match(body, /Agreement storage alone launches no workers/);
-    assert.match(body, /Without that complete opt-in context[\s\S]*stop/);
     assert.match(body, /fv-skills\/references\/auto-transitions\.md/);
-    assert.match(body, /Actual live provider execution[\s\S]*separately granted concrete setup\/permission/);
+    assert.match(body, /Do not infer dispatch permission from a stored agreement/);
     assert.match(body, /verifyReconciliation/);
+    assert.doesNotMatch(body, /Production driver|prepareCurrentRequest|advanceOnce|runPairedEffect/);
     assert.match(read('commands/fvs/roadmap.md'), /`\.formalising\/auto-fv\/ROADMAP\.md`; `\/fvs:auto-init`/);
     assert.match(read('fv-skills/workflows/roadmap.md'), /\*\.md\) FILE=\$ROADMAP_PATH/);
     assert.match(read('fv-skills/workflows/roadmap.md'), /Generic roadmaps outside auto-init require no machine envelope/);
+  });
+
+  it('the relaxed path of init, top-specs and execute never calls the strict lane', () => {
+    const strict = /--require-agreement|record-memory|refresh-memory|prime-memory|verifyReconciliation|verifyMemoryBootstrap|fvs-auto-driver|fvs-auto-respec|run-owned|ack-work|execute-transition|prepare-review|import-review/;
+    for (const name of ['auto-init', 'auto-top-specs', 'auto-execute']) {
+      const workflow = read(`fv-skills/workflows/${name}.md`);
+      const marker = workflow.indexOf('## Optional strict lane');
+      const relaxed = marker === -1 ? workflow : workflow.slice(0, marker);
+      assert.doesNotMatch(relaxed, strict, `${name} relaxed text calls the strict lane`);
+      assert.match(relaxed, /"\$AUTO" read-state --project-root \.\n/, `${name} reads state plainly`);
+      assert.doesNotMatch(read(`commands/fvs/${name}.md`), strict, `${name} command text calls the strict lane`);
+    }
+    assert.doesNotMatch(read('commands/fvs/auto.md'), strict);
+    assert.match(read('fv-skills/workflows/auto-init.md'), /^## Optional strict lane$/m);
   });
 });
 

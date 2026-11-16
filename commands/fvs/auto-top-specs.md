@@ -1,6 +1,6 @@
 ---
 name: fvs:auto-top-specs
-description: Draft and freshly review agreed nonpublic specifications through the authorized AO controller
+description: Write and adversarially review Lean statements for every public API item in the agreed scope, then open a draft spec pull request
 argument-hint: ""
 allowed-tools:
   - Read
@@ -10,11 +10,12 @@ allowed-tools:
 ---
 
 <objective>
-For an actual v2 AO orchestrator with current applicable agreement, explicit execution grant,
-resolved role profile and controller context, continue agreed nonpublic selection, actual specification
-writing and fresh independent review through the production driver. Preserve the complete scope;
-the registry records machine review, never human approval or proof acceptance.
-Legacy/read-only and missing-context invocations retain the reporting stop without dispatch.
+For the AO orchestrator: after extraction, list every public API item in the agreed scope. Per Rust
+file, an author writes the statements and a fresh adversarial reviewer checks them (at most three
+rounds). Statements go in `formal/specs/Defs` and `formal/specs/Specs`, one file per Rust file, each
+restated with `recall` and a guarded `#print axioms` list; hand-written axioms go in `formal/trusted`.
+Open the spec pull request as a draft on the project's own repository, then stop for the owner.
+The goal and the pipeline are fixed; how the agents get there is theirs to decide.
 </objective>
 
 <execution_context>
@@ -25,13 +26,16 @@ Legacy/read-only and missing-context invocations retain the reporting stop witho
 <process>
 Follow the auto-top-specs workflow. Finish with its report block, which always carries the
 `State:`, `Next action:` and `Pending decision:` lines.
+
+Agents may open draft pull requests and edit a pull request body. They never post comments or reviews
+on GitHub, never mark a pull request ready and never merge: only the owner comments, marks ready and
+merges.
 </process>
 
 <success_criteria>
 - [ ] Reports the recorded state read through `fvs-auto.mjs read-state`, or why it cannot.
-- [ ] Legacy/read-only routes stop with "milestone 2 functionality not yet available" without writes or dispatch.
-- [ ] V2 alone grants nothing: missing agreement/grant/profile/controller/capability remains partial.
-- [ ] Authorized selection uses the real discovery, dependency-record and closure-ownership identities; public-API mode stays held.
-- [ ] An actual author and fresh reviewer use distinct issued assignments; Other responses are bound to the contract registry before dispatch.
-- [ ] Edits/failed reviews iterate within the original agreement; changed candidate/head requires fresh review.
+- [ ] Every public API item in the agreed scope is listed; nothing leaves the scope silently.
+- [ ] Each Rust file's statements were written by an author and checked by a fresh adversarial reviewer, in at most three rounds.
+- [ ] The spec pull request is a draft on the project's own repository, and the agents stop for the owner.
+- [ ] Nothing is posted as a GitHub comment or review.
 </success_criteria>

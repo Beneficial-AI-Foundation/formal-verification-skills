@@ -1,81 +1,66 @@
 <purpose>
-For the configured AO orchestrator, continue the bounded transition protocol to authoritative review-bundle
-references. Otherwise reconcile the recorded state and report the standalone continuation. Worker
-reports establish no proof acceptance; the trusted checker remains the sole publication authority.
+For the AO orchestrator: after the owner has merged the spec pull request, have workers prove the
+statements, let FVS's build check decide what is accepted, and open the proof pull request as a draft.
+The goal and the pipeline are fixed; how the workers get there is theirs to decide. Worker reports
+establish no proof acceptance. Without the orchestrator, reconcile the recorded state and report.
 </purpose>
 
 <process>
 
-## Rc1 human-feedback boundary
+## Goal
 
-For AUTO owner feedback that revises previously reviewed contracts after end/partial results,
-report `unsupported: human re-specification is not available in 3.0.0-rc1` and stop before
-state/agreement/registry changes, revision effects or provider dispatch. Apply this to direct
-requests and resumed handoff instructions. Keep the actual feedback, complete selected scope,
-original accounting and each root's failed/unsupported/partial reason. No ready/success claim follows.
-Initial autonomous specify/review/revise/prove and ordinary safe resume remain available under their
-existing gates; stale proofs still need current checker receipts. Internal diagnostic APIs do not
-authorize a public re-specification run.
+Every statement in the merged spec pull request has a Lean proof with no `sorry`, and FVS's build check
+has accepted it in a fresh clean copy. The result is one draft pull request of proofs for the owner.
 
+## Pipeline
 
-## Opt-in AO controller continuation
+Start only when the owner has merged the spec pull request. If it is not merged, say so and stop;
+the agent never marks it ready or merges it.
 
-For a v2 project, follow `auto-execution.md`: keep its original optional budget and explicit memory
-disposition. During active small proof work use cheap progress observations, diagnose around1h when
-useful, and stop/reconcile the exact known scope before replacement. This is not a proof deadline.
-The current source component and protocol fixtures do not qualify actual stock-AO replacement;
-report unsupported known-work stop scope honestly and retain the cooperative handoff fallback.
+1. **Prove, one proof file per Rust item** (`formal/proofs`). The merged spec pull request holds each
+   statement in a stub proof file with `sorry`; a worker replaces the `sorry` and leaves the statement
+   alone. Run as many workers as the agreement allows. Complete first: get every statement proved by
+   whatever works. Improve later: once everything is proved, make the proofs shorter, more robust to
+   translation changes and better factored into lemmas. The statements do not change in either phase.
+   A statement that turns out wrong or too weak is noted for a refactor pull request, never edited in
+   a proof.
+2. **Axioms.** Lean's three standard axioms are always fine, and so are the hand-written axioms that
+   the statement's spec file lists. A proof that starts using a new axiom fails the check.
+   `native_decide` and `bv_decide` are fine while developing a proof and are flagged by the check, so
+   remove them before it runs.
+3. **FVS's build check decides accepted.** It runs in a fresh clean copy of the commit, never in a
+   worker's checkout. The whole project builds with warnings as errors, so any `sorry` fails, and each
+   statement's guarded `#print axioms` list must still match. Run it on the integration tree's head:
 
-For an actual orchestrator with a complete current controller request, execution grant and resolved
-stage manifest, follow `fv-skills/references/auto-transitions.md` through the bounded proposal/effect/checkpoint loop to
-the draft-PR reference handoff. Reuse initial agreement; no routine per-round human gate or hidden provider
-children. Actual live provider execution requires separately granted concrete setup/permission. Missing context
-stays partial. Otherwise use the standalone reconciliation/report path below; it dispatches nothing.
+   ```bash
+   node "$HOME/.claude/scripts/fvs-build-check.mjs" --project-root <root> --commit <SHA>
+   ```
 
-Use that reference's **Production driver: authorized v2 continuation** recipe and closed adapter
-requests. Resolve the one trusted engine from actual held context. Prepare fresh caller requests;
-`advanceOnce` uses the strict ordinary proposal path only when current. Call `runPairedEffect`
-directly for a concrete executable effect: it records its own before exactly once, including its
-original successful v2basis during explained retained-store revisions. The concrete-before
-`advanceOnce` route serves externally managed procedures, whose retained before is used directly.
+   It prints `accepted (build check in a clean copy)` or `build check failed: REASON`. Read that label
+   from the output, then read the state again: it reports `done` once the check has passed for the
+   proof pull request's head. A worker's report, or a green build in its own checkout, is not acceptance.
+4. **Open the PROOF PR as a draft** on the project's own repository: the destination recorded in the
+   agreement at `/fvs:auto-init`, never an upstream. Put in the body which statements are accepted,
+   which are not and why, and what each unproved one is missing. Nothing leaves the scope silently.
+5. **Refactors.** A spec refactor found while proving arrives as a new draft pull request, either
+   one per refactor or one cumulative pull request. The owner reviews and merges it like the first.
 
-For each actual proposal/action:
+## GitHub rule
 
-1. Missing construction or contract readiness continues the shared extractor/discovery or
-   `auto-top-specs` author/fresh-review loop under the same initial grant; unsupported roots remain
-   in the whole-scope inventory. No owner-supplied top-level specs or routine mid-run approval.
-2. Freeze the pristine reviewed context with mutable proof overlays absent. Launch only a dependency-ready
-   proof unit through the selected `fc_proof_plan` / `fc_proof_execution` profile. Use the actor
-   permission-ready/startup/prepare/release guard and fresh start marker. Split distinct tuples;
-   the combined `lean-verify/controller-direct` route needs equal role tuples.
-3. Observe actual progress and failed approaches. Wait for the exact issued actor's conclusive
-   typed result. About1h unresolved on a small roadmap proof prompts diagnosis, not a kill/deadline.
-   For replacement, preserve drafts, stop known owned commands, verify actual termination and
-   resolve the old reservation before a fresh linked assignment. Unknown scope retains capacity.
-4. Compose only the exact allowed candidate bytes via the existing materialization procedure.
-   Run the paired check and serial bottom-up accept at one fixed integration tree. Call
-   `runPairedEffect`, retain real command/result/completion, then prepare the actual post-state and
-   `recordAfter`. Typed command/facts partial outcomes authorize no work or proof by themselves.
-5. Revalidate each concrete successor through the engine's finite v2basis rules when old accepted
-   entries are stale. Keep history/store and original execution/memory policy intact; no unconditional
-   strict proposal, fresh run, cache flag or worker PASS bypass. Final whole-scope currentness stays strict.
-6. On end or precise partial status, build and verify the review bundle with the independently held complete scope,
-   current facts and required historical captures. List every root's current checked PASS or exact
-   failed/unsupported/partial reason. Human review remains pending; the driver never merges/publishes.
+Agents may open draft pull requests and edit a pull request body. They never post comments or reviews
+on GitHub, never mark a pull request ready and never merge: only the owner comments, marks ready and
+merges.
 
-Finish this authorized branch with actual receipt/bundle references and missing capabilities. A
-separately explicit draft-PR grant may authorize its trusted publication route. This branch does not
-fall through to the legacy unavailable message below; missing authority retains that reporting path.
+## Probes and the strict lane
 
-At an end-of-run or partial-results boundary, use `fv-skills/references/auto-review-bundle.md`
-to build and verify the local human-review artifact. Supply the independently held full scope
-inventory and current source/context references, including failed/unmapped items; the controller proposal
-alone is not complete coverage evidence. Capture pending/expired/unfinished reasons without restarting
-work. Bundle integrity, historical proof facts, fresh currentness and human approval are separate.
-This step writes no PR, checker receipt, registry, runtime or memory state. Human re-specification
-stops at the rc1 boundary above. Keep any requested changes and their whole-scope partial status;
-bundle verification never supplies revision permission. `auto-respec.md` documents internal diagnostic
-records only, not an enabled continuation.
+No probe is needed for this pipeline. Read the `auto-execute` stage line in the profile first
+(`auto-setup.md`, "Probes and stage lines", says what each line means); without `probe-lean`, proof
+acceptance through the strict lane refuses, and the build check above is the route. When `probe-lean`
+works, the strict lane stays available: dependency-ready proof units, serial independent acceptance and
+the human review bundle, driven by `fv-skills/references/auto-transitions.md` and
+`fv-skills/references/auto-review-bundle.md`. Keep the agreement's optional budget and its memory
+disposition (`auto-execution.md`, `auto-resume.md`). The strict lane's human re-specification command is
+not available in 3.0.0-rc1; in this pipeline a spec refactor is a new draft pull request.
 
 ## Step 1: Require Agent Orchestrator
 
@@ -95,32 +80,23 @@ node "$AUTO" read-state --project-root .
 ```
 
 On `malformed-state` or `malformed-externals`, use `message` as the state and `nextStep` as the next
-action. On `no-state`, use `message` and `nextAction`.
+action. On `no-state`, use `message` and `nextAction`, and stop: run `/fvs:auto-init` first. A missing
+or outdated agreement is a warning to carry into the report, not a stop.
 
-## Step 3: Reconcile an agreed configured continuation
+## Step 3: Run the pipeline, then report
 
-When current agreement, the recorded memory disposition and caller invocation context exist, follow `auto-resume.md`.
-Perform the mandatory canonical semantic applicability/actions check, prepare a fresh request and
-run `state` with exclusive output, then `verifyReconciliation` against the independently held request.
-Preserve partial reasons, reservations and original limits. The adapter may update only its runtime
-history and the owned memory context; a read-only M1 invocation still reports its recorded continuation.
-Missing agreement/store/association/accounting/context stops that affected route without setup,
-budget reset, guessed identities or a new scope interview. This is no dispatch/publication grant.
-
-## Step 4: Report and stop
+Run the pipeline above for the recorded scope, then print:
 
 ```
 FVS >> AUTO-EXECUTE
 
-State:            {recorded choices/extraction/externals; current reconciliation or partial reasons}
-Next action:      {nextAction}
+State:            {recorded choices, extraction and spec pull request status, items proved, accepted and open}
+Next action:      {nextAction, or the owner's review of the proof pull request}
 Pending decision: {pendingDecisions, or none}
-
-Automatic stage sequencing/proof dispatch: milestone 2 functionality not yet available; no proof accepted by this invocation.
-See the "Auto track" section of the FVS README for what milestone 1 provides.
+Proof PR:         {draft pull request URL, or not opened and why}
 ```
 
-On the legacy/read-only path, stop after the report. Checkpoint metadata and currentness inspection establish no new proof acceptance;
-keep provisional results and accepted checker receipts distinct.
+Without the orchestrator or the recorded state, report and stop; dispatch no worker. Only an accepted
+result counts as accepted; keep provisional worker results apart from it.
 
 </process>
