@@ -610,16 +610,15 @@ describe('auto-extract extraction record', () => {
     assert.match(auto.readState({ projectRoot: root }).nextAction, /\/fvs:auto-extract/);
   });
 
-  it('without a probe the next action names the gap, and following it refreshes only the profile', () => {
+  it('without a probe the stage runs reduced with a warning, and installing it refreshes only the profile', () => {
     const root = project();
     assert.equal(init(root, CHOICES, { bin: binWithout('probe-aeneas') }).code, 'created');
     const { out } = prepared(root);
     assert.equal(record(root, out, 0).code, 'recorded');
     const blocked = auto.readState({ projectRoot: root });
-    assert.equal(blocked.readiness.find((entry) => entry.stage === 'auto-top-specs').status, 'no-route');
-    assert.equal(blocked.nextAction, '/fvs:auto-top-specs cannot run here yet: it is missing probe-aeneas. First, the owner must install probe-aeneas '
-      + '(or set its path override), then rerun /fvs:auto-init with the recorded choices so the recorded profile is refreshed.');
-    assert.doesNotMatch(blocked.nextAction, /approves/, 'nothing is put to the owner for approval before the stage can run');
+    assert.equal(blocked.readiness.find((entry) => entry.stage === 'auto-top-specs').status, 'ready-reduced');
+    assert.match(blocked.nextAction, /^Before \/fvs:auto-top-specs, the owner approves the initial agreement .* Warning: auto-top-specs: ready, reduced - without probe-aeneas; /);
+    assert.match(blocked.nextAction, /To restore, the owner can install probe-aeneas \(or set its path override\), then rerun \/fvs:auto-init/);
 
     // The owner installs probe-aeneas; the agent reruns init-state with the same choices.
     const refreshed = init(root);
@@ -630,6 +629,7 @@ describe('auto-extract extraction record', () => {
     assert.equal(after.choicesGeneration, blocked.state.choicesGeneration, 'a refresh is not a choice change');
     assert.equal(after.profile.probes.find((entry) => entry.id === 'probe-aeneas').status, 'present-unqualified');
     assert.match(refreshed.nextAction, /^Before \/fvs:auto-top-specs, the owner approves the initial agreement/);
+    assert.doesNotMatch(refreshed.nextAction, /ready, reduced/);
     const bytes = fs.readFileSync(stateFile(root));
     assert.equal(init(root).code, 'unchanged');
     assert.deepEqual(fs.readFileSync(stateFile(root)), bytes, 'a replay on the same host writes nothing');

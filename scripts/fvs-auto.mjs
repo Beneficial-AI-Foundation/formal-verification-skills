@@ -177,13 +177,29 @@ function stageGap(need, items, probes) {
 // One line per stage, computed from a profile (fresh or recorded) so the setup
 // report, the next action and the read state never disagree: full (every probe
 // qualified), ready-unverified (every probe present and usable, some not
-// qualified), or no-route, naming the first missing or unverified-blocked need
-// and who supplies it.
+// qualified), ready-reduced (only recorded probes are missing, not checked or
+// unusable: the stage runs without their output, labelled reduced), or
+// no-route (AO or Lean missing, or the probes were not recorded), naming the
+// first missing need and who supplies it.
+const REDUCED_PROBE = ['missing', 'not-checked', 'unverified-blocked'];
 export function readiness(profileResult) {
   const items = Object.fromEntries((profileResult?.items ?? []).map((entry) => [entry.id, entry]));
   const probes = Object.fromEntries((profileResult?.probes ?? []).map((entry) => [entry.id, entry]));
   return Object.entries(STAGES).map(([stage, needs]) => {
     const gaps = needs.map((need) => stageGap(need, items, probes)).filter(Boolean);
+    if (gaps.length > 0 && gaps.every((gap) => REDUCED_PROBE.includes(probes[gap.need]?.status))) {
+      const lost = gaps.map((gap) => gap.need);
+      const named = lost.map((need) => {
+        const { status, reason } = probes[need];
+        if (status === 'missing') return need;
+        return `${need} (${status === 'not-checked' ? 'not checked' : 'present but unusable'}${reason ? `: ${reason}` : ''})`;
+      });
+      const unverified = needs.filter((need) => probes[need]?.status === 'present-unqualified');
+      const acceptance = lost.includes('probe-lean') ? ' Proof acceptance (freeze, check, accept) needs the Lean graph, so it refuses until probe-lean is usable.' : '';
+      const labelled = unverified.length > 0 ? ` ${unverified.join(', ')} not qualified for this toolchain tuple: output labelled unverified.` : '';
+      return { stage, status: 'ready-reduced', firstMissing: gaps[0], missing: lost,
+        line: `${stage}: ready, reduced - without ${named.join(', ')}; output labelled reduced. Lost: ${lost.map((need) => `${need}: ${PROBE_LOSSES[need]}`).join(' ')}${acceptance}${labelled} To restore, the ${gaps[0].supplier} can ${gaps[0].step} (warning, not a stop)` };
+    }
     if (gaps.length > 0) {
       const blocked = gaps.filter((gap) => probes[gap.need]?.status === 'unverified-blocked').map((gap) => gap.need);
       const absent = gaps.map((gap) => gap.need).filter((need) => !blocked.includes(need));
@@ -1282,17 +1298,17 @@ function nextAction(state) {
     if (stage.status === 'no-route') {
       return `/fvs:auto-top-specs cannot run here yet: it is ${stage.summary}. First, the ${stage.firstMissing.supplier} must ${stage.firstMissing.step}.`;
     }
+    const warning = ['ready-unverified', 'ready-reduced'].includes(stage.status) ? ` Warning: ${stage.line}.` : '';
     const agreement = state.agreements?.at(-1);
     if (!agreement) {
-      return 'Before /fvs:auto-top-specs, the owner approves the initial agreement (scope, claims, trust, acceptance and the execution grant): the agent drafts it in the roadmap Decisions section, and once the owner has approved its exact content the owner runs record-agreement in their own terminal (the agent never records it).';
+      return 'Before /fvs:auto-top-specs, the owner approves the initial agreement (scope, claims, trust, acceptance and the execution grant): the agent drafts it in the roadmap Decisions section, and once the owner has approved its exact content the owner runs record-agreement in their own terminal (the agent never records it).' + warning;
     }
     if (agreement.payload.choicesGeneration !== (state.choicesGeneration ?? 0) || choiceChanges(agreement.payload.choices, state.choices).length > 0) {
-      return 'Before /fvs:auto-top-specs, the owner approves a successor agreement: the recorded one covers earlier choices.';
+      return 'Before /fvs:auto-top-specs, the owner approves a successor agreement: the recorded one covers earlier choices.' + warning;
     }
     if (agreement.payload.execution === null) {
-      return 'Before /fvs:auto-top-specs, the owner grants the execution actions in a successor agreement: the recorded one grants none, so no worker can be launched.';
+      return 'Before /fvs:auto-top-specs, the owner grants the execution actions in a successor agreement: the recorded one grants none, so no worker can be launched.' + warning;
     }
-    const warning = stage.status === 'ready-unverified' ? ` Warning: ${stage.line}.` : '';
     return 'Run /fvs:auto-top-specs from the AO orchestrator. Each action also needs the stage profile (harness, model and effort per role; the owner approves it, the agent passes it with the request) and, for each actor launch, the permission-ready receipt of the actor permission install, which the owner runs.' + warning;
   }
   if (state.extraction) return 'Rerun /fvs:auto-extract after fixing the recorded failure reasons.';

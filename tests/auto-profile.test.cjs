@@ -520,8 +520,8 @@ describe('fvs-auto profile: probes are optional', () => {
     assert.match(probe.nextStep, /^Not needed for setup or extraction: /);
     const stages = Object.fromEntries(result.readiness.map((entry) => [entry.stage, entry]));
     assert.deepEqual(Object.keys(stages), ['auto-top-specs', 'auto-execute']);
-    assert.equal(stages['auto-top-specs'].status, 'no-route');
-    assert.match(stages['auto-top-specs'].line, /no route here - missing [^;]*probe-aeneas, probe-rust/);
+    assert.equal(stages['auto-top-specs'].status, 'ready-reduced');
+    assert.match(stages['auto-top-specs'].line, /ready, reduced - without [^;]*probe-aeneas, probe-rust/);
   });
 
   it('reports an unsupported host as not needed for setup, pointing to the stage lines', async () => {
@@ -588,13 +588,30 @@ describe('fvs-auto readiness: what each stage can do, computed from a profile', 
     assert.match(stage.line, /ready, unverified - probe-lean not qualified .*warning, not a stop/);
   });
 
-  it('has no route when a probe is missing, and names the owner and the step', () => {
+  it('is ready but reduced when probes are missing, naming the losses, the acceptance refusal and the restoring step', () => {
     const stage = topSpecs(profileWith({ probes: { 'probe-aeneas': { status: 'missing' }, 'probe-lean': { status: 'missing' } } }));
-    assert.equal(stage.status, 'no-route');
+    assert.equal(stage.status, 'ready-reduced');
     assert.deepEqual(stage.missing, ['probe-aeneas', 'probe-lean']);
     assert.deepEqual(stage.firstMissing, { need: 'probe-aeneas', supplier: 'owner',
       step: 'install probe-aeneas (or set its path override), then rerun /fvs:auto-init with the recorded choices so the recorded profile is refreshed' });
-    assert.match(stage.line, /missing probe-aeneas, probe-lean; first, the owner must install probe-aeneas/);
+    assert.match(stage.line, /^auto-top-specs: ready, reduced - without probe-aeneas, probe-lean; output labelled reduced\. Lost: probe-aeneas: .*probe-lean: the Lean atom list/);
+    assert.match(stage.line, /Proof acceptance \(freeze, check, accept\) needs the Lean graph, so it refuses until probe-lean is usable\./);
+    assert.match(stage.line, /To restore, the owner can install probe-aeneas .*\(warning, not a stop\)$/);
+    assert.doesNotMatch(topSpecs(profileWith({ probes: { 'probe-rust': { status: 'missing' } } })).line, /Proof acceptance/,
+      'acceptance is named only when probe-lean is lost');
+  });
+
+  it('labels present but unqualified probes alongside a reduced route', () => {
+    const stage = topSpecs(profileWith({ probes: { 'probe-lean': { status: 'missing' }, scip: { status: 'present-unqualified' } } }));
+    assert.equal(stage.status, 'ready-reduced');
+    assert.match(stage.line, /scip not qualified for this toolchain tuple: output labelled unverified\./);
+  });
+
+  it('has no route when AO is missing, even if only probes are missing besides', () => {
+    const stage = topSpecs(profileWith({ ao: 'missing', probes: { 'probe-lean': { status: 'missing' } } }));
+    assert.equal(stage.status, 'no-route');
+    assert.deepEqual(stage.missing, ['ao', 'probe-lean']);
+    assert.equal(stage.firstMissing.need, 'ao');
   });
 
   it('has no route without ao, using the ao item next step and naming the refresh', () => {
@@ -617,7 +634,8 @@ describe('fvs-auto readiness: what each stage can do, computed from a profile', 
     assert.equal(scip.status, 'not-checked');
     assert.match(scip.reason, /FVS_SCIP_PATH/);
     const stage = result.readiness.find((entry) => entry.stage === 'auto-top-specs');
-    assert.equal(stage.status, 'no-route');
+    assert.equal(stage.status, 'ready-reduced');
+    assert.match(stage.line, /scip \(not checked: [^)]*FVS_SCIP_PATH/);
     assert.match(stage.line, /fix what stopped the probe check \(.*FVS_SCIP_PATH/);
   });
 
@@ -645,9 +663,9 @@ describe('fvs-auto readiness: what each stage can do, computed from a profile', 
     assert.match(leanOf(refused).lost, /Lean atom list/);
     assert.match(leanOf(refused).lost, /commit other than the Rust commit is not reconciled/);
     const stage = refused.readiness.find((entry) => entry.stage === 'auto-top-specs');
-    assert.equal(stage.status, 'no-route');
-    assert.match(stage.line, /blocked by probe-lean: present but unverified, and no stage can use its output/);
-    assert.doesNotMatch(stage.line, /missing [^;]*probe-lean/);
+    assert.equal(stage.status, 'ready-reduced');
+    assert.match(stage.line, /probe-lean \(present but unusable: the Lean graph step accepts only/);
+    assert.match(stage.line, /Proof acceptance \(freeze, check, accept\) needs the Lean graph/);
 
     const accepted = await profileWithProbeLean('echo 0.14.0');
     assert.ok(!graphCodes('0.14.0').includes('unqualified-interface'), 'the graph step accepts 0.14.0');
@@ -671,8 +689,8 @@ describe('fvs-auto readiness: what each stage can do, computed from a profile', 
     assert.match(analyzer.reason, /^rust-analyzer --version failed: error: Unknown binary/);
     assert.match(analyzer.lost, /indexer probe-rust uses/);
     const stage = result.readiness.find((entry) => entry.stage === 'auto-top-specs');
-    assert.match(stage.line, /missing [^;]*rust-analyzer/);
-    assert.doesNotMatch(stage.line, /blocked by [^;]*rust-analyzer/);
+    assert.match(stage.line, /without [^;]*rust-analyzer/);
+    assert.doesNotMatch(stage.line, /rust-analyzer \(present but unusable/);
   });
 
   it('treats a recorded probe status it does not know as no route', () => {
@@ -684,7 +702,7 @@ describe('fvs-auto readiness: what each stage can do, computed from a profile', 
 
   it('keeps the reason a probe check was not made', () => {
     const stage = topSpecs(profileWith({ probes: { scip: { status: 'not-checked', reason: 'FVS_SCIP_PATH is not absolute' } } }));
-    assert.equal(stage.status, 'no-route');
+    assert.equal(stage.status, 'ready-reduced');
     assert.match(stage.firstMissing.step, /fix what stopped the probe check \(FVS_SCIP_PATH is not absolute\)/);
   });
 
