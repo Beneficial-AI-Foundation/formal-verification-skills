@@ -265,7 +265,7 @@ lines" below explains them.
 |---|---|
 | `supported-and-tested` | An exact tested tuple on this host, for the recorded operation only, with probe-aeneas and every helper at the tested version. The profile names the operation, tuple and platform it covers. |
 | `available-but-unverified` | Present, but no recorded FVS run covers it. The reason says exactly why. This is not a failure. A reason that starts with `warning:` (pins that contradict each other, or a Charon or Lean that contradicts a tested Aeneas revision) is also this verdict and never stops setup. |
-| `incompatible` | A concrete mismatch in the recorded extraction: `translation.json` records an Aeneas revision that was tested with a different Charon or Lean. Only the `probe` item prints it, and it never stops setup. Being absent from the tested list is never enough. |
+| `incompatible` | A concrete mismatch. Only the `probe` item prints it, and it never stops setup. Either `translation.json` records an Aeneas revision that was tested with a different Charon or Lean, or the project is on a tested tuple and probe-aeneas or one of its helpers is at a different version than the tested one, or this host cannot confine the run. Being absent from the tested list is never enough. |
 | `missing` | A component is actually absent. For `ao`, `rust`, `lean` and `aeneas` this stops `/fvs:auto-init`. A missing `probe` is only noted, because no probe is needed for setup or extraction. |
 | `unsupported-platform` | This host's target has no recorded confined run, or no official probe-aeneas asset. Setup and extraction go on here. Without the probes the spec and proof stages have no route here, and the stage lines say so. |
 | `not-extracted-yet` | The expected state of a fresh project: no `translation.json` and no Aeneas-generated Lean file yet. This is not a failure. |
@@ -291,10 +291,11 @@ or a second sentence, the cell shows it:
 
 Other next steps name your own revision, host or paths, so the profile writes them for you: install
 Aeneas and Charon for the pinned revision under `.aeneas/releases/<rev>/<platform>/`; run the resolver
-above for a missing or drifted probe-aeneas or helper; use a host with a recorded confined run when the
-host is `unsupported-platform`. Every `probe` step except the one for a project that is not extracted
-yet, and the `host` step on an `unsupported-platform` host, starts with "Not needed for setup or
-extraction:", because the probes are optional until the spec and proof stages. For an untested tuple the
+above for a missing or drifted probe-aeneas or helper. On an `unsupported-platform` host, setup and
+extraction go on, and a host with recorded confined-run evidence can also run the confined probe
+inventory. Every `probe` step except the one for a project that is not extracted yet, and the `host`
+step on an `unsupported-platform` host, starts with "Not needed for setup or extraction:", because the
+probes are optional until the spec and proof stages. For an untested tuple the
 `probe` step describes how to qualify it: run probe-aeneas confined against your project with its own
 Aeneas, Charon and Lean, record the envelope, helper versions and platform, and add the tuple to
 `TESTED_TUPLES` in a reviewed change. Until then it stays `available-but-unverified`.
@@ -354,8 +355,10 @@ command that runs the profile, the resolver or the engine:
 
 Each path must be absolute and name an executable file (a directory, for the library). A variable that
 is set but unusable is refused with its name in the reason, and the lookup never falls back to the
-default place, so you cannot get a different binary than the one you named. The profile then shows the
-helpers as `not-checked`. `rust-analyzer` and `probe-aeneas` have no override: put them on PATH.
+default place, so you cannot get a different binary than the one you named. Depending on the project,
+the profile then shows the helpers as `not-checked` or stops with the refusal as its only output. In
+both cases fix or unset the variable and rerun. `rust-analyzer` and `probe-aeneas` have no override: put
+them on PATH.
 
 Without probe output the Rust identity record rests on `translation.json` alone. The
 `fvs-rust-identity.mjs record` command takes the probe outputs as optional inputs (`--rust`,
@@ -368,8 +371,9 @@ substitute a guess for the missing probe output.
 
 Two contradictions are warnings, never stops: Aeneas versions that disagree across `translation.json`,
 `lake-manifest.json` and `aeneas-config.yml`, and a Charon or Lean that contradicts a tested Aeneas
-revision. Both print as `available-but-unverified` with a `warning:` reason. The run goes on if the
-recorded extraction builds against the pinned Lean library, and a failed build stops at
+revision. The `aeneas` item prints both as `available-but-unverified` with a `warning:` reason. The
+`probe` item prints the second one as `incompatible`, which also never stops setup. The run goes on if
+the recorded extraction builds against the pinned Lean library, and a failed build stops at
 `record-extraction`.
 
 ## Keep `.formalising/` out of git

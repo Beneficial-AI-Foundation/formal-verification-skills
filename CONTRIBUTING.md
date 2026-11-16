@@ -5,9 +5,8 @@
 `npm test` runs every test file one after another through `scripts/run-tests.cjs` and takes about half
 an hour.
 
-- **Build the hooks first.** `npm test` does not build them, and a fresh checkout has no `hooks/dist`.
-  Run `npm run build:hooks` once before the first run. Without it about a dozen install tests fail, in
-  the codex-coexist, install, local-patches and installed-script-paths test files.
+- **Hooks.** The install tests need `hooks/dist`, which is build output that git ignores. If they fail
+  because hook files are missing, run `npm run build:hooks` once and run them again.
 - **Keep the machine awake.** A laptop that sleeps in the middle of a run fails long tests with timeouts
   that have nothing to do with the code. Stay on AC power. On macOS, `caffeinate -is npm test` holds the
   machine awake while it is plugged in; `caffeinate -i` alone does not.
