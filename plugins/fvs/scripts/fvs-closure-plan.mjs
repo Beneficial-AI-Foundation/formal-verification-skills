@@ -443,8 +443,9 @@ export function expandSchedulingDependencies(g, nodes, failed = []) {
   // or recursor): it has no Rust def_id, owner or task and is only passed through.
   const oracle = g.schemaVersion === 2;
   const generated = (id) => oracle && !g.nodes[id].probeAtom;
-  // A type-level probe atom no item owns (a structure or its projection: ticket
-  // 10 records functions only) is passed through like a generated node.
+  // A type-level probe atom no item owns (a structure or its projection: the
+  // Rust identity record lists functions only) is passed through like a
+  // generated node.
   const passThrough = (id) => generated(id) || (oracle && typeLevel(g.nodes[id]) && !owner.has(id));
   const adjacency = new Map(Object.keys(oracle ? g.nodes : g.declarations).map((id) => [id, []]));
   for (const edge of declared) if (edge.resolution === 'local' || edge.resolution === 'generated') adjacency.get(edge.from).push(edge.to);
