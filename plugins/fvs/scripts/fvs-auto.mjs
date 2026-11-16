@@ -428,12 +428,24 @@ function cpuAndOs(name) {
   return cpu && system ? `${cpu}-${system}` : null;
 }
 
+// Where installed releases are looked for: the project root's own .aeneas, then,
+// when the root is a subfolder of a git working tree, the top of that working
+// tree (a Lean project in formal/ beside an install at the repository root). The
+// repository-top folder counts only while it is itself in the working tree of the
+// root: a link out of the tree, or a nested repository, hides it.
+function releaseBases(root) {
+  const bases = [path.join(root, '.aeneas', 'releases')];
+  const top = gitWorkingTree(root);
+  const above = top === null || top === root ? null : path.join(top, '.aeneas', 'releases');
+  if (above !== null && fs.existsSync(above) && gitWorkingTree(above) === top) bases.push(above);
+  return bases;
+}
+
 // Installed releases under .aeneas/releases/<tag>/<platform>/. Only a
 // release whose directory name clearly matches the host counts as usable.
-function aeneasReleases(root, platform) {
+function aeneasReleases(bases, platform) {
   const host = cpuAndOs(platform);
-  const base = path.join(root, '.aeneas', 'releases');
-  return sortedDirectories(base).flatMap((tag) => sortedDirectories(path.join(base, tag)).map((name) => {
+  return bases.flatMap((base) => sortedDirectories(base).flatMap((tag) => sortedDirectories(path.join(base, tag)).map((name) => {
     const directory = path.join(base, tag, name);
     return {
       tag,
@@ -442,14 +454,15 @@ function aeneasReleases(root, platform) {
       aeneas: executableFile(path.join(directory, 'aeneas')),
       charon: executableFile(path.join(directory, 'charon')),
     };
-  }));
+  })));
 }
 
 function aeneasItem(root, platform, provenance) {
   const lakefile = lakefileAeneas(root);
   const inputRev = manifestInputRev(root);
   const pins = [...new Set([lakefile.rev, inputRev, provenance.aeneasRev].filter(Boolean))];
-  const releases = aeneasReleases(root, platform);
+  const bases = releaseBases(root);
+  const releases = aeneasReleases(bases, platform);
   // With no pin at all, any installed release for this host counts as
   // present; which Aeneas Lake would use is then reported as uncertain.
   const pinned = releases.filter((entry) => pins.length === 0 || pins.includes(entry.tag));
@@ -493,7 +506,7 @@ function aeneasItem(root, platform, provenance) {
     .filter(([, found]) => !found).map(([name]) => name);
   if (absent.length > 0) {
     const rev = lakefile.rev ?? inputRev ?? provenance.aeneasRev;
-    const install = `Aeneas and Charon for ${rev ?? 'it'} built for ${platform} (an Aeneas release from https://github.com/AeneasVerif/aeneas/releases bundles both) under .aeneas/releases/${rev ?? '<rev>'}/<platform>/, or put aeneas and charon on PATH.`;
+    const install = `Aeneas and Charon for ${rev ?? 'it'} built for ${platform} (an Aeneas release from https://github.com/AeneasVerif/aeneas/releases bundles both) under .aeneas/releases/${rev ?? '<rev>'}/<platform>/ in the project root or at the top of its git working tree, or put aeneas and charon on PATH.`;
     let step = `Install ${install}`;
     if (!rev) step = `Pin the Aeneas rev in the lakefile, then install ${install}`;
     else if (uncertainty) step = `Run lake update so lake-manifest.json matches the lakefile, then install ${install}`;
@@ -1253,6 +1266,12 @@ function choiceChanges(recorded, requested) {
 const blocks = (entry) => !['host', 'probe'].includes(entry.id)
   && ['incompatible', 'unsupported-platform', 'missing'].includes(entry.verdict);
 
+// What stops setup for a recorded state. A missing Aeneas stops a first setup, but
+// not once an extraction has succeeded: only a new extraction needs Aeneas, and it
+// refuses there, naming the tool, so setup warns instead.
+const stops = (entry, state) => blocks(entry)
+  && !(entry.id === 'aeneas' && entry.verdict === 'missing' && state?.extraction?.status === 'succeeded');
+
 export function initState({ projectRoot, choices, confirmOverwrite = false, platform = hostTarget(), schemaVersion }) {
   const root = projectDirectory(projectRoot);
   const recorded = loadState(root);
@@ -1261,8 +1280,10 @@ export function initState({ projectRoot, choices, confirmOverwrite = false, plat
   if (recorded && recorded.schemaVersion !== schemaVersion) refuse('migration-required', 'existing setup version is preserved; no in-place migration');
   const requested = normalizeChoices(choices, schemaVersion);
   const result = profile({ projectRoot: root, platform });
+  const warned = result.items.filter((entry) => blocks(entry) && !stops(entry, recorded));
+  const warning = warned.length === 0 ? '' : `; warning: ${warned.map((entry) => `${entry.id} is ${entry.verdict}`).join(', ')}, so a new extraction stops until it is fixed. ${warned.map((entry) => entry.nextStep).join(' ')}`;
   const refuseBlocked = () => {
-    const blocking = result.items.filter(blocks).map(({ id, verdict, reason, nextStep }) => ({ id, verdict, reason, nextStep }));
+    const blocking = result.items.filter((entry) => stops(entry, recorded)).map(({ id, verdict, reason, nextStep }) => ({ id, verdict, reason, nextStep }));
     if (blocking.length > 0) {
       const nested = result.items.find((entry) => entry.id === 'lean')?.evidence.nestedProject;
       const where = nested ? `; the Lean project is in ${nested}/, so rerun with the project root at ${nested}/` : '';
@@ -1277,14 +1298,14 @@ export function initState({ projectRoot, choices, confirmOverwrite = false, plat
     // setup, so readiness and the next action never rest on tools the host no
     // longer has. Only the profile is replaced: choices, generation, agreements
     // and extraction stay, and requested choice changes are not saved here.
-    if (profileChanged && (changes.length === 0 || result.items.some(blocks))) {
+    if (profileChanged && (changes.length === 0 || result.items.some((entry) => stops(entry, recorded)))) {
       commitState(root, recorded, { ...recorded, profiledAt: now(), profile: result });
     }
     refuseBlocked();
     if (changes.length === 0) {
       return profileChanged
-        ? { ...readState({ projectRoot: root }), code: 'profile-refreshed', message: `the recorded profile was refreshed in ${statePath(root)}; the choices are unchanged` }
-        : { ...readState({ projectRoot: root }), code: 'unchanged', message: 'the recorded setup state already holds these choices and this profile; nothing was written' };
+        ? { ...readState({ projectRoot: root }), code: 'profile-refreshed', message: `the recorded profile was refreshed in ${statePath(root)}; the choices are unchanged${warning}` }
+        : { ...readState({ projectRoot: root }), code: 'unchanged', message: `the recorded setup state already holds these choices and this profile; nothing was written${warning}` };
     }
     if (!confirmOverwrite) {
       refuse('confirmation-required', `the requested choices change recorded owner choices: ${changes.map((change) => change.field).join(', ')}`,
@@ -1309,7 +1330,7 @@ export function initState({ projectRoot, choices, confirmOverwrite = false, plat
   if ('choicesGeneration' in state && !generationValid(state.choicesGeneration)) refuse('generation-exhausted', 'choices generation cannot advance safely; no state was written');
   commitState(root, recorded, state);
   // The refreshed view, so the caller sees the pending decisions of the state just written.
-  return { ...readState({ projectRoot: root }), code: recorded ? 'updated' : 'created', message: `setup state written to ${statePath(root)}` };
+  return { ...readState({ projectRoot: root }), code: recorded ? 'updated' : 'created', message: `setup state written to ${statePath(root)}${warning}` };
 }
 
 // The phase, the next action and its warnings, derived together so they never
@@ -1318,7 +1339,7 @@ export function initState({ projectRoot, choices, confirmOverwrite = false, plat
 // execution grant, stage profile or permission install is asked for. A missing
 // or outdated agreement and a reduced or unverified stage are warnings only.
 function progress(state) {
-  const blocking = state.profile.items.filter(blocks);
+  const blocking = state.profile.items.filter((entry) => stops(entry, state));
   if (blocking.length > 0) {
     return { phase: 'setup', warnings: [], nextAction: `Setup is blocked: ${blocking.map((entry) => `${entry.id} is ${entry.verdict}`).join(', ')}. ${blocking.map((entry) => entry.nextStep).join(' ')} Then rerun /fvs:auto-init.` };
   }

@@ -741,3 +741,69 @@ describe('fvs-auto readiness: what each stage can do, computed from a profile', 
     assert.notEqual(none.firstMissing, null);
   });
 });
+
+describe('fvs-auto profile: Aeneas and Charon installed at the top of the working tree', () => {
+  const TAG = 'nightly-2026.09.30-0855ce1';
+  const PILOT = path.join(FIXTURES, 'pilot');
+  const RELEASE = path.join('.aeneas', 'releases', TAG, 'darwin-arm64');
+
+  function gitInit(directory) {
+    const env = { ...process.env };
+    for (const name of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete env[name];
+    assert.equal(spawnSync('git', ['init', '-q', directory], { env }).status, 0);
+  }
+
+  // The pilot's Lean project in formal/ of a repository, its install moved to the
+  // repository top (under another revision name when tag is given).
+  function layout({ init = true, tag = TAG } = {}) {
+    const repo = fs.realpathSync(temporaryDirectory());
+    fs.cpSync(PILOT, path.join(repo, 'formal'), { recursive: true, filter: (entry) => path.relative(PILOT, entry) !== '.aeneas' });
+    fs.cpSync(path.join(PILOT, RELEASE), path.join(repo, '.aeneas', 'releases', tag, 'darwin-arm64'), { recursive: true });
+    if (init) gitInit(repo);
+    return { repo, formal: path.join(repo, 'formal') };
+  }
+
+  it('finds the release at the repository top, under the same pin, host and executable rules', async () => {
+    const { repo, formal } = layout();
+    const aeneas = item(await profileOf(formal), 'aeneas');
+    assert.equal(aeneas.verdict, 'available-but-unverified', aeneas.reason);
+    assert.equal(aeneas.evidence.aeneas, path.join(repo, RELEASE, 'aeneas'));
+    assert.equal(aeneas.evidence.charon.path, path.join(repo, RELEASE, 'charon'));
+    assert.deepEqual(aeneas.evidence.releases.map((entry) => [entry.tag, entry.platform, entry.forHost]), [[TAG, 'darwin-arm64', true]]);
+
+    const wrongPin = layout({ tag: 'nightly-2000.01.01-0000000' });
+    const missing = item(await profileOf(wrongPin.formal), 'aeneas');
+    assert.equal(missing.verdict, 'missing', 'a release for another revision is not the pinned one');
+    assert.match(missing.nextStep, /in the project root or at the top of its git working tree/);
+
+    const foreign = item(await profileOf(layout().formal, { platform: 'x86_64-unknown-linux-gnu' }), 'aeneas');
+    assert.equal(foreign.verdict, 'missing', 'a release built for another host is not usable');
+    assert.match(foreign.reason, /installed releases are for other hosts: nightly-2026\.09\.30-0855ce1\/darwin-arm64/);
+  });
+
+  it('prefers the project root\'s own install over the repository top', async () => {
+    const { formal } = layout();
+    fs.cpSync(path.join(PILOT, RELEASE), path.join(formal, RELEASE), { recursive: true });
+    const aeneas = item(await profileOf(formal), 'aeneas');
+    assert.equal(aeneas.evidence.aeneas, path.join(formal, RELEASE, 'aeneas'));
+  });
+
+  it('looks nowhere above the root when it is in no git working tree', async () => {
+    const { formal } = layout({ init: false });
+    const aeneas = item(await profileOf(formal), 'aeneas');
+    assert.equal(aeneas.verdict, 'missing');
+    assert.deepEqual(aeneas.evidence.releases, []);
+  });
+
+  it('ignores a top-level install that is a link out of the working tree or a nested repository', async () => {
+    const linked = layout();
+    const elsewhere = fs.realpathSync(temporaryDirectory());
+    fs.renameSync(path.join(linked.repo, '.aeneas'), path.join(elsewhere, '.aeneas'));
+    fs.symlinkSync(path.join(elsewhere, '.aeneas'), path.join(linked.repo, '.aeneas'));
+    assert.equal(item(await profileOf(linked.formal), 'aeneas').verdict, 'missing', 'a link out of the working tree');
+
+    const nested = layout();
+    gitInit(path.join(nested.repo, '.aeneas'));
+    assert.equal(item(await profileOf(nested.formal), 'aeneas').verdict, 'missing', 'a nested repository');
+  });
+});

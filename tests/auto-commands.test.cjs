@@ -1239,3 +1239,55 @@ describe('auto command and workflow text', () => {
     assert.match(read('fv-skills/workflows/roadmap.md'), /Generic roadmaps outside auto-init require no machine envelope/);
   });
 });
+
+describe('a missing Aeneas once an extraction is recorded', () => {
+  const noAeneas = () => binWithout('aeneas', 'charon');
+  // The fixture project carries its own install; with that gone and none on PATH, Aeneas is absent.
+  const withoutInstall = (root) => { fs.rmSync(path.join(root, '.aeneas'), { recursive: true, force: true }); return root; };
+  const aeneasOf = (root) => auto.readState({ projectRoot: root }).state.profile.items.find((entry) => entry.id === 'aeneas');
+
+  it('stops a first setup, and only warns after an extraction succeeded', () => {
+    const first = init(withoutInstall(project()), CHOICES, { bin: noAeneas() });
+    assert.equal(first.code, 'profile-blocked', first.message);
+    assert.match(first.message, /aeneas is missing/);
+
+    const root = project();
+    init(root);
+    const { out } = prepared(root);
+    assert.equal(record(root, out, 0).code, 'recorded');
+    withoutInstall(root);
+    const before = auto.readState({ projectRoot: root }).state;
+
+    const bin = noAeneas();
+    const warned = init(root, CHOICES, { bin });
+    assert.equal(warned.code, 'profile-refreshed', warned.message);
+    assert.match(warned.message, /; warning: aeneas is missing, so a new extraction stops until it is fixed\. Install Aeneas and Charon/);
+    assert.equal(aeneasOf(root).verdict, 'missing', 'the recorded profile still states the gap');
+    const view = auto.readState({ projectRoot: root });
+    assert.deepEqual(view.state.extraction, before.extraction);
+    assert.deepEqual(view.state.choices, before.choices);
+    assert.doesNotMatch(view.nextAction, /^Setup is blocked/);
+
+    const again = init(root, CHOICES, { bin });
+    assert.equal(again.code, 'unchanged');
+    assert.match(again.message, /nothing was written; warning: aeneas is missing/);
+    assert.equal(init(root).code, 'profile-refreshed', 'restoring Aeneas clears the warning');
+  });
+
+  it('still stops when the recorded extraction failed, and for any other missing tool', () => {
+    const failed = project();
+    init(failed);
+    const { out } = prepared(failed);
+    assert.equal(record(failed, out, 1).code, 'extraction-failed');
+    withoutInstall(failed);
+    assert.equal(auto.readState({ projectRoot: failed }).state.extraction.status, 'failed');
+    assert.equal(init(failed, CHOICES, { bin: noAeneas() }).code, 'profile-blocked');
+
+    const succeeded = project();
+    init(succeeded);
+    const prepare = prepared(succeeded);
+    assert.equal(record(succeeded, prepare.out, 0).code, 'recorded');
+    withoutInstall(succeeded);
+    assert.equal(init(succeeded, CHOICES, { bin: binWithout('aeneas', 'charon', 'ao') }).code, 'profile-blocked');
+  });
+});
