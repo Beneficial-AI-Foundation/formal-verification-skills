@@ -555,16 +555,34 @@ describe('fvs-auto readiness: what each stage can do, computed from a profile', 
   it('has no route when a probe is missing, and names the owner and the step', () => {
     const stage = topSpecs(profileWith({ probes: { 'probe-aeneas': { status: 'missing' }, 'probe-lean': { status: 'missing' } } }));
     assert.equal(stage.status, 'no-route');
+    assert.deepEqual(stage.missing, ['probe-aeneas', 'probe-lean']);
     assert.deepEqual(stage.firstMissing, { need: 'probe-aeneas', supplier: 'owner',
-      step: 'install probe-aeneas (or set its path override), then rerun the profile' });
+      step: 'install probe-aeneas (or set its path override), then rerun /fvs:auto-init with the recorded choices so the recorded profile is refreshed' });
     assert.match(stage.line, /missing probe-aeneas, probe-lean; first, the owner must install probe-aeneas/);
   });
 
-  it('has no route without ao, using the ao item next step', () => {
+  it('has no route without ao, using the ao item next step and naming the refresh', () => {
     const stage = topSpecs(profileWith({ ao: 'missing' }));
     assert.equal(stage.status, 'no-route');
     assert.equal(stage.firstMissing.need, 'ao');
-    assert.equal(stage.firstMissing.step, 'install Agent Orchestrator and put its ao CLI on PATH, then rerun the profile');
+    assert.equal(stage.firstMissing.step,
+      'install Agent Orchestrator and put its ao CLI on PATH, then rerun /fvs:auto-init with the recorded choices so the recorded profile is refreshed');
+  });
+
+  it('a refused path override leaves the helpers not checked and keeps the reason', async () => {
+    process.env.FVS_SCIP_PATH = 'relative/scip';
+    let result;
+    try {
+      result = await profileOf(extractedPilot());
+    } finally {
+      delete process.env.FVS_SCIP_PATH;
+    }
+    const scip = result.probes.find((entry) => entry.id === 'scip');
+    assert.equal(scip.status, 'not-checked');
+    assert.match(scip.reason, /FVS_SCIP_PATH/);
+    const stage = result.readiness.find((entry) => entry.stage === 'auto-top-specs');
+    assert.equal(stage.status, 'no-route');
+    assert.match(stage.line, /fix what stopped the probe check \(.*FVS_SCIP_PATH/);
   });
 
   it('keeps the reason a probe check was not made', () => {

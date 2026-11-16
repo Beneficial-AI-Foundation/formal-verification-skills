@@ -133,17 +133,21 @@ function probeStatuses(root, probe, resolver, platform) {
 const STAGE_NEEDS = ['ao', 'lean', ...Object.keys(PROBE_LOSSES)];
 const STAGES = { 'auto-top-specs': STAGE_NEEDS, 'auto-execute': STAGE_NEEDS };
 
+// The recorded profile changes only when init-state runs again (same choices
+// refresh only the profile), so every step ends by naming that.
+const REFRESH = 'then rerun /fvs:auto-init with the recorded choices so the recorded profile is refreshed';
+
 function stageGap(need, items, probes) {
   if (!(need in PROBE_LOSSES)) {
     const entry = items[need];
     if (entry && entry.verdict !== 'missing') return null;
-    const step = entry?.nextStep ? entry.nextStep[0].toLowerCase() + entry.nextStep.slice(1).replace(/\.$/, '') : `install ${need}, then rerun the profile`;
-    return { need, supplier: 'owner', step };
+    const advice = entry?.nextStep ? entry.nextStep[0].toLowerCase() + entry.nextStep.slice(1).replace(/,? then rerun the profile\.?$|\.$/, '') : `install ${need}`;
+    return { need, supplier: 'owner', step: `${advice}, ${REFRESH}` };
   }
   const probe = probes[need];
-  if (!probe) return { need, supplier: 'agent', step: 'rerun the profile: the recorded profile did not check the probes' };
-  if (probe.status === 'missing') return { need, supplier: 'owner', step: `install ${need} (or set its path override), then rerun the profile` };
-  if (probe.status === 'not-checked') return { need, supplier: 'owner', step: `fix what stopped the probe check (${probe.reason ?? 'reason not recorded'}), then rerun the profile` };
+  if (!probe) return { need, supplier: 'agent', step: 'rerun /fvs:auto-init with the recorded choices so the recorded profile is refreshed: it did not check the probes' };
+  if (probe.status === 'missing') return { need, supplier: 'owner', step: `install ${need} (or set its path override), ${REFRESH}` };
+  if (probe.status === 'not-checked') return { need, supplier: 'owner', step: `fix what stopped the probe check (${probe.reason ?? 'reason not recorded'}), ${REFRESH}` };
   return null;
 }
 
@@ -157,7 +161,7 @@ export function readiness(profileResult) {
   return Object.entries(STAGES).map(([stage, needs]) => {
     const gaps = needs.map((need) => stageGap(need, items, probes)).filter(Boolean);
     if (gaps.length > 0) {
-      return { stage, status: 'no-route', firstMissing: gaps[0],
+      return { stage, status: 'no-route', firstMissing: gaps[0], missing: gaps.map((gap) => gap.need),
         line: `${stage}: no route here - missing ${gaps.map((gap) => gap.need).join(', ')}; first, the ${gaps[0].supplier} must ${gaps[0].step}` };
     }
     const unverified = needs.filter((need) => need in PROBE_LOSSES && probes[need].status !== 'qualified');
@@ -1137,22 +1141,32 @@ export function initState({ projectRoot, choices, confirmOverwrite = false, plat
   if (![1, 2].includes(schemaVersion)) refuse('invalid-input', 'unsupported setup version');
   if (recorded && recorded.schemaVersion !== schemaVersion) refuse('migration-required', 'existing setup version is preserved; no in-place migration');
   const requested = normalizeChoices(choices, schemaVersion);
+  const result = profile({ projectRoot: root, platform });
+  const refuseBlocked = () => {
+    const blocking = result.items.filter(blocks).map(({ id, verdict, reason, nextStep }) => ({ id, verdict, reason, nextStep }));
+    if (blocking.length > 0) {
+      refuse('profile-blocked', `the compatibility profile stops auto-init: ${blocking.map((entry) => `${entry.id} is ${entry.verdict}`).join(', ')}`,
+        { blocking, nextStep: blocking.map((entry) => entry.nextStep).join(' ') });
+    }
+  };
   if (recorded) {
     const changes = choiceChanges(recorded.choices, requested);
     if (changes.length === 0) {
-      return { ...readState({ projectRoot: root }), code: 'unchanged', message: 'the recorded setup state already holds these choices; nothing was written' };
+      if (canonicalJson(result) === canonicalJson(recorded.profile)) {
+        return { ...readState({ projectRoot: root }), code: 'unchanged', message: 'the recorded setup state already holds these choices and this profile; nothing was written' };
+      }
+      // Same choices, new host facts (a tool installed or removed): only the
+      // profile is replaced; choices, generation, agreements and extraction stay.
+      refuseBlocked();
+      writeAtomic(statePath(root), { ...recorded, profiledAt: now(), profile: result });
+      return { ...readState({ projectRoot: root }), code: 'profile-refreshed', message: `the recorded profile was refreshed in ${statePath(root)}; the choices are unchanged` };
     }
     if (!confirmOverwrite) {
       refuse('confirmation-required', `the requested choices change recorded owner choices: ${changes.map((change) => change.field).join(', ')}`,
         { changes, nextStep: 'Show each change to the owner and rerun with --confirm-overwrite only after they confirm it.' });
     }
   }
-  const result = profile({ projectRoot: root, platform });
-  const blocking = result.items.filter(blocks).map(({ id, verdict, reason, nextStep }) => ({ id, verdict, reason, nextStep }));
-  if (blocking.length > 0) {
-    refuse('profile-blocked', `the compatibility profile stops auto-init: ${blocking.map((entry) => `${entry.id} is ${entry.verdict}`).join(', ')}`,
-      { blocking, nextStep: blocking.map((entry) => entry.nextStep).join(' ') });
-  }
+  refuseBlocked();
   const state = {
     schema: 'fvs/auto-state',
     schemaVersion,
@@ -1182,7 +1196,7 @@ function nextAction(state) {
     // Recomputed from the recorded profile, never read from a stored field.
     const stage = readiness(state.profile).find((entry) => entry.stage === 'auto-top-specs');
     if (stage.status === 'no-route') {
-      return `/fvs:auto-top-specs cannot run here yet. First, the ${stage.firstMissing.supplier} must ${stage.firstMissing.step}. (${stage.line})`;
+      return `/fvs:auto-top-specs cannot run here yet: it is missing ${stage.missing.join(', ')}. First, the ${stage.firstMissing.supplier} must ${stage.firstMissing.step}.`;
     }
     const agreement = state.agreements?.at(-1);
     if (!agreement) {
