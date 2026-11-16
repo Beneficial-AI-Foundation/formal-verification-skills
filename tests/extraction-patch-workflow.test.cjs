@@ -176,6 +176,13 @@ describe('The patch route follows the proposed change, not the layer that failed
     assert.doesNotMatch(command, /at the `charon` or `aeneas` layer, before a new patch/);
   });
 
+  it('the success checklists in the workflow and the command name the proposed change, not a layer', () => {
+    assert.doesNotMatch(workflow, /runs before a new patch at the `charon` or `aeneas` layer/);
+    assert.doesNotMatch(command, /A new patch at the `charon` or `aeneas` layer starts with/);
+    assert.match(flatten(workflow), /KNOWN ISSUES \(Step 3a\) runs before any new or changed patch to the Rust extraction inputs, whichever layer reported the blocker/);
+    assert.match(flatten(command), /A new or changed patch to the Rust extraction inputs, whichever layer reported the blocker, starts with a read-only known-issues check/);
+  });
+
   it('the patch review needs the known-issues record first and catches a repair found late', () => {
     const review = step('patch_review').replace(/\s+/g, ' ');
     assert.match(review, /Step 3a has recorded an outcome for the signature before the first writer dispatch/);
