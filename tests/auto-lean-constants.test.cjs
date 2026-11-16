@@ -28,6 +28,16 @@ if (args.includes('build')) {
   if (env.FAKE_EXTRA_OLEAN) fs.writeFileSync(path.join(process.cwd(), '.lake/build/lib/lean/Other.olean'), 'stale');
   if (env.FAKE_BUILD_EDIT) fs.appendFileSync(path.join(process.cwd(), 'Demo.lean'), '-- edited by the build');
   if (env.FAKE_BUILD_OUTPUT) fs.writeFileSync(path.join(process.cwd(), '.lake/build/lib/lean/Demo/Sub.ilean'), '{ }');
+  // A module named with + is built by name, as Lake does for one the roots do not import.
+  const named = args.filter((arg) => arg.startsWith('+'));
+  if (named.length > 0) {
+    if (env.FAKE_MODULE_BUILD_EXIT) process.exit(Number(env.FAKE_MODULE_BUILD_EXIT));
+    for (const arg of named) {
+      const base = path.join(process.cwd(), '.lake/build/lib/lean', arg.slice(1).replaceAll('.', '/'));
+      fs.writeFileSync(base + '.olean', arg + ' olean');
+      fs.writeFileSync(base + '.ilean', '{}');
+    }
+  }
   process.exit(Number(env.FAKE_BUILD_EXIT || 0));
 }
 const file = args[args.length - 1];
@@ -38,7 +48,14 @@ const rows = [
   { module: 'Demo', olean: olean(build, 'Demo'), parts: [''] },
   { module: 'Demo.Sub', olean: olean(build, 'Demo.Sub'), parts: [''] },
 ];
-if (path.basename(file) === 'Discover.lean') {
+// Demo imports Demo.Sub; any other module the file imports is loaded only if it was compiled.
+for (const line of fs.readFileSync(file, 'utf8').split('\\n')) {
+  const module = /^import (\\S+)$/.exec(line)?.[1];
+  if (!module || rows.some((row) => row.module === module)) continue;
+  if (!fs.existsSync(olean(build, module))) { console.error('unknown module ' + module); process.exit(1); }
+  rows.push({ module, olean: olean(build, module), parts: [''] });
+}
+if (path.basename(file).startsWith('Discover')) {
   console.log('info: discovery');
   console.log(JSON.stringify(rows));
   process.exit(0);
@@ -47,7 +64,7 @@ const body = {
   nodes: [{ name: 'Demo.x', module: 'Demo', kind: 'def', hasDeclarationRange: true, isStructure: false, isProjection: false,
     isClass: false, isInstance: false, type: ['Nat'], value: ['Nat.succ'], axioms: [] }],
   referenced: [{ name: 'Nat', module: 'Init' }, { name: 'Nat.succ', module: 'Init' }],
-  moduleNames: env.FAKE_MODULES ? env.FAKE_MODULES.split(',') : ['Init', 'Demo', 'Demo.Sub'],
+  moduleNames: env.FAKE_MODULES ? env.FAKE_MODULES.split(',') : rows.map((row) => row.module),
 };
 console.log(JSON.stringify(body));
 if (env.FAKE_TWO_LINES) console.log(JSON.stringify(body));
@@ -77,6 +94,7 @@ function freshProject(env = {}) {
   fs.writeFileSync(path.join(project, '.lake/build/lib/lean/Demo/Sub.ilean'), '{}');
   fs.writeFileSync(path.join(toolchainLib, 'Init.olean'), 'init olean');
   if (env.FAKE_UNIMPORTED) fs.writeFileSync(path.join(project, 'Demo/Extra.lean'), 'def y := 1\n');
+  if (env.FAKE_ODD_NAME) fs.writeFileSync(path.join(project, 'Demo/odd-name.lean'), 'def w := 3\n');
   return project;
 }
 
@@ -149,7 +167,8 @@ describe('fvs-lean-constants producer', () => {
     ['a project file the build changes', { FAKE_BUILD_EDIT: '1' }, 'Demo', /project files changed during the build \(only build outputs under \.lake may change\): Demo\.lean$/m],
     ['extractor module names that differ from discovery', { FAKE_MODULES: 'Init,Demo,Other' }, 'Demo', /module names differ/],
     ['a compiled file of a module outside the roots', { FAKE_EXTRA_OLEAN: '1' }, 'Demo', /unexpected \.lake\/build\/lib\/lean\/Other\.olean/],
-    ['a project module the library root does not import', { FAKE_UNIMPORTED: '1' }, 'Demo', /do not import Demo\.Extra: .*`import Demo\.Extra` to Demo\.lean/],
+    ['a module the root does not import that fails to build by name', { FAKE_UNIMPORTED: '1', FAKE_MODULE_BUILD_EXIT: '1' }, 'Demo', /01b-build-modules exited 1/],
+    ['a module the root does not import whose name is not a plain identifier', { FAKE_ODD_NAME: '1' }, 'Demo', /do not import Demo\.odd-name: .*`import Demo\.odd-name` to Demo\.lean/],
   ];
   for (const [label, env, roots, message] of refusals) {
     it(`refuses ${label} and publishes nothing`, () => {
@@ -158,9 +177,42 @@ describe('fvs-lean-constants producer', () => {
       assert.match(result.stderr, message);
       for (const file of ['constants.json', 'constants-run.json', 'imports.json']) assert.ok(!fs.existsSync(path.join(out, file)));
       // The layout check runs before the extractor starts.
-      if (env.FAKE_UNIMPORTED) assert.ok(!fs.existsSync(path.join(out, '03-constants.log')));
+      if (env.FAKE_UNIMPORTED || env.FAKE_ODD_NAME) assert.ok(!fs.existsSync(path.join(out, '03-constants.log')));
     });
   }
+
+  it('builds a project module the root does not import by name, records it and warns', async () => {
+    const { out, result } = produce({ FAKE_UNIMPORTED: '1' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /^warning: the library roots do not import Demo\.Extra, so Lake built them by name .*`import Demo\.Extra` to Demo\.lean/m);
+    for (const log of ['01a-discover-roots', '01b-build-modules']) assert.ok(fs.existsSync(path.join(out, `${log}.log`)));
+    const graph = await import(pathToFileURL(path.join(ROOT, 'scripts', 'fvs-lean-graph.mjs')).href);
+    const recordText = fs.readFileSync(path.join(out, 'constants.json'), 'utf8');
+    const record = JSON.parse(recordText);
+    const receipt = JSON.parse(fs.readFileSync(path.join(out, 'constants-run.json'), 'utf8'));
+    const importsText = fs.readFileSync(path.join(out, 'imports.json'), 'utf8');
+    const analysed = ['Demo', 'Demo.Extra', 'Demo.Sub'];
+    assert.deepEqual(graph.oracleShapeProblems(record), []);
+    assert.deepEqual(graph.constantsRunProblems(receipt, recordText, record, project), []);
+    assert.deepEqual(graph.compiledProblems(record.inputs.compiled, analysed, project), []);
+    assert.deepEqual(graph.importProblems(importsText, record.inputs.imports, record.inputs.compiled, analysed, record.referenced), []);
+    assert.ok(Object.hasOwn(JSON.parse(importsText).modules, 'Demo.Extra'));
+    assert.ok(Object.hasOwn(record.inputs.files, '.lake/build/lib/lean/Demo/Extra.ilean'), 'the record binds the by-name build\'s .ilean');
+    assert.equal(receipt.warnings.length, 1);
+    assert.match(receipt.warnings[0], /do not import Demo\.Extra/);
+    // The work files import the module after the root; the roots-only discovery does not.
+    assert.match(fs.readFileSync(path.join(out, 'work', 'LeanConstants.lean'), 'utf8'), /^import Demo\nimport Demo\.Extra\nopen Lean\n/);
+    assert.match(fs.readFileSync(path.join(out, 'work', 'DiscoverRoots.lean'), 'utf8'), /^import Demo\nopen Lean\n/);
+    assert.equal(record.producer.extractorSha256, sha256(fs.readFileSync(path.join(out, 'work', 'LeanConstants.lean'))));
+  });
+
+  it('warns about nothing when the roots import every project module', () => {
+    const { out, result } = produce();
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stderr, /warning/);
+    assert.ok(!fs.existsSync(path.join(out, '01b-build-modules.log')));
+    assert.ok(!Object.hasOwn(JSON.parse(fs.readFileSync(path.join(out, 'constants-run.json'), 'utf8')), 'warnings'));
+  });
 
   it('accepts build outputs the build rewrites under .lake', () => {
     const { out, result } = produce({ FAKE_BUILD_OUTPUT: '1' });

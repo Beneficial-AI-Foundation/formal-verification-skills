@@ -19,11 +19,13 @@ const ROOT_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 export class Refusal extends Error {}
 const refuse = (message) => { throw new Refusal(message); };
 
-const header = (roots) => `${roots.map((root) => `import ${root}`).join('\n')}\nopen Lean\n`;
+// Modules the roots do not import are imported by name after them, so their
+// constants are in the environment too.
+const header = (roots, extra = []) => `${[...roots, ...extra].map((module) => `import ${module}`).join('\n')}\nopen Lean\n`;
 
 // Import discovery: every module of the roots' import closure, the compiled
 // file Lean resolves for it and which data parts exist.
-export const discoverySource = (roots) => `${header(roots)}
+export const discoverySource = (roots, extra = []) => `${header(roots, extra)}
 /-! Import discovery for the Lean constants oracle: every module in the import
 closure of the roots above, the compiled file Lean resolves for it (findOLean)
 and which of its data parts exist (.olean, .olean.server, .olean.private),
@@ -46,7 +48,7 @@ def discover : CoreM Json := do
 `;
 
 // The constants extractor (fvs/lean-constants version 2, extractor v3).
-export const extractorSource = (roots) => `${header(roots)}
+export const extractorSource = (roots, extra = []) => `${header(roots, extra)}
 /-! Lean constants extractor, fvs/lean-constants version 2, extractor v3 (body only; the
 harness adds schema, producer and inputs). For every constant declared in a
 project module: kernel kind, module, whether Lean has a declaration range
@@ -134,7 +136,8 @@ function usage() {
     '           receipt names them and the graph step re-hashes them',
     '--lake     the toolchain\'s lake binary; by default the one beside `lean --print-prefix` in the project',
     '',
-    'Builds the roots (lake --no-cache --rehash --verbose build), discovers the import inventory before',
+    'Builds the roots (lake --no-cache --rehash --verbose build), then by name (+Module) any project module',
+    'under the roots that they do not import, with a warning in the receipt; discovers the import inventory before',
     'and after running the extractor, and writes constants.json, constants-run.json and imports.json',
     'only when every step succeeded and nothing changed during the run.',
     'Exit: 0 written; 1 refused or a step failed (the reason is printed; logs stay in DIR); 2 usage.',
@@ -225,11 +228,46 @@ export function produce({ project: projectArg, roots, out: outArg, lake: lakeArg
   fs.mkdirSync(out);
   const work = path.join(out, 'work');
   fs.mkdirSync(work);
+  const self = fileURLToPath(import.meta.url);
+  const discoverArgvFor = (file) => [tools.lake, 'env', 'lean', '--threads=2', file];
+  const build = (name, targets) => step(out, name, [tools.lake, '--no-cache', '--rehash', '--verbose', 'build', ...targets], project);
+
+  // The build runs in place, so the inputs are fixed before it starts. It may
+  // write only build outputs under .lake (the compiled files and .ilean files);
+  // every other project input must come out of it byte for byte unchanged.
+  const sources = (inputs) => Object.fromEntries(Object.entries(inputs).filter(([file]) => !file.startsWith(`${ILEAN_DIR}/`)));
+  const baseline = sources(projectInputs(project));
+  const unchanged = () => {
+    const built = sources(projectInputs(project));
+    const touched = [...new Set([...Object.keys(baseline), ...Object.keys(built)])].filter((file) => baseline[file] !== built[file]).sort();
+    if (touched.length > 0) refuse(`the project files changed during the build (only build outputs under .lake may change): ${touched.join(', ')}`);
+  };
+  build('01-build', roots);
+  unchanged();
+
+  // Building the roots compiles only their import closure. A project module
+  // outside it is built by name and imported after the roots, so the record
+  // still covers it, and the run receipt warns that a plain build skips it.
+  const rootsDiscovery = path.join(work, 'DiscoverRoots.lean');
+  fs.writeFileSync(rootsDiscovery, discoverySource(roots), { flag: 'wx' });
+  const reached = new Set(Object.keys(JSON.parse(inventory(step(out, '01a-discover-roots', discoverArgvFor(rootsDiscovery), project), 'discovery').text).modules));
+  const unimported = projectModules(baseline).map((module) => module.replaceAll('/', '.'))
+    .filter((module) => roots.includes(module.split('.')[0]) && !reached.has(module)).sort();
+  const warnings = [];
+  if (unimported.length > 0) {
+    // A module name goes into Lean source and Lake's arguments, so only plain identifiers.
+    if (!unimported.every((module) => module.split('.').every((part) => ROOT_NAME.test(part)))) {
+      refuse(`the library roots do not import ${unimported.join(', ')}: ${notBuiltHint(unimported, roots)}`);
+    }
+    build('01b-build-modules', unimported.map((module) => `+${module}`));
+    unchanged();
+    warnings.push(`the library roots do not import ${unimported.join(', ')}, so Lake built them by name for this record and a plain lake build skips them: ${notBuiltHint(unimported, roots)}`);
+  }
+
   const discovery = path.join(work, 'Discover.lean');
   const extractor = path.join(work, 'LeanConstants.lean');
-  fs.writeFileSync(discovery, discoverySource(roots), { flag: 'wx' });
-  fs.writeFileSync(extractor, extractorSource(roots), { flag: 'wx' });
-  const self = fileURLToPath(import.meta.url);
+  fs.writeFileSync(discovery, discoverySource(roots, unimported), { flag: 'wx' });
+  fs.writeFileSync(extractor, extractorSource(roots, unimported), { flag: 'wx' });
   const producer = {
     toolchain: tools.name,
     leanSha256: sha256(fs.readFileSync(tools.lean)),
@@ -239,22 +277,11 @@ export function produce({ project: projectArg, roots, out: outArg, lake: lakeArg
     harnessSha256: sha256(fs.readFileSync(self)),
   };
   const oracleArgv = [tools.lake, 'env', 'lean', '--threads=2', extractor];
-  const discoverArgv = [tools.lake, 'env', 'lean', '--threads=2', discovery];
-
-  // The build runs in place, so the inputs are fixed before it starts. It may
-  // write only build outputs under .lake (the compiled files and .ilean files);
-  // every other project input must come out of it byte for byte unchanged.
-  const sources = (inputs) => Object.fromEntries(Object.entries(inputs).filter(([file]) => !file.startsWith(`${ILEAN_DIR}/`)));
-  const baseline = sources(projectInputs(project));
-  step(out, '01-build', [tools.lake, '--no-cache', '--rehash', '--verbose', 'build', ...roots], project);
+  const discoverArgv = discoverArgvFor(discovery);
   const files = projectInputs(project);
-  const built = sources(files);
-  const touched = [...new Set([...Object.keys(baseline), ...Object.keys(built)])].filter((file) => baseline[file] !== built[file]).sort();
-  if (touched.length > 0) refuse(`the project files changed during the build (only build outputs under .lake may change): ${touched.join(', ')}`);
   const compiled = compiledFiles(project);
   const before = inventory(step(out, '02-discover-before', discoverArgv, project), 'discovery');
-  // A project module outside the roots' import closure is never compiled, and
-  // the record would silently leave it out.
+  // Every project module under the roots must now be loaded, or the record would silently leave it out.
   const loaded = new Set(Object.keys(JSON.parse(before.text).modules));
   const unbuilt = projectModules(files).map((module) => module.replaceAll('/', '.'))
     .filter((module) => roots.includes(module.split('.')[0]) && !loaded.has(module)).sort();
@@ -282,6 +309,7 @@ export function produce({ project: projectArg, roots, out: outArg, lake: lakeArg
     schema: 'fvs/lean-constants-run', version: 1, exitCode: 0, argv: oracleArgv, cwd: project,
     inventoryBefore: before.summary.digest, inventoryAfter: after.summary.digest, producer,
     outputSha256: sha256(recordText), outputBytes: Buffer.byteLength(recordText),
+    ...(warnings.length > 0 ? { warnings } : {}),
   };
   const runProblems = constantsRunProblems(run, recordText, record, project);
   if (runProblems.length > 0) refuse(`the run receipt would not be accepted: ${runProblems.join('; ')}`);
@@ -294,7 +322,7 @@ export function produce({ project: projectArg, roots, out: outArg, lake: lakeArg
   publish(path.join(out, 'imports.json'), before.text);
   publish(path.join(out, 'constants.json'), recordText);
   publish(path.join(out, 'constants-run.json'), `${JSON.stringify(run, null, 1)}\n`);
-  return { out, nodes: record.nodes.length, imports: before.summary, toolchain: tools.name };
+  return { out, nodes: record.nodes.length, imports: before.summary, toolchain: tools.name, warnings };
 }
 
 function parseFlags(argv) {
@@ -314,6 +342,7 @@ function main(argv) {
   if (!flags) { usage(); return 2; }
   try {
     const result = produce({ project: flags.project, roots: flags.roots?.split(','), out: flags.out, lake: flags.lake });
+    for (const warning of result.warnings) process.stderr.write(`warning: ${warning}\n`);
     process.stdout.write(`written: ${result.nodes} constants from ${result.imports.modules} modules (toolchain ${result.toolchain}) to ${result.out}\n`);
     return 0;
   } catch (error) {
