@@ -100,7 +100,9 @@ patch list is a mixed state the engine refuses.
   `translation-patches/` and `series` alone. Keep it line-preserving: the change sits on an existing
   line, or each hunk keeps its line count, so no other line of the file moves (an import goes on an
   existing `use` line or becomes a full path at its use site; an attribute goes on the existing
-  line). The prompt gives you the check command. If no line-preserving patch clears the blocker, say
+  line). The prompt gives you the zero-context line-count command; run it on your scratch copy. Do
+  not run the patch engine's `check`: it reads only patches listed in `series`, so it cannot see a
+  staged patch, and it runs after installation. If no line-preserving patch clears the blocker, say
   so and stop; do not force one, because a gap no patch can fix goes to the owner as a boundary.
 - Every other recipe (`namespace-cascade`, `refresh-manifest`, an axiom-signature port, a
   `tweaks-substitution`, any edit to hand-authored Lean or project config) stays an ordinary edit

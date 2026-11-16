@@ -67,11 +67,13 @@ Emit a PROPOSED fix only:
   the ratification token. B-fixes route to the gate; they are NEVER auto-applied.
 
 When the prompt dispatches you as the patch WRITER for a review, the proposal takes the form of a
-staged patch: author it in a scratch directory and write it only at the staging path the prompt
-names inside the workspace, never into `translation-patches/` or `series`. Keep it line-preserving:
-the change sits on an existing line, or each hunk keeps its line count, so no other line of the file
-moves. If no line-preserving patch clears the blocker, say so and stop; a gap no patch can fix goes
-to the owner as a boundary, and you never force a patch to avoid that.
+staged patch: work in a scratch directory inside the workspace, and write the patch with the Write
+tool only at the staging path the prompt names, never into `translation-patches/` or `series`.
+Keep it line-preserving: the change sits on an existing line, or each hunk keeps its line count, so
+no other line of the file moves. The prompt gives you the zero-context line-count command; run it on
+your scratch copy. Do not run the patch engine's `check`, which cannot see a staged patch. If no
+line-preserving patch clears the blocker, say so and stop; a gap no patch can fix goes to the owner
+as a boundary, and you never force a patch to avoid that.
 
 You propose; the gate (for B) or the applier (for A) disposes. The bisector's output is always a
 proposal awaiting a separate disposition.

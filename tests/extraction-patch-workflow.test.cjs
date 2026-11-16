@@ -10,12 +10,13 @@
 //
 // Pure node:test + node:assert/strict, zero npm dependencies.
 
-const { describe, it } = require('node:test');
+const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { pathToFileURL } = require('node:url');
 
 const ROOT = path.resolve(__dirname, '..');
 const read = (...parts) => fs.readFileSync(path.join(ROOT, ...parts), 'utf8');
@@ -103,9 +104,9 @@ describe('A new patch is written and reviewed by two different models', () => {
   it('names the writer and reviewer seats and requires different models', () => {
     const models = step('resolve_models');
     assert.match(models, /`WRITER` and `REVIEWER`/);
-    assert.match(models, /the user chooses them at\s+confirmation/);
-    assert.match(models, /default writer is the user's saved spec-writing selection/);
-    assert.match(models, /default reviewer is the user's saved spec-review selection/);
+    assert.match(models, /The user chooses the two at\s+confirmation/);
+    assert.match(models, /default writer is the user's saved\s+spec-writing\s+selection/);
+    assert.match(models, /default reviewer is the user's saved\s+spec-review\s+selection/);
     assert.match(models, /must resolve to different models/);
     assert.match(models, /Never pick\s+one silently/);
     assert.match(models, /No model name is built into this workflow/);
@@ -119,7 +120,7 @@ describe('A new patch is written and reviewed by two different models', () => {
 
   it('stages the patch outside the gate directory and installs it only after the review', () => {
     assert.match(text, /patch-review\/<change-id>\.patch/);
-    assert.match(text, /It does not touch `translation-patches\/` or `series`/);
+    assert.match(text, /It does not touch\s+`translation-patches\/` or `series`/);
     assert.match(text, /patch-review\/<change-id>\.round-<n>\.md/);
     assert.match(text, /outside\s+`equivalence-gate\/`/);
   });
@@ -162,7 +163,7 @@ describe('Patches are line-preserving and checked against one observer set', () 
     assert.match(command, /Every patch is line-preserving/);
     for (const [name, text] of [['applier', applier], ['bisector', bisector]]) {
       assert.match(text, /line-preserving/, `${name} does not state the line rule`);
-      assert.match(text, /goes\s+to the owner as a boundary|goes to the owner as a boundary/, `${name} does not route a gap to the owner`);
+      assert.match(text, /goes\s+to\s+the\s+owner\s+as\s+a\s+boundary/, `${name} does not route a gap to the owner`);
     }
     assert.match(assessor, /Line preservation, per hunk/);
     assert.match(packet, /\*\*Line-preserving:\*\*/);
@@ -252,5 +253,72 @@ describe('Owner token and wording', () => {
     for (const [name, text] of [['workflow', workflow], ['command', command], ['assessor', assessor], ['applier', applier], ['bisector', bisector]]) {
       assert.doesNotMatch(text, forbidden, `${name} names a forbidden upstream-creating command`);
     }
+  });
+});
+
+describe('An opaque boundary written as the auto-extract workflow describes it', () => {
+  const FIXTURES = path.join(__dirname, 'fixtures', 'auto-profile');
+  const temporaries = [];
+  let auto;
+  before(async () => { auto = await import(pathToFileURL(path.join(ROOT, 'scripts', 'fvs-auto.mjs')).href); });
+  after(() => { for (const directory of temporaries) fs.rmSync(directory, { recursive: true, force: true }); });
+
+  // A committed checkout whose auto-track state is recorded under the stub toolchain of the profile tests.
+  function recordedProject() {
+    const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'fvs-opaque-boundary-'));
+    temporaries.push(root);
+    fs.cpSync(path.join(__dirname, 'fixtures', 'extract-patches', 'crate'), root, { recursive: true });
+    fs.cpSync(path.join(FIXTURES, 'fresh'), root, { recursive: true });
+    for (const args of [['init', '-q'], ['add', '-A'], ['-c', 'user.name=fvs', '-c', 'user.email=fvs@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'fixture']]) {
+      const result = spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' });
+      assert.equal(result.status, 0, result.stderr);
+    }
+    const values = { HOME: path.join(FIXTURES, 'home'), PATH: [path.join(FIXTURES, 'bin'), '/usr/bin', '/bin'].join(path.delimiter), FVS_TOOLS_HOME: path.join(FIXTURES, 'no-fvs-tools') };
+    const saved = Object.fromEntries(Object.keys(values).map((key) => [key, process.env[key]]));
+    Object.assign(process.env, values);
+    try {
+      auto.initState({ projectRoot: root, choices: { source: { revision: 'HEAD', configuration: 'default features' }, scope: 'the portable module', limits: { wallClockHours: 40 } }, platform: 'aarch64-apple-darwin' });
+    } finally {
+      for (const key of Object.keys(values)) if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key];
+    }
+    return root;
+  }
+
+  // The fields the workflow lists for a function left opaque: the Lean declaration and the sha256 of its file.
+  const opaqueRecord = (overrides = {}) => ({
+    id: 'opaque-ntt-reduce',
+    kind: 'opaque',
+    source: { symbol: 'portable::ntt::reduce', commit: 'a'.repeat(40) },
+    model: { symbol: 'portable.ntt.reduce', sha256: 'b'.repeat(64) },
+    claimedBehaviour: 'returns the input reduced modulo q',
+    reason: 'none found',
+    affectedRoots: [],
+    evidence: ['escalations/ntt-reduce.md', 'known-issues/ntt-reduce.md'],
+    status: 'open',
+    decision: null,
+    ...overrides,
+  });
+
+  it('is recorded open with no decision, its reason saying none found', () => {
+    const flat = autoExtract.replace(/\s+/g, ' ');
+    assert.match(flat, /`model` then names that Lean declaration \(`symbol`\) and the `sha256` of the Lean file/);
+    assert.match(flat, /says `none found` \(or `not checked`/);
+    const root = recordedProject();
+    const recorded = auto.recordExternals({ projectRoot: root, records: [opaqueRecord()] });
+    assert.equal(recorded.code, 'recorded');
+    const written = JSON.parse(fs.readFileSync(path.join(root, '.formalising', 'auto-fv', 'externals.json'), 'utf8'));
+    const entry = (written.records ?? written)[0];
+    assert.equal(entry.kind, 'opaque');
+    assert.equal(entry.status, 'open');
+    assert.equal(entry.decision, null);
+  });
+
+  it('cannot be recorded without the Lean declaration, which is why the workflow leaves such a function in its escalation record', () => {
+    assert.match(autoExtract.replace(/\s+/g, ' '), /A function with no such declaration cannot be recorded here/);
+    const root = recordedProject();
+    for (const model of [{ symbol: '', sha256: 'b'.repeat(64) }, { symbol: 'portable.ntt.reduce', sha256: '' }]) {
+      assert.throws(() => auto.recordExternals({ projectRoot: root, records: [opaqueRecord({ model })] }), (error) => error.code === 'invalid-input');
+    }
+    assert.ok(!fs.existsSync(path.join(root, '.formalising', 'auto-fv', 'externals.json')), 'a refused list writes nothing');
   });
 });

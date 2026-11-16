@@ -98,12 +98,15 @@ in milestone 2), `evidence` (paths to the gate packet, the patch file or the mod
 `decision`. A new boundary is `open` with `decision: null`.
 
 A function the extraction loop could not patch is recorded as an `opaque` boundary, lifted from its
-escalation record (`<extract_workspace>/<target>/escalations/<id>.md`). Its `reason` names the tool
-issue the function waits for, with the link, or says `no issue found` (or `not checked` when the
-tracker could not be reached); the roots that reach it stay in the escalation record, because
-`affectedRoots` is `[]` for now. `evidence` points to that escalation record and to the known-issues
-record in the same workspace. The record stays `open` until the owner decides: `assumption-accepted`
-(a limitation, never proof) or `blocked`.
+escalation record (`<extract_workspace>/<target>/escalations/<id>.md`), once the function is left
+opaque and the extraction emits an external stub or axiom for it. `model` then names that Lean
+declaration (`symbol`) and the `sha256` of the Lean file that holds it. A function with no such
+declaration cannot be recorded here: it stays in its escalation record, and the run stays blocked
+until the owner decides. The `reason` names the tool issue the function waits for, with the link, or
+says `none found` (or `not checked` when the tracker could not be reached); the roots that reach it
+stay in the escalation record, because `affectedRoots` is `[]` for now. `evidence` points to that
+escalation record and to the known-issues record in the same workspace. The record stays `open`
+until the owner decides: `assumption-accepted` (a limitation, never proof) or `blocked`.
 
 Status changes only on a decision: `assumption-accepted` or `blocked` names who decided, when and
 on what evidence (`decision: {by, at, evidence}`); accepting an assumption is labelled as a

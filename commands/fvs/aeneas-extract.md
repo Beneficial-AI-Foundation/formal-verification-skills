@@ -209,8 +209,9 @@ step describes, and parent-owned baseline, build, revert and report steps stay w
   `WRITER` seat (the applier or bisector dispatch with `model="$WRITER_MODEL"`,
   `reasoning_effort="$WRITER_EFFORT"`) and staged in `<extract_workspace>/<target>/patch-review/`;
   its prompt inlines the known-issues outcome and link, the header fields, the authoring recipe, the
-  line-preserving rule, the observer set and the `check` command, because agents have no
-  @-references. A new `fvs-equivalence-assessor` dispatch with `model="$REVIEWER_MODEL"` and
+  line-preserving rule with its zero-context line-count command and the observer set, because
+  agents have no @-references. The writer stages the patch with the Write tool and does not run
+  the patch engine's `check`, which cannot see a staged patch; it runs after installation. A new `fvs-equivalence-assessor` dispatch with `model="$REVIEWER_MODEL"` and
   `reasoning_effort="$REVIEWER_EFFORT"` then tries to break it: line preservation per hunk, each
   observer-set member against the change, panic occurrence and the file and line it reports. For a
   Category-B patch that dispatch also drafts sections 2-6 of the packet (it is the gate's assessor
@@ -263,8 +264,9 @@ a fixing subagent:
 3. HALT and present the rendered 7-field packet to the owner (write it to
    `<extract_workspace>/<target>/equivalence-gate/<change-id>.md`). Section 7 and the ratification
    token come last, and only from the owner or from someone the owner explicitly delegated to. A
-   delegation is recorded: the stamp's `Reviewed-by:` line names the delegate and says where the
-   owner recorded the delegation (the agreement, or a dated line the owner wrote). The delegate is
+   delegation is recorded: the stamp's `Reviewed-by:` line names the delegate and its `Delegation:`
+   line says where the owner recorded the delegation (the agreement, or a dated line the owner
+   wrote); the owner's own stamp reads `Delegation: owner`. The delegate is
    never the writer or the reviewer of that patch, and no model seat stamps. Use `AskUserQuestion`
    to present the halt; on Codex, degrade to a plain-text question and WAIT (fail-closed -- never
    auto-pick a default, and no model seat ever stamps a packet).

@@ -57,9 +57,11 @@ investigator. If any stage needed by the chosen path is absent, rebuild and reco
 before dispatch. Never derive tiers from agent names or silently fall back.
 
 **Patch pair.** A new patch for a tool blocker (Step 4a) is written by one model and checked by a
-different one. The manifest shows two seats, `WRITER` and `REVIEWER`, and the user chooses them at
-confirmation. The default writer is the user's saved spec-writing selection (stage `fc_spec`); the
-default reviewer is the user's saved spec-review selection (`spec_review`). The seats replace the
+different one. The manifest shows two seats, `WRITER` and `REVIEWER`; a seat here is a model role
+in this loop, not the orchestrator, worker or owner seat that `auto-seats.md` assigns to engine
+operations. The user chooses the two at confirmation. The default writer is the user's saved
+spec-writing selection (stage `fc_spec`); the default reviewer is the user's saved spec-review
+selection (`spec_review`). The seats replace the
 `extract_apply` / `extract_bisect` settings (for the writer) and the `extract_assess` settings (for
 the reviewer) only for the dispatches in Step 4a; every other dispatch keeps its own stage.
 
@@ -461,10 +463,14 @@ seats from `resolve_models`. It adds no agent and no stage. Each round dispatche
    ```
 
    (`fvs-extract-bisector` for a NOVEL signature.) The prompt inlines the Step 3a outcome with its
-   link, the Step 6 header fields, the authoring recipe, the line-preserving rule, the observer set
-   and the `check` command, because the child has no @-references. The writer authors the patch in
-   a scratch directory and stages it as `<extract_workspace>/<target>/patch-review/<change-id>.patch`.
-   It does not touch `translation-patches/` or `series`.
+   link, the Step 6 header fields, the authoring recipe, the line-preserving rule with its
+   zero-context line-count command (Step 6) and the observer set, because the child has no
+   @-references. The writer authors the patch in a scratch directory inside the extraction workspace
+   and stages it, with the Write tool, as
+   `<extract_workspace>/<target>/patch-review/<change-id>.patch`. It does not touch
+   `translation-patches/` or `series`, and it does not run the patch engine's `check`: that check
+   reads only patches listed in `series`, so it cannot see a staged patch and runs after
+   installation (Step 6).
 2. **Review.** Dispatch a new `fvs-equivalence-assessor` with the reviewer seat's settings:
 
    ```
@@ -523,8 +529,9 @@ command body), never by a fixing agent.** The independence is structural:
 3. The orchestrator HALTS and presents the rendered 7-field packet to the owner. **Section 7
    (the stamper's own independent checklist) and the ratification token come last, and only from
    the owner or from someone the owner has explicitly delegated to.** A delegation is recorded:
-   the stamp's `Reviewed-by:` line names the delegate and says where the owner recorded the
-   delegation (the agreement, or a dated line the owner wrote). The delegate is never the writer
+   the stamp's `Reviewed-by:` line names the delegate and its `Delegation:` line says where the
+   owner recorded the delegation (the agreement, or a dated line the owner wrote); the owner's own
+   stamp reads `Delegation: owner`. The delegate is never the writer
    or the reviewer of that patch, and no model seat from Step 4a stamps. The loop does NOT
    re-extract until the token is present, and it waits for it synchronously.
 
