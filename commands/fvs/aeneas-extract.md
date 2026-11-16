@@ -78,13 +78,21 @@ exact remediation in noninteractive mode. Pass only validated native model/effor
 The manifest also shows the patch pair for new tool-blocker patches: a `WRITER` seat and a
 `REVIEWER` seat. The writer defaults to the saved spec-writing selection (`fc_spec`) and the
 reviewer to the saved spec-review selection (`spec_review`); the user can choose another pair at
-confirmation. The two must resolve to different models: if they resolve to the same one, stop and
-ask for a different pair (noninteractive: stop with the exact remediation, never pick silently). The
-reviewer runs as a fresh `fvs-equivalence-assessor` dispatch on this runtime; when the saved
-spec-review selection names another runtime or leaves its model unset, show the seat as unresolved
-and ask for a model that differs from the writer's. The seats replace the `extract_apply` /
-`extract_bisect` and `extract_assess` settings only for the patch write-and-review dispatches
-below. The pair is whatever the manifest says; no model is built into this command.
+confirmation. Each seat records its runtime and its model (and effort). The two must resolve to
+different models: if they resolve to the same one, stop and ask for a different pair
+(noninteractive: stop with the exact remediation, never pick silently). A seat on this runtime whose
+child dispatch can set the model runs as a child of this session. A seat on another runtime, or on a
+runtime that cannot set a per-child model, runs through an external runner: that runtime's own
+authenticated command-line client (Claude Code CLI or Codex CLI, as `model-profiles.md` routes
+reviews) or an Agent Orchestrator worker session started with the seat's model, with the same
+inlined brief; the review record keeps the runner, model and effort the run reports, never the
+requested values. So a saved Claude writer with a Codex reviewer, or the reverse, works as the
+default. Show a seat as unresolved, and ask for a replacement that differs from the other seat, only
+when the chosen runner is really unavailable (client missing or not authenticated, no worker route,
+or the saved selection leaves the model unset); noninteractive stops with the exact remediation, and
+nothing switches silently. The seats replace the `extract_apply` / `extract_bisect` and
+`extract_assess` settings only for the patch write-and-review dispatches below. The pair is whatever
+the manifest says; no model is built into this command.
 
 ## Step 2: PRE-FLIGHT (pin audit + clone resolution)
 
@@ -230,7 +238,9 @@ step describes, and parent-owned baseline, build, revert and report steps stay w
   the attempt-cap, because the patch is never installed and never gets a packet; it is distinct from
   a human rejection at the gate. After "no objection": Category B -> the GATE (Step 4); Category A
   -> install the patch byte for byte, run `check`, and re-extract with a new `prepare`. A gap no
-  patch can fix is recorded as a boundary (Step 6).
+  patch can fix is recorded as a boundary (Step 6). A seat that the manifest routes to an external
+  runner (another runtime, or a runtime with no per-child model) gets the same prompt through that
+  runner and returns the same files; the `Task` form above is the child form.
 - **DOCUMENT:** after any applied change, write the reversible records at the crate ROOT.
   Generated `Types.lean`/`Funs.lean` are NEVER written; annotations are preferred over edits.
   - Patch mode: one `translation-patches/<name>.patch` per function (a classified supporting

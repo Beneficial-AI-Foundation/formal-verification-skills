@@ -30,6 +30,8 @@ const packet = read('fv-skills', 'templates', 'equivalence-gate-packet.md');
 const autoInit = read('fv-skills', 'workflows', 'auto-init.md');
 const autoExtract = read('fv-skills', 'workflows', 'auto-extract.md');
 
+const flatten = (text) => text.replace(/\s+/g, ' ');
+
 function step(name) {
   const match = workflow.match(new RegExp(`<step name="${name}">([\\s\\S]*?)</step>`));
   assert.ok(match, `workflow has no <step name="${name}">`);
@@ -236,6 +238,40 @@ describe('A new patch is written and reviewed by two different models', () => {
     assert.match(models, /must resolve to different models/);
     assert.match(models, /Never pick\s+one silently/);
     assert.match(models, /No model name is built into this workflow/);
+  });
+
+  it('keeps the runtime and the model in each seat, so a Claude writer with a Codex reviewer is the default route', () => {
+    const models = flatten(step('resolve_models'));
+    assert.match(models, /Each seat records its runtime and its model \(and effort\)/);
+    assert.match(models, /runs through an external runner: that runtime's own authenticated command-line client/);
+    assert.match(models, /or an Agent Orchestrator worker session started with the seat's model/);
+    assert.match(models, /A saved pair of a Claude writer and a Codex reviewer, or the other way round, therefore works as the default/);
+    assert.match(models, /never copy them from the request/i);
+    const cmd = flatten(command);
+    assert.match(cmd, /Each seat records its runtime and its model \(and effort\)/);
+    assert.match(cmd, /external runner: that runtime's own authenticated command-line client/);
+    assert.match(cmd, /So a saved Claude writer with a Codex reviewer, or the reverse, works as the default/);
+    for (const text of [models, cmd]) {
+      assert.doesNotMatch(text, /runs as a fresh `fvs-equivalence-assessor` dispatch on this runtime/);
+      assert.doesNotMatch(text, /reviewer is a fresh `fvs-equivalence-assessor` dispatch on this runtime/);
+    }
+  });
+
+  it('asks for a replacement only when the chosen runner is really unavailable', () => {
+    const models = flatten(step('resolve_models'));
+    assert.match(models, /only when the chosen runner is really unavailable/);
+    assert.match(models, /not installed or not authenticated, no worker route can start it, or the saved selection leaves its model unset/);
+    assert.match(models, /A seat on another runtime is not unresolved for that reason alone/);
+    assert.match(models, /Never switch to another runner silently/);
+    const cmd = flatten(command);
+    assert.match(cmd, /only\s+when the chosen runner is really unavailable/);
+    assert.match(cmd, /nothing switches silently/);
+  });
+
+  it('shows the external-runner form in the review step and the command bullet', () => {
+    assert.match(flatten(text), /a new run of the seat's external runner when `resolve_models` routes the seat there/);
+    assert.match(flatten(text), /the runner gets the same prompt and returns the same files/);
+    assert.match(flatten(command), /A seat that the manifest routes to an external runner/);
   });
 
   it('dispatches the writer and a fresh reviewer under the seat variables, reusing the existing agents', () => {

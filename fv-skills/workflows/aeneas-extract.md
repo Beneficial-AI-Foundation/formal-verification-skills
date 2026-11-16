@@ -65,12 +65,25 @@ selection (`spec_review`). The seats replace the
 `extract_apply` / `extract_bisect` settings (for the writer) and the `extract_assess` settings (for
 the reviewer) only for the dispatches in Step 4a; every other dispatch keeps its own stage.
 
-- The two seats must resolve to different models. If they resolve to the same one, stop and ask
-  for a different pair; a noninteractive run stops and prints the exact remediation. Never pick
-  one silently.
-- The reviewer is a fresh `fvs-equivalence-assessor` dispatch on this runtime. If the saved
-  spec-review selection names another runtime, or leaves the model unset, show the reviewer seat
-  as unresolved and ask the user for a model that differs from the writer's.
+- Each seat records its runtime and its model (and effort), because a model id means nothing
+  without the runtime that serves it. The two seats must resolve to different models. If they
+  resolve to the same one, stop and ask for a different pair; a noninteractive run stops and
+  prints the exact remediation. Never pick one silently.
+- A seat whose runtime is this one, and whose child dispatch can set the model, runs as a child of
+  this session (the `Task` calls of Step 4a). A seat on another runtime, or on a runtime whose child
+  dispatch cannot set a per-child model, runs through an external runner: that runtime's own
+  authenticated command-line client (for example Claude Code CLI or Codex CLI, as `model-profiles.md`
+  routes reviews), or an Agent Orchestrator worker session started with the seat's model. The
+  brief is the same as the child's: the prompt inlines everything, the writer returns the staged
+  patch file, and the reviewer returns the review record that ends in the `Reviewer verdict:` line.
+  Record the runner, model and effort the run reports in the review record; never copy them from the
+  request. A saved pair of a Claude writer and a Codex reviewer, or the other way round, therefore
+  works as the default: it needs no change to the pair.
+- Show a seat as unresolved, and ask the user for a replacement that differs from the other seat,
+  only when the chosen runner is really unavailable: its client is not installed or not
+  authenticated, no worker route can start it, or the saved selection leaves its model unset. A
+  seat on another runtime is not unresolved for that reason alone. A noninteractive run stops with
+  the exact remediation. Never switch to another runner silently.
 - No model name is built into this workflow. The pair is whatever the user's manifest says.
 </step>
 
@@ -470,7 +483,9 @@ This step takes over when Step 3a leaves a patch route and the change is a new o
 the Rust extraction inputs, whichever layer's failure prompted it (patch mode only; legacy mode
 keeps its own steps). It reuses the proposer dispatches of Step 4 and the assessor dispatch of
 Step 5 under the `WRITER` and `REVIEWER` seats from `resolve_models`. It adds no agent and no stage.
-Each round dispatches a new child.
+Each round dispatches a new child, or a new run of the seat's external runner when `resolve_models`
+routes the seat there: the `Task` calls below show the child form, and the runner gets the same
+prompt and returns the same files.
 
 Step 3a has recorded an outcome for the signature before the first writer dispatch. A proposer can
 find that the repair lands in the Rust source only after its dispatch (a `lean` failure that turns
