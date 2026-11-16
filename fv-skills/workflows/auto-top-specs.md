@@ -27,9 +27,11 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
    and caches (`.formalising/`, `.claude/` and `.lake/`).
 
    The build must also reach the new files. A Lake library that keeps its default roots compiles no file
-   under `formal/`, so a build can finish while no spec was compiled. Widen the library's module globs so they
-   cover the spec and proof folders, and confirm that the build really compiles a new spec file before
-   you rely on it; the spec pull request carries this Lake change. A fresh worktree has no Lake
+   under `formal/`, so a build can finish while no spec was compiled. Widen the library's module globs
+   so they cover the spec and proof folders: in `lakefile.toml`, give the `[[lean_lib]]` entry
+   `globs = ["<Library>.+"]`, and if the spec and proof folders are separate module roots, add each one
+   the same way. Confirm that the build really compiles a new spec file before you rely on it; the spec
+   pull request carries this Lake change. A fresh worktree has no Lake
    packages: run `lake exe cache get` and build the dependencies there, or point the worktrees at one
    shared packages folder, whichever works with the worktrees AO makes. Authors have no recorded state
    in their worktrees, so only you run the engine's steps, in the project checkout, after the authors'

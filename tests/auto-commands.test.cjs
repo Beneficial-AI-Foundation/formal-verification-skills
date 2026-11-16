@@ -887,7 +887,9 @@ describe('auto command and workflow text', () => {
     assert.match(body, /never commit local state and caches \(`\.formalising\/`, `\.claude\/` and `\.lake\/`\)/);
     assert.match(body, /compiles no file under `formal\/`/);
     assert.match(body, /Widen the library's module globs so they cover the spec and proof folders/);
-    assert.match(body, /confirm that the build really compiles a new spec file/);
+    assert.match(body, /give the `\[\[lean_lib\]\]` entry `globs = \["<Library>\.\+"\]`/);
+    assert.match(body, /add each one the same way/);
+    assert.match(body, /Confirm that the build really compiles a new spec file/);
     assert.match(body, /`lake exe cache get`/);
     assert.match(body, /shared packages folder/);
     assert.match(body, /only you run the engine's steps, in the project checkout/);
