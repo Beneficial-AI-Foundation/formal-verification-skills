@@ -470,7 +470,7 @@ describe('Rust identity record: claims stay bounded by the evidence', () => {
       },
       'foreign probe-rust envelope': (i) => { i.rust.json.schema = 'probe-lean/extract'; },
       'unprepared manifest': (i) => { delete i.manifest.json.status; },
-      'missing lean input': (i) => { delete i.lean; },
+      'a probe output that is not { json, sha256 }': (i) => { i.lean = { sha256: 'x' }; },
       'short source commit': (i) => { i.sourceCommit = 'fac7cf2'; },
     };
     for (const [label, mutate] of Object.entries(cases)) {
@@ -478,15 +478,22 @@ describe('Rust identity record: claims stay bounded by the evidence', () => {
       mutate(input);
       assert.throws(() => buildRecord(input), (error) => error.code === 'invalid-input', label);
     }
+    const withoutLean = valid();
+    delete withoutLean.lean;
+    assert.equal(buildRecord(withoutLean).status, 'degraded', 'a missing probe-lean output degrades instead of claiming the family check');
   });
 
-  it('requires the Lean evidence the family check uses', () => {
-    const dir = inputs();
-    fs.rmSync(path.join(dir, 'lean.json'));
-    const run = spawnSync(process.execPath, [SCRIPT, 'record', '--source-commit', COMMIT, '--translation', path.join(dir, 'translation.json'),
-      '--manifest', path.join(dir, 'manifest.json'), '--rust', path.join(dir, 'rust.json'), '--mappings', path.join(dir, 'translations.json'),
-      '--functions', path.join(dir, 'functions.json')], { encoding: 'utf8' });
-    assert.equal(run.status, 2);
+  it('never runs the family check without the Lean evidence it uses: the other probe outputs are named unused', () => {
+    const dir = inputs({ 'lean.json': null });
+    const { status, result } = record(dir);
+    assert.equal(status, 9);
+    assert.equal(result.code, 'degraded');
+    assert.equal(result.record.provenance.discovery, 'translation-only');
+    assert.deepEqual(result.record.provenance.unusedInputs.map((entry) => entry.flag), ['--rust', '--mappings', '--functions']);
+    assert.equal(result.record.provenance.unusedInputs[0].sha256, sha256(path.join(dir, 'rust.json')));
+    assert.equal(result.record.provenance.unusedInputs[0].toolVersion, read('rust.json').tool?.version ?? null);
+    assert.equal(result.record.provenance.rustSha256, null, 'an unused input is never treated as joined');
+    assert.ok(result.record.items.every((entry) => entry.missingGenerated === null && entry.candidates === null));
   });
 });
 
@@ -866,5 +873,81 @@ describe('Rust identity record: usage', () => {
     const run = spawnSync(process.execPath, [SCRIPT, 'record', '--translation', 'x'], { encoding: 'utf8' });
     assert.equal(run.status, 2);
     assert.equal(JSON.parse(run.stdout).code, 'usage');
+  });
+});
+
+describe('Rust identity record: translation.json only (no probe outputs)', () => {
+  const zlib = require('node:zlib');
+  const BOUND = path.join(__dirname, 'fixtures', 'auto-rust-identity', 'bound-runs');
+  const COMMIT_B = '8d4406a8be358e1e177a01a8759c9cf46d411618';
+  const only = (args) => {
+    const run = spawnSync(process.execPath, [SCRIPT, 'record', ...args], { encoding: 'utf8' });
+    return { status: run.status, result: JSON.parse(run.stdout) };
+  };
+  const boundOnly = (translation = path.join(BOUND, 'positive-a', 'translation.json')) => {
+    const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'fvs-rust-identity-only-'));
+    temporaryDirectories.push(dir);
+    const llbc = path.join(dir, 'a.llbc');
+    fs.writeFileSync(llbc, zlib.gunzipSync(fs.readFileSync(path.join(BOUND, 'positive-a', 'm1demo.llbc.gz'))));
+    return only(['--source-commit', COMMIT_B, '--translation', translation, '--manifest', path.join(BOUND, 'positive-a', 'manifest.json'),
+      '--state', path.join(BOUND, 'positive-a', 'state.json'), '--llbc', llbc]);
+  };
+
+  it('declares every local function by Aeneas, never exact, and says what each missing probe would have computed', () => {
+    const { status, result } = only(['--source-commit', COMMIT, '--translation', path.join(RUN1, 'translation.json'), '--manifest', path.join(RUN1, 'manifest.json')]);
+    assert.equal(status, 9);
+    assert.equal(result.ok, false);
+    const rec = result.record;
+    assert.equal(rec.status, 'degraded');
+    assert.equal(rec.provenance.discovery, 'translation-only');
+    assert.deepEqual(rec.provenance.unusedInputs, []);
+    for (const key of ['rustSha256', 'mappingsSha256', 'leanSha256', 'functionsSha256', 'leanProjectCommit', 'probeRustVersion', 'probeAeneasVersion']) {
+      assert.equal(rec.provenance[key], null, key);
+    }
+    const local = read('translation.json').functions.filter((f) => f.is_local && f.loop === undefined);
+    assert.equal(rec.items.length, new Set(local.map((f) => f.def_id)).size);
+    assert.ok(rec.items.every((entry) => entry.correspondence === 'declared-by-aeneas' && entry.mapping === null && entry.missingGenerated === null));
+    assert.match(result.message, /declared-by-aeneas in translation\.json, none exact;/);
+    assert.deepEqual(rec.items.find((entry) => entry.rustName === 'm1demo::count_down').reasons, ['recursion'], 'translation-derived limits stay');
+    assert.equal(rec.unkeyedRustAtoms, null, 'not computed, never an empty list');
+    assert.equal(rec.orphanRustAtoms, null);
+    assert.deepEqual(Object.keys(rec.notComputed).sort(), ['dependencies', 'mapping', 'missingGenerated', 'orphanRustAtoms', 'unkeyedRustAtoms']);
+    assert.deepEqual(rec.lost, Object.values(rec.notComputed));
+    assert.ok(rec.items.every((entry) => entry.generated.every((g) => g.dependencies === null && g.lean === null)));
+  });
+
+  it('keeps the binding: bound to the recorded attempt, and an edited translation.json is refused', () => {
+    const { status, result } = boundOnly();
+    assert.equal(status, 9);
+    assert.equal(result.record.status, 'degraded');
+    assert.equal(result.record.binding.status, 'bound');
+    assert.equal(result.record.provenance.linkage, 'recorded-attempt');
+    const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'fvs-rust-identity-edit-'));
+    temporaryDirectories.push(dir);
+    const edited = path.join(dir, 'translation.json');
+    const json = JSON.parse(fs.readFileSync(path.join(BOUND, 'positive-a', 'translation.json'), 'utf8'));
+    json.functions.find((f) => f.is_local).lean_name += '_edited';
+    fs.writeFileSync(edited, `${JSON.stringify(json, null, 2)}\n`);
+    const refused = boundOnly(edited);
+    assert.equal(refused.status, 7);
+    assert.equal(refused.result.record.status, 'blocked');
+    assert.ok(refused.result.record.blockers.some((b) => b.code === 'run-translation-mismatch'));
+    assert.deepEqual(refused.result.record.items, [], 'a blocked record claims no function');
+  });
+
+  it('still blocks without a manifest or on a dirty source', () => {
+    const dir = inputs({ 'manifest.json': (json) => ({ ...json, source: { ...json.source, dirty: ['src/lib.rs'] } }) });
+    const dirty = only(['--source-commit', COMMIT, '--translation', path.join(dir, 'translation.json'), '--manifest', path.join(dir, 'manifest.json')]);
+    assert.equal(dirty.status, 7);
+    assert.ok(dirty.result.record.blockers.some((b) => b.code === 'dirty-source'));
+    const missing = only(['--source-commit', COMMIT, '--translation', path.join(RUN1, 'translation.json'), '--manifest', path.join(dir, 'absent.json')]);
+    assert.ok(missing.result.record.blockers.some((b) => b.code === 'missing-manifest'));
+  });
+
+  it('leaves the probe-full record without the translation-only fields', () => {
+    const { result } = record(inputs());
+    assert.equal(result.record.provenance.discovery, undefined);
+    assert.equal(result.record.notComputed, undefined);
+    assert.ok(Array.isArray(result.record.unkeyedRustAtoms));
   });
 });
