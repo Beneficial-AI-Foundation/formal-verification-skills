@@ -736,7 +736,7 @@ describe('closure plan: degraded (no graph or a translation.json-only identity)'
     assert.deepEqual(plan('positive', { identity: translationOnly, graph: null }).result.record.degraded.reasons, ['graph-missing', 'identity-translation-only']);
   });
 
-  it('is refused by the registry plan check and the checker\'s ready-plan rule, with or without a graph', async () => {
+  it('is refused by the registry plan check, with or without a graph, and is never ready', async () => {
     const { buildPlan } = await import(require('node:url').pathToFileURL(SCRIPT).href);
     const { validatePlan } = await registry();
     const graph = load('graph-record.json');
@@ -748,7 +748,6 @@ describe('closure plan: degraded (no graph or a translation.json-only identity)'
     for (const [label, input] of [['no graph', { identity, graph: null }], ['translation-only with a verified graph', { identity: declared, graph }], ['translation-only, no graph', { identity: declared, graph: null }]]) {
       const record = buildPlan({ ...input, roots: [21], failed: [] });
       assert.equal(record.status, 'degraded', label);
-      assert.notEqual(record.status, 'ready', `${label}: the checker accepts only a ready plan`);
       const { problems } = validatePlan({ json: record, sha256: 'a'.repeat(64) }, graph);
       assert.ok(problems.includes('the plan is degraded'), `${label}: ${problems}`);
       assert.ok(problems.includes('the plan is not admissible without blockers'), label);
