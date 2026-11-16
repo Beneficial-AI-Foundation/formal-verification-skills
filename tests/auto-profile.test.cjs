@@ -602,6 +602,23 @@ describe('fvs-auto readiness: what each stage can do, computed from a profile', 
     assert.doesNotMatch(rustOnly, /refuses until probe-lean/, 'the probe-lean refusal is named only when probe-lean is lost');
   });
 
+  it('reads a profile recorded without probes (an rc1 profile) as ready, reduced, with an agent refresh as the restoring step', () => {
+    const { probes, ...rc1 } = profileWith();
+    for (const entry of readiness(rc1)) {
+      assert.equal(entry.status, 'ready-reduced', entry.stage);
+      assert.deepEqual(entry.missing, ids);
+      assert.deepEqual(entry.firstMissing, { need: 'probe-aeneas', supplier: 'agent',
+        step: 'rerun /fvs:auto-init with the recorded choices so the recorded profile is refreshed: it did not check the probes' });
+      assert.match(entry.line, /without probe-aeneas \(not checked\), probe-rust \(not checked\)/);
+      assert.match(entry.line, /To restore, the agent can rerun \/fvs:auto-init .*\(warning, not a stop\)$/);
+    }
+    const partial = topSpecs({ ...rc1, probes: probes.filter((entry) => entry.id !== 'probe-lean') });
+    assert.equal(partial.status, 'ready-reduced');
+    assert.deepEqual(partial.missing, ['probe-lean']);
+    const noAo = topSpecs({ ...rc1, items: rc1.items.map((entry) => entry.id === 'ao' ? { ...entry, verdict: 'missing' } : entry) });
+    assert.equal(noAo.status, 'no-route', 'a missing AO is still no route when the probes were not recorded');
+  });
+
   it('labels present but unqualified probes alongside a reduced route', () => {
     const stage = topSpecs(profileWith({ probes: { 'probe-lean': { status: 'missing' }, scip: { status: 'present-unqualified' } } }));
     assert.equal(stage.status, 'ready-reduced');
@@ -715,11 +732,11 @@ describe('fvs-auto readiness: what each stage can do, computed from a profile', 
   });
 
   it('never shows a recorded profile without probes as full', () => {
-    for (const legacy of [{ items: profileWith().items }, undefined]) {
-      const stage = topSpecs(legacy);
-      assert.equal(stage.status, 'no-route');
-      assert.notEqual(stage.firstMissing, null);
-    }
-    assert.equal(topSpecs({ items: profileWith().items }).firstMissing.supplier, 'agent');
+    const legacy = topSpecs({ items: profileWith().items });
+    assert.equal(legacy.status, 'ready-reduced');
+    assert.equal(legacy.firstMissing.supplier, 'agent');
+    const none = topSpecs(undefined);
+    assert.equal(none.status, 'no-route', 'no profile at all has no AO or Lean');
+    assert.notEqual(none.firstMissing, null);
   });
 });

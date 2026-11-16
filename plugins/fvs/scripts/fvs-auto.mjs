@@ -182,19 +182,19 @@ function stageGap(need, items, probes) {
 // report, the next action and the read state never disagree: full (every probe
 // qualified), ready-unverified (every probe present and usable, some not
 // qualified), ready-reduced (only recorded probes are missing, not checked or
-// unusable: the stage runs without their output, labelled reduced), or
-// no-route (AO or Lean missing, or the probes were not recorded), naming the
-// first missing need and who supplies it.
+// unusable, or absent from a profile recorded before probes were checked: the
+// stage runs without their output, labelled reduced), or no-route (AO or Lean
+// missing), naming the first missing need and who supplies it.
 const REDUCED_PROBE = ['missing', 'not-checked', 'unverified-blocked'];
 export function readiness(profileResult) {
   const items = Object.fromEntries((profileResult?.items ?? []).map((entry) => [entry.id, entry]));
   const probes = Object.fromEntries((profileResult?.probes ?? []).map((entry) => [entry.id, entry]));
   return Object.entries(STAGES).map(([stage, needs]) => {
     const gaps = needs.map((need) => stageGap(need, items, probes)).filter(Boolean);
-    if (gaps.length > 0 && gaps.every((gap) => REDUCED_PROBE.includes(probes[gap.need]?.status))) {
+    if (gaps.length > 0 && gaps.every((gap) => gap.need in PROBE_LOSSES && REDUCED_PROBE.includes(probes[gap.need]?.status ?? 'not-checked'))) {
       const lost = gaps.map((gap) => gap.need);
       const named = lost.map((need) => {
-        const { status, reason } = probes[need];
+        const { status, reason } = probes[need] ?? { status: 'not-checked' };
         if (status === 'missing') return need;
         return `${need} (${status === 'not-checked' ? 'not checked' : 'present but unusable'}${reason ? `: ${reason}` : ''})`;
       });
