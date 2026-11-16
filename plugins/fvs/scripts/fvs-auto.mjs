@@ -54,6 +54,7 @@ function usage() {
     '       node fvs-auto.mjs record-spec --spec-file PATH --items ID[,ID...] --round N --verdict pass|changes|blocked --review FILE [--out-of-scope ID[,ID...]] [--project-root DIR]',
     '       node fvs-auto.mjs spec-status [--project-root DIR]',
     '       node fvs-auto.mjs record-pr --kind spec|proof --url URL --branch B --head SHA [--project-root DIR]',
+    '       node fvs-auto.mjs record-pr --kind spec|proof --merged --merge-commit SHA [--project-root DIR]',
     '       node fvs-auto.mjs freeze|check|accept --request FILE --out EXCLUSIVE_DIR',
     '',
     'profile reports what this host and project can do for the FVS auto track,',
@@ -1175,8 +1176,11 @@ function specsFileErrors(value) {
   }
   const prErrors = (value.prs ?? []).flatMap((pr, index) => {
     const text = (field) => typeof pr[field] === 'string' && pr[field].length > 0;
-    const ok = plainObject(pr) && PR_KINDS.includes(pr.kind) && (pr.merged === true ? text('mergeCommit') : text('url') && text('branch') && text('head'));
-    return ok ? [] : [`prs[${index}] must be a ${PR_KINDS.join(' or ')} PR with url, branch and head, or a merge with its merge commit`];
+    const changes = pr?.ownerChanges === undefined || (Array.isArray(pr.ownerChanges)
+      && pr.ownerChanges.every((entry) => plainObject(entry) && typeof entry.specFile === 'string' && Object.hasOwn(OWNER_CHANGES, entry.change)));
+    const ok = plainObject(pr) && PR_KINDS.includes(pr.kind) && changes
+      && (pr.merged === true ? text('mergeCommit') : text('url') && text('branch') && text('head'));
+    return ok ? [] : [`prs[${index}] must be a ${PR_KINDS.join(' or ')} PR with url, branch and head, or a merge with its merge commit (and owner changes ${Object.keys(OWNER_CHANGES).join(' or ')})`];
   });
   return [...prErrors, ...value.specs.flatMap((row, index) => {
     const ids = (list) => Array.isArray(list) && list.every((id) => typeof id === 'string' && id.length > 0);
@@ -1187,6 +1191,10 @@ function specsFileErrors(value) {
   })];
 }
 const PR_KINDS = ['spec', 'proof'];
+// What the owner did to a reviewed spec file before merging the spec PR.
+const OWNER_CHANGES = { pruned: 'pruned by owner', 'owner-changed': 'changed by owner in review' };
+const currentSpecRows = (specs) => [...new Map((specs?.specs ?? []).map((row) => [row.specFile, row])).values()];
+const lastPr = (specs, kind) => (specs?.prs ?? []).filter((pr) => pr.kind === kind).at(-1);
 
 function requireState(root) {
   const state = loadState(root);
@@ -1341,10 +1349,13 @@ function progress(state, specs = null) {
   if (state.extraction?.status !== 'succeeded') {
     return { phase: 'extract', warnings: [], nextAction: state.extraction ? 'Rerun /fvs:auto-extract after fixing the recorded failure reasons.' : 'Run /fvs:auto-extract to extract the selected revision.' };
   }
+  // A recorded spec PR merge starts the proof phase.
+  const specMerge = (specs?.prs ?? []).filter((pr) => pr.kind === 'spec' && pr.merged).at(-1);
+  const stageName = specMerge ? 'auto-execute' : 'auto-top-specs';
   // Recomputed from the recorded profile, never read from a stored field.
-  const stage = readiness(state.profile).find((entry) => entry.stage === 'auto-top-specs');
+  const stage = readiness(state.profile).find((entry) => entry.stage === stageName);
   if (stage.status === 'no-route') {
-    return { phase: 'setup', warnings: [], nextAction: `/fvs:auto-top-specs cannot run here yet: it is ${stage.summary}. First, the ${stage.firstMissing.supplier} must ${stage.firstMissing.step}.` };
+    return { phase: 'setup', warnings: [], nextAction: `/fvs:${stageName} cannot run here yet: it is ${stage.summary}. First, the ${stage.firstMissing.supplier} must ${stage.firstMissing.step}.` };
   }
   const warnings = ['ready-unverified', 'ready-reduced'].includes(stage.status) ? [stage.line] : [];
   const agreement = state.agreements?.at(-1);
@@ -1353,7 +1364,13 @@ function progress(state, specs = null) {
   } else if (agreement.payload.choicesGeneration !== (state.choicesGeneration ?? 0) || choiceChanges(agreement.payload.choices, state.choices).length > 0) {
     warnings.push('the recorded agreement covers earlier choices: a successor agreement is advised; the spec phase does not wait for it');
   }
-  const specPr = (specs?.prs ?? []).filter((pr) => pr.kind === 'spec').at(-1);
+  const specPr = lastPr(specs, 'spec');
+  if (specMerge) {
+    if (!specPr.merged) warnings.push(`the spec refactor PR ${specPr.url} is open: after the owner merges it, record the merge with record-pr --kind spec --merged --merge-commit SHA`);
+    return { phase: 'proofs', warnings,
+      nextAction: `The spec PR merge is recorded at ${specMerge.mergeCommit}. Run /fvs:auto-execute from the AO orchestrator for the proof phase: stock AO workers prove the merged statements, and the orchestrator opens one draft proof PR on the project's own repository and records it with record-pr --kind proof. No execution grant, stage profile or permission install is needed.`
+        + warnings.map((warning) => ` Warning: ${warning}.`).join('') };
+  }
   return { phase: 'specs', warnings,
     nextAction: (specPr
       ? `The draft spec PR ${specPr.url} is recorded: the owner reviews and merges it. After the merge, read the merge commit with gh pr view and record it with record-pr --kind spec --merged --merge-commit SHA. A spec refactor is another review round recorded with record-spec, then another record-pr.`
@@ -1803,8 +1820,12 @@ export function recordSpec({ projectRoot, specFile, items, round, verdict, revie
 // Blocked files do not hold the PR; its body names them.
 export function specStatus({ projectRoot }) {
   const root = projectDirectory(projectRoot);
+  const specs = loadSpecs(root);
   const current = new Map();
-  for (const row of loadSpecs(root)?.specs ?? []) current.set(row.specFile, { row, rounds: (current.get(row.specFile)?.rounds ?? 0) + 1 });
+  for (const row of specs?.specs ?? []) current.set(row.specFile, { row, rounds: (current.get(row.specFile)?.rounds ?? 0) + 1 });
+  // The owner's change at the last spec merge applies until a later review round.
+  const merge = (specs?.prs ?? []).filter((pr) => pr.kind === 'spec' && pr.merged).at(-1);
+  const owner = new Map((merge?.ownerChanges ?? []).map((entry) => [entry.specFile, OWNER_CHANGES[entry.change]]));
   const specFiles = [...current.values()].map(({ row, rounds }) => {
     let bytes = null;
     try {
@@ -1814,7 +1835,8 @@ export function specStatus({ projectRoot }) {
     }
     return { specFile: row.specFile, items: row.items, outOfScope: row.outOfScope.map((id) => ({ id, label: 'out of scope (noted by agent)' })),
       verdict: row.verdict, round: row.round, label: SPEC_VERDICTS[row.verdict](row.round), rounds, review: row.review,
-      stale: bytes === null || sha256(bytes) !== row.specSha256, missing: bytes === null };
+      stale: bytes === null || sha256(bytes) !== row.specSha256, missing: bytes === null,
+      ownerChange: row.recordedAt <= merge?.recordedAt ? owner.get(row.specFile) ?? null : null };
   });
   const readyForPr = specFiles.some((file) => file.verdict === 'pass') && !specFiles.some((file) => file.verdict === 'changes' || file.stale);
   const blocked = specFiles.filter((file) => file.verdict === 'blocked').map((file) => file.specFile);
@@ -1830,9 +1852,10 @@ function bytesAt(root, commit, relative) {
 
 // Records a draft PR the orchestrator opened. Only a mismatch the engine can
 // see is reported, as a warning: it never calls GitHub and never refuses a PR.
-export function recordPr({ projectRoot, kind, url, branch, head }) {
+export function recordPr({ projectRoot, kind, url, branch, head, merged = false, mergeCommit }) {
   const root = projectDirectory(projectRoot);
   if (!PR_KINDS.includes(kind)) refuse('usage', `--kind must be ${PR_KINDS.join(' or ')}`);
+  if (merged) return recordMerge(root, kind, mergeCommit);
   for (const [flag, value] of [['--url', url], ['--branch', branch], ['--head', head]]) if (!value) refuse('usage', `${flag} is required`);
   const warnings = [];
   const commit = resolveRevision(root, head);
@@ -1842,8 +1865,7 @@ export function recordPr({ projectRoot, kind, url, branch, head }) {
     if (commit === null) {
       warnings.push(`the head ${head} is not a local commit, so the recorded spec files were not compared with it; fetch the PR branch to compare`);
     } else {
-      const rows = new Map((loadSpecs(root)?.specs ?? []).map((row) => [row.specFile, row]));
-      for (const row of rows.values()) {
+      for (const row of currentSpecRows(loadSpecs(root))) {
         const bytes = bytesAt(root, commit, row.specFile);
         if (bytes === null) warnings.push(`${row.specFile} is not in the PR head`);
         else if (sha256(bytes) !== row.specSha256) warnings.push(`${row.specFile} in the PR head differs from the reviewed bytes`);
@@ -1854,6 +1876,31 @@ export function recordPr({ projectRoot, kind, url, branch, head }) {
   const pr = { kind, url, branch, head: commit ?? head, recordedAt: new Date().toISOString() };
   commitState(root, base, { ...(base ?? { schema: 'fvs/auto-specs', schemaVersion: 1, specs: [] }), prs: [...(base?.prs ?? []), pr] }, specsPath(root));
   return { code: 'recorded', message: `draft ${kind} PR recorded: ${url}`, pr, warnings };
+}
+
+// The owner merged the PR; the orchestrator read the merge commit from GitHub.
+// The commit must be local so the merged spec files can be compared with their
+// reviewed bytes: a file the owner removed is pruned, one they edited is
+// owner-changed. Both are warnings; a spec merge starts the proof phase.
+function recordMerge(root, kind, mergeCommit) {
+  if (!mergeCommit) refuse('usage', '--merge-commit is required with --merged');
+  const commit = resolveRevision(root, mergeCommit);
+  if (commit === null) refuse('invalid-input', `the merge commit ${mergeCommit} is not a local commit: fetch the merged branch, then rerun record-pr`);
+  const base = loadSpecs(root);
+  const open = lastPr(base, kind);
+  const warnings = open && !open.merged ? [] : [`no open draft ${kind} PR is recorded; the merge is recorded on its own`];
+  const pr = { kind, merged: true, mergeCommit: commit, ...(open && !open.merged ? { url: open.url } : {}), recordedAt: new Date().toISOString() };
+  if (kind === 'spec') {
+    pr.ownerChanges = currentSpecRows(base).flatMap((row) => {
+      const bytes = bytesAt(root, commit, row.specFile);
+      if (bytes === null) return [{ specFile: row.specFile, change: 'pruned' }];
+      return sha256(bytes) === row.specSha256 ? [] : [{ specFile: row.specFile, change: 'owner-changed' }];
+    });
+    warnings.push(...pr.ownerChanges.map((entry) => `${entry.specFile}: ${OWNER_CHANGES[entry.change]}`));
+  }
+  commitState(root, base, { ...(base ?? { schema: 'fvs/auto-specs', schemaVersion: 1, specs: [] }), prs: [...(base?.prs ?? []), pr] }, specsPath(root));
+  const ownerChanges = pr.ownerChanges?.map((entry) => ({ ...entry, label: OWNER_CHANGES[entry.change] }));
+  return { code: 'recorded', message: `${kind} PR merge recorded at ${commit}`, pr: { ...pr, ...(ownerChanges ? { ownerChanges } : {}) }, warnings };
 }
 
 function readInput(file) {
@@ -1947,8 +1994,9 @@ const STATE_COMMANDS = {
   },
   'spec-status': (argv) => specStatus({ projectRoot: stateFlags(argv, [])['project-root'] }),
   'record-pr': (argv) => {
-    const flags = stateFlags(argv, ['kind'], [], ['url', 'branch', 'head']);
-    return recordPr({ projectRoot: flags['project-root'], kind: flags.kind, url: flags.url, branch: flags.branch, head: flags.head });
+    const flags = stateFlags(argv, ['kind'], ['merged'], ['url', 'branch', 'head', 'merge-commit']);
+    return recordPr({ projectRoot: flags['project-root'], kind: flags.kind, url: flags.url, branch: flags.branch, head: flags.head,
+      merged: flags.merged === true, mergeCommit: flags['merge-commit'] });
   },
 };
 

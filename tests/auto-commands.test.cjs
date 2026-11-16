@@ -1209,6 +1209,57 @@ describe('spec phase: record-spec and spec-status', () => {
     assert.deepEqual(recordPr(root, 'HEAD').json.warnings, []);
   });
 
+  const recordMerge = (root, commit, kind = 'spec') => cli('record-pr', '--project-root', root, '--kind', kind, '--merged', '--merge-commit', commit);
+  const specsFile = (root) => JSON.parse(fs.readFileSync(path.join(root, '.formalising/auto-fv/specs.json'), 'utf8'));
+
+  it('records the owner\'s merge, marking spec files the owner changed or pruned, and refuses only a non-local merge commit', () => {
+    const root = specProject();
+    recordSpec(root, 'formal/specs/Specs/Hmac.lean', 'pass');
+    recordSpec(root, 'formal/specs/Specs/Hkdf.lean', 'pass');
+    assert.equal(recordPr(root, 'HEAD').status, 0);
+
+    fs.appendFileSync(path.join(root, 'formal/specs/Specs/Hmac.lean'), '-- owner edit\n');
+    git(root, 'rm', '-q', 'formal/specs/Specs/Hkdf.lean');
+    git(root, 'commit', '-qam', 'owner review');
+    const merged = recordMerge(root, 'HEAD');
+    assert.equal(merged.status, 0, merged.stdout);
+    assert.equal(merged.json.pr.mergeCommit, git(root, 'rev-parse', 'HEAD'), 'stored as the full commit');
+    assert.deepEqual(merged.json.warnings, ['formal/specs/Specs/Hmac.lean: changed by owner in review', 'formal/specs/Specs/Hkdf.lean: pruned by owner']);
+    assert.deepEqual(merged.json.pr.ownerChanges.map((entry) => entry.label), ['changed by owner in review', 'pruned by owner']);
+    const merge = specsFile(root).prs.at(-1);
+    assert.deepEqual(merge.ownerChanges, [
+      { specFile: 'formal/specs/Specs/Hmac.lean', change: 'owner-changed' },
+      { specFile: 'formal/specs/Specs/Hkdf.lean', change: 'pruned' },
+    ], 'the record keeps the change, labels are derived');
+    assert.equal(merge.url, 'https://example.invalid/pr/1', 'the merge names the open PR it closes');
+    let view = status(root);
+    assert.deepEqual(view.specFiles.map((file) => file.ownerChange), ['changed by owner in review', 'pruned by owner']);
+
+    const again = recordSpec(root, 'formal/specs/Specs/Hmac.lean', 'pass', '2');
+    assert.equal(again.status, 0);
+    view = status(root);
+    assert.deepEqual(view.specFiles.map((file) => file.ownerChange), [null, 'pruned by owner'], 'a later review round replaces the owner change');
+
+    const prs = specsFile(root).prs.length;
+    assert.equal(recordMerge(root, 'f'.repeat(40)).json.code, 'invalid-input');
+    assert.match(recordMerge(root, 'f'.repeat(40)).json.message, /is not a local commit: fetch the merged branch, then rerun record-pr$/);
+    assert.equal(cli('record-pr', '--project-root', root, '--kind', 'spec', '--merged').json.code, 'usage');
+    assert.equal(specsFile(root).prs.length, prs, 'a refusal writes nothing');
+  });
+
+  it('a merge with no open PR on record is recorded with a warning; a proof merge is record-only', () => {
+    const root = specProject();
+    recordSpec(root, 'formal/specs/Specs/Hmac.lean', 'pass');
+    const spec = recordMerge(root, 'HEAD');
+    assert.equal(spec.status, 0, spec.stdout);
+    assert.deepEqual(spec.json.warnings, ['no open draft spec PR is recorded; the merge is recorded on its own']);
+    assert.deepEqual(spec.json.pr.ownerChanges, []);
+    const proof = recordMerge(root, 'HEAD', 'proof');
+    assert.equal(proof.status, 0);
+    assert.equal(proof.json.message, `proof PR merge recorded at ${git(root, 'rev-parse', 'HEAD')}`);
+    assert.equal('ownerChanges' in proof.json.pr, false);
+  });
+
   it('after a spec PR is recorded the next action is the owner\'s merge, not another spec phase', () => {
     const root = project();
     init(root);
@@ -1220,5 +1271,15 @@ describe('spec phase: record-spec and spec-status', () => {
     assert.equal(view.phase, 'specs');
     assert.match(view.nextAction, /^The draft spec PR https:\/\/example\.invalid\/pr\/1 is recorded: the owner reviews and merges it\. After the merge, .*record-pr --kind spec --merged --merge-commit SHA\./);
     assert.match(view.nextAction, / Warning: no agreement is recorded/);
+
+    assert.equal(recordMerge(root, 'HEAD').status, 0);
+    const proofs = auto.readState({ projectRoot: root });
+    assert.equal(proofs.phase, 'proofs');
+    assert.match(proofs.nextAction, /^The spec PR merge is recorded at [0-9a-f]{40}\. Run \/fvs:auto-execute from the AO orchestrator for the proof phase: .*No execution grant, stage profile or permission install is needed\./);
+    assert.doesNotMatch(proofs.nextAction, /refactor/);
+    assert.equal(cli('record-pr', '--project-root', root, '--kind', 'spec', '--url', 'https://example.invalid/pr/2', '--branch', 'refactor', '--head', 'HEAD').status, 0);
+    const refactor = auto.readState({ projectRoot: root });
+    assert.equal(refactor.phase, 'proofs', 'a spec refactor PR does not leave the proof phase');
+    assert.match(refactor.warnings.at(-1), /^the spec refactor PR https:\/\/example\.invalid\/pr\/2 is open: after the owner merges it/);
   });
 });
