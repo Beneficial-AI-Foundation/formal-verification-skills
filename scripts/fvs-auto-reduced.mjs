@@ -100,16 +100,17 @@ export function next({ projectRoot: rootArg, plan: planArg }) {
 // Appended to a scratch copy of the proof file: every constant the file
 // declares and the axioms Lean.collectAxioms reports for it. The canary is a
 // sorry the audit must find, or its declaration list is not trusted; the nonce
-// keeps the file itself from printing a result.
+// keeps the file itself from printing a result. Names are spelled as declared:
+// export aliases such as Lean.getEnv do not resolve under _root_.
 const auditSource = (text, nonce) => `import Lean ${text}
 
 theorem _root_.fvsReducedCanary_${nonce} : True := sorry
 
-#eval show _root_.Lean.CoreM Unit from do
-  let env ← _root_.Lean.getEnv
+#eval show _root_.Lean.Core.CoreM Unit from do
+  let env ← _root_.Lean.MonadEnv.getEnv
   let mut rows : Array _root_.Lean.Json := #[]
   for (nm, _) in env.constants.map₂.toList do
-    rows := rows.push (_root_.Lean.Json.mkObj [("name", _root_.Lean.toJson nm), ("axioms", _root_.Lean.toJson (← _root_.Lean.collectAxioms nm))])
+    rows := rows.push (_root_.Lean.Json.mkObj [("name", _root_.Lean.ToJson.toJson nm), ("axioms", _root_.Lean.ToJson.toJson (← _root_.Lean.collectAxioms nm))])
   _root_.IO.println s!"FVS-REDUCED-AUDIT-${nonce} {(_root_.Lean.Json.arr rows).compress}"
 `;
 
@@ -195,7 +196,12 @@ export function record({ projectRoot: rootArg, plan: planArg, defId: defIdArg, l
     if (touched.length > 0) refuse(`the project files changed during the build (only build outputs under .lake may change): ${touched.join(', ')}`);
     if (fileSha(absolute) !== sha256(bytes)) refuse(`${file} changed during the build`);
     // Lean's own sorry warning and the audit must agree, or the audit is not trusted.
-    const sorryWarning = /declaration uses ['`]sorry['`]/.test(build.text);
+    // Only warnings about this file count: Lake also replays the warnings of imported modules.
+    const target = fs.realpathSync(absolute);
+    const sorryWarning = build.text.split('\n').some((line) => {
+      const match = /^(?:warning: )?(.+?):\d+:\d+: (?:warning: )?declaration uses ['`]sorry['`]/.exec(line);
+      try { return match !== null && fs.realpathSync(path.resolve(root, match[1])) === target; } catch { return false; }
+    });
     if (audit?.status === 'audited' && sorryWarning && !audit.axioms.includes('sorryAx')) audit = { ...audit, status: 'not-audited', reason: 'Lean warned about sorry but the audit found no sorryAx' };
     const audited = audit?.status === 'audited';
     const outcome = build.evidence.exitCode !== 0 ? 'build-failed'

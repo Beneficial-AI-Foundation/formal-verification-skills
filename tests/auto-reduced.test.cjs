@@ -19,6 +19,7 @@ const sha = (text) => crypto.createHash('sha256').update(text).digest('hex');
 const load = (name) => { const text = fs.readFileSync(path.join(FIXTURES, name), 'utf8'); return { json: JSON.parse(text), sha256: sha(text) }; };
 
 // `lake lean FILE`: fails on FAIL, warns about sorry on SORRY or WARNONLY,
+// replays an imported module's sorry warning on IMPORTED,
 // edits a project file on TOUCH and creates lake-manifest.json on MANIFEST.
 // `lake env lean --threads=2 AUDIT`: prints the audit result for the nonce in
 // the appended program, with sorryAx on SORRY or HIDDEN and myAxiom on
@@ -43,6 +44,7 @@ grep -q TOUCH "$f" && echo "-- edited" >> Proofs/Other.lean
 grep -q MANIFEST "$f" && echo '{}' > lake-manifest.json
 if grep -q FAIL "$f"; then echo "$f:1:0: error: unsolved goals"; exit 1; fi
 grep -qE 'SORRY|WARNONLY' "$f" && echo "$f:1:0: warning: declaration uses 'sorry'"
+grep -q IMPORTED "$f" && echo "warning: Proofs/Imported.lean:4:2: declaration uses 'sorry'"
 exit 0
 `;
 
@@ -152,6 +154,10 @@ describe('reduced lane (degraded plan, no Lean graph)', () => {
     const disagree = label('WarnOnly', 'theorem t : True := trivial -- WARNONLY\n');
     assert.equal(disagree.outcome, 'built-with-sorry');
     assert.match(disagree.audit.reason, /warned about sorry but the audit found no sorryAx/);
+    write('Proofs/Imported.lean', 'theorem s : True := sorry\n');
+    const imported = label('ImportSorry', 'theorem t : True := trivial -- IMPORTED\n');
+    assert.equal(imported.outcome, 'built', 'a sorry warning replayed from an imported module is not this file\'s');
+    assert.equal(imported.audit.status, 'audited');
     const silent = label('NoAudit', 'theorem t : True := trivial -- NOAUDIT\n');
     assert.equal(silent.outcome, 'built-unaudited');
     assert.equal(silent.label, 'built by Lean, axioms not audited, not accepted (reduced)');
