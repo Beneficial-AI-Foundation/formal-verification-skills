@@ -1,6 +1,6 @@
 # Internal human re-specification diagnostics
 
-Public human re-specification is **unsupported in 3.0.0-rc1**. The default `inspect` and `finish`
+Public human re-specification is **unsupported in 3.0.0-rc2**. The default `inspect` and `finish`
 CLI operations refuse before reading a request or causing effects. AUTO entry, execute and resume
 feedback routes stop before revision work or provider dispatch. Preserve all feedback and the
 complete selected scope, with precise partial reasons; do not report revision success/readiness.
@@ -39,7 +39,7 @@ Internal revision records retain the initial scope, feedback payload and origina
 Their diagnostic readers check correspondence and current observations against the recorded
 specification, fresh review, proof, check and serial acceptance stages. These APIs create no proof,
 dispatch, human approval or publication authority and run no model or proof compiler.
-They do not provide a public human-feedback continuation in rc1.
+They do not provide a public human-feedback continuation in rc2.
 
 </overview>
 
@@ -49,7 +49,7 @@ Retained diagnostic consumer only:
 node <installed-scripts>/fvs-auto-respec.mjs verify --request CURRENT.json --out EXISTING_RESULT
 ```
 
-Its output reports internal evidence only; it does not enable human re-specification in rc1.
+Its output reports internal evidence only; it does not enable human re-specification in rc2.
 
 The JS operations are `runRespec({request,out})` and `verifyRespecResult({request,out})`. The consumer
 provides its independently held current request. Verification creates separate bounded evidence;

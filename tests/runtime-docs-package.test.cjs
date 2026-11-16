@@ -195,9 +195,9 @@ if (process.argv.includes('--package-fixture')) {
     assert.ok(readme.includes('https://github.com/open-gsd/gsd-core'));
     assert.ok(readme.includes('https://pi.dev/packages/fv-skills-baif'));
   });
-  it('rc1 onboarding separates exact source installation from optional project memory', () => {
+  it('rc2 onboarding separates exact source installation from optional project memory', () => {
     const setup = fs.readFileSync(path.join(ROOT, 'fv-skills/references/auto-setup.md'), 'utf8');
-    const rc = setup.slice(setup.indexOf('## Rc1 exact-source installation'), setup.indexOf('## V2 run policy'));
+    const rc = setup.slice(setup.indexOf('## Rc2 exact-source installation'), setup.indexOf('## V2 run policy'));
     for (const token of ['FVS_SHA=', 'git -C "$FVS_SOURCE" rev-parse HEAD', '--claude --local',
       'pi install "$FVS_SOURCE" --local', 'each AO worker worktree', 'existing Beads', '1.3.1', 'worker-readonly']) {
       assert.ok(rc.includes(token), token);
@@ -208,14 +208,14 @@ if (process.argv.includes('--package-fixture')) {
     assert.match(rc, /version string.*floating branch/s);
   });
 
-  it('rc1 setup and help describe the actual prerequisite and continuation boundaries', () => {
+  it('rc2 setup and help describe the actual prerequisite and continuation boundaries', () => {
     const setup = fs.readFileSync(path.join(ROOT, 'fv-skills/references/auto-setup.md'), 'utf8');
-    const rc = section(setup, '## Rc1 exact-source installation', '## V2 run policy');
+    const rc = section(setup, '## Rc2 exact-source installation', '## V2 run policy');
     assert.ok(rc.indexOf('scripts/build-hooks.js') < rc.indexOf('bin/install.js'));
     for (const token of ['hooks/dist/fvs-check-update.js', 'hooks/dist/fvs-statusline.js',
       'raw Git checkout', 'mcpServers.lean-lsp', 'before native startup', 'externally prepared',
       'profile-blocked', 'identity, correspondence and eligibility',
-      'uncertain reservation with no rc1 closure route', 'retain the old run as a partial',
+      'uncertain reservation with no closure route', 'retain the old run as a partial',
       'failed-attempt history and applicable limits/accounting',
       'Start a fresh run root only after the old launch and any created session are conclusively stopped or absent',
       'existing authorization covers the new attempt', 'If termination remains uncertain, HOLD',
@@ -225,7 +225,7 @@ if (process.argv.includes('--package-fixture')) {
       'one simple, auditable command per step', 'an unattended prompt may be aborted',
       'reshape it to avoid review', 'denied before it started had no effect', 'is uncertain: the effect may have run',
       'never assume it did nothing', 'cannot promise that a host permission classifier allows any command',
-      'rc1 has no tracer acceptance or rejection', 'a released specification author cannot be closed',
+      'no run of the strict lane has reached a checker acceptance or rejection', 'a released specification author cannot be closed',
       "register each node's contract in dependency order", 'fvs-contract-registry.mjs" register --plan',
       'Exit 6 with state `needs-review` is the expected result', 'first proposal is `review-or-revise`',
       'only under the fresh-root conditions above', 'for projects whose pinned packages provide it',
@@ -259,18 +259,18 @@ if (process.argv.includes('--package-fixture')) {
     assert.doesNotMatch(help, /authorized v2 controller context|production driver/);
     for (const file of ['commands/fvs/auto-init.md', 'fv-skills/workflows/auto-init.md']) {
       const body = fs.readFileSync(path.join(ROOT, file), 'utf8');
-      assert.match(body, /Fresh rc1 setup requires the declared Aeneas/);
+      assert.match(body, /Fresh rc2 setup requires the declared Aeneas/);
       assert.match(body, /externally\s+prepared/);
       assert.match(body, /profile-blocked/);
     }
   });
 
-  it('rc1 source status guard stops a failed Git command before the installation sentinel', () => {
+  it('rc2 source status guard stops a failed Git command before the installation sentinel', () => {
     const setup = fs.readFileSync(path.join(ROOT, 'fv-skills/references/auto-setup.md'), 'utf8');
     const block = setup.match(/```bash\n([ \t]*FVS_SOURCE=[\s\S]*?)```/)[1];
     const guard = block.split('\n').map(line => line.trim()).filter(line => line.startsWith('FVS_SOURCE_STATUS=') || line.startsWith('test -z ')).join('\n');
     assert.ok(guard);
-    const area = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-rc1-status-'));
+    const area = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-rc2-status-'));
     const bin = path.join(area, 'bin'); fs.mkdirSync(bin);
     fs.writeFileSync(path.join(bin, 'git'), '#!/bin/sh\nprintf \'%s\' "$FVS_GIT_STDOUT"\nexit "$FVS_GIT_EXIT"\n', { mode: 0o755 });
     try {

@@ -6,27 +6,112 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [3.0.0-rc2] - 2026-11-16
+
+This is prerelease source metadata for the selected-target SWVF candidate. It is meant for the
+npm `next` tag only, and stable 2.3.x stays `latest`. Identify the release by the tag
+`v3.0.0-rc2` and its full commit SHA. This entry does not claim catalog publication, complete
+runtime qualification or a whole-library verification result.
+
+### Added
+
+- `/fvs:auto-init` is the single entry to the auto track. It opens with the goal and the whole
+  pipeline, shows the profile first so you see which stages can run on your machine, and keeps the
+  agreement conversation short: the agent reads the repository, proposes a default for every choice
+  and you confirm. After a successful extraction it goes on to the spec phase: it lists the public
+  API items, has authors write the statements, has fresh reviewers check them and opens a draft spec
+  pull request for you. Agents push the working branch to the project's own repository as the base
+  for the workers and the pull requests. They never mark a pull request ready, post comments or
+  reviews, or merge. This path no longer asks for an execution grant, a stage profile or a
+  permission install.
+- Probes are optional. probe-aeneas, probe-rust, scip, rust-analyzer and probe-lean no longer stop
+  `/fvs:auto-init`. The profile lists each one with a status (`qualified`, `present-unqualified`,
+  `unverified-blocked`, `missing` or `not-checked`) and the loss each missing one causes. It ends with
+  one line per later stage: `full`, `ready, unverified`, `ready, reduced` or `no route here`.
+  `/fvs:auto-top-specs` and `/fvs:auto-execute` run reduced when only probes are missing.
+- `FVS_PROBE_RUST_PATH`, `FVS_SCIP_PATH`, `FVS_PROBE_LEAN_PATH` and `FVS_PROBE_LEAN_LIBRARY_PATH`
+  name a probe helper or the probe-lean library at any absolute location. A relative, missing or
+  non-executable override is refused, and its probe is reported as not checked.
+- The reduced route. Without probe output, the Rust identity record is built from `translation.json`
+  alone and the closure plan lists the items in source order, with no dependency order.
+  `scripts/fvs-auto-reduced.mjs` then builds each item's proof file with Lean, reads the proof from
+  the worker's checkout, collects axioms with Lean's own axiom collection and records one outcome
+  per item. Its outcomes report progress. None of them is an acceptance.
+- `scripts/fvs-build-check.mjs` builds one commit of a Lean project in a clean copy made from the
+  commit's tracked files, never from the author's working tree or build output. Only the prebuilt
+  dependency packages are reused, and they are checked first, so Mathlib is never rebuilt. It runs
+  `lake build --wfail`, so any `sorry` fails it, and Lake enforces each spec file's `#guard_msgs` on
+  `#print axioms`. The report lists every statement with the axioms it rests on. A receipt bound to
+  the commit and its tree is written outside the clean copy. A project with no guarded statements is
+  never accepted.
+- The engine records the spec and proof pull requests. `record-spec` stores one row per review round
+  of a spec file and `spec-status` reports whether the files are ready for a pull request.
+  `record-pr` stores a draft spec or proof pull request, and `record-pr --merged` records your merge
+  and moves the state to the proof phase. The state reports done only when the build check accepted
+  the head of the recorded proof pull request.
+- `scripts/fvs-lean-constants.mjs` runs FVS's Lean constants extractor in the project's own Lean
+  environment, with no probe, and writes the constants record, its run receipt and the import
+  manifest. It publishes nothing when a step fails or an input changes during the run.
+- The closure plan and the Lean graph step accept axioms, enums, classes and instances. Axiom policy
+  is a setting per item: `propext`, `Classical.choice` and `Quot.sound` are always allowed, and a
+  project axiom is allowed only when named with `--allow-axioms`. An item that rests on any other
+  axiom is blocked, and so are its dependents.
+- `scripts/fvs-auto-agreement.mjs` drafts the agreement fence from the recorded choices, prints its
+  digest and checks the draft on a scratch copy. It never records the agreement: you run that step.
+- Aeneas and Charon are also looked for at the top of the project's git working tree, which suits a
+  Lean project in a subfolder next to an install at the repository root.
+
 ### Changed
 
-- This branch carries the 3.0.0-rc1 changes on top of the current stable line, so the next release
-  candidate starts from stable 2.3.11 plus the 2.3.12 entry, not from 2.3.9. The version stays at
-  `3.0.0-rc1`. Every stable change below is now part of the branch; each has its own full section
-  further down.
-  - Stable 2.3.12: `/fvs:loop-me-in` and `/fvs:loop-me-in --final` write a self-contained HTML
-    walkthrough of a chunk of work or of the whole formalisation, with its own config block,
-    templates and workflows. `/fvs:crypto-execute` names the executor's run report path explicitly.
-  - Stable 2.3.11: direct installs resolve bundled script paths from the selected installation
-    directory and quote them. The 3.0.0-rc1 installer already reused this fix; the two copies agree.
-  - Stable 2.3.10: Codex sub-agent dispatch fixes (explicit-request dispatch, fresh context on both
-    spawn schemas, no implied sandbox enforcement), one uniform fresh-child-per-pass rule for loop
-    commands, a measured `Thinker wall time` in each `/fvs:crypto-eval`, `/fvs:lean-refactor` for
-    any Lean file whose proofs already compile with the new `scripts/fvs-refactor-report.mjs`
-    helper, and a plain-English pass in the protocol-prose guidance.
-- The merged inventory is 41 commands and 27 workflows: the 40 commands and 25 workflows of
-  3.0.0-rc1 plus `/fvs:loop-me-in` and its two workflows. The Pi and plugin copies are regenerated
-  from the sources.
-- The auto-track engine files are unchanged by this integration, so their file hashes, and with them
-  the engine identity, are the same as in 3.0.0-rc1.
+- rc2 carries the changes listed in the 2.3.10, 2.3.11 and 2.3.12 sections below, as they stand in
+  this tree. 2.3.12 adds `/fvs:loop-me-in` and `/fvs:loop-me-in --final`, which write a
+  self-contained HTML walkthrough of a chunk of work or of the whole formalisation, and makes
+  `/fvs:crypto-execute` name its run report path. 2.3.11 resolves bundled script paths for direct
+  installs from the selected installation directory and quotes them. 2.3.10 brings the Codex
+  sub-agent dispatch fixes, the fresh-child-per-pass rule for loop commands, the measured
+  `Thinker wall time` in `/fvs:crypto-eval` and `/fvs:lean-refactor` for any Lean file whose proofs
+  already compile. The merged inventory is 41 commands and 27 workflows.
+- The auto-track engine files changed since 3.0.0-rc1, so the engine identity differs from rc1.
+  Keep one engine identity for the whole run and do not update the installation in the middle of one.
+- A missing Aeneas or Charon is a warning once a recorded extraction has succeeded. The first setup,
+  a failed extraction and any other missing tool still stop `/fvs:auto-init`.
+- Different Aeneas versions in `translation.json`, `aeneas-config.yml` and `lake-manifest.json` are
+  reported as a warning that keeps every version in the reason. They stop the run only when the
+  recorded extraction fails to build against the pinned Lean library.
+- The extraction guidance checks known tool issues first. Any Rust repair, whichever layer failed,
+  gets a two-model review, and a matched recipe has a writer that stages the patch and installs
+  nothing. A reviewer verdict is separate from a ratification that an explicitly named model or
+  session can give.
+- The setup guide covers running the auto track under AO and Codex, the per-worktree `.claude`
+  layout and which seat runs each engine operation. Documents explain components in plain words
+  instead of private issue shorthand.
+
+### Fixed
+
+- State writes take an exclusive lock and are refused when the file changed since it was read, so a
+  concurrent owner choice, agreement or extraction record is never overwritten by an older snapshot.
+- A probe that is present but unusable, such as a rust-analyzer proxy that fails `--version` or a
+  probe-lean version the graph step refuses, is reported as missing or `unverified-blocked` instead
+  of ready. probe-lean 0.24.0 now counts as a route.
+- `init-state` profiles on every run, so installing a missing probe clears the gap in a stage line.
+- With the project root at a repository root and the Lean project one folder down, the profile
+  names that folder. An extraction crate must be in the same git working tree as the project root,
+  inside or beside the Lean project. A nested repository or a linked worktree is refused.
+  `record-extraction --out` resolves a relative path against the project root.
+- The actor permission helper pins the settings directory by descriptor, so a swapped path or a
+  staged-file link cannot redirect a grant. It refuses a linked `.claude` folder and a linked
+  `settings.local.json`, and names the layout that works: a real `.claude` folder per worktree with
+  only the FVS entries linked into it.
+- The agreement helper keeps its output and its scratch copy out of the control area and the
+  project, and resolves the protected folders through links. These checks are static: a process of
+  the same user that swaps a directory or a link between the check and the write is outside the
+  threat boundary of this release.
+- The Lean constants producer refuses `.ilean` files the graph step would reject, accepts the
+  `lake-manifest.json` that Lake creates on a first build, builds modules that no library root
+  imports and names them in a warning, and gives import advice only for a module Lake never compiled.
+- The closure plan checks the axioms of generated constants that an item passes through.
+- A bundle request with a malformed closure plan names the record it needs. Messages in the closure
+  plan, Rust identity and transition scripts name records in plain words.
 
 ## [3.0.0-rc1] - 2026-11-10
 

@@ -67,7 +67,7 @@ works, the strict lane stays available: dependency-ready proof units, serial ind
 the human review bundle, driven by `fv-skills/references/auto-transitions.md` and
 `fv-skills/references/auto-review-bundle.md`. Keep the agreement's optional budget and its memory
 disposition (`auto-execution.md`, `auto-resume.md`). The strict lane's human re-specification command is
-not available in 3.0.0-rc1; in this pipeline a spec refactor is a new draft pull request.
+not available in 3.0.0-rc2; in this pipeline a spec refactor is a new draft pull request.
 
 ## Step 1: Require Agent Orchestrator
 

@@ -41,7 +41,7 @@ require('node:module').syncBuiltinESMExports();
         const body = JSON.parse(p.stdout);
         assert.deepEqual({ exit: p.status, status: body.status, code: body.code, read: fs.existsSync(read), dispatched: fs.existsSync(dispatched), output: fs.existsSync(out) },
           { exit: 7, status: 'unsupported', code: 'respec-unsupported', read: false, dispatched: false, output: false });
-        assert.match(body.message, /3\.0\.0-rc1/);
+        assert.match(body.message, /3\.0\.0-rc2/);
         assert.equal(fs.readFileSync(state, 'utf8'), '{"history":"keep","accepted":"historical only"}\n');
       }
       const missing = spawnSync(process.execPath, [path.join(ROOT, relative), operation, '--request', path.join(root, 'absent'), '--out', path.join(root, 'absent-out')], { encoding: 'utf8', timeout: 5000, env: { PATH: '/usr/bin:/bin', LEAN_NUM_THREADS: '2' } });
@@ -54,8 +54,8 @@ require('node:module').syncBuiltinESMExports();
 test('the strict resume route stops public AUTO feedback before continuation and retains initial/safe-resume guards', () => {
   for (const rel of ['commands/fvs/resume-work.md', 'fv-skills/references/auto-resume.md']) {
     const body = fs.readFileSync(path.join(ROOT, rel), 'utf8');
-    assert.match(body, /Rc1 human-feedback boundary/, rel);
-    assert.match(body, /unsupported: human re-specification is not available in 3\.0\.0-rc1/, rel);
+    assert.match(body, /Rc2 human-feedback boundary/, rel);
+    assert.match(body, /unsupported: human re-specification is not available in 3\.0\.0-rc2/, rel);
     assert.match(body, /stop before[\s\S]*revision effects or provider dispatch/, rel);
     assert.match(body, /Initial autonomous specify\/review\/revise\/prove and ordinary safe resume remain available/, rel);
   }
@@ -64,7 +64,7 @@ test('the strict resume route stops public AUTO feedback before continuation and
 test('the relaxed auto workflows carry no human-feedback stop: a spec refactor is a new draft pull request', () => {
   for (const rel of ['commands/fvs/auto.md', 'commands/fvs/auto-init.md', 'commands/fvs/auto-execute.md', 'fv-skills/workflows/auto-init.md', 'fv-skills/workflows/auto-execute.md']) {
     const body = fs.readFileSync(path.join(ROOT, rel), 'utf8');
-    assert.doesNotMatch(body, /Rc1 human-feedback boundary/, rel);
+    assert.doesNotMatch(body, /Rc2 human-feedback boundary/, rel);
     assert.doesNotMatch(body, /stop before\s+state\/agreement\/registry changes/, rel);
   }
 });

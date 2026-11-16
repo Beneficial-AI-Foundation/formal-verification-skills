@@ -1,6 +1,6 @@
 {
   "name": "fv-skills-baif",
-  "version": "3.0.0-rc1",
+  "version": "3.0.0-rc2",
   "description": "Formal verification skills for Pi, Claude Code, Codex, OpenCode, and Antigravity. Rust -> Lean 4 via Aeneas.",
   "repository": {
     "type": "git",

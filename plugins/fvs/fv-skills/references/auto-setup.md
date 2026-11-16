@@ -15,9 +15,9 @@ matrix mirrors it and a test keeps the two in step.
 
 </overview>
 
-## Rc1 exact-source installation
+## Rc2 exact-source installation
 
-Use this checklist for the `3.0.0-rc1` selected-target SWVF preview. An approved immutable source pin
+Use this checklist for the `3.0.0-rc2` selected-target SWVF preview. An approved immutable source pin
 and its qualification report identify the candidate; a version string, a floating branch or a stable
 marketplace/npm installation does not. Record remaining runtime qualifications honestly. Whole-libcrux
 extraction and a full pilot are separate from preparing this installation.
@@ -40,8 +40,8 @@ extraction and a full pilot are separate from preparing this installation.
    test "$(git -C "$FVS_SOURCE" rev-parse HEAD)" = "$FVS_SHA" || exit 1
    FVS_SOURCE_STATUS=$(git -C "$FVS_SOURCE" status --porcelain=v1 --untracked-files=all) || exit 1
    test -z "$FVS_SOURCE_STATUS" || exit 1
-   test "$(node -p 'require(process.argv[1]).version' "$FVS_SOURCE/package.json")" = "3.0.0-rc1" || exit 1
-   test "$(cat "$FVS_SOURCE/fv-skills/VERSION")" = "3.0.0-rc1" || exit 1
+   test "$(node -p 'require(process.argv[1]).version' "$FVS_SOURCE/package.json")" = "3.0.0-rc2" || exit 1
+   test "$(cat "$FVS_SOURCE/fv-skills/VERSION")" = "3.0.0-rc2" || exit 1
    ```
 
 3. **Install only in the agreed scope.** Inspect existing FVS installations/local patches first and
@@ -63,7 +63,7 @@ extraction and a full pilot are separate from preparing this installation.
    retain that exact source snapshot. The unified `--pi` installer delegates to npm, so it cannot
    install an unpublished source pin. Exact registry prereleases are accepted by `--pi-version`
    only when the requested version is actually published. Plugin users need the actual plugin root
-   and runtime role/capability checks; a stable catalog entry is not an rc1 pin.
+   and runtime role/capability checks; a stable catalog entry is not an rc2 pin.
 4. **Verify every actor installation.** Reload/start the normal session when the owner is ready.
    Read its installed version and manifest, compare the actual scripts to the selected source, and
    check role/tool access from that actor. Repeat for each AO worker worktree: ignored local installs
@@ -90,7 +90,7 @@ extraction and a full pilot are separate from preparing this installation.
    Select source/features, roots, worker/resource limits and execution authority only where missing.
    Recommend local markdown issues for a new preview; preserve any existing tracker choice and use
    `/fvs:issues-setup` for an explicit change. Beads memory does not duplicate that task queue.
-   Fresh rc1 setup requires the declared Aeneas and Charon executables locally even when resuming an
+   Fresh rc2 setup requires the declared Aeneas and Charon executables locally even when resuming an
    externally prepared, validated extraction. Missing executables still produce `profile-blocked`;
    the retained witness does not bypass that presence check. Installing them does not qualify the
    tuple or replace the extraction's identity, correspondence and eligibility checks. Rerun the profile,
@@ -110,26 +110,26 @@ extraction and a full pilot are separate from preparing this installation.
    nor the held public-API path. Keep Lean threads at the agreed cap (here `LEAN_NUM_THREADS=2`),
    serialize heavy work and use only controls available in the project's pinned build tools.
 
-Known rc1 issue: a failed worker launch can leave an uncertain reservation with no rc1 closure route.
+Known issue seen in rc1 and still present in rc2: a failed worker launch can leave an uncertain reservation with no closure route.
 Stop and retain the old run as a partial, preserving failed-attempt history and applicable limits/accounting.
 Start a fresh run root only after the old launch and any created session are conclusively stopped or absent
 and existing authorization covers the new attempt. If termination remains uncertain, HOLD.
 A fresh root is not a same-run resume; do not synthesize an after-event or delete the pending reservation.
 The same applies to a released work packet that its worker can never acknowledge, such as one whose start
-marker is not beside the packet file: rc1 has no route to close or re-issue that reservation, so recover in a
+marker is not beside the packet file: rc2 has no route to close or re-issue that reservation, so recover in a
 fresh run root under the rules above. Release preparation now refuses such a packet before it is sent. An
 ordinary acknowledgement that is only still pending is not this case: wait, or recover delivery of the same
 handle with `--recover-only`.
 
-Rc1 status: rc1 has no tracer acceptance or rejection. Tracer run 3 (engine `91e9443`) exercised setup through
-specification composition only.
+Rc2 status: no run of the strict lane has reached a checker acceptance or rejection. Tracer run 3 (engine `91e9443`,
+rc1) exercised setup through specification composition only.
 
-Known rc1 issue: a released specification author cannot be closed, so its nodes cannot reach review in the
+Known issue seen in rc1 and still present in rc2: a released specification author cannot be closed, so its nodes cannot reach review in the
 same run. This manual unblock is an owner-run recovery, not the automatic path from no specifications. It uses
 shipped commands only, and only under the fresh-root conditions above: the old run's work is conclusively
 stopped or absent, existing authorization covers the new attempt, and the old run's accounting is retained.
 1. Create a fresh run root whose primary is the commit with the composed specifications, and complete the
-   rc1 setup above, including `lake exe cache get` for projects whose pinned packages provide it.
+   rc2 setup above, including `lake exe cache get` for projects whose pinned packages provide it.
 2. Run `/fvs:auto-init` in that primary, and HOLD continuation after it: `/fvs:auto-init` continues
    automatically once its context is complete. Do not let the controller propose or launch anything until
    steps 3 and 4 are done; otherwise it can launch another specification author.
@@ -149,7 +149,7 @@ Each contract file must pass the registry's contract checks against the files at
 its real author. The reviewer must be a different session and run. Never hand-write start markers, progress or
 completion records.
 
-Known rc1 issues, untested in v2:
+Known issues seen in rc1 and still present in rc2, untested in v2:
 - Closing a proof worker after a completed proof.
 - A failing canonical check: the checker returns a typed error (for example `audit-failed`), and the driver
   reports the effect as `execution-unverified`. The orchestration layer has no typed rejection for it, and the

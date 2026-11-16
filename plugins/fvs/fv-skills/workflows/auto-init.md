@@ -87,7 +87,7 @@ Its `stages:` lines say up front whether each stage has a route and what is miss
 learns of a gap before answering anything (`auto-setup.md`, "Probes and stage lines", explains them).
 No probe is needed for setup or extraction, and a missing probe never stops it.
 
-Fresh rc1 setup requires the declared Aeneas and Charon executables locally even for an externally
+Fresh rc2 setup requires the declared Aeneas and Charon executables locally even for an externally
 prepared, validated extraction. A missing executable still blocks `init-state`; preserve and report
 its `profile-blocked` next step. After separately authorized prerequisite setup, rerun the profile and
 resume this workflow. Executable presence does not qualify a tuple or replace the bound extraction's
@@ -281,7 +281,7 @@ Everything above works without this section, and the relaxed path never calls wh
 stored-context gate (`read-state` with its strict flag), the memory commands, owned work, the driver,
 the review bundle and the re-specification command. Use it only when the owner wants the strict graph
 lane and `probe-lean` works, or when the agreement records enabled Beads memory. The strict lane's
-human re-specification is not available in 3.0.0-rc1; on the relaxed path a spec refactor is a new
+human re-specification is not available in 3.0.0-rc2; on the relaxed path a spec refactor is a new
 draft pull request.
 
 ### Stored-context gate AND semantic applicability check
