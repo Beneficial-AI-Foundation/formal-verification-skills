@@ -1207,7 +1207,7 @@ function nextAction(state) {
     }
     const agreement = state.agreements?.at(-1);
     if (!agreement) {
-      return 'Before /fvs:auto-top-specs, the owner approves the initial agreement (scope, claims, trust, acceptance and the execution grant): the agent drafts it in the roadmap Decisions section and records it with record-agreement once the owner has approved its exact content.';
+      return 'Before /fvs:auto-top-specs, the owner approves the initial agreement (scope, claims, trust, acceptance and the execution grant): the agent drafts it in the roadmap Decisions section, and once the owner has approved its exact content the owner runs record-agreement in their own terminal (the agent never records it).';
     }
     if (agreement.payload.choicesGeneration !== (state.choicesGeneration ?? 0) || choiceChanges(agreement.payload.choices, state.choices).length > 0) {
       return 'Before /fvs:auto-top-specs, the owner approves a successor agreement: the recorded one covers earlier choices.';
