@@ -171,6 +171,13 @@ never be shared is `settings.local.json`: it receives the grant, so it must stay
 per-worktree file with no `permissions` key. A linked `.claude` folder, or a linked or hard linked
 `settings.local.json`, is refused without changing any settings, because the grant would reach every
 worktree that shares the file. This layout was checked end to end on AO 0.14.10 in a throwaway project.
+The write itself pins that `.claude` folder by directory descriptor and makes the final checks, the
+staged file and the replace through it, so a path or link swapped in meanwhile cannot send the grant
+to another directory, and a staged file that already has a second link when checked is refused before
+any grant byte is written. The guarantee is about that folder object, not its name, and it assumes no same-user process
+is rearranging the filesystem during the step: a concurrent process of the same user that relocates
+the folder or creates hard links at that instant is outside the boundary, because such a process can
+edit the user's settings anyway. This is not an enforced exclusion against such a process.
 
 Only after verified association/profile/install readback, send one permission-ready notice naming
 the launch, actor/worktree and retained installation receipt. This is trusted instruction coordination,
