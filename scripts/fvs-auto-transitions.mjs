@@ -410,9 +410,9 @@ export function transitionValidators({ tools, git, inspectBaseline = inspectAuto
       }
     },
     verifySelection(a, actual) {
-      if (!actual.fixed.plan || !actual.fixed.graph) stop('transition-scope-unverified', 'supported selected13 scope is required');
+      if (!actual.fixed.plan || !actual.fixed.graph) stop('transition-scope-unverified', 'a supported selected scope is required');
       const plan = { json: transitionBound(actual.fixed.plan), sha256: actual.fixed.plan.sha256 }, graph = { json: transitionBound(actual.fixed.graph), sha256: actual.fixed.graph.sha256 }, view = validatePlan(plan, graph);
-      if (view.problems.length || !a.nodes.length || a.nodes.some((id) => !view.union.has(id) || view.nodes.get(id)?.eligibility !== 'eligible')) stop('transition-scope-unverified', 'assigned nodes must belong to the supported selected13 union');
+      if (view.problems.length || !a.nodes.length || a.nodes.some((id) => !view.union.has(id) || view.nodes.get(id)?.eligibility !== 'eligible')) stop('transition-scope-unverified', 'assigned nodes must belong to the supported selected union');
     },
     verifyResolution(a, actual, evidence) {
       const observed = evidence.result.session;

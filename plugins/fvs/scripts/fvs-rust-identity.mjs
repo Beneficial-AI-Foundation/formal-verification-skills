@@ -71,7 +71,7 @@ function usage() {
     '--config       a configuration file whose sha256 is recorded as the caller\'s; it binds nothing',
     '--state        FVS auto state; its recorded manifest sha256 and source commit must agree, and',
     '               its recorded extraction attempt (extraction.run) is what can bind the record',
-    '--lean-receipt the ticket 21 probe-lean run receipt (fvs/lean-probe-run v1). Only with it may',
+    '--lean-receipt the probe-lean run receipt (fvs/lean-probe-run v1). Only with it may',
     '               probe-lean\'s commit differ from the Rust source commit, and only when the record is',
     '               bound and the receipt analysed every published Lean file at its recorded hash',
     '--llbc         Charon\'s LLBC from that attempt: its hash, options, embedded sources and',
@@ -380,13 +380,13 @@ function bindRun({ state, manifest, translation, llbc, t }) {
 
 // A Lean project may move on from the Rust source commit (for example a committed
 // specification module). That is accepted only when the record is bound to the
-// recorded attempt and the ticket 21 run receipt shows probe-lean analysed this
+// recorded attempt and the probe-lean run receipt shows probe-lean analysed this
 // lean.json at that commit, with every published generated file byte-identical to
 // what the attempt published (paths relative to the crate root the engine recorded).
 // Returns what is missing; empty means covered.
 function leanCommitGaps({ binding, state, lean, leanReceipt }) {
   if (binding.status !== 'bound') return ['the record is bound to a recorded extraction attempt'];
-  if (!leanReceipt) return ['a ticket 21 run receipt (--lean-receipt) covers the published Lean files'];
+  if (!leanReceipt) return ['a probe-lean run receipt (--lean-receipt) covers the published Lean files'];
   const r = leanReceipt.json;
   const extraction = state.json.extraction ?? state.json.state?.extraction;
   const gaps = [];

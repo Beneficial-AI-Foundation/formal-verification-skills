@@ -7,7 +7,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-// Joins ticket 10's Rust identity record to ticket 21's Lean graph record of
+// Joins the Rust identity record to the Lean graph record of
 // the same extraction and plans the union dependency closure of the requested
 // roots. It only reads those records (and, optionally, the attempt's LLBC); it
 // runs nothing. Three decisions stay separate: the raw upstream results are
@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 // is computed per node, and a requested root is ready only when its whole
 // closure is. Recursive items are reported as recursion-unqualified: no
 // recursion rule is qualified yet, and the LLBC recursion group is exposed for
-// information only. A ticket 21 record of schema version 2 (oracle lanes) is
+// information only. A Lean graph record of schema version 2 (oracle lanes) is
 // planned from its nodes lanes: generated nodes are passed through as
 // dependency evidence and are never given a def_id, an owner or a task.
 //
@@ -36,7 +36,7 @@ const COMMIT_FIELDS = ['sourceCommit', 'leanProjectCommit'];
 const DIGEST_FIELDS = ['translationSha256', 'manifestSha256', 'llbcSha256', 'configSha256'];
 const VERSION_FIELDS = ['charonVersion', 'aeneasVersion'];
 const PROVENANCE = [...COMMIT_FIELDS, 'translationSha256', ...VERSION_FIELDS, 'manifestSha256', 'llbcSha256', 'configSha256'];
-// Ticket 21 schema version 2 (capability oracle-lanes): every project constant
+// Lean graph schema version 2 (capability oracle-lanes): every project constant
 // is a node with authoritative type and value lanes; generated nodes (no probe
 // atom) are dependency evidence only. Kernel kinds as the producer names them.
 const ORACLE_CAPABILITY = 'oracle-lanes';
@@ -84,11 +84,11 @@ function usage() {
     'Usage: node fvs-closure-plan.mjs plan --identity FILE [--graph FILE] --roots DEF_ID[,DEF_ID...]',
     '         [--failed DEF_ID[,DEF_ID...]] [--llbc FILE] [--out FILE] [--format json|text]',
     '',
-    '--identity  the ticket 10 record (fvs-rust-identity record --out)',
-    '--graph     the ticket 21 record (fvs-lean-graph output) of the same extraction. Optional:',
+    '--identity  the Rust identity record (fvs-rust-identity record --out)',
+    '--graph     the Lean graph record (fvs-lean-graph output) of the same extraction. Optional:',
     '            without it, or with a translation.json-only identity record, the plan is',
     '            degraded (roots in source order, no closure, not admissible)',
-    '--roots     the requested roots, by ticket 10 def_id',
+    '--roots     the requested roots, by Rust identity def_id',
     '--failed    nodes whose proof failed; every node depending on them is blocked',
     '--llbc      the attempt\'s LLBC (its sha256 must equal both records\' llbcSha256); its',
     '            recursion groups are exposed per node for information only',
@@ -218,21 +218,21 @@ function admissibility(i, g, llbc) {
   const block = (code, message) => blockers.push({ code, message });
   // Each record's claims must agree with themselves.
   const nonExact = i.items.some((item) => item.correspondence !== 'exact');
-  if (i.binding.status !== 'bound') block('identity-unbound', 'the ticket 10 record is not bound to a recorded extraction attempt');
-  else if ((i.binding.reasons ?? []).length > 0) block('identity-contradiction', 'the ticket 10 record is bound but lists binding reasons');
-  if (!['complete', 'partial'].includes(i.status)) block('identity-blocked', `the ticket 10 record is ${i.status}`);
-  else if (i.blockers.length > 0) block('identity-contradiction', `the ticket 10 record is ${i.status} but lists blockers`);
-  else if (i.status === 'complete' && nonExact) block('identity-contradiction', 'the ticket 10 record is complete but holds non-exact items');
-  if (g.binding.status !== 'bound') block('graph-unbound', 'the ticket 21 record is not bound to a recorded extraction attempt');
-  else if ((g.binding.reasons ?? []).length > 0) block('graph-contradiction', 'the ticket 21 record is bound but lists binding reasons');
-  if (g.state === 'unsupported') block('graph-unsupported', 'the ticket 21 producer reported this input unsupported; it gives no graph to plan from');
-  else if (g.state !== 'complete') block('graph-incomplete', `the ticket 21 record is ${g.state}; an incomplete graph cannot support a closure claim`);
-  else if (g.blockers.length > 0) block('graph-contradiction', 'the ticket 21 record is complete but lists blockers');
-  // A graph record without a fidelity field predates ticket 21's fidelity check: its dependencies are not
+  if (i.binding.status !== 'bound') block('identity-unbound', 'the Rust identity record is not bound to a recorded extraction attempt');
+  else if ((i.binding.reasons ?? []).length > 0) block('identity-contradiction', 'the Rust identity record is bound but lists binding reasons');
+  if (!['complete', 'partial'].includes(i.status)) block('identity-blocked', `the Rust identity record is ${i.status}`);
+  else if (i.blockers.length > 0) block('identity-contradiction', `the Rust identity record is ${i.status} but lists blockers`);
+  else if (i.status === 'complete' && nonExact) block('identity-contradiction', 'the Rust identity record is complete but holds non-exact items');
+  if (g.binding.status !== 'bound') block('graph-unbound', 'the Lean graph record is not bound to a recorded extraction attempt');
+  else if ((g.binding.reasons ?? []).length > 0) block('graph-contradiction', 'the Lean graph record is bound but lists binding reasons');
+  if (g.state === 'unsupported') block('graph-unsupported', 'the Lean graph producer reported this input unsupported; it gives no graph to plan from');
+  else if (g.state !== 'complete') block('graph-incomplete', `the Lean graph record is ${g.state}; an incomplete graph cannot support a closure claim`);
+  else if (g.blockers.length > 0) block('graph-contradiction', 'the Lean graph record is complete but lists blockers');
+  // A graph record without a fidelity field predates the graph fidelity check: its dependencies are not
   // shown to cover what Lean records, so it is treated as unverified.
-  if (g.fidelity === undefined) block('graph-fidelity-not-verified', 'the ticket 21 record carries no fidelity result (a pre-fidelity graph record), so its dependencies are unverified');
-  else if (g.fidelity.status !== 'verified') block('graph-fidelity-not-verified', `the ticket 21 record's dependency fidelity is ${g.fidelity.status}`);
-  else if (!Array.isArray(g.fidelity.obligations) || g.fidelity.obligations.length > 0) block('graph-fidelity-contradiction', 'the ticket 21 record claims verified fidelity without an empty obligations list');
+  if (g.fidelity === undefined) block('graph-fidelity-not-verified', 'the Lean graph record carries no fidelity result (a pre-fidelity graph record), so its dependencies are unverified');
+  else if (g.fidelity.status !== 'verified') block('graph-fidelity-not-verified', `the Lean graph record's dependency fidelity is ${g.fidelity.status}`);
+  else if (!Array.isArray(g.fidelity.obligations) || g.fidelity.obligations.length > 0) block('graph-fidelity-contradiction', 'the Lean graph record claims verified fidelity without an empty obligations list');
   // The graph's edge list must be its declarations' dependency lists (version 1)
   // or its nodes lanes (version 2), exactly.
   const oracle = g.schemaVersion === 2;
@@ -242,7 +242,7 @@ function admissibility(i, g, llbc) {
     const want = declared.map(edgeKey).sort();
     const have = g.edges.map(edgeKey).sort();
     if (JSON.stringify(want) !== JSON.stringify(have)) block('graph-edges-inconsistent', 'the edge list does not match the declarations\' dependency lists (endpoints, kinds or resolutions)');
-    if (g.state === 'complete' && declared.some((edge) => edge.resolution === 'unresolved')) block('graph-contradiction', 'the ticket 21 record is complete but has unresolved dependencies');
+    if (g.state === 'complete' && declared.some((edge) => edge.resolution === 'unresolved')) block('graph-contradiction', 'the Lean graph record is complete but has unresolved dependencies');
     // A declaration of this graph is in scope: listing it as external would hide a local dependency.
     const hidden = declared.filter((edge) => edge.resolution === 'external' && Object.hasOwn(g.declarations, edge.to));
     if (hidden.length > 0) block('graph-contradiction', `declared in the graph but listed as external: ${[...new Set(hidden.map((edge) => edge.to))].sort().join(', ')}`);
@@ -285,20 +285,20 @@ function admissibility(i, g, llbc) {
     const outside = Object.keys(g.nodes).filter((id) => (g.nodes[id].axioms ?? []).some((axiom) => !AXIOM_POLICY.includes(axiom))).sort();
     if (outside.length > 0 && g.fidelity?.status === 'verified') block('graph-fidelity-contradiction', `verified fidelity with axioms outside ${AXIOM_POLICY.join(', ')} in ${outside.join(', ')}`);
   }
-  // Across the records: a ticket 10 generated family member is a source
+  // Across the records: an identity generated family member is a source
   // definition of this extraction, so the graph may not hold it as a generated,
   // type-level or external constant, which would hide the Rust item from its consumers.
   const claimed = new Set(i.items.flatMap((item) => item.generated.map((member) => leanId(member.leanName))));
   const hiddenItems = [...claimed].filter((id) => (oracle && Object.hasOwn(g.nodes, id) && (!g.nodes[id].probeAtom || typeLevel(g.nodes[id])))
     || (!Object.hasOwn(g.declarations, id) && (declared ?? []).some((edge) => edge.resolution === 'external' && edge.to === id))).sort();
-  if (hiddenItems.length > 0) block('identity-graph-contradiction', `ticket 10 family members held by the graph as generated, type-level or external constants: ${hiddenItems.join(', ')}`);
+  if (hiddenItems.length > 0) block('identity-graph-contradiction', `Rust identity family members held by the graph as generated, type-level or external constants: ${hiddenItems.join(', ')}`);
   // Provenance: well-formed on both sides, and equal.
   for (const field of PROVENANCE) {
     const [a, b] = [i.provenance[field], g.provenance[field]];
     const valid = COMMIT_FIELDS.includes(field) ? isCommit : DIGEST_FIELDS.includes(field) ? isSha : isText;
-    if (a === null || a === undefined || b === null || b === undefined) block('provenance-missing', `${field} is missing from ${a == null && b == null ? 'both records' : a == null ? 'the ticket 10 record' : 'the ticket 21 record'}`);
+    if (a === null || a === undefined || b === null || b === undefined) block('provenance-missing', `${field} is missing from ${a == null && b == null ? 'both records' : a == null ? 'the Rust identity record' : 'the Lean graph record'}`);
     else if (!valid(a) || !valid(b)) block('provenance-malformed', `${field} is not a well-formed ${COMMIT_FIELDS.includes(field) ? 'commit' : DIGEST_FIELDS.includes(field) ? 'sha256' : 'version'}`);
-    else if (a !== b) block('provenance-mismatch', `${field} differs: ticket 10 ${a}, ticket 21 ${b}`);
+    else if (a !== b) block('provenance-mismatch', `${field} differs: Rust identity record ${a}, Lean graph record ${b}`);
   }
   // Published Lean files: well-formed, unique, and the same set on both sides.
   const published = (record, label) => {
@@ -314,7 +314,7 @@ function admissibility(i, g, llbc) {
     }
     return list.map((entry) => `${entry.projectPath}\u0000${entry.sha256}`).sort();
   };
-  const [pi, pg] = [published(i, 'ticket 10'), published(g, 'ticket 21')];
+  const [pi, pg] = [published(i, 'Rust identity'), published(g, 'Lean graph')];
   if (pi && pg && JSON.stringify(pi) !== JSON.stringify(pg)) block('generated-lean-mismatch', 'the two records name different published Lean files or hashes');
   if (llbc && llbc.sha256 !== i.provenance.llbcSha256) block('llbc-mismatch', 'the given LLBC is not the attempt\'s LLBC');
   return { blockers, declared };
@@ -486,7 +486,7 @@ export function expandSchedulingDependencies(g, nodes, failed = []) {
     node.unmappedDependencies.sort();
     if (node.unmappedDependencies.length > 0 && node.eligibility === 'eligible') {
       node.eligibility = 'blocked-unmapped-dependency';
-      node.reasons.push(...node.unmappedDependencies.map((id) => `depends on ${id}, which no single ticket 10 item owns`));
+      node.reasons.push(...node.unmappedDependencies.map((id) => `depends on ${id}, which no single Rust identity item owns`));
     }
   }
   // Cycles over the full declaration graph, before any mapping or eligibility
@@ -497,7 +497,7 @@ export function expandSchedulingDependencies(g, nodes, failed = []) {
     const mapped = sortedNumbers(new Set(component.map((id) => owner.get(id)).filter((id) => id !== undefined)));
     const unmapped = component.filter((id) => !owner.has(id));
     // A single owned node's self-reference is not a scheduling cycle (recursion
-    // stays ticket 10's classification); an unowned self-reference is.
+    // stays the identity record's classification); an unowned self-reference is.
     const scheduling = mapped.length > 1 || unmapped.length > 0;
     observedCycles.push({
       declarations: component, nodes: mapped, unmappedDeclarations: unmapped, schedulingCycle: scheduling,
@@ -513,7 +513,7 @@ export function expandSchedulingDependencies(g, nodes, failed = []) {
   }
 
   for (const id of failed) {
-    if (!nodes.has(id)) refuse('invalid-input', `failed names def_id ${id}, which is not a ticket 10 item`);
+    if (!nodes.has(id)) refuse('invalid-input', `failed names def_id ${id}, which is not a Rust identity item`);
     nodes.get(id).eligibility = 'failed';
   }
   const closureOf = (start) => {
@@ -544,7 +544,7 @@ export function expandSchedulingDependencies(g, nodes, failed = []) {
 function degradedPlan({ identity, graph, llbc, i, g, requested, failed }) {
   const codes = [...(g ? [] : ['graph-missing']), ...(i.provenance.discovery === 'translation-only' ? ['identity-translation-only'] : [])];
   const blockers = codes.map((code) => ({ code, message: DEGRADED_LOST[code] }));
-  if (i.status === 'blocked') blockers.push({ code: 'identity-blocked', message: 'the ticket 10 record is blocked' });
+  if (i.status === 'blocked') blockers.push({ code: 'identity-blocked', message: 'the Rust identity record is blocked' });
   const items = new Map(i.items.map((item) => [item.defId, item]));
   const sourceOrder = [...i.items]
     .sort((a, b) => String(a.source?.file ?? '').localeCompare(String(b.source?.file ?? '')) || (a.source?.begin_line ?? 0) - (b.source?.begin_line ?? 0) || a.defId - b.defId)
@@ -563,7 +563,7 @@ function degradedPlan({ identity, graph, llbc, i, g, requested, failed }) {
     nodes: {},
     observedCycles: [],
     roots: requested.map((defId) => (blocked || !items.has(defId)
-      ? { defId, status: 'blocked', closure: null, blockers: [blocked ? { code: 'not-admissible', message: 'the ticket 10 record is blocked' } : { code: 'unknown-root', message: `def_id ${defId} is not a ticket 10 item` }] }
+      ? { defId, status: 'blocked', closure: null, blockers: [blocked ? { code: 'not-admissible', message: 'the Rust identity record is blocked' } : { code: 'unknown-root', message: `def_id ${defId} is not a Rust identity item` }] }
       : { defId, rustName: items.get(defId).rustName ?? null, status: 'degraded', closure: null, scope: 'every item in degraded.sourceOrder; the closure is not computed',
         blockers: [{ code: 'closure-not-computed', message: `the dependency closure needs ${codes.map((code) => (code === 'graph-missing' ? 'a Lean graph' : 'an exact identity')).join(' and ')}` }] })),
     degraded: {
@@ -606,7 +606,7 @@ export function buildPlan({ identity, graph = null, roots, failed = [], llbc = n
     return record;
   }
 
-  // Nodes: one per ticket 10 item; its Lean family is every generated definition.
+  // Nodes: one per Rust identity item; its Lean family is every generated definition.
   const groups = recursionGroups(llbc);
   const nodes = new Map();
   for (const item of i.items) {
@@ -616,9 +616,9 @@ export function buildPlan({ identity, graph = null, roots, failed = [], llbc = n
     if (item.correspondence !== 'exact') {
       eligibility = item.reasons.includes('recursion') ? 'recursion-unqualified' : 'blocked-upstream';
     } else if (item.reasons.length > 0) {
-      // Ticket 10 gives exact correspondence only to an item with no reasons.
+      // The identity record gives exact correspondence only to an item with no reasons.
       eligibility = 'blocked-upstream-contradiction';
-      reasons.push('the item is labelled exact but carries ticket 10 reasons');
+      reasons.push('the item is labelled exact but carries Rust identity reasons');
     } else if (declarations.length === 0 || new Set(declarations).size !== declarations.length || !item.target
       || !item.generated.some((member) => member.leanName === item.target)) {
       eligibility = 'blocked-family-invalid';
@@ -650,7 +650,7 @@ export function buildPlan({ identity, graph = null, roots, failed = [], llbc = n
   const ownerRoot = new Map();
   for (const root of requested) {
     if (!nodes.has(root)) {
-      record.roots.push({ defId: root, status: 'blocked', closure: null, blockers: [{ code: 'unknown-root', message: `def_id ${root} is not a ticket 10 item` }] });
+      record.roots.push({ defId: root, status: 'blocked', closure: null, blockers: [{ code: 'unknown-root', message: `def_id ${root} is not a Rust identity item` }] });
       continue;
     }
     const closure = closureOf(root);

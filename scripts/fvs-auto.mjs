@@ -826,7 +826,7 @@ function agreementStateErrors(state) {
 
 function validateAgreement(value, code) {
   if (plainObject(value) && value.mode !== 'nonpublic-intent') {
-    refuse('unsupported-agreement-mode', 'only nonpublic-intent is supported; public-API selection remains held on separately permitted ticket11 landing');
+    refuse('unsupported-agreement-mode', 'only nonpublic-intent is supported; public-API selection is not supported in this release');
   }
   const errors = agreementErrors(value);
   if (errors.length) refuse(code, 'invalid agreement: ' + errors.join('; '), { errors });
