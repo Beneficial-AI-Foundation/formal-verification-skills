@@ -9,7 +9,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { ILEAN_DIR, projectInputs, oracleShapeProblems, constantsRunProblems, compiledProblems, importProblems, projectModules, notBuiltHint } from './fvs-lean-graph.mjs';
+import { ILEAN_DIR, projectInputs, oracleShapeProblems, constantsRunProblems, compiledProblems, importProblems, projectModules, notBuiltHint, ileanDeclarations } from './fvs-lean-graph.mjs';
 
 const sha256 = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
 // A library root is interpolated into Lean source that #eval runs, and the
@@ -291,6 +291,9 @@ export function produce({ project: projectArg, roots, out: outArg, lake: lakeArg
   const unbuilt = projectModules(files).map((module) => module.replaceAll('/', '.'))
     .filter((module) => roots.includes(module.split('.')[0]) && !loaded.has(module)).sort();
   if (unbuilt.length > 0) refuse(`the library roots do not import ${unbuilt.join(', ')}: ${notBuiltHint(unbuilt, roots)}`);
+  // The graph step reads each module's declarations from its .ilean; never publish a record it would reject.
+  const ileanCheck = ileanDeclarations(project, files, projectModules(files).filter((module) => roots.includes(module.split('/')[0])), roots);
+  if (ileanCheck.problems.length > 0) refuse(`the graph step would reject the .ilean files: ${ileanCheck.problems.map((problem) => problem.message).join('; ')}`);
   const body = lastLine(step(out, '03-constants', oracleArgv, project), '{', 'the extractor');
   const after = inventory(step(out, '04-discover-after', discoverArgv, project), 'discovery');
   if (before.summary.digest !== after.summary.digest) refuse('the import inventory changed during the extractor run');

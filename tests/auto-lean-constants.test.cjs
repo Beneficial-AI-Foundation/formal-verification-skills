@@ -18,6 +18,8 @@ const ROOT = path.resolve(__dirname, '..');
 const SCRIPT = path.join(ROOT, 'scripts', 'fvs-lean-constants.mjs');
 const QUALIFIED = path.join(__dirname, 'helpers', 'lean-witness-capture', 'qualified');
 const sha256 = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
+// A .ilean the graph step reads: the module name, its decls and its references map.
+const ilean = (module, fields = { decls: {}, references: {} }) => JSON.stringify({ module, ...fields });
 
 const FAKE_LAKE = `#!/usr/bin/env node
 const fs = require('node:fs');
@@ -28,7 +30,7 @@ if (args.includes('build')) {
   if (env.FAKE_EXTRA_OLEAN) fs.writeFileSync(path.join(process.cwd(), '.lake/build/lib/lean/Other.olean'), 'stale');
   if (env.FAKE_BUILD_EDIT) fs.appendFileSync(path.join(process.cwd(), 'Demo.lean'), '-- edited by the build');
   if (env.FAKE_BUILD_MANIFEST) fs.writeFileSync(path.join(process.cwd(), 'lake-manifest.json'), '{"version": "1.1.0", "packages": []}');
-  if (env.FAKE_BUILD_OUTPUT) fs.writeFileSync(path.join(process.cwd(), '.lake/build/lib/lean/Demo/Sub.ilean'), '{ }');
+  if (env.FAKE_ILEAN) fs.writeFileSync(path.join(process.cwd(), '.lake/build/lib/lean/Demo/Sub.ilean'), env.FAKE_ILEAN);
   // A module named with + is built by name, as Lake does for one the roots do not import.
   const named = args.filter((arg) => arg.startsWith('+'));
   if (named.length > 0) {
@@ -36,7 +38,7 @@ if (args.includes('build')) {
     for (const arg of named) {
       const base = path.join(process.cwd(), '.lake/build/lib/lean', arg.slice(1).replaceAll('.', '/'));
       fs.writeFileSync(base + '.olean', arg + ' olean');
-      fs.writeFileSync(base + '.ilean', '{}');
+      fs.writeFileSync(base + '.ilean', JSON.stringify({ module: arg.slice(1), decls: {}, references: {} }));
     }
   }
   process.exit(Number(env.FAKE_BUILD_EXIT || 0));
@@ -86,13 +88,13 @@ function freshProject(env = {}) {
   fs.writeFileSync(path.join(project, 'Demo.lean'), 'def x := Nat.succ 0\n');
   fs.mkdirSync(path.join(project, '.lake/build/lib/lean'), { recursive: true });
   fs.writeFileSync(path.join(project, '.lake/build/lib/lean/Demo.olean'), 'demo olean');
-  fs.writeFileSync(path.join(project, '.lake/build/lib/lean/Demo.ilean'), '{}');
+  fs.writeFileSync(path.join(project, '.lake/build/lib/lean/Demo.ilean'), ilean('Demo'));
   // A nested module the root imports, as an extraction inside a library is.
   fs.mkdirSync(path.join(project, 'Demo'));
   fs.writeFileSync(path.join(project, 'Demo/Sub.lean'), 'def z := 2\n');
   fs.mkdirSync(path.join(project, '.lake/build/lib/lean/Demo'));
   fs.writeFileSync(path.join(project, '.lake/build/lib/lean/Demo/Sub.olean'), 'sub olean');
-  fs.writeFileSync(path.join(project, '.lake/build/lib/lean/Demo/Sub.ilean'), '{}');
+  fs.writeFileSync(path.join(project, '.lake/build/lib/lean/Demo/Sub.ilean'), ilean('Demo.Sub'));
   fs.writeFileSync(path.join(toolchainLib, 'Init.olean'), 'init olean');
   if (env.FAKE_UNIMPORTED) fs.writeFileSync(path.join(project, 'Demo/Extra.lean'), 'def y := 1\n');
   if (env.FAKE_MANIFEST_PRESENT) fs.writeFileSync(path.join(project, 'lake-manifest.json'), '{"version": "1.1.0"}');
@@ -127,7 +129,7 @@ describe('fvs-lean-constants producer', () => {
   });
   after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
-  it('publishes a record and receipt the graph step accepts', async () => {
+  it('publishes a record and receipt that pass the graph step\'s record, receipt and import checks', async () => {
     const { out, result } = produce();
     assert.equal(result.status, 0, result.stderr);
     const graph = await import(pathToFileURL(path.join(ROOT, 'scripts', 'fvs-lean-graph.mjs')).href);
@@ -171,6 +173,9 @@ describe('fvs-lean-constants producer', () => {
     ['a compiled file of a module outside the roots', { FAKE_EXTRA_OLEAN: '1' }, 'Demo', /unexpected \.lake\/build\/lib\/lean\/Other\.olean/],
     ['a lake-manifest.json the build changes', { FAKE_MANIFEST_PRESENT: '1', FAKE_BUILD_MANIFEST: '1' }, 'Demo', /project files changed during the build \(only build outputs under \.lake may change\): lake-manifest\.json$/m],
     ['a module the root does not import that fails to build by name', { FAKE_UNIMPORTED: '1', FAKE_MODULE_BUILD_EXIT: '1' }, 'Demo', /01b-build-modules exited 1/],
+    ['a .ilean for another module', { FAKE_ILEAN: ilean('Demo.Other') }, 'Demo', /graph step would reject the \.ilean files: module Demo\.Sub has no matching \.lake\/build\/lib\/lean\/Demo\/Sub\.ilean/],
+    ['a .ilean without decls', { FAKE_ILEAN: ilean('Demo.Sub', { references: {} }) }, 'Demo', /graph step would reject the \.ilean files: module Demo\.Sub has no matching/],
+    ['a .ilean without a references map', { FAKE_ILEAN: ilean('Demo.Sub', { decls: {} }) }, 'Demo', /graph step would reject the \.ilean files: \.lake\/build\/lib\/lean\/Demo\/Sub\.ilean has no references map/],
     ['a module the root does not import whose name is not a plain identifier', { FAKE_ODD_NAME: '1' }, 'Demo', /do not import Demo\.odd-name: .*`import Demo\.odd-name` to Demo\.lean/],
   ];
   for (const [label, env, roots, message] of refusals) {
@@ -180,7 +185,7 @@ describe('fvs-lean-constants producer', () => {
       assert.match(result.stderr, message);
       for (const file of ['constants.json', 'constants-run.json', 'imports.json']) assert.ok(!fs.existsSync(path.join(out, file)));
       // The layout check runs before the extractor starts.
-      if (env.FAKE_UNIMPORTED || env.FAKE_ODD_NAME) assert.ok(!fs.existsSync(path.join(out, '03-constants.log')));
+      if (env.FAKE_UNIMPORTED || env.FAKE_ODD_NAME || env.FAKE_ILEAN) assert.ok(!fs.existsSync(path.join(out, '03-constants.log')));
     });
   }
 
@@ -229,10 +234,11 @@ describe('fvs-lean-constants producer', () => {
   });
 
   it('accepts build outputs the build rewrites under .lake', () => {
-    const { out, result } = produce({ FAKE_BUILD_OUTPUT: '1' });
+    const rebuilt = `${ilean('Demo.Sub')} `;
+    const { out, result } = produce({ FAKE_ILEAN: rebuilt });
     assert.equal(result.status, 0, result.stderr);
     const record = JSON.parse(fs.readFileSync(path.join(out, 'constants.json'), 'utf8'));
-    assert.equal(record.inputs.files['.lake/build/lib/lean/Demo/Sub.ilean'], sha256('{ }'), 'the record binds the built .ilean');
+    assert.equal(record.inputs.files['.lake/build/lib/lean/Demo/Sub.ilean'], sha256(rebuilt), 'the record binds the built .ilean');
   });
 
   it('refuses an output directory that exists or lies inside the project', () => {
