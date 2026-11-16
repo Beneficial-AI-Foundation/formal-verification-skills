@@ -54,6 +54,9 @@ const leanId = (name) => `probe:${name}`;
 // item resting on any other axiom is blocked, and so is every item depending on it.
 const AXIOM_KINDS = ['def', 'theorem'];
 const AXIOM_POLICY = ['propext', 'Classical.choice', 'Quot.sound'];
+// The axioms a node rests on: its recorded axiom set, and the node itself when it is an axiom.
+const axiomsOf = (g, id) => [...(g.nodes[id]?.axioms ?? []), ...(g.nodes[id]?.kind === 'axiom' ? [id.slice('probe:'.length)] : [])];
+const unallowedAxioms = (names, allowedAxioms) => [...new Set(names)].filter((name) => !AXIOM_POLICY.includes(name) && !(allowedAxioms ?? []).includes(name)).sort();
 // How each probe declaration label must look as a node (the producer's rule).
 const PROBE_LABELS = {
   def: (node) => node.kind === 'def' && node.projection !== true,
@@ -416,7 +419,9 @@ export function definitionClosure(g, starts) {
 
 // Expand scheduling through both graph lanes and structure members. Callers supply
 // validated families; this also propagates cycles, unmapped dependencies and failures.
-export function expandSchedulingDependencies(g, nodes, failed = []) {
+// allowedAxioms is the plan's selection: a generated node passed through must rest
+// only on those and the standard axioms, like the item's own declarations.
+export function expandSchedulingDependencies(g, nodes, failed = [], allowedAxioms = []) {
   const claims = new Map();
   for (const node of nodes.values()) {
     node.dependsOn = [];
@@ -500,6 +505,11 @@ export function expandSchedulingDependencies(g, nodes, failed = []) {
       if (inCycle.length > 0 && node.eligibility === 'eligible') {
         node.eligibility = 'blocked-generated-cycle';
         node.reasons.push(`reaches ${inCycle.join(', ')}, which ${inCycle.length === 1 ? 'is' : 'are'} in a dependency cycle no item owns`);
+      }
+      const unallowed = unallowedAxioms([...passed].flatMap((id) => axiomsOf(g, id)), allowedAxioms);
+      if (unallowed.length > 0 && node.eligibility === 'eligible') {
+        node.eligibility = 'blocked-unallowed-axiom';
+        node.reasons.push(`reaches generated constants resting on ${unallowed.join(', ')}, which ${unallowed.length === 1 ? 'is' : 'are'} not an allowed axiom`);
       }
     }
   }
@@ -657,8 +667,7 @@ export function buildPlan({ identity, graph = null, roots, failed = [], llbc = n
       }
     }
     // The axioms the item rests on: its declarations' axiom sets, and the item itself when it is an axiom.
-    const restsOn = g.schemaVersion === 2 ? declarations.flatMap((id) => [...(g.nodes[id]?.axioms ?? []), ...(g.nodes[id]?.kind === 'axiom' ? [id.slice('probe:'.length)] : [])]) : [];
-    const unallowed = [...new Set(restsOn)].filter((name) => !AXIOM_POLICY.includes(name) && !(allowedAxioms ?? []).includes(name)).sort();
+    const unallowed = g.schemaVersion === 2 ? unallowedAxioms(declarations.flatMap((id) => axiomsOf(g, id)), allowedAxioms) : [];
     if (unallowed.length > 0 && eligibility === 'eligible') {
       eligibility = 'blocked-unallowed-axiom';
       reasons.push(`rests on ${unallowed.join(', ')}, which ${unallowed.length === 1 ? 'is' : 'are'} not an allowed axiom`);
@@ -676,7 +685,7 @@ export function buildPlan({ identity, graph = null, roots, failed = [], llbc = n
       unmappedDependencies: [],
     });
   }
-  const { observedCycles, closureOf } = expandSchedulingDependencies(g, nodes, failed);
+  const { observedCycles, closureOf } = expandSchedulingDependencies(g, nodes, failed, allowedAxioms);
   record.observedCycles = observedCycles;
   const oracle = g.schemaVersion === 2;
 

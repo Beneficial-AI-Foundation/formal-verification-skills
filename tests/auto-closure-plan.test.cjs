@@ -666,6 +666,26 @@ describe('closure plan: schema 2 oracle lanes (SYNTHETIC records)', () => {
     }
   });
 
+  it('checks the axioms of generated constants an item passes through', () => {
+    const sorry = plan('positive', { graph: oracle((g) => { viaMatcher(g).nodes['probe:m1demo.root_a.match_1'].axioms = ['sorryAx']; return g; }) });
+    assert.equal(sorry.status, 6);
+    assert.equal(sorry.result.record.nodes[21].eligibility, 'blocked-unallowed-axiom', 'blocked by the matcher itself, not by a dependency');
+    assert.match(sorry.result.record.nodes[21].reasons.join(), /generated constants resting on sorryAx/);
+    assert.deepEqual([21, 22, 23].map((id) => root(sorry.result, id).status), ['blocked', 'ready', 'ready']);
+    // A project axiom reached only through the matcher is allowed only when named.
+    const viaAxiom = oracle((g) => {
+      g.declarations['probe:m1demo.helper'].kind = 'axiom';
+      g.nodes['probe:m1demo.helper'].kind = 'axiom';
+      delete g.nodes['probe:m1demo.helper'].axioms;
+      viaMatcher(g).nodes['probe:m1demo.root_a.match_1'].axioms = ['m1demo.helper'];
+      return g;
+    });
+    const unnamed = plan('positive', { graph: viaAxiom });
+    assert.equal(unnamed.result.record.nodes[21].eligibility, 'blocked-unallowed-axiom');
+    assert.match(unnamed.result.record.nodes[21].reasons.join(), /generated constants resting on m1demo\.helper/);
+    assert.equal(plan('positive', { graph: viaAxiom, allowAxioms: ['m1demo.helper'] }).status, 0);
+  });
+
   it('blocks an item that is a project axiom until the setting names it exactly', () => {
     // helper becomes an axiom (an opaque Rust function); root_a's axiom set names it, as Lean's would.
     const asAxiom = oracle((g) => {
