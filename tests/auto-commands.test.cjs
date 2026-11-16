@@ -463,6 +463,22 @@ describe('auto-extract extraction record', () => {
     assert.match(extraction.note, /not a proof/);
   });
 
+  it('a relative --out is read from the project root, not the shell working directory', () => {
+    const root = project();
+    init(root);
+    const { out } = prepared(root);
+    // The CLI runs from the FVS checkout; the copy lies beside the project, so only
+    // resolution against --project-root reaches it.
+    const relative = path.relative(root, out);
+    assert.ok(!path.isAbsolute(relative) && relative.startsWith('..'));
+    const result = cli('record-extraction', '--project-root', root, '--out', relative, '--build-exit-code', '0', '--oracle', 'complete');
+    assert.equal(result.status, 0, result.stdout || result.stderr);
+    assert.equal(result.json.code, 'recorded');
+    const { extraction } = JSON.parse(fs.readFileSync(stateFile(root), 'utf8'));
+    assert.equal(extraction.status, 'succeeded');
+    assert.equal(extraction.inputs.out, out);
+  });
+
   it('a failed build is recorded as failure, never as success', () => {
     const root = project();
     init(root);

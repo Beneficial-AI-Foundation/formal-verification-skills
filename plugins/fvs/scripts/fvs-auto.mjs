@@ -1615,7 +1615,8 @@ export function recordExtraction({ projectRoot, out, buildExitCode, oracle, orac
   const reason = isText(oracleReason) ? oracleReason : undefined;
   const root = projectDirectory(projectRoot);
   const state = requireState(root);
-  const copy = path.resolve(out);
+  // A relative copy path is read from the project root, not the shell's working directory.
+  const copy = path.resolve(root, out);
   const checks = {
     status: engineCheck('status', copy),
     'verify-tree': engineCheck('verify-tree', copy),
