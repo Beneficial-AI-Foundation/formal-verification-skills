@@ -878,6 +878,23 @@ describe('auto command and workflow text', () => {
     assert.match(body, /marks the pull request ready and merges it/);
   });
 
+  it('top-specs commits what a spec imports and makes the build reach the new files before authors start', () => {
+    const body = flat(text('auto-top-specs'));
+    assert.match(body, /Prepare the working branch before any author starts/);
+    assert.match(body, /made from the committed head/);
+    assert.match(body, /fails with a bad import/);
+    assert.match(body, /Commit the generated translation, the patches and the extraction and Lake configuration as the first commit on the branch/);
+    assert.match(body, /never commit local state and caches \(`\.formalising\/`, `\.claude\/` and `\.lake\/`\)/);
+    assert.match(body, /compiles no file under `formal\/`/);
+    assert.match(body, /Widen the library's module globs so they cover the spec and proof folders/);
+    assert.match(body, /confirm that the build really compiles a new spec file/);
+    assert.match(body, /`lake exe cache get`/);
+    assert.match(body, /shared packages folder/);
+    assert.match(body, /only you run the engine's steps, in the project checkout/);
+    assert.match(body, /which commit holds the generated translation and the Lake change/);
+    assert.ok(body.indexOf('Prepare the working branch') < body.indexOf('Write and review, one Rust file at a time'), 'branch preparation comes before authors');
+  });
+
   it('execute keeps statements fixed and lets only the build check in a fresh clean copy accept', () => {
     const body = flat(text('auto-execute'));
     assert.match(body, /Start only when the owner has merged the spec pull request/);
@@ -894,6 +911,8 @@ describe('auto command and workflow text', () => {
     assert.match(body, /node "\$HOME\/\.claude\/scripts\/fvs-build-check\.mjs" --project-root <root> --commit <SHA>/);
     assert.match(body, /accepted \(build check in a clean copy\)/);
     assert.match(body, /build check failed: REASON/);
+    assert.match(body, /The state reports `done` only once the proof pull request is recorded and its head has passed the check/);
+    assert.match(body, /stop after opening the proof pull request and report the build-check result/);
     assert.match(body, /a worker replaces the `sorry` and leaves the statement alone/);
     assert.doesNotMatch(body, /FVS-RC2-PLACEHOLDER/);
     assert.match(body, /Open the PROOF PR as a draft/);

@@ -37,8 +37,10 @@ the agent never marks it ready or merges it.
    ```
 
    It prints `accepted (build check in a clean copy)` or `build check failed: REASON`. Read that label
-   from the output, then read the state again: it reports `done` once the check has passed for the
-   proof pull request's head. A worker's report, or a green build in its own checkout, is not acceptance.
+   from the output. The state reports `done` only once the proof pull request is recorded and its head
+   has passed the check. This text names no step for recording the proof pull request yet, so until it
+   does, stop after opening the proof pull request and report the build-check result. A worker's
+   report, or a green build in its own checkout, is not acceptance.
 4. **Open the PROOF PR as a draft** on the project's own repository: the destination recorded in the
    agreement at `/fvs:auto-init`, never an upstream. Put in the body which statements are accepted,
    which are not and why, and what each unproved one is missing. Nothing leaves the scope silently.

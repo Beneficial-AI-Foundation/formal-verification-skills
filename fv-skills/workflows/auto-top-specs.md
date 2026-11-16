@@ -18,12 +18,28 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
    modules and features fixed at `/fvs:auto-init`), with the Rust file each one lives in. There is no
    per-item confirmation. Nothing leaves the scope silently: note the items you think are out of scope
    and why, and leave the pruning to the owner in the pull request review.
-2. **Write and review, one Rust file at a time.** An author agent writes the statements for the
+2. **Prepare the working branch before any author starts.** Work on a branch of the project's own
+   repository; its pull request is the spec PR. An author's worktree is made from the committed head, so
+   it holds only what is committed. In a fresh project the extraction output, the patches, the Aeneas
+   configuration and the Lake configuration are not committed, and a statement that imports the
+   generated translation fails with a bad import. Commit the generated translation, the patches and the
+   extraction and Lake configuration as the first commit on the branch, and never commit local state
+   and caches (`.formalising/`, `.claude/` and `.lake/`).
+
+   The build must also reach the new files. A Lake library that keeps its default roots compiles no file
+   under `formal/`, so a build can finish while no spec was compiled. Widen the library's module globs so they
+   cover the spec and proof folders, and confirm that the build really compiles a new spec file before
+   you rely on it; the spec pull request carries this Lake change. A fresh worktree has no Lake
+   packages: run `lake exe cache get` and build the dependencies there, or point the worktrees at one
+   shared packages folder, whichever works with the worktrees AO makes. Authors have no recorded state
+   in their worktrees, so only you run the engine's steps, in the project checkout, after the authors'
+   files are on the branch.
+3. **Write and review, one Rust file at a time.** An author agent writes the statements for the
    file's items, and a fresh adversarial reviewer (the chosen pair) checks them against the Rust code
    and its documentation. Is each statement faithful, strong enough to be useful, and free of
    assumptions it should prove? At most three rounds; put anything still open in the pull request body.
    The reviewer is a different agent from the author, and a new reviewer reads each round.
-3. **Put them where an auditor looks.** The default layout for a new project is `formal/specs/Defs`
+4. **Put them where an auditor looks.** The default layout for a new project is `formal/specs/Defs`
    for the definitions the statements use and `formal/specs/Specs` with one file per Rust file. Each
    statement is declared once, in a proof file under `formal/proofs` with a placeholder proof (`sorry`),
    and restated in its spec file with `recall`. `recall` needs the declaration to exist, so this pull
@@ -36,11 +52,12 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
    statement rests on, with Lean's three standard axioms always fine. Until the proofs land that list
    shows `sorryAx`, so this pull request may leave the guards out or mark them pending, and agents
    complete or update them in the proof pull request.
-4. **Open the SPEC PR as a draft** on the project's own repository: the destination recorded in the
+5. **Open the SPEC PR as a draft** on the project's own repository: the destination recorded in the
    agreement at `/fvs:auto-init`, never an upstream. If none is recorded, ask the owner which repository
    before opening anything. Put in the body what each file covers, the items you left out, the axioms
-   the statements rest on and the review rounds that were held.
-5. **Stop for the owner.** The owner reviews, prunes, marks the pull request ready and merges it.
+   the statements rest on, the review rounds that were held, and which commit holds the generated
+   translation and the Lake change.
+6. **Stop for the owner.** The owner reviews, prunes, marks the pull request ready and merges it.
    `/fvs:auto-execute` starts the proofs after that.
 
 ## GitHub rule
