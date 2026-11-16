@@ -59,10 +59,13 @@ function captureInput(job, out, engine) {
   return { controllerInput: { file, sha256: hash(file) }, adapterInput: save(out, 'adapter-input.json', job) };
 }
 
+const REDUCED_LANE = 'Proof acceptance needs the Lean graph; a degraded plan runs reduced and cannot freeze. Record each item with fvs-auto-reduced.mjs record instead (labelled not accepted).';
 // Re-run the existing producers; a self-consistent supplied plan is insufficient.
 export function extractionContext(extraction) {
   closed(extraction, ['identity', 'graph', 'plan', 'rust', 'lean'], 'extraction inputs');
-  const identity = bound(extraction.identity), graph = bound(extraction.graph), plan = bound(extraction.plan);
+  const plan = bound(extraction.plan);
+  if (plan.json?.status === 'degraded') refuse('unsupported', REDUCED_LANE);
+  const identity = bound(extraction.identity), graph = bound(extraction.graph);
   closed(extraction.rust, ['sourceCommit', 'translation', 'manifest', 'rust', 'mappings', 'lean', 'functions', 'state', 'llbc', 'leanReceipt'], 'Rust identity inputs');
   const rust = Object.fromEntries(Object.entries(extraction.rust).map(([key, ref]) => [key, key === 'sourceCommit' ? ref : bound(ref)]));
   let extractionStateText = null;
@@ -375,6 +378,7 @@ async function freezeAuto(job, out, engine) {
 }
 
 function frozenArtifacts(ref) {
+  if (ref === null || ref === undefined) refuse('invalid-input', `no frozen baseline: freeze first. ${REDUCED_LANE}`);
   const frozen = bound(ref).json;
   if (frozen.schema !== 'fvs-checker/auto-baseline' || ![1, 2].includes(frozen.version) || frozen.purpose !== 'auto' || frozen.authority !== 'expectations-only'
     || frozen.meaning?.status !== 'meaning-checked' || frozen.meaning?.targetProofsChecked !== false

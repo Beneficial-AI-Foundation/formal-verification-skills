@@ -16,7 +16,7 @@ const sha256 = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex'
 // extractor compares module roots, so only a plain top-level identifier.
 const ROOT_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-class Refusal extends Error {}
+export class Refusal extends Error {}
 const refuse = (message) => { throw new Refusal(message); };
 
 const header = (roots) => `${roots.map((root) => `import ${root}`).join('\n')}\nopen Lean\n`;
@@ -143,7 +143,7 @@ function usage() {
 }
 
 // The Lake and Lean binaries of the project's toolchain (not an elan shim).
-function toolchain(project, lakeFlag) {
+export function toolchain(project, lakeFlag) {
   let lake = lakeFlag;
   if (!lake) {
     const prefix = spawnSync('lean', ['--print-prefix'], { cwd: project, encoding: 'utf8' });

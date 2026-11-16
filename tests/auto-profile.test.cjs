@@ -595,7 +595,7 @@ describe('fvs-auto readiness: what each stage can do, computed from a profile', 
     assert.deepEqual(stage.firstMissing, { need: 'probe-aeneas', supplier: 'owner',
       step: 'install probe-aeneas (or set its path override), then rerun /fvs:auto-init with the recorded choices so the recorded profile is refreshed' });
     assert.match(stage.line, /^auto-top-specs: ready, reduced - without probe-aeneas, probe-lean; output labelled reduced\. Lost: probe-aeneas: .*probe-lean: the Lean atom list/);
-    assert.match(stage.line, /Proof acceptance \(freeze, check, accept\) needs the Lean graph, so it refuses until probe-lean is usable\./);
+    assert.match(stage.line, /Proof acceptance \(freeze, check, accept\) needs the Lean graph, so it refuses until probe-lean is usable; until then fvs-auto-reduced\.mjs \(next, record\) builds each item with Lean and records it, labelled not accepted\./);
     assert.match(stage.line, /To restore, the owner can install probe-aeneas .*\(warning, not a stop\)$/);
     assert.doesNotMatch(topSpecs(profileWith({ probes: { 'probe-rust': { status: 'missing' } } })).line, /Proof acceptance/,
       'acceptance is named only when probe-lean is lost');
