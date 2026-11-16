@@ -37,13 +37,14 @@ const llbcText = (run) => zlib.gunzipSync(fs.readFileSync(path.join(FIXTURES, ru
 // The recorded positive graph predates ticket 21's fidelity check, so the algorithm cases add a
 // verified fidelity result to it (labelled mutation); rawGraph keeps the recorded bytes' meaning.
 const verified = (g) => ({ ...g, fidelity: { status: 'verified', represented: [], obligations: [] } });
-function plan(run, { identity = (x) => x, graph = (x) => x, llbc = null, roots = [21, 22, 23], failed = null, rawGraph = false } = {}) {
+function plan(run, { identity = (x) => x, graph = (x) => x, llbc = null, roots = [21, 22, 23], failed = null, rawGraph = false, allowAxioms = null } = {}) {
   const dir = scratch();
   const write = (name, value) => { const file = path.join(dir, name); fs.writeFileSync(file, typeof value === 'string' ? value : JSON.stringify(value)); return file; };
   const args = [SCRIPT, 'plan', '--identity', write('identity.json', identity(read(run, 'identity-record.json'))),
-    '--graph', write('graph.json', graph(rawGraph || run !== 'positive' ? read(run, 'graph-record.json') : verified(read(run, 'graph-record.json')))), '--roots', roots.join(',')];
+    ...(graph === null ? [] : ['--graph', write('graph.json', graph(rawGraph || run !== 'positive' ? read(run, 'graph-record.json') : verified(read(run, 'graph-record.json'))))]), '--roots', roots.join(',')];
   if (failed) args.push('--failed', failed.join(','));
   if (llbc) args.push('--llbc', write('m1demo.llbc', llbc));
+  if (allowAxioms) args.push('--allow-axioms', allowAxioms.join(','));
   const out = spawnSync(process.execPath, args, { encoding: 'utf8' });
   return { status: out.status, result: JSON.parse(out.stdout) };
 }
@@ -636,7 +637,7 @@ describe('closure plan: schema 2 oracle lanes (SYNTHETIC records)', () => {
     }
   });
 
-  it('requires coherent axiom evidence and refuses verified fidelity over a non-policy axiom', () => {
+  it('requires coherent axiom evidence, and blocks only the items resting on an axiom outside the policy', () => {
     const sole = (graph, code, label) => {
       const { status, result } = plan('positive', { graph });
       assert.equal(status, 7, label);
@@ -647,7 +648,14 @@ describe('closure plan: schema 2 oracle lanes (SYNTHETIC records)', () => {
     sole((g) => { const r = oracle()(g); delete r.trust['probe:m1demo.helper']; return r; }, 'graph-trust-contradiction', 'trust entry missing');
     sole((g) => { const r = oracle()(g); r.trust['probe:m1demo.ghost'] = []; return r; }, 'graph-trust-contradiction', 'trust for no node');
     sole(oracle((g) => { withBox()(g); g.nodes['probe:m1demo.Box'].axioms = []; return g; }), 'graph-trust-contradiction', 'axioms on a structure');
-    sole(oracle((g) => { g.nodes['probe:m1demo.helper'].axioms = ['propext', 'sorryAx']; return g; }), 'graph-fidelity-contradiction', 'sorryAx under verified fidelity');
+    const sorry = plan('positive', { graph: oracle((g) => { g.nodes['probe:m1demo.helper'].axioms = ['propext', 'sorryAx']; return g; }) });
+    assert.equal(sorry.status, 6, 'an axiom outside the policy is no admissibility blocker');
+    assert.equal(sorry.result.record.admissibility.status, 'admissible');
+    assert.equal(sorry.result.record.nodes[19].eligibility, 'blocked-unallowed-axiom');
+    assert.match(sorry.result.record.nodes[19].reasons.join(), /rests on sorryAx/);
+    assert.deepEqual([21, 22, 23].map((id) => root(sorry.result, id).status), ['blocked', 'blocked', 'ready'], 'it blocks only the claims that depend on it');
+    assert.equal(sorry.result.record.nodes[21].eligibility, 'blocked-by-dependency');
+    assert.deepEqual(Object.keys(sorry.result.record.selection), ['requestedRoots', 'failed'], 'no setting, no selection field');
     assert.equal(plan('positive', { graph: oracle((g) => { g.nodes['probe:m1demo.helper'].axioms = ['propext', 'Classical.choice', 'Quot.sound']; return g; }) }).status, 0, 'policy axioms only');
     for (const [label, edit] of [
       ['no trust', (r) => { delete r.trust; }],
@@ -656,6 +664,59 @@ describe('closure plan: schema 2 oracle lanes (SYNTHETIC records)', () => {
     ]) {
       assert.equal(plan('positive', { graph: (g) => { const r = oracle()(g); edit(r); return r; } }).result.code, 'invalid-input', label);
     }
+  });
+
+  it('blocks an item that is a project axiom until the setting names it exactly', () => {
+    // helper becomes an axiom (an opaque Rust function); root_a's axiom set names it, as Lean's would.
+    const asAxiom = oracle((g) => {
+      g.declarations['probe:m1demo.helper'].kind = 'axiom';
+      g.nodes['probe:m1demo.helper'].kind = 'axiom';
+      delete g.nodes['probe:m1demo.helper'].axioms;
+      g.nodes['probe:m1demo.root_a'].axioms = ['m1demo.helper', 'propext'];
+      return g;
+    });
+    const unnamed = plan('positive', { graph: asAxiom });
+    assert.equal(unnamed.status, 6);
+    assert.equal(unnamed.result.record.admissibility.status, 'admissible', 'an axiom node is a qualified kind');
+    assert.deepEqual([19, 21].map((id) => unnamed.result.record.nodes[id].eligibility), ['blocked-unallowed-axiom', 'blocked-unallowed-axiom']);
+    assert.match(unnamed.result.record.nodes[19].reasons.join(), /rests on m1demo\.helper/);
+    assert.deepEqual([21, 22, 23].map((id) => root(unnamed.result, id).status), ['blocked', 'blocked', 'ready']);
+    const named = plan('positive', { graph: asAxiom, allowAxioms: ['m1demo.helper'] });
+    assert.equal(named.status, 0, JSON.stringify(named.result.record?.roots));
+    assert.deepEqual(named.result.record.selection.allowedAxioms, ['m1demo.helper'], 'the setting is recorded');
+    for (const [label, names, graph] of [
+      ['a standard axiom', ['propext'], asAxiom],
+      ['a definition', ['m1demo.root_a'], asAxiom],
+      ['an unknown name', ['m1demo.Helper'], asAxiom],
+      ['a version 1 graph', ['m1demo.helper'], (g) => g],
+    ]) {
+      assert.equal(plan('positive', { graph, allowAxioms: names }).result.code, 'invalid-input', label);
+    }
+  });
+
+  it('plans an enum, its covered constructors, a class and an instance', () => {
+    // Color is a plain inductive probe-lean emits; Lean defines its constructor and recursor in source.
+    const withEnum = (ctors) => oracle((g) => {
+      probeAtom(g, 'probe:m1demo.Color', 'inductive');
+      Object.assign(g.nodes['probe:m1demo.Color'], { kind: 'inductive', family: { ctors: ctors.map((c) => `m1demo.Color.${c}`), recursors: ['m1demo.Color.rec'] } });
+      delete g.nodes['probe:m1demo.Color'].axioms;
+      for (const c of ctors) g.nodes[`probe:m1demo.Color.${c}`] = { kind: 'ctor', source: true, probeAtom: false, type: ['probe:m1demo.Color'], value: [], family: { inductive: 'm1demo.Color' } };
+      g.nodes['probe:m1demo.Color.rec'] = { kind: 'recursor', source: true, probeAtom: false, type: ['probe:m1demo.Color'], value: [], family: { inductives: ['m1demo.Color'] } };
+      g.nodes['probe:m1demo.independent'].type.push('probe:m1demo.Color');
+      g.declarations['probe:m1demo.independent'].kind = 'instance';
+      return g;
+    });
+    const { status, result } = plan('positive', { graph: withEnum(['red', 'blue']) });
+    assert.equal(status, 0, JSON.stringify(result.record?.admissibility));
+    const definitions = root(result, 23).definitionClosure;
+    for (const member of ['probe:m1demo.Color', 'probe:m1demo.Color.red', 'probe:m1demo.Color.blue']) assert.ok(definitions.includes(member), member);
+    assert.match(result.record.definitionClosureRule, /any other inductive adds its constructors$/);
+    assert.doesNotMatch(plan('positive', { graph: oracle() }).result.record.definitionClosureRule, /other inductive/, 'unchanged rule without one');
+    assert.equal(plan('positive', { graph: withEnum([]) }).status, 0, 'an empty inductive');
+    const uncovered = plan('positive', { graph: (g) => { const r = withEnum(['red'])(g); r.nodes['probe:m1demo.Color.red'].family.inductive = 'm1demo.Pair'; return r; } });
+    assert.equal(uncovered.status, 7, 'a source constructor of no emitted inductive');
+    const relabelled = plan('positive', { graph: (g) => { const r = withEnum(['red'])(g); r.declarations['probe:m1demo.Color'].kind = 'structure'; return r; } });
+    assert.match(JSON.stringify(relabelled.result.record.admissibility.blockers), /labels disagree.*probe:m1demo\.Color/);
   });
 
   it('refuses unknown versions, capabilities, resolutions and malformed nodes as invalid input', () => {
@@ -687,5 +748,92 @@ describe('closure plan: schema 2 oracle lanes (SYNTHETIC records)', () => {
     assert.equal(record.status, 'ready');
     assert.deepEqual(record.nodes[21].generatedDependencies, ['probe:m1demo.root_a.match_1']);
     assert.ok(record.roots[0].definitionClosure.includes('probe:m1demo.root_a.match_1'));
+  });
+});
+
+// LABELLED MUTATION: the recorded positive identity rewritten as fvs-rust-identity's
+// translation.json-only record (no probe outputs): every item declared by Aeneas, none exact.
+const translationOnly = (i) => ({ ...i, status: 'degraded', blockers: [],
+  provenance: { ...i.provenance, discovery: 'translation-only' },
+  items: i.items.map((item) => ({ ...item, correspondence: 'declared-by-aeneas' })) });
+
+describe('closure plan: degraded (no graph or a translation.json-only identity)', () => {
+  const registry = () => import(require('node:url').pathToFileURL(path.resolve(__dirname, '..', 'scripts', 'fvs-contract-registry.mjs')).href);
+  const load = (name) => { const text = fs.readFileSync(path.join(FIXTURES, 'positive', name), 'utf8'); return { json: JSON.parse(text), sha256: sha(text) }; };
+
+  it('lists the roots and items in source order without a graph, claims no closure and is not admissible', () => {
+    const { status, result } = plan('positive', { graph: null });
+    assert.equal(status, 9);
+    assert.equal(result.code, 'degraded');
+    const rec = result.record;
+    assert.equal(rec.status, 'degraded');
+    assert.equal(rec.inputs.graphSha256, null);
+    assert.equal(rec.qualification.graphFidelity, 'not-supplied (no graph)');
+    assert.deepEqual(rec.admissibility.blockers.map((b) => b.code), ['graph-missing']);
+    assert.deepEqual(rec.nodes, {});
+    assert.deepEqual(rec.upstream.graphState, null);
+    for (const id of [21, 22, 23]) {
+      assert.equal(root(result, id).status, 'degraded');
+      assert.equal(root(result, id).closure, null);
+      assert.deepEqual(root(result, id).blockers.map((b) => b.code), ['closure-not-computed']);
+    }
+    const identity = read('positive', 'identity-record.json');
+    assert.equal(rec.degraded.sourceOrder.length, identity.items.length);
+    assert.deepEqual(rec.degraded.reasons, ['graph-missing']);
+    assert.match(rec.degraded.order, /no dependency order/);
+    assert.match(rec.degraded.lost[0], /no closure/);
+    const lines = rec.degraded.sourceOrder.map((x) => [x.file, x.beginLine]);
+    assert.deepEqual(lines, [...lines].sort((a, b) => a[0].localeCompare(b[0]) || a[1] - b[1]));
+    assert.match(result.message, /degraded \(graph-missing\).*no closure is claimed/);
+  });
+
+  it('does not join a translation.json-only identity to a verified graph', () => {
+    const { status, result } = plan('positive', { identity: translationOnly, graph: oracle() });
+    assert.equal(status, 9);
+    assert.deepEqual(result.record.degraded.reasons, ['identity-translation-only']);
+    assert.equal(result.record.qualification.graphFidelity, 'verified');
+    assert.match(result.record.inputs.graphSha256, /^[0-9a-f]{64}$/);
+    assert.deepEqual(result.record.nodes, {});
+    assert.deepEqual(plan('positive', { identity: translationOnly, graph: null }).result.record.degraded.reasons, ['graph-missing', 'identity-translation-only']);
+  });
+
+  it('is refused by the registry plan check, with or without a graph, and is never ready', async () => {
+    const { buildPlan } = await import(require('node:url').pathToFileURL(SCRIPT).href);
+    const { validatePlan } = await registry();
+    const graph = load('graph-record.json');
+    graph.json = oracle()(graph.json);
+    const identity = load('identity-record.json');
+    const declared = { json: translationOnly(identity.json), sha256: identity.sha256 };
+    assert.equal(buildPlan({ identity, graph, roots: [21], failed: [] }).status, 'ready', 'control: the probe-full plan is accepted');
+    assert.deepEqual(validatePlan({ json: buildPlan({ identity, graph, roots: [21], failed: [] }), sha256: 'a'.repeat(64) }, graph).problems, []);
+    for (const [label, input] of [['no graph', { identity, graph: null }], ['translation-only with a verified graph', { identity: declared, graph }], ['translation-only, no graph', { identity: declared, graph: null }]]) {
+      const record = buildPlan({ ...input, roots: [21], failed: [] });
+      assert.equal(record.status, 'degraded', label);
+      const { problems } = validatePlan({ json: record, sha256: 'a'.repeat(64) }, graph);
+      assert.ok(problems.includes('the plan is degraded'), `${label}: ${problems}`);
+      assert.ok(problems.includes('the plan is not admissible without blockers'), label);
+    }
+  });
+
+  it('keeps unknown roots blocked and a blocked identity claims nothing', () => {
+    const { result } = plan('positive', { graph: null, roots: [21, 99] });
+    assert.deepEqual([root(result, 99).status, root(result, 99).blockers[0].code], ['blocked', 'unknown-root']);
+    const blocked = plan('positive', { graph: null, identity: (i) => ({ ...translationOnly(i), status: 'blocked', blockers: [{ code: 'dirty-source', message: 'x' }] }) });
+    assert.equal(blocked.status, 7);
+    assert.equal(blocked.result.record.status, 'blocked');
+    assert.deepEqual(blocked.result.record.degraded.sourceOrder, []);
+    assert.ok(blocked.result.record.roots.every((r) => r.status === 'blocked' && r.closure === null));
+  });
+
+  it('refuses a degraded label without translation-only discovery, and declared items in any other record', () => {
+    for (const [label, identity] of [
+      ['degraded status on a probe-built record', (i) => ({ ...i, status: 'degraded' })],
+      ['translation-only discovery with a complete status', (i) => ({ ...translationOnly(i), status: 'complete' })],
+      ['translation-only discovery with an exact item', (i) => { const x = translationOnly(i); x.items[0] = { ...x.items[0], correspondence: 'exact' }; return x; }],
+      ['a declared item in a probe-built record', (i) => { i.items[0].correspondence = 'declared-by-aeneas'; return i; }],
+    ]) {
+      assert.equal(plan('positive', { identity, graph: null }).result.code, 'invalid-input', label);
+      assert.equal(plan('positive', { identity }).result.code, 'invalid-input', `${label} (with a graph)`);
+    }
   });
 });

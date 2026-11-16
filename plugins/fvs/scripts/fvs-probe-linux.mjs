@@ -80,6 +80,11 @@ function executable(value) {
 
 // Match the upstream helper lookup order without running or installing tools.
 // Direct staging callers may omit a selection, including the missing-SCIP case.
+// FVS_PROBE_RUST_PATH, FVS_SCIP_PATH, FVS_PROBE_LEAN_PATH and
+// FVS_PROBE_LEAN_LIBRARY_PATH name a helper (or the probe-lean library) at any
+// absolute location; a set override that is not usable is refused, never
+// replaced by the default lookup.
+const PATH_OVERRIDES = { 'probe-rust': 'FVS_PROBE_RUST_PATH', scip: 'FVS_SCIP_PATH', 'probe-lean': 'FVS_PROBE_LEAN_PATH' };
 export function selectProbeToolPaths({ sourceEnv = process.env, projectRoot = null, leanToolchain = null } = {}) {
   const home = sourceEnv.HOME || os.homedir();
   const available = (file) => {
@@ -110,13 +115,27 @@ export function selectProbeToolPaths({ sourceEnv = process.env, projectRoot = nu
   if (leanVersion && !/^[A-Za-z0-9._-]+$/.test(leanVersion)) {
     fail('unsupported Lean toolchain name for helper lookup');
   }
-  const libraryPath = leanVersion ? path.join(home, '.local', 'lib', `probe-lean-${leanVersion}`) : null;
+  const override = (name) => {
+    const value = sourceEnv[name];
+    if (!value) return undefined;
+    if (!path.isAbsolute(value)) fail(`${name} must be an absolute path`);
+    return value;
+  };
+  const libraryOverride = override('FVS_PROBE_LEAN_LIBRARY_PATH');
+  if (libraryOverride !== undefined && !(fs.existsSync(libraryOverride) && fs.statSync(libraryOverride).isDirectory())) fail('FVS_PROBE_LEAN_LIBRARY_PATH is not a directory');
+  const libraryPath = libraryOverride ?? (leanVersion ? path.join(home, '.local', 'lib', `probe-lean-${leanVersion}`) : null);
   const helpers = {
     'probe-rust': which('probe-rust') ?? available(path.join(home, '.cargo', 'bin', 'probe-rust')),
     scip: available(path.join(home, '.probe-rust', 'tools', 'scip')) ?? which('scip'),
     'probe-lean': leanVersion ? available(path.join(home, '.local', 'bin', `probe-lean-${leanVersion}`)) : null,
     'rust-analyzer': which('rust-analyzer'),
   };
+  for (const [helper, name] of Object.entries(PATH_OVERRIDES)) {
+    const value = override(name);
+    if (value === undefined) continue;
+    if (!available(value)) fail(`${name} is not an executable file`);
+    helpers[helper] = value;
+  }
   const rustupPath = which('rustup');
   return {
     helpers, rustupPath, libraryPath,

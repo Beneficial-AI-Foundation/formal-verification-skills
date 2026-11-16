@@ -143,6 +143,7 @@ describe('published FVS plugin package', () => {
         'fvs-codex-think.mjs',
         'fvs-extract-patches.mjs',
         'fvs-kb-query.py',
+        'fvs-lean-constants.mjs',
         'fvs-lean-graph.mjs',
         'fvs-lean-style-check.mjs',
         'fvs-refactor-report.mjs',

@@ -236,14 +236,22 @@ describe('fvs-auto profile verdicts', () => {
     assert.equal(probe.evidence.resolver.status, 'incompatible', 'raw resolver evidence is preserved');
   });
 
-  it('reports disagreeing provenance pins as incompatible', async () => {
+  // A provenance conflict is a warning: the run goes on, and a failed recorded build stops it later.
+  it('reports disagreeing provenance pins as a warning that never blocks', async () => {
     const project = copyFixture('tested', {
       files: { 'Lean/translation.json': translation({ aeneas_version: 'deadbeef', charon_version: '0.1.225' }) },
     });
-    const probe = item(await profileOf(project), 'probe');
-    assert.equal(probe.verdict, 'incompatible');
+    const profile = await profileOf(project);
+    const probe = item(profile, 'probe');
+    assert.equal(probe.verdict, 'available-but-unverified');
     assert.match(probe.reason,
-      /^conflict: translation\.json aeneas_version deadbeef does not match lake-manifest\.json aeneas 6e167c9b/);
+      /^warning: conflict: translation\.json aeneas_version deadbeef does not match lake-manifest\.json aeneas 6e167c9b.*probe output stays unverified/);
+    // This fixture ships no Aeneas binaries: absent binaries are reported first, with the conflict carried along.
+    const aeneas = item(profile, 'aeneas');
+    assert.equal(aeneas.verdict, 'missing');
+    assert.match(aeneas.reason, /aeneas and charon not found.*; conflict: translation\.json aeneas_version deadbeef does not match lake-manifest\.json aeneas 6e167c9b/);
+    assert.deepEqual(aeneas.evidence.provenanceConflicts.map((c) => c.slice(0, 50)),
+      ['conflict: translation.json aeneas_version deadbeef']);
   });
 
   // Aeneas release builds report their release tag (nightly-YYYY.MM.DD-<short commit>) as aeneas_version.
@@ -262,9 +270,9 @@ describe('fvs-auto profile verdicts', () => {
       files: { 'Lean/translation.json': translation({ aeneas_version: 'nightly-2026.09.30-deadbee', charon_version: '0.1.225' }) },
     });
     const probe = item(await profileOf(project), 'probe');
-    assert.equal(probe.verdict, 'incompatible');
+    assert.equal(probe.verdict, 'available-but-unverified');
     assert.match(probe.reason,
-      /^conflict: translation\.json aeneas_version nightly-2026\.09\.30-deadbee does not match lake-manifest\.json aeneas 6e167c9b/);
+      /^warning: conflict: translation\.json aeneas_version nightly-2026\.09\.30-deadbee does not match lake-manifest\.json aeneas 6e167c9b/);
   });
 
   it('keeps a release-tagged extraction of the untested pilot tuple unverified, without a conflict', async () => {
@@ -286,8 +294,8 @@ describe('fvs-auto profile verdicts', () => {
         files: { 'Lean/translation.json': translation({ aeneas_version: tag, charon_version: '0.1.225' }) },
       });
       const probe = item(await profileOf(project), 'probe');
-      assert.equal(probe.verdict, 'incompatible', tag);
-      assert.match(probe.reason, /^conflict: translation\.json aeneas_version /, tag);
+      assert.equal(probe.verdict, 'available-but-unverified', tag);
+      assert.match(probe.reason, /^warning: conflict: translation\.json aeneas_version /, tag);
     }
   });
 
@@ -396,6 +404,34 @@ describe('fvs-auto profile verdicts', () => {
       ['probe'], 'one tested operation qualifies nothing else');
   });
 
+  it('on a tested tuple, a bad helper path override leaves the probe not checked and init-state still runs', async (t) => {
+    // The tuple's evidence is per platform, so the helper lookup is reached only on this host.
+    if (process.platform !== 'darwin' || process.arch !== 'arm64') return t.skip('requires the macOS arm64 host');
+    const root = copyFixture('tested');
+    process.env.FVS_SCIP_PATH = '/nonexistent/scip';
+    try {
+      const result = await profileOf(root);
+      const probe = item(result, 'probe');
+      assert.equal(probe.verdict, 'not-checked', probe.reason);
+      assert.match(probe.reason, /FVS_SCIP_PATH is not an executable file/);
+      assert.equal(probe.evidence.resolver.tuple, 'aeneas-6e167c9b-charon-0.1.225-lean-v4.31.0');
+      assert.equal(result.probes.find((entry) => entry.id === 'scip').status, 'not-checked');
+      const { initState, Refusal } = await import(pathToFileURL(SCRIPT).href);
+      const choices = { source: { revision: 'HEAD', configuration: 'default features' }, scope: 'one module', limits: {} };
+      let state;
+      try {
+        state = withStubEnvironment(undefined, () => initState({ projectRoot: root, choices, platform: PLATFORM }));
+      } catch (error) {
+        assert.ok(error instanceof Refusal, error.stack);
+        assert.doesNotMatch(JSON.stringify(error.details ?? {}), /"id":"probe"/, 'the probe never blocks init-state');
+        state = error;
+      }
+      assert.ok(state, 'init-state returned or refused cleanly');
+    } finally {
+      delete process.env.FVS_SCIP_PATH;
+    }
+  });
+
   it('reports malformed or missing provenance as unknown, with the raw evidence and no invented values', async () => {
     for (const [variant, problem, unknownField] of [
       [{ files: { 'Lean/translation.json': '{ not json' } }, /cannot read translation\.json/, 'charonVersion'],
@@ -461,5 +497,221 @@ describe('fvs-auto profile output', () => {
     const unknown = cli(['roots']);
     assert.equal(unknown.status, 2);
     assert.match(unknown.stderr, /unknown subcommand "roots"; available: profile/);
+  });
+});
+
+describe('fvs-auto profile: probes are optional', () => {
+  it('lists every probe with its status and states what a missing one loses', async () => {
+    const result = await profileOf(extractedPilot(), { bin: binWithout('probe-aeneas', 'probe-rust') });
+    const probes = Object.fromEntries(result.probes.map((entry) => [entry.id, entry]));
+    assert.deepEqual(Object.keys(probes), ['probe-aeneas', 'probe-rust', 'scip', 'rust-analyzer', 'probe-lean']);
+    for (const id of ['probe-aeneas', 'probe-rust']) {
+      assert.equal(probes[id].status, 'missing', id);
+      assert.equal(probes[id].path, null, id);
+    }
+    assert.match(probes['probe-aeneas'].lost, /declared by Aeneas in translation\.json, never exact/);
+    assert.match(probes['probe-rust'].lost, /Rust atom inventory/);
+    for (const entry of result.probes) {
+      assert.ok(['qualified', 'present-unqualified', 'unverified-blocked', 'missing', 'not-checked'].includes(entry.status), entry.id);
+      assert.equal(entry.lost === null, ['qualified', 'present-unqualified'].includes(entry.status), entry.id);
+    }
+    const probe = item(result, 'probe');
+    assert.equal(probe.verdict, 'missing');
+    assert.match(probe.nextStep, /^Not needed for setup or extraction: /);
+    const stages = Object.fromEntries(result.readiness.map((entry) => [entry.stage, entry]));
+    assert.deepEqual(Object.keys(stages), ['auto-top-specs', 'auto-execute']);
+    assert.equal(stages['auto-top-specs'].status, 'ready-reduced');
+    assert.match(stages['auto-top-specs'].line, /ready, reduced - without [^;]*probe-aeneas, probe-rust/);
+  });
+
+  it('reports an unsupported host as not needed for setup, pointing to the stage lines', async () => {
+    const result = await profileOf(path.join(FIXTURES, 'fresh'), { platform: 'x86_64-pc-windows-msvc' });
+    const host = item(result, 'host');
+    assert.equal(host.verdict, 'unsupported-platform');
+    assert.match(host.nextStep, /^Not needed for setup or extraction: setup and extraction go on here, and the stage lines say/);
+    assert.doesNotMatch(host.nextStep, /degraded route/);
+    assert.doesNotMatch(host.nextStep, /only exploratory work/);
+  });
+
+  it('keeps a tuple contradiction on the aeneas item as a non-blocking warning', async () => {
+    const project = copyFixture('tested', { files: { 'lean-toolchain': 'leanprover/lean4:v4.35.0\n' } });
+    fs.cpSync(path.join(FIXTURES, 'fresh', '.aeneas', 'releases', 'nightly-2026.09.30-0855ce1', 'darwin-arm64'),
+      path.join(project, '.aeneas', 'releases', '6e167c9b63a4dafd66d0e0edd9d94669f957ff7b', 'darwin-arm64'), { recursive: true });
+    const result = await profileOf(project);
+    const aeneas = item(result, 'aeneas');
+    assert.equal(aeneas.verdict, 'available-but-unverified', aeneas.reason);
+    assert.match(aeneas.reason, /^warning: Aeneas 6e167c9b/);
+    assert.match(aeneas.reason, /was tested with leanprover\/lean4:v4\.31\.0 \([^)]*\); this project pins leanprover\/lean4:v4\.35\.0/);
+    assert.match(aeneas.nextStep, /^None required; the tuple is recorded as evidence, not a gate\./);
+    const probe = item(result, 'probe');
+    assert.equal(probe.verdict, 'incompatible', 'the probe item still shows the contradiction');
+    assert.match(probe.nextStep, /^Not needed for setup or extraction: /);
+  });
+
+  it('prints the probes and their losses as text, outside the next-step lines', () => {
+    const text = spawnSync(process.execPath, [SCRIPT, 'profile', '--project-root', path.join(FIXTURES, 'pilot'), '--format', 'text'],
+      { cwd: ROOT, env: stubEnvironment(), encoding: 'utf8' });
+    assert.equal(text.status, 0, text.stderr);
+    const lines = text.stdout.split('\n');
+    const start = lines.indexOf('probes (none is needed for setup or extraction; the stage lines below say what each stage needs):');
+    const stages = lines.indexOf('stages:');
+    assert.ok(start > 0 && stages > start, text.stdout);
+    assert.deepEqual(lines.slice(start + 1, stages).filter(Boolean).map((line) => line.split(':')[0].trim()),
+      ['probe-aeneas', 'probe-rust', 'scip', 'rust-analyzer', 'probe-lean']);
+    assert.deepEqual(lines.slice(stages + 1).filter(Boolean).map((line) => line.split(':')[0].trim()),
+      ['auto-top-specs', 'auto-execute']);
+  });
+});
+
+describe('fvs-auto readiness: what each stage can do, computed from a profile', () => {
+  let readiness;
+  before(async () => { ({ readiness } = await import(pathToFileURL(SCRIPT).href)); });
+
+  const ids = ['probe-aeneas', 'probe-rust', 'scip', 'rust-analyzer', 'probe-lean'];
+  const profileWith = ({ ao = 'available-but-unverified', lean = 'available-but-unverified', probes = {} } = {}) => ({
+    items: [
+      { id: 'ao', verdict: ao, nextStep: 'Install Agent Orchestrator and put its ao CLI on PATH, then rerun the profile.' },
+      { id: 'lean', verdict: lean, nextStep: 'None required now.' },
+    ],
+    probes: ids.map((id) => ({ id, status: 'qualified', ...(probes[id] ?? {}) })),
+  });
+  const topSpecs = (profile) => readiness(profile).find((entry) => entry.stage === 'auto-top-specs');
+
+  it('is full only when every probe is qualified', () => {
+    for (const entry of readiness(profileWith())) assert.equal(entry.status, 'full', entry.stage);
+  });
+
+  it('is ready but unverified when a probe is present but not qualified, as a warning', () => {
+    const stage = topSpecs(profileWith({ probes: { 'probe-lean': { status: 'present-unqualified' } } }));
+    assert.equal(stage.status, 'ready-unverified');
+    assert.equal(stage.firstMissing, null);
+    assert.match(stage.line, /ready, unverified - probe-lean not qualified .*warning, not a stop/);
+  });
+
+  it('is ready but reduced when probes are missing, naming the losses, the acceptance refusal and the restoring step', () => {
+    const stage = topSpecs(profileWith({ probes: { 'probe-aeneas': { status: 'missing' }, 'probe-lean': { status: 'missing' } } }));
+    assert.equal(stage.status, 'ready-reduced');
+    assert.deepEqual(stage.missing, ['probe-aeneas', 'probe-lean']);
+    assert.deepEqual(stage.firstMissing, { need: 'probe-aeneas', supplier: 'owner',
+      step: 'install probe-aeneas (or set its path override), then rerun /fvs:auto-init with the recorded choices so the recorded profile is refreshed' });
+    assert.match(stage.line, /^auto-top-specs: ready, reduced - without probe-aeneas, probe-lean; output labelled reduced\. Lost: probe-aeneas: .*probe-lean: the Lean atom list/);
+    assert.match(stage.line, /Proof acceptance \(freeze, check, accept\) needs the Lean graph, so it refuses until probe-lean is usable\./);
+    assert.match(stage.line, /To restore, the owner can install probe-aeneas .*\(warning, not a stop\)$/);
+    assert.doesNotMatch(topSpecs(profileWith({ probes: { 'probe-rust': { status: 'missing' } } })).line, /Proof acceptance/,
+      'acceptance is named only when probe-lean is lost');
+  });
+
+  it('labels present but unqualified probes alongside a reduced route', () => {
+    const stage = topSpecs(profileWith({ probes: { 'probe-lean': { status: 'missing' }, scip: { status: 'present-unqualified' } } }));
+    assert.equal(stage.status, 'ready-reduced');
+    assert.match(stage.line, /scip not qualified for this toolchain tuple: output labelled unverified\./);
+  });
+
+  it('has no route when AO is missing, even if only probes are missing besides', () => {
+    const stage = topSpecs(profileWith({ ao: 'missing', probes: { 'probe-lean': { status: 'missing' } } }));
+    assert.equal(stage.status, 'no-route');
+    assert.deepEqual(stage.missing, ['ao', 'probe-lean']);
+    assert.equal(stage.firstMissing.need, 'ao');
+  });
+
+  it('has no route without ao, using the ao item next step and naming the refresh', () => {
+    const stage = topSpecs(profileWith({ ao: 'missing' }));
+    assert.equal(stage.status, 'no-route');
+    assert.equal(stage.firstMissing.need, 'ao');
+    assert.equal(stage.firstMissing.step,
+      'install Agent Orchestrator and put its ao CLI on PATH, then rerun /fvs:auto-init with the recorded choices so the recorded profile is refreshed');
+  });
+
+  it('a refused path override leaves the helpers not checked and keeps the reason', async () => {
+    process.env.FVS_SCIP_PATH = 'relative/scip';
+    let result;
+    try {
+      result = await profileOf(extractedPilot());
+    } finally {
+      delete process.env.FVS_SCIP_PATH;
+    }
+    const scip = result.probes.find((entry) => entry.id === 'scip');
+    assert.equal(scip.status, 'not-checked');
+    assert.match(scip.reason, /FVS_SCIP_PATH/);
+    const stage = result.readiness.find((entry) => entry.stage === 'auto-top-specs');
+    assert.equal(stage.status, 'ready-reduced');
+    assert.match(stage.line, /scip \(not checked: [^)]*FVS_SCIP_PATH/);
+    assert.match(stage.line, /fix what stopped the probe check \(.*FVS_SCIP_PATH/);
+  });
+
+  it('a present probe-lean the graph step refuses is unverified-blocked, and readiness and the graph step agree', async (t) => {
+    if (!CONFINED) return t.skip('read-only confinement is unavailable here, so --version is not run');
+    const { buildLeanGraph } = await import(pathToFileURL(path.join(ROOT, 'scripts', 'fvs-lean-graph.mjs')).href);
+    const graphCodes = (version) => buildLeanGraph({ libraries: [], extractText: JSON.stringify({ schema: 'probe-lean/extract',
+      'schema-version': '3.0', tool: { name: 'probe-lean', command: 'extract', version }, data: {} }) }).blockers.map((entry) => entry.code);
+    const profileWithProbeLean = async (script) => {
+      const stub = path.join(temporaryDirectory(), 'probe-lean');
+      fs.writeFileSync(stub, `#!/bin/sh\n${script}\n`, { mode: 0o755 });
+      process.env.FVS_PROBE_LEAN_PATH = stub;
+      try {
+        return await profileOf(extractedPilot());
+      } finally {
+        delete process.env.FVS_PROBE_LEAN_PATH;
+      }
+    };
+    const leanOf = (result) => result.probes.find((entry) => entry.id === 'probe-lean');
+
+    const refused = await profileWithProbeLean('echo 0.99.0');
+    assert.ok(graphCodes('0.99.0').includes('unqualified-interface'), 'the graph step refuses 0.99.0');
+    assert.equal(leanOf(refused).status, 'unverified-blocked');
+    assert.match(leanOf(refused).reason, /accepts only probe-lean 0\.14\.0 output and refuses other versions; this probe-lean reports "0\.99\.0"/);
+    assert.match(leanOf(refused).lost, /Lean atom list/);
+    assert.match(leanOf(refused).lost, /commit other than the Rust commit is not reconciled/);
+    const stage = refused.readiness.find((entry) => entry.stage === 'auto-top-specs');
+    assert.equal(stage.status, 'ready-reduced');
+    assert.match(stage.line, /probe-lean \(present but unusable: the Lean graph step accepts only/);
+    assert.match(stage.line, /Proof acceptance \(freeze, check, accept\) needs the Lean graph/);
+
+    const accepted = await profileWithProbeLean('echo 0.14.0');
+    assert.ok(!graphCodes('0.14.0').includes('unqualified-interface'), 'the graph step accepts 0.14.0');
+    assert.equal(leanOf(accepted).status, 'present-unqualified');
+    assert.equal(leanOf(accepted).lost, null);
+
+    const broken = leanOf(await profileWithProbeLean('echo "cannot load library" >&2; exit 1'));
+    assert.equal(broken.status, 'unverified-blocked');
+    assert.match(broken.reason, /^probe-lean --version failed: cannot load library$/);
+  });
+
+  it('a rust-analyzer rustup proxy without the component is missing, not blocked', async (t) => {
+    if (!CONFINED) return t.skip('read-only confinement is unavailable here, so --version is not run');
+    const bin = temporaryDirectory();
+    for (const name of fs.readdirSync(BIN)) fs.copyFileSync(path.join(BIN, name), path.join(bin, name));
+    fs.writeFileSync(path.join(bin, 'rust-analyzer'),
+      "#!/bin/sh\necho \"error: Unknown binary 'rust-analyzer' in official toolchain\" >&2\nexit 1\n", { mode: 0o755 });
+    const result = await profileOf(extractedPilot(), { bin });
+    const analyzer = result.probes.find((entry) => entry.id === 'rust-analyzer');
+    assert.equal(analyzer.status, 'missing');
+    assert.match(analyzer.reason, /^rust-analyzer --version failed: error: Unknown binary/);
+    assert.match(analyzer.lost, /indexer probe-rust uses/);
+    const stage = result.readiness.find((entry) => entry.stage === 'auto-top-specs');
+    assert.match(stage.line, /without [^;]*rust-analyzer/);
+    assert.doesNotMatch(stage.line, /rust-analyzer \(present but unusable/);
+  });
+
+  it('treats a recorded probe status it does not know as no route', () => {
+    const stage = topSpecs(profileWith({ probes: { scip: { status: 'usable-somehow' } } }));
+    assert.equal(stage.status, 'no-route');
+    assert.equal(stage.firstMissing.supplier, 'agent');
+    assert.match(stage.firstMissing.step, /scip status "usable-somehow" is not one this engine knows/);
+  });
+
+  it('keeps the reason a probe check was not made', () => {
+    const stage = topSpecs(profileWith({ probes: { scip: { status: 'not-checked', reason: 'FVS_SCIP_PATH is not absolute' } } }));
+    assert.equal(stage.status, 'ready-reduced');
+    assert.match(stage.firstMissing.step, /fix what stopped the probe check \(FVS_SCIP_PATH is not absolute\)/);
+  });
+
+  it('never shows a recorded profile without probes as full', () => {
+    for (const legacy of [{ items: profileWith().items }, undefined]) {
+      const stage = topSpecs(legacy);
+      assert.equal(stage.status, 'no-route');
+      assert.notEqual(stage.firstMissing, null);
+    }
+    assert.equal(topSpecs({ items: profileWith().items }).firstMissing.supplier, 'agent');
   });
 });

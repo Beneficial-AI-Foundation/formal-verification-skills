@@ -17,13 +17,31 @@ import { fileURLToPath } from 'node:url';
 // record is bound to one extraction only when the state carries an attempt the
 // patch engine recorded and re-validated, and the given LLBC and translation.json
 // are that attempt's outputs and agree with each other and the manifest.
+//
+// The probe outputs are optional. Without all four of them the record is built
+// from translation.json alone: every def_id and Lean name is what Aeneas declares
+// about its own output, nothing confirms it independently, so no item is exact
+// and the record is degraded at best. What each missing probe would have
+// computed is null with a reason, never an empty list.
 
-const EXIT = { ok: 0, usage: 2, internal: 2, 'invalid-input': 5, partial: 6, blocked: 7, unbound: 8 };
+const EXIT = { ok: 0, usage: 2, internal: 2, 'invalid-input': 5, partial: 6, blocked: 7, unbound: 8, degraded: 9 };
 const DEF_ID_METHOD = 'charon-def-id';
 const CONFLICT = new Set(['span-mismatch', 'mapping-target-differs']);
 const AMBIGUOUS = new Set(['duplicate-charon-def-id', 'lean-target-claimed-twice', 'span-missing', 'span-path-unsupported', 'conflicting-mappings']);
 const UNSUPPORTED = new Set(['recursion', 'non-loop-split', 'no-primary', 'type-generic']);
 const UNBOUND_WITHOUT_ATTEMPT = ['translation-linkage-triangulated', 'extraction-configuration-not-bound'];
+const PROBE_INPUTS = { rust: '--rust', mappings: '--mappings', lean: '--lean', functions: '--functions' };
+const present = (value) => value !== null && value !== undefined;
+const translationOnly = (input) => Object.keys(PROBE_INPUTS).some((key) => !present(input[key]));
+const DECLARED = 'declared-by-aeneas';
+const NOT_COMPUTED = {
+  mapping: 'no probe-aeneas mapping: def_id to Lean name is declared by Aeneas in translation.json, never confirmed independently, so never exact',
+  unkeyedRustAtoms: 'no probe-rust inventory: Rust functions without a Charon def_id are not listed',
+  orphanRustAtoms: 'no probe-rust inventory: Rust functions Aeneas did not translate are not detected',
+  missingGenerated: 'no probe-lean output or functions.json: generated Lean families are not checked for completeness',
+  dependencies: 'no probe-lean output: Lean dependencies are unknown',
+  leanCommit: 'no probe-lean output: a Lean project commit other than the Rust commit is not reconciled, and the published generated Lean files are not checked against an analysed Lean build',
+};
 
 class Refusal extends Error {
   constructor(code, message) {
@@ -39,7 +57,7 @@ function refuse(code, message) {
 function usage() {
   process.stdout.write([
     'Usage: node fvs-rust-identity.mjs record --source-commit SHA --translation FILE --manifest FILE',
-    '         --rust FILE --mappings FILE --lean FILE --functions FILE [--config FILE]',
+    '         [--rust FILE --mappings FILE --lean FILE --functions FILE] [--config FILE]',
     '         [--state FILE] [--llbc FILE] [--lean-receipt FILE] [--out FILE] [--format json|text]',
     '',
     '--translation  Aeneas translation.json (-emit-json); its functions[] def_ids are the keys',
@@ -48,10 +66,13 @@ function usage() {
     '--mappings     probe-aeneas `translate` output (each mapping names its method)',
     '--lean, --functions  probe-lean extract output and probe-aeneas functions.json: kept verbatim',
     '               and used to check that each Lean family is complete',
+    '               The four probe outputs are optional. Without all four the record comes from',
+    '               translation.json alone: every item is declared by Aeneas, none is exact, the',
+    '               status is degraded, and any probe output given is listed as unused',
     '--config       a configuration file whose sha256 is recorded as the caller\'s; it binds nothing',
     '--state        FVS auto state; its recorded manifest sha256 and source commit must agree, and',
     '               its recorded extraction attempt (extraction.run) is what can bind the record',
-    '--lean-receipt the ticket 21 probe-lean run receipt (fvs/lean-probe-run v1). Only with it may',
+    '--lean-receipt the probe-lean run receipt (fvs/lean-probe-run v1). Only with it may',
     '               probe-lean\'s commit differ from the Rust source commit, and only when the record is',
     '               bound and the receipt analysed every published Lean file at its recorded hash',
     '--llbc         Charon\'s LLBC from that attempt: its hash, options, embedded sources and',
@@ -60,7 +81,7 @@ function usage() {
     'Exit: 0 complete (bound to the recorded attempt and every function exact), 8 unbound',
     '(every function exact, but no validated recorded attempt binds the inputs), 6 partial',
     '(some functions not exact), 7 blocked (provenance or correspondence conflict; no function',
-    'is claimed), 5 invalid input, 2 usage.',
+    'is claimed), 9 degraded (translation.json only), 5 invalid input, 2 usage.',
     '',
   ].join('\n'));
 }
@@ -103,10 +124,12 @@ const sha256Text = (text) => crypto.createHash('sha256').update(text).digest('he
 
 // Refuses an input whose envelope or identity fields are not the qualified shape,
 // so a missing or mistyped field can never take part in a match.
-function validate({ translation, manifest, rust, mappings, lean, functions, state, llbc, leanReceipt, sourceCommit }) {
+function validate(input) {
+  const { translation, manifest, rust, mappings, lean, functions, state, llbc, leanReceipt, sourceCommit } = input;
   const bad = (label, message) => refuse('invalid-input', `${label}: ${message}`);
+  const degraded = translationOnly(input);
   for (const [label, value] of Object.entries({ translation, rust, mappings, lean, functions })) {
-    if (!isObject(value) || !('json' in value)) bad(label, 'is required as { json, sha256 }');
+    if ((label === 'translation' || present(value)) && (!isObject(value) || !('json' in value))) bad(label, 'is required as { json, sha256 }');
   }
   if (manifest !== null && manifest !== undefined && !isObject(manifest)) bad('manifest', 'must be { json, sha256 } or null');
   if (state !== null && state !== undefined && !isObject(state?.json)) bad('state', 'must be { json, sha256 } or null');
@@ -142,26 +165,29 @@ function validate({ translation, manifest, rust, mappings, lean, functions, stat
       bad('manifest', 'is not a prepared fvs-extract-patches manifest (schema, version 1, status prepared, source commit and dirty list)');
     }
   }
-  const r = rust.json;
-  if (!isObject(r) || r.schema !== 'probe-rust/extract' || r['schema-version'] !== '3.0' || !isObject(r.data) || !isObject(r.source)) {
-    bad('probe-rust output', 'needs schema probe-rust/extract 3.0 with source and data objects');
-  }
-  for (const [name, atom] of Object.entries(r.data)) {
-    if (atom['charon-def-id'] !== undefined && !isId(atom['charon-def-id'])) bad('probe-rust output', `${name} has a non-integer charon-def-id`);
-    if (atom['charon-version'] !== undefined && typeof atom['charon-version'] !== 'string') bad('probe-rust output', `${name} has a non-string charon-version`);
-  }
-  const mp = mappings.json;
-  if (!isObject(mp) || mp.schema !== 'probe/mappings' || mp['schema-version'] !== '3.0' || mp.tool?.command !== 'translate' || !Array.isArray(mp.mappings)
-    || mp.mappings.some((m) => !isObject(m) || typeof m.from !== 'string' || typeof m.to !== 'string')) {
-    bad('probe-aeneas translate output', 'needs schema probe/mappings 3.0 from translate with from/to strings');
-  }
-  if (!isObject(lean.json) || lean.json.schema !== 'probe-lean/extract' || !isObject(lean.json.data)) bad('probe-lean output', 'needs schema probe-lean/extract with a data object');
-  if (!isObject(functions.json) || !Array.isArray(functions.json.functions) || functions.json.functions.some((f) => !isObject(f) || typeof f.lean_name !== 'string')) {
-    bad('functions.json', 'needs a functions array of records with lean_name');
+  // Unused probe outputs (a partial set) are recorded by hash only and never read.
+  if (!degraded) {
+    const r = rust.json;
+    if (!isObject(r) || r.schema !== 'probe-rust/extract' || r['schema-version'] !== '3.0' || !isObject(r.data) || !isObject(r.source)) {
+      bad('probe-rust output', 'needs schema probe-rust/extract 3.0 with source and data objects');
+    }
+    for (const [name, atom] of Object.entries(r.data)) {
+      if (atom['charon-def-id'] !== undefined && !isId(atom['charon-def-id'])) bad('probe-rust output', `${name} has a non-integer charon-def-id`);
+      if (atom['charon-version'] !== undefined && typeof atom['charon-version'] !== 'string') bad('probe-rust output', `${name} has a non-string charon-version`);
+    }
+    const mp = mappings.json;
+    if (!isObject(mp) || mp.schema !== 'probe/mappings' || mp['schema-version'] !== '3.0' || mp.tool?.command !== 'translate' || !Array.isArray(mp.mappings)
+      || mp.mappings.some((m) => !isObject(m) || typeof m.from !== 'string' || typeof m.to !== 'string')) {
+      bad('probe-aeneas translate output', 'needs schema probe/mappings 3.0 from translate with from/to strings');
+    }
+    if (!isObject(lean.json) || lean.json.schema !== 'probe-lean/extract' || !isObject(lean.json.data)) bad('probe-lean output', 'needs schema probe-lean/extract with a data object');
+    if (!isObject(functions.json) || !Array.isArray(functions.json.functions) || functions.json.functions.some((f) => !isObject(f) || typeof f.lean_name !== 'string')) {
+      bad('functions.json', 'needs a functions array of records with lean_name');
+    }
   }
   const run = state ? (state.json.extraction ?? state.json.state?.extraction)?.run : undefined;
   if (run !== undefined && !runShapeValid(run)) bad('state', 'extraction.run is not a complete recorded extraction attempt (stages, trust, attempt hash, translation and a non-empty unique publication)');
-  if (!isCommit(lean.json.source?.commit)) bad('probe-lean output', 'source.commit must be a full 40-character commit');
+  if (!degraded && !isCommit(lean.json.source?.commit)) bad('probe-lean output', 'source.commit must be a full 40-character commit');
   if (leanReceipt !== null && leanReceipt !== undefined) {
     const r = leanReceipt.json;
     if (!isObject(leanReceipt) || !isSha(leanReceipt.sha256)) bad('lean receipt', 'is required as { json, sha256 } with the sha256 of its bytes');
@@ -355,13 +381,13 @@ function bindRun({ state, manifest, translation, llbc, t }) {
 
 // A Lean project may move on from the Rust source commit (for example a committed
 // specification module). That is accepted only when the record is bound to the
-// recorded attempt and the ticket 21 run receipt shows probe-lean analysed this
+// recorded attempt and the probe-lean run receipt shows probe-lean analysed this
 // lean.json at that commit, with every published generated file byte-identical to
 // what the attempt published (paths relative to the crate root the engine recorded).
 // Returns what is missing; empty means covered.
 function leanCommitGaps({ binding, state, lean, leanReceipt }) {
   if (binding.status !== 'bound') return ['the record is bound to a recorded extraction attempt'];
-  if (!leanReceipt) return ['a ticket 21 run receipt (--lean-receipt) covers the published Lean files'];
+  if (!leanReceipt) return ['a probe-lean run receipt (--lean-receipt) covers the published Lean files'];
   const r = leanReceipt.json;
   const extraction = state.json.extraction ?? state.json.state?.extraction;
   const gaps = [];
@@ -377,10 +403,129 @@ function leanCommitGaps({ binding, state, lean, leanReceipt }) {
   return gaps;
 }
 
+// The record from translation.json alone, when any probe output is missing. The
+// binding to the recorded attempt and the manifest and state checks still apply,
+// so an edited translation.json is still refused; only the independent
+// confirmation is lost. Unused probe outputs are named, never joined.
+function buildTranslationOnly(input) {
+  const { translation, manifest, state, llbc, sourceCommit } = input;
+  const t = translation.json;
+  const blockers = [];
+  const block = (code, message) => blockers.push({ code, message });
+  const localFunctions = t.functions.filter((f) => f.is_local === true);
+  const unusedInputs = [...Object.entries(PROBE_INPUTS), ['leanReceipt', '--lean-receipt']]
+    .filter(([key]) => present(input[key]))
+    .map(([key, flag]) => ({ flag, sha256: input[key].sha256 ?? null, toolVersion: input[key].json?.tool?.version ?? null }));
+  const provenance = {
+    sourceCommit,
+    manifestSha256: manifest?.sha256 ?? null,
+    translationSha256: translation.sha256,
+    charonVersion: t.charon_version || null,
+    aeneasVersion: t.aeneas_version || null,
+    crate: t.crate ?? null,
+    rustSha256: null,
+    mappingsSha256: null,
+    leanSha256: null,
+    functionsSha256: null,
+    leanProjectCommit: null,
+    llbcSha256: llbc?.sha256 ?? null,
+    configSha256: null,
+    callerConfigSha256: input.configSha256 ?? null,
+    probeRustVersion: null,
+    probeAeneasVersion: null,
+    linkage: 'translation-only',
+    gaps: llbc ? [] : ['type-genericity-not-exposed'],
+    discovery: 'translation-only',
+    unusedInputs,
+    missingOutputs: input.missingOutputs ?? [],
+  };
+  const { binding, blocks: bindingBlocks, decls } = bindRun({ state, manifest, translation, llbc, t });
+  if (binding.status === 'bound') {
+    provenance.configSha256 = binding.configSha256;
+    provenance.generatedLean = binding.generatedLean;
+    provenance.linkage = 'recorded-attempt';
+  }
+  if (!manifest) block('missing-manifest', 'no patch-engine manifest: the extraction inputs are unbound');
+  if (!t.charon_version) block('missing-charon-version', 'translation.json records no charon_version, so def_ids have no provenance');
+  if (manifest) {
+    const m = manifest.json.source ?? {};
+    if (m.commit !== sourceCommit) block('source-commit-mismatch', `manifest source commit ${m.commit} differs from ${sourceCommit}`);
+    if (Array.isArray(m.dirty) && m.dirty.length > 0) block('dirty-source', `manifest records uncommitted source changes: ${m.dirty.join(', ')}`);
+  }
+  if (state) {
+    const recorded = state.json.extraction ?? state.json.state?.extraction;
+    if (!recorded?.inputs) block('state-without-extraction', 'the state records no extraction to bind to');
+    else {
+      if (recorded.inputs.manifestSha256 !== provenance.manifestSha256) block('manifest-mismatch', 'the state records a different manifest sha256');
+      if (recorded.inputs.sourceCommit !== sourceCommit) block('source-commit-mismatch', `state source commit ${recorded.inputs.sourceCommit} differs from ${sourceCommit}`);
+    }
+  }
+  for (const { code, message } of bindingBlocks) block(code, message);
+  if (localFunctions.length === 0) block('empty-discovery', 'translation.json lists no local functions');
+  const record = {
+    schema: 'fvs-rust-identity/record',
+    version: 1,
+    status: 'blocked',
+    provenance,
+    binding,
+    blockers,
+    items: [],
+    unkeyedRustAtoms: null,
+    orphanRustAtoms: null,
+    externals: [],
+    outOfScope: t.functions.filter((f) => f.is_local !== true)
+      .map((f) => ({ defId: f.def_id, rustName: f.rust_name ?? null, leanName: f.lean_name ?? null })),
+    notComputed: NOT_COMPUTED,
+    lost: Object.values(NOT_COMPUTED),
+  };
+  if (blockers.length > 0) return record;
+  const byId = new Map();
+  for (const f of localFunctions) byId.set(f.def_id, [...(byId.get(f.def_id) ?? []), f]);
+  for (const [defId, family] of [...byId].sort(([a], [b]) => a - b)) {
+    const primaries = family.filter((f) => f.loop === undefined);
+    const primary = primaries.length === 1 ? primaries[0] : null;
+    const reasons = [];
+    if (primaries.length > 1) reasons.push('non-loop-split');
+    if (primaries.length === 0) reasons.push('no-primary');
+    if (family.some((f) => f.is_rec === true)) reasons.push('recursion');
+    if (isGeneric(decls.get(defId))) reasons.push('type-generic');
+    const entry = {
+      defId,
+      rustName: (primary ?? family[0]).rust_name ?? null,
+      source: (primary ?? family[0]).source ?? null,
+      target: primary?.lean_name ?? null,
+      opaque: family.some((f) => f.is_opaque === true),
+      generated: family.map((f) => ({
+        leanName: f.lean_name,
+        loop: f.loop ?? null,
+        parentLeanName: f.parent_lean_name ?? null,
+        isRec: f.is_rec ?? null,
+        isOpaque: f.is_opaque ?? null,
+        dependencies: null,
+        lean: null,
+        functionsRecord: null,
+      })),
+      missingGenerated: null,
+      rustAtom: null,
+      rustQualifiedName: null,
+      candidates: null,
+      mapping: null,
+      corroboration: null,
+      correspondence: DECLARED,
+      reasons,
+    };
+    if (entry.opaque) record.externals.push({ defId, rustName: entry.rustName, leanNames: family.map((f) => f.lean_name) });
+    record.items.push(entry);
+  }
+  record.status = 'degraded';
+  return record;
+}
+
 // The public entry point: validates its input, then builds the record. Throws a
 // Refusal with code `invalid-input` for any input the qualified tools would not emit.
 export function buildRecord(input) {
   validate(input);
+  if (translationOnly(input)) return buildTranslationOnly(input);
   const { translation, manifest, rust, mappings, lean, functions, state, llbc, leanReceipt, sourceCommit } = input;
   const t = translation.json;
   const blockers = [];
@@ -603,7 +748,7 @@ function parseFlags(argv) {
   }
   // --manifest is required on the command line, but a missing file is a blocked
   // record rather than a usage error, so the gap is reported, not hidden.
-  for (const key of ['source-commit', 'translation', 'manifest', 'rust', 'mappings', 'lean', 'functions']) if (!flags[key]) refuse('usage', `--${key} is required`);
+  for (const key of ['source-commit', 'translation', 'manifest']) if (!flags[key]) refuse('usage', `--${key} is required`);
   if (!/^[0-9a-f]{40}$/.test(flags['source-commit'])) refuse('usage', '--source-commit must be a full 40-character commit');
   if (flags.format && !['json', 'text'].includes(flags.format)) refuse('usage', '--format must be json or text');
   return flags;
@@ -616,27 +761,44 @@ function writeAtomic(file, text) {
 }
 
 function record(flags) {
+  // A named probe output that does not exist takes the translation-only route
+  // and is listed; an unreadable or malformed one is still invalid input.
+  const missingOutputs = [];
+  const probeOutput = (key, label) => {
+    const file = flags[key];
+    if (!file) return null;
+    if (fs.statSync(file, { throwIfNoEntry: false }) === undefined) {
+      missingOutputs.push({ flag: PROBE_INPUTS[key], file, reason: 'file not found' });
+      return null;
+    }
+    return readInput(file, label);
+  };
   const inputs = {
     sourceCommit: flags['source-commit'],
     translation: readInput(flags.translation, 'translation.json'),
     manifest: fs.existsSync(flags.manifest) ? readInput(flags.manifest, 'manifest') : null,
-    rust: readInput(flags.rust, 'probe-rust output'),
-    mappings: readInput(flags.mappings, 'probe-aeneas translate output'),
-    lean: readInput(flags.lean, 'probe-lean output'),
-    functions: readInput(flags.functions, 'functions.json'),
+    rust: probeOutput('rust', 'probe-rust output'),
+    mappings: probeOutput('mappings', 'probe-aeneas translate output'),
+    lean: probeOutput('lean', 'probe-lean output'),
+    functions: probeOutput('functions', 'functions.json'),
     state: flags.state ? readInput(flags.state, 'state') : null,
     llbc: flags.llbc ? readInput(flags.llbc, 'llbc') : null,
     leanReceipt: flags['lean-receipt'] ? readInput(flags['lean-receipt'], 'lean receipt') : null,
     configSha256: flags.config ? sha256File(flags.config) : null,
+    missingOutputs: missingOutputs.map(({ flag, reason }) => ({ flag, reason })),
   };
   const rec = buildRecord(inputs);
   if (flags.out) writeAtomic(flags.out, `${JSON.stringify(rec, null, 2)}\n`);
   const counts = {};
   for (const entry of rec.items) counts[entry.correspondence] = (counts[entry.correspondence] ?? 0) + 1;
   const tally = Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', ') || 'no functions';
+  const unused = rec.provenance.unusedInputs?.length ? `; unused: ${rec.provenance.unusedInputs.map((entry) => entry.flag).join(', ')}` : '';
+  const missing = missingOutputs.length ? `; missing: ${missingOutputs.map((entry) => `${entry.flag} ${entry.file} (${entry.reason})`).join(', ')}` : '';
   const message = rec.status === 'blocked'
     ? rec.blockers.map((b) => b.code).join(', ')
-    : `${tally}; ${rec.unkeyedRustAtoms.length} unkeyed, ${rec.orphanRustAtoms.length} orphan Rust atom(s); same-extraction binding: ${rec.binding.status}`;
+    : rec.status === 'degraded'
+      ? `${tally} in translation.json, none exact; not computed without probes: ${Object.keys(rec.notComputed).join(', ')}${missing}${unused}; same-extraction binding: ${rec.binding.status}`
+      : `${tally}; ${rec.unkeyedRustAtoms.length} unkeyed, ${rec.orphanRustAtoms.length} orphan Rust atom(s); same-extraction binding: ${rec.binding.status}`;
   return { code: rec.status === 'complete' ? 'ok' : rec.status, message, record: rec };
 }
 
@@ -667,7 +829,7 @@ function main(argv) {
   } else {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   }
-  if (!['ok', 'partial', 'blocked', 'unbound'].includes(result.code)) process.stderr.write(`FVS >> ${result.code}: ${result.message}\n`);
+  if (!['ok', 'partial', 'blocked', 'unbound', 'degraded'].includes(result.code)) process.stderr.write(`FVS >> ${result.code}: ${result.message}\n`);
   process.exitCode = EXIT[result.code];
 }
 

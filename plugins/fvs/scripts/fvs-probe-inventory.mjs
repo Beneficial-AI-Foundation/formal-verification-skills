@@ -552,6 +552,16 @@ export const PROBE_RELEASE = {
   },
 };
 
+// The probe-lean interface the Lean graph step accepts: probe-lean 0.14.0
+// `extract` (Lean 4.31.0 build), Schema 3.0. probe-lean 0.24.0 is accepted only
+// beside a version 2 constants record, which is then the dependency authority;
+// its own dependency arrays match 0.14.0's on the qualification fixtures.
+// Setup readiness asks the same question of the installed probe-lean.
+export const PROBE_LEAN_INTERFACE = { schema: 'probe-lean/extract', schemaVersion: '3.0', tool: 'probe-lean', version: '0.14.0' };
+export function acceptedProbeLeanVersions({ constantsVersion2 = false } = {}) {
+  return constantsVersion2 ? [PROBE_LEAN_INTERFACE.version, '0.24.0'] : [PROBE_LEAN_INTERFACE.version];
+}
+
 // Consumer provenance tuples with a passing confined extraction. A project is
 // verified only when its generated translation.json, its Aeneas lock pin and
 // its Lean toolchain all match one tuple exactly.
@@ -1048,7 +1058,15 @@ export function resolveProbe({ projectRoot, probe = null, platform = hostTarget(
     return finish('unsupported-platform');
   }
 
-  const selected = selectProbeToolPaths({ leanToolchain: provenance.leanToolchain });
+  let selected;
+  try {
+    selected = selectProbeToolPaths({ leanToolchain: provenance.leanToolchain });
+  } catch (error) {
+    // A refused path override leaves the probe unchecked; the caller still reports.
+    result.reasons.push(`probe helpers not checked: ${error.message}`);
+    result.manual.push('Fix or unset the helper path override, then rerun the profile.');
+    return finish('not-checked');
+  }
   if (process.platform === 'linux') {
     try {
       validateLinuxToolPaths(selected, { projectRoot: root });

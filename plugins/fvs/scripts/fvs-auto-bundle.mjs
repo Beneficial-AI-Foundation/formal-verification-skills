@@ -179,7 +179,7 @@ function contextOf(q) {
 }
 function scopeData(q, get) {
   const p = get(q.plan), g = get(q.graph), inv = get(q.scopeInventory);
-  if (p.schema !== 'fvs-closure-plan/record' || p.version !== 1 || !ids(p.selection?.requestedRoots) || !ids(p.selection?.failed) || !Array.isArray(p.roots) || !p.nodes || typeof p.nodes !== 'object') fail('bundle-scope-invalid', 'supported diagnostic13 selection required');
+  if (p.schema !== 'fvs-closure-plan/record' || p.version !== 1 || !ids(p.selection?.requestedRoots) || !ids(p.selection?.failed) || !Array.isArray(p.roots) || !p.nodes || typeof p.nodes !== 'object') fail('bundle-scope-invalid', 'a closure plan record (version 1) with its requested and failed root selection is required');
   closed(inv, ['schema', 'schemaVersion', 'agreement', 'plan', 'requestedRoots', 'failed', 'applicability'], 'scope inventory');
   if (inv.schema !== 'fvs/auto-bundle-scope-inventory' || inv.schemaVersion !== 1 || !same(inv.agreement, q.agreement) || !same(inv.plan, q.plan)
     || !same(inv.requestedRoots, p.selection.requestedRoots) || !same(inv.failed, p.selection.failed) || !Array.isArray(inv.applicability) || !inv.applicability.length) fail('bundle-scope-invalid', 'scope inventory must bind agreement and exact requested/failed selection');

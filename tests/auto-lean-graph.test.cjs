@@ -339,9 +339,21 @@ describe('derived: completeness needs the requested scope, not one atom or a cac
   });
 
   it('a requested module whose .ilean the run never produced blocks', () => {
-    const projectRoot = projectCopy((directory) => fs.rmSync(path.join(directory, '.lake/build/lib/lean/M1demo/Spec.ilean')));
+    const projectRoot = projectCopy((directory) => {
+      fs.rmSync(path.join(directory, '.lake/build/lib/lean/M1demo/Spec.ilean'));
+      fs.writeFileSync(path.join(directory, '.lake/build/lib/lean/M1demo/Spec.olean'), 'compiled');
+    });
     const record = derived({ projectRoot, receipt: (r) => { r.inputs.files = projectInputs(projectRoot); } });
     assert.deepEqual(codes(record), withUnverified(['missing-ilean', 'atom-outside-scope']));
+    // The .olean is there, so the module was compiled: no import advice.
+    assert.doesNotMatch(record.blockers[0].reason, /import/);
+  });
+
+  it('a project module no library root imports blocks with the import to add', () => {
+    const projectRoot = projectCopy((directory) => fs.writeFileSync(path.join(directory, 'M1demo/Extra.lean'), 'def extra : Nat := 1\n'));
+    const record = derived({ projectRoot, receipt: (r) => { r.inputs.files = projectInputs(projectRoot); } });
+    assert.deepEqual(codes(record), withUnverified(['missing-ilean']));
+    assert.match(record.blockers.find((item) => item.code === 'missing-ilean').reason, /add `import M1demo\.Extra` to M1demo\.lean/);
   });
 
   it('a recorded receipt that no longer lists a module .ilean on disk blocks', () => {
@@ -1156,17 +1168,42 @@ describe('oracle lanes: constants version 2 as the dependency authority', () => 
     assert.ok(has(v2Graph({ constants: (c) => { c.nodes = c.nodes.filter((node) => node.name !== 'm1demo.Pair.mk'); } }), 'invalid-structure-family'));
   });
 
-  it('trust: non-policy axioms block on a definition and on a generated proof; malformed sets are refused', () => {
+  it('trust: any axiom set is a recorded fact, not a graph blocker; malformed sets are refused', () => {
+    // Which axioms a claim may rest on is the closure plan's policy.
     for (const name of ['m1demo.helper', 'm1demo.root_twice._proof_1']) {
       const record = v2Graph({ constants: (c, n) => { n[name].axioms.push('sorryAx'); } });
-      assert.ok(has(record, 'non-policy-axiom'), name);
-      assert.equal(record.fidelity.status, 'incomplete');
-      assert.ok(record.fidelity.obligations.some((item) => item.code === 'non-policy-axiom'));
+      assert.deepEqual([record.state, record.fidelity.status], ['complete', 'verified'], name);
+      assert.ok(record.trust[`probe:${name}`].includes('sorryAx'), name);
     }
     assert.ok(has(v2Graph({ constants: (c, n) => { n['m1demo.helper'].axioms = 'propext'; } }), 'invalid-constants'));
-    // The obligation reaches the consumers' closures.
-    const tainted = v2Graph({ constants: (c, n) => { n['m1demo.helper'].axioms.push('sorryAx'); } });
-    assert.ok(tainted.closures[N('roots.root_sum_eq')].blockers.some((item) => item.declaration === N('helper')));
+  });
+
+  it('axioms, enums and their generated constructors are accepted only with Lean\'s kernel facts', () => {
+    // Pair as a plain inductive: no fields, its projections plain definitions.
+    const asEnum = (c, n) => {
+      n['m1demo.Pair'].isStructure = false;
+      delete n['m1demo.Pair'].fields;
+      for (const field of ['a', 'b']) n[`m1demo.Pair.${field}`].isProjection = false;
+    };
+    const relabel = (data) => {
+      data[N('Pair')].kind = 'inductive';
+      for (const field of ['a', 'b']) data[N(`Pair.${field}`)].kind = 'def';
+    };
+    const record = v2Graph({ constants: asEnum, extract: relabel });
+    assert.deepEqual([record.state, codes(record)], ['complete', []]);
+    // The constructor and recursor are covered by the inductive probe-lean emits.
+    assert.deepEqual([record.nodes[N('Pair.mk')].probeAtom, record.nodes[N('Pair')].structure], [false, undefined]);
+    assert.ok(record.closures[N('roots.root_sum_eq')].declarations.includes(N('Pair.mk')));
+    // The label must match Lean: a plain inductive is no structure, and the reverse.
+    assert.ok(has(v2Graph({ constants: asEnum }), 'kind-mismatch'));
+    assert.ok(has(v2Graph({ extract: relabel }), 'kind-mismatch'));
+    // An axiom label must name a kernel axiom.
+    assert.ok(has(v2Graph({ extract: (data) => { data[N('helper')].kind = 'axiom'; } }), 'kind-mismatch'));
+    // A matched constructor probe-lean reports is excused only beside its inductive in Lean's lane.
+    const reports = (name) => (data) => { for (const field of ['type-dependencies', 'dependencies']) data[N(name)][field].push(N('Pair.mk')); };
+    assert.ok(!has(v2Graph({ extract: reports('helper') }), 'probe-dependency-not-in-lane'));
+    assert.ok(has(v2Graph({ extract: reports('helper'), constants: (c, n) => { n['m1demo.helper'].type = n['m1demo.helper'].type.filter((x) => x !== 'm1demo.Pair'); } }),
+      'probe-dependency-not-in-lane'));
   });
 
   it('families and kinds: unqualified generated kinds, broken families and generated-only cycles block', () => {

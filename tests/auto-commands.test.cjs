@@ -240,6 +240,17 @@ describe('auto-init setup state', () => {
     assert.ok(result.blocking[0].nextStep);
   });
 
+  it('a missing probe never stops auto-init, and an unsupported host stops only for its own missing tools', () => {
+    const root = project();
+    const result = init(root, CHOICES, { bin: binWithout('probe-aeneas', 'probe-rust') });
+    assert.equal(result.code, 'created', JSON.stringify(result.blocking ?? result.message));
+    assert.ok(fs.existsSync(stateFile(root)));
+    // This fixture ships Aeneas binaries for macOS arm64 only; host and probe never block.
+    const windows = init(project(), CHOICES, { platform: 'x86_64-pc-windows-msvc' });
+    assert.equal(windows.code, 'profile-blocked');
+    assert.deepEqual(windows.blocking.map((entry) => [entry.id, entry.verdict]), [['aeneas', 'missing']]);
+  });
+
   it('malformed state is an actionable failure, never a crash or an overwrite', () => {
     const root = project();
     fs.mkdirSync(path.dirname(stateFile(root)), { recursive: true });
@@ -463,6 +474,34 @@ describe('auto-extract extraction record', () => {
     assert.match(extraction.reasons.join('\n'), /build exited 1/);
   });
 
+  // The recorded Aeneas versions disagree: setup goes on with a warning, and
+  // only a failed build of the recorded extraction stops the run.
+  it('a provenance conflict warns at setup and stops only when the recorded build fails', () => {
+    const conflicted = () => {
+      const root = project();
+      fs.copyFileSync(path.join(PROFILE_FIXTURES, 'pilot', 'lake-manifest.json'), path.join(root, 'lake-manifest.json'));
+      fs.writeFileSync(path.join(root, 'aeneas-config.yml'), 'aeneas:\n  commit: "deadbeef"\n');
+      git(root, 'add', '-A');
+      git(root, 'commit', '-q', '-m', 'conflicting provenance');
+      return root;
+    };
+    const built = conflicted();
+    assert.equal(init(built).code, 'created');
+    const aeneas = auto.readState({ projectRoot: built }).state.profile.items.find((entry) => entry.id === 'aeneas');
+    assert.equal(aeneas.verdict, 'available-but-unverified');
+    assert.match(aeneas.reason, /^warning: conflict: aeneas-config\.yml aeneas\.commit deadbeef does not match lake-manifest\.json aeneas 0855ce1b/);
+    assert.match(aeneas.reason, /the run goes on if the recorded extraction builds against the pinned Lean library/);
+    assert.match(aeneas.nextStep, /To clear the provenance warning: Regenerate the extraction/);
+    assert.equal(aeneas.evidence.provenanceConflicts.length, 1);
+    assert.equal(record(built, prepared(built).out, 0).code, 'recorded');
+    assert.match(auto.readState({ projectRoot: built }).nextAction, /\/fvs:auto-top-specs/);
+
+    const broken = conflicted();
+    assert.equal(init(broken).code, 'created');
+    assert.equal(record(broken, prepared(broken).out, 1).code, 'extraction-failed');
+    assert.match(auto.readState({ projectRoot: broken }).nextAction, /Rerun \/fvs:auto-extract after fixing the recorded failure reasons/);
+  });
+
   it('a green build whose shared success oracle refused completion is recorded as failure', () => {
     const root = project();
     init(root);
@@ -569,6 +608,143 @@ describe('auto-extract extraction record', () => {
     assert.match(auto.readState({ projectRoot: root }).nextAction, /\/fvs:auto-top-specs/);
     assert.equal(record(root, out, 2).code, 'extraction-failed');
     assert.match(auto.readState({ projectRoot: root }).nextAction, /\/fvs:auto-extract/);
+  });
+
+  it('without a probe the stage runs reduced with a warning, and installing it refreshes only the profile', () => {
+    const root = project();
+    assert.equal(init(root, CHOICES, { bin: binWithout('probe-aeneas') }).code, 'created');
+    const { out } = prepared(root);
+    assert.equal(record(root, out, 0).code, 'recorded');
+    const blocked = auto.readState({ projectRoot: root });
+    assert.equal(blocked.readiness.find((entry) => entry.stage === 'auto-top-specs').status, 'ready-reduced');
+    assert.match(blocked.nextAction, /^Before \/fvs:auto-top-specs, the owner approves the initial agreement .* Warning: auto-top-specs: ready, reduced - without probe-aeneas; /);
+    assert.match(blocked.nextAction, /To restore, the owner can install probe-aeneas \(or set its path override\), then rerun \/fvs:auto-init/);
+
+    // The owner installs probe-aeneas; the agent reruns init-state with the same choices.
+    const refreshed = init(root);
+    assert.equal(refreshed.code, 'profile-refreshed', JSON.stringify(refreshed));
+    const after = refreshed.state;
+    assert.deepEqual(after.extraction, blocked.state.extraction, 'the extraction is kept');
+    assert.deepEqual(after.choices, blocked.state.choices);
+    assert.equal(after.choicesGeneration, blocked.state.choicesGeneration, 'a refresh is not a choice change');
+    assert.equal(after.profile.probes.find((entry) => entry.id === 'probe-aeneas').status, 'present-unqualified');
+    assert.match(refreshed.nextAction, /^Before \/fvs:auto-top-specs, the owner approves the initial agreement/);
+    assert.doesNotMatch(refreshed.nextAction, /ready, reduced/);
+    const bytes = fs.readFileSync(stateFile(root));
+    assert.equal(init(root).code, 'unchanged');
+    assert.deepEqual(fs.readFileSync(stateFile(root)), bytes, 'a replay on the same host writes nothing');
+  });
+
+  it('a refresh refuses, writing nothing, when another command changed the state after it was read', () => {
+    const root = project();
+    assert.equal(init(root).code, 'created');
+    // Between this refresh's read and its write, a separate process records the
+    // roadmap decision through the real command.
+    const open = fs.openSync;
+    let raced = null;
+    fs.openSync = function (file, ...rest) {
+      if (raced === null && String(file) === `${stateFile(root)}.lock`) {
+        raced = cli('record-roadmap', '--decision', 'declined', '--project-root', root);
+      }
+      return open.call(this, file, ...rest);
+    };
+    let refreshed;
+    try {
+      refreshed = init(root, CHOICES, { bin: binWithout('probe-aeneas') });
+    } finally {
+      fs.openSync = open;
+    }
+    assert.equal(raced.json?.code, 'recorded', raced.stdout + raced.stderr);
+    assert.equal(refreshed.code, 'state-changed', JSON.stringify(refreshed));
+    const state = JSON.parse(fs.readFileSync(stateFile(root), 'utf8'));
+    assert.equal(state.roadmap.decision, 'declined', 'the newer decision survives');
+    assert.equal(state.profile.probes.find((entry) => entry.id === 'probe-aeneas').status, 'present-unqualified', 'the stale refresh wrote nothing');
+    assert.equal(fs.existsSync(`${stateFile(root)}.lock`), false);
+
+    const retried = init(root, CHOICES, { bin: binWithout('probe-aeneas') });
+    assert.equal(retried.code, 'profile-refreshed', 'a rerun starts from the current state');
+    assert.equal(retried.state.roadmap.decision, 'declined');
+    assert.equal(retried.state.profile.probes.find((entry) => entry.id === 'probe-aeneas').status, 'missing');
+  });
+
+  it('a state write refuses while another writer holds the lock, and names the lock file', () => {
+    const root = project();
+    init(root);
+    const bytes = fs.readFileSync(stateFile(root));
+    fs.writeFileSync(`${stateFile(root)}.lock`, '1\n');
+    const refused = init(root, CHOICES, { bin: binWithout('probe-aeneas') });
+    assert.equal(refused.code, 'state-locked');
+    assert.match(refused.nextStep, /state\.json\.lock/);
+    assert.deepEqual(fs.readFileSync(stateFile(root)), bytes);
+    assert.equal(run(() => auto.recordRoadmap({ projectRoot: root, decision: 'declined' })).code, 'state-locked');
+    fs.rmSync(`${stateFile(root)}.lock`);
+    assert.equal(run(() => auto.recordRoadmap({ projectRoot: root, decision: 'declined' })).code, 'recorded');
+  });
+
+  it('a refresh after AO is removed saves the gap, keeps the choices and extraction, then reports the blocker', () => {
+    const root = project();
+    init(root);
+    const { out } = prepared(root);
+    assert.equal(record(root, out, 0).code, 'recorded');
+    const before = auto.readState({ projectRoot: root }).state;
+
+    const noAo = binWithout('ao');
+    const blocked = init(root, CHOICES, { bin: noAo });
+    assert.equal(blocked.code, 'profile-blocked', JSON.stringify(blocked));
+    assert.match(blocked.message, /ao is missing; the recorded profile now holds these facts/);
+    const view = auto.readState({ projectRoot: root });
+    assert.equal(view.state.profile.items.find((entry) => entry.id === 'ao').verdict, 'missing');
+    assert.deepEqual(view.state.extraction, before.extraction);
+    assert.deepEqual(view.state.choices, before.choices);
+    assert.equal(view.state.choicesGeneration, before.choicesGeneration);
+    assert.equal(view.readiness.find((entry) => entry.stage === 'auto-top-specs').status, 'no-route');
+    assert.match(view.nextAction, /^Setup is blocked: ao is missing\. .*Then rerun \/fvs:auto-init\.$/);
+
+    const bytes = fs.readFileSync(stateFile(root));
+    assert.equal(init(root, CHOICES, { bin: noAo }).code, 'profile-blocked', 'a rerun on the same host still reports the blocker');
+    assert.deepEqual(fs.readFileSync(stateFile(root)), bytes);
+    assert.equal(init(root, { ...CHOICES, scope: 'another scope' }, { bin: noAo, confirmOverwrite: true }).code, 'profile-blocked');
+    assert.deepEqual(auto.readState({ projectRoot: root }).state.choices, before.choices, 'a blocked choice change saves no choices');
+
+    assert.equal(init(root).code, 'profile-refreshed', 'restoring AO clears the blocker');
+    assert.doesNotMatch(auto.readState({ projectRoot: root }).nextAction, /^Setup is blocked/);
+  });
+
+  it('once the probes are present the next action asks for the agreement, then the grant, then runs with an unverified warning', () => {
+    const root = project();
+    init(root);
+    const { out } = prepared(root);
+    assert.equal(record(root, out, 0).code, 'recorded');
+    const state = JSON.parse(fs.readFileSync(stateFile(root), 'utf8'));
+    for (const entry of state.profile.items) {
+      if (['ao', 'lean'].includes(entry.id)) entry.verdict = 'available-but-unverified';
+    }
+    state.profile.probes = ['probe-aeneas', 'probe-rust', 'scip', 'rust-analyzer', 'probe-lean']
+      .map((id) => ({ id, status: 'present-unqualified', path: `/opt/${id}`, lost: null }));
+    fs.writeFileSync(stateFile(root), JSON.stringify(state));
+    assert.match(auto.readState({ projectRoot: root }).nextAction, /^Before \/fvs:auto-top-specs, the owner approves the initial agreement/);
+
+    const agree = (execution, generation, contextVersion) => {
+      const agreement = {
+        schema: 'fvs/auto-agreement', schemaVersion: 1, mode: 'nonpublic-intent',
+        payload: { choicesGeneration: generation, choices: auto.readState({ projectRoot: root }).state.choices,
+          contextVersion, boundaries: [], conventions: [], layout: 'single-crate', claims: ['fixture'],
+          trust: ['fixture policy'], acceptance: ['fixture evidence'], ownerReserved: ['human final decision'],
+          execution, draftPr: null },
+        ownerEvidence: { reference: 'fixture:response', response: 'Fixture agreement' },
+      };
+      agreement.approvedPayloadSha256 = auto.agreementPayloadSha256(agreement);
+      fs.writeFileSync(path.join(root, '.formalising/auto-fv/ROADMAP.md'),
+        '## Decisions\n```fvs-auto-agreement\n' + JSON.stringify(agreement) + '\n```\n');
+      auto.recordAgreement({ projectRoot: root, agreement, confirmOverwrite: contextVersion > 1 });
+    };
+    agree(null, 0, 1);
+    assert.match(auto.readState({ projectRoot: root }).nextAction, /^Before \/fvs:auto-top-specs, the owner grants the execution actions/);
+    agree({ actions: ['fixture work'], reference: 'fixture:grant' }, auto.readState({ projectRoot: root }).state.choicesGeneration, 2);
+    const { nextAction } = auto.readState({ projectRoot: root });
+    assert.match(nextAction, /^Run \/fvs:auto-top-specs from the AO orchestrator\./);
+    assert.match(nextAction, /stage profile .*permission-ready receipt/);
+    assert.match(nextAction, /Warning: auto-top-specs: ready, unverified - probe-aeneas, probe-rust, scip, rust-analyzer, probe-lean not qualified/);
   });
 
   it('no flag lets a caller state the result', () => {

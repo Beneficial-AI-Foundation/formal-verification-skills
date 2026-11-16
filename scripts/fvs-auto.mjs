@@ -12,6 +12,7 @@ import {
   CONFINEMENT_UNAVAILABLE,
   PROBE_RELEASE,
   TESTED_TUPLES,
+  acceptedProbeLeanVersions,
   executableFile,
   hostTarget,
   managedProbePath,
@@ -19,6 +20,7 @@ import {
   resolveProbe,
   which,
 } from './fvs-probe-inventory.mjs';
+import { selectProbeToolPaths } from './fvs-probe-linux.mjs';
 
 import {
   MemoryError, memoryHash, memoryOwnData, memoryDataSnapshot, memoryBindingsErrors, bindingIdentity, inspectMemoryRegistration, memoryJson,
@@ -90,6 +92,132 @@ function versionCheck(bin, args, cwd, root) {
   return { ...run, skipped: unavailable ? `not checked: ${unavailable}` : null };
 }
 
+// Probes and the host they were tested on add evidence; none of them stops setup
+// or extraction. Each missing probe costs what PROBE_LOSSES says, and what each
+// stage can still do is in `readiness`.
+const OPTIONAL = 'Not needed for setup or extraction:';
+export const PROBE_LOSSES = {
+  'probe-aeneas': 'Rust-to-Lean mappings confirmed independently of Aeneas: without it every mapping is declared by Aeneas in translation.json, never exact, and generated Lean functions are not checked against functions.json.',
+  'probe-rust': 'the Rust atom inventory: without it Rust names and spans come from translation.json alone, and Rust functions Aeneas did not translate are not detected.',
+  scip: 'the code index probe-rust reads: without it probe-rust cannot run.',
+  'rust-analyzer': 'the indexer probe-rust uses: without it probe-rust cannot run.',
+  'probe-lean': 'the Lean atom list for the graph: without it no Lean graph is built, so the closure plan has source order only, no dependency order, and proof acceptance refuses it; a Lean project commit other than the Rust commit is not reconciled with the published generated Lean files.',
+};
+
+// Presence and qualification of each probe. Qualified probes were checked by the
+// resolver for this toolchain tuple. Any other present probe is run once with
+// --version under the read-only confinement: one that does not answer, or a
+// probe-lean whose version the Lean graph step refuses, is unverified-blocked
+// with the reason, because no stage can use its output.
+function probeStatuses(root, probe, resolver, platform) {
+  let selected = null;
+  let unchecked = null;
+  try {
+    selected = selectProbeToolPaths({ projectRoot: root });
+  } catch (error) {
+    // An unreadable lean-toolchain or a refused path override leaves the helpers not checked.
+    unchecked = error.message;
+  }
+  const aeneasPath = [managedProbePath(undefined, platform), which('probe-aeneas')].find((file) => file && fs.existsSync(file)) ?? null;
+  return Object.keys(PROBE_LOSSES).map((id) => {
+    const found = id === 'probe-aeneas' ? aeneasPath : selected?.helpers[id] ?? null;
+    let status = found ? 'present-unqualified' : 'missing';
+    let reason = null;
+    if (id !== 'probe-aeneas' && selected === null) [status, reason] = ['not-checked', unchecked];
+    if (probe.verdict === GREEN && resolver.status === 'verified') [status, reason] = ['qualified', null];
+    if (status === 'present-unqualified') [status, reason] = probeUsable(id, found, root, selected);
+    return { id, status, path: found, lost: status === 'qualified' || status === 'present-unqualified' ? null : PROBE_LOSSES[id],
+      ...(reason === null ? {} : { reason }) };
+  });
+}
+
+function probeUsable(id, bin, root, selected) {
+  const run = readOnlyRun(bin, ['--version'], root, { projectRoot: root, toolPaths: selected });
+  const unavailable = run.confinementError ?? (run.output === CONFINEMENT_UNAVAILABLE ? run.output : null);
+  if (unavailable) return ['not-checked', `${id} --version was not run: ${unavailable}`];
+  // rustup installs a rust-analyzer proxy that fails until the component is
+  // added, so a failing one is missing, as the resolver also counts it.
+  if (!run.ok) return [id === 'rust-analyzer' ? 'missing' : 'unverified-blocked', `${id} --version failed: ${firstLine(run.output) || 'no output'}`];
+  if (id !== 'probe-lean') return ['present-unqualified', null];
+  const version = firstLine(run.stdout).split(/\s+/).pop();
+  const accepted = acceptedProbeLeanVersions();
+  if (accepted.includes(version)) return ['present-unqualified', null];
+  return ['unverified-blocked', `the Lean graph step accepts only probe-lean ${accepted.join(' or ')} output and refuses other versions; this probe-lean reports ${JSON.stringify(version)}`];
+}
+
+// What each stage needs on this engine. The AO controller launches spec, review
+// and proof work only on a closure plan the registry accepts: a verified Lean
+// graph from probe-lean, and an identity confirmed by probe-aeneas and probe-rust
+// (which needs scip and rust-analyzer). Without AO or Lean a stage has no route;
+// without a probe it runs reduced, labelled with what that probe's output would
+// have added. Probes that are present but not qualified for this tuple give a
+// route whose output is labelled unverified.
+const STAGE_NEEDS = ['ao', 'lean', ...Object.keys(PROBE_LOSSES)];
+const STAGES = { 'auto-top-specs': STAGE_NEEDS, 'auto-execute': STAGE_NEEDS };
+
+// The recorded profile changes only when init-state runs again (same choices
+// refresh only the profile), so every step ends by naming that.
+const REFRESH = 'then rerun /fvs:auto-init with the recorded choices so the recorded profile is refreshed';
+
+function stageGap(need, items, probes) {
+  if (!(need in PROBE_LOSSES)) {
+    const entry = items[need];
+    if (entry && entry.verdict !== 'missing') return null;
+    const advice = entry?.nextStep ? entry.nextStep[0].toLowerCase() + entry.nextStep.slice(1).replace(/,? then rerun the profile\.?$|\.$/, '') : `install ${need}`;
+    return { need, supplier: 'owner', step: `${advice}, ${REFRESH}` };
+  }
+  const probe = probes[need];
+  if (!probe) return { need, supplier: 'agent', step: 'rerun /fvs:auto-init with the recorded choices so the recorded profile is refreshed: it did not check the probes' };
+  if (probe.status === 'missing') return { need, supplier: 'owner', step: `install ${need} (or set its path override), ${REFRESH}` };
+  if (probe.status === 'not-checked') return { need, supplier: 'owner', step: `fix what stopped the probe check (${probe.reason ?? 'reason not recorded'}), ${REFRESH}` };
+  if (probe.status === 'unverified-blocked') return { need, supplier: 'owner', step: `replace ${need} with one this engine can use (${probe.reason}), ${REFRESH}` };
+  if (!['qualified', 'present-unqualified'].includes(probe.status)) return { need, supplier: 'agent', step: `rerun /fvs:auto-init with the recorded choices so the recorded profile is refreshed: its ${need} status ${JSON.stringify(probe.status)} is not one this engine knows` };
+  return null;
+}
+
+// One line per stage, computed from a profile (fresh or recorded) so the setup
+// report, the next action and the read state never disagree: full (every probe
+// qualified), ready-unverified (every probe present and usable, some not
+// qualified), ready-reduced (only recorded probes are missing, not checked or
+// unusable: the stage runs without their output, labelled reduced), or
+// no-route (AO or Lean missing, or the probes were not recorded), naming the
+// first missing need and who supplies it.
+const REDUCED_PROBE = ['missing', 'not-checked', 'unverified-blocked'];
+export function readiness(profileResult) {
+  const items = Object.fromEntries((profileResult?.items ?? []).map((entry) => [entry.id, entry]));
+  const probes = Object.fromEntries((profileResult?.probes ?? []).map((entry) => [entry.id, entry]));
+  return Object.entries(STAGES).map(([stage, needs]) => {
+    const gaps = needs.map((need) => stageGap(need, items, probes)).filter(Boolean);
+    if (gaps.length > 0 && gaps.every((gap) => REDUCED_PROBE.includes(probes[gap.need]?.status))) {
+      const lost = gaps.map((gap) => gap.need);
+      const named = lost.map((need) => {
+        const { status, reason } = probes[need];
+        if (status === 'missing') return need;
+        return `${need} (${status === 'not-checked' ? 'not checked' : 'present but unusable'}${reason ? `: ${reason}` : ''})`;
+      });
+      const unverified = needs.filter((need) => probes[need]?.status === 'present-unqualified');
+      const acceptance = lost.includes('probe-lean') ? ' Proof acceptance (freeze, check, accept) needs the Lean graph, so it refuses until probe-lean is usable.' : '';
+      const labelled = unverified.length > 0 ? ` ${unverified.join(', ')} not qualified for this toolchain tuple: output labelled unverified.` : '';
+      return { stage, status: 'ready-reduced', firstMissing: gaps[0], missing: lost,
+        line: `${stage}: ready, reduced - without ${named.join(', ')}; output labelled reduced. Lost: ${lost.map((need) => `${need}: ${PROBE_LOSSES[need]}`).join(' ')}${acceptance}${labelled} To restore, the ${gaps[0].supplier} can ${gaps[0].step} (warning, not a stop)` };
+    }
+    if (gaps.length > 0) {
+      const blocked = gaps.filter((gap) => probes[gap.need]?.status === 'unverified-blocked').map((gap) => gap.need);
+      const absent = gaps.map((gap) => gap.need).filter((need) => !blocked.includes(need));
+      const what = [absent.length > 0 && `missing ${absent.join(', ')}`,
+        blocked.length > 0 && `blocked by ${blocked.join(', ')}: present but unverified, and no stage can use its output`].filter(Boolean).join('; ');
+      return { stage, status: 'no-route', firstMissing: gaps[0], missing: gaps.map((gap) => gap.need), summary: what,
+        line: `${stage}: no route here - ${what}; first, the ${gaps[0].supplier} must ${gaps[0].step}` };
+    }
+    const unverified = needs.filter((need) => need in PROBE_LOSSES && probes[need].status !== 'qualified');
+    if (unverified.length > 0) {
+      return { stage, status: 'ready-unverified', firstMissing: null,
+        line: `${stage}: ready, unverified - ${unverified.join(', ')} not qualified for this toolchain tuple; their output is used and labelled unverified (warning, not a stop)` };
+    }
+    return { stage, status: 'full', firstMissing: null, line: `${stage}: full - every probe qualified for this toolchain tuple` };
+  });
+}
+
 function item(id, verdict, reason, nextStep, evidence, scope = null) {
   return {
     id,
@@ -140,7 +268,7 @@ function hostItem(platform) {
     const probeReason = asset?.reason ?? `no official probe-aeneas ${PROBE_RELEASE.tag} asset exists for it`;
     const hosts = [...new Set(TESTED_TUPLES.flatMap((tuple) => Object.keys(tuple.platforms)))].join(', ');
     return item('host', 'unsupported-platform', `${platform} has no recorded FVS confined run: ${probeReason}`,
-      `Use a host with recorded evidence (${hosts}) for the auto track; here only exploratory work without a graph is possible.`,
+      `${OPTIONAL} setup and extraction go on here, and the stage lines say what each later stage can do; a host with recorded evidence (${hosts}) can also run the confined probe inventory.`,
       evidence);
   }
   return item('host', 'available-but-unverified',
@@ -317,12 +445,16 @@ function aeneasItem(root, platform, provenance) {
     return item('aeneas', 'missing', 'no Aeneas requirement in the lakefile or lake-manifest.json',
       'Require the Aeneas Lean backend in lakefile.toml ([[require]] name = "aeneas" with a pinned rev).', evidence);
   }
+  // A provenance conflict (the recorded Aeneas versions disagree) is a warning,
+  // never a stop: the run goes on if the recorded extraction builds against the
+  // pinned Lean library, and a failed build stops at record-extraction instead.
   const conflicts = provenance.problems.filter((problem) => problem.startsWith('conflict:'));
-  if (conflicts.length > 0) {
-    return item('aeneas', 'incompatible', conflicts.join('; '),
-      'Regenerate the extraction so translation.json, lake-manifest.json and aeneas-config.yml agree, then rerun the profile.',
-      evidence);
-  }
+  if (conflicts.length > 0) evidence.provenanceConflicts = conflicts;
+  const unverified = (reason, step) => item('aeneas', 'available-but-unverified', conflicts.length === 0 ? reason
+    : `warning: ${conflicts.join('; ')}; the run goes on if the recorded extraction builds against the pinned Lean library (a failed build stops at record-extraction); ${reason}`,
+  conflicts.length === 0 ? step
+    : `${step} To clear the provenance warning: Regenerate the extraction so translation.json, lake-manifest.json and aeneas-config.yml agree, then rerun the profile.`,
+  evidence);
   // An uncertain pin never hides absent binaries: presence is checked first
   // and the uncertainty is carried into the reason.
   let uncertainty = null;
@@ -344,12 +476,13 @@ function aeneasItem(root, platform, provenance) {
       `${absent.join(' and ')} not found for ${platform} under .aeneas/releases/${pins.join(' or ') || '*'}/ or on PATH`,
       ...(foreign.length > 0 ? [`installed releases are for other hosts: ${foreign.join(', ')}`] : []),
       ...(uncertainty ? [uncertainty] : []),
+      ...conflicts,
     ].join('; '), step, evidence);
   }
   if (uncertainty) {
-    return item('aeneas', 'available-but-unverified', uncertainty, pins.length === 0
+    return unverified(uncertainty, pins.length === 0
       ? 'Pin the Aeneas rev in the lakefile, or run lake update so lake-manifest.json records the resolved revision, then rerun the profile.'
-      : 'Run lake update so lake-manifest.json matches the lakefile, then rerun the profile.', evidence);
+      : 'Run lake update so lake-manifest.json matches the lakefile, then rerun the profile.');
   }
   // Only the installed Charon counts here: it is what the next extraction
   // uses. The probe item judges the one recorded in translation.json.
@@ -363,18 +496,20 @@ function aeneasItem(root, platform, provenance) {
     charon: charon.version,
     lean: provenance.leanToolchain,
   });
+  // A tuple is evidence, never a gate: if this Aeneas works with the project's
+  // Lean, the run goes on and the difference stays on record as a warning.
   if (tuples.contradictions.length > 0) {
-    return item('aeneas', 'incompatible', tuples.contradictions.join('; '),
-      'Install the Charon and Lean versions this Aeneas revision was tested with, or move to another Aeneas revision.', evidence);
+    return unverified(`warning: ${tuples.contradictions.join('; ')}`,
+      'None required; the tuple is recorded as evidence, not a gate. To match the tested tuple instead: Install the Charon and Lean versions this Aeneas revision was tested with, or move to another Aeneas revision.');
   }
   if (tuples.exact) {
-    return item('aeneas', 'available-but-unverified',
+    return unverified(
       `matches tested tuple ${tuples.exact.id}, whose recorded evidence covers only the confined probe-aeneas inventory operation, not Aeneas extraction`,
-      'None required now; extraction with this tuple has no recorded FVS run yet.', evidence);
+      'None required now; extraction with this tuple has no recorded FVS run yet.');
   }
-  return item('aeneas', 'available-but-unverified',
+  return unverified(
     `no tested tuple matches the installed toolchain: differs from ${tuples.differences.join('; ')}`,
-    'None required to extract; results with this tuple stay unverified until a confined run is recorded for it.', evidence);
+    'None required to extract; results with this tuple stay unverified until a confined run is recorded for it.');
 }
 
 const AENEAS_HEADER = '-- THIS FILE WAS AUTOMATICALLY GENERATED BY AENEAS';
@@ -425,7 +560,7 @@ function probeItem(root, platform, resolver) {
   const { provenance } = resolver;
   if (resolver.status === 'unsupported-platform') {
     return item('probe', 'unsupported-platform', resolver.reasons.join('; '),
-      resolver.manual[0] ?? 'Continue without a graph for exploratory work.', evidence);
+      `${OPTIONAL} setup and extraction go on without probes, and the stage lines say what each later stage can do.`, evidence);
   }
   const conflicts = provenance.problems.filter((problem) => problem.startsWith('conflict:'));
   const malformed = provenance.problems.some((problem) => problem.includes('escapes the project root'));
@@ -435,17 +570,19 @@ function probeItem(root, platform, resolver) {
       'no translation.json yet: the probe inventory runs on an Aeneas extraction that writes translation.json',
       'Extract the crate with the shared aeneas-extract workflow (/fvs:aeneas-extract), then rerun the profile.', evidence);
   }
-  if (conflicts.length > 0) {
-    return item('probe', 'incompatible', conflicts.join('; '), resolver.manual[0], evidence);
-  }
   // Below a tested tuple the resolver never looks for probe-aeneas, so an
   // absent probe is checked here before anything is called present.
   const installed = fs.existsSync(managedProbePath(undefined, platform)) || Boolean(which('probe-aeneas'));
   const presence = (reason) => (installed ? reason : `probe-aeneas is not installed, and ${reason}`);
   const verdict = installed ? 'available-but-unverified' : 'missing';
+  // Conflicting recorded versions leave any probe output unqualified, never a stop.
+  if (conflicts.length > 0) {
+    return item('probe', verdict, presence(`warning: ${conflicts.join('; ')}, so probe output stays unverified`),
+      `${OPTIONAL} ${resolver.manual[0]}`, evidence);
+  }
   if (resolver.status === 'unknown') {
     return item('probe', verdict, presence(`provenance unknown: ${provenance.problems.join('; ')}`),
-      resolver.manual[0], evidence);
+      `${OPTIONAL} ${resolver.manual[0]}`, evidence);
   }
   if (resolver.tuple === null) {
     // The resolver stops at the tuple check and reports any untested tuple
@@ -457,15 +594,15 @@ function probeItem(root, platform, resolver) {
     });
     if (tuples.contradictions.length > 0) {
       return item('probe', 'incompatible', tuples.contradictions.join('; '),
-        'Pin the Charon and Lean versions this Aeneas revision was tested with (or move to another Aeneas revision), then re-extract.',
+        `${OPTIONAL} Pin the Charon and Lean versions this Aeneas revision was tested with (or move to another Aeneas revision), then re-extract.`,
         evidence);
     }
     const qualify = `qualify this tuple: run probe-aeneas ${PROBE_RELEASE.tag} confined against this project with its own Aeneas, Charon and Lean, record the envelope, helper versions and platform, and add the tuple to TESTED_TUPLES in a reviewed PR citing that evidence.`;
     return item('probe', verdict,
       presence(`no tested tuple matches this extraction: differs from ${tuples.differences.join('; ')}`),
       installed
-        ? `To verify, ${qualify}`
-        : `Install probe-aeneas ${PROBE_RELEASE.tag} by hand from ${PROBE_RELEASE.baseUrl} (FVS installs it only for a tested tuple), then ${qualify}`,
+        ? `${OPTIONAL} to verify, ${qualify}`
+        : `${OPTIONAL} install probe-aeneas ${PROBE_RELEASE.tag} by hand from ${PROBE_RELEASE.baseUrl} (FVS installs it only for a tested tuple), then ${qualify}`,
       evidence);
   }
   if (resolver.status === 'verified') {
@@ -474,14 +611,15 @@ function probeItem(root, platform, resolver) {
       null, evidence, { operation: 'probe-aeneas inventory (confined)', tuple: resolver.tuple, platform });
   }
   // A tested tuple with a drifted or absent probe or helper.
-  return item('probe', resolver.status, resolver.reasons.join('; '), resolver.manual[0], evidence);
+  return item('probe', resolver.status, resolver.reasons.join('; '), `${OPTIONAL} ${resolver.manual[0]}`, evidence);
 }
 
 export function profile({ projectRoot, platform = hostTarget() }) {
   const root = path.resolve(projectRoot);
   if (!fs.statSync(root, { throwIfNoEntry: false })?.isDirectory()) fatal(`project root is not a directory: ${root}`);
   const resolver = resolveProbe({ projectRoot: root, platform });
-  return {
+  const probe = probeItem(root, platform, resolver);
+  const result = {
     schema: 'fvs/auto-profile',
     schemaVersion: 1,
     projectRoot: root,
@@ -492,9 +630,11 @@ export function profile({ projectRoot, platform = hostTarget() }) {
       rustItem(root, resolver.provenance.rustProject),
       leanItem(root),
       aeneasItem(root, platform, resolver.provenance),
-      probeItem(root, platform, resolver),
+      probe,
     ],
+    probes: probeStatuses(root, probe, resolver, platform),
   };
+  return { ...result, readiness: readiness(result) };
 }
 
 function renderText(result) {
@@ -504,6 +644,12 @@ function renderText(result) {
     if (entry.scope) lines.push(`  scope: ${entry.scope.operation}, tuple ${entry.scope.tuple}, ${entry.scope.platform} only`);
     if (entry.nextStep) lines.push(`  next: ${entry.nextStep}`);
   }
+  lines.push('probes (none is needed for setup or extraction; the stage lines below say what each stage needs):');
+  for (const entry of result.probes ?? []) {
+    lines.push(`  ${entry.id}: ${entry.status}${entry.reason ? ` (${entry.reason})` : ''}${entry.lost ? `; loses ${entry.lost}` : ''}`);
+  }
+  lines.push('stages:');
+  for (const entry of readiness(result)) lines.push(`  ${entry.line}`);
   return `${lines.join('\n')}\n`;
 }
 
@@ -732,7 +878,7 @@ function agreementStateErrors(state) {
 
 function validateAgreement(value, code) {
   if (plainObject(value) && value.mode !== 'nonpublic-intent') {
-    refuse('unsupported-agreement-mode', 'only nonpublic-intent is supported; public-API selection remains held on separately permitted ticket11 landing');
+    refuse('unsupported-agreement-mode', 'only nonpublic-intent is supported; public-API selection is not supported in this release');
   }
   const errors = agreementErrors(value);
   if (errors.length) refuse(code, 'invalid agreement: ' + errors.join('; '), { errors });
@@ -857,7 +1003,7 @@ export function recordAgreement({ projectRoot, agreement, confirmOverwrite = fal
   state.choicesGeneration ??= 0;
   state.agreements ??= [];
   state.agreements.push({ ...agreement, contextSha256: current.contextSha256, recordedAt: now() });
-  writeAtomic(statePath(root), state);
+  commitState(root, state, state);
   return { code: 'recorded', message: 'initial-scope agreement recorded; no workers or publication authorized by inference', state };
 }
 
@@ -991,8 +1137,13 @@ function loadRecord(file, code, validate, rerun) {
   }
   const errors = validate(value);
   if (errors.length > 0) refuse(code, `${file} is malformed: ${errors.join('; ')}`, { file, errors, nextStep });
+  RECORD_TEXT.set(value, text);
   return value;
 }
+
+// The exact text each loaded record was parsed from, so a writer can tell
+// whether the file changed after it read it.
+const RECORD_TEXT = new WeakMap();
 
 const loadState = (root) => loadRecord(statePath(root), 'malformed-state', stateErrors, '/fvs:auto-init');
 const loadExternals = (root) => loadRecord(externalsPath(root), 'malformed-externals', externalsFileErrors, '/fvs:auto-extract');
@@ -1023,6 +1174,42 @@ function writeAtomic(file, value) {
   }
 }
 
+// Every state write goes through here. An exclusive lock file serializes the
+// writers; under it, a writer whose state file changed since it read `base`
+// (null: no state yet) refuses instead of replacing newer owner choices,
+// agreements, extraction or memory records with its older copy.
+// ponytail: a killed writer leaves the lock behind and the next write refuses
+// naming it; recover it automatically (holder pid liveness) if that ever matters.
+function commitState(root, base, value) {
+  const file = statePath(root), lock = `${file}.lock`;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  let fd;
+  try {
+    fd = fs.openSync(lock, 'wx');
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    refuse('state-locked', `another FVS command is writing ${file}; nothing was written`, { file: lock,
+      nextStep: `Rerun once it has finished. If no FVS command is running, an interrupted one left ${lock} behind: delete that file, then rerun.` });
+  }
+  try {
+    fs.writeSync(fd, `${process.pid}\n`);
+    let current = null;
+    try {
+      current = fs.readFileSync(file, 'utf8');
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    if (current !== (base === null ? null : RECORD_TEXT.get(base))) {
+      refuse('state-changed', `${file} changed after this command read it; nothing was written`, { file,
+        nextStep: 'Rerun the command so it starts from the current state.' });
+    }
+    writeAtomic(file, value);
+  } finally {
+    fs.closeSync(fd);
+    fs.rmSync(lock, { force: true });
+  }
+}
+
 function flatten(value, prefix = '') {
   if (!plainObject(value)) return { [prefix]: value };
   return Object.assign({}, ...Object.entries(value).map(([key, inner]) => flatten(inner, prefix ? `${prefix}.${key}` : key)));
@@ -1034,10 +1221,11 @@ function choiceChanges(recorded, requested) {
     .map((field) => ({ field, recorded: before[field], requested: after[field] }));
 }
 
-// Verdicts that stop auto-init. A missing probe is expected until extraction,
-// and probe-aeneas is first needed by milestone 2.
-const blocks = (entry) => ['incompatible', 'unsupported-platform'].includes(entry.verdict)
-  || (entry.verdict === 'missing' && entry.id !== 'probe');
+// Verdicts that stop auto-init. Probes are optional, so neither the probe item
+// nor the host it was tested on ever stops it. A provenance conflict is a warning:
+// the extraction stops only when its recorded build fails.
+const blocks = (entry) => !['host', 'probe'].includes(entry.id)
+  && ['incompatible', 'unsupported-platform', 'missing'].includes(entry.verdict);
 
 export function initState({ projectRoot, choices, confirmOverwrite = false, platform = hostTarget(), schemaVersion }) {
   const root = projectDirectory(projectRoot);
@@ -1046,22 +1234,36 @@ export function initState({ projectRoot, choices, confirmOverwrite = false, plat
   if (![1, 2].includes(schemaVersion)) refuse('invalid-input', 'unsupported setup version');
   if (recorded && recorded.schemaVersion !== schemaVersion) refuse('migration-required', 'existing setup version is preserved; no in-place migration');
   const requested = normalizeChoices(choices, schemaVersion);
+  const result = profile({ projectRoot: root, platform });
+  const refuseBlocked = () => {
+    const blocking = result.items.filter(blocks).map(({ id, verdict, reason, nextStep }) => ({ id, verdict, reason, nextStep }));
+    if (blocking.length > 0) {
+      refuse('profile-blocked', `the compatibility profile stops auto-init: ${blocking.map((entry) => `${entry.id} is ${entry.verdict}`).join(', ')}${recorded ? '; the recorded profile now holds these facts, and the recorded choices are unchanged' : ''}`,
+        { blocking, nextStep: blocking.map((entry) => entry.nextStep).join(' ') });
+    }
+  };
   if (recorded) {
     const changes = choiceChanges(recorded.choices, requested);
+    const profileChanged = canonicalJson(result) !== canonicalJson(recorded.profile);
+    // New host facts (a tool installed or removed) are saved even when they stop
+    // setup, so readiness and the next action never rest on tools the host no
+    // longer has. Only the profile is replaced: choices, generation, agreements
+    // and extraction stay, and requested choice changes are not saved here.
+    if (profileChanged && (changes.length === 0 || result.items.some(blocks))) {
+      commitState(root, recorded, { ...recorded, profiledAt: now(), profile: result });
+    }
+    refuseBlocked();
     if (changes.length === 0) {
-      return { ...readState({ projectRoot: root }), code: 'unchanged', message: 'the recorded setup state already holds these choices; nothing was written' };
+      return profileChanged
+        ? { ...readState({ projectRoot: root }), code: 'profile-refreshed', message: `the recorded profile was refreshed in ${statePath(root)}; the choices are unchanged` }
+        : { ...readState({ projectRoot: root }), code: 'unchanged', message: 'the recorded setup state already holds these choices and this profile; nothing was written' };
     }
     if (!confirmOverwrite) {
       refuse('confirmation-required', `the requested choices change recorded owner choices: ${changes.map((change) => change.field).join(', ')}`,
         { changes, nextStep: 'Show each change to the owner and rerun with --confirm-overwrite only after they confirm it.' });
     }
   }
-  const result = profile({ projectRoot: root, platform });
-  const blocking = result.items.filter(blocks).map(({ id, verdict, reason, nextStep }) => ({ id, verdict, reason, nextStep }));
-  if (blocking.length > 0) {
-    refuse('profile-blocked', `the compatibility profile stops auto-init: ${blocking.map((entry) => `${entry.id} is ${entry.verdict}`).join(', ')}`,
-      { blocking, nextStep: blocking.map((entry) => entry.nextStep).join(' ') });
-  }
+  refuseBlocked();
   const state = {
     schema: 'fvs/auto-state',
     schemaVersion,
@@ -1077,18 +1279,38 @@ export function initState({ projectRoot, choices, confirmOverwrite = false, plat
     } : {}),
   };
   if ('choicesGeneration' in state && !generationValid(state.choicesGeneration)) refuse('generation-exhausted', 'choices generation cannot advance safely; no state was written');
-  writeAtomic(statePath(root), state);
+  commitState(root, recorded, state);
   // The refreshed view, so the caller sees the pending decisions of the state just written.
   return { ...readState({ projectRoot: root }), code: recorded ? 'updated' : 'created', message: `setup state written to ${statePath(root)}` };
 }
 
 function nextAction(state) {
+  const blocking = state.profile.items.filter(blocks);
+  if (blocking.length > 0) {
+    return `Setup is blocked: ${blocking.map((entry) => `${entry.id} is ${entry.verdict}`).join(', ')}. ${blocking.map((entry) => entry.nextStep).join(' ')} Then rerun /fvs:auto-init.`;
+  }
   const { selected } = state.extraction ?? {};
   if (selected && choiceChanges(selected, state.choices.source).length > 0) {
     return `Rerun /fvs:auto-extract: the recorded extraction is for revision ${selected.revision} (${selected.configuration}), not the selected source.`;
   }
   if (state.extraction?.status === 'succeeded') {
-    return 'Run /fvs:auto-top-specs; milestone 2 functionality not yet available, so the auto track stops after extraction for now.';
+    // Recomputed from the recorded profile, never read from a stored field.
+    const stage = readiness(state.profile).find((entry) => entry.stage === 'auto-top-specs');
+    if (stage.status === 'no-route') {
+      return `/fvs:auto-top-specs cannot run here yet: it is ${stage.summary}. First, the ${stage.firstMissing.supplier} must ${stage.firstMissing.step}.`;
+    }
+    const warning = ['ready-unverified', 'ready-reduced'].includes(stage.status) ? ` Warning: ${stage.line}.` : '';
+    const agreement = state.agreements?.at(-1);
+    if (!agreement) {
+      return 'Before /fvs:auto-top-specs, the owner approves the initial agreement (scope, claims, trust, acceptance and the execution grant): the agent drafts it in the roadmap Decisions section, and once the owner has approved its exact content the owner runs record-agreement in their own terminal (the agent never records it).' + warning;
+    }
+    if (agreement.payload.choicesGeneration !== (state.choicesGeneration ?? 0) || choiceChanges(agreement.payload.choices, state.choices).length > 0) {
+      return 'Before /fvs:auto-top-specs, the owner approves a successor agreement: the recorded one covers earlier choices.' + warning;
+    }
+    if (agreement.payload.execution === null) {
+      return 'Before /fvs:auto-top-specs, the owner grants the execution actions in a successor agreement: the recorded one grants none, so no worker can be launched.' + warning;
+    }
+    return 'Run /fvs:auto-top-specs from the AO orchestrator. Each action also needs the stage profile (harness, model and effort per role; the owner approves it, the agent passes it with the request) and, for each actor launch, the permission-ready receipt of the actor permission install, which the owner runs.' + warning;
   }
   if (state.extraction) return 'Rerun /fvs:auto-extract after fixing the recorded failure reasons.';
   return 'Run /fvs:auto-extract to extract the selected revision.';
@@ -1111,6 +1333,7 @@ export function readState({ projectRoot, requireAgreement = false }) {
     roadmapPresent: state.roadmap?.path ? fs.existsSync(path.join(root, state.roadmap.path)) : false,
     externals,
     pendingDecisions: requireAgreement || state.roadmap ? [] : ['roadmap'],
+    readiness: readiness(state.profile),
     nextAction: nextAction(state),
     ...(requireAgreement ? { agreement: requireStoredAgreement(root, state) } : {}),
   };
@@ -1145,7 +1368,7 @@ export function recordMemory(options) {
     if (!Number.isSafeInteger(bindingRevision)) refuse('generation-exhausted', 'memory binding revision cannot advance safely');
     state.memoryBindings ??= [];
     state.memoryBindings.push({ ...observed.binding, bindingRevision, recordedAt: now() });
-    writeAtomic(statePath(root), state);
+    commitState(root, state, state);
     return { code: 'recorded', message: 'existing primary project memory registered; no store created or workers launched', state, inspection: observed.out };
   });
 }
@@ -1372,7 +1595,7 @@ export function recordRoadmap({ projectRoot, decision, confirmOverwrite = false 
     });
   }
   state.roadmap = { decision, path: decision === 'accepted' ? ROADMAP_PATH : null, decidedAt: now() };
-  writeAtomic(statePath(root), state);
+  commitState(root, state, state);
   return { code: 'recorded', message: `roadmap offer recorded as ${decision}`, state };
 }
 
@@ -1467,7 +1690,7 @@ export function recordExtraction({ projectRoot, out, buildExitCode, oracle, orac
     note: NOT_A_PROOF,
   };
   state.extraction = extraction;
-  writeAtomic(statePath(root), state);
+  commitState(root, state, state);
   if (reasons.length > 0) {
     refuse('extraction-failed', `extraction recorded as failed: ${reasons.join('; ')}`,
       { extraction, nextStep: 'Fix the reasons above and rerun /fvs:auto-extract; a failed extraction is never recorded as success.' });
