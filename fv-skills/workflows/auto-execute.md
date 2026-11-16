@@ -40,8 +40,9 @@ merge and the proof pull request").
    It prints `accepted (build check in a clean copy)` or `build check failed: REASON`. Read that label
    from the output. The state reports `done` only once the proof pull request is recorded and its head
    has passed the check, so record that pull request with the commit you checked, and run the check
-   again after any new commit on its branch. A worker's report, or a green build in its own checkout,
-   is not acceptance.
+   again after any new commit on its branch. Do not redirect the receipt: the state reads it only from
+   the build check's default location. A worker's report, or a green build in its own checkout, is not
+   acceptance.
 4. **Open the PROOF PR as a draft** on the project's own repository: the destination recorded in the
    agreement at `/fvs:auto-init`, never an upstream. Put in the body which statements are accepted,
    which are not and why, and what each unproved one is missing. Nothing leaves the scope silently.

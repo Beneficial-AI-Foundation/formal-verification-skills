@@ -890,8 +890,14 @@ describe('auto command and workflow text', () => {
     assert.match(body, /give the `\[\[lean_lib\]\]` entry `globs = \["<Library>\.\+"\]`/);
     assert.match(body, /add each one the same way/);
     assert.match(body, /Confirm that the build really compiles a new spec file/);
-    assert.match(body, /`lake exe cache get`/);
-    assert.match(body, /shared packages folder/);
+    assert.match(body, /Give each worktree its own copy of the primary checkout's Lake packages folder \(a copy-on-write clone is fast where the filesystem supports it\), or fall back to `lake exe cache get` and a dependency build/);
+    assert.match(body, /never share one packages folder between worktrees, because concurrent builds would write the same package outputs/);
+    assert.doesNotMatch(body, /point the worktrees at one shared packages folder/);
+    assert.match(body, /New worker worktrees start from the project's remote base branch, so a commit that exists only in your local checkout never reaches an author or a reviewer/);
+    assert.match(body, /Push the working branch to the project's own repository and make it the base new workers start from; with AO, set the project's default branch to it once it exists on the remote/);
+    assert.match(body, /The spec and proof pull requests use it as their base unless the agreement says otherwise/);
+    assert.match(body, /Spawn one author first\. Check that its worktree head is the working branch head and that a new spec file compiles there, and only then spawn the rest/);
+    assert.match(body, /Read the public items of the in-scope Rust modules and cross-check the list against the generated Lean/);
     assert.match(body, /only you run the engine's steps, in the project checkout/);
     assert.match(body, /which commit holds the generated translation and the Lake change/);
     assert.ok(body.indexOf('Prepare the working branch') < body.indexOf('Write and review, one Rust file at a time'), 'branch preparation comes before authors');
@@ -941,6 +947,7 @@ describe('auto command and workflow text', () => {
     assert.match(body, /This only records the pull request; it accepts nothing/);
     assert.match(body, /After a new commit on the branch, record the new head the same way and run the build check on it again/);
     assert.match(body, /run the check again after any new commit on its branch/);
+    assert.match(body, /Do not redirect the receipt: the state reads it only from the build check's default location/);
     assert.match(body, /Record its review rounds and the pull request as for the first, and record its merge once the owner merges it/);
     assert.doesNotMatch(body, /names no step for recording/);
     assert.ok(body.indexOf('Recording the merge and the proof pull request') < body.indexOf('## Step 3'), 'recording section comes before the final report step');

@@ -15,7 +15,8 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
 ## Pipeline
 
 1. **List the items.** After extraction, list every public API item in the agreed scope (the crates,
-   modules and features fixed at `/fvs:auto-init`), with the Rust file each one lives in. There is no
+   modules and features fixed at `/fvs:auto-init`), with the Rust file each one lives in. Read the public
+   items of the in-scope Rust modules and cross-check the list against the generated Lean. There is no
    per-item confirmation. Nothing leaves the scope silently: note the items you think are out of scope
    and why, and leave the pruning to the owner in the pull request review.
 2. **Prepare the working branch before any author starts.** Work on a branch of the project's own
@@ -26,16 +27,26 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
    translation, the patches and the extraction and Lake configuration as the first commit on the branch,
    and never commit local state and caches (`.formalising/`, `.claude/`, `.lake/` and `.aeneas/`).
 
+   New worker worktrees start from the project's remote base branch, so a commit that exists only in
+   your local checkout never reaches an author or a reviewer. Push the working branch to the project's
+   own repository and make it the base new workers start from; with AO, set the project's default branch
+   to it once it exists on the remote. The spec and proof pull requests use it as their base unless the
+   agreement says otherwise.
+
    The build must also reach the new files. A Lake library that keeps its default roots compiles no file
    under `formal/`, so a build can finish while no spec was compiled. Widen the library's module globs
    so they cover the spec and proof folders: in `lakefile.toml`, give the `[[lean_lib]]` entry
    `globs = ["<Library>.+"]`, and if the spec and proof folders are separate module roots, add each one
    the same way. Confirm that the build really compiles a new spec file before you rely on it; the spec
    pull request carries this Lake change. A fresh worktree has no Lake
-   packages: run `lake exe cache get` and build the dependencies there, or point the worktrees at one
-   shared packages folder, whichever works with the worktrees AO makes. Authors have no recorded state
-   in their worktrees, so only you run the engine's steps, in the project checkout, after the authors'
-   files are on the branch.
+   packages. Give each worktree its own copy of the primary checkout's Lake packages folder (a
+   copy-on-write clone is fast where the filesystem supports it), or fall back to `lake exe cache get`
+   and a dependency build; never share one packages folder between worktrees, because concurrent builds
+   would write the same package outputs. Authors have no recorded state in their worktrees, so only you
+   run the engine's steps, in the project checkout, after the authors' files are on the branch.
+
+   Spawn one author first. Check that its worktree head is the working branch head and that a new spec
+   file compiles there, and only then spawn the rest.
 3. **Write and review, one Rust file at a time.** An author agent writes the statements for the
    file's items, and a fresh adversarial reviewer (the chosen pair) checks them against the Rust code
    and its documentation. Is each statement faithful, strong enough to be useful, and free of
