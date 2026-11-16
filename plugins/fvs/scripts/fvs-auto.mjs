@@ -148,9 +148,10 @@ function probeUsable(id, bin, root, selected) {
 // What each stage needs on this engine. The AO controller launches spec, review
 // and proof work only on a closure plan the registry accepts: a verified Lean
 // graph from probe-lean, and an identity confirmed by probe-aeneas and probe-rust
-// (which needs scip and rust-analyzer). Without any one of them a stage has no
-// route. Probes that are present but not qualified for this tuple give a route
-// whose output is labelled unverified.
+// (which needs scip and rust-analyzer). Without AO or Lean a stage has no route;
+// without a probe it runs reduced, labelled with what that probe's output would
+// have added. Probes that are present but not qualified for this tuple give a
+// route whose output is labelled unverified.
 const STAGE_NEEDS = ['ao', 'lean', ...Object.keys(PROBE_LOSSES)];
 const STAGES = { 'auto-top-specs': STAGE_NEEDS, 'auto-execute': STAGE_NEEDS };
 
