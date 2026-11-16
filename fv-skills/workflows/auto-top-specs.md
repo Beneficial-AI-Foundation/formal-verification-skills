@@ -65,7 +65,8 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
    the statements rest on, the review rounds that were held, and which commit holds the generated
    translation and the Lake change. Then record the pull request (see "Recording the pull request").
 6. **Stop for the owner.** The owner reviews, prunes, marks the pull request ready and merges it.
-   `/fvs:auto-execute` records the merge and starts the proofs after that.
+   Once it is merged, record the merge (see "Recording the pull request"); `/fvs:auto-execute` starts
+   the proofs after that.
 
 ## GitHub rule
 
@@ -149,6 +150,18 @@ pass, when the status is not ready, when `SHA` is not a commit in the checkout (
 branch first), and when a recorded spec file is missing from the head or differs there from the file
 that was reviewed. Fix what a warning names, or name it in the pull request body. The state stays in the
 spec phase, and its next action says the owner reviews and merges the pull request.
+
+When the owner has merged it, read the pull request yourself (`gh pr view` shows its merge commit),
+fetch the merged branch so that commit is in the checkout, and record the merge:
+
+```bash
+node "$AUTO" record-pr --project-root . --kind spec --merged --merge-commit SHA
+```
+
+This moves the state to the proof phase, where `/fvs:auto-execute` takes over. It refuses only a commit
+that is not in the checkout. It warns when no open draft spec pull request was recorded, and for each
+spec file the owner removed or edited in review; `spec-status` then labels those files `pruned by owner`
+or `changed by owner in review`.
 
 ## Step 3: Run the pipeline, then report
 

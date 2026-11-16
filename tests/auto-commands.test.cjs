@@ -914,19 +914,23 @@ describe('auto command and workflow text', () => {
     assert.match(body, /if no file passed, open it anyway and say in the body that none did, so the owner decides/);
   });
 
-  it('top-specs records the draft pull request and hands the merge record to execute', () => {
+  it('top-specs records the draft pull request and the owner\'s merge, so the spec-phase state is never a dead end', () => {
     const body = flat(text('auto-top-specs'));
     assert.match(body, /Then record the pull request \(see "Recording the pull request"\)/);
     assert.match(body, /node "\$AUTO" record-pr --project-root \. --kind spec --url URL --branch BRANCH --head SHA/);
     assert.match(body, /never calls GitHub and does not refuse on content; it warns when no spec file has a reviewed pass, when the status is not ready/);
     assert.match(body, /fetch the pull request branch first/);
-    assert.match(body, /`\/fvs:auto-execute` records the merge and starts the proofs after that/);
-    assert.doesNotMatch(body, /--merged/, 'the merge is recorded by execute, after the owner merges');
+    assert.match(body, /Once it is merged, record the merge \(see "Recording the pull request"\); `\/fvs:auto-execute` starts the proofs after that/);
+    assert.match(body, /read the pull request yourself \(`gh pr view` shows its merge commit\), fetch the merged branch so that commit is in the checkout/);
+    assert.match(body, /node "\$AUTO" record-pr --project-root \. --kind spec --merged --merge-commit SHA/);
+    assert.match(body, /moves the state to the proof phase, where `\/fvs:auto-execute` takes over/);
+    assert.match(body, /`pruned by owner` or `changed by owner in review`/);
   });
 
   it('execute records the owner\'s merge before proving and records the proof pull request with the checked commit', () => {
     const body = flat(text('auto-execute'));
     assert.match(body, /Once it is merged, record the merge \(see "Recording the merge and the proof pull request"\)/);
+    assert.match(body, /If the state still says the spec phase, the merge is not recorded yet/);
     assert.match(body, /read it yourself \(`gh pr view` shows its merge commit\), fetch the merged branch so that commit is in the checkout/);
     assert.match(body, /node "\$AUTO" record-pr --project-root \. --kind spec --merged --merge-commit SHA/);
     assert.match(body, /It refuses only a commit that is not in the checkout/);
@@ -935,6 +939,7 @@ describe('auto command and workflow text', () => {
     assert.match(body, /node "\$AUTO" record-pr --project-root \. --kind proof --url URL --branch BRANCH --head SHA/);
     assert.match(body, /record it with the commit the build check accepted/);
     assert.match(body, /This only records the pull request; it accepts nothing/);
+    assert.match(body, /After a new commit on the branch, record the new head the same way and run the build check on it again/);
     assert.match(body, /run the check again after any new commit on its branch/);
     assert.match(body, /Record its review rounds and the pull request as for the first, and record its merge once the owner merges it/);
     assert.doesNotMatch(body, /names no step for recording/);

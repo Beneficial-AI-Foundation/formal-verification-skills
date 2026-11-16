@@ -91,8 +91,9 @@ or outdated agreement is a warning to carry into the report, not a stop.
 
 ## Recording the merge and the proof pull request
 
-When the owner has merged the spec pull request, read it yourself (`gh pr view` shows its merge commit),
-fetch the merged branch so that commit is in the checkout, and record the merge:
+If the state still says the spec phase, the merge is not recorded yet. When the owner has merged the
+spec pull request, read it yourself (`gh pr view` shows its merge commit), fetch the merged branch so
+that commit is in the checkout, and record the merge:
 
 ```bash
 node "$AUTO" record-pr --project-root . --kind spec --merged --merge-commit SHA
@@ -110,7 +111,8 @@ node "$AUTO" record-pr --project-root . --kind proof --url URL --branch BRANCH -
 ```
 
 This only records the pull request; it accepts nothing. The state stays in the proof phase until a
-passing build check exists for that head.
+passing build check exists for that head. After a new commit on the branch, record the new head the
+same way and run the build check on it again.
 
 ## Step 3: Run the pipeline, then report
 
