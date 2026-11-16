@@ -29,6 +29,12 @@ if [ "$1" = build ]; then
   pwd > "$STUB/build-cwd"
   echo "$*" > "$STUB/build-args"
   echo "$LEAN_NUM_THREADS" > "$STUB/threads"
+  if [ -f "$STUB/hang" ]; then
+    echo $$ > "$STUB/lake-pid"
+    sleep 60 &
+    echo $! > "$STUB/child-pid"
+    wait
+  fi
   ls .lake/build > "$STUB/prebuild-listing" 2>&1
   cat Specs/A.lean > "$STUB/seen-A.lean" 2>/dev/null
   if [ -f "$STUB/oleans" ]; then
@@ -198,6 +204,24 @@ describe('a build that does not pass', () => {
     assert.equal(result.json.specFiles[0].status, 'failing');
     assert.match(statementOf(result, 'Dep.foo').reason, /Specs\/A\.lean:6/);
     assert.equal(receipts(fx).length, 1);
+  });
+
+  test('a build that runs past the time limit fails, and nothing it started is still running afterwards', () => {
+    const fx = fixture();
+    write(path.join(fx.stub, 'hang'), '');
+    const result = check(fx, { args: ['--timeout', '1'], oleans: [] });
+    assert.equal(result.status, 1);
+    assert.equal(result.json.accepted, false);
+    assert.match(result.json.label, /^build check failed: lake exited with status 124/);
+    const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; } };
+    for (const name of ['lake-pid', 'child-pid']) {
+      const pid = Number(seen(fx, name));
+      // A killed process can linger briefly as a zombie until its parent reaps it.
+      for (let wait = 0; wait < 40 && alive(pid); wait += 1) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+      const running = alive(pid);
+      if (running) process.kill(pid, 'SIGKILL');
+      assert.equal(running, false, `${name} (${pid}) was still running after the check returned`);
+    }
   });
 
   test('a sorry warning fails the build and is reported', () => {

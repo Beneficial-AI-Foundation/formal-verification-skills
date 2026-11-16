@@ -297,7 +297,10 @@ function runLake(args, { cwd, env, log, timeoutSeconds }) {
   const argv = [...wrapper, 'nice', '-n', '19', 'lake', ...args];
   const out = fs.openSync(log, 'w');
   try {
-    const run = spawnSync(argv[0], argv.slice(1), { cwd, env, stdio: ['ignore', out, out], timeout: timeoutSeconds * 1000 });
+    // The child leads its own process group. A timeout kills only that child, so the whole group is
+    // killed once the run returns: no Lean worker may outlive the check and overlap the next build.
+    const run = spawnSync(argv[0], argv.slice(1), { cwd, env, stdio: ['ignore', out, out], timeout: timeoutSeconds * 1000, detached: true });
+    if (run.pid) { try { process.kill(-run.pid, 'SIGKILL'); } catch { /* the group is already gone */ } }
     return { argv, status: run.status ?? (run.error ? 124 : 1) };
   } finally { fs.closeSync(out); }
 }
