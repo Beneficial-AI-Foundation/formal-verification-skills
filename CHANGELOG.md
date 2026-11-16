@@ -48,6 +48,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   `.formalising/fv-plans/<topic>/IMPLEMENTATION_nN.md` next to `build.log` (where it already landed
   in practice), checks it after the run and writes the returned report there itself when missing.
   `/fvs:loop-me-in` reads it as the authoritative list of files an iteration touched. (#96, #120)
+- `/fvs:crypto-eval` reads that same report by name, `.formalising/fv-plans/<topic>/IMPLEMENTATION_nN.md`,
+  as its source for the files the iteration touched, and checks that the iteration argument is `n`
+  followed by digits before it builds the path. When the report is missing, as for an iteration run
+  before it was persisted, the eval says so and takes the files from `git diff --stat` and
+  `git status --porcelain` instead of rebuilding the list from chat context. (#119)
 
 ### Fixed
 
