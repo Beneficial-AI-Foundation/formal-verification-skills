@@ -65,6 +65,10 @@ The driver runs in the orchestrator's context, from the one fixed trusted engine
 | `fvs-auto-bundle.mjs` (`build`, `verify`) | orchestrator | Collects and checks the human review bundle. |
 | `fvs-auto-actor-permissions.py` | orchestrator | Run once per actor for an explicitly granted Claude gate profile. |
 
+What the agreement helper's path checks cover. `--out` must name a new file. The helper resolves the destination and the protected places through every link and compares real paths, so it refuses a destination inside the project's `.formalising` directory, inside its `auto-fv` area (each protected where it really lives, also when it is a link) or among the engine scripts. The dry run keeps its scratch copy in a temporary directory outside the project. A new file elsewhere, even inside the project, is allowed.
+
+These checks are static. A process of the same user that changes a directory or a link between a check and the write that follows is outside what the helper defends against, and outside the threat boundary of this release. The exclusive creation of the output file still stops it replacing an existing file, and the helper checks its scratch directory again after creating it, but it does not claim to be safe against such a race.
+
 ## When a seat cannot run its command
 
 A stock Agent Orchestrator orchestrator is set up to coordinate: it starts workers, sends messages and reads reports. Many orchestrator rows above are shell commands that change recorded state, and the host's permission checks may refuse some of them, for example a record step that replaces an agreement. This is a known friction, not a failure of the run.

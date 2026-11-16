@@ -6,6 +6,15 @@
 // result against the engine's record rules on a scratch copy, and prints the roadmap fence plus the one
 // command only the owner runs. It never records the agreement, never edits the roadmap or the state, and
 // reads no standard input. It is a drafting aid, not part of the checker's frozen engine files.
+//
+// What the path checks cover. They are static: the protected locations (the project's .formalising
+// directory, its auto-fv area, and the engine scripts directory) and the --out destination are each resolved
+// through every link and compared as real paths, so a link on either side is followed before the comparison.
+// The output file is created exclusively, so an existing file or a link at its own name is never replaced, and
+// the scratch directory's real path is checked again after it is created. What they do not cover: a process
+// of the same user that swaps a directory or a link between a check and the write that follows. Defending
+// against that needs an isolation boundary the helper does not have, and it is outside the threat boundary
+// of this release; the helper does not claim to close it.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -29,8 +38,12 @@ const USAGE = [
   'With ownerEvidence ({"reference": ..., "response": ...}, the owner\'s own reply word for word) it also',
   'needs --out, writes that new file, and prints the roadmap fence and the owner-run record command.',
   '--out must be a new file outside the project\'s .formalising directory and the engine scripts (links are',
-  'resolved first). The helper never records the agreement, never overwrites a file, and writes nothing inside',
-  'the project: its scratch copy lives in a temporary directory outside the project root.',
+  'resolved first, on both the destination and those protected locations). The helper never records the',
+  'agreement and never overwrites a file. The dry run and the protected control state stay untouched: its',
+  'scratch copy lives in a temporary directory outside the project root, and --out can never land inside',
+  '.formalising or the engine scripts. A new file elsewhere, even inside the project, is allowed. The checks',
+  'are static: they do not defend against another process of the same user changing directories or links',
+  'while the helper runs.',
 ].join('\n') + '\n';
 
 class UsageError extends Error {}
@@ -116,18 +129,28 @@ function checkWithEngine(root, envelope) {
   }
 }
 
+// The real path of a protected directory. When the directory is itself a link (or lies behind one) the
+// protected place is where it actually lives, which is where a destination's real path will point. A
+// directory that does not exist keeps its project-relative spelling: nothing can be created inside it.
+function realDirectory(directory) {
+  try { return fs.realpathSync.native(directory); } catch { return directory; }
+}
+
 // The real path of a file that does not exist yet (its parent resolved through every link, plus its own
 // name), refused when it would land in the control area, anywhere else in .formalising, or among the
-// engine's own scripts. The agreement goes to a new file in an ordinary place; it is never able to create
-// or replace the state, the externals record, the roadmap or an engine file.
+// engine's own scripts. The protected places are resolved the same way, so a linked .formalising or a
+// linked auto-fv area is protected where it really lives. The agreement goes to a new file in an ordinary
+// place; it is never able to create or replace the state, the externals record, the roadmap or an engine file.
 function checkDestination(root, out) {
   const target = path.resolve(out);
   let real;
   try { real = path.join(fs.realpathSync.native(path.dirname(target)), path.basename(target)); }
   catch (error) { throw new UsageError(`cannot create ${target}: its directory is not readable (${error.code})`); }
+  const controlArea = path.join(root, '.formalising');
   const protectedAreas = [
-    [path.join(root, '.formalising'), 'the .formalising control area, which only the engine writes'],
-    [fs.realpathSync.native(path.dirname(ENGINE)), 'the engine scripts'],
+    [realDirectory(controlArea), 'the .formalising control area, which only the engine writes'],
+    [realDirectory(path.join(controlArea, 'auto-fv')), 'the .formalising control area (its auto-fv directory), which only the engine writes'],
+    [realDirectory(path.dirname(ENGINE)), 'the engine scripts'],
   ];
   for (const [area, name] of protectedAreas) {
     if (within(area, real)) throw new UsageError(`refusing --out ${target}: it resolves to ${real}, inside ${name}; choose a new file elsewhere`);

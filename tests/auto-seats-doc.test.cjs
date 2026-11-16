@@ -89,6 +89,21 @@ describe('seat reference', () => {
     }
   });
 
+  it('states what the agreement helper path checks cover and keeps the same-user race boundary visible', () => {
+    const flat = text.replace(/\s+/g, ' ');
+    assert.match(flat, /resolves the destination and the protected places through every link and compares real paths/);
+    assert.match(flat, /each protected where it really lives, also when it is a link/);
+    assert.match(flat, /A new file elsewhere, even inside the project, is allowed/);
+    assert.match(flat, /These checks are static\. A process of the same user that changes a directory or a link between a check and the write/);
+    assert.match(flat, /outside the threat boundary of this release/);
+    assert.match(flat, /does not claim to be safe against such a race/);
+    assert.ok(!/race-proof|safe from races|cannot race/i.test(flat), 'the helper is never described as race-proof');
+    const init = fs.readFileSync(path.join(ROOT, 'fv-skills', 'workflows', 'auto-init.md'), 'utf8').replace(/\s+/g, ' ');
+    assert.match(init, /This dry run writes nothing in the project/);
+    assert.match(init, /A new file elsewhere, even inside the project, is allowed\. These checks are static; `auto-seats\.md` says what they do not cover/);
+    assert.ok(!/and nothing in the project is written/.test(init), 'the dry-run claim is no longer an unqualified statement about the helper');
+  });
+
   it('says a seat is a workflow rule, and what to do when a seat cannot run its command', () => {
     const flat = text.replace(/\s+/g, ' ');
     assert.match(flat, /does not authenticate who typed a command/);

@@ -180,16 +180,19 @@ node "$HELPER" --project-root . --input "$DRAFT"
 
 Without `ownerEvidence` the helper prints the payload and its digest and nothing else. It checks the
 payload against the engine's own record rules on a scratch copy in a temporary directory outside the
-project (a project-local `TMPDIR` is skipped), so a refusal appears now, naming the field, and nothing
-in the project is written. Show the owner the printed payload.
+project (a project-local `TMPDIR` is skipped), so a refusal appears now, naming the field. This dry run
+writes nothing in the project. Show the owner the printed payload.
 
 Only after reading the actual applicable response/grants associate them with that exact payload: add
 the owner's reply, word for word, to `$DRAFT` as `"ownerEvidence": {"reference": "<where the reply
 is>", "response": "<the reply text>"}`. Never write that reply yourself. Human authenticity is declared
 workflow evidence, not independent authentication. Run the helper again with `--out "$AGREEMENT"`, a
 new file it never overwrites. Choose it outside the project's `.formalising` directory (a temporary
-file is fine); the helper resolves links first and refuses a destination under `.formalising` or among
-the engine scripts, so it can never create or replace the state, the externals record or the roadmap:
+file is fine); the helper resolves links on both the destination and the `.formalising` directory (a
+linked `.formalising` or `auto-fv` counts where it really lives) and refuses a destination under
+`.formalising` or among the engine scripts, so it does not create or replace the state, the externals
+record or the roadmap. A new file elsewhere, even inside the project, is allowed. These checks are
+static; `auto-seats.md` says what they do not cover:
 
 ```bash
 node "$HELPER" --project-root . --input "$DRAFT" --out "$AGREEMENT"

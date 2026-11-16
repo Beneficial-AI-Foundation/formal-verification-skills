@@ -243,6 +243,92 @@ describe('agreement drafting helper', () => {
     assert.deepEqual(snapshot(root), before, 'nothing in the project changed');
   });
 
+  // Moves a directory of the project to a place outside it and leaves a link at the old name.
+  function relocate(root, relative) {
+    const home = temporary('fvs-agreement-linked-');
+    const moved = path.join(home, path.basename(relative));
+    fs.renameSync(path.join(root, relative), moved);
+    fs.symlinkSync(moved, path.join(root, relative));
+    return moved;
+  }
+
+  it('protects the control area where it really lives when .formalising is itself a link', () => {
+    const root = project();
+    const moved = relocate(root, '.formalising');
+    fs.rmSync(path.join(moved, 'auto-fv', 'ROADMAP.md'), { force: true });
+    const alias = path.join(temporary('fvs-agreement-alias-'), 'control');
+    fs.symlinkSync(moved, alias);
+    const destinations = [
+      path.join(root, '.formalising', 'auto-fv', 'externals.json'),
+      path.join(root, '.formalising', 'auto-fv', 'ROADMAP.md'),
+      path.join(root, '.formalising', 'other-note.json'),
+      path.join(moved, 'auto-fv', 'externals.json'),
+      path.join(moved, 'auto-fv', 'ROADMAP.md'),
+      path.join(moved, 'other-note.json'),
+      path.join(alias, 'auto-fv', 'externals.json'),
+    ];
+    const before = [snapshot(root), snapshot(moved)];
+    const stateBefore = fs.readFileSync(stateFile(root));
+    for (const destination of destinations) {
+      assert.ok(!fs.existsSync(destination), `${destination} must start absent`);
+      const result = helper(root, { ...draftFields, ownerEvidence }, '--out', destination);
+      assert.equal(result.status, 2, `${destination}: ${result.stderr}`);
+      assert.match(result.stderr, /refusing --out .*inside the \.formalising control area/);
+      assert.ok(!fs.existsSync(destination), `${destination} must not be created`);
+    }
+    assert.deepEqual([snapshot(root), snapshot(moved)], before, 'nothing under the project or the linked control area changed');
+    assert.deepEqual(fs.readFileSync(stateFile(root)), stateBefore);
+
+    const dryRun = helper(root, draftFields);
+    assert.equal(dryRun.status, 0, dryRun.stderr);
+    assert.deepEqual([snapshot(root), snapshot(moved)], before, 'the dry run writes nothing either');
+    const out = path.join(temporary('fvs-agreement-out-'), 'agreement.json');
+    const written = helper(root, { ...draftFields, ownerEvidence }, '--out', out);
+    assert.equal(written.status, 0, written.stderr);
+    assert.deepEqual(JSON.parse(fs.readFileSync(out, 'utf8')), printedFence(written.stdout), 'an ordinary new file elsewhere is still allowed');
+  });
+
+  it('protects the auto-fv area where it really lives when auto-fv is itself a link', () => {
+    const root = project();
+    const moved = relocate(root, '.formalising/auto-fv');
+    fs.rmSync(path.join(moved, 'ROADMAP.md'), { force: true });
+    const alias = path.join(temporary('fvs-agreement-alias-'), 'auto-fv');
+    fs.symlinkSync(moved, alias);
+    const destinations = [
+      path.join(root, '.formalising', 'auto-fv', 'externals.json'),
+      path.join(root, '.formalising', 'auto-fv', 'ROADMAP.md'),
+      path.join(moved, 'externals.json'),
+      path.join(moved, 'ROADMAP.md'),
+      path.join(alias, 'externals.json'),
+    ];
+    const before = [snapshot(root), snapshot(moved)];
+    for (const destination of destinations) {
+      assert.ok(!fs.existsSync(destination), `${destination} must start absent`);
+      const result = helper(root, { ...draftFields, ownerEvidence }, '--out', destination);
+      assert.equal(result.status, 2, `${destination}: ${result.stderr}`);
+      assert.match(result.stderr, /refusing --out .*inside the \.formalising control area/);
+      assert.ok(!fs.existsSync(destination), `${destination} must not be created`);
+    }
+    assert.deepEqual([snapshot(root), snapshot(moved)], before, 'nothing under the project or the linked auto-fv area changed');
+
+    const out = path.join(temporary('fvs-agreement-out-'), 'agreement.json');
+    const written = helper(root, { ...draftFields, ownerEvidence }, '--out', out);
+    assert.equal(written.status, 0, written.stderr);
+    assert.deepEqual([snapshot(root), snapshot(moved)], before, 'writing the agreement elsewhere leaves the linked area unchanged');
+  });
+
+  it('limits what it claims: static path checks, and the helper header and usage name the same-user race boundary', () => {
+    const source = fs.readFileSync(HELPER, 'utf8');
+    const header = source.slice(0, source.indexOf("import fs from 'node:fs'"));
+    assert.match(header.replace(/\n\/\/ ?/g, ' '), /same user that swaps a directory or a link between a check and the write/);
+    assert.match(header.replace(/\n\/\/ ?/g, ' '), /does not claim to close it/);
+    const usage = spawnSync(process.execPath, [HELPER, '--help'], { encoding: 'utf8' }).stdout.replace(/\s+/g, ' ');
+    assert.match(usage, /The dry run and the protected control state stay untouched/);
+    assert.match(usage, /A new file elsewhere, even inside the project, is allowed/);
+    assert.match(usage, /do not defend against another process of the same user changing directories or links/);
+    assert.ok(!/writes nothing inside the project/.test(source), 'the old unqualified claim is gone');
+  });
+
   it('refuses an output among the engine scripts and one whose directory is missing', () => {
     const root = project();
     const inEngine = path.join(path.dirname(ENGINE), 'fvs-agreement-never-created.json');
