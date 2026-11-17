@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
-## [3.0.0-rc2] - 2026-11-16
+## [3.0.0-rc2] - 2026-11-17
 
 This is prerelease source metadata for the selected-target SWVF candidate. It is meant for the
 npm `next` tag only, and stable 2.3.x stays `latest`. Identify the release by the tag
