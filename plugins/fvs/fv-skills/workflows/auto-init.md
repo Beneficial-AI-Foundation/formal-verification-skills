@@ -270,7 +270,7 @@ node "$PERM" plan --project-root . --repo "$DRAFT_REPO" --remote origin --branch
 ```
 
 - `record.present` true: print its `summary` for the report line, say nothing more, and go to Step 6 (after
-  "Where pushes go" below, when `pushDestination.status` is `missing`). The one exception is the owner's request to
+  "Where pushes go" below, unless `pushDestination.status` is `matches`). The one exception is the owner's request to
   check permissions again: see "Recheck on request" below.
 - `legacyPushRules` present (Claude Code): a project settings file already has a push allow rule. Show the
   owner the listed entries before you probe. FVS deletes none of them, and a Claude `write-allowlist` refuses
@@ -286,7 +286,7 @@ node "$PERM" plan --project-root . --repo "$DRAFT_REPO" --remote origin --branch
 
 **Where pushes go.** The push command (`fvs-auto-push.mjs`) pushes only to a destination that init records, so
 record it whatever the check finds: also when the owner skips the check, and also for a project whose check was
-recorded earlier (`pushDestination.status` is `missing`). It is a separate yes. Run `write-destination` without
+recorded earlier (`pushDestination.status` is not `matches`). It is a separate yes. Run `write-destination` without
 `--confirm`:
 
 ```bash
@@ -297,7 +297,8 @@ It writes nothing and refuses with `confirmation-required`, printing the `record
 it after its own rewriting, the host, the repository, the branch namespaces, the project root and the git
 directory), the `file` (in the repository's shared git directory, so no commit contains it) and a digest. Show the
 owner exactly that and ask. Only on the yes, rerun the same command with `--confirm <digest>`. On a no, nothing is
-recorded: the push command then refuses to run, and the owner approves any other push as it appears. If
+recorded: the push command then refuses to run (`no-destination-recorded`), workers stop and report that
+refusal instead of falling back to `git push`, and the owner pushes branches by hand. If
 `pushDestination.status` is already `matches` there is nothing to do (`unchanged`). With `destination-conflict`
 another record exists: show `existing` and `record`. FVS never replaces it; the owner checks the file, deletes it
 themselves and runs init again.

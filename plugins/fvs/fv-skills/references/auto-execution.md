@@ -136,7 +136,8 @@ claim. The evidence named here is what the orchestrator keeps.
   command at a time may hold a chained line for approval, and the exit status of a chain is the status
   of its last command. The command leaves no `origin/<name>` ref and sets no upstream, so run
   `git fetch` before you look for the branch on the remote. Quote its exit status and its `result` in
-  the report.
+  the report. When it refuses (for example `no-destination-recorded`), do not fall back to `git push`:
+  stop, and report its `code` and `message` to the orchestrator.
 - **Keep three commits apart.** A status line names the commit the build check accepted, the head
   published on the pull request and the head that `record-pr` recorded, each with its SHA. They can
   differ for hours. Never show a pull request as accepted because another local commit passed the
