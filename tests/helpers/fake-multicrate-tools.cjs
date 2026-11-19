@@ -11,6 +11,7 @@
 
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const ENGINE = path.resolve(__dirname, '..', '..', 'scripts', 'fvs-extract-patches.mjs');
@@ -134,4 +135,61 @@ const toySpec = (fields = {}) => ({
   ...fields,
 });
 
-module.exports = { ENGINE, RELEASE, fakeMultiTools, engine, toyWorkspace, toySpec };
+
+// Lifecycle helpers shared by the multi-crate test files: a toy workspace with fake
+// tools, a prepared copy, a recorded attempt and the stages of every crate.
+const TMP = fs.realpathSync(os.tmpdir());
+const temporaryDirectories = [];
+let counter = 0;
+
+function cleanup() {
+  for (const directory of temporaryDirectories) fs.rmSync(directory, { recursive: true, force: true });
+}
+
+function workspace(behaviour = {}) {
+  const root = fs.mkdtempSync(path.join(TMP, 'fvs-multicrate-'));
+  temporaryDirectories.push(root);
+  const project = toyWorkspace(root);
+  const tools = fakeMultiTools(project, root, behaviour);
+  fs.mkdirSync(path.join(root, 'copies'));
+  return { root, project, tools, behaviour: tools.setBehaviour, release: tools.release };
+}
+
+const run = (ws, args) => engine(ws.tools, args);
+
+function prepared(ws) {
+  const out = path.join(ws.root, 'copies', `out-${(counter += 1)}`);
+  const prep = run(ws, ['prepare', '--project-root', ws.project, '--out', out]);
+  if (prep.status !== 0) throw new Error(prep.stdout);
+  return out;
+}
+
+function specFile(ws, spec) {
+  const file = path.join(ws.root, `spec-${(counter += 1)}.json`);
+  fs.writeFileSync(file, JSON.stringify(spec));
+  return file;
+}
+
+function attempted(ws, spec = toySpec()) {
+  const out = prepared(ws);
+  return { out, recorded: run(ws, ['attempt', '--out', out, '--spec', specFile(ws, spec)]) };
+}
+
+const step = (ws, out, name, crate) => run(ws, ['run', '--out', out, '--step', name, ...(crate ? ['--crate', crate] : [])]);
+
+function completeUnit(ws, out, crate) {
+  for (const name of ['charon', 'aeneas', 'publish']) {
+    const done = step(ws, out, name, crate);
+    if (done.status !== 0) throw new Error(`${crate} ${name}: ${done.stdout}`);
+  }
+}
+
+// Runs the chain of every crate in dependency order (the order of the attempt record).
+function complete(ws, spec) {
+  const { out, recorded } = attempted(ws, spec);
+  if (recorded.status !== 0) throw new Error(recorded.stdout);
+  for (const crate of recorded.result.attempt.order) completeUnit(ws, out, crate);
+  return out;
+}
+
+module.exports = { ENGINE, RELEASE, fakeMultiTools, engine, toyWorkspace, toySpec, cleanup, workspace, run, prepared, specFile, attempted, step, completeUnit, complete };

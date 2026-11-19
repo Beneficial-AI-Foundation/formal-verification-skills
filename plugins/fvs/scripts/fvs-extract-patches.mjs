@@ -861,7 +861,7 @@ function canonicalConfig(value, out, projectRoot) {
   return JSON.parse(JSON.stringify(value), (key, item) => (typeof item === 'string' ? item.split(out).join('$OUT').split(projectRoot).join('$PROJECT') : item));
 }
 
-const SPEC_FIELDS = ['release', 'crate', 'publishDir', 'charonArgs', 'cargoArgs', 'aeneasArgs'];
+const SPEC_FIELDS = ['release', 'crate', 'publishDir', 'charonArgs', 'cargoArgs', 'aeneasArgs', 'moduleRoot', 'substitutions', 'stitch'];
 const INVOCATION_FIELDS = ['spec', 'crate', 'llbc', 'aeneasDest', 'publishDir', 'projectRoot', 'tree', 'release', 'tools', 'env', 'charon', 'aeneas', 'targets'];
 const TRUST = 'local-host-and-reviewed-scripts';
 
@@ -871,9 +871,57 @@ const TRUST = 'local-host-and-reviewed-scripts';
 const UNITS_DIR = 'units';
 const MULTI_SCHEMA = 'fvs-extract-patches/multi-attempt';
 const MULTI_SPEC_FIELDS = ['release', 'cargoArgs', 'charonArgs', 'aeneasArgs', 'crates', 'main'];
-const UNIT_FIELDS = ['crate', 'package', 'dir', 'publishDir', 'charonArgs', 'cargoArgs', 'aeneasArgs'];
+const UNIT_FIELDS = ['crate', 'package', 'dir', 'publishDir', 'charonArgs', 'cargoArgs', 'aeneasArgs', 'moduleRoot', 'substitutions', 'stitch'];
 const CRATE_NAME = /^[A-Za-z0-9_]+$/;
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+
+// Edits to the generated Lean are declared in the spec, never made by hand:
+// exact text substitutions with the match count they must find, and stitching a
+// crate to the crate whose real translation replaces its axioms.
+const LEAN_MODULE = /^[A-Za-z_][A-Za-z0-9_']*(\.[A-Za-z_][A-Za-z0-9_']*)*$/;
+const RUST_PATH = /^[A-Za-z0-9_]+(::[A-Za-z0-9_]+)*$/;
+const SUBSTITUTION_FIELDS = ['file', 'find', 'replace', 'count', 'reason'];
+const STITCH_FIELDS = ['crate', 'assume'];
+const PUBLISH_DEST = 'publish-dest';
+
+function checkSubstitutions(list) {
+  if (!Array.isArray(list)) refuse('invalid-input', 'spec.substitutions must be an array');
+  return list.map((entry, index) => {
+    const where = `substitutions[${index}]`;
+    if (!isObject(entry)) refuse('invalid-input', `${where} must be an object`);
+    const extra = Object.keys(entry).filter((key) => !SUBSTITUTION_FIELDS.includes(key));
+    if (extra.length > 0) refuse('invalid-input', `${where} has unsupported fields: ${extra.join(', ')}`);
+    const relative = typeof entry.file === 'string' ? path.posix.normalize(entry.file) : '';
+    if (!relative.endsWith('.lean') || path.posix.isAbsolute(relative) || relative.split('/').includes('..')) refuse('invalid-input', `${where}.file must name a generated Lean file, relative to the Aeneas output`);
+    if (typeof entry.find !== 'string' || entry.find === '') refuse('invalid-input', `${where}.find must be the exact non-empty text to replace`);
+    if (typeof entry.replace !== 'string') refuse('invalid-input', `${where}.replace must be a string`);
+    if (!Number.isInteger(entry.count) || entry.count < 1) refuse('invalid-input', `${where}.count must be the exact number of matches (at least 1)`);
+    if (typeof entry.reason !== 'string' || entry.reason.trim() === '') refuse('invalid-input', `${where}.reason must say why the generated Lean needs this edit`);
+    return { file: relative, find: entry.find, replace: entry.replace, count: entry.count, reason: entry.reason };
+  });
+}
+
+function checkStitch(list, crate, targets) {
+  if (!Array.isArray(list)) refuse('invalid-input', 'spec.stitch must be an array');
+  if (list.length > 0 && targets.length === 0) refuse('invalid-input', 'stitch needs a multi-crate spec: the crate it imports must be another crate of the same attempt');
+  const seen = new Set();
+  return list.map((entry, index) => {
+    const where = `stitch[${index}]`;
+    if (!isObject(entry)) refuse('invalid-input', `${where} must be an object`);
+    const extra = Object.keys(entry).filter((key) => !STITCH_FIELDS.includes(key));
+    if (extra.length > 0) refuse('invalid-input', `${where} has unsupported fields: ${extra.join(', ')}`);
+    checkCrateName(`${where}.crate`, entry.crate);
+    if (entry.crate === crate) refuse('invalid-input', `${where}.crate names the crate itself`);
+    if (!targets.some((target) => target.crate === entry.crate)) refuse('invalid-input', `${where}.crate ${entry.crate} is not a crate of this attempt (${targets.map((target) => target.crate).join(', ')})`);
+    if (seen.has(entry.crate)) refuse('invalid-input', `stitch names crate ${entry.crate} more than once`);
+    seen.add(entry.crate);
+    const assume = entry.assume ?? [];
+    if (!Array.isArray(assume) || assume.some((item) => typeof item !== 'string' || !RUST_PATH.test(item) || item.split('::')[0] !== entry.crate)) {
+      refuse('invalid-input', `${where}.assume must list Rust paths of crate ${entry.crate} (a module or an item, such as ${entry.crate}::some_module)`);
+    }
+    return { crate: entry.crate, assume: [...assume].sort() };
+  });
+}
 
 // The manifest, the tree and the verify checks belong to the copy OUT; a
 // crate's own attempt lives in OUT/units/<crate>.
@@ -922,6 +970,9 @@ function multiUnits(spec, manifest) {
         charonArgs: entry.charonArgs ?? spec.charonArgs ?? [],
         cargoArgs: [...cargoArgs, '--package', entry.package],
         aeneasArgs: entry.aeneasArgs ?? spec.aeneasArgs ?? [],
+        ...(entry.moduleRoot !== undefined ? { moduleRoot: entry.moduleRoot } : {}),
+        ...(entry.substitutions !== undefined ? { substitutions: entry.substitutions } : {}),
+        ...(entry.stitch !== undefined ? { stitch: entry.stitch } : {}),
       },
     };
   });
@@ -936,7 +987,31 @@ function multiUnits(spec, manifest) {
       refuse('invalid-input', `the publishDir of ${units[i].crate} (${first}) and of ${units[j].crate} (${second}) are the same or nested; every crate publishes into its own sibling directory`);
     }
   }));
-  return { units, main: spec.main };
+  return { units, main: spec.main, order: stitchOrder(units) };
+}
+
+// The crates in dependency order, providers before the crates stitched to them. A crate
+// can only be stitched to a crate whose Lean module root is known, and a cycle is refused.
+function stitchOrder(units) {
+  const targets = units.map(({ crate, dir }) => ({ crate, dir }));
+  const providers = new Map(units.map((unit) => [unit.crate, checkStitch(unit.flat.stitch ?? [], unit.crate, targets).map((entry) => entry.crate)]));
+  for (const [crate, list] of providers) {
+    for (const provider of list) {
+      if (units.find((unit) => unit.crate === provider).flat.moduleRoot === undefined) refuse('invalid-input', `${crate} is stitched to ${provider}, which names no moduleRoot; the Lean module name of ${provider}'s published directory is needed to import it`);
+    }
+  }
+  const order = [];
+  const visiting = new Set();
+  const visit = (crate) => {
+    if (order.includes(crate)) return;
+    if (visiting.has(crate)) refuse('invalid-input', `stitching is circular through ${crate}; a crate can only import crates that do not import it`);
+    visiting.add(crate);
+    for (const provider of providers.get(crate)) visit(provider);
+    visiting.delete(crate);
+    order.push(crate);
+  };
+  for (const unit of units) visit(unit.crate);
+  return order;
 }
 
 function homesOf(env) {
@@ -967,6 +1042,11 @@ function deriveInvocation(out, manifest, spec, homes, targets = []) {
   const charonArgs = checkArgs('charonArgs', spec.charonArgs ?? [], new Set(), CHARON_VALUED);
   const cargoArgs = checkArgs('cargoArgs', spec.cargoArgs ?? [], CARGO_FLAGS, CARGO_VALUED);
   checkArgs('aeneasArgs', spec.aeneasArgs ?? [], new Set(), {});
+  if (spec.moduleRoot !== undefined && (typeof spec.moduleRoot !== 'string' || !LEAN_MODULE.test(spec.moduleRoot))) {
+    refuse('invalid-input', 'spec.moduleRoot must be the Lean module name of the published directory, such as Project.Extraction.Crate');
+  }
+  const substitutions = checkSubstitutions(spec.substitutions ?? []);
+  const stitch = checkStitch(spec.stitch ?? [], spec.crate, targets);
   const release = releaseTools(path.resolve(projectRoot, spec.release));
   for (const name of ['HOME', 'RUSTUP_HOME', 'CARGO_HOME']) {
     if (typeof homes[name] !== 'string' || !path.isAbsolute(homes[name])) refuse('invalid-input', `${name} must be an absolute path`);
@@ -975,7 +1055,12 @@ function deriveInvocation(out, manifest, spec, homes, targets = []) {
   const llbc = path.join(out, `${spec.crate}.llbc`);
   const aeneasDest = path.join(out, 'aeneas-dest');
   return {
-    spec: { release: spec.release, crate: spec.crate, publishDir: publishRelative, charonArgs, cargoArgs, aeneasArgs: [] },
+    spec: {
+      release: spec.release, crate: spec.crate, publishDir: publishRelative, charonArgs, cargoArgs, aeneasArgs: [],
+      ...(spec.moduleRoot !== undefined ? { moduleRoot: spec.moduleRoot } : {}),
+      ...(substitutions.length > 0 ? { substitutions } : {}),
+      ...(stitch.length > 0 ? { stitch } : {}),
+    },
     crate: spec.crate,
     llbc,
     aeneasDest,
@@ -1038,7 +1123,7 @@ function attempt(flags) {
 // the same prepared manifest, and OUT/attempt.json lists them with their hashes.
 // Everything is checked before anything is written.
 function attemptUnits(out, manifest, manifestSha256, spec) {
-  const { units, main } = multiUnits(spec, manifest);
+  const { units, main, order } = multiUnits(spec, manifest);
   const targets = units.map(({ crate, dir }) => ({ crate, dir }));
   const homes = homesOf(process.env);
   const unitOut = (unit) => path.join(out, UNITS_DIR, unit.crate);
@@ -1053,10 +1138,12 @@ function attemptUnits(out, manifest, manifestSha256, spec) {
     out,
     manifestSha256,
     main,
+    order,
     units: recorded.map(({ unit, record: attempt }) => ({
       crate: unit.crate,
       package: unit.package,
       dir: unit.dir,
+      imports: (attempt.spec.stitch ?? []).map((entry) => entry.crate),
       out: unitOut(unit),
       attemptSha256: sha256(fs.readFileSync(path.join(unitOut(unit), ATTEMPT))),
       supported: attempt.supported,
@@ -1422,7 +1509,7 @@ function runAeneas(chain) {
 // directories that hold them, and the ownership record; this attempt must
 // produce every owned file again. Publication never deletes or overwrites
 // anything else.
-function publicationPlan(inv, outputs) {
+function publicationPlan(inv, outputs, sources = {}) {
   const { publishDir, projectRoot } = inv;
   refuseLinkedDirectory(projectRoot, path.relative(projectRoot, publishDir));
   const stat = fs.lstatSync(publishDir, { throwIfNoEntry: false });
@@ -1465,7 +1552,297 @@ function publicationPlan(inv, outputs) {
     if (folded.has(key) && folded.get(key) !== entry) reject(`${entry} and ${folded.get(key)} differ only in case`, { reason: 'case-collision' });
     folded.set(key, entry);
   }
-  return produced.map((file) => ({ attemptPath: path.join(inv.aeneasDest, file), projectPath: path.join(publishDir, file), sha256: outputs[file] }));
+  return produced.map((file) => ({ attemptPath: sources[file] ?? path.join(inv.aeneasDest, file), projectPath: path.join(publishDir, file), sha256: outputs[file] }));
+}
+
+// ---- Edits to the generated Lean ------------------------------------------------------
+//
+// Two declared, recorded edits turn the Aeneas output into the published Lean: the exact
+// text substitutions of the spec, then stitching to the crates whose real translation
+// replaces this crate's axioms. Both are a pure function of the Aeneas outputs and the
+// spec, so attempt-status computes them again and compares with what publication wrote.
+//
+// Stitching. When crate B calls crate A and A is a target, Aeneas still writes B's
+// foreign items of A as axioms that carry only a type. Each such axiom becomes a
+// reducible alias of A's real constant, with the type B's code was translated against,
+// and B's Lean imports A's module:
+//
+//   axiom A.f : T            ==>   @[reducible] def A.f : T := _root_.A.f
+//
+// The alias keeps every existing name valid, and Lean itself is the signature gate: a
+// constant whose type is not T is rejected when the project builds. A foreign global is
+// typed `Result T` where the crate's own global is `T`, so a constant is lifted with
+// Result.ok. Nothing falls back to an axiom silently: an item the provider does not
+// define must be named in the spec's `assume` list, and is then recorded as assumed.
+
+const OPENERS = '({[⦃';
+const CLOSERS = ')}]⦄';
+const squash = (text) => text.replace(/\s+/g, ' ').trim();
+const countOf = (text, needle) => text.split(needle).length - 1;
+const isRustItem = (rustPath, prefix) => rustPath === prefix || rustPath.startsWith(`${prefix}::`);
+
+function applySubstitutions(file, text, substitutions) {
+  const applied = [];
+  const reasons = [];
+  let current = text;
+  substitutions.forEach((entry, index) => {
+    if (entry.file !== file) return;
+    const found = countOf(current, entry.find);
+    if (found !== entry.count) {
+      reasons.push(`substitution ${index} expects ${entry.count} match(es) of ${JSON.stringify(entry.find)} in ${file} and finds ${found}`);
+      return;
+    }
+    const next = current.split(entry.find).join(entry.replace);
+    applied.push({ index, file, find: entry.find, replace: entry.replace, count: entry.count, reason: entry.reason, beforeSha256: sha256(current), afterSha256: sha256(next) });
+    current = next;
+  });
+  return { text: current, applied, reasons };
+}
+
+function topLevel(text, tokens) {
+  const found = [];
+  let depth = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (OPENERS.includes(char)) depth += 1;
+    else if (CLOSERS.includes(char)) depth -= 1;
+    else if (depth === 0) {
+      const token = tokens.find((candidate) => text.startsWith(candidate, index));
+      if (token) {
+        found.push({ index, token });
+        index += token.length - 1;
+      }
+    }
+  }
+  return found;
+}
+
+// The binder groups and the type after a declaration's name, up to a top-level `:=`.
+function readSignature(rest) {
+  let at = 0;
+  const skip = () => { while (at < rest.length && /\s/.test(rest[at])) at += 1; };
+  const binders = [];
+  skip();
+  while (at < rest.length && OPENERS.includes(rest[at])) {
+    const start = at;
+    let depth = 0;
+    for (; at < rest.length; at += 1) {
+      if (OPENERS.includes(rest[at])) depth += 1;
+      else if (CLOSERS.includes(rest[at])) {
+        depth -= 1;
+        if (depth === 0) { at += 1; break; }
+      }
+    }
+    if (depth !== 0) return null;
+    binders.push(rest.slice(start, at));
+    skip();
+  }
+  if (rest[at] !== ':' || rest[at + 1] === '=') return null;
+  const body = rest.slice(at + 1);
+  const stop = topLevel(body, [':=']).at(0)?.index ?? body.length;
+  return { binders, type: body.slice(0, stop).trim() };
+}
+
+// A declaration's signature as implicit binders, explicit domains and a result, with
+// every identifier that names a declaration of the file spelled in full. Null when the
+// shape is not one this check reads (a dependent type): Lean then decides at build time.
+function normalSignature(rest, qualify) {
+  const parsed = readSignature(rest);
+  if (parsed === null) return null;
+  const implicit = [];
+  const domains = [];
+  for (const group of parsed.binders) {
+    if (group[0] !== '(') { implicit.push(qualify(squash(group))); continue; }
+    const inner = /^\(\s*([^:]+?)\s*:\s*([\s\S]*)\)$/.exec(group);
+    if (inner === null) return null;
+    const others = `${parsed.type} ${parsed.binders.filter((other) => other !== group).join(' ')}`;
+    const names = inner[1].split(/\s+/);
+    if (names.some((name) => new RegExp(`(^|[^A-Za-z0-9_'.])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^A-Za-z0-9_'.])`).test(others))) return null;
+    for (let count = 0; count < names.length; count += 1) domains.push(qualify(squash(inner[2])));
+  }
+  const cuts = topLevel(parsed.type, ['→', '->']);
+  const parts = [];
+  let from = 0;
+  for (const cut of cuts) { parts.push(parsed.type.slice(from, cut.index)); from = cut.index + cut.token.length; }
+  parts.push(parsed.type.slice(from));
+  if (parts.some((part) => /^\(\s*[^()]*:/.test(part.trim()) || /[∀Π]/.test(part))) return null;
+  return { implicit, domains: [...domains, ...parts.slice(0, -1).map((part) => qualify(squash(part)))], result: qualify(squash(parts.at(-1))) };
+}
+
+function balanced(text) {
+  let depth = 0;
+  for (const char of text) {
+    if (OPENERS.includes(char)) depth += 1;
+    else if (CLOSERS.includes(char)) depth -= 1;
+    if (depth < 0) return false;
+  }
+  return depth === 0;
+}
+
+// Removes parentheses that wrap the whole text.
+function unwrap(text) {
+  let value = text.trim();
+  while (value.startsWith('(') && value.endsWith(')') && balanced(value.slice(1, -1))) value = value.slice(1, -1).trim();
+  return value;
+}
+
+// 'equal', 'differ' or 'undecided'. Only a decided difference refuses early; the Lean
+// build is the check for everything else, and the record says which one ran.
+function compareSignatures(consumer, provider, lift) {
+  if (consumer === null || provider === null) return 'undecided';
+  const result = lift ? unwrap(consumer.result.replace(/^Result\s+/, '')) : consumer.result;
+  const expected = lift ? unwrap(provider.result) : provider.result;
+  if (lift && !/^Result\s/.test(consumer.result)) return 'differ';
+  const same = JSON.stringify([consumer.implicit, consumer.domains, result]) === JSON.stringify([provider.implicit, provider.domains, expected]);
+  return same ? 'equal' : 'differ';
+}
+
+const DECLARATION = /^(?:noncomputable\s+)?(def|axiom|structure|inductive|abbrev|opaque|class)\s+([^\s:({[⦃]+)([\s\S]*)$/m;
+const DOC_PATH = /^\/-- (?:Trait declaration: |Trait implementation: )?\[(.*)\]/;
+const RUST_ATTRIBUTE = /\b(rust_fun|rust_const|rust_type)\s+"([^"]+)"/;
+
+function leanDeclarations(texts, crate) {
+  const declarations = new Map();
+  for (const text of texts) {
+    for (const block of text.split(/\n{2,}/)) {
+      if (!block.startsWith('/--')) continue;
+      const found = DECLARATION.exec(block);
+      if (found === null) continue;
+      declarations.set(`${crate}.${found[2]}`, { keyword: found[1], rustPath: DOC_PATH.exec(block)?.[1] ?? null, rest: found[3], blockSha256: sha256(block) });
+    }
+  }
+  return declarations;
+}
+
+// The crate whose Aeneas output this directory holds, ready to be imported: its attempt
+// record, its Aeneas stage (completed, outputs intact) and the Lean it generated.
+function loadProvider(chain, crate) {
+  const dir = path.join(copyRoot(chain.attempt.out), UNITS_DIR, crate);
+  const bad = (message) => refuse('attempt-refused', `stitching to crate ${crate}: ${message}`);
+  if (!lexists(path.join(dir, ATTEMPT))) bad('it has no attempt record in this copy');
+  const record = JSON.parse(fs.readFileSync(path.join(dir, ATTEMPT)));
+  const stageFile = stagePaths(dir, 'aeneas').completed;
+  if (!lexists(stageFile)) bad('its Aeneas stage is not completed; run the stages of that crate through aeneas first');
+  const stageBytes = fs.readFileSync(stageFile);
+  const stage = JSON.parse(stageBytes);
+  if (!exactlyFiles(entriesUnder(record.aeneasDest), stage.outputs)) bad('its Aeneas outputs changed after the Aeneas stage recorded them');
+  const names = translationLeanFiles(path.join(record.aeneasDest, 'translation.json'));
+  const texts = Object.fromEntries(names.map((name) => [name, fs.readFileSync(path.join(record.aeneasDest, name), 'utf8')]));
+  const root = record.spec.moduleRoot;
+  if (root === undefined) bad('it names no moduleRoot');
+  return {
+    crate,
+    stageSha256: sha256(stageBytes),
+    modules: names.map((name) => `${root}.${name.replace(/\.lean$/, '').split('/').join('.')}`),
+    declarations: leanDeclarations(Object.values(texts), crate),
+  };
+}
+
+function stitchText(text, { crate, provider, assume, consumerNames }) {
+  const providerOwned = (rustPath) => rustPath.split('::')[0] === provider.crate;
+  const qualifierFor = (owner, names, skipPrefix) => (code) => code.replace(/[A-Za-z_][A-Za-z0-9_'.]*/g, (token) => (!(skipPrefix && token.startsWith(`${skipPrefix}.`)) && names.has(`${owner}.${token}`) ? `${owner}.${token}` : token));
+  const replaced = [];
+  const assumed = [];
+  const copies = [];
+  const problems = [];
+  const parts = text.split(/(\n{2,})/);
+  for (let index = 0; index < parts.length; index += 2) {
+    const block = parts[index];
+    if (!block.startsWith('/--')) continue;
+    const declaration = /^axiom\s+([^\s:({[⦃]+)([\s\S]*)$/m.exec(block);
+    const attribute = declaration ? RUST_ATTRIBUTE.exec(block.slice(0, declaration.index)) : null;
+    if (declaration === null || attribute === null) {
+      const doc = DOC_PATH.exec(block)?.[1];
+      const copy = DECLARATION.exec(block);
+      if (doc !== undefined && copy !== null && providerOwned(doc)) copies.push({ rustPath: doc, name: copy[2], keyword: copy[1] });
+      continue;
+    }
+    const [, kindWord, rustPath] = attribute;
+    if (!providerOwned(rustPath)) continue;
+    const name = declaration[1];
+    const kind = { rust_fun: 'fun', rust_const: 'const', rust_type: 'type' }[kindWord];
+    const covered = assume.some((prefix) => isRustItem(rustPath, prefix));
+    const target = provider.declarations.get(name);
+    if (covered) {
+      assumed.push({ rustPath, name, reason: 'named in the stitch assume list' });
+      continue;
+    }
+    if (!target || (target.rustPath !== null && target.rustPath !== rustPath)) {
+      problems.push(target ? `${name} is ${rustPath} here and ${target.rustPath} in ${provider.crate}` : `${rustPath} (${name}) is not defined by ${provider.crate}; stitching never keeps an axiom silently, so name it in the stitch assume list or translate it in ${provider.crate}`);
+      continue;
+    }
+    const lift = kind === 'const' && !/^Result\b/.test(squash(readSignature(target.rest)?.type ?? ''));
+    const verdict = compareSignatures(
+      normalSignature(declaration[2], qualifierFor(crate, consumerNames, provider.crate)),
+      normalSignature(target.rest, qualifierFor(provider.crate, provider.declarations, null)),
+      lift,
+    );
+    if (verdict === 'differ') {
+      problems.push(`${rustPath}: the type of ${name} here (${squash(declaration[2])}) is not the type ${provider.crate} defines (${squash(target.rest.split(':=')[0])}), so it cannot stand for it`);
+      continue;
+    }
+    const head = block.slice(0, declaration.index);
+    const marked = /^@\[/m.test(head) ? head.replace(/^@\[/m, '@[reducible, ') : `${head}@[reducible]\n`;
+    parts[index] = `${marked}def ${name}${declaration[2].trimEnd()}\n  := ${lift ? 'Result.ok ' : ''}_root_.${name}`;
+    replaced.push({
+      rustPath, name, kind, lift, providerKind: target.keyword, check: verdict === 'equal' ? 'text-and-lean-build' : 'lean-build',
+      signatureSha256: sha256(squash(declaration[2])), providerDeclSha256: target.blockSha256,
+    });
+  }
+  let result = parts.join('');
+  if (replaced.length > 0) {
+    const header = /^(public import Aeneas|import Aeneas)$/m.exec(result);
+    if (header === null) problems.push('the file has no `import Aeneas` line to add the provider import after');
+    else {
+      const keyword = header[1].startsWith('public') ? 'public import' : 'import';
+      result = result.replace(header[0], [header[0], ...provider.modules.filter((module) => !result.includes(`import ${module}\n`)).map((module) => `${keyword} ${module}`)].join('\n'));
+    }
+  }
+  return { text: result, replaced, assumed, copies, problems };
+}
+
+// The substitutions and then the stitching of every generated Lean file, recomputed from
+// the Aeneas outputs on disk. Returns the record that publication stores, the final
+// texts, and the reasons the edit cannot be made.
+function computeTransform(chain, raw) {
+  const spec = chain.attempt.spec;
+  const substitutions = spec.substitutions ?? [];
+  const reasons = [];
+  for (const entry of substitutions) if (!Object.hasOwn(raw, entry.file)) reasons.push(`a substitution names ${entry.file}, which is not a generated Lean file (${Object.keys(raw).join(', ')})`);
+  const providers = (spec.stitch ?? []).map((entry) => ({ ...entry, loaded: loadProvider(chain, entry.crate) }));
+  const texts = {};
+  const applied = [];
+  const files = {};
+  for (const [name, original] of Object.entries(raw)) {
+    const substituted = applySubstitutions(name, original, substitutions);
+    reasons.push(...substituted.reasons);
+    applied.push(...substituted.applied);
+    texts[name] = substituted.text;
+  }
+  const consumerNames = leanDeclarations(Object.values(texts), spec.crate);
+  const stitched = providers.map(({ loaded }) => ({ provider: loaded.crate, providerStageSha256: loaded.stageSha256, modules: loaded.modules, replaced: [], assumed: [], copies: [], files: [] }));
+  for (const name of Object.keys(texts)) {
+    providers.forEach(({ assume, loaded }, position) => {
+      const result = stitchText(texts[name], { crate: spec.crate, provider: loaded, assume, consumerNames });
+      texts[name] = result.text;
+      stitched[position].replaced.push(...result.replaced);
+      stitched[position].assumed.push(...result.assumed);
+      stitched[position].copies.push(...result.copies);
+      if (result.replaced.length > 0) stitched[position].files.push(name);
+      reasons.push(...result.problems.map((problem) => `${name}: ${problem}`));
+    });
+    files[name] = { rawSha256: sha256(raw[name]), sha256: sha256(texts[name]) };
+  }
+  return { record: { substitutions: applied, stitch: stitched, files }, texts, reasons };
+}
+
+// The edit as the stages see it: nothing when the spec declares none.
+function transformOf(chain) {
+  const spec = chain.attempt.spec;
+  if ((spec.substitutions ?? []).length === 0 && (spec.stitch ?? []).length === 0) return null;
+  const outputs = chain.stages.aeneas.record.outputs;
+  const raw = Object.fromEntries(Object.keys(outputs).filter((file) => file.endsWith('.lean')).sort().map((file) => [file, fs.readFileSync(path.join(chain.invocation.aeneasDest, file), 'utf8')]));
+  return computeTransform(chain, raw);
 }
 
 function runPublish(chain) {
@@ -1473,7 +1850,24 @@ function runPublish(chain) {
   const { out } = chain.attempt;
   const aeneas = chain.stages.aeneas.record;
   if (!exactlyFiles(entriesUnder(inv.aeneasDest), aeneas.outputs)) refuse('attempt-refused', 'the Aeneas outputs changed after the Aeneas stage recorded them');
-  const plan = publicationPlan(inv, aeneas.outputs);
+  const transform = transformOf(chain);
+  if (transform !== null && transform.reasons.length > 0) {
+    return settle(beginStage(chain, 'publish'), { ...stageBase(chain, 'publish'), mapping: [], ownershipSha256: null, transform: transform.record }, transform.reasons);
+  }
+  const outputs = { ...aeneas.outputs };
+  const sources = {};
+  if (transform !== null) {
+    const dest = path.join(out, PUBLISH_DEST);
+    fs.rmSync(dest, { recursive: true, force: true });
+    fs.mkdirSync(dest);
+    for (const [file, text] of Object.entries(transform.texts)) {
+      fs.mkdirSync(path.dirname(path.join(dest, file)), { recursive: true });
+      fs.writeFileSync(path.join(dest, file), text);
+      outputs[file] = sha256(text);
+      sources[file] = path.join(dest, file);
+    }
+  }
+  const plan = publicationPlan(inv, outputs, sources);
   const files = beginStage(chain, 'publish');
   const reasons = [];
   let ownershipSha256 = null;
@@ -1499,7 +1893,7 @@ function runPublish(chain) {
   } catch (error) {
     reasons.push(error.message);
   }
-  return settle(files, { ...stageBase(chain, 'publish'), mapping: plan, ownershipSha256 }, reasons);
+  return settle(files, { ...stageBase(chain, 'publish'), mapping: plan, ownershipSha256, ...(transform === null ? {} : { transform: transform.record }) }, reasons);
 }
 
 const STAGE_RUNNERS = { charon: runCharon, aeneas: runAeneas, publish: runPublish };
@@ -1535,7 +1929,7 @@ function progressOf(out) {
 }
 
 function unitRow(unit) {
-  const base = { crate: unit.crate, package: unit.package, dir: unit.dir };
+  const base = { crate: unit.crate, package: unit.package, dir: unit.dir, imports: unit.imports ?? [] };
   try {
     return { ...base, status: 'complete', run: attemptStatusOf(unit.out).run };
   } catch (error) {
@@ -1557,8 +1951,8 @@ function attemptStatus(flags) {
   // A complete crate's row carries its whole single-crate run, so a reader written for
   // one crate reads any crate of the attempt unchanged.
   const summary = (row) => {
-    const base = { crate: row.crate, package: row.package, dir: row.dir, status: row.status };
-    return row.status === 'complete' ? { ...base, ...row.run } : base;
+    const base = { crate: row.crate, package: row.package, dir: row.dir, status: row.status, imports: row.imports };
+    return row.status === 'complete' ? { ...base, stitch: [], ...row.run } : base;
   };
   if (flags.crate !== undefined) {
     const row = rows.find((entry) => entry.crate === flags.crate);
@@ -1572,7 +1966,7 @@ function attemptStatus(flags) {
   const main = rows.find((row) => row.crate === multi.main);
   const supported = rows.every((row) => row.run.supported);
   const residuals = [...new Map(rows.flatMap((row) => row.run.residuals).map((entry) => [JSON.stringify(entry), entry])).values()];
-  return { message: `attempt complete for ${rows.length} crate(s) (${supported ? 'supported configuration' : 'unsupported configuration'})`, run: { ...main.run, supported, residuals, units: rows.map(summary) } };
+  return { message: `attempt complete for ${rows.length} crate(s) (${supported ? 'supported configuration' : 'unsupported configuration'})`, run: { ...main.run, supported, residuals, order: multi.order ?? multi.units.map((unit) => unit.crate), units: rows.map(summary) } };
 }
 
 function attemptStatusOf(out) {
@@ -1588,6 +1982,18 @@ function attemptStatusOf(out) {
   if (fileState(path.join(inv.publishDir, OWNERSHIP))?.sha256 !== stages.publish.record.ownershipSha256) refuse('attempt-refused', 'the publication ownership record changed');
   const translation = mapping.find((entry) => entry.attemptPath === path.join(inv.aeneasDest, 'translation.json'));
   if (!translation) refuse('attempt-refused', 'the publication record does not map translation.json');
+  const recorded = stages.publish.record.transform ?? null;
+  const again = transformOf(chain);
+  if ((again === null) !== (recorded === null)) refuse('attempt-refused', 'the spec declares substitutions or stitching that publication did not record, or the reverse');
+  if (again !== null) {
+    const staged = path.join(out, PUBLISH_DEST);
+    if (again.reasons.length > 0 || !sameState(again.record, recorded)) refuse('attempt-refused', `the substitutions and stitching no longer reproduce the published Lean${again.reasons.length > 0 ? `: ${again.reasons.join('; ')}` : ''}`);
+    if (!exactlyFiles(entriesUnder(staged), Object.fromEntries(Object.entries(again.record.files).map(([file, state]) => [file, state.sha256])))) refuse('attempt-refused', 'the edited Lean files changed after publication wrote them');
+    for (const [file, state] of Object.entries(again.record.files)) {
+      const entry = mapping.find((candidate) => candidate.projectPath === path.join(inv.publishDir, file));
+      if (entry?.sha256 !== state.sha256 || entry.attemptPath !== path.join(staged, file)) refuse('attempt-refused', `${file} was not published from the edited Lean`);
+    }
+  }
   return {
     message: `attempt complete (${record.supported ? 'supported configuration' : 'unsupported configuration'})`,
     run: {
@@ -1606,6 +2012,9 @@ function attemptStatusOf(out) {
       publishDir: path.relative(inv.projectRoot, inv.publishDir),
       // What Charon flagged although it exited 0: the items it could not translate, by name.
       hasErrors: stages.charon.record.llbc ? { value: stages.charon.record.llbc.hasErrors, items: stages.charon.record.llbc.items, itemCount: stages.charon.record.llbc.itemCount } : null,
+      // The declared edits of the generated Lean: substitutions, and the crates whose real
+      // translation this crate's Lean imports in place of axioms.
+      ...(recorded === null ? {} : { imports: recorded.stitch.map((entry) => entry.provider), stitch: recorded.stitch, substitutions: recorded.substitutions }),
     },
   };
 }

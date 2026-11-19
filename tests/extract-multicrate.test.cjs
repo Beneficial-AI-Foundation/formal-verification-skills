@@ -9,60 +9,11 @@
 const { describe, it, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 
-const { fakeMultiTools, engine: runEngine, toyWorkspace, toySpec } = require('./helpers/fake-multicrate-tools.cjs');
+const { toySpec, cleanup, workspace, run: engine, prepared, specFile, attempted, step, completeUnit, complete } = require('./helpers/fake-multicrate-tools.cjs');
 
-const TMP = fs.realpathSync(os.tmpdir());
-const temporaryDirectories = [];
-
-after(() => {
-  for (const directory of temporaryDirectories) fs.rmSync(directory, { recursive: true, force: true });
-});
-
-function workspace(behaviour = {}) {
-  const root = fs.mkdtempSync(path.join(TMP, 'fvs-multicrate-'));
-  temporaryDirectories.push(root);
-  const project = toyWorkspace(root);
-  const tools = fakeMultiTools(project, root, behaviour);
-  fs.mkdirSync(path.join(root, 'copies'));
-  return { root, project, tools, behaviour: tools.setBehaviour, release: tools.release };
-}
-
-const engine = (ws, args) => runEngine(ws.tools, args);
-
-let counter = 0;
-function prepared(ws) {
-  const out = path.join(ws.root, 'copies', `out-${(counter += 1)}`);
-  const prep = engine(ws, ['prepare', '--project-root', ws.project, '--out', out]);
-  assert.equal(prep.status, 0, prep.stdout);
-  return out;
-}
-
-function specFile(ws, spec) {
-  const file = path.join(ws.root, `spec-${(counter += 1)}.json`);
-  fs.writeFileSync(file, JSON.stringify(spec));
-  return file;
-}
-
-function attempted(ws, spec = toySpec()) {
-  const out = prepared(ws);
-  return { out, recorded: engine(ws, ['attempt', '--out', out, '--spec', specFile(ws, spec)]) };
-}
-
-const step = (ws, out, name, crate) => engine(ws, ['run', '--out', out, '--step', name, ...(crate ? ['--crate', crate] : [])]);
-
-function completeUnit(ws, out, crate) {
-  for (const name of ['charon', 'aeneas', 'publish']) assert.equal(step(ws, out, name, crate).status, 0, `${crate} ${name}`);
-}
-
-function complete(ws, spec) {
-  const { out, recorded } = attempted(ws, spec);
-  assert.equal(recorded.status, 0, recorded.stdout);
-  for (const unit of recorded.result.attempt.units) completeUnit(ws, out, unit.crate);
-  return out;
-}
+after(cleanup);
 
 const charonRecord = (out, crate) => JSON.parse(fs.readFileSync(path.join(out, 'units', crate, 'stage-1-charon.completed.json'), 'utf8'));
 const failedCharon = (out, crate) => JSON.parse(fs.readFileSync(path.join(out, 'units', crate, 'stage-1-charon.failed.json'), 'utf8'));
@@ -103,7 +54,7 @@ describe('multi-crate extraction: the toy workspace', () => {
     for (const unit of run.units) {
       for (const field of ['attemptSha256', 'stages', 'manifestSha256', 'config', 'configSha256', 'llbc', 'translation', 'publication', 'hasErrors']) assert.ok(unit[field] !== undefined, `${unit.crate} row lacks ${field}`);
       const one = engine(ws, ['attempt-status', '--out', out, '--crate', unit.crate]).result;
-      const { units: _, ...main } = run;
+      const { units: _, order: __, ...main } = run;
       assert.equal(one.run.crate, unit.crate);
       assert.equal(one.run.attemptSha256, unit.attemptSha256);
       assert.equal(one.run.translation.projectPath, path.join(ws.project, unit.publishDir, 'translation.json'));
