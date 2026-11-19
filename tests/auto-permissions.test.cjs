@@ -110,16 +110,15 @@ describe('the catalog', () => {
       'Bash(git push *)', 'Bash(git push --force origin fvs/*)', 'Bash(git push origin main)', 'Bash(git push origin main*)', 'Bash(git push upstream fvs/*)',
       'Bash(git push origin */*)', 'Bash(git push -u upstream fvs/*)', 'Bash(git push origin release/*)', 'Bash(git *)', 'Bash(gh *)', 'Bash(*)', 'Bash(rm *)',
       'Bash(ao stop *)', 'Bash(ao pr merge *)', 'Edit(/.claude/**)', 'Edit(/.git/**)', 'Edit(/../**)', 'Edit(/**)', 'Read(/**)', 'WebFetch',
+      // Not rules FVS writes: the spec and proof folders, and draft pull request create and edit, are left to the user.
+      'Edit(/formal/**)', 'Bash(gh pr edit *)', `Bash(gh pr create --draft --repo ${REPO} *)`,
     ]) assert.ok(lib.ruleProblem('allow', rule), `should refuse ${rule}`);
     assert.ok(lib.ruleProblem('deny', 'Bash(gh pr comment *)'));
   });
 
-  it('refuses inputs that could widen a push or edit rule', () => {
+  it('refuses inputs that could widen a push rule', () => {
     for (const bad of ['main', 'master', '*', 'fvs/*', 'a:b', '..', 'a/../b', '-f', '+x', '', 'release/3.0.0-rc2', 'HEAD', 'a b']) {
       assert.throws(() => lib.buildCatalog({ repo: REPO, prefixes: [bad] }), (error) => error.code === 'invalid-input', bad);
-    }
-    for (const bad of ['.claude', '.git', '../x', '/abs', '*', '', 'a/.b']) {
-      assert.throws(() => lib.buildCatalog({ repo: REPO, editDir: bad }), (error) => error.code === 'invalid-input', bad);
     }
     assert.throws(() => lib.buildCatalog({ repo: REPO, remote: 'upstream' }), (error) => error.code === 'upstream-refused');
     assert.throws(() => lib.buildCatalog({ repo: 'not-a-repo' }), (error) => error.code === 'invalid-input');
@@ -130,8 +129,7 @@ describe('plan', () => {
   it('lists the probes and refuses a remote that is not the project repository', () => {
     const ok = run('plan', base());
     assert.equal(ok.status, 0);
-    assert.deepEqual(ok.json.steps.filter((s) => !s.optional).map((s) => s.id),
-      ['worker-message', 'author-edit', 'lake-build', 'gh-read', 'git-read', 'git-push']);
+    assert.deepEqual(ok.json.steps.map((s) => s.id), ['worker-message', 'author-edit', 'lake-build', 'gh-read', 'git-read', 'git-push']);
     assert.equal(ok.json.record.present, false);
     const wrong = run('plan', ['--project-root', project, '--repo', 'Other/repo']);
     assert.equal(wrong.status, 1);
@@ -322,16 +320,11 @@ describe('write-allowlist for Claude Code', () => {
   it('refuses unknown steps and forbidden inputs', () => {
     assert.equal(allow('gh-comment').json.code, 'unknown-step');
     assert.equal(allow('worker-message', '--branch-prefix', 'main').json.code, 'invalid-input');
-    assert.equal(allow('edit-folders', '--edit-dir', '.claude').json.code, 'invalid-input');
+    for (const dropped of ['edit-folders', 'draft-pr-create', 'draft-pr-edit']) assert.equal(allow(dropped).json.code, 'unknown-step', dropped);
+    assert.equal(run('plan', base('--edit-dir', 'formal')).json.code, 'usage');
     assert.equal(run('write-allowlist', base('--runtime', 'claude', '--steps', '')).json.code, 'invalid-input');
     assert.equal(run('write-allowlist', base('--runtime', 'cursor', '--steps', 'git-push')).json.code, 'invalid-input');
     assert.equal(fs.existsSync(settingsFile()), false);
-  });
-
-  it('writes the optional steps only when they are named, with their pinned shape', () => {
-    const done = confirmed('draft-pr-create,edit-folders', '--edit-dir', 'formal');
-    assert.equal(done.json.code, 'written');
-    assert.deepEqual(readSettings().permissions.allow, [`Bash(gh pr create --draft --repo ${REPO} *)`, 'Edit(/formal/**)']);
   });
 
   it('writes through a linked .claude folder and says where the file really is', () => {
@@ -483,8 +476,7 @@ describe('the permissions page', () => {
     const documented = JSON.parse(block(page(), 'Claude Code allowlist', 'json'));
     assert.deepEqual(documented.permissions.allow, probed.flatMap((s) => s.claude));
     assert.deepEqual(documented.permissions.deny, lib.GUARDS);
-    const optional = catalog.steps.filter((s) => s.optional).flatMap((s) => s.claude);
-    for (const rule of optional) assert.ok(page().includes(rule), `optional rule ${rule} is documented`);
+    for (const dropped of ['draft-pr-create', 'draft-pr-edit', 'edit-folders', 'gh pr create', 'gh pr edit']) assert.ok(!page().includes(dropped), `${dropped} is no longer written, so the page does not offer it`);
   });
 
   it('prints exactly the Codex rules the script writes', () => {

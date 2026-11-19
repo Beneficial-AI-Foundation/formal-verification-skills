@@ -307,8 +307,7 @@ If nothing prompted, say so and write nothing. If some steps prompted:
 2. Run `write-allowlist` without `--confirm` for the steps that prompted, for example
    `node "$PERM" write-allowlist --project-root . --repo "$DRAFT_REPO" --branch-prefix fvs --runtime claude --steps worker-message,git-push`.
    It writes nothing and refuses with `confirmation-required`, printing the exact rules, the file and a digest.
-   Show the owner exactly that preview. Offer the optional steps (`draft-pr-create`, `draft-pr-edit`,
-   `edit-folders`) as extra choices, never as a default, and say they were not probed. Offer
+   Show the owner exactly that preview. Offer
    `--target local` (`.claude/settings.local.json`, read from the main checkout by every worktree and kept
    out of git) beside the default shared file. On Codex, use `--runtime codex`; it writes only the rules
    Codex can express and says why it skips the rest.

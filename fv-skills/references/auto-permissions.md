@@ -35,8 +35,8 @@ them posts to GitHub or pushes anything. The only things written are one scratch
 check refuses to run the push probe when the remote does not point at it. `fvs` is the branch namespace the
 run pushes under; you choose it, and it can never be `main`, `master`, `release` or a wildcard.
 
-Creating or editing a pull request is not harmless, so those steps are not probed. They are offered as
-optional rules (below).
+Creating or editing a pull request is not part of the check, and init writes no rule for either. Approve
+them yourself, or add your own rule if you want them to run unasked.
 
 Then you answer which steps prompted. If none did, nothing is written. If some did, init shows you the exact
 rules for those steps, and writes them only after your yes. The record of your answers is
@@ -89,7 +89,7 @@ Why each rule:
 
 - `ao send *`: the orchestrator's messages to workers.
 - `Edit(/.formalising/auto-fv/permission-check/**)`: the scratch file of the check only. Edits in your spec and
-  proof folders follow the session's permission mode (see the optional rule below).
+  proof folders follow the session's permission mode; init writes no rule for them.
 - `lake env lean *` and `lake build *`: compiling Lean. Lake runs the project's own lakefile and downloads a
   dependency that is missing, so these rules allow what any build of the project does.
 - `gh pr view *` and `gh pr list *`: reading pull requests. Read only.
@@ -102,14 +102,6 @@ Why each rule:
   of force pushes, deletes, mirrors, tag pushes, pruning, `+branch` and `source:destination` pushes outright,
   because an unanswered prompt would only stall the run. They are not a complete boundary: see "What the
   rules cannot close".
-
-Optional rules, never probed, written only when you pick them:
-
-| Step | Rule | Why |
-|---|---|---|
-| `draft-pr-create` | `Bash(gh pr create --draft --repo OWNER/REPO *)` | A worker opens a draft pull request on your repository. The order of the words matters: `--draft` then `--repo`. |
-| `draft-pr-edit` | `Bash(gh pr edit *)` | A worker edits the body of a pull request. |
-| `edit-folders` | `Edit(/formal/**)` | Authors edit your spec and proof folder without asking each time. It never names `.claude`, `.git` or `.formalising`. |
 
 ## Codex rules
 
@@ -211,7 +203,7 @@ Work through these in order. Each is specific to a setup, so skip any that is no
 1. **The session has not reloaded the file.** Claude Code watches settings files and reloads them, but a
    session started before the file existed may need a restart.
 2. **An ask rule matches.** An ask rule beats an allow rule. Wildcard ask rules, such as one for any command
-   containing `gh pr edit` or `git merge`, match words anywhere in a command, including the text of an
+   containing `git merge`, match words anywhere in a command, including the text of an
    `ao send` message or a pull request body, so a harmless message that mentions a merge can prompt. Say what
    should happen in plain words ("combine the branches"), or narrow the ask rule so that it starts with the
    command.

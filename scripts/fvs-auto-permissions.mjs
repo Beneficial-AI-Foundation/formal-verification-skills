@@ -55,11 +55,6 @@ function checkPrefix(prefix) {
   if (RESERVED.has(parts[0])) refuse('invalid-input', `branch prefix ${JSON.stringify(prefix)} is a shared branch name; choose a namespace of your own, such as fvs`);
   return prefix;
 }
-function checkEditDir(dir) {
-  if (!String(dir).split('/').every((part) => WORD.test(part))) refuse('invalid-input', `edit folder ${JSON.stringify(dir)} must be a plain relative folder such as formal (no dot folders, no "..", no wildcard)`);
-  return dir;
-}
-
 // Host and OWNER/REPO of a git URL, or null when the URL does not name exactly one repository on one host
 // (a local path, a file URL, a path with more or fewer than two segments).
 export function parseRemoteUrl(url) {
@@ -106,8 +101,8 @@ export const GUARDS = [
 const bash = (command) => ({ tool: 'Bash', command });
 const rule = (pattern, justification, match, notMatch) => ({ pattern, justification, match, notMatch });
 
-export function buildCatalog({ repo, remote = 'origin', prefixes = ['fvs'], editDir = 'formal' }) {
-  checkRepo(repo); checkRemote(remote); checkEditDir(editDir);
+export function buildCatalog({ repo, remote = 'origin', prefixes = ['fvs'] }) {
+  checkRepo(repo); checkRemote(remote);
   const pushPrefixes = prefixes.map(checkPrefix);
   const prefix = pushPrefixes[0];
   const steps = [
@@ -154,37 +149,16 @@ export function buildCatalog({ repo, remote = 'origin', prefixes = ['fvs'], edit
       codex: [], codexNote: 'A Codex rule matches only the start of a command, so it cannot exclude a force push: push still asks on Codex.',
       guards: GUARDS,
     },
-    {
-      id: 'draft-pr-create', optional: true, why: 'A worker opens a draft pull request on the project repository. Not probed: creating one is not harmless.',
-      probes: null,
-      claude: [`Bash(gh pr create --draft --repo ${repo} *)`],
-      codex: [], codexNote: 'Not written for Codex.',
-    },
-    {
-      id: 'draft-pr-edit', optional: true, why: 'A worker edits the body of a pull request. Not probed: editing one is not harmless.',
-      probes: null,
-      claude: ['Bash(gh pr edit *)'],
-      codex: [], codexNote: 'Not written for Codex.',
-    },
-    {
-      id: 'edit-folders', optional: true, why: `Authors edit files under ${editDir}/ without asking each time. Not probed: a probe there would leave a stray file in a folder that is committed.`,
-      probes: null,
-      claude: [`Edit(/${editDir}/**)`],
-      codex: [], codexNote: 'Codex file edits follow the sandbox mode, not a rule file.',
-    },
   ];
-  return { repo, remote, prefixes: pushPrefixes, editDir, steps, guards: GUARDS };
+  return { repo, remote, prefixes: pushPrefixes, steps, guards: GUARDS };
 }
 
 // Defence in depth: every rule the writer is about to emit passes this, whatever built it.
 export function ruleProblem(kind, text) {
   if (kind === 'deny') return GUARDS.includes(text) ? null : 'only the push guard rules may be written as deny rules';
   if (kind !== 'allow') return `unknown rule kind ${kind}`;
-  const edit = /^Edit\(\/(.+)\/\*\*\)$/.exec(text);
-  if (edit) {
-    if (edit[1] === SCRATCH_DIR) return null;
-    return edit[1].split('/').every((part) => WORD.test(part)) ? null : 'an edit rule must name a plain folder (no dot folders such as .claude or .git, no "..")';
-  }
+  // The only edit rule is for the check's own scratch folder; spec and proof folders follow the session's permission mode.
+  if (text.startsWith('Edit(')) return text === `Edit(/${SCRATCH_DIR}/**)` ? null : 'the only edit rule FVS writes is for the permission check\'s scratch folder';
   const push = /^Bash\(git push (?:-u )?(\S+) (\S+)\/\*\)$/.exec(text);
   if (push) {
     if (!WORD.test(push[1]) || push[1] === 'upstream') return 'a push rule must name the project remote, never upstream';
@@ -192,8 +166,7 @@ export function ruleProblem(kind, text) {
     if (!parts.every((part) => WORD.test(part)) || push[2].includes('..') || RESERVED.has(parts[0])) return 'a push rule must name a private branch namespace, never a shared branch';
     return null;
   }
-  const fixed = [/^Bash\(ao send \*\)$/, /^Bash\(gh pr (?:view|list|edit) \*\)$/, /^Bash\(git (?:fetch|ls-remote) \*\)$/,
-    /^Bash\(lake (?:env lean|build) \*\)$/, /^Bash\(gh pr create --draft --repo [A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9._-]+ \*\)$/];
+  const fixed = [/^Bash\(ao send \*\)$/, /^Bash\(gh pr (?:view|list) \*\)$/, /^Bash\(git (?:fetch|ls-remote) \*\)$/, /^Bash\(lake (?:env lean|build) \*\)$/];
   return fixed.some((pattern) => pattern.test(text)) ? null : 'not a rule FVS writes (no GitHub comment, review or merge, no force push, no wildcard program)';
 }
 
@@ -248,7 +221,7 @@ function summaryLine(record) {
 
 function context(flags) {
   const root = fs.realpathSync.native(flags['project-root'] ?? process.cwd());
-  const catalog = buildCatalog({ repo: flags.repo, remote: flags.remote, prefixes: flags['branch-prefix'], editDir: flags['edit-dir'] });
+  const catalog = buildCatalog({ repo: flags.repo, remote: flags.remote, prefixes: flags['branch-prefix'] });
   const host = flags.host ?? 'github.com';
   if (!/^[A-Za-z0-9.-]+$/.test(host)) refuse('invalid-input', `--host must be a plain host name, got ${JSON.stringify(host)}`);
   checkRemoteIsRepo(root, catalog.remote, catalog.repo, host);
@@ -276,8 +249,8 @@ function plan(flags) {
     code: 'ok', record: record ? { present: true, summary: summaryLine(record), rounds: record.rounds } : { present: false, summary: summaryLine(null) },
     repo: catalog.repo, remote: catalog.remote, branchPrefixes: catalog.prefixes,
     steps: catalog.steps.map((step) => (step.id === 'lake-build' && lakeBlocker
-      ? { id: step.id, optional: false, why: step.why, probes: null, skipped: `not probed: ${lakeBlocker}; record it as unknown` }
-      : { id: step.id, optional: Boolean(step.optional), why: step.why, probes: step.probes })),
+      ? { id: step.id, why: step.why, probes: null, skipped: `not probed: ${lakeBlocker}; record it as unknown` }
+      : { id: step.id, why: step.why, probes: step.probes })),
     message: record ? 'A record exists: do not run the check again; show the summary.' : 'Run each probe as its own plain call, then ask the user which steps prompted. A skipped step is recorded as unknown.',
   };
 }
@@ -288,7 +261,7 @@ function record(flags) {
   if (!flags.input) refuse('invalid-input', '--input is required');
   let input;
   try { input = readJson(flags.input); } catch (error) { refuse('invalid-input', `cannot read --input: ${error.message}`); }
-  const ids = new Set(catalog.steps.filter((step) => step.probes).map((step) => step.id));
+  const ids = new Set(catalog.steps.map((step) => step.id));
   const errors = [];
   if (!['claude', 'codex'].includes(input.runtime)) errors.push('runtime must be claude or codex');
   if (!['check', 'recheck'].includes(input.kind)) errors.push('kind must be check or recheck');
@@ -449,9 +422,8 @@ const USAGE = `Usage: node fvs-auto-permissions.mjs <plan|record|write-allowlist
   --host HOST            the host of that repository (default github.com); a URL on any other host is refused
   --remote NAME          git remote of the project fork (default origin; never upstream)
   --branch-prefix P      branch namespace the run pushes under (repeatable; default fvs; never main, master, release...)
-  --edit-dir DIR         spec and proof folder for the optional edit-folders step (default formal)
 
-plan                     list the probes: one harmless instance of each run step, plus the optional steps
+plan                     list the probes: one instance of each run step, chosen to post and push nothing
 record --input FILE      keep the user's answer: {"runtime":"claude|codex","kind":"check|recheck","results":{"<step>":"prompted|quiet|unknown"}}
 write-allowlist          --runtime claude|codex --steps ID,ID [--target shared|local] [--confirm DIGEST]
                          without a matching --confirm it writes nothing and prints the preview and its digest
@@ -461,7 +433,7 @@ Output is JSON. Exit 0 on success, 1 on a refusal, 2 on a usage error.
 
 function parse(argv) {
   const flags = { 'branch-prefix': [] };
-  const known = new Set(['project-root', 'repo', 'host', 'remote', 'branch-prefix', 'edit-dir', 'input', 'runtime', 'steps', 'target', 'confirm']);
+  const known = new Set(['project-root', 'repo', 'host', 'remote', 'branch-prefix', 'input', 'runtime', 'steps', 'target', 'confirm']);
   for (let i = 0; i < argv.length; i += 2) {
     const name = argv[i]?.startsWith('--') ? argv[i].slice(2) : null;
     if (!name || !known.has(name)) throw new Refuse('usage', `unknown argument ${JSON.stringify(argv[i])}`);
