@@ -97,7 +97,8 @@ merge and the proof pull request").
    recorded spec merge (a receipt made without `--spec-base`, or against another commit, does not
    count), so record that pull request with the commit you checked, and run the check again after any
    new commit on its branch. A receipt also stops counting when an externals record that its
-   acceptance relied on changes. A check that is refused or does not finish leaves a receipt that is
+   acceptance relied on changes, and an acceptance from an older build check (a receipt before version
+   2, or one with no Lean-level comparison) does not count either: run the check again. A check that is refused or does not finish leaves a receipt that is
    not an acceptance, so an earlier acceptance of the same commit does not stand. Do not redirect
    the receipt: the state reads it only from the build check's default location. A worker's report,
    or a green build in its own checkout, is not acceptance.
