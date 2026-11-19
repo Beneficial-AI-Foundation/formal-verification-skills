@@ -243,16 +243,16 @@ describe('run overrides', () => {
     init(root);
     assert.equal(cli('read-state', '--project-root', root).json.overrides, undefined, 'none recorded, none shown');
 
-    const result = override(root, 'pr-base', 'release/3.0.0-rc3', 'the run brief moved the base');
+    const result = override(root, 'pr-base', 'release/next', 'the run brief moved the base');
     assert.equal(result.status, 0, result.stdout);
     assert.equal(result.json.code, 'recorded');
     assert.match(result.json.message, /do not amend the agreement/);
-    assert.equal(result.json.overrides['pr-base'].value, 'release/3.0.0-rc3');
+    assert.equal(result.json.overrides['pr-base'].value, 'release/next');
 
     // Each command below is a new process, as a resumed session would be.
     for (const flags of [[], ['--brief']]) {
       const view = cli('read-state', '--project-root', root, ...flags).json;
-      assert.equal(view.overrides['pr-base'].value, 'release/3.0.0-rc3', flags.join(' '));
+      assert.equal(view.overrides['pr-base'].value, 'release/next', flags.join(' '));
       assert.equal(view.overrides['pr-base'].reason, 'the run brief moved the base');
       assert.match(view.overridesNote, /do not amend the agreement/);
     }
@@ -267,12 +267,12 @@ describe('run overrides', () => {
     assert.equal(override(root, 'pr-base', 'main', 'again').json.code, 'unchanged');
     assert.deepEqual(fs.readFileSync(overridesFile(root)), bytes, 'nothing was written');
 
-    assert.equal(override(root, 'pr-base', 'release/3.0.0-rc3', 'second brief').json.code, 'recorded');
+    assert.equal(override(root, 'pr-base', 'release/next', 'second brief').json.code, 'recorded');
     const view = cli('read-state', '--project-root', root, '--brief').json;
     assert.deepEqual(Object.keys(view.overrides).sort(), ['a2-exception', 'pr-base']);
-    assert.equal(view.overrides['pr-base'].value, 'release/3.0.0-rc3');
+    assert.equal(view.overrides['pr-base'].value, 'release/next');
     const rows = JSON.parse(fs.readFileSync(overridesFile(root), 'utf8')).overrides;
-    assert.deepEqual(rows.map((row) => [row.key, row.value]), [['pr-base', 'main'], ['a2-exception', 'does not apply'], ['pr-base', 'release/3.0.0-rc3']]);
+    assert.deepEqual(rows.map((row) => [row.key, row.value]), [['pr-base', 'main'], ['a2-exception', 'does not apply'], ['pr-base', 'release/next']]);
   });
 
   it('survive a re-init with changed choices, and recording one leaves state.json untouched', () => {
@@ -280,12 +280,12 @@ describe('run overrides', () => {
     init(root);
     const stateFile = path.join(root, '.formalising', 'auto-fv', 'state.json');
     const stateBefore = fs.readFileSync(stateFile);
-    override(root, 'pr-base', 'release/3.0.0-rc3', 'brief');
+    override(root, 'pr-base', 'release/next', 'brief');
     assert.deepEqual(fs.readFileSync(stateFile), stateBefore, 'the agreement and choices in state.json are not amended');
 
     const changed = init(root, { scope: 'the whole crate', confirmOverwrite: true });
     assert.equal(changed.code, 'updated');
-    assert.equal(cli('read-state', '--project-root', root).json.overrides['pr-base'].value, 'release/3.0.0-rc3');
+    assert.equal(cli('read-state', '--project-root', root).json.overrides['pr-base'].value, 'release/next');
   });
 
   it('are refused without state, with a bad key, or without a value or reason, writing nothing', () => {
