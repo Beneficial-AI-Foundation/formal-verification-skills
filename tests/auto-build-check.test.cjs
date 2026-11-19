@@ -1004,6 +1004,34 @@ describe('the merged spec: changes that are refused', () => {
     assert.deepEqual(prose.problems, [], 'docstring prose that starts a line with the word is not a declaration');
   });
 
+  test('a Lean file or lakefile that names debug.skipKernelTC or addDeclWithoutChecking is refused before any build', async () => {
+    const proofs = (text) => ({ ...HEAD_FILES, 'formal/proofs/Lemmas/L.lean': `import Dep\n${text}` });
+    for (const [name, text, token] of [
+      ['the option in front of a theorem', 'set_option debug.skipKernelTC true in\ntheorem helper : 1 = 2 := by decide\n', 'debug.skipKernelTC'],
+      ['the option with other spacing', 'set_option   debug.skipKernelTC   true\ntheorem helper : True := trivial\n', 'debug.skipKernelTC'],
+      ['the option in a comment', '/- set_option debug.skipKernelTC true -/\ntheorem helper : True := trivial\n', 'debug.skipKernelTC'],
+      ['the option as a string', 'def o : String := "debug.skipKernelTC"\ntheorem helper : True := trivial\n', 'debug.skipKernelTC'],
+      ['the function in a command', 'open Lean Elab Command in\nelab "evil" : command => modifyEnv fun e => e.addDeclWithoutChecking default\ntheorem helper : True := trivial\n', 'addDeclWithoutChecking'],
+    ]) {
+      const fx = layered({ head: proofs(text) });
+      const result = checkTip(fx);
+      assert.equal(result.status, 1, name);
+      assert.deepEqual(result.json.integrity.problems.map((p) => [p.kind, p.token, p.file]), [['unchecked-declaration', token, 'formal/proofs/Lemmas/L.lean']], name);
+      assert.match(result.json.label, /^build check failed: .*lets Lean accept a declaration without running its kernel/, name);
+      noBuild(fx);
+    }
+    const { checkIntegrity, memoryTree } = await library();
+    const lake = (extra) => `defaultTargets = ["Foo"]\n[[lean_lib]]\nname = "Foo"\nglobs = ["Foo.+"]\n${extra}`;
+    const kinds = (files, base = null) => checkIntegrity({ base: base && memoryTree(base), head: memoryTree(files) }).problems.map((p) => [p.kind, p.file]);
+    const same = { 'lakefile.toml': lake('moreLeanArgs = ["-Ddebug.skipKernelTC=true"]\n'), 'Foo/P.lean': 'def p := 1\n' };
+    assert.deepEqual(kinds(same, same), [['unchecked-declaration', 'lakefile.toml']], 'a lakefile that sets it, unchanged since the merged spec');
+    assert.deepEqual(kinds({ 'lakefile.lean': 'import Lake\nopen Lake DSL\n\npackage p where\n  moreLeanArgs := #["-Ddebug.skipKernelTC=true"]\n', 'Foo/P.lean': 'def p := 1\n' }),
+      [['unchecked-declaration', 'lakefile.lean']], 'a lakefile.lean, with no merged spec to compare with');
+    const old = { 'lakefile.toml': lake(''), 'Foo/P.lean': 'set_option debug.skipKernelTC true\ndef p := 1\n' };
+    assert.deepEqual(kinds(old, old), [['unchecked-declaration', 'Foo/P.lean']], 'the same text in the merged spec itself is refused too');
+    assert.deepEqual(kinds({ 'lakefile.toml': lake(''), 'Foo/P.lean': 'def p := 1\n', '.lake/packages/dep/Dep.lean': 'set_option debug.skipKernelTC true\n', 'README.md': 'debug.skipKernelTC\n' }), [], 'a prebuilt package and a file that is not Lean are not read');
+  });
+
   test('a project one folder below the repository root is compared by the same rules', () => {
     const fx = layered({ sub: 'proj' });
     const result = checkTip(fx);

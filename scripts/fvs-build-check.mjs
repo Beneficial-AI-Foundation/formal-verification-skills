@@ -21,7 +21,8 @@
 // by the declaration each sits in) or an axiom outside Trusted/ (judged by its name and type, so
 // swapping one for another counts), a lakefile may not appear below the project root, and a new Trusted file
 // is allowed only for axioms tied to an externals record the owner accepted. Strings and layout are
-// compared exactly; only comments, docstrings, guards and the layout of a recalled statement are free. The glob guard refuses a spec,
+// compared exactly; only comments, docstrings, guards and the layout of a recalled statement are free. No Lean file or
+// lakefile of the commit may name debug.skipKernelTC or addDeclWithoutChecking, whatever the merged spec had. The glob guard refuses a spec,
 // proof or extraction file that no lean_lib glob of a default target reaches, because Lake would
 // never compile it; the lakefile, the manifest and lean-toolchain are frozen. A commit that fails a
 // guard gets a failed receipt and no build runs.
@@ -855,6 +856,30 @@ function globProblems(head, changed, layout) {
   return problems;
 }
 
+// Two ways to make Lean accept a declaration without running the kernel on it: the option
+// debug.skipKernelTC (in a file, in a lakefile's leanOptions, or as a -D argument) and
+// Environment.addDeclWithoutChecking from a command or an initializer. Either one lets a false theorem
+// into the environment, and nothing the Lean-level program reads afterwards can tell. So the bare
+// identifier is refused in any Lean file or lakefile of the commit, whatever the merged spec had,
+// read from the raw text (a comment, a docstring or a string holding it counts too, because a string
+// can be turned into an option name or a command). Building the name from pieces is beyond a text rule.
+const UNCHECKED_DECLARATION = [['debug.skipKernelTC', /skipKernelTC/], ['addDeclWithoutChecking', /addDeclWithoutChecking/]];
+
+function uncheckedDeclarations(head) {
+  const problems = [];
+  for (const rel of [...head.keys()].sort()) {
+    if (rel.startsWith('.lake/') || !/\.lean$|(?:^|\/)lakefile\.[a-z]+$/.test(rel)) continue;
+    const text = head.get(rel).text();
+    for (const [token, pattern] of UNCHECKED_DECLARATION) {
+      const found = pattern.exec(text);
+      if (!found) continue;
+      const line = text.slice(0, found.index).split('\n').length;
+      problems.push({ kind: 'unchecked-declaration', file: rel, statement: null, token, detail: `${token} is named at line ${line}: it lets Lean accept a declaration without running its kernel on it, so nothing a build proves holds, and no project file or lakefile may name it` });
+    }
+  }
+  return problems;
+}
+
 // What the head tree may differ in from the merged spec tree, and whether every spec and proof file is
 // built. `base` is null when there is no merged spec to compare with; the glob check still runs.
 // `externals` returns the records of the run state (or null), and is read only when a new Trusted
@@ -901,7 +926,7 @@ export function checkIntegrity({ base: baseTree, head: headTree, externals = () 
       if (lean) forbiddenAdded(rel, was.text(), now.text(), problems);
     }
   }
-  problems.push(...globProblems(head, changed, layout));
+  problems.push(...globProblems(head, changed, layout), ...uncheckedDeclarations(head));
   // Every spec, proof and extraction file is one Lake must have compiled, whatever the lakefile says and
   // whether or not it holds a recall. The module a file has is its path below a library's source folder;
   // for a lakefile.lean, which is not read here, its path or its path below any folder.
