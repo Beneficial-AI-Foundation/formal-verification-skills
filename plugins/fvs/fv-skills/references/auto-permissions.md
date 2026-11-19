@@ -146,8 +146,9 @@ It exits with a plain message and a non-zero status, and pushes nothing, unless 
   command goes by the real path that git uses and not by the name of the link; a link into another repository is
   another repository.
 - git started in the top of this work tree uses the same repository. A `core.worktree` setting that points a
-  repository at the files of another one is refused with `worktree-mismatch`. After these checks every git call
-  names the git directory and the work tree that were found, and none finds a repository again from a directory.
+  repository at the files of another one is refused with `worktree-mismatch`. After these checks, the branch
+  checks, the address checks, the read of the branch tip and the push itself each name the git directory and the
+  work tree that were found, so none of them finds a repository again from a directory.
 - `<name>` is a plain branch name under a recorded namespace (`fvs/...`), `refs/heads/<name>` exists as a local
   branch, it is not a symbolic ref, and no tag has the same name.
 - no `url.<base>.insteadOf` or `pushInsteadOf` rule applies to the recorded address, no `[remote "<address>"]`
@@ -181,7 +182,9 @@ destination before you retry, and report the code and message.
 
 ### What it does not stop
 
-- Git hooks of the repository still run, as for any push.
+- Git hooks of the repository still run, as for any push. They run with `GIT_DIR` and `GIT_WORK_TREE` set to the
+  checked repository, because the command names both and git exports them. A hook that runs git in another
+  directory has to unset them first.
 - Credential helpers, ssh and proxy settings come from your own git configuration and environment, as for any push.
 - The recorded address is checked just before the push. A rewrite rule that you add after that check and before
   the connection is a race the command cannot close.

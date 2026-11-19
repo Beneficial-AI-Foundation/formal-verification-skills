@@ -283,6 +283,10 @@ node "$PERM" plan --project-root . --repo "$DRAFT_REPO" --remote origin --branch
   runs against a remote that is not the project's own repository. Every URL of the remote (all fetch and push
   URLs) must name it, and no `insteadOf` or `pushInsteadOf` rule may rewrite the push address again. Report the
   refusal, skip the check and go to Step 6.
+- `not-a-repository`, `git-environment` or `worktree-mismatch`: the project root is not a git work tree, `GIT_DIR`
+  or a similar variable is set, or a `core.worktree` setting points the repository at the files of another one.
+  The push command would refuse in each case, so nothing is recorded. Report the refusal, skip the check and go
+  to Step 6; the owner has to fix the repository first.
 
 **Where pushes go.** The push command (`fvs-auto-push.mjs`) pushes only to a destination that init records, so
 record it whatever the check finds: also when the owner skips the check, and also for a project whose check was
