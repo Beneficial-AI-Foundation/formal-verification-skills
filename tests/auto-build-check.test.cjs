@@ -3,7 +3,7 @@
 // The build check in a clean copy, run against a stub `lake` so no real Lean build happens.
 // The stub records where it ran and what it saw, and prints whatever log the test hands it.
 
-const { describe, test } = require('node:test');
+const { after, describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -80,7 +80,10 @@ if (fs.existsSync(stub + '/dump-' + side + '-fail')) { console.error('stub: the 
 if (fs.existsSync(stub + '/dump-' + side + '.jsonl')) { process.stdout.write(fs.readFileSync(stub + '/dump-' + side + '.jsonl')); process.exit(0); }
 const args = JSON.parse(fs.readFileSync(argsFile, 'utf8'));
 console.log(JSON.stringify({ toolchain: 'Lean (stub)', githash: 'stub' }));
-for (const id of args.recalls) console.log(JSON.stringify({ recall: id, matches: [id], rests: [{ n: id, axioms: [] }] }));
+for (const id of args.recalls) {
+  console.log(JSON.stringify({ recall: id, matches: [id], rests: [{ n: id, axioms: [] }] }));
+  console.log(JSON.stringify({ n: id, k: 'thm', m: 'Stub', lp: [], t: 'stub statement', d: [] }));
+}
 `;
 
 const sh = (cwd, file, args, env = {}) => {
@@ -1512,6 +1515,27 @@ describe('the Lean program: the axioms a statement may rest on', () => {
     assert.deepEqual(kinds(result), ['trusted-axiom-unbound', 'trusted-axiom-unbound']);
   });
 
+  test('a recalled declaration the Lean program printed no constant for is refused, never compared as empty', async () => {
+    const without = () => leanDump({ recalls: { 'Dep.foo': {} }, constants: [DIV()] });
+    const head = await compare({ base: leanDump({ recalls: { 'Dep.foo': {} }, constants: [FOO, DIV()] }), head: without() });
+    assert.deepEqual(kinds(head), ['statement-unresolved']);
+    assert.match(head.problems[0].detail, /printed no constant for Dep\.foo on the head/);
+    const both = await compare({ base: without(), head: without() });
+    assert.match(both.problems[0].detail, /on the base and head/);
+  });
+
+  test('a line of the output that starts like JSON and is not is an error', async () => {
+    const { parseDump } = await library();
+    assert.throws(() => parseDump(`${leanDump()}{"n": broken\n`), /not valid JSON/);
+  });
+
+  test('a declaration that was not an axiom at the merged spec and is one now is a new axiom', async () => {
+    const was = constant('Gap.div_spec', { k: 'thm', t: 'Div', d: ['Div'], v: undefined });
+    const result = await compare({ base: leanDump({ constants: [DIV(), was] }), head: leanDump({ constants: [DIV(), GAP_AXIOM({ m: 'formal.proofs.Cheat' })] }), recalled: [] });
+    assert.deepEqual(kinds(result), ['axiom-not-allowed']);
+    assert.match(result.problems[0].detail, /new since the merged spec and is declared outside Trusted/);
+  });
+
   test('a Lean program output without its toolchain line is an error, and lines that are not JSON are skipped', async () => {
     const { parseDump } = await library();
     assert.throws(() => parseDump('{"recall":"x","matches":[],"rests":[]}\n'), /no toolchain line/);
@@ -1589,8 +1613,10 @@ const REAL_HEAD = {
 };
 
 // Commits `REAL_BASE` then `head` on top, with the externals records the check reads.
+const realFolders = [];
 function realProject(head, { externals = EXTERNALS(record({ id: 'gap-add' })), remove = [], baseFiles = {} } = {}) {
   const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-real-')));
+  realFolders.push(base);
   const repo = path.join(base, 'repo');
   fs.mkdirSync(path.join(base, 'work'));
   git(base, 'init', '-q', '-b', 'main', repo);
@@ -1607,13 +1633,15 @@ function realProject(head, { externals = EXTERNALS(record({ id: 'gap-add' })), r
   return { base, repo, merged, tip: git(repo, 'rev-parse', 'HEAD'), receipts: path.join(base, 'receipts'), work: path.join(base, 'work') };
 }
 function realCheck(fx) {
-  const run = sh(fx.base, process.execPath, [SCRIPT, '--project-root', fx.repo, '--commit', fx.tip, '--spec-base', fx.merged, '--receipt-dir', fx.receipts, '--workdir', fx.work, '--keep'], { TMPDIR: fx.base, LEAN_NUM_THREADS: '2' });
+  const run = sh(fx.base, process.execPath, [SCRIPT, '--project-root', fx.repo, '--commit', fx.tip, '--spec-base', fx.merged, '--receipt-dir', fx.receipts, '--workdir', fx.work], { TMPDIR: fx.base, LEAN_NUM_THREADS: '2' });
   let json = null;
   try { json = JSON.parse(run.stdout); } catch { /* reported by the assertions */ }
   return { status: run.status, json, stderr: run.stderr };
 }
 
 describe('real Lean: a statement that still reads the same but does not mean the same', { skip: REAL_LEAN ? false : 'FVS_REAL_LEAN does not name an installed toolchain' }, () => {
+  after(() => { for (const folder of realFolders) fs.rmSync(folder, { recursive: true, force: true }); });
+
   test('proofs on top of an unchanged spec are accepted, and the receipt carries the comparison', () => {
     const result = realCheck(realProject(REAL_HEAD));
     assert.equal(result.status, 0, result.stderr);
@@ -1645,6 +1673,33 @@ describe('real Lean: a statement that still reads the same but does not mean the
     assert.equal(result.status, 1, result.stderr);
     assert.equal(result.json.integrity.problems[0].kind, 'statement-meaning-changed');
     assert.match(result.json.integrity.problems[0].detail, /its type changed/);
+  });
+
+  // The statement text and the spec file stay the same; only the imported helper differs between the two sides.
+  const redefined = (statement, baseHelper, headHelper) => realCheck(realProject({
+    'Fx/Proofs/Helper.lean': headHelper,
+    'Fx/Proofs/P.lean': `import Fx.Proofs.Helper\n\ntheorem Fx.foo_spec : ${statement} := rfl\n`,
+    'Fx/Specs/A.lean': `import Fx.Proofs.P\n\nrecall Fx.foo_spec : ${statement}\n\n${GUARD_NONE('Fx.foo_spec')}`,
+  }, { baseFiles: {
+    'Fx/Proofs/Helper.lean': baseHelper,
+    'Fx/Proofs/P.lean': `import Fx.Proofs.Helper\n\ntheorem Fx.foo_spec : ${statement} := by\n  sorry\n`,
+    'Fx/Specs/A.lean': `import Fx.Proofs.P\n\nrecall Fx.foo_spec : ${statement}\n\n#print axioms Fx.foo_spec\n`,
+  } }));
+
+  test('a macro redefined in an imported file changes the elaborated statement under unchanged text, and is refused', () => {
+    const macro = (body) => `macro "LIMIT" : term => \`((${body} : Nat))\n`;
+    const result = redefined('LIMIT = 10', macro('10'), macro('5 + 5'));
+    assert.equal(result.status, 1, result.stderr);
+    assert.equal(result.json.integrity.problems[0].kind, 'statement-meaning-changed');
+  });
+
+  test('an instance redefined in an imported file changes what the statement rests on, under unchanged text, and is refused', () => {
+    const helper = (body) => `class Fx.HasLimit (α : Type) where\n  limit : Nat\n\ninstance Fx.instHasLimitNat : Fx.HasLimit Nat := ⟨${body}⟩\n`;
+    assert.equal(redefined('@Fx.HasLimit.limit Nat _ = 10', helper('10'), `${helper('10')}\n-- a comment\n`).status, 0, 'the same instance is accepted');
+    const result = redefined('@Fx.HasLimit.limit Nat _ = 10', helper('10'), helper('5 + 5'));
+    assert.equal(result.status, 1, result.stderr);
+    assert.equal(result.json.integrity.problems[0].kind, 'statement-meaning-changed');
+    assert.match(result.json.integrity.problems[0].detail, /Fx\.instHasLimitNat, which it rests on, changed/);
   });
 
   test('a new Trusted axiom asserting False under a record tied to another proposition is refused; the bound one is accepted', () => {

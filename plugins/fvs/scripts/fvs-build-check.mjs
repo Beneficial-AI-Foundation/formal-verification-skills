@@ -1051,7 +1051,7 @@ export function parseDump(text) {
   for (const line of text.split('\n')) {
     if (!line.startsWith('{"')) continue;
     let item;
-    try { item = JSON.parse(line); } catch { continue; }
+    try { item = JSON.parse(line); } catch { throw new Error(`a line of the output is not valid JSON: ${line.slice(0, 80)}`); }
     if (item.toolchain !== undefined) dump.toolchain = { lean: item.toolchain, githash: item.githash };
     else if (item.recall !== undefined) dump.recalls.set(item.recall, { matches: item.matches ?? [], rests: item.rests ?? [] });
     else if (item.doc !== undefined) dump.docs.push({ name: item.doc, module: item.m, cites: item.cites ?? [], prop: item.prop === true, axiom: item.axiom === true });
@@ -1105,6 +1105,8 @@ export function semanticProblems({ base, head, recalled, acceptedIds = new Set()
       continue;
     }
     for (const name of was.matches) {
+      const missing = ['base', 'head'].filter((side) => !(side === 'base' ? base : head).constants.has(name));
+      if (missing.length > 0) { add('statement-unresolved', id, `the Lean program printed no constant for ${name} on the ${missing.join(' and ')}, so what the statement rests on cannot be compared`); continue; }
       const [closedBase, closedHead] = [closureOf(base.constants, name), closureOf(head.constants, name)];
       const first = [...closedBase].find(([constant, digest]) => closedHead.get(constant) !== digest);
       if (first) {
@@ -1121,7 +1123,7 @@ export function semanticProblems({ base, head, recalled, acceptedIds = new Set()
   const standard = new Set(STANDARD_AXIOMS);
   const projectAxioms = (dump) => [...dump.constants.values()].filter((constant) => constant.kind === 'axiom');
   const baseAxioms = new Set(projectAxioms(base).map((constant) => constant.name));
-  const newAxioms = projectAxioms(head).filter((constant) => !base.constants.has(constant.name));
+  const newAxioms = projectAxioms(head).filter((constant) => !baseAxioms.has(constant.name));
   for (const axiom of projectAxioms(head)) {
     if (!baseAxioms.has(axiom.name)) continue;
     if (closureDigest(closureOf(base.constants, axiom.name)) !== closureDigest(closureOf(head.constants, axiom.name))) add('axiom-changed', axiom.name, `the axiom ${axiom.name} of the merged spec asserts something else than it did`);
