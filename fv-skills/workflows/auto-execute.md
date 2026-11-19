@@ -26,7 +26,9 @@ merge and the proof pull request").
    A statement that turns out wrong or too weak is noted for a refactor pull request, never edited in
    a proof.
 2. **Axioms.** Lean's three standard axioms are always fine, and so are the hand-written axioms that
-   the statement's spec file lists. A proof that starts using a new axiom fails the check. The one way
+   the statement's spec file lists. In a multi-crate run that holds only for axioms on the engine's
+   allowed list (step 3): a statement that rests on an axiom about a function of another targeted
+   crate does not pass, whatever its spec file lists. A proof that starts using a new axiom fails the check. The one way
    through is the owner's ruling: if the owner accepts the assumption, mark it `assumption-accepted` in
    the externals record, and put the axiom in a new file under `formal/trusted`, with the record id in
    backticks in the axiom's docstring (one axiom for each record). `native_decide` and `bv_decide` are
@@ -51,6 +53,12 @@ merge and the proof pull request").
      `formal/trusted`;
    - a spec file, proof file or extraction file is not covered by a `lean_lib` glob of a default
      target, and no built module imports it, so Lake would never compile it.
+
+   When the engine has written a list of allowed axioms (a multi-crate run), add
+   `--allow-axioms <FILE>`. Then a statement whose guard lists any axiom beyond Lean's three that the
+   list does not name fails, and the label names the statement and the axiom. The list holds the
+   non-standard axioms that have a legitimate record, never one about a function of a targeted crate.
+   The receipt records the file's sha256, so the engine can tell which list a receipt was made with.
 
    Each refusal names the file, the statement and the kind of change. A statement that is wrong or too
    weak is not fixed in a proof: it becomes a refactor pull request (step 5), and once the owner
