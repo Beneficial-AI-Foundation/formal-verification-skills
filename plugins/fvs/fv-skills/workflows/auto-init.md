@@ -295,8 +295,9 @@ node "$PERM" write-destination --project-root . --repo "$DRAFT_REPO" --remote or
 
 It writes nothing and refuses with `confirmation-required`, printing the `record` (the push address as git will use
 it after its own rewriting, the host, the repository, the branch namespaces, the project root and the git
-directory), the `file` (in the repository's shared git directory, so no commit contains it) and a digest. Show the
-owner exactly that and ask. Only on the yes, rerun the same command with `--confirm <digest>`. On a no, nothing is
+directory), the `file` (in the repository's shared git directory, so no commit contains it), a `note`, the
+`contract` (what the push command checks, hardens and trusts) and a digest. Show the owner exactly that, with the
+contract as printed, and ask. Only on the yes, rerun the same command with `--confirm <digest>`. On a no, nothing is
 recorded: the push command then refuses to run (`no-destination-recorded`), workers stop and report that
 refusal instead of falling back to `git push`, and the owner pushes branches by hand. If
 `pushDestination.status` is already `matches` there is nothing to do (`unchanged`). With `destination-conflict`
