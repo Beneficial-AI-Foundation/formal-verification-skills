@@ -196,11 +196,13 @@ inference. The draft pull requests of the later stages go to that recorded desti
 In a repository with several crates every crate is a verification target unless the owner decides
 otherwise, and results are used across crates: a crate that calls another verified crate uses that crate's
 translation and theorems, not axioms of its own about it. Ask the owner which crates to verify; the answer
-may be all of them. To see the crates, prepare a copy of the repository and list them in dependency order
-(`fvs-extract-patches.mjs crates --out OUT --release DIR`; `aeneas-extract.md`, "Several crates"). The list
-also names path dependencies that are not workspace members. A repository with no `Cargo.lock` is prepared
-with `--lock update --release DIR`: the lock is made inside the copy, never in the checkout, so offer
-this option and keep that lock with the extraction record.
+may be all of them. To see the crates in a fresh checkout, scan it
+(`fvs-extract-patches.mjs crates --project-root DIR --release DIR`; `aeneas-extract.md`, "Several
+crates"): it lists each crate with the crates of the repository it depends on, in an order that puts
+providers first. The same command with `--out OUT` reads a prepared copy and also names path
+dependencies that are not workspace members. A repository with no `Cargo.lock` is prepared with
+`--lock update --release DIR`: the lock is made inside the copy, never in the checkout, so offer this
+option and keep that lock with the extraction record.
 
 Record the answer in the optional `targets` key of the payload, for `layout` `monorepo` only:
 `"targets": {"crates": ["<crate to verify>"], "nonTargets": [{"crate": "<crate>", "decision": "<the owner's
