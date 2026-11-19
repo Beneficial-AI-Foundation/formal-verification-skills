@@ -281,6 +281,7 @@ node "$PATCH_ENGINE" prepare --project-root "$CRATE_ROOT" --out "$OUT" || exit 1
 node "$PATCH_ENGINE" verify-tree --out "$OUT" || exit 1                  # before Charon: the copy is the recorded post-patch tree
 # One recorded attempt. $EXTRACT_SPEC (JSON: release, crate, publishDir, charonArgs, cargoArgs) states the
 # project's usual invocation in the supported form; the engine refuses anything else before recording.
+# (A repository with several target crates uses a spec with a crates list: see "Several crates" below.)
 node "$PATCH_ENGINE" attempt --out "$OUT" --spec "$EXTRACT_SPEC" || exit 1
 # Charon runs in "$OUT/tree" with --dest-file "$OUT/<crate>.llbc", under the controlled environment.
 node "$PATCH_ENGINE" run --out "$OUT" --step charon; CHARON_STATUS=$?   # 9 = Charon failed -> CLASSIFY
@@ -308,6 +309,63 @@ overwrites a maintained file and never deletes. When the project's invocation is
 supported contract (`attempt` refuses with `invalid-input`), run the project's own Charon command in
 `"$OUT/tree"` with `--dest-file "$OUT/<crate>.llbc"` and Aeneas as before. That extraction can still
 be recorded, but it carries no recorded attempt and stays unbound.
+
+#### Several crates
+
+A repository whose crates call each other is extracted crate by crate inside the ONE prepared
+copy. The owner decides which in-repo crates are verification targets (by default every crate
+that has a library); each crate left out is declared a non-target, and only the items of a
+non-target may become assumptions. A crate that is neither declared a target nor a non-target is
+refused when Charon's output is read.
+
+```bash
+node "$PATCH_ENGINE" crates --out "$OUT" --release "$RELEASE_DIR"   # advisory: in-repo crates, their in-repo dependencies, an order (providers first)
+node "$PATCH_ENGINE" attempt --out "$OUT" --spec "$EXTRACT_SPEC"     # a spec with a crates list records one attempt chain per crate
+# then, for each crate in the attempt's `order` (providers before the crates that import them):
+node "$PATCH_ENGINE" run --out "$OUT" --step charon  --crate "$CRATE"
+node "$PATCH_ENGINE" run --out "$OUT" --step aeneas  --crate "$CRATE"
+node "$PATCH_ENGINE" run --out "$OUT" --step publish --crate "$CRATE"
+node "$PATCH_ENGINE" attempt-status --out "$OUT"                      # refuses unless EVERY crate is complete
+```
+
+The spec keeps the single-crate fields as a base (`release`, `cargoArgs`, `charonArgs`) and adds
+`main` (the crate the extraction record is about), `crates` (one entry per target) and
+`nonTargets`:
+
+| Field | Meaning |
+|-------|---------|
+| `crates[].crate`, `package`, `dir` | the crate name Charon labels items with (underscored), the cargo package name, and its directory in the copy |
+| `crates[].publishDir` | where that crate's Lean is published; one folder per crate, none inside another |
+| `crates[].moduleRoot` | the Lean module name of that folder, so another crate can import it |
+| `crates[].stitch` | `[{ crate, assume }]`: this crate calls target `crate`; its Lean imports that crate's published module (see below) |
+| `crates[].substitutions` | `[{ file, find, replace, count, reason }]`: a required literal edit to the generated Lean, with the exact number of matches; recorded with before and after hashes and recomputed by `attempt-status` |
+| `nonTargets` | `[{ crate, dir }]`: in-repo crates the owner decided not to verify |
+
+Every crate has its own Charon, Aeneas and publish chain, so a failing crate ends only its own
+chain. `attempt-status` refuses until every crate is complete and then lists each crate's status;
+`--crate NAME` reads one crate. Each unit row is a whole single-crate run plus its `imports`,
+`stitch`, `hasErrors` (the items Aeneas could not translate; they are never roots),
+`foreignCrates` (each crate the LLBC reaches, as `target`, `non-target` or `external`) and the
+pinned sources of each non-target.
+
+Stitching. When crate B calls target crate A, Aeneas writes B's copy of A's items as axioms that
+carry only a type. Publication replaces each such axiom by an alias of A's real definition with
+the type B was translated against, and adds `public import <A moduleRoot>.<file>` to B's Lean.
+Lean's own type check is the signature gate: an alias whose type is not the type A defines is
+rejected when the project builds, and the engine refuses an obvious mismatch before that. Functions
+and types become reducible aliases; a constant becomes a plain definition `Result.ok` of A's
+constant, so proof automation keeps seeing the constant. Every existing name stays valid. Nothing
+falls back to an axiom silently: an item A does not define (for example a module excluded from A's
+translation) must be named under `assume`, or publication fails; the items taken as assumed are
+recorded and each needs an externals record. Publication stitches only after A's own Aeneas stage
+is complete, and the record names A's stage hash. The generated files are edited only by these two
+declared, recorded transforms; the `translation.json` Aeneas wrote is left as it is. Two caveats:
+an item whose signature involves another crate's types that B and A each wrote out separately
+cannot be aliased, and two crates that reach the same external Rust item each keep their own
+axiom for it.
+
+Publication never overwrites a file it does not own. When a folder already holds committed
+extraction output from an earlier layout, the owner removes it once; later runs own the folder.
 
 Send Charon's `.llbc` file and logs outside `"$OUT/tree"` (`--dest-file` as above; without it
 Charon writes into its working directory). Only cargo's `target/` directory may appear in the copy
