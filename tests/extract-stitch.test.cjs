@@ -151,6 +151,11 @@ describe('stitching: the consumer\'s axioms become checked aliases of the provid
     assert.match(text, /unless \(← isDefEq a\.type expected\) do/);
     assert.doesNotMatch(text, /other_mod\.skipped, /, 'an assumed item stays an axiom and is not compared');
     assert.deepEqual(app.leanChecks.map(({ file, module, items }) => [file, module, items]), [['ToyApp.lean', 'Toy.App.ToyApp', 4]]);
+    // A reader may refuse a unit that replaced aliases without a block: the two always go together, because
+    // the block is built from the same list of replaced items, one block per file that has any.
+    const replacedTotal = app.stitch.reduce((sum, provider) => sum + provider.replaced.length, 0);
+    assert.equal(app.leanChecks.reduce((sum, check) => sum + check.items, 0), replacedTotal);
+    assert.deepEqual(app.leanChecks.map((check) => check.file).sort(), [...new Set(app.stitch.flatMap((provider) => provider.files))].sort());
     assert.match(app.leanChecks[0].blockSha256, /^[0-9a-f]{64}$/);
     const publishedFile = app.publication.find((entry) => entry.relativePath.endsWith('Lean/App/ToyApp.lean'));
     assert.equal(app.leanChecks[0].fileSha256, publishedFile.sha256, 'the file the block was appended to is the published file');
