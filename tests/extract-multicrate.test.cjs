@@ -352,7 +352,19 @@ describe('crates: the in-repo crates of a prepared copy', () => {
     assert.deepEqual(row('toy-script'), { package: 'toy-script', crate: null, dir: 'script', library: false, deps: [] }, 'a package without a library cannot be a target');
     assert.deepEqual(listed.result.order, ['toy_lib', 'toy_app', 'toy_tool']);
     assert.equal(listed.result.workspaceRoot, '.');
+    assert.deepEqual(listed.result.unlisted, []);
     assert.equal(fs.existsSync(path.join(out, 'attempt.json')), false, 'the command changes nothing');
+  });
+
+  it('names a path dependency inside the copy that is not a workspace member', () => {
+    const ws = workspace();
+    const out = prepared(ws);
+    fs.writeFileSync(path.join(ws.tools.cargoHome, 'bin', 'metadata-hide.txt'), 'lib\n');
+    const listed = crates(ws, out);
+    assert.equal(listed.status, 0, listed.stdout);
+    assert.deepEqual(listed.result.unlisted, ['lib']);
+    assert.deepEqual(listed.result.crates.map((item) => item.package), ['toy-app']);
+    assert.deepEqual(listed.result.crates[0].deps, [], 'a crate that is not listed is not a dependency in the list');
   });
 
   it('reports a workspace cargo cannot read with cargo\'s own first lines', () => {

@@ -319,6 +319,7 @@ non-target may become assumptions. A crate that is neither declared a target nor
 refused when Charon's output is read.
 
 ```bash
+RELEASE_DIR=...   # the release directory the spec names as `release` (relative to the project root, or absolute)
 node "$PATCH_ENGINE" crates --out "$OUT" --release "$RELEASE_DIR"   # advisory: in-repo crates, their in-repo dependencies, an order (providers first)
 node "$PATCH_ENGINE" attempt --out "$OUT" --spec "$EXTRACT_SPEC"     # a spec with a crates list records one attempt chain per crate
 # then, for each crate in the attempt's `order` (providers before the crates that import them):
@@ -372,7 +373,7 @@ Charon writes into its working directory). Only cargo's `target/` directory may 
 after `prepare`; any other new, edited or deleted file there fails `verify-tree`. The copy needs a
 `Cargo.lock` that matches its patched manifests, so that cargo has nothing to write in it. Commit
 one and keep it current, or let `prepare` bring it in line once: `--lock update --release
-"$RELEASE_DIR"` runs `cargo generate-lockfile` in the copy when the project has no lock, and
+"$RELEASE_DIR"` (the release directory the spec names) runs `cargo generate-lockfile` in the copy when the project has no lock, and
 `cargo update --workspace` when it has one (every version the lock pins is kept; only what the
 patched manifests added or dropped changes). Either may need network access. The manifest records
 the lock's hash and origin (`read`, `generated` or `updated`, and the hash it started from); the

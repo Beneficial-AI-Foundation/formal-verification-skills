@@ -1238,6 +1238,12 @@ function listCrates(flags) {
       .map((dependency) => byDir.get(fs.existsSync(dependency.path) ? fs.realpathSync(dependency.path) : dependency.path))
       .filter((provider) => provider !== undefined && provider.library).map((provider) => provider.crate))].sort(),
   }));
+  // `--no-deps` lists the workspace members only: a path dependency that lies inside the
+  // copy but is not a member is not in the list above, so it is named here.
+  const unlisted = [...new Set(rows.flatMap((row) => row.dependencies.filter((dependency) => dependency.kind !== 'dev' && dependency.path)
+    .map((dependency) => (fs.existsSync(dependency.path) ? fs.realpathSync(dependency.path) : dependency.path))
+    .filter((dir) => !byDir.has(dir) && inside(dir, tree) && dir !== tree)
+    .map((dir) => path.relative(tree, dir).split(path.sep).join('/'))))].sort();
   const order = [];
   const visit = (row, seen = new Set()) => {
     if (order.includes(row.crate) || seen.has(row.crate)) return;
@@ -1246,7 +1252,7 @@ function listCrates(flags) {
     order.push(row.crate);
   };
   crates.filter((row) => row.library).forEach((row) => visit(row));
-  return { message: `${crates.length} in-repo package(s), ${order.length} with a library`, tree, workspaceRoot: path.relative(tree, metadata.workspace_root).split(path.sep).join('/') || '.', crates, order };
+  return { message: `${crates.length} in-repo package(s), ${order.length} with a library`, tree, workspaceRoot: path.relative(tree, metadata.workspace_root).split(path.sep).join('/') || '.', crates, order, unlisted };
 }
 
 // A multi-crate attempt: every crate gets an ordinary attempt of its own in

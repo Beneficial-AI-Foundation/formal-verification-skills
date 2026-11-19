@@ -86,7 +86,8 @@ process.exit(mine.aeneasExit ?? 0);`;
 // when it exists. Also `cargo metadata --no-deps` for the toy manifests: one package per Cargo.toml with a
 // name, a library target when src/lib.rs exists, and its path dependencies (those after
 // [dev-dependencies] are marked dev). A metadata-failure.txt next to the script makes it
-// fail the way cargo does, with that text on stderr.
+// fail the way cargo does, with that text on stderr, and the directory names in metadata-hide.txt
+// are left out of the packages (not workspace members).
 const CARGO = `const args = process.argv.slice(2);
 if (args[0] === 'generate-lockfile' || args[0] === 'update') {
   const refused = path.join(path.dirname(process.argv[1]), 'lock-failure.txt');
@@ -112,6 +113,8 @@ const packages = [];
       const [normal, dev = ''] = text.split('[dev-dependencies]');
       const dependencies = [[normal, null], [dev, 'dev']].flatMap(([part, kind]) => [...part.matchAll(/^(\\S+)\\s*=\\s*\\{[^}]*path\\s*=\\s*"([^"]+)"/gm)].map((m) => ({ name: m[1], kind, path: path.resolve(path.dirname(file), m[2]) })));
       const targets = fs.existsSync(path.join(path.dirname(file), 'src', 'lib.rs')) ? [{ name: crate.replace(/-/g, '_'), kind: ['lib'] }] : [{ name: crate, kind: ['bin'] }];
+      const hidden = path.join(path.dirname(process.argv[1]), 'metadata-hide.txt');
+      if (fs.existsSync(hidden) && fs.readFileSync(hidden, 'utf8').split('\\n').includes(path.basename(path.dirname(file)))) continue;
       packages.push({ name: crate, manifest_path: file, targets, dependencies });
     }
   }
