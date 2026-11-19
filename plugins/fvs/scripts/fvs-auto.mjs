@@ -41,7 +41,7 @@ function usage() {
   process.stdout.write([
     'Usage: node fvs-auto.mjs profile [--project-root DIR] [--format json|text]',
     '       node fvs-auto.mjs init-state --input CHOICES.json [--project-root DIR] [--confirm-overwrite]',
-    '       node fvs-auto.mjs read-state [--project-root DIR] [--require-agreement]',
+    '       node fvs-auto.mjs read-state [--project-root DIR] [--require-agreement | --brief]',
     '       node fvs-auto.mjs record-agreement --input AGREEMENT.json [--project-root DIR] [--confirm-overwrite]',
     '       node fvs-auto.mjs record-memory --input REGISTRATION.json [--project-root PRIMARY] [--confirm-overwrite]',
     '       node fvs-auto.mjs prime-memory --request REQUEST.json --out EXCLUSIVE_DIR [--project-root PRIMARY]',
@@ -51,8 +51,8 @@ function usage() {
     '       node fvs-auto.mjs record-roadmap --decision accepted|declined [--project-root DIR] [--confirm-overwrite]',
     '       node fvs-auto.mjs record-extraction --out OUT --build-exit-code N --oracle complete|refused|unknown [--oracle-reason TEXT] [--project-root DIR]',
     '       node fvs-auto.mjs record-externals --input RECORDS.json [--project-root DIR]',
-    '       node fvs-auto.mjs record-spec --spec-file PATH --items ID[,ID...] --round N --verdict pass|changes|blocked --review FILE [--out-of-scope ID[,ID...]] [--project-root DIR]',
-    '       node fvs-auto.mjs spec-status [--project-root DIR]',
+    '       node fvs-auto.mjs record-spec --spec-file PATH --items ID[,ID...] --round N --verdict pass|changes|blocked --review FILE [--out-of-scope ID[,ID...]] [--commit SHA] [--project-root DIR]',
+    '       node fvs-auto.mjs spec-status [--commit SHA] [--project-root DIR]',
     '       node fvs-auto.mjs record-pr --kind spec|proof --url URL --branch B --head SHA [--project-root DIR]',
     '       node fvs-auto.mjs record-pr --kind spec|proof --merged --merge-commit SHA [--project-root DIR]',
     '       node fvs-auto.mjs freeze|check|accept --request FILE --out EXCLUSIVE_DIR',
@@ -1220,7 +1220,8 @@ function specsFileErrors(value) {
     const ids = (list) => Array.isArray(list) && list.every((id) => typeof id === 'string' && id.length > 0);
     const ok = plainObject(row) && typeof row.specFile === 'string' && typeof row.review === 'string'
       && ids(row.items) && row.items.length > 0 && ids(row.outOfScope) && Number.isInteger(row.round) && row.round >= 1
-      && Object.hasOwn(SPEC_VERDICTS, row.verdict) && HEX64.test(row.specSha256) && HEX64.test(row.reviewSha256);
+      && Object.hasOwn(SPEC_VERDICTS, row.verdict) && HEX64.test(row.specSha256) && HEX64.test(row.reviewSha256)
+      && (row.commit === undefined || /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(row.commit));
     return ok ? [] : [`specs[${index}] must name a spec file, items, a round, a verdict (${Object.keys(SPEC_VERDICTS).join(', ')}) and both hashes`];
   })];
 }
@@ -1456,7 +1457,17 @@ function progress(root, state, specs = null) {
       + warnings.map((warning) => ` Warning: ${warning}.`).join('') };
 }
 
-export function readState({ projectRoot, requireAgreement = false }) {
+// What `read-state --brief` keeps: where the run is and what to do next, a few
+// lines instead of the recorded probe profile and every readiness row.
+const BRIEF_FIELDS = ['code', 'message', 'phase', 'nextAction', 'warnings', 'pendingDecisions', 'externals'];
+
+export function readState({ projectRoot, requireAgreement = false, brief = false }) {
+  if (brief && requireAgreement) refuse('usage', '--brief cannot be combined with --require-agreement: that check returns the whole agreement');
+  const full = readFullState({ projectRoot, requireAgreement });
+  return brief ? { brief: true, ...Object.fromEntries(BRIEF_FIELDS.filter((key) => Object.hasOwn(full, key)).map((key) => [key, full[key]])) } : full;
+}
+
+function readFullState({ projectRoot, requireAgreement }) {
   const root = projectDirectory(projectRoot);
   const state = loadState(root);
   if (!state) {
@@ -1894,17 +1905,39 @@ const idList = (text, flag) => {
   return [...new Set(ids)];
 };
 
-export function recordSpec({ projectRoot, specFile, items, round, verdict, review, outOfScope }) {
+// The spec file named by a path that only has to exist in a commit, not on disk.
+// The path is checked lexically, so it still has to stay inside the project root.
+function committedSpec(root, commit, file) {
+  const relative = path.relative(root, path.resolve(root, file));
+  if (relative === '' || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    refuse('invalid-input', `--spec-file must name a file inside the project root ${root}: ${file}`);
+  }
+  const specFile = relative.split(path.sep).join('/');
+  const bytes = bytesAt(root, commit, specFile);
+  if (bytes === null) refuse('invalid-input', `--spec-file ${file} is not a file in commit ${commit}`);
+  return { relative: specFile, bytes };
+}
+
+// With a commit, the spec file is hashed from that commit's git object, so the
+// checkout is never moved or touched to record a review. The review report is
+// a working file (it is never committed), so it is still read from disk.
+export function recordSpec({ projectRoot, specFile, items, round, verdict, review, outOfScope, commit }) {
   const root = projectDirectory(projectRoot);
   if (!Object.hasOwn(SPEC_VERDICTS, verdict)) refuse('usage', `--verdict must be ${Object.keys(SPEC_VERDICTS).join(', ')}`);
   if (!Number.isInteger(round) || round < 1) refuse('usage', '--round must be a positive integer');
   const ids = idList(items, '--items');
   if (ids.length === 0) refuse('usage', '--items must name at least one item');
-  const spec = projectFile(root, specFile, '--spec-file');
+  let resolved = null;
+  if (commit !== undefined) {
+    resolved = resolveRevision(root, commit);
+    if (resolved === null) refuse('invalid-input', `--commit ${commit} is not a local commit: fetch the branch first`);
+  }
+  const spec = resolved === null ? projectFile(root, specFile, '--spec-file') : committedSpec(root, resolved, specFile);
   const reviewFile = projectFile(root, review, '--review');
   const row = {
     specFile: spec.relative, items: ids, outOfScope: idList(outOfScope, '--out-of-scope'), round, verdict,
-    specSha256: sha256(fs.readFileSync(spec.real)), review: reviewFile.relative, reviewSha256: sha256(fs.readFileSync(reviewFile.real)),
+    specSha256: sha256(resolved === null ? fs.readFileSync(spec.real) : spec.bytes), review: reviewFile.relative, reviewSha256: sha256(fs.readFileSync(reviewFile.real)),
+    ...(resolved === null ? {} : { commit: resolved }),
     recordedAt: new Date().toISOString(),
   };
   const base = loadSpecs(root);
@@ -1913,21 +1946,30 @@ export function recordSpec({ projectRoot, specFile, items, round, verdict, revie
   return { code: 'recorded', message: `${SPEC_VERDICTS[verdict](round)}: ${row.specFile}`, row, warnings };
 }
 
-// Current verdict per spec file, recomputed against the bytes on disk. Ready
-// for the PR: at least one pass, no file waiting for changes, none stale.
-// Blocked files do not hold the PR; its body names them.
-export function specStatus({ projectRoot }) {
+// Current verdict per spec file, recomputed against the bytes on disk, or at a
+// commit when one is given (the PR head, for a checkout that holds no spec
+// files). Ready for the PR: at least one pass, no file waiting for changes,
+// none stale. Blocked files do not hold the PR; its body names them.
+export function specStatus({ projectRoot, commit }) {
   const root = projectDirectory(projectRoot);
+  let resolved = null;
+  if (commit !== undefined) {
+    resolved = resolveRevision(root, commit);
+    if (resolved === null) refuse('invalid-input', `--commit ${commit} is not a local commit: fetch the branch first`);
+  }
   const specs = loadSpecs(root);
   const current = new Map();
   for (const row of specs?.specs ?? []) current.set(row.specFile, { row, rounds: (current.get(row.specFile)?.rounds ?? 0) + 1 });
   const owner = ownerChangesOf(specs);
   const specFiles = [...current.values()].map(({ row, rounds }) => {
     let bytes = null;
-    try {
-      bytes = fs.readFileSync(path.join(root, row.specFile));
-    } catch {
-      // a missing spec file is stale
+    if (resolved !== null) bytes = bytesAt(root, resolved, row.specFile);
+    else {
+      try {
+        bytes = fs.readFileSync(path.join(root, row.specFile));
+      } catch {
+        // a missing spec file is stale
+      }
     }
     const ownerChange = OWNER_CHANGES[owner.get(row.specFile)] ?? null;
     return { specFile: row.specFile, items: row.items, outOfScope: row.outOfScope.map((id) => ({ id, label: 'out of scope (noted by agent)' })),
@@ -1938,13 +1980,14 @@ export function specStatus({ projectRoot }) {
   const live = specFiles.filter((file) => owner.get(file.specFile) !== 'pruned');
   const readyForPr = live.some((file) => file.verdict === 'pass') && !live.some((file) => file.verdict === 'changes' || file.stale);
   const blocked = specFiles.filter((file) => file.verdict === 'blocked').map((file) => file.specFile);
-  return { code: 'ok', message: `${specFiles.length} spec file(s) recorded in ${specsPath(root)}`, specFiles, readyForPr, blocked };
+  return { code: 'ok', message: `${specFiles.length} spec file(s) recorded in ${specsPath(root)}`, ...(resolved === null ? {} : { commit: resolved }), specFiles, readyForPr, blocked };
 }
 
-// The bytes of a project-root-relative file at a commit, or null when the
-// commit does not have it. The project root may be a subdirectory of the repository.
+// The raw bytes of a project-root-relative file at a commit (never converted by
+// a git filter), or null when the commit does not have it as a file. The
+// project root may be a subdirectory of the repository.
 function bytesAt(root, commit, relative) {
-  const run = spawnSync('git', ['--no-optional-locks', '-C', root, 'show', `${commit}:./${relative}`], { maxBuffer: 64 * 1024 * 1024 });
+  const run = spawnSync('git', ['--no-optional-locks', '-C', root, 'cat-file', 'blob', `${commit}:./${relative}`], { maxBuffer: 64 * 1024 * 1024 });
   return run.status === 0 ? run.stdout : null;
 }
 
@@ -1958,7 +2001,8 @@ export function recordPr({ projectRoot, kind, url, branch, head, merged = false,
   const warnings = [];
   const commit = resolveRevision(root, head);
   if (kind === 'spec') {
-    const status = specStatus({ projectRoot: root });
+    // Readiness is judged at the PR head when it is local: the checkout need not hold the spec files.
+    const status = specStatus({ projectRoot: root, ...(commit === null ? {} : { commit }) });
     if (!status.readyForPr) warnings.push(status.specFiles.length === 0 ? 'no reviewed spec file is recorded' : 'spec-status is not ready for the PR (a file is waiting for changes or changed after its review)');
     if (commit === null) {
       warnings.push(`the head ${head} is not a local commit, so the recorded spec files were not compared with it; fetch the PR branch to compare`);
@@ -2049,8 +2093,8 @@ const STATE_COMMANDS = {
     return initState({ projectRoot: flags['project-root'], choices: readInput(flags.input), confirmOverwrite: flags['confirm-overwrite'] === true });
   },
   'read-state': (argv) => {
-    const flags = stateFlags(argv, [], ['require-agreement']);
-    return readState({ projectRoot: flags['project-root'], requireAgreement: flags['require-agreement'] === true });
+    const flags = stateFlags(argv, [], ['require-agreement', 'brief']);
+    return readState({ projectRoot: flags['project-root'], requireAgreement: flags['require-agreement'] === true, brief: flags.brief === true });
   },
   'record-agreement': (argv) => {
     const flags = stateFlags(argv, ['input'], ['confirm-overwrite']);
@@ -2088,12 +2132,15 @@ const STATE_COMMANDS = {
     return recordExternals({ projectRoot: flags['project-root'], records: readInput(flags.input) });
   },
   'record-spec': (argv) => {
-    const flags = stateFlags(argv, ['spec-file', 'items', 'round', 'verdict', 'review'], [], ['out-of-scope']);
+    const flags = stateFlags(argv, ['spec-file', 'items', 'round', 'verdict', 'review'], [], ['out-of-scope', 'commit']);
     if (!/^\d+$/.test(flags.round)) refuse('usage', '--round must be a positive integer');
     return recordSpec({ projectRoot: flags['project-root'], specFile: flags['spec-file'], items: flags.items, round: Number(flags.round),
-      verdict: flags.verdict, review: flags.review, outOfScope: flags['out-of-scope'] });
+      verdict: flags.verdict, review: flags.review, outOfScope: flags['out-of-scope'], commit: flags.commit });
   },
-  'spec-status': (argv) => specStatus({ projectRoot: stateFlags(argv, [])['project-root'] }),
+  'spec-status': (argv) => {
+    const flags = stateFlags(argv, [], [], ['commit']);
+    return specStatus({ projectRoot: flags['project-root'], commit: flags.commit });
+  },
   'record-pr': (argv) => {
     const flags = stateFlags(argv, ['kind'], ['merged'], ['url', 'branch', 'head', 'merge-commit']);
     return recordPr({ projectRoot: flags['project-root'], kind: flags.kind, url: flags.url, branch: flags.branch, head: flags.head,

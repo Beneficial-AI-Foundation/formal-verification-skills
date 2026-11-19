@@ -972,7 +972,9 @@ try {
 }
 }
 
-if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) cli().catch(error => {
+// A script read from stdin has the argument `-`, which is no file: it is not the main script.
+let direct = false; try { direct = fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch {}
+if (direct) cli().catch(error => {
   process.stderr.write(`FVS >> ${error.message}\n`);
   process.exitCode = 1;
 });
