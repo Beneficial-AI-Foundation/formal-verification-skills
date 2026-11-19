@@ -62,8 +62,8 @@ probes that ran. They do not predict every command the run may use later.
 
 After a write, what you can check depends on the tool:
 
-- Claude Code reloads settings files while it runs. Init runs `recheck`, repeats the probes of the steps
-  whose rules it wrote and asks again. A step that still prompts: see "A step still prompts".
+- Claude Code reloads settings files while it runs. Init runs `recheck` for the steps whose rules it wrote,
+  repeats their probes and asks again. A step that still prompts: see "A step still prompts".
 - Codex reads rules when a session starts. A recheck in the session that was already running proves nothing
   about a new rules file, so init says so, records the write, and leaves the recheck (`recheck` again, on your
   request) for a new session once the project's `.codex/` folder is trusted. It never calls a prompt unfixable because of a retry in the same

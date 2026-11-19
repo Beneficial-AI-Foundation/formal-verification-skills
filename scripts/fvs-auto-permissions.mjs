@@ -370,16 +370,20 @@ export function namesPush(rule) {
   const body = /^Bash\((.*)\)$/s.exec(typeof rule === 'string' ? rule.trim() : '')?.[1];
   if (body === undefined) return false;
   const words = body.replace(/:\*$/, '').split(/\s+/);
-  const at = words.findIndex((word) => word === 'git' || word.endsWith('/git'));
-  if (at < 0) return false;
-  let i = at + 1;
-  // Global git options before the subcommand: `-C <path>`, `-c <name=value>`, and `--option[=value]`.
-  for (;;) {
-    if (words[i] === '-C' || words[i] === '-c') i += 2;
-    else if (/^--[\w-]+(?:=.*)?$/.test(words[i] ?? '')) i += 1;
-    else break;
-  }
-  return words[i] === 'push';
+  // Every `git` word counts, so `git fetch * && git push *` is found as well as `git push *`.
+  return words.some((word, at) => {
+    if (word !== 'git' && !word.endsWith('/git')) return false;
+    let i = at + 1;
+    // Global git options before the subcommand: `-C <path>`, `-c <name=value>`, and `--option[=value]`.
+    for (;;) {
+      if (words[i] === '-C' || words[i] === '-c') i += 2;
+      else if (/^--[\w-]+(?:=.*)?$/.test(words[i] ?? '')) i += 1;
+      else break;
+    }
+    const sub = words[i] ?? '';
+    // A subcommand written with a glob, such as `push*` or `pu*`, reaches push; a lone `*` is a broad rule and is not examined.
+    return sub === 'push' || (/[*?]/.test(sub) && !/^\*+$/.test(sub) && new RegExp(`^${sub.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`).test('push'));
+  });
 }
 
 // The push allow rules already in the project's two settings files, by file. FVS deletes none of them: they are listed
@@ -568,7 +572,7 @@ function writeClaude(flags, root, catalog, picked, allow, hook) {
     code: 'written', ...preview, realPath: real, gitStatus: gitStatusOf(root, relative),
     verified: false, verification: 'The file was re-read as JSON and holds the rules and hook. Claude Code has no offline rule evaluator, so a live recheck is the only evidence that a step stopped prompting. The hook\'s decisions are tested offline; whether Claude Code skips its prompt on an allow answer was not observed.',
     notes: [
-      'Claude Code reloads settings files while running; if a step still prompts, run the check again for that step (see the permissions page).',
+      'Claude Code reloads settings files while running; if a step still prompts, run recheck for that step (see the permissions page).',
       'Worker worktrees read their own .claude/settings.json: it reaches them only if committed or if .claude is linked into them. settings.local.json is read from the main checkout in every worktree.',
       ...(added.hook ? ['The push gate hook allows only the exact plain pushes listed in the preview and asks for the other pushes it recognises. For a push it does not recognise, or when it does not run (Node or the script missing, a failure, a timeout), your other rules and permission mode decide. Branch protection on the project fork is still recommended as an independent safeguard.'] : []),
     ],
@@ -643,7 +647,7 @@ function writeCodex(flags, root, catalog, picked) {
     message: evaluation.verified
       ? `Written, and the installed Codex (${evaluation.evaluator.version}) allowed every probe command against the exact content before it was written. That checks the rules, not a live session.`
       : `Written but NOT verified: ${evaluation.evaluator.reason}. The syntax follows Codex's documentation, but nothing here has run it.`,
-    notes: ['Rules load when a Codex session starts, so check again in a new session; a prompt in the session that was already running proves nothing about them.', 'Whether a live Codex session stops prompting after this file is not observed.'],
+    notes: ['Rules load when a Codex session starts, so run recheck in a new session; a prompt in the session that was already running proves nothing about them.', 'Whether a live Codex session stops prompting after this file is not observed.'],
   };
 }
 

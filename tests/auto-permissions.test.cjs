@@ -775,9 +775,11 @@ describe('push allow rules that are already in the settings', () => {
 
   it('names a push only where the rule is for git push, and not for a broad rule or another command', () => {
     const named = ['Bash(git push origin fvs/*)', 'Bash(git push:*)', 'Bash(git push -u origin fvs/*)', 'Bash(git -C * push *)', 'Bash(rtk git push *)',
-      'Bash(git --no-pager push *)', 'Bash(git push)', 'Bash(/usr/bin/git push *)', 'Bash(git -c push.default=current push *)'];
+      'Bash(git --no-pager push *)', 'Bash(git push)', 'Bash(/usr/bin/git push *)', 'Bash(git -c push.default=current push *)',
+      'Bash(git push*)', 'Bash(git pu*)', 'Bash(git p*)', 'Bash(git fetch * && git push *)', 'Bash(git status && git -C x push:*)'];
     for (const rule of named) assert.equal(lib.namesPush(rule), true, rule);
-    const other = ['Bash(git stash push *)', 'Bash(npm run push-docs *)', 'Bash(git pushd *)', 'Bash(git commit -m push)', 'Bash(git *)', 'Bash(git:*)', 'Bash(*)',
+    const other = ['Bash(git stash push *)', 'Bash(npm run push-docs *)', 'Bash(git pushd *)', 'Bash(git commit -m push)', 'Bash(git *)', 'Bash(git **)', 'Bash(git:*)', 'Bash(*)',
+      'Bash(git stash push * && git status)', 'Bash(git fetch *)', 'Bash(git co*)', 'Bash(git pull *)',
       'Bash(ao send *)', 'Bash(gh pr view *)', 'Bash', 'Edit(/.formalising/auto-fv/permission-check/**)', 'WebFetch(domain:push.example.com)', '', null, 5, { rule: 'Bash(git push *)' }];
     for (const rule of other) assert.equal(lib.namesPush(rule), false, JSON.stringify(rule));
   });
