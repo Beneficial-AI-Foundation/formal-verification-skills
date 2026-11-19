@@ -7,8 +7,10 @@
 // of each step (`plan` lists them) while the user is present. The agent cannot see prompts, so the user says
 // which steps prompted and `record` keeps the answer. `write-allowlist` writes rules only for the steps that
 // prompted, only from the closed catalog below, and only for the exact rule text the user confirmed (the
-// confirmation is the digest that the preview prints). It never writes a rule that allows a GitHub comment,
-// review or merge, a push to another repository, a force push or a push to a shared branch.
+// confirmation is the digest that the preview prints). No rule it writes names a GitHub comment, review or
+// merge, another remote, another branch namespace or a wildcard program. A wildcard in an allow rule still
+// matches the rest of the command text, so the push rules come with deny rules for the usual force, delete
+// and refspec spellings; those are not a boundary (see the permissions page), remote branch protection is.
 //
 // It reads no standard input and does not touch the engine's state or externals files; the answers live in
 // their own record, .formalising/auto-fv/permissions.json.
@@ -107,7 +109,7 @@ export function buildCatalog({ repo, remote = 'origin', prefixes = ['fvs'], edit
       codex: [], codexNote: 'Codex file edits follow the sandbox mode, not a rule file.',
     },
     {
-      id: 'lake-build', why: 'Authors and the orchestrator compile Lean files with Lake. The probe uses an import-free file, so it cannot fetch anything.',
+      id: 'lake-build', why: 'Authors and the orchestrator compile Lean files with Lake. The probe compiles an import-free file; `plan` skips it while a dependency is missing, because Lake would download it.',
       probes: [bash(`lake env lean ${SCRATCH_FILE}`)],
       claude: ['Bash(lake env lean *)', 'Bash(lake build *)'],
       codex: [], codexNote: 'Codex runs Lake inside its workspace sandbox without a rule.',
@@ -236,14 +238,30 @@ function context(flags) {
   return { root, catalog };
 }
 
+// `lake env lean` loads the whole workspace: Lake clones a dependency that is missing and writes a manifest that is
+// missing. The Lake probe therefore runs only when neither can happen.
+export function lakeProbeBlocker(root) {
+  const has = (name) => fs.existsSync(path.join(root, name));
+  if (!has('lakefile.toml') && !has('lakefile.lean')) return 'there is no lakefile at the project root';
+  if (!has('lake-manifest.json')) return 'there is no lake-manifest.json yet and Lake would create one';
+  let manifest;
+  try { manifest = readJson(path.join(root, 'lake-manifest.json')); } catch { return 'lake-manifest.json is not valid JSON'; }
+  const dir = manifest.packagesDir ?? '.lake/packages';
+  const missing = (manifest.packages ?? []).filter((pkg) => pkg.type !== 'path' && !fs.existsSync(path.join(root, dir, pkg.name))).map((pkg) => pkg.name);
+  return missing.length ? `Lake would download ${missing.join(', ')}, which is not in ${dir}` : null;
+}
+
 function plan(flags) {
   const { root, catalog } = context(flags);
   const record = readRecord(root);
+  const lakeBlocker = lakeProbeBlocker(root);
   return {
     code: 'ok', record: record ? { present: true, summary: summaryLine(record), rounds: record.rounds } : { present: false, summary: summaryLine(null) },
     repo: catalog.repo, remote: catalog.remote, branchPrefixes: catalog.prefixes,
-    steps: catalog.steps.map((step) => ({ id: step.id, optional: Boolean(step.optional), why: step.why, probes: step.probes })),
-    message: record ? 'A record exists: do not run the check again; show the summary.' : 'Run each probe as its own plain call, then ask the user which steps prompted.',
+    steps: catalog.steps.map((step) => (step.id === 'lake-build' && lakeBlocker
+      ? { id: step.id, optional: false, why: step.why, probes: null, skipped: `not probed: ${lakeBlocker}; record it as unknown` }
+      : { id: step.id, optional: Boolean(step.optional), why: step.why, probes: step.probes })),
+    message: record ? 'A record exists: do not run the check again; show the summary.' : 'Run each probe as its own plain call, then ask the user which steps prompted. A skipped step is recorded as unknown.',
   };
 }
 
@@ -279,6 +297,16 @@ function gitStatusOf(root, relative) {
   if (git('rev-parse', '--git-dir').status !== 0) return 'not-a-git-repository';
   if (git('check-ignore', '-q', relative).status === 0) return 'ignored';
   return git('ls-files', '--error-unmatch', relative).status === 0 ? 'tracked' : 'untracked-not-ignored';
+}
+
+// Claude Code reads settings.local.json from the main checkout, so a copy in a linked worktree would be ignored.
+function checkMainCheckout(root) {
+  const git = (flag) => spawnSync('git', ['-C', root, 'rev-parse', '--path-format=absolute', flag], { encoding: 'utf8' });
+  const dir = git('--git-dir');
+  const common = git('--git-common-dir');
+  if (dir.status === 0 && common.status === 0 && dir.stdout.trim() !== common.stdout.trim()) {
+    refuse('local-needs-main-checkout', `${root} is a linked worktree; Claude Code reads .claude/settings.local.json from the main checkout, so run init there or use --target shared`);
+  }
 }
 
 function mergeClaude(existing, allow, deny) {
@@ -334,6 +362,7 @@ function writeClaude(flags, root, catalog, picked, allow, deny) {
   const target = flags.target ?? 'shared';
   if (!['shared', 'local'].includes(target)) refuse('invalid-input', '--target must be shared or local');
   const relative = `.claude/${target === 'shared' ? 'settings.json' : 'settings.local.json'}`;
+  if (target === 'local') checkMainCheckout(root);
   const file = path.join(root, relative);
   let existing = {};
   if (fs.existsSync(file)) {

@@ -89,6 +89,18 @@ describe('the catalog', () => {
     }
   });
 
+  it('states the push shapes no glob can close: they match an allow rule and no guard', () => {
+    // A trailing "*" spans spaces and a glob cannot say "no second argument", so these stay allowed by text.
+    // The permissions page names them and points at remote branch protection; if a guard ever closes one,
+    // move it to the blocked list above and update the page.
+    const allowRules = lib.buildCatalog({ repo: REPO }).steps.find((s) => s.id === 'git-push').claude;
+    for (const command of ['git push origin fvs/x main', 'git push -u origin fvs/x -uf']) {
+      assert.ok(allowRules.some((rule) => bashMatches(rule, command)), command);
+      assert.ok(!lib.GUARDS.some((guard) => bashMatches(guard, command)), command);
+    }
+    assert.match(fs.readFileSync(PAGE, 'utf8').replace(/\s+/g, ' '), /second branch name.*combined short flags.*branch protection/);
+  });
+
   it('every rule the catalog writes passes the rule check, and forbidden rules never do', () => {
     const catalog = lib.buildCatalog({ repo: REPO });
     for (const step of catalog.steps) for (const rule of step.claude) assert.equal(lib.ruleProblem('allow', rule), null, rule);
@@ -126,6 +138,31 @@ describe('plan', () => {
     assert.equal(wrong.json.code, 'remote-mismatch');
     const noRemote = run('plan', base('--remote', 'fork'));
     assert.equal(noRemote.json.code, 'remote-missing');
+  });
+
+  it('skips the Lake probe while Lake would download a dependency or create a manifest', () => {
+    const lakeStep = () => run('plan', base()).json.steps.find((step) => step.id === 'lake-build');
+    assert.match(lakeStep().skipped, /no lakefile/);
+    fs.writeFileSync(path.join(project, 'lakefile.toml'), 'name = "p"\n');
+    assert.match(lakeStep().skipped, /no lake-manifest\.json/);
+    fs.writeFileSync(path.join(project, 'lake-manifest.json'), JSON.stringify({ version: '1.1.0', packagesDir: '.lake/packages', packages: [{ name: 'batteries', type: 'git' }, { name: 'local', type: 'path' }] }));
+    assert.match(lakeStep().skipped, /would download batteries/);
+    assert.equal(lakeStep().probes, null);
+    fs.writeFileSync(path.join(project, 'lake-manifest.json'), '{ nope');
+    assert.match(lakeStep().skipped, /not valid JSON/);
+    fs.writeFileSync(path.join(project, 'lake-manifest.json'), JSON.stringify({ packagesDir: '.lake/packages', packages: [{ name: 'batteries', type: 'git' }] }));
+    fs.mkdirSync(path.join(project, '.lake', 'packages', 'batteries'), { recursive: true });
+    assert.equal(lakeStep().skipped, undefined);
+    assert.match(lakeStep().probes[0].command, /^lake env lean /);
+  });
+
+  it('a skipped step can be recorded as unknown, and an all-unknown record reads as skipped by the owner', () => {
+    const file = path.join(project, 'answer.json');
+    fs.writeFileSync(file, JSON.stringify({ runtime: 'claude', kind: 'check', results: { 'lake-build': 'unknown', 'git-push': 'unknown' } }));
+    const done = run('record', base('--input', file));
+    assert.equal(done.json.code, 'recorded');
+    assert.match(done.json.summary, /skipped by the owner, nothing was checked/);
+    assert.doesNotMatch(done.json.summary, /waiting for your approval/);
   });
 
   it('refuses a push URL that differs from the fetch URL', () => {
@@ -226,6 +263,19 @@ describe('write-allowlist for Claude Code', () => {
     assert.equal(done.json.code, 'written');
     assert.equal(done.json.realPath, path.join(fs.realpathSync(shared), 'settings.json'));
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(shared, 'settings.json'), 'utf8')).permissions.allow, ['Bash(ao send *)']);
+  });
+
+  it('refuses the local file from a linked worktree, where Claude Code would not read it', () => {
+    const git = (...args) => assert.equal(spawnSync('git', ['-C', project, '-c', 'user.email=a@b', '-c', 'user.name=n', ...args], { encoding: 'utf8' }).status, 0, args.join(' '));
+    git('commit', '-q', '--allow-empty', '-m', 'init');
+    const linked = path.join(os.tmpdir(), `fvs-perm-linked-${process.pid}-${Date.now()}`);
+    git('worktree', 'add', '-q', linked, '-b', 'linked');
+    const args = ['--project-root', linked, '--repo', REPO, '--runtime', 'claude', '--steps', 'worker-message', '--target', 'local'];
+    const refused = run('write-allowlist', args);
+    assert.equal(refused.json.code, 'local-needs-main-checkout');
+    assert.equal(fs.existsSync(path.join(linked, '.claude')), false);
+    const shared = run('write-allowlist', args.slice(0, -2));
+    assert.equal(shared.json.code, 'confirmation-required', 'the shared file still works from a worktree');
   });
 
   it('reports whether the file is tracked, ignored or loose, and supports the local file', () => {
