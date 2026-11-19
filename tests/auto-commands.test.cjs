@@ -78,6 +78,8 @@ function project() {
   const root = temporaryDirectory('fvs-auto-project-');
   fs.cpSync(CRATE, root, { recursive: true });
   fs.cpSync(path.join(PROFILE_FIXTURES, 'fresh'), root, { recursive: true });
+  // An attempt refuses a copy without a lock, so the fixture project carries one.
+  fs.writeFileSync(path.join(root, 'Cargo.lock'), 'version = 3\n');
   git(root, 'init', '-q');
   git(root, 'add', '-A');
   git(root, 'commit', '-q', '-m', 'fixture');
