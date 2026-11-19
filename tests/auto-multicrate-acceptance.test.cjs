@@ -71,11 +71,17 @@ function allowAxioms(root, head) {
   return written.json?.sha256 ? { file: written.json.file, sha256: written.json.sha256, names: written.json.names } : null;
 }
 
+// What a version 2 acceptance carries besides the statements: the Lean-level comparison of them with
+// the merged spec, which an acceptance without it does not count.
+const LEAN_COMPARISON = { toolchain: { lean: 'Lean (version 4.35.0)', githash: 'a'.repeat(40) }, statements: [{ name: 'f', declaration: 'f', constants: 2, sha256: 'a'.repeat(64) }],
+  bindings: [], dumps: { base: 'b'.repeat(64), head: 'c'.repeat(64) } };
+
 function receipt(root, head, files, extra = {}) {
   const directory = path.join(root, '.formalising', 'auto-fv', 'build-check');
   fs.mkdirSync(directory, { recursive: true });
-  fs.writeFileSync(path.join(directory, `${head}.json`), JSON.stringify({ schema: 1, kind: 'fvs-build-check', accepted: true,
-    label: 'accepted (build check)', commit: head, specBase: head, specFiles: files, allowAxioms: allowAxioms(root, head), externals: { records: [] }, ...extra }));
+  fs.writeFileSync(path.join(directory, `${head}.json`), JSON.stringify({ schema: 2, kind: 'fvs-build-check', accepted: true,
+    label: 'accepted (build check)', commit: head, specBase: head, specFiles: files, allowAxioms: allowAxioms(root, head), externals: { records: [] },
+    integrity: { semantic: LEAN_COMPARISON }, ...extra }));
 }
 
 const bothBuilt = () => [specFile(HMAC_SPEC, [statement('hmac_spec')]), specFile(SHA2_SPEC, [statement('hash_256_spec')])];
