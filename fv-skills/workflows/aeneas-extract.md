@@ -354,7 +354,7 @@ The spec keeps the single-crate fields as a base (`release`, `cargoArgs`, `charo
 | `crates[].publishDir` | where that crate's Lean is published; one folder per crate, none inside another |
 | `crates[].moduleRoot` | the Lean module name of that folder, so another crate can import it |
 | `crates[].stitch` | `[{ crate, assume }]`: this crate calls target `crate`; its Lean imports that crate's published module (see below) |
-| `crates[].substitutions` | `[{ file, find, replace, count, reason }]`: a required literal edit to the generated Lean, with the exact number of matches; recorded with before and after hashes and recomputed by `attempt-status` |
+| `crates[].substitutions` | `[{ file, find, replace, count, reason }]`: a rename of a name Lean cannot read, with the exact number of matches. `find` holds U+00B7 (Aeneas writes a shadowed local as `len·`), `replace` is a plain identifier that occurs nowhere in the crate's generated Lean, no match follows a `.`, and the rename is made inside a definition body only. Any other edit is refused when the attempt is recorded: it belongs in a patch of the Rust source. Recorded with before and after hashes and recomputed by `attempt-status` |
 | `nonTargets` | `[{ crate, dir }]`: in-repo crates the owner decided not to verify |
 
 Every crate has its own Charon, Aeneas and publish chain, so a failing crate ends only its own

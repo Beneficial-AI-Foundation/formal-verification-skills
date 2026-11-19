@@ -938,6 +938,12 @@ const isObject = (value) => value !== null && typeof value === 'object' && !Arra
 const LEAN_MODULE = /^[A-Za-z_][A-Za-z0-9_']*(\.[A-Za-z_][A-Za-z0-9_']*)*$/;
 const RUST_PATH = /^[A-Za-z0-9_]+(::[A-Za-z0-9_]+)*$/;
 const SUBSTITUTION_FIELDS = ['file', 'find', 'replace', 'count', 'reason'];
+// A substitution renames a name that Lean cannot read, and does nothing else. Aeneas writes
+// a shadowed local as `len·`, which a Lean identifier cannot contain. The characters that
+// qualify are listed, and the list grows only from output a real Aeneas wrote.
+const UNREADABLE_NAME_CHARS = ['\u00b7'];
+const NAME_FRAGMENT = /^[\p{L}\p{N}_'\u00b7]+$/u;
+const PLAIN_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_']*$/;
 const STITCH_FIELDS = ['crate', 'assume'];
 const PUBLISH_DEST = 'publish-dest';
 
@@ -953,9 +959,17 @@ function checkSubstitutions(list) {
     if (relative.split('/').some((part) => part.toLowerCase() === 'trusted')) refuse('invalid-input', `${where}.file is under a Trusted directory; a substitution edits generated Lean only, never a Trusted file`);
     if (typeof entry.find !== 'string' || entry.find === '') refuse('invalid-input', `${where}.find must be the exact non-empty text to replace`);
     if (typeof entry.replace !== 'string') refuse('invalid-input', `${where}.replace must be a string`);
+    if (!NAME_FRAGMENT.test(entry.find) || !UNREADABLE_NAME_CHARS.some((char) => entry.find.includes(char))) {
+      refuse('invalid-input', `${where}.find must be part of a name that Lean cannot read, which holds one of ${UNREADABLE_NAME_CHARS.map((char) => `U+${char.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`).join(', ')} (such as "len·"); a substitution only renames such a name, and any other change to the translation is a translation patch of the Rust source`);
+    }
+    if (!PLAIN_IDENTIFIER.test(entry.replace)) refuse('invalid-input', `${where}.replace must be a plain identifier (ASCII letters, digits, _ and ')`);
     if (!Number.isInteger(entry.count) || entry.count < 1) refuse('invalid-input', `${where}.count must be the exact number of matches (at least 1)`);
     if (typeof entry.reason !== 'string' || entry.reason.trim() === '') refuse('invalid-input', `${where}.reason must say why the generated Lean needs this edit`);
     return { file: relative, find: entry.find, replace: entry.replace, count: entry.count, reason: entry.reason };
+  }).map((entry, index, all) => {
+    const clash = all.findIndex((other, at) => at !== index && other.replace === entry.replace);
+    if (clash !== -1) refuse('invalid-input', `substitutions[${index}].replace ${JSON.stringify(entry.replace)} is also used by substitutions[${clash}]: two renames never share a new name`);
+    return entry;
   });
 }
 
@@ -1851,7 +1865,11 @@ const squash = (text) => text.replace(/\s+/g, ' ').trim();
 const countOf = (text, needle) => text.split(needle).length - 1;
 const isRustItem = (rustPath, prefix) => rustPath === prefix || rustPath.startsWith(`${prefix}::`);
 
-// A substitution may change the code inside a definition's body and nothing else. Axiom
+// A substitution renames a name Lean cannot read (see UNREADABLE_NAME_CHARS), which is not
+// a change of meaning: the old name is not valid Lean, every match is replaced, the new name
+// is plain and occurs nowhere in the crate's generated Lean (so it captures nothing and no
+// existing name is confused with it), and no match is a field or a qualified-name component
+// (a match after a `.`). A rename can still only be made inside a definition's body. Axiom
 // declarations (name, type, attributes, the doc comment that carries the Rust path), the
 // name and type of every definition and every other top-level line stay exactly as Aeneas
 // wrote them, so a literal edit cannot add, retype or relabel an assumption, or reword what
@@ -1901,7 +1919,7 @@ function declarationProblems(before, after) {
   return [];
 }
 
-function applySubstitutions(file, text, substitutions) {
+function applySubstitutions(file, text, substitutions, world = {}) {
   const applied = [];
   const reasons = [];
   let current = text;
@@ -1910,6 +1928,15 @@ function applySubstitutions(file, text, substitutions) {
     const found = countOf(current, entry.find);
     if (found !== entry.count) {
       reasons.push(`substitution ${index} expects ${entry.count} match(es) of ${JSON.stringify(entry.find)} in ${file} and finds ${found}`);
+      return;
+    }
+    const taken = [[file, current], ...Object.entries(world)].find(([, other]) => other.includes(entry.replace));
+    if (taken) {
+      reasons.push(`substitution ${index} is refused in ${file}: ${JSON.stringify(entry.replace)} already occurs in ${taken[0]}, so the renamed name could capture an existing one`);
+      return;
+    }
+    if (current.split(entry.find).slice(0, -1).some((piece) => piece.endsWith('.'))) {
+      reasons.push(`substitution ${index} is refused in ${file}: a match of ${JSON.stringify(entry.find)} follows a '.', and a substitution never renames a field or a part of a qualified name`);
       return;
     }
     const next = current.split(entry.find).join(entry.replace);
@@ -2142,7 +2169,7 @@ function computeTransform(chain, raw) {
   const applied = [];
   const files = {};
   for (const [name, original] of Object.entries(raw)) {
-    const substituted = applySubstitutions(name, original, substitutions);
+    const substituted = applySubstitutions(name, original, substitutions, raw);
     reasons.push(...substituted.reasons);
     applied.push(...substituted.applied);
     texts[name] = substituted.text;

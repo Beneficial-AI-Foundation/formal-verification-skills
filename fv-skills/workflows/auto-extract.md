@@ -83,7 +83,8 @@ crates"): one entry for each target crate with its own `publishDir` and `moduleR
 crates the agreement excludes, and, for each target that calls another target, a `stitch` entry naming
 that target. Stitching makes the caller's Lean use the other crate's real translation; without it the
 calls would be axioms in the caller's Lean, and the extraction is not recorded as succeeded. Use a
-`substitutions` entry only for a required edit inside a definition body; a substitution never touches an
+`substitutions` entry only to rename a name Lean cannot read (Aeneas writes a shadowed local as `len·`);
+any other change to the translation is a patch of the Rust source, and a substitution never touches an
 axiom, the name or type of a definition, or a Trusted file. The extractor runs the chain of each crate in
 the `order` the attempt records, and the run-end summary still names one copy, `OUT`. A crate whose chain
 fails fails the whole extraction; the others stay on disk as evidence.

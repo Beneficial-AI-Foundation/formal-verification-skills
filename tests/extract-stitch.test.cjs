@@ -96,6 +96,10 @@ end toy_app
 
 const behaviour = (extra = {}) => ({ toy_lib: { lean: lib() }, toy_app: { lean: APP }, ...extra });
 
+// Aeneas names a shadowed local with a middle dot (U+00B7), which a Lean name cannot contain.
+const SHADOWED = APP.replace('let x ← toy_lib.one\n  ok x', 'let x· ← toy_lib.one\n  ok x·');
+const shadowed = (extra = {}) => behaviour({ toy_app: { lean: SHADOWED }, ...extra });
+
 function stitched(spec = {}) {
   const base = toySpec();
   base.crates[0].moduleRoot = 'Toy.Lib';
@@ -207,102 +211,115 @@ describe('stitching: the consumer\'s axioms become checked aliases of the provid
   });
 });
 
-describe('substitutions: exact text edits of the generated Lean with the match count they must find', () => {
-  const edit = (extra = {}) => ({ file: 'ToyApp.lean', find: 'let x ← toy_lib.one\n  ok x', replace: 'let y ← toy_lib.one\n  ok y', count: 1, reason: 'rename a local that the project\'s specs name', ...extra });
+describe('substitutions: a rename of a name Lean cannot read, with the match count it must find', () => {
+  const edit = (extra = {}) => ({ file: 'ToyApp.lean', find: 'x·', replace: 'x_mid', count: 2, reason: 'Aeneas names a shadowed local with a middle dot, which a Lean name cannot contain', ...extra });
+  const only = /a substitution only renames such a name, and any other change to the translation is a translation patch of the Rust source/;
 
-  it('applies the edit, records both hashes, and publishes the edited file', () => {
-    const ws = workspace(behaviour());
+  // The spec is refused when the attempt is recorded, before anything is written.
+  const specRefused = (substitutions, pattern) => {
+    const ws = workspace(shadowed());
+    const { recorded } = attempted(ws, stitched({ stitch: undefined, substitutions: [].concat(substitutions) }));
+    assert.equal(recorded.status, 5, recorded.stdout);
+    assert.match(recorded.result.message, pattern);
+  };
+  // The publish stage refuses and publishes nothing.
+  const publishRefused = (variant, substitutions, pattern) => {
+    const ws = workspace(variant);
+    const { out } = attempted(ws, stitched({ stitch: undefined, substitutions: [].concat(substitutions) }));
+    for (const name of ['charon', 'aeneas']) assert.equal(step(ws, out, name, 'toy_app').status, 0);
+    const publish = step(ws, out, 'publish', 'toy_app');
+    assert.equal(publish.status, 9, publish.stdout);
+    assert.match(publish.result.message, pattern);
+    assert.equal(fs.existsSync(path.join(ws.project, 'Lean', 'App')), false, 'nothing is published from a refused edit');
+  };
+  const variantOf = (...pairs) => behaviour({ toy_app: { lean: pairs.reduce((text, [from, to]) => { assert.ok(text.includes(from), from); return text.replace(from, to); }, APP) } });
+
+  it('applies the rename, records both hashes, and publishes the renamed file', () => {
+    const ws = workspace(shadowed());
     const out = complete(ws, stitched({ stitch: undefined, substitutions: [edit()] }));
-    assert.match(published(ws, 'Lean/App/ToyApp.lean'), /let y ← toy_lib\.one\n {2}ok y/);
+    assert.match(published(ws, 'Lean/App/ToyApp.lean'), /let x_mid ← toy_lib\.one\n {2}ok x_mid/);
     const { run } = engine(ws, ['attempt-status', '--out', out]).result;
     const app = run.units.find((unit) => unit.crate === 'toy_app');
     assert.equal(app.substitutions.length, 1);
     const [entry] = app.substitutions;
-    assert.deepEqual([entry.file, entry.count, entry.reason], ['ToyApp.lean', 1, 'rename a local that the project\'s specs name']);
+    assert.deepEqual([entry.file, entry.count], ['ToyApp.lean', 2]);
+    assert.match(entry.reason, /shadowed local/);
     assert.notEqual(entry.beforeSha256, entry.afterSha256);
     assert.equal(app.publication.find((item) => item.projectPath.endsWith('ToyApp.lean')).sha256, entry.afterSha256);
     assert.deepEqual(app.stitch, [], 'no stitching was declared');
   });
 
   it('fails the publish stage when the text matches a different number of times, and publishes nothing', () => {
-    const ws = workspace(behaviour());
-    const { out } = attempted(ws, stitched({ stitch: undefined, substitutions: [edit({ count: 2 })] }));
-    for (const name of ['charon', 'aeneas']) assert.equal(step(ws, out, name, 'toy_app').status, 0);
-    const publish = step(ws, out, 'publish', 'toy_app');
-    assert.equal(publish.status, 9, publish.stdout);
-    assert.match(publish.result.message, /substitution 0 expects 2 match\(es\) of .* in ToyApp\.lean and finds 1/);
-    assert.equal(fs.existsSync(path.join(ws.project, 'Lean', 'App')), false);
+    publishRefused(shadowed(), edit({ count: 3 }), /substitution 0 expects 3 match\(es\) of .* in ToyApp\.lean and finds 2/);
   });
 
   it('refuses a substitution that names a file the translation did not produce', () => {
-    const ws = workspace(behaviour());
-    const { out } = attempted(ws, stitched({ stitch: undefined, substitutions: [edit({ file: 'Missing.lean' })] }));
-    for (const name of ['charon', 'aeneas']) assert.equal(step(ws, out, name, 'toy_app').status, 0);
-    const publish = step(ws, out, 'publish', 'toy_app');
-    assert.equal(publish.status, 9, publish.stdout);
-    assert.match(publish.result.message, /a substitution names Missing\.lean, which is not a generated Lean file \(ToyApp\.lean\)/);
+    publishRefused(shadowed(), edit({ file: 'Missing.lean' }), /a substitution names Missing\.lean, which is not a generated Lean file \(ToyApp\.lean\)/);
   });
 
-  // A substitution edits the code inside a definition's body and nothing else: it cannot add,
-  // retype or relabel an axiom, change what a definition claims, or reach a Trusted file.
-  describe('never touches a declaration', () => {
-    const refusedPublish = (substitution, pattern) => {
-      const ws = workspace(behaviour());
-      const { out } = attempted(ws, stitched({ stitch: undefined, substitutions: [substitution] }));
-      for (const name of ['charon', 'aeneas']) assert.equal(step(ws, out, name, 'toy_app').status, 0);
-      const publish = step(ws, out, 'publish', 'toy_app');
-      assert.equal(publish.status, 9, publish.stdout);
-      assert.match(publish.result.message, pattern);
-      assert.equal(fs.existsSync(path.join(ws.project, 'Lean', 'App')), false, 'nothing is published from a refused edit');
-    };
-    const base = (extra) => edit(extra);
+  describe('is never an edit of the code', () => {
+    it('refuses a change of a value, a call or a declaration', () => {
+      specRefused(edit({ find: 'ok x·', replace: 'ok 7#u32' }), only);
+      specRefused(edit({ find: 'toy_lib.one', replace: 'toy_lib.grow' }), only);
+      specRefused(edit({ find: 'axiom toy_lib.other_mod.skipped : Result Unit', replace: 'axiom toy_lib.other_mod.skipped : 1 = 1' }), only);
+      specRefused(edit({ find: 'def three : Result Std.U32 := do', replace: 'def four : Result Std.U32 := do' }), only);
+      specRefused(edit({ find: 'x', replace: 'y' }), only);
+    });
 
+    it('refuses a find that is not a plain name fragment and a replace that is not a plain identifier', () => {
+      specRefused(edit({ find: 'x· ←' }), only);
+      specRefused(edit({ find: 'a.x·' }), only);
+      specRefused(edit({ find: '' }), /find must be the exact non-empty text/);
+      for (const replace of ['x·y', 'x_mid + 1', 'x.mid', '9x', '']) specRefused(edit({ replace }), /replace must be a plain identifier/);
+    });
+
+    it('refuses two renames that share a new name', () => {
+      specRefused([edit(), edit({ find: 'y·' })], /substitutions\[0\]\.replace "x_mid" is also used by substitutions\[1\]: two renames never share a new name/);
+    });
+
+    it('refuses a new name that already occurs in the crate\'s generated Lean', () => {
+      publishRefused(shadowed(), edit({ replace: 'three' }), /"three" already occurs in ToyApp\.lean, so the renamed name could capture an existing one/);
+      publishRefused(shadowed(), edit({ replace: 'ok' }), /"ok" already occurs in ToyApp\.lean/);
+    });
+
+    it('refuses to rename a field or a part of a qualified name', () => {
+      publishRefused(variantOf(['let x ← toy_lib.one\n  ok x', 'let x· ← toy_lib.one\n  ok p.x·']), edit(), /a match of "x·" follows a '\.', and a substitution never renames a field or a part of a qualified name/);
+    });
+  });
+
+  // Defense in depth: the rename itself can only be made inside a definition's body. Aeneas
+  // output with the unreadable character in a declaration, an axiom or a doc comment is refused.
+  describe('never reaches a declaration', () => {
     it('refuses to retype an axiom', () => {
-      refusedPublish(base({ find: 'axiom toy_lib.other_mod.skipped : Result Unit', replace: 'axiom toy_lib.other_mod.skipped : 1 = 1', reason: 'x' }), /substitution 0 is refused in ToyApp\.lean: it changes the axiom toy_lib\.other_mod\.skipped, and a substitution never edits an axiom/);
+      publishRefused(variantOf(['axiom toy_lib.other_mod.skipped : Result Unit', 'axiom toy_lib.other_mod.skipped : Result Unit·']),
+        edit({ find: 'Unit·', replace: 'Unit_x', count: 1 }), /substitution 0 is refused in ToyApp\.lean: it changes the axiom toy_lib\.other_mod\.skipped, and a substitution never edits an axiom/);
     });
 
-    it('refuses to rewrite the Rust path in an axiom\'s doc comment or attribute', () => {
-      refusedPublish(base({ find: 'Name pattern: [toy_lib::other_mod::skipped]', replace: 'Name pattern: [toy_lib::one]', reason: 'x' }), /it changes the axiom toy_lib\.other_mod\.skipped/);
-      refusedPublish(base({ find: '@[rust_fun "toy_lib::other_mod::skipped"]', replace: '@[rust_fun "toy_lib::one"]', reason: 'x' }), /it changes the axiom toy_lib\.other_mod\.skipped/);
+    it('refuses to rename a definition, or the Rust path of its doc comment', () => {
+      publishRefused(variantOf(['def three : Result Std.U32 := do', 'def three· : Result Std.U32 := do']),
+        edit({ find: 'three·', replace: 'three_x', count: 1 }), /it changes the name or type of three·, and a substitution edits only the body of a definition/);
+      publishRefused(variantOf(['/-- [toy_app::three]:', '/-- [toy_app::three·]:']),
+        edit({ find: 'three·', replace: 'three_x', count: 1 }), /it changes the name or type of three/);
     });
 
-    it('refuses to rename an axiom, or to add one', () => {
-      refusedPublish(base({ find: 'axiom toy_lib.other_mod.skipped', replace: 'axiom toy_lib.other_mod.renamed', reason: 'x' }), /it changes the axiom toy_lib\.other_mod\.skipped/);
-      refusedPublish(base({ find: 'def three : Result Std.U32 := do', replace: 'axiom extra : False\n\ndef three : Result Std.U32 := do', reason: 'x' }), /it changes the number of top-level declarations/);
-    });
-
-    it('refuses to change the name or the type of a definition, but not its body', () => {
-      refusedPublish(base({ find: 'def three : Result Std.U32 := do', replace: 'def four : Result Std.U32 := do', reason: 'x' }), /it changes the name or type of three, and a substitution edits only the body of a definition/);
-      refusedPublish(base({ find: 'def three : Result Std.U32 := do', replace: 'def three : Result Std.U64 := do', reason: 'x' }), /it changes the name or type of three/);
-      refusedPublish(base({ find: '/-- [toy_app::three]:', replace: '/-- [toy_app::four]:', reason: 'x' }), /it changes the name or type of three/);
-    });
-
-    it('refuses text outside any definition, such as an import line', () => {
-      refusedPublish(base({ find: 'open Aeneas', replace: 'open Aeneas Foo', reason: 'x' }), /it changes text outside a definition body \("open Aeneas/);
-    });
-
-    it('still allows an edit inside a body', () => {
-      const ws = workspace(behaviour());
-      complete(ws, stitched({ stitch: undefined, substitutions: [edit()] }));
-      assert.match(published(ws, 'Lean/App/ToyApp.lean'), /let y ← toy_lib\.one/);
+    it('refuses text outside any definition, such as an open line', () => {
+      publishRefused(variantOf(['open Aeneas Aeneas.Std Result\nnamespace toy_app', 'open Aeneas Aeneas.Std Result\nopen Foo·\nnamespace toy_app']),
+        edit({ find: 'Foo·', replace: 'Foo_x', count: 1 }), /it changes text outside a definition body \("open Foo/);
     });
 
     it('names no Trusted file: a substitution under a Trusted directory is refused before anything is written', () => {
-      const ws = workspace(behaviour());
-      const { recorded } = attempted(ws, stitched({ stitch: undefined, substitutions: [edit({ file: 'Trusted/Sha2.lean' })] }));
-      assert.equal(recorded.status, 5, recorded.stdout);
-      assert.match(recorded.result.message, /substitutions\[0\]\.file is under a Trusted directory; a substitution edits generated Lean only, never a Trusted file/);
+      specRefused(edit({ file: 'Trusted/Sha2.lean' }), /substitutions\[0\]\.file is under a Trusted directory; a substitution edits generated Lean only, never a Trusted file/);
     });
   });
 
   it('works for a single-crate attempt as well', () => {
-    const ws = workspace({ toy_lib: { lean: lib() } });
+    const ws = workspace({ toy_lib: { lean: lib().replace('def one : Result Std.U32 := ok 1#u32', 'def one : Result Std.U32 := do\n  let n· := 1#u32\n  ok n·') } });
     const out = path.join(ws.root, 'copies', 'single');
     assert.equal(engine(ws, ['prepare', '--project-root', ws.project, '--out', out]).status, 0);
-    const spec = { release: toySpec().release, crate: 'toy_lib', publishDir: 'Lean/Lib', cargoArgs: ['--locked', '--package', 'toy-lib'], substitutions: [{ file: 'ToyLib.lean', find: 'def one : Result Std.U32 := ok 1#u32', replace: 'def one : Result Std.U32 := ok 7#u32', count: 1, reason: 'exercise the edit' }] };
+    const spec = { release: toySpec().release, crate: 'toy_lib', publishDir: 'Lean/Lib', cargoArgs: ['--locked', '--package', 'toy-lib'], substitutions: [{ file: 'ToyLib.lean', find: 'n·', replace: 'n_one', count: 2, reason: 'a local named with a middle dot' }] };
     assert.equal(engine(ws, ['attempt', '--out', out, '--spec', specFile(ws, spec)]).status, 0);
     for (const name of ['charon', 'aeneas', 'publish']) assert.equal(engine(ws, ['run', '--out', out, '--step', name]).status, 0);
-    assert.match(published(ws, 'Lean/Lib/ToyLib.lean'), /ok 7#u32/);
+    assert.match(published(ws, 'Lean/Lib/ToyLib.lean'), /let n_one := 1#u32\n {2}ok n_one/);
     const status = engine(ws, ['attempt-status', '--out', out]);
     assert.equal(status.status, 0, status.stdout);
     assert.equal(status.result.run.substitutions.length, 1);
@@ -337,7 +354,7 @@ describe('stitching and substitutions: the spec is checked before anything is wr
   });
 
   it('refuses malformed substitutions', () => {
-    const base = { file: 'ToyApp.lean', find: 'x', replace: 'y', count: 1, reason: 'why' };
+    const base = { file: 'ToyApp.lean', find: 'x·', replace: 'y', count: 1, reason: 'why' };
     refused(stitched({ substitutions: [{ ...base, count: 0 }] }), /substitutions\[0\]\.count must be the exact number of matches/);
     refused(stitched({ substitutions: [{ ...base, find: '' }] }), /substitutions\[0\]\.find must be the exact non-empty text/);
     refused(stitched({ substitutions: [{ ...base, reason: ' ' }] }), /substitutions\[0\]\.reason must say why/);
