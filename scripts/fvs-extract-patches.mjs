@@ -59,8 +59,8 @@ function usage() {
     '       node fvs-extract-patches.mjs status --out DIR [--format json|text]',
     '       node fvs-extract-patches.mjs migrate --project-root DIR [--format json|text]',
     '       node fvs-extract-patches.mjs attempt --out DIR --spec FILE [--format json|text]',
-    '       node fvs-extract-patches.mjs run --out DIR --step charon|aeneas|publish [--format json|text]',
-    '       node fvs-extract-patches.mjs attempt-status --out DIR [--format json|text]',
+    '       node fvs-extract-patches.mjs run --out DIR --step charon|aeneas|publish [--crate NAME] [--format json|text]',
+    '       node fvs-extract-patches.mjs attempt-status --out DIR [--crate NAME] [--format json|text]',
     '',
     'Applies the translation patches in DIR/translation-patches, in the order listed',
     'in DIR/translation-patches/series (one file name per line, every patch exactly',
@@ -83,6 +83,12 @@ function usage() {
     '(charon, aeneas, publish), under the controlled environment, and records its outputs',
     'when it exits; a failed or interrupted stage ends the attempt. attempt-status',
     're-validates the whole chain and the current output hashes.',
+    '',
+    'A spec with a crates list (and main) records one attempt per in-repo target crate',
+    'inside the one prepared copy, under DIR/units/<crate>: every crate has its own',
+    'Charon, Aeneas and publish chain, so a failing crate ends only its own chain. run',
+    'then needs --crate NAME. attempt-status refuses unless every crate is complete and',
+    'lists each crate\'s status; its run is the main crate\'s, plus run.units.',
     '',
     'Exit codes: 0 ok; 1 a patch does not fit (stale, already applied, not reversible,',
     'or not independent although it declares Independent: yes); 2 usage or internal',
@@ -856,8 +862,82 @@ function canonicalConfig(value, out, projectRoot) {
 }
 
 const SPEC_FIELDS = ['release', 'crate', 'publishDir', 'charonArgs', 'cargoArgs', 'aeneasArgs'];
-const INVOCATION_FIELDS = ['spec', 'crate', 'llbc', 'aeneasDest', 'publishDir', 'projectRoot', 'tree', 'release', 'tools', 'env', 'charon', 'aeneas'];
+const INVOCATION_FIELDS = ['spec', 'crate', 'llbc', 'aeneasDest', 'publishDir', 'projectRoot', 'tree', 'release', 'tools', 'env', 'charon', 'aeneas', 'targets'];
 const TRUST = 'local-host-and-reviewed-scripts';
+
+// A multi-crate spec: the top-level fields are the base, every entry of crates
+// is an overlay, and each crate gets its own attempt chain inside the one
+// prepared copy, under OUT/units/<crate>.
+const UNITS_DIR = 'units';
+const MULTI_SCHEMA = 'fvs-extract-patches/multi-attempt';
+const MULTI_SPEC_FIELDS = ['release', 'cargoArgs', 'charonArgs', 'aeneasArgs', 'crates', 'main'];
+const UNIT_FIELDS = ['crate', 'package', 'dir', 'publishDir', 'charonArgs', 'cargoArgs', 'aeneasArgs'];
+const CRATE_NAME = /^[A-Za-z0-9_]+$/;
+const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+
+// The manifest, the tree and the verify checks belong to the copy OUT; a
+// crate's own attempt lives in OUT/units/<crate>.
+function copyRoot(out) {
+  if (lexists(path.join(out, MANIFEST))) return out;
+  const copy = path.dirname(path.dirname(out));
+  return path.basename(path.dirname(out)) === UNITS_DIR && lexists(path.join(copy, MANIFEST)) ? copy : out;
+}
+
+// Charon labels a crate with its underscored name; the hyphenated one belongs to --package.
+function checkCrateName(where, name) {
+  if (typeof name === 'string' && name.includes('-') && CRATE_NAME.test(name.replace(/-/g, '_'))) {
+    refuse('invalid-input', `${where} ${JSON.stringify(name)} has a hyphen; Charon labels a crate with its underscored name, so use ${JSON.stringify(name.replace(/-/g, '_'))} (the hyphenated name is the --package name)`, { field: where });
+  }
+  if (typeof name !== 'string' || !CRATE_NAME.test(name)) refuse('invalid-input', `${where} must be a crate name (letters, digits and underscores)`, { field: where });
+}
+
+// The units of a multi-crate spec, each as an ordinary single-crate spec. An
+// overlay field replaces the base field (lists are replaced, never joined), and
+// the unit's package becomes its --package argument. Nothing is written here.
+function multiUnits(spec, manifest) {
+  const unknown = Object.keys(spec).filter((key) => !MULTI_SPEC_FIELDS.includes(key));
+  if (unknown.length > 0) refuse('invalid-input', `a multi-crate spec has unsupported fields: ${unknown.join(', ')} (crate and publishDir belong to each entry of crates)`);
+  if (!Array.isArray(spec.crates) || spec.crates.length === 0) refuse('invalid-input', 'crates must be a non-empty array');
+  const units = spec.crates.map((entry, index) => {
+    const where = `crates[${index}]`;
+    if (!isObject(entry)) refuse('invalid-input', `${where} must be an object`);
+    const extra = Object.keys(entry).filter((key) => !UNIT_FIELDS.includes(key));
+    if (extra.length > 0) refuse('invalid-input', `${where} has unsupported fields: ${extra.join(', ')}`);
+    checkCrateName(`${where}.crate`, entry.crate);
+    if (typeof entry.package !== 'string' || !/^[A-Za-z0-9_-]+$/.test(entry.package)) refuse('invalid-input', `${where}.package must be the Cargo package name`);
+    const dir = typeof entry.dir === 'string' ? path.posix.normalize(entry.dir) : '';
+    if (dir === '' || path.isAbsolute(dir) || dir.split('/').includes('..')) refuse('invalid-input', `${where}.dir must be the crate directory inside the extraction copy, relative to its root`);
+    if (!Object.hasOwn(manifest.final.files, path.posix.join(dir, 'Cargo.toml'))) refuse('invalid-input', `${where}.dir ${dir} holds no Cargo.toml in the extraction copy; add it to extraction.inputs`, { field: `${where}.dir` });
+    const cargoArgs = entry.cargoArgs ?? spec.cargoArgs ?? [];
+    if (!Array.isArray(cargoArgs)) refuse('invalid-input', `${where}.cargoArgs must be an array of strings`);
+    if (cargoArgs.includes('--package')) refuse('invalid-input', `${where}.cargoArgs must not carry --package; set package instead`);
+    return {
+      crate: entry.crate,
+      package: entry.package,
+      dir,
+      flat: {
+        release: spec.release,
+        crate: entry.crate,
+        publishDir: entry.publishDir,
+        charonArgs: entry.charonArgs ?? spec.charonArgs ?? [],
+        cargoArgs: [...cargoArgs, '--package', entry.package],
+        aeneasArgs: entry.aeneasArgs ?? spec.aeneasArgs ?? [],
+      },
+    };
+  });
+  for (const key of ['crate', 'package', 'dir']) {
+    const repeated = units.map((unit) => unit[key]).filter((value, index, all) => all.indexOf(value) !== index);
+    if (repeated.length > 0) refuse('invalid-input', `crates names ${key} ${repeated.join(', ')} more than once`);
+  }
+  if (typeof spec.main !== 'string' || !units.some((unit) => unit.crate === spec.main)) refuse('invalid-input', `main must name one of the crates (${units.map((unit) => unit.crate).join(', ')})`);
+  const published = units.map((unit) => (typeof unit.flat.publishDir === 'string' ? path.posix.normalize(unit.flat.publishDir) : null));
+  published.forEach((first, i) => published.forEach((second, j) => {
+    if (i < j && first !== null && second !== null && (first === second || first.startsWith(`${second}/`) || second.startsWith(`${first}/`))) {
+      refuse('invalid-input', `the publishDir of ${units[i].crate} (${first}) and of ${units[j].crate} (${second}) are the same or nested; every crate publishes into its own sibling directory`);
+    }
+  }));
+  return { units, main: spec.main };
+}
 
 function homesOf(env) {
   const home = env.HOME;
@@ -872,11 +952,11 @@ function homesOf(env) {
 // spec, the prepared manifest, the release and the three home paths. Recording
 // stores it; every stage derives it again, refuses any difference from the
 // record, and executes only the derived form.
-function deriveInvocation(out, manifest, spec, homes) {
+function deriveInvocation(out, manifest, spec, homes, targets = []) {
   if (spec === null || typeof spec !== 'object' || Array.isArray(spec)) refuse('invalid-input', 'the spec must be a JSON object');
   const unknown = Object.keys(spec).filter((key) => !SPEC_FIELDS.includes(key));
   if (unknown.length > 0) refuse('invalid-input', `the spec has unsupported fields: ${unknown.join(', ')}`);
-  if (typeof spec.crate !== 'string' || !/^[A-Za-z0-9_-]+$/.test(spec.crate)) refuse('invalid-input', 'spec.crate must be a crate name');
+  checkCrateName('spec.crate', spec.crate);
   const { projectRoot } = manifest;
   const publishRelative = typeof spec.publishDir === 'string' ? path.posix.normalize(spec.publishDir) : '';
   if (publishRelative === '' || publishRelative === '.' || path.isAbsolute(publishRelative) || publishRelative.split('/').includes('..')) {
@@ -907,6 +987,9 @@ function deriveInvocation(out, manifest, spec, homes) {
     env,
     charon: { argv: ['cargo', '--preset=aeneas', '--dest-file', llbc, ...charonArgs, ...(cargoArgs.length > 0 ? ['--', ...cargoArgs] : [])], cwd: manifest.tree },
     aeneas: { argv: ['-backend', 'lean', '-emit-json', '-dest', aeneasDest, llbc], cwd: projectRoot },
+    // The declared crates of a multi-crate attempt (absent for a single crate), so the
+    // Charon stage can tell another declared crate's sources from an undeclared one.
+    ...(targets.length > 0 ? { targets } : {}),
   };
 }
 
@@ -932,7 +1015,7 @@ function configOf(invocation, identity, cargoConfig, out) {
 }
 
 function preparedManifest(out) {
-  const manifestFile = path.join(out, MANIFEST);
+  const manifestFile = path.join(copyRoot(out), MANIFEST);
   if (!fs.existsSync(manifestFile)) refuse('usage', `no manifest at ${manifestFile}`);
   const bytes = fs.readFileSync(manifestFile);
   const manifest = JSON.parse(bytes);
@@ -946,7 +1029,74 @@ function attempt(flags) {
   const out = path.resolve(flags.out);
   const { manifest, manifestSha256 } = preparedManifest(out);
   if (lexists(path.join(out, ATTEMPT))) refuse('attempt-refused', 'this copy already has an attempt; prepare a new copy to retry');
-  const invocation = deriveInvocation(out, manifest, readJson(path.resolve(flags.spec)), homesOf(process.env));
+  const spec = readJson(path.resolve(flags.spec));
+  return isObject(spec) && spec.crates !== undefined ? attemptUnits(out, manifest, manifestSha256, spec) : recordAttempt(out, manifest, manifestSha256, spec);
+}
+
+// A multi-crate attempt: every crate gets an ordinary attempt of its own in
+// OUT/units/<crate> (so a failing crate ends only its own chain), all bound to
+// the same prepared manifest, and OUT/attempt.json lists them with their hashes.
+// Everything is checked before anything is written.
+function attemptUnits(out, manifest, manifestSha256, spec) {
+  const { units, main } = multiUnits(spec, manifest);
+  const targets = units.map(({ crate, dir }) => ({ crate, dir }));
+  const homes = homesOf(process.env);
+  const unitOut = (unit) => path.join(out, UNITS_DIR, unit.crate);
+  for (const unit of units) deriveInvocation(unitOut(unit), manifest, unit.flat, homes, targets);
+  const recorded = units.map((unit) => {
+    fs.mkdirSync(unitOut(unit), { recursive: true });
+    return { unit, record: recordAttempt(unitOut(unit), manifest, manifestSha256, unit.flat, targets).attempt };
+  });
+  const record = {
+    schema: MULTI_SCHEMA,
+    version: 1,
+    out,
+    manifestSha256,
+    main,
+    units: recorded.map(({ unit, record: attempt }) => ({
+      crate: unit.crate,
+      package: unit.package,
+      dir: unit.dir,
+      out: unitOut(unit),
+      attemptSha256: sha256(fs.readFileSync(path.join(unitOut(unit), ATTEMPT))),
+      supported: attempt.supported,
+    })),
+  };
+  fs.writeFileSync(path.join(out, ATTEMPT), `${JSON.stringify(record, null, 2)}\n`, { flag: 'wx' });
+  const unsupported = record.units.filter((unit) => !unit.supported).map((unit) => unit.crate);
+  return {
+    message: `attempt recorded for ${units.length} crate(s) (${unsupported.length === 0 ? 'supported configuration' : `unsupported: ${unsupported.join(', ')}`})`,
+    attempt: record,
+  };
+}
+
+// The multi-crate record of a copy, re-read against the manifest and every
+// crate's own attempt record; null when the copy holds a single-crate attempt.
+function readMulti(out) {
+  const file = path.join(out, ATTEMPT);
+  if (!fs.existsSync(file)) return null;
+  let record;
+  try {
+    record = JSON.parse(fs.readFileSync(file));
+  } catch {
+    refuse('attempt-refused', `${file} is not readable JSON`);
+  }
+  if (record?.schema !== MULTI_SCHEMA) return null;
+  const bad = (message) => refuse('attempt-refused', `${file}: ${message}`);
+  if (record.version !== 1 || record.out !== out || !Array.isArray(record.units) || record.units.length === 0) bad('not this copy\'s multi-crate attempt record');
+  const { manifestSha256 } = preparedManifest(out);
+  if (record.manifestSha256 !== manifestSha256) bad('the manifest changed after the attempt was recorded');
+  for (const unit of record.units) {
+    if (typeof unit?.crate !== 'string' || !CRATE_NAME.test(unit.crate) || unit.out !== path.join(out, UNITS_DIR, unit.crate)) bad('a unit record does not name a crate directory of this copy');
+    const unitFile = path.join(unit.out, ATTEMPT);
+    if (!lexists(unitFile) || sha256(fs.readFileSync(unitFile)) !== unit.attemptSha256) bad(`the attempt record of crate ${unit.crate} changed after it was recorded`);
+  }
+  if (!record.units.some((unit) => unit.crate === record.main)) bad('main is not one of the units');
+  return record;
+}
+
+function recordAttempt(out, manifest, manifestSha256, spec, targets = []) {
+  const invocation = deriveInvocation(out, manifest, spec, homesOf(process.env), targets);
   const residuals = callerResiduals(process.env, invocation.env.RUSTUP_TOOLCHAIN);
   const cargoConfig = cargoConfigFiles(manifest.tree, invocation.env.CARGO_HOME);
   for (const file of cargoConfig.filter((entry) => entry.present)) residuals.push({ name: file.path, class: 'cargo-config' });
@@ -997,7 +1147,7 @@ function loadChain(out, through) {
   }
   const { manifest, manifestSha256 } = preparedManifest(out);
   if (record.manifestSha256 !== manifestSha256) refuse('attempt-refused', 'the manifest changed after the attempt was recorded');
-  const invocation = deriveInvocation(out, manifest, record.spec, homesOf(record.env ?? {}));
+  const invocation = deriveInvocation(out, manifest, record.spec, homesOf(record.env ?? {}), Array.isArray(record.targets) ? record.targets : []);
   const differing = INVOCATION_FIELDS.filter((field) => !sameState(invocation[field], record[field]));
   if (differing.length > 0) refuse('attempt-refused', `the recorded ${differing.join(', ')} differ from what the attempt would execute (or a tool changed since it was recorded)`);
   const cargoConfig = cargoConfigFiles(manifest.tree, invocation.env.CARGO_HOME);
@@ -1063,36 +1213,86 @@ function exactlyFiles(entries, files) {
     && Object.entries(entries).every(([entry, state]) => state?.sha256 !== undefined || (state?.type === 'directory' && dirs.has(entry)));
 }
 
-// Structural problems in Charon's LLBC that the identity record relies on.
-function llbcProblems(file, invocation, sources) {
+// The declared crate whose directory is the longest prefix of a file of the copy.
+function ownerOf(targets, file) {
+  let best = null;
+  for (const target of targets) {
+    const holds = target.dir === '.' || file === target.dir || file.startsWith(`${target.dir}/`);
+    if (holds && (best === null || (target.dir !== '.' && (best.dir === '.' || target.dir.length > best.dir.length)))) best = target;
+  }
+  return best?.crate ?? null;
+}
+
+const LLBC_ITEM_KINDS = ['fun_decls', 'type_decls', 'global_decls', 'trait_decls', 'trait_impls'];
+const MAX_ERROR_ITEMS = 200;
+
+// Charon can exit 0 and still flag items it could not translate: the LLBC's own
+// has_errors flag, and has_errors on each item. The names are recorded, never dropped.
+function llbcErrorItems(llbc, translated) {
+  const items = [];
+  for (const kind of LLBC_ITEM_KINDS) {
+    for (const decl of Array.isArray(translated?.[kind]) ? translated[kind] : []) {
+      if (decl?.item_meta?.has_errors !== true) continue;
+      const name = Array.isArray(decl.item_meta.name) ? decl.item_meta.name.map((part) => (Array.isArray(part?.Ident) ? part.Ident[0] : '{impl}')).join('::') : '?';
+      items.push(`${kind.replace(/_decls$|s$/, '')} ${name}`);
+    }
+  }
+  return { hasErrors: llbc?.has_errors === true || items.length > 0, items: items.slice(0, MAX_ERROR_ITEMS), itemCount: items.length };
+}
+
+// Structural problems in Charon's LLBC that the identity record relies on, and
+// what the record keeps about it. For one crate every source of the copy must be
+// labelled with that crate and carry its exact contents. With declared crates
+// (targets), Charon nulls the contents of every crate that is not the main one, so
+// a source under another declared crate may carry no contents, but it must be
+// labelled with its owner; its bytes are pinned by the recorded tree (verify-tree
+// ran before and after Charon) and checked exactly by that crate's own attempt.
+// A source under no declared crate, or labelled with another crate, is refused.
+function inspectLlbc(file, invocation, sources) {
   let llbc;
   try {
     llbc = JSON.parse(fs.readFileSync(file, 'utf8'));
   } catch (error) {
-    return [`the LLBC is not readable JSON: ${error.message}`];
+    return { problems: [`the LLBC is not readable JSON: ${error.message}`], info: null };
   }
   const translated = llbc?.translated;
   const problems = [];
   if (typeof llbc?.charon_version !== 'string') problems.push('the LLBC records no charon_version');
   if (translated?.options?.dest_file !== invocation.llbc) problems.push('the LLBC names another output path');
+  if (translated?.crate_name !== invocation.crate) problems.push(`the LLBC is for crate ${JSON.stringify(translated?.crate_name)}, not ${JSON.stringify(invocation.crate)}`);
   const files = Array.isArray(translated?.files) ? translated.files : null;
   const decls = Array.isArray(translated?.fun_decls) ? translated.fun_decls.filter((decl) => decl !== null) : null;
-  if (!files || !decls) return [...problems, 'the LLBC has no files or fun_decls list'];
+  if (!files || !decls) return { problems: [...problems, 'the LLBC has no files or fun_decls list'], info: null };
   const ids = files.map((entry) => entry?.id);
   if (ids.some((id) => !Number.isInteger(id)) || new Set(ids).size !== ids.length) problems.push('the LLBC file ids are not unique integers');
   const defIds = decls.map((decl) => decl?.def_id);
   if (defIds.some((id) => !Number.isInteger(id)) || new Set(defIds).size !== defIds.length) problems.push('the LLBC fun_decls def_ids are not unique integers');
-  if (files.some((entry) => entry?.crate_name === invocation.crate && typeof entry?.name?.Local === 'string' && typeof entry.contents !== 'string')) {
+  const targets = invocation.targets ?? [];
+  const foreign = [];
+  if (targets.length === 0 && files.some((entry) => entry?.crate_name === invocation.crate && typeof entry?.name?.Local === 'string' && typeof entry.contents !== 'string')) {
     problems.push('a local source file in the LLBC has no contents');
   }
-  // Every entry naming a source of the prepared copy must carry its exact contents and the crate label.
+  const exact = (entry, name) => typeof entry.contents === 'string' && sha256(entry.contents) === sources[name]?.sha256;
   for (const entry of files) {
     const name = entry?.name?.Local;
     if (typeof name !== 'string' || !Object.hasOwn(sources, name)) continue;
-    if (entry.crate_name !== invocation.crate) problems.push(`the LLBC labels ${name} with crate ${JSON.stringify(entry.crate_name)}, not ${JSON.stringify(invocation.crate)}`);
-    if (typeof entry.contents !== 'string' || sha256(entry.contents) !== sources[name]?.sha256) problems.push(`the LLBC's ${name} is not the prepared source`);
+    if (targets.length === 0) {
+      if (entry.crate_name !== invocation.crate) problems.push(`the LLBC labels ${name} with crate ${JSON.stringify(entry.crate_name)}, not ${JSON.stringify(invocation.crate)}`);
+      if (!exact(entry, name)) problems.push(`the LLBC's ${name} is not the prepared source`);
+      continue;
+    }
+    const owner = ownerOf(targets, name);
+    if (entry.crate_name === invocation.crate) {
+      if (owner !== invocation.crate) problems.push(`the LLBC labels ${name} with crate ${JSON.stringify(invocation.crate)}, but the file lies under ${owner === null ? 'no declared crate' : `crate ${JSON.stringify(owner)}`}`);
+      else if (!exact(entry, name)) problems.push(`the LLBC's ${name} is not the prepared source`);
+    } else if (owner !== null && entry.crate_name === owner) {
+      if (entry.contents !== null && entry.contents !== undefined && !exact(entry, name)) problems.push(`the LLBC's ${name} is not the prepared source`);
+      else foreign.push({ crate: owner, file: name, sha256: sources[name].sha256 });
+    } else {
+      problems.push(`the LLBC labels ${name} with crate ${JSON.stringify(entry.crate_name)}, but the file lies under ${owner === null ? 'no declared crate, so it is an in-repo crate nobody declared as a target' : `declared crate ${JSON.stringify(owner)}`}`);
+    }
   }
-  return problems;
+  return { problems, info: { crate: translated.crate_name, ...llbcErrorItems(llbc, translated), foreignSources: foreign.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0)) } };
 }
 
 function beginStage(chain, stage) {
@@ -1137,20 +1337,26 @@ function runCharon(chain) {
   const inv = chain.invocation;
   const { out } = chain.attempt;
   if (lexists(inv.llbc)) refuse('attempt-refused', `${inv.llbc} already exists; the LLBC must be produced by this attempt`);
-  verifyTree({ out });
+  const copy = copyRoot(out);
+  verifyTree({ out: copy });
   const files = beginStage(chain, 'charon');
   const log = path.join(out, 'charon.log');
   const run = runTool(inv.tools.charon.path, inv.charon.argv, inv.charon.cwd, inv.env, log);
   const reasons = toolReasons('Charon', run);
   try {
-    verifyTree({ out });
+    verifyTree({ out: copy });
   } catch (error) {
     reasons.push(`verify-tree after Charon: ${error.message}`);
   }
   const llbc = fileState(inv.llbc);
+  let info = null;
   if (!llbc?.sha256) reasons.push(`Charon produced no LLBC file at ${inv.llbc}`);
-  else if (reasons.length === 0) reasons.push(...llbcProblems(inv.llbc, inv, chain.manifest.final.files));
-  return settle(files, { ...stageBase(chain, 'charon'), run, logSha256: fileState(log).sha256, llbcSha256: llbc?.sha256 ?? null }, reasons);
+  else if (reasons.length === 0) {
+    const checked = inspectLlbc(inv.llbc, inv, chain.manifest.final.files);
+    reasons.push(...checked.problems);
+    info = checked.info;
+  }
+  return settle(files, { ...stageBase(chain, 'charon'), run, logSha256: fileState(log).sha256, llbcSha256: llbc?.sha256 ?? null, llbc: info }, reasons);
 }
 
 // The Lean files translation.json names. Every local function must name one, and
@@ -1298,16 +1504,81 @@ function runPublish(chain) {
 
 const STAGE_RUNNERS = { charon: runCharon, aeneas: runAeneas, publish: runPublish };
 
+// The directory of the attempt a command acts on: the copy itself for one crate, the
+// crate's own directory for a multi-crate attempt (named with --crate).
+function attemptDirectory(flags, multi) {
+  if (!multi) {
+    if (flags.crate !== undefined) refuse('usage', '--crate is only for a multi-crate attempt');
+    return path.resolve(flags.out);
+  }
+  const unit = multi.units.find((entry) => entry.crate === flags.crate);
+  if (!unit) refuse('usage', `--crate is required and must be one of ${multi.units.map((entry) => entry.crate).join(', ')}`);
+  return unit.out;
+}
+
 function run(flags) {
   if (!Object.hasOwn(STAGE_RUNNERS, flags.step)) refuse('usage', `--step must be ${ATTEMPT_STAGES.join(', ')}`);
-  return STAGE_RUNNERS[flags.step](loadChain(path.resolve(flags.out), ATTEMPT_STAGES.indexOf(flags.step)));
+  return STAGE_RUNNERS[flags.step](loadChain(attemptDirectory(flags, readMulti(path.resolve(flags.out))), ATTEMPT_STAGES.indexOf(flags.step)));
+}
+
+// Where a crate's chain stands, from its stage records alone: the first stage
+// that is not completed, and how it ended.
+function progressOf(out) {
+  for (const stage of ATTEMPT_STAGES) {
+    const files = stagePaths(out, stage);
+    if (lexists(files.completed)) continue;
+    if (lexists(files.failed)) return `failed at ${stage}`;
+    if (lexists(files.pending)) return `interrupted at ${stage}`;
+    return `not run: ${stage} is next`;
+  }
+  return null;
+}
+
+function unitRow(unit) {
+  const base = { crate: unit.crate, package: unit.package, dir: unit.dir };
+  try {
+    return { ...base, status: 'complete', run: attemptStatusOf(unit.out).run };
+  } catch (error) {
+    if (!(error instanceof Refusal)) throw error;
+    return { ...base, status: progressOf(unit.out) ?? `refused: ${error.message}` };
+  }
 }
 
 // The completed chain, re-validated with the current invocation, cargo
 // configuration, toolchain identity, LLBC, Aeneas-output and published-file
-// hashes; the summary record-extraction stores.
+// hashes; the summary record-extraction stores. For a multi-crate attempt every
+// declared crate's chain must be complete: one failed or missing crate refuses
+// the whole status, so such an extraction is never recorded as a success. The
+// top-level run is the main crate's; run.units has one row per crate.
 function attemptStatus(flags) {
-  const chain = loadChain(path.resolve(flags.out), ATTEMPT_STAGES.length);
+  const multi = readMulti(path.resolve(flags.out));
+  if (!multi) return attemptStatusOf(attemptDirectory(flags, null));
+  const rows = multi.units.map(unitRow);
+  const summary = (row) => {
+    if (row.status !== 'complete') return { crate: row.crate, package: row.package, dir: row.dir, status: row.status };
+    const { run: unit } = row;
+    return {
+      crate: row.crate, package: row.package, dir: row.dir, status: row.status, publishDir: unit.publishDir,
+      llbc: unit.llbc, translation: unit.translation, publication: unit.publication, stages: unit.stages, hasErrors: unit.hasErrors,
+    };
+  };
+  if (flags.crate !== undefined) {
+    const row = rows.find((entry) => entry.crate === flags.crate);
+    if (!row) refuse('usage', `--crate must be one of ${rows.map((entry) => entry.crate).join(', ')}`);
+    return { message: `crate ${row.crate}: ${row.status}`, unit: summary(row) };
+  }
+  const incomplete = rows.filter((row) => row.status !== 'complete');
+  if (incomplete.length > 0) {
+    refuse('attempt-refused', `the multi-crate attempt is not complete: ${incomplete.map((row) => `${row.crate} ${row.status}`).join('; ')}`, { units: rows.map(summary) });
+  }
+  const main = rows.find((row) => row.crate === multi.main);
+  const supported = rows.every((row) => row.run.supported);
+  const residuals = [...new Map(rows.flatMap((row) => row.run.residuals).map((entry) => [JSON.stringify(entry), entry])).values()];
+  return { message: `attempt complete for ${rows.length} crate(s) (${supported ? 'supported configuration' : 'unsupported configuration'})`, run: { ...main.run, supported, residuals, units: rows.map(summary) } };
+}
+
+function attemptStatusOf(out) {
+  const chain = loadChain(out, ATTEMPT_STAGES.length);
   const { attempt: record, invocation: inv, stages } = chain;
   if (fileState(inv.llbc)?.sha256 !== stages.charon.record.llbcSha256) refuse('attempt-refused', 'the LLBC changed after the Charon stage');
   if (!exactlyFiles(entriesUnder(inv.aeneasDest), stages.aeneas.record.outputs)) refuse('attempt-refused', 'the Aeneas outputs changed after the Aeneas stage');
@@ -1333,6 +1604,10 @@ function attemptStatus(flags) {
       llbc: { path: inv.llbc, sha256: stages.charon.record.llbcSha256 },
       translation,
       publication: mapping,
+      crate: inv.crate,
+      publishDir: path.relative(inv.projectRoot, inv.publishDir),
+      // What Charon flagged although it exited 0: the items it could not translate, by name.
+      hasErrors: stages.charon.record.llbc ? { value: stages.charon.record.llbc.hasErrors, items: stages.charon.record.llbc.items, itemCount: stages.charon.record.llbc.itemCount } : null,
     },
   };
 }
@@ -1345,17 +1620,17 @@ const COMMANDS = {
   status: { required: ['out'], run: status },
   migrate: { required: ['project-root'], run: migrate },
   attempt: { required: ['out', 'spec'], run: attempt },
-  run: { required: ['out', 'step'], run },
-  'attempt-status': { required: ['out'], run: attemptStatus },
+  run: { required: ['out', 'step'], optional: ['crate'], run },
+  'attempt-status': { required: ['out'], optional: ['crate'], run: attemptStatus },
 };
 
-function parseFlags(argv, required) {
+function parseFlags(argv, required, optional = []) {
   const flags = {};
   const rest = [...argv];
   while (rest.length > 0) {
     const flag = rest.shift();
     const key = flag.replace(/^--/, '');
-    if (![...required, 'format'].includes(key) || key === flag) refuse('usage', `unknown argument ${JSON.stringify(flag)}`);
+    if (![...required, ...optional, 'format'].includes(key) || key === flag) refuse('usage', `unknown argument ${JSON.stringify(flag)}`);
     const value = rest.shift();
     if (!value || value.startsWith('--')) refuse('usage', `${flag} requires a value`);
     flags[key] = value;
@@ -1375,7 +1650,7 @@ function main(argv) {
   try {
     if (!Object.prototype.hasOwnProperty.call(COMMANDS, argv[0])) refuse('usage', `unknown command ${JSON.stringify(argv[0])}`);
     const command = COMMANDS[argv[0]];
-    const flags = parseFlags(argv.slice(1), command.required);
+    const flags = parseFlags(argv.slice(1), command.required, command.optional);
     format = flags.format ?? 'json';
     result = { ok: true, code: 'ok', command: argv[0], ...command.run(flags) };
   } catch (error) {
