@@ -103,7 +103,7 @@ describe('multi-crate extraction: the LLBC identity rule', () => {
   it('refuses an in-repo crate nobody declared as a target, so none is silently made opaque', () => {
     const ws = workspace();
     const spec = toySpec();
-    spec.crates = spec.crates.slice(1);
+    spec.crates = spec.crates.slice(1).map(({ stitch, ...rest }) => rest);
     const { out, recorded } = attempted(ws, spec);
     assert.equal(recorded.status, 0, recorded.stdout);
     const charon = step(ws, out, 'charon', 'toy_app');
@@ -149,21 +149,21 @@ describe('multi-crate extraction: the LLBC identity rule', () => {
 
 describe('multi-crate extraction: a failed or missing crate is never a complete attempt', () => {
   it('ends only the failing crate\'s chain and refuses the whole status, naming the crate', () => {
-    const ws = workspace({ toy_lib: { charonExit: 1 } });
+    const ws = workspace({ toy_app: { charonExit: 1 } });
     const { out, recorded } = attempted(ws);
     assert.equal(recorded.status, 0, recorded.stdout);
-    assert.equal(step(ws, out, 'charon', 'toy_lib').status, 9);
-    assert.match(failedCharon(out, 'toy_lib').reasons.join(' '), /Charon exited 1/);
-    completeUnit(ws, out, 'toy_app');
+    completeUnit(ws, out, 'toy_lib');
+    assert.equal(step(ws, out, 'charon', 'toy_app').status, 9);
+    assert.match(failedCharon(out, 'toy_app').reasons.join(' '), /Charon exited 1/);
     const status = engine(ws, ['attempt-status', '--out', out]);
     assert.equal(status.status, 8, status.stdout);
     assert.equal(status.result.code, 'attempt-refused');
-    assert.match(status.result.message, /toy_lib failed at charon/);
-    assert.deepEqual(status.result.units.map((unit) => [unit.crate, unit.status]), [['toy_lib', 'failed at charon'], ['toy_app', 'complete']]);
-    const unit = engine(ws, ['attempt-status', '--out', out, '--crate', 'toy_app']);
+    assert.match(status.result.message, /toy_app failed at charon/);
+    assert.deepEqual(status.result.units.map((unit) => [unit.crate, unit.status]), [['toy_lib', 'complete'], ['toy_app', 'failed at charon']]);
+    const unit = engine(ws, ['attempt-status', '--out', out, '--crate', 'toy_lib']);
     assert.equal(unit.status, 0, unit.stdout);
     assert.equal(unit.result.unit.status, 'complete');
-    assert.equal(engine(ws, ['attempt-status', '--out', out, '--crate', 'toy_lib']).result.unit.status, 'failed at charon');
+    assert.equal(engine(ws, ['attempt-status', '--out', out, '--crate', 'toy_app']).result.unit.status, 'failed at charon');
   });
 
   it('names the first error lines of a failed Charon log in the reasons, bounded', () => {
@@ -184,10 +184,10 @@ describe('multi-crate extraction: a failed or missing crate is never a complete 
   it('refuses the status while a crate has not run at all', () => {
     const ws = workspace();
     const { out } = attempted(ws);
-    completeUnit(ws, out, 'toy_app');
+    completeUnit(ws, out, 'toy_lib');
     const status = engine(ws, ['attempt-status', '--out', out]);
     assert.equal(status.status, 8, status.stdout);
-    assert.match(status.result.message, /toy_lib not run: charon is next/);
+    assert.match(status.result.message, /toy_app not run: charon is next/);
   });
 
   it('needs --crate for a multi-crate attempt and refuses it for a single crate', () => {
@@ -266,7 +266,7 @@ describe('multi-crate extraction: the spec is checked before anything is written
 describe('multi-crate extraction: crates the owner chose not to verify', () => {
   const appOnly = (nonTargets) => {
     const spec = toySpec();
-    spec.crates = spec.crates.slice(1);
+    spec.crates = spec.crates.slice(1).map(({ stitch, ...rest }) => rest);
     spec.nonTargets = nonTargets;
     return spec;
   };
@@ -309,7 +309,7 @@ describe('multi-crate extraction: crates the owner chose not to verify', () => {
     const out = complete(ws);
     const { run } = engine(ws, ['attempt-status', '--out', out]).result;
     const app = run.units.find((unit) => unit.crate === 'toy_app');
-    assert.deepEqual([app.dependsOn, app.unstitched, app.prerequisites], [['toy_lib'], ['toy_lib'], []], 'a target called with no stitch entry is data the acceptance side can refuse on');
+    assert.deepEqual([app.dependsOn, app.unstitched, app.prerequisites], [['toy_lib'], [], []], 'a target the crate calls is stitched, or the crate is not published');
     const library = run.units.find((unit) => unit.crate === 'toy_lib');
     assert.deepEqual([library.dependsOn, library.unstitched], [[], []]);
   });

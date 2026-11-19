@@ -371,10 +371,17 @@ Lean's own type check is the signature gate: an alias whose type is not the type
 rejected when the project builds, and the engine refuses an obvious mismatch before that. Functions
 and types become reducible aliases; a constant becomes a plain definition `Result.ok` of A's
 constant, so proof automation keeps seeing the constant. Every existing name stays valid. Nothing
-falls back to an axiom silently: an item A does not define (for example a module excluded from A's
-translation) must be named under `assume`, or publication fails; the items taken as assumed are
-recorded and each needs an externals record. Publication stitches only after A's own Aeneas stage
-is complete, and the record names A's stage hash. The generated files are edited only by these two
+falls back to an axiom silently. A crate whose Charon output reaches a target crate A must have a
+`stitch` entry for A, or its publication fails (declare A a non-target if the owner decides to
+leave A out). An item A does not declare (for example a module excluded from A's translation) must
+be named under `assume`, by a module or item path and never the whole crate; `assume` never covers
+an item A declares, an entry that matches no axiom is refused as stale, and the items taken as
+assumed are recorded and each needs an externals record. An item A declares but leaves opaque stays
+an alias of A's own axiom: it is recorded as `providerOpaque` and needs A's externals record. After
+stitching, every axiom left in the published Lean is classified by the crate its Rust path names: an
+axiom for another target's item that is not a recorded assumption, or one with no readable Rust path,
+fails publication. Publication stitches only after A's own Aeneas stage is complete, and the record
+names A's stage hash. The generated files are edited only by these two
 declared, recorded transforms; the `translation.json` Aeneas wrote is left as it is. Two caveats:
 an item whose signature involves another crate's types that B and A each wrote out separately
 cannot be aliased, and two crates that reach the same external Rust item each keep their own

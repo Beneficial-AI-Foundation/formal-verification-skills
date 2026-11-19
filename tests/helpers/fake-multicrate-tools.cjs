@@ -175,8 +175,8 @@ const toySpec = (fields = {}) => ({
   cargoArgs: ['--locked'],
   main: 'toy_app',
   crates: [
-    { crate: 'toy_lib', package: 'toy-lib', dir: 'lib', publishDir: 'Lean/Lib' },
-    { crate: 'toy_app', package: 'toy-app', dir: 'app', publishDir: 'Lean/App' },
+    { crate: 'toy_lib', package: 'toy-lib', dir: 'lib', publishDir: 'Lean/Lib', moduleRoot: 'Toy.Lib' },
+    { crate: 'toy_app', package: 'toy-app', dir: 'app', publishDir: 'Lean/App', moduleRoot: 'Toy.App', stitch: [{ crate: 'toy_lib' }] },
   ],
   ...fields,
 });

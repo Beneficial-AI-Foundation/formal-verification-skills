@@ -991,6 +991,7 @@ function checkStitch(list, crate, targets) {
     if (!Array.isArray(assume) || assume.some((item) => typeof item !== 'string' || !RUST_PATH.test(item) || item.split('::')[0] !== entry.crate)) {
       refuse('invalid-input', `${where}.assume must list Rust paths of crate ${entry.crate} (a module or an item, such as ${entry.crate}::some_module)`);
     }
+    if (assume.some((item) => !item.includes('::'))) refuse('invalid-input', `${where}.assume names the whole crate ${entry.crate}; list the modules or items it does not define (such as ${entry.crate}::some_module), because everything it defines is stitched`);
     return { crate: entry.crate, assume: [...assume].sort() };
   });
 }
@@ -2097,6 +2098,7 @@ function stitchText(text, { crate, provider, assume, consumerNames }) {
   const assumed = [];
   const copies = [];
   const problems = [];
+  const usedAssume = new Set();
   const parts = text.split(/(\n{2,})/);
   for (let index = 0; index < parts.length; index += 2) {
     const block = parts[index];
@@ -2113,9 +2115,14 @@ function stitchText(text, { crate, provider, assume, consumerNames }) {
     if (!providerOwned(rustPath)) continue;
     const name = declaration[1];
     const kind = { rust_fun: 'fun', rust_const: 'const', rust_type: 'type' }[kindWord];
-    const covered = assume.some((prefix) => isRustItem(rustPath, prefix));
+    const covering = assume.filter((prefix) => isRustItem(rustPath, prefix));
     const target = provider.declarations.get(name);
-    if (covered) {
+    if (covering.length > 0) {
+      covering.forEach((prefix) => usedAssume.add(prefix));
+      if (target) {
+        problems.push(`${rustPath} (${name}) is named in the assume list, but ${provider.crate} declares it (${target.keyword}); it is stitched, and the assume list only names items the provider does not declare`);
+        continue;
+      }
       assumed.push({ rustPath, name, qualifiedName: `${crate}.${name}`, reason: 'named in the stitch assume list' });
       continue;
     }
@@ -2140,7 +2147,7 @@ function stitchText(text, { crate, provider, assume, consumerNames }) {
     const marked = kind === 'const' ? head : /^@\[/m.test(head) ? head.replace(/^@\[/m, '@[reducible, ') : `${head}@[reducible]\n`;
     parts[index] = `${marked}def ${name}${declaration[2].trimEnd()}\n  := ${lift ? 'Result.ok ' : ''}_root_.${name}`;
     replaced.push({
-      rustPath, name, qualifiedName: `${crate}.${name}`, providerQualifiedName: name, kind, lift, providerKind: target.keyword, check: verdict === 'equal' ? 'text-and-lean-build' : 'lean-build',
+      rustPath, name, qualifiedName: `${crate}.${name}`, providerQualifiedName: name, kind, lift, providerKind: target.keyword, providerOpaque: target.keyword === 'axiom', check: verdict === 'equal' ? 'text-and-lean-build' : 'lean-build',
       signatureSha256: sha256(squash(declaration[2])), providerDeclSha256: target.blockSha256,
     });
   }
@@ -2153,7 +2160,7 @@ function stitchText(text, { crate, provider, assume, consumerNames }) {
       result = result.replace(header[0], [header[0], ...provider.modules.filter((module) => !result.includes(`import ${module}\n`)).map((module) => `${keyword} ${module}`)].join('\n'));
     }
   }
-  return { text: result, replaced, assumed, copies, problems };
+  return { text: result, replaced, assumed, copies, problems, usedAssume: [...usedAssume] };
 }
 
 // The substitutions and then the stitching of every generated Lean file, recomputed from
@@ -2176,9 +2183,11 @@ function computeTransform(chain, raw) {
   }
   const consumerNames = leanDeclarations(Object.values(texts), spec.crate);
   const stitched = providers.map(({ loaded }) => ({ provider: loaded.crate, providerStageSha256: loaded.stageSha256, modules: loaded.modules, replaced: [], assumed: [], copies: [], files: [] }));
+  const usedAssume = providers.map(() => new Set());
   for (const name of Object.keys(texts)) {
     providers.forEach(({ assume, loaded }, position) => {
       const result = stitchText(texts[name], { crate: spec.crate, provider: loaded, assume, consumerNames });
+      result.usedAssume.forEach((prefix) => usedAssume[position].add(prefix));
       texts[name] = result.text;
       stitched[position].replaced.push(...result.replaced);
       stitched[position].assumed.push(...result.assumed);
@@ -2188,7 +2197,57 @@ function computeTransform(chain, raw) {
     });
     files[name] = { rawSha256: sha256(raw[name]), sha256: sha256(texts[name]) };
   }
+  providers.forEach(({ assume, loaded }, position) => {
+    for (const prefix of assume) if (!usedAssume[position].has(prefix)) reasons.push(`stitch to ${loaded.crate}: the assume entry ${prefix} matches no axiom of this crate, so it is stale`);
+  });
   return { record: { substitutions: applied, stitch: stitched, files }, texts, reasons };
+}
+
+// A crate whose LLBC reaches another target crate must import that crate's real
+// translation. Without a stitch entry every reached item stays an axiom in this crate's
+// Lean, an assumption about a function the attempt itself extracts.
+function reachProblems(chain) {
+  if (!chain.invocation.targets) return [];
+  const stitched = new Set((chain.attempt.spec.stitch ?? []).map((entry) => entry.crate));
+  return (chain.stages.charon.record.llbc?.foreignCrates ?? [])
+    .filter((entry) => entry.kind === 'target' && !stitched.has(entry.crate))
+    .map((entry) => `the LLBC reaches target crate ${entry.crate}, and the spec has no stitch entry for it, so its items would stay axioms here; add a stitch entry, or declare ${entry.crate} a non-target (the owner's decision)`);
+}
+
+// Every axiom left in the final Lean has to be accounted for. One that stands for an item
+// of another target crate must be a recorded assumption, and one with no Rust path cannot
+// be classified at all; both are refused, so no assumption about a target survives
+// unrecorded. Axioms for the crate's own items, a non-target or an external crate are the
+// disclosed assumptions of the externals records.
+function axiomProblems(chain, texts, stitch) {
+  const targets = (chain.invocation.targets ?? []).map((entry) => entry.crate);
+  if (targets.length === 0) return [];
+  const assumed = new Set(stitch.flatMap((entry) => entry.assumed.map((item) => item.name)));
+  const problems = [];
+  for (const [file, text] of Object.entries(texts)) {
+    for (const block of leanBlocks(text)) {
+      if (!block.axiom) continue;
+      const rustPath = RUST_ATTRIBUTE.exec(block.text)?.[2] ?? DOC_PATH.exec(block.text)?.[1] ?? null;
+      if (rustPath === null) problems.push(`${file}: the axiom ${block.name} carries no readable Rust path, so it cannot be classified`);
+      else if (rustPath.split('::')[0] !== chain.invocation.crate && targets.includes(rustPath.split('::')[0]) && !assumed.has(block.name)) {
+        problems.push(`${file}: the axiom ${block.name} stands for ${rustPath}, an item of target crate ${rustPath.split('::')[0]}, which stitching neither replaces nor records as assumed`);
+      }
+    }
+  }
+  return problems;
+}
+
+// The Lean files as they will be published: the edited texts when edits are declared,
+// the Aeneas output otherwise.
+function finalTexts(chain, transform) {
+  if (transform !== null) return transform.texts;
+  const outputs = chain.stages.aeneas.record.outputs;
+  return Object.fromEntries(Object.keys(outputs).filter((file) => file.endsWith('.lean')).sort().map((file) => [file, fs.readFileSync(path.join(chain.invocation.aeneasDest, file), 'utf8')]));
+}
+
+// Everything that stops this crate from being published, from its LLBC and final Lean.
+function publishProblems(chain, transform) {
+  return [...(transform?.reasons ?? []), ...reachProblems(chain), ...axiomProblems(chain, finalTexts(chain, transform), transform?.record.stitch ?? [])];
 }
 
 // The edit as the stages see it: nothing when the spec declares none.
@@ -2206,8 +2265,9 @@ function runPublish(chain) {
   const aeneas = chain.stages.aeneas.record;
   if (!exactlyFiles(entriesUnder(inv.aeneasDest), aeneas.outputs)) refuse('attempt-refused', 'the Aeneas outputs changed after the Aeneas stage recorded them');
   const transform = transformOf(chain);
-  if (transform !== null && transform.reasons.length > 0) {
-    return settle(beginStage(chain, 'publish'), { ...stageBase(chain, 'publish'), mapping: [], ownershipSha256: null, transform: transform.record }, transform.reasons);
+  const problems = publishProblems(chain, transform);
+  if (problems.length > 0) {
+    return settle(beginStage(chain, 'publish'), { ...stageBase(chain, 'publish'), mapping: [], ownershipSha256: null, ...(transform === null ? {} : { transform: transform.record }) }, problems);
   }
   const outputs = { ...aeneas.outputs };
   const sources = {};
@@ -2353,6 +2413,8 @@ function attemptStatusOf(out) {
   const translation = relativePath(translationEntry);
   const recorded = stages.publish.record.transform ?? null;
   const again = transformOf(chain);
+  const unaccounted = [...reachProblems(chain), ...axiomProblems(chain, finalTexts(chain, again), again?.record.stitch ?? [])];
+  if (unaccounted.length > 0) refuse('attempt-refused', `the attempt is not complete: ${unaccounted.join('; ')}`);
   if ((again === null) !== (recorded === null)) refuse('attempt-refused', 'the spec declares substitutions or stitching that publication did not record, or the reverse');
   if (again !== null) {
     const staged = path.join(out, PUBLISH_DEST);

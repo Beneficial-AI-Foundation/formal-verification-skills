@@ -82,7 +82,8 @@ For several crates, give the extractor one spec with a `crates` list (`aeneas-ex
 crates"): one entry for each target crate with its own `publishDir` and `moduleRoot`, `nonTargets` for the
 crates the agreement excludes, and, for each target that calls another target, a `stitch` entry naming
 that target. Stitching makes the caller's Lean use the other crate's real translation; without it the
-calls would be axioms in the caller's Lean, and the extraction is not recorded as succeeded. Use a
+calls would be axioms in the caller's Lean, so publication of a crate that calls a target without a
+stitch entry fails and the extraction is not recorded as succeeded. Use a
 `substitutions` entry only to rename a name Lean cannot read (Aeneas writes a shadowed local as `len·`);
 any other change to the translation is a patch of the Rust source, and a substitution never touches an
 axiom, the name or type of a definition, or a Trusted file. The extractor runs the chain of each crate in

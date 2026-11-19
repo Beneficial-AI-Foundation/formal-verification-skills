@@ -9,6 +9,7 @@
 
 const { describe, it, after } = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -211,6 +212,63 @@ describe('stitching: the consumer\'s axioms become checked aliases of the provid
   });
 });
 
+describe('a target the crate calls is stitched, or nothing is published', () => {
+  const stitchedStages = (ws, spec) => {
+    const { out } = attempted(ws, spec);
+    for (const name of ['charon', 'aeneas']) for (const crate of ['toy_lib', 'toy_app']) assert.equal(step(ws, out, name, crate).status, 0);
+    return { out, publish: step(ws, out, 'publish', 'toy_app') };
+  };
+  const refusedPublish = (ws, spec, pattern) => {
+    const { publish } = stitchedStages(ws, spec);
+    assert.equal(publish.status, 9, publish.stdout);
+    assert.match(publish.result.message, pattern);
+    assert.equal(fs.existsSync(path.join(ws.project, 'Lean', 'App')), false, 'nothing is published');
+  };
+  const withApp = (...pairs) => behaviour({ toy_app: { lean: pairs.reduce((text, [from, to]) => { assert.ok(text.includes(from), from); return text.replace(from, to); }, APP) } });
+
+  it('refuses a crate that reaches a target with no stitch entry', () => {
+    refusedPublish(workspace(behaviour()), stitched({ stitch: undefined }), /the LLBC reaches target crate toy_lib, and the spec has no stitch entry for it, so its items would stay axioms here; add a stitch entry, or declare toy_lib a non-target/);
+  });
+
+  it('refuses a target-wide assume, an assume over an item the provider declares, and a stale assume entry', () => {
+    const ws = workspace(behaviour());
+    const { recorded } = attempted(ws, stitched({ stitch: [{ crate: 'toy_lib', assume: ['toy_lib'] }] }));
+    assert.equal(recorded.status, 5, recorded.stdout);
+    assert.match(recorded.result.message, /stitch\[0\]\.assume names the whole crate toy_lib; list the modules or items it does not define/);
+    refusedPublish(workspace(behaviour()), stitched({ stitch: [{ crate: 'toy_lib', assume: ['toy_lib::other_mod', 'toy_lib::one'] }] }), /toy_lib::one \(toy_lib\.one\) is named in the assume list, but toy_lib declares it \(def\); it is stitched, and the assume list only names items the provider does not declare/);
+    refusedPublish(workspace(behaviour()), stitched({ stitch: [{ crate: 'toy_lib', assume: ['toy_lib::other_mod', 'toy_lib::gone'] }] }), /stitch to toy_lib: the assume entry toy_lib::gone matches no axiom of this crate, so it is stale/);
+  });
+
+  it('refuses an axiom for a target\'s item that stitching neither replaced nor recorded', () => {
+    const hidden = ['/-- [toy_app::three]:', '/-- [toy_lib::hidden]:\n    Visibility: public -/\naxiom toy_lib.hidden : Result Unit\n\n/-- [toy_app::three]:'];
+    refusedPublish(workspace(withApp(hidden)), stitched(), /ToyApp\.lean: the axiom toy_lib\.hidden stands for toy_lib::hidden, an item of target crate toy_lib, which stitching neither replaces nor records as assumed/);
+  });
+
+  it('refuses an axiom that carries no readable Rust path', () => {
+    const bare = ['/-- [toy_app::three]:', 'axiom toy_app.mystery : Result Unit\n\n/-- [toy_app::three]:'];
+    refusedPublish(workspace(withApp(bare)), stitched(), /ToyApp\.lean: the axiom toy_app\.mystery carries no readable Rust path, so it cannot be classified/);
+  });
+
+  it('accepts the crate\'s own axioms and the standard library\'s, and still records the assumed ones', () => {
+    const own = ['/-- [toy_app::three]:', '/-- [core::mem::swap]:\n    Visibility: public -/\n@[rust_fun "core::mem::swap"]\naxiom core.mem.swap : Result Unit\n\n/-- [toy_app::own]:\n    Visibility: public -/\naxiom toy_app.own : Result Unit\n\n/-- [toy_app::three]:'];
+    const ws = workspace(withApp(own));
+    const out = complete(ws, stitched());
+    const { run } = engine(ws, ['attempt-status', '--out', out]).result;
+    assert.deepEqual(run.units.find((unit) => unit.crate === 'toy_app').stitch[0].assumed.map((item) => item.rustPath), ['toy_lib::other_mod::skipped']);
+  });
+
+  it('records that an alias stands for an item the provider itself leaves opaque', () => {
+    const opaque = lib().replace('def one : Result Std.U32 := ok 1#u32', 'axiom one : Result Std.U32');
+    const ws = workspace(behaviour({ toy_lib: { lean: opaque } }));
+    const out = complete(ws, stitched());
+    const { run } = engine(ws, ['attempt-status', '--out', out]).result;
+    const [stitch] = run.units.find((unit) => unit.crate === 'toy_app').stitch;
+    assert.deepEqual(stitch.replaced.map(({ rustPath, providerKind, providerOpaque }) => [rustPath, providerKind, providerOpaque]), [
+      ['toy_lib::one', 'axiom', true], ['toy_lib::TWO', 'def', false], ['toy_lib::Thing', 'structure', false], ['toy_lib::grow', 'def', false],
+    ]);
+  });
+});
+
 describe('substitutions: a rename of a name Lean cannot read, with the match count it must find', () => {
   const edit = (extra = {}) => ({ file: 'ToyApp.lean', find: 'x·', replace: 'x_mid', count: 2, reason: 'Aeneas names a shadowed local with a middle dot, which a Lean name cannot contain', ...extra });
   const only = /a substitution only renames such a name, and any other change to the translation is a translation patch of the Rust source/;
@@ -218,15 +276,15 @@ describe('substitutions: a rename of a name Lean cannot read, with the match cou
   // The spec is refused when the attempt is recorded, before anything is written.
   const specRefused = (substitutions, pattern) => {
     const ws = workspace(shadowed());
-    const { recorded } = attempted(ws, stitched({ stitch: undefined, substitutions: [].concat(substitutions) }));
+    const { recorded } = attempted(ws, stitched({ substitutions: [].concat(substitutions) }));
     assert.equal(recorded.status, 5, recorded.stdout);
     assert.match(recorded.result.message, pattern);
   };
   // The publish stage refuses and publishes nothing.
   const publishRefused = (variant, substitutions, pattern) => {
     const ws = workspace(variant);
-    const { out } = attempted(ws, stitched({ stitch: undefined, substitutions: [].concat(substitutions) }));
-    for (const name of ['charon', 'aeneas']) assert.equal(step(ws, out, name, 'toy_app').status, 0);
+    const { out } = attempted(ws, stitched({ substitutions: [].concat(substitutions) }));
+    for (const name of ['charon', 'aeneas']) for (const crate of ['toy_lib', 'toy_app']) assert.equal(step(ws, out, name, crate).status, 0);
     const publish = step(ws, out, 'publish', 'toy_app');
     assert.equal(publish.status, 9, publish.stdout);
     assert.match(publish.result.message, pattern);
@@ -236,7 +294,7 @@ describe('substitutions: a rename of a name Lean cannot read, with the match cou
 
   it('applies the rename, records both hashes, and publishes the renamed file', () => {
     const ws = workspace(shadowed());
-    const out = complete(ws, stitched({ stitch: undefined, substitutions: [edit()] }));
+    const out = complete(ws, stitched({ substitutions: [edit()] }));
     assert.match(published(ws, 'Lean/App/ToyApp.lean'), /let x_mid ← toy_lib\.one\n {2}ok x_mid/);
     const { run } = engine(ws, ['attempt-status', '--out', out]).result;
     const app = run.units.find((unit) => unit.crate === 'toy_app');
@@ -245,8 +303,8 @@ describe('substitutions: a rename of a name Lean cannot read, with the match cou
     assert.deepEqual([entry.file, entry.count], ['ToyApp.lean', 2]);
     assert.match(entry.reason, /shadowed local/);
     assert.notEqual(entry.beforeSha256, entry.afterSha256);
-    assert.equal(app.publication.find((item) => item.projectPath.endsWith('ToyApp.lean')).sha256, entry.afterSha256);
-    assert.deepEqual(app.stitch, [], 'no stitching was declared');
+    assert.equal(app.publication.find((item) => item.projectPath.endsWith('ToyApp.lean')).sha256, crypto.createHash('sha256').update(published(ws, 'Lean/App/ToyApp.lean')).digest('hex'), 'the file is published after the rename and the stitching');
+    assert.equal(app.stitch.length, 1, 'the rename and the stitching are both recorded');
   });
 
   it('fails the publish stage when the text matches a different number of times, and publishes nothing', () => {
