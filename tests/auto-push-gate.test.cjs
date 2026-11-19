@@ -106,13 +106,24 @@ before(async () => {
   makeRepo('https', { url: 'https://github.com/Acme/proj' });
   makeRepo('othercase', { url: 'https://github.com/ACME/Proj.git' });
   makeRepo('noremote', { setup: (d) => git(d, 'remote', 'remove', 'origin') });
+  // URLs that a naive reading takes for Acme/proj on github.com while git contacts another host.
+  makeRepo('scpuser', { url: 'evil.test:x@github.com:Acme/proj' });
+  makeRepo('backslashurl', { url: 'https://evil.test\\@github.com/Acme/proj' });
+  // git remote add refuses a URL that starts with a dash, but a config file can still hold one.
+  makeRepo('optionlike', { setup: (d) => config(d, 'remote.origin.url', '-oProxyCommand=x@github.com:Acme/proj') });
+  makeRepo('submodulerecurse', { setup: (d) => config(d, 'submodule.recurse', 'true') });
 });
 after(() => { fs.rmSync(BASE, { recursive: true, force: true }); });
 
-// 'allow', 'ask', or null for a command that is not a push.
+const argvOf = (cfg) => ['--repo', cfg.repo, '--host', cfg.host, '--remote', cfg.remote, ...cfg.prefixes.flatMap((prefix) => ['--prefix', prefix])];
+
+// 'allow', 'ask', or null for a command that is not a push. Each row goes through the program's own entry point with
+// the hook input Claude Code sends, so parsing and the printed answer are covered. Only the process boundary is
+// skipped here: "the hook as a program" below crosses it.
 function answer(command, cwd, cfg = CONFIG) {
-  const decision = lib.decide({ command: command.replaceAll('{ok}', repos.ok), cwd }, cfg);
-  return decision ? decision.decision : null;
+  const input = { session_id: 's', hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: command.replaceAll('{ok}', repos.ok) }, cwd };
+  const printed = lib.main(argvOf(cfg), JSON.stringify(input));
+  return printed ? JSON.parse(printed).hookSpecificOutput.permissionDecision : null;
 }
 
 // Each row: [command, expected, working repo (default ok), why]. Mismatches are collected so one run shows all of them.
@@ -275,7 +286,8 @@ describe('every other push asks', () => {
       ['git stash push -m x', null, 'ok', 'a stash is not a remote push'], ['git ls-remote --heads origin', null], ['git checkout -b fvs/new', null],
       ['git add . && git commit -m "x"', null], ['ls -la', null], ['echo pushing', null], ['npm run push', null], ['gh pr list', null], ['gh pr view 1', null],
       ['ao send --session s --message "all done"', null], ['lake build', null], ['grep -rn gitpush .', null], ['echo digit push', null], ['mygit push', null],
-      ['git -C {ok} --no-pager log', null], ['', null], ['   ', null],
+      ['git -C {ok} --no-pager log', null], ['git -C {ok} commit -qm "push the thing"', null, 'ok', 'a readable -C argument: an ordinary commit stays quiet'],
+      ['git -C {ok} commit -m push', null], ['', null], ['   ', null],
     ]);
     assert.equal(lib.decide({ command: undefined, cwd: repos.ok }, CONFIG), null);
     assert.equal(lib.decide({ command: 42, cwd: repos.ok }, CONFIG), null);
@@ -318,6 +330,7 @@ describe('the settings that make a push send more than one branch', () => {
     table([
       ['git push origin fvs/foo', 'ask', 'followtags'], ['git push -u origin fvs/foo', 'ask', 'followtags'],
       ['git push origin fvs/foo', 'ask', 'mirror'], ['git push origin fvs/foo', 'ask', 'recurse'],
+      ['git push origin fvs/foo', 'ask', 'submodulerecurse', 'submodule.recurse makes push follow submodules'], ['git push', 'ask', 'submodulerecurse'],
       ['git push origin fvs/foo', 'allow', 'recursecheck'], ['git push origin fvs/foo', 'allow', 'originpush', 'an explicit refspec overrides remote.origin.push'],
     ]);
   });
@@ -346,6 +359,23 @@ describe('the destination check: every URL git would push to must name the agree
     both('localpath', 'ask', 'a local path');
     both('fileurl', 'ask', 'a file URL');
     both('deeppath', 'ask', 'more than two path segments');
+  });
+
+  it('asks for a URL that reads as the agreed repository but that git sends somewhere else', () => {
+    both('scpuser', 'ask', 'git splits an scp-like URL at the first colon: this is host evil.test');
+    both('backslashurl', 'ask', 'a backslash is read differently by different programs');
+    both('optionlike', 'ask', 'a URL that starts with a dash can pass for an option');
+  });
+
+  it('reads a URL the way git does and refuses forms that programs read differently', () => {
+    assert.deepEqual(lib.parseRemoteUrl('git@github.com:Acme/proj.git'), { host: 'github.com', repo: 'Acme/proj' });
+    assert.deepEqual(lib.parseRemoteUrl('ssh://evil.test:x@github.com/Acme/proj'), { host: 'github.com', repo: 'Acme/proj' }, 'in a URL with a scheme, user:password@ is the user part');
+    assert.deepEqual(lib.parseRemoteUrl('https://user:tok@github.com/Acme/proj.git'), { host: 'github.com', repo: 'Acme/proj' });
+    for (const url of ['evil.test:x@github.com:Acme/proj', 'evil.test:x@github.com:Acme/proj.git', 'https://evil.test\\@github.com/Acme/proj', 'ssh://evil.test\\@github.com/Acme/proj',
+      '-oProxyCommand=x@github.com:Acme/proj', '--upload-pack=x@github.com:Acme/proj', 'git@github.com:Acme/proj extra', 'git@github.com:Acme/proj\x00', 'git@github.com:Acme/pro\tj', 'https://a@evil.test@github.com/Acme/proj']) {
+      assert.equal(lib.parseRemoteUrl(url), null, JSON.stringify(url));
+    }
+    assert.notEqual(lib.parseRemoteUrl('a@b@github.com:Acme/proj')?.host, 'github.com');
   });
 
   it('judges the URL git uses after its own rewriting', () => {
@@ -396,7 +426,9 @@ describe('recognising a push', () => {
       assert.equal(lib.containsPush(text), true, text);
     }
     for (const text of ['git status', 'git commit -m push', 'git stash push', 'git -C a status', 'git log -S push', 'echo push', 'git pushx', 'git-pusher', 'digit push', 'git', 'git -C', 'git -C a',
-      'git -C $(id) status', 'git -C /a\\ b log -S pushed', 'git -C a commit -m "no pushing here"', '']) {
+      'git -C $(id) status', 'git -C /a\\ b log -S pushed', 'git -C a commit -m "no pushing here"',
+      // A readable -C argument leaves no doubt where the subcommand starts, so these are not pushes.
+      'git -C /x commit -qm "push the thing"', 'git -C a commit -m push', 'git -C /a/b -c user.name=x commit -m "push"', '']) {
       assert.equal(lib.containsPush(text), false, text);
     }
   });

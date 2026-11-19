@@ -29,8 +29,13 @@ import { fileURLToPath } from 'node:url';
 // (a local path, a file URL, a path with more or fewer than two segments).
 export function parseRemoteUrl(url) {
   const text = String(url).trim();
+  // Different programs read a backslash, a space or a control character in a URL differently, and a leading "-" can
+  // pass for an option, so none of them is a plain URL.
+  if (text.startsWith('-') || /[\\\s\x00-\x1f\x7f]/.test(text)) return null;
+  // In the scp-like form git splits at the first colon, so the optional user part cannot hold one:
+  // "evil.test:x@github.com:Acme/proj" is host evil.test, not github.com.
   const found = /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/]*@)?(\[[^\]]+\]|[^/:@]+)(?::\d*)?\/(.+)$/i.exec(text)
-    ?? /^(?:[^@/\s]+@)?([^:/\s]+):(?!\/\/)(.+)$/.exec(text);
+    ?? /^(?:[^@/\s:]+@)?([^:/\s]+):(?!\/\/)(.+)$/.exec(text);
   if (!found) return null;
   const segments = found[2].replace(/\/+$/, '').replace(/\.git$/, '').split('/');
   if (segments.length !== 2 || segments.some((part) => !/^[A-Za-z0-9._-]+$/.test(part))) return null;
@@ -66,7 +71,9 @@ const SPACE = /\s+/y;
 
 // A `push` word anywhere in what follows, as the shell would split it. Used only after a -C (or similar) argument
 // that this scan cannot read, such as `$(...)` or a backslash-escaped space, which hides where the subcommand starts.
+// An ordinary argument is read exactly, so `git -C dir commit -m "push the thing"` is not a push.
 const LATER_PUSH = /(^|[\s;&|("'])push(?=[\s;&|)<>"']|$)/;
+const UNREADABLE_ARGUMENT = /[\\$`()"']/;
 
 // True when the text holds `git [global options] push` anywhere, however the command is chained. It scans the words
 // after each `git` once (no backtracking), so a long run of options cannot make it slow. It over-recognises on
@@ -77,7 +84,7 @@ export function containsPush(text) {
   const git = /(^|[^A-Za-z0-9_-])git['"]?(?=\s)/gm;
   for (let found = git.exec(text); found; found = git.exec(text)) {
     let at = found.index + found[0].length;
-    let tookWord = false;
+    let hiddenSubcommand = false;
     for (;;) {
       SPACE.lastIndex = at;
       if (!SPACE.test(text)) break;
@@ -93,11 +100,12 @@ export function containsPush(text) {
         if (!SPACE.test(text)) break;
         at = SPACE.lastIndex;
         WORD.lastIndex = at;
-        if (!WORD.exec(text)) break;
+        const argument = WORD.exec(text);
+        if (!argument) break;
         at = WORD.lastIndex;
-        tookWord = true;
+        if (UNREADABLE_ARGUMENT.test(argument[0])) hiddenSubcommand = true;
       } else if (!/^(?:--[A-Za-z][A-Za-z-]*(?:=.*)?|-[A-Za-z])$/.test(token)) {
-        if (tookWord && LATER_PUSH.test(text.slice(at))) return true;
+        if (hiddenSubcommand && LATER_PUSH.test(text.slice(at))) return true;
         break;
       }
     }
@@ -142,10 +150,13 @@ function sendsMore(dir, remote) {
   const followTags = gitConfig(dir, '--bool', '--get', 'push.followTags');
   const mirror = gitConfig(dir, '--bool', '--get', `remote.${remote}.mirror`);
   const submodules = gitConfig(dir, '--get', 'push.recurseSubmodules');
-  if (followTags === null || mirror === null || submodules === null) return 'a push setting could not be read';
+  // With push.recurseSubmodules unset, git's push follows submodule.recurse as "on-demand".
+  const recurse = gitConfig(dir, '--bool', '--get', 'submodule.recurse');
+  if (followTags === null || mirror === null || submodules === null || recurse === null) return 'a push setting could not be read';
   if (followTags === 'true') return 'push.followTags is set, so tags would be pushed too';
   if (mirror === 'true') return `remote.${remote}.mirror is set`;
   if (!['', 'no', 'check'].includes(submodules)) return 'push.recurseSubmodules would push submodule commits too';
+  if (recurse === 'true') return 'submodule.recurse is set, so submodule commits would be pushed too';
   return null;
 }
 
