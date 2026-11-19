@@ -1318,6 +1318,13 @@ describe('the permissions page', () => {
     assert.match(text, /The command then reports `push-outcome-unknown` and does not say that nothing changed\. Read the destination before you retry/);
     // The two refusal codes that a worker may now see are named on the page.
     for (const code of ['worktree-mismatch', 'push-outcome-unknown']) assert.ok(text.includes(`\`${code}\``), code);
+    // The claim is limited to the calls that act on the repository, and the hook environment is stated.
+    assert.match(text, /the branch checks, the address checks, the read of the branch tip and the push itself each name the git directory and the work tree that were found/);
+    assert.doesNotMatch(text, /every git call names the git directory/);
+    assert.match(text, /Git hooks of the repository still run, as for any push\. They run with `GIT_DIR` and `GIT_WORK_TREE` set to the checked repository/);
+    // The init workflow lists the new init-time refusal.
+    const init = fs.readFileSync(path.join(ROOT, 'fv-skills', 'workflows', 'auto-init.md'), 'utf8').replace(/\s+/g, ' ');
+    assert.match(init, /`not-a-repository`, `git-environment` or `worktree-mismatch`: the project root is not a git work tree/);
   });
 
   it('makes no unconditional promise that a push asks, and no longer describes a hook as part of init', () => {
