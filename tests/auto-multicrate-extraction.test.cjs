@@ -30,6 +30,8 @@ describe('a succeeded extraction over several crates', () => {
       assert.equal(result.status, 0, result.stdout);
       assert.deepEqual(result.json.crates, {
         order: ['libcrux_sha2', 'libcrux_hmac'],
+        targets: ['libcrux_sha2', 'libcrux_hmac'],
+        nonTargets: [],
         units: [
           { crate: 'libcrux_hmac', package: 'libcrux-hmac', dir: 'crates/libcrux_hmac', dependsOn: ['libcrux_sha2'], hasErrorItems: [] },
           { crate: 'libcrux_sha2', package: 'libcrux-sha2', dir: 'crates/libcrux_sha2', dependsOn: [], hasErrorItems: [] },
@@ -67,6 +69,7 @@ describe('a succeeded extraction over several crates', () => {
     const { crates } = cli('read-state', '--project-root', root, '--brief').json;
     assert.deepEqual(crates.cycle, ['a', 'b']);
     assert.deepEqual(crates.order, ['c']);
+    assert.deepEqual(crates.targets, ['c', 'a', 'b'], 'a crate in a cycle is still a target');
   });
 
   it('lists the items an extraction could not translate with their crate', () => {

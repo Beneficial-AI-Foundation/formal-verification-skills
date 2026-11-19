@@ -848,8 +848,36 @@ const ATTEMPT_STAGES = ['charon', 'aeneas', 'publish'];
 // The optional M2 extension records declared owner evidence, not authentication or proof acceptance.
 // Approval covers canonical JSON content; roadmap status logs and record timestamps are not approval.
 const AGREEMENT_FIELDS = ['schema', 'schemaVersion', 'mode', 'payload', 'ownerEvidence', 'approvedPayloadSha256'];
+// `targets` is optional and left out of the payload when the owner names no crates, so an
+// agreement written without it keeps its digest.
 const PAYLOAD_FIELDS = ['choicesGeneration', 'choices', 'contextVersion', 'boundaries', 'conventions', 'layout',
-  'claims', 'trust', 'acceptance', 'ownerReserved', 'execution', 'draftPr'];
+  'claims', 'trust', 'acceptance', 'ownerReserved', 'execution', 'draftPr', 'targets'];
+const CRATE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+// The crates of a monorepo the owner verifies, and each crate the owner decided not to
+// verify, with that decision in the owner's words. A non-target crate's items can only
+// become assumptions; a target crate's items are proved, and other targets use the result.
+function targetsErrors(targets) {
+  const errors = [];
+  if (!fields(errors, targets, 'agreement.payload.targets', ['crates', 'nonTargets'])) return errors;
+  const { crates, nonTargets } = targets;
+  const names = Array.isArray(crates) && crates.every((name) => typeof name === 'string' && CRATE_NAME.test(name));
+  if (!names || crates.length === 0 || new Set(crates).size !== crates.length) {
+    errors.push('agreement.payload.targets.crates must be a list of distinct crate names with at least one entry');
+  }
+  if (!Array.isArray(nonTargets)) errors.push('agreement.payload.targets.nonTargets must be a list, empty when the owner drops no crate');
+  else {
+    nonTargets.forEach((entry, index) => {
+      const where = `agreement.payload.targets.nonTargets[${index}]`;
+      if (!fields(errors, entry, where, ['crate', 'decision'])) return;
+      if (typeof entry.crate !== 'string' || !CRATE_NAME.test(entry.crate)) errors.push(`${where}.crate must be a crate name`);
+      else if (names && crates.includes(entry.crate)) errors.push(`${where}.crate ${entry.crate} is also a target`);
+      if (!isText(entry.decision)) errors.push(`${where}.decision must be the owner's decision in words`);
+    });
+    if (new Set(nonTargets.map((entry) => entry?.crate)).size !== nonTargets.length) errors.push('agreement.payload.targets.nonTargets names a crate twice');
+  }
+  return errors;
+}
 const generationValid = (value) => Number.isSafeInteger(value) && value >= 0;
 const textList = (value) => Array.isArray(value) && value.every(isText);
 const canonicalJson = (value) => JSON.stringify(value, function (_key, item) {
@@ -872,6 +900,10 @@ function agreementErrors(value, stored = false) {
     if (!Number.isSafeInteger(p.contextVersion) || p.contextVersion < 1) errors.push('agreement.payload.contextVersion must be a positive safe integer');
     errors.push(...choiceErrors(p.choices, value.schemaVersion));
     if (!['single-crate', 'monorepo'].includes(p.layout)) errors.push('agreement.payload.layout must be single-crate or monorepo');
+    if ('targets' in p) {
+      if (p.layout !== 'monorepo') errors.push('agreement.payload.targets applies to layout monorepo only');
+      errors.push(...targetsErrors(p.targets));
+    }
     for (const key of ['boundaries', 'conventions', 'claims', 'trust', 'acceptance', 'ownerReserved']) {
       if (!textList(p[key]) || (['claims', 'trust', 'acceptance', 'ownerReserved'].includes(key) && p[key].length === 0)) {
         errors.push('agreement.payload.' + key + ' must be an explicit list of nonempty strings' + (['boundaries', 'conventions'].includes(key) ? '' : ' with at least one entry'));
@@ -1097,13 +1129,17 @@ export function runOf(state, crate) {
   return run.units ? run.units.find((unit) => unit.crate === crate) ?? null : (run.crate === crate ? run : null);
 }
 
-// The crates of an extraction that has more than one, with the other target crates
-// each one depends on and an order that puts providers before consumers. A crate
-// depends on another when its Lean imports it, when it lists it as a prerequisite or
-// when its LLBC reaches it; null for a single-crate run, so nothing about that changes.
-function crateView(run) {
-  const units = run?.units ?? [];
-  if (units.length < 2) return null;
+// The unit rows of a run: its units, or the run itself when it names its crate.
+const unitsOf = (run) => run?.units ?? (isText(run?.crate) ? [run] : []);
+
+// The crates of an extraction that has more than one (or any, with `always`), with the
+// other extracted crates each one depends on and an order that puts providers before
+// consumers. A crate depends on another when its Lean imports it, when it lists it as a
+// prerequisite or when its LLBC reaches it; null for a single-crate run, so nothing
+// about that changes.
+function crateView(run, always = false) {
+  const units = unitsOf(run);
+  if (units.length < (always ? 1 : 2)) return null;
   const crates = units.map((unit) => unit.crate);
   const names = (list, pick) => (Array.isArray(list) ? list.map(pick) : []);
   const dependsOn = new Map(units.map((unit) => [unit.crate, [...new Set([
@@ -1127,6 +1163,53 @@ function crateView(run) {
       hasErrorItems: Array.isArray(unit.hasErrors?.items) ? unit.hasErrors.items : [] })),
   };
 }
+
+// What the extraction and the owner's agreement together say about the crates of this
+// project, or null when there is nothing to say: a single crate, no non-target crate
+// the extraction declared and no crate decision in the agreement. A target is an
+// extracted crate the owner did not drop; a crate the agreement names a target but the
+// extraction lacks is missing; a non-target crate, declared by the extraction or dropped
+// by the owner, only has assumptions.
+function crateContextOf(state) {
+  const extraction = state?.extraction?.status === 'succeeded' ? state.extraction : null;
+  if (!extraction) return null;
+  const { run } = extraction;
+  const units = unitsOf(run);
+  const agreed = state.agreements?.at(-1)?.payload?.targets ?? null;
+  const declared = [...new Set([run, ...units].flatMap((row) => (Array.isArray(row?.nonTargets) ? row.nonTargets.map((entry) => entry?.crate) : [])).filter(isText))].sort();
+  if (units.length < 2 && declared.length === 0 && agreed === null) return null;
+  const view = crateView(run, true);
+  if (view === null) return null;
+  const dropped = new Set((agreed?.nonTargets ?? []).map((entry) => entry.crate));
+  // Providers first; the crates of a dependency cycle have no place in the order and follow it.
+  const extracted = [...view.order, ...(view.cycle ?? [])];
+  const targets = extracted.filter((crate) => !dropped.has(crate));
+  return {
+    view, units, extracted, targets,
+    missing: (agreed?.crates ?? []).filter((crate) => !extracted.includes(crate)),
+    nonTargets: new Set([...declared, ...dropped]),
+    // Declared non-target crates whose owner decision is not in the agreement yet.
+    undecided: declared.filter((crate) => !dropped.has(crate)),
+    // Extracted crates that an agreement with crate decisions names as neither a target nor a non-target.
+    unlisted: agreed === null ? [] : targets.filter((crate) => !agreed.crates.includes(crate)),
+  };
+}
+
+const crateContext = (root) => crateContextOf(loadState(root));
+
+function crateReport(context) {
+  return { order: context.view.order, targets: context.targets, nonTargets: [...context.nonTargets].sort(),
+    ...(context.missing.length > 0 ? { missing: context.missing } : {}), ...(context.view.cycle ? { cycle: context.view.cycle } : {}), units: context.view.units };
+}
+
+function crateWarnings(context) {
+  return [
+    ...context.missing.map((crate) => `the agreement names ${crate} as a target, but the extraction does not hold it`),
+    ...context.unlisted.map((crate) => `the extraction holds ${crate}, which the agreement names as neither a target nor a non-target: a successor agreement records the owner's decision`),
+  ];
+}
+
+const crateDecisions = (context) => context.undecided.map((crate) => `non-target crate ${crate}: the owner has not recorded a decision in the agreement`);
 
 function extractionErrors(extraction) {
   const errors = [];
@@ -1572,19 +1655,21 @@ function readFullState({ projectRoot, requireAgreement }) {
   const externals = Object.fromEntries([['total', records.length],
     ...BOUNDARY_STATUSES.map((status) => [status, records.filter((record) => record.status === status).length])]);
   const overrides = currentOverrides(loadOverrides(root));
-  // Only an extraction that succeeded and covers several crates has a crate view.
-  const crates = state.extraction?.status === 'succeeded' ? crateView(state.extraction.run) : null;
+  // Only a succeeded extraction with several crates, a declared non-target or a crate decision has a crate view.
+  const context = crateContextOf(state);
+  const next = progress(root, state, loadSpecs(root));
   return {
     code: 'ok',
     message: `auto-track state in ${statePath(root)}`,
     state,
     roadmapPresent: state.roadmap?.path ? fs.existsSync(path.join(root, state.roadmap.path)) : false,
     externals,
-    ...(crates ? { crates } : {}),
+    ...(context ? { crates: crateReport(context) } : {}),
     ...(Object.keys(overrides).length > 0 ? { overrides, overridesNote: OVERRIDES_NOTE } : {}),
-    pendingDecisions: requireAgreement || state.roadmap ? [] : ['roadmap'],
+    pendingDecisions: [...(requireAgreement || state.roadmap ? [] : ['roadmap']), ...(context ? crateDecisions(context) : [])],
     readiness: readiness(state.profile),
-    ...progress(root, state, loadSpecs(root)),
+    ...next,
+    ...(context ? { warnings: [...next.warnings, ...crateWarnings(context)] } : {}),
     ...(requireAgreement ? { agreement: requireStoredAgreement(root, state) } : {}),
   };
 }
@@ -2023,29 +2108,24 @@ function committedSpec(root, commit, file) {
 // The crate an item belongs to: the first segment of its Rust path.
 const itemCrate = (id) => id.split('::')[0];
 
-// The crates a succeeded multi-crate extraction covers, or null for a single-crate
-// project, where nothing below applies. The crate names are the extracted units'.
-function crateContext(root) {
-  const extraction = loadState(root)?.extraction;
-  const view = extraction?.status === 'succeeded' ? crateView(extraction.run) : null;
-  if (!view) return null;
-  const units = extraction.run.units;
-  const nonTargets = new Set(units.flatMap((unit) => (Array.isArray(unit.nonTargets) ? unit.nonTargets.map((entry) => entry?.crate) : [])).filter(isText));
-  return { view, units, nonTargets, crates: units.map((unit) => unit.crate) };
-}
-
-// Every item of a spec file must belong to one extracted crate and must have been
-// translated: an item of another crate has no statement here, and an item Charon
-// could not translate has no definition to state anything about.
+// Every item of a spec file must belong to one target crate and must have been
+// translated: an item of a crate the owner or the extraction left out has no statement
+// to give, a target the extraction lacks has nothing to state it about, and an item
+// Charon could not translate has no definition.
 function checkSpecItems(context, ids) {
   const owners = new Set();
   for (const id of ids) {
     const crate = itemCrate(id);
+    if (context.nonTargets.has(crate)) {
+      refuse('invalid-input', `${id}: crate ${crate} is not a verification target, so its items get no statement; the owner may only assume them`);
+    }
+    if (context.missing.includes(crate)) {
+      refuse('invalid-input', `${id}: crate ${crate} is a target in the agreement but the extraction does not hold it; extract it, or record the owner's decision to drop it`);
+    }
     const unit = context.units.find((entry) => entry.crate === crate);
     if (!unit) {
-      refuse('invalid-input', context.nonTargets.has(crate)
-        ? `${id}: crate ${crate} is not a verification target, so its items get no statement; the owner may only assume them`
-        : `${id}: crate ${crate} is not in the recorded extraction (crates: ${context.crates.join(', ')})`, { crates: context.crates });
+      const known = context.units.map((entry) => entry.crate);
+      refuse('invalid-input', `${id}: crate ${crate} is not in the recorded extraction (crates: ${known.join(', ')})`, { crates: known });
     }
     if (Array.isArray(unit.hasErrors?.items) && unit.hasErrors.items.includes(id)) {
       refuse('invalid-input', `${id} was not translated (Charon reported errors on it), so it cannot have a statement; name it in --out-of-scope`);
@@ -2184,22 +2264,25 @@ export function specStatus({ projectRoot, commit }) {
     specFiles: crates ? specFiles.map((file) => ({ ...file, crates: crateNames(context, file.items) })) : specFiles, ...(crates ? { crates } : {}), readyForPr, blocked };
 }
 
-// The extracted crates an item list belongs to, in the order the extraction names them.
-const crateNames = (context, items) => context.crates.filter((crate) => items.some((id) => itemCrate(id) === crate));
+// The target crates an item list belongs to, providers first.
+const crateNames = (context, items) => context.targets.filter((crate) => items.some((id) => itemCrate(id) === crate));
 
-// Each crate with the spec files that state its items, providers first. A crate is
-// ready when it has a reviewed pass and no file of it waits for changes or is stale.
+// Each target crate with the spec files that state its items, providers first, then the
+// targets the extraction lacks. A crate is ready when it has a reviewed pass and no file
+// of it waits for changes or is stale; a missing crate is never ready.
 function specCrates(context, specFiles, live, ready) {
-  const label = (files) => (files.length === 0 ? 'no spec file is recorded for this crate'
-    : ready(files) ? 'spec files reviewed: pass'
-      : files.some((file) => file.verdict === 'changes' || file.stale) ? 'a spec file is waiting for changes or changed after its review'
-        : 'no spec file of this crate has a reviewed pass');
-  const dependsOn = new Map(context.view.units.map((unit) => [unit.crate, unit.dependsOn]));
+  const label = (files, crate) => (context.missing.includes(crate) ? 'the agreement names this crate as a target, but the extraction does not hold it'
+    : files.length === 0 ? 'no spec file is recorded for this crate'
+      : ready(files) ? 'spec files reviewed: pass'
+        : files.some((file) => file.verdict === 'changes' || file.stale) ? 'a spec file is waiting for changes or changed after its review'
+          : 'no spec file of this crate has a reviewed pass');
+  const dependsOn = new Map(context.view.units.map((unit) => [unit.crate, unit.dependsOn.filter((crate) => context.targets.includes(crate))]));
+  const order = [...context.targets, ...context.missing];
   return {
-    order: context.view.order,
-    units: context.view.order.map((crate) => {
+    order,
+    units: order.map((crate) => {
       const files = live.filter((file) => file.items.some((id) => itemCrate(id) === crate));
-      return { crate, dependsOn: dependsOn.get(crate), specFiles: files.map((file) => file.specFile), ready: ready(files), label: label(files) };
+      return { crate, dependsOn: dependsOn.get(crate) ?? [], specFiles: files.map((file) => file.specFile), ready: !context.missing.includes(crate) && ready(files), label: label(files, crate) };
     }),
   };
 }

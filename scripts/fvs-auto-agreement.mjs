@@ -24,7 +24,7 @@ import { agreementPayloadSha256, readState, recordAgreement, Refusal } from './f
 const STATE_FILE = '.formalising/auto-fv/state.json';
 const ROADMAP_FILE = '.formalising/auto-fv/ROADMAP.md';
 const ENGINE = fileURLToPath(new URL('./fvs-auto.mjs', import.meta.url));
-const INPUT_FIELDS = ['contextVersion', 'boundaries', 'conventions', 'layout', 'claims', 'trust', 'acceptance', 'ownerReserved', 'execution', 'draftPr', 'ownerEvidence'];
+const INPUT_FIELDS = ['contextVersion', 'boundaries', 'conventions', 'layout', 'claims', 'trust', 'acceptance', 'ownerReserved', 'execution', 'draftPr', 'targets', 'ownerEvidence'];
 
 const USAGE = [
   'Usage: node fvs-auto-agreement.mjs --input DRAFT.json [--project-root DIR] [--out AGREEMENT.json]',
@@ -32,6 +32,9 @@ const USAGE = [
   'DRAFT.json holds the owner-visible fields: layout (single-crate or monorepo); claims, trust, acceptance and',
   'ownerReserved (each a list with at least one entry); boundaries and conventions (lists); execution and draftPr',
   '(null, or the objects the engine documents); contextVersion (optional, defaults to the next free number).',
+  'For a monorepo, targets (optional) names the crates to verify and each crate the owner decided not to verify:',
+  '{"crates": ["crate_a"], "nonTargets": [{"crate": "crate_b", "decision": "the owner\'s words"}]}. Leave it out to',
+  'verify every extracted crate; a crate the extraction declares as a non-target needs the owner\'s decision here.',
   'The choices, generation and schema version come from the recorded state, not from DRAFT.json.',
   '',
   'Without ownerEvidence the helper prints the payload and its digest for you to show the owner.',
@@ -87,6 +90,7 @@ function buildEnvelope(state, draft) {
     ownerReserved: draft.ownerReserved,
     execution: draft.execution ?? null,
     draftPr: draft.draftPr ?? null,
+    ...(draft.targets === undefined ? {} : { targets: draft.targets }),
   };
   const withEvidence = (ownerEvidence) => ({ ...header, payload, ownerEvidence, approvedPayloadSha256: agreementPayloadSha256({ ...header, payload }) });
   return { payload, digest: agreementPayloadSha256({ ...header, payload }), withEvidence, previous };
