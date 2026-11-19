@@ -1568,6 +1568,17 @@ function toolReasons(name, run) {
   ].filter(Boolean);
 }
 
+// The first few lines of a tool's log that state an error, each cut short: what a person
+// needs to classify a failed build (a lock cargo cannot satisfy, a missing manifest, a
+// compile error) without opening the log. The full log stays on disk and is hashed.
+const LOG_ERROR_LINES = 5;
+const LOG_LINE_LENGTH = 200;
+function logErrors(log) {
+  const lines = fs.readFileSync(log, 'utf8').split('\n').map((line) => line.trim()).filter((line) => /^error(\[[A-Za-z0-9]+\])?:/.test(line));
+  const shown = lines.slice(0, LOG_ERROR_LINES).map((line) => (line.length > LOG_LINE_LENGTH ? `${line.slice(0, LOG_LINE_LENGTH)}...` : line));
+  return lines.length > shown.length ? [...shown, `(${lines.length - shown.length} more error line(s) in the log)`] : shown;
+}
+
 function stageBase(chain, stage) {
   return { stage, prevSha256: chain.prevSha256, manifestSha256: chain.manifestSha256 };
 }
@@ -1582,6 +1593,7 @@ function runCharon(chain) {
   const log = path.join(out, 'charon.log');
   const run = runTool(inv.tools.charon.path, inv.charon.argv, inv.charon.cwd, inv.env, log);
   const reasons = toolReasons('Charon', run);
+  if (reasons.length > 0) reasons.push(...logErrors(log).map((line) => `Charon's log: ${line}`));
   try {
     verifyTree({ out: copy });
   } catch (error) {

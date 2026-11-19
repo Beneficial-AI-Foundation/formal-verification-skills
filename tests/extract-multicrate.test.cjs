@@ -166,6 +166,21 @@ describe('multi-crate extraction: a failed or missing crate is never a complete 
     assert.equal(engine(ws, ['attempt-status', '--out', out, '--crate', 'toy_lib']).result.unit.status, 'failed at charon');
   });
 
+  it('names the first error lines of a failed Charon log in the reasons, bounded', () => {
+    const many = Array.from({ length: 8 }, (_, index) => `error[E000${index}]: problem number ${index} ${'x'.repeat(index === 0 ? 400 : 1)}`);
+    const ws = workspace({ toy_lib: { charonExit: 101, charonLog: ['Compiling toy-lib', 'warning: unused import', ...many, ''].join('\n') } });
+    const { out } = attempted(ws);
+    const failed = step(ws, out, 'charon', 'toy_lib');
+    assert.equal(failed.status, 9, failed.stdout);
+    const reasons = failedCharon(out, 'toy_lib').reasons;
+    const logged = reasons.filter((reason) => reason.startsWith('Charon\'s log: '));
+    assert.equal(logged.length, 6, 'five error lines and a count of the rest');
+    assert.match(logged[0], /^Charon's log: error\[E0000\]: problem number 0 x+\.\.\.$/);
+    assert.ok(logged[0].length < 240, 'a long line is cut');
+    assert.equal(logged[5], 'Charon\'s log: (3 more error line(s) in the log)');
+    assert.ok(!reasons.join(' ').includes('warning'), 'only error lines are shown');
+  });
+
   it('refuses the status while a crate has not run at all', () => {
     const ws = workspace();
     const { out } = attempted(ws);

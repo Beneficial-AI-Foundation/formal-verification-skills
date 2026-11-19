@@ -6,7 +6,7 @@
 // crate's sources with their contents, and the sources of every crate it reaches by
 // a path dependency labelled with that crate and with null contents. Behaviour is
 // steered per crate by behaviour.json next to the tools:
-//   { "<crate>": { charonExit, hasErrors, errorItems, relabelForeign, alterForeign,
+//   { "<crate>": { charonExit, charonLog, hasErrors, errorItems, relabelForeign, alterForeign,
 //                  alterMain, aeneasExit, lean } }
 
 const { spawnSync } = require('node:child_process');
@@ -66,6 +66,7 @@ for (const dep of me.deps) {
 decls.push({ def_id: decls.length, item_meta: { name: [{ Ident: ['core', 0] }, { Ident: ['mem', 0] }], has_errors: false } });
 const llbc = { charon_version: '0.1.315', has_errors: mine.hasErrors === true,
   translated: { crate_name: mine.llbcCrate ?? crateOf(pkg), options: { dest_file: dest, args }, files, fun_decls: decls, type_decls: [], global_decls: [], trait_decls: [], trait_impls: [] } };
+if (mine.charonLog) process.stderr.write(mine.charonLog);
 if (mine.charonExit === undefined || mine.charonExit === 0) fs.writeFileSync(dest, JSON.stringify(llbc));
 process.exit(mine.charonExit ?? 0);`;
 
