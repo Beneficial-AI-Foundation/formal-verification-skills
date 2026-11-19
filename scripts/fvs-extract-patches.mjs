@@ -2232,40 +2232,67 @@ const DECLARATION = /^(?:noncomputable\s+)?(def|axiom|structure|inductive|abbrev
 const DOC_PATH = /^\/-- (?:Trait declaration: |Trait implementation: )?\[(.*)\]/;
 const RUST_ATTRIBUTE = /\b(rust_fun|rust_const|rust_type)\s+"([^"]+)"/;
 
+// The declarations of a crate's Lean by their full name. A name declared twice is reported, never
+// overwritten: the inventory would otherwise bind to whichever copy came last.
 function leanDeclarations(texts, crate) {
   const declarations = new Map();
+  const duplicates = new Set();
   for (const text of texts) {
     for (const block of text.split(/\n{2,}/)) {
       if (!block.startsWith('/--')) continue;
       const found = DECLARATION.exec(block);
       if (found === null) continue;
-      declarations.set(`${crate}.${found[2]}`, { keyword: found[1], rustPath: DOC_PATH.exec(block)?.[1] ?? null, rest: found[3], blockSha256: sha256(block) });
+      const key = `${crate}.${found[2]}`;
+      if (declarations.has(key)) {
+        duplicates.add(found[2]);
+        continue;
+      }
+      declarations.set(key, { keyword: found[1], rustPath: DOC_PATH.exec(block)?.[1] ?? null, rest: found[3], blockSha256: sha256(block) });
     }
   }
-  return declarations;
+  return { declarations, duplicates: [...duplicates].sort() };
 }
 
-// The crate whose Aeneas output this directory holds, ready to be imported: its attempt
-// record, its Aeneas stage (completed, outputs intact) and the Lean it generated.
+// The crate whose published Lean this crate imports. What counts is the provider's final
+// publication, with its substitutions and its own stitching applied: that is the module Lean
+// loads, so its inventory and hashes come from there and never from the raw Aeneas output. The
+// provider's whole chain must be completed and consistent first (every stage recorded, the
+// published files as recorded, the edits reproducing), which is why a crate is published after
+// the crates it stitches to.
 function loadProvider(chain, crate) {
   const dir = path.join(copyRoot(chain.attempt.out), UNITS_DIR, crate);
   const bad = (message) => refuse('attempt-refused', `stitching to crate ${crate}: ${message}`);
   if (!lexists(path.join(dir, ATTEMPT))) bad('it has no attempt record in this copy');
-  const record = JSON.parse(fs.readFileSync(path.join(dir, ATTEMPT)));
-  const stageFile = stagePaths(dir, 'aeneas').completed;
-  if (!lexists(stageFile)) bad('its Aeneas stage is not completed; run the stages of that crate through aeneas first');
-  const stageBytes = fs.readFileSync(stageFile);
-  const stage = JSON.parse(stageBytes);
-  if (!exactlyFiles(entriesUnder(record.aeneasDest), stage.outputs)) bad('its Aeneas outputs changed after the Aeneas stage recorded them');
-  const names = translationLeanFiles(path.join(record.aeneasDest, 'translation.json'));
-  const texts = Object.fromEntries(names.map((name) => [name, fs.readFileSync(path.join(record.aeneasDest, name), 'utf8')]));
+  for (const stage of ATTEMPT_STAGES) {
+    if (!lexists(stagePaths(dir, stage).completed)) bad(`its ${stage} stage is not completed; run that crate through publish first, because this crate imports what it published`);
+  }
+  let provider;
+  try {
+    provider = loadChain(dir, ATTEMPT_STAGES.length);
+    attemptStatusOfChain(provider, dir);
+  } catch (error) {
+    if (!(error instanceof Refusal)) throw error;
+    bad(`its attempt is not consistent (${error.message}), so what it published is not a binding translation`);
+  }
+  const record = provider.attempt;
   const root = record.spec.moduleRoot;
   if (root === undefined) bad('it names no moduleRoot');
+  const names = translationLeanFiles(path.join(record.aeneasDest, 'translation.json'));
+  const mapping = provider.stages.publish.record.mapping;
+  const texts = {};
+  for (const name of names) {
+    const entry = mapping.find((candidate) => candidate.projectPath === path.join(provider.invocation.publishDir, name));
+    if (!entry) bad(`its publication does not map ${name}`);
+    texts[name] = fs.readFileSync(entry.projectPath, 'utf8');
+  }
+  const inventory = leanDeclarations(Object.values(texts), crate);
+  if (inventory.duplicates.length > 0) bad(`its published Lean declares ${inventory.duplicates.slice(0, 6).join(', ')}${inventory.duplicates.length > 6 ? ', ...' : ''} more than once, so no declaration of it is a unique target`);
   return {
     crate,
-    stageSha256: sha256(stageBytes),
+    stageSha256: provider.stages.publish.sha256,
     modules: names.map((name) => `${root}.${name.replace(/\.lean$/, '').split('/').join('.')}`),
-    declarations: leanDeclarations(Object.values(texts), crate),
+    declarations: inventory.declarations,
+    rustPaths: new Set([...inventory.declarations.values()].map((item) => item.rustPath).filter((item) => item !== null)),
   };
 }
 
@@ -2286,7 +2313,18 @@ function stitchText(text, { crate, provider, assume, consumerNames }) {
     if (declaration === null || attribute === null) {
       const doc = DOC_PATH.exec(block)?.[1];
       const copy = DECLARATION.exec(block);
-      if (doc !== undefined && copy !== null && providerOwned(doc)) copies.push({ rustPath: doc, name: copy[2], keyword: copy[1] });
+      if (doc !== undefined && copy !== null && providerOwned(doc)) {
+        // This crate's Lean defines an item of the provider itself. Where the provider defines it
+        // too, two declarations stand for one Rust item and the provider's theorems concern the
+        // other one. Where it does not, the owner has to have said so: the item is under an assume
+        // prefix, an item the provider leaves out.
+        const defined = provider.declarations.get(copy[2]) ?? [...provider.declarations.values()].find((item) => item.rustPath === doc);
+        const covering = assume.filter((prefix) => isRustItem(doc, prefix));
+        covering.forEach((prefix) => usedAssume.add(prefix));
+        if (defined) problems.push(`${doc} (${copy[2]}) is also defined as a ${copy[1]} in this crate's Lean, and ${provider.crate} defines it too (${defined.keyword}): two declarations stand for one Rust item, and ${provider.crate}'s theorems concern the other one; translate it opaquely here so that stitching can replace it by ${provider.crate}'s, or leave ${provider.crate} a non-target`);
+        else if (covering.length === 0) problems.push(`${doc} (${copy[2]}) is an item of ${provider.crate} that this crate's Lean defines itself, and ${provider.crate} does not define it; name it in the stitch assume list (the owner's decision) or translate it in ${provider.crate}`);
+        else copies.push({ rustPath: doc, name: copy[2], keyword: copy[1], assume: covering[0] });
+      }
       continue;
     }
     const [, kindWord, rustPath] = attribute;
@@ -2359,8 +2397,10 @@ function computeTransform(chain, raw) {
     applied.push(...substituted.applied);
     texts[name] = substituted.text;
   }
-  const consumerNames = leanDeclarations(Object.values(texts), spec.crate);
-  const stitched = providers.map(({ loaded }) => ({ provider: loaded.crate, providerStageSha256: loaded.stageSha256, modules: loaded.modules, replaced: [], assumed: [], copies: [], files: [] }));
+  const consumerInventory = leanDeclarations(Object.values(texts), spec.crate);
+  const consumerNames = consumerInventory.declarations;
+  if (consumerInventory.duplicates.length > 0) reasons.push(`this crate's Lean declares ${consumerInventory.duplicates.slice(0, 6).join(', ')}${consumerInventory.duplicates.length > 6 ? ', ...' : ''} more than once, so a declaration of it is not a unique target`);
+  const stitched = providers.map(({ loaded }) => ({ provider: loaded.crate, providerStage: 'publish', providerStageSha256: loaded.stageSha256, modules: loaded.modules, replaced: [], assumed: [], copies: [], files: [] }));
   const usedAssume = providers.map(() => new Set());
   for (const name of Object.keys(texts)) {
     providers.forEach(({ assume, loaded }, position) => {
@@ -2573,7 +2613,10 @@ function crossCrate(foreignCrates, recorded) {
 }
 
 function attemptStatusOf(out) {
-  const chain = loadChain(out, ATTEMPT_STAGES.length);
+  return attemptStatusOfChain(loadChain(out, ATTEMPT_STAGES.length), out);
+}
+
+function attemptStatusOfChain(chain, out) {
   const { attempt: record, invocation: inv, stages } = chain;
   if (fileState(inv.llbc)?.sha256 !== stages.charon.record.llbcSha256) refuse('attempt-refused', 'the LLBC changed after the Charon stage');
   if (!exactlyFiles(entriesUnder(inv.aeneasDest), stages.aeneas.record.outputs)) refuse('attempt-refused', 'the Aeneas outputs changed after the Aeneas stage');

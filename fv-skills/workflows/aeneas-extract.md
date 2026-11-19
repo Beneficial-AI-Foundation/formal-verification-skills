@@ -388,13 +388,21 @@ falls back to an axiom silently. A crate whose Charon output reaches a target cr
 `stitch` entry for A, or its publication fails (declare A a non-target if the owner decides to
 leave A out). An item A does not declare (for example a module excluded from A's translation) must
 be named under `assume`, by a module or item path and never the whole crate; `assume` never covers
-an item A declares, an entry that matches no axiom is refused as stale, and the items taken as
-assumed are recorded and each needs an externals record. An item A declares but leaves opaque stays
+an item A declares, an entry that matches nothing is refused as stale, and the items taken as
+assumed are recorded and each needs an externals record. The same holds for a definition: when B's
+Lean defines an item of A itself (Aeneas translated it in B instead of leaving an axiom), the item
+has two declarations if A defines it too, and A's theorems then concern the other one, so
+publication refuses; if A does not define it, it has to sit under an `assume` prefix, and it is
+recorded as a copy with the prefix that covers it. An item A declares but leaves opaque stays
 an alias of A's own axiom: it is recorded as `providerOpaque` and needs A's externals record. After
 stitching, every axiom left in the published Lean is classified by the crate its Rust path names: an
 axiom for another target's item that is not a recorded assumption, or one with no readable Rust path,
-fails publication. Publication stitches only after A's own Aeneas stage is complete, and the record
-names A's stage hash. The generated files are edited only by these two
+fails publication. What B imports is what A published, so publication stitches only after A's
+own chain is complete and consistent (every stage recorded, the published files as recorded, A's own
+edits reproducing): A's inventory and the `providerDeclSha256` of each replaced item come from A's
+final published Lean, substitutions and stitching included, never from the raw Aeneas output, and a
+name that Lean text declares twice (in A or in B) is refused instead of bound to the last one. The
+record names the hash of A's publish stage (`providerStage`, `providerStageSha256`). The generated files are edited only by these two
 declared, recorded transforms; the `translation.json` Aeneas wrote is left as it is. Two caveats:
 an item whose signature involves another crate's types that B and A each wrote out separately
 cannot be aliased, and two crates that reach the same external Rust item each keep their own

@@ -163,6 +163,7 @@ describe('stitching: the consumer\'s axioms become checked aliases of the provid
     const ws = workspace(behaviour({ toy_lib: { lean: lib('(a : Std.U64) (b : Std.U32) : Result Std.U32') } }));
     const { out } = attempted(ws, stitched());
     for (const name of ['charon', 'aeneas']) for (const crate of ['toy_lib', 'toy_app']) assert.equal(step(ws, out, name, crate).status, 0);
+    assert.equal(step(ws, out, 'publish', 'toy_lib').status, 0, 'the provider is published first');
     const publish = step(ws, out, 'publish', 'toy_app');
     assert.equal(publish.status, 9, publish.stdout);
     assert.match(publish.result.message, /toy_lib::grow: the type of toy_lib\.grow here \(: Std\.U32 → Std\.U32 → Result Std\.U32\) is not the type toy_lib defines/);
@@ -174,24 +175,28 @@ describe('stitching: the consumer\'s axioms become checked aliases of the provid
     const ws = workspace(behaviour());
     const { out } = attempted(ws, stitched({ stitch: [{ crate: 'toy_lib' }] }));
     for (const name of ['charon', 'aeneas']) for (const crate of ['toy_lib', 'toy_app']) assert.equal(step(ws, out, name, crate).status, 0);
+    assert.equal(step(ws, out, 'publish', 'toy_lib').status, 0, 'the provider is published first');
     const publish = step(ws, out, 'publish', 'toy_app');
     assert.equal(publish.status, 9, publish.stdout);
     assert.match(publish.result.message, /toy_lib::other_mod::skipped \(toy_lib\.other_mod\.skipped\) is not defined by toy_lib; stitching never keeps an axiom silently/);
   });
 
-  it('waits for the provider\'s Aeneas output and then publishes, without ending the crate\'s chain', () => {
+  it('waits for the provider\'s publication and then publishes, without ending the crate\'s chain', () => {
     const ws = workspace(behaviour());
     const { out } = attempted(ws, stitched());
     assert.equal(step(ws, out, 'charon', 'toy_app').status, 0);
     assert.equal(step(ws, out, 'aeneas', 'toy_app').status, 0);
     const early = step(ws, out, 'publish', 'toy_app');
     assert.equal(early.status, 8, early.stdout);
-    assert.match(early.result.message, /stitching to crate toy_lib: its Aeneas stage is not completed/);
+    assert.match(early.result.message, /stitching to crate toy_lib: its charon stage is not completed; run that crate through publish first/);
     assert.equal(fs.existsSync(path.join(out, 'units', 'toy_app', 'stage-3-publish.failed.json')), false, 'a provider that is not ready is not a failure of this crate');
     assert.equal(step(ws, out, 'charon', 'toy_lib').status, 0);
     assert.equal(step(ws, out, 'aeneas', 'toy_lib').status, 0);
-    assert.equal(step(ws, out, 'publish', 'toy_app').status, 0);
+    const unpublished = step(ws, out, 'publish', 'toy_app');
+    assert.equal(unpublished.status, 8, unpublished.stdout);
+    assert.match(unpublished.result.message, /stitching to crate toy_lib: its publish stage is not completed; run that crate through publish first, because this crate imports what it published/, 'the Aeneas output of the provider is not what Lean loads');
     assert.equal(step(ws, out, 'publish', 'toy_lib').status, 0);
+    assert.equal(step(ws, out, 'publish', 'toy_app').status, 0);
     assert.equal(engine(ws, ['attempt-status', '--out', out]).status, 0);
   });
 
@@ -212,10 +217,100 @@ describe('stitching: the consumer\'s axioms become checked aliases of the provid
   });
 });
 
+describe('the provider is its final publication, and an item has one declaration', () => {
+  const hash = (text) => crypto.createHash('sha256').update(text).digest('hex');
+  const blockOf = (text, rustPath) => text.split(/\n{2,}/).find((candidate) => candidate.startsWith('/--') && candidate.includes(`[${rustPath}]`));
+  const reasonText = 'Aeneas names a shadowed local with a middle dot, which a Lean name cannot contain';
+  // Charon and Aeneas of both crates; the publications are left to the test.
+  const throughAeneas = (ws, spec) => {
+    const { out } = attempted(ws, spec);
+    for (const name of ['charon', 'aeneas']) for (const crate of ['toy_lib', 'toy_app']) assert.equal(step(ws, out, name, crate).status, 0);
+    return out;
+  };
+  const GROW_AXIOM = '@[rust_fun "toy_lib::grow"]\naxiom toy_lib.grow\n  : Std.U32 → Std.U32 → Result Std.U32';
+  const SKIPPED_AXIOM = '@[rust_fun "toy_lib::other_mod::skipped"]\naxiom toy_lib.other_mod.skipped : Result Unit';
+  const consumer = (...pairs) => behaviour({ toy_app: { lean: pairs.reduce((text, [from, to]) => { assert.ok(text.includes(from), from); return text.replace(from, to); }, APP) } });
+  const twice = (name, rustPath, namespace) => `/-- [${rustPath}]:\n    Source: 'x.rs', lines 1:0-1:1\n    Visibility: public -/\ndef ${name} : Result Std.U32 := ok 2#u32\n\nend ${namespace}`;
+
+  it('takes the declaration hashes from the provider\'s final Lean, not from the raw Aeneas output', () => {
+    const shadowedLib = lib().replace('Result Std.U32 := do\n  a + b', 'Result Std.U32 := do\n  let x· ← ok a\n  x· + b');
+    const ws = workspace(behaviour({ toy_lib: { lean: shadowedLib } }));
+    const spec = stitched();
+    spec.crates[0].substitutions = [{ file: 'ToyLib.lean', find: 'x·', replace: 'x_mid', count: 2, reason: reasonText }];
+    const out = complete(ws, spec);
+    const finalBlock = blockOf(published(ws, 'Lean/Lib/ToyLib.lean'), 'toy_lib::grow');
+    assert.match(finalBlock, /x_mid/);
+    const entry = engine(ws, ['attempt-status', '--out', out]).result.run.units.find((unit) => unit.crate === 'toy_app').stitch[0];
+    const grow = entry.replaced.find((item) => item.rustPath === 'toy_lib::grow');
+    assert.equal(grow.providerDeclSha256, hash(finalBlock));
+    const raw = fs.readFileSync(path.join(out, 'units', 'toy_lib', 'aeneas-dest', 'ToyLib.lean'), 'utf8');
+    assert.notEqual(grow.providerDeclSha256, hash(blockOf(raw, 'toy_lib::grow')), 'the raw output is not what Lean loads');
+    assert.equal(entry.providerStage, 'publish');
+  });
+
+  it('refuses to publish against a provider whose published Lean changed after its publication', () => {
+    const ws = workspace(behaviour());
+    const out = throughAeneas(ws, stitched());
+    assert.equal(step(ws, out, 'publish', 'toy_lib').status, 0);
+    fs.appendFileSync(path.join(ws.project, 'Lean/Lib/ToyLib.lean'), '-- edited\n');
+    const refused = step(ws, out, 'publish', 'toy_app');
+    assert.equal(refused.status, 8, refused.stdout);
+    assert.match(refused.result.message, /stitching to crate toy_lib: its attempt is not consistent \(.*changed after publication.*\)/);
+    assert.equal(fs.existsSync(path.join(ws.project, 'Lean', 'App')), false);
+  });
+
+  it('refuses a name declared twice, in the provider or in the consumer, instead of binding to the last one', () => {
+    const provider = workspace(behaviour({ toy_lib: { lean: lib().replace('end toy_lib', twice('one', 'toy_lib::one', 'toy_lib')) } }));
+    const out = throughAeneas(provider, stitched());
+    assert.equal(step(provider, out, 'publish', 'toy_lib').status, 0);
+    const refused = step(provider, out, 'publish', 'toy_app');
+    assert.equal(refused.status, 8, refused.stdout);
+    assert.match(refused.result.message, /stitching to crate toy_lib: its published Lean declares one more than once, so no declaration of it is a unique target/);
+
+    const ws = workspace(consumer(['end toy_app', twice('three', 'toy_app::three', 'toy_app')]));
+    const outApp = throughAeneas(ws, stitched());
+    assert.equal(step(ws, outApp, 'publish', 'toy_lib').status, 0);
+    const own = step(ws, outApp, 'publish', 'toy_app');
+    assert.equal(own.status, 9, own.stdout);
+    assert.match(own.result.message, /this crate's Lean declares three more than once, so a declaration of it is not a unique target/);
+  });
+
+  describe('a copy of an item of the provider', () => {
+    const attemptWith = (variant, spec) => {
+      const ws = workspace(variant);
+      const out = throughAeneas(ws, spec);
+      assert.equal(step(ws, out, 'publish', 'toy_lib').status, 0);
+      return { ws, out, publish: step(ws, out, 'publish', 'toy_app') };
+    };
+
+    it('is refused when the provider defines the same item too', () => {
+      const { publish, ws } = attemptWith(consumer([GROW_AXIOM, 'def toy_lib.grow (a : Std.U32) (b : Std.U32) : Result Std.U32 := do\n  a + b']), stitched());
+      assert.equal(publish.status, 9, publish.stdout);
+      assert.match(publish.result.message, /toy_lib::grow \(toy_lib\.grow\) is also defined as a def in this crate's Lean, and toy_lib defines it too \(def\): two declarations stand for one Rust item, and toy_lib's theorems concern the other one/);
+      assert.equal(fs.existsSync(path.join(ws.project, 'Lean', 'App')), false);
+    });
+
+    it('is refused when the provider does not define it and the owner did not say so', () => {
+      const { publish } = attemptWith(consumer([SKIPPED_AXIOM, 'def toy_lib.other_mod.skipped : Result Unit := ok ()']), stitched({ stitch: [{ crate: 'toy_lib' }] }));
+      assert.equal(publish.status, 9, publish.stdout);
+      assert.match(publish.result.message, /toy_lib::other_mod::skipped \(toy_lib\.other_mod\.skipped\) is an item of toy_lib that this crate's Lean defines itself, and toy_lib does not define it; name it in the stitch assume list/);
+    });
+
+    it('is recorded, with the assume prefix that covers it, when the provider does not define it', () => {
+      const { ws, out, publish } = attemptWith(consumer([SKIPPED_AXIOM, 'def toy_lib.other_mod.skipped : Result Unit := ok ()']), stitched());
+      assert.equal(publish.status, 0, publish.stdout);
+      const entry = engine(ws, ['attempt-status', '--out', out]).result.run.units.find((unit) => unit.crate === 'toy_app').stitch[0];
+      assert.deepEqual(entry.copies, [{ rustPath: 'toy_lib::other_mod::skipped', name: 'toy_lib.other_mod.skipped', keyword: 'def', assume: 'toy_lib::other_mod' }]);
+      assert.deepEqual(entry.assumed, [], 'a copy is a definition here, not an assumed axiom');
+    });
+  });
+});
+
 describe('a target the crate calls is stitched, or nothing is published', () => {
   const stitchedStages = (ws, spec) => {
     const { out } = attempted(ws, spec);
     for (const name of ['charon', 'aeneas']) for (const crate of ['toy_lib', 'toy_app']) assert.equal(step(ws, out, name, crate).status, 0);
+    assert.equal(step(ws, out, 'publish', 'toy_lib').status, 0, 'the provider is published first');
     return { out, publish: step(ws, out, 'publish', 'toy_app') };
   };
   const refusedPublish = (ws, spec, pattern) => {
@@ -285,6 +380,7 @@ describe('substitutions: a rename of a name Lean cannot read, with the match cou
     const ws = workspace(variant);
     const { out } = attempted(ws, stitched({ substitutions: [].concat(substitutions) }));
     for (const name of ['charon', 'aeneas']) for (const crate of ['toy_lib', 'toy_app']) assert.equal(step(ws, out, name, crate).status, 0);
+    assert.equal(step(ws, out, 'publish', 'toy_lib').status, 0, 'the provider is published first');
     const publish = step(ws, out, 'publish', 'toy_app');
     assert.equal(publish.status, 9, publish.stdout);
     assert.match(publish.result.message, pattern);
