@@ -65,8 +65,9 @@ file, anything under `src`, or an input itself) is named in `links` and refused:
 with the content, or leaves its crate out. When the project has no
 `Cargo.lock`, or its lock does not match the patched manifests, the owner agrees to
 `--lock update --release "$RELEASE_DIR"` for the copy: the lock is made inside the copy, never in the
-checkout, and its hash and origin are recorded. Keep a copy of `"$OUT/tree/Cargo.lock"` with the
-extraction record.
+checkout, and its hash and origin are recorded. The lock stays in `"$OUT/tree/Cargo.lock"`: `OUT` is
+in the evidence directory (`$HOME/.fvs/extractions`, or `FVS_EVIDENCE_DIR`), and the whole attempt
+directory is kept for as long as the extraction record that cites it.
 
 ## Step 3: Hand off to the shared extractor
 

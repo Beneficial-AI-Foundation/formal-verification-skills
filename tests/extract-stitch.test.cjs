@@ -155,6 +155,11 @@ describe('stitching: the consumer\'s axioms become checked aliases of the provid
     const publishedFile = app.publication.find((entry) => entry.relativePath.endsWith('Lean/App/ToyApp.lean'));
     assert.equal(app.leanChecks[0].fileSha256, publishedFile.sha256, 'the file the block was appended to is the published file');
     assert.notEqual(app.leanChecks[0].blockSha256, app.leanChecks[0].fileSha256);
+    // The block is the exact suffix of the published file, so its length and hash can be checked without knowing its text.
+    const publishedText = fs.readFileSync(path.join(ws.project, 'Lean/App/ToyApp.lean'));
+    assert.equal(crypto.createHash('sha256').update(publishedText.subarray(publishedText.length - app.leanChecks[0].blockBytes)).digest('hex'), app.leanChecks[0].blockSha256);
+    assert.equal(app.leanChecks[0].relativePath, 'Lean/App/ToyApp.lean');
+    assert.equal(app.leanChecks[0].relativePath, publishedFile.relativePath);
     assert.deepEqual(library.leanChecks ?? [], [], 'a crate that stitches nothing has no check');
     assert.ok(entry.replaced.every((item) => /^[0-9a-f]{64}$/.test(item.signatureSha256) && /^[0-9a-f]{64}$/.test(item.providerDeclSha256)));
     assert.deepEqual(entry.assumed, [{ rustPath: 'toy_lib::other_mod::skipped', name: 'toy_lib.other_mod.skipped', qualifiedName: 'toy_app.toy_lib.other_mod.skipped', reason: 'named in the stitch assume list' }]);

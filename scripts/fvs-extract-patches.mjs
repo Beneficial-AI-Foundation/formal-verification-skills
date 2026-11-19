@@ -2597,7 +2597,7 @@ function computeTransform(chain, raw) {
     if (replacedHere.length > 0) {
       const block = leanCheckBlock(replacedHere);
       texts[name] = `${texts[name].endsWith('\n') ? texts[name] : `${texts[name]}\n`}${block}`;
-      leanChecks.push({ file: name, module: spec.moduleRoot === undefined ? null : `${spec.moduleRoot}.${name.replace(/\.lean$/, '').split('/').join('.')}`, items: replacedHere.length, blockSha256: sha256(block), fileSha256: sha256(texts[name]) });
+      leanChecks.push({ file: name, module: spec.moduleRoot === undefined ? null : `${spec.moduleRoot}.${name.replace(/\.lean$/, '').split('/').join('.')}`, items: replacedHere.length, blockSha256: sha256(block), blockBytes: Buffer.byteLength(block), fileSha256: sha256(texts[name]) });
     }
     files[name] = { rawSha256: sha256(raw[name]), sha256: sha256(texts[name]) };
   }
@@ -2862,7 +2862,7 @@ function attemptStatusOfChain(chain, out) {
       hasErrors: stages.charon.record.llbc ? { value: stages.charon.record.llbc.hasErrors, items: stages.charon.record.llbc.items, itemCount: stages.charon.record.llbc.itemCount } : null,
       // The declared edits of the generated Lean: substitutions, and the crates whose real
       // translation this crate's Lean imports in place of axioms.
-      ...(recorded === null ? {} : { imports: recorded.stitch.map((entry) => entry.provider), stitch: recorded.stitch, substitutions: recorded.substitutions, leanChecks: recorded.leanChecks }),
+      ...(recorded === null ? {} : { imports: recorded.stitch.map((entry) => entry.provider), stitch: recorded.stitch, substitutions: recorded.substitutions, leanChecks: recorded.leanChecks.map((check) => ({ ...check, relativePath: path.relative(inv.projectRoot, path.join(inv.publishDir, check.file)).split(path.sep).join('/') })) }),
       // Cross-crate edges, present with or without stitching: the declared target crates this
       // crate's LLBC reaches, the ones among them its Lean does not import (their items are
       // still axioms here), and the provider items the stitched aliases stand for, each of

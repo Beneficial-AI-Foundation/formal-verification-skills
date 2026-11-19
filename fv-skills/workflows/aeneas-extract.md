@@ -272,11 +272,18 @@ for the build artifact directly. Always build under `LEAN_NUM_THREADS="${LEAN_NU
 
 Charon runs in a disposable copy the engine prepares: the original checkout is never the
 extraction tree. Every cycle uses a NEW `OUT` outside the crate checkout, because the patch list
-may have changed since the last one; an earlier cycle's copy is never reused.
+may have changed since the last one; an earlier cycle's copy is never reused. `OUT` lies in a durable
+evidence directory, not a temporary one (`$HOME/.fvs/extractions` unless `FVS_EVIDENCE_DIR` says
+otherwise): the extraction record, the oracle and the reviews cite files inside it (the LLBC and logs,
+each crate's attempt and stage records, the published-file hashes, `tree/Cargo.lock`), and a
+temporary directory can be cleared before anyone reads them. The whole attempt directory stays for as
+long as the record that cites it does.
 
 ```bash
 set -o pipefail
-OUT="$(mktemp -d "${TMPDIR:-/tmp}/fvs-extract.XXXXXX")/copy"
+EVIDENCE_ROOT="${FVS_EVIDENCE_DIR:-$HOME/.fvs/extractions}"
+mkdir -p "$EVIDENCE_ROOT" || exit 1
+OUT="$(mktemp -d "$EVIDENCE_ROOT/$(basename "$CRATE_ROOT")-$(date -u +%Y%m%dT%H%M%SZ).XXXXXX")/copy"
 RELEASE_DIR=...   # the release directory the spec names as `release` (relative to the project root, or absolute)
 node "$PATCH_ENGINE" prepare --project-root "$CRATE_ROOT" --out "$OUT" --release "$RELEASE_DIR" || exit 1   # records the manifest and the workspace; refusal -> STOP
 node "$PATCH_ENGINE" verify-tree --out "$OUT" || exit 1                  # before Charon: the copy is the recorded post-patch tree
@@ -416,9 +423,9 @@ definitionally equal to A's type (inside `Result` for a constant). An alias alon
 instantiating what A keeps general (an implicit type argument, an instance argument, a universe),
 and the block rejects exactly those. Every replaced item carries `check: pending-lean-build`, never
 a finished check: the comparison has run once the published modules build with exit 0, and the
-record lists each generated block (`leanChecks`: the file, its module, the hash of the block alone
-and the hash of the whole published file, which is the file's `publication` hash) so that
-`attempt-status` recomputes it. Functions and types become reducible aliases; a constant becomes a plain definition `Result.ok` of A's
+record lists each generated block (`leanChecks`: the file and its project-relative path, its module,
+the block's byte length and hash, and the hash of the whole published file, which is the file's
+`publication` hash; the block is the exact end of that file) so that `attempt-status` recomputes it. Functions and types become reducible aliases; a constant becomes a plain definition `Result.ok` of A's
 constant, so proof automation keeps seeing the constant. Every existing name stays valid. Nothing
 falls back to an axiom silently. A crate whose Charon output reaches a target crate A must have a
 `stitch` entry for A, or its publication fails (declare A a non-target if the owner decides to
@@ -466,8 +473,9 @@ the lock's hash and origin (`read`, `generated` or `updated`, and the hash it st
 checkout is not touched, and `verify-restore` refuses when the project's own `Cargo.lock` is no
 longer the one recorded at the start, and `verify-tree` names a lock that a tool rewrote in the
 copy. `attempt` refuses a copy that has no lock. A generated or updated lock pins
-whatever resolved at that moment, so keep a copy of `"$OUT/tree/Cargo.lock"` with the extraction
-record: a later `prepare` may resolve newer versions. When Charon fails, still run
+whatever resolved at that moment, and a later `prepare` may resolve newer versions, so the lock
+(`"$OUT/tree/Cargo.lock"`) is kept as part of the whole attempt directory, in the evidence directory
+above, for as long as the extraction record is. When Charon fails, still run
 the second `verify-tree`, skip Aeneas, and go to CLASSIFY.
 
 An engine refusal (`prepare`, either `verify-tree`, or `verify-restore` exiting nonzero) is a
