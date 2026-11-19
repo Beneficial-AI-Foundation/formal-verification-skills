@@ -2020,6 +2020,41 @@ function committedSpec(root, commit, file) {
   return { relative: specFile, bytes };
 }
 
+// The crate an item belongs to: the first segment of its Rust path.
+const itemCrate = (id) => id.split('::')[0];
+
+// The crates a succeeded multi-crate extraction covers, or null for a single-crate
+// project, where nothing below applies. The crate names are the extracted units'.
+function crateContext(root) {
+  const extraction = loadState(root)?.extraction;
+  const view = extraction?.status === 'succeeded' ? crateView(extraction.run) : null;
+  if (!view) return null;
+  const units = extraction.run.units;
+  const nonTargets = new Set(units.flatMap((unit) => (Array.isArray(unit.nonTargets) ? unit.nonTargets.map((entry) => entry?.crate) : [])).filter(isText));
+  return { view, units, nonTargets, crates: units.map((unit) => unit.crate) };
+}
+
+// Every item of a spec file must belong to one extracted crate and must have been
+// translated: an item of another crate has no statement here, and an item Charon
+// could not translate has no definition to state anything about.
+function checkSpecItems(context, ids) {
+  const owners = new Set();
+  for (const id of ids) {
+    const crate = itemCrate(id);
+    const unit = context.units.find((entry) => entry.crate === crate);
+    if (!unit) {
+      refuse('invalid-input', context.nonTargets.has(crate)
+        ? `${id}: crate ${crate} is not a verification target, so its items get no statement; the owner may only assume them`
+        : `${id}: crate ${crate} is not in the recorded extraction (crates: ${context.crates.join(', ')})`, { crates: context.crates });
+    }
+    if (Array.isArray(unit.hasErrors?.items) && unit.hasErrors.items.includes(id)) {
+      refuse('invalid-input', `${id} was not translated (Charon reported errors on it), so it cannot have a statement; name it in --out-of-scope`);
+    }
+    owners.add(crate);
+  }
+  if (owners.size > 1) refuse('invalid-input', `--items names items of ${[...owners].join(', ')}: a spec file covers one crate, so record one file per crate`, { crates: [...owners] });
+}
+
 // With a commit, the spec file is hashed from that commit's git object, so the
 // checkout is never moved or touched to record a review. The review report is
 // a working file (it is never committed), so it is still read from disk.
@@ -2029,6 +2064,8 @@ export function recordSpec({ projectRoot, specFile, items, round, verdict, revie
   if (!Number.isInteger(round) || round < 1) refuse('usage', '--round must be a positive integer');
   const ids = idList(items, '--items');
   if (ids.length === 0) refuse('usage', '--items must name at least one item');
+  const context = crateContext(root);
+  if (context) checkSpecItems(context, ids);
   let resolved = null;
   if (commit !== undefined) {
     resolved = resolveRevision(root, commit);
@@ -2137,9 +2174,34 @@ export function specStatus({ projectRoot, commit }) {
   });
   // A file the owner pruned at the merge never holds a later PR.
   const live = specFiles.filter((file) => owner.get(file.specFile) !== 'pruned');
-  const readyForPr = live.some((file) => file.verdict === 'pass') && !live.some((file) => file.verdict === 'changes' || file.stale);
+  const ready = (files) => files.some((file) => file.verdict === 'pass') && !files.some((file) => file.verdict === 'changes' || file.stale);
   const blocked = specFiles.filter((file) => file.verdict === 'blocked').map((file) => file.specFile);
-  return { code: 'ok', message: `${specFiles.length} spec file(s) recorded in ${specsPath(root)}`, ...(resolved === null ? {} : { commit: resolved }), specFiles, readyForPr, blocked };
+  // With several crates, every crate needs its own reviewed spec files before the PR is ready.
+  const context = crateContext(root);
+  const crates = context ? specCrates(context, specFiles, live, ready) : null;
+  const readyForPr = ready(live) && (crates === null || crates.units.every((unit) => unit.ready));
+  return { code: 'ok', message: `${specFiles.length} spec file(s) recorded in ${specsPath(root)}`, ...(resolved === null ? {} : { commit: resolved }),
+    specFiles: crates ? specFiles.map((file) => ({ ...file, crates: crateNames(context, file.items) })) : specFiles, ...(crates ? { crates } : {}), readyForPr, blocked };
+}
+
+// The extracted crates an item list belongs to, in the order the extraction names them.
+const crateNames = (context, items) => context.crates.filter((crate) => items.some((id) => itemCrate(id) === crate));
+
+// Each crate with the spec files that state its items, providers first. A crate is
+// ready when it has a reviewed pass and no file of it waits for changes or is stale.
+function specCrates(context, specFiles, live, ready) {
+  const label = (files) => (files.length === 0 ? 'no spec file is recorded for this crate'
+    : ready(files) ? 'spec files reviewed: pass'
+      : files.some((file) => file.verdict === 'changes' || file.stale) ? 'a spec file is waiting for changes or changed after its review'
+        : 'no spec file of this crate has a reviewed pass');
+  const dependsOn = new Map(context.view.units.map((unit) => [unit.crate, unit.dependsOn]));
+  return {
+    order: context.view.order,
+    units: context.view.order.map((crate) => {
+      const files = live.filter((file) => file.items.some((id) => itemCrate(id) === crate));
+      return { crate, dependsOn: dependsOn.get(crate), specFiles: files.map((file) => file.specFile), ready: ready(files), label: label(files) };
+    }),
+  };
 }
 
 // The raw bytes of a project-root-relative file at a commit (never converted by
@@ -2163,6 +2225,7 @@ export function recordPr({ projectRoot, kind, url, branch, head, merged = false,
     // Readiness is judged at the PR head when it is local: the checkout need not hold the spec files.
     const status = specStatus({ projectRoot: root, ...(commit === null ? {} : { commit }) });
     if (!status.readyForPr) warnings.push(status.specFiles.length === 0 ? 'no reviewed spec file is recorded' : 'spec-status is not ready for the PR (a file is waiting for changes or changed after its review)');
+    for (const unit of (status.crates?.units ?? []).filter((entry) => !entry.ready)) warnings.push(`crate ${unit.crate}: ${unit.label}`);
     if (commit === null) {
       warnings.push(`the head ${head} is not a local commit, so the recorded spec files were not compared with it; fetch the PR branch to compare`);
     } else {
