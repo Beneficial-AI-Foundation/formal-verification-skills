@@ -1569,7 +1569,7 @@ function reportLines(receipt) {
   const lines = [receipt.label, `commit ${receipt.commit}`, `tree ${receipt.tree}`, ...receipt.warnings.map((warning) => `warning: ${warning}`)];
   lines.push(integrity.compared ? `spec base ${integrity.specBase}: statements, frozen paths and added code compared with the merged spec`
     : 'spec base: none given or recorded, so the statements were not compared with a merged spec and this is not an acceptance');
-  lines.push(receipt.allowAxioms ? `allowed axioms: ${receipt.allowAxioms.names} names${receipt.allowAxioms.crates === undefined ? '' : ` in ${receipt.allowAxioms.crates} crates`} from ${receipt.allowAxioms.file} (sha256 ${receipt.allowAxioms.sha256}); a statement that rests on any other non-standard axiom does not pass`
+  lines.push(receipt.allowAxioms ? `allowed axioms: ${receipt.allowAxioms.names} names${receipt.allowAxioms.crates === undefined ? '' : ` in ${receipt.allowAxioms.crates} crate${receipt.allowAxioms.crates === 1 ? '' : 's'}`} from ${receipt.allowAxioms.file} (sha256 ${receipt.allowAxioms.sha256}); a statement that rests on any other non-standard axiom does not pass`
     : 'allowed axioms: no list given, so no statement is held to a list of axioms');
   const { folders, files } = integrity.extraction ?? { folders: [], files: [] };
   lines.push(`extraction output held fixed, besides the folders named Extraction...: ${folders.length + files.length === 0 ? 'none recorded in the run state' : [...folders, ...files].join(', ')}`);
