@@ -49,6 +49,8 @@ const confirmed = (steps, ...extra) => {
   return allow(steps, ...extra, '--confirm', preview.json.digest);
 };
 
+const otherHookSteps = (catalog) => catalog.steps.filter((s) => s.hook && s.id !== 'git-push').map((s) => s.id);
+
 // How Claude Code reads a Bash rule: "*" stands for any text, and a trailing " *" also matches the bare command.
 function bashMatches(rule, command) {
   const body = /^Bash\((.*)\)$/s.exec(rule)[1];
@@ -76,7 +78,9 @@ describe('the catalog', () => {
     assert.equal(push.probes.length, 2, 'one dry-run push per prefix');
     assert.ok(push.probes.every((p) => p.command.endsWith(' --dry-run')));
     assert.deepEqual(push.claude, [], 'no allow rule for a push');
-    assert.match(push.claudeNote, /no allow rule is written for a push/i);
+    assert.match(push.hook.command, /^node "[^"]+\/fvs-auto-push-gate\.mjs" --repo Acme\/proj --host github\.com --remote origin --prefix fvs --prefix team\/runs$/);
+    assert.equal(lib.hookProblem(push.hook.command), null);
+    assert.deepEqual(otherHookSteps(catalog), [], 'no other step installs a hook');
   });
 
   it('no rule the catalog writes matches any push, whatever its spelling', () => {
@@ -300,23 +304,171 @@ describe('write-allowlist for Claude Code', () => {
     assert.equal(fs.readFileSync(settingsFile(), 'utf8'), before);
   });
 
-  it('a push step alone writes nothing and says its prompt stays unresolved', () => {
-    const refused = allow('git-push', '--branch-prefix', 'fvs', '--branch-prefix', 'ao');
-    assert.equal(refused.json.code, 'nothing-to-write');
-    assert.match(refused.json.message, /prompts stay unresolved/);
-    assert.match(refused.json.reasons['git-push'], /no allow rule is written for a push/i);
-    assert.equal(fs.existsSync(settingsFile()), false);
-    assert.equal(allow('git-push', '--confirm', 'anything').json.code, 'nothing-to-write');
+});
+
+describe('the push gate hook install', () => {
+  const GATE = path.join(ROOT, 'scripts', 'fvs-auto-push-gate.mjs');
+  const command = `node "${GATE}" --repo ${REPO} --host github.com --remote origin --prefix fvs`;
+  const entry = { matcher: 'Bash', hooks: [{ type: 'command', command, timeout: 15 }] };
+
+  it('shows the exact hook and what it allows and asks, and writes nothing before the yes', () => {
+    const preview = allow('git-push');
+    assert.equal(preview.status, 1);
+    assert.equal(preview.json.code, 'confirmation-required');
+    assert.deepEqual(preview.json.add, { allow: [], hook: command });
+    assert.deepEqual(preview.json.hook.entry, entry);
+    assert.equal(preview.json.hook.event, 'PreToolUse');
+    assert.equal(preview.json.hook.script, GATE);
+    assert.match(preview.json.hook.allows.join(' '), /git push \[-u\] origin fvs\/<name>.*bare `git push`/);
+    assert.match(preview.json.hook.destination, /github\.com\/Acme\/proj/);
+    assert.match(preview.json.hook.asks, /every other command that contains a push/);
+    assert.match(preview.json.hook.note, /--target local/);
+    assert.equal(fs.existsSync(path.join(project, '.claude')), false);
+    assert.equal(allow('git-push', '--confirm', 'anything').json.code, 'confirmation-required');
     assert.equal(fs.existsSync(path.join(project, '.claude')), false);
   });
 
-  it('a push step next to other steps adds only the other steps\' rules', () => {
+  it('the digest covers the hook, so a confirmation for other rules does not install it', () => {
+    const other = allow('git-read').json.digest;
+    assert.equal(allow('git-push', '--confirm', other).json.code, 'confirmation-required');
+    const both = allow('git-read,git-push').json;
+    assert.notEqual(both.digest, other);
+    assert.equal(allow('git-read', '--confirm', both.digest).json.code, 'confirmation-required');
+  });
+
+  it('writes the hook after the yes, with no push rule and no deny rule', () => {
+    const done = confirmed('git-push');
+    assert.equal(done.json.code, 'written');
+    const written = readSettings();
+    assert.deepEqual(written, { hooks: { PreToolUse: [entry] } });
+    assert.match(done.json.notes.join(' '), /Branch protection on the project fork is still recommended/);
+    assert.match(done.json.verification, /whether Claude Code skips its prompt on an allow answer was not observed/);
+    const before = fs.readFileSync(settingsFile(), 'utf8');
+    assert.equal(allow('git-push').json.code, 'unchanged');
+    assert.equal(fs.readFileSync(settingsFile(), 'utf8'), before, 'a second write changes nothing');
+  });
+
+  it('next to other steps it adds those steps\' rules and the hook, and still no push rule', () => {
     const done = confirmed('git-push,worker-message');
     assert.equal(done.json.code, 'written');
     const written = readSettings();
     assert.deepEqual(written.permissions.allow, ['Bash(ao send *)']);
-    assert.ok(!JSON.stringify(written).includes('push'), 'no push rule of any kind');
+    assert.deepEqual(written.hooks.PreToolUse, [entry]);
+    assert.ok(!JSON.stringify(written.permissions).includes('push'), 'no push rule of any kind');
   });
+
+  it('appends one entry and keeps every other key, rule, hook and the key order', () => {
+    const original = {
+      $schema: 'https://json.schemastore.org/claude-code-settings.json',
+      permissions: { allow: ['Bash(npm run lint)'], deny: ['Bash(git push *--force*)'], ask: ['Bash(gh pr edit *)'] },
+      hooks: {
+        PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: '/home/me/.claude/hooks/ao-branch-gate.sh' }] }, { matcher: 'Edit', hooks: [{ type: 'command', command: 'lint' }] }],
+        PostToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: 'log' }] }],
+      },
+      env: { A: '1' },
+    };
+    writeSettings(original);
+    assert.equal(confirmed('git-push').json.code, 'written');
+    const after = readSettings();
+    assert.deepEqual(Object.keys(after), Object.keys(original));
+    assert.deepEqual(Object.keys(after.hooks), ['PreToolUse', 'PostToolUse']);
+    assert.deepEqual(after.hooks.PreToolUse, [...original.hooks.PreToolUse, entry]);
+    assert.deepEqual(after.hooks.PostToolUse, original.hooks.PostToolUse);
+    assert.deepEqual(after.permissions, original.permissions, 'the owner\'s own deny rule is kept and no rule is added');
+    assert.deepEqual(after.env, original.env);
+  });
+
+  it('works for the local file too', () => {
+    const done = confirmed('git-push', '--target', 'local');
+    assert.equal(done.json.code, 'written');
+    assert.equal(done.json.file, '.claude/settings.local.json');
+    assert.deepEqual(readSettings('settings.local.json'), { hooks: { PreToolUse: [entry] } });
+    assert.equal(fs.existsSync(settingsFile()), false);
+  });
+
+  it('refuses to replace or edit a push gate entry that differs, and says how to resolve it', () => {
+    const stale = { matcher: 'Bash', hooks: [{ type: 'command', command: 'node "/old/place/fvs-auto-push-gate.mjs" --repo Acme/proj --prefix fvs' }] };
+    writeSettings({ hooks: { PreToolUse: [stale] } });
+    const before = fs.readFileSync(settingsFile(), 'utf8');
+    const refused = allow('git-push');
+    assert.equal(refused.json.code, 'push-gate-conflict');
+    assert.match(refused.json.message, /does not replace or edit it.*Remove that entry yourself/);
+    assert.deepEqual(refused.json.existing, [stale.hooks[0].command]);
+    assert.equal(refused.json.wouldAdd, command);
+    assert.equal(allow('git-push', '--confirm', 'anything').json.code, 'push-gate-conflict');
+    assert.equal(fs.readFileSync(settingsFile(), 'utf8'), before);
+  });
+
+  it('treats the same entry as already installed, and adds beside an entry that is not the gate', () => {
+    writeSettings({ hooks: { PreToolUse: [entry] } });
+    assert.equal(allow('git-push').json.code, 'unchanged');
+    writeSettings({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'node other-hook.mjs' }] }, 'not an entry', null] } });
+    assert.equal(confirmed('git-push').json.code, 'written');
+    assert.equal(readSettings().hooks.PreToolUse.length, 4);
+  });
+
+  it('refuses a hooks section of the wrong shape and leaves the file untouched', () => {
+    for (const text of ['{ "hooks": [] }', '{ "hooks": "x" }', '{ "hooks": { "PreToolUse": {} } }', '{ "hooks": { "PreToolUse": "x" } }']) {
+      writeSettings(text);
+      assert.equal(allow('git-push').json.code, 'malformed-settings', text);
+      assert.equal(fs.readFileSync(settingsFile(), 'utf8'), text);
+    }
+  });
+
+  it('names every namespace and the host in the command', () => {
+    spawnSync('git', ['-C', project, 'remote', 'set-url', 'origin', `https://git.example.com/${REPO}.git`]);
+    const preview = allow('git-push', '--branch-prefix', 'fvs', '--branch-prefix', 'team/runs', '--host', 'git.example.com').json;
+    assert.equal(preview.add.hook, `node "${GATE}" --repo ${REPO} --host git.example.com --remote origin --prefix fvs --prefix team/runs`);
+  });
+
+  it('only the exact command shape passes the second check', () => {
+    assert.equal(lib.hookProblem(command), null);
+    for (const bad of [
+      `${command}; rm -rf /`, `${command} && true`, `${command} | cat`, `${command}\nid`, `${command} $(id)`, `${command} --prefix main*`, `${command} --prefix "x"`,
+      `node "/x/other.mjs" --repo ${REPO}`, `sh "${GATE}" --repo ${REPO}`, `node ${GATE} --repo ${REPO}`, `node "${GATE}"`, `node "${GATE}" --bogus x`,
+      `node "/a\\"b/fvs-auto-push-gate.mjs" --repo ${REPO}`, 'node "/a$HOME/fvs-auto-push-gate.mjs" --repo A/b', 'node "/a`id`/fvs-auto-push-gate.mjs" --repo A/b', '',
+    ]) assert.ok(lib.hookProblem(bad), JSON.stringify(bad));
+  });
+
+  it('the installed command runs as written: it allows the exact push and asks for the rest', () => {
+    const installed = confirmed('git-push').json;
+    assert.equal(installed.code, 'written');
+    const written = readSettings().hooks.PreToolUse[0].hooks[0].command;
+    const hook = (cmd) => {
+      const run = spawnSync('sh', ['-c', written], {
+        cwd: project, encoding: 'utf8', input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: cmd }, cwd: project }),
+        env: { ...process.env, PATH: `${path.dirname(process.execPath)}:${process.env.PATH}` },
+      });
+      return { status: run.status, decision: run.stdout ? JSON.parse(run.stdout).hookSpecificOutput.permissionDecision : null };
+    };
+    assert.deepEqual(hook('git push -u origin fvs/work'), { status: 0, decision: 'allow' });
+    assert.deepEqual(hook('git push origin fvs/work main'), { status: 0, decision: 'ask' });
+    assert.deepEqual(hook('git push -u origin fvs/work -uf'), { status: 0, decision: 'ask' });
+    assert.deepEqual(hook('git push origin main'), { status: 0, decision: 'ask' });
+    assert.deepEqual(hook('git status'), { status: 0, decision: null });
+    spawnSync('git', ['-C', project, 'remote', 'set-url', '--push', 'origin', 'git@github.com:Upstream/proj.git']);
+    assert.deepEqual(hook('git push -u origin fvs/work'), { status: 0, decision: 'ask' }, 'a push URL that changed after init is caught at the push');
+  });
+
+  it('Codex gets no hook: a push selection there writes nothing and says why', () => {
+    const refused = run('write-allowlist', base('--runtime', 'codex', '--steps', 'git-push'));
+    assert.equal(refused.json.code, 'nothing-to-write');
+    assert.match(refused.json.reasons['git-push'], /no push gate hook/);
+    assert.equal(fs.existsSync(path.join(project, '.codex')), false);
+  });
+
+  it('the summary says the hook was installed', () => {
+    const file = path.join(project, 'answer.json');
+    fs.writeFileSync(file, JSON.stringify({ runtime: 'claude', kind: 'check', results: { 'git-push': 'prompted' } }));
+    assert.equal(run('record', base('--input', file)).json.code, 'recorded');
+    assert.equal(confirmed('git-push').json.code, 'written');
+    const summary = run('plan', base()).json.record.summary;
+    assert.match(summary, /allowlist written to \.claude\/settings\.json \(0 allow, push gate hook\)/);
+    assert.match(summary, /waiting for your approval when the run reaches: git-push/);
+  });
+});
+
+describe('write-allowlist for Claude Code: files and targets', () => {
 
   it('refuses a file that is not valid JSON, or has the wrong shape, and leaves it untouched', () => {
     for (const text of ['{ "permissions": { "allow": [ ', '[]', '{ "permissions": { "allow": "Bash(ls)" } }', '{ "permissions": [] }', '// comment\n{}']) {
