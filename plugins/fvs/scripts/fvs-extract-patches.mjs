@@ -53,7 +53,7 @@ function refuse(code, message, details) {
 function usage() {
   process.stdout.write([
     'Usage: node fvs-extract-patches.mjs check --project-root DIR [--format json|text]',
-    '       node fvs-extract-patches.mjs prepare --project-root DIR --out DIR [--format json|text]',
+    '       node fvs-extract-patches.mjs prepare --project-root DIR --out DIR [--lock generate --release DIR] [--format json|text]',
     '       node fvs-extract-patches.mjs verify-restore --out DIR [--format json|text]',
     '       node fvs-extract-patches.mjs verify-tree --out DIR [--format json|text]',
     '       node fvs-extract-patches.mjs status --out DIR [--format json|text]',
@@ -72,6 +72,10 @@ function usage() {
     'outside the project); verify-restore compares the touched original sources with',
     'the recorded start; verify-tree compares every file under OUT/tree, except cargo\'s',
     'target/ directory, with the tree prepare recorded; status reads the manifest.',
+    'The manifest records the Cargo.lock of the copy (origin read, or absent). A project',
+    'without one is refused by attempt, because cargo would write one into the copy; prepare',
+    '--lock generate --release DIR writes it once in the copy with cargo generate-lockfile',
+    '(network access; origin generated, recorded by hash; the checkout is not touched).',
     'migrate turns an active legacy src-modifications ledger into translation patches',
     '(one per hunk, entries from src-modifications.json kept verbatim) and marks the',
     'ledger inactive in place with src-modifications.inactive.json; it never edits',
@@ -487,7 +491,38 @@ function writeManifest(out, manifest) {
   fs.writeFileSync(path.join(out, MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
+const LOCK_FILE = 'Cargo.lock';
+
+// The environment cargo runs in for the engine's own cargo calls: the caller's home
+// directories, the cargo bin directory, and the release's pinned toolchain.
+function cargoEnvironment(release) {
+  const homes = homesOf(process.env);
+  for (const name of ['HOME', 'RUSTUP_HOME', 'CARGO_HOME']) {
+    if (typeof homes[name] !== 'string' || !path.isAbsolute(homes[name])) refuse('invalid-input', `${name} must be an absolute path`);
+  }
+  return { HOME: homes.HOME, RUSTUP_HOME: homes.RUSTUP_HOME, CARGO_HOME: homes.CARGO_HOME, PATH: `${path.join(homes.CARGO_HOME, 'bin')}:/usr/bin:/bin`, RUSTUP_TOOLCHAIN: release.tools.rustToolchain.channel };
+}
+
+// A project without a Cargo.lock gets one written in the copy, once, before the copy is
+// recorded: cargo would otherwise write it during the build, and the copy would then
+// differ from the recorded tree. Resolution needs the registry index (network); the lock
+// is recorded by hash with origin "generated", and the original checkout is not touched.
+// A copy that already has a lock keeps it.
+function generateLock(context, tree, releaseFlag) {
+  if (lexists(path.join(tree, LOCK_FILE))) refuse('invalid-input', `--lock generate is for a project without a ${LOCK_FILE}; this one has it, and it is kept as it is`);
+  const release = releaseTools(path.resolve(context.projectRoot, releaseFlag));
+  const run = spawnSync('cargo', ['generate-lockfile'], { env: cargoEnvironment(release), cwd: tree, encoding: 'utf8' });
+  if (run.status !== 0 || !lexists(path.join(tree, LOCK_FILE))) {
+    const lines = `${run.stderr ?? ''}`.split('\n').map((line) => line.trim()).filter((line) => line !== '').slice(0, 6);
+    refuse('tool-failed', `cargo generate-lockfile failed in the extraction copy${lines.length > 0 ? `: ${lines.join(' | ')}` : ''}`, { reasons: lines });
+  }
+  return true;
+}
+
 function prepare(flags) {
+  if (flags.lock !== undefined && flags.lock !== 'generate') refuse('usage', '--lock accepts only "generate"');
+  if (flags.release !== undefined && flags.lock === undefined) refuse('usage', '--release is for --lock generate');
+  if (flags.lock === 'generate' && flags.release === undefined) refuse('usage', '--lock generate needs --release DIR: the release\'s toolchain runs cargo');
   const context = load(flags['project-root']);
   const out = resolveOut(flags.out, context.projectRoot);
   const tree = path.join(out, 'tree');
@@ -512,12 +547,14 @@ function prepare(flags) {
       throw new Error('the rehearsal copy reached different states from the extraction copy');
     }
     refuseChangedOriginals(manifest);
+    const generated = flags.lock === 'generate' ? generateLock(context, tree, flags.release) : false;
     // The exact tree handed to the next stage: the touched set's hash and every file in the
     // copy. A completed tree holding any link is refused before it is recorded.
     const files = copyState(tree);
     const link = Object.keys(files).find((file) => files[file].link !== undefined);
     if (link) refuseCopyLink(link);
     manifest.final = { touchedSha256: sha256(JSON.stringify(touchedState(tree, context.touched))), files };
+    manifest.lock = { path: LOCK_FILE, origin: generated ? 'generated' : files[LOCK_FILE] ? 'read' : 'absent', sha256: files[LOCK_FILE]?.sha256 ?? null };
     manifest.status = 'prepared';
   } catch (error) {
     manifest.failure = error instanceof Refusal
@@ -1147,6 +1184,9 @@ function attempt(flags) {
   const out = path.resolve(flags.out);
   const { manifest, manifestSha256 } = preparedManifest(out);
   if (lexists(path.join(out, ATTEMPT))) refuse('attempt-refused', 'this copy already has an attempt; prepare a new copy to retry');
+  if (manifest.lock?.origin === 'absent') {
+    refuse('attempt-refused', `the prepared copy has no ${LOCK_FILE}, so cargo would write one into the copy during the build and the copy would no longer match the recorded tree; commit a ${LOCK_FILE} to the project, or prepare a new copy with --lock generate --release DIR (needs network access; the generated lock is recorded by hash)`);
+  }
   const spec = readJson(path.resolve(flags.spec));
   return isObject(spec) && spec.crates !== undefined ? attemptUnits(out, manifest, manifestSha256, spec) : recordAttempt(out, manifest, manifestSha256, spec);
 }
@@ -1163,11 +1203,7 @@ function listCrates(flags) {
   const out = path.resolve(flags.out);
   const { manifest } = preparedManifest(out);
   const release = releaseTools(path.resolve(manifest.projectRoot, flags.release));
-  const homes = homesOf(process.env);
-  for (const name of ['HOME', 'RUSTUP_HOME', 'CARGO_HOME']) {
-    if (typeof homes[name] !== 'string' || !path.isAbsolute(homes[name])) refuse('invalid-input', `${name} must be an absolute path`);
-  }
-  const env = { HOME: homes.HOME, RUSTUP_HOME: homes.RUSTUP_HOME, CARGO_HOME: homes.CARGO_HOME, PATH: `${path.join(homes.CARGO_HOME, 'bin')}:/usr/bin:/bin`, RUSTUP_TOOLCHAIN: release.tools.rustToolchain.channel };
+  const env = cargoEnvironment(release);
   const tree = fs.realpathSync(manifest.tree);
   const run = spawnSync('cargo', ['metadata', '--no-deps', '--offline', '--format-version', '1'], { env, cwd: tree, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   if (run.status !== 0) {
@@ -2123,6 +2159,8 @@ function attemptStatusOf(out) {
       publication: mapping,
       crate: inv.crate,
       publishDir: path.relative(inv.projectRoot, inv.publishDir),
+      // The Cargo.lock the copy was built against: read from the project, or generated in the copy.
+      lock: preparedManifest(copyRoot(out)).manifest.lock ?? null,
       // What Charon flagged although it exited 0: the items it could not translate, by name.
       hasErrors: stages.charon.record.llbc ? { value: stages.charon.record.llbc.hasErrors, items: stages.charon.record.llbc.items, itemCount: stages.charon.record.llbc.itemCount } : null,
       // The declared edits of the generated Lean: substitutions, and the crates whose real
@@ -2138,7 +2176,7 @@ function attemptStatusOf(out) {
 
 const COMMANDS = {
   check: { required: ['project-root'], run: check },
-  prepare: { required: ['project-root', 'out'], run: prepare },
+  prepare: { required: ['project-root', 'out'], optional: ['lock', 'release'], run: prepare },
   'verify-restore': { required: ['out'], run: verifyRestore },
   'verify-tree': { required: ['out'], run: verifyTree },
   status: { required: ['out'], run: status },

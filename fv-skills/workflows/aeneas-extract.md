@@ -369,8 +369,14 @@ extraction output from an earlier layout, the owner removes it once; later runs 
 
 Send Charon's `.llbc` file and logs outside `"$OUT/tree"` (`--dest-file` as above; without it
 Charon writes into its working directory). Only cargo's `target/` directory may appear in the copy
-after `prepare`; any other new, edited or deleted file there fails `verify-tree`. Keep `Cargo.lock`
-committed and current so cargo has nothing to rewrite in the copy. When Charon fails, still run
+after `prepare`; any other new, edited or deleted file there fails `verify-tree`. The copy needs a
+`Cargo.lock` so that cargo has nothing to write in it: commit one and keep it current. A project
+with none (typically a library) is prepared with `--lock generate --release "$RELEASE_DIR"`, which
+runs `cargo generate-lockfile` once in the copy (it needs network access), and records the lock's
+hash and origin (`read` or `generated`) in the manifest; the checkout is not touched. `attempt`
+refuses a copy that has no lock. A generated lock pins whatever versions resolved at that moment, so
+keep a copy of `"$OUT/tree/Cargo.lock"` with the extraction record: a later `prepare` may resolve
+newer versions. When Charon fails, still run
 the second `verify-tree`, skip Aeneas, and go to CLASSIFY.
 
 An engine refusal (`prepare`, either `verify-tree`, or `verify-restore` exiting nonzero) is a
