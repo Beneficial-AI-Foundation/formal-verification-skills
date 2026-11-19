@@ -64,7 +64,7 @@ stored-context flag: the steps below never call the strict lane (see the last se
   owner's actual earlier responses rather than asking again. Read the recorded agreement and the
   roadmap against the current request, and when they conflict settle only that decision with the owner.
   A project that already has an agreement goes straight on to the stage `phase` names, with no
-  re-interview. A missing or outdated agreement is a warning: put it in the report, resolve only the
+  re-interview, after the one-time permission check of Step 5 when it has no permission record yet. A missing or outdated agreement is a warning: put it in the report, resolve only the
   affected setup through Steps 3 and 4, and do not hold the stages for it. When the owner asks for a
   material change, show only the affected choices and use those steps.
 - `malformed-state` or `malformed-externals`: print `message` and `nextStep` verbatim and stop.
@@ -251,7 +251,7 @@ grants publication, launches workers, resets budgets or reinterprets `nodeHours`
 ## Step 5: Check which run steps stop for approval
 
 An approval prompt that nobody answers is aborted after about 30 minutes and the session that asked
-stops; in the first rc2 run, waiting for approvals took most of the elapsed time. So, while the owner is
+stops; in one setup, waiting for approvals took most of the elapsed time. So, while the owner is
 present, check which steps of the run prompt on this machine, and offer a small allowlist for exactly
 those. `auto-permissions.md` has the steps, the rules, the reason for each rule, what still prompts on
 purpose and the troubleshooting notes. Run the check once: a project that already has a record is not
@@ -277,12 +277,16 @@ Otherwise ask the owner whether to run the check or skip it. A skip is recorded 
 **Tell the owner first**, in these words or close to them: some of the next commands may stop and ask you
 to approve them; please approve each one when it appears, that is what the check is for. None of them posts
 to GitHub or pushes anything. They send a message to a session that does not exist, write one scratch file
-under `.formalising/`, compile it, read pull requests, fetch, and do a dry-run push.
+under `.formalising/`, compile it (only when the project's dependencies are already downloaded), read pull
+requests, fetch, and do a dry-run push.
 
 Then run every probe of the `plan` output as its own plain call: one `Bash` call per command exactly as
 printed, with no `&&`, `;`, pipe, `cd` or wrapper, and the scratch file with the `Write` tool (its `path` and
-`content` are in the plan). A command that fails is fine; the question is only whether it stopped and asked.
-Do not retry or reshape a command that was refused outright.
+`content` are in the plan; if the file already exists from an earlier run, `Read` it first, because `Write`
+refuses to replace a file it has not read). A command that fails is fine; the question is only whether it
+stopped and asked. Do not retry or reshape a command that was refused outright. A step with `skipped` in the
+plan has no probe (Lake would download a missing dependency): do not ask about it, tell the owner why, and
+record it as `unknown`.
 
 **You cannot see prompts**, so ask. Two multi-select questions with at most four options each, each with a
 "none of these" option: first `worker-message`, `author-edit`, `lake-build`; then `gh-read`, `git-read`,
