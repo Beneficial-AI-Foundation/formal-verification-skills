@@ -391,7 +391,43 @@ describe('record', () => {
     assert.deepEqual(written.allowlist.allow, ['Bash(ao send *)']);
   });
 
-  it('refuses unknown or unprobed steps and bad values, and never overwrites a malformed record', () => {
+  it('takes the latest answer per step across rounds, so a partial recheck keeps an unresolved prompt visible', () => {
+    answer({ runtime: 'codex', kind: 'check', results: { 'worker-message': 'prompted', 'git-push': 'prompted', 'gh-read': 'quiet' } });
+    const recheck = answer({ runtime: 'codex', kind: 'recheck', results: { 'worker-message': 'quiet' } });
+    assert.match(recheck.json.summary, /quiet: worker-message, gh-read/);
+    assert.match(recheck.json.summary, /prompted: git-push/);
+    assert.match(recheck.json.summary, /waiting for your approval when the run reaches: git-push/);
+    assert.doesNotMatch(recheck.json.summary, /no step prompted/);
+    const view = run('plan', base()).json.record;
+    assert.deepEqual(view.latest, { 'worker-message': 'quiet', 'git-push': 'prompted', 'gh-read': 'quiet' });
+    assert.deepEqual(view.notAsked, ['author-edit', 'lake-build', 'git-read']);
+    assert.equal(view.rounds.length, 2, 'the raw history is kept');
+    const later = answer({ runtime: 'codex', kind: 'recheck', results: { 'git-push': 'quiet' } });
+    assert.match(later.json.summary, /no step prompted in the latest answers/);
+  });
+
+  it('keeps unknown and not-yet-asked steps visible next to quiet ones, and does not call that a skip', () => {
+    const mixed = answer({ runtime: 'claude', kind: 'check', results: { 'lake-build': 'unknown', 'gh-read': 'quiet' } });
+    assert.match(mixed.json.summary, /quiet: gh-read; unknown: lake-build; not asked: worker-message, author-edit, git-read, git-push/);
+    assert.match(mixed.json.summary, /no step prompted in the latest answers/);
+    assert.doesNotMatch(mixed.json.summary, /skipped by the owner/);
+  });
+
+  it('after a Codex write, says the rules load at startup until a later round is recorded', () => {
+    answer({ runtime: 'codex', kind: 'check', results: { 'worker-message': 'prompted', 'git-push': 'prompted' } });
+    const preview = run('write-allowlist', base('--runtime', 'codex', '--steps', 'worker-message'));
+    const done = run('write-allowlist', base('--runtime', 'codex', '--steps', 'worker-message', '--confirm', preview.json.digest));
+    assert.equal(done.json.code, 'written');
+    const waiting = run('plan', base()).json.record.summary;
+    assert.match(waiting, /allowlist written to \.codex\/rules\/fvs-auto\.rules \(1 allow, 0 deny\)/);
+    assert.match(waiting, /Codex loads rules at startup: check again in a new session/);
+    assert.match(waiting, /waiting for your approval when the run reaches: worker-message, git-push/);
+    const after = answer({ runtime: 'codex', kind: 'recheck', results: { 'worker-message': 'quiet' } });
+    assert.doesNotMatch(after.json.summary, /loads rules at startup/);
+    assert.match(after.json.summary, /waiting for your approval when the run reaches: git-push/);
+  });
+
+  it('refuses unknown steps and bad values, and never overwrites a malformed record', () => {
     assert.equal(answer({ runtime: 'claude', kind: 'check', results: { 'draft-pr-create': 'prompted' } }).json.code, 'invalid-input');
     assert.equal(answer({ runtime: 'claude', kind: 'check', results: { 'git-push': 'maybe' } }).json.code, 'invalid-input');
     assert.equal(answer({ runtime: 'vim', kind: 'check', results: { 'git-push': 'quiet' } }).json.code, 'invalid-input');

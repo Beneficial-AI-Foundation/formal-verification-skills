@@ -205,16 +205,32 @@ function readRecord(root) {
   return value;
 }
 
-function summaryLine(record) {
+// The newest answer for each step across all rounds: a recheck of some steps must not hide a step it did not ask about.
+function latestObservations(record) {
+  const latest = {};
+  for (const round of record.rounds) for (const [id, value] of Object.entries(round.results ?? {})) latest[id] = value;
+  return latest;
+}
+
+// What the check observed, step by step. These are answers about the probes that ran, not predictions of every later command.
+function summaryLine(record, stepIds) {
   if (!record) return 'not checked';
+  const latest = latestObservations(record);
+  const by = (value) => Object.entries(latest).filter(([, v]) => v === value).map(([k]) => k);
+  const [prompted, quiet, unknown] = ['prompted', 'quiet', 'unknown'].map(by);
+  const notAsked = stepIds.filter((id) => !(id in latest));
   const last = record.rounds.at(-1);
-  const results = Object.values(last?.results ?? {});
-  const prompted = Object.entries(last?.results ?? {}).filter(([, v]) => v === 'prompted').map(([k]) => k);
-  const wrote = record.allowlist ? `; allowlist written to ${record.allowlist.file} (${record.allowlist.allow.length} allow, ${record.allowlist.deny.length} deny)` : '';
+  const parts = [`${last?.kind ?? 'check'} on ${(last?.at ?? '').slice(0, 10)} (${record.runtime})`];
   // Every step "unknown" is how the owner's decision to skip the check is kept, so it is not asked again.
-  const skipped = results.length > 0 && results.every((v) => v === 'unknown');
-  const waits = skipped ? '; skipped by the owner, nothing was checked' : prompted.length ? `; waiting for your approval when the run reaches: ${prompted.join(', ')}` : '; no step prompted';
-  return `${last?.kind ?? 'check'} on ${(last?.at ?? '').slice(0, 10)} (${record.runtime})${waits}${wrote}`;
+  if (prompted.length === 0 && quiet.length === 0 && unknown.length > 0) parts.push('skipped by the owner, nothing was checked');
+  else {
+    const seen = [prompted.length && `prompted: ${prompted.join(', ')}`, quiet.length && `quiet: ${quiet.join(', ')}`, unknown.length && `unknown: ${unknown.join(', ')}`, notAsked.length && `not asked: ${notAsked.join(', ')}`].filter(Boolean);
+    parts.push(`latest answer per step, ${seen.join('; ')}`);
+    parts.push(prompted.length ? `waiting for your approval when the run reaches: ${prompted.join(', ')}` : 'no step prompted in the latest answers');
+  }
+  if (record.allowlist) parts.push(`allowlist written to ${record.allowlist.file} (${record.allowlist.allow.length} allow, ${record.allowlist.deny.length} deny)`);
+  if (record.runtime === 'codex' && record.allowlist?.writtenAt > (last?.at ?? '')) parts.push('Codex loads rules at startup: check again in a new session before treating any step as fixed or unfixed');
+  return parts.join('; ');
 }
 
 // ---- commands -----------------------------------------------------------------------------------------------
@@ -245,8 +261,12 @@ function plan(flags) {
   const { root, catalog } = context(flags);
   const record = readRecord(root);
   const lakeBlocker = lakeProbeBlocker(root);
+  const stepIds = catalog.steps.map((step) => step.id);
   return {
-    code: 'ok', record: record ? { present: true, summary: summaryLine(record), rounds: record.rounds } : { present: false, summary: summaryLine(null) },
+    code: 'ok',
+    record: record
+      ? { present: true, summary: summaryLine(record, stepIds), latest: latestObservations(record), notAsked: stepIds.filter((id) => !(id in latestObservations(record))), rounds: record.rounds }
+      : { present: false, summary: summaryLine(null, stepIds) },
     repo: catalog.repo, remote: catalog.remote, branchPrefixes: catalog.prefixes,
     steps: catalog.steps.map((step) => (step.id === 'lake-build' && lakeBlocker
       ? { id: step.id, why: step.why, probes: null, skipped: `not probed: ${lakeBlocker}; record it as unknown` }
@@ -279,7 +299,7 @@ function record(flags) {
   };
   fs.mkdirSync(path.join(root, path.dirname(RECORD_FILE)), { recursive: true });
   writeAtomic(path.join(root, RECORD_FILE), JSON.stringify(next, null, 2) + '\n');
-  return { code: 'recorded', summary: summaryLine(next), prompted: Object.entries(input.results).filter(([, v]) => v === 'prompted').map(([k]) => k) };
+  return { code: 'recorded', summary: summaryLine(next, catalog.steps.map((step) => step.id)), prompted: Object.entries(input.results).filter(([, v]) => v === 'prompted').map(([k]) => k) };
 }
 
 function gitStatusOf(root, relative) {
@@ -297,6 +317,14 @@ function checkMainCheckout(root) {
   if (dir.status === 0 && common.status === 0 && dir.stdout.trim() !== common.stdout.trim()) {
     refuse('local-needs-main-checkout', `${root} is a linked worktree; Claude Code reads .claude/settings.local.json from the main checkout, so run init there or use --target shared`);
   }
+}
+
+// Keep what was written in the record (when there is one), so the summary and a resumed run can say so.
+function recordAllowlist(root, file, allow, deny, replace = false) {
+  const previous = readRecord(root);
+  if (!previous) return;
+  const kept = !replace && previous.allowlist?.file === file ? previous.allowlist : { file, allow: [], deny: [] };
+  writeAtomic(path.join(root, RECORD_FILE), JSON.stringify({ ...previous, allowlist: { file, allow: [...kept.allow, ...allow], deny: [...kept.deny, ...deny], writtenAt: new Date().toISOString() } }, null, 2) + '\n');
 }
 
 function mergeClaude(existing, allow, deny) {
@@ -369,11 +397,7 @@ function writeClaude(flags, root, catalog, picked, allow, deny) {
   if (![...added.allow, ...added.deny].every((text) => [...(reread.permissions.allow ?? []), ...(reread.permissions.deny ?? [])].includes(text))) {
     refuse('write-check-failed', `${real} does not hold the new rules after writing`);
   }
-  const previous = readRecord(root);
-  if (previous) {
-    const kept = previous.allowlist?.file === relative ? previous.allowlist : { file: relative, allow: [], deny: [] };
-    writeAtomic(path.join(root, RECORD_FILE), JSON.stringify({ ...previous, allowlist: { file: relative, allow: [...kept.allow, ...added.allow], deny: [...kept.deny, ...added.deny] } }, null, 2) + '\n');
-  }
+  recordAllowlist(root, relative, added.allow, added.deny);
   return {
     code: 'written', ...preview, realPath: real, gitStatus: gitStatusOf(root, relative),
     notes: [
@@ -401,6 +425,7 @@ function writeCodex(flags, root, catalog, picked) {
   confirmationNeeded(flags, digestOf({ runtime: 'codex', file: relative, text }), preview);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   writeAtomic(file, text);
+  recordAllowlist(root, relative, rules.map((r) => r.pattern.join(' ')), [], true);
   // Codex's own evaluator checks that each rule matches its probe command (it needs the codex CLI on PATH).
   const checks = picked.flatMap((s) => s.codex.flatMap((r) => r.match)).map((command) => {
     const run = spawnSync('codex', ['execpolicy', 'check', '--rules', file, ...command.split(' ')], { encoding: 'utf8' });
