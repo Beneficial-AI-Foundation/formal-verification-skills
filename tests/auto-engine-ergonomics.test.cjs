@@ -56,7 +56,7 @@ function project() {
 }
 
 // Setup state recorded with the profile tests' stub tools as the only tools.
-function init(root) {
+function init(root, { scope = 'the portable NTT module only', confirmOverwrite = false } = {}) {
   const environment = {
     HOME: path.join(PROFILE_FIXTURES, 'home'),
     PATH: [path.join(PROFILE_FIXTURES, 'bin'), '/usr/bin', '/bin'].join(path.delimiter),
@@ -65,8 +65,8 @@ function init(root) {
   const saved = Object.fromEntries(Object.keys(environment).map((key) => [key, process.env[key]]));
   Object.assign(process.env, environment);
   try {
-    return auto.initState({ projectRoot: root, platform: 'aarch64-apple-darwin',
-      choices: { source: { revision: 'HEAD', configuration: 'default features' }, scope: 'the portable NTT module only', limits: { wallClockHours: 40 } } });
+    return auto.initState({ projectRoot: root, platform: 'aarch64-apple-darwin', confirmOverwrite,
+      choices: { source: { revision: 'HEAD', configuration: 'default features' }, scope, limits: { wallClockHours: 40 } } });
   } finally {
     for (const [key, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[key];
@@ -231,5 +231,84 @@ describe('record-spec --commit', () => {
     assert.equal(result.status, 0, result.stdout);
     assert.equal(result.json.row.commit, undefined);
     assert.equal(cli('spec-status', '--project-root', root).json.readyForPr, true);
+  });
+});
+
+describe('run overrides', () => {
+  const overridesFile = (root) => path.join(root, '.formalising', 'auto-fv', 'overrides.json');
+  const override = (root, key, value, reason) => cli('record-override', '--project-root', root, '--key', key, '--value', value, '--reason', reason);
+
+  it('are recorded with their reason and shown by every later read-state, full and brief', () => {
+    const root = project();
+    init(root);
+    assert.equal(cli('read-state', '--project-root', root).json.overrides, undefined, 'none recorded, none shown');
+
+    const result = override(root, 'pr-base', 'release/3.0.0-rc3', 'the run brief moved the base');
+    assert.equal(result.status, 0, result.stdout);
+    assert.equal(result.json.code, 'recorded');
+    assert.match(result.json.message, /do not amend the agreement/);
+    assert.equal(result.json.overrides['pr-base'].value, 'release/3.0.0-rc3');
+
+    // Each command below is a new process, as a resumed session would be.
+    for (const flags of [[], ['--brief']]) {
+      const view = cli('read-state', '--project-root', root, ...flags).json;
+      assert.equal(view.overrides['pr-base'].value, 'release/3.0.0-rc3', flags.join(' '));
+      assert.equal(view.overrides['pr-base'].reason, 'the run brief moved the base');
+      assert.match(view.overridesNote, /do not amend the agreement/);
+    }
+  });
+
+  it('keep history: a later value for a key is the one in force, an unchanged one writes nothing', () => {
+    const root = project();
+    init(root);
+    override(root, 'pr-base', 'main', 'first brief');
+    override(root, 'a2-exception', 'does not apply', 'owner ruling');
+    const bytes = fs.readFileSync(overridesFile(root));
+    assert.equal(override(root, 'pr-base', 'main', 'again').json.code, 'unchanged');
+    assert.deepEqual(fs.readFileSync(overridesFile(root)), bytes, 'nothing was written');
+
+    assert.equal(override(root, 'pr-base', 'release/3.0.0-rc3', 'second brief').json.code, 'recorded');
+    const view = cli('read-state', '--project-root', root, '--brief').json;
+    assert.deepEqual(Object.keys(view.overrides).sort(), ['a2-exception', 'pr-base']);
+    assert.equal(view.overrides['pr-base'].value, 'release/3.0.0-rc3');
+    const rows = JSON.parse(fs.readFileSync(overridesFile(root), 'utf8')).overrides;
+    assert.deepEqual(rows.map((row) => [row.key, row.value]), [['pr-base', 'main'], ['a2-exception', 'does not apply'], ['pr-base', 'release/3.0.0-rc3']]);
+  });
+
+  it('survive a re-init with changed choices, and recording one leaves state.json untouched', () => {
+    const root = project();
+    init(root);
+    const stateFile = path.join(root, '.formalising', 'auto-fv', 'state.json');
+    const stateBefore = fs.readFileSync(stateFile);
+    override(root, 'pr-base', 'release/3.0.0-rc3', 'brief');
+    assert.deepEqual(fs.readFileSync(stateFile), stateBefore, 'the agreement and choices in state.json are not amended');
+
+    const changed = init(root, { scope: 'the whole crate', confirmOverwrite: true });
+    assert.equal(changed.code, 'updated');
+    assert.equal(cli('read-state', '--project-root', root).json.overrides['pr-base'].value, 'release/3.0.0-rc3');
+  });
+
+  it('are refused without state, with a bad key, or without a value or reason, writing nothing', () => {
+    const fresh = project();
+    assert.equal(override(fresh, 'pr-base', 'main', 'why').json.code, 'no-state');
+    const root = project();
+    init(root);
+    for (const [key, value, reason, code] of [['PR base', 'main', 'why', 'usage'], ['pr-base', ' ', 'why', 'usage'], ['pr-base', 'main', ' ', 'usage'], ['', 'main', 'why', 'usage']]) {
+      assert.equal(cli('record-override', '--project-root', root, '--key', key, '--value', value, '--reason', reason).json.code, code, JSON.stringify([key, value, reason]));
+    }
+    assert.equal(cli('record-override', '--project-root', root, '--key', 'pr-base', '--value', 'main').status, 2, 'the reason is required');
+    assert.equal(fs.existsSync(overridesFile(root)), false);
+  });
+
+  it('a malformed overrides file is reported with exit 3 and never overwritten', () => {
+    const root = project();
+    init(root);
+    fs.writeFileSync(overridesFile(root), '{"schema":"fvs/auto-overrides","schemaVersion":1,"overrides":[{"key":"pr-base"}]}');
+    const before = fs.readFileSync(overridesFile(root));
+    for (const result of [cli('read-state', '--project-root', root), override(root, 'pr-base', 'main', 'why')]) {
+      assert.equal(result.status, 3);
+      assert.equal(result.json.code, 'malformed-overrides');
+    }
+    assert.deepEqual(fs.readFileSync(overridesFile(root)), before);
   });
 });

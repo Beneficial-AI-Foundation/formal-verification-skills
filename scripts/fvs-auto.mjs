@@ -53,6 +53,7 @@ function usage() {
     '       node fvs-auto.mjs record-externals --input RECORDS.json [--project-root DIR]',
     '       node fvs-auto.mjs record-spec --spec-file PATH --items ID[,ID...] --round N --verdict pass|changes|blocked --review FILE [--out-of-scope ID[,ID...]] [--commit SHA] [--project-root DIR]',
     '       node fvs-auto.mjs spec-status [--commit SHA] [--project-root DIR]',
+    '       node fvs-auto.mjs record-override --key KEY --value TEXT --reason TEXT [--project-root DIR]',
     '       node fvs-auto.mjs record-pr --kind spec|proof --url URL --branch B --head SHA [--project-root DIR]',
     '       node fvs-auto.mjs record-pr --kind spec|proof --merged --merge-commit SHA [--project-root DIR]',
     '       node fvs-auto.mjs freeze|check|accept --request FILE --out EXCLUSIVE_DIR',
@@ -65,7 +66,8 @@ function usage() {
     'The state subcommands keep the milestone 1 auto-track state under',
     '.formalising/auto-fv/ in the project root: state.json (profile, owner choices,',
     'roadmap offer, extraction, optional M2 agreement), externals.json (one record per',
-    'boundary) and specs.json (one row per spec review round; PATH and FILE are',
+    'boundary), overrides.json (run decisions made after the agreement; append-only) and',
+    'specs.json (one row per spec review round; PATH and FILE are',
     'files inside the project root, relative to it). Every write is atomic; malformed files are reported, never',
     'overwritten. They print one JSON result. Exit codes: 0 ok; 1 refused',
     '(confirmation required, blocked profile, failed extraction, record loss,',
@@ -1193,6 +1195,40 @@ const loadState = (root) => loadRecord(statePath(root), 'malformed-state', state
 const loadExternals = (root) => loadRecord(externalsPath(root), 'malformed-externals', externalsFileErrors, '/fvs:auto-extract');
 const specsPath = (root) => path.join(root, STATE_DIR, 'specs.json');
 const loadSpecs = (root) => loadRecord(specsPath(root), 'malformed-specs', specsFileErrors, 'the spec-phase command');
+const overridesPath = (root) => path.join(root, STATE_DIR, 'overrides.json');
+const loadOverrides = (root) => loadRecord(overridesPath(root), 'malformed-overrides', overridesFileErrors, 'record-override');
+
+// Run overrides: decisions made after the agreement (a changed PR base, an
+// exception that no longer holds) that the agreement still names the old way.
+// The file is append-only; the last row for a key is the one in force.
+const OVERRIDE_KEY = /^[a-z0-9][a-z0-9-]*$/;
+const OVERRIDES_NOTE = 'Run overrides were recorded after the agreement and take precedence over it for this run. They do not amend the agreement, which still names the earlier values.';
+
+function overridesFileErrors(value) {
+  if (!plainObject(value) || value.schema !== 'fvs/auto-overrides' || value.schemaVersion !== 1 || !Array.isArray(value.overrides)) {
+    return ['schema must be fvs/auto-overrides version 1 with an overrides list'];
+  }
+  return value.overrides.flatMap((row, index) => (plainObject(row) && OVERRIDE_KEY.test(row.key) && isText(row.value) && isText(row.reason) && isText(row.recordedAt)
+    ? [] : [`overrides[${index}] must have a key (lowercase words joined by hyphens), a value, a reason and a time`]));
+}
+
+const currentOverrides = (overrides) => Object.fromEntries((overrides?.overrides ?? []).map(({ key, value, reason, recordedAt }) => [key, { value, reason, recordedAt }]));
+
+export function recordOverride({ projectRoot, key, value, reason }) {
+  if (!OVERRIDE_KEY.test(key ?? '')) refuse('usage', '--key must be lowercase words joined by hyphens, for example pr-base');
+  if (!isText(value)) refuse('usage', '--value must be text');
+  if (!isText(reason)) refuse('usage', '--reason must say why the run differs from the agreement');
+  const root = projectDirectory(projectRoot);
+  requireState(root);
+  const base = loadOverrides(root);
+  const row = { key, value: value.trim(), reason: reason.trim(), recordedAt: now() };
+  if (currentOverrides(base)[key]?.value === row.value) {
+    return { code: 'unchanged', message: `the override ${key} already holds this value; nothing was written`, overrides: currentOverrides(base) };
+  }
+  const next = { ...(base ?? { schema: 'fvs/auto-overrides', schemaVersion: 1 }), overrides: [...(base?.overrides ?? []), row] };
+  commitState(root, base, next, overridesPath(root));
+  return { code: 'recorded', message: `run override recorded: ${key} = ${row.value}. ${OVERRIDES_NOTE}`, row, overrides: currentOverrides(next) };
+}
 
 // One row per review round of a spec file; the last row for a file is its
 // current verdict, earlier rows are history. Labels come from the verdict.
@@ -1459,7 +1495,7 @@ function progress(root, state, specs = null) {
 
 // What `read-state --brief` keeps: where the run is and what to do next, a few
 // lines instead of the recorded probe profile and every readiness row.
-const BRIEF_FIELDS = ['code', 'message', 'phase', 'nextAction', 'warnings', 'pendingDecisions', 'externals'];
+const BRIEF_FIELDS = ['code', 'message', 'phase', 'nextAction', 'warnings', 'pendingDecisions', 'externals', 'overrides', 'overridesNote'];
 
 export function readState({ projectRoot, requireAgreement = false, brief = false }) {
   if (brief && requireAgreement) refuse('usage', '--brief cannot be combined with --require-agreement: that check returns the whole agreement');
@@ -1477,12 +1513,14 @@ function readFullState({ projectRoot, requireAgreement }) {
   const records = loadExternals(root)?.records ?? [];
   const externals = Object.fromEntries([['total', records.length],
     ...BOUNDARY_STATUSES.map((status) => [status, records.filter((record) => record.status === status).length])]);
+  const overrides = currentOverrides(loadOverrides(root));
   return {
     code: 'ok',
     message: `auto-track state in ${statePath(root)}`,
     state,
     roadmapPresent: state.roadmap?.path ? fs.existsSync(path.join(root, state.roadmap.path)) : false,
     externals,
+    ...(Object.keys(overrides).length > 0 ? { overrides, overridesNote: OVERRIDES_NOTE } : {}),
     pendingDecisions: requireAgreement || state.roadmap ? [] : ['roadmap'],
     readiness: readiness(state.profile),
     ...progress(root, state, loadSpecs(root)),
@@ -2137,6 +2175,10 @@ const STATE_COMMANDS = {
     return recordSpec({ projectRoot: flags['project-root'], specFile: flags['spec-file'], items: flags.items, round: Number(flags.round),
       verdict: flags.verdict, review: flags.review, outOfScope: flags['out-of-scope'], commit: flags.commit });
   },
+  'record-override': (argv) => {
+    const flags = stateFlags(argv, ['key', 'value', 'reason']);
+    return recordOverride({ projectRoot: flags['project-root'], key: flags.key, value: flags.value, reason: flags.reason });
+  },
   'spec-status': (argv) => {
     const flags = stateFlags(argv, [], [], ['commit']);
     return specStatus({ projectRoot: flags['project-root'], commit: flags.commit });
@@ -2171,7 +2213,7 @@ async function stateMain(command, argv) {
   }
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   if (!result.ok) process.stderr.write(`FVS >> ${result.code}: ${result.message}\n`);
-  const malformed = ['malformed-state', 'malformed-externals', 'malformed-specs'].includes(result.code);
+  const malformed = ['malformed-state', 'malformed-externals', 'malformed-specs', 'malformed-overrides'].includes(result.code);
   process.exitCode = result.code === 'cancelled' ? 130 : result.ok ? 0 : malformed ? 3 : ['usage', 'internal'].includes(result.code) ? 2 : 1;
 }
 
