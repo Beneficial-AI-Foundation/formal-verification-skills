@@ -42,10 +42,13 @@
 // The receipt keeps the comparison under integrity.semantic.
 //
 // With --allow-axioms FILE (a list the engine writes from its own records, JSON with schema
-// fvs/auto-allowed-axioms) a statement passes only if every axiom its guard lists is one of Lean's
-// three standard axioms or is named in the list; a name in the list also covers that name with its
-// leading namespace dropped, because `#print axioms` shows names relative to the file's namespace.
-// The receipt records the file's sha256 as allowAxioms. Without the flag no statement is held to a list.
+// fvs/auto-allowed-axioms, version 1 one flat list or version 2 one list for each crate with its spec
+// files) a statement passes only if every axiom Lean says it rests on is one of Lean's three standard
+// axioms or is named exactly, fully qualified, in its list (its crate's list in version 2; a statement in a
+// spec file that no crate lists is refused). The names come from the Lean program below, not from the
+// guard text, so a name that differs from a listed one only in a leading namespace is another name. With a
+// list, an axiom whose type is a proposition must be a hand-written Trusted axiom. The receipt records the
+// file's sha256 as allowAxioms. Without the flag no statement is held to a list.
 //
 // The build is `lake build --wfail`: every warning, so every `sorry`, fails it. Each
 // spec file restates its statements with `recall` and pins what they rest on with
@@ -234,40 +237,61 @@ export function readSpecSource(text) {
 // With `--allow-axioms FILE` a statement may rest on Lean's three standard axioms and on the names
 // the file lists, and on nothing else. The file is written by the engine from its own records (the
 // extraction's opaque or external declarations, recorded assumptions, accepted ruling), never by a
-// worker. Without the flag no statement is held to a list.
+// worker. Without the flag no statement is held to a list. Names are exact and fully qualified: the
+// axioms of a statement are read from Lean's environment, which gives full names, not from the
+// guards, which print a name relative to the file's namespace. Two constants that differ only in a
+// leading namespace are therefore two names, and listing one never covers the other.
+//
+// Version 1 is one flat list. Version 2 is one list for each crate: each statement is held to the
+// list of the crate whose spec files hold it, and a statement in a spec file that no crate lists is
+// refused. The engine computes what a crate may rest on, inheritance from its providers included.
 
 const ALLOWED_AXIOMS_SCHEMA = 'fvs/auto-allowed-axioms';
 
-// The allowed names in a file's bytes. The caller hashes the same bytes, so the digest in the
+const validName = (name) => typeof name === 'string' && name !== '' && name === name.trim();
+
+// The allowed names in a file's bytes: { schemaVersion, names (every name), crates (null for version 1,
+// else a Map from crate to { specFiles, axioms }) }. The caller hashes the same bytes, so the digest in the
 // receipt is the digest of what was read. Anything that is not a well-formed list is refused: a
 // mistyped file must never read as "no list".
 export function readAllowedAxioms(bytes, file = 'the allowed-axioms file') {
+  const invalid = (message) => refuse('allow-axioms-invalid', `${file}: ${message}`);
   let data;
-  try { data = JSON.parse(Buffer.from(bytes).toString('utf8')); } catch { refuse('allow-axioms-invalid', `${file} is not valid JSON`); }
-  if (data?.schema !== ALLOWED_AXIOMS_SCHEMA || data.schemaVersion !== 1) refuse('allow-axioms-invalid', `${file} is not a ${ALLOWED_AXIOMS_SCHEMA} version 1 file`);
-  if (!Array.isArray(data.axioms) || !data.axioms.every((name) => typeof name === 'string' && name !== '' && name === name.trim())) {
-    refuse('allow-axioms-invalid', `${file}: "axioms" must be an array of axiom names, each a non-empty string without surrounding spaces`);
+  try { data = JSON.parse(Buffer.from(bytes).toString('utf8')); } catch { return invalid('not valid JSON'); }
+  if (data?.schema !== ALLOWED_AXIOMS_SCHEMA || ![1, 2].includes(data.schemaVersion)) return invalid(`not a ${ALLOWED_AXIOMS_SCHEMA} version 1 or 2 file`);
+  const nameList = (list, where) => {
+    if (!Array.isArray(list) || !list.every(validName)) invalid(`${where} must be an array of axiom names, each a non-empty string without surrounding spaces`);
+    return list;
+  };
+  if (data.schemaVersion === 1) return { schemaVersion: 1, names: new Set(nameList(data.axioms, '"axioms"')), crates: null };
+  const extra = Object.keys(data).filter((key) => !['schema', 'schemaVersion', 'crates'].includes(key));
+  if (extra.length > 0) invalid(`unknown key ${extra[0]}`);
+  if (!Array.isArray(data.crates)) invalid('"crates" must be an array');
+  const crates = new Map();
+  const owner = new Map();
+  const names = new Set();
+  for (const entry of data.crates) {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) invalid('each crate must be an object');
+    const unknown = Object.keys(entry).filter((key) => !['crate', 'specFiles', 'axioms'].includes(key));
+    if (unknown.length > 0) invalid(`unknown key ${unknown[0]} in a crate`);
+    if (!validName(entry.crate)) invalid('each crate needs a non-empty "crate" name without surrounding spaces');
+    if (crates.has(entry.crate)) invalid(`the crate ${entry.crate} is listed twice`);
+    const specFiles = nameList(entry.specFiles, `"specFiles" of ${entry.crate}`);
+    const axioms = nameList(entry.axioms, `"axioms" of ${entry.crate}`);
+    for (const specFile of specFiles) {
+      if (owner.has(specFile)) invalid(`the spec file ${specFile} is listed under two crates (${owner.get(specFile)} and ${entry.crate})`);
+      owner.set(specFile, entry.crate);
+    }
+    crates.set(entry.crate, { specFiles: new Set(specFiles), axioms: new Set(axioms) });
+    for (const name of axioms) names.add(name);
   }
-  return new Set(data.axioms);
+  return { schemaVersion: 2, names, crates };
 }
 
-// `#print axioms` shows a name relative to the namespace of the file it runs in, so the guards of a spec
-// file inside `namespace A` list `B.f` for the axiom whose full name is `A.B.f`. A listed name
-// therefore covers itself and itself with leading components dropped.
-const nameTails = (names) => {
-  const tails = new Set();
-  for (const name of names) {
-    const parts = name.split('.');
-    for (let i = 0; i < parts.length; i += 1) tails.add(parts.slice(i).join('.'));
-  }
-  return tails;
-};
-
-// The axioms in `axioms` that are neither standard nor covered by the allowed names. Every axiom a
-// guard lists counts, including names that look like native_decide or bv_decide axioms.
+// The axioms in `axioms` that are neither standard nor named exactly in `allowed`. Every axiom
+// counts, including names that look like native_decide or bv_decide axioms.
 export function axiomsNotAllowed(axioms, allowed) {
-  const covered = nameTails(allowed);
-  return (axioms ?? []).filter((name) => !STANDARD_AXIOMS.includes(name) && !covered.has(name));
+  return (axioms ?? []).filter((name) => !STANDARD_AXIOMS.includes(name) && !allowed.has(name));
 }
 
 // ---- reading a Lake log --------------------------------------------------------------------
@@ -1036,6 +1060,12 @@ def main (args : List String) : IO UInt32 := do
       seen := seen.insert n
       let some ci := env.find? n | continue
       let (json, deps) := describe env isProj ci
+      -- An axiom whose type is a proposition asserts something; one whose type is a type only says a thing exists.
+      let json ← match ci with
+        | .axiomInfo _ =>
+          let (asserts, _) ← (Meta.isProp ci.type : MetaM Bool).toIO ctx { env }
+          pure (json.setObjVal! "pr" (Json.bool asserts))
+        | _ => pure json
       IO.println (Json.compress json)
       work := deps.toList ++ work
   return 0
@@ -1057,7 +1087,7 @@ export function parseDump(text) {
     else if (item.doc !== undefined) dump.docs.push({ name: item.doc, module: item.m, cites: item.cites ?? [], prop: item.prop === true, axiom: item.axiom === true });
     else if (typeof item.n === 'string') {
       dump.constants.set(item.n, {
-        name: item.n, kind: item.k, module: item.m, deps: item.d ?? [], typeConst: item.tc ?? null,
+        name: item.n, kind: item.k, module: item.m, deps: item.d ?? [], typeConst: item.tc ?? null, asserts: item.pr === true,
         own: digestOf([item.k, item.lp, item.t, item.v ?? null, item.params ?? null, item.indices ?? null, item.rec ?? null, item.ctors ?? null, item.cidx ?? null, item.fields ?? null, item.safety ?? null]),
       });
     }
@@ -1155,6 +1185,38 @@ export function semanticProblems({ base, head, recalled, acceptedIds = new Set()
     bindings.push({ axiom: axiom.name, record, proposition });
   }
   return { problems, statements, bindings };
+}
+
+// What the allowed-axioms list says about the axioms each statement rests on, read from Lean (full names).
+// `recalledFiles` maps a recalled name to the spec files that recall it, as paths from the git top.
+// A version 1 list holds every statement to one set; a version 2 list holds a statement to the set of the
+// crate whose spec files hold it, and refuses a spec file that no crate lists. An axiom whose type is a
+// proposition asserts something, so with a list it may only be a hand-written Trusted axiom (an assumption
+// bound to its accepted record, or the merged spec's own); one outside Trusted, an extraction's among them,
+// is refused even when listed, because a list vouches for where a name came from, not for what it says.
+export function allowedProblems({ head, recalledFiles, allowed }) {
+  const problems = [];
+  const asserts = (name) => { const constant = head.constants.get(name); return constant?.kind === 'axiom' && constant.asserts ? constant : null; };
+  for (const [id, now] of head.recalls) {
+    for (const file of recalledFiles.get(id) ?? []) {
+      let names = allowed.names;
+      let where = '';
+      if (allowed.crates !== null) {
+        const crate = [...allowed.crates].find(([, entry]) => entry.specFiles.has(file));
+        if (!crate) { problems.push({ kind: 'allowed-axioms-crate-unknown', file, statement: id, detail: `the spec file ${file} is listed under no crate of the allowed axioms, so the statement ${id} cannot be held to a crate's list` }); continue; }
+        [where, names] = [` of the crate ${crate[0]}`, crate[1].axioms];
+      }
+      for (const rest of now.rests) {
+        const outside = axiomsNotAllowed(rest.axioms, names);
+        if (outside.length > 0) problems.push({ kind: 'axiom-not-allowed', file, statement: id, detail: `the statement ${id} (${rest.n}) rests on the ${outside.length === 1 ? 'axiom' : 'axioms'} ${outside.slice(0, 3).join(', ')}${outside.length > 3 ? ` and ${outside.length - 3} more` : ''}, which the allowed axioms${where} do not name` });
+        for (const name of rest.axioms) {
+          const constant = asserts(name);
+          if (constant && !inTrustedModule(constant.module)) problems.push({ kind: 'prop-axiom-outside-trusted', file, statement: id, detail: `the statement ${id} (${rest.n}) rests on ${name}, an axiom whose type is a proposition, declared outside Trusted/ (in ${constant.module}); only a hand-written Trusted axiom bound to its accepted record may assert something` });
+        }
+      }
+    }
+  }
+  return problems;
 }
 
 // ---- the run state -------------------------------------------------------------------------
@@ -1256,7 +1318,7 @@ function loadAllowedAxioms(file) {
   const resolved = path.resolve(file);
   let bytes;
   try { bytes = fs.readFileSync(resolved); } catch { refuse('allow-axioms-unreadable', `cannot read the allowed-axioms file ${resolved}`); }
-  return { file: resolved, sha256: sha256(bytes), names: readAllowedAxioms(bytes, resolved) };
+  return { file: resolved, sha256: sha256(bytes), ...readAllowedAxioms(bytes, resolved) };
 }
 
 export function buildCheck({ projectRoot, commit, specBase, allowAxioms, packages, receiptDir, workdir, keep = false, timeoutSeconds = 7200 }) {
@@ -1283,7 +1345,7 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
     const specBaseFull = resolveSpecBase({ top, root, full, specBase });
     if (allowAxioms === '') refuse('usage', '--allow-axioms needs the path of the allowed-axioms file');
     const allowed = allowAxioms === undefined ? null : loadAllowedAxioms(allowAxioms);
-    const allowedRecord = allowed && { file: allowed.file, sha256: allowed.sha256, names: allowed.names.size };
+    const allowedRecord = allowed && { file: allowed.file, sha256: allowed.sha256, names: allowed.names.size, ...(allowed.crates ? { crates: allowed.crates.size } : {}) };
     work = fs.mkdtempSync(path.join(workdir ? path.resolve(workdir) : os.tmpdir(), `fvs-build-check-${full.slice(0, 12)}-`));
     const cleanRoot = path.join(work, 'tree');
     extractCommit(top, full, work, cleanRoot);
@@ -1346,6 +1408,7 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
     const specFiles = [];
     const tampered = [];
     const recalled = new Set();
+    const recalledFiles = new Map();
     for (const rel of files.files) {
       const bytes = fs.readFileSync(path.join(leanRoot, rel));
       const text = bytes.toString('utf8');
@@ -1354,15 +1417,16 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
       if (!rel.endsWith('.lean')) continue;
       const spec = readSpecSource(text);
       if (spec.statements.length === 0) continue;
-      for (const statement of spec.statements) recalled.add(statement.name);
+      for (const statement of spec.statements) {
+        recalled.add(statement.name);
+        recalledFiles.set(statement.name, [...(recalledFiles.get(statement.name) ?? []), path.join(sub, below, rel).split(path.sep).join('/')]);
+      }
       const own = log.messages.filter((m) => m.file === rel && m.severity !== 'info');
       const built = builtModule(leanRoot, rel) !== null;
       const statements = spec.statements.map((statement) => {
         const hit = own.find((m) => m.line === statement.recallLine || (statement.guardFrom !== null && m.line >= statement.guardFrom && m.line <= statement.guardTo));
-        const unlisted = allowed && statement.axioms ? axiomsNotAllowed(statement.axioms, allowed.names) : [];
         const reason = statement.problems[0] ?? (hit ? describe(hit) : null)
-          ?? (own.length > 0 ? `its spec file did not build (${describe(firstProblem(own))})` : built ? null : 'its spec file was not built')
-          ?? (unlisted.length === 0 ? null : `the statement ${statement.name} rests on the ${unlisted.length === 1 ? 'axiom' : 'axioms'} ${unlisted.slice(0, 3).join(', ')}${unlisted.length > 3 ? ` and ${unlisted.length - 3} more` : ''}, which the allowed axioms do not name`);
+          ?? (own.length > 0 ? `its spec file did not build (${describe(firstProblem(own))})` : built ? null : 'its spec file was not built');
         return { name: statement.name, line: statement.line, status: reason ? 'failing' : 'built', reason, axioms: statement.axioms, beyondStandard: statement.beyondStandard, flags: statement.flags };
       });
       const fileReason = own.length > 0 ? describe(firstProblem(own) ?? own[0]) : (built ? null : 'no .olean was produced, so the file is not part of the build');
@@ -1390,7 +1454,7 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
       const accepted = (() => {
         try { const file = externalsFile ?? readRunFile(root, 'externals.json'); return new Set((file?.data?.records ?? []).filter((r) => r?.status === 'assumption-accepted' && r.decision && typeof r.id === 'string').map((r) => r.id)); } catch (error) { if (error instanceof Refusal) return new Set(); throw error; }
       })();
-      const lean = leanCheck({ top, sub, below, specBaseFull, work, leanRoot, source, hasPackages: manifest.length > 0, env, timeoutSeconds, integrity, recalled, acceptedIds: accepted, builtModule });
+      const lean = leanCheck({ top, sub, below, specBaseFull, work, leanRoot, source, hasPackages: manifest.length > 0, env, timeoutSeconds, integrity, recalled, recalledFiles, allowed, acceptedIds: accepted, builtModule });
       if (lean.error) reason = `the Lean check could not run: ${lean.error}`;
       else {
         integrityRecord.semantic = { toolchain: lean.toolchain, statements: lean.statements, bindings: lean.bindings, dumps: lean.dumps };
@@ -1426,7 +1490,7 @@ const oleanFile = (root, module) => path.join(root, '.lake', 'build', 'lib', 'le
 
 // Runs the Lean program on the built head and on a fresh build of the merged spec in a copy of its own,
 // then compares them. An `error` means the comparison could not be made, which is not an acceptance.
-function leanCheck({ top, sub, below, specBaseFull, work, leanRoot, source, hasPackages, env, timeoutSeconds, integrity, recalled, acceptedIds, builtModule }) {
+function leanCheck({ top, sub, below, specBaseFull, work, leanRoot, source, hasPackages, env, timeoutSeconds, integrity, recalled, recalledFiles, allowed, acceptedIds, builtModule }) {
   const dump = path.join(work, 'dump');
   fs.mkdirSync(dump, { recursive: true });
   fs.writeFileSync(path.join(dump, 'Dump.lean'), DUMP_SOURCE);
@@ -1459,6 +1523,7 @@ function leanCheck({ top, sub, below, specBaseFull, work, leanRoot, source, hasP
   const base = dumpOf('base', baseRoot);
   if (base.error) return base;
   const { problems, statements, bindings } = semanticProblems({ base: base.dump, head: head.dump, recalled: [...recalled].sort(), acceptedIds });
+  if (allowed) problems.push(...allowedProblems({ head: head.dump, recalledFiles, allowed }));
   return { problems, statements, bindings, toolchain: head.dump.toolchain, dumps: { base: base.sha256, head: head.sha256 } };
 }
 
@@ -1504,7 +1569,7 @@ function reportLines(receipt) {
   const lines = [receipt.label, `commit ${receipt.commit}`, `tree ${receipt.tree}`, ...receipt.warnings.map((warning) => `warning: ${warning}`)];
   lines.push(integrity.compared ? `spec base ${integrity.specBase}: statements, frozen paths and added code compared with the merged spec`
     : 'spec base: none given or recorded, so the statements were not compared with a merged spec and this is not an acceptance');
-  lines.push(receipt.allowAxioms ? `allowed axioms: ${receipt.allowAxioms.names} names from ${receipt.allowAxioms.file} (sha256 ${receipt.allowAxioms.sha256}); a statement that rests on any other non-standard axiom does not pass`
+  lines.push(receipt.allowAxioms ? `allowed axioms: ${receipt.allowAxioms.names} names${receipt.allowAxioms.crates === undefined ? '' : ` in ${receipt.allowAxioms.crates} crate${receipt.allowAxioms.crates === 1 ? '' : 's'}`} from ${receipt.allowAxioms.file} (sha256 ${receipt.allowAxioms.sha256}); a statement that rests on any other non-standard axiom does not pass`
     : 'allowed axioms: no list given, so no statement is held to a list of axioms');
   const { folders, files } = integrity.extraction ?? { folders: [], files: [] };
   lines.push(`extraction output held fixed, besides the folders named Extraction...: ${folders.length + files.length === 0 ? 'none recorded in the run state' : [...folders, ...files].join(', ')}`);
