@@ -45,7 +45,7 @@ node "$PATCH_ENGINE" check --project-root "$CRATE_ROOT" --format json
   migrates explicitly as `extraction-patch-migration.md` describes. Never migrate here.
 - `mixed-mode` or any other code: print the result's `message` verbatim and stop.
 
-### Several crates, and the lock
+### The crates of the repository, and the lock
 
 List the crates of the repository before extracting (read-only, nothing is written):
 
