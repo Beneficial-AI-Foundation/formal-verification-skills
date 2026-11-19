@@ -361,13 +361,14 @@ const DECLARATION = /(?:^|\s)(?:theorem|lemma|def|abbrev|axiom|instance|opaque|s
 // The declaration a position falls in, so a message can name it. Null before the first one.
 const declarationNear = (code, index) => [...code.slice(0, index + 1).matchAll(DECLARATION)].at(-1)?.[1] ?? null;
 
-export function normalizeLean(text) {
-  return stripLean(text, { keepStrings: true }).code
-    .replace(/\/--#\d+-\//g, ' ')
-    .replace(/#guard_msgs\s*(?:\([^)]*\))?\s*in\s+#print\s+axioms\s+\S+/g, ' ')
-    .replace(/#print\s+axioms\s+\S+/g, ' ')
-    .replace(/\s+/g, ' ').trim();
-}
+// Comments gone, docstring markers gone, axiom guards gone, whitespace runs collapsed to one space.
+const flatten = (code) => code
+  .replace(/\/--#\d+-\//g, ' ')
+  .replace(/#guard_msgs\s*(?:\([^)]*\))?\s*in\s+#print\s+axioms\s+\S+/g, ' ')
+  .replace(/#print\s+axioms\s+\S+/g, ' ')
+  .replace(/\s+/g, ' ').trim();
+
+export const normalizeLean = (text) => flatten(stripLean(text, { keepStrings: true }).code);
 
 // Each `recall` statement of a spec file as its text, comments gone and whitespace collapsed. A
 // statement runs to the next line that starts in column 0.
@@ -378,7 +379,7 @@ export function recalledStatements(text) {
     const ending = /\n(?=\S)/g;
     ending.lastIndex = match.index + match[0].length;
     const stop = ending.exec(code);
-    statements.set(match[1], code.slice(match.index, stop ? stop.index : code.length).replace(/\/--#\d+-\//g, ' ').replace(/\s+/g, ' ').trim());
+    statements.set(match[1], flatten(code.slice(match.index, stop ? stop.index : code.length)));
   }
   return statements;
 }

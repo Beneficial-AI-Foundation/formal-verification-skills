@@ -582,6 +582,16 @@ describe('the merged spec: changes that are allowed', () => {
   });
 });
 
+test('a guard added below an indented statement does not change the statement', async () => {
+  const { checkIntegrity, memoryTree } = await library();
+  const lake = 'defaultTargets = ["Foo"]\n[[lean_lib]]\nname = "Foo"\nglobs = ["Foo.+"]\n';
+  const spec = (body) => memoryTree({ 'lakefile.toml': lake, 'Foo/S.lean': `namespace N\n  recall foo (n : Nat) :\n      n = n\n${body}end N\n` });
+  const run = (body) => checkIntegrity({ base: spec('  #print axioms foo\n'), head: spec(body) }).problems;
+  assert.deepEqual(run('  /-- [propext] -/\n  #guard_msgs in\n  #print axioms foo\n'), []);
+  assert.equal(run('  #print axioms foo\n').length, 0);
+  assert.equal(run('  #eval 1\n')[0].kind, 'statement-changed', 'in an indented layout a statement runs to the next line in column 0');
+});
+
 describe('the merged spec: changes that are refused', () => {
   // A refusal is a failed verdict: exit 1, a receipt that says not accepted, and no build.
   const refusedAs = (result, fx, kind, file, statement) => {
