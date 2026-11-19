@@ -1134,9 +1134,9 @@ const unitsOf = (run) => run?.units ?? (isText(run?.crate) ? [run] : []);
 
 // The crates of an extraction that has more than one (or any, with `always`), with the
 // other extracted crates each one depends on and an order that puts providers before
-// consumers. A crate depends on another when its Lean imports it, when it lists it as a
-// prerequisite or when its LLBC reaches it; null for a single-crate run, so nothing
-// about that changes.
+// consumers. A crate depends on another when its Lean imports it, when it is stitched to it
+// or when its LLBC reaches an item of it; null for a single-crate run, so nothing about
+// that changes.
 function crateView(run, always = false) {
   const units = unitsOf(run);
   if (units.length < (always ? 1 : 2)) return null;
@@ -1144,8 +1144,8 @@ function crateView(run, always = false) {
   const names = (list, pick) => (Array.isArray(list) ? list.map(pick) : []);
   const dependsOn = new Map(units.map((unit) => [unit.crate, [...new Set([
     ...names(unit.imports, (crate) => crate),
-    ...names(unit.prerequisites, (entry) => entry?.providerCrate),
-    ...names(unit.llbc?.foreignCrates?.filter((entry) => entry?.target === true), (entry) => entry.crate),
+    ...names([].concat(unit.stitch ?? []), (entry) => entry?.provider),
+    ...names(unit.foreignCrates?.filter((entry) => entry?.kind === 'target'), (entry) => entry.crate),
   ])].filter((crate) => crates.includes(crate) && crate !== unit.crate).sort()]));
   const derived = [];
   const rest = [...crates].sort();

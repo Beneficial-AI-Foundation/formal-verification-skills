@@ -40,17 +40,25 @@ describe('a succeeded extraction over several crates', () => {
     }
   });
 
-  it('takes a dependency from imports, prerequisites or a target the LLBC reaches, and ignores non-targets and unknown crates', () => {
+  it('takes a dependency from imports, a stitch provider or a target the LLBC reaches, and ignores other crates', () => {
     const root = extracted((directory) => [
-      unit(directory, 'app', [], { prerequisites: [{ providerCrate: 'mid', rustPath: 'mid::f' }, { providerCrate: 'elsewhere', rustPath: 'elsewhere::g' }] }),
-      unit(directory, 'mid', [], { llbc: { path: 'mid.llbc', sha256: ZEROS, foreignCrates: [{ crate: 'base', target: true }, { crate: 'core', target: false }] } }),
+      unit(directory, 'app', [], { stitch: [{ provider: 'mid', modules: ['Mid'], replaced: [], assumed: [], copies: [], files: [] }, { provider: 'elsewhere' }] }),
+      unit(directory, 'mid', [], { foreignCrates: [{ crate: 'base', kind: 'target' }, { crate: 'core', kind: 'external' }, { crate: 'loose', kind: 'non-target' }] }),
       unit(directory, 'base', []),
       unit(directory, 'loose', []),
     ]);
     const { crates } = cli('read-state', '--project-root', root, '--brief').json;
     assert.deepEqual(Object.fromEntries(crates.units.map((entry) => [entry.crate, entry.dependsOn])),
-      { app: ['mid'], mid: ['base'], base: [], loose: [] });
+      { app: ['mid'], mid: ['base'], base: [], loose: [] }, 'elsewhere is no extracted crate, and loose is only a non-target the LLBC reaches');
     assert.deepEqual(crates.order, ['base', 'loose', 'mid', 'app'], 'derived order: ties by name, every provider first');
+  });
+
+  it('reads a stitch given as one entry as well as a list', () => {
+    const root = extracted((directory) => [
+      unit(directory, 'app', [], { stitch: { provider: 'base', modules: [], replaced: [], assumed: [] } }),
+      unit(directory, 'base', []),
+    ]);
+    assert.deepEqual(cli('read-state', '--project-root', root, '--brief').json.crates.order, ['base', 'app']);
   });
 
   it('keeps the extraction\'s own order when it puts every provider first, and derives one when it does not', () => {
