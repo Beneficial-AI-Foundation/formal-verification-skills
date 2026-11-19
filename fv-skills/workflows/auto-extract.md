@@ -57,8 +57,12 @@ node "$PATCH_ENGINE" crates --project-root "$CRATE_ROOT" --release "$RELEASE_DIR
 With more than one crate that has a library, the extraction covers several crates. Every one is a
 target unless the agreement (`targets`, recorded by `/fvs:auto-init`) lists it as a non-target, which
 only the owner decides; the answer's `order` gives the crates with providers first. The same result
-names the `inputs` a copy needs and any symbolic link under them (a copy refuses links, so a
-workspace with links needs a translation patch that trims its member list). When the project has no
+names the `inputs` a copy needs and the symbolic links under them. A link the build cannot read (the
+C headers a crate generates, say) is not copied and is only reported (`ignoredLinks`; the copy's
+manifest records each as `source.links`), so a whole-workspace run is not stopped by it. A link the
+build can read (a manifest, lock, build script, toolchain or cargo configuration file, a Rust source
+file, anything under `src`, or an input itself) is named in `links` and refused: the owner replaces it
+with the content, or leaves its crate out. When the project has no
 `Cargo.lock`, or its lock does not match the patched manifests, the owner agrees to
 `--lock update --release "$RELEASE_DIR"` for the copy: the lock is made inside the copy, never in the
 checkout, and its hash and origin are recorded. Keep a copy of `"$OUT/tree/Cargo.lock"` with the

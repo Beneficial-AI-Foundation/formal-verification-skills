@@ -480,6 +480,51 @@ describe('fvs-extract-patches: copy boundary', () => {
     assert.equal(fs.readFileSync(path.join(outside, 'shared.rs'), 'utf8'), 'pub fn shared() {}\n');
   });
 
+  it('leaves a link that is not a Rust input out of the copy and reports it', () => {
+    const outside = temporaryDirectory('fvs-extract-outside-');
+    fs.writeFileSync(path.join(outside, 'header.h'), '/* generated */\n');
+    fs.mkdirSync(path.join(outside, 'tests'));
+    const root = project([], { config: { extraction: { inputs: ['Cargo.toml', 'src', 'gen'] } } });
+    fs.mkdirSync(path.join(root, 'gen', 'sub'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'gen', 'notes.txt'), 'kept\n');
+    fs.symlinkSync(path.join(outside, 'header.h'), path.join(root, 'gen', 'header.h'));
+    fs.symlinkSync(outside, path.join(root, 'gen', 'sub', 'tests'));
+    const before = snapshot(root);
+    const checked = run('check', '--project-root', root);
+    assert.equal(checked.status, 0, checked.stdout);
+    assert.deepEqual(checked.json.links, [
+      { path: 'gen/header.h', target: path.join(outside, 'header.h') },
+      { path: 'gen/sub/tests', target: outside },
+    ]);
+    const out = outDirectory();
+    const prepared = run('prepare', '--project-root', root, '--out', out);
+    assert.equal(prepared.status, 0, prepared.stdout);
+    const manifest = JSON.parse(fs.readFileSync(path.join(out, 'manifest.json'), 'utf8'));
+    assert.deepEqual(manifest.source.links.map((link) => link.path), ['gen/header.h', 'gen/sub/tests']);
+    assert.equal(fs.existsSync(path.join(out, 'tree', 'gen', 'notes.txt')), true, 'the regular files of the directory are copied');
+    assert.equal(fs.existsSync(path.join(out, 'tree', 'gen', 'header.h')), false, 'the link is not');
+    assert.equal(fs.lstatSync(path.join(out, 'tree', 'gen', 'sub'), { throwIfNoEntry: false })?.isDirectory() ?? false, false, 'a directory holding only a link is not made');
+    assert.equal(run('verify-tree', '--out', out).status, 0);
+    assert.equal(run('verify-restore', '--out', out).status, 0);
+    assert.deepEqual(snapshot(root), before, 'the checkout is not touched');
+  });
+
+  it('still rejects a link the build can read, wherever it sits', () => {
+    const outside = temporaryDirectory('fvs-extract-outside-');
+    fs.writeFileSync(path.join(outside, 'data.bin'), 'x');
+    for (const [link, name] of [['src/data.bin', 'under src'], ['gen/extra.rs', 'a Rust file'], ['gen/build.rs', 'a build script'], ['gen/Cargo.toml', 'a manifest']]) {
+      const root = project([], { config: { extraction: { inputs: ['Cargo.toml', 'src', 'gen'] } } });
+      fs.mkdirSync(path.join(root, 'gen'), { recursive: true });
+      fs.symlinkSync(path.join(outside, 'data.bin'), path.join(root, link));
+      const out = outDirectory();
+      const prepared = run('prepare', '--project-root', root, '--out', out);
+      assert.equal(prepared.status, 5, `${name}: ${prepared.stdout}`);
+      assert.deepEqual([prepared.json.code, prepared.json.kind, prepared.json.path], ['invalid-input', 'symlink', link], name);
+      assert.match(prepared.json.message, /a symbolic link the build can read/, name);
+      assert.equal(fs.existsSync(out), false, name);
+    }
+  });
+
   it('rejects an input reached through a linked directory', () => {
     const outside = temporaryDirectory('fvs-extract-outside-');
     fs.mkdirSync(path.join(outside, 'src'));

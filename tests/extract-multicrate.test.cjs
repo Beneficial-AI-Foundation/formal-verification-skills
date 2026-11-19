@@ -380,12 +380,18 @@ describe('crates: the in-repo crates of a prepared copy', () => {
     const ws = workspace();
     withExtras(ws);
     fs.symlinkSync('lib.rs', path.join(ws.project, 'lib', 'src', 'alias.rs'));
+    for (const name of ['one.sh', 'two.sh']) {
+      fs.mkdirSync(path.join(ws.project, 'lib', 'extracts'), { recursive: true });
+      fs.symlinkSync('../src/lib.rs', path.join(ws.project, 'lib', 'extracts', name));
+    }
     const before = fs.readdirSync(path.join(ws.project, 'lib', 'src')).sort();
     const listed = engine(ws, ['crates', '--project-root', ws.project, '--release', toySpec().release]);
     assert.equal(listed.status, 0, listed.stdout);
     assert.deepEqual(listed.result.order, ['toy_lib', 'toy_app', 'toy_tool']);
     assert.deepEqual(listed.result.inputs, ['Cargo.lock', 'Cargo.toml', 'app', 'lib', 'script', 'tool']);
-    assert.deepEqual(listed.result.links, ['lib/src/alias.rs'], 'a link a copy would refuse is named');
+    assert.deepEqual(listed.result.links, ['lib/src/alias.rs'], 'a link the build can read, which a copy refuses, is named');
+    assert.deepEqual(listed.result.ignoredLinks, ['lib/extracts/one.sh', 'lib/extracts/two.sh'], 'a link it cannot read is only reported');
+    assert.equal(listed.result.ignoredLinkCount, 2);
     assert.equal(listed.result.compared, undefined, 'there is no copy to compare with');
     assert.deepEqual(fs.readdirSync(path.join(ws.project, 'lib', 'src')).sort(), before, 'the checkout is not touched');
   });

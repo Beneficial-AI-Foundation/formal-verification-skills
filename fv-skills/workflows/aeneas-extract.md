@@ -342,8 +342,13 @@ node "$PATCH_ENGINE" attempt-status --out "$OUT"                      # refuses 
 `crates` runs `cargo metadata --no-deps --offline` and writes nothing. On a checkout it offers every
 in-repo crate (package, crate name, directory, the in-repo crates it depends on, an order with
 providers first), proposes the `extraction.inputs` a copy needs (workspace manifest and lock, every
-member and in-repo path dependency) and names any symbolic link under them, which a copy refuses; a
-workspace with links under members needs a translation patch that trims its member list. It follows
+member and in-repo path dependency) and names the symbolic links under them. A copy holds regular
+files only: a link the build can read (a manifest, lock, build script, toolchain or cargo
+configuration file, a Rust source file, anything under `src`, or an input itself) is listed in
+`links` and refused, and the owner replaces it by its content or leaves its crate out. Any other link
+(generated C headers, say) is not copied and not read by the build, so it never stops a run: it is
+listed in `ignoredLinks` (with `ignoredLinkCount`), and `check` and the manifest (`source.links`)
+record each with its target. A build that did need one fails on the missing file. It follows
 the path dependencies of a crate that is not a workspace member to any depth, and names a member whose
 real directory lies outside the checkout (`outside`). On a prepared copy it also names the path
 dependencies the patches removed (`pathDependenciesRemoved`) and the packages the copy lacks
