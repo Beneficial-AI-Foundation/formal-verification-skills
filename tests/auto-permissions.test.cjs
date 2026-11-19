@@ -273,7 +273,7 @@ describe('write-allowlist for Claude Code', () => {
   it('merges into an existing file and keeps every other key, rule and the key order', () => {
     const original = {
       $schema: 'https://json.schemastore.org/claude-code-settings.json',
-      model: 'opus',
+      model: 'example-model',
       permissions: { allow: ['Bash(npm run lint)', 'Bash(ao session get *)'], ask: ['Bash(gh pr edit *)'], defaultMode: 'default' },
       hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'x' }] }] },
       env: { A: '1' },
