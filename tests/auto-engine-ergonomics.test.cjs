@@ -425,3 +425,37 @@ describe('list-items', () => {
     assert.equal(cli('list-items', '--project-root', root).json.code, 'invalid-input', 'a failed extraction names no translation');
   });
 });
+
+describe('installed FVS path and version', () => {
+  const version = fs.readFileSync(path.join(ROOT, 'fv-skills', 'VERSION'), 'utf8').trim();
+
+  it('read-state reports them in the full, brief and no-state results', () => {
+    const root = project();
+    const none = cli('read-state', '--project-root', root, '--brief').json;
+    assert.deepEqual(none.fvs, { root: fs.realpathSync(ROOT), version });
+    init(root);
+    for (const flags of [[], ['--brief']]) {
+      assert.deepEqual(cli('read-state', '--project-root', root, ...flags).json.fvs, { root: fs.realpathSync(ROOT), version }, flags.join(' '));
+    }
+  });
+
+  // The engine finds its own install from where it sits: the folder above scripts/ holds fv-skills/VERSION.
+  function installWith(versionText) {
+    const install = temporaryDirectory('fvs-ergonomics-install-');
+    fs.cpSync(path.join(ROOT, 'scripts'), path.join(install, 'scripts'), { recursive: true });
+    fs.mkdirSync(path.join(install, 'fv-skills'));
+    if (versionText !== null) fs.writeFileSync(path.join(install, 'fv-skills', 'VERSION'), versionText);
+    const result = spawnSync(process.execPath, [path.join(install, 'scripts', 'fvs-auto.mjs'), 'read-state', '--project-root', project(), '--brief'], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    return { fvs: JSON.parse(result.stdout).fvs, install: fs.realpathSync(install) };
+  }
+
+  it('name the install the script sits in, with its VERSION file', () => {
+    const { fvs, install } = installWith('9.9.9-test\n');
+    assert.deepEqual(fvs, { root: install, version: '9.9.9-test' });
+  });
+
+  it('report an absent or blank VERSION as unknown, never a guess', () => {
+    for (const text of [null, '', '  \n']) assert.equal(installWith(text).fvs.version, 'unknown', JSON.stringify(text));
+  });
+});
