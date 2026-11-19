@@ -418,7 +418,9 @@ describe('the recorded destination', () => {
       schema: 'fvs/auto-push-destination', schemaVersion: 1, projectRoot: root, commonDir: path.join(root, '.git'),
       url: `git@github.com:${REPO}.git`, host: 'github.com', repo: REPO, prefixes: ['fvs'],
     });
-    assert.match(preview.json.note, /any session of your user account can change it/);
+    assert.match(preview.json.note, /any session of your user account can change it, and so change where the command pushes/);
+    assert.doesNotMatch(preview.json.note, /pushes only/);
+    assert.deepEqual(preview.json.contract, pushLib.CONTRACT);
     assert.equal(fs.existsSync(recordFile()), false);
     assert.equal(destination('--confirm', 'anything').json.code, 'confirmation-required');
     assert.equal(fs.existsSync(recordFile()), false);
@@ -511,6 +513,7 @@ describe('the push command rule for Claude Code', { skip: pushSkip }, () => {
     assert.equal(preview.json.push.destination.file, recordFile());
     assert.deepEqual(preview.json.push.destination.prefixes, ['fvs']);
     assert.equal(preview.json.hook, undefined, 'there is no hook');
+    assert.deepEqual(preview.json.push.contract, pushLib.CONTRACT, 'the preview shows what the command is, checks, hardens and trusts');
     assert.doesNotMatch(JSON.stringify(preview.json), /fails safe|asks as usual/);
     assert.equal(fs.existsSync(path.join(project, '.claude')), false);
     assert.equal(allow('git-push', '--confirm', 'anything').json.code, 'confirmation-required');
@@ -539,7 +542,13 @@ describe('the push command rule for Claude Code', { skip: pushSkip }, () => {
     const notes = done.json.notes.join(' ');
     assert.match(notes, /Branch protection on the project fork is still recommended/);
     assert.match(notes, /A plain git push is not covered by this rule: your other rules and permission mode decide it, as before/);
-    assert.match(notes, /Git hooks of the repository, credential helpers and a URL rewrite that changes after the command's check still apply/);
+    // The note carries the same contract the page prints: what the command checks, what it hardens, and what it trusts.
+    assert.ok(notes.includes(pushLib.contractText()), 'the write note carries the contract text');
+    assert.match(notes, /not a security boundary/);
+    assert.match(notes, /Repository hooks are ignored for this push/);
+    assert.match(notes, /Credential helpers\./);
+    assert.match(notes, /a rule that is added or changed after the command checks and before it connects is not caught/);
+    assert.doesNotMatch(notes, /still apply|pushes only to|refuses anything else(?! on its command line)/);
     assert.match(done.json.verification, /Claude Code has no offline rule evaluator/);
     const before = fs.readFileSync(settingsFile(), 'utf8');
     assert.equal(allow('git-push').json.code, 'unchanged');
@@ -924,6 +933,21 @@ describe('write-allowlist for Codex', () => {
     }
   });
 
+  it('the Codex preview shows the same push command contract as the Claude preview', { skip: pushSkip }, () => {
+    recordDestination();
+    const preview = codexAllow('git-push');
+    assert.equal(preview.json.code, 'confirmation-required');
+    assert.deepEqual(preview.json.push.contract, pushLib.CONTRACT);
+    assert.equal(preview.json.push.command, `${PROGRAM} --branch fvs/<name>`);
+    assert.deepEqual(preview.json.push.contract, allow('git-push').json.push.contract);
+  });
+
+  it('the plan carries the contract for the explanation before any write', { skip: pushSkip }, () => {
+    const out = run('plan', base()).json;
+    assert.deepEqual(out.pushContract, pushLib.CONTRACT);
+    assert.equal(out.pushContract.kind, 'cooperative, with hardening, and not a security boundary');
+  });
+
   it('Codex itself accepts the push command rule, matches only that program with --branch, and says what it cannot exclude', { skip: (!codexOnPath && 'codex CLI not on PATH') || pushSkip }, () => {
     recordDestination();
     const done = codexConfirmed('git-push');
@@ -1242,10 +1266,6 @@ describe('the permissions page', () => {
     const text = page().replace(/\s+/g, ' ');
     assert.match(text, /Branch protection on the project fork is still recommended/);
     assert.match(text, /A rule is matched against the command text, and a `\*` in it also matches the rest of that text, so the rule cannot check the arguments\. The command checks them itself/);
-    assert.match(text, /Git hooks of the repository still run, as for any push/);
-    assert.match(text, /Credential helpers, ssh and proxy settings come from your own git configuration and environment/);
-    assert.match(text, /A rewrite rule that you add after that check and before the connection is a race the command cannot close/);
-    assert.match(text, /Any session of your user account can change it/);
     assert.match(text, /A worker that runs a plain `git push` is not covered by this rule: your other rules and permission mode decide that push, as before/);
     assert.match(text, /On Codex, a rule matches the start of a command: `node`, the path and `--branch`\. It cannot tell `fvs\/work` from `main`, and the command refuses a name outside the recorded namespaces/);
     assert.match(text, /Codex splits a command run through a shell wrapper such as `bash -lc`.*That was not observed here/);
@@ -1253,7 +1273,6 @@ describe('the permissions page', () => {
     assert.match(text, /In the tests, none of these settings changed where the push went or what it sent: `remote\.<name>\.push`.*`submodule\.recurse`/);
     assert.match(text, /A worker that gets a refusal stops and reports its `code` and `message`\. It does not fall back to `git push`/);
     assert.match(text, /An FVS update or reinstall that moves the script leaves both stale: run init again to append the rule for the new path, and delete the old rule yourself/);
-    assert.match(text, /Any session of your user account can edit the script file at the allowed path, as it can edit the record/);
     assert.match(text, /whether Claude Code screens a command substitution \(`\$\(\.\.\.\)`\) after the branch name against an allow rule, which its documentation does not say, or applies its documented checks of redirect targets and of each part of a compound command to the push rule/);
     // What the runtimes' documentation says, with the versions it was read for, and the limit that none of it was observed.
     assert.match(text, /a compound command is split at `&&`, `\|\|`, `;`, `\|`, `\|&`, `&` and newlines and that every part must be allowed, and that a redirect target is checked against your file rules/);
@@ -1270,8 +1289,9 @@ describe('the permissions page', () => {
     const text = page().replace(/\s+/g, ' ');
     assert.match(text, /A `core\.worktree` setting that points a repository at the files of another one is refused with `worktree-mismatch`/);
     assert.match(text, /a copy of the repository and another repository do not\. A link that leads into the same repository is that repository/);
-    assert.match(text, /`-c core\.abbrev=no` and `-c push\.pushOption=`, and no other option/);
-    assert.match(text, /The last one empties the list of push options from every git configuration and from the environment/);
+    assert.match(text, /`-c core\.abbrev=no`, `-c push\.pushOption=` and `-c core\.hooksPath=\/dev\/null`, and no other option/);
+    assert.match(text, /`push\.pushOption=` empties the list of push options from every git configuration/);
+    assert.match(text, /`core\.hooksPath=\/dev\/null` makes git find no hook, wherever the hooks folder is set/);
     assert.match(text, /The record names only object ids that the push itself reported/);
     assert.match(text, /so `newRemoteId` is null for them\. `localTipBeforePush` is the tip that the command read just before the push/);
     assert.match(text, /treat that as a later observation/);
@@ -1281,10 +1301,12 @@ describe('the permissions page', () => {
     // The claim is limited to the calls that act on the repository, and the hook environment is stated.
     assert.match(text, /the branch checks, the address checks, the read of the branch tip and the push itself each name the git directory and the work tree that were found/);
     assert.doesNotMatch(text, /every git call names the git directory/);
-    assert.match(text, /Git hooks of the repository still run, as for any push\. They run with `GIT_DIR` and `GIT_WORK_TREE` set to the checked repository/);
-    // The init workflow lists the new init-time refusal.
+    // Variables are dropped, not refused, so the page lists no refusal for them and the init workflow names none.
+    assert.doesNotMatch(text, /are not set\./);
+    assert.doesNotMatch(text, /git-environment/);
     const init = fs.readFileSync(path.join(ROOT, 'fv-skills', 'workflows', 'auto-init.md'), 'utf8').replace(/\s+/g, ' ');
-    assert.match(init, /`not-a-repository`, `git-environment` or `worktree-mismatch`: the project root is not a git work tree/);
+    assert.match(init, /`not-a-repository` or `worktree-mismatch`: the project root is not a git work tree, or a `core\.worktree` setting/);
+    assert.doesNotMatch(init, /git-environment/);
   });
 
   it('names no push gate hook anywhere in what ships: no release ever shipped one, so nothing is listed for cleanup', () => {
@@ -1302,6 +1324,42 @@ describe('the permissions page', () => {
     // Legacy push allow rules are still detected and listed.
     assert.equal(typeof lib.legacyPushRules, 'function');
     assert.equal(lib.legacyPushGateHooks, undefined);
+  });
+
+  // The surfaces that tell a person what the push command is. Each must say it plainly, with its limits.
+  const CONTRACT_SURFACES = ['fv-skills/references/auto-permissions.md', 'fv-skills/workflows/auto-init.md', 'commands/fvs/auto-init.md',
+    'fv-skills/references/auto-setup.md', 'README.md', 'fv-skills/references/auto-execution.md', 'fv-skills/workflows/auto-top-specs.md'];
+  const flat = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8').replace(/`/g, '').replace(/\s+/g, ' ');
+
+  it('prints the push command contract on the page exactly as the script defines it', () => {
+    const text = flat(path.relative(ROOT, PAGE));
+    assert.match(text, /### What the command is[\s\S]*### What the command refuses/);
+    assert.ok(text.includes(`The push command is ${pushLib.CONTRACT.kind}.`), 'the page states what kind of guard it is');
+    for (const list of ['checks', 'hardening', 'trusts']) {
+      assert.ok(pushLib.CONTRACT[list].length > 0, list);
+      for (const entry of pushLib.CONTRACT[list]) assert.ok(text.includes(entry), `${list}: ${entry}`);
+    }
+    assert.match(text, /It is not a defence against a program that runs as your user/);
+  });
+
+  it('every surface that describes the push command says it is a guard with limits, and none promises more', () => {
+    for (const file of CONTRACT_SURFACES) {
+      const text = flat(file);
+      assert.doesNotMatch(text, /refuses anything else(?! on its command line)|refuses every other|other than the recorded|pushes only to|push only to|cannot redirect|cannot widen/i, file);
+      assert.doesNotMatch(text, /Git hooks of the repository still run|hooks .{0,40}still run/i, file);
+    }
+    // The three places a person is told what the command is name the guard, its hardening and its limits.
+    for (const file of ['fv-skills/workflows/auto-init.md', 'commands/fvs/auto-init.md', 'fv-skills/references/auto-execution.md']) {
+      const text = flat(file);
+      assert.match(text, /cooperative guard/, file);
+      assert.match(text, /not a security boundary/, file);
+    }
+    const init = flat('fv-skills/workflows/auto-init.md');
+    for (const term of ['pushContract', 'ignores repository hooks', 'pre-push checks do not run', 'drops the listed git environment variables', 'ssh and transport wrappers', 'credential helpers', 'URL rewrite rules', 'the record file and FVS itself', 'anything that runs as the owner.s user']) {
+      assert.match(init, new RegExp(term), term);
+    }
+    const brief = flat('fv-skills/references/auto-execution.md');
+    for (const term of ['hooks', 'credential helpers', 'URL rewrite', 'ssh', 'record file', 'runs as your user']) assert.ok(brief.includes(term), `the worker brief names ${term}`);
   });
 
   it('makes no unconditional promise that a push asks, and no longer describes a hook as part of init', () => {

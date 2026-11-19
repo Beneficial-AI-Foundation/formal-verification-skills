@@ -676,6 +676,23 @@ describe('the environment git runs in', () => {
     assert.equal(JSON.stringify(all), before, 'the environment it was given is not changed');
   });
 
+  it('the contract names the variables that cleanEnvironment removes, and none that it keeps', () => {
+    const hardening = lib.CONTRACT.hardening.join(' ');
+    const named = hardening.match(/GIT_[A-Za-z_]+/g);
+    assert.ok(named.length >= 12, 'the contract lists the variables');
+    for (const name of named) {
+      const probe = name.endsWith('_n') ? name.replace(/_n$/, '_0') : name;
+      assert.deepEqual(lib.cleanEnvironment({ [probe]: 'x' }), {}, `${name} is named in the contract and is removed`);
+    }
+    for (const name of DROPPED) assert.ok(named.includes(name.replace(/_\d+$/, '_n')) || named.includes(name), `${name} is removed, so the contract names it`);
+    for (const name of KEPT) {
+      assert.ok(!named.includes(name), `${name} stays, so the hardening list does not name it`);
+      assert.deepEqual(lib.cleanEnvironment({ [name]: 'x' }), { [name]: 'x' }, name);
+    }
+    // What stays is stated as trusted, not as protected.
+    assert.match(lib.CONTRACT.trusts.join(' '), /GIT_SSH_COMMAND/);
+  });
+
   it('removes every listed variable from every git call the command makes, and keeps the ssh, credential and transport settings', () => {
     const w = world();
     const other = world({ skipRecord: true });
