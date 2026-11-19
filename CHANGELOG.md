@@ -56,6 +56,14 @@ on release day. -->
   create and edit, a push to the project's own repository, fetch and `ls-remote`. With your yes it
   writes a minimal project allowlist. It never allows GitHub comments, reviews or a push to
   upstream. Run status says when the run waits for your approval.
+- Workers and the orchestrator push with one command, `scripts/fvs-auto-push.mjs --branch
+  fvs/<name>`. It pushes that one branch to the destination that `/fvs:auto-init` recorded and
+  refuses a branch outside the recorded namespace, a changed destination, and a push rewrite
+  rule. The allowlist names this command and writes no rule for a plain `git push`, because a glob
+  cannot allow a push safely. Init tells you when a rule of your own already allows a plain
+  `git push`. <!-- rc3-fill: confirm the refusal list and the init notice against the push command;
+  the opt-in push hook never shipped in a release, so it gets no line of its own -->
+
 - A permissions page, linked from the README and printed when the check fails, gives allowlists
   for Claude Code and Codex, the reason for each rule and what still prompts. It names
   `/fewer-permission-prompts` as tuning after a first run. <!-- rc3-fill: confirm the page name and path -->
