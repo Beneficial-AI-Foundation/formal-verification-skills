@@ -35,9 +35,15 @@
 // `#guard_msgs ... in #print axioms NAME`; the build enforces those guards, and this
 // script refuses a pass that rests on guards it cannot read or that say nothing.
 //
-// A verdict, accepted or not, is written as a receipt bound to the commit and its tree.
+// A verdict, accepted or not, is written as a receipt bound to the commit and its tree. Accepted
+// means the statements were compared with a merged spec; a build with no spec base is labelled
+// "built, integrity not checked" and is not an acceptance. A check that holds the lock replaces any
+// earlier receipt for the commit at once with a non-accepting one, and a refusal or a crash after that
+// leaves a non-accepting receipt, so an old acceptance never stands in for a check that did not
+// finish. A caller refused the lock changes nothing. The receipt lists the externals records the
+// acceptance relied on, each with a digest, so a later change to one of them shows.
 // Output: stdout holds one JSON object and nothing else; the report for people goes to stderr.
-// Exit status 0 accepted, 1 build check failed, 2 refused.
+// Exit status 0 accepted, 1 not accepted (failed, or built without a spec base), 2 refused.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -46,6 +52,9 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 export const LABEL_ACCEPTED = 'accepted (build check)';
+// A commit that built but was not compared with a merged spec: nothing says its statements are the
+// approved ones, so it is not an acceptance and the exit status is not 0.
+export const LABEL_UNCHECKED = 'built, integrity not checked';
 export const labelFailed = (reason) => `build check failed: ${reason}`;
 const STANDARD_AXIOMS = ['propext', 'Classical.choice', 'Quot.sound'];
 // What native_decide and bv_decide add to #print axioms: a generated axiom named after the
@@ -780,10 +789,32 @@ const describeProblem = (problem) => `${problem.file}${problem.statement ? `: ${
 
 // ---- the run state -------------------------------------------------------------------------
 
-function readRunRecord(root, name) {
+// A run-state file with the digest of the bytes it was read from, or null when there is none.
+function readRunFile(root, name) {
   const file = path.join(root, '.formalising', 'auto-fv', name);
   if (!fs.existsSync(file)) return null;
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return refuse('run-state-unreadable', `${file} is not valid JSON; fix it or move it aside, then run the build check again`); }
+  let bytes;
+  try { bytes = fs.readFileSync(file); } catch { return refuse('run-state-unreadable', `${file} cannot be read; fix it, then run the build check again`); }
+  try { return { file, sha256: sha256(bytes), data: JSON.parse(bytes.toString('utf8')) }; } catch { return refuse('run-state-unreadable', `${file} is not valid JSON; fix it or move it aside, then run the build check again`); }
+}
+const readRunRecord = (root, name) => readRunFile(root, name)?.data ?? null;
+
+// JSON with every object's keys in order, as the engine writes its own digests (fvs-auto.mjs, canonicalJson),
+// so a record has the same digest in a receipt and when the engine reads the record again.
+const canonicalJson = (value) => JSON.stringify(value, (_key, item) => (item !== null && typeof item === 'object' && !Array.isArray(item)
+  ? Object.fromEntries(Object.keys(item).sort().map((key) => [key, item[key]])) : item));
+export const recordDigest = (record) => sha256(canonicalJson(record ?? null));
+
+// The externals records a check relied on (the ones its accepted Trusted axioms are tied to), each with
+// a digest of the record as it stood. A consumer that finds a record changed or gone knows the receipt
+// was made on an authority that no longer holds.
+function externalsBinding(ties, externalsFile) {
+  const records = new Map((externalsFile?.data?.records ?? []).map((record) => [record?.id, record]));
+  return {
+    file: externalsFile?.file ?? null,
+    sha256: externalsFile?.sha256 ?? null,
+    records: [...new Set(ties.map((tie) => tie.record))].sort().map((id) => ({ id, sha256: recordDigest(records.get(id)) })),
+  };
 }
 
 // Where the recorded extraction published its Lean, as the folders and files of the Lean project: a
@@ -868,16 +899,22 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
   const full = git(top, ['rev-parse', '--verify', '--quiet', `${commit}^{commit}`]);
   const tree = full === null ? null : git(top, ['rev-parse', `${full}^{tree}`]);
   if (full === null || tree === null) refuse('commit-not-found', `${commit} is not a commit of this repository`);
-  if (specBase !== undefined && !SHA_ARGUMENT.test(specBase)) refuse('usage', '--spec-base must be a commit hash of 7 to 64 hexadecimal digits');
-  const specBaseFull = resolveSpecBase({ top, root, full, specBase });
-  if (allowAxioms === '') refuse('usage', '--allow-axioms needs the path of the allowed-axioms file');
-  const allowed = allowAxioms === undefined ? null : loadAllowedAxioms(allowAxioms);
-  const allowedRecord = allowed && { file: allowed.file, sha256: allowed.sha256, names: allowed.names.size };
 
+  // From here on the commit is known. Once this check holds the lock, an earlier receipt for the commit
+  // no longer stands in for it: a non-accepting receipt replaces it at once, and the verdict (or, if
+  // the check is refused or dies, the refusal) replaces that. A caller that is refused the lock changes
+  // nothing, so it cannot spoil the receipt of the check that is running.
   const receipts = path.resolve(receiptDir ?? path.join(root, '.formalising', 'auto-fv', 'build-check'));
   const release = acquireLock();
-  const work = fs.mkdtempSync(path.join(workdir ? path.resolve(workdir) : os.tmpdir(), `fvs-build-check-${full.slice(0, 12)}-`));
+  let work = null;
   try {
+    writeReceipt(receipts, full, { schema: 1, kind: 'fvs-build-check', accepted: false, label: labelFailed('the check started and did not finish'), commit: full, tree, startedAt: new Date().toISOString() });
+    if (specBase !== undefined && !SHA_ARGUMENT.test(specBase)) refuse('usage', '--spec-base must be a commit hash of 7 to 64 hexadecimal digits');
+    const specBaseFull = resolveSpecBase({ top, root, full, specBase });
+    if (allowAxioms === '') refuse('usage', '--allow-axioms needs the path of the allowed-axioms file');
+    const allowed = allowAxioms === undefined ? null : loadAllowedAxioms(allowAxioms);
+    const allowedRecord = allowed && { file: allowed.file, sha256: allowed.sha256, names: allowed.names.size };
+    work = fs.mkdtempSync(path.join(workdir ? path.resolve(workdir) : os.tmpdir(), `fvs-build-check-${full.slice(0, 12)}-`));
     const cleanRoot = path.join(work, 'tree');
     extractCommit(top, full, work, cleanRoot);
     const sub = path.relative(top, root);
@@ -892,19 +929,21 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
     // The project's folder in the repository, with `/` separators; empty when it is the repository root.
     const prefix = path.join(sub, below).split(path.sep).filter((part) => part && part !== '.').join('/');
     const layout = extractionLayout(readRunRecord(root, 'state.json'), { root, top, prefix });
+    let externalsFile = null;
     const integrity = checkIntegrity({
       base: specBaseFull === null ? null : gitTree(top, specBaseFull, prefix, layout),
       head: gitTree(top, full, prefix, layout),
       layout,
-      externals: () => { const records = readRunRecord(root, 'externals.json')?.records; return Array.isArray(records) ? records : null; },
+      externals: () => { externalsFile = readRunFile(root, 'externals.json'); const records = externalsFile?.data?.records; return Array.isArray(records) ? records : null; },
     });
+    const externalsRecord = externalsBinding(integrity.ties, externalsFile);
     const integrityRecord = { specBase: specBaseFull, compared: specBaseFull !== null, ok: integrity.problems.length === 0, problems: integrity.problems, ties: integrity.ties, extraction: layout };
     if (!integrityRecord.ok) {
       const reason = `${describeProblem(integrity.problems[0])}${integrity.problems.length > 1 ? ` (and ${integrity.problems.length - 1} more)` : ''}`;
       return finish(receipts, full, {
         schema: 1, kind: 'fvs-build-check', accepted: false, label: labelFailed(reason), commit: full, tree,
         leanRoot: path.join(sub, below) || '.', toolchain: toolchainOf(leanRoot), lake: null, packages: null, build: null,
-        specFiles: [], flags: [], warnings: [], specBase: specBaseFull, allowAxioms: allowedRecord, integrity: integrityRecord, checkedAt: new Date().toISOString(),
+        specFiles: [], flags: [], warnings: [], specBase: specBaseFull, allowAxioms: allowedRecord, externals: externalsRecord, integrity: integrityRecord, checkedAt: new Date().toISOString(),
       });
     }
 
@@ -969,39 +1008,67 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
     }
     const flags = statements.filter((s) => s.flags.length > 0).map((s) => `${s.name} uses ${s.flags.join(', ')}`);
     const warnings = symlinks.soft.length === 0 ? [] : [`symbolic links lead out of the commit to files Lake does not read as Lean sources: ${symlinks.soft.slice(0, 3).join(', ')}${symlinks.soft.length > 3 ? ` and ${symlinks.soft.length - 3} more` : ''}`];
-    const accepted = reason === null;
-    const label = accepted ? LABEL_ACCEPTED : labelFailed(reason);
+    // Accepted means the statements were compared with the merged spec; a build alone is not that.
+    const accepted = reason === null && specBaseFull !== null;
+    const label = reason !== null ? labelFailed(reason) : accepted ? LABEL_ACCEPTED : LABEL_UNCHECKED;
     const receipt = {
       schema: 1, kind: 'fvs-build-check', accepted, label, commit: full, tree,
       leanRoot: path.join(sub, below) || '.', toolchain: toolchainOf(leanRoot),
       lake: lakeVersion, packages: { source, copy, revisions },
       build: { argv: build.argv, exitCode: build.status, seconds, log: logFile, logSha256: sha256(logBytes) },
-      specFiles, flags, warnings, specBase: specBaseFull, allowAxioms: allowedRecord, integrity: integrityRecord, checkedAt: new Date().toISOString(),
+      specFiles, flags, warnings, specBase: specBaseFull, allowAxioms: allowedRecord, externals: externalsRecord, integrity: integrityRecord, checkedAt: new Date().toISOString(),
     };
     return finish(receipts, full, receipt);
+  } catch (error) {
+    throw leaveRefusal(receipts, full, tree, error);
   } finally {
     release();
-    if (!keep) fs.rmSync(work, { recursive: true, force: true });
+    if (work && !keep) fs.rmSync(work, { recursive: true, force: true });
   }
 }
 
 const toolchainOf = (leanRoot) => (fs.existsSync(path.join(leanRoot, 'lean-toolchain')) ? fs.readFileSync(path.join(leanRoot, 'lean-toolchain'), 'utf8').trim() : null);
 
-// Writes the receipt, bound to the commit, and returns the result. A receipt is written for every
-// verdict, so a later verdict for the same commit replaces an earlier one.
-function finish(receipts, full, receipt) {
-  fs.mkdirSync(receipts, { recursive: true });
+// Writes a receipt bound to the commit, replacing the one that was there. If the new one cannot be
+// written, the old one is removed rather than left standing.
+function writeReceipt(receipts, full, receipt) {
   const receiptPath = path.join(receipts, `${full}.json`);
-  fs.writeFileSync(`${receiptPath}.tmp`, `${JSON.stringify(receipt, null, 2)}\n`);
-  fs.renameSync(`${receiptPath}.tmp`, receiptPath);
-  return { ok: true, code: receipt.accepted ? 'accepted' : 'failed', ...receipt, receipt: receiptPath, report: reportLines(receipt) };
+  try {
+    fs.mkdirSync(receipts, { recursive: true });
+    fs.writeFileSync(`${receiptPath}.tmp`, `${JSON.stringify(receipt, null, 2)}\n`);
+    fs.renameSync(`${receiptPath}.tmp`, receiptPath);
+  } catch (error) {
+    try { fs.rmSync(receiptPath, { force: true }); } catch { /* the folder cannot be written at all */ }
+    throw new Refusal('receipt-not-written', `the receipt ${receiptPath} could not be written (${error.message})`);
+  }
+  return receiptPath;
+}
+
+// A refused or crashed check leaves a terminal, non-accepting receipt for the commit, so an earlier
+// accepting receipt does not stand in for a check that did not complete.
+function leaveRefusal(receipts, full, tree, error) {
+  const code = error instanceof Refusal ? error.code : 'internal-error';
+  const message = error instanceof Error ? error.message : String(error);
+  try {
+    const file = writeReceipt(receipts, full, { schema: 1, kind: 'fvs-build-check', accepted: false, label: `build check refused (${code}): ${message}`.slice(0, 400), commit: full, tree, refusal: { code, message }, checkedAt: new Date().toISOString() });
+    if (error instanceof Refusal) error.receipt = file;
+  } catch { /* the earlier receipt was already replaced or removed */ }
+  return error;
+}
+
+// Writes the receipt for a verdict, bound to the commit, and returns the result. A receipt is written
+// for every verdict, so a later verdict for the same commit replaces an earlier one.
+function finish(receipts, full, receipt) {
+  const receiptPath = writeReceipt(receipts, full, receipt);
+  const code = receipt.accepted ? 'accepted' : receipt.label === LABEL_UNCHECKED ? 'unchecked' : 'failed';
+  return { ok: true, code, ...receipt, receipt: receiptPath, report: reportLines(receipt) };
 }
 
 function reportLines(receipt) {
   const { integrity } = receipt;
   const lines = [receipt.label, `commit ${receipt.commit}`, `tree ${receipt.tree}`, ...receipt.warnings.map((warning) => `warning: ${warning}`)];
   lines.push(integrity.compared ? `spec base ${integrity.specBase}: statements, frozen paths and added code compared with the merged spec`
-    : 'spec base: none given or recorded, so the statements were not compared with a merged spec');
+    : 'spec base: none given or recorded, so the statements were not compared with a merged spec and this is not an acceptance');
   lines.push(receipt.allowAxioms ? `allowed axioms: ${receipt.allowAxioms.names} names from ${receipt.allowAxioms.file} (sha256 ${receipt.allowAxioms.sha256}); a statement that rests on any other non-standard axiom does not pass`
     : 'allowed axioms: no list given, so no statement is held to a list of axioms');
   const { folders, files } = integrity.extraction ?? { folders: [], files: [] };
@@ -1033,7 +1100,11 @@ function parseArguments(argv) {
   return options;
 }
 
-if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Run only when this file is the program, not when it is imported or read from stdin (argv[1] is then
+// missing or names no file).
+let direct = false;
+try { direct = fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url)); } catch { /* imported or piped */ }
+if (direct) {
   try {
     const { report, ...result } = buildCheck(parseArguments(process.argv.slice(2)));
     // stdout holds the JSON result and nothing else, so a caller can parse it; the report is for people.
@@ -1042,7 +1113,7 @@ if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import
     process.exitCode = result.accepted ? 0 : 1;
   } catch (error) {
     if (!(error instanceof Refusal)) throw error;
-    process.stdout.write(`${JSON.stringify({ ok: false, code: error.code, message: error.message }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ ok: false, code: error.code, message: error.message, ...(error.receipt ? { receipt: error.receipt } : {}) }, null, 2)}\n`);
     process.stderr.write(`refused (${error.code}): ${error.message}\n`);
     process.exitCode = 2;
   }

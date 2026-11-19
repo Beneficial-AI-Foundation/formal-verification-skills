@@ -9,7 +9,8 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
+const { once } = require('node:events');
 const { pathToFileURL } = require('node:url');
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'fvs-build-check.mjs');
@@ -96,7 +97,10 @@ function fixture({ spec = SPEC, sub = '', files = {}, attributes = '', manifestE
   return { base, repo, lean, stub, bin, dep, rev, commit, receipts, work };
 }
 
-function check(fx, { args = [], root = fx.repo, commit = fx.commit, preflight, out, status, oleans = ['Specs/A'], env = {} } = {}) {
+// A check with no --spec-base given is held to the commit itself, so these tests ask for the checks they
+// are about; `noBase` runs the check with no spec base at all.
+function check(fx, { args = [], root = fx.repo, commit = fx.commit, noBase = false, preflight, out, status, oleans = ['Specs/A'], env = {} } = {}) {
+  if (!noBase && !args.includes('--spec-base') && /^[0-9a-f]{7,64}$/i.test(commit)) args = ['--spec-base', commit, ...args];
   if (preflight) write(path.join(fx.stub, 'preflight'), preflight);
   if (out) write(path.join(fx.stub, 'build.out'), out);
   if (status !== undefined) write(path.join(fx.stub, 'status'), String(status));
@@ -389,26 +393,38 @@ describe('what the check reports and flags', () => {
 });
 
 describe('refusals', () => {
-  const refused = (fx, result, code) => {
+  // A refusal before the check is admitted (a bad argument, an unknown commit, a lock that is taken)
+  // writes nothing. One after it leaves a non-accepting receipt for the commit, so an earlier accepting
+  // receipt cannot stand in for a check that was refused.
+  const refused = (fx, result, code, { writes = true, commit = fx.commit } = {}) => {
     assert.equal(result.status, 2, result.stderr);
     assert.equal(result.json.ok, false);
     assert.equal(result.json.code, code);
-    assert.equal(receipts(fx).length, 0);
-    assert.equal(fs.existsSync(fx.receipts), false, 'nothing was written for a refusal');
     assert.equal(fs.existsSync(path.join(fx.stub, 'build-cwd')), false, 'no build ran');
     assert.deepEqual(fs.readdirSync(fx.work), []);
+    if (!writes) {
+      assert.equal(receipts(fx).length, 0);
+      assert.equal(fs.existsSync(fx.receipts), false, 'nothing was written for a refusal before admission');
+      return;
+    }
+    assert.deepEqual(receipts(fx), [`${commit}.json`]);
+    const receipt = JSON.parse(fs.readFileSync(path.join(fx.receipts, `${commit}.json`), 'utf8'));
+    assert.equal(receipt.accepted, false);
+    assert.deepEqual(receipt.refusal.code, code);
+    assert.match(receipt.label, new RegExp(`^build check refused \\(${code}\\): `));
+    assert.equal(result.json.receipt, path.join(fx.receipts, `${commit}.json`));
   };
 
   test('a commit argument that is not a hexadecimal hash', () => {
     const fx = fixture();
-    refused(fx, check(fx, { commit: 'HEAD' }), 'usage');
-    refused(fx, check(fx, { commit: 'abc; rm -rf /' }), 'usage');
-    refused(fx, check(fx, { commit: '--upload-pack=x' }), 'usage');
+    refused(fx, check(fx, { commit: 'HEAD' }), 'usage', { writes: false });
+    refused(fx, check(fx, { commit: 'abc; rm -rf /' }), 'usage', { writes: false });
+    refused(fx, check(fx, { commit: '--upload-pack=x' }), 'usage', { writes: false });
   });
 
   test('a commit that does not exist', () => {
     const fx = fixture();
-    refused(fx, check(fx, { commit: 'deadbeef' }), 'commit-not-found');
+    refused(fx, check(fx, { commit: 'deadbeef' }), 'commit-not-found', { writes: false });
   });
 
   test('a prebuilt package at another revision than the manifest', () => {
@@ -446,14 +462,15 @@ describe('refusals', () => {
     const fx = fixture();
     git(fx.repo, 'rm', '-q', 'lakefile.toml');
     git(fx.repo, 'commit', '-q', '-m', 'no lakefile');
-    refused(fx, check(fx, { commit: git(fx.repo, 'rev-parse', 'HEAD') }), 'no-lean-project');
+    const commit = git(fx.repo, 'rev-parse', 'HEAD');
+    refused(fx, check(fx, { commit }), 'no-lean-project', { commit });
   });
 
   test('a build check already running anywhere on the machine, but not a stale lock of a dead process', () => {
     const fx = fixture();
     const lock = path.join(fx.base, 'fvs-build-check.lock');
     write(path.join(lock, 'pid'), String(process.pid));
-    refused(fx, check(fx, { args: ['--receipt-dir', path.join(fx.base, 'another-receipts')] }), 'build-check-running');
+    refused(fx, check(fx, { args: ['--receipt-dir', path.join(fx.base, 'another-receipts')] }), 'build-check-running', { writes: false });
     const dead = spawnSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' }).stdout;
     write(path.join(lock, 'pid'), dead);
     assert.equal(check(fx).json.accepted, true);
@@ -488,6 +505,95 @@ describe('reading Lean source', () => {
     const fg = source.statements.find((s) => s.name === 'A.fg');
     assert.match(f.problems.join(), /no #guard_msgs/);
     assert.deepEqual(fg.problems, []);
+  });
+});
+
+describe('a check that is refused or does not finish leaves no accepting receipt', () => {
+  const left = (fx, commit) => JSON.parse(fs.readFileSync(path.join(fx.receipts, `${commit}.json`), 'utf8'));
+  const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; } };
+
+  test('a recheck refused after an acceptance replaces the acceptance: the externals it needs became unreadable', () => {
+    const fx = layered();
+    const first = checkTip(fx);
+    assert.equal(first.json.accepted, true, first.stderr);
+    assert.equal(left(fx, fx.tip).accepted, true);
+    write(path.join(fx.repo, '.formalising', 'auto-fv', 'externals.json'), '{not json');
+    const again = checkTip(fx);
+    assert.equal(again.status, 2);
+    assert.equal(again.json.code, 'run-state-unreadable');
+    assert.equal(again.json.receipt, path.join(fx.receipts, `${fx.tip}.json`));
+    const receipt = left(fx, fx.tip);
+    assert.equal(receipt.accepted, false);
+    assert.deepEqual(receipt.refusal.code, 'run-state-unreadable');
+    assert.match(receipt.label, /^build check refused \(run-state-unreadable\): /);
+    // Repairing the file and checking again accepts again, and the receipt is the new verdict.
+    write(path.join(fx.repo, '.formalising', 'auto-fv', 'externals.json'), JSON.stringify(EXTERNALS(record())));
+    assert.equal(checkTip(fx).json.accepted, true);
+    assert.equal(left(fx, fx.tip).accepted, true);
+  });
+
+  test('a spec base that is not the recorded merge refuses and leaves a non-accepting receipt as well', () => {
+    const fx = layered({ recorded: true });
+    assert.equal(check(fx, { commit: fx.tip, oleans: OLEANS, noBase: true }).json.accepted, true);
+    const result = check(fx, { commit: fx.tip, args: ['--spec-base', fx.tip], oleans: OLEANS });
+    assert.equal(result.json.code, 'spec-base-mismatch');
+    assert.equal(left(fx, fx.tip).accepted, false);
+    assert.equal(left(fx, fx.tip).refusal.code, 'spec-base-mismatch');
+  });
+
+  test('a check that dies while it builds leaves a receipt that is not an acceptance', async () => {
+    const fx = layered();
+    assert.equal(checkTip(fx).json.accepted, true);
+    write(path.join(fx.stub, 'hang'), '');
+    const child = spawn(process.execPath, [SCRIPT, '--project-root', fx.repo, '--commit', fx.tip, '--spec-base', fx.merged, '--receipt-dir', fx.receipts, '--workdir', fx.work],
+      { env: { ...process.env, PATH: `${fx.bin}${path.delimiter}${process.env.PATH}`, STUB: fx.stub, TMPDIR: fx.base }, stdio: 'ignore' });
+    const pidFile = path.join(fx.stub, 'lake-pid');
+    for (let wait = 0; wait < 200 && !fs.existsSync(pidFile); wait += 1) await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.ok(fs.existsSync(pidFile), 'the build started');
+    child.kill('SIGKILL');
+    await once(child, 'exit');
+    const receipt = left(fx, fx.tip);
+    assert.equal(receipt.accepted, false, 'the old acceptance does not stand in for a check that did not finish');
+    assert.match(receipt.label, /^build check failed: the check started and did not finish/);
+    for (const name of ['lake-pid', 'child-pid']) { try { process.kill(Number(seen(fx, name)), 'SIGKILL'); } catch { /* gone already */ } }
+    for (let wait = 0; wait < 40 && alive(Number(seen(fx, 'lake-pid'))); wait += 1) await new Promise((resolve) => setTimeout(resolve, 50));
+  });
+
+  test('a caller that is refused the lock does not change the receipt of a finished check', () => {
+    const fx = layered();
+    assert.equal(checkTip(fx).json.accepted, true);
+    const before = fs.readFileSync(path.join(fx.receipts, `${fx.tip}.json`), 'utf8');
+    write(path.join(fx.base, 'fvs-build-check.lock', 'pid'), String(process.pid));
+    const busy = checkTip(fx);
+    assert.equal(busy.json.code, 'build-check-running');
+    assert.equal(Object.hasOwn(busy.json, 'receipt'), false);
+    assert.equal(fs.readFileSync(path.join(fx.receipts, `${fx.tip}.json`), 'utf8'), before);
+  });
+
+  test('the receipt binds a digest of each externals record the acceptance relied on', async () => {
+    const { recordDigest } = await library();
+    const fx = layered();
+    const result = checkTip(fx);
+    assert.deepEqual(result.json.externals.records, [{ id: 'gap-div', sha256: recordDigest(record()) }]);
+    assert.equal(result.json.externals.sha256, sha256(fs.readFileSync(path.join(fx.repo, '.formalising', 'auto-fv', 'externals.json'))));
+    assert.equal(recordDigest(Object.fromEntries(Object.entries(record()).reverse())), recordDigest(record()), 'key order does not change a digest');
+    assert.notEqual(recordDigest(record({ status: 'open' })), recordDigest(record()));
+    // A check that relied on no record lists none, and a failed integrity receipt carries the binding too.
+    assert.deepEqual(check(fixture()).json.externals, { file: null, sha256: null, records: [] });
+    const failing = layered({ head: { ...HEAD_FILES, 'formal/specs/Specs/A.lean': SPEC_HEAD.replace('0 < n', '0 ≤ n') } });
+    assert.ok(Array.isArray(checkTip(failing).json.externals.records));
+  });
+});
+
+describe('running the script', () => {
+  test('imported, or read from stdin, it does not run and does not fail', () => {
+    const stdin = spawnSync(process.execPath, ['--input-type=module', '-'], { input: fs.readFileSync(SCRIPT), encoding: 'utf8' });
+    assert.equal(stdin.status, 0, stdin.stderr);
+    assert.equal(stdin.stdout, '');
+    assert.equal(stdin.stderr, '');
+    const imported = spawnSync(process.execPath, ['--input-type=module', '-e', `await import(${JSON.stringify(pathToFileURL(SCRIPT).href)})`], { encoding: 'utf8' });
+    assert.equal(imported.status, 0, imported.stderr);
+    assert.equal(imported.stdout, '');
   });
 });
 
@@ -567,19 +673,29 @@ describe('the merged spec: changes that are allowed', () => {
 
   test('the recorded spec merge is used when no --spec-base is given', () => {
     const fx = layered({ recorded: true });
-    const result = check(fx, { commit: fx.tip, oleans: OLEANS });
+    const result = check(fx, { commit: fx.tip, oleans: OLEANS, noBase: true });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.json.specBase, fx.merged);
     assert.equal(result.json.integrity.compared, true);
   });
 
-  test('without a spec base the statements are not compared, and the report says so', () => {
+  test('without a spec base a build is not an acceptance: its own label, a non-zero exit, and the report says why', () => {
     const fx = layered();
-    const result = check(fx, { commit: fx.tip, oleans: OLEANS });
-    assert.equal(result.json.accepted, true, result.json.label);
+    const result = check(fx, { commit: fx.tip, oleans: OLEANS, noBase: true });
+    assert.equal(result.json.accepted, false);
+    assert.equal(result.json.label, 'built, integrity not checked');
+    assert.equal(result.json.code, 'unchecked');
+    assert.equal(result.status, 1, 'exit 0 is only for an acceptance');
     assert.equal(result.json.specBase, null);
     assert.equal(result.json.integrity.compared, false);
-    assert.match(result.stderr, /not compared with a merged spec/);
+    assert.match(result.stderr, /^built, integrity not checked\n/);
+    assert.match(result.stderr, /not compared with a merged spec and this is not an acceptance/);
+    assert.doesNotMatch(result.stderr, /accepted \(build check\)/);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(fx.receipts, `${fx.tip}.json`), 'utf8')).accepted, false);
+    // A build that fails still says it failed, base or no base.
+    const failing = check(fx, { commit: fx.tip, oleans: [], noBase: true, status: 1, out: 'error: Specs/A.lean:6:0: unsolved goals\n' });
+    assert.match(failing.json.label, /^build check failed: Specs\/A\.lean:6/);
+    assert.equal(failing.json.code, 'failed');
   });
 });
 
@@ -704,7 +820,7 @@ describe('the merged spec: changes that are refused', () => {
 
   test('a failed verdict replaces an accepted receipt that an earlier run left for the same commit', () => {
     const fx = layered({ head: { ...HEAD_FILES, 'formal/specs/Specs/A.lean': SPEC_HEAD.replace('0 < n', '0 ≤ n') } });
-    assert.equal(check(fx, { commit: fx.tip, oleans: OLEANS }).json.accepted, true, 'with no spec base there is nothing to compare');
+    assert.equal(check(fx, { commit: fx.tip, oleans: OLEANS, args: ['--spec-base', fx.tip] }).json.accepted, true, 'held to itself, nothing differs');
     const receiptFile = path.join(fx.receipts, `${fx.tip}.json`);
     assert.equal(JSON.parse(fs.readFileSync(receiptFile, 'utf8')).accepted, true);
     assert.equal(checkTip(fx).json.accepted, false);
@@ -963,7 +1079,9 @@ describe('the allowed axioms', () => {
       assert.equal(result.status, 2, bad);
       assert.equal(result.json.code, 'allow-axioms-invalid', bad);
     }
-    assert.equal(receipts(fx).length, 0, 'a refusal writes no receipt');
+    const left = JSON.parse(fs.readFileSync(path.join(fx.receipts, `${fx.commit}.json`), 'utf8'));
+    assert.equal(left.accepted, false, 'the refusal left a non-accepting receipt');
+    assert.equal(left.refusal.code, 'allow-axioms-invalid');
     assert.equal(check(fx, { args: ['--allow-axioms'] }).json.code, 'usage');
   });
 
@@ -1027,7 +1145,7 @@ describe('files that no lean_lib glob reaches', () => {
     const lakefile = 'name = "fixture"\ndefaultTargets = ["Proj"]\n\n[[lean_lib]]\nname = "Proj"\nglobs = ["Proj.+"]\n';
     const fx = layered({ lakefile, head: {} });
     for (const args of [[], ['--spec-base', fx.merged]]) {
-      const result = check(fx, { commit: fx.tip, args, oleans: OLEANS });
+      const result = check(fx, { commit: fx.tip, args, oleans: OLEANS, noBase: args.length === 0 });
       assert.equal(result.status, 1, result.stderr);
       const problem = result.json.integrity.problems.find((p) => p.file === 'formal/specs/Specs/A.lean');
       assert.equal(problem.kind, 'not-covered-by-lean-lib');

@@ -67,11 +67,15 @@ merge and the proof pull request").
 
    Then the whole project builds with warnings as errors, so any `sorry` fails, and each statement's
    guarded `#print axioms` list must still match. The JSON result is on stdout and the report for
-   people is on stderr. Read `label` from the JSON: it is `accepted (build check)` or
-   `build check failed: REASON`. The state reports `done` only once the proof pull request is recorded
-   and its head has passed the check against the recorded spec merge (a receipt made without
-   `--spec-base`, or against another commit, does not count), so record that pull request with the
-   commit you checked, and run the check again after any new commit on its branch. Do not redirect
+   people is on stderr. Read `label` from the JSON: it is `accepted (build check)`,
+   `build check failed: REASON`, or `built, integrity not checked` when no spec base was given or
+   recorded (a build alone is not an acceptance, and the exit status is not 0 then). The state reports
+   `done` only once the proof pull request is recorded and its head has passed the check against the
+   recorded spec merge (a receipt made without `--spec-base`, or against another commit, does not
+   count), so record that pull request with the commit you checked, and run the check again after any
+   new commit on its branch. A receipt also stops counting when an externals record that its
+   acceptance relied on changes. A check that is refused or does not finish leaves a receipt that is
+   not an acceptance, so an earlier acceptance of the same commit does not stand. Do not redirect
    the receipt: the state reads it only from the build check's default location. A worker's report,
    or a green build in its own checkout, is not acceptance.
 4. **Open the PROOF PR as a draft** on the project's own repository: the destination recorded in the
