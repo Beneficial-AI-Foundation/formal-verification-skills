@@ -247,3 +247,63 @@ describe('multi-crate extraction: the spec is checked before anything is written
     refused(twice, /crates names crate toy_lib more than once/);
   });
 });
+
+describe('multi-crate extraction: crates the owner chose not to verify', () => {
+  const appOnly = (nonTargets) => {
+    const spec = toySpec();
+    spec.crates = spec.crates.slice(1);
+    spec.nonTargets = nonTargets;
+    return spec;
+  };
+
+  it('accepts the sources of a declared non-target under its own label and records them, tree-pinned', () => {
+    const ws = workspace();
+    const out = complete(ws, appOnly([{ crate: 'toy_lib', dir: 'lib' }]));
+    const manifest = JSON.parse(fs.readFileSync(path.join(out, 'manifest.json'), 'utf8'));
+    const charon = charonRecord(out, 'toy_app').llbc;
+    assert.deepEqual(charon.foreignSources, []);
+    assert.deepEqual(charon.nonTargetSources.map((entry) => [entry.crate, entry.file]), [['toy_lib', 'lib/src/lib.rs'], ['toy_lib', 'lib/src/more.rs']]);
+    for (const entry of charon.nonTargetSources) assert.equal(entry.sha256, manifest.final.files[entry.file].sha256);
+    const { run } = engine(ws, ['attempt-status', '--out', out]).result;
+    assert.deepEqual(run.nonTargets.map(({ crate, dir, sources }) => [crate, dir, sources.map((source) => source.file)]), [['toy_lib', 'lib', ['lib/src/lib.rs', 'lib/src/more.rs']]]);
+    assert.deepEqual(run.foreignCrates, [{ crate: 'core', kind: 'external' }, { crate: 'toy_lib', kind: 'non-target' }]);
+  });
+
+  it('reports a target crate the LLBC reaches as a target, and the standard library as external', () => {
+    const ws = workspace();
+    const out = complete(ws);
+    const { run } = engine(ws, ['attempt-status', '--out', out]).result;
+    assert.deepEqual(run.units.find((unit) => unit.crate === 'toy_app').foreignCrates, [{ crate: 'core', kind: 'external' }, { crate: 'toy_lib', kind: 'target' }]);
+    assert.equal(run.nonTargets, undefined, 'no non-target was declared');
+  });
+
+  it('still refuses a non-target\'s source labelled with another crate', () => {
+    const ws = workspace({ toy_app: { relabelForeign: 'other_crate' } });
+    const { out } = attempted(ws, appOnly([{ crate: 'toy_lib', dir: 'lib' }]));
+    const charon = step(ws, out, 'charon', 'toy_app');
+    assert.equal(charon.status, 9, charon.stdout);
+    assert.match(charon.result.message, /labels lib\/src\/lib\.rs with crate "other_crate", but the file lies under declared crate "toy_lib"/);
+  });
+
+  it('refuses a malformed or contradictory declaration before anything is written', () => {
+    const refused = (spec, pattern) => {
+      const ws = workspace();
+      const { out, recorded } = attempted(ws, spec);
+      assert.equal(recorded.status, 5, recorded.stdout);
+      assert.match(recorded.result.message, pattern);
+      assert.equal(fs.existsSync(path.join(out, 'units')), false);
+    };
+    refused(appOnly([{ crate: 'toy_app', dir: 'lib' }]), /nonTargets\[0\]\.crate toy_app is also a target/);
+    refused(appOnly([{ crate: 'toy_lib', dir: 'lib' }, { crate: 'toy_lib', dir: 'lib' }]), /nonTargets names crate toy_lib more than once/);
+    refused(appOnly([{ crate: 'toy_lib', dir: 'nowhere' }]), /nonTargets\[0\]\.dir nowhere holds no Cargo\.toml/);
+    refused(appOnly([{ crate: 'toy_lib', dir: 'app' }]), /nonTargets\[0\]\.dir app is the directory of target crate toy_app/);
+    refused(appOnly([{ crate: 'toy-lib', dir: 'lib' }]), /nonTargets\[0\]\.crate "toy-lib" has a hyphen/);
+    refused(appOnly([{ crate: 'toy_lib', dir: 'lib', reason: 'x' }]), /nonTargets\[0\] has unsupported fields: reason/);
+    const ws = workspace();
+    const out = prepared(ws);
+    const single = engine(ws, ['attempt', '--out', out, '--spec', specFile(ws, { release: toySpec().release, crate: 'toy_app', publishDir: 'Lean/App', nonTargets: [{ crate: 'toy_lib', dir: 'lib' }] })]);
+    assert.equal(single.status, 5, single.stdout);
+    assert.match(single.result.message, /nonTargets belongs to a multi-crate spec: list this crate under crates/);
+  });
+});
+

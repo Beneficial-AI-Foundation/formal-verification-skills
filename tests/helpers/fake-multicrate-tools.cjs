@@ -59,6 +59,11 @@ for (const dep of me.deps) {
 const decl = (name, errors) => ({ def_id: 0, item_meta: { name: [{ Ident: [crateOf(pkg), 0] }, { Ident: [name, 0] }], has_errors: errors } });
 const decls = [{ ...decl('one', false), def_id: 0 }];
 (mine.errorItems ?? []).forEach((name, index) => decls.push({ ...decl(name, true), def_id: index + 1 }));
+for (const dep of me.deps) {
+  const owner = Object.keys(info).find((name) => info[name].dir === dep);
+  decls.push({ def_id: decls.length, item_meta: { name: [{ Ident: [crateOf(owner), 0] }, { Ident: ['one', 0] }], has_errors: false } });
+}
+decls.push({ def_id: decls.length, item_meta: { name: [{ Ident: ['core', 0] }, { Ident: ['mem', 0] }], has_errors: false } });
 const llbc = { charon_version: '0.1.315', has_errors: mine.hasErrors === true,
   translated: { crate_name: mine.llbcCrate ?? crateOf(pkg), options: { dest_file: dest, args }, files, fun_decls: decls, type_decls: [], global_decls: [], trait_decls: [], trait_impls: [] } };
 if (mine.charonExit === undefined || mine.charonExit === 0) fs.writeFileSync(dest, JSON.stringify(llbc));

@@ -862,7 +862,7 @@ function canonicalConfig(value, out, projectRoot) {
 }
 
 const SPEC_FIELDS = ['release', 'crate', 'publishDir', 'charonArgs', 'cargoArgs', 'aeneasArgs', 'moduleRoot', 'substitutions', 'stitch'];
-const INVOCATION_FIELDS = ['spec', 'crate', 'llbc', 'aeneasDest', 'publishDir', 'projectRoot', 'tree', 'release', 'tools', 'env', 'charon', 'aeneas', 'targets'];
+const INVOCATION_FIELDS = ['spec', 'crate', 'llbc', 'aeneasDest', 'publishDir', 'projectRoot', 'tree', 'release', 'tools', 'env', 'charon', 'aeneas', 'targets', 'nonTargets'];
 const TRUST = 'local-host-and-reviewed-scripts';
 
 // A multi-crate spec: the top-level fields are the base, every entry of crates
@@ -870,7 +870,7 @@ const TRUST = 'local-host-and-reviewed-scripts';
 // prepared copy, under OUT/units/<crate>.
 const UNITS_DIR = 'units';
 const MULTI_SCHEMA = 'fvs-extract-patches/multi-attempt';
-const MULTI_SPEC_FIELDS = ['release', 'cargoArgs', 'charonArgs', 'aeneasArgs', 'crates', 'main'];
+const MULTI_SPEC_FIELDS = ['release', 'cargoArgs', 'charonArgs', 'aeneasArgs', 'crates', 'main', 'nonTargets'];
 const UNIT_FIELDS = ['crate', 'package', 'dir', 'publishDir', 'charonArgs', 'cargoArgs', 'aeneasArgs', 'moduleRoot', 'substitutions', 'stitch'];
 const CRATE_NAME = /^[A-Za-z0-9_]+$/;
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -939,6 +939,30 @@ function checkCrateName(where, name) {
   if (typeof name !== 'string' || !CRATE_NAME.test(name)) refuse('invalid-input', `${where} must be a crate name (letters, digits and underscores)`, { field: where });
 }
 
+// In-repo crates the owner decided not to verify. They are named, never hidden: Charon
+// reaches their sources, the LLBC check accepts them under their own label and records
+// their tree-pinned hashes, and only their items may become assumptions.
+function checkNonTargets(list, units, manifest) {
+  if (list === undefined) return [];
+  if (!Array.isArray(list)) refuse('invalid-input', 'nonTargets must be an array');
+  const seen = new Set();
+  return list.map((entry, index) => {
+    const where = `nonTargets[${index}]`;
+    if (!isObject(entry)) refuse('invalid-input', `${where} must be an object`);
+    const extra = Object.keys(entry).filter((key) => !['crate', 'dir'].includes(key));
+    if (extra.length > 0) refuse('invalid-input', `${where} has unsupported fields: ${extra.join(', ')}`);
+    checkCrateName(`${where}.crate`, entry.crate);
+    if (units.some((unit) => unit.crate === entry.crate)) refuse('invalid-input', `${where}.crate ${entry.crate} is also a target; a crate is either verified or not`);
+    if (seen.has(entry.crate)) refuse('invalid-input', `nonTargets names crate ${entry.crate} more than once`);
+    seen.add(entry.crate);
+    const dir = typeof entry.dir === 'string' ? path.posix.normalize(entry.dir) : '';
+    if (dir === '' || path.isAbsolute(dir) || dir.split('/').includes('..')) refuse('invalid-input', `${where}.dir must be the crate directory inside the extraction copy, relative to its root`);
+    if (!Object.hasOwn(manifest.final.files, path.posix.join(dir, 'Cargo.toml'))) refuse('invalid-input', `${where}.dir ${dir} holds no Cargo.toml in the extraction copy; add it to extraction.inputs`, { field: `${where}.dir` });
+    if (units.some((unit) => unit.dir === dir)) refuse('invalid-input', `${where}.dir ${dir} is the directory of target crate ${units.find((unit) => unit.dir === dir).crate}`);
+    return { crate: entry.crate, dir };
+  });
+}
+
 // The units of a multi-crate spec, each as an ordinary single-crate spec. An
 // overlay field replaces the base field (lists are replaced, never joined), and
 // the unit's package becomes its --package argument. Nothing is written here.
@@ -987,7 +1011,7 @@ function multiUnits(spec, manifest) {
       refuse('invalid-input', `the publishDir of ${units[i].crate} (${first}) and of ${units[j].crate} (${second}) are the same or nested; every crate publishes into its own sibling directory`);
     }
   }));
-  return { units, main: spec.main, order: stitchOrder(units) };
+  return { units, main: spec.main, order: stitchOrder(units), nonTargets: checkNonTargets(spec.nonTargets, units, manifest) };
 }
 
 // The crates in dependency order, providers before the crates stitched to them. A crate
@@ -1027,10 +1051,10 @@ function homesOf(env) {
 // spec, the prepared manifest, the release and the three home paths. Recording
 // stores it; every stage derives it again, refuses any difference from the
 // record, and executes only the derived form.
-function deriveInvocation(out, manifest, spec, homes, targets = []) {
+function deriveInvocation(out, manifest, spec, homes, targets = [], nonTargets = []) {
   if (spec === null || typeof spec !== 'object' || Array.isArray(spec)) refuse('invalid-input', 'the spec must be a JSON object');
   const unknown = Object.keys(spec).filter((key) => !SPEC_FIELDS.includes(key));
-  if (unknown.length > 0) refuse('invalid-input', `the spec has unsupported fields: ${unknown.join(', ')}`);
+  if (unknown.length > 0) refuse('invalid-input', `the spec has unsupported fields: ${unknown.join(', ')}${unknown.includes('nonTargets') ? ' (nonTargets belongs to a multi-crate spec: list this crate under crates)' : ''}`);
   checkCrateName('spec.crate', spec.crate);
   const { projectRoot } = manifest;
   const publishRelative = typeof spec.publishDir === 'string' ? path.posix.normalize(spec.publishDir) : '';
@@ -1075,6 +1099,7 @@ function deriveInvocation(out, manifest, spec, homes, targets = []) {
     // The declared crates of a multi-crate attempt (absent for a single crate), so the
     // Charon stage can tell another declared crate's sources from an undeclared one.
     ...(targets.length > 0 ? { targets } : {}),
+    ...(nonTargets.length > 0 ? { nonTargets } : {}),
   };
 }
 
@@ -1123,14 +1148,14 @@ function attempt(flags) {
 // the same prepared manifest, and OUT/attempt.json lists them with their hashes.
 // Everything is checked before anything is written.
 function attemptUnits(out, manifest, manifestSha256, spec) {
-  const { units, main, order } = multiUnits(spec, manifest);
+  const { units, main, order, nonTargets } = multiUnits(spec, manifest);
   const targets = units.map(({ crate, dir }) => ({ crate, dir }));
   const homes = homesOf(process.env);
   const unitOut = (unit) => path.join(out, UNITS_DIR, unit.crate);
-  for (const unit of units) deriveInvocation(unitOut(unit), manifest, unit.flat, homes, targets);
+  for (const unit of units) deriveInvocation(unitOut(unit), manifest, unit.flat, homes, targets, nonTargets);
   const recorded = units.map((unit) => {
     fs.mkdirSync(unitOut(unit), { recursive: true });
-    return { unit, record: recordAttempt(unitOut(unit), manifest, manifestSha256, unit.flat, targets).attempt };
+    return { unit, record: recordAttempt(unitOut(unit), manifest, manifestSha256, unit.flat, targets, nonTargets).attempt };
   });
   const record = {
     schema: MULTI_SCHEMA,
@@ -1182,8 +1207,8 @@ function readMulti(out) {
   return record;
 }
 
-function recordAttempt(out, manifest, manifestSha256, spec, targets = []) {
-  const invocation = deriveInvocation(out, manifest, spec, homesOf(process.env), targets);
+function recordAttempt(out, manifest, manifestSha256, spec, targets = [], nonTargets = []) {
+  const invocation = deriveInvocation(out, manifest, spec, homesOf(process.env), targets, nonTargets);
   const residuals = callerResiduals(process.env, invocation.env.RUSTUP_TOOLCHAIN);
   const cargoConfig = cargoConfigFiles(manifest.tree, invocation.env.CARGO_HOME);
   for (const file of cargoConfig.filter((entry) => entry.present)) residuals.push({ name: file.path, class: 'cargo-config' });
@@ -1234,7 +1259,7 @@ function loadChain(out, through) {
   }
   const { manifest, manifestSha256 } = preparedManifest(out);
   if (record.manifestSha256 !== manifestSha256) refuse('attempt-refused', 'the manifest changed after the attempt was recorded');
-  const invocation = deriveInvocation(out, manifest, record.spec, homesOf(record.env ?? {}), Array.isArray(record.targets) ? record.targets : []);
+  const invocation = deriveInvocation(out, manifest, record.spec, homesOf(record.env ?? {}), Array.isArray(record.targets) ? record.targets : [], Array.isArray(record.nonTargets) ? record.nonTargets : []);
   const differing = INVOCATION_FIELDS.filter((field) => !sameState(invocation[field], record[field]));
   if (differing.length > 0) refuse('attempt-refused', `the recorded ${differing.join(', ')} differ from what the attempt would execute (or a tool changed since it was recorded)`);
   const cargoConfig = cargoConfigFiles(manifest.tree, invocation.env.CARGO_HOME);
@@ -1301,13 +1326,25 @@ function exactlyFiles(entries, files) {
 }
 
 // The declared crate whose directory is the longest prefix of a file of the copy.
-function ownerOf(targets, file) {
+function ownerOf(crates, file) {
   let best = null;
-  for (const target of targets) {
-    const holds = target.dir === '.' || file === target.dir || file.startsWith(`${target.dir}/`);
-    if (holds && (best === null || (target.dir !== '.' && (best.dir === '.' || target.dir.length > best.dir.length)))) best = target;
+  for (const candidate of crates) {
+    const holds = candidate.dir === '.' || file === candidate.dir || file.startsWith(`${candidate.dir}/`);
+    if (holds && (best === null || (candidate.dir !== '.' && (best.dir === '.' || candidate.dir.length > best.dir.length)))) best = candidate;
   }
-  return best?.crate ?? null;
+  return best;
+}
+
+// The crates an LLBC reaches, from the first segment of every item's path.
+function reachedCrates(translated) {
+  const names = new Set();
+  for (const kind of LLBC_ITEM_KINDS) {
+    for (const decl of Array.isArray(translated?.[kind]) ? translated[kind] : []) {
+      const first = Array.isArray(decl?.item_meta?.name) ? decl.item_meta.name[0]?.Ident?.[0] : undefined;
+      if (typeof first === 'string') names.add(first);
+    }
+  }
+  return names;
 }
 
 const LLBC_ITEM_KINDS = ['fun_decls', 'type_decls', 'global_decls', 'trait_decls', 'trait_impls'];
@@ -1355,7 +1392,10 @@ function inspectLlbc(file, invocation, sources) {
   const defIds = decls.map((decl) => decl?.def_id);
   if (defIds.some((id) => !Number.isInteger(id)) || new Set(defIds).size !== defIds.length) problems.push('the LLBC fun_decls def_ids are not unique integers');
   const targets = invocation.targets ?? [];
+  const nonTargets = invocation.nonTargets ?? [];
+  const declared = [...targets.map((entry) => ({ ...entry, kind: 'target' })), ...nonTargets.map((entry) => ({ ...entry, kind: 'non-target' }))];
   const foreign = [];
+  const nonTargetSources = [];
   if (targets.length === 0 && files.some((entry) => entry?.crate_name === invocation.crate && typeof entry?.name?.Local === 'string' && typeof entry.contents !== 'string')) {
     problems.push('a local source file in the LLBC has no contents');
   }
@@ -1368,18 +1408,24 @@ function inspectLlbc(file, invocation, sources) {
       if (!exact(entry, name)) problems.push(`the LLBC's ${name} is not the prepared source`);
       continue;
     }
-    const owner = ownerOf(targets, name);
+    const holder = ownerOf(declared, name);
+    const owner = holder?.crate ?? null;
     if (entry.crate_name === invocation.crate) {
       if (owner !== invocation.crate) problems.push(`the LLBC labels ${name} with crate ${JSON.stringify(invocation.crate)}, but the file lies under ${owner === null ? 'no declared crate' : `crate ${JSON.stringify(owner)}`}`);
       else if (!exact(entry, name)) problems.push(`the LLBC's ${name} is not the prepared source`);
     } else if (owner !== null && entry.crate_name === owner) {
       if (entry.contents !== null && entry.contents !== undefined && !exact(entry, name)) problems.push(`the LLBC's ${name} is not the prepared source`);
-      else foreign.push({ crate: owner, file: name, sha256: sources[name].sha256 });
+      else (holder.kind === 'target' ? foreign : nonTargetSources).push({ crate: owner, file: name, sha256: sources[name].sha256 });
     } else {
-      problems.push(`the LLBC labels ${name} with crate ${JSON.stringify(entry.crate_name)}, but the file lies under ${owner === null ? 'no declared crate, so it is an in-repo crate nobody declared as a target' : `declared crate ${JSON.stringify(owner)}`}`);
+      problems.push(`the LLBC labels ${name} with crate ${JSON.stringify(entry.crate_name)}, but the file lies under ${owner === null ? 'no declared crate, so it is an in-repo crate nobody declared as a target or as a non-target' : `declared crate ${JSON.stringify(owner)}`}`);
     }
   }
-  return { problems, info: { crate: translated.crate_name, ...llbcErrorItems(llbc, translated), foreignSources: foreign.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0)) } };
+  const byFile = (a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0);
+  const foreignCrates = [...reachedCrates(translated)].filter((crate) => crate !== invocation.crate).sort().map((crate) => ({
+    crate,
+    kind: targets.some((entry) => entry.crate === crate) ? 'target' : nonTargets.some((entry) => entry.crate === crate) ? 'non-target' : 'external',
+  }));
+  return { problems, info: { crate: translated.crate_name, ...llbcErrorItems(llbc, translated), foreignSources: foreign.sort(byFile), nonTargetSources: nonTargetSources.sort(byFile), foreignCrates } };
 }
 
 function beginStage(chain, stage) {
@@ -2015,6 +2061,10 @@ function attemptStatusOf(out) {
       // The declared edits of the generated Lean: substitutions, and the crates whose real
       // translation this crate's Lean imports in place of axioms.
       ...(recorded === null ? {} : { imports: recorded.stitch.map((entry) => entry.provider), stitch: recorded.stitch, substitutions: recorded.substitutions }),
+      // The crates the LLBC reaches, and the in-repo crates the owner chose not to verify
+      // with the sources of each that appeared (their items alone may become assumptions).
+      ...(stages.charon.record.llbc?.foreignCrates ? { foreignCrates: stages.charon.record.llbc.foreignCrates } : {}),
+      ...(inv.nonTargets ? { nonTargets: inv.nonTargets.map((entry) => ({ ...entry, sources: (stages.charon.record.llbc?.nonTargetSources ?? []).filter((source) => source.crate === entry.crate).map(({ file, sha256: hash }) => ({ file, sha256: hash })) })) } : {}),
     },
   };
 }
