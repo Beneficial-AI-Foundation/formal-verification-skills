@@ -32,6 +32,13 @@ on release day. -->
   `[workspace]` table, and show the cargo error. A hyphenated crate name where Charon's
   underscored name is needed is reported before Charon runs. An LLBC from another tree is still
   refused. <!-- rc3-fill: confirm each sentence against the extraction commits -->
+- The crates of one repository are extracted in dependency order, and their imports are stitched.
+  When a crate uses an item that another crate in the repository already translates, the generated
+  Lean imports that crate's module in place of an assumed axiom, so a proof about the main crate
+  rests on the proved library crate and not on an assumption. Only items from outside the
+  repository stay as external axioms. <!-- rc3-fill: confirm the order, what is stitched, any
+  duplicate-declaration check and the exact refusal messages against the stitching commits; delete
+  this bullet if stitching is not on the branch at the freeze -->
 - `Cargo.lock` is a recorded generated input: it is generated or read, hashed into the extraction
   record and checked on restore. It is never required to be committed in the target repository.
   <!-- rc3-fill: confirm who generates the lock, and the --locked and untracked-lock rules -->
