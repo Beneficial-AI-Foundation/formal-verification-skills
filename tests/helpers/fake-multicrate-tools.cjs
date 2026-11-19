@@ -80,6 +80,34 @@ fs.writeFileSync(path.join(dest, 'translation.json'), JSON.stringify({ crate: st
 fs.writeFileSync(path.join(dest, camel + '.lean'), mine.lean ?? ('def ' + stem + '_one := 1\\n'));
 process.exit(mine.aeneasExit ?? 0);`;
 
+// `cargo metadata --no-deps` for the toy manifests: one package per Cargo.toml with a
+// name, a library target when src/lib.rs exists, and its path dependencies (those after
+// [dev-dependencies] are marked dev). A metadata-failure.txt next to the script makes it
+// fail the way cargo does, with that text on stderr.
+const CARGO = `const args = process.argv.slice(2);
+if (args[0] !== 'metadata') { console.log('cargo 1.100.0-nightly (fake)'); process.exit(0); }
+const failure = path.join(path.dirname(process.argv[1]), 'metadata-failure.txt');
+if (fs.existsSync(failure)) { process.stderr.write(fs.readFileSync(failure, 'utf8')); process.exit(101); }
+const cwd = fs.realpathSync(process.cwd());
+const packages = [];
+(function walk(dir) {
+  for (const name of fs.readdirSync(dir)) {
+    if (name === 'target') continue;
+    const file = path.join(dir, name);
+    if (fs.statSync(file).isDirectory()) walk(file);
+    else if (name === 'Cargo.toml') {
+      const text = fs.readFileSync(file, 'utf8');
+      const crate = /^name\\s*=\\s*"([^"]+)"/m.exec(text)?.[1];
+      if (!crate) continue;
+      const [normal, dev = ''] = text.split('[dev-dependencies]');
+      const dependencies = [[normal, null], [dev, 'dev']].flatMap(([part, kind]) => [...part.matchAll(/^(\\S+)\\s*=\\s*\\{[^}]*path\\s*=\\s*"([^"]+)"/gm)].map((m) => ({ name: m[1], kind, path: path.resolve(path.dirname(file), m[2]) })));
+      const targets = fs.existsSync(path.join(path.dirname(file), 'src', 'lib.rs')) ? [{ name: crate.replace(/-/g, '_'), kind: ['lib'] }] : [{ name: crate, kind: ['bin'] }];
+      packages.push({ name: crate, manifest_path: file, targets, dependencies });
+    }
+  }
+})(cwd);
+console.log(JSON.stringify({ packages, workspace_root: cwd }));`;
+
 // Installs a fake release under PROJECT/.aeneas/releases/... and a fake cargo home
 // under SCRATCH; returns their paths and a setter for the behaviour.
 function fakeMultiTools(project, scratch, behaviour = {}) {
@@ -93,7 +121,7 @@ function fakeMultiTools(project, scratch, behaviour = {}) {
   script(path.join(release, 'aeneas'), AENEAS);
   const cargoHome = path.join(scratch, 'cargo-home');
   script(path.join(cargoHome, 'bin', 'rustc'), "console.log('rustc 1.100.0-nightly (fake)'); console.log('host: aarch64-apple-darwin');");
-  script(path.join(cargoHome, 'bin', 'cargo'), "console.log('cargo 1.100.0-nightly (fake)');");
+  script(path.join(cargoHome, 'bin', 'cargo'), CARGO);
   return { release, cargoHome, scratch, setBehaviour };
 }
 

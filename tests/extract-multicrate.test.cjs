@@ -307,3 +307,57 @@ describe('multi-crate extraction: crates the owner chose not to verify', () => {
   });
 });
 
+
+describe('crates: the in-repo crates of a prepared copy', () => {
+  // The toy workspace plus a library that depends on toy-lib and, only for its tests,
+  // on toy-app, and a package with no library.
+  function withExtras(ws) {
+    const write = (file, text) => {
+      fs.mkdirSync(path.dirname(path.join(ws.project, file)), { recursive: true });
+      fs.writeFileSync(path.join(ws.project, file), text);
+    };
+    write('tool/Cargo.toml', '[package]\nname = "toy-tool"\nversion = "0.1.0"\n\n[dependencies]\ntoy-lib = { path = "../lib" }\n\n[dev-dependencies]\ntoy-app = { path = "../app" }\n');
+    write('tool/src/lib.rs', 'pub fn four() -> u32 { 4 }\n');
+    write('script/Cargo.toml', '[package]\nname = "toy-script"\nversion = "0.1.0"\n');
+    write('script/src/main.rs', 'fn main() {}\n');
+    write('.formalising/fvs-config.json', JSON.stringify({ extraction: { inputs: ['Cargo.toml', 'Cargo.lock', 'app', 'lib', 'tool', 'script'] } }));
+  }
+  const crates = (ws, out) => engine(ws, ['crates', '--out', out, '--release', toySpec().release]);
+
+  it('lists the crates, what each depends on in the repo and an order with providers first', () => {
+    const ws = workspace();
+    withExtras(ws);
+    const out = prepared(ws);
+    const listed = crates(ws, out);
+    assert.equal(listed.status, 0, listed.stdout);
+    const row = (crate) => listed.result.crates.find((item) => item.package === crate);
+    assert.deepEqual(row('toy-app'), { package: 'toy-app', crate: 'toy_app', dir: 'app', library: true, deps: ['toy_lib'] });
+    assert.deepEqual(row('toy-lib'), { package: 'toy-lib', crate: 'toy_lib', dir: 'lib', library: true, deps: [] });
+    assert.deepEqual(row('toy-tool'), { package: 'toy-tool', crate: 'toy_tool', dir: 'tool', library: true, deps: ['toy_lib'] }, 'a dev-dependency is not a dependency of an extraction');
+    assert.deepEqual(row('toy-script'), { package: 'toy-script', crate: null, dir: 'script', library: false, deps: [] }, 'a package without a library cannot be a target');
+    assert.deepEqual(listed.result.order, ['toy_lib', 'toy_app', 'toy_tool']);
+    assert.equal(listed.result.workspaceRoot, '.');
+    assert.equal(fs.existsSync(path.join(out, 'attempt.json')), false, 'the command changes nothing');
+  });
+
+  it('reports a workspace cargo cannot read with cargo\'s own first lines', () => {
+    const ws = workspace();
+    const out = prepared(ws);
+    fs.writeFileSync(path.join(ws.tools.cargoHome, 'bin', 'metadata-failure.txt'), 'error: failed to load manifest for workspace member `/x/lib`\nCaused by:\n  failed to read `/x/lib/Cargo.toml`\n');
+    const listed = crates(ws, out);
+    assert.equal(listed.status, 9, listed.stdout);
+    assert.match(listed.result.message, /cargo cannot read the workspace of the extraction copy: error: failed to load manifest for workspace member `\/x\/lib` \| Caused by: \| failed to read/);
+  });
+
+  it('needs a prepared copy and a release', () => {
+    const ws = workspace();
+    const none = engine(ws, ['crates', '--out', path.join(ws.root, 'copies', 'missing'), '--release', toySpec().release]);
+    assert.equal(none.status, 2, none.stdout);
+    const out = prepared(ws);
+    const noRelease = engine(ws, ['crates', '--out', out]);
+    assert.equal(noRelease.status, 2, noRelease.stdout);
+    assert.match(noRelease.result.message, /--release is required/);
+    const wrong = engine(ws, ['crates', '--out', out, '--release', 'no/such/release']);
+    assert.equal(wrong.status, 5, wrong.stdout);
+  });
+});

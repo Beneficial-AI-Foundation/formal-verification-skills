@@ -61,6 +61,7 @@ function usage() {
     '       node fvs-extract-patches.mjs attempt --out DIR --spec FILE [--format json|text]',
     '       node fvs-extract-patches.mjs run --out DIR --step charon|aeneas|publish [--crate NAME] [--format json|text]',
     '       node fvs-extract-patches.mjs attempt-status --out DIR [--crate NAME] [--format json|text]',
+    '       node fvs-extract-patches.mjs crates --out DIR --release DIR [--format json|text]',
     '',
     'Applies the translation patches in DIR/translation-patches, in the order listed',
     'in DIR/translation-patches/series (one file name per line, every patch exactly',
@@ -89,6 +90,13 @@ function usage() {
     'Charon, Aeneas and publish chain, so a failing crate ends only its own chain. run',
     'then needs --crate NAME. attempt-status refuses unless every crate is complete and',
     'lists each crate\'s status; its run is the main crate\'s, plus run.units.',
+    '',
+    'crates lists the in-repo crates of a prepared copy (package, crate name, directory,',
+    'the in-repo crates it depends on) and a dependency order, providers first, so a',
+    'multi-crate spec can start from every crate as a target and drop the ones the owner',
+    'decides not to verify. It runs cargo metadata --no-deps --offline in the copy, under',
+    'the toolchain of the release directory (relative to the project root); it changes',
+    'nothing and is advisory.',
     '',
     'Exit codes: 0 ok; 1 a patch does not fit (stale, already applied, not reversible,',
     'or not independent although it declares Independent: yes); 2 usage or internal',
@@ -1143,6 +1151,61 @@ function attempt(flags) {
   return isObject(spec) && spec.crates !== undefined ? attemptUnits(out, manifest, manifestSha256, spec) : recordAttempt(out, manifest, manifestSha256, spec);
 }
 
+// The in-repo crates of the prepared copy, as cargo sees them: package, crate name (the
+// library target's, which is what Charon labels items with), directory, and the in-repo
+// crates each one depends on (normal and build dependencies; dev-dependencies are not
+// part of an extraction), with a dependency order, providers first. This only proposes
+// targets: a crate that is neither declared a target nor a non-target is refused when
+// Charon's output is read. It runs `cargo metadata --no-deps --offline` in the copy, so
+// the answer is for the patched workspace Charon will build, and a workspace cargo
+// cannot read is reported with cargo's own first error lines.
+function listCrates(flags) {
+  const out = path.resolve(flags.out);
+  const { manifest } = preparedManifest(out);
+  const release = releaseTools(path.resolve(manifest.projectRoot, flags.release));
+  const homes = homesOf(process.env);
+  for (const name of ['HOME', 'RUSTUP_HOME', 'CARGO_HOME']) {
+    if (typeof homes[name] !== 'string' || !path.isAbsolute(homes[name])) refuse('invalid-input', `${name} must be an absolute path`);
+  }
+  const env = { HOME: homes.HOME, RUSTUP_HOME: homes.RUSTUP_HOME, CARGO_HOME: homes.CARGO_HOME, PATH: `${path.join(homes.CARGO_HOME, 'bin')}:/usr/bin:/bin`, RUSTUP_TOOLCHAIN: release.tools.rustToolchain.channel };
+  const tree = fs.realpathSync(manifest.tree);
+  const run = spawnSync('cargo', ['metadata', '--no-deps', '--offline', '--format-version', '1'], { env, cwd: tree, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  if (run.status !== 0) {
+    const lines = `${run.stderr ?? ''}`.split('\n').map((line) => line.trim()).filter((line) => line !== '').slice(0, 6);
+    refuse('tool-failed', `cargo cannot read the workspace of the extraction copy${lines.length > 0 ? `: ${lines.join(' | ')}` : ''}`, { reasons: lines });
+  }
+  let metadata;
+  try {
+    metadata = JSON.parse(run.stdout);
+  } catch {
+    refuse('tool-failed', 'cargo metadata did not return JSON');
+  }
+  const rows = metadata.packages.map((item) => {
+    const dir = path.dirname(fs.realpathSync(item.manifest_path));
+    const library = item.targets.find((target) => target.kind.some((kind) => ['lib', 'rlib', 'dylib', 'cdylib', 'staticlib'].includes(kind)));
+    return { package: item.name, crate: library ? library.name.replace(/-/g, '_') : null, dir: inside(dir, tree) ? (path.relative(tree, dir).split(path.sep).join('/') || '.') : null, abs: dir, library: library !== undefined, dependencies: item.dependencies };
+  }).filter((row) => row.dir !== null).sort((a, b) => a.dir.localeCompare(b.dir));
+  const byDir = new Map(rows.map((row) => [row.abs, row]));
+  const crates = rows.map((row) => ({
+    package: row.package,
+    crate: row.crate,
+    dir: row.dir,
+    library: row.library,
+    deps: [...new Set(row.dependencies.filter((dependency) => dependency.kind !== 'dev' && dependency.path)
+      .map((dependency) => byDir.get(fs.existsSync(dependency.path) ? fs.realpathSync(dependency.path) : dependency.path))
+      .filter((provider) => provider !== undefined && provider.library).map((provider) => provider.crate))].sort(),
+  }));
+  const order = [];
+  const visit = (row, seen = new Set()) => {
+    if (order.includes(row.crate) || seen.has(row.crate)) return;
+    seen.add(row.crate);
+    for (const dependency of row.deps) visit(crates.find((candidate) => candidate.crate === dependency), seen);
+    order.push(row.crate);
+  };
+  crates.filter((row) => row.library).forEach((row) => visit(row));
+  return { message: `${crates.length} in-repo package(s), ${order.length} with a library`, tree, workspaceRoot: path.relative(tree, metadata.workspace_root).split(path.sep).join('/') || '.', crates, order };
+}
+
 // A multi-crate attempt: every crate gets an ordinary attempt of its own in
 // OUT/units/<crate> (so a failing crate ends only its own chain), all bound to
 // the same prepared manifest, and OUT/attempt.json lists them with their hashes.
@@ -2083,6 +2146,7 @@ const COMMANDS = {
   attempt: { required: ['out', 'spec'], run: attempt },
   run: { required: ['out', 'step'], optional: ['crate'], run },
   'attempt-status': { required: ['out'], optional: ['crate'], run: attemptStatus },
+  crates: { required: ['out', 'release'], run: listCrates },
 };
 
 function parseFlags(argv, required, optional = []) {
