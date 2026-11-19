@@ -795,6 +795,30 @@ describe('the permissions page', () => {
     assert.ok(!/decision = "(prompt|forbidden)"/.test(text));
   });
 
+  it('prints exactly the hook entry the script installs, with the scripts folder as a placeholder', () => {
+    const hook = lib.buildCatalog({ repo: 'OWNER/REPO' }).steps.find((s) => s.id === 'git-push').hook;
+    const expected = structuredClone(hook.entry);
+    expected.hooks[0].command = expected.hooks[0].command.replace(hook.script, '<FVS scripts folder>/fvs-auto-push-gate.mjs');
+    assert.deepEqual(JSON.parse(block(page(), 'Push gate hook', 'json')), { hooks: { PreToolUse: [expected] } });
+  });
+
+  it('keeps the push gate honest: branch protection stays recommended, and no push rule is offered', () => {
+    const text = page().replace(/\s+/g, ' ');
+    assert.match(text, /Branch protection on the project fork is still recommended/);
+    assert.match(text, /There is no hook for Codex\. A push asks on Codex/);
+    assert.match(text, /A hook that answers "allow" skips the prompt, but it does not override your own `deny` or `ask` rules/);
+    assert.ok(!/Bash\(git push/.test(page()), 'the page shows no push rule');
+  });
+
+  it('names the Codex source and the tested version, qualifies "harmless", and separates tested from not observed', () => {
+    const text = page();
+    assert.match(text, /\(https:\/\/developers\.openai\.com\/codex\/rules\)/);
+    assert.match(text, /codex-cli 0\.166\.0/);
+    assert.match(text, /\n## What was tested\n[\s\S]*Unit tests[\s\S]*codex execpolicy check[\s\S]*One live probe: the message step[\s\S]*Not observed:/);
+    assert.match(text.replace(/\s+/g, ' '), /Lake evaluates your project's own lakefile and can write build caches, and git runs any hook you configured/);
+    assert.doesNotMatch(text, /harmless instance/);
+  });
+
   it('every probe command in the page is one the plan prints', () => {
     const catalog = lib.buildCatalog({ repo: 'OWNER/REPO' });
     const commands = catalog.steps.flatMap((s) => (s.probes ?? []).filter((p) => p.command).map((p) => p.command));
