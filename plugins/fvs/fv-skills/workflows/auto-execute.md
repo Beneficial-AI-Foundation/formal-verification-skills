@@ -56,8 +56,10 @@ merge and the proof pull request").
 
 With several target crates the build check still builds the whole project once and writes one receipt for a
 head. It also gets the list of axioms the statements may rest on beyond Lean's three standard ones. The
-engine writes that list for the commit it checks, and the check refuses any statement that rests on an axiom
-the list does not name, naming the statement and the axiom:
+engine writes that list for the commit it checks, with one section for each target crate: the crate's spec
+files and the axioms its statements may rest on. The check holds each statement to the section of the crate
+whose spec file holds it, and refuses a statement that rests on an axiom its section does not name, or that
+is in a spec file no section lists, naming the statement and the axiom:
 
 ```bash
 node "$AUTO" allowed-axioms --project-root . --commit <SHA>
@@ -69,7 +71,12 @@ The state reports `done` only when the receipt was made with the list the engine
 today and also holds for every target crate. A new or changed externals record, or a changed file, changes
 the list: write it and run the check again. `allowed-axioms` prints each axiom it leaves out and why.
 
-An axiom is on the list only when its origin shows it is the owner's to assume:
+A crate's section holds the axioms its own published Lean declares and the owner may assume, those of every
+crate it depends on (a crate it is stitched to, or one its code calls, followed to the end), and the Trusted
+axioms. So a statement of a crate that others use never rests on an assumption made only for a crate that
+uses it.
+
+An axiom is in a section only when its origin shows it is the owner's to assume:
 
 - the extraction declares it for an item of another library or of a crate the owner does not verify. It
   only says that the item exists;
