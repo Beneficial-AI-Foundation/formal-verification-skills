@@ -178,6 +178,55 @@ describe('a push of one branch', () => {
   });
 });
 
+describe('the record that init writes', () => {
+  const HELPER = path.join(ROOT, 'scripts', 'fvs-auto-permissions.mjs');
+
+  it('is what the push command uses: write-destination, then one real push, with no hand-made record', () => {
+    const w = world({ skipRecord: true });
+    const helper = (...extra) => {
+      const out = spawnSync(process.execPath, [HELPER, 'write-destination', '--project-root', w.work, '--repo', 'Acme/proj', ...extra], { encoding: 'utf8', env: w.env });
+      return { status: out.status, json: JSON.parse(out.stdout) };
+    };
+    const program = () => spawnSync(process.execPath, [SCRIPT, '--branch', 'fvs/t'], { cwd: w.work, encoding: 'utf8', env: w.env });
+    // Before init has recorded anything, the command refuses and nothing lands anywhere.
+    const before = program();
+    assert.equal(before.status, 1);
+    assert.equal(JSON.parse(before.stdout).code, 'no-destination-recorded');
+    nothingLanded(w);
+    const preview = helper();
+    assert.equal(preview.json.code, 'confirmation-required');
+    nothingLanded(w);
+    const written = helper('--confirm', preview.json.digest);
+    assert.equal(written.json.code, 'written');
+    const expected = lib.destinationRecord({ projectRoot: w.root, commonDir: w.commonDir, url: URL_RECORDED, host: 'github.com', repo: 'Acme/proj', prefixes: ['fvs'] });
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(w.commonDir, lib.RECORD_NAME), 'utf8')), expected);
+    const tip = w.git('rev-parse', 'refs/heads/fvs/t');
+    const pushed = program();
+    assert.equal(pushed.status, 0, pushed.stdout + pushed.stderr);
+    const json = JSON.parse(pushed.stdout);
+    assert.equal(json.code, 'pushed');
+    assert.equal(json.result, 'created');
+    assert.equal(json.newRemoteId, tip);
+    assert.deepEqual(w.refs(w.right), ['refs/heads/fvs/t']);
+    assert.equal(git(w.dir, w.env, '-C', w.right, 'rev-parse', 'refs/heads/fvs/t'), tip);
+    assert.deepEqual(w.refs(w.wrong), [], 'nothing reached the wrong repository');
+  });
+
+  it('is written from the main checkout and found from a linked worktree, where a worker runs', () => {
+    const w = world({ skipRecord: true });
+    const helper = (...extra) => spawnSync(process.execPath, [HELPER, 'write-destination', '--project-root', w.work, '--repo', 'Acme/proj', ...extra], { encoding: 'utf8', env: w.env });
+    const preview = JSON.parse(helper().stdout);
+    assert.equal(JSON.parse(helper('--confirm', preview.digest).stdout).code, 'written');
+    const linked = path.join(w.dir, 'linked');
+    w.git('worktree', 'add', '-q', linked, '-b', 'fvs/linked');
+    const out = spawnSync(process.execPath, [SCRIPT, '--branch', 'fvs/linked'], { cwd: linked, encoding: 'utf8', env: w.env });
+    assert.equal(out.status, 0, out.stdout + out.stderr);
+    assert.equal(JSON.parse(out.stdout).result, 'created');
+    assert.deepEqual(w.refs(w.right), ['refs/heads/fvs/linked']);
+    assert.deepEqual(w.refs(w.wrong), []);
+  });
+});
+
 describe('arguments: only --branch fvs/<name> is accepted', () => {
   const bad = [
     [[], 'no argument'], [['--branch'], 'no name'], [['--branch', ''], 'empty name'], [['--branch', 'fvs/t', '--force'], 'an extra option'],
