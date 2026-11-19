@@ -2,7 +2,7 @@
 // Build check: build one commit of a Lean project in a fresh clean copy and report
 // what the build proves.
 //
-//   node fvs-build-check.mjs --project-root R --commit SHA
+//   node fvs-build-check.mjs --project-root R --commit SHA [--spec-base SHA]
 //        [--packages DIR] [--receipt-dir DIR] [--workdir DIR] [--keep] [--timeout SECONDS]
 //
 // The copy holds exactly the tracked files of the commit, never the author's working
@@ -12,13 +12,23 @@
 // dependency that Lake would rebuild (a Mathlib built for another revision, a missing
 // package) stops the check before any build starts.
 //
+// Before any build, two guards run on the commit's files. The spec guard compares the commit with the
+// merged spec (the spec merge commit the run state records, or --spec-base; they must agree): every
+// recalled statement must be the same text, the lakefile, the manifest, Specs/Defs, Trusted and
+// Extraction must be unchanged apart from comments, docstrings and axiom guards, nothing may add
+// `sorry`, `admit`, `native_decide`, `bv_decide` or an axiom outside Trusted/, and a new Trusted file
+// is allowed only for axioms tied to an externals record the owner accepted. The glob guard refuses
+// a spec or proof file that no lean_lib glob of a default target reaches, because Lake would never
+// compile it. A commit that fails a guard gets a failed receipt and no build runs.
+//
 // The build is `lake build --wfail`: every warning, so every `sorry`, fails it. Each
 // spec file restates its statements with `recall` and pins what they rest on with
 // `#guard_msgs ... in #print axioms NAME`; the build enforces those guards, and this
 // script refuses a pass that rests on guards it cannot read or that say nothing.
 //
 // A verdict, accepted or not, is written as a receipt bound to the commit and its tree.
-// Output: one JSON object. Exit status 0 accepted, 1 build check failed, 2 refused.
+// Output: stdout holds one JSON object and nothing else; the report for people goes to stderr.
+// Exit status 0 accepted, 1 build check failed, 2 refused.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -56,8 +66,9 @@ function git(cwd, args, extra = {}) {
 // ---- reading Lean source -------------------------------------------------------------------
 
 // Comments are blanked and docstrings are replaced by a numbered marker, so the text that
-// is left can be matched without a commented-out guard counting. Line numbers are kept.
-export function stripLean(text) {
+// is left can be matched without a commented-out guard counting. Line numbers are kept. String
+// contents are blanked too, unless `keepStrings` is set: a comparison must see an edited string.
+export function stripLean(text, { keepStrings = false } = {}) {
   const docstrings = [];
   let code = '';
   let i = 0;
@@ -83,12 +94,12 @@ export function stripLean(text) {
     } else if (text.startsWith('--', i)) {
       while (i < text.length && text[i] !== '\n') i += 1;
     } else if (text.startsWith("'\"'", i)) {
-      code += "'?'";
+      code += keepStrings ? "'\"'" : "'?'";
       i += 3;
     } else if (text[i] === '"') {
       let j = i + 1;
       while (j < text.length && text[j] !== '"') j += text[j] === '\\' ? 2 : 1;
-      code += `""${newlines(text.slice(i, j + 1))}`;
+      code += keepStrings ? text.slice(i, j + 1) : `""${newlines(text.slice(i, j + 1))}`;
       i = j + 1;
     } else {
       code += text[i];
@@ -326,9 +337,348 @@ function acquireLock() {
   return refuse('build-check-running', 'the build check lock could not be taken');
 }
 
+// ---- what may change after the merged spec -------------------------------------------------
+//
+// The proofs are written after the owner merged the spec, so "accepted" must also mean that the
+// statements and what they rest on are the merged ones. Both trees are read from git objects, never
+// from a working tree. A change is judged on Lean text with comments, docstrings and axiom guards
+// taken out and whitespace collapsed to one space, so those edits are free and nothing else is.
+
+const lowerFolders = (rel) => rel.toLowerCase().split('/').slice(0, -1);
+const LAKE_FILES = /^(?:lakefile\.(?:toml|lean)|lake-manifest\.json)$/;
+const isTrusted = (rel) => lowerFolders(rel).includes('trusted');
+const isProofPath = (rel) => lowerFolders(rel).includes('proofs');
+
+// Frozen once the spec is merged. Folder names match in any case: the default layout is
+// formal/trusted and a real project may say Formal/Trusted.
+export function isFrozen(rel) {
+  const folders = lowerFolders(rel);
+  return LAKE_FILES.test(rel) || folders.includes('trusted') || folders.includes('extraction')
+    || folders.some((name, i) => name === 'specs' && folders[i + 1] === 'defs');
+}
+
+const DECLARATION = /(?:^|\s)(?:theorem|lemma|def|abbrev|axiom|instance|opaque|structure|inductive|class|recall|notation|macro|syntax)\s+([^\s(\[{:]+)/g;
+// The declaration a position falls in, so a message can name it. Null before the first one.
+const declarationNear = (code, index) => [...code.slice(0, index + 1).matchAll(DECLARATION)].at(-1)?.[1] ?? null;
+
+export function normalizeLean(text) {
+  return stripLean(text, { keepStrings: true }).code
+    .replace(/\/--#\d+-\//g, ' ')
+    .replace(/#guard_msgs\s*(?:\([^)]*\))?\s*in\s+#print\s+axioms\s+\S+/g, ' ')
+    .replace(/#print\s+axioms\s+\S+/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+}
+
+// Each `recall` statement of a spec file as its text, comments gone and whitespace collapsed. A
+// statement runs to the next line that starts in column 0.
+export function recalledStatements(text) {
+  const { code } = stripLean(text, { keepStrings: true });
+  const statements = new Map();
+  for (const match of code.matchAll(/^[ \t]*recall\s+([^\s(\[{:]+)/gm)) {
+    const ending = /\n(?=\S)/g;
+    ending.lastIndex = match.index + match[0].length;
+    const stop = ending.exec(code);
+    statements.set(match[1], code.slice(match.index, stop ? stop.index : code.length).replace(/\/--#\d+-\//g, ' ').replace(/\s+/g, ' ').trim());
+  }
+  return statements;
+}
+
+// Where two texts first differ, as a short piece of each.
+function firstDifference(was, now) {
+  let at = 0;
+  while (at < was.length && at < now.length && was[at] === now[at]) at += 1;
+  const start = Math.max(0, at - 30);
+  return { index: at, was: was.slice(start, at + 50), now: now.slice(start, at + 50) };
+}
+
+const fileEntry = (blob, read) => { let text; return { blob, text: () => (text ??= read().toString('utf8')) }; };
+// A tree held in memory, for a caller that has no repository to read.
+export const memoryTree = (files) => new Map(Object.entries(files).map(([rel, text]) => [rel, fileEntry(sha256(text), () => Buffer.from(text))]));
+
+function gitBlob(top, blob) {
+  const run = spawnSync('git', ['--no-optional-locks', '-C', top, 'cat-file', 'blob', blob], { env: gitEnvironment(), maxBuffer: 256 * 1024 * 1024 });
+  if (run.status !== 0) refuse('commit-unreadable', `cannot read the file ${blob}`);
+  return run.stdout;
+}
+
+const LAKEFILE_AT = /(?:^|\/)lakefile\.(?:toml|lean)$/;
+
+// Files below a folder with a lakefile of its own belong to another Lake project, not to this one.
+function withoutNested(tree) {
+  const folders = [...tree.keys()].filter((rel) => rel.includes('/') && LAKEFILE_AT.test(rel)).map((rel) => rel.slice(0, rel.lastIndexOf('/') + 1));
+  return new Map([...tree].filter(([rel]) => !folders.some((folder) => rel.startsWith(folder))));
+}
+
+// The Lean sources, lakefiles and frozen files of the project at `prefix` in one commit.
+export function gitTree(top, commit, prefix) {
+  const listing = git(top, ['ls-tree', '-r', '-z', '--full-tree', commit, ...(prefix ? ['--', `${prefix}/`] : [])]);
+  if (listing === null) refuse('commit-unreadable', `cannot list the files of ${commit}`);
+  const tree = new Map();
+  for (const line of listing.split('\0').filter(Boolean)) {
+    const tab = line.indexOf('\t');
+    const [, type, blob] = line.slice(0, tab).split(' ');
+    const name = line.slice(tab + 1);
+    const rel = prefix ? name.slice(prefix.length + 1) : name;
+    if (type === 'blob' && (rel.endsWith('.lean') || isFrozen(rel) || LAKEFILE_AT.test(rel))) tree.set(rel, fileEntry(blob, () => gitBlob(top, blob)));
+  }
+  return tree;
+}
+
+const hasStatements = (text) => readSpecSource(text).statements.length > 0;
+
+// What `sorry`, `admit`, a native check or an axiom outside Trusted/ would add. Counted on code
+// alone, so a mention in a comment or a string does not count.
+const FORBIDDEN = [['sorry', /\bsorry\b/g], ['admit', /\badmit\b/g], ['native_decide', /\bnative_decide\b/g], ['bv_decide', /\bbv_decide\b/g],
+  ['decide +native', /\bdecide\s*\+\s*native\b/g], ['axiom', /\baxiom\b/g]];
+
+function forbiddenAdded(rel, was, now, problems) {
+  const before = was === null ? '' : stripLean(was).code;
+  const after = stripLean(now).code;
+  for (const [token, pattern] of FORBIDDEN) {
+    if (token === 'axiom' && isTrusted(rel)) continue;
+    const had = [...before.matchAll(pattern)].length;
+    const found = [...after.matchAll(pattern)];
+    if (found.length > had) {
+      const named = token === 'axiom' ? /^axiom\s+([^\s(\[{:]+)/.exec(after.slice(found[had].index))?.[1] ?? null : declarationNear(after, found[had].index);
+      problems.push({ kind: 'forbidden-added', file: rel, statement: named, token, detail: `${token} was added (${had} before, ${found.length} now)${token === 'axiom' ? '; an axiom belongs in Trusted/ and needs an accepted externals record' : ''}` });
+    }
+  }
+}
+
+const AXIOM = /(?:\/--#(\d+)-\/\s*)?(?:@\[[^\]]*\]\s*)*(?:(?:private|protected|noncomputable|unsafe)\s+)*\baxiom\s+([^\s(\[{:]+)/g;
+const EXTRA_COMMAND = /(?:^|\s)(?:@\[[^\]]*\]\s*)*(?:(?:private|protected|noncomputable|unsafe|partial|local|scoped)\s+)*(def|theorem|lemma|instance|macro_rules|macro|syntax|elab|notation|infixl|infixr|infix|prefix|postfix|attribute|set_option|opaque|abbrev|structure|inductive|class|example|initialize|run_cmd|#[a-z_]+)(?=\s)/;
+
+// A new Trusted file is allowed only for axioms the owner accepted: each axiom's docstring names, in
+// backticks, the id of an externals record with status assumption-accepted, one axiom for each record.
+function trustedAddition(rel, text, records, used, problems, ties) {
+  const { code, docstrings } = stripLean(text);
+  const extra = EXTRA_COMMAND.exec(normalizeLean(text));
+  if (extra) problems.push({ kind: 'trusted-file-extra-code', file: rel, statement: null, detail: `a new Trusted file may hold only imports, namespaces and axioms, not \`${extra[1]}\`` });
+  const accepted = new Map((records ?? []).filter((record) => record?.status === 'assumption-accepted' && record.decision && typeof record.id === 'string').map((record) => [record.id, record]));
+  for (const match of code.matchAll(AXIOM)) {
+    const name = match[2];
+    const doc = match[1] === undefined ? '' : docstrings[Number(match[1])];
+    const cited = [...doc.matchAll(/`([^`\n]+)`/g)].map((m) => m[1].trim()).filter((id) => accepted.has(id));
+    const free = cited.find((id) => !used.has(id));
+    if (free) {
+      used.set(free, name);
+      ties.push({ file: rel, axiom: name, record: free });
+    } else {
+      const why = cited.length > 0 ? `the record ${cited[0]} is already tied to axiom ${used.get(cited[0])}`
+        : `its docstring names no externals record with status assumption-accepted${accepted.size === 0 ? ' (none is recorded)' : ''}`;
+      problems.push({ kind: 'trusted-axiom-untied', file: rel, statement: name, detail: `the new axiom ${name} is not tied to an accepted assumption: ${why}; name the record id in backticks in the axiom's docstring` });
+    }
+  }
+}
+
+function specChange(rel, was, now, problems) {
+  const before = recalledStatements(was);
+  const after = recalledStatements(now);
+  const found = problems.length;
+  for (const [name, text] of before) {
+    if (!after.has(name)) problems.push({ kind: 'statement-removed', file: rel, statement: name, detail: `the statement ${name} is no longer restated with recall` });
+    else if (after.get(name) !== text) {
+      const diff = firstDifference(text, after.get(name));
+      problems.push({ kind: 'statement-changed', file: rel, statement: name, detail: `the statement ${name} changed since the merged spec: was "…${diff.was}", now "…${diff.now}"` });
+    }
+  }
+  for (const name of after.keys()) {
+    if (!before.has(name)) problems.push({ kind: 'statement-added', file: rel, statement: name, detail: `the statement ${name} is not in the merged spec` });
+  }
+  if (problems.length === found) {
+    const [a, b] = [normalizeLean(was), normalizeLean(now)];
+    if (a !== b) {
+      const diff = firstDifference(a, b);
+      problems.push({ kind: 'spec-code-changed', file: rel, statement: declarationNear(b, diff.index), detail: `code outside the comments and guards changed since the merged spec: was "…${diff.was}", now "…${diff.now}"` });
+    }
+  }
+}
+
+function frozenChange(rel, was, now, problems) {
+  if (!rel.endsWith('.lean')) {
+    problems.push({ kind: 'frozen-file-changed', file: rel, statement: null, detail: 'this frozen file differs from the merged spec' });
+    return;
+  }
+  const [a, b] = [normalizeLean(was.text()), normalizeLean(now.text())];
+  if (a === b) return;
+  const diff = firstDifference(a, b);
+  problems.push({ kind: 'frozen-file-changed', file: rel, statement: declarationNear(b, diff.index), detail: `this frozen file changed beyond comments and guards since the merged spec: was "…${diff.was}", now "…${diff.now}"` });
+}
+
+// ---- Lake globs ----------------------------------------------------------------------------
+
+const noComment = (line) => {
+  let quoted = false;
+  for (let i = 0; i < line.length; i += 1) {
+    if (line[i] === '\\' && quoted) i += 1;
+    else if (line[i] === '"') quoted = !quoted;
+    else if (line[i] === '#' && !quoted) return line.slice(0, i);
+  }
+  return line;
+};
+const quotedStrings = (value) => [...value.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]);
+
+// The few lakefile.toml settings that decide which modules a bare `lake build` compiles.
+export function readLakefileToml(text) {
+  const lake = { srcDir: '.', defaultTargets: [], libs: [] };
+  let where = lake;
+  let open = null;
+  const set = (key, value) => {
+    const strings = quotedStrings(value);
+    const array = value.trim().startsWith('[');
+    if (where === lake && key === 'srcDir' && strings[0] !== undefined) lake.srcDir = strings[0];
+    else if (where === lake && key === 'defaultTargets') lake.defaultTargets = strings;
+    else if (where && where !== lake && ['roots', 'globs'].includes(key)) where[key] = array ? strings : strings.slice(0, 1);
+    else if (where && where !== lake && key === 'srcDir' && strings[0] !== undefined) where.srcDir = strings[0];
+  };
+  for (const raw of text.split('\n')) {
+    const line = noComment(raw);
+    if (open) {
+      open.value += ` ${line}`;
+      if ((open.value.match(/\[/g) ?? []).length <= (open.value.match(/\]/g) ?? []).length) { set(open.key, open.value); open = null; }
+      continue;
+    }
+    const table = /^\s*\[\[\s*([\w.-]+)\s*\]\]\s*$/.exec(line);
+    if (table) {
+      if (table[1] === 'lean_lib') { where = { name: null, roots: null, globs: null, srcDir: null }; lake.libs.push(where); } else where = null;
+      continue;
+    }
+    if (/^\s*\[[^[]/.test(line)) { where = null; continue; }
+    const pair = /^\s*([A-Za-z_][\w-]*)\s*=\s*(.*)$/.exec(line);
+    if (!pair) continue;
+    if (pair[1] === 'name' && where && where !== lake) { where.name = quotedStrings(pair[2])[0] ?? null; continue; }
+    if (pair[2].trim().startsWith('[') && (pair[2].match(/\[/g) ?? []).length > (pair[2].match(/\]/g) ?? []).length) open = { key: pair[1], value: pair[2] };
+    else set(pair[1], pair[2]);
+  }
+  return lake;
+}
+
+const globOf = (source) => {
+  const [, name, mark] = /^(.*?)(?:\.([+*]))?$/.exec(source);
+  const names = name.replaceAll(/[«»]/g, '');
+  return { source, matches: (module) => (mark === '+' ? module.startsWith(`${names}.`) : mark === '*' ? module === names || module.startsWith(`${names}.`) : module === names) };
+};
+
+const IMPORT = /^[ \t]*(?:(?:public|meta)[ \t]+)*import[ \t]+(?:all[ \t]+)?(\S+)/gm;
+
+// A spec or proof file whose module no lean_lib glob of a default target reaches is never built by a
+// bare `lake build`, though the build passes. Modules that a built module imports are built too.
+// A project with a lakefile.lean is not read here: the check for a missing .olean is the backstop.
+function globProblems(head, changed) {
+  const toml = head.get('lakefile.toml');
+  if (!toml || head.has('lakefile.lean')) return [];
+  const lake = readLakefileToml(toml.text());
+  // The folder a library's modules live in, with a trailing slash; empty for the project root.
+  const folderOf = (lib) => { const dir = path.posix.normalize(path.posix.join(lake.srcDir, lib.srcDir ?? '.')); return dir === '.' ? '' : `${dir}/`; };
+  const direct = lake.libs.filter((lib) => lib.name && lake.defaultTargets.includes(lib.name))
+    .map((lib) => ({ name: lib.name, folder: folderOf(lib), globs: (lib.globs ?? lib.roots ?? [lib.name]).map(globOf) }));
+  const sources = [...new Set(lake.libs.map(folderOf))];
+  const leanFilesHere = [...head.keys()].filter((rel) => rel.endsWith('.lean') && !LAKE_FILES.test(rel) && !rel.startsWith('.lake/'));
+  const moduleOf = (rel, folder) => (rel.startsWith(folder) ? rel.slice(folder.length, -'.lean'.length).replaceAll('/', '.') : null);
+  const covered = new Set(leanFilesHere.filter((rel) => direct.some((lib) => {
+    const module = moduleOf(rel, lib.folder);
+    return module !== null && lib.globs.some((glob) => glob.matches(module));
+  })));
+  const queue = [...covered];
+  while (queue.length > 0) {
+    const rel = queue.pop();
+    for (const match of stripLean(head.get(rel).text()).code.matchAll(IMPORT)) {
+      const wanted = `${match[1].replaceAll(/[«»]/g, '').replaceAll('.', '/')}.lean`;
+      for (const dir of sources) {
+        const found = `${dir}${wanted}`;
+        if (head.has(found) && !covered.has(found)) { covered.add(found); queue.push(found); }
+      }
+    }
+  }
+  const problems = [];
+  for (const rel of leanFilesHere.sort()) {
+    if (covered.has(rel) || !(changed.has(rel) || isProofPath(rel) || hasStatements(head.get(rel).text()))) continue;
+    const module = sources.map((folder) => moduleOf(rel, folder)).find((name) => name !== null) ?? rel;
+    const reach = direct.length === 0 ? 'no lean_lib is a default target (defaultTargets), so a bare lake build builds nothing'
+      : `the globs of the default targets are ${direct.map((lib) => `${lib.name}: ${lib.globs.map((glob) => glob.source).join(', ')}`).join('; ')}`;
+    problems.push({ kind: 'not-covered-by-lean-lib', file: rel, statement: null, detail: `the module ${module} is not covered by any lean_lib glob that a bare lake build runs, so Lake would not compile this file; ${reach}` });
+  }
+  return problems;
+}
+
+// What the head tree may differ in from the merged spec tree, and whether every spec and proof file is
+// built. `base` is null when there is no merged spec to compare with; the glob check still runs.
+// `externals` returns the records of the run state (or null), and is read only when a new Trusted
+// file needs them.
+export function checkIntegrity({ base: baseTree, head: headTree, externals = () => null }) {
+  const [base, head] = [baseTree && withoutNested(baseTree), withoutNested(headTree)];
+  const problems = [];
+  const ties = [];
+  const used = new Map();
+  const changed = new Set();
+  let records;
+  const recordsOnce = () => (records === undefined ? (records = externals()) : records);
+  if (base) {
+    for (const rel of [...new Set([...base.keys(), ...head.keys()])].sort()) {
+      const [was, now] = [base.get(rel), head.get(rel)];
+      if (was && now && was.blob === now.blob) continue;
+      const frozen = isFrozen(rel);
+      const lean = rel.endsWith('.lean');
+      if (!now) {
+        if (frozen) problems.push({ kind: 'frozen-file-removed', file: rel, statement: null, detail: 'this frozen file was removed since the merged spec' });
+        else if (lean && hasStatements(was.text())) problems.push({ kind: 'spec-file-removed', file: rel, statement: null, detail: 'this spec file was removed since the merged spec' });
+        continue;
+      }
+      if (lean) changed.add(rel);
+      if (!was) {
+        if (frozen && !(lean && isTrusted(rel))) problems.push({ kind: 'frozen-file-added', file: rel, statement: null, detail: 'a file was added under a frozen path (the lakefile, Defs, Trusted or Extraction) after the merged spec' });
+        else if (lean && !frozen && hasStatements(now.text())) problems.push({ kind: 'spec-file-added', file: rel, statement: null, detail: 'this spec file is not in the merged spec' });
+        else if (frozen) trustedAddition(rel, now.text(), recordsOnce(), used, problems, ties);
+        if (lean) forbiddenAdded(rel, null, now.text(), problems);
+        continue;
+      }
+      if (frozen) frozenChange(rel, was, now, problems);
+      else if (lean && (hasStatements(was.text()) || hasStatements(now.text()))) specChange(rel, was.text(), now.text(), problems);
+      if (lean) forbiddenAdded(rel, was.text(), now.text(), problems);
+    }
+  }
+  problems.push(...globProblems(head, changed));
+  return { problems, ties };
+}
+
+const describeProblem = (problem) => `${problem.file}${problem.statement ? `: ${problem.statement}` : ''}: ${problem.detail}`;
+
+// ---- the run state -------------------------------------------------------------------------
+
+function readRunRecord(root, name) {
+  const file = path.join(root, '.formalising', 'auto-fv', name);
+  if (!fs.existsSync(file)) return null;
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return refuse('run-state-unreadable', `${file} is not valid JSON; fix it or move it aside, then run the build check again`); }
+}
+
+// The merge commit of the last merged spec pull request the run state records, or null.
+export const recordedSpecMerge = (specs) => (specs?.prs ?? []).filter((pr) => pr?.kind === 'spec' && pr.merged === true && typeof pr.mergeCommit === 'string').at(-1)?.mergeCommit ?? null;
+
+// The commit whose spec the proofs must keep: the recorded spec merge, and `--spec-base` only when it
+// is the same commit. A caller cannot pick a base that suits it, and the base must be in the history
+// of the commit that is checked.
+function resolveSpecBase({ top, root, full, specBase }) {
+  const resolve = (value, label) => {
+    const found = git(top, ['rev-parse', '--verify', '--quiet', `${value}^{commit}`]);
+    if (found === null) refuse('spec-base-not-found', `${label} ${value} is not a commit of this repository: fetch the merged spec branch, then run the build check again`);
+    return found;
+  };
+  const recorded = recordedSpecMerge(readRunRecord(root, 'specs.json'));
+  const recordedFull = recorded === null ? null : resolve(recorded, 'the recorded spec merge commit');
+  const given = specBase === undefined ? null : resolve(specBase, '--spec-base');
+  if (given !== null && recordedFull !== null && given !== recordedFull) {
+    refuse('spec-base-mismatch', `--spec-base ${given.slice(0, 12)} is not the spec merge commit the run state records (${recordedFull.slice(0, 12)}); the statements are held to the merged spec only`);
+  }
+  const chosen = recordedFull ?? given;
+  if (chosen !== null && git(top, ['merge-base', '--is-ancestor', chosen, full]) === null) {
+    refuse('spec-base-not-ancestor', `the spec merge commit ${chosen.slice(0, 12)} is not in the history of ${full.slice(0, 12)}; merge or rebase the proof branch onto the merged spec, then run the build check again`);
+  }
+  return chosen;
+}
+
 // ---- the check -----------------------------------------------------------------------------
 
-export function buildCheck({ projectRoot, commit, packages, receiptDir, workdir, keep = false, timeoutSeconds = 7200 }) {
+export function buildCheck({ projectRoot, commit, specBase, packages, receiptDir, workdir, keep = false, timeoutSeconds = 7200 }) {
   if (!projectRoot) refuse('usage', '--project-root is required');
   if (!SHA_ARGUMENT.test(commit ?? '')) refuse('usage', '--commit must be a commit hash of 7 to 64 hexadecimal digits');
   const root = fs.existsSync(projectRoot) ? fs.realpathSync(projectRoot) : refuse('usage', `no such project root: ${projectRoot}`);
@@ -338,6 +688,8 @@ export function buildCheck({ projectRoot, commit, packages, receiptDir, workdir,
   const full = git(top, ['rev-parse', '--verify', '--quiet', `${commit}^{commit}`]);
   const tree = full === null ? null : git(top, ['rev-parse', `${full}^{tree}`]);
   if (full === null || tree === null) refuse('commit-not-found', `${commit} is not a commit of this repository`);
+  if (specBase !== undefined && !SHA_ARGUMENT.test(specBase)) refuse('usage', '--spec-base must be a commit hash of 7 to 64 hexadecimal digits');
+  const specBaseFull = resolveSpecBase({ top, root, full, specBase });
 
   const receipts = path.resolve(receiptDir ?? path.join(root, '.formalising', 'auto-fv', 'build-check'));
   const release = acquireLock();
@@ -350,6 +702,27 @@ export function buildCheck({ projectRoot, commit, packages, receiptDir, workdir,
     const below = fs.existsSync(start) ? leanProjectIn(start) : null;
     if (below === null) refuse('no-lean-project', `the commit has no single Lean project (a lakefile) at ${sub || '.'} or one folder below it`);
     const leanRoot = path.join(start, below);
+
+    // Before any build: the statements and what they rest on are the merged spec's, and every spec and
+    // proof file is one Lake builds. A commit that fails this gets a failed receipt, so an earlier
+    // receipt for the same commit never stands in for it.
+    // The project's folder in the repository, with `/` separators; empty when it is the repository root.
+    const prefix = path.join(sub, below).split(path.sep).filter((part) => part && part !== '.').join('/');
+    const integrity = checkIntegrity({
+      base: specBaseFull === null ? null : gitTree(top, specBaseFull, prefix),
+      head: gitTree(top, full, prefix),
+      externals: () => { const records = readRunRecord(root, 'externals.json')?.records; return Array.isArray(records) ? records : null; },
+    });
+    const integrityRecord = { specBase: specBaseFull, compared: specBaseFull !== null, ok: integrity.problems.length === 0, problems: integrity.problems, ties: integrity.ties };
+    if (!integrityRecord.ok) {
+      const reason = `${describeProblem(integrity.problems[0])}${integrity.problems.length > 1 ? ` (and ${integrity.problems.length - 1} more)` : ''}`;
+      return finish(receipts, full, {
+        schema: 1, kind: 'fvs-build-check', accepted: false, label: labelFailed(reason), commit: full, tree,
+        leanRoot: path.join(sub, below) || '.', toolchain: toolchainOf(leanRoot), lake: null, packages: null, build: null,
+        specFiles: [], flags: [], warnings: [], specBase: specBaseFull, integrity: integrityRecord, checkedAt: new Date().toISOString(),
+      });
+    }
+
     const manifest = readManifest(leanRoot);
     const source = packages ? path.resolve(packages) : path.join(root, below, '.lake', 'packages');
     const revisions = manifest.length === 0 ? {} : checkPackages({ packages: manifest, source, cleanRoot, leanRoot });
@@ -413,23 +786,37 @@ export function buildCheck({ projectRoot, commit, packages, receiptDir, workdir,
     const label = accepted ? LABEL_ACCEPTED : labelFailed(reason);
     const receipt = {
       schema: 1, kind: 'fvs-build-check', accepted, label, commit: full, tree,
-      leanRoot: path.join(sub, below) || '.', toolchain: (fs.existsSync(path.join(leanRoot, 'lean-toolchain')) ? fs.readFileSync(path.join(leanRoot, 'lean-toolchain'), 'utf8').trim() : null),
+      leanRoot: path.join(sub, below) || '.', toolchain: toolchainOf(leanRoot),
       lake: lakeVersion, packages: { source, copy, revisions },
       build: { argv: build.argv, exitCode: build.status, seconds, log: logFile, logSha256: sha256(logBytes) },
-      specFiles, flags, warnings, checkedAt: new Date().toISOString(),
+      specFiles, flags, warnings, specBase: specBaseFull, integrity: integrityRecord, checkedAt: new Date().toISOString(),
     };
-    const receiptPath = path.join(receipts, `${full}.json`);
-    fs.writeFileSync(`${receiptPath}.tmp`, `${JSON.stringify(receipt, null, 2)}\n`);
-    fs.renameSync(`${receiptPath}.tmp`, receiptPath);
-    return { ok: true, code: accepted ? 'accepted' : 'failed', ...receipt, receipt: receiptPath, report: reportLines(receipt) };
+    return finish(receipts, full, receipt);
   } finally {
     release();
     if (!keep) fs.rmSync(work, { recursive: true, force: true });
   }
 }
 
+const toolchainOf = (leanRoot) => (fs.existsSync(path.join(leanRoot, 'lean-toolchain')) ? fs.readFileSync(path.join(leanRoot, 'lean-toolchain'), 'utf8').trim() : null);
+
+// Writes the receipt, bound to the commit, and returns the result. A receipt is written for every
+// verdict, so a later verdict for the same commit replaces an earlier one.
+function finish(receipts, full, receipt) {
+  fs.mkdirSync(receipts, { recursive: true });
+  const receiptPath = path.join(receipts, `${full}.json`);
+  fs.writeFileSync(`${receiptPath}.tmp`, `${JSON.stringify(receipt, null, 2)}\n`);
+  fs.renameSync(`${receiptPath}.tmp`, receiptPath);
+  return { ok: true, code: receipt.accepted ? 'accepted' : 'failed', ...receipt, receipt: receiptPath, report: reportLines(receipt) };
+}
+
 function reportLines(receipt) {
+  const { integrity } = receipt;
   const lines = [receipt.label, `commit ${receipt.commit}`, `tree ${receipt.tree}`, ...receipt.warnings.map((warning) => `warning: ${warning}`)];
+  lines.push(integrity.compared ? `spec base ${integrity.specBase}: statements, frozen paths and added code compared with the merged spec`
+    : 'spec base: none given or recorded, so the statements were not compared with a merged spec');
+  for (const problem of integrity.problems) lines.push(`not accepted: ${problem.kind}: ${describeProblem(problem)}`);
+  for (const tie of integrity.ties) lines.push(`accepted assumption: axiom ${tie.axiom} (${tie.file}) is tied to externals record ${tie.record}`);
   for (const file of receipt.specFiles) {
     lines.push(`${file.path}: ${file.status}${file.reason ? ` (${file.reason})` : ''}`);
     for (const s of file.statements) {
@@ -443,7 +830,7 @@ function reportLines(receipt) {
 
 function parseArguments(argv) {
   const options = {};
-  const valued = { '--project-root': 'projectRoot', '--commit': 'commit', '--packages': 'packages', '--receipt-dir': 'receiptDir', '--workdir': 'workdir', '--timeout': 'timeoutSeconds' };
+  const valued = { '--project-root': 'projectRoot', '--commit': 'commit', '--spec-base': 'specBase', '--packages': 'packages', '--receipt-dir': 'receiptDir', '--workdir': 'workdir', '--timeout': 'timeoutSeconds' };
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--keep') options.keep = true;
     else if (valued[argv[i]] && i + 1 < argv.length) { options[valued[argv[i]]] = argv[i + 1]; i += 1; } else refuse('usage', `unknown or incomplete argument ${argv[i]}`);
@@ -457,12 +844,15 @@ function parseArguments(argv) {
 
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const result = buildCheck(parseArguments(process.argv.slice(2)));
+    const { report, ...result } = buildCheck(parseArguments(process.argv.slice(2)));
+    // stdout holds the JSON result and nothing else, so a caller can parse it; the report is for people.
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    process.stderr.write(`${report.join('\n')}\n`);
     process.exitCode = result.accepted ? 0 : 1;
   } catch (error) {
     if (!(error instanceof Refusal)) throw error;
     process.stdout.write(`${JSON.stringify({ ok: false, code: error.code, message: error.message }, null, 2)}\n`);
+    process.stderr.write(`refused (${error.code}): ${error.message}\n`);
     process.exitCode = 2;
   }
 }
