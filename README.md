@@ -128,6 +128,11 @@ It lists the tools you install yourself with the command that checks each one, e
 compatibility verdict and its next step, and gives the tested matrix. Today only the confined
 probe-aeneas inventory on the listed tuples and platforms has evidence behind it.
 
+Approval prompts that nobody answers stall a run: one unanswered prompt is aborted after about 30 minutes.
+`/fvs:auto-init` checks which steps of the run prompt on your machine and, only after your yes, writes a
+minimal allowlist for them. The [permissions page](fv-skills/references/auto-permissions.md) lists the rules for
+Claude Code and Codex, why each exists, what still asks on purpose, and what to do when a step keeps asking.
+
 FVS asks for runtime, model and effort choices at each relevant stage. Requested settings,
 resolved settings and observed settings are recorded separately; unavailable observations are stated
 explicitly. Use `/fvs:configure` to save defaults. See [model profiles](fv-skills/references/model-profiles.md)

@@ -4,7 +4,7 @@ How to get from a clean host to a recorded auto-init state when you are new to f
 verification: what you install yourself, how to check each tool, what each compatibility verdict means
 and what the single next step is, how to keep `.formalising/` out of git, and which operation, tuple
 and platforms have a recorded run. It also covers running the auto track under Agent Orchestrator and
-Codex: permission and command habits that keep a run from stalling, worktrees and per-worktree installs,
+Codex: permission and command habits that keep a run from stalling (with a link to the permissions page), worktrees and per-worktree installs,
 the project config and the model rule, Codex trust, which steps only the owner runs, a `/goal` wording
 that accepts an owner gate as done, rule changes reaching live sessions, and how reports link
 artifacts. It also says what the five probes add, which stages need them (none is needed for setup or
@@ -166,9 +166,12 @@ Known issues seen in rc1 and still present in rc2, untested in v2:
 
 Controller permissions in auto mode:
 - Before the run, the owner approves the controller's commands in the controller's own session. These are
-  the FVS driver/CLI, `ao`, `git` and the pinned Lean tools. FVS changes no permission settings.
-  `auto-seats.md` says which seat (owner, orchestrator or worker) runs each operation. "Permissions and
-  command rules" below gives the general habits for every session.
+  the FVS driver/CLI, `ao`, `git` and the pinned Lean tools. `/fvs:auto-init` checks which steps of the run
+  prompt on this machine and, only after the owner's yes, writes a minimal project allowlist for those
+  steps; it writes no other permission setting, and never allows a GitHub comment, review or merge, a
+  push to an upstream or a force push. `auto-permissions.md` has the rules, what still prompts and how to
+  fix a step that keeps prompting. `auto-seats.md` says which seat (owner, orchestrator or worker) runs
+  each operation. "Permissions and command rules" below gives the general habits for every session.
 - Run one simple, auditable command per step: one driver or CLI operation with its `--input` file, one
   `ao` call or one `git` call. Compound commands (`&&`, `;`, pipes, `cd` plus a command, subshells) can
   trigger a permission prompt, and an unattended prompt may be aborted.
@@ -417,9 +420,10 @@ your team agrees to share the rule.
 ## Permissions and command rules
 
 These habits apply to every session in a run: the owner's, the orchestrator's and each worker's. FVS
-changes no permission settings. The habits keep a run from stalling on a prompt nobody answers. The
-FVS-specific part, what the controller needs approved and how to treat a denied or aborted command, is
-in "Controller permissions in auto mode" above.
+writes a permission rule only after the owner has seen the exact rules and said yes (`/fvs:auto-init`;
+see [the permissions page](auto-permissions.md)); the habits below need no file. They keep a run from stalling on a prompt nobody
+answers. The FVS-specific part, what the controller needs approved and how to treat a denied or aborted
+command, is in "Controller permissions in auto mode" above.
 
 - **One simple command per call, for every worker.** No `;`, `&&`, `||`, pipes or subshells, and no `cd`
   followed by a command. Use `git -C <path> status` rather than changing directory first. Compound
