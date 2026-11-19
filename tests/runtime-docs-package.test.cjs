@@ -225,6 +225,7 @@ if (process.argv.includes('--package-fixture')) {
       'not a same-run resume', 'do not synthesize an after-event or delete the pending reservation',
       'its worker can never acknowledge', 'marker is not beside the packet file', 'only still pending is not this case',
       "approves the controller's commands in the controller's own session", "only after the owner's yes, writes a minimal project allowlist",
+      'it writes no other permission setting',
       'one simple, auditable command per step', 'an unattended prompt may be aborted',
       'reshape it to avoid review', 'denied before it started had no effect', 'is uncertain: the effect may have run',
       'never assume it did nothing', 'cannot promise that a host permission classifier allows any command',

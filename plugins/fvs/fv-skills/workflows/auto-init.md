@@ -253,14 +253,14 @@ grants publication, launches workers, resets budgets or reinterprets `nodeHours`
 An approval prompt that nobody answers is aborted after about 30 minutes and the session that asked
 stops; in one setup, waiting for approvals took most of the elapsed time. So, while the owner is
 present, check which steps of the run prompt on this machine, and offer a small allowlist for exactly
-those. `auto-permissions.md` has the steps, the rules, the reason for each rule, what still prompts on
-purpose and the troubleshooting notes. Run the check once: a project that already has a record is not
-checked again.
+those, and for a push a small hook. `auto-permissions.md` has the steps, the rules, the reason for each
+rule, the push gate hook, what still prompts on purpose, what was tested and the troubleshooting notes. Run
+the check once: a project that already has a record is not checked again.
 
 The check needs the repository the draft pull requests go to (the agreement's `draftPr.destination`, or the
 repository the owner named in Step 3: the project's own, never an upstream), the git remote that points at
-it (usually `origin`) and the branch namespace workers push under (default `fvs`; ask the owner once, and
-never `main`, `master` or a release name).
+it (usually `origin`), its host if it is not `github.com` (`--host`), and the branch namespace workers push
+under (default `fvs`; ask the owner once, and never `main`, `master` or a release name).
 
 ```bash
 PERM="$(dirname "$AUTO")/fvs-auto-permissions.mjs"
@@ -268,8 +268,9 @@ node "$PERM" plan --project-root . --repo "$DRAFT_REPO" --remote origin --branch
 ```
 
 - `record.present` true: print its `summary` for the report line, say nothing more, and go to Step 6.
-- `remote-mismatch`, `remote-missing` or `invalid-input`: the push probe never runs against a remote that
-  is not the project's own repository. Report the refusal, skip the check and go to Step 6.
+- `remote-mismatch`, `remote-ambiguous`, `remote-missing` or `invalid-input`: no probe runs against a remote
+  that is not the project's own repository, and every URL of the remote (all fetch and push URLs) must name
+  it. Report the refusal, skip the check and go to Step 6.
 
 Otherwise ask the owner whether to run the check or skip it. A skip is recorded with every step as
 `unknown` (below) so that a resume does not ask again.
@@ -278,7 +279,8 @@ Otherwise ask the owner whether to run the check or skip it. A skip is recorded 
 to approve them; please approve each one when it appears, that is what the check is for. None of them posts
 to GitHub or pushes anything. They send a message to a session that does not exist, write one scratch file
 under `.formalising/`, compile it (only when the project's dependencies are already downloaded), read pull
-requests, fetch, and do a dry-run push.
+requests, fetch, and do a dry-run push. Say also that "low-risk" is not "inert": Lake evaluates the
+project's own lakefile and can write build caches, and git runs any hook configured for a fetch or a push.
 
 Then run every probe of the `plan` output as its own plain call: one `Bash` call per command exactly as
 printed, with no `&&`, `;`, pipe, `cd` or wrapper, and the scratch file with the `Write` tool (its `path` and
@@ -301,28 +303,57 @@ with one entry for each probed step (`"runtime":"codex"` on Codex).
 
 If nothing prompted, say so and write nothing. If some steps prompted:
 
-1. Show the owner `auto-permissions.md` in plain words: the rules for those steps, why each exists, what
-   still prompts on purpose (GitHub comments, reviews, merges, pushes to another remote, force pushes), and
-   that an unanswered prompt aborts after about 30 minutes.
-2. Run `write-allowlist` without `--confirm` for the steps that prompted, for example
-   `node "$PERM" write-allowlist --project-root . --repo "$DRAFT_REPO" --branch-prefix fvs --runtime claude --steps worker-message,git-push`.
-   It writes nothing and refuses with `confirmation-required`, printing the exact rules, the file and a digest.
-   Show the owner exactly that preview. Offer the optional steps (`draft-pr-create`, `draft-pr-edit`,
-   `edit-folders`) as extra choices, never as a default, and say they were not probed. Offer
-   `--target local` (`.claude/settings.local.json`, read from the main checkout by every worktree and kept
-   out of git) beside the default shared file. On Codex, use `--runtime codex`; it writes only the rules
-   Codex can express and says why it skips the rest.
+1. Show the owner `auto-permissions.md` in plain words: the rules for those steps and why each exists; what
+   still prompts on purpose (GitHub comments, reviews, merges, and every push that is not an exact plain
+   push of one branch under the namespace to the project fork); and that an unanswered prompt aborts after
+   about 30 minutes. A push never gets an allow rule. If `git-push` prompted on Claude Code, explain the push
+   gate hook (what it allows, that every other push still asks, that it checks every push URL of the remote
+   at each push, and that branch protection on the fork is still recommended) and ask for it as its own yes.
+   On a no, leave `git-push` out of `--steps`: that prompt stays unresolved and the owner approves pushes as
+   they appear. On Codex there is no hook: say that a push keeps asking.
+2. Run `write-allowlist` without `--confirm` for the steps the owner agreed to, for example
+   `node "$PERM" write-allowlist --project-root . --repo "$DRAFT_REPO" --branch-prefix fvs --runtime claude --steps worker-message,git-push`
+   (add `--host HOST` when the repository is not on `github.com`). It writes nothing and refuses with
+   `confirmation-required`, printing the file, its real path (`resolvedPath`, `viaLink`), its `gitStatus` and
+   where it applies (`appliesTo`), the exact rules, for `git-push` the exact hook entry with what it allows
+   and asks, and a digest. Show the owner exactly that preview. Offer `--target local`
+   (`.claude/settings.local.json`, read from the main checkout by every worktree and kept out of git) beside
+   the default shared file; the hook command names this machine's copy of the script, so the local file is the
+   better home for it. On Codex, use `--runtime codex`; it writes only the rules Codex can express. Other
+   answers to this command, each reported plainly and never worked around:
+   - `nothing-to-write` (Codex): none of the steps that prompted can be a Codex rule (push, Lake and edit
+     steps cannot). Say so: those prompts stay unresolved, and the owner approves them when they appear. Do
+     not ask for a confirmation and do not recheck.
+   - `rules-file-conflict` (Codex): `.codex/rules/fvs-auto.rules` exists and differs. Show `existing` and
+     `wouldWrite`. FVS neither replaces nor merges it; the owner saves any rule of their own, deletes the file
+     and writes every step they want in one command.
+   - `push-gate-conflict` (Claude): the file already runs a different push gate entry. Show it. The owner
+     removes that entry and runs init again.
+   - `evaluator-rejected` or `evaluator-mismatch` (Codex): the installed Codex rejects the rules or does not
+     allow a probe command. Nothing was written. Show `evaluation`.
+   - `malformed-settings`: the settings file is not valid JSON, or its `permissions` or `hooks` section has an
+     unexpected shape. Leave it alone and tell the owner.
 3. Only on the owner's explicit yes, rerun the same command with `--confirm <digest>`. Never pass a digest
-   the owner has not seen, and never write the rules without the yes. A decline writes nothing and the
-   run goes on; the steps that prompted then wait for the owner's approval during the run.
-4. Report where the file landed and its `gitStatus` (a loose or tracked file can end up in a pull request).
-5. Repeat the probes of the steps just written, ask again which prompted, and record the answers with
-   `"kind":"recheck"`. A step that still prompts has a cause no rule fixes: show the owner the "A step
-   still prompts" section of `auto-permissions.md` and leave it at that.
+   the owner has not seen, and never write without the yes. A decline writes nothing and the run goes on;
+   the steps that prompted then wait for the owner's approval during the run.
+4. Report where the file landed (`realPath`) and its `gitStatus` (a loose or tracked file can end up in a
+   pull request). On Codex, report `verified`: `true` means the installed Codex (name its `evaluator.version`)
+   allowed every probe command against the exact content before it was written, which checks the rules and not
+   a live session; `false` means nothing verified the file, and `message` says why. Do not say the rules work.
+5. Recheck, which depends on the tool:
+   - Claude Code: repeat the probes of the steps whose rules were written, ask again which prompted, and
+     record the answers with `"kind":"recheck"`. A step that still prompts: show the owner the "A step still
+     prompts" section of `auto-permissions.md` and leave it at that. Do not repeat the push probe: its
+     dry-run form is not one the hook allows, so it asks even when the hook works. Say that the first real
+     worker push is the evidence for the hook.
+   - Codex: rules load when a session starts, so a recheck in this session proves nothing about them. Do not
+     repeat the probes now. Tell the owner to run the check again in a new session after the project's
+     `.codex/` folder is trusted, and record that round as a recheck then. Never say that a prompt cannot be
+     fixed because of a retry in this session. The summary says that the recheck is pending.
 
-Never write any rule by hand, never allow a GitHub comment, review or merge, a push to an upstream or a
-force push, and never edit a settings or rules file other than through the command above. Agreement
-storage and this check launch no workers.
+Never write any rule by hand, never allow a GitHub comment, review or merge, never write a push rule or a deny
+rule, and never edit a settings or rules file other than through the command above. Agreement storage and
+this check launch no workers.
 
 ## Step 6: Hand off to the stages
 

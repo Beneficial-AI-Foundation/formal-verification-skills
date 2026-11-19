@@ -32,10 +32,12 @@ pull request. Later provisional cycles stay autonomous within the agreement and 
 stays human.
 
 Before the hand-off, init checks which steps of the run stop for an approval prompt, by running one
-harmless instance of each while the owner is present, and asks the owner which prompted. Only after the
-owner's yes does it write a minimal project allowlist for those steps through
-`scripts/fvs-auto-permissions.mjs` (`auto-permissions.md`). It never allows GitHub comments, reviews,
-merges, pushes to an upstream or force pushes.
+low-risk instance of each while the owner is present (low-risk is not inert: Lake evaluates the project's
+lakefile and git can run configured hooks), and asks the owner which prompted. Only after the owner's yes
+does it write a minimal project allowlist for those steps through `scripts/fvs-auto-permissions.mjs`, and,
+for a push on Claude Code, an opt-in push gate hook that allows only exact plain pushes to the project fork
+and asks for every other push (`auto-permissions.md`). It never writes a rule that allows GitHub comments,
+reviews, merges or any push.
 </objective>
 
 <execution_context>
@@ -95,6 +97,7 @@ Applicable existing explicit responses are reused without another question; comp
 - [ ] No implicit grant or per-round human approval is introduced.
 - [ ] Agreement storage alone launches no workers; a recorded draft pull request destination is the project's own repository.
 - [ ] The permission check runs once, after telling the owner that some steps may prompt, and asks the owner which prompted; it never infers a prompt.
-- [ ] A rules or settings file is written only after the owner's explicit yes on the exact preview, keeps every other key, and never allows a GitHub comment, review or merge, a push to an upstream or a force push.
+- [ ] A rules or settings file is written only after the owner's explicit yes on the exact preview, keeps every other key, and never writes a rule that allows a GitHub comment, review or merge, or any push; the push gate hook is a separate yes, allows only exact plain pushes to the project fork, and asks for every other push.
+- [ ] Codex gets no hook; a Codex write never replaces or merges an existing rules file, and its recheck waits for a new session.
 - [ ] The report carries the State, Next action, Permissions and Pending decision lines.
 </success_criteria>
