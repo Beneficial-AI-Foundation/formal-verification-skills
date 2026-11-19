@@ -123,7 +123,7 @@ merges.
 - [ ] Starts only after the owner has merged the spec pull request.
 - [ ] Statements stay unchanged while proving; a wrong or weak one becomes a refactor draft pull request.
 - [ ] Only FVS's build check in a fresh clean copy counts as accepted; worker reports establish no acceptance.
-- [ ] The build check ran with the recorded spec merge commit as `--spec-base`: a changed statement, a changed frozen file, a new axiom that is not an accepted assumption, or a spec file that Lake does not build means not accepted.
+- [ ] The build check ran with the recorded spec merge commit as `--spec-base`: a changed statement, a changed frozen file, a statement whose meaning changed through a helper or notation, a new axiom that is not exactly an accepted assumption, or a spec, proof or extraction file that Lake does not build means not accepted.
 - [ ] The proof pull request is a draft on the project's own repository; every unproved item is listed with its reason.
 - [ ] Nothing is posted as a GitHub comment or review.
 </success_criteria>

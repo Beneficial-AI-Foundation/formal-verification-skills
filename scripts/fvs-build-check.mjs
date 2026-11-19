@@ -2,7 +2,7 @@
 // Build check: build one commit of a Lean project in a fresh clean copy and report
 // what the build proves.
 //
-//   node fvs-build-check.mjs --project-root R --commit SHA [--spec-base SHA]
+//   node fvs-build-check.mjs --project-root R --commit SHA [--spec-base SHA] [--allow-axioms FILE]
 //        [--packages DIR] [--receipt-dir DIR] [--workdir DIR] [--keep] [--timeout SECONDS]
 //
 // The copy holds exactly the tracked files of the commit, never the author's working
@@ -17,21 +17,53 @@
 // recalled statement must be the same text, the lakefile, the manifest, Specs/Defs, Trusted and
 // every extraction folder (any folder named Extraction..., and each publish folder or published file
 // the run state records for a multi-crate extraction) must be unchanged apart from comments,
-// docstrings and axiom guards, nothing may add `sorry`, `admit`, `native_decide`, `bv_decide` or an
-// axiom outside Trusted/, a lakefile may not appear below the project root, and a new Trusted file
-// is allowed only for axioms tied to an externals record the owner accepted. Strings are compared
-// exactly; only comments and the spacing between tokens are free. The glob guard refuses a spec,
+// docstrings and axiom guards, nothing may add `sorry`, `admit`, `native_decide`, `bv_decide` (judged
+// by the declaration each sits in) or an axiom outside Trusted/ (judged by its name and type, so
+// swapping one for another counts), a lakefile may not appear below the project root, and a new Trusted file
+// is allowed only for axioms tied to an externals record the owner accepted. Strings and layout are
+// compared exactly; only comments, docstrings, guards and the layout of a recalled statement are free. The glob guard refuses a spec,
 // proof or extraction file that no lean_lib glob of a default target reaches, because Lake would
-// never compile it. A commit that fails a guard gets a failed receipt and no build runs.
+// never compile it; the lakefile, the manifest and lean-toolchain are frozen. A commit that fails a
+// guard gets a failed receipt and no build runs.
+//
+// After the build, two more conditions must hold. Every spec, proof and extraction file must have
+// produced a .olean in this build (for a lakefile.lean, where globs are not read, a module named by its
+// path or by a suffix of it), whether or not the file holds a recall. And a small Lean program must find
+// that what each recalled statement rests on is what it rested on in the merged spec: it serialises the
+// elaborated type of the statement and of every project definition, instance and abbreviation it
+// reaches (values included, proofs not), on the head and on a fresh build of the merged spec, and the
+// two must agree constant by constant. Text alone cannot say that: a notation, a macro, an instance or a
+// helper in a file that is not frozen can change what unchanged text elaborates to. The axioms a
+// statement rests on come from Lean, not from the guard text: Lean's three standard axioms, a project
+// axiom of the merged spec that has not changed, and a new axiom only in a Trusted module that asserts
+// exactly the one frozen proposition of the merged spec whose docstring cites the axiom's accepted
+// externals record (a record is cited by one axiom only); sorry, native_decide and bv_decide axioms
+// are refused. If the program cannot run, or the merged spec does not build, the commit is not accepted.
+// The receipt keeps the comparison under integrity.semantic.
+//
+// With --allow-axioms FILE (a list the engine writes from its own records, JSON with schema
+// fvs/auto-allowed-axioms, version 1 one flat list or version 2 one list for each crate with its spec
+// files) a statement passes only if every axiom Lean says it rests on is one of Lean's three standard
+// axioms or is named exactly, fully qualified, in its list (its crate's list in version 2; a statement in a
+// spec file that no crate lists is refused). The names come from the Lean program below, not from the
+// guard text, so a name that differs from a listed one only in a leading namespace is another name. With a
+// list, an axiom whose type is a proposition must be a hand-written Trusted axiom. The receipt records the
+// file's sha256 as allowAxioms. Without the flag no statement is held to a list.
 //
 // The build is `lake build --wfail`: every warning, so every `sorry`, fails it. Each
 // spec file restates its statements with `recall` and pins what they rest on with
 // `#guard_msgs ... in #print axioms NAME`; the build enforces those guards, and this
 // script refuses a pass that rests on guards it cannot read or that say nothing.
 //
-// A verdict, accepted or not, is written as a receipt bound to the commit and its tree.
+// A verdict, accepted or not, is written as a receipt bound to the commit and its tree. Accepted
+// means the statements were compared with a merged spec; a build with no spec base is labelled
+// "built, integrity not checked" and is not an acceptance. A check that holds the lock replaces any
+// earlier receipt for the commit at once with a non-accepting one, and a refusal or a crash after that
+// leaves a non-accepting receipt, so an old acceptance never stands in for a check that did not
+// finish. A caller refused the lock changes nothing. The receipt lists the externals records the
+// acceptance relied on, each with a digest, so a later change to one of them shows.
 // Output: stdout holds one JSON object and nothing else; the report for people goes to stderr.
-// Exit status 0 accepted, 1 build check failed, 2 refused.
+// Exit status 0 accepted, 1 not accepted (failed, or built without a spec base), 2 refused.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -40,7 +72,13 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 export const LABEL_ACCEPTED = 'accepted (build check)';
+// A commit that built but was not compared with a merged spec: nothing says its statements are the
+// approved ones, so it is not an acceptance and the exit status is not 0.
+export const LABEL_UNCHECKED = 'built, integrity not checked';
 export const labelFailed = (reason) => `build check failed: ${reason}`;
+// The version of the receipt. Version 2 is the first whose acceptance carries the Lean-level comparison of
+// the statements with the merged spec (integrity.semantic); the engine counts only an acceptance of this version.
+export const RECEIPT_SCHEMA = 2;
 const STANDARD_AXIOMS = ['propext', 'Classical.choice', 'Quot.sound'];
 // What native_decide and bv_decide add to #print axioms: a generated axiom named after the
 // theorem on Lean 4.35, Lean.ofReduceBool on older toolchains.
@@ -73,7 +111,9 @@ const RAW_STRING = /r(#*)"/y;
 const CHARACTER = /'(?:\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[^xu\n])|[^\\'\n])'/y;
 
 // Comments are blanked and docstrings are replaced by a numbered marker, so the text that
-// is left can be matched without a commented-out guard counting. Line numbers are kept. String
+// is left can be matched without a commented-out guard counting. A block comment becomes blanks of
+// its own width (newlines kept), so it still separates the tokens around it and the columns of
+// what follows on its last line stay where they were; Lean reads layout from columns. String
 // and character literals are blanked too. With `keepStrings` each literal is replaced by a
 // numbered placeholder instead and returned in `strings`, so a comparison sees an edited string
 // exactly while code inside it never looks like code.
@@ -123,7 +163,7 @@ export function stripLean(text, { keepStrings = false } = {}) {
       i = end;
     } else if (text.startsWith('/-', i)) {
       const end = blockEnd(i);
-      code += newlines(text.slice(i, end));
+      code += text.slice(i, end).replace(/[^\n]/g, ' ');
       i = end;
     } else if (text.startsWith('--', i)) {
       while (i < text.length && text[i] !== '\n') i += 1;
@@ -193,6 +233,68 @@ export function readSpecSource(text) {
     statement.beyondStandard = (statement.axioms ?? []).filter((name) => !STANDARD_AXIOMS.includes(name) && !NATIVE_AXIOM.test(name));
   }
   return { statements: [...statements.values()] };
+}
+
+// ---- the axioms a statement may rest on ----------------------------------------------------
+//
+// With `--allow-axioms FILE` a statement may rest on Lean's three standard axioms and on the names
+// the file lists, and on nothing else. The file is written by the engine from its own records (the
+// extraction's opaque or external declarations, recorded assumptions, accepted ruling), never by a
+// worker. Without the flag no statement is held to a list. Names are exact and fully qualified: the
+// axioms of a statement are read from Lean's environment, which gives full names, not from the
+// guards, which print a name relative to the file's namespace. Two constants that differ only in a
+// leading namespace are therefore two names, and listing one never covers the other.
+//
+// Version 1 is one flat list. Version 2 is one list for each crate: each statement is held to the
+// list of the crate whose spec files hold it, and a statement in a spec file that no crate lists is
+// refused. The engine computes what a crate may rest on, inheritance from its providers included.
+
+const ALLOWED_AXIOMS_SCHEMA = 'fvs/auto-allowed-axioms';
+
+const validName = (name) => typeof name === 'string' && name !== '' && name === name.trim();
+
+// The allowed names in a file's bytes: { schemaVersion, names (every name), crates (null for version 1,
+// else a Map from crate to { specFiles, axioms }) }. The caller hashes the same bytes, so the digest in the
+// receipt is the digest of what was read. Anything that is not a well-formed list is refused: a
+// mistyped file must never read as "no list".
+export function readAllowedAxioms(bytes, file = 'the allowed-axioms file') {
+  const invalid = (message) => refuse('allow-axioms-invalid', `${file}: ${message}`);
+  let data;
+  try { data = JSON.parse(Buffer.from(bytes).toString('utf8')); } catch { return invalid('not valid JSON'); }
+  if (data?.schema !== ALLOWED_AXIOMS_SCHEMA || ![1, 2].includes(data.schemaVersion)) return invalid(`not a ${ALLOWED_AXIOMS_SCHEMA} version 1 or 2 file`);
+  const nameList = (list, where) => {
+    if (!Array.isArray(list) || !list.every(validName)) invalid(`${where} must be an array of axiom names, each a non-empty string without surrounding spaces`);
+    return list;
+  };
+  if (data.schemaVersion === 1) return { schemaVersion: 1, names: new Set(nameList(data.axioms, '"axioms"')), crates: null };
+  const extra = Object.keys(data).filter((key) => !['schema', 'schemaVersion', 'crates'].includes(key));
+  if (extra.length > 0) invalid(`unknown key ${extra[0]}`);
+  if (!Array.isArray(data.crates)) invalid('"crates" must be an array');
+  const crates = new Map();
+  const owner = new Map();
+  const names = new Set();
+  for (const entry of data.crates) {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) invalid('each crate must be an object');
+    const unknown = Object.keys(entry).filter((key) => !['crate', 'specFiles', 'axioms'].includes(key));
+    if (unknown.length > 0) invalid(`unknown key ${unknown[0]} in a crate`);
+    if (!validName(entry.crate)) invalid('each crate needs a non-empty "crate" name without surrounding spaces');
+    if (crates.has(entry.crate)) invalid(`the crate ${entry.crate} is listed twice`);
+    const specFiles = nameList(entry.specFiles, `"specFiles" of ${entry.crate}`);
+    const axioms = nameList(entry.axioms, `"axioms" of ${entry.crate}`);
+    for (const specFile of specFiles) {
+      if (owner.has(specFile)) invalid(`the spec file ${specFile} is listed under two crates (${owner.get(specFile)} and ${entry.crate})`);
+      owner.set(specFile, entry.crate);
+    }
+    crates.set(entry.crate, { specFiles: new Set(specFiles), axioms: new Set(axioms) });
+    for (const name of axioms) names.add(name);
+  }
+  return { schemaVersion: 2, names, crates };
+}
+
+// The axioms in `axioms` that are neither standard nor named exactly in `allowed`. Every axiom
+// counts, including names that look like native_decide or bv_decide axioms.
+export function axiomsNotAllowed(axioms, allowed) {
+  return (axioms ?? []).filter((name) => !STANDARD_AXIOMS.includes(name) && !allowed.has(name));
 }
 
 // ---- reading a Lake log --------------------------------------------------------------------
@@ -339,17 +441,19 @@ function dependencyTargets(targets, files, declared) {
   });
 }
 
-function runLake(args, { cwd, env, log, timeoutSeconds }) {
+// `stdoutFile`, when given, takes the standard output apart from the log.
+function runLake(args, { cwd, env, log, timeoutSeconds, stdoutFile }) {
   const wrapper = process.platform === 'darwin' && spawnSync('sh', ['-c', 'command -v caffeinate'], { stdio: 'ignore' }).status === 0 ? ['caffeinate', '-is'] : [];
   const argv = [...wrapper, 'nice', '-n', '19', 'lake', ...args];
   const out = fs.openSync(log, 'w');
+  const main = stdoutFile ? fs.openSync(stdoutFile, 'w') : out;
   try {
     // The child leads its own process group. A timeout kills only that child, so the whole group is
     // killed once the run returns: no Lean worker may outlive the check and overlap the next build.
-    const run = spawnSync(argv[0], argv.slice(1), { cwd, env, stdio: ['ignore', out, out], timeout: timeoutSeconds * 1000, detached: true });
+    const run = spawnSync(argv[0], argv.slice(1), { cwd, env, stdio: ['ignore', main, out], timeout: timeoutSeconds * 1000, detached: true });
     if (run.pid) { try { process.kill(-run.pid, 'SIGKILL'); } catch { /* the group is already gone */ } }
     return { argv, status: run.status ?? (run.error ? 124 : 1) };
-  } finally { fs.closeSync(out); }
+  } finally { fs.closeSync(out); if (main !== out) fs.closeSync(main); }
 }
 
 // One build at a time on this machine, whatever the project or the receipt folder.
@@ -378,10 +482,12 @@ function acquireLock() {
 // The proofs are written after the owner merged the spec, so "accepted" must also mean that the
 // statements and what they rest on are the merged ones. Both trees are read from git objects, never
 // from a working tree. A change is judged on Lean text with comments, docstrings and axiom guards
-// taken out and whitespace collapsed to one space, so those edits are free and nothing else is.
+// taken out. Layout is kept exactly (spacing, indentation, and a block comment by its width), because
+// Lean reads blocks from columns; only a recalled statement is compared with its whitespace collapsed,
+// a comment counting as a space, since the meaning of a statement is compared at the Lean level.
 
 const lowerFolders = (rel) => rel.toLowerCase().split('/').slice(0, -1);
-const LAKE_FILES = /^(?:lakefile\.(?:toml|lean)|lake-manifest\.json)$/;
+const LAKE_FILES = /^(?:lakefile\.(?:toml|lean)|lake-manifest\.json|lean-toolchain)$/;
 const isTrusted = (rel) => lowerFolders(rel).includes('trusted');
 const isProofPath = (rel) => lowerFolders(rel).includes('proofs');
 
@@ -417,6 +523,38 @@ const flatten = (code, strings) => code
   .replace(/\u0000(\d+)\u0000/g, (_, n) => strings[Number(n)]);
 
 export const normalizeLean = (text) => { const { code, strings } = stripLean(text, { keepStrings: true }); return flatten(code, strings); };
+
+// The same text with layout kept: comments are blanks of their width, docstring markers and axiom
+// guards are gone, a line's trailing blanks and the empty lines are dropped (Lean never reads them),
+// and everything else is exactly as written, indentation and the spaces between tokens included. A
+// `do` block or a tactic block reads its structure from columns, so a change of indentation can
+// change a program and is a change here. Each string is put back as written. With `statements`, the
+// text of each recalled statement is collapsed instead, because the elaborated statement is compared
+// at the Lean level and a reflowed statement is not a change of meaning.
+function exactText(code, strings, { statements = false } = {}) {
+  let text = code;
+  if (statements) {
+    let out = '';
+    let at = 0;
+    for (const match of text.matchAll(/^[ \t]*recall\s+([^\s(\[{:]+)/gm)) {
+      if (match.index < at) continue;
+      const ending = /\n(?=\S)/g;
+      ending.lastIndex = match.index + match[0].length;
+      const stop = ending.exec(text);
+      const end = stop ? stop.index : text.length;
+      out += `${text.slice(at, match.index)}recall ${match[1]} ${flatten(text.slice(match.index + match[0].length, end), strings)}`;
+      at = end;
+    }
+    text = out + text.slice(at);
+  }
+  return text
+    .replace(/\/--#\d+-\/[ \t]*/g, '')
+    .replace(/#guard_msgs\s*(?:\([^)]*\))?\s*in\s+#print\s+axioms\s+\S+/g, '')
+    .replace(/#print\s+axioms\s+\S+/g, '')
+    .split('\n').map((line) => line.replace(/\s+$/, '')).filter((line) => line !== '').join('\n')
+    .replace(/\u0000(\d+)\u0000/g, (_, n) => strings[Number(n)]);
+}
+export const exactLean = (text, options) => { const { code, strings } = stripLean(text, { keepStrings: true }); return exactText(code, strings, options); };
 
 // Each `recall` statement of a spec file as its text, comments gone and whitespace collapsed. A
 // statement runs to the next line that starts in column 0.
@@ -475,10 +613,13 @@ export function gitTree(top, commit, prefix, layout) {
 
 const hasStatements = (text) => readSpecSource(text).statements.length > 0;
 
-// What `sorry`, `admit`, a native check or an axiom outside Trusted/ would add. Counted on code
-// alone, so a mention in a comment or a string does not count.
+// What `sorry`, `admit`, a native check or an axiom outside Trusted/ would add. Read from code alone,
+// so a mention in a comment or a string does not count. A use is identified by the declaration it sits
+// in and the word, and an axiom by its name and its type, never by a count: a file whose total stays
+// the same can still have moved a `native_decide` to another declaration, or swapped one axiom for a
+// stronger one.
 const FORBIDDEN = [['sorry', /\bsorry\b/g], ['admit', /\badmit\b/g], ['native_decide', /\bnative_decide\b/g], ['bv_decide', /\bbv_decide\b/g],
-  ['decide +native', /\bdecide\s*\+\s*native\b/g], ['axiom', /\baxiom\b/g]];
+  ['decide +native', /\bdecide\s*\+\s*native\b/g]];
 
 // An axiom that starts a line, read from the raw text with no lexer in between. If the comment and
 // string reader were ever thrown off by odd source, an axiom declared on its own line is still seen.
@@ -488,22 +629,57 @@ const FORBIDDEN = [['sorry', /\bsorry\b/g], ['admit', /\badmit\b/g], ['native_de
 const RAW_AXIOM = /^[ \t]*(?:@\[[^\]\n]*\][ \t]*)*(?:(?:private|protected|noncomputable|unsafe)[ \t]+)*axiom[ \t]+([\p{L}_«][\p{L}\p{N}_.'!?«»]*)(?=\s*[:({\[⦃])/gmu;
 const rawAxioms = (text) => [...text.matchAll(RAW_AXIOM)].map((match) => match[1]);
 
+// A multiset as a Map from a key to how many times it occurs.
+const tally = (keys) => { const counts = new Map(); for (const key of keys) counts.set(key, (counts.get(key) ?? 0) + 1); return counts; };
+
+// Each axiom of a source text as "name : type", the type read to the next line that starts in column 0
+// and flattened, with the declared name.
+function axiomIdentities(text) {
+  const { code, strings } = stripLean(text, { keepStrings: true });
+  return [...code.matchAll(/\baxiom\s+([^\s(\[{:]+)/g)].map((match) => {
+    const ending = /\n(?=\S)/g;
+    ending.lastIndex = match.index + match[0].length;
+    const stop = ending.exec(code);
+    return { name: match[1], identity: flatten(code.slice(match.index, stop ? stop.index : code.length), strings) };
+  });
+}
+
 function forbiddenAdded(rel, was, now, problems) {
   const before = was === null ? '' : stripLean(was).code;
   const after = stripLean(now).code;
   for (const [token, pattern] of FORBIDDEN) {
-    if (token === 'axiom' && isTrusted(rel)) continue;
-    const had = [...before.matchAll(pattern)].length;
-    const found = [...after.matchAll(pattern)];
-    if (found.length > had) {
-      const named = token === 'axiom' ? /^axiom\s+([^\s(\[{:]+)/.exec(after.slice(found[had].index))?.[1] ?? null : declarationNear(after, found[had].index);
-      problems.push({ kind: 'forbidden-added', file: rel, statement: named, token, detail: `${token} was added (${had} before, ${found.length} now)${token === 'axiom' ? '; an axiom belongs in Trusted/ and needs an accepted externals record' : ''}` });
+    const uses = (code) => [...code.matchAll(pattern)].map((use) => ({ at: use.index, declaration: declarationNear(code, use.index) ?? '' }));
+    const had = tally(uses(before).map((use) => use.declaration));
+    const seenNow = new Map();
+    for (const use of uses(after)) {
+      const count = (seenNow.get(use.declaration) ?? 0) + 1;
+      seenNow.set(use.declaration, count);
+      if (count > (had.get(use.declaration) ?? 0)) {
+        problems.push({ kind: 'forbidden-added', file: rel, statement: use.declaration || null, token, detail: `${token} was added${use.declaration ? ` in ${use.declaration}` : ''} (${had.get(use.declaration) ?? 0} there before, ${count} now)` });
+      }
     }
   }
-  if (!isTrusted(rel) && !problems.some((problem) => problem.file === rel && problem.token === 'axiom')) {
-    const [had, found] = [rawAxioms(was ?? ''), rawAxioms(now)];
-    if (found.length > had.length) {
-      problems.push({ kind: 'forbidden-added', file: rel, statement: found[had.length], token: 'axiom', detail: `axiom was added (${had.length} before, ${found.length} now); an axiom belongs in Trusted/ and needs an accepted externals record` });
+  if (isTrusted(rel)) return;
+  const hadAxioms = tally(axiomIdentities(was ?? '').map((entry) => entry.identity));
+  const haveAxioms = new Map();
+  const reported = new Set();
+  for (const entry of axiomIdentities(now)) {
+    const count = (haveAxioms.get(entry.identity) ?? 0) + 1;
+    haveAxioms.set(entry.identity, count);
+    if (count > (hadAxioms.get(entry.identity) ?? 0)) {
+      reported.add(entry.name);
+      problems.push({ kind: 'forbidden-added', file: rel, statement: entry.name, token: 'axiom', detail: `the axiom ${entry.name} is not in the merged spec with this type; an axiom belongs in Trusted/ and needs an accepted externals record` });
+    }
+  }
+  // The same, from the raw lines, by name only.
+  const hadRaw = tally(rawAxioms(was ?? ''));
+  const haveRaw = new Map();
+  for (const name of rawAxioms(now)) {
+    const count = (haveRaw.get(name) ?? 0) + 1;
+    haveRaw.set(name, count);
+    if (count > (hadRaw.get(name) ?? 0) && !reported.has(name)) {
+      reported.add(name);
+      problems.push({ kind: 'forbidden-added', file: rel, statement: name, token: 'axiom', detail: `the axiom ${name} is not in the merged spec; an axiom belongs in Trusted/ and needs an accepted externals record` });
     }
   }
 }
@@ -554,10 +730,10 @@ function specChange(rel, was, now, problems) {
     if (!before.has(name)) problems.push({ kind: 'statement-added', file: rel, statement: name, detail: `the statement ${name} is not in the merged spec` });
   }
   if (problems.length === found) {
-    const [a, b] = [normalizeLean(was), normalizeLean(now)];
+    const [a, b] = [exactLean(was, { statements: true }), exactLean(now, { statements: true })];
     if (a !== b) {
       const diff = firstDifference(a, b);
-      problems.push({ kind: 'spec-code-changed', file: rel, statement: declarationNear(b, diff.index), detail: `code outside the comments and guards changed since the merged spec: was "…${diff.was}", now "…${diff.now}"` });
+      problems.push({ kind: 'spec-code-changed', file: rel, statement: declarationNear(b, diff.index), detail: `code outside the recalled statements, comments and guards changed since the merged spec (spacing and indentation count): was "…${diff.was}", now "…${diff.now}"`.replace(/\n/g, '⏎') });
     }
   }
 }
@@ -567,10 +743,10 @@ function frozenChange(rel, was, now, problems) {
     problems.push({ kind: 'frozen-file-changed', file: rel, statement: null, detail: 'this frozen file differs from the merged spec' });
     return;
   }
-  const [a, b] = [normalizeLean(was.text()), normalizeLean(now.text())];
+  const [a, b] = [exactLean(was.text()), exactLean(now.text())];
   if (a === b) return;
   const diff = firstDifference(a, b);
-  problems.push({ kind: 'frozen-file-changed', file: rel, statement: declarationNear(b, diff.index), detail: `this frozen file changed beyond comments and guards since the merged spec: was "…${diff.was}", now "…${diff.now}"` });
+  problems.push({ kind: 'frozen-file-changed', file: rel, statement: declarationNear(b, diff.index), detail: `this frozen file changed beyond comments, docstrings and guards since the merged spec (spacing and indentation count): was "…${diff.was}", now "…${diff.now}"`.replace(/\n/g, '⏎') });
 }
 
 // ---- Lake globs ----------------------------------------------------------------------------
@@ -726,17 +902,354 @@ export function checkIntegrity({ base: baseTree, head: headTree, externals = () 
     }
   }
   problems.push(...globProblems(head, changed, layout));
-  return { problems, ties };
+  // Every spec, proof and extraction file is one Lake must have compiled, whatever the lakefile says and
+  // whether or not it holds a recall. The module a file has is its path below a library's source folder;
+  // for a lakefile.lean, which is not read here, its path or its path below any folder.
+  const sourceFolders = built ? built.sources : [''];
+  const moduleCandidates = (rel) => {
+    const modules = sourceFolders.map((folder) => (rel.startsWith(folder) ? rel.slice(folder.length, -'.lean'.length).replaceAll('/', '.') : null)).filter(Boolean);
+    if (!built) { const parts = rel.slice(0, -'.lean'.length).split('/'); for (let i = 1; i < parts.length; i += 1) modules.push(parts.slice(i).join('.')); }
+    return [...new Set(modules)];
+  };
+  const required = [...head.keys()].filter((rel) => rel.endsWith('.lean') && !LAKE_FILES.test(rel)
+    && (isProofPath(rel) || isExtraction(rel, layout) || hasStatements(head.get(rel).text()))).sort().map((rel) => ({ rel, modules: moduleCandidates(rel) }));
+  return { problems, ties, required, moduleCandidates };
 }
 
-const describeProblem = (problem) => `${problem.file}${problem.statement ? `: ${problem.statement}` : ''}: ${problem.detail}`;
+const describeProblem = (problem) => `${problem.file ?? 'Lean check'}${problem.statement ? `: ${problem.statement}` : ''}: ${problem.detail}`;
+
+// ---- the Lean-level check ------------------------------------------------------------------
+//
+// Text cannot say that the statements still mean what the merged spec's statements mean: a helper
+// definition in a proof file, a notation, a macro or an instance can change what unchanged text
+// elaborates to. So after the build a small Lean program loads the built project and, for each recalled
+// statement, serialises the elaborated type and everything it depends on: the types and values of the
+// project's definitions, instances and abbreviations, and the types (not the proofs) of its theorems,
+// axioms and constructors. Constants outside the project (Lean, Mathlib, the dependencies) are pinned
+// by lean-toolchain and the manifest, which are frozen. The same program runs on the merged spec, and
+// the two serialisations must agree, constant by constant, for everything a statement rests on.
+// The program also reports, for each statement, the axioms its proof rests on, and which project
+// axioms exist and what they assert, so that a new axiom can be held to its accepted record.
+
+const DUMP_SOURCE = String.raw`import Lean
+open Lean
+
+/-! Canonical dump of the project's constants reachable from a set of roots, one JSON object per line. -/
+
+structure Ser where
+  ids : Std.HashMap Expr Nat := {}
+  out : Array String := #[]
+
+abbrev SerM := StateM Ser
+
+def serLevel : Level → String
+  | .zero => "0"
+  | .succ l => "(s " ++ serLevel l ++ ")"
+  | .max a b => "(m " ++ serLevel a ++ " " ++ serLevel b ++ ")"
+  | .imax a b => "(i " ++ serLevel a ++ " " ++ serLevel b ++ ")"
+  | .param n => "(p " ++ toString n ++ ")"
+  | .mvar _ => "?"
+
+partial def serExpr (e : Expr) : SerM Nat := do
+  match e with
+  | .mdata _ b => serExpr b
+  | _ =>
+    if let some i := (← get).ids[e]? then return i
+    let line ← match e with
+      | .bvar i => pure s!"b {i}"
+      | .fvar _ => pure "f"
+      | .mvar _ => pure "?"
+      | .sort l => pure s!"S {serLevel l}"
+      | .const n ls => pure s!"C {n} {" ".intercalate (ls.map serLevel)}"
+      | .app f a => do let f ← serExpr f; let a ← serExpr a; pure s!"A {f} {a}"
+      | .lam _ t b _ => do let t ← serExpr t; let b ← serExpr b; pure s!"L {t} {b}"
+      | .forallE _ t b _ => do let t ← serExpr t; let b ← serExpr b; pure s!"P {t} {b}"
+      | .letE _ t v b nd => do let t ← serExpr t; let v ← serExpr v; let b ← serExpr b; pure s!"T {t} {v} {b} {nd}"
+      | .lit (.natVal n) => pure s!"N {n}"
+      | .lit (.strVal s) => pure s!"R {s.quote}"
+      | .proj s i b => do let b ← serExpr b; pure s!"J {s} {i} {b}"
+      | .mdata _ _ => pure "?"
+    let id := (← get).out.size
+    modify fun st => { st with out := st.out.push line, ids := st.ids.insert e id }
+    return id
+
+def serialize (e : Expr) : String :=
+  let (root, st) := (serExpr e).run {}
+  s!"{root}|" ++ ";".intercalate st.out.toList
+
+def kindOf : ConstantInfo → String
+  | .axiomInfo _ => "axiom"
+  | .defnInfo _ => "defn"
+  | .thmInfo _ => "thm"
+  | .opaqueInfo _ => "opaque"
+  | .quotInfo _ => "quot"
+  | .inductInfo _ => "induct"
+  | .ctorInfo _ => "ctor"
+  | .recInfo _ => "rec"
+
+def describe (env : Environment) (isProj : Name → Bool) (ci : ConstantInfo) : Json × Array Name :=
+  let valueOf : Option Expr := match ci with
+    | .defnInfo d => some d.value
+    | _ => none
+  let extra : Array Name := match ci with
+    | .inductInfo i => i.ctors.toArray ++ i.all.toArray
+    | .ctorInfo c => #[c.induct]
+    | _ => #[]
+  let uses := ci.type.getUsedConstants ++ (valueOf.map (·.getUsedConstants)).getD #[] ++ extra
+  let deps := (uses.filter isProj).toList.eraseDups.toArray
+  let modName := env.getModuleIdxFor? ci.name |>.map (fun i => env.header.moduleNames[i.toNat]!) |>.getD .anonymous
+  let shape : List (String × Json) := match ci with
+    | .inductInfo i => [("params", Json.num i.numParams), ("indices", Json.num i.numIndices), ("rec", Json.bool i.isRec), ("ctors", toJson (i.ctors.map toString))]
+    | .ctorInfo c => [("cidx", Json.num c.cidx), ("params", Json.num c.numParams), ("fields", Json.num c.numFields)]
+    | .defnInfo d => [("safety", Json.str (toString (repr d.safety)))]
+    | .axiomInfo _ => [("tc", match ci.type with | .const n [] => Json.str (toString n) | _ => Json.null)]
+    | _ => []
+  let base : List (String × Json) :=
+    [("n", Json.str (toString ci.name)), ("k", Json.str (kindOf ci)), ("m", Json.str (toString modName)),
+     ("lp", toJson (ci.levelParams.map toString)), ("t", Json.str (serialize ci.type)),
+     ("d", toJson (deps.map toString))] ++ shape
+  let withValue := match valueOf with
+    | some v => base ++ [("v", Json.str (serialize v))]
+    | none => base
+  (Json.mkObj withValue, deps)
+
+def main (args : List String) : IO UInt32 := do
+  let [argFile] := args | IO.eprintln "usage: Dump <args.json>"; return 2
+  let input ← IO.ofExcept (Json.parse (← IO.FS.readFile argFile))
+  let mods : Array String ← IO.ofExcept (input.getObjValAs? (Array String) "modules")
+  let recalls : Array String ← IO.ofExcept (input.getObjValAs? (Array String) "recalls")
+  let ids : Array String ← IO.ofExcept (input.getObjValAs? (Array String) "ids")
+  initSearchPath (← findSysroot)
+  let names := mods.map String.toName
+  let env ← importModules (names.map fun m => { module := m }) {} (trustLevel := 0)
+  let projMods : Std.HashSet Name := names.foldl (·.insert ·) {}
+  let isProj (c : Name) : Bool := match env.getModuleIdxFor? c with
+    | some i => projMods.contains env.header.moduleNames[i.toNat]!
+    | none => false
+  let ctx : Core.Context := { fileName := "<dump>", fileMap := default }
+  IO.println (Json.compress (Json.mkObj [("toolchain", Json.str versionString), ("githash", Json.str githash)]))
+  let mut roots : Array Name := #[]
+  let projNames : Array Name := env.constants.map₁.fold (fun acc n _ => if isProj n then acc.push n else acc) #[]
+  for id in recalls do
+    let found := projNames.filter fun n => let s := toString n; s == id || s.endsWith ("." ++ id)
+    let mut axioms : Array Json := #[]
+    for n in found do
+      roots := roots.push n
+      let (r, _) ← (Lean.collectAxioms n : CoreM (Array Name)).toIO ctx { env }
+      axioms := axioms.push (Json.mkObj [("n", Json.str (toString n)), ("axioms", toJson (r.map toString))])
+    IO.println (Json.compress (Json.mkObj [("recall", Json.str id), ("matches", toJson (found.map toString)), ("rests", Json.arr axioms)]))
+  let tick := String.singleton (Char.ofNat 96)
+  for n in projNames do
+    let some ci := env.find? n | continue
+    let isAxiom := ci matches .axiomInfo _
+    let isProp := match ci.type with | .sort .zero => true | _ => false
+    let doc? ← findDocString? env n
+    let cites := match doc? with
+      | some d => ids.filter fun i => (d.splitOn (tick ++ i ++ tick)).length > 1
+      | none => #[]
+    if isAxiom then roots := roots.push n
+    else if isProp && cites.size > 0 then roots := roots.push n
+    if cites.size > 0 && (isProp || isAxiom) then
+      let modName := env.getModuleIdxFor? n |>.map (fun i => env.header.moduleNames[i.toNat]!) |>.getD .anonymous
+      IO.println (Json.compress (Json.mkObj [("doc", Json.str (toString n)), ("m", Json.str (toString modName)), ("cites", toJson cites), ("prop", Json.bool isProp), ("axiom", Json.bool isAxiom)]))
+  let mut seen : Std.HashSet Name := {}
+  let mut work := roots.toList
+  while true do
+    match work with
+    | [] => break
+    | n :: rest =>
+      work := rest
+      if seen.contains n then continue
+      seen := seen.insert n
+      let some ci := env.find? n | continue
+      let (json, deps) := describe env isProj ci
+      -- An axiom whose type is a proposition asserts something; one whose type is a type only says a thing exists.
+      let json ← match ci with
+        | .axiomInfo _ =>
+          let (asserts, _) ← (Meta.isProp ci.type : MetaM Bool).toIO ctx { env }
+          pure (json.setObjVal! "pr" (Json.bool asserts))
+        | _ => pure json
+      IO.println (Json.compress json)
+      work := deps.toList ++ work
+  return 0
+`;
+
+const digestOf = (value) => sha256(typeof value === 'string' ? value : JSON.stringify(value));
+
+// What the Lean program printed: the toolchain, for each recalled name the project declarations that
+// end with it (with the axioms each rests on), the propositions and axioms that cite an externals record,
+// and every project constant reachable from a root, each with the digest of its own content.
+export function parseDump(text) {
+  const dump = { toolchain: null, recalls: new Map(), docs: [], constants: new Map() };
+  for (const line of text.split('\n')) {
+    if (!line.startsWith('{"')) continue;
+    let item;
+    try { item = JSON.parse(line); } catch { throw new Error(`a line of the output is not valid JSON: ${line.slice(0, 80)}`); }
+    if (item.toolchain !== undefined) dump.toolchain = { lean: item.toolchain, githash: item.githash };
+    else if (item.recall !== undefined) dump.recalls.set(item.recall, { matches: item.matches ?? [], rests: item.rests ?? [] });
+    else if (item.doc !== undefined) dump.docs.push({ name: item.doc, module: item.m, cites: item.cites ?? [], prop: item.prop === true, axiom: item.axiom === true });
+    else if (typeof item.n === 'string') {
+      dump.constants.set(item.n, {
+        name: item.n, kind: item.k, module: item.m, deps: item.d ?? [], typeConst: item.tc ?? null, asserts: item.pr === true,
+        own: digestOf([item.k, item.lp, item.t, item.v ?? null, item.params ?? null, item.indices ?? null, item.rec ?? null, item.ctors ?? null, item.cidx ?? null, item.fields ?? null, item.safety ?? null]),
+      });
+    }
+  }
+  if (dump.toolchain === null) throw new Error('the Lean program printed no toolchain line');
+  return dump;
+}
+
+// The constants a root rests on (itself included), in the order they are met, with each one's digest.
+function closureOf(constants, root) {
+  const seen = new Map();
+  const queue = [root];
+  while (queue.length > 0) {
+    const name = queue.shift();
+    if (seen.has(name) || !constants.has(name)) continue;
+    seen.set(name, constants.get(name).own);
+    queue.push(...constants.get(name).deps);
+  }
+  return seen;
+}
+const closureDigest = (closure) => digestOf([...closure].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+
+// A module as the path of its file, so the folder rules that name files apply to it.
+const moduleRel = (module) => `${module.replaceAll('.', '/')}.lean`;
+const inTrustedModule = (module) => isTrusted(moduleRel(module));
+
+// What the merged spec's statements, axioms and propositions are compared with at the head. `base` and
+// `head` come from parseDump; `recalled` are the names the spec files recall; `acceptedIds` are the ids
+// of the externals records the owner accepted.
+export function semanticProblems({ base, head, recalled, acceptedIds = new Set() }) {
+  const problems = [];
+  const add = (kind, statement, detail) => problems.push({ kind, file: null, statement, detail });
+  if (base.toolchain.lean !== head.toolchain.lean || base.toolchain.githash !== head.toolchain.githash) {
+    add('toolchain-changed', null, `the Lean toolchain differs (${base.toolchain.lean} ${String(base.toolchain.githash).slice(0, 8)} at the merged spec, ${head.toolchain.lean} ${String(head.toolchain.githash).slice(0, 8)} now), so the two serialisations cannot be compared`);
+    return { problems, statements: [], bindings: [] };
+  }
+  const statements = [];
+  for (const id of recalled) {
+    const [was, now] = [base.recalls.get(id), head.recalls.get(id)];
+    if (!was || was.matches.length === 0) { add('statement-unresolved', id, `no declaration of the project at the merged spec has a name that ends with ${id}, so the statement cannot be compared`); continue; }
+    if (!now || [...was.matches].sort().join('\n') !== [...now.matches].sort().join('\n')) {
+      const [a, b] = [new Set(was.matches), new Set(now?.matches ?? [])];
+      const changed = [...b].filter((name) => !a.has(name)).map((name) => `${name} (added)`).concat([...a].filter((name) => !b.has(name)).map((name) => `${name} (gone)`));
+      add('statement-shadowed', id, `the declarations whose names end with ${id} are not the merged spec's: ${changed.join(', ')}; the recall could resolve to another declaration, so name new declarations differently`);
+      continue;
+    }
+    for (const name of was.matches) {
+      const missing = ['base', 'head'].filter((side) => !(side === 'base' ? base : head).constants.has(name));
+      if (missing.length > 0) { add('statement-unresolved', id, `the Lean program printed no constant for ${name} on the ${missing.join(' and ')}, so what the statement rests on cannot be compared`); continue; }
+      const [closedBase, closedHead] = [closureOf(base.constants, name), closureOf(head.constants, name)];
+      const first = [...closedBase].find(([constant, digest]) => closedHead.get(constant) !== digest);
+      if (first) {
+        add('statement-meaning-changed', id, `the statement ${id} (${name}) no longer means what it meant in the merged spec: ${first[0] === name ? 'its type changed' : `${first[0]}, which it rests on, ${closedHead.has(first[0]) ? 'changed' : 'is gone'}`}`);
+        continue;
+      }
+      statements.push({ name: id, declaration: name, constants: closedHead.size, sha256: closureDigest(closedHead) });
+    }
+  }
+
+  // Axioms: Lean's three standard ones, the project's own that the merged spec already had (unchanged),
+  // and new ones only in a Trusted module, each asserting exactly the proposition its accepted record is
+  // tied to in the merged spec.
+  const standard = new Set(STANDARD_AXIOMS);
+  const projectAxioms = (dump) => [...dump.constants.values()].filter((constant) => constant.kind === 'axiom');
+  const baseAxioms = new Set(projectAxioms(base).map((constant) => constant.name));
+  const newAxioms = projectAxioms(head).filter((constant) => !baseAxioms.has(constant.name));
+  for (const axiom of projectAxioms(head)) {
+    if (!baseAxioms.has(axiom.name)) continue;
+    if (closureDigest(closureOf(base.constants, axiom.name)) !== closureDigest(closureOf(head.constants, axiom.name))) add('axiom-changed', axiom.name, `the axiom ${axiom.name} of the merged spec asserts something else than it did`);
+  }
+  for (const [id, now] of head.recalls) {
+    for (const rest of now.rests) {
+      for (const name of rest.axioms) {
+        if (standard.has(name)) continue;
+        const constant = head.constants.get(name);
+        if (!constant || constant.kind !== 'axiom') add('axiom-not-allowed', id, `the statement ${id} (${rest.n}) rests on the axiom ${name}, which is not one of Lean's three standard axioms or an axiom of the project (sorry, native_decide and bv_decide add such axioms)`);
+      }
+    }
+  }
+  const bindings = [];
+  const cited = (dump, kind) => dump.docs.filter((doc) => doc[kind]);
+  for (const axiom of newAxioms) {
+    if (!inTrustedModule(axiom.module)) { add('axiom-not-allowed', axiom.name, `the axiom ${axiom.name} is new since the merged spec and is declared outside Trusted/ (in ${axiom.module})`); continue; }
+    const doc = cited(head, 'axiom').find((entry) => entry.name === axiom.name);
+    const ids = (doc?.cites ?? []).filter((id) => acceptedIds.has(id));
+    if (ids.length !== 1) { add('trusted-axiom-unbound', axiom.name, `the new axiom ${axiom.name} must cite exactly one accepted externals record in its docstring (it cites ${ids.length})`); continue; }
+    const record = ids[0];
+    const props = cited(base, 'prop').filter((entry) => entry.cites.includes(record) && !inTrustedModule(entry.module) && isFrozen(moduleRel(entry.module)));
+    if (props.length !== 1) { add('trusted-axiom-unbound', axiom.name, `the record ${record} is tied to ${props.length} propositions in the frozen spec of the merged spec; it must be tied to exactly one, so the axiom ${axiom.name} has nothing to assert`); continue; }
+    const proposition = props[0].name;
+    if (axiom.typeConst !== proposition) { add('trusted-axiom-unbound', axiom.name, `the axiom ${axiom.name} asserts ${axiom.typeConst ?? 'something that is not one proposition'}, but the record ${record} is tied to the proposition ${proposition} in the merged spec; an axiom must assert exactly that`); continue; }
+    if (closureDigest(closureOf(base.constants, proposition)) !== closureDigest(closureOf(head.constants, proposition))) { add('trusted-axiom-unbound', axiom.name, `the proposition ${proposition} that the record ${record} is tied to changed since the merged spec`); continue; }
+    const citing = cited(head, 'axiom').filter((entry) => inTrustedModule(entry.module) && entry.cites.includes(record));
+    if (citing.length !== 1) { add('trusted-axiom-unbound', axiom.name, `the record ${record} is cited by ${citing.length} axioms (${citing.map((entry) => entry.name).join(', ')}); it ties one`); continue; }
+    bindings.push({ axiom: axiom.name, record, proposition });
+  }
+  return { problems, statements, bindings };
+}
+
+// What the allowed-axioms list says about the axioms each statement rests on, read from Lean (full names).
+// `recalledFiles` maps a recalled name to the spec files that recall it, as paths from the git top.
+// A version 1 list holds every statement to one set; a version 2 list holds a statement to the set of the
+// crate whose spec files hold it, and refuses a spec file that no crate lists. An axiom whose type is a
+// proposition asserts something, so with a list it may only be a hand-written Trusted axiom (an assumption
+// bound to its accepted record, or the merged spec's own); one outside Trusted, an extraction's among them,
+// is refused even when listed, because a list vouches for where a name came from, not for what it says.
+export function allowedProblems({ head, recalledFiles, allowed }) {
+  const problems = [];
+  const asserts = (name) => { const constant = head.constants.get(name); return constant?.kind === 'axiom' && constant.asserts ? constant : null; };
+  for (const [id, now] of head.recalls) {
+    for (const file of recalledFiles.get(id) ?? []) {
+      let names = allowed.names;
+      let where = '';
+      if (allowed.crates !== null) {
+        const crate = [...allowed.crates].find(([, entry]) => entry.specFiles.has(file));
+        if (!crate) { problems.push({ kind: 'allowed-axioms-crate-unknown', file, statement: id, detail: `the spec file ${file} is listed under no crate of the allowed axioms, so the statement ${id} cannot be held to a crate's list` }); continue; }
+        [where, names] = [` of the crate ${crate[0]}`, crate[1].axioms];
+      }
+      for (const rest of now.rests) {
+        const outside = axiomsNotAllowed(rest.axioms, names);
+        if (outside.length > 0) problems.push({ kind: 'axiom-not-allowed', file, statement: id, detail: `the statement ${id} (${rest.n}) rests on the ${outside.length === 1 ? 'axiom' : 'axioms'} ${outside.slice(0, 3).join(', ')}${outside.length > 3 ? ` and ${outside.length - 3} more` : ''}, which the allowed axioms${where} do not name` });
+        for (const name of rest.axioms) {
+          const constant = asserts(name);
+          if (constant && !inTrustedModule(constant.module)) problems.push({ kind: 'prop-axiom-outside-trusted', file, statement: id, detail: `the statement ${id} (${rest.n}) rests on ${name}, an axiom whose type is a proposition, declared outside Trusted/ (in ${constant.module}); only a hand-written Trusted axiom bound to its accepted record may assert something` });
+        }
+      }
+    }
+  }
+  return problems;
+}
 
 // ---- the run state -------------------------------------------------------------------------
 
-function readRunRecord(root, name) {
+// A run-state file with the digest of the bytes it was read from, or null when there is none.
+function readRunFile(root, name) {
   const file = path.join(root, '.formalising', 'auto-fv', name);
   if (!fs.existsSync(file)) return null;
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return refuse('run-state-unreadable', `${file} is not valid JSON; fix it or move it aside, then run the build check again`); }
+  let bytes;
+  try { bytes = fs.readFileSync(file); } catch { return refuse('run-state-unreadable', `${file} cannot be read; fix it, then run the build check again`); }
+  try { return { file, sha256: sha256(bytes), data: JSON.parse(bytes.toString('utf8')) }; } catch { return refuse('run-state-unreadable', `${file} is not valid JSON; fix it or move it aside, then run the build check again`); }
+}
+const readRunRecord = (root, name) => readRunFile(root, name)?.data ?? null;
+
+// JSON with every object's keys in order, as the engine writes its own digests (fvs-auto.mjs, canonicalJson),
+// so a record has the same digest in a receipt and when the engine reads the record again.
+const canonicalJson = (value) => JSON.stringify(value, (_key, item) => (item !== null && typeof item === 'object' && !Array.isArray(item)
+  ? Object.fromEntries(Object.keys(item).sort().map((key) => [key, item[key]])) : item));
+export const recordDigest = (record) => sha256(canonicalJson(record ?? null));
+
+// The externals records a check relied on (the ones its accepted Trusted axioms are tied to), each with
+// a digest of the record as it stood. A consumer that finds a record changed or gone knows the receipt
+// was made on an authority that no longer holds.
+function externalsBinding(ties, externalsFile) {
+  const records = new Map((externalsFile?.data?.records ?? []).map((record) => [record?.id, record]));
+  return {
+    file: externalsFile?.file ?? null,
+    sha256: externalsFile?.sha256 ?? null,
+    records: [...new Set(ties.map((tie) => tie.record))].sort().map((id) => ({ id, sha256: recordDigest(records.get(id)) })),
+  };
 }
 
 // Where the recorded extraction published its Lean, as the folders and files of the Lean project: a
@@ -803,7 +1316,15 @@ function resolveSpecBase({ top, root, full, specBase }) {
 
 // ---- the check -----------------------------------------------------------------------------
 
-export function buildCheck({ projectRoot, commit, specBase, packages, receiptDir, workdir, keep = false, timeoutSeconds = 7200 }) {
+// The list given with --allow-axioms: its names and the digest of the bytes they were read from.
+function loadAllowedAxioms(file) {
+  const resolved = path.resolve(file);
+  let bytes;
+  try { bytes = fs.readFileSync(resolved); } catch { refuse('allow-axioms-unreadable', `cannot read the allowed-axioms file ${resolved}`); }
+  return { file: resolved, sha256: sha256(bytes), ...readAllowedAxioms(bytes, resolved) };
+}
+
+export function buildCheck({ projectRoot, commit, specBase, allowAxioms, packages, receiptDir, workdir, keep = false, timeoutSeconds = 7200 }) {
   if (!projectRoot) refuse('usage', '--project-root is required');
   if (!SHA_ARGUMENT.test(commit ?? '')) refuse('usage', '--commit must be a commit hash of 7 to 64 hexadecimal digits');
   const root = fs.existsSync(projectRoot) ? fs.realpathSync(projectRoot) : refuse('usage', `no such project root: ${projectRoot}`);
@@ -813,13 +1334,22 @@ export function buildCheck({ projectRoot, commit, specBase, packages, receiptDir
   const full = git(top, ['rev-parse', '--verify', '--quiet', `${commit}^{commit}`]);
   const tree = full === null ? null : git(top, ['rev-parse', `${full}^{tree}`]);
   if (full === null || tree === null) refuse('commit-not-found', `${commit} is not a commit of this repository`);
-  if (specBase !== undefined && !SHA_ARGUMENT.test(specBase)) refuse('usage', '--spec-base must be a commit hash of 7 to 64 hexadecimal digits');
-  const specBaseFull = resolveSpecBase({ top, root, full, specBase });
 
+  // From here on the commit is known. Once this check holds the lock, an earlier receipt for the commit
+  // no longer stands in for it: a non-accepting receipt replaces it at once, and the verdict (or, if
+  // the check is refused or dies, the refusal) replaces that. A caller that is refused the lock changes
+  // nothing, so it cannot spoil the receipt of the check that is running.
   const receipts = path.resolve(receiptDir ?? path.join(root, '.formalising', 'auto-fv', 'build-check'));
   const release = acquireLock();
-  const work = fs.mkdtempSync(path.join(workdir ? path.resolve(workdir) : os.tmpdir(), `fvs-build-check-${full.slice(0, 12)}-`));
+  let work = null;
   try {
+    writeReceipt(receipts, full, { schema: RECEIPT_SCHEMA, kind: 'fvs-build-check', accepted: false, label: labelFailed('the check started and did not finish'), commit: full, tree, startedAt: new Date().toISOString() });
+    if (specBase !== undefined && !SHA_ARGUMENT.test(specBase)) refuse('usage', '--spec-base must be a commit hash of 7 to 64 hexadecimal digits');
+    const specBaseFull = resolveSpecBase({ top, root, full, specBase });
+    if (allowAxioms === '') refuse('usage', '--allow-axioms needs the path of the allowed-axioms file');
+    const allowed = allowAxioms === undefined ? null : loadAllowedAxioms(allowAxioms);
+    const allowedRecord = allowed && { file: allowed.file, sha256: allowed.sha256, names: allowed.names.size, ...(allowed.crates ? { crates: allowed.crates.size } : {}) };
+    work = fs.mkdtempSync(path.join(workdir ? path.resolve(workdir) : os.tmpdir(), `fvs-build-check-${full.slice(0, 12)}-`));
     const cleanRoot = path.join(work, 'tree');
     extractCommit(top, full, work, cleanRoot);
     const sub = path.relative(top, root);
@@ -834,19 +1364,21 @@ export function buildCheck({ projectRoot, commit, specBase, packages, receiptDir
     // The project's folder in the repository, with `/` separators; empty when it is the repository root.
     const prefix = path.join(sub, below).split(path.sep).filter((part) => part && part !== '.').join('/');
     const layout = extractionLayout(readRunRecord(root, 'state.json'), { root, top, prefix });
+    let externalsFile = null;
     const integrity = checkIntegrity({
       base: specBaseFull === null ? null : gitTree(top, specBaseFull, prefix, layout),
       head: gitTree(top, full, prefix, layout),
       layout,
-      externals: () => { const records = readRunRecord(root, 'externals.json')?.records; return Array.isArray(records) ? records : null; },
+      externals: () => { externalsFile = readRunFile(root, 'externals.json'); const records = externalsFile?.data?.records; return Array.isArray(records) ? records : null; },
     });
+    const externalsRecord = externalsBinding(integrity.ties, externalsFile);
     const integrityRecord = { specBase: specBaseFull, compared: specBaseFull !== null, ok: integrity.problems.length === 0, problems: integrity.problems, ties: integrity.ties, extraction: layout };
     if (!integrityRecord.ok) {
       const reason = `${describeProblem(integrity.problems[0])}${integrity.problems.length > 1 ? ` (and ${integrity.problems.length - 1} more)` : ''}`;
       return finish(receipts, full, {
-        schema: 1, kind: 'fvs-build-check', accepted: false, label: labelFailed(reason), commit: full, tree,
+        schema: RECEIPT_SCHEMA, kind: 'fvs-build-check', accepted: false, label: labelFailed(reason), commit: full, tree,
         leanRoot: path.join(sub, below) || '.', toolchain: toolchainOf(leanRoot), lake: null, packages: null, build: null,
-        specFiles: [], flags: [], warnings: [], specBase: specBaseFull, integrity: integrityRecord, checkedAt: new Date().toISOString(),
+        specFiles: [], flags: [], warnings: [], specBase: specBaseFull, allowAxioms: allowedRecord, externals: externalsRecord, integrity: integrityRecord, checkedAt: new Date().toISOString(),
       });
     }
 
@@ -859,6 +1391,8 @@ export function buildCheck({ projectRoot, commit, specBase, packages, receiptDir
     const env = { ...gitEnvironment(), LEAN_NUM_THREADS: '2' };
     const lakeVersion = (spawnSync('lake', ['--version'], { cwd: leanRoot, encoding: 'utf8', env }).stdout ?? '').split('\n')[0].trim();
     const files = leanFiles(leanRoot);
+    // A module's .olean, wherever the file's module name puts it; none exists before this check's build.
+    const builtModule = (at, rel) => integrity.moduleCandidates(rel).find((module) => fs.existsSync(oleanFile(at, module))) ?? null;
     // Dependencies must be up to date before the build; only the project's own modules may be missing.
     const preflightLog = path.join(work, 'preflight.log');
     runLake(['build', '--no-build', '--no-ansi'], { cwd: leanRoot, env, log: preflightLog, timeoutSeconds: 1800 });
@@ -876,6 +1410,8 @@ export function buildCheck({ projectRoot, commit, specBase, packages, receiptDir
 
     const specFiles = [];
     const tampered = [];
+    const recalled = new Set();
+    const recalledFiles = new Map();
     for (const rel of files.files) {
       const bytes = fs.readFileSync(path.join(leanRoot, rel));
       const text = bytes.toString('utf8');
@@ -884,9 +1420,12 @@ export function buildCheck({ projectRoot, commit, specBase, packages, receiptDir
       if (!rel.endsWith('.lean')) continue;
       const spec = readSpecSource(text);
       if (spec.statements.length === 0) continue;
-      const olean = path.join(leanRoot, '.lake', 'build', 'lib', 'lean', `${rel.slice(0, -'.lean'.length)}.olean`);
+      for (const statement of spec.statements) {
+        recalled.add(statement.name);
+        recalledFiles.set(statement.name, [...(recalledFiles.get(statement.name) ?? []), path.join(sub, below, rel).split(path.sep).join('/')]);
+      }
       const own = log.messages.filter((m) => m.file === rel && m.severity !== 'info');
-      const built = fs.existsSync(olean);
+      const built = builtModule(leanRoot, rel) !== null;
       const statements = spec.statements.map((statement) => {
         const hit = own.find((m) => m.line === statement.recallLine || (statement.guardFrom !== null && m.line >= statement.guardFrom && m.line <= statement.guardTo));
         const reason = statement.problems[0] ?? (hit ? describe(hit) : null)
@@ -907,43 +1446,140 @@ export function buildCheck({ projectRoot, commit, specBase, packages, receiptDir
       const failing = specFiles.find((file) => file.status === 'failing');
       if (failing) reason = `${failing.path}: ${failing.reason ?? failing.statements.find((s) => s.status === 'failing').reason}`;
     }
+    // Lake must have compiled every spec, proof and extraction file, whatever the lakefile says and
+    // whether or not the file holds a recall: each needs the .olean this build produced.
+    if (reason === null) {
+      const unbuilt = integrity.required.filter(({ rel }) => builtModule(leanRoot, rel) === null);
+      if (unbuilt.length > 0) reason = `no .olean was produced for ${unbuilt[0].rel}${unbuilt[0].modules[0] ? ` (module ${unbuilt[0].modules[0]})` : ''}, so Lake did not build it${unbuilt.length > 1 ? ` (and ${unbuilt.length - 1} more)` : ''}`;
+    }
+    // The Lean-level comparison with the merged spec. Without a merged spec there is nothing to compare.
+    if (reason === null && specBaseFull !== null) {
+      const accepted = (() => {
+        try { const file = externalsFile ?? readRunFile(root, 'externals.json'); return new Set((file?.data?.records ?? []).filter((r) => r?.status === 'assumption-accepted' && r.decision && typeof r.id === 'string').map((r) => r.id)); } catch (error) { if (error instanceof Refusal) return new Set(); throw error; }
+      })();
+      const lean = leanCheck({ top, sub, below, specBaseFull, work, leanRoot, source, hasPackages: manifest.length > 0, env, timeoutSeconds, integrity, recalled, recalledFiles, allowed, acceptedIds: accepted, builtModule });
+      if (lean.error) reason = `the Lean check could not run: ${lean.error}`;
+      else {
+        integrityRecord.semantic = { toolchain: lean.toolchain, statements: lean.statements, bindings: lean.bindings, dumps: lean.dumps };
+        if (lean.problems.length > 0) {
+          integrityRecord.problems.push(...lean.problems);
+          integrityRecord.ok = false;
+          reason = `${describeProblem(lean.problems[0])}${lean.problems.length > 1 ? ` (and ${lean.problems.length - 1} more)` : ''}`;
+        }
+      }
+    }
     const flags = statements.filter((s) => s.flags.length > 0).map((s) => `${s.name} uses ${s.flags.join(', ')}`);
     const warnings = symlinks.soft.length === 0 ? [] : [`symbolic links lead out of the commit to files Lake does not read as Lean sources: ${symlinks.soft.slice(0, 3).join(', ')}${symlinks.soft.length > 3 ? ` and ${symlinks.soft.length - 3} more` : ''}`];
-    const accepted = reason === null;
-    const label = accepted ? LABEL_ACCEPTED : labelFailed(reason);
+    // Accepted means the statements were compared with the merged spec; a build alone is not that.
+    const accepted = reason === null && specBaseFull !== null;
+    const label = reason !== null ? labelFailed(reason) : accepted ? LABEL_ACCEPTED : LABEL_UNCHECKED;
     const receipt = {
-      schema: 1, kind: 'fvs-build-check', accepted, label, commit: full, tree,
+      schema: RECEIPT_SCHEMA, kind: 'fvs-build-check', accepted, label, commit: full, tree,
       leanRoot: path.join(sub, below) || '.', toolchain: toolchainOf(leanRoot),
       lake: lakeVersion, packages: { source, copy, revisions },
       build: { argv: build.argv, exitCode: build.status, seconds, log: logFile, logSha256: sha256(logBytes) },
-      specFiles, flags, warnings, specBase: specBaseFull, integrity: integrityRecord, checkedAt: new Date().toISOString(),
+      specFiles, flags, warnings, specBase: specBaseFull, allowAxioms: allowedRecord, externals: externalsRecord, integrity: integrityRecord, checkedAt: new Date().toISOString(),
     };
     return finish(receipts, full, receipt);
+  } catch (error) {
+    throw leaveRefusal(receipts, full, tree, error);
   } finally {
     release();
-    if (!keep) fs.rmSync(work, { recursive: true, force: true });
+    if (work && !keep) fs.rmSync(work, { recursive: true, force: true });
   }
+}
+
+const oleanFile = (root, module) => path.join(root, '.lake', 'build', 'lib', 'lean', `${module.replaceAll('.', '/')}.olean`);
+
+// Runs the Lean program on the built head and on a fresh build of the merged spec in a copy of its own,
+// then compares them. An `error` means the comparison could not be made, which is not an acceptance.
+function leanCheck({ top, sub, below, specBaseFull, work, leanRoot, source, hasPackages, env, timeoutSeconds, integrity, recalled, recalledFiles, allowed, acceptedIds, builtModule }) {
+  const dump = path.join(work, 'dump');
+  fs.mkdirSync(dump, { recursive: true });
+  fs.writeFileSync(path.join(dump, 'Dump.lean'), DUMP_SOURCE);
+  const tail = (file) => { try { return fs.readFileSync(file, 'utf8').trim().split('\n').slice(-3).join(' | ').slice(0, 300); } catch { return ''; } };
+  const dumpOf = (side, root) => {
+    const modules = [...new Set(leanFiles(root).files.filter((rel) => rel.endsWith('.lean') && !LAKE_FILES.test(rel)).map((rel) => builtModule(root, rel)).filter(Boolean))].sort();
+    const args = path.join(dump, `${side}-args.json`);
+    fs.writeFileSync(args, JSON.stringify({ modules, recalls: [...recalled].sort(), ids: [...acceptedIds].sort() }));
+    const [out, log] = [path.join(dump, `${side}.jsonl`), path.join(dump, `${side}.log`)];
+    const run = runLake(['env', 'lean', '--run', path.join(dump, 'Dump.lean'), args], { cwd: root, env, log, stdoutFile: out, timeoutSeconds });
+    if (run.status !== 0) return { error: `the Lean program failed on the ${side} (exit ${run.status}): ${tail(log)}` };
+    const text = fs.readFileSync(out, 'utf8');
+    try { return { dump: parseDump(text), sha256: sha256(text) }; } catch (error) { return { error: `the Lean program's output for the ${side} cannot be read (${error.message}): ${tail(log)}` }; }
+  };
+  const head = dumpOf('head', leanRoot);
+  if (head.error) return head;
+
+  const baseClean = path.join(work, 'base');
+  fs.mkdirSync(path.join(work, 'base-index'), { recursive: true });
+  extractCommit(top, specBaseFull, path.join(work, 'base-index'), baseClean);
+  const baseRoot = path.join(baseClean, sub, below);
+  if (!hasLakefile(baseRoot)) return { error: `the merged spec ${specBaseFull.slice(0, 12)} has no Lean project at ${path.join(sub, below) || '.'}` };
+  if (hasPackages) copyPackages(source, path.join(baseRoot, '.lake', 'packages'));
+  const baseLog = path.join(work, 'base-build.log');
+  const build = runLake(['build', '--no-ansi'], { cwd: baseRoot, env, log: baseLog, timeoutSeconds });
+  if (build.status !== 0) {
+    const problem = firstProblem(readLog(fs.readFileSync(baseLog, 'utf8')).messages);
+    return { error: `the merged spec ${specBaseFull.slice(0, 12)} does not build (${problem ? describe(problem) : `lake exited with status ${build.status}`})` };
+  }
+  const base = dumpOf('base', baseRoot);
+  if (base.error) return base;
+  const { problems, statements, bindings } = semanticProblems({ base: base.dump, head: head.dump, recalled: [...recalled].sort(), acceptedIds });
+  if (allowed) problems.push(...allowedProblems({ head: head.dump, recalledFiles, allowed }));
+  return { problems, statements, bindings, toolchain: head.dump.toolchain, dumps: { base: base.sha256, head: head.sha256 } };
 }
 
 const toolchainOf = (leanRoot) => (fs.existsSync(path.join(leanRoot, 'lean-toolchain')) ? fs.readFileSync(path.join(leanRoot, 'lean-toolchain'), 'utf8').trim() : null);
 
-// Writes the receipt, bound to the commit, and returns the result. A receipt is written for every
-// verdict, so a later verdict for the same commit replaces an earlier one.
-function finish(receipts, full, receipt) {
-  fs.mkdirSync(receipts, { recursive: true });
+// Writes a receipt bound to the commit, replacing the one that was there. If the new one cannot be
+// written, the old one is removed rather than left standing.
+function writeReceipt(receipts, full, receipt) {
   const receiptPath = path.join(receipts, `${full}.json`);
-  fs.writeFileSync(`${receiptPath}.tmp`, `${JSON.stringify(receipt, null, 2)}\n`);
-  fs.renameSync(`${receiptPath}.tmp`, receiptPath);
-  return { ok: true, code: receipt.accepted ? 'accepted' : 'failed', ...receipt, receipt: receiptPath, report: reportLines(receipt) };
+  try {
+    fs.mkdirSync(receipts, { recursive: true });
+    fs.writeFileSync(`${receiptPath}.tmp`, `${JSON.stringify(receipt, null, 2)}\n`);
+    fs.renameSync(`${receiptPath}.tmp`, receiptPath);
+  } catch (error) {
+    try { fs.rmSync(receiptPath, { force: true }); } catch { /* the folder cannot be written at all */ }
+    throw new Refusal('receipt-not-written', `the receipt ${receiptPath} could not be written (${error.message})`);
+  }
+  return receiptPath;
+}
+
+// A refused or crashed check leaves a terminal, non-accepting receipt for the commit, so an earlier
+// accepting receipt does not stand in for a check that did not complete.
+function leaveRefusal(receipts, full, tree, error) {
+  const code = error instanceof Refusal ? error.code : 'internal-error';
+  const message = error instanceof Error ? error.message : String(error);
+  try {
+    const file = writeReceipt(receipts, full, { schema: RECEIPT_SCHEMA, kind: 'fvs-build-check', accepted: false, label: `build check refused (${code}): ${message}`.slice(0, 400), commit: full, tree, refusal: { code, message }, checkedAt: new Date().toISOString() });
+    if (error instanceof Refusal) error.receipt = file;
+  } catch { /* the earlier receipt was already replaced or removed */ }
+  return error;
+}
+
+// Writes the receipt for a verdict, bound to the commit, and returns the result. A receipt is written
+// for every verdict, so a later verdict for the same commit replaces an earlier one.
+function finish(receipts, full, receipt) {
+  const receiptPath = writeReceipt(receipts, full, receipt);
+  const code = receipt.accepted ? 'accepted' : receipt.label === LABEL_UNCHECKED ? 'unchecked' : 'failed';
+  return { ok: true, code, ...receipt, receipt: receiptPath, report: reportLines(receipt) };
 }
 
 function reportLines(receipt) {
   const { integrity } = receipt;
   const lines = [receipt.label, `commit ${receipt.commit}`, `tree ${receipt.tree}`, ...receipt.warnings.map((warning) => `warning: ${warning}`)];
   lines.push(integrity.compared ? `spec base ${integrity.specBase}: statements, frozen paths and added code compared with the merged spec`
-    : 'spec base: none given or recorded, so the statements were not compared with a merged spec');
+    : 'spec base: none given or recorded, so the statements were not compared with a merged spec and this is not an acceptance');
+  lines.push(receipt.allowAxioms ? `allowed axioms: ${receipt.allowAxioms.names} names${receipt.allowAxioms.crates === undefined ? '' : ` in ${receipt.allowAxioms.crates} crate${receipt.allowAxioms.crates === 1 ? '' : 's'}`} from ${receipt.allowAxioms.file} (sha256 ${receipt.allowAxioms.sha256}); a statement that rests on any other non-standard axiom does not pass`
+    : 'allowed axioms: no list given, so no statement is held to a list of axioms');
   const { folders, files } = integrity.extraction ?? { folders: [], files: [] };
   lines.push(`extraction output held fixed, besides the folders named Extraction...: ${folders.length + files.length === 0 ? 'none recorded in the run state' : [...folders, ...files].join(', ')}`);
+  if (integrity.semantic) {
+    const { statements, bindings, toolchain } = integrity.semantic;
+    lines.push(`Lean check (${toolchain.lean}): recalled declarations compared: ${statements.length} (${statements.reduce((sum, item) => sum + item.constants, 0)} project constants); new Trusted axioms bound to their records: ${bindings.length}`);
+  }
   for (const problem of integrity.problems) lines.push(`not accepted: ${problem.kind}: ${describeProblem(problem)}`);
   for (const tie of integrity.ties) lines.push(`accepted assumption: axiom ${tie.axiom} (${tie.file}) is tied to externals record ${tie.record}`);
   for (const file of receipt.specFiles) {
@@ -959,7 +1595,7 @@ function reportLines(receipt) {
 
 function parseArguments(argv) {
   const options = {};
-  const valued = { '--project-root': 'projectRoot', '--commit': 'commit', '--spec-base': 'specBase', '--packages': 'packages', '--receipt-dir': 'receiptDir', '--workdir': 'workdir', '--timeout': 'timeoutSeconds' };
+  const valued = { '--project-root': 'projectRoot', '--commit': 'commit', '--spec-base': 'specBase', '--allow-axioms': 'allowAxioms', '--packages': 'packages', '--receipt-dir': 'receiptDir', '--workdir': 'workdir', '--timeout': 'timeoutSeconds' };
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--keep') options.keep = true;
     else if (valued[argv[i]] && i + 1 < argv.length) { options[valued[argv[i]]] = argv[i + 1]; i += 1; } else refuse('usage', `unknown or incomplete argument ${argv[i]}`);
@@ -971,7 +1607,11 @@ function parseArguments(argv) {
   return options;
 }
 
-if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Run only when this file is the program, not when it is imported or read from stdin (argv[1] is then
+// missing or names no file).
+let direct = false;
+try { direct = fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url)); } catch { /* imported or piped */ }
+if (direct) {
   try {
     const { report, ...result } = buildCheck(parseArguments(process.argv.slice(2)));
     // stdout holds the JSON result and nothing else, so a caller can parse it; the report is for people.
@@ -980,7 +1620,7 @@ if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import
     process.exitCode = result.accepted ? 0 : 1;
   } catch (error) {
     if (!(error instanceof Refusal)) throw error;
-    process.stdout.write(`${JSON.stringify({ ok: false, code: error.code, message: error.message }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ ok: false, code: error.code, message: error.message, ...(error.receipt ? { receipt: error.receipt } : {}) }, null, 2)}\n`);
     process.stderr.write(`refused (${error.code}): ${error.message}\n`);
     process.exitCode = 2;
   }
