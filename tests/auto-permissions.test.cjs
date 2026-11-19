@@ -1289,16 +1289,35 @@ describe('the permissions page', () => {
     assert.match(text, /A worker that runs a plain `git push` is not covered by this rule: your other rules and permission mode decide that push, as before/);
     assert.match(text, /On Codex, a rule matches the start of a command: `node`, the path and `--branch`\. It cannot tell `fvs\/work` from `main`, and the command refuses a name outside the recorded namespaces/);
     assert.match(text, /Codex splits a command run through a shell wrapper such as `bash -lc`.*That was not observed here/);
-    assert.match(text, /It leaves no `origin\/<name>` ref and sets no upstream: run `git fetch` to see the branch/);
+    assert.match(text, /leaves no `origin\/<name>` ref and sets no upstream: run `git fetch` to see the branch/);
     assert.match(text, /In the tests, none of these settings changed where the push went or what it sent: `remote\.<name>\.push`.*`submodule\.recurse`/);
     assert.match(text, /A worker that gets a refusal stops and reports its `code` and `message`\. It does not fall back to `git push`/);
     assert.match(text, /An FVS update or reinstall that moves the script leaves both stale: run init again to append the rule for the new path, and delete the old rule yourself/);
     assert.match(text, /Any session of your user account can edit the script file at the allowed path, as it can edit the record/);
-    assert.match(text, /such as a command substitution \(`\$\(\.\.\.\)`\) or a redirect \(`> file`\) after the branch name, which its documentation does not say/);
+    assert.match(text, /whether Claude Code screens a command substitution \(`\$\(\.\.\.\)`\) after the branch name against an allow rule, which its documentation does not say, or applies its documented checks of redirect targets and of each part of a compound command to the push rule/);
+    // What the runtimes' documentation says, with the versions it was read for, and the limit that none of it was observed.
+    assert.match(text, /a compound command is split at `&&`, `\|\|`, `;`, `\|`, `\|&`, `&` and newlines and that every part must be allowed, and that a redirect target is checked against your file rules/);
+    assert.match(text, /Codex splits a command run through a shell wrapper such as `bash -lc` into its simple commands only when the script is a plain chain joined by `&&`, `\|\|`, `;` or `\|`\. A script with a redirect, a substitution, a variable assignment or a wildcard is not split/);
+    assert.match(text, /Claude Code 2\.1\.329 and codex-cli 0\.170\.0/);
+    assert.match(text, /Do not make the first real push the test of the rule/);
     // The page names a git push allow rule only as something to delete, never inside a block that shows what FVS writes.
     const blocks = [...page().matchAll(/```[a-z]*\n([\s\S]*?)```/g)].map((match) => match[1]);
     assert.ok(blocks.length >= 4);
     for (const code of blocks) assert.ok(!/Bash\(git push/.test(code), 'no block of the page shows a git push rule');
+  });
+
+  it('states what the push command checks, sends and records, with the repository, option and receipt rules', () => {
+    const text = page().replace(/\s+/g, ' ');
+    assert.match(text, /A `core\.worktree` setting that points a repository at the files of another one is refused with `worktree-mismatch`/);
+    assert.match(text, /a copy of the repository and another repository do not\. A link that leads into the same repository is that repository/);
+    assert.match(text, /`-c core\.abbrev=no` and `-c push\.pushOption=`, and no other option/);
+    assert.match(text, /The last one empties the list of push options from every git configuration and from the environment/);
+    assert.match(text, /The record names only object ids that the push itself reported/);
+    assert.match(text, /so `newRemoteId` is null for them\. `localTipBeforePush` is the tip that the command read just before the push/);
+    assert.match(text, /treat that as a later observation/);
+    assert.match(text, /The command then reports `push-outcome-unknown` and does not say that nothing changed\. Read the destination before you retry/);
+    // The two refusal codes that a worker may now see are named on the page.
+    for (const code of ['worktree-mismatch', 'push-outcome-unknown']) assert.ok(text.includes(`\`${code}\``), code);
   });
 
   it('makes no unconditional promise that a push asks, and no longer describes a hook as part of init', () => {

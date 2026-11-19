@@ -141,8 +141,13 @@ It exits with a plain message and a non-zero status, and pushes nothing, unless 
 - exactly `--branch <name>` was given. Any other argument, a second `--branch`, `--force`, a refspec or a remote
   name is refused.
 - the shared git directory of the repository it runs in is the one recorded at init, and the recorded project root
-  is a checkout of that same repository. The main checkout and its linked worktrees pass; a copy, a link or
-  another repository does not.
+  is a checkout of that same repository. The main checkout and its linked worktrees pass; a copy of the repository
+  and another repository do not. A link that leads into the same repository is that repository, because the
+  command goes by the real path that git uses and not by the name of the link; a link into another repository is
+  another repository.
+- git started in the top of this work tree uses the same repository. A `core.worktree` setting that points a
+  repository at the files of another one is refused with `worktree-mismatch`. After these checks every git call
+  names the git directory and the work tree that were found, and none finds a repository again from a directory.
 - `<name>` is a plain branch name under a recorded namespace (`fvs/...`), `refs/heads/<name>` exists as a local
   branch, it is not a symbolic ref, and no tag has the same name.
 - no `url.<base>.insteadOf` or `pushInsteadOf` rule applies to the recorded address, no `[remote "<address>"]`
@@ -157,10 +162,22 @@ It pushes to the address recorded at init, never to a remote name. In the tests,
 where the push went or what it sent: `remote.<name>.push`, `remote.<name>.pushurl`, `remote.<name>.mirror`,
 `remote.pushDefault`, `branch.<name>.pushRemote`, `push.default`, `push.followTags`, `push.recurseSubmodules` and
 `submodule.recurse`. It uses the full refspec `refs/heads/<name>:refs/heads/<name>` without a `+`,
-`--no-follow-tags`, `-c push.followTags=false`, `--recurse-submodules=no`, `--porcelain` and
-`-c core.abbrev=no`, and no other option. The result (created, fast-forward, up to date or failed, with the old
-and new object id that the destination reported) is appended to `.formalising/auto-fv/pushes.jsonl` in the recorded
-project root. It leaves no `origin/<name>` ref and sets no upstream: run `git fetch` to see the branch.
+`--no-follow-tags`, `-c push.followTags=false`, `--recurse-submodules=no`, `--porcelain`, `-c core.abbrev=no` and
+`-c push.pushOption=`, and no other option. The last one empties the list of push options from every git
+configuration and from the environment: push options go to the receiving side, which can act on them, and this
+command sends none.
+
+The result is appended to `.formalising/auto-fv/pushes.jsonl` in the recorded project root: `created`,
+`fast-forward`, `up-to-date`, `failed` (git says it did not update the branch) or `unknown`. The record names only
+object ids that the push itself reported. A fast-forward has both the old and the new id. A new branch and an
+up-to-date branch have none in git's summary, so `newRemoteId` is null for them. `localTipBeforePush` is the tip
+that the command read just before the push. It is not the id of what was sent, because the branch can move between
+that read and the push. To learn the head on the destination, run `git fetch` and read `origin/<name>`, and treat
+that as a later observation: another push may have come in since. The command leaves no `origin/<name>` ref and sets no upstream: run `git fetch` to see the branch.
+
+When git ends without a result for the branch (a lost connection, a timeout, a signal), the destination may have
+taken the update. The command then reports `push-outcome-unknown` and does not say that nothing changed. Read the
+destination before you retry, and report the code and message.
 
 ### What it does not stop
 
@@ -179,9 +196,16 @@ project root. It leaves no `origin/<name>` ref and sets no upstream: run `git fe
   that push, as before. That is why a Claude write refuses while a project settings file allows a `git push` by rule
   (next section).
 - On Codex, a rule matches the start of a command: `node`, the path and `--branch`. It cannot tell `fvs/work` from
-  `main`, and the command refuses a name outside the recorded namespaces. Codex splits a command run through a shell
-  wrapper such as `bash -lc` into its simple commands before it matches rules, as its documentation says. That was
-  not observed here.
+  `main`, and the command refuses a name outside the recorded namespaces. As the Codex rules documentation describes
+  it, Codex splits a command run through a shell wrapper such as `bash -lc` into its simple commands only when the
+  script is a plain chain joined by `&&`, `||`, `;` or `|`. A script with a redirect, a substitution, a variable
+  assignment or a wildcard is not split, and the rules then apply to the whole invocation. That was not observed here.
+- On Claude Code, its documentation says that a compound command is split at `&&`, `||`, `;`, `|`, `|&`, `&` and
+  newlines and that every part must be allowed, and that a redirect target is checked against your file rules as if
+  Claude wrote that file: the rule allows the command, not the target. For a command substitution after the branch
+  name it says only that deny and ask rules see the nested command, and not what an allow rule does. None of this
+  was observed here. The documentation was read in November 2026; the versions installed where this was written
+  were Claude Code 2.1.329 and codex-cli 0.170.0.
 - **Branch protection on the project fork is still recommended.** Protect `main` and the release branches and
   forbid force pushes. It is an independent safeguard that works whatever a command looks like.
 
@@ -239,7 +263,7 @@ machine, and it would still run.
 
 Written to `.codex/rules/fvs-auto.rules` in the project, after your yes. The syntax is Codex's own
 `prefix_rule`, from the [Codex rules documentation](https://developers.openai.com/codex/rules), and it was
-checked with `codex execpolicy check` on codex-cli 0.166.0. The file lists examples that Codex checks when it
+checked with `codex execpolicy check` on codex-cli 0.166.0 and again on 0.170.0. The file lists examples that Codex checks when it
 loads the rules. Whether a live Codex session stops prompting after this file is not observed.
 
 ```python
@@ -291,8 +315,8 @@ prefix_rule(
   there is nothing to write on Codex: init says so and those prompts stay unresolved until you approve them when
   they appear.
 - Codex splits a command run through a shell wrapper such as `bash -lc` into its simple commands before it matches
-  rules, as its documentation says. That was not observed here, and `codex execpolicy check` takes the command words
-  directly.
+  rules only for a plain chain joined by `&&`, `||`, `;` or `|`; any other script is matched as one invocation, as its
+  documentation says. That was not observed here, and `codex execpolicy check` takes the command words directly.
 
 ## What FVS never allows
 
@@ -344,17 +368,19 @@ covers the session that ran init. If your workers run in another mode, check tha
   another project root), the `recheck` entry point, and the push command: every refusal listed above, and real
   pushes into a throwaway local bare repository that stands in for the fork, reached through a stand-in for `ssh`.
   Nothing in them contacts GitHub.
-- The Codex rules were run through `codex execpolicy check` on codex-cli 0.166.0: the file parses, each probe
+- The Codex rules were run through `codex execpolicy check` on codex-cli 0.166.0 and again on 0.170.0: the file parses, each probe
   command is allowed, and `git push`, merge and other commands are not matched. The tests repeat this when a Codex
   CLI is installed.
 - One live probe: the message step (`ao send` to a session that does not exist) was run in a Claude Code
   session.
 - Not observed: a live Claude Code or Codex session showing that a written rule removes a prompt; the live `gh`,
-  `git fetch` and Lake probes; a real push to GitHub through the push command; whether Claude Code screens text
-  after the matched words against an allow rule, such as a command substitution (`$(...)`) or a redirect (`> file`)
-  after the branch name, which its documentation does not say; that Codex splits a shell wrapper before it matches rules; that the push command finds the same `git`,
-  `PATH` and shell environment that a worker's shell uses. That is why init asks you to recheck, and why the
-  first real push is the evidence for the push command.
+  `git fetch` and Lake probes; a real push to GitHub through the push command; whether Claude Code screens a
+  command substitution (`$(...)`) after the branch name against an allow rule, which its documentation does not say,
+  or applies its documented checks of redirect targets and of each part of a compound command to the push rule;
+  that Codex splits a shell wrapper before it matches rules; that the push command finds the same `git`,
+  `PATH` and shell environment that a worker's shell uses. That is why init asks you to recheck. The recheck pushes
+  nothing: its probe uses the branch name `fvs/.permission-check`, which git forbids and the push command refuses
+  before it contacts anything. Do not make the first real push the test of the rule.
 
 ## After a first run: `/fewer-permission-prompts`
 
