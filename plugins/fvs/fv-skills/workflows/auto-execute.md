@@ -55,26 +55,45 @@ merge and the proof pull request").
 ## Several crates
 
 With several target crates the build check still builds the whole project once and writes one receipt for a
-head. The state reports `done` only when that receipt also holds for every target crate. `read-state` shows
-`crates`: for each crate whether it is accepted and, when it is not, why. A crate is accepted when:
+head. It also gets the list of axioms the statements may rest on beyond Lean's three standard ones. The
+engine writes that list for the commit it checks, and the check refuses any statement that rests on an axiom
+the list does not name, naming the statement and the axiom:
+
+```bash
+node "$AUTO" allowed-axioms --project-root . --commit <SHA>
+node "${CLAUDE_PLUGIN_ROOT}/scripts/fvs-build-check.mjs" --project-root <root> --commit <SHA> --spec-base <MERGE> \
+  --allow-axioms .formalising/auto-fv/allowed-axioms.json
+```
+
+The state reports `done` only when the receipt was made with the list the engine derives from that commit
+today and also holds for every target crate. A new or changed externals record, or a changed file, changes
+the list: write it and run the check again. `allowed-axioms` prints each axiom it leaves out and why.
+
+An axiom is on the list only when its origin shows it is the owner's to assume:
+
+- the extraction declares it for an item of another library or of a crate the owner does not verify. It
+  only says that the item exists;
+- the extraction declares it for an item of another target crate that the crate has no definition for, and
+  the extraction's stitch lists that item as assumed;
+- the extraction declares it for an item of the crate itself that was left opaque, and the owner accepted an
+  externals record whose source starts with that item's path;
+- a Trusted file declares it by hand, and its docstring names, in backticks, the id of an accepted externals
+  record whose source names a crate path and no target crate.
+
+Everything else stays off the list: a hand-written assumption about a function of another target crate, a
+Trusted axiom with no accepted record, an axiom the engine cannot place. Prove such a function in its own
+crate and use that crate's theorem in the crate that calls it, or stitch the calling crate to it.
+`read-state` shows `crates`: for each crate whether it is accepted and, when it is not, why. A crate is
+accepted when:
 
 - its recorded spec files built and hold at least one statement;
-- none of its statements rests on an axiom without an accepted entry in the externals record, whose model
-  symbol is the axiom's name as Lean prints it (once a repository has several crates or a crate decision,
-  every axiom beyond Lean's three standard ones needs one);
-- none of its statements rests on a hand-written assumption about a function of another target crate. The
-  one exception is an item the other crate has no definition for, because the extraction excluded it or made
-  it opaque there: the extraction lists it and the owner accepts the assumption. Otherwise prove the
-  function in its own crate and use that crate's theorem in the crate that calls it. An axiom that an
-  accepted provider's own statements already rest on is that provider's assumption, vetted when the
-  provider was accepted, so its consumers inherit it;
 - every target crate it depends on is accepted too.
 
 Dispatch workers providers first, in the order `crates.order` gives, and accept bottom-up, one crate at a
 time. A crate that depends on another may be proved early against the other crate's reviewed statement, but
 it counts as accepted only after the other crate is. An item of a crate the owner does not verify may be
 assumed, with the owner's accepted entry in the externals record. A project with one crate is not affected:
-the receipt alone decides.
+the receipt alone decides, and the build check runs without the list.
 
 ## GitHub rule
 

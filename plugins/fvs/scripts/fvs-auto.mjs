@@ -55,6 +55,7 @@ function usage() {
     '       node fvs-auto.mjs spec-status [--commit SHA] [--project-root DIR]',
     '       node fvs-auto.mjs record-override --key KEY --value TEXT --reason TEXT [--project-root DIR]',
     '       node fvs-auto.mjs list-items [--translation PATH | --crate NAME] [--scope FILE|DIR|RUST_PATH[,...]] [--project-root DIR]',
+    '       node fvs-auto.mjs allowed-axioms [--commit SHA] [--project-root DIR]',
     '       node fvs-auto.mjs record-pr --kind spec|proof --url URL --branch B --head SHA [--project-root DIR]',
     '       node fvs-auto.mjs record-pr --kind spec|proof --merged --merge-commit SHA [--project-root DIR]',
     '       node fvs-auto.mjs freeze|check|accept --request FILE --out EXCLUSIVE_DIR',
@@ -1236,28 +1237,12 @@ function crateWarnings(context) {
 
 const crateDecisions = (context) => context.undecided.map((crate) => `non-target crate ${crate}: the owner has not recorded a decision in the agreement`);
 
-// Why an axiom beyond Lean's standard ones is not an assumption the owner accepted for the
-// statements of `crate`, or null. Each such axiom needs an accepted externals record. A
-// record about an item of another verified crate is refused unless the extraction lists
-// that item as one the provider has no definition for: a target's function is proved in its
-// own crate and used from there, never assumed again. Items of the crate itself, of a crate
-// the owner does not verify and of other libraries are the owner's to assume. The extraction
-// names an assumed item as the constant declared in the consuming crate's namespace, and Lean
-// prints it with that namespace in front, so either form is the same axiom.
-function axiomProblem(axiom, crate, records, assumed, context) {
-  const record = records.get(axiom);
-  if (!record) return `rests on the axiom ${axiom}, which has no accepted externals record`;
-  const source = record.source.symbol;
-  const owner = itemCrate(source);
-  if (owner === crate || !context.targets.includes(owner)
-    || assumed.some((entry) => entry?.rustPath === source && (entry.name === axiom || `${crate}.${entry.name}` === axiom))) return null;
-  return `rests on the axiom ${axiom}, a hand-written assumption about ${source}, an item of the verified crate ${owner}: prove it there and use that crate's theorem`;
-}
-
 // The target crates the build check accepted at the head of the proof PR. The check builds the
 // whole project once, so a crate is accepted when every statement of its recorded spec files
-// built, none of them rests on an axiom the engine cannot account for, and every target crate
-// it depends on is accepted too. A target with no built statement is not accepted.
+// built and every target crate it depends on is accepted too; a target with no built statement
+// is not accepted. What the statements may rest on beyond Lean's standard axioms is not judged
+// here: the build check enforces the allowed axioms, and the state requires a receipt made with
+// the current list (see allowedAxiomList).
 function crateAcceptance(root, specs, context, receipt) {
   if (context.targets.length === 0) return [{ crate: null, accepted: false, reason: 'the agreement drops every extracted crate, so nothing is verified' }];
   const top = gitWorkingTree(root);
@@ -1265,18 +1250,10 @@ function crateAcceptance(root, specs, context, receipt) {
   const pruned = ownerChangesOf(specs);
   const rows = currentSpecRows(specs).filter((row) => pruned.get(row.specFile) !== 'pruned');
   const files = new Map((Array.isArray(receipt.specFiles) ? receipt.specFiles : []).map((file) => [file?.path, file]));
-  const records = new Map((loadExternals(root)?.records ?? []).filter((record) => record.status === 'assumption-accepted').map((record) => [record.model.symbol, record]));
   const dependsOn = new Map(context.view.units.map((unit) => [unit.crate, unit.dependsOn.filter((crate) => context.targets.includes(crate))]));
-  // The axioms the statements of each judged crate rest on once they passed, with those it
-  // inherits: an axiom an accepted provider's statements already rest on is the provider's
-  // own assumption, vetted when the provider was judged, not a new one in its consumers.
-  const vetted = new Map();
   const reasonOf = (crate) => {
     const own = rows.filter((row) => row.items.some((id) => itemCrate(id) === crate));
     if (own.length === 0) return 'no spec file is recorded for this crate';
-    const assumed = [].concat(context.units.find((entry) => entry.crate === crate)?.stitch ?? []).flatMap((entry) => (Array.isArray(entry?.assumed) ? entry.assumed : []));
-    const known = new Set(dependsOn.get(crate).flatMap((other) => [...(vetted.get(other) ?? [])]));
-    vetted.set(crate, known);
     let statements = 0;
     for (const row of own) {
       const file = files.get(path.posix.join(prefix, row.specFile));
@@ -1285,12 +1262,6 @@ function crateAcceptance(root, specs, context, receipt) {
       for (const statement of Array.isArray(file.statements) ? file.statements : []) {
         statements += 1;
         if (statement?.status !== 'built') return `the statement ${statement?.name} did not build in the check`;
-        for (const axiom of Array.isArray(statement.beyondStandard) ? statement.beyondStandard : []) {
-          if (known.has(axiom)) continue;
-          const problem = axiomProblem(axiom, crate, records, assumed, context);
-          if (problem) return `the statement ${statement.name} ${problem}`;
-          known.add(axiom);
-        }
       }
     }
     return statements === 0 ? 'the build check built no statement of this crate' : null;
@@ -1305,6 +1276,236 @@ function crateAcceptance(root, specs, context, receipt) {
   }
   for (const crate of context.missing) result.push({ crate, accepted: false, reason: 'the extraction does not hold this crate' });
   return result;
+}
+
+// ---- The allowed axioms of a run over several crates -------------------------------------
+//
+// The build check refuses a statement that rests on an axiom beyond Lean's standard ones unless
+// the list it is given names that axiom, fully qualified. The engine writes the list from the
+// blobs of the commit being checked and requires the receipt to have been made with it. An
+// axiom is listed only when its origin says it is the owner's to assume:
+//   - declared in a file the extraction published (its hash is the recorded one), for an item of
+//     a crate the owner does not verify or of another library: it only asserts that the item
+//     exists;
+//   - declared there for an item another verified crate has no definition for, and named in the
+//     stitch's assumed list;
+//   - declared there for an item the verified crate itself left opaque, with an accepted
+//     externals record whose source starts with that item's path;
+//   - hand-written in a Trusted folder, citing in its docstring, in backticks, the id of an
+//     accepted externals record whose source names a crate path and no verified crate.
+// Anything else the engine cannot read or place is withheld and named, never listed.
+
+const ALLOWED_AXIOMS_SCHEMA = 'fvs/auto-allowed-axioms';
+const allowedAxiomsPath = (root) => path.join(root, STATE_DIR, 'allowed-axioms.json');
+
+// Lean source with its comments and string contents blanked (every newline kept, so lines and
+// columns hold), and the doc comments with where each one ends.
+function leanCode(text) {
+  const out = text.split('');
+  const docs = [];
+  const blank = (from, to) => {
+    for (let at = from; at < to; at += 1) if (out[at] !== '\n') out[at] = ' ';
+  };
+  let at = 0;
+  while (at < text.length) {
+    const here = text[at];
+    if (here === '/' && text[at + 1] === '-') {
+      // A block comment; they nest.
+      let depth = 1;
+      let end = at + 2;
+      while (end < text.length && depth > 0) {
+        if (text[end] === '/' && text[end + 1] === '-') { depth += 1; end += 2; }
+        else if (text[end] === '-' && text[end + 1] === '/') { depth -= 1; end += 2; }
+        else end += 1;
+      }
+      if (text[at + 2] === '-') docs.push({ end, text: text.slice(at, end) });
+      blank(at, end);
+      at = end;
+    } else if (here === '-' && text[at + 1] === '-') {
+      let end = at;
+      while (end < text.length && text[end] !== '\n') end += 1;
+      blank(at, end);
+      at = end;
+    } else if (here === '"') {
+      let end = at + 1;
+      while (end < text.length && text[end] !== '"') end += text[end] === '\\' ? 2 : 1;
+      blank(at + 1, Math.min(end, text.length));
+      at = end + 1;
+    } else if (here === "'" && !/[A-Za-z0-9_'!?]/.test(text[at - 1] ?? '')) {
+      // A character literal; a quote after an identifier is part of the name.
+      const literal = /^'(?:\\.|[^\\'\n])'/.exec(text.slice(at, at + 8));
+      if (literal) {
+        blank(at + 1, at + literal[0].length - 1);
+        at += literal[0].length;
+      } else at += 1;
+    } else at += 1;
+  }
+  return { code: out.join(''), docs };
+}
+
+// The axioms a Lean file declares, each with its fully qualified name (the enclosing
+// namespaces in front) and the doc comment right before it. `unread` counts axiom keywords the
+// reader could not place in a declaration: a file with any is not read at all.
+export function leanAxioms(text) {
+  const { code, docs } = leanCode(text);
+  const commands = [];
+  let offset = 0;
+  for (const [index, line] of code.split('\n').entries()) {
+    if (/^\S/.test(line)) commands.push({ line: index + 1, start: offset, text: line });
+    else if (commands.length > 0) commands.at(-1).text += `\n${line}`;
+    offset += line.length + 1;
+  }
+  const frames = [];
+  const axioms = [];
+  let pending = null;
+  for (const command of commands) {
+    let rest = command.text.trimStart();
+    let attributes = false;
+    for (;;) {
+      if (rest.startsWith('@[')) {
+        let depth = 0;
+        let close = 0;
+        for (; close < rest.length; close += 1) {
+          if (rest[close] === '[') depth += 1;
+          else if (rest[close] === ']' && (depth -= 1) === 0) break;
+        }
+        rest = rest.slice(close + 1).trimStart();
+        attributes = true;
+        continue;
+      }
+      const modifier = /^(?:private|protected|noncomputable|unsafe|partial|nonrec|public|meta)\b\s*/.exec(rest);
+      if (!modifier) break;
+      rest = rest.slice(modifier[0].length);
+    }
+    // The doc comment ends right before the command, with only blanks between.
+    const doc = docs.findLast((candidate) => candidate.end <= command.start && code.slice(candidate.end, command.start).trim() === '');
+    if (rest === '' && attributes) {
+      // Attributes on a line of their own belong to the declaration after them, and so does the doc comment before them.
+      pending = pending ?? (doc ? doc.text : null);
+      continue;
+    }
+    const docText = doc ? doc.text : pending;
+    pending = null;
+    const head = /^[A-Za-z_]+/.exec(rest)?.[0];
+    if (head === 'namespace') frames.push(/^namespace\s+(\S+)/.exec(rest)?.[1] ?? '');
+    else if (head === 'section' || head === 'mutual') frames.push('');
+    else if (head === 'end') frames.pop();
+    else if (head === 'axiom') {
+      const name = /^axiom\s+(«[^»]*»|[^\s:({[⦃]+)/.exec(rest)?.[1];
+      if (name) {
+        const full = name.startsWith('_root_.') ? name.slice(7) : [...frames.filter(Boolean), name].join('.');
+        axioms.push({ name, full, line: command.line, doc: docText });
+      }
+    }
+  }
+  const keywords = (code.match(/(?<![A-Za-z0-9_.'«»])axiom(?![A-Za-z0-9_'])/g) ?? []).length;
+  return { axioms, unread: keywords - axioms.length };
+}
+
+// The Rust path an extraction writes first in an item's doc comment, such as
+// `[core::num::{u32}::wrapping_div]:`, or null for a hand-written docstring.
+const docRustPath = (doc) => /^(?:Trait (?:implementation|declaration): )?\[(.*)\]:?$/.exec(doc?.replace(/^\/--\s*/, '').split('\n')[0].trim() ?? '')?.[1] ?? null;
+const docRecordIds = (doc) => [...(doc ?? '').matchAll(/`([^`\s]+)`/g)].map((entry) => entry[1]);
+
+const allowedAxiomsBytes = (axioms) => Buffer.from(`${JSON.stringify({ schema: ALLOWED_AXIOMS_SCHEMA, schemaVersion: 1, axioms }, null, 2)}\n`);
+
+function trustedLeanFiles(root, commit) {
+  const run = spawnSync('git', ['--no-optional-locks', '-C', root, 'ls-tree', '-r', '--name-only', commit], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  if (run.status !== 0) return null;
+  return run.stdout.split('\n').filter((file) => file.endsWith('.lean') && file.split('/').slice(0, -1).some((folder) => folder.toLowerCase() === 'trusted'));
+}
+
+// Why an accepted externals record is not about axioms the owner may assume, or null. The
+// record's source is free text, so it must name a crate path and no verified crate.
+function recordSourceProblem(record, context) {
+  const text = record.source.symbol;
+  if (![...text.matchAll(/(?:^|[\s,;(])([A-Za-z_][A-Za-z0-9_]*)::/g)].length) return `the record ${record.id} names no crate path in its source`;
+  for (const unit of context.units.filter((entry) => context.targets.includes(entry.crate))) {
+    const names = [unit.crate, ...(isText(unit.package) ? [unit.package] : [])];
+    if (names.some((name) => new RegExp(`(?<![A-Za-z0-9_-])${name.replace(/[^A-Za-z0-9_]/g, '\\$&')}(?![A-Za-z0-9_-])`).test(text))) {
+      return `the record ${record.id} is about ${unit.crate}, a verified crate: prove it there`;
+    }
+  }
+  return null;
+}
+
+// The axioms a run over several crates may rest on at `commit`, fully qualified and sorted,
+// with each axiom withheld and why, and the problems that stop the list from being derived.
+export function allowedAxiomList(root, state, context, commit) {
+  const problems = [];
+  const withheld = [];
+  const listed = new Set();
+  const accepted = new Map((loadExternals(root)?.records ?? []).filter((record) => record.status === 'assumption-accepted').map((record) => [record.id, record]));
+  const read = (file, expectedSha256) => {
+    const relative = path.relative(root, path.resolve(root, file));
+    if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
+      problems.push(`${file} is outside the project, so it cannot be read at ${commit}`);
+      return null;
+    }
+    const posix = relative.split(path.sep).join('/');
+    const bytes = bytesAt(root, commit, posix);
+    if (bytes === null) problems.push(`${posix} is not in the commit ${commit}`);
+    else if (expectedSha256 !== undefined && sha256(bytes) !== expectedSha256) problems.push(`${posix} differs from the file the extraction published`);
+    else {
+      const { axioms, unread } = leanAxioms(bytes.toString('utf8'));
+      if (unread === 0) return { posix, axioms };
+      problems.push(`${posix} holds ${unread} axiom keyword(s) the engine could not place in a declaration`);
+    }
+    return null;
+  };
+  for (const unit of context.units) {
+    const assumed = [].concat(unit.stitch ?? []).flatMap((entry) => (Array.isArray(entry?.assumed) ? entry.assumed : []));
+    const foreign = new Set((Array.isArray(unit.foreignCrates) ? unit.foreignCrates : []).map((entry) => entry?.crate));
+    for (const entry of Array.isArray(unit.publication) ? unit.publication : []) {
+      if (!entry.projectPath.endsWith('.lean')) continue;
+      const file = read(entry.projectPath, entry.sha256);
+      for (const axiom of file?.axioms ?? []) {
+        const rustPath = docRustPath(axiom.doc);
+        const owner = rustPath?.split('::')[0];
+        const withhold = (reason) => withheld.push({ name: axiom.full, file: file.posix, reason });
+        if (!owner || !CRATE_NAME.test(owner)) withhold('its doc comment gives no Rust path, so its crate cannot be read');
+        else if (owner !== unit.crate && !foreign.has(owner)) withhold(`its crate ${owner} is not one the extraction recorded for ${unit.crate}`);
+        else if (!context.targets.includes(owner)) listed.add(axiom.full);
+        else if (owner === unit.crate) {
+          if ([...accepted.values()].some((record) => record.source.symbol === rustPath || record.source.symbol.startsWith(`${rustPath} `))) listed.add(axiom.full);
+          else withhold(`it stands for ${rustPath}, an item of the verified crate ${owner} that has no definition there: the owner accepts it with an externals record whose source starts with that path`);
+        } else if (assumed.some((item) => item?.rustPath === rustPath)) listed.add(axiom.full);
+        else withhold(`it stands for ${rustPath}, an item of the verified crate ${owner}: stitch ${unit.crate} to ${owner}, or prove the function there`);
+      }
+    }
+  }
+  for (const relative of trustedLeanFiles(root, commit) ?? []) {
+    const file = read(relative);
+    for (const axiom of file?.axioms ?? []) {
+      const records = docRecordIds(axiom.doc).filter((id) => accepted.has(id)).map((id) => accepted.get(id));
+      const reason = records.length === 0 ? 'its docstring cites no accepted externals record (the record id in backticks)' : records.map((record) => recordSourceProblem(record, context)).find(Boolean);
+      if (reason) withheld.push({ name: axiom.full, file: file.posix, reason });
+      else listed.add(axiom.full);
+    }
+  }
+  const axioms = [...listed].sort();
+  const bytes = allowedAxiomsBytes(axioms);
+  return { commit, axioms, withheld, problems, bytes, sha256: sha256(bytes) };
+}
+
+// Writes the allowed axioms for the commit the build check will check: the open proof PR's
+// head when one is recorded, else HEAD. A project with one crate has no list.
+export function allowedAxioms({ projectRoot, commit }) {
+  const root = projectDirectory(projectRoot);
+  const state = requireState(root);
+  const context = crateContextOf(state);
+  if (context === null) refuse('not-multi-crate', 'this project has one crate: the build check runs without an allowed-axioms file');
+  const specs = loadSpecs(root);
+  const proofPr = (specs?.prs ?? []).filter((pr) => pr.kind === 'proof' && !pr.merged).at(-1);
+  const head = resolveRevision(root, commit ?? proofPr?.head ?? 'HEAD');
+  if (head === null) refuse('usage', `${commit ?? proofPr?.head ?? 'HEAD'} is not a commit in this checkout`);
+  const result = allowedAxiomList(root, state, context, head);
+  if (result.problems.length > 0) refuse('allowed-axioms-unreadable', `the allowed axioms cannot be derived at ${head}: ${result.problems.join('; ')}`);
+  const file = allowedAxiomsPath(root);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, result.bytes);
+  return { code: 'written', message: `${result.axioms.length} allowed axiom(s) written for ${head}${result.withheld.length > 0 ? `; ${result.withheld.length} withheld` : ''}`,
+    file, commit: head, sha256: result.sha256, names: result.axioms.length, withheld: result.withheld };
 }
 
 function extractionErrors(extraction) {
@@ -1715,11 +1916,25 @@ function progress(root, state, specs = null) {
     // An accepting receipt counts only when the statements were held to the recorded spec merge: a
     // receipt made with no spec base, or against another commit, proves nothing about them.
     const heldToSpec = receipt?.specBase === specMerge.mergeCommit;
-    const check = `node fvs-build-check.mjs --project-root ${root} --commit ${proofPr.head} --spec-base ${specMerge.mergeCommit}`;
+    // With several crates the build check also gets the allowed axioms, which the engine writes for
+    // the commit it checks; a project with one crate runs it without.
+    const several = crateContextOf(state) !== null;
+    const check = `node fvs-build-check.mjs --project-root ${root} --commit ${proofPr.head} --spec-base ${specMerge.mergeCommit}`
+      + (several ? ` --allow-axioms ${allowedAxiomsPath(root)}` : '');
+    const writeList = `node fvs-auto.mjs allowed-axioms --project-root ${root} --commit ${proofPr.head}`;
+    const checkSteps = several ? `Write the allowed axioms: ${writeList}; then run the build check: ${check}` : `Run the build check on that commit: ${check}`;
     // With several crates the accepting receipt must also hold for every verified crate: one built
-    // project says nothing about a crate with no statement, an unrecorded axiom or an assumption
-    // about another verified crate's function. A single-crate project has no crate context.
+    // project says nothing about a crate with no statement or one that depends on a crate that is
+    // not accepted, and it counts only when it was made with the allowed axioms of this commit. A
+    // single-crate project has no crate context.
     const context = receipt?.accepted && heldToSpec ? crateContextOf(state) : null;
+    const allowed = context ? allowedAxiomList(root, state, context, proofPr.head) : null;
+    if (allowed && (allowed.problems.length > 0 || receipt.allowAxioms?.sha256 !== allowed.sha256)) {
+      return { phase: 'proofs', warnings,
+        nextAction: allowed.problems.length > 0
+          ? `The build check accepted the draft proof PR ${proofPr.url} at ${proofPr.head}, but the allowed axioms cannot be derived at that commit: ${allowed.problems.join('; ')}. Fix what is named, push, record the new head with record-pr --kind proof, and rerun the build check on it.` + suffix
+          : `The build check receipt for the draft proof PR ${proofPr.url} at ${proofPr.head} does not count: it was not made with the allowed axioms of this commit (${receipt.allowAxioms ? 'it holds another list' : 'it holds none'}). ${checkSteps}; read-state reports done when it accepts.` + suffix };
+    }
     const rejected = context ? crateAcceptance(root, specs, context, receipt).filter((entry) => !entry.accepted) : [];
     if (receipt?.accepted && heldToSpec && rejected.length === 0) {
       return { phase: 'done', warnings,
@@ -1732,10 +1947,10 @@ function progress(root, state, specs = null) {
     }
     return { phase: 'proofs', warnings,
       nextAction: (receipt?.accepted
-        ? `The build check receipt for the draft proof PR ${proofPr.url} at ${proofPr.head} does not count: it was made ${typeof receipt.specBase === 'string' ? `against the spec base ${receipt.specBase}` : 'without a spec base'}, not against the recorded spec merge ${specMerge.mergeCommit}. Run the build check again: ${check}; read-state reports done when it accepts.`
+        ? `The build check receipt for the draft proof PR ${proofPr.url} at ${proofPr.head} does not count: it was made ${typeof receipt.specBase === 'string' ? `against the spec base ${receipt.specBase}` : 'without a spec base'}, not against the recorded spec merge ${specMerge.mergeCommit}. ${several ? checkSteps : `Run the build check again: ${check}`}; read-state reports done when it accepts.`
         : receipt
           ? `The build check failed for the draft proof PR ${proofPr.url} at ${proofPr.head}: ${receipt.label}. Fix the proofs, push, record the new head with record-pr --kind proof, and rerun the build check on it.`
-          : `The draft proof PR ${proofPr.url} is recorded at ${proofPr.head}. Run the build check on that commit: ${check}; read-state reports done when it accepts.`) + suffix };
+          : `The draft proof PR ${proofPr.url} is recorded at ${proofPr.head}. ${checkSteps}; read-state reports done when it accepts.`) + suffix };
   }
   return { phase: 'specs', warnings,
     nextAction: (specPr
@@ -2557,6 +2772,10 @@ const STATE_COMMANDS = {
   'list-items': (argv) => {
     const flags = stateFlags(argv, [], [], ['translation', 'scope', 'crate']);
     return listItems({ projectRoot: flags['project-root'], translation: flags.translation, scope: flags.scope, crate: flags.crate });
+  },
+  'allowed-axioms': (argv) => {
+    const flags = stateFlags(argv, [], [], ['commit']);
+    return allowedAxioms({ projectRoot: flags['project-root'], commit: flags.commit });
   },
   'record-override': (argv) => {
     const flags = stateFlags(argv, ['key', 'value', 'reason']);
