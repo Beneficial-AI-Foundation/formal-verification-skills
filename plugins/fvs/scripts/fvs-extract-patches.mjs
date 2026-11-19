@@ -1609,16 +1609,17 @@ function publicationPlan(inv, outputs, sources = {}) {
 // spec, so attempt-status computes them again and compares with what publication wrote.
 //
 // Stitching. When crate B calls crate A and A is a target, Aeneas still writes B's
-// foreign items of A as axioms that carry only a type. Each such axiom becomes a
-// reducible alias of A's real constant, with the type B's code was translated against,
-// and B's Lean imports A's module:
+// foreign items of A as axioms that carry only a type. Each such axiom becomes an alias
+// of A's real definition, with the type B's code was translated against, and B's Lean
+// imports A's module:
 //
 //   axiom A.f : T            ==>   @[reducible] def A.f : T := _root_.A.f
 //
 // The alias keeps every existing name valid, and Lean itself is the signature gate: a
 // constant whose type is not T is rejected when the project builds. A foreign global is
 // typed `Result T` where the crate's own global is `T`, so a constant is lifted with
-// Result.ok. Nothing falls back to an axiom silently: an item the provider does not
+// Result.ok, and is an ordinary (not reducible) definition so that proof automation
+// keeps seeing the constant. Nothing falls back to an axiom silently: an item the provider does not
 // define must be named in the spec's `assume` list, and is then recorded as assumed.
 
 const OPENERS = '({[⦃';
@@ -1828,7 +1829,10 @@ function stitchText(text, { crate, provider, assume, consumerNames }) {
       continue;
     }
     const head = block.slice(0, declaration.index);
-    const marked = /^@\[/m.test(head) ? head.replace(/^@\[/m, '@[reducible, ') : `${head}@[reducible]\n`;
+    // A constant stays an ordinary definition: a reducible `Result.ok c` would let proof
+    // automation read the bound value away, and the proofs written against the axiom name
+    // that value.
+    const marked = kind === 'const' ? head : /^@\[/m.test(head) ? head.replace(/^@\[/m, '@[reducible, ') : `${head}@[reducible]\n`;
     parts[index] = `${marked}def ${name}${declaration[2].trimEnd()}\n  := ${lift ? 'Result.ok ' : ''}_root_.${name}`;
     replaced.push({
       rustPath, name, kind, lift, providerKind: target.keyword, check: verdict === 'equal' ? 'text-and-lean-build' : 'lean-build',

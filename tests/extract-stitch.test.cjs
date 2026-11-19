@@ -117,7 +117,7 @@ describe('stitching: the consumer\'s axioms become checked aliases of the provid
     const text = published(ws, 'Lean/App/ToyApp.lean');
     assert.match(text, /public import Aeneas\npublic import Toy\.Lib\.ToyLib\n@\[expose\] public section/);
     assert.match(text, /@\[reducible, rust_fun "toy_lib::one"\]\ndef toy_lib\.one : Result Std\.U32\n {2}:= _root_\.toy_lib\.one/);
-    assert.match(text, /@\[reducible, rust_const "toy_lib::TWO"\]\ndef toy_lib\.TWO : Result Std\.U32\n {2}:= Result\.ok _root_\.toy_lib\.TWO/, 'a foreign global is typed Result T, so the real value is lifted');
+    assert.match(text, /@\[rust_const "toy_lib::TWO"\]\ndef toy_lib\.TWO : Result Std\.U32\n {2}:= Result\.ok _root_\.toy_lib\.TWO/, 'a foreign global is typed Result T, so the real value is lifted, and is not reducible');
     assert.match(text, /@\[reducible, rust_type "toy_lib::Thing"\]\ndef toy_lib\.Thing : Type\n {2}:= _root_\.toy_lib\.Thing/);
     assert.match(text, /def toy_lib\.grow\n {2}: Std\.U32 → Std\.U32 → Result Std\.U32\n {2}:= _root_\.toy_lib\.grow/);
     assert.match(text, /\naxiom toy_lib\.other_mod\.skipped : Result Unit/, 'an assumed item stays an axiom');
