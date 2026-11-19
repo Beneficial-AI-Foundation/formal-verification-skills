@@ -1232,10 +1232,24 @@ const lastPr = (specs, kind) => (specs?.prs ?? []).filter((pr) => pr.kind === ki
 // One record has one digest: the digest of its canonical JSON (keys in order), the same one the build
 // check computes when it writes a receipt (fvs-build-check.mjs, recordDigest).
 const recordDigest = (record) => crypto.createHash('sha256').update(canonicalJson(record ?? null)).digest('hex');
-// Why an accepting receipt no longer holds, or null. The receipt lists the externals records its
+// The version of the receipt the build check writes (fvs-build-check.mjs, `schema`). Version 2 is the
+// first whose acceptance rests on the Lean-level comparison of the statements with the merged spec; an
+// older receipt is read as older and never counted, so it takes a new check to be accepted again.
+const BUILD_CHECK_RECEIPT_SCHEMA = 2;
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+// The Lean-level comparison an acceptance must carry: the toolchain it ran on, the declarations compared,
+// the new Trusted axioms it bound to their records, and the digests of both dumps.
+const hasLeanComparison = (semantic) => semantic !== null && typeof semantic === 'object'
+  && semantic.toolchain !== null && typeof semantic.toolchain === 'object'
+  && Array.isArray(semantic.statements) && semantic.statements.length > 0 && Array.isArray(semantic.bindings)
+  && ['base', 'head'].every((side) => SHA256_HEX.test(semantic.dumps?.[side] ?? ''));
+// Why an accepting receipt no longer holds, or null. A receipt of another version, or without the
+// Lean-level comparison, does not count. The receipt lists the externals records its
 // acceptance relied on, each with a digest; a record that changed, is gone, or cannot be read now means
 // the authority the check used is not the one on record, so the check has to run again.
 function staleReason(root, receipt) {
+  if (receipt.schema !== BUILD_CHECK_RECEIPT_SCHEMA) return `it is a version ${receipt.schema ?? 'unknown'} receipt, made before the build check compared the statements with the merged spec in Lean (this engine reads version ${BUILD_CHECK_RECEIPT_SCHEMA})`;
+  if (!hasLeanComparison(receipt.integrity?.semantic)) return 'it carries no Lean-level comparison of the statements with the merged spec (integrity.semantic)';
   const bound = receipt.externals;
   if (!bound || !Array.isArray(bound.records)) return 'it does not list the externals records it relied on (an older build check wrote it)';
   if (bound.records.length === 0) return null;
