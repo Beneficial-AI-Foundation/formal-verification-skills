@@ -1096,78 +1096,116 @@ describe('extraction folders in a multi-crate run', () => {
 });
 
 // A multi-crate run: crate A (hmac) and crate B (sha2) are both targets. The engine lists the axioms that
-// have a legitimate record. The spec files sit inside `namespace libcrux_hmac`, so the guards print names
-// without that prefix, and the list holds the full names.
+// have a legitimate record. The list holds full names, and a statement's axioms are read from Lean's
+// environment, which gives full names too, so a name is covered only by itself.
 describe('the allowed axioms', () => {
   const LIST = (...axioms) => JSON.stringify({ schema: 'fvs/auto-allowed-axioms', schemaVersion: 1, axioms });
-  const resting = (...axioms) => `import Dep\n\nrecall Dep.foo : True\n\n${GUARD('Dep.foo', `[${['propext', 'Classical.choice', 'Quot.sound', ...axioms].join(', ')}]`)}`;
-  const run = (fx, listText, extra = []) => {
+  const CRATES = (...crates) => JSON.stringify({ schema: 'fvs/auto-allowed-axioms', schemaVersion: 2, crates: crates.map(([crate, specFiles, axioms]) => ({ crate, specFiles, axioms })) });
+  const EXTERNAL = 'libcrux_hmac.libcrux_sha2.hacl.hash_256'; // generated for a crate that is not a target: says only that a function exists
+  const GAP = 'libcrux_hmac.Trusted.u32_wrapping_div_spec'; // a recorded gap assumption, hand-written: asserts something
+  const ABOUT_TARGET = 'libcrux_hmac.Trusted.sha2_hash_spec'; // hand-written, about a function of crate B, which is a target
+  const AXIOMS = {
+    [EXTERNAL]: { m: 'Extraction.Out', asserts: false },
+    [GAP]: { m: 'Trusted.Gaps', asserts: true },
+    [ABOUT_TARGET]: { m: 'Trusted.Gaps', asserts: true },
+  };
+  const axiomConstant = (name, { m, asserts }) => constant(name, { k: 'axiom', m, t: asserts ? 'a proposition' : 'a type', v: undefined, pr: asserts });
+  // The merged spec and the head both hold these axioms, so only the list is in question.
+  const resting = (names, extra = {}) => {
+    const dump = leanDump({
+      recalls: { 'Dep.foo': { axioms: ['propext', 'Classical.choice', 'Quot.sound', ...names] } },
+      constants: [constant('Dep.foo', { k: 'thm', t: 'a statement', v: undefined }), ...names.map((name) => axiomConstant(name, extra[name] ?? AXIOMS[name] ?? { m: 'Extraction.Out', asserts: false }))],
+    });
+    return { base: dump, head: dump };
+  };
+  const run = (fx, listText, dump, extra = []) => {
     const file = path.join(fx.base, 'allowed.json');
     write(file, listText);
-    return { file, result: check(fx, { args: ['--allow-axioms', file, ...extra] }) };
+    return { file, result: check(fx, { args: ['--allow-axioms', file, ...extra], dump }) };
   };
-  const EXTERNAL = 'libcrux_hmac.libcrux_sha2.hacl.hash_256'; // a generated axiom for a crate that is not a target
-  const GAP = 'libcrux_hmac.Trusted.u32_wrapping_div_spec'; // a recorded gap assumption, hand-written
-  const ABOUT_TARGET = 'Trusted.sha2_hash_spec'; // hand-written, and about a function of crate B, which is a target
+  const problemOf = (result, kind) => result.json.integrity.problems.find((problem) => problem.kind === kind);
 
   test('accepts a statement that rests on a non-target external axiom and on a recorded gap', () => {
-    const fx = fixture({ spec: resting('libcrux_sha2.hacl.hash_256', 'Trusted.u32_wrapping_div_spec') });
-    const { file, result } = run(fx, LIST(EXTERNAL, GAP, 'libcrux_hmac.Trusted.unused_spec'));
+    const fx = fixture();
+    const { file, result } = run(fx, LIST(EXTERNAL, GAP, 'libcrux_hmac.Trusted.unused_spec'), resting([EXTERNAL, GAP]));
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.json.accepted, true);
     assert.deepEqual(result.json.allowAxioms, { file, sha256: sha256(fs.readFileSync(file)), names: 3 });
     assert.match(result.stderr, /allowed axioms: 3 names from .*allowed\.json \(sha256 [0-9a-f]{64}\)/);
-    assert.deepEqual(statementOf(result, 'Dep.foo').beyondStandard, ['libcrux_sha2.hacl.hash_256', 'Trusted.u32_wrapping_div_spec']);
   });
 
   test('refuses a targeted crate\'s statement that rests on a hand-written axiom about another targeted crate\'s function', () => {
-    const fx = fixture({ spec: resting('libcrux_sha2.hacl.hash_256', 'Trusted.u32_wrapping_div_spec', ABOUT_TARGET) });
-    const { result } = run(fx, LIST(EXTERNAL, GAP));
+    const fx = fixture();
+    const { result } = run(fx, LIST(EXTERNAL, GAP), resting([EXTERNAL, GAP, ABOUT_TARGET]));
     assert.equal(result.status, 1, result.stderr);
     assert.equal(result.json.accepted, false);
-    assert.equal(result.json.label, `build check failed: Specs/A.lean: the statement Dep.foo rests on the axiom ${ABOUT_TARGET}, which the allowed axioms do not name`);
-    const statement = statementOf(result, 'Dep.foo');
-    assert.equal(statement.status, 'failing');
-    assert.match(statement.reason, /Dep\.foo.*Trusted\.sha2_hash_spec/);
-    assert.match(result.stderr, /Dep\.foo: failing \(the statement Dep\.foo rests on the axiom Trusted\.sha2_hash_spec/);
+    assert.equal(result.json.label, `build check failed: Specs/A.lean: Dep.foo: the statement Dep.foo (Dep.foo) rests on the axiom ${ABOUT_TARGET}, which the allowed axioms do not name`);
+    assert.equal(problemOf(result, 'axiom-not-allowed').statement, 'Dep.foo');
     assert.equal(JSON.parse(fs.readFileSync(path.join(fx.receipts, `${fx.commit}.json`), 'utf8')).accepted, false);
   });
 
   test('names every unlisted axiom, and the first three in the label', () => {
-    const fx = fixture({ spec: resting('a.one', 'a.two', 'a.three', 'a.four', EXTERNAL.replace('libcrux_hmac.', '')) });
-    const { result } = run(fx, LIST(EXTERNAL));
-    assert.equal(result.json.label, 'build check failed: Specs/A.lean: the statement Dep.foo rests on the axioms a.one, a.two, a.three and 1 more, which the allowed axioms do not name');
+    const names = ['a.one', 'a.two', 'a.three', 'a.four', EXTERNAL.replace('libcrux_hmac.', '')];
+    const { result } = run(fixture(), LIST(EXTERNAL), resting(names));
+    assert.match(result.json.label, /the statement Dep\.foo \(Dep\.foo\) rests on the axioms a\.one, a\.two, a\.three and 2 more, which the allowed axioms do not name$/);
+  });
+
+  test('a name is covered only by itself: the same tail under another namespace is another constant, in either direction', () => {
+    const own = 'libcrux_sha2.hacl.hash_256'; // sha2's own constant, declared in sha2's namespace
+    const mine = run(fixture(), LIST(own), resting([EXTERNAL]));
+    assert.equal(mine.result.json.accepted, false, "listing sha2's own constant does not cover hmac's copy");
+    assert.match(mine.result.json.label, new RegExp(`rests on the axiom ${EXTERNAL.replaceAll('.', '\\.')}, which`));
+    const copy = run(fixture(), LIST(EXTERNAL), resting([own]));
+    assert.equal(copy.result.json.accepted, false, "listing hmac's copy does not cover sha2's own constant");
   });
 
   test('with no list given nothing changes, and the receipt says so', () => {
-    const fx = fixture({ spec: resting(ABOUT_TARGET) });
-    const result = check(fx);
+    const fx = fixture();
+    const result = check(fx, { dump: resting([EXTERNAL, ABOUT_TARGET]) });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.json.allowAxioms, null);
     assert.match(result.stderr, /allowed axioms: no list given/);
   });
 
   test('an empty list allows only the three standard axioms', () => {
-    const standard = run(fixture(), LIST()).result;
+    const standard = run(fixture(), LIST(), resting([])).result;
     assert.equal(standard.status, 0, standard.stderr);
     assert.equal(standard.json.allowAxioms.names, 0);
-    assert.equal(run(fixture({ spec: resting(ABOUT_TARGET) }), LIST()).result.json.accepted, false);
+    assert.equal(run(fixture(), LIST(), resting([EXTERNAL])).result.json.accepted, false);
   });
 
-  test('a name that looks like a native_decide axiom is held to the list too', () => {
-    const native = 'Trusted._native.native_decide.ax_1';
-    const fx = fixture({ spec: resting(native) });
-    assert.equal(check(fx).json.accepted, true, 'without a list it is only flagged, as before');
-    const refused = run(fixture({ spec: resting(native) }), LIST(EXTERNAL)).result;
-    assert.equal(refused.json.accepted, false);
-    assert.match(refused.json.label, /rests on the axiom Trusted\._native\.native_decide\.ax_1, which the allowed axioms do not name/);
-    assert.equal(run(fixture({ spec: resting(native) }), LIST(native)).result.json.accepted, true, 'listed, it passes and is still flagged');
+  test('an axiom that sorry, native_decide or bv_decide would add is refused with a list or without, listed or not', () => {
+    const native = 'Dep.foo._native.native_decide.ax_1';
+    const asNew = (names) => { const { head } = resting(names); return { base: resting([]).base, head }; };
+    const without = check(fixture(), { dump: asNew([native]) });
+    assert.equal(without.json.accepted, false);
+    assert.equal(problemOf(without, 'axiom-not-allowed').statement, native);
+    const listed = run(fixture(), LIST(native), asNew([native])).result;
+    assert.equal(listed.json.accepted, false, 'a list does not make a new axiom outside Trusted acceptable');
+    assert.match(problemOf(listed, 'axiom-not-allowed').detail, /declared outside Trusted/);
+  });
+
+  test('an axiom whose type is a proposition must be a hand-written Trusted axiom, even when it is listed', () => {
+    const generated = { m: 'Extraction.Out', asserts: true };
+    const { result } = run(fixture(), LIST(EXTERNAL), resting([EXTERNAL], { [EXTERNAL]: generated }));
+    assert.equal(result.status, 1, result.stderr);
+    const problem = problemOf(result, 'prop-axiom-outside-trusted');
+    assert.match(problem.detail, new RegExp(`rests on ${EXTERNAL.replaceAll('.', '\\.')}, an axiom whose type is a proposition, declared outside Trusted/ \\(in Extraction\\.Out\\)`));
+    const bound = run(fixture(), LIST(GAP), resting([GAP])).result;
+    assert.equal(bound.status, 0, 'a Prop-valued axiom in Trusted, listed, passes');
+    const data = run(fixture(), LIST(EXTERNAL), resting([EXTERNAL], { [EXTERNAL]: { m: 'Trusted.Out', asserts: false } })).result;
+    assert.equal(data.status, 0, 'a data axiom passes wherever it is');
+  });
+
+  test('a Prop-valued axiom that is not on the list is refused for being unlisted, once', () => {
+    const { result } = run(fixture(), LIST(), resting([GAP]));
+    assert.deepEqual(result.json.integrity.problems.map((problem) => problem.kind), ['axiom-not-allowed']);
   });
 
   test('the digest is that of the raw bytes, and a statement with another fault keeps its own reason', () => {
-    const fx = fixture({ spec: resting(ABOUT_TARGET) });
+    const fx = fixture();
     const text = `  ${LIST(EXTERNAL)}\n\n`;
-    const { file, result } = run(fx, text);
+    const { file, result } = run(fx, text, resting([EXTERNAL]));
     assert.equal(result.json.allowAxioms.sha256, sha256(text));
     assert.equal(result.json.allowAxioms.sha256, sha256(fs.readFileSync(file)));
     const unguarded = fixture({ spec: `import Dep\n\nrecall Dep.foo : True\n` });
@@ -1179,10 +1217,15 @@ describe('the allowed axioms', () => {
     const missing = check(fx, { args: ['--allow-axioms', path.join(fx.base, 'nope.json')] });
     assert.equal(missing.status, 2);
     assert.equal(missing.json.code, 'allow-axioms-unreadable');
-    for (const bad of ['{ not json', JSON.stringify({ schema: 'other', schemaVersion: 1, axioms: [] }), JSON.stringify({ schema: 'fvs/auto-allowed-axioms', schemaVersion: 2, axioms: [] }),
-      JSON.stringify({ schema: 'fvs/auto-allowed-axioms', schemaVersion: 1 }), JSON.stringify({ schema: 'fvs/auto-allowed-axioms', schemaVersion: 1, axioms: 'a.b' }),
-      JSON.stringify({ schema: 'fvs/auto-allowed-axioms', schemaVersion: 1, axioms: ['a.b', ''] }), JSON.stringify({ schema: 'fvs/auto-allowed-axioms', schemaVersion: 1, axioms: [' a.b'] }),
-      JSON.stringify({ schema: 'fvs/auto-allowed-axioms', schemaVersion: 1, axioms: [1] }), 'null']) {
+    const v1 = (axioms) => JSON.stringify({ schema: 'fvs/auto-allowed-axioms', schemaVersion: 1, axioms });
+    const v2 = (fields) => JSON.stringify({ schema: 'fvs/auto-allowed-axioms', schemaVersion: 2, ...fields });
+    const crate = (fields) => ({ crate: 'a', specFiles: ['S.lean'], axioms: [], ...fields });
+    for (const bad of ['{ not json', JSON.stringify({ schema: 'other', schemaVersion: 1, axioms: [] }), JSON.stringify({ schema: 'fvs/auto-allowed-axioms', schemaVersion: 3, axioms: [] }),
+      JSON.stringify({ schema: 'fvs/auto-allowed-axioms', schemaVersion: 1 }), v1('a.b'), v1(['a.b', '']), v1([' a.b']), v1([1]), 'null',
+      v2({ axioms: [] }), v2({ crates: 'a' }), v2({ crates: [null] }), v2({ crates: [], extra: 1 }), v2({ crates: [crate({ extra: 1 })] }),
+      v2({ crates: [crate({ crate: '' })] }), v2({ crates: [crate({ crate: ' a' })] }), v2({ crates: [crate({ specFiles: 'S.lean' })] }), v2({ crates: [crate({ axioms: [1] })] }),
+      v2({ crates: [crate({ axioms: ['a.b', ''] })] }), v2({ crates: [crate({ specFiles: [''] })] }), v2({ crates: [crate(), crate()] }),
+      v2({ crates: [crate(), crate({ crate: 'b' })] })]) {
       const { result } = run(fx, bad);
       assert.equal(result.status, 2, bad);
       assert.equal(result.json.code, 'allow-axioms-invalid', bad);
@@ -1204,12 +1247,55 @@ describe('the allowed axioms', () => {
     noBuild(fx);
   });
 
-  test('a listed name covers itself and itself with leading components dropped, nothing else', async () => {
+  describe('one list for each crate (version 2)', () => {
+    const SPEC_FILE = 'Specs/A.lean';
+    test('a statement is held to the list of the crate whose spec files hold it', () => {
+      const text = CRATES(['libcrux_hmac', [SPEC_FILE], [EXTERNAL, GAP]], ['libcrux_sha2', ['sha2/Specs/B.lean'], [ABOUT_TARGET]]);
+      const accepted = run(fixture(), text, resting([EXTERNAL, GAP]));
+      assert.equal(accepted.result.status, 0, accepted.result.stderr);
+      assert.deepEqual(accepted.result.json.allowAxioms, { file: accepted.file, sha256: sha256(text), names: 3, crates: 2 });
+      assert.match(accepted.result.stderr, /allowed axioms: 3 names in 2 crates from /);
+      const other = run(fixture(), text, resting([EXTERNAL, ABOUT_TARGET])).result;
+      assert.equal(other.status, 1, 'an axiom that only the other crate lists is not this crate\'s');
+      assert.match(other.json.label, new RegExp(`rests on the axiom ${ABOUT_TARGET.replaceAll('.', '\\.')}, which the allowed axioms of the crate libcrux_hmac do not name`));
+    });
+
+    test('the same bare tail under another namespace is not covered by the crate list either', () => {
+      const text = CRATES(['libcrux_hmac', [SPEC_FILE], ['libcrux_sha2.hacl.hash_256']]);
+      const { result } = run(fixture(), text, resting([EXTERNAL]));
+      assert.equal(result.json.accepted, false);
+      assert.equal(problemOf(result, 'axiom-not-allowed').file, SPEC_FILE);
+    });
+
+    test('a statement in a spec file that no crate lists is refused, naming the file', () => {
+      const { result } = run(fixture(), CRATES(['libcrux_hmac', ['Specs/Other.lean'], [EXTERNAL]]), resting([EXTERNAL]));
+      assert.equal(result.status, 1, result.stderr);
+      const problem = problemOf(result, 'allowed-axioms-crate-unknown');
+      assert.equal(problem.file, SPEC_FILE);
+      assert.match(problem.detail, /the spec file Specs\/A\.lean is listed under no crate of the allowed axioms/);
+    });
+
+    test('the Prop rule and the unlisted rule apply per crate too', () => {
+      const generated = { m: 'Extraction.Out', asserts: true };
+      const { result } = run(fixture(), CRATES(['libcrux_hmac', [SPEC_FILE], [EXTERNAL]]), resting([EXTERNAL], { [EXTERNAL]: generated }));
+      assert.ok(problemOf(result, 'prop-axiom-outside-trusted'));
+    });
+
+    test('a list read for the check is the list the receipt digest names', () => {
+      const text = CRATES(['libcrux_hmac', [SPEC_FILE], []]);
+      const { result, file } = run(fixture(), text, resting([]));
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.json.allowAxioms.sha256, sha256(fs.readFileSync(file)));
+    });
+  });
+
+  test('a listed name covers itself and nothing else', async () => {
     const { axiomsNotAllowed } = await library();
     const allowed = new Set([EXTERNAL]);
     const left = (...names) => axiomsNotAllowed(names, allowed);
-    assert.deepEqual(left('libcrux_hmac.libcrux_sha2.hacl.hash_256', 'libcrux_sha2.hacl.hash_256', 'hacl.hash_256'), []);
-    assert.deepEqual(left('libcrux_sha2.hacl.hash_384', 'x.libcrux_hmac.libcrux_sha2.hacl.hash_256', 'sha2.hacl.hash_256', 'libcrux_sha2.hacl', 'hash_25'), ['libcrux_sha2.hacl.hash_384', 'x.libcrux_hmac.libcrux_sha2.hacl.hash_256', 'sha2.hacl.hash_256', 'libcrux_sha2.hacl', 'hash_25']);
+    assert.deepEqual(left(EXTERNAL), []);
+    assert.deepEqual(left('libcrux_sha2.hacl.hash_256', 'hacl.hash_256', 'x.libcrux_hmac.libcrux_sha2.hacl.hash_256', 'libcrux_hmac.libcrux_sha2.hacl', 'libcrux_hmac.libcrux_sha2.hacl.hash_25'),
+      ['libcrux_sha2.hacl.hash_256', 'hacl.hash_256', 'x.libcrux_hmac.libcrux_sha2.hacl.hash_256', 'libcrux_hmac.libcrux_sha2.hacl', 'libcrux_hmac.libcrux_sha2.hacl.hash_25']);
     assert.deepEqual(left('propext', 'Classical.choice', 'Quot.sound'), [], 'the standard axioms need no entry');
     assert.deepEqual(axiomsNotAllowed(null, allowed), []);
   });
@@ -1632,8 +1718,8 @@ function realProject(head, { externals = EXTERNALS(record({ id: 'gap-add' })), r
   git(repo, 'commit', '-q', '-m', 'proofs');
   return { base, repo, merged, tip: git(repo, 'rev-parse', 'HEAD'), receipts: path.join(base, 'receipts'), work: path.join(base, 'work') };
 }
-function realCheck(fx) {
-  const run = sh(fx.base, process.execPath, [SCRIPT, '--project-root', fx.repo, '--commit', fx.tip, '--spec-base', fx.merged, '--receipt-dir', fx.receipts, '--workdir', fx.work], { TMPDIR: fx.base, LEAN_NUM_THREADS: '2' });
+function realCheck(fx, args = []) {
+  const run = sh(fx.base, process.execPath, [SCRIPT, '--project-root', fx.repo, '--commit', fx.tip, '--spec-base', fx.merged, '--receipt-dir', fx.receipts, '--workdir', fx.work, ...args], { TMPDIR: fx.base, LEAN_NUM_THREADS: '2' });
   let json = null;
   try { json = JSON.parse(run.stdout); } catch { /* reported by the assertions */ }
   return { status: run.status, json, stderr: run.stderr };
@@ -1710,6 +1796,39 @@ describe('real Lean: a statement that still reads the same but does not mean the
     const strengthened = realCheck(realProject({ ...REAL_HEAD, 'Fx/Trusted/Gaps.lean': `import Fx.Specs.Defs.Gaps\n\n${trusted('False')}` }));
     assert.equal(strengthened.status, 1, strengthened.stderr);
     assert.ok(strengthened.json.integrity.problems.some((p) => p.kind === 'trusted-axiom-unbound' && /asserts False/.test(p.detail)), strengthened.stderr);
+  });
+
+  // The names a statement rests on come from Lean's environment, in full, and whether an axiom's type is a
+  // proposition comes from Lean too. The axiom is declared in the merged spec, so only the list is in question.
+  test('the allowed axioms are matched by full name; a proposition outside Trusted is refused even when listed', () => {
+    const rests = ({ folder, axiom, type, statement, proof }) => realProject({
+      'Fx/Proofs/P.lean': `import Fx.${folder}.Out\n\ntheorem Fx.foo_spec : ${statement} := ${proof}\n`,
+      'Fx/Specs/A.lean': `import Fx.Proofs.P\n\nrecall Fx.foo_spec : ${statement}\n\n/-- 'Fx.foo_spec' depends on axioms: [${axiom}] -/\n#guard_msgs (whitespace := lax, substring := true) in\n#print axioms Fx.foo_spec\n`,
+    }, { baseFiles: {
+      [`Fx/${folder}/Out.lean`]: `axiom ${axiom} : ${type}\n`,
+      'Fx/Proofs/P.lean': `import Fx.${folder}.Out\n\ntheorem Fx.foo_spec : ${statement} := by\n  sorry\n`,
+      'Fx/Specs/A.lean': `import Fx.Proofs.P\n\nrecall Fx.foo_spec : ${statement}\n\n#print axioms Fx.foo_spec\n`,
+    } });
+    const allowing = (fx, ...names) => {
+      const file = path.join(fx.base, 'allowed.json');
+      write(file, JSON.stringify({ schema: 'fvs/auto-allowed-axioms', schemaVersion: 1, axioms: names }));
+      return realCheck(fx, ['--allow-axioms', file]);
+    };
+    const data = { folder: 'Extraction', axiom: 'Fx.ext_value', type: 'Nat', statement: 'Fx.ext_value = Fx.ext_value', proof: 'rfl' };
+    const listed = allowing(rests(data), 'Fx.ext_value');
+    assert.equal(listed.status, 0, listed.stderr);
+    assert.equal(listed.json.allowAxioms.names, 1);
+    const unlisted = allowing(rests(data));
+    assert.equal(unlisted.status, 1, unlisted.stderr);
+    assert.deepEqual(unlisted.json.integrity.problems.map((p) => p.kind), ['axiom-not-allowed']);
+    assert.match(unlisted.json.integrity.problems[0].detail, /rests on the axiom Fx\.ext_value, which the allowed axioms do not name/);
+    assert.equal(allowing(rests(data), 'ext_value').status, 1, 'the end of a name is not the name');
+    const prop = { folder: 'Extraction', axiom: 'Fx.ext_fact', type: '(10 : Nat) = 10', statement: '(10 : Nat) = 10', proof: 'Fx.ext_fact' };
+    const generated = allowing(rests(prop), 'Fx.ext_fact');
+    assert.equal(generated.status, 1, generated.stderr);
+    assert.deepEqual(generated.json.integrity.problems.map((p) => p.kind), ['prop-axiom-outside-trusted']);
+    const handWritten = allowing(rests({ ...prop, folder: 'Trusted' }), 'Fx.ext_fact');
+    assert.equal(handWritten.status, 0, handWritten.stderr);
   });
 });
 
@@ -1788,31 +1907,64 @@ describe('the real libcrux-hmac rc2 range', { skip: haveReal ? false : 'FVS_RC2_
     assert.deepEqual(problems.map((p) => [p.kind, p.file]), [['trusted-axiom-untied', file]]);
   });
 
-  // The engine's list is made from what the extraction and the Trusted files declare. The guards print
-  // those names relative to `namespace libcrux_hmac`, which the list's full names must still cover.
-  test('the axioms the guards print are covered by the axioms the extraction and Trusted files declare', async () => {
-    const { gitTree, readSpecSource, axiomsNotAllowed } = await library();
+  // The engine lists full names and the Lean program reports full names. The guards in the spec files print
+  // names relative to `namespace libcrux_hmac`, so here each printed name is resolved to the one declared name
+  // it ends, and the Lean program's report is built from the files: an axiom declared under a Trusted folder
+  // asserts something (a proposition), one in the extraction is a function, type or constant (measured with the
+  // real Lean program on this run).
+  test('the real statements pass the allowed-axioms check with the full names of what the extraction and Trusted files declare, and only with those', async () => {
+    const { gitTree, readSpecSource, parseDump, allowedProblems, readAllowedAxioms } = await library();
     const head = gitTree(REAL.repo, REAL.head, '');
-    const declared = [];
-    const printed = new Set();
+    const declared = new Map();
+    const statements = new Map();
+    const standard = ['propext', 'Classical.choice', 'Quot.sound'];
     for (const [rel, entry] of head) {
       if (!rel.endsWith('.lean')) continue;
       const text = entry.text();
-      for (const statement of readSpecSource(text).statements) for (const name of statement.axioms ?? []) printed.add(name);
+      for (const statement of readSpecSource(text).statements) statements.set(statement.name, { rel, printed: (statement.axioms ?? []).filter((name) => !standard.includes(name)) });
       if (!/\/(Extraction|Trusted)\//.test(rel)) continue;
       // Aeneas puts `axiom` on one line and the name on the next, so the scan reads across lines.
       const namespaces = [];
       for (const match of text.matchAll(/^(?:namespace\s+(\S+)|(end)\s+\S+|(?:@\[[^\]]*\]\s*)?axiom\s+(\S+))/gm)) {
         if (match[1]) namespaces.push(match[1]);
         else if (match[2]) namespaces.pop();
-        else declared.push([...namespaces, match[3]].join('.'));
+        else declared.set([...namespaces, match[3]].join('.'), rel);
       }
     }
-    const names = [...printed].filter((name) => !['propext', 'Classical.choice', 'Quot.sound'].includes(name));
-    assert.ok(names.length >= 70, `the guards print ${names.length} non-standard axioms`);
-    assert.deepEqual(axiomsNotAllowed(names, new Set(declared)), []);
+    const full = (printed) => {
+      const hits = [...declared.keys()].filter((name) => name === printed || name.endsWith(`.${printed}`));
+      assert.equal(hits.length, 1, `${printed} ends exactly one declared axiom`);
+      return hits[0];
+    };
+    const resting = new Map([...statements].map(([name, { printed }]) => [name, printed.map(full)]));
+    const used = new Set([...resting.values()].flat());
+    assert.ok(statements.size >= 30 && used.size >= 70, `${statements.size} statements rest on ${used.size} non-standard axioms`);
     const target = 'libcrux_hmac.libcrux_sha2.hacl.hash_256';
-    assert.ok(declared.includes(target));
-    assert.deepEqual(axiomsNotAllowed(names, new Set(declared.filter((name) => name !== target))), ['libcrux_sha2.hacl.hash_256'], 'one axiom left out of the list is named');
+    assert.ok(used.has(target));
+    const dump = (asserting = (rel) => /\/Trusted\//.test(rel)) => parseDump(leanDump({
+      recalls: Object.fromEntries([...resting].map(([name, axioms]) => [name, { axioms: [...standard, ...axioms] }])),
+      constants: [...declared].map(([name, rel]) => constant(name, { k: 'axiom', m: rel.replace(/\.lean$/, '').replaceAll('/', '.'), t: 'type', v: undefined, pr: asserting(rel) })),
+    }));
+    const recalledFiles = new Map([...statements].map(([name, { rel }]) => [name, [rel]]));
+    const list = (names) => ({ names: new Set(names), crates: null });
+    const problems = (names, head = dump()) => allowedProblems({ head, recalledFiles, allowed: list(names) });
+
+    assert.deepEqual(problems([...used]), [], 'the names the statements rest on, in full, cover them all');
+    assert.deepEqual(problems([...declared.keys()]), [], 'so do all the declared axioms');
+    const without = problems([...used].filter((name) => name !== target));
+    assert.ok(without.length >= 1 && without.every((problem) => problem.kind === 'axiom-not-allowed' && problem.detail.includes(target)), 'the axiom left out is named, and nothing else is refused');
+    assert.equal(new Set(without.map((problem) => problem.statement)).size, [...resting.values()].filter((axioms) => axioms.includes(target)).length);
+    const printed = new Set([...statements.values()].flatMap((statement) => statement.printed));
+    assert.equal(problems([...printed]).length, [...resting.values()].filter((axioms) => axioms.length > 0).length, 'names as the guards print them are not the names Lean reports: every statement with an axiom is refused');
+    const asserting = problems([...used], dump((rel) => rel === declared.get(target)));
+    assert.ok(asserting.length >= 1 && asserting.every((problem) => problem.kind === 'prop-axiom-outside-trusted' && problem.detail.includes('declared outside Trusted/')), 'an extraction axiom whose type is a proposition is refused even though it is listed');
+
+    // One crate holds every spec file here: its list is the list, and a spec file under no crate is refused.
+    const files = [...new Set([...statements.values()].map((statement) => statement.rel))];
+    const crates = (specFiles, axioms) => readAllowedAxioms(JSON.stringify({ schema: 'fvs/auto-allowed-axioms', schemaVersion: 2, crates: [{ crate: 'libcrux_hmac', specFiles, axioms }] }));
+    assert.deepEqual(allowedProblems({ head: dump(), recalledFiles, allowed: crates(files, [...used]) }), []);
+    const partial = allowedProblems({ head: dump(), recalledFiles, allowed: crates(files.slice(1), [...used]) });
+    assert.deepEqual([...new Set(partial.map((problem) => problem.kind))], ['allowed-axioms-crate-unknown']);
+    assert.deepEqual([...new Set(partial.map((problem) => problem.file))], [files[0]]);
   });
 });
