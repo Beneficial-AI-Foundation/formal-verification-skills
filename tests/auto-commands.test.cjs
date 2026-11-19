@@ -1695,14 +1695,39 @@ describe('spec phase: record-spec and spec-status', () => {
     const other = 'f'.repeat(40);
     for (const [name, fields, said] of [['no spec base', {}, /without a spec base/], ['a null spec base', { specBase: null }, /without a spec base/],
       ['another commit', { specBase: other }, new RegExp(`against the spec base ${other}`)], ['a shortened spec merge', { specBase: head.slice(0, 12) }, /against the spec base [0-9a-f]{12},/]]) {
-      receipt({ accepted: true, label: 'accepted (build check)', ...fields });
+      receipt({ accepted: true, label: 'accepted (build check)', externals: { records: [] }, ...fields });
       view = auto.readState({ projectRoot: root });
       assert.equal(view.phase, 'proofs', name);
       assert.match(view.nextAction, said, name);
       assert.match(view.nextAction, new RegExp(`not against the recorded spec merge ${head}\\. Run the build check again: node fvs-build-check\\.mjs --project-root .* --commit ${head} --spec-base ${head}; read-state reports done when it accepts\\.`), name);
     }
 
-    receipt({ accepted: true, label: 'accepted (build check)', specBase: head });
+    // An accepting receipt counts only while the externals records it relied on are as they were.
+    const externals = path.join(root, '.formalising/auto-fv/externals.json');
+    const digest = (record) => crypto.createHash('sha256').update(JSON.stringify(record, (_k, v) => (v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, v[k]])) : v))).digest('hex');
+    const accepted = { id: 'gap-one', kind: 'external', source: { symbol: 'core::f', commit: head }, model: { symbol: 'lib.f (axiom)', sha256: 'a'.repeat(64) },
+      claimedBehaviour: 'f behaves', reason: 'no model', affectedRoots: [], evidence: ['line 1'], status: 'assumption-accepted', decision: { by: 'owner', at: '2026-11-19', evidence: 'ruling' } };
+    const write = (records) => fs.writeFileSync(externals, JSON.stringify({ schema: 'fvs/auto-externals', schemaVersion: 1, records }));
+    const stale = (name, fields, said) => {
+      receipt({ accepted: true, label: 'accepted (build check)', specBase: head, ...fields });
+      view = auto.readState({ projectRoot: root });
+      assert.equal(view.phase, 'proofs', name);
+      assert.match(view.nextAction, said, name);
+      assert.match(view.nextAction, new RegExp(`Run the build check again: node fvs-build-check\\.mjs --project-root .* --commit ${head} --spec-base ${head}; read-state reports done when it accepts\\.`), name);
+    };
+    stale('a receipt that lists no externals records', {}, /does not count: it does not list the externals records it relied on/);
+    const relied = { externals: { sha256: null, records: [{ id: 'gap-one', sha256: digest(accepted) }] } };
+    stale('records that cannot be read', relied, /does not count: the externals records it relied on cannot be read now/);
+    write([{ ...accepted, status: 'open', decision: null }]);
+    stale('a record that changed after the check', relied, /does not count: the externals record gap-one it relied on changed after the check/);
+    write([]);
+    stale('a record that is gone', relied, /does not count: the externals record gap-one it relied on is no longer recorded/);
+    write([Object.fromEntries(Object.entries(accepted).reverse())]);
+    receipt({ accepted: true, label: 'accepted (build check)', specBase: head, ...relied });
+    assert.equal(auto.readState({ projectRoot: root }).phase, 'done', 'the same record in another key order still holds');
+    fs.rmSync(externals);
+
+    receipt({ accepted: true, label: 'accepted (build check)', specBase: head, externals: { records: [] } });
     view = auto.readState({ projectRoot: root });
     assert.equal(view.phase, 'done');
     assert.match(view.nextAction, new RegExp(`^The build check accepted the draft proof PR https://example\\.invalid/pr/3 at ${head}: accepted \\(build check\\)\\. The owner reviews and merges it;`));

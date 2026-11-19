@@ -1229,13 +1229,35 @@ const PR_KINDS = ['spec', 'proof'];
 const OWNER_CHANGES = { pruned: 'pruned by owner', 'owner-changed': 'changed by owner in review' };
 const currentSpecRows = (specs) => [...new Map((specs?.specs ?? []).map((row) => [row.specFile, row])).values()];
 const lastPr = (specs, kind) => (specs?.prs ?? []).filter((pr) => pr.kind === kind).at(-1);
+// One record has one digest: the digest of its canonical JSON (keys in order), the same one the build
+// check computes when it writes a receipt (fvs-build-check.mjs, recordDigest).
+const recordDigest = (record) => crypto.createHash('sha256').update(canonicalJson(record ?? null)).digest('hex');
+// Why an accepting receipt no longer holds, or null. The receipt lists the externals records its
+// acceptance relied on, each with a digest; a record that changed, is gone, or cannot be read now means
+// the authority the check used is not the one on record, so the check has to run again.
+function staleReason(root, receipt) {
+  const bound = receipt.externals;
+  if (!bound || !Array.isArray(bound.records)) return 'it does not list the externals records it relied on (an older build check wrote it)';
+  if (bound.records.length === 0) return null;
+  let records;
+  try { records = JSON.parse(fs.readFileSync(path.join(root, '.formalising', 'auto-fv', 'externals.json'), 'utf8')).records; } catch { return 'the externals records it relied on cannot be read now'; }
+  for (const entry of bound.records) {
+    const now = Array.isArray(records) ? records.find((record) => record?.id === entry?.id) : undefined;
+    if (!now) return `the externals record ${entry?.id} it relied on is no longer recorded`;
+    if (recordDigest(now) !== entry.sha256) return `the externals record ${entry.id} it relied on changed after the check`;
+  }
+  return null;
+}
 // The build check's receipt for a full commit SHA, or null when it is missing,
-// unreadable or for another commit. Only the receipt decides acceptance.
+// unreadable or for another commit. Only the receipt decides acceptance. An accepting receipt whose
+// externals records no longer hold comes back not accepting, with the reason in `stale`.
 function buildCheckReceipt(root, head) {
   if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(head ?? '')) return null;
   try {
     const receipt = JSON.parse(fs.readFileSync(path.join(root, '.formalising', 'auto-fv', 'build-check', `${head}.json`), 'utf8'));
-    return receipt?.kind === 'fvs-build-check' && receipt.commit === head && typeof receipt.accepted === 'boolean' && typeof receipt.label === 'string' ? receipt : null;
+    if (!(receipt?.kind === 'fvs-build-check' && receipt.commit === head && typeof receipt.accepted === 'boolean' && typeof receipt.label === 'string')) return null;
+    const stale = receipt.accepted ? staleReason(root, receipt) : null;
+    return stale === null ? receipt : { ...receipt, accepted: false, stale };
   } catch {
     return null;
   }
@@ -1449,7 +1471,9 @@ function progress(root, state, specs = null) {
           + (proofMerge ? `The proof PR merge is recorded at ${proofMerge.mergeCommit}.` : 'The owner reviews and merges it; then record the merge with record-pr --kind proof --merged --merge-commit SHA.') + suffix };
     }
     return { phase: 'proofs', warnings,
-      nextAction: (receipt?.accepted
+      nextAction: (receipt?.stale
+        ? `The build check receipt for the draft proof PR ${proofPr.url} at ${proofPr.head} does not count: ${receipt.stale}. Run the build check again: ${check}; read-state reports done when it accepts.`
+        : receipt?.accepted
         ? `The build check receipt for the draft proof PR ${proofPr.url} at ${proofPr.head} does not count: it was made ${typeof receipt.specBase === 'string' ? `against the spec base ${receipt.specBase}` : 'without a spec base'}, not against the recorded spec merge ${specMerge.mergeCommit}. Run the build check again: ${check}; read-state reports done when it accepts.`
         : receipt
           ? `The build check failed for the draft proof PR ${proofPr.url} at ${proofPr.head}: ${receipt.label}. Fix the proofs, push, record the new head with record-pr --kind proof, and rerun the build check on it.`
