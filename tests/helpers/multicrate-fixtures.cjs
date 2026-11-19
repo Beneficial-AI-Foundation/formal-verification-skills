@@ -42,14 +42,17 @@ function git(root, ...args) {
   return result.stdout.trim();
 }
 
-// A committed single-crate Lean project that the stub profile accepts.
-function project() {
-  const root = temporaryDirectory('fvs-multicrate-');
+// A committed single-crate Lean project that the stub profile accepts. With `below` the
+// project is the folder `lean` of the repository, not its top.
+function project(below = false) {
+  const top = temporaryDirectory('fvs-multicrate-');
+  const root = below ? path.join(top, 'lean') : top;
+  fs.mkdirSync(root, { recursive: true });
   fs.cpSync(CRATE, root, { recursive: true });
   fs.cpSync(path.join(PROFILE_FIXTURES, 'fresh'), root, { recursive: true });
-  git(root, 'init', '-q');
-  git(root, 'add', '-A');
-  git(root, 'commit', '-q', '-m', 'fixture');
+  git(top, 'init', '-q');
+  git(top, 'add', '-A');
+  git(top, 'commit', '-q', '-m', 'fixture');
   return root;
 }
 
@@ -133,8 +136,8 @@ function unit(root, crate, functions, extra = {}) {
 
 // A project whose recorded extraction succeeded over the crates `units(root)` builds;
 // the first is the main crate. `run` adds fields to the top-level run.
-function extracted(units, { run = {} } = {}) {
-  const root = project();
+function extracted(units, { run = {}, below = false } = {}) {
+  const root = project(below);
   init(root);
   const state = readState(root);
   const rows = units(root);

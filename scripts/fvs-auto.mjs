@@ -1439,7 +1439,7 @@ export function allowedAxiomList(root, state, context, commit) {
   const read = (file, expectedSha256) => {
     const relative = path.relative(root, path.resolve(root, file));
     if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
-      problems.push(`${file} is outside the project, so it cannot be read at ${commit}`);
+      problems.push(`${file} is outside this project (${root}), so it cannot be read at ${commit}: the extraction was recorded from another checkout, so record it again from this one`);
       return null;
     }
     const posix = relative.split(path.sep).join('/');

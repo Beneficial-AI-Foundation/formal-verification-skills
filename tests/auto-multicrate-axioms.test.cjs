@@ -52,7 +52,7 @@ const FOREIGN = [{ crate: 'core', kind: 'external' }, { crate: 'libcrux_traits',
 
 // hmac and sha2, both verified. `files` are the Lean files the extraction published for hmac,
 // `trusted` the hand-written files, `stitch` hmac's stitch to sha2; everything is committed.
-function scenario({ files = {}, trusted = {}, stitch = [], records = [], sha2Files = {}, commit = true } = {}) {
+function scenario({ files = {}, trusted = {}, stitch = [], records = [], sha2Files = {}, commit = true, below = false } = {}) {
   const root = extracted((directory) => {
     const row = (crate, lean, extra) => {
       const made = unit(directory, crate, [fn(`${crate}::x::f`, 'src/x.rs', 1)], extra);
@@ -64,7 +64,7 @@ function scenario({ files = {}, trusted = {}, stitch = [], records = [], sha2Fil
       return made;
     };
     return [row('libcrux_hmac', files, { imports: ['libcrux_sha2'], stitch, foreignCrates: FOREIGN }), row('libcrux_sha2', sha2Files, {})];
-  });
+  }, { below });
   for (const [name, text] of Object.entries(trusted)) {
     fs.mkdirSync(path.join(root, 'formal', 'Trusted'), { recursive: true });
     fs.writeFileSync(path.join(root, 'formal', 'Trusted', name), text);
@@ -225,6 +225,19 @@ describe('hand-written Trusted axioms', () => {
   });
 });
 
+describe('a Lean project below the top of the repository', () => {
+  it('reads the published files and the Trusted files at the commit, by their place in the project', () => {
+    const trusted = { 'Gaps.lean': trustedFile('/-- Accepted assumption, `gap-div`. -/\naxiom div_spec : True\n') };
+    const root = scenario({ below: true, trusted, records: [record('gap-div', 'core::num::{u32}::wrapping_div')],
+      files: { 'Hmac.lean': leanFile('libcrux_hmac', extractionAxiom('core::a', 'core.a')) } });
+    assert.equal(fs.existsSync(path.join(path.dirname(root), '.git')), true, 'the repository top is the parent of the project');
+    const result = write(root);
+    assert.equal(result.status, 0, result.stdout);
+    assert.deepEqual(listed(root), ['libcrux_hmac.Trusted.div_spec', 'libcrux_hmac.core.a']);
+    assert.deepEqual(result.json.withheld, []);
+  });
+});
+
 describe('what stops the list from being written', () => {
   const lean = { 'Hmac.lean': leanFile('libcrux_hmac', extractionAxiom('core::a', 'core.a')) };
 
@@ -251,6 +264,16 @@ describe('what stops the list from being written', () => {
     const root = scenario({ files: { 'Hmac.lean': text } });
     assert.match(write(root).json.message, /holds 1 axiom keyword\(s\) the engine could not place in a declaration/);
     assert.match(write(root, '--commit', 'f'.repeat(40)).json.message, /is not a commit in this checkout/);
+  });
+
+  it('names the real cause when a published file lies outside this checkout', () => {
+    const root = scenario({ files: lean });
+    const state = fixtures.readState(root);
+    for (const row of state.extraction.run.units) for (const entry of row.publication) if (entry.projectPath.endsWith('.lean')) entry.projectPath = `/elsewhere/checkout/${path.basename(entry.projectPath)}`;
+    fixtures.writeState(root, state);
+    const result = write(root);
+    assert.equal(result.status, 1, result.stdout);
+    assert.match(result.json.message, /is outside this project \(.*\), so it cannot be read at [0-9a-f]{40}: the extraction was recorded from another checkout, so record it again from this one/);
   });
 
   it('is not written for a project with one crate', () => {
