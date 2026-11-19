@@ -1215,23 +1215,41 @@ function proofAcceptance(root, state, specs, context) {
   return receipt?.accepted && receipt.specBase === specMerge.mergeCommit ? crateAcceptance(root, specs, context, receipt) : null;
 }
 
-// A crate whose LLBC reaches items of another verified crate that it neither imports nor is
-// stitched to has an axiom for each of them in its own Lean: a black box where the other
-// crate's translation belongs. A crate the owner does not verify may be assumed.
-function unstitchedWarnings(context) {
-  return context.units.flatMap((unit) => {
+// The pairs of verified crates where the consumer's LLBC reaches items of the provider but the
+// consumer neither imports it nor is stitched to it. Each such item is an axiom in the consumer's
+// own Lean: a black box where the provider's translation belongs, which a verified provider must
+// never be. A crate the owner does not verify may be assumed, so it makes no pair.
+function unstitchedPairs(context) {
+  return context.units.filter((unit) => context.targets.includes(unit.crate)).flatMap((unit) => {
     const linked = new Set([...(Array.isArray(unit.imports) ? unit.imports : []), ...[].concat(unit.stitch ?? []).map((entry) => entry?.provider)]);
     return (Array.isArray(unit.foreignCrates) ? unit.foreignCrates : [])
       .filter((entry) => entry?.kind === 'target' && entry.crate !== unit.crate && context.targets.includes(entry.crate) && !linked.has(entry.crate))
-      .map((entry) => `crate ${unit.crate} uses items of ${entry.crate}, which is verified, without being stitched to it: they are axioms in ${unit.crate}'s Lean, not ${entry.crate}'s translation; stitch ${unit.crate} to ${entry.crate} in the extraction spec`);
+      .map((entry) => ({ crate: unit.crate, provider: entry.crate }));
   });
+}
+
+const unstitchedReason = ({ crate, provider }, subject = `crate ${crate}`) => `${subject} uses items of ${provider}, which is verified, without being stitched to it: they would be axioms in ${crate}'s Lean, not ${provider}'s translation. Stitch ${crate} to ${provider} in the extraction spec, or have the owner record ${provider} as a non-target in the agreement`;
+
+// What stops a recorded run over several crates from being used, given the targets the owner's
+// agreement names (null without a crate decision): a dependency cycle, which no order of providers
+// before consumers fits, and a verified crate that uses another verified crate's items without
+// being stitched to it. Empty for a single crate.
+export function crateProblems(run, agreedTargets = null) {
+  const context = run ? crateContextOf({ extraction: { status: 'succeeded', run }, agreements: agreedTargets === null ? [] : [{ payload: { targets: agreedTargets } }] }) : null;
+  if (context === null) return [];
+  return [
+    ...(context.view.cycle ? [`the crates ${context.view.cycle.join(', ')} depend on each other, so no order puts providers before consumers`] : []),
+    ...unstitchedPairs(context).map((pair) => unstitchedReason(pair)),
+  ];
 }
 
 function crateWarnings(context) {
   return [
     ...context.missing.map((crate) => `the agreement names ${crate} as a target, but the extraction does not hold it`),
     ...context.unlisted.map((crate) => `the extraction holds ${crate}, which the agreement names as neither a target nor a non-target: a successor agreement records the owner's decision`),
-    ...unstitchedWarnings(context),
+    // The extraction is refused with these when it is recorded; they show here when the owner's
+    // decision changed afterwards, and keep the crate from being accepted.
+    ...unstitchedPairs(context).map((pair) => unstitchedReason(pair)),
   ];
 }
 
@@ -1240,7 +1258,8 @@ const crateDecisions = (context) => context.undecided.map((crate) => `non-target
 // The target crates the build check accepted at the head of the proof PR. The check builds the
 // whole project once, so a crate is accepted when every statement of its recorded spec files
 // built and every target crate it depends on is accepted too; a target with no built statement
-// is not accepted. What the statements may rest on beyond Lean's standard axioms is not judged
+// is not accepted, and neither is one that uses a verified crate it is not stitched to (see
+// unstitchedPairs). What the statements may rest on beyond Lean's standard axioms is not judged
 // here: the build check enforces the allowed axioms, and the state requires a receipt made with
 // the current list (see allowedAxiomList).
 function crateAcceptance(root, specs, context, receipt) {
@@ -1251,7 +1270,10 @@ function crateAcceptance(root, specs, context, receipt) {
   const rows = currentSpecRows(specs).filter((row) => pruned.get(row.specFile) !== 'pruned');
   const files = new Map((Array.isArray(receipt.specFiles) ? receipt.specFiles : []).map((file) => [file?.path, file]));
   const dependsOn = new Map(context.view.units.map((unit) => [unit.crate, unit.dependsOn.filter((crate) => context.targets.includes(crate))]));
+  const unstitched = unstitchedPairs(context);
   const reasonOf = (crate) => {
+    const loose = unstitched.find((pair) => pair.crate === crate);
+    if (loose) return unstitchedReason(loose, 'it');
     const own = rows.filter((row) => row.items.some((id) => itemCrate(id) === crate));
     if (own.length === 0) return 'no spec file is recorded for this crate';
     let statements = 0;
@@ -2359,9 +2381,9 @@ export function recordExtraction({ projectRoot, out, buildExitCode, oracle, orac
     else if (!recordedRunValid(status.run) || status.run.manifestSha256 !== inputs?.manifestSha256) reasons.push('the recorded extraction attempt is not bound to this manifest');
     else run = status.run;
   }
-  // Providers must come before consumers, so a dependency cycle between crates cannot be ordered.
-  const cycle = crateView(run)?.cycle;
-  if (cycle) reasons.push(`the crates ${cycle.join(', ')} depend on each other, so no order puts providers before consumers`);
+  // Providers must come before consumers, and a verified crate must be stitched to the verified
+  // crates it uses, with the targets the owner's latest agreement names.
+  reasons.push(...crateProblems(run, state.agreements?.at(-1)?.payload?.targets ?? null));
   const extraction = {
     status: reasons.length === 0 ? 'succeeded' : 'failed',
     recordedAt: now(),

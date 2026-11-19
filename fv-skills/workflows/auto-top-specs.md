@@ -132,8 +132,9 @@ Carry the pending decisions into the report. Work crate by crate, providers firs
   `base_crate::module::function`. `record-spec` refuses an item of a crate the owner does not verify, an item
   of a crate the agreement names but the extraction lacks, an item Charon could not translate and a spec
   file that names items of two crates.
-- A crate that calls another target crate uses that crate's real translation, not an axiom, and its
-  statements use the other crate's statements as lemmas. No statement may rest on a hand-written axiom
+- A crate that calls another target crate uses that crate's real translation, not an axiom (the
+  extraction is not recorded as succeeded otherwise), and its statements use the other crate's
+  statements as lemmas. No statement may rest on a hand-written axiom
   that says what a function of another target crate does: prove it in its own crate and use the result. An
   author may start such a statement early against the other crate's reviewed statement; the proof is
   accepted only after the other crate is accepted (`auto-execute.md`).

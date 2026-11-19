@@ -87,6 +87,10 @@ crate and use that crate's theorem in the crate that calls it, or stitch the cal
 accepted when:
 
 - its recorded spec files built and hold at least one statement;
+- it is stitched to every target crate it uses, so none of those calls is an axiom in its own Lean. When
+  the owner's decisions change after the extraction and leave such a crate unstitched, `read-state`
+  warns and the crate is not accepted: stitch it and extract again, or record the crate it uses as a
+  non-target in the agreement;
 - every target crate it depends on is accepted too.
 
 Dispatch workers providers first, in the order `crates.order` gives, and accept bottom-up, one crate at a
