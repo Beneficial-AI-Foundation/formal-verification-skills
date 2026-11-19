@@ -33,7 +33,9 @@ merge and the proof pull request").
    the externals record, and put the axiom in a new file under `formal/trusted`, with the record id in
    backticks in the axiom's docstring (one axiom for each record). The axiom's type must be exactly one
    proposition, a `Prop` definition in `formal/specs/Defs` of the merged spec whose docstring cites the same
-   record id in backticks; the spec pull request is where that definition is written. `native_decide` and `bv_decide` are
+   record id in backticks; the spec pull request is where that definition is written. The docstring
+   citation is how the record and its proposition are tied in this release; an explicit field on the
+   record that names the proposition is the planned stronger form, for runs after this release. `native_decide` and `bv_decide` are
    fine in scratch work, but the check refuses a commit that adds one, so remove them before it runs.
 3. **FVS's build check decides accepted.** It runs in a fresh clean copy of the commit, never in a
    worker's checkout. Run it on the integration tree's head, and pass the spec merge commit you
@@ -58,11 +60,19 @@ merge and the proof pull request").
    - a spec file, proof file or extraction file is not covered by a `lean_lib` glob of a default
      target, and no built module imports it, so Lake would never compile it.
 
-   When the engine has written a list of allowed axioms (a multi-crate run), add
-   `--allow-axioms <FILE>`. Then a statement whose guard lists any axiom beyond Lean's three that the
-   list does not name fails, and the label names the statement and the axiom. The list holds the
-   non-standard axioms that have a legitimate record, never one about a function of a targeted crate.
-   The receipt records the file's sha256, so the engine can tell which list a receipt was made with.
+   When the engine has written a list of allowed axioms (`fvs-auto.mjs allowed-axioms`, a multi-crate
+   run), add `--allow-axioms <FILE>`. A statement then passes only if every axiom it rests on, beyond
+   Lean's three, is named in the list by the full name Lean reports (read from Lean, not from the guard
+   text). A name is covered only by itself: the same function under another namespace is another axiom.
+   Version 2 of the file has one section for each crate with the spec files that belong to it, and holds
+   a statement to the section of the crate whose spec file holds it. A spec file that no section lists is
+   refused by name, and so is a file that repeats a crate, lists a spec file under two crates, or has an
+   unknown key or an empty name. An axiom whose type is a proposition asserts something, so it may only
+   be a hand-written axiom in `formal/trusted`, bound to its accepted record as step 2 says (or already
+   in the merged spec); a proposition declared anywhere else, the extraction's included, is refused even
+   when the list names it. The list names the axioms that have a legitimate record, never one about a
+   function of a targeted crate. The receipt records the file's sha256, its number of names and, for
+   version 2, its number of crates, so the engine can tell which list a receipt was made with.
 
    Each refusal names the file, the statement and the kind of change. A statement that is wrong or too
    weak is not fixed in a proof: it becomes a refactor pull request (step 5), and once the owner
