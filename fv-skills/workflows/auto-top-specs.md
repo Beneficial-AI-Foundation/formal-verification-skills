@@ -37,7 +37,10 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
    under `formal/`, so a build can finish while no spec was compiled. Widen the library's module globs
    so they cover the spec and proof folders: in `lakefile.toml`, give the `[[lean_lib]]` entry
    `globs = ["<Library>.+"]`, and if the spec and proof folders are separate module roots, add each one
-   the same way. Confirm that the build really compiles a new spec file before you rely on it; the spec
+   the same way. The extraction folders need the same coverage, or a built module must import them:
+   the lakefile is frozen once this pull request is merged, and the build check refuses a spec, proof
+   or extraction file that Lake would not compile, so a gap found later takes a spec refactor to fix.
+   Confirm that the build really compiles a new spec file before you rely on it; the spec
    pull request carries this Lake change. A fresh worktree has no Lake
    packages. Give each worktree its own copy of the primary checkout's Lake packages folder (a
    copy-on-write clone is fast where the filesystem supports it), or fall back to `lake exe cache get`
