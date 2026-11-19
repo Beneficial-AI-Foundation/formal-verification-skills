@@ -129,6 +129,11 @@ describe('a succeeded extraction over several crates', () => {
       'an empty units list': (state) => { state.extraction.run.units = []; },
       'an order that misses a crate': (state) => { state.extraction.run.order = ['libcrux_sha2']; },
       'an order with a crate that is not extracted': (state) => { state.extraction.run.order = ['libcrux_sha2', 'libcrux_other']; },
+      'a run over several crates with no roster hash': (state) => { delete state.extraction.run.rosterSha256; },
+      'a roster that does not hash to the run\'s digest': (state) => { state.extraction.run.roster.main = 'libcrux_sha2'; },
+      'a unit row of another roster': (state) => { state.extraction.run.units[1].rosterSha256 = '1'.repeat(64); },
+      'a unit row with no roster hash': (state) => { delete state.extraction.run.units[1].rosterSha256; },
+      'a crate removed from the aggregate while the roster still names it': (state) => { state.extraction.run.units.pop(); state.extraction.run.order = ['libcrux_hmac']; },
     };
     for (const [label, change] of Object.entries(cases)) {
       const root = extracted(hmacAndSha2);
@@ -230,6 +235,27 @@ describe('what the project does after stitching', () => {
     assert.doesNotMatch(cli('read-state', '--project-root', plain, '--brief').json.nextAction, /After the stitching/);
     const none = extracted((directory) => [unit(directory, 'app', [], { stitch: [] }), unit(directory, 'base', [])]);
     assert.doesNotMatch(cli('read-state', '--project-root', none, '--brief').json.nextAction, /After the stitching/, 'an empty stitch list changes nothing');
+  });
+});
+
+describe('the roster of a run over several crates', () => {
+  it('a single crate\'s run has no roster, and none is required of it', () => {
+    const root = extracted((directory) => [unit(directory, 'libcrux_hmac', [])]);
+    const state = readState(root);
+    for (const key of ['units', 'roster', 'rosterSha256']) delete state.extraction.run[key];
+    writeState(root, state);
+    const result = cli('read-state', '--project-root', root);
+    assert.equal(result.status, 0, result.stdout);
+    assert.equal(result.json.code, 'ok');
+  });
+
+  it('is kept in the extraction record, with each unit row carrying the same hash', () => {
+    const root = extracted(hmacAndSha2);
+    const { run } = readState(root).extraction;
+    assert.match(run.rosterSha256, /^[0-9a-f]{64}$/);
+    assert.equal(run.rosterSha256, fixtures.sha256(JSON.stringify(run.roster)));
+    assert.deepEqual(run.units.map((row) => row.rosterSha256), [run.rosterSha256, run.rosterSha256]);
+    assert.deepEqual(run.roster.units.map((entry) => entry.crate), run.roster.order);
   });
 });
 

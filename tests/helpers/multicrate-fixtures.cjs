@@ -141,13 +141,23 @@ function extracted(units, { run = {}, below = false } = {}) {
   init(root);
   const state = readState(root);
   const rows = units(root);
+  // The roster the extraction engine hashes: the main crate, the crates in order with their stitch
+  // providers, the non-targets and the crates a patch removed. Every row carries the same hash.
+  const order = run.order ?? rows.map((row) => row.crate);
+  const roster = { main: rows[0].crate, order,
+    units: order.map((crate) => {
+      const row = rows.find((entry) => entry.crate === crate);
+      return { crate, package: row?.package, dir: row?.dir, stitch: [...new Set([].concat(row?.stitch ?? []).map((entry) => entry.provider))].sort() };
+    }), nonTargets: [], dropped: [] };
+  const rosterSha256 = sha256(JSON.stringify(roster));
+  for (const row of rows) row.rosterSha256 = rosterSha256;
   state.extraction = {
     status: 'succeeded', recordedAt: '2026-11-19T00:00:00.000Z', reasons: [], note: 'not a proof',
     selected: { ...state.choices.source },
     declared: { buildExitCode: 0, oracle: 'complete' },
     checks: { status: { ok: true }, 'verify-tree': { ok: true }, 'verify-restore': { ok: true } },
     inputs: { out: path.join(root, 'copy'), manifestSha256: ZEROS, crateRoot: root, mode: 'translation-patches', sourceCommit: 'a'.repeat(40), patches: [] },
-    run: { ...rows[0], units: rows, ...run },
+    run: { ...rows[0], units: rows, roster, rosterSha256, ...run },
   };
   writeState(root, state);
   return root;

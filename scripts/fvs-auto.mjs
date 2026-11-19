@@ -1105,16 +1105,31 @@ function runValid(run) {
     && publicationValid(run.publication, run.translation);
 }
 
+// The roster of a run over several crates, which the extraction engine hashes (the main crate, the
+// crates in order, each with its stitch providers, the non-targets and the crates a patch removed).
+// Every unit row and the run carry the same hash, and the roster must name exactly the rows the run
+// holds: a row dropped from the aggregate, or one added, cannot pass for the extraction that was made.
+function rosterValid(run) {
+  const { roster, rosterSha256, units } = run;
+  if (!SHA256.test(rosterSha256 ?? '') || !plainObject(roster) || sha256(JSON.stringify(roster)) !== rosterSha256) return false;
+  if (!units.every((unit) => unit.rosterSha256 === rosterSha256)) return false;
+  const crates = units.map((unit) => unit.crate);
+  const same = (list) => Array.isArray(list) && list.length === crates.length && new Set(list).size === list.length && list.every((crate) => crates.includes(crate));
+  return same(roster.order) && same(Array.isArray(roster.units) ? roster.units.map((entry) => entry?.crate) : null)
+    && (!isText(run.crate) || roster.main === run.crate);
+}
+
 // A run over several crates lists each crate's whole single-crate run in `units`, so
 // a reader written for one crate reads any crate's row unchanged. Every unit comes
-// from the same prepared copy as the main run, so it carries the same manifest hash.
+// from the same prepared copy as the main run, so it carries the same manifest hash,
+// and the same roster.
 function unitsValid(run) {
   const { units, order } = run;
   if (units === undefined) return true;
   if (!Array.isArray(units) || units.length === 0) return false;
   if (!units.every((unit) => runValid(unit) && isText(unit.crate) && isText(unit.status) && unit.manifestSha256 === run.manifestSha256)) return false;
   const crates = units.map((unit) => unit.crate);
-  return new Set(crates).size === crates.length
+  return new Set(crates).size === crates.length && rosterValid(run)
     && (order === undefined || (Array.isArray(order) && order.length === crates.length && new Set(order).size === order.length && order.every((crate) => crates.includes(crate))));
 }
 
@@ -2433,7 +2448,8 @@ export function recordExtraction({ projectRoot, out, buildExitCode, oracle, orac
   if (fs.existsSync(path.join(copy, 'attempt.json'))) {
     const status = engineResult('attempt-status', copy);
     if (!status.ok) reasons.push(`the recorded extraction attempt does not check out (${status.code}): ${status.message}`);
-    else if (!recordedRunValid(status.run) || status.run.manifestSha256 !== inputs?.manifestSha256) reasons.push('the recorded extraction attempt is not bound to this manifest');
+    else if (!runValid(status.run) || status.run.manifestSha256 !== inputs?.manifestSha256) reasons.push('the recorded extraction attempt is not bound to this manifest');
+    else if (!unitsValid(status.run)) reasons.push('the crates of the recorded extraction attempt do not agree with its roster (a crate is missing, added or changed): extract again');
     else run = status.run;
   }
   // Providers must come before consumers, and a verified crate must be stitched to the verified
