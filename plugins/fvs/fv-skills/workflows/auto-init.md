@@ -342,8 +342,8 @@ If nothing prompted, say so and write nothing. If some steps prompted:
      removes that entry and runs init again.
    - `legacy-push-rules` (Claude): `.claude/settings.json` or `.claude/settings.local.json` already allows a
      push by rule. Show `legacyPushRules` and `cleanup`: for each file the exact entries to delete and how many
-     other entries stay. FVS deletes nothing and writes nothing; the owner removes exactly those entries
-     (or tells you to, after seeing the exact change) and runs init again. Say what `notExamined` lists.
+     other entries stay. FVS deletes nothing and writes nothing, and you do not edit the file either: the
+     owner removes exactly those entries and runs init again. Say what `notExamined` lists.
    - `changed-since-preview`: the file or a link in front of it changed while the command ran. Nothing was
      written. Run the command again without `--confirm`, show the new preview and ask again.
    - `evaluator-rejected` or `evaluator-mismatch` (Codex): the installed Codex rejects the rules or does not
@@ -363,8 +363,9 @@ If nothing prompted, say so and write nothing. If some steps prompted:
    a live session; `false` means nothing verified the file, and `message` says why. Do not say the rules work.
 5. Recheck, which depends on the tool. The entry point is the `recheck` command (next section), never a
    second `plan` and never deleting the record:
-   - Claude Code: run `recheck` now, run the probes it lists, ask again which prompted, and record the answers
-     with `"kind":"recheck"`. A step that still prompts: show the owner the "A step still prompts" section of
+   - Claude Code: run `recheck --steps ID,ID` now, naming the steps whose rules were just written (without
+     `--steps` it lists every step that last prompted, including steps the owner declined), run the probes it
+     lists, ask again which prompted, and record the answers with `"kind":"recheck"`. A step that still prompts: show the owner the "A step still prompts" section of
      `auto-permissions.md` and leave it at that. `recheck` never lists the push probe: its dry-run form is not
      one the hook allows, so it asks even when the hook works. Say that the first real worker push is the
      evidence for the hook.
