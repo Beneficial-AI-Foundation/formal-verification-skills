@@ -19,6 +19,12 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
    items of the in-scope Rust modules and cross-check the list against the generated Lean. There is no
    per-item confirmation. Nothing leaves the scope silently: note the items you think are out of scope
    and why, and leave the pruning to the owner in the pull request review.
+
+   Before the first review round, list every public API case of each item: the normal result, each
+   error and panic path, and each limit and overflow case, such as a running count that can pass its
+   limit across several calls. Give the list to the author and to the reviewer. A reviewer who finds a
+   case missing in round 3 has found it too late. A case without a statement is named in the pull
+   request body, with the reason.
 2. **Prepare the working branch before any author starts.** Work on a branch of the project's own
    repository; its pull request is the spec PR. Spawn each author from this branch's head: its worktree
    is made from the committed head, so it holds only what is committed. In a fresh project the extraction
@@ -51,6 +57,11 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
    file's items, and a fresh adversarial reviewer (the chosen pair) checks them against the Rust code
    and its documentation. Is each statement faithful, strong enough to be useful, and free of
    assumptions it should prove? At most three rounds; put anything still open in the pull request body.
+   Keep exact and conditional claims apart. An exact statement holds for every input. A statement
+   that needs a hypothesis (a bound on the inputs, a capacity, an assumption about an external
+   function) is conditional. Write them as separate statements with separate names, and label each
+   one in its docstring as `exact` or `conditional` with the hypotheses it needs. Never weaken an exact
+   statement into a conditional one without saying so in the pull request body.
    The reviewer is a different agent from the author, and a new reviewer reads each round. After every
    round the orchestrator records it for each spec file (see "Recording the review rounds"). A file that
    still needs changes after the third round is recorded as `blocked`, so it does not hold the pull
@@ -75,6 +86,26 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
    Put in the body what each file covers, the items you left out, the axioms
    the statements rest on, the review rounds that were held, and which commit holds the generated
    translation and the Lake change. Then record the pull request (see "Recording the pull request").
+
+   **Put the rulings in the body.** The owner should be able to rule on every claim that needs a model
+   or an accepted assumption when the spec pull request is merged, before any proof starts. A claim
+   needs one when it is exact and rests on the behaviour of a function the extraction leaves without
+   a model: a standard-library function, a dependency function or a function left opaque. Before the
+   body is written:
+   1. For each statement, run `#print axioms` on the extracted functions it talks about. The proofs
+      are still `sorry`, so the statement's own list says nothing, but each extraction axiom in the
+      list of a function names an external function that the claim reaches.
+   2. Check that each such function has a record in `externals.json`. If one has none, the extraction
+      missed it: record it as open with `record-externals` (kind `external` or `opaque`) before you go on.
+   3. Save a notes file that names, for each open record, the exact claims that need it in plain words
+      (`auto-review-bundle.md`, "Pull request trust section", describes the file), and run
+      `node "${CLAUDE_PLUGIN_ROOT}/scripts/fvs-auto-bundle.mjs" rulings --project-root . --notes FILE`.
+      Paste its markdown into the body unchanged. It lists each open record with what it assumes, why
+      it has no model, the claims that rest on it and the owner's choices: accept it as a named
+      assumption, have it modelled, narrow the claim, or block it. A record with no claim named reads
+      `NOT STATED`, so say which claims need it, or that none does.
+   After the owner rules, record the decision with `record-externals` (the `decision` names the owner,
+   the date and where the ruling is). Only the owner decides; never record a ruling yourself.
 6. **Stop for the owner.** The owner reviews, prunes, marks the pull request ready and merges it.
    Once it is merged, record the merge (see "Recording the pull request"); `/fvs:auto-execute` starts
    the proofs after that.

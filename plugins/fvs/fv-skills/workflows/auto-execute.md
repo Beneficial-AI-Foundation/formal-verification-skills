@@ -46,6 +46,13 @@ merge and the proof pull request").
 4. **Open the PROOF PR as a draft** on the project's own repository: the destination recorded in the
    agreement at `/fvs:auto-init`, never an upstream. Put in the body which statements are accepted,
    which are not and why, and what each unproved one is missing. Nothing leaves the scope silently.
+   Generate the trust section of the body, never write it by hand. Once the build check has written its
+   receipt for the commit, save a notes file with, for each spec file, the owner questions still open
+   and each change you made to a reviewer's brief (an empty list says there is none), then run
+   `node "${CLAUDE_PLUGIN_ROOT}/scripts/fvs-auto-bundle.mjs" trust --project-root . --commit SHA --notes FILE`
+   and paste its markdown unchanged (`auto-review-bundle.md`, "Pull request trust section"). If it
+   exits with a refusal, fix what it names; do not write the section yourself. Do not turn a pass
+   that the section shows as qualified, or as NOT STATED, into a plain pass in your own text.
    Then record it (see "Recording the merge and the proof pull request").
 5. **Refactors.** A spec refactor found while proving arrives as a new draft pull request, either
    one per refactor or one cumulative pull request. The owner reviews and merges it like the first.
