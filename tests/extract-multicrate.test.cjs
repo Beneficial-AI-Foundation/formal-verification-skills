@@ -292,6 +292,16 @@ describe('multi-crate extraction: crates the owner chose not to verify', () => {
     assert.equal(run.nonTargets, undefined, 'no non-target was declared');
   });
 
+  it('says which target crates a crate reaches and which of them it does not import', () => {
+    const ws = workspace();
+    const out = complete(ws);
+    const { run } = engine(ws, ['attempt-status', '--out', out]).result;
+    const app = run.units.find((unit) => unit.crate === 'toy_app');
+    assert.deepEqual([app.dependsOn, app.unstitched, app.prerequisites], [['toy_lib'], ['toy_lib'], []], 'a target called with no stitch entry is data the acceptance side can refuse on');
+    const library = run.units.find((unit) => unit.crate === 'toy_lib');
+    assert.deepEqual([library.dependsOn, library.unstitched], [[], []]);
+  });
+
   it('still refuses a non-target\'s source labelled with another crate', () => {
     const ws = workspace({ toy_app: { relabelForeign: 'other_crate' } });
     const { out } = attempted(ws, appOnly([{ crate: 'toy_lib', dir: 'lib' }]));
@@ -354,6 +364,44 @@ describe('crates: the in-repo crates of a prepared copy', () => {
     assert.equal(listed.result.workspaceRoot, '.');
     assert.deepEqual(listed.result.unlisted, []);
     assert.equal(fs.existsSync(path.join(out, 'attempt.json')), false, 'the command changes nothing');
+  });
+
+  it('describes a fresh checkout before any copy exists and proposes the inputs a copy needs', () => {
+    const ws = workspace();
+    withExtras(ws);
+    fs.symlinkSync('lib.rs', path.join(ws.project, 'lib', 'src', 'alias.rs'));
+    const before = fs.readdirSync(path.join(ws.project, 'lib', 'src')).sort();
+    const listed = engine(ws, ['crates', '--project-root', ws.project, '--release', toySpec().release]);
+    assert.equal(listed.status, 0, listed.stdout);
+    assert.deepEqual(listed.result.order, ['toy_lib', 'toy_app', 'toy_tool']);
+    assert.deepEqual(listed.result.inputs, ['Cargo.lock', 'Cargo.toml', 'app', 'lib', 'script', 'tool']);
+    assert.deepEqual(listed.result.links, ['lib/src/alias.rs'], 'a link a copy would refuse is named');
+    assert.equal(listed.result.compared, undefined, 'there is no copy to compare with');
+    assert.deepEqual(fs.readdirSync(path.join(ws.project, 'lib', 'src')).sort(), before, 'the checkout is not touched');
+  });
+
+  it('says what the patched copy lost compared with the checkout', () => {
+    const ws = workspace();
+    withExtras(ws);
+    const out = prepared(ws);
+    let listed = crates(ws, out);
+    assert.deepEqual(listed.result.compared, { available: true, packagesNotInCopy: [], pathDependenciesRemoved: [] });
+    fs.writeFileSync(path.join(out, 'tree', 'app', 'Cargo.toml'), fs.readFileSync(path.join(out, 'tree', 'app', 'Cargo.toml'), 'utf8').replace('toy-lib = { path = "../lib" }', 'toy-lib = "0.1.0"'));
+    fs.rmSync(path.join(out, 'tree', 'script'), { recursive: true });
+    listed = crates(ws, out);
+    assert.equal(listed.status, 0, listed.stdout);
+    assert.deepEqual(listed.result.compared.pathDependenciesRemoved, [{ package: 'toy-app', dependency: 'toy-lib', dir: 'lib' }], 'a path dependency a patch turned into a registry one is named');
+    assert.deepEqual(listed.result.compared.packagesNotInCopy, [{ package: 'toy-script', dir: 'script' }]);
+    assert.deepEqual(listed.result.crates.find((item) => item.package === 'toy-app').deps, [], 'and it is no longer an in-repo dependency of the copy');
+  });
+
+  it('needs exactly one of a prepared copy and a checkout', () => {
+    const ws = workspace();
+    const out = prepared(ws);
+    const both = engine(ws, ['crates', '--out', out, '--project-root', ws.project, '--release', toySpec().release]);
+    assert.equal(both.status, 2, both.stdout);
+    assert.match(both.result.message, /exactly one of --out \(a prepared copy\) and --project-root \(a checkout\)/);
+    assert.equal(engine(ws, ['crates', '--release', toySpec().release]).status, 2);
   });
 
   it('names a path dependency inside the copy that is not a workspace member', () => {

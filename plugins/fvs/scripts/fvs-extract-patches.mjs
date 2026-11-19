@@ -61,7 +61,7 @@ function usage() {
     '       node fvs-extract-patches.mjs attempt --out DIR --spec FILE [--format json|text]',
     '       node fvs-extract-patches.mjs run --out DIR --step charon|aeneas|publish [--crate NAME] [--format json|text]',
     '       node fvs-extract-patches.mjs attempt-status --out DIR [--crate NAME] [--format json|text]',
-    '       node fvs-extract-patches.mjs crates --out DIR --release DIR [--format json|text]',
+    '       node fvs-extract-patches.mjs crates (--out DIR | --project-root DIR) --release DIR [--format json|text]',
     '',
     'Applies the translation patches in DIR/translation-patches, in the order listed',
     'in DIR/translation-patches/series (one file name per line, every patch exactly',
@@ -97,12 +97,14 @@ function usage() {
     'then needs --crate NAME. attempt-status refuses unless every crate is complete and',
     'lists each crate\'s status; its run is the main crate\'s, plus run.units.',
     '',
-    'crates lists the in-repo crates of a prepared copy (package, crate name, directory,',
-    'the in-repo crates it depends on) and a dependency order, providers first, so a',
-    'multi-crate spec can start from every crate as a target and drop the ones the owner',
-    'decides not to verify. It runs cargo metadata --no-deps --offline in the copy, under',
-    'the toolchain of the release directory (relative to the project root); it changes',
-    'nothing and is advisory.',
+    'crates lists the in-repo crates of a prepared copy (--out) or of a fresh checkout',
+    '(--project-root): package, crate name, directory, the in-repo crates it depends on, and',
+    'a dependency order, providers first, so a multi-crate spec can start from every crate as',
+    'a target and drop the ones the owner decides not to verify. It runs cargo metadata',
+    '--no-deps --offline under the toolchain of the release directory (relative to the project',
+    'root) and changes nothing; it is advisory. On a copy it also names the path dependencies',
+    'the patches removed and the packages the copy lacks; on a checkout it proposes the',
+    'extraction.inputs a copy needs.',
     '',
     'Exit codes: 0 ok; 1 a patch does not fit (stale, already applied, not reversible,',
     'or not independent although it declares Independent: yes); 2 usage or internal',
@@ -474,6 +476,9 @@ function check(flags) {
     message: `${records.length} translation patch(es) apply in order and undo to the exact starting state`,
     mode: context.mode,
     inputs: context.inputs,
+    // The commit the inputs start from and the input paths that differ from it (modified,
+    // staged, deleted or untracked); both null outside a git checkout.
+    source: { commit: context.commit, dirty: context.dirty },
     patches: records,
   };
 }
@@ -1198,35 +1203,44 @@ function attempt(flags) {
   return isObject(spec) && spec.crates !== undefined ? attemptUnits(out, manifest, manifestSha256, spec) : recordAttempt(out, manifest, manifestSha256, spec);
 }
 
-// The in-repo crates of the prepared copy, as cargo sees them: package, crate name (the
-// library target's, which is what Charon labels items with), directory, and the in-repo
-// crates each one depends on (normal and build dependencies; dev-dependencies are not
-// part of an extraction), with a dependency order, providers first. This only proposes
-// targets: a crate that is neither declared a target nor a non-target is refused when
-// Charon's output is read. It runs `cargo metadata --no-deps --offline` in the copy, so
-// the answer is for the patched workspace Charon will build, and a workspace cargo
-// cannot read is reported with cargo's own first error lines.
-function listCrates(flags) {
-  const out = path.resolve(flags.out);
-  const { manifest } = preparedManifest(out);
-  const release = releaseTools(path.resolve(manifest.projectRoot, flags.release));
-  const env = cargoEnvironment(release);
-  const tree = fs.realpathSync(manifest.tree);
+// The in-repo crates of a tree, as cargo sees them: package, crate name (the library
+// target's, which is what Charon labels items with), directory, and the in-repo crates
+// each one depends on (normal and build dependencies; dev-dependencies are not part of an
+// extraction), with a dependency order, providers first. This only proposes targets: a
+// crate that is neither declared a target nor a non-target is refused when Charon's output
+// is read. It runs `cargo metadata --no-deps --offline` (nothing is written), so a
+// workspace cargo cannot read (a missing member, inheritance without a workspace, a path
+// dependency without a manifest) is reported with cargo's own first error lines.
+//
+// With --out it describes the PATCHED copy Charon will build, and compares it with the
+// checkout: the path dependencies a patch removed and the packages the copy lacks. With
+// --project-root it describes a fresh checkout, before any copy exists, and proposes the
+// extraction.inputs that give a copy every in-repo crate cargo needs.
+const LIBRARY_KINDS = ['lib', 'rlib', 'dylib', 'cdylib', 'staticlib'];
+const first = (lines) => lines.map((line) => line.trim()).filter((line) => line !== '').slice(0, 6);
+
+function cargoMetadata(tree, env, where) {
   const run = spawnSync('cargo', ['metadata', '--no-deps', '--offline', '--format-version', '1'], { env, cwd: tree, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   if (run.status !== 0) {
-    const lines = `${run.stderr ?? ''}`.split('\n').map((line) => line.trim()).filter((line) => line !== '').slice(0, 6);
-    refuse('tool-failed', `cargo cannot read the workspace of the extraction copy${lines.length > 0 ? `: ${lines.join(' | ')}` : ''}`, { reasons: lines });
+    const lines = first(`${run.stderr ?? ''}`.split('\n'));
+    refuse('tool-failed', `cargo cannot read the workspace of ${where}${lines.length > 0 ? `: ${lines.join(' | ')}` : ''}`, { reasons: lines });
   }
-  let metadata;
   try {
-    metadata = JSON.parse(run.stdout);
+    return JSON.parse(run.stdout);
   } catch {
-    refuse('tool-failed', 'cargo metadata did not return JSON');
+    return refuse('tool-failed', 'cargo metadata did not return JSON');
   }
+}
+
+const relativeTo = (tree, dir) => path.relative(tree, dir).split(path.sep).join('/') || '.';
+const realOrSelf = (file) => (fs.existsSync(file) ? fs.realpathSync(file) : file);
+const pathDependencies = (item) => item.dependencies.filter((dependency) => dependency.kind !== 'dev' && dependency.path);
+
+function describeWorkspace(tree, metadata) {
   const rows = metadata.packages.map((item) => {
     const dir = path.dirname(fs.realpathSync(item.manifest_path));
-    const library = item.targets.find((target) => target.kind.some((kind) => ['lib', 'rlib', 'dylib', 'cdylib', 'staticlib'].includes(kind)));
-    return { package: item.name, crate: library ? library.name.replace(/-/g, '_') : null, dir: inside(dir, tree) ? (path.relative(tree, dir).split(path.sep).join('/') || '.') : null, abs: dir, library: library !== undefined, dependencies: item.dependencies };
+    const library = item.targets.find((target) => target.kind.some((kind) => LIBRARY_KINDS.includes(kind)));
+    return { package: item.name, crate: library ? library.name.replace(/-/g, '_') : null, dir: inside(dir, tree) || dir === tree ? relativeTo(tree, dir) : null, abs: dir, library: library !== undefined, item };
   }).filter((row) => row.dir !== null).sort((a, b) => a.dir.localeCompare(b.dir));
   const byDir = new Map(rows.map((row) => [row.abs, row]));
   const crates = rows.map((row) => ({
@@ -1234,16 +1248,13 @@ function listCrates(flags) {
     crate: row.crate,
     dir: row.dir,
     library: row.library,
-    deps: [...new Set(row.dependencies.filter((dependency) => dependency.kind !== 'dev' && dependency.path)
-      .map((dependency) => byDir.get(fs.existsSync(dependency.path) ? fs.realpathSync(dependency.path) : dependency.path))
+    deps: [...new Set(pathDependencies(row.item).map((dependency) => byDir.get(realOrSelf(dependency.path)))
       .filter((provider) => provider !== undefined && provider.library).map((provider) => provider.crate))].sort(),
   }));
-  // `--no-deps` lists the workspace members only: a path dependency that lies inside the
-  // copy but is not a member is not in the list above, so it is named here.
-  const unlisted = [...new Set(rows.flatMap((row) => row.dependencies.filter((dependency) => dependency.kind !== 'dev' && dependency.path)
-    .map((dependency) => (fs.existsSync(dependency.path) ? fs.realpathSync(dependency.path) : dependency.path))
-    .filter((dir) => !byDir.has(dir) && inside(dir, tree) && dir !== tree)
-    .map((dir) => path.relative(tree, dir).split(path.sep).join('/'))))].sort();
+  // --no-deps lists the workspace members only: a path dependency inside the tree that is
+  // not a member is not in the list above, so it is named here.
+  const unlistedAbs = [...new Set(rows.flatMap((row) => pathDependencies(row.item).map((dependency) => realOrSelf(dependency.path))
+    .filter((dir) => !byDir.has(dir) && inside(dir, tree) && dir !== tree)))].sort();
   const order = [];
   const visit = (row, seen = new Set()) => {
     if (order.includes(row.crate) || seen.has(row.crate)) return;
@@ -1252,7 +1263,94 @@ function listCrates(flags) {
     order.push(row.crate);
   };
   crates.filter((row) => row.library).forEach((row) => visit(row));
-  return { message: `${crates.length} in-repo package(s), ${order.length} with a library`, tree, workspaceRoot: path.relative(tree, metadata.workspace_root).split(path.sep).join('/') || '.', crates, order, unlisted };
+  return { rows, crates, order, unlisted: unlistedAbs.map((dir) => relativeTo(tree, dir)) };
+}
+
+// What a copy of a fresh checkout must hold for cargo to read it: the workspace manifest
+// and lock, every member and in-repo path dependency, and, for a root package, the
+// directories its targets live in (cargo refuses a package whose targets are missing).
+function suggestedInputs(tree, metadata, described) {
+  const inputs = new Set(['Cargo.toml']);
+  if (fs.existsSync(path.join(tree, 'Cargo.lock'))) inputs.add('Cargo.lock');
+  for (const row of described.rows) {
+    if (row.dir !== '.') {
+      inputs.add(row.dir);
+      continue;
+    }
+    if (fs.existsSync(path.join(tree, 'build.rs'))) inputs.add('build.rs');
+    for (const target of row.item.targets) {
+      const relative = relativeTo(tree, target.src_path);
+      if (!relative.startsWith('..')) inputs.add(relative.split('/')[0]);
+    }
+  }
+  for (const dir of described.unlisted) inputs.add(dir);
+  const covered = [...inputs].filter((input) => ![...inputs].some((other) => other !== input && input.startsWith(`${other}/`)));
+  return covered.sort();
+}
+
+// Symbolic links under the proposed inputs, which a copy refuses (it takes only regular
+// files): the first few, so the owner can leave the directory out or replace the link.
+const LINK_REPORT_LIMIT = 10;
+function linksUnder(tree, inputs) {
+  const links = [];
+  const visit = (relative) => {
+    if (links.length >= LINK_REPORT_LIMIT) return;
+    const stat = fs.lstatSync(path.join(tree, relative), { throwIfNoEntry: false });
+    if (!stat) return;
+    if (stat.isSymbolicLink()) links.push(relative);
+    else if (stat.isDirectory()) for (const name of fs.readdirSync(path.join(tree, relative)).sort()) visit(`${relative}/${name}`);
+  };
+  inputs.forEach(visit);
+  return links;
+}
+
+function listCrates(flags) {
+  if ((flags.out === undefined) === (flags['project-root'] === undefined)) refuse('usage', 'crates needs exactly one of --out (a prepared copy) and --project-root (a checkout)');
+  const prepared = flags.out !== undefined ? preparedManifest(path.resolve(flags.out)).manifest : null;
+  const projectRoot = prepared ? prepared.projectRoot : (fs.existsSync(flags['project-root']) ? fs.realpathSync(flags['project-root']) : refuse('usage', `--project-root ${flags['project-root']} does not exist`));
+  const env = cargoEnvironment(releaseTools(path.resolve(projectRoot, flags.release)));
+  const tree = fs.realpathSync(prepared ? prepared.tree : projectRoot);
+  const metadata = cargoMetadata(tree, env, prepared ? 'the extraction copy' : 'the checkout');
+  const described = describeWorkspace(tree, metadata);
+  const result = {
+    message: `${described.crates.length} in-repo package(s), ${described.order.length} with a library`,
+    tree,
+    workspaceRoot: relativeTo(tree, metadata.workspace_root),
+    crates: described.crates,
+    order: described.order,
+    unlisted: described.unlisted,
+  };
+  if (!prepared) {
+    const inputs = suggestedInputs(tree, metadata, described);
+    // A copy holds regular files only, and cargo needs every workspace member's manifest in it,
+    // so a workspace with links under its members needs a patch that trims the member list.
+    return { ...result, inputs, links: linksUnder(tree, inputs) };
+  }
+  // The checkout's own view, for what the patches changed. A checkout cargo cannot read
+  // leaves the comparison out, with the reason.
+  let original;
+  try {
+    original = describeWorkspace(projectRoot, cargoMetadata(projectRoot, env, 'the checkout'));
+  } catch (error) {
+    return { ...result, compared: { available: false, reason: error.message } };
+  }
+  const key = (row) => row.package;
+  const here = new Map(described.rows.map((row) => [key(row), row]));
+  const dependencyKey = (row, dependency, base) => `${row.package}|${dependency.name}|${relativeTo(base, realOrSelf(dependency.path))}`;
+  const kept = new Set(described.rows.flatMap((row) => pathDependencies(row.item).map((dependency) => dependencyKey(row, dependency, tree))));
+  const pathDependenciesRemoved = original.rows.filter((row) => here.has(key(row)))
+    .flatMap((row) => pathDependencies(row.item).filter((dependency) => !kept.has(dependencyKey(row, dependency, projectRoot)))
+      .map((dependency) => ({ package: row.package, dependency: dependency.name, dir: relativeTo(projectRoot, realOrSelf(dependency.path)) })));
+  return {
+    ...result,
+    compared: {
+      available: true,
+      packagesNotInCopy: original.rows.filter((row) => !here.has(key(row))).map((row) => ({ package: row.package, dir: row.dir })),
+      // A path dependency the patched manifests no longer have: a patch that turns an in-repo
+      // crate into a registry one hides it from extraction, so it is named, never silent.
+      pathDependenciesRemoved,
+    },
+  };
 }
 
 // A multi-crate attempt: every crate gets an ordinary attempt of its own in
@@ -1935,7 +2033,7 @@ function stitchText(text, { crate, provider, assume, consumerNames }) {
     const covered = assume.some((prefix) => isRustItem(rustPath, prefix));
     const target = provider.declarations.get(name);
     if (covered) {
-      assumed.push({ rustPath, name, reason: 'named in the stitch assume list' });
+      assumed.push({ rustPath, name, qualifiedName: `${crate}.${name}`, reason: 'named in the stitch assume list' });
       continue;
     }
     if (!target || (target.rustPath !== null && target.rustPath !== rustPath)) {
@@ -1959,7 +2057,7 @@ function stitchText(text, { crate, provider, assume, consumerNames }) {
     const marked = kind === 'const' ? head : /^@\[/m.test(head) ? head.replace(/^@\[/m, '@[reducible, ') : `${head}@[reducible]\n`;
     parts[index] = `${marked}def ${name}${declaration[2].trimEnd()}\n  := ${lift ? 'Result.ok ' : ''}_root_.${name}`;
     replaced.push({
-      rustPath, name, kind, lift, providerKind: target.keyword, check: verdict === 'equal' ? 'text-and-lean-build' : 'lean-build',
+      rustPath, name, qualifiedName: `${crate}.${name}`, providerQualifiedName: name, kind, lift, providerKind: target.keyword, check: verdict === 'equal' ? 'text-and-lean-build' : 'lean-build',
       signatureSha256: sha256(squash(declaration[2])), providerDeclSha256: target.blockSha256,
     });
   }
@@ -2143,6 +2241,16 @@ function attemptStatus(flags) {
   return { message: `attempt complete for ${rows.length} crate(s) (${supported ? 'supported configuration' : 'unsupported configuration'})`, run: { ...main.run, supported, residuals, order: multi.order ?? multi.units.map((unit) => unit.crate), units: rows.map(summary) } };
 }
 
+function crossCrate(foreignCrates, recorded) {
+  const dependsOn = foreignCrates.filter((entry) => entry.kind === 'target').map((entry) => entry.crate).sort();
+  const imports = recorded === null ? [] : recorded.stitch.map((entry) => entry.provider);
+  return {
+    dependsOn,
+    unstitched: dependsOn.filter((crate) => !imports.includes(crate)),
+    prerequisites: (recorded?.stitch ?? []).flatMap((entry) => entry.replaced.map((item) => ({ providerCrate: entry.provider, rustPath: item.rustPath }))),
+  };
+}
+
 function attemptStatusOf(out) {
   const chain = loadChain(out, ATTEMPT_STAGES.length);
   const { attempt: record, invocation: inv, stages } = chain;
@@ -2191,6 +2299,11 @@ function attemptStatusOf(out) {
       // The declared edits of the generated Lean: substitutions, and the crates whose real
       // translation this crate's Lean imports in place of axioms.
       ...(recorded === null ? {} : { imports: recorded.stitch.map((entry) => entry.provider), stitch: recorded.stitch, substitutions: recorded.substitutions }),
+      // Cross-crate edges, present with or without stitching: the declared target crates this
+      // crate's LLBC reaches, the ones among them its Lean does not import (their items are
+      // still axioms here), and the provider items the stitched aliases stand for, each of
+      // which must be settled in its own crate before this one is.
+      ...(inv.targets && stages.charon.record.llbc?.foreignCrates ? crossCrate(stages.charon.record.llbc.foreignCrates, recorded) : {}),
       // The crates the LLBC reaches, and the in-repo crates the owner chose not to verify
       // with the sources of each that appeared (their items alone may become assumptions).
       ...(stages.charon.record.llbc?.foreignCrates ? { foreignCrates: stages.charon.record.llbc.foreignCrates } : {}),
@@ -2209,7 +2322,7 @@ const COMMANDS = {
   attempt: { required: ['out', 'spec'], run: attempt },
   run: { required: ['out', 'step'], optional: ['crate'], run },
   'attempt-status': { required: ['out'], optional: ['crate'], run: attemptStatus },
-  crates: { required: ['out', 'release'], run: listCrates },
+  crates: { required: ['release'], optional: ['out', 'project-root'], run: listCrates },
 };
 
 function parseFlags(argv, required, optional = []) {

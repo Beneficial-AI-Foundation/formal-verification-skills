@@ -140,7 +140,16 @@ describe('stitching: the consumer\'s axioms become checked aliases of the provid
     ]);
     assert.deepEqual(entry.replaced.map((item) => item.check), ['text-and-lean-build', 'text-and-lean-build', 'lean-build', 'text-and-lean-build'], 'a signature the engine cannot read is left to the Lean build, and the record says so');
     assert.ok(entry.replaced.every((item) => /^[0-9a-f]{64}$/.test(item.signatureSha256) && /^[0-9a-f]{64}$/.test(item.providerDeclSha256)));
-    assert.deepEqual(entry.assumed, [{ rustPath: 'toy_lib::other_mod::skipped', name: 'toy_lib.other_mod.skipped', reason: 'named in the stitch assume list' }]);
+    assert.deepEqual(entry.assumed, [{ rustPath: 'toy_lib::other_mod::skipped', name: 'toy_lib.other_mod.skipped', qualifiedName: 'toy_app.toy_lib.other_mod.skipped', reason: 'named in the stitch assume list' }]);
+    // The generated file declares everything inside `namespace <crate>`: this is the name
+    // `#print axioms` prints at the root; the provider's own constant is the alias target `_root_.<name>`.
+    assert.deepEqual(entry.replaced.map((item) => [item.qualifiedName, item.providerQualifiedName]).slice(0, 2), [
+      ['toy_app.toy_lib.one', 'toy_lib.one'], ['toy_app.toy_lib.TWO', 'toy_lib.TWO'],
+    ]);
+    assert.deepEqual(app.dependsOn, ['toy_lib']);
+    assert.deepEqual(app.unstitched, []);
+    assert.deepEqual(app.prerequisites, entry.replaced.map((item) => ({ providerCrate: 'toy_lib', rustPath: item.rustPath })));
+    assert.deepEqual([library.dependsOn, library.unstitched, library.prerequisites], [[], [], []]);
     assert.deepEqual(entry.files, ['ToyApp.lean']);
     assert.equal(app.translation.attemptPath.endsWith('aeneas-dest/translation.json'), true, 'translation.json is not edited');
   });

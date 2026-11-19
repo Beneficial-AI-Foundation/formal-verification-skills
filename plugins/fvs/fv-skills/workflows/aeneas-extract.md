@@ -320,6 +320,7 @@ refused when Charon's output is read.
 
 ```bash
 RELEASE_DIR=...   # the release directory the spec names as `release` (relative to the project root, or absolute)
+node "$PATCH_ENGINE" crates --project-root "$CRATE_ROOT" --release "$RELEASE_DIR"   # a fresh checkout: every in-repo crate, and the extraction.inputs a copy needs
 node "$PATCH_ENGINE" crates --out "$OUT" --release "$RELEASE_DIR"   # advisory: in-repo crates, their in-repo dependencies, an order (providers first)
 node "$PATCH_ENGINE" attempt --out "$OUT" --spec "$EXTRACT_SPEC"     # a spec with a crates list records one attempt chain per crate
 # then, for each crate in the attempt's `order` (providers before the crates that import them):
@@ -328,6 +329,16 @@ node "$PATCH_ENGINE" run --out "$OUT" --step aeneas  --crate "$CRATE"
 node "$PATCH_ENGINE" run --out "$OUT" --step publish --crate "$CRATE"
 node "$PATCH_ENGINE" attempt-status --out "$OUT"                      # refuses unless EVERY crate is complete
 ```
+
+`crates` runs `cargo metadata --no-deps --offline` and writes nothing. On a checkout it offers every
+in-repo crate (package, crate name, directory, the in-repo crates it depends on, an order with
+providers first), proposes the `extraction.inputs` a copy needs (workspace manifest and lock, every
+member and in-repo path dependency) and names any symbolic link under them, which a copy refuses; a
+workspace with links under members needs a translation patch that trims its member list. On a
+prepared copy it also names the path dependencies the patches removed (`pathDependenciesRemoved`) and
+the packages the copy lacks (`packagesNotInCopy`), so a patch that hides an in-repo crate is never
+silent. A workspace cargo cannot read (a missing member, inheritance without a workspace, a path
+dependency without a manifest) is reported with cargo's first error lines.
 
 The spec keeps the single-crate fields as a base (`release`, `cargoArgs`, `charonArgs`) and adds
 `main` (the crate the extraction record is about), `crates` (one entry per target) and
@@ -364,6 +375,12 @@ declared, recorded transforms; the `translation.json` Aeneas wrote is left as it
 an item whose signature involves another crate's types that B and A each wrote out separately
 cannot be aliased, and two crates that reach the same external Rust item each keep their own
 axiom for it.
+
+A project that pins the axioms a theorem depends on (a checked message around `#print axioms`) sees
+those pinned lists change after stitching: the items stitching replaced leave them, and the axioms
+the provider's own translation still rests on enter. Updating the pins is project-side work, and each
+axiom that enters needs an externals record; this workflow never regenerates a pin in the project,
+and its report says so as the next action.
 
 Publication never overwrites a file it does not own. When a folder already holds committed
 extraction output from an earlier layout, the owner removes it once; later runs own the folder.
