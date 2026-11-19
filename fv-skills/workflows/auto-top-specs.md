@@ -19,6 +19,12 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
    items of the in-scope Rust modules and cross-check the list against the generated Lean. There is no
    per-item confirmation. Nothing leaves the scope silently: note the items you think are out of scope
    and why, and leave the pruning to the owner in the pull request review.
+
+   Before the first review round, list every public API case of each item: the normal result, each
+   error and panic path, and each limit and overflow case, such as a running count that can pass its
+   limit across several calls. Give the list to the author and to the reviewer. A reviewer who finds a
+   case missing in round 3 has found it too late. A case without a statement is named in the pull
+   request body, with the reason.
 2. **Prepare the working branch before any author starts.** Work on a branch of the project's own
    repository; its pull request is the spec PR. Spawn each author from this branch's head: its worktree
    is made from the committed head, so it holds only what is committed. In a fresh project the extraction
@@ -51,6 +57,11 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
    file's items, and a fresh adversarial reviewer (the chosen pair) checks them against the Rust code
    and its documentation. Is each statement faithful, strong enough to be useful, and free of
    assumptions it should prove? At most three rounds; put anything still open in the pull request body.
+   Keep exact and conditional claims apart. An exact statement holds for every input. A statement
+   that needs a hypothesis (a bound on the inputs, a capacity, an assumption about an external
+   function) is conditional. Write them as separate statements with separate names, and label each
+   one in its docstring as `exact` or `conditional` with the hypotheses it needs. Never weaken an exact
+   statement into a conditional one without saying so in the pull request body.
    The reviewer is a different agent from the author, and a new reviewer reads each round. After every
    round the orchestrator records it for each spec file (see "Recording the review rounds"). A file that
    still needs changes after the third round is recorded as `blocked`, so it does not hold the pull

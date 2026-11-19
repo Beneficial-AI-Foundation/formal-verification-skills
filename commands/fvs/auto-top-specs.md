@@ -27,6 +27,9 @@ The goal and the pipeline are fixed; how the agents get there is theirs to decid
 Follow the auto-top-specs workflow. Finish with its report block, which always carries the
 `State:`, `Next action:` and `Pending decision:` lines.
 
+Before the first review round, list every public API case of each item, overflow cases included,
+and keep exact and conditional claims as separate, labelled statements.
+
 Agents may open draft pull requests and edit a pull request body. They never post comments or reviews
 on GitHub, never mark a pull request ready and never merge: only the owner comments, marks ready and
 merges.
@@ -35,6 +38,7 @@ merges.
 <success_criteria>
 - [ ] Reports the recorded state read through `fvs-auto.mjs read-state`, or why it cannot.
 - [ ] Every public API item in the agreed scope is listed; nothing leaves the scope silently.
+- [ ] Every public API case, overflow included, was listed before the first review round; exact and conditional claims are separate, labelled statements.
 - [ ] Each Rust file's statements were written by an author and checked by a fresh adversarial reviewer, in at most three rounds.
 - [ ] The spec pull request is a draft on the project's own repository, and the agents stop for the owner.
 - [ ] Nothing is posted as a GitHub comment or review.
