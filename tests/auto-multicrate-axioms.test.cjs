@@ -121,6 +121,19 @@ axiom five : True
     assert.equal(auto.leanAxioms('def x := axiom\n').unread, 1, 'a keyword that starts no declaration is counted, so the file is not read');
   });
 
+  it('reads a published module that ends in a generated run_cmd check, with no axiom and nothing unread', () => {
+    const check = `open Lean Meta Elab Command in
+run_cmd liftTermElabM do
+  for (consumer, provider, lift) in [(\`libcrux_hmac.hacl.hash_256, \`libcrux_sha2.hacl.hash_256, false)] do
+    let consumerInfo ← getConstInfo consumer
+    unless consumerInfo.levelParams.length == (← getConstInfo provider).levelParams.length do
+      throwError "the universe parameters of {consumer} differ (no axiom here)"
+`;
+    const { axioms, unread } = auto.leanAxioms(`${leanFile('libcrux_hmac', extractionAxiom('core::a', 'core.a'))}\n${check}`);
+    assert.equal(unread, 0, 'the word in an error message is a string, not a declaration');
+    assert.deepEqual(axioms.map((axiom) => axiom.full), ['libcrux_hmac.core.a'], 'the block neither adds an axiom nor hides the one before it');
+  });
+
   it('reads an axiom with its attributes on the same line and no doc comment', () => {
     const { axioms } = auto.leanAxioms('namespace N\n@[simp] axiom a : True\nnoncomputable axiom b : True\nend N\n');
     assert.deepEqual(axioms.map((axiom) => [axiom.full, axiom.doc]), [['N.a', null], ['N.b', null]]);
