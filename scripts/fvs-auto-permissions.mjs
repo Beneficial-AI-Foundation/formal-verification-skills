@@ -16,7 +16,7 @@
 // The command checks its own arguments instead and refuses anything but `--branch fvs/<name>`. It pushes only to the
 // destination that `write-destination` records in the repository's git directory. A project settings file that already
 // allows `git push` by rule would let a worker skip the command, so a Claude write refuses while one is there and lists
-// it. It never deletes one. A push gate hook entry that an earlier build installed is listed for cleanup too.
+// it. It never deletes one.
 //
 // It reads no standard input and does not touch the engine's state or externals files; the answers live in
 // their own record, .formalising/auto-fv/permissions.json.
@@ -43,8 +43,6 @@ const PUSH_SCRIPT = 'fvs-auto-push.mjs';
 // A branch name that no branch can have (git forbids a name component that starts with a dot), so the push command
 // refuses it before it contacts the destination. The push probe uses it.
 const PROBE_BRANCH = '.permission-check';
-// The hook of earlier builds ran this script; an entry that names it is listed for cleanup.
-const OLD_GATE_NAME = 'fvs-auto-push-gate';
 
 class Refuse extends Error {
   constructor(code, message, details = {}) { super(message); this.code = code; this.details = details; }
@@ -315,7 +313,6 @@ function plan(flags) {
   const lakeBlocker = lakeProbeBlocker(root);
   const stepIds = catalog.steps.map((step) => step.id);
   const legacy = legacyPushRules(root);
-  const oldHooks = legacyPushGateHooks(root);
   const state = destinationState(destination);
   return {
     code: 'ok',
@@ -330,7 +327,6 @@ function plan(flags) {
       ? 'A record exists: do not run the check again; show the summary. To check again on the owner\'s request (after rules were written, or in a new Codex session), run the recheck command.'
       : 'Run each probe as its own plain call, then ask the user which steps prompted. A skipped step is recorded as unknown.',
     ...(legacy.length ? { legacyPushRules: legacy, legacyPushRulesNote: 'a project settings file already allows a git push by rule: a Claude write-allowlist refuses until the owner removes these entries, and the push probe may stay quiet because of them rather than because of the push command' } : {}),
-    ...(oldHooks.length ? { legacyPushGateHooks: oldHooks, legacyPushGateHooksNote: OLD_HOOK_NOTE } : {}),
   };
 }
 
@@ -423,22 +419,6 @@ export function legacyPushRules(root) {
     const list = plain(settings) && plain(settings.permissions) && Array.isArray(settings.permissions.allow) ? settings.permissions.allow : [];
     const rules = list.filter(namesPush);
     if (rules.length) found.push({ file: relative, resolvedPath: snapshot.resolvedPath, rules, keeps: list.length - rules.length });
-  }
-  return found;
-}
-
-const OLD_HOOK_NOTE = 'an earlier FVS build offered a push gate hook, and an entry for it is still in this file. This build ships no such hook, and a hook whose script is missing gives no decision (an older copy of the script may still be installed, and it would still run). Delete the listed entries from hooks.PreToolUse yourself; every other hook stays. FVS deletes none of them.';
-
-// Hook entries of earlier builds that run the old push gate script, by file.
-export function legacyPushGateHooks(root) {
-  const found = [];
-  for (const { relative, snapshot, settings } of readSettings(root)) {
-    const list = plain(settings) && plain(settings.hooks) && Array.isArray(settings.hooks.PreToolUse) ? settings.hooks.PreToolUse : [];
-    const commands = list
-      .flatMap((entry) => (Array.isArray(entry?.hooks) ? entry.hooks : []))
-      .map((one) => one?.command)
-      .filter((command) => typeof command === 'string' && command.includes(OLD_GATE_NAME));
-    if (commands.length) found.push({ file: relative, resolvedPath: snapshot.resolvedPath, commands });
   }
   return found;
 }
@@ -570,7 +550,6 @@ function writeClaude(flags, root, catalog, picked, allow, recorded) {
     try { existing = JSON.parse(before.bytes.toString('utf8')); } catch { refuse('malformed-settings', `${relative} is not valid JSON; fix it yourself first, it is never overwritten`); }
   }
   const { merged, added } = mergeClaude(existing, allow);
-  const oldHooks = legacyPushGateHooks(root);
   const preview = {
     runtime: 'claude', target, file: relative, projectRoot: root, resolvedPath: before.resolvedPath, viaLink: before.viaLink, existingSha256: before.sha256, gitStatus: gitStatusOf(root, relative),
     appliesTo: target === 'shared'
@@ -579,7 +558,6 @@ function writeClaude(flags, root, catalog, picked, allow, recorded) {
     steps: picked.map((step) => step.id), add: added,
     alreadyPresent: { allow: allow.filter((r) => !added.allow.includes(r)) },
     ...(recorded ? { push: pushPreview(catalog, recorded) } : {}),
-    ...(oldHooks.length ? { legacyPushGateHooks: oldHooks, legacyPushGateHooksNote: OLD_HOOK_NOTE } : {}),
   };
   if (added.allow.length === 0) return { code: 'unchanged', message: `${relative} already holds every rule`, ...preview };
   // The confirmation is about this project, this real file and these exact bytes, as well as these rules and the destination.

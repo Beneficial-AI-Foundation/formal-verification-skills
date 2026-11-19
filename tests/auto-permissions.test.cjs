@@ -1014,46 +1014,6 @@ describe('push allow rules that are already in the settings', () => {
   });
 });
 
-describe('a push gate hook from an earlier build', () => {
-  const OLD = { matcher: 'Bash', hooks: [{ type: 'command', command: 'node "/old/place/fvs-auto-push-gate.mjs" --repo Acme/proj --host github.com --remote origin --prefix fvs', timeout: 15 }] };
-  const OTHER = { matcher: 'Bash', hooks: [{ type: 'command', command: 'node other-hook.mjs' }] };
-
-  it('is listed by plan and by every Claude write, with how to clean it up, and is kept as it was', () => {
-    const original = { hooks: { PreToolUse: [OTHER, OLD, 'not an entry', null] }, permissions: { allow: ['Bash(ls *)'] } };
-    writeSettings(original);
-    const found = [{ file: '.claude/settings.json', resolvedPath: path.join(fs.realpathSync(project), '.claude', 'settings.json'), commands: [OLD.hooks[0].command] }];
-    const planned = run('plan', base()).json;
-    assert.deepEqual(planned.legacyPushGateHooks, found);
-    assert.match(planned.legacyPushGateHooksNote, /Delete the listed entries from hooks\.PreToolUse yourself; every other hook stays/);
-    const preview = allow('worker-message').json;
-    assert.equal(preview.code, 'confirmation-required');
-    assert.deepEqual(preview.legacyPushGateHooks, found);
-    const done = confirmed('worker-message');
-    assert.equal(done.json.code, 'written');
-    assert.deepEqual(done.json.legacyPushGateHooks, found);
-    assert.deepEqual(readSettings().hooks, original.hooks, 'the entry is kept: FVS deletes nothing');
-    assert.deepEqual(readSettings().permissions.allow, ['Bash(ls *)', 'Bash(ao send *)']);
-  });
-
-  it('reads both project files, and lists nothing for a file without such an entry', () => {
-    writeSettings({ hooks: { PreToolUse: [OTHER] } });
-    writeSettings({ hooks: { PreToolUse: [OLD] } }, 'settings.local.json');
-    assert.deepEqual(run('plan', base()).json.legacyPushGateHooks.map((one) => one.file), ['.claude/settings.local.json']);
-    writeSettings({ hooks: { PreToolUse: [OTHER] } }, 'settings.local.json');
-    assert.equal(run('plan', base()).json.legacyPushGateHooks, undefined);
-    writeSettings({ hooks: 'x' });
-    writeSettings('{ not json', 'settings.local.json');
-    assert.equal(run('plan', base()).json.legacyPushGateHooks, undefined);
-    assert.deepEqual(lib.legacyPushGateHooks(fs.realpathSync(project)), []);
-  });
-
-  it('does not stop a write: it is listed, not refused', () => {
-    writeSettings({ hooks: { PreToolUse: [OLD] } });
-    assert.equal(allow('worker-message').json.code, 'confirmation-required');
-    assert.equal(run('write-allowlist', base('--runtime', 'codex', '--steps', 'worker-message')).json.code, 'confirmation-required');
-  });
-});
-
 describe('what a confirmation is bound to', () => {
   const sha = (name = 'settings.json') => require('node:crypto').createHash('sha256').update(fs.readFileSync(settingsFile(name))).digest('hex');
   const folder = (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -1327,6 +1287,23 @@ describe('the permissions page', () => {
     assert.match(init, /`not-a-repository`, `git-environment` or `worktree-mismatch`: the project root is not a git work tree/);
   });
 
+  it('names no push gate hook anywhere in what ships: no release ever shipped one, so nothing is listed for cleanup', () => {
+    const old = ['fvs-auto-push', 'gate'].join('-');
+    const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) return ['node_modules', '.git'].includes(entry.name) ? [] : walk(full);
+      return /\.(md|mjs|cjs|js|json|toml)$/.test(entry.name) ? [full] : [];
+    });
+    const roots = ['fv-skills', 'commands', 'scripts', 'bin', 'agents', 'plugins', 'pi'].map((name) => path.join(ROOT, name)).filter((dir) => fs.existsSync(dir));
+    for (const file of [path.join(ROOT, 'README.md'), ...roots.flatMap(walk)]) {
+      assert.ok(!fs.readFileSync(file, 'utf8').includes(old), `${path.relative(ROOT, file)} names the old push gate script`);
+    }
+    assert.equal(fs.existsSync(path.join(ROOT, 'scripts', `${old}.mjs`)), false);
+    // Legacy push allow rules are still detected and listed.
+    assert.equal(typeof lib.legacyPushRules, 'function');
+    assert.equal(lib.legacyPushGateHooks, undefined);
+  });
+
   it('makes no unconditional promise that a push asks, and no longer describes a hook as part of init', () => {
     const docs = [PAGE, 'fv-skills/workflows/auto-init.md', 'fv-skills/references/auto-setup.md', 'commands/fvs/auto-init.md', 'README.md', 'scripts/fvs-auto-permissions.mjs', 'scripts/fvs-auto-push.mjs']
       .map((file) => [file, fs.readFileSync(path.isAbsolute(file) ? file : path.join(ROOT, file), 'utf8').replace(/\s+/g, ' ')]);
@@ -1345,8 +1322,6 @@ describe('the permissions page', () => {
     assert.match(text, /### Push allow rules already in your settings/);
     assert.match(text, /a Claude write stops with `legacy-push-rules`, before any preview and before anything is written\. Both files stay byte-identical/);
     assert.match(text, /does not see: broad rules such as `Bash\(git \*\)` or `Bash\(\*\)`, your user settings/);
-    assert.match(text, /### A push gate hook from an earlier build/);
-    assert.match(text, /Delete the listed entries from hooks\.PreToolUse yourself; every other hook stays/);
     assert.match(text, /The digest covers the exact rules, the recorded destination when a push rule is written, the canonical project root, the real path of the file .* and the hash of the file's current content/);
     assert.match(text, /a new digest that needs a new yes/);
     assert.match(text, /an edit made in the instant between that last check and the replacement is not detected/);

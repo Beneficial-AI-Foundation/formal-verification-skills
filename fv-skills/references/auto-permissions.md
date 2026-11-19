@@ -253,15 +253,6 @@ quiet for a reason that has nothing to do with the push command. The rule that n
 What this check does not see: broad rules such as `Bash(git *)` or `Bash(*)`, your user settings
 (`~/.claude/settings.json`), managed settings, and the permission mode. Check those yourself.
 
-### A push gate hook from an earlier build
-
-An earlier build of FVS offered a hook, `fvs-auto-push-gate.mjs`, for pushes. This build ships no hook. When a
-project settings file still has an entry of `hooks.PreToolUse` whose command runs that script, `plan` and every
-Claude write list it (file, real path and command) and leave it in place: FVS deletes none of your settings, and the
-write is not refused because of it. Delete the listed entries from hooks.PreToolUse yourself; every other hook stays.
-A hook whose script is missing gives no decision, but an older copy of the script may still be installed on your
-machine, and it would still run.
-
 ## Codex rules
 
 Written to `.codex/rules/fvs-auto.rules` in the project, after your yes. The syntax is Codex's own
@@ -366,7 +357,7 @@ covers the session that ran init. If your workers run in another mode, check tha
 ## What was tested
 
 - Unit tests (node, no network): the helper's confirmation, merge, refusals and Codex file handling, the refusal
-  while a `git push` allow rule is present, the listing of a push gate hook of an earlier build, the confirmation
+  while a `git push` allow rule is present, the confirmation
   binding (a `.claude` or `.codex` link retargeted between the preview and the confirmation, a changed file,
   another project root), the `recheck` entry point, and the push command: every refusal listed above, and real
   pushes into a throwaway local bare repository that stands in for the fork, reached through a stand-in for `ssh`.

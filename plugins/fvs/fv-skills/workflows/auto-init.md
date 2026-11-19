@@ -276,9 +276,6 @@ node "$PERM" plan --project-root . --repo "$DRAFT_REPO" --remote origin --branch
   owner the listed entries before you probe. FVS deletes none of them, and a Claude `write-allowlist` refuses
   until the owner has removed those entries; the push probe may also be quiet because of them, not because of
   the push command. Go on with the check if the owner wants, and say that writing waits for the cleanup.
-- `legacyPushGateHooks` present (Claude Code): a project settings file still has a push gate hook entry that an
-  earlier build installed. Show the listed entries. This build ships no hook, FVS keeps the entry and a write is
-  not refused because of it, and the owner deletes it themselves (`legacyPushGateHooksNote` says how).
 - `remote-mismatch`, `remote-ambiguous`, `remote-missing`, `destination-rewritten` or `invalid-input`: no probe
   runs against a remote that is not the project's own repository. Every URL of the remote (all fetch and push
   URLs) must name it, and no `insteadOf` or `pushInsteadOf` rule may rewrite the push address again. Report the
@@ -370,8 +367,6 @@ If nothing prompted, say so and write nothing. If some steps prompted:
      and writes every step they want in one command.
    - `destination-not-recorded`: the push rule needs the recorded destination, and it is missing or no longer
      what init would record. Do "Where pushes go" first, then run this command again.
-   - `legacyPushGateHooks` in the preview: a hook entry of an earlier build is in the file. Show it and say that
-     FVS keeps it; the owner deletes it themselves.
    - `legacy-push-rules` (Claude): `.claude/settings.json` or `.claude/settings.local.json` already allows a
      push by rule. Show `legacyPushRules` and `cleanup`: for each file the exact entries to delete and how many
      other entries stay. FVS deletes nothing and writes nothing, and you do not edit the file either: the
