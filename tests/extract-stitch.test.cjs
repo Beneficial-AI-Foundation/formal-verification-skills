@@ -243,6 +243,58 @@ describe('substitutions: exact text edits of the generated Lean with the match c
     assert.match(publish.result.message, /a substitution names Missing\.lean, which is not a generated Lean file \(ToyApp\.lean\)/);
   });
 
+  // A substitution edits the code inside a definition's body and nothing else: it cannot add,
+  // retype or relabel an axiom, change what a definition claims, or reach a Trusted file.
+  describe('never touches a declaration', () => {
+    const refusedPublish = (substitution, pattern) => {
+      const ws = workspace(behaviour());
+      const { out } = attempted(ws, stitched({ stitch: undefined, substitutions: [substitution] }));
+      for (const name of ['charon', 'aeneas']) assert.equal(step(ws, out, name, 'toy_app').status, 0);
+      const publish = step(ws, out, 'publish', 'toy_app');
+      assert.equal(publish.status, 9, publish.stdout);
+      assert.match(publish.result.message, pattern);
+      assert.equal(fs.existsSync(path.join(ws.project, 'Lean', 'App')), false, 'nothing is published from a refused edit');
+    };
+    const base = (extra) => edit(extra);
+
+    it('refuses to retype an axiom', () => {
+      refusedPublish(base({ find: 'axiom toy_lib.other_mod.skipped : Result Unit', replace: 'axiom toy_lib.other_mod.skipped : 1 = 1', reason: 'x' }), /substitution 0 is refused in ToyApp\.lean: it changes the axiom toy_lib\.other_mod\.skipped, and a substitution never edits an axiom/);
+    });
+
+    it('refuses to rewrite the Rust path in an axiom\'s doc comment or attribute', () => {
+      refusedPublish(base({ find: 'Name pattern: [toy_lib::other_mod::skipped]', replace: 'Name pattern: [toy_lib::one]', reason: 'x' }), /it changes the axiom toy_lib\.other_mod\.skipped/);
+      refusedPublish(base({ find: '@[rust_fun "toy_lib::other_mod::skipped"]', replace: '@[rust_fun "toy_lib::one"]', reason: 'x' }), /it changes the axiom toy_lib\.other_mod\.skipped/);
+    });
+
+    it('refuses to rename an axiom, or to add one', () => {
+      refusedPublish(base({ find: 'axiom toy_lib.other_mod.skipped', replace: 'axiom toy_lib.other_mod.renamed', reason: 'x' }), /it changes the axiom toy_lib\.other_mod\.skipped/);
+      refusedPublish(base({ find: 'def three : Result Std.U32 := do', replace: 'axiom extra : False\n\ndef three : Result Std.U32 := do', reason: 'x' }), /it changes the number of top-level declarations/);
+    });
+
+    it('refuses to change the name or the type of a definition, but not its body', () => {
+      refusedPublish(base({ find: 'def three : Result Std.U32 := do', replace: 'def four : Result Std.U32 := do', reason: 'x' }), /it changes the name or type of three, and a substitution edits only the body of a definition/);
+      refusedPublish(base({ find: 'def three : Result Std.U32 := do', replace: 'def three : Result Std.U64 := do', reason: 'x' }), /it changes the name or type of three/);
+      refusedPublish(base({ find: '/-- [toy_app::three]:', replace: '/-- [toy_app::four]:', reason: 'x' }), /it changes the name or type of three/);
+    });
+
+    it('refuses text outside any definition, such as an import line', () => {
+      refusedPublish(base({ find: 'open Aeneas', replace: 'open Aeneas Foo', reason: 'x' }), /it changes text outside a definition body \("open Aeneas/);
+    });
+
+    it('still allows an edit inside a body', () => {
+      const ws = workspace(behaviour());
+      complete(ws, stitched({ stitch: undefined, substitutions: [edit()] }));
+      assert.match(published(ws, 'Lean/App/ToyApp.lean'), /let y ← toy_lib\.one/);
+    });
+
+    it('names no Trusted file: a substitution under a Trusted directory is refused before anything is written', () => {
+      const ws = workspace(behaviour());
+      const { recorded } = attempted(ws, stitched({ stitch: undefined, substitutions: [edit({ file: 'Trusted/Sha2.lean' })] }));
+      assert.equal(recorded.status, 5, recorded.stdout);
+      assert.match(recorded.result.message, /substitutions\[0\]\.file is under a Trusted directory; a substitution edits generated Lean only, never a Trusted file/);
+    });
+  });
+
   it('works for a single-crate attempt as well', () => {
     const ws = workspace({ toy_lib: { lean: lib() } });
     const out = path.join(ws.root, 'copies', 'single');

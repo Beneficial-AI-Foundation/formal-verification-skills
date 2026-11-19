@@ -950,6 +950,7 @@ function checkSubstitutions(list) {
     if (extra.length > 0) refuse('invalid-input', `${where} has unsupported fields: ${extra.join(', ')}`);
     const relative = typeof entry.file === 'string' ? path.posix.normalize(entry.file) : '';
     if (!relative.endsWith('.lean') || path.posix.isAbsolute(relative) || relative.split('/').includes('..')) refuse('invalid-input', `${where}.file must name a generated Lean file, relative to the Aeneas output`);
+    if (relative.split('/').some((part) => part.toLowerCase() === 'trusted')) refuse('invalid-input', `${where}.file is under a Trusted directory; a substitution edits generated Lean only, never a Trusted file`);
     if (typeof entry.find !== 'string' || entry.find === '') refuse('invalid-input', `${where}.find must be the exact non-empty text to replace`);
     if (typeof entry.replace !== 'string') refuse('invalid-input', `${where}.replace must be a string`);
     if (!Number.isInteger(entry.count) || entry.count < 1) refuse('invalid-input', `${where}.count must be the exact number of matches (at least 1)`);
@@ -1850,6 +1851,56 @@ const squash = (text) => text.replace(/\s+/g, ' ').trim();
 const countOf = (text, needle) => text.split(needle).length - 1;
 const isRustItem = (rustPath, prefix) => rustPath === prefix || rustPath.startsWith(`${prefix}::`);
 
+// A substitution may change the code inside a definition's body and nothing else. Axiom
+// declarations (name, type, attributes, the doc comment that carries the Rust path), the
+// name and type of every definition and every other top-level line stay exactly as Aeneas
+// wrote them, so a literal edit cannot add, retype or relabel an assumption, or reword what
+// a definition claims. The generated file is cut into top-level blocks (a block starts at a
+// doc comment, an attribute or a declaration keyword in column 0); a definition or theorem
+// block is split at its first top-level `:=` into a head, which is fixed, and a body, which
+// is free; every other block is fixed whole.
+const BLOCK_START = /^(?:\/--|@\[|(?:noncomputable\s+)?(?:def|axiom|theorem|lemma|structure|inductive|abbrev|opaque|class|instance|namespace|end|open|set_option|section|attribute|import|public)\b)/;
+const KEYWORD_LINE = /^(?:noncomputable\s+)?(def|axiom|theorem|lemma|structure|inductive|abbrev|opaque|class|instance)\b/;
+const BODY_KEYWORDS = new Set(['def', 'theorem', 'lemma', 'abbrev', 'instance']);
+
+function leanBlocks(text) {
+  const blocks = [];
+  let current = null;
+  for (const line of text.split('\n')) {
+    const keyword = KEYWORD_LINE.exec(line);
+    const starts = BLOCK_START.test(line) && (current === null || (/^\/--/.test(line) ? current.text !== '' && (current.keyword !== null || !current.doc) : current.keyword !== null || /^(?:namespace|end|open|set_option|section|attribute|import|public)\b/.test(line)));
+    if (current === null || starts) {
+      current = { text: '', keyword: null, doc: false };
+      blocks.push(current);
+    }
+    if (/^\/--/.test(line)) current.doc = true;
+    if (keyword && current.keyword === null) current.keyword = { word: keyword[1], offset: current.text.length };
+    current.text += `${current.text === '' ? '' : '\n'}${line}`;
+  }
+  return blocks.map((block) => {
+    const name = DECLARATION.exec(block.text.slice(block.keyword?.offset ?? 0))?.[2] ?? null;
+    const found = block.keyword && BODY_KEYWORDS.has(block.keyword.word)
+      ? topLevel(block.text.slice(block.keyword.offset), [':='])[0]
+      : undefined;
+    const end = found === undefined ? null : block.keyword.offset + found.index + 2;
+    return { text: block.text, name, axiom: block.keyword?.word === 'axiom', head: end === null ? null : block.text.slice(0, end), body: end === null ? null : block.text.slice(end) };
+  });
+}
+
+function declarationProblems(before, after) {
+  const was = leanBlocks(before);
+  const now = leanBlocks(after);
+  if (was.length !== now.length) return ['it changes the number of top-level declarations'];
+  for (let index = 0; index < was.length; index += 1) {
+    const [a, b] = [was[index], now[index]];
+    const free = a.head !== null && b.head !== null;
+    if (free ? a.head === b.head : a.text === b.text) continue;
+    if (a.axiom || b.axiom) return [`it changes the axiom ${a.name ?? b.name}, and a substitution never edits an axiom`];
+    return [free ? `it changes the name or type of ${a.name ?? b.name}, and a substitution edits only the body of a definition` : `it changes text outside a definition body (${JSON.stringify(a.text.split('\n')[0].slice(0, 60))})`];
+  }
+  return [];
+}
+
 function applySubstitutions(file, text, substitutions) {
   const applied = [];
   const reasons = [];
@@ -1862,6 +1913,11 @@ function applySubstitutions(file, text, substitutions) {
       return;
     }
     const next = current.split(entry.find).join(entry.replace);
+    const problems = declarationProblems(current, next);
+    if (problems.length > 0) {
+      reasons.push(`substitution ${index} is refused in ${file}: ${problems[0]}`);
+      return;
+    }
     applied.push({ index, file, find: entry.find, replace: entry.replace, count: entry.count, reason: entry.reason, beforeSha256: sha256(current), afterSha256: sha256(next) });
     current = next;
   });
@@ -2262,8 +2318,12 @@ function attemptStatusOf(out) {
     if (fileState(entry.projectPath)?.sha256 !== entry.sha256) refuse('attempt-refused', `${entry.projectPath} changed after publication`);
   }
   if (fileState(path.join(inv.publishDir, OWNERSHIP))?.sha256 !== stages.publish.record.ownershipSha256) refuse('attempt-refused', 'the publication ownership record changed');
-  const translation = mapping.find((entry) => entry.attemptPath === path.join(inv.aeneasDest, 'translation.json'));
-  if (!translation) refuse('attempt-refused', 'the publication record does not map translation.json');
+  const translationEntry = mapping.find((entry) => entry.attemptPath === path.join(inv.aeneasDest, 'translation.json'));
+  if (!translationEntry) refuse('attempt-refused', 'the publication record does not map translation.json');
+  // projectPath is absolute, as recorded; relativePath is the same file relative to the project
+  // root, so another checkout of the project can find it without the recording machine's paths.
+  const relativePath = (entry) => ({ ...entry, relativePath: path.relative(inv.projectRoot, entry.projectPath).split(path.sep).join('/') });
+  const translation = relativePath(translationEntry);
   const recorded = stages.publish.record.transform ?? null;
   const again = transformOf(chain);
   if ((again === null) !== (recorded === null)) refuse('attempt-refused', 'the spec declares substitutions or stitching that publication did not record, or the reverse');
@@ -2289,7 +2349,7 @@ function attemptStatusOf(out) {
       configSha256: record.configSha256,
       llbc: { path: inv.llbc, sha256: stages.charon.record.llbcSha256 },
       translation,
-      publication: mapping,
+      publication: mapping.map(relativePath),
       crate: inv.crate,
       publishDir: path.relative(inv.projectRoot, inv.publishDir),
       // The Cargo.lock the copy was built against: read from the project, or generated in the copy.

@@ -292,6 +292,18 @@ describe('multi-crate extraction: crates the owner chose not to verify', () => {
     assert.equal(run.nonTargets, undefined, 'no non-target was declared');
   });
 
+  it('gives every translation and published file also relative to the project root', () => {
+    const ws = workspace();
+    const out = complete(ws);
+    const { run } = engine(ws, ['attempt-status', '--out', out]).result;
+    for (const unit of [run, ...run.units]) {
+      assert.equal(path.isAbsolute(unit.translation.projectPath), true, 'the recorded path is unchanged');
+      assert.equal(unit.translation.relativePath, `${unit.publishDir}/translation.json`);
+      for (const entry of unit.publication) assert.equal(path.join(ws.project, entry.relativePath), fs.realpathSync(entry.projectPath));
+      assert.ok(unit.publication.every((entry) => !path.isAbsolute(entry.relativePath) && !entry.relativePath.startsWith('..')));
+    }
+  });
+
   it('says which target crates a crate reaches and which of them it does not import', () => {
     const ws = workspace();
     const out = complete(ws);
