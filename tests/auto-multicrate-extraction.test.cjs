@@ -53,6 +53,23 @@ describe('a succeeded extraction over several crates', () => {
     assert.deepEqual(crates.order, ['base', 'loose', 'mid', 'app'], 'derived order: ties by name, every provider first');
   });
 
+  it('warns when a crate uses a verified crate it is neither stitched to nor imports, and not for a crate the owner does not verify', () => {
+    const reaches = (crate, kind = 'target') => ({ foreignCrates: [{ crate, kind }, { crate: 'core', kind: 'external' }] });
+    const warnings = (root) => cli('read-state', '--project-root', root, '--brief').json.warnings.filter((text) => /without being stitched/.test(text));
+    const open = extracted((directory) => [unit(directory, 'app', [], reaches('base')), unit(directory, 'base', [])]);
+    assert.deepEqual(warnings(open), ["crate app uses items of base, which is verified, without being stitched to it: they are axioms in app's Lean, not base's translation; stitch app to base in the extraction spec"]);
+    const stitched = extracted((directory) => [unit(directory, 'app', [], { ...reaches('base'), stitch: [{ provider: 'base', modules: ['Base'], replaced: [], assumed: [], copies: [], files: [] }] }), unit(directory, 'base', [])]);
+    assert.deepEqual(warnings(stitched), []);
+    const imported = extracted((directory) => [unit(directory, 'app', [], { ...reaches('base'), imports: ['base'] }), unit(directory, 'base', [])]);
+    assert.deepEqual(warnings(imported), []);
+    // A crate the extraction itself marks a non-target, and one the owner drops afterwards, may be assumed.
+    const nonTarget = extracted((directory) => [unit(directory, 'app', [], reaches('base', 'non-target')), unit(directory, 'base', [])]);
+    assert.deepEqual(warnings(nonTarget), []);
+    const dropped = extracted((directory) => [unit(directory, 'app', [], reaches('base')), unit(directory, 'base', [])]);
+    fixtures.recordAgreement(dropped, fixtures.agreementFor(dropped, { targets: { crates: ['app'], nonTargets: [{ crate: 'base', decision: 'Not verified; its behaviour is assumed.' }] } }));
+    assert.deepEqual(warnings(dropped), [], 'a crate the owner drops is only assumed');
+  });
+
   it('reads a stitch given as one entry as well as a list', () => {
     const root = extracted((directory) => [
       unit(directory, 'app', [], { stitch: { provider: 'base', modules: [], replaced: [], assumed: [] } }),
