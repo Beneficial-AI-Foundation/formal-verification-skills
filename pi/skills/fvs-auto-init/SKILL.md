@@ -30,11 +30,18 @@ launches no workers or proofs. The pipeline after it is fixed and the agents cho
 draft spec pull request the owner merges, proofs, FVS's build check in a fresh clean copy, a draft proof
 pull request. Later provisional cycles stay autonomous within the agreement and final PR acceptance
 stays human.
+
+Before the hand-off, init checks which steps of the run stop for an approval prompt, by running one
+harmless instance of each while the owner is present, and asks the owner which prompted. Only after the
+owner's yes does it write a minimal project allowlist for those steps through
+`scripts/fvs-auto-permissions.mjs` (`auto-permissions.md`). It never allows GitHub comments, reviews,
+merges, pushes to an upstream or force pushes.
 </objective>
 
 <execution_context>
 @../../../fv-skills/workflows/auto-init.md
 @../../../fv-skills/references/auto-setup.md
+@../../../fv-skills/references/auto-permissions.md
 @../../../fv-skills/references/auto-memory.md
 @../../../fv-skills/references/ui-brand.md
 </execution_context>
@@ -53,6 +60,10 @@ Follow the auto-init workflow end to end. Every state change goes through `fvs-a
 write or edit `state.json` by hand, and never pass `--confirm-overwrite` without the owner's
 explicit confirmation of the listed changes.
 
+The permission check is the one place init writes a settings or rules file, and only through
+`fvs-auto-permissions.mjs write-allowlist` after the owner has seen the exact rules and said yes. Run it
+once: a project with a permission record is not checked again.
+
 Agents may open draft pull requests and edit a pull request body. They never post comments or reviews
 on GitHub, never mark a pull request ready and never merge: only the owner comments, marks ready and
 merges.
@@ -62,10 +73,11 @@ Finish with the workflow's report block, which always carries the `State:`, `Nex
 </process>
 
 <codex_skill_adapter>
-On Codex, every owner question in this command (the choices, a confirmation of changed choices and
-the initial roadmap agreement) degrades to a plain-text question and WAITS for the answer. It is fail-closed:
+On Codex, every owner question in this command (the choices, a confirmation of changed choices,
+the initial roadmap agreement, the permission check's answers and the allowlist confirmation) degrades
+to a plain-text question and WAITS for the answer. It is fail-closed:
 it never picks a default for the owner, never runs `init-state` before the owner has answered,
-and never passes `--confirm-overwrite` or records owner agreement/authority on the owner's behalf.
+and never passes `--confirm-overwrite`, or `--confirm` for an allowlist, or records owner agreement/authority on the owner's behalf.
 Applicable existing explicit responses are reused without another question; computing a hash is not approval.
 </codex_skill_adapter>
 
@@ -82,5 +94,7 @@ Applicable existing explicit responses are reused without another question; comp
 - [ ] The relaxed path reads state plainly and never calls the stored-context gate, the memory routes, owned work, the driver or the re-specification command.
 - [ ] No implicit grant or per-round human approval is introduced.
 - [ ] Agreement storage alone launches no workers; a recorded draft pull request destination is the project's own repository.
-- [ ] The report carries the State, Next action and Pending decision lines.
+- [ ] The permission check runs once, after telling the owner that some steps may prompt, and asks the owner which prompted; it never infers a prompt.
+- [ ] A rules or settings file is written only after the owner's explicit yes on the exact preview, keeps every other key, and never allows a GitHub comment, review or merge, a push to an upstream or a force push.
+- [ ] The report carries the State, Next action, Permissions and Pending decision lines.
 </success_criteria>

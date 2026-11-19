@@ -123,7 +123,7 @@ never raised or reset automatically. The initial owner agreement is the setup hu
 provisional specify/review/revise cycles are autonomous within it;
 there is no per-round human contract approval.
 The owner's merge of the spec pull request is the sign-off before any proof starts.
-Final PR acceptance remains human. Agreement storage does not dispatch; Step 5 hands off to the stages.
+Final PR acceptance remains human. Agreement storage does not dispatch; Step 6 hands off to the stages.
 
 Write the known and answered choices to a temporary file outside the project:
 
@@ -248,7 +248,79 @@ nothing. Missing, malformed, unknown or future mode, mismatched content or stale
 refuses; show the actual reason and resolve only the affected agreement. No operation selects roots or
 grants publication, launches workers, resets budgets or reinterprets `nodeHours`.
 
-## Step 5: Hand off to the stages
+## Step 5: Check which run steps stop for approval
+
+An approval prompt that nobody answers is aborted after about 30 minutes and the session that asked
+stops; in the first rc2 run, waiting for approvals took most of the elapsed time. So, while the owner is
+present, check which steps of the run prompt on this machine, and offer a small allowlist for exactly
+those. `auto-permissions.md` has the steps, the rules, the reason for each rule, what still prompts on
+purpose and the troubleshooting notes. Run the check once: a project that already has a record is not
+checked again.
+
+The check needs the repository the draft pull requests go to (the agreement's `draftPr.destination`, or the
+repository the owner named in Step 3: the project's own, never an upstream), the git remote that points at
+it (usually `origin`) and the branch namespace workers push under (default `fvs`; ask the owner once, and
+never `main`, `master` or a release name).
+
+```bash
+PERM="$(dirname "$AUTO")/fvs-auto-permissions.mjs"
+node "$PERM" plan --project-root . --repo "$DRAFT_REPO" --remote origin --branch-prefix fvs
+```
+
+- `record.present` true: print its `summary` for the report line, say nothing more, and go to Step 6.
+- `remote-mismatch`, `remote-missing` or `invalid-input`: the push probe never runs against a remote that
+  is not the project's own repository. Report the refusal, skip the check and go to Step 6.
+
+Otherwise ask the owner whether to run the check or skip it. A skip is recorded with every step as
+`unknown` (below) so that a resume does not ask again.
+
+**Tell the owner first**, in these words or close to them: some of the next commands may stop and ask you
+to approve them; please approve each one when it appears, that is what the check is for. None of them posts
+to GitHub or pushes anything. They send a message to a session that does not exist, write one scratch file
+under `.formalising/`, compile it, read pull requests, fetch, and do a dry-run push.
+
+Then run every probe of the `plan` output as its own plain call: one `Bash` call per command exactly as
+printed, with no `&&`, `;`, pipe, `cd` or wrapper, and the scratch file with the `Write` tool (its `path` and
+`content` are in the plan). A command that fails is fine; the question is only whether it stopped and asked.
+Do not retry or reshape a command that was refused outright.
+
+**You cannot see prompts**, so ask. Two multi-select questions with at most four options each, each with a
+"none of these" option: first `worker-message`, `author-edit`, `lake-build`; then `gh-read`, `git-read`,
+`git-push`. The owner's answer is the result. Write it to a temporary file outside the project and record it:
+
+```bash
+node "$PERM" record --project-root . --repo "$DRAFT_REPO" --remote origin --branch-prefix fvs --input "$ANSWER"
+```
+
+`$ANSWER` is `{"runtime":"claude","kind":"check","results":{"<step>":"prompted"|"quiet"|"unknown"}}`
+with one entry for each probed step (`"runtime":"codex"` on Codex).
+
+If nothing prompted, say so and write nothing. If some steps prompted:
+
+1. Show the owner `auto-permissions.md` in plain words: the rules for those steps, why each exists, what
+   still prompts on purpose (GitHub comments, reviews, merges, pushes to another remote, force pushes), and
+   that an unanswered prompt aborts after about 30 minutes.
+2. Run `write-allowlist` without `--confirm` for the steps that prompted, for example
+   `node "$PERM" write-allowlist --project-root . --repo "$DRAFT_REPO" --branch-prefix fvs --runtime claude --steps worker-message,git-push`.
+   It writes nothing and refuses with `confirmation-required`, printing the exact rules, the file and a digest.
+   Show the owner exactly that preview. Offer the optional steps (`draft-pr-create`, `draft-pr-edit`,
+   `edit-folders`) as extra choices, never as a default, and say they were not probed. Offer
+   `--target local` (`.claude/settings.local.json`, read from the main checkout by every worktree and kept
+   out of git) beside the default shared file. On Codex, use `--runtime codex`; it writes only the rules
+   Codex can express and says why it skips the rest.
+3. Only on the owner's explicit yes, rerun the same command with `--confirm <digest>`. Never pass a digest
+   the owner has not seen, and never write the rules without the yes. A decline writes nothing and the
+   run goes on; the steps that prompted then wait for the owner's approval during the run.
+4. Report where the file landed and its `gitStatus` (a loose or tracked file can end up in a pull request).
+5. Repeat the probes of the steps just written, ask again which prompted, and record the answers with
+   `"kind":"recheck"`. A step that still prompts has a cause no rule fixes: show the owner the "A step
+   still prompts" section of `auto-permissions.md` and leave it at that.
+
+Never write any rule by hand, never allow a GitHub comment, review or merge, a push to an upstream or a
+force push, and never edit a settings or rules file other than through the command above. Agreement
+storage and this check launch no workers.
+
+## Step 6: Hand off to the stages
 
 With a recorded agreement, or its absence reported as a warning, the pipeline above takes over and the
 orchestrator does not ask the owner to launch each stage. `/fvs:auto-extract` comes next, then
@@ -257,7 +329,7 @@ recorded state and existing decisions; a genuinely missing capability or input i
 scope interview. Do not infer dispatch permission from a stored agreement, a remembered grant, a partial
 result or a worker verdict.
 
-## Step 6: Report
+## Step 7: Report
 
 Use the refreshed post-init or post-record state, not the pre-init `no-state` result. Print:
 
@@ -269,6 +341,7 @@ Next action:      {the next stage, the partial reason, or the standalone extract
 Warnings:         {the warnings from read-state, such as a missing agreement, or none}
 Stages:           {the profile's stage lines, one per stage, as printed}
 Draft PRs:        {the recorded destination repository | not recorded}
+Permissions:      {the `summary` of the permission record, which names the steps that will wait for the owner's approval | not checked | skipped by the owner}
 Memory:           {explicitly disabled | enabled: its status from the strict lane below}
 Pending decision: {only affected missing initial decisions, or none}
 ```
