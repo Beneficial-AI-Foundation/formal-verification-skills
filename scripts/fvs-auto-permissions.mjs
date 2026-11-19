@@ -16,6 +16,7 @@
 // their own record, .formalising/auto-fv/permissions.json.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -302,6 +303,15 @@ function record(flags) {
   return { code: 'recorded', summary: summaryLine(next, catalog.steps.map((step) => step.id)), prompted: Object.entries(input.results).filter(([, v]) => v === 'prompted').map(([k]) => k) };
 }
 
+// Where the file really is, and whether a link leads there: shown before the user confirms, not only after the write.
+function resolveTarget(root, relative) {
+  const file = path.join(root, relative);
+  const dir = path.dirname(file);
+  const realDir = fs.existsSync(dir) ? fs.realpathSync(dir) : dir;
+  const resolvedPath = fs.existsSync(file) ? fs.realpathSync(file) : path.join(realDir, path.basename(file));
+  return { resolvedPath, viaLink: resolvedPath !== file };
+}
+
 function gitStatusOf(root, relative) {
   const git = (...args) => spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' });
   if (git('rev-parse', '--git-dir').status !== 0) return 'not-a-git-repository';
@@ -387,7 +397,14 @@ function writeClaude(flags, root, catalog, picked, allow, deny) {
     try { existing = readJson(file); } catch { refuse('malformed-settings', `${relative} is not valid JSON; fix it yourself first, it is never overwritten`); }
   }
   const { merged, added } = mergeClaude(existing, allow, deny);
-  const preview = { runtime: 'claude', file: relative, steps: picked.map((step) => step.id), add: added, alreadyPresent: { allow: allow.filter((r) => !added.allow.includes(r)), deny: deny.filter((r) => !added.deny.includes(r)) } };
+  const preview = {
+    runtime: 'claude', target, file: relative, ...resolveTarget(root, relative), gitStatus: gitStatusOf(root, relative),
+    appliesTo: target === 'shared'
+      ? 'Claude Code reads .claude/settings.json from each session\'s own directory, and its allow rules apply once the folder is trusted. A worker worktree sees it only if the file is committed or .claude is linked into the worktree.'
+      : 'Claude Code reads .claude/settings.local.json from the main checkout in every worktree and keeps it out of git; its allow rules apply without the trust step while the file stays untracked.',
+    steps: picked.map((step) => step.id), add: added,
+    alreadyPresent: { allow: allow.filter((r) => !added.allow.includes(r)), deny: deny.filter((r) => !added.deny.includes(r)) },
+  };
   if (added.allow.length + added.deny.length === 0) return { code: 'unchanged', message: `${relative} already holds every rule`, ...preview };
   confirmationNeeded(flags, digestOf({ runtime: 'claude', file: relative, allow: added.allow, deny: added.deny }), preview);
   checkNothingElseChanged(existing, merged, added);
@@ -400,6 +417,7 @@ function writeClaude(flags, root, catalog, picked, allow, deny) {
   recordAllowlist(root, relative, added.allow, added.deny);
   return {
     code: 'written', ...preview, realPath: real, gitStatus: gitStatusOf(root, relative),
+    verified: false, verification: 'The file was re-read as JSON and holds the rules. Claude Code has no offline rule evaluator, so a live recheck is the only evidence that a step stopped prompting.',
     notes: [
       'Claude Code reloads settings files while running; if a step still prompts, run the check again for that step (see the permissions page).',
       'Worker worktrees read their own .claude/settings.json: it reaches them only if committed or if .claude is linked into them. settings.local.json is read from the main checkout in every worktree.',
@@ -413,28 +431,67 @@ function codexFile(rules) {
   return [CODEX_MARKER, '', ...body].join('\n');
 }
 
+function codexEvaluator() {
+  const run = spawnSync('codex', ['--version'], { encoding: 'utf8' });
+  if (run.error) return { available: false, version: null, reason: `the codex CLI was not found on PATH (${run.error.code ?? run.error.message})` };
+  if (run.status !== 0) return { available: false, version: null, reason: `codex --version exited with status ${run.status}` };
+  return { available: true, version: run.stdout.trim() };
+}
+
+// Codex's own evaluator reads the exact candidate text from a temporary file, so nothing live is touched: the rules must
+// parse with their examples, and every command the rules exist for must come out as allowed.
+function evaluateCodex(text, commands) {
+  const evaluator = codexEvaluator();
+  if (!evaluator.available) return { verified: false, evaluator, checks: [], problem: null };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-codex-rules-'));
+  try {
+    const candidate = path.join(dir, 'candidate.rules');
+    fs.writeFileSync(candidate, text);
+    const checks = commands.map((command) => {
+      const run = spawnSync('codex', ['execpolicy', 'check', '--rules', candidate, '--', ...command.split(' ')], { encoding: 'utf8' });
+      let decision = null;
+      try { decision = JSON.parse(run.stdout).decision ?? null; } catch { /* no JSON: the file was rejected */ }
+      return { command, exitStatus: run.status, decision, stderr: (run.stderr ?? '').trim().slice(0, 400) };
+    });
+    const rejected = checks.find((check) => check.exitStatus !== 0);
+    const notAllowed = checks.find((check) => check.exitStatus === 0 && check.decision !== 'allow');
+    return { verified: !rejected && !notAllowed, evaluator, checks, problem: rejected ? 'rejected' : notAllowed ? 'mismatch' : null };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 function writeCodex(flags, root, catalog, picked) {
   const rules = picked.flatMap((step) => step.codex);
-  if (rules.length === 0) refuse('nothing-to-write', 'none of these steps can be written as a Codex rule', { reasons: Object.fromEntries(picked.map((s) => [s.id, s.codexNote ?? ''])) });
+  if (rules.length === 0) refuse('nothing-to-write', 'none of these steps can be written as a Codex rule; their prompts stay unresolved, and the user approves them when they appear', { reasons: Object.fromEntries(picked.map((s) => [s.id, s.codexNote ?? ''])) });
   const relative = '.codex/rules/fvs-auto.rules';
   const file = path.join(root, relative);
   const text = codexFile(rules);
-  if (fs.existsSync(file) && !fs.readFileSync(file, 'utf8').startsWith(CODEX_MARKER)) refuse('foreign-file', `${relative} exists and was not written by FVS; it is never overwritten`);
-  const preview = { runtime: 'codex', file: relative, steps: picked.map((s) => s.id), text, notWritten: Object.fromEntries(picked.filter((s) => s.codex.length === 0).map((s) => [s.id, s.codexNote ?? ''])) };
-  if (fs.existsSync(file) && fs.readFileSync(file, 'utf8') === text) return { code: 'unchanged', ...preview };
-  confirmationNeeded(flags, digestOf({ runtime: 'codex', file: relative, text }), preview);
+  // Never replace or merge an existing file: that could drop rules approved earlier or a restrictive rule the user added.
+  if (fs.existsSync(file) && fs.readFileSync(file, 'utf8') !== text) {
+    refuse('rules-file-conflict', `${relative} already exists and differs from what this selection would write. FVS does not replace or merge it, because that could drop rules you approved earlier or rules you added. To change it, save any rule of your own, delete the file yourself, and write every step you want in one command.`,
+      { file: relative, existing: fs.readFileSync(file, 'utf8'), wouldWrite: text });
+  }
+  const preview = {
+    runtime: 'codex', file: relative, ...resolveTarget(root, relative), gitStatus: gitStatusOf(root, relative), steps: picked.map((s) => s.id), text,
+    notWritten: Object.fromEntries(picked.filter((s) => s.codex.length === 0).map((s) => [s.id, s.codexNote ?? ''])),
+    appliesTo: 'Codex loads project rules only when the project .codex/ folder is trusted, and scans rules when a session starts: they take effect in a new session.',
+  };
+  if (fs.existsSync(file)) return { code: 'unchanged', ...preview };
+  const evaluation = evaluateCodex(text, picked.flatMap((s) => s.codex.flatMap((r) => r.match)));
+  if (evaluation.problem === 'rejected') refuse('evaluator-rejected', 'the installed Codex rejected these rules; nothing was written', { ...preview, evaluation });
+  if (evaluation.problem === 'mismatch') refuse('evaluator-mismatch', 'the installed Codex does not allow every command these rules exist for; nothing was written', { ...preview, evaluation });
+  const shown = { ...preview, evaluation: { verified: evaluation.verified, evaluator: evaluation.evaluator } };
+  confirmationNeeded(flags, digestOf({ runtime: 'codex', file: relative, text }), shown);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   writeAtomic(file, text);
   recordAllowlist(root, relative, rules.map((r) => r.pattern.join(' ')), [], true);
-  // Codex's own evaluator checks that each rule matches its probe command (it needs the codex CLI on PATH).
-  const checks = picked.flatMap((s) => s.codex.flatMap((r) => r.match)).map((command) => {
-    const run = spawnSync('codex', ['execpolicy', 'check', '--rules', file, ...command.split(' ')], { encoding: 'utf8' });
-    if (run.error || run.status !== 0) return { command, decision: null };
-    try { return { command, decision: JSON.parse(run.stdout).decision ?? null }; } catch { return { command, decision: null }; }
-  });
   return {
-    code: 'written', ...preview, gitStatus: gitStatusOf(root, relative), codexCheck: checks,
-    notes: ['Codex loads project rules only when the project .codex/ folder is trusted.', 'Whether a live Codex session stops prompting after this file is not observed.'],
+    code: 'written', ...shown, evaluation, verified: evaluation.verified,
+    message: evaluation.verified
+      ? `Written, and the installed Codex (${evaluation.evaluator.version}) allowed every probe command against the exact content before it was written. That checks the rules, not a live session.`
+      : `Written but NOT verified: ${evaluation.evaluator.reason}. The syntax follows Codex's documentation, but nothing here has run it.`,
+    notes: ['Rules load when a Codex session starts, so check again in a new session; a prompt in the session that was already running proves nothing about them.', 'Whether a live Codex session stops prompting after this file is not observed.'],
   };
 }
 

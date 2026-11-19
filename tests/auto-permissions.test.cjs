@@ -30,8 +30,8 @@ beforeEach(() => {
 });
 
 const base = (...extra) => ['--project-root', project, '--repo', REPO, ...extra];
-function run(command, args) {
-  const result = spawnSync(process.execPath, [SCRIPT, command, ...args], { encoding: 'utf8' });
+function run(command, args, env) {
+  const result = spawnSync(process.execPath, [SCRIPT, command, ...args], { encoding: 'utf8', ...(env ? { env } : {}) });
   let json = null;
   try { json = JSON.parse(result.stdout); } catch { /* usage text */ }
   return { status: result.status, json, stderr: result.stderr };
@@ -327,9 +327,28 @@ describe('write-allowlist for Claude Code', () => {
     assert.equal(fs.existsSync(settingsFile()), false);
   });
 
+  it('shows the resolved target, its git status and where it applies before anything is confirmed', () => {
+    const shared = allow('worker-message').json;
+    assert.equal(shared.target, 'shared');
+    assert.equal(shared.file, '.claude/settings.json');
+    assert.equal(shared.resolvedPath, path.join(fs.realpathSync(project), '.claude', 'settings.json'));
+    assert.equal(shared.viaLink, false);
+    assert.equal(shared.gitStatus, 'untracked-not-ignored');
+    assert.match(shared.appliesTo, /once the folder is trusted.*worker worktree sees it only if the file is committed or \.claude is linked/);
+    const local = allow('worker-message', '--target', 'local').json;
+    assert.equal(local.target, 'local');
+    assert.equal(local.file, '.claude/settings.local.json');
+    assert.match(local.appliesTo, /main checkout in every worktree.*without the trust step/);
+    assert.equal(fs.existsSync(settingsFile()), false);
+    assert.equal(fs.existsSync(settingsFile('settings.local.json')), false);
+  });
+
   it('writes through a linked .claude folder and says where the file really is', () => {
     const shared = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-perm-shared-'));
     fs.symlinkSync(shared, path.join(project, '.claude'));
+    const linkedPreview = allow('worker-message').json;
+    assert.equal(linkedPreview.viaLink, true);
+    assert.equal(linkedPreview.resolvedPath, path.join(fs.realpathSync(shared), 'settings.json'), 'the real path is shown before the write');
     const done = confirmed('worker-message');
     assert.equal(done.json.code, 'written');
     assert.equal(done.json.realPath, path.join(fs.realpathSync(shared), 'settings.json'));
@@ -464,29 +483,118 @@ describe('write-allowlist for Codex', () => {
     const text = fs.readFileSync(path.join(project, '.codex', 'rules', 'fvs-auto.rules'), 'utf8');
     for (const pattern of ['["ao", "send"]', '["gh", "pr", "view"]', '["gh", "pr", "list"]', '["git", "fetch", "origin"]', '["git", "ls-remote"]']) assert.ok(text.includes(pattern), pattern);
     assert.ok(!/"push"/.test(text.replace(/not_match = \[[^\]]*\]/g, '')), 'no push allow rule');
-    assert.equal(codexAllow('worker-message').json.code, 'confirmation-required', 'a different rule set needs its own confirmation');
+    assert.equal(codexAllow('worker-message').json.code, 'rules-file-conflict', 'a different rule set is refused, not merged');
+    assert.equal(fs.readFileSync(path.join(project, '.codex', 'rules', 'fvs-auto.rules'), 'utf8'), text, 'the written file is unchanged');
   });
 
-  it('a step with no Codex rule writes nothing and says why', () => {
-    const refused = codexAllow('git-push');
-    assert.equal(refused.json.code, 'nothing-to-write');
-    assert.match(refused.json.reasons['git-push'], /cannot exclude a force push/);
+  it('a step with no Codex rule writes nothing, says why, and leaves its prompt unresolved', () => {
+    for (const step of ['git-push', 'lake-build', 'author-edit']) {
+      const refused = codexAllow(step);
+      assert.equal(refused.json.code, 'nothing-to-write', step);
+      assert.match(refused.json.message, /prompts stay unresolved/);
+      assert.ok(refused.json.reasons[step].length > 10, step);
+    }
+    assert.match(codexAllow('git-push').json.reasons['git-push'], /cannot exclude a force push/);
     assert.equal(fs.existsSync(path.join(project, '.codex')), false);
   });
 
-  it('never overwrites a rules file it did not write', () => {
-    const file = path.join(project, '.codex', 'rules', 'fvs-auto.rules');
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, 'prefix_rule(pattern=["ls"], decision="allow")\n');
-    assert.equal(codexAllow('worker-message').json.code, 'foreign-file');
-    assert.equal(fs.readFileSync(file, 'utf8'), 'prefix_rule(pattern=["ls"], decision="allow")\n');
+  const rulesFile = () => path.join(project, '.codex', 'rules', 'fvs-auto.rules');
+
+  it('never replaces or merges an existing rules file that differs, and says why', () => {
+    fs.mkdirSync(path.dirname(rulesFile()), { recursive: true });
+    fs.writeFileSync(rulesFile(), 'prefix_rule(pattern=["ls"], decision="allow")\n');
+    const refused = codexAllow('worker-message');
+    assert.equal(refused.json.code, 'rules-file-conflict');
+    assert.match(refused.json.message, /does not replace or merge it/);
+    assert.equal(refused.json.existing, 'prefix_rule(pattern=["ls"], decision="allow")\n');
+    assert.match(refused.json.wouldWrite, /"ao", "send"/);
+    assert.equal(fs.readFileSync(rulesFile(), 'utf8'), 'prefix_rule(pattern=["ls"], decision="allow")\n');
+  });
+
+  it('a second write with a disjoint selection keeps the first rules and the user\'s own restrictive rule', () => {
+    assert.equal(codexConfirmed('worker-message,gh-read').json.code, 'written');
+    const restrictive = '\nprefix_rule(\n    pattern = ["gh", "pr", "view", "--web"],\n    decision = "forbidden",\n)\n';
+    fs.appendFileSync(rulesFile(), restrictive);
+    const before = fs.readFileSync(rulesFile(), 'utf8');
+    const second = codexAllow('git-read');
+    assert.equal(second.json.code, 'rules-file-conflict');
+    assert.equal(codexAllow('git-read', '--confirm', 'anything').json.code, 'rules-file-conflict', 'a confirmation does not override the conflict');
+    const after = fs.readFileSync(rulesFile(), 'utf8');
+    assert.equal(after, before);
+    assert.ok(after.includes('"ao", "send"') && after.includes('"gh", "pr", "list"') && after.includes('decision = "forbidden"'));
+    assert.match(second.json.message, /write every step you want in one command/);
+  });
+
+  it('repeating the same write changes nothing', () => {
+    assert.equal(codexConfirmed('worker-message').json.code, 'written');
+    const before = fs.readFileSync(rulesFile(), 'utf8');
+    assert.equal(codexAllow('worker-message').json.code, 'unchanged');
+    assert.equal(fs.readFileSync(rulesFile(), 'utf8'), before);
+  });
+
+  // A stand-in for the codex CLI, so a missing, rejecting or disagreeing evaluator can be exercised on any machine.
+  const realGit = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+  function withCodex(script) {
+    const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-perm-bin-'));
+    fs.symlinkSync(realGit, path.join(bin, 'git'));
+    if (script) fs.writeFileSync(path.join(bin, 'codex'), `#!/bin/sh\n${script}\n`, { mode: 0o755 });
+    return { PATH: bin, HOME: process.env.HOME };
+  }
+  const args = (...extra) => base('--runtime', 'codex', '--steps', 'worker-message,gh-read', ...extra);
+
+  it('without the codex CLI it writes after confirmation but says plainly that nothing verified it', () => {
+    const env = withCodex(null);
+    const preview = run('write-allowlist', args(), env).json;
+    assert.equal(preview.code, 'confirmation-required');
+    assert.equal(preview.evaluation.verified, false);
+    assert.equal(preview.evaluation.evaluator.available, false);
+    const done = run('write-allowlist', args('--confirm', preview.digest), env).json;
+    assert.equal(done.code, 'written');
+    assert.equal(done.verified, false);
+    assert.match(done.message, /Written but NOT verified: the codex CLI was not found on PATH/);
+    assert.ok(fs.existsSync(rulesFile()));
+  });
+
+  it('a codex that rejects the rules stops the write before any live file exists', () => {
+    const env = withCodex('if [ "$1" = "--version" ]; then echo codex-cli 9.9.9; exit 0; fi\necho "Error: failed to parse policy" >&2\nexit 1');
+    const refused = run('write-allowlist', args(), env);
+    assert.equal(refused.json.code, 'evaluator-rejected');
+    assert.match(refused.json.evaluation.checks[0].stderr, /failed to parse policy/);
+    assert.equal(run('write-allowlist', args('--confirm', 'x'), env).json.code, 'evaluator-rejected');
+    assert.equal(fs.existsSync(path.join(project, '.codex')), false);
+  });
+
+  it('a codex that does not allow a probe command stops the write', () => {
+    const env = withCodex('if [ "$1" = "--version" ]; then echo codex-cli 9.9.9; exit 0; fi\necho \'{"matchedRules":[]}\'');
+    const refused = run('write-allowlist', args(), env);
+    assert.equal(refused.json.code, 'evaluator-mismatch');
+    assert.equal(fs.existsSync(path.join(project, '.codex')), false);
+  });
+
+  it('evaluates a temporary candidate before the live file exists, and reports the evaluator version', () => {
+    const log = path.join(project, 'codex-calls.log');
+    const env = withCodex(`if [ "$1" = "--version" ]; then echo codex-cli 9.9.9; exit 0; fi\nif [ -e "${rulesFile()}" ]; then echo "live $4" >> "${log}"; else echo "candidate $4" >> "${log}"; fi\necho '{"decision":"allow","matchedRules":[]}'`);
+    const preview = run('write-allowlist', args(), env).json;
+    const done = run('write-allowlist', args('--confirm', preview.digest), env).json;
+    assert.equal(done.code, 'written');
+    assert.equal(done.verified, true);
+    assert.match(done.message, /codex-cli 9\.9\.9.*before it was written.*checks the rules, not a live session/);
+    const calls = fs.readFileSync(log, 'utf8').trim().split('\n');
+    assert.ok(calls.length >= 3);
+    for (const call of calls) {
+      assert.match(call, /^candidate /, 'only a candidate was ever evaluated, never the live file');
+      assert.ok(!call.includes(project), 'the candidate lives outside the project');
+    }
+    assert.match(done.notes.join(' '), /new session/);
   });
 
   it('Codex itself accepts the written file and allows each probe', { skip: !codexOnPath && 'codex CLI not on PATH' }, () => {
     const done = codexConfirmed('worker-message,gh-read,git-read');
     assert.equal(done.json.code, 'written');
-    assert.ok(done.json.codexCheck.length >= 5);
-    for (const check of done.json.codexCheck) assert.equal(check.decision, 'allow', check.command);
+    assert.equal(done.json.verified, true);
+    assert.ok(done.json.evaluation.checks.length >= 5);
+    assert.match(done.json.evaluation.evaluator.version, /^codex-cli /);
+    for (const check of done.json.evaluation.checks) assert.equal(check.decision, 'allow', check.command);
     const file = path.join(project, '.codex', 'rules', 'fvs-auto.rules');
     for (const command of ['gh pr merge 1', 'git push origin main', 'ao stop w']) {
       const out = spawnSync('codex', ['execpolicy', 'check', '--rules', file, ...command.split(' ')], { encoding: 'utf8' });
