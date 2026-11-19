@@ -277,7 +277,8 @@ may have changed since the last one; an earlier cycle's copy is never reused.
 ```bash
 set -o pipefail
 OUT="$(mktemp -d "${TMPDIR:-/tmp}/fvs-extract.XXXXXX")/copy"
-node "$PATCH_ENGINE" prepare --project-root "$CRATE_ROOT" --out "$OUT" || exit 1   # records the manifest; refusal -> STOP
+RELEASE_DIR=...   # the release directory the spec names as `release` (relative to the project root, or absolute)
+node "$PATCH_ENGINE" prepare --project-root "$CRATE_ROOT" --out "$OUT" --release "$RELEASE_DIR" || exit 1   # records the manifest and the workspace; refusal -> STOP
 node "$PATCH_ENGINE" verify-tree --out "$OUT" || exit 1                  # before Charon: the copy is the recorded post-patch tree
 # One recorded attempt. $EXTRACT_SPEC (JSON: release, crate, publishDir, charonArgs, cargoArgs) states the
 # project's usual invocation in the supported form; the engine refuses anything else before recording.
@@ -319,8 +320,12 @@ be recorded, but it carries no recorded attempt and stays unbound.
 A repository whose crates call each other is extracted crate by crate inside the ONE prepared
 copy. The owner decides which in-repo crates are verification targets (by default every crate
 that has a library); each crate left out is declared a non-target, and only the items of a
-non-target may become assumptions. A crate that is neither declared a target nor a non-target is
-refused when Charon's output is read.
+non-target may become assumptions. `prepare --release` reads the workspace of the checkout and of the
+copy (cargo only reads) and records both, and the attempt refuses unless every in-repo library crate of
+the original workspace is accounted for: a target, a `nonTargets` entry (its sources are in the copy),
+or a `dropped` entry (they are not: the crate is outside the copy, or a patch replaced its path
+dependency by a registry release). A several-crate attempt on a copy prepared without `--release` is
+refused. A crate that reaches Charon's output undeclared is refused there as well.
 
 ```bash
 RELEASE_DIR=...   # the release directory the spec names as `release` (relative to the project root, or absolute)
@@ -338,10 +343,12 @@ node "$PATCH_ENGINE" attempt-status --out "$OUT"                      # refuses 
 in-repo crate (package, crate name, directory, the in-repo crates it depends on, an order with
 providers first), proposes the `extraction.inputs` a copy needs (workspace manifest and lock, every
 member and in-repo path dependency) and names any symbolic link under them, which a copy refuses; a
-workspace with links under members needs a translation patch that trims its member list. On a
-prepared copy it also names the path dependencies the patches removed (`pathDependenciesRemoved`) and
-the packages the copy lacks (`packagesNotInCopy`), so a patch that hides an in-repo crate is never
-silent. A workspace cargo cannot read (a missing member, inheritance without a workspace, a path
+workspace with links under members needs a translation patch that trims its member list. It follows
+the path dependencies of a crate that is not a workspace member to any depth, and names a member whose
+real directory lies outside the checkout (`outside`). On a prepared copy it also names the path
+dependencies the patches removed (`pathDependenciesRemoved`) and the packages the copy lacks
+(`packagesNotInCopy`), so a patch that hides an in-repo crate is never silent; the attempt enforces
+the same from the workspace that `prepare --release` recorded. A workspace cargo cannot read (a missing member, inheritance without a workspace, a path
 dependency without a manifest) is reported with cargo's first error lines.
 
 The spec keeps the single-crate fields as a base (`release`, `cargoArgs`, `charonArgs`) and adds
@@ -355,7 +362,8 @@ The spec keeps the single-crate fields as a base (`release`, `cargoArgs`, `charo
 | `crates[].moduleRoot` | the Lean module name of that folder, so another crate can import it |
 | `crates[].stitch` | `[{ crate, assume }]`: this crate calls target `crate`; its Lean imports that crate's published module (see below) |
 | `crates[].substitutions` | `[{ file, find, replace, count, reason }]`: a rename of a name Lean cannot read, with the exact number of matches. `find` holds U+00B7 (Aeneas writes a shadowed local as `len·`), `replace` is a plain identifier that occurs nowhere in the crate's generated Lean, no match follows a `.`, and the rename is made inside a definition body only. Any other edit is refused when the attempt is recorded: it belongs in a patch of the Rust source. Recorded with before and after hashes and recomputed by `attempt-status` |
-| `nonTargets` | `[{ crate, dir }]`: in-repo crates the owner decided not to verify |
+| `nonTargets` | `[{ crate, dir }]`: in-repo crates the owner decided not to verify, with their sources in the copy |
+| `dropped` | `[{ crate, reason }]`: in-repo crates left out of the copy by the owner's decision, or whose path dependency a patch replaced by a registry release (the single-crate spec has this field too); the reason says who decided and why, and a crate still in the copy cannot be dropped |
 
 Every crate has its own Charon, Aeneas and publish chain, so a failing crate ends only its own
 chain. `attempt-status` refuses until every crate is complete and then lists each crate's status;

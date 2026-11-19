@@ -100,6 +100,7 @@ if (args[0] !== 'metadata') { console.log('cargo 1.100.0-nightly (fake)'); proce
 const failure = path.join(path.dirname(process.argv[1]), 'metadata-failure.txt');
 if (fs.existsSync(failure)) { process.stderr.write(fs.readFileSync(failure, 'utf8')); process.exit(101); }
 const cwd = fs.realpathSync(process.cwd());
+const only = args.includes('--manifest-path') ? fs.realpathSync(args[args.indexOf('--manifest-path') + 1]) : null;
 const packages = [];
 (function walk(dir) {
   for (const name of fs.readdirSync(dir)) {
@@ -114,7 +115,8 @@ const packages = [];
       const dependencies = [[normal, null], [dev, 'dev']].flatMap(([part, kind]) => [...part.matchAll(/^(\\S+)\\s*=\\s*\\{[^}]*path\\s*=\\s*"([^"]+)"/gm)].map((m) => ({ name: m[1], kind, path: path.resolve(path.dirname(file), m[2]) })));
       const targets = fs.existsSync(path.join(path.dirname(file), 'src', 'lib.rs')) ? [{ name: crate.replace(/-/g, '_'), kind: ['lib'] }] : [{ name: crate, kind: ['bin'] }];
       const hidden = path.join(path.dirname(process.argv[1]), 'metadata-hide.txt');
-      if (fs.existsSync(hidden) && fs.readFileSync(hidden, 'utf8').split('\\n').includes(path.basename(path.dirname(file)))) continue;
+      if (only === null && fs.existsSync(hidden) && fs.readFileSync(hidden, 'utf8').split('\\n').includes(path.basename(path.dirname(file)))) continue;
+      if (only !== null && fs.realpathSync(file) !== only) continue;
       packages.push({ name: crate, manifest_path: file, targets, dependencies });
     }
   }
@@ -205,7 +207,7 @@ const run = (ws, args) => engine(ws.tools, args);
 
 function prepared(ws) {
   const out = path.join(ws.root, 'copies', `out-${(counter += 1)}`);
-  const prep = run(ws, ['prepare', '--project-root', ws.project, '--out', out]);
+  const prep = run(ws, ['prepare', '--project-root', ws.project, '--out', out, '--release', RELEASE]);
   if (prep.status !== 0) throw new Error(prep.stdout);
   return out;
 }

@@ -172,7 +172,7 @@ step describes, and parent-owned baseline, build, revert and report steps stay w
 - **EXTRACT:** run extraction and build under `set -o pipefail` + `LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" nice -n 19 lake build`;
   read the tool's real exit status via `${PIPESTATUS[0]}`, never the tail of a piped log.
   Clean -> success oracle (Step 5). Failure -> classify.
-  - Patch mode: every cycle runs `node "$PATCH_ENGINE" prepare --project-root "$CRATE_ROOT" --out "$OUT"`
+  - Patch mode: every cycle runs `node "$PATCH_ENGINE" prepare --project-root "$CRATE_ROOT" --out "$OUT" --release "$RELEASE_DIR"`
     into a NEW `OUT` outside the checkout, then `verify-tree --out "$OUT"`, then the project's Charon
     with `"$OUT/tree"` as its working directory and `--dest-file` outside the tree, then
     `verify-tree` again, Aeneas on the `.llbc`, `verify-restore --out "$OUT"`, and the build. Only

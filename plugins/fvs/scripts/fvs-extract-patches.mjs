@@ -53,7 +53,7 @@ function refuse(code, message, details) {
 function usage() {
   process.stdout.write([
     'Usage: node fvs-extract-patches.mjs check --project-root DIR [--format json|text]',
-    '       node fvs-extract-patches.mjs prepare --project-root DIR --out DIR [--lock update --release DIR] [--format json|text]',
+    '       node fvs-extract-patches.mjs prepare --project-root DIR --out DIR [--release DIR [--lock update]] [--format json|text]',
     '       node fvs-extract-patches.mjs verify-restore --out DIR [--format json|text]',
     '       node fvs-extract-patches.mjs verify-tree --out DIR [--format json|text]',
     '       node fvs-extract-patches.mjs status --out DIR [--format json|text]',
@@ -79,7 +79,11 @@ function usage() {
     '--lock update --release DIR brings the lock of the copy in line with the patched',
     'manifests once: generated when there is none, otherwise updated keeping every pinned',
     'version (cargo update --workspace). It may need network access, records the origin and',
-    'hashes, and never touches the checkout.',
+    'hashes, and never touches the checkout. With --release, prepare also records the',
+    'workspace: the in-repo crates before and after the patches (cargo only reads). A',
+    'multi-crate attempt needs it, and every in-repo library crate must then be a target,',
+    'a nonTargets entry, or a dropped entry ({crate, reason}) when it is not in the copy;',
+    'a path dependency a patch removed has to be listed as dropped too.',
     'migrate turns an active legacy src-modifications ledger into translation patches',
     '(one per hunk, entries from src-modifications.json kept verbatim) and marks the',
     'ledger inactive in place with src-modifications.inactive.json; it never edits',
@@ -538,7 +542,6 @@ function updateLock(context, tree, releaseFlag) {
 
 function prepare(flags) {
   if (flags.lock !== undefined && flags.lock !== 'update') refuse('usage', '--lock accepts only "update"');
-  if (flags.release !== undefined && flags.lock === undefined) refuse('usage', '--release is for --lock update');
   if (flags.lock === 'update' && flags.release === undefined) refuse('usage', '--lock update needs --release DIR: the release\'s toolchain runs cargo');
   const context = load(flags['project-root']);
   const out = resolveOut(flags.out, context.projectRoot);
@@ -568,6 +571,11 @@ function prepare(flags) {
     // The exact tree handed to the next stage: the touched set's hash and every file in the
     // copy. A completed tree holding any link is refused before it is recorded.
     const files = copyState(tree);
+    // With the release, the workspace is read before and after the patches (cargo only reads),
+    // and the copy must be the same afterwards.
+    const workspace = flags.release === undefined ? null : workspaceInventory(context.projectRoot, tree, flags.release);
+    if (workspace !== null && !sameState(files, copyState(tree))) refuse('internal', 'reading the workspace changed the extraction copy');
+    if (workspace !== null) manifest.workspace = workspace;
     const link = Object.keys(files).find((file) => files[file].link !== undefined);
     if (link) refuseCopyLink(link);
     manifest.final = { touchedSha256: sha256(JSON.stringify(touchedState(tree, context.touched))), files };
@@ -937,7 +945,7 @@ function canonicalConfig(value, out, projectRoot) {
   return JSON.parse(JSON.stringify(value), (key, item) => (typeof item === 'string' ? item.split(out).join('$OUT').split(projectRoot).join('$PROJECT') : item));
 }
 
-const SPEC_FIELDS = ['release', 'crate', 'publishDir', 'charonArgs', 'cargoArgs', 'aeneasArgs', 'moduleRoot', 'substitutions', 'stitch'];
+const SPEC_FIELDS = ['release', 'crate', 'publishDir', 'charonArgs', 'cargoArgs', 'aeneasArgs', 'moduleRoot', 'substitutions', 'stitch', 'dropped'];
 const INVOCATION_FIELDS = ['spec', 'crate', 'llbc', 'aeneasDest', 'publishDir', 'projectRoot', 'tree', 'release', 'tools', 'env', 'charon', 'aeneas', 'targets', 'nonTargets'];
 const TRUST = 'local-host-and-reviewed-scripts';
 
@@ -946,7 +954,7 @@ const TRUST = 'local-host-and-reviewed-scripts';
 // prepared copy, under OUT/units/<crate>.
 const UNITS_DIR = 'units';
 const MULTI_SCHEMA = 'fvs-extract-patches/multi-attempt';
-const MULTI_SPEC_FIELDS = ['release', 'cargoArgs', 'charonArgs', 'aeneasArgs', 'crates', 'main', 'nonTargets'];
+const MULTI_SPEC_FIELDS = ['release', 'cargoArgs', 'charonArgs', 'aeneasArgs', 'crates', 'main', 'nonTargets', 'dropped'];
 const UNIT_FIELDS = ['crate', 'package', 'dir', 'publishDir', 'charonArgs', 'cargoArgs', 'aeneasArgs', 'moduleRoot', 'substitutions', 'stitch'];
 const CRATE_NAME = /^[A-Za-z0-9_]+$/;
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -1235,7 +1243,10 @@ function attempt(flags) {
     refuse('attempt-refused', `the prepared copy has no ${LOCK_FILE}, so cargo would write one into the copy during the build and the copy would no longer match the recorded tree; put a ${LOCK_FILE} in the project (it need not be committed: its hash and origin are recorded), or prepare a new copy with --lock update --release DIR (it may need network access; the lock is recorded by hash)`);
   }
   const spec = readJson(path.resolve(flags.spec));
-  return isObject(spec) && spec.crates !== undefined ? attemptUnits(out, manifest, manifestSha256, spec) : recordAttempt(out, manifest, manifestSha256, spec);
+  if (isObject(spec) && spec.crates !== undefined) return attemptUnits(out, manifest, manifestSha256, spec);
+  const unaccounted = coverageProblems(manifest, { targets: [], nonTargets: [], dropped: checkDropped(isObject(spec) ? spec.dropped : undefined), multi: false });
+  if (unaccounted.length > 0) refuse('attempt-refused', `the workspace is not accounted for: ${unaccounted.join('; ')}`, { reasons: unaccounted });
+  return recordAttempt(out, manifest, manifestSha256, spec);
 }
 
 // The in-repo crates of a tree, as cargo sees them: package, crate name (the library
@@ -1254,8 +1265,8 @@ function attempt(flags) {
 const LIBRARY_KINDS = ['lib', 'rlib', 'dylib', 'cdylib', 'staticlib'];
 const first = (lines) => lines.map((line) => line.trim()).filter((line) => line !== '').slice(0, 6);
 
-function cargoMetadata(tree, env, where) {
-  const run = spawnSync('cargo', ['metadata', '--no-deps', '--offline', '--format-version', '1'], { env, cwd: tree, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+function cargoMetadata(tree, env, where, manifestPath = null) {
+  const run = spawnSync('cargo', ['metadata', '--no-deps', '--offline', '--format-version', '1', ...(manifestPath ? ['--manifest-path', manifestPath] : [])], { env, cwd: tree, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   if (run.status !== 0) {
     const lines = first(`${run.stderr ?? ''}`.split('\n'));
     refuse('tool-failed', `cargo cannot read the workspace of ${where}${lines.length > 0 ? `: ${lines.join(' | ')}` : ''}`, { reasons: lines });
@@ -1298,7 +1309,120 @@ function describeWorkspace(tree, metadata) {
     order.push(row.crate);
   };
   crates.filter((row) => row.library).forEach((row) => visit(row));
-  return { rows, crates, order, unlisted: unlistedAbs.map((dir) => relativeTo(tree, dir)) };
+  return { rows, crates, order, unlistedAbs, unlisted: unlistedAbs.map((dir) => relativeTo(tree, dir)) };
+}
+
+const crateName = (name) => name.replace(/-/g, '_');
+
+// The in-repo crates of a tree as cargo sees them, complete: the workspace members, the
+// path dependencies inside the tree that are not members, followed to any depth (cargo
+// metadata without dependencies lists members only, one manifest per call), and the members
+// whose real directory is outside the tree (a symbolic link), which a copy cannot hold.
+function workspaceView(tree, env, where) {
+  const metadata = cargoMetadata(tree, env, where);
+  const described = describeWorkspace(tree, metadata);
+  const outside = metadata.packages.filter((item) => !inside(path.dirname(fs.realpathSync(item.manifest_path)), tree) && path.dirname(fs.realpathSync(item.manifest_path)) !== tree)
+    .map((item) => ({ package: item.name, crate: crateName((item.targets.find((target) => target.kind.some((kind) => LIBRARY_KINDS.includes(kind))) ?? { name: item.name }).name), library: item.targets.some((target) => target.kind.some((kind) => LIBRARY_KINDS.includes(kind))), manifest: item.manifest_path }));
+  const seen = new Set(described.rows.map((row) => row.abs));
+  const rows = [...described.rows];
+  const queue = [...described.unlistedAbs];
+  const loose = [];
+  while (queue.length > 0) {
+    const dir = queue.shift();
+    if (seen.has(dir)) continue;
+    seen.add(dir);
+    const listed = cargoMetadata(tree, env, `${where}, ${relativeTo(tree, dir)}`, path.join(dir, 'Cargo.toml'));
+    for (const item of listed.packages) {
+      const home = path.dirname(fs.realpathSync(item.manifest_path));
+      if (home !== dir) continue;
+      const library = item.targets.find((target) => target.kind.some((kind) => LIBRARY_KINDS.includes(kind)));
+      rows.push({ package: item.name, crate: library ? crateName(library.name) : null, dir: relativeTo(tree, dir), abs: dir, library: library !== undefined, item, member: false });
+      loose.push(dir);
+      for (const dependency of pathDependencies(item)) {
+        const target = realOrSelf(dependency.path);
+        if (!seen.has(target) && inside(target, tree) && target !== tree) queue.push(target);
+      }
+    }
+  }
+  const byDir = new Map(rows.map((row) => [row.abs, row]));
+  return {
+    metadata,
+    described,
+    rows,
+    outside,
+    unlisted: loose.map((dir) => relativeTo(tree, dir)).sort(),
+    crates: [
+      ...rows.map((row) => ({ package: row.package, crate: row.crate, dir: row.dir, library: row.library, member: row.member !== false })),
+      ...outside.map((row) => ({ package: row.package, crate: row.crate, dir: null, library: row.library, member: true, outside: true })),
+    ],
+    pathDependencies: rows.flatMap((row) => pathDependencies(row.item).map((dependency) => ({ package: row.package, dependency: dependency.name, crate: byDir.get(realOrSelf(dependency.path))?.crate ?? crateName(dependency.name), dir: relativeTo(tree, realOrSelf(dependency.path)) }))),
+  };
+}
+
+// The workspace before and after the patches, recorded in the manifest when prepare is given
+// the release. Attempts check coverage against it: every in-repo library crate is a target, a
+// declared non-target, or declared dropped, and a path dependency a patch removed is declared
+// dropped too.
+function workspaceInventory(projectRoot, tree, releaseFlag) {
+  const env = cargoEnvironment(releaseTools(path.resolve(projectRoot, releaseFlag)));
+  const original = workspaceView(projectRoot, env, 'the checkout');
+  const copy = workspaceView(tree, env, 'the extraction copy');
+  const keep = (view) => ({ crates: view.crates, unlisted: view.unlisted });
+  const inCopy = new Set(copy.crates.map((row) => row.package));
+  const kept = new Set(copy.pathDependencies.map((dependency) => `${dependency.package}|${dependency.dependency}|${dependency.dir}`));
+  return {
+    original: keep(original),
+    copy: keep(copy),
+    notInCopy: original.crates.filter((row) => !inCopy.has(row.package)).map(({ package: name, crate, dir, library }) => ({ package: name, crate, dir, library })),
+    removedPathDependencies: original.pathDependencies.filter((dependency) => inCopy.has(dependency.package) && !kept.has(`${dependency.package}|${dependency.dependency}|${dependency.dir}`)).map(({ package: name, dependency, crate, dir }) => ({ package: name, dependency, crate, dir })),
+  };
+}
+
+const DROPPED_FIELDS = ['crate', 'reason'];
+
+// In-repo crates the owner decided to leave out of the extraction copy, or that a patch
+// replaced by a registry release. They are named with a reason, never silently missing.
+function checkDropped(list) {
+  if (list === undefined) return [];
+  if (!Array.isArray(list)) refuse('invalid-input', 'dropped must be an array');
+  const seen = new Set();
+  return list.map((entry, index) => {
+    const where = `dropped[${index}]`;
+    if (!isObject(entry)) refuse('invalid-input', `${where} must be an object`);
+    const extra = Object.keys(entry).filter((key) => !DROPPED_FIELDS.includes(key));
+    if (extra.length > 0) refuse('invalid-input', `${where} has unsupported fields: ${extra.join(', ')}`);
+    checkCrateName(`${where}.crate`, entry.crate);
+    if (typeof entry.reason !== 'string' || entry.reason.trim() === '') refuse('invalid-input', `${where}.reason must say who decided to leave the crate out and why`);
+    if (seen.has(entry.crate)) refuse('invalid-input', `dropped names crate ${entry.crate} more than once`);
+    seen.add(entry.crate);
+    return { crate: entry.crate, reason: entry.reason };
+  });
+}
+
+// Every in-repo library crate of the original workspace is accounted for by the spec, and
+// so is every path dependency a patch turned into a registry one.
+function coverageProblems(manifest, { targets, nonTargets, dropped, multi }) {
+  const inventory = manifest.workspace;
+  if (!inventory) {
+    return multi ? ['the copy was prepared without --release, so it records no workspace inventory; prepare a new copy with --release DIR so that every in-repo crate is accounted for'] : [];
+  }
+  const accounted = new Set([...targets.map((entry) => entry.crate), ...nonTargets.map((entry) => entry.crate), ...dropped.map((entry) => entry.crate)]);
+  const problems = [];
+  const inRepo = new Set(inventory.original.crates.filter((row) => row.library).map((row) => row.crate));
+  const present = new Set(inventory.copy.crates.filter((row) => row.library).map((row) => row.crate));
+  const removed = new Set(inventory.removedPathDependencies.map((row) => row.crate));
+  if (multi) {
+    const missing = [...inRepo].filter((crate) => !accounted.has(crate)).sort();
+    if (missing.length > 0) problems.push(`${missing.length} in-repo crate(s) of the workspace are neither a target, a non-target nor dropped: ${missing.slice(0, 12).join(', ')}${missing.length > 12 ? ', ...' : ''}; every in-repo crate is a target unless the owner decides otherwise, and each crate left out is named in nonTargets (its sources are in the copy) or dropped (they are not)`);
+  }
+  const loose = inventory.removedPathDependencies.filter((row) => !dropped.some((entry) => entry.crate === row.crate));
+  if (loose.length > 0) problems.push(`a patch removed the path dependency on ${[...new Set(loose.map((row) => `${row.crate} (from ${row.package})`))].join(', ')}, so the build would use a registry release of an in-repo crate; name each crate in dropped with the owner's decision`);
+  for (const entry of dropped) {
+    if (!inRepo.has(entry.crate) && !removed.has(entry.crate)) problems.push(`dropped names crate ${entry.crate}, which is not an in-repo crate of the workspace or a path dependency a patch removed`);
+    else if (targets.some((target) => target.crate === entry.crate) || nonTargets.some((other) => other.crate === entry.crate)) problems.push(`dropped names crate ${entry.crate}, which is also a target or a non-target`);
+    else if (present.has(entry.crate)) problems.push(`dropped names crate ${entry.crate}, which is still in the extraction copy; a crate is either in the copy or dropped`);
+  }
+  return problems;
 }
 
 // What a copy of a fresh checkout must hold for cargo to read it: the workspace manifest
@@ -1345,18 +1469,19 @@ function listCrates(flags) {
   const projectRoot = prepared ? prepared.projectRoot : (fs.existsSync(flags['project-root']) ? fs.realpathSync(flags['project-root']) : refuse('usage', `--project-root ${flags['project-root']} does not exist`));
   const env = cargoEnvironment(releaseTools(path.resolve(projectRoot, flags.release)));
   const tree = fs.realpathSync(prepared ? prepared.tree : projectRoot);
-  const metadata = cargoMetadata(tree, env, prepared ? 'the extraction copy' : 'the checkout');
-  const described = describeWorkspace(tree, metadata);
+  const view = workspaceView(tree, env, prepared ? 'the extraction copy' : 'the checkout');
+  const { described, metadata } = view;
   const result = {
     message: `${described.crates.length} in-repo package(s), ${described.order.length} with a library`,
     tree,
     workspaceRoot: relativeTo(tree, metadata.workspace_root),
     crates: described.crates,
     order: described.order,
-    unlisted: described.unlisted,
+    unlisted: view.unlisted,
+    ...(view.outside.length > 0 ? { outside: view.outside.map(({ package: name, manifest }) => ({ package: name, manifest })) } : {}),
   };
   if (!prepared) {
-    const inputs = suggestedInputs(tree, metadata, described);
+    const inputs = suggestedInputs(tree, metadata, { ...described, unlisted: view.unlisted });
     // A copy holds regular files only, and cargo needs every workspace member's manifest in it,
     // so a workspace with links under its members needs a patch that trims the member list.
     return { ...result, inputs, links: linksUnder(tree, inputs) };
@@ -1395,6 +1520,9 @@ function listCrates(flags) {
 function attemptUnits(out, manifest, manifestSha256, spec) {
   const { units, main, order, nonTargets } = multiUnits(spec, manifest);
   const targets = units.map(({ crate, dir }) => ({ crate, dir }));
+  const dropped = checkDropped(spec.dropped);
+  const unaccounted = coverageProblems(manifest, { targets, nonTargets, dropped, multi: true });
+  if (unaccounted.length > 0) refuse('attempt-refused', `the workspace is not accounted for: ${unaccounted.join('; ')}`, { reasons: unaccounted });
   const homes = homesOf(process.env);
   const unitOut = (unit) => path.join(out, UNITS_DIR, unit.crate);
   for (const unit of units) deriveInvocation(unitOut(unit), manifest, unit.flat, homes, targets, nonTargets);
@@ -1409,6 +1537,7 @@ function attemptUnits(out, manifest, manifestSha256, spec) {
     manifestSha256,
     main,
     order,
+    ...(dropped.length > 0 ? { dropped } : {}),
     units: recorded.map(({ unit, record: attempt }) => ({
       crate: unit.crate,
       package: unit.package,

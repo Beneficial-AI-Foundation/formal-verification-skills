@@ -80,7 +80,8 @@ oracle refusal after a clean build (an unratified Category-B patch, a failed dif
 
 For several crates, give the extractor one spec with a `crates` list (`aeneas-extract.md`, "Several
 crates"): one entry for each target crate with its own `publishDir` and `moduleRoot`, `nonTargets` for the
-crates the agreement excludes, and, for each target that calls another target, a `stitch` entry naming
+crates the agreement excludes (`dropped` for those left out of the copy; the attempt refuses a crate of
+the workspace that is none of target, `nonTargets` or `dropped`), and, for each target that calls another target, a `stitch` entry naming
 that target. Stitching makes the caller's Lean use the other crate's real translation; without it the
 calls would be axioms in the caller's Lean, so publication of a crate that calls a target without a
 stitch entry fails and the extraction is not recorded as succeeded. Use a

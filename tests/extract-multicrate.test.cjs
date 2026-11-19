@@ -105,11 +105,9 @@ describe('multi-crate extraction: the LLBC identity rule', () => {
     const spec = toySpec();
     spec.crates = spec.crates.slice(1).map(({ stitch, ...rest }) => rest);
     const { out, recorded } = attempted(ws, spec);
-    assert.equal(recorded.status, 0, recorded.stdout);
-    const charon = step(ws, out, 'charon', 'toy_app');
-    assert.equal(charon.status, 9, charon.stdout);
-    assert.match(charon.result.message, /lib\/src\/lib\.rs with crate "toy_lib", but the file lies under no declared crate, so it is an in-repo crate nobody declared as a target/);
-    assert.equal(fs.existsSync(path.join(out, 'units', 'toy_app', 'stage-1-charon.failed.json')), true);
+    assert.equal(recorded.status, 8, recorded.stdout);
+    assert.match(recorded.result.message, /the workspace is not accounted for: 1 in-repo crate\(s\) of the workspace are neither a target, a non-target nor dropped: toy_lib; every in-repo crate is a target unless the owner decides otherwise/);
+    assert.equal(fs.existsSync(path.join(out, 'attempt.json')), false, 'nothing is recorded');
   });
 
   it('refuses altered contents of the main crate and of a declared crate that carries contents', () => {
@@ -446,5 +444,149 @@ describe('crates: the in-repo crates of a prepared copy', () => {
     assert.match(noRelease.result.message, /--release is required/);
     const wrong = engine(ws, ['crates', '--out', out, '--release', 'no/such/release']);
     assert.equal(wrong.status, 5, wrong.stdout);
+  });
+});
+
+// Every in-repo library crate is a target, a declared non-target, or declared dropped, and a
+// path dependency a patch removed is declared dropped too; the check is enforced by the
+// attempt, from the workspace the copy recorded when it was prepared with the release.
+describe('multi-crate extraction: the workspace is accounted for', () => {
+  const { RELEASE } = require('./helpers/fake-multicrate-tools.cjs');
+  const write = (ws, file, text) => {
+    fs.mkdirSync(path.dirname(path.join(ws.project, file)), { recursive: true });
+    fs.writeFileSync(path.join(ws.project, file), text);
+  };
+  const dropped = (...crates) => crates.map((crate) => ({ crate, reason: 'the owner decided to leave it out' }));
+  let copies = 0;
+  const prepareWith = (ws, extra = ['--release', RELEASE]) => {
+    const out = path.join(ws.root, 'copies', `ws-${(copies += 1)}`);
+    const done = engine(ws, ['prepare', '--project-root', ws.project, '--out', out, ...extra]);
+    assert.equal(done.status, 0, done.stdout);
+    return { out, manifest: done.result.manifest };
+  };
+  const attempt = (ws, out, spec) => engine(ws, ['attempt', '--out', out, '--spec', specFile(ws, spec)]);
+  // A crate in the project that the copy does not take: it is not an extraction input.
+  const outsideTheCopy = (ws) => {
+    write(ws, 'extra/Cargo.toml', '[package]\nname = "toy-extra"\nversion = "0.1.0"\nedition = "2021"\n');
+    write(ws, 'extra/src/lib.rs', 'pub fn extra() {}\n');
+  };
+  // A patch that turns the path dependency of toy-app into a registry one.
+  const registryPatch = (ws) => {
+    const directory = path.join(ws.project, 'translation-patches');
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(path.join(directory, '01-registry.patch'), [
+      'Translation patch: toy::registry', '', 'Change: the dependency on toy-lib comes from the registry.', 'Why: fixture for the workspace coverage tests.', 'Behaviour: identical.', 'Independent: yes', '',
+      'diff --git a/app/Cargo.toml b/app/Cargo.toml', '--- a/app/Cargo.toml', '+++ b/app/Cargo.toml', '@@ -5,3 +5,3 @@ edition.workspace = true',
+      ' ', ' [dependencies]', '-toy-lib = { path = "../lib" }', '+toy-lib = "0.1"', '',
+    ].join('\n'));
+    fs.writeFileSync(path.join(directory, 'series'), '01-registry.patch\n');
+  };
+
+  it('records the workspace of the checkout and of the copy when prepare is given the release', () => {
+    const ws = workspace();
+    outsideTheCopy(ws);
+    const { manifest } = prepareWith(ws);
+    assert.deepEqual(manifest.workspace.original.crates.filter((row) => row.library).map((row) => row.crate).sort(), ['toy_app', 'toy_extra', 'toy_lib']);
+    assert.deepEqual(manifest.workspace.copy.crates.filter((row) => row.library).map((row) => row.crate).sort(), ['toy_app', 'toy_lib']);
+    assert.deepEqual(manifest.workspace.notInCopy.map((row) => row.crate), ['toy_extra']);
+    assert.deepEqual(manifest.workspace.removedPathDependencies, []);
+    assert.equal(prepareWith(ws, []).manifest.workspace, undefined, 'without the release nothing is recorded');
+  });
+
+  it('refuses a multi-crate attempt on a copy prepared without the release', () => {
+    const ws = workspace();
+    const { out } = prepareWith(ws, []);
+    const refused = attempt(ws, out, toySpec());
+    assert.equal(refused.status, 8, refused.stdout);
+    assert.match(refused.result.message, /the copy was prepared without --release, so it records no workspace inventory; prepare a new copy with --release DIR/);
+    assert.equal(fs.existsSync(path.join(out, 'attempt.json')), false);
+  });
+
+  it('refuses an in-repo crate that is neither a target, a non-target nor dropped, and accepts it once dropped', () => {
+    const ws = workspace();
+    outsideTheCopy(ws);
+    const { out } = prepareWith(ws);
+    const refused = attempt(ws, out, toySpec());
+    assert.equal(refused.status, 8, refused.stdout);
+    assert.match(refused.result.message, /neither a target, a non-target nor dropped: toy_extra; .* each crate left out is named in nonTargets \(its sources are in the copy\) or dropped \(they are not\)/);
+    const accepted = attempt(ws, out, toySpec({ dropped: dropped('toy_extra') }));
+    assert.equal(accepted.status, 0, accepted.stdout);
+    assert.deepEqual(accepted.result.attempt.dropped, dropped('toy_extra'), 'the decision is recorded with the attempt');
+  });
+
+  it('checks the dropped list itself', () => {
+    const ws = workspace();
+    outsideTheCopy(ws);
+    const { out } = prepareWith(ws);
+    const refused = (list, pattern, status = 5) => {
+      const done = attempt(ws, out, toySpec({ dropped: list }));
+      assert.equal(done.status, status, done.stdout);
+      assert.match(done.result.message, pattern);
+    };
+    refused([{ crate: 'toy_extra' }], /dropped\[0\]\.reason must say who decided/);
+    refused([{ crate: 'toy_extra', reason: 'x', note: 1 }], /dropped\[0\] has unsupported fields: note/);
+    refused([{ crate: 'toy-extra', reason: 'x' }], /dropped\[0\]\.crate "toy-extra" has a hyphen/);
+    refused(dropped('toy_extra', 'toy_extra'), /dropped names crate toy_extra more than once/);
+    refused(dropped('toy_extra', 'nobody'), /dropped names crate nobody, which is not an in-repo crate of the workspace/, 8);
+    refused(dropped('toy_extra', 'toy_lib'), /dropped names crate toy_lib, which is also a target or a non-target/, 8);
+  });
+
+  it('refuses a path dependency a patch removed unless it is dropped, and a dropped crate that is still in the copy', () => {
+    const ws = workspace();
+    registryPatch(ws);
+    const { out, manifest } = prepareWith(ws);
+    assert.deepEqual(manifest.workspace.removedPathDependencies, [{ package: 'toy-app', dependency: 'toy-lib', crate: 'toy_lib', dir: 'lib' }]);
+    const refused = attempt(ws, out, toySpec());
+    assert.equal(refused.status, 8, refused.stdout);
+    assert.match(refused.result.message, /a patch removed the path dependency on toy_lib \(from toy-app\), so the build would use a registry release of an in-repo crate; name each crate in dropped with the owner's decision/);
+    const alone = { release: RELEASE, crates: [toySpec().crates[1]].map(({ stitch, ...rest }) => rest), main: 'toy_app', dropped: dropped('toy_lib') };
+    const stillThere = attempt(ws, out, alone);
+    assert.equal(stillThere.status, 8, stillThere.stdout);
+    assert.match(stillThere.result.message, /dropped names crate toy_lib, which is still in the extraction copy; a crate is either in the copy or dropped/);
+  });
+
+  it('applies to a single-crate attempt too', () => {
+    const ws = workspace();
+    registryPatch(ws);
+    fs.writeFileSync(path.join(ws.project, '.formalising', 'fvs-config.json'), JSON.stringify({ extraction: { inputs: ['Cargo.toml', 'Cargo.lock', 'app'] } }));
+    const { out } = prepareWith(ws);
+    const single = { release: RELEASE, crate: 'toy_app', publishDir: 'Lean/App', cargoArgs: ['--locked', '--package', 'toy-app'] };
+    const refused = attempt(ws, out, single);
+    assert.equal(refused.status, 8, refused.stdout);
+    assert.match(refused.result.message, /a patch removed the path dependency on toy_lib \(from toy-app\)/);
+    const accepted = attempt(ws, out, { ...single, dropped: dropped('toy_lib') });
+    assert.equal(accepted.status, 0, accepted.stdout);
+  });
+
+  it('names a workspace member that resolves outside the checkout, and holds it to the same rule', () => {
+    const ws = workspace();
+    const outside = path.join(ws.root, 'outside-ext');
+    fs.mkdirSync(path.join(outside, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(outside, 'Cargo.toml'), '[package]\nname = "toy-ext"\nversion = "0.1.0"\nedition = "2021"\n');
+    fs.writeFileSync(path.join(outside, 'src', 'lib.rs'), 'pub fn ext() {}\n');
+    fs.symlinkSync(outside, path.join(ws.project, 'ext'));
+    const listed = engine(ws, ['crates', '--project-root', ws.project, '--release', RELEASE]);
+    assert.equal(listed.status, 0, listed.stdout);
+    assert.deepEqual(listed.result.outside.map((row) => row.package), ['toy-ext']);
+    const { out, manifest } = prepareWith(ws);
+    assert.deepEqual(manifest.workspace.original.crates.find((row) => row.package === 'toy-ext'), { package: 'toy-ext', crate: 'toy_ext', dir: null, library: true, member: true, outside: true });
+    const refused = attempt(ws, out, toySpec());
+    assert.equal(refused.status, 8, refused.stdout);
+    assert.match(refused.result.message, /neither a target, a non-target nor dropped: toy_ext/);
+    assert.equal(attempt(ws, out, toySpec({ dropped: dropped('toy_ext') })).status, 0);
+  });
+
+  it('follows path dependencies of a crate that is not a workspace member, to any depth', () => {
+    const ws = workspace();
+    write(ws, 'lib/Cargo.toml', '[package]\nname = "toy-lib"\nversion.workspace = true\nedition.workspace = true\n\n[dependencies]\ntoy-deep = { path = "../deep" }\n');
+    write(ws, 'deep/Cargo.toml', '[package]\nname = "toy-deep"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\ntoy-deeper = { path = "../deeper" }\n');
+    write(ws, 'deep/src/lib.rs', 'pub fn deep() {}\n');
+    write(ws, 'deeper/Cargo.toml', '[package]\nname = "toy-deeper"\nversion = "0.1.0"\nedition = "2021"\n');
+    write(ws, 'deeper/src/lib.rs', 'pub fn deeper() {}\n');
+    fs.writeFileSync(path.join(ws.tools.cargoHome, 'bin', 'metadata-hide.txt'), 'lib\ndeep\ndeeper\n');
+    const listed = engine(ws, ['crates', '--project-root', ws.project, '--release', RELEASE]);
+    assert.equal(listed.status, 0, listed.stdout);
+    assert.deepEqual(listed.result.unlisted, ['deep', 'deeper', 'lib'], 'one manifest per call would stop at lib');
+    assert.deepEqual(listed.result.inputs.filter((input) => ['deep', 'deeper', 'lib'].includes(input)), ['deep', 'deeper', 'lib']);
   });
 });

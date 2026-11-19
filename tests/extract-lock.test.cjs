@@ -25,7 +25,8 @@ const withoutLock = (ws) => {
 };
 const prepare = (ws, extra = []) => {
   const out = copyOut(ws);
-  return { out, done: engine(ws, ['prepare', '--project-root', ws.project, '--out', out, ...extra]) };
+  const release = extra.includes('--release') ? [] : ['--release', RELEASE];
+  return { out, done: engine(ws, ['prepare', '--project-root', ws.project, '--out', out, ...release, ...extra]) };
 };
 
 describe('Cargo.lock of the extraction copy', () => {
@@ -113,9 +114,9 @@ describe('Cargo.lock of the extraction copy', () => {
     for (const [extra, pattern] of [
       [['--lock', 'refresh', '--release', RELEASE], /--lock accepts only "update"/],
       [['--lock', 'update'], /--lock update needs --release DIR/],
-      [['--release', RELEASE], /--release is for --lock update/],
     ]) {
-      const { out, done } = prepare(ws, extra);
+      const out = copyOut(ws);
+      const done = engine(ws, ['prepare', '--project-root', ws.project, '--out', out, ...extra]);
       assert.equal(done.status, 2, done.stdout);
       assert.match(done.result.message, pattern);
       assert.equal(step(ws, out, 'charon').status === 0, false);
