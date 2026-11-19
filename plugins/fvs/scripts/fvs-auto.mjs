@@ -1197,9 +1197,21 @@ function crateContextOf(state) {
 
 const crateContext = (root) => crateContextOf(loadState(root));
 
-function crateReport(context) {
+function crateReport(context, acceptance = null) {
+  const status = new Map((acceptance ?? []).map((entry) => [entry.crate, entry]));
   return { order: context.view.order, targets: context.targets, nonTargets: [...context.nonTargets].sort(),
-    ...(context.missing.length > 0 ? { missing: context.missing } : {}), ...(context.view.cycle ? { cycle: context.view.cycle } : {}), units: context.view.units };
+    ...(context.missing.length > 0 ? { missing: context.missing } : {}), ...(context.view.cycle ? { cycle: context.view.cycle } : {}),
+    units: context.view.units.map((unit) => (status.has(unit.crate) ? { ...unit, accepted: status.get(unit.crate).accepted, ...(status.get(unit.crate).reason ? { reason: status.get(unit.crate).reason } : {}) } : unit)) };
+}
+
+// The per-crate acceptance at the head of the open proof PR, once an accepting receipt for it
+// was made against the recorded spec merge; null before that, and for a single-crate project.
+function proofAcceptance(root, state, specs, context) {
+  const specMerge = (specs?.prs ?? []).filter((pr) => pr.kind === 'spec' && pr.merged).at(-1);
+  if (!context || !specMerge) return null;
+  const proofPr = specs.prs.slice(specs.prs.lastIndexOf(specMerge) + 1).filter((pr) => pr.kind === 'proof' && !pr.merged).at(-1);
+  const receipt = proofPr ? buildCheckReceipt(root, proofPr.head) : null;
+  return receipt?.accepted && receipt.specBase === specMerge.mergeCommit ? crateAcceptance(root, specs, context, receipt) : null;
 }
 
 function crateWarnings(context) {
@@ -1210,6 +1222,66 @@ function crateWarnings(context) {
 }
 
 const crateDecisions = (context) => context.undecided.map((crate) => `non-target crate ${crate}: the owner has not recorded a decision in the agreement`);
+
+// Why an axiom beyond Lean's standard ones is not an assumption the owner accepted for the
+// statements of `crate`, or null. Each such axiom needs an accepted externals record. A
+// record about an item of another verified crate is refused unless the extraction lists
+// that item as one the provider has no definition for: a target's function is proved in its
+// own crate and used from there, never assumed again. Items of the crate itself, of a crate
+// the owner does not verify and of other libraries are the owner's to assume.
+function axiomProblem(axiom, crate, records, assumed, context) {
+  const record = records.get(axiom);
+  if (!record) return `rests on the axiom ${axiom}, which has no accepted externals record`;
+  const source = record.source.symbol;
+  const owner = itemCrate(source);
+  if (owner === crate || !context.targets.includes(owner) || assumed.some((entry) => entry?.name === axiom && entry.rustPath === source)) return null;
+  return `rests on the axiom ${axiom}, a hand-written assumption about ${source}, an item of the verified crate ${owner}: prove it there and use that crate's theorem`;
+}
+
+// The target crates the build check accepted at the head of the proof PR. The check builds the
+// whole project once, so a crate is accepted when every statement of its recorded spec files
+// built, none of them rests on an axiom the engine cannot account for, and every target crate
+// it depends on is accepted too. A target with no built statement is not accepted.
+function crateAcceptance(root, specs, context, receipt) {
+  if (context.targets.length === 0) return [{ crate: null, accepted: false, reason: 'the agreement drops every extracted crate, so nothing is verified' }];
+  const top = gitWorkingTree(root);
+  const prefix = top === null ? '' : path.relative(top, root).split(path.sep).join('/');
+  const pruned = ownerChangesOf(specs);
+  const rows = currentSpecRows(specs).filter((row) => pruned.get(row.specFile) !== 'pruned');
+  const files = new Map((Array.isArray(receipt.specFiles) ? receipt.specFiles : []).map((file) => [file?.path, file]));
+  const records = new Map((loadExternals(root)?.records ?? []).filter((record) => record.status === 'assumption-accepted').map((record) => [record.model.symbol, record]));
+  const dependsOn = new Map(context.view.units.map((unit) => [unit.crate, unit.dependsOn.filter((crate) => context.targets.includes(crate))]));
+  const reasonOf = (crate) => {
+    const own = rows.filter((row) => row.items.some((id) => itemCrate(id) === crate));
+    if (own.length === 0) return 'no spec file is recorded for this crate';
+    const assumed = [].concat(context.units.find((entry) => entry.crate === crate)?.stitch ?? []).flatMap((entry) => (Array.isArray(entry?.assumed) ? entry.assumed : []));
+    let statements = 0;
+    for (const row of own) {
+      const file = files.get(path.posix.join(prefix, row.specFile));
+      if (!file) return `${row.specFile} is not among the files the build check built`;
+      if (file.status !== 'built') return `${row.specFile} did not build in the check${isText(file.reason) ? `: ${file.reason}` : ''}`;
+      for (const statement of Array.isArray(file.statements) ? file.statements : []) {
+        statements += 1;
+        if (statement?.status !== 'built') return `the statement ${statement?.name} did not build in the check`;
+        for (const axiom of Array.isArray(statement.beyondStandard) ? statement.beyondStandard : []) {
+          const problem = axiomProblem(axiom, crate, records, assumed, context);
+          if (problem) return `the statement ${statement.name} ${problem}`;
+        }
+      }
+    }
+    return statements === 0 ? 'the build check built no statement of this crate' : null;
+  };
+  const accepted = new Set();
+  const result = [];
+  // Providers come first, so a crate is judged after the crates it depends on.
+  for (const crate of context.targets) {
+    const reason = reasonOf(crate) ?? dependsOn.get(crate).filter((other) => !accepted.has(other)).map((other) => `it depends on ${other}, which is not accepted`).at(0) ?? null;
+    if (reason === null) accepted.add(crate);
+    result.push({ crate, accepted: reason === null, ...(reason === null ? {} : { reason }) });
+  }
+  for (const crate of context.missing) result.push({ crate, accepted: false, reason: 'the extraction does not hold this crate' });
+  return result;
+}
 
 function extractionErrors(extraction) {
   const errors = [];
@@ -1620,10 +1692,19 @@ function progress(root, state, specs = null) {
     // receipt made with no spec base, or against another commit, proves nothing about them.
     const heldToSpec = receipt?.specBase === specMerge.mergeCommit;
     const check = `node fvs-build-check.mjs --project-root ${root} --commit ${proofPr.head} --spec-base ${specMerge.mergeCommit}`;
-    if (receipt?.accepted && heldToSpec) {
+    // With several crates the accepting receipt must also hold for every verified crate: one built
+    // project says nothing about a crate with no statement, an unrecorded axiom or an assumption
+    // about another verified crate's function. A single-crate project has no crate context.
+    const context = receipt?.accepted && heldToSpec ? crateContextOf(state) : null;
+    const rejected = context ? crateAcceptance(root, specs, context, receipt).filter((entry) => !entry.accepted) : [];
+    if (receipt?.accepted && heldToSpec && rejected.length === 0) {
       return { phase: 'done', warnings,
         nextAction: `The build check accepted the draft proof PR ${proofPr.url} at ${proofPr.head}: ${receipt.label}. `
           + (proofMerge ? `The proof PR merge is recorded at ${proofMerge.mergeCommit}.` : 'The owner reviews and merges it; then record the merge with record-pr --kind proof --merged --merge-commit SHA.') + suffix };
+    }
+    if (rejected.length > 0) {
+      return { phase: 'proofs', warnings,
+        nextAction: `The build check accepted the draft proof PR ${proofPr.url} at ${proofPr.head}, but not every verified crate is accepted: ${rejected.map((entry) => `crate ${entry.crate ?? '(none)'}: ${entry.reason}`).join('; ')}. Fix what is named, push, record the new head with record-pr --kind proof, and rerun the build check on it.` + suffix };
     }
     return { phase: 'proofs', warnings,
       nextAction: (receipt?.accepted
@@ -1663,14 +1744,15 @@ function readFullState({ projectRoot, requireAgreement }) {
   const overrides = currentOverrides(loadOverrides(root));
   // Only a succeeded extraction with several crates, a declared non-target or a crate decision has a crate view.
   const context = crateContextOf(state);
-  const next = progress(root, state, loadSpecs(root));
+  const specs = loadSpecs(root);
+  const next = progress(root, state, specs);
   return {
     code: 'ok',
     message: `auto-track state in ${statePath(root)}`,
     state,
     roadmapPresent: state.roadmap?.path ? fs.existsSync(path.join(root, state.roadmap.path)) : false,
     externals,
-    ...(context ? { crates: crateReport(context) } : {}),
+    ...(context ? { crates: crateReport(context, proofAcceptance(root, state, specs, context)) } : {}),
     ...(Object.keys(overrides).length > 0 ? { overrides, overridesNote: OVERRIDES_NOTE } : {}),
     pendingDecisions: [...(requireAgreement || state.roadmap ? [] : ['roadmap']), ...(context ? crateDecisions(context) : [])],
     readiness: readiness(state.profile),
