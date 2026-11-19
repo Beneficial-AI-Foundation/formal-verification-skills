@@ -6,7 +6,7 @@ asked stops. In one setup, about 70% of the wall-clock was waiting for approvals
 aborted prompt.
 
 This page says how `/fvs:auto-init` finds the steps that prompt on your machine, which rules (and, for a push,
-which hook) it writes for them only after your yes, what still asks on purpose, and what to do when a step
+which hook) it writes for them only after your yes, what FVS never allows, and what to do when a step
 keeps asking. The commands that do this are in `scripts/fvs-auto-permissions.mjs` and
 `scripts/fvs-auto-push-gate.mjs`, run by the orchestrator seat (`auto-seats.md`).
 
@@ -49,8 +49,11 @@ them yourself, or add your own rule if you want them to run unasked.
 
 Then you answer which steps prompted. If none did, nothing is written. If some did, init shows you the exact
 rules for those steps (and, for a push, the hook), and writes them only after your yes. The record of your
-answers is `.formalising/auto-fv/permissions.json`; a resumed run reads it and does not ask again. To run the
-check again, delete that file yourself and run `/fvs:auto-init`.
+answers is `.formalising/auto-fv/permissions.json`; a resumed run reads it, shows its summary and does not ask
+again. To check again, ask init to recheck permissions: it runs `recheck`, which repeats the probes of the
+steps that last prompted (never the push step) and records the answers as a recheck. This is the entry point
+after rules were written, and in a new Codex session, because Codex reads its rules only when a session
+starts. To start over, delete the record file yourself and run `/fvs:auto-init`.
 
 The summary that init prints, and reports as the `Permissions:` line, shows the latest answer for each step
 across all rounds. A recheck of some steps never hides a step it did not ask about. Steps never asked, and
@@ -59,11 +62,11 @@ probes that ran. They do not predict every command the run may use later.
 
 After a write, what you can check depends on the tool:
 
-- Claude Code reloads settings files while it runs. Init repeats the probes of the steps whose rules it wrote
-  and asks again. A step that still prompts: see "A step still prompts".
+- Claude Code reloads settings files while it runs. Init runs `recheck`, repeats the probes of the steps
+  whose rules it wrote and asks again. A step that still prompts: see "A step still prompts".
 - Codex reads rules when a session starts. A recheck in the session that was already running proves nothing
-  about a new rules file, so init says so, records the write, and leaves the recheck for a new session once the
-  project's `.codex/` folder is trusted. It never calls a prompt unfixable because of a retry in the same
+  about a new rules file, so init says so, records the write, and leaves the recheck (`recheck` again, on your
+  request) for a new session once the project's `.codex/` folder is trusted. It never calls a prompt unfixable because of a retry in the same
   session.
 - The push step has no recheck. The init probe is a dry run, which is not one of the exact forms the hook
   allows, so it asks even with the hook installed. The first real push by a worker is the evidence that the
@@ -134,7 +137,7 @@ every other key and hook in the file stays as it was:
 ```
 
 The command names the destination you chose, because a worker's worktree has no run folder to read it from.
-The hook answers for every Bash command that contains a push:
+The hook answers for every Bash command it recognises as a push:
 
 - **Allow** only the exact plain forms, each on one line with nothing around it:
   - `git push origin fvs/<name>` and `git push -u origin fvs/<name>`, also after one `git -C <plain path>`. A
@@ -153,7 +156,7 @@ The hook answers for every Bash command that contains a push:
   means ask. A URL is read the way git reads it, and a form that programs read differently is refused: a
   backslash, a space or control character, a leading `-`, and an scp-like form such as
   `host:user@github.com:Acme/proj`, which git sends to `host`.
-- **Ask** for every other command that contains a push: force flags, `--delete`, `--tags`, `--mirror`, `--all`,
+- **Ask** for every other command it recognises as a push: force flags, `--delete`, `--tags`, `--mirror`, `--all`,
   `--dry-run`, refspecs with `:` or `+`, other remotes, other branch names, several branch names, chains
   (`&&`, `;`), pipes, redirects (`2>&1`), several lines, quotes, `$(...)`, a `-C` path that is not plain, other
   git options before `push`, and a prefix such as `rtk`, `env` or `sudo`.
@@ -164,21 +167,52 @@ What it does not do:
 - A hook that answers "allow" skips the prompt, but it does not override your own `deny` or `ask` rules. A hook
   that answers "ask" makes the push prompt even where a rule of yours allows it.
 - It judges the text of a command. A push it does not recognise as a push (for example one that builds the word
-  `git` from a variable) is not judged. It goes through the session's normal permission flow, as it would
-  without the hook, and that flow asks because init writes no push rule. A commit message or `ao send` text that
-  contains `git push` is treated as a push and asks.
+  `git` from a variable, or writes `git "push"`) is not judged: the hook gives no decision for it (see "When the
+  hook gives no decision"). A commit message or `ao send` text that contains `git push` is treated as a push
+  and asks.
 - **Branch protection on the project fork is still recommended.** Protect `main` and the release branches and
   forbid force pushes. It is an independent safeguard that works whatever the command looks like, including a
   push this hook cannot see.
-- There is no hook for Codex. A push asks on Codex, and a Codex rule cannot say "but not `--force`".
+- There is no hook for Codex, and a Codex rule cannot say "but not `--force`". Init writes no push rule for
+  Codex, so a push there follows Codex's own rules and sandbox mode.
 
 Workers should push in one standalone, unchained call: `git push -u origin fvs/<name>`, with no `&&`, `;`,
 pipe, redirect, `cd` or quote in front of or after it. A commit and a push in one command asks.
 
-The command names this machine's copy of the script. If the script is missing or the hook fails, a push asks
-as usual, so it fails safe. After an FVS update or reinstall that moves the script, remove the entry and run
-init again: init never replaces or edits a push gate entry it finds, and says so. Use `--target local` so that
-a machine path does not end up in a committed file. To undo the hook, delete the entry.
+The command names this machine's copy of the script. After an FVS update or reinstall that moves the script,
+remove the entry and run init again: init never replaces or edits a push gate entry it finds, and says so. Use
+`--target local` so that a machine path does not end up in a committed file. To undo the hook, delete the entry.
+
+### When the hook gives no decision
+
+The hook is a safeguard that runs only when everything around it works. It gives **no decision**, neither allow
+nor ask, in these cases:
+
+- the push is not recognised as a push (an unusual spelling, an alias, a shell function);
+- Node is not installed or not on the hook's `PATH`, or the script file is missing or cannot start;
+- the script fails or prints something Claude Code cannot read;
+- the run passes the 15-second timeout in the entry (the script makes several git calls, and each can be slow
+  on a large repository or a slow disk).
+
+Claude Code documents a hook that cannot start, a timeout and a failing hook as non-blocking: the command goes on
+through the normal permission flow. "No decision" is not an allow. It leaves your other `allow` and `ask` rules,
+your `deny` rules and your permission mode in charge, exactly as if the hook were not installed. Whatever those
+say decides, so an `allow` rule for a push, or a mode that approves commands unasked, applies again. That is why
+init refuses to write while a project settings file already has a push allow rule (next section), and why
+branch protection on the fork stays recommended. Nothing in this page promises that a push asks.
+
+### Push allow rules already in your settings
+
+FVS writes no push rule. It also does not delete yours. When either project settings file
+(`.claude/settings.json` or `.claude/settings.local.json`) already has an entry of `permissions.allow` that names
+`git push`, such as `Bash(git push origin fvs/*)`, `Bash(git push:*)`, `Bash(git -C * push *)` or
+`Bash(rtk git push *)`, a Claude write stops with `legacy-push-rules`, before any preview and before anything is
+written. Both files stay byte-identical. The refusal lists, for each file, the exact entries and how many other
+allow entries stay, so that you can delete exactly those lines and run init again. `plan` lists them too, because
+such a rule can also make the push probe quiet for a reason that has nothing to do with the hook.
+
+What this check does not see: broad rules such as `Bash(git *)` or `Bash(*)`, your user settings
+(`~/.claude/settings.json`), managed settings, and the permission mode. Check those yourself.
 
 ## Codex rules
 
@@ -225,18 +259,20 @@ prefix_rule(
   To change it, save any rule of your own, delete the file yourself, and write every step you want in one
   command.
 - Codex rules match only the start of a command, so they cannot say "but not `--force`". No push rule is
-  written for Codex, and there is no hook: a push still asks. Codex edits and Lake builds follow the sandbox
+  written for Codex, and there is no hook: a push follows Codex's own rules and sandbox mode. Codex edits and Lake builds follow the sandbox
   mode, not a rule file, so no rule is written for them either. If only the push, Lake or edit step prompted,
   there is nothing to write on Codex: init says so and those prompts stay unresolved until you approve them
   when they appear.
 
-## What still prompts on purpose
+## What FVS never allows
 
-None of these is ever allowed by the files above, and the check refuses to write a rule for any of them:
+FVS writes no rule or hook decision that allows any of these, and the check refuses to write a rule for any of
+them. Whether one prompts in a session still depends on your other rules and permission mode:
 
 - a GitHub comment or review (`gh pr comment`, `gh pr review`), marking a pull request ready, and a merge;
   only you comment, mark ready and merge;
-- every push that is not one of the exact forms of the push gate hook, and every push on Codex;
+- every push that is not one of the exact forms of the push gate hook (and every push on Codex, where no push
+  rule or hook is written);
 - `gh api`, `gh issue`, `gh repo`, `gh release` and any other command not in the table above;
 - any step you did not confirm, and any step that did not prompt in your check.
 
@@ -248,6 +284,14 @@ file is tracked, ignored or loose in git, and where it applies.
 Claude Code reads the project's `.claude/settings.json` from the session's own directory, and rules and hooks
 in a shared project file apply once you trust the folder. Whether a hook in `.claude/settings.local.json` needs
 the same trust step is not observed.
+
+Your yes is bound to what the preview showed. The digest covers the exact rules and hook, the canonical project
+root, the real path of the file (every link followed, also when the folder does not exist yet) and the hash of
+the file's current content. If any of them changes between the preview and your confirmation, for example a
+`.claude` link that now leads to another folder, or an edit to the file, the confirmation is refused, nothing is
+written, and init shows a new preview with a new digest that needs a new yes. The write checks again just before
+it replaces the file and writes to the path that was shown. This does not lock the file: an edit made in the
+instant between that last check and the replacement is not detected.
 
 - A worker works in its own worktree. It sees `.claude/settings.json` only if the file is committed, or if
   `.claude` is linked into the worktree (`auto-setup.md`, "Worktrees"). If neither is true, the allowlist and
@@ -266,8 +310,10 @@ covers the session that ran init. If your workers run in another mode, check tha
 
 ## What was tested
 
-- Unit tests (node, no network): the helper's confirmation, merge, refusals and Codex file handling, and the
-  hook's decision table against throwaway repositories with a fake remote. Nothing in them pushes.
+- Unit tests (node, no network): the helper's confirmation, merge, refusals and Codex file handling, the
+  refusal while a push allow rule is present, the confirmation binding (a `.claude` or `.codex` link retargeted
+  between the preview and the confirmation, a changed file, another project root), the `recheck` entry point,
+  and the hook's decision table against throwaway repositories with a fake remote. Nothing in them pushes.
 - The Codex rules were run through `codex execpolicy check` on codex-cli 0.166.0: the file parses, each probe
   command is allowed, and push, merge and other commands are not matched. The tests repeat this when a Codex
   CLI is installed.
@@ -276,9 +322,10 @@ covers the session that ran init. If your workers run in another mode, check tha
 - Not observed: a live Claude Code or Codex session showing that a written rule or the hook removes a prompt,
   including that an "allow" answer from the hook skips the prompt; the live `gh`, `git fetch`,
   `git push --dry-run` and Lake probes; a real push through the hook; that the working directory Claude Code
-  gives the hook is the directory the shell runs the push in (the `-C` path and the destination check rely on
-  it, and a mismatch makes the hook ask, not allow). That is why init asks you to recheck, and why the first
-  real push is the evidence for the hook.
+  gives the hook is the directory the shell runs the push in (the `-C` path and the destination check read the
+  repository at that directory, and the hook does not compare it with where the shell really runs); that the
+  hook finds the same `git`, `PATH` and shell environment that the command will use. That is why init asks you
+  to recheck, and why the first real push is the evidence for the hook.
 
 ## After a first run: `/fewer-permission-prompts`
 
@@ -293,7 +340,7 @@ Work through these in order. Each is specific to a setup, so skip any that is no
 
 1. **The session has not loaded the file.** Claude Code watches settings files and reloads them, but a
    session started before the file existed may need a restart. Codex scans rules only when a session starts:
-   open a new session.
+   open a new session, then ask init to recheck permissions (it runs `recheck`).
 2. **An ask rule matches.** An ask rule beats an allow rule. Wildcard ask rules, such as one for any command
    containing `git merge`, match words anywhere in a command, including the text of an
    `ao send` message or a pull request body, so a harmless message that mentions a merge can prompt. Say what
@@ -301,11 +348,11 @@ Work through these in order. Each is specific to a setup, so skip any that is no
    command.
 3. **A hook asks.** A command hook before a tool call can ask even when a rule allows. A hook that guards
    pushes may ask for every push whose branch name it does not know, and the push gate hook asks for every push
-   that is not an exact plain form (see "Push gate hook"). FVS cannot change your hook: change the hook, or
+   it recognises that is not an exact plain form (see "Push gate hook"). FVS cannot change your hook: change the hook, or
    approve those pushes yourself.
 4. **A hook rewrites the command (for example `rtk`).** The permission layer then sees the rewritten command,
    so an allow rule written for `git push ...` does not match `rtk git push ...`, and the push gate hook sees
-   `rtk git push ...`, which is not an exact form, so it asks for every push. Add a twin rule for the rewritten
+   `rtk git push ...`, which is not an exact form, so it asks for each push it recognises. Add a twin rule for the rewritten
    form, or exempt the command from the rewriting hook. Such hooks have also cut JSON output short.
 5. **Managed settings** from an organisation can override a project file. `/status` in Claude Code names the
    sources.
