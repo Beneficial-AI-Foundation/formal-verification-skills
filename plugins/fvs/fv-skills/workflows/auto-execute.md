@@ -65,7 +65,9 @@ head. The state reports `done` only when that receipt also holds for every targe
 - none of its statements rests on a hand-written assumption about a function of another target crate. The
   one exception is an item the other crate has no definition for, because the extraction excluded it or made
   it opaque there: the extraction lists it and the owner accepts the assumption. Otherwise prove the
-  function in its own crate and use that crate's theorem in the crate that calls it;
+  function in its own crate and use that crate's theorem in the crate that calls it. An axiom that an
+  accepted provider's own statements already rest on is that provider's assumption, vetted when the
+  provider was accepted, so its consumers inherit it;
 - every target crate it depends on is accepted too.
 
 Dispatch workers providers first, in the order `crates.order` gives, and accept bottom-up, one crate at a

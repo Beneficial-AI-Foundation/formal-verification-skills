@@ -1228,13 +1228,16 @@ const crateDecisions = (context) => context.undecided.map((crate) => `non-target
 // record about an item of another verified crate is refused unless the extraction lists
 // that item as one the provider has no definition for: a target's function is proved in its
 // own crate and used from there, never assumed again. Items of the crate itself, of a crate
-// the owner does not verify and of other libraries are the owner's to assume.
+// the owner does not verify and of other libraries are the owner's to assume. The extraction
+// names an assumed item as the constant declared in the consuming crate's namespace, and Lean
+// prints it with that namespace in front, so either form is the same axiom.
 function axiomProblem(axiom, crate, records, assumed, context) {
   const record = records.get(axiom);
   if (!record) return `rests on the axiom ${axiom}, which has no accepted externals record`;
   const source = record.source.symbol;
   const owner = itemCrate(source);
-  if (owner === crate || !context.targets.includes(owner) || assumed.some((entry) => entry?.name === axiom && entry.rustPath === source)) return null;
+  if (owner === crate || !context.targets.includes(owner)
+    || assumed.some((entry) => entry?.rustPath === source && (entry.name === axiom || `${crate}.${entry.name}` === axiom))) return null;
   return `rests on the axiom ${axiom}, a hand-written assumption about ${source}, an item of the verified crate ${owner}: prove it there and use that crate's theorem`;
 }
 
@@ -1251,10 +1254,16 @@ function crateAcceptance(root, specs, context, receipt) {
   const files = new Map((Array.isArray(receipt.specFiles) ? receipt.specFiles : []).map((file) => [file?.path, file]));
   const records = new Map((loadExternals(root)?.records ?? []).filter((record) => record.status === 'assumption-accepted').map((record) => [record.model.symbol, record]));
   const dependsOn = new Map(context.view.units.map((unit) => [unit.crate, unit.dependsOn.filter((crate) => context.targets.includes(crate))]));
+  // The axioms the statements of each judged crate rest on once they passed, with those it
+  // inherits: an axiom an accepted provider's statements already rest on is the provider's
+  // own assumption, vetted when the provider was judged, not a new one in its consumers.
+  const vetted = new Map();
   const reasonOf = (crate) => {
     const own = rows.filter((row) => row.items.some((id) => itemCrate(id) === crate));
     if (own.length === 0) return 'no spec file is recorded for this crate';
     const assumed = [].concat(context.units.find((entry) => entry.crate === crate)?.stitch ?? []).flatMap((entry) => (Array.isArray(entry?.assumed) ? entry.assumed : []));
+    const known = new Set(dependsOn.get(crate).flatMap((other) => [...(vetted.get(other) ?? [])]));
+    vetted.set(crate, known);
     let statements = 0;
     for (const row of own) {
       const file = files.get(path.posix.join(prefix, row.specFile));
@@ -1264,8 +1273,10 @@ function crateAcceptance(root, specs, context, receipt) {
         statements += 1;
         if (statement?.status !== 'built') return `the statement ${statement?.name} did not build in the check`;
         for (const axiom of Array.isArray(statement.beyondStandard) ? statement.beyondStandard : []) {
+          if (known.has(axiom)) continue;
           const problem = axiomProblem(axiom, crate, records, assumed, context);
           if (problem) return `the statement ${statement.name} ${problem}`;
+          known.add(axiom);
         }
       }
     }
