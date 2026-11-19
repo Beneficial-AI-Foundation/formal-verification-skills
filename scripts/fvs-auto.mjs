@@ -54,7 +54,7 @@ function usage() {
     '       node fvs-auto.mjs record-spec --spec-file PATH --items ID[,ID...] --round N --verdict pass|changes|blocked --review FILE [--out-of-scope ID[,ID...]] [--commit SHA] [--project-root DIR]',
     '       node fvs-auto.mjs spec-status [--commit SHA] [--project-root DIR]',
     '       node fvs-auto.mjs record-override --key KEY --value TEXT --reason TEXT [--project-root DIR]',
-    '       node fvs-auto.mjs list-items [--translation PATH] [--scope FILE|DIR|RUST_PATH[,...]] [--project-root DIR]',
+    '       node fvs-auto.mjs list-items [--translation PATH | --crate NAME] [--scope FILE|DIR|RUST_PATH[,...]] [--project-root DIR]',
     '       node fvs-auto.mjs record-pr --kind spec|proof --url URL --branch B --head SHA [--project-root DIR]',
     '       node fvs-auto.mjs record-pr --kind spec|proof --merged --merge-commit SHA [--project-root DIR]',
     '       node fvs-auto.mjs freeze|check|accept --request FILE --out EXCLUSIVE_DIR',
@@ -1072,10 +1072,66 @@ function runValid(run) {
     && publicationValid(run.publication, run.translation);
 }
 
+// A run over several crates lists each crate's whole single-crate run in `units`, so
+// a reader written for one crate reads any crate's row unchanged. Every unit comes
+// from the same prepared copy as the main run, so it carries the same manifest hash.
+function unitsValid(run) {
+  const { units, order } = run;
+  if (units === undefined) return true;
+  if (!Array.isArray(units) || units.length === 0) return false;
+  if (!units.every((unit) => runValid(unit) && isText(unit.crate) && isText(unit.status) && unit.manifestSha256 === run.manifestSha256)) return false;
+  const crates = units.map((unit) => unit.crate);
+  return new Set(crates).size === crates.length
+    && (order === undefined || (Array.isArray(order) && order.length === crates.length && new Set(order).size === order.length && order.every((crate) => crates.includes(crate))));
+}
+
+const recordedRunValid = (run) => runValid(run) && unitsValid(run);
+
+// The recorded run of one crate. Without a crate it is the main run, which is all a
+// single-crate project has; with one it is that crate's unit, or null when the
+// extraction holds no such crate.
+export function runOf(state, crate) {
+  const run = state?.extraction?.run ?? null;
+  if (crate === undefined) return run;
+  if (run === null) return null;
+  return run.units ? run.units.find((unit) => unit.crate === crate) ?? null : (run.crate === crate ? run : null);
+}
+
+// The crates of an extraction that has more than one, with the other target crates
+// each one depends on and an order that puts providers before consumers. A crate
+// depends on another when its Lean imports it, when it lists it as a prerequisite or
+// when its LLBC reaches it; null for a single-crate run, so nothing about that changes.
+function crateView(run) {
+  const units = run?.units ?? [];
+  if (units.length < 2) return null;
+  const crates = units.map((unit) => unit.crate);
+  const names = (list, pick) => (Array.isArray(list) ? list.map(pick) : []);
+  const dependsOn = new Map(units.map((unit) => [unit.crate, [...new Set([
+    ...names(unit.imports, (crate) => crate),
+    ...names(unit.prerequisites, (entry) => entry?.providerCrate),
+    ...names(unit.llbc?.foreignCrates?.filter((entry) => entry?.target === true), (entry) => entry.crate),
+  ])].filter((crate) => crates.includes(crate) && crate !== unit.crate).sort()]));
+  const derived = [];
+  const rest = [...crates].sort();
+  const ready = () => rest.find((crate) => dependsOn.get(crate).every((other) => derived.includes(other)));
+  for (let next = ready(); next !== undefined; next = ready()) {
+    derived.push(next);
+    rest.splice(rest.indexOf(next), 1);
+  }
+  // The extraction's own order is kept when it already puts every provider first.
+  const given = Array.isArray(run.order) && run.order.every((crate, at) => dependsOn.get(crate).every((other) => run.order.indexOf(other) < at)) ? run.order : null;
+  return {
+    order: given ?? derived,
+    ...(rest.length > 0 ? { cycle: rest } : {}),
+    units: units.map((unit) => ({ crate: unit.crate, package: unit.package ?? null, dir: unit.dir ?? null, dependsOn: dependsOn.get(unit.crate),
+      hasErrorItems: Array.isArray(unit.hasErrors?.items) ? unit.hasErrors.items : [] })),
+  };
+}
+
 function extractionErrors(extraction) {
   const errors = [];
   if (!fields(errors, extraction, 'extraction', [...EXTRACTION_FIELDS, 'run'])) return errors;
-  if ('run' in extraction && !runValid(extraction.run)) errors.push('extraction.run must be the re-validated extraction attempt');
+  if ('run' in extraction && !recordedRunValid(extraction.run)) errors.push('extraction.run must be the re-validated extraction attempt');
   const missing = EXTRACTION_FIELDS.filter((key) => !(key in extraction));
   if (missing.length > 0) return [`extraction lacks ${missing.join(', ')}`];
   const { status, reasons, selected, declared, checks, inputs } = extraction;
@@ -1496,7 +1552,7 @@ function progress(root, state, specs = null) {
 
 // What `read-state --brief` keeps: where the run is and what to do next, a few
 // lines instead of the recorded probe profile and every readiness row.
-const BRIEF_FIELDS = ['code', 'message', 'phase', 'nextAction', 'warnings', 'pendingDecisions', 'externals', 'overrides', 'overridesNote', 'fvs'];
+const BRIEF_FIELDS = ['code', 'message', 'phase', 'nextAction', 'warnings', 'pendingDecisions', 'externals', 'crates', 'overrides', 'overridesNote', 'fvs'];
 
 export function readState({ projectRoot, requireAgreement = false, brief = false }) {
   if (brief && requireAgreement) refuse('usage', '--brief cannot be combined with --require-agreement: that check returns the whole agreement');
@@ -1516,12 +1572,15 @@ function readFullState({ projectRoot, requireAgreement }) {
   const externals = Object.fromEntries([['total', records.length],
     ...BOUNDARY_STATUSES.map((status) => [status, records.filter((record) => record.status === status).length])]);
   const overrides = currentOverrides(loadOverrides(root));
+  // Only an extraction that succeeded and covers several crates has a crate view.
+  const crates = state.extraction?.status === 'succeeded' ? crateView(state.extraction.run) : null;
   return {
     code: 'ok',
     message: `auto-track state in ${statePath(root)}`,
     state,
     roadmapPresent: state.roadmap?.path ? fs.existsSync(path.join(root, state.roadmap.path)) : false,
     externals,
+    ...(crates ? { crates } : {}),
     ...(Object.keys(overrides).length > 0 ? { overrides, overridesNote: OVERRIDES_NOTE } : {}),
     pendingDecisions: requireAgreement || state.roadmap ? [] : ['roadmap'],
     readiness: readiness(state.profile),
@@ -1885,9 +1944,12 @@ export function recordExtraction({ projectRoot, out, buildExitCode, oracle, orac
   if (fs.existsSync(path.join(copy, 'attempt.json'))) {
     const status = engineResult('attempt-status', copy);
     if (!status.ok) reasons.push(`the recorded extraction attempt does not check out (${status.code}): ${status.message}`);
-    else if (!runValid(status.run) || status.run.manifestSha256 !== inputs?.manifestSha256) reasons.push('the recorded extraction attempt is not bound to this manifest');
+    else if (!recordedRunValid(status.run) || status.run.manifestSha256 !== inputs?.manifestSha256) reasons.push('the recorded extraction attempt is not bound to this manifest');
     else run = status.run;
   }
+  // Providers must come before consumers, so a dependency cycle between crates cannot be ordered.
+  const cycle = crateView(run)?.cycle;
+  if (cycle) reasons.push(`the crates ${cycle.join(', ')} depend on each other, so no order puts providers before consumers`);
   const extraction = {
     status: reasons.length === 0 ? 'succeeded' : 'failed',
     recordedAt: now(),
@@ -1990,11 +2052,21 @@ export function recordSpec({ projectRoot, specFile, items, round, verdict, revie
 // and narrowed by an explicit scope: a source file or directory (src/hmac.rs) or a
 // Rust path prefix (libcrux_hmac::hmac). translation.json records no visibility, so
 // the list holds candidates for the public API, never a claim about it.
-export function listItems({ projectRoot, translation, scope }) {
+export function listItems({ projectRoot, translation, scope, crate }) {
   const root = projectDirectory(projectRoot);
+  if (translation !== undefined && crate !== undefined) refuse('usage', '--crate names a crate of the recorded extraction, so it cannot be combined with --translation');
   // Without --translation, the one a succeeded extraction published; a failed one names none.
-  const extraction = translation === undefined ? loadState(root)?.extraction : null;
-  const file = translation === undefined ? (extraction?.status === 'succeeded' ? extraction.run?.translation?.projectPath : undefined) : path.resolve(root, translation);
+  const state = translation === undefined ? loadState(root) : null;
+  const extraction = state?.extraction?.status === 'succeeded' ? state.extraction : null;
+  let run = extraction?.run;
+  if (extraction && crate !== undefined) {
+    run = runOf(state, crate);
+    if (!run) refuse('invalid-input', `the recorded extraction has no crate ${crate}`, { crates: (extraction.run?.units ?? []).map((unit) => unit.crate) });
+  } else if (extraction && (extraction.run?.units?.length ?? 0) > 1) {
+    // Several crates are translated, and a list of only one of them would read as complete.
+    refuse('invalid-input', 'the recorded extraction has several crates: pass --crate NAME', { crates: extraction.run.units.map((unit) => unit.crate) });
+  }
+  const file = translation === undefined ? run?.translation?.projectPath : path.resolve(root, translation);
   if (!file) refuse('invalid-input', 'no translation.json is known: pass --translation PATH, or record an extraction that names it', { nextStep: 'Run /fvs:auto-extract, or pass --translation PATH.' });
   let bytes;
   let data;
@@ -2225,8 +2297,8 @@ const STATE_COMMANDS = {
       verdict: flags.verdict, review: flags.review, outOfScope: flags['out-of-scope'], commit: flags.commit });
   },
   'list-items': (argv) => {
-    const flags = stateFlags(argv, [], [], ['translation', 'scope']);
-    return listItems({ projectRoot: flags['project-root'], translation: flags.translation, scope: flags.scope });
+    const flags = stateFlags(argv, [], [], ['translation', 'scope', 'crate']);
+    return listItems({ projectRoot: flags['project-root'], translation: flags.translation, scope: flags.scope, crate: flags.crate });
   },
   'record-override': (argv) => {
     const flags = stateFlags(argv, ['key', 'value', 'reason']);
