@@ -73,6 +73,30 @@ function init(root) {
   }
 }
 
+// A key-sorted JSON the engine hashes for approval, so a digest in a test is computed, not copied.
+const canonical = (value) => JSON.stringify(value, (_key, item) => (item && typeof item === 'object' && !Array.isArray(item)
+  ? Object.fromEntries(Object.keys(item).sort().map((key) => [key, item[key]])) : item));
+
+// An agreement for the recorded choices; `extra` adds payload fields such as targets.
+function agreementFor(root, extra = {}, layout = 'monorepo') {
+  const agreement = {
+    schema: 'fvs/auto-agreement', schemaVersion: 1, mode: 'nonpublic-intent',
+    payload: { choicesGeneration: 0, choices: auto.readState({ projectRoot: root }).state.choices,
+      contextVersion: 1, boundaries: [], conventions: [], layout, claims: ['fixture'],
+      trust: ['fixture policy'], acceptance: ['fixture evidence'], ownerReserved: ['human final decision'],
+      execution: null, draftPr: null, ...extra },
+    ownerEvidence: { reference: 'fixture:response', response: 'Fixture agreement only' },
+  };
+  agreement.approvedPayloadSha256 = auto.agreementPayloadSha256(agreement);
+  return agreement;
+}
+
+// Records an agreement the way the owner's record step does: the roadmap holds its fence.
+function recordAgreement(root, agreement) {
+  fs.writeFileSync(path.join(root, '.formalising/auto-fv/ROADMAP.md'), '## Decisions\n```fvs-auto-agreement\n' + JSON.stringify(agreement) + '\n```\n');
+  return auto.recordAgreement({ projectRoot: root, agreement });
+}
+
 function cli(...args) {
   const result = spawnSync(process.execPath, [SCRIPT, ...args], { cwd: ROOT, encoding: 'utf8' });
   let json = null;
@@ -132,4 +156,4 @@ const hmacAndSha2 = (root) => [
   unit(root, 'libcrux_sha2', [fn('libcrux_sha2::hacl::hash_256', 'src/hacl.rs', 5)]),
 ];
 
-module.exports = { ROOT, ZEROS, use, cleanup, temporaryDirectory, sha256, git, project, init, cli, stateFile, readState, writeState, fn, unit, extracted, hmacAndSha2 };
+module.exports = { canonical, agreementFor, recordAgreement, ROOT, ZEROS, use, cleanup, temporaryDirectory, sha256, git, project, init, cli, stateFile, readState, writeState, fn, unit, extracted, hmacAndSha2 };

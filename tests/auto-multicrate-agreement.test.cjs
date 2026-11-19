@@ -23,27 +23,7 @@ before(async () => {
 
 after(fixtures.cleanup);
 
-// The same key-sorted JSON the engine hashes, written out so the digest is checked, not copied.
-const canonical = (value) => JSON.stringify(value, (_key, item) => (item && typeof item === 'object' && !Array.isArray(item)
-  ? Object.fromEntries(Object.keys(item).sort().map((key) => [key, item[key]])) : item));
-
-function agreementFor(root, extra = {}, layout = 'monorepo') {
-  const agreement = {
-    schema: 'fvs/auto-agreement', schemaVersion: 1, mode: 'nonpublic-intent',
-    payload: { choicesGeneration: 0, choices: auto.readState({ projectRoot: root }).state.choices,
-      contextVersion: 1, boundaries: [], conventions: [], layout, claims: ['fixture'],
-      trust: ['fixture policy'], acceptance: ['fixture evidence'], ownerReserved: ['human final decision'],
-      execution: null, draftPr: null, ...extra },
-    ownerEvidence: { reference: 'fixture:response', response: 'Fixture agreement only' },
-  };
-  agreement.approvedPayloadSha256 = auto.agreementPayloadSha256(agreement);
-  return agreement;
-}
-
-function record(root, agreement) {
-  fs.writeFileSync(path.join(root, '.formalising/auto-fv/ROADMAP.md'), '## Decisions\n```fvs-auto-agreement\n' + JSON.stringify(agreement) + '\n```\n');
-  return auto.recordAgreement({ projectRoot: root, agreement });
-}
+const { canonical, agreementFor, recordAgreement: record } = fixtures;
 
 const TARGETS = {
   crates: ['libcrux_hmac'],
