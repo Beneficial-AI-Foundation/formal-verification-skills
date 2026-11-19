@@ -449,7 +449,7 @@ function checkNoLegacyPushRules(root) {
   refuse('legacy-push-rules', 'a project settings file already allows a git push by rule. A worker could then run a plain `git push` with any flag and skip the FVS push command, which is the only push FVS allows. FVS deletes none of your rules. Nothing was written. Remove the listed entries yourself, then run init again; every other entry stays.', {
     legacyPushRules: found,
     cleanup: found.map((one) => `In ${one.file} (${one.resolvedPath}) delete these ${one.rules.length} entr${one.rules.length === 1 ? 'y' : 'ies'} from permissions.allow and nothing else: ${one.rules.map((rule) => JSON.stringify(rule)).join(', ')}. The other ${one.keeps} allow entr${one.keeps === 1 ? 'y stays' : 'ies stay'}.`),
-    notExamined: 'broad rules such as Bash(git *), your user settings (${CLAUDE_PLUGIN_ROOT}/settings.json) and the permission mode are not examined',
+    notExamined: 'broad rules such as Bash(git *), your user settings (~/.claude/settings.json) and the permission mode are not examined',
   });
 }
 

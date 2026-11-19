@@ -10,14 +10,19 @@
 //   - exactly `--branch <name>` was given (any other argument is refused);
 //   - the shared git directory of the repository it runs in is the one recorded at init, and the recorded project
 //     root is a checkout of that same repository (the main checkout and its linked worktrees pass; a link, a copy
-//     or another repository does not);
+//     or another repository does not), and git started in the top of this work tree uses the same repository (a
+//     core.worktree setting that points at another repository's files is refused);
 //   - `refs/heads/<name>` exists as a branch under a recorded namespace (fvs/...), is not a symbolic ref, and no tag
 //     of the same name exists;
 //   - no url.<base>.insteadOf or url.<base>.pushInsteadOf rule applies to the recorded URL, and no
 //     [remote "<url>"] section names it, and git itself does not rewrite it.
-// The push uses an explicit full refspec without `+`, --no-follow-tags and -c push.followTags=false,
-// --recurse-submodules=no, --porcelain and -c core.abbrev=no (full object ids). The result is appended to
-// .formalising/auto-fv/pushes.jsonl of the recorded project root.
+// Every git call after the first one names the git directory and the work tree that were found and checked, so none of
+// them finds a repository again from a directory. The push uses an explicit full refspec without `+`,
+// --no-follow-tags and -c push.followTags=false, --recurse-submodules=no, -c push.pushOption= (no push option from any
+// configuration), --porcelain and -c core.abbrev=no (full object ids). The result is appended to
+// .formalising/auto-fv/pushes.jsonl of the recorded project root. It names only object ids that the push reported: a
+// new or up-to-date branch has none in git's summary. When git does not report a result for the branch (a timeout, a lost
+// connection), the outcome is `unknown`, and the destination may have changed.
 //
 // What it does not do: git hooks in the repository still run, as for any push; credential helpers, ssh and proxy
 // settings come from the user's git configuration and environment; the recorded destination is a plain file that
@@ -57,9 +62,12 @@ export function parseRemoteUrl(url) {
 // The push target must be the project's own repository, and a remote can name several: git fetches from the first
 // URL but pushes to every push URL (or, with none, every URL). So all URLs git would use, after its own URL
 // rewriting, must name the agreed host and repository. Returns null when they do, else {code, message}.
-export function destinationProblem(dir, remote, repo, host) {
+export function destinationProblem(where, remote, repo, host) {
+  const dir = typeof where === 'string' ? where : where.top;
   for (const [label, args] of [['fetch', []], ['push', ['--push']]]) {
-    const run = spawnSync('git', ['-C', dir, 'remote', 'get-url', ...args, '--all', remote], { encoding: 'utf8', timeout: 10000 });
+    const run = typeof where === 'string'
+      ? git(['-C', where, 'remote', 'get-url', ...args, '--all', remote])
+      : git(['remote', 'get-url', ...args, '--all', remote], { where });
     if (run.status !== 0) return { code: 'remote-missing', message: `git remote ${remote} is not set in ${dir}` };
     const urls = run.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
     if (urls.length === 0) return { code: 'remote-ambiguous', message: `git remote ${remote} has no ${label} URL` };
@@ -74,17 +82,22 @@ export function destinationProblem(dir, remote, repo, host) {
   return null;
 }
 
-function git(args, { cwd, env, stdio } = {}) {
-  const run = spawnSync('git', args, { cwd, env, encoding: 'utf8', timeout: 30000, ...(stdio ? { stdio } : {}) });
-  return { status: run.status, stdout: run.stdout ?? '', stderr: (run.stderr ?? '').trim(), error: run.error };
+// Where git runs once `locate` has captured the repository: the git directory and the work tree, named on every call so
+// that no call finds a repository by itself. Without them git discovers a repository from the working directory, and a
+// setting such as core.worktree can make the work tree of one repository a directory that belongs to another.
+const placed = (where) => (where ? ['--git-dir', where.gitDir, '--work-tree', where.top] : []);
+
+function git(args, { cwd, where, env, stdio } = {}) {
+  const run = spawnSync('git', [...placed(where), ...args], { cwd: where ? where.top : cwd, env, encoding: 'utf8', timeout: 30000, ...(stdio ? { stdio } : {}) });
+  return { status: run.status, stdout: run.stdout ?? '', stderr: (run.stderr ?? '').trim(), error: run.error, signal: run.signal };
 }
 
 // Git rewrites a URL given to push by the longest matching url.<base>.insteadOf or url.<base>.pushInsteadOf prefix,
 // and the push then goes to the rewritten address. Instead of predicting which rule wins, any rule that applies to the
 // recorded URL is a refusal. A [remote "<url>"] section is refused too: git does not read one for a URL with a slash,
 // but a refusal costs nothing and keeps the check independent of that detail. Returns null or a plain message.
-export function rewriteProblem(cwd, url, env) {
-  const list = git(['config', '--list', '-z'], { cwd, env });
+export function rewriteProblem(where, url, env) {
+  const list = git(['config', '--list', '-z'], { where, env });
   if (list.status !== 0) return `git config could not be read (${list.stderr || list.error?.message || `exit ${list.status}`})`;
   for (const entry of list.stdout.split('\0').filter(Boolean)) {
     const at = entry.indexOf('\n');
@@ -95,7 +108,7 @@ export function rewriteProblem(cwd, url, env) {
     const remote = /^remote\.(.+)\.[^.]+$/.exec(key);
     if (remote && remote[1] === url) return `the git setting ${key} names the recorded destination as a remote`;
   }
-  const shown = git(['ls-remote', '--get-url', url], { cwd, env });
+  const shown = git(['ls-remote', '--get-url', url], { where, env });
   if (shown.status !== 0 || shown.stdout.trim() !== url) return `git reads the recorded destination ${url} as ${shown.stdout.trim() || '(unreadable)'}`;
   return null;
 }
@@ -145,16 +158,16 @@ const refuse = (code, message, details) => { throw new Refuse(code, message, det
 // (every fetch and push URL of the remote is checked) and no rewrite rule may apply to it, because the push command
 // refuses a destination that a rule would rewrite.
 export function initDestination(root, remote, repo, host, prefixes, env = process.env) {
-  const problem = destinationProblem(root, remote, repo, host);
-  if (problem) return { problem };
   let found;
   try { found = locate(root, env); } catch (error) {
     if (error instanceof Refuse) return { problem: { code: error.code, message: error.message } };
     throw error;
   }
-  const urls = git(['remote', 'get-url', '--push', '--all', remote], { cwd: root, env }).stdout.split('\n').map((line) => line.trim()).filter(Boolean);
+  const problem = destinationProblem(found, remote, repo, host);
+  if (problem) return { problem };
+  const urls = git(['remote', 'get-url', '--push', '--all', remote], { where: found, env }).stdout.split('\n').map((line) => line.trim()).filter(Boolean);
   if (urls.length === 0) return { problem: { code: 'remote-ambiguous', message: `git remote ${remote} has no push URL` } };
-  const rewritten = rewriteProblem(found.top, urls[0], env);
+  const rewritten = rewriteProblem(found, urls[0], env);
   if (rewritten) return { problem: { code: 'destination-rewritten', message: rewritten } };
   return { record: destinationRecord({ projectRoot: root, commonDir: found.commonDir, url: urls[0], host: host.toLowerCase(), repo, prefixes }), commonDir: found.commonDir };
 }
@@ -162,13 +175,34 @@ export function initDestination(root, remote, repo, host, prefixes, env = proces
 // Environment variables that move git to another repository or work tree than the working directory shows.
 const MOVING = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_NAMESPACE'];
 
-// Where the command runs: the physical top of the work tree and the shared git directory, links resolved.
+// Where the command runs, captured once: the git directory of this work tree (a linked worktree has its own), the shared
+// git directory, and the top of the work tree, all with links resolved. One git process answers all three, so the answers
+// describe one repository. Every later git call names the git directory and the work tree (see `placed`) instead of
+// finding them again from a directory.
+//
+// The top of the work tree is whatever core.worktree says when it is set, and it can be a directory of another
+// repository. So the answer is accepted only if it makes a round trip: git started in the top must use the same git
+// directory and the same shared git directory. A repository whose git directory is kept apart from its work tree, a
+// linked worktree and a submodule pass; a repository pointed at another one's files does not.
 export function locate(cwd, env) {
   for (const name of MOVING) if (env[name]) refuse('git-environment', `${name} is set in the environment, so git would not use the repository of the working directory; unset it`);
-  const top = git(['rev-parse', '--show-toplevel'], { cwd, env });
-  const common = git(['rev-parse', '--git-common-dir'], { cwd, env });
-  if (top.status !== 0 || common.status !== 0) refuse('not-a-repository', `${cwd} is not inside a git work tree`);
-  return { top: fs.realpathSync.native(top.stdout.trim()), commonDir: fs.realpathSync.native(path.resolve(cwd, common.stdout.trim())) };
+  const shown = git(['rev-parse', '--absolute-git-dir', '--git-common-dir', '--show-toplevel'], { cwd, env });
+  const lines = shown.stdout.split('\n');
+  if (shown.status !== 0) refuse('not-a-repository', `${cwd} is not inside a git work tree`);
+  if (lines.length !== 4 || lines[3] !== '') refuse('not-a-repository', `git gave an answer about ${cwd} that cannot be read as a git directory, a shared git directory and a work tree`);
+  const real = (base, text) => fs.realpathSync.native(path.resolve(base, text));
+  let found;
+  try { found = { gitDir: real(cwd, lines[0]), commonDir: real(fs.realpathSync.native(cwd), lines[1]), top: real(cwd, lines[2]) }; } catch (error) {
+    refuse('not-a-repository', `a directory that git named for ${cwd} cannot be read (${error.message})`);
+  }
+  const back = git(['rev-parse', '--absolute-git-dir', '--git-common-dir'], { cwd: found.top, env });
+  const [backDir, backCommon] = back.stdout.split('\n');
+  let sameRepository = false;
+  try { sameRepository = back.status === 0 && real(found.top, backDir) === found.gitDir && real(found.top, backCommon) === found.commonDir; } catch { /* a directory is missing: not the same */ }
+  if (!sameRepository) {
+    refuse('worktree-mismatch', `the work tree of the repository at ${found.gitDir} is ${found.top}, but git started in ${found.top} does not use that repository; a setting such as core.worktree points this repository at the files of another one. Nothing was pushed`);
+  }
+  return found;
 }
 
 export function readRecord(commonDir) {
@@ -186,7 +220,9 @@ export function readRecord(commonDir) {
 
 // The repository the command runs in must be the one the destination was recorded for. The comparison is the shared git
 // directory, because a worker works in a linked worktree whose top directory is not the project root. The recorded
-// project root must also still be a checkout of this same repository.
+// project root must also still be a checkout of this same repository. That second check is the one place that lets git
+// discover a repository from a directory: the recorded root is another directory, so there is no captured git directory
+// for it. Only its shared git directory is read and compared, and nothing is run or pushed there.
 export function repositoryProblem(record, found, env) {
   if (record.commonDir !== found.commonDir) return `this repository (${found.commonDir}) is not the one the destination was recorded for (${record.commonDir})`;
   const rootCommon = git(['rev-parse', '--git-common-dir'], { cwd: record.projectRoot, env });
@@ -202,7 +238,7 @@ export function branchProblem(found, branch, prefixes, env) {
   if (!inside || !parts.every((part) => WORD.test(part)) || branch.includes('..') || branch.endsWith('.lock')) {
     return `${JSON.stringify(branch)} is not a plain branch name under ${prefixes.map((prefix) => `${prefix}/`).join(' or ')}`;
   }
-  const at = { cwd: found.top, env };
+  const at = { where: found, env };
   if (git(['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], at).status !== 0) return `refs/heads/${branch} does not exist as a local branch`;
   if (git(['symbolic-ref', '-q', `refs/heads/${branch}`], at).status === 0) return `refs/heads/${branch} is a symbolic ref, not a branch`;
   if (git(['show-ref', '--verify', '--quiet', `refs/tags/${branch}`], at).status === 0) return `${branch} names both a branch and a tag, so it is ambiguous`;
@@ -261,23 +297,37 @@ export function run(argv, { cwd = process.cwd(), env = process.env, now = () => 
     if (wrongPlace) refuse('wrong-repository', wrongPlace);
     const wrongBranch = branchProblem(found, branch, record.prefixes, env);
     if (wrongBranch) refuse('branch-refused', wrongBranch);
-    const rewritten = rewriteProblem(found.top, record.url, env);
+    const rewritten = rewriteProblem(found, record.url, env);
     if (rewritten) refuse('destination-rewritten', `${rewritten}; the push was not made`);
-    const tip = git(['rev-parse', '--verify', `refs/heads/${branch}^{commit}`], { cwd: found.top, env }).stdout.trim();
+    const read = git(['rev-parse', '--verify', `refs/heads/${branch}^{commit}`], { where: found, env });
+    const tip = read.stdout.trim();
+    if (read.status !== 0 || !/^[0-9a-f]{40,64}$/.test(tip)) refuse('branch-refused', `the tip of refs/heads/${branch} could not be read as a commit (${read.stderr || read.error?.message || `exit ${read.status}`}), so nothing was pushed`);
     const refspec = `refs/heads/${branch}:refs/heads/${branch}`;
-    const pushed = git(['-c', 'push.followTags=false', '-c', 'core.abbrev=no', 'push', '--porcelain', '--no-follow-tags', '--recurse-submodules=no', record.url, refspec],
-      { cwd: found.top, env, stdio: ['inherit', 'pipe', 'inherit'] });
+    // -c push.pushOption= empties the list of push options from every configuration file and the environment: options
+    // go to the receiving side, which can act on them, and this command sends none.
+    const pushed = git(['-c', 'push.followTags=false', '-c', 'push.pushOption=', '-c', 'core.abbrev=no', 'push', '--porcelain', '--no-follow-tags', '--recurse-submodules=no', record.url, refspec],
+      { where: found, env, stdio: ['inherit', 'pipe', 'inherit'] });
     const seen = parsePorcelain(pushed.stdout, branch);
     const status = STATUS[seen.flag] ?? null;
-    const sent = pushed.status === 0 && (status === 'created' || status === 'fast-forward' || status === 'up-to-date');
+    const accepted = pushed.status === 0 && (status === 'created' || status === 'fast-forward' || status === 'up-to-date');
+    // Git named this ref and said it was not updated: a known failure. Anything else without a success line (a timeout, a
+    // lost connection, a signal, no line for the ref) leaves the outcome open: the destination may have taken the update.
+    const result = accepted ? status : seen.flag === '!' ? 'failed' : 'unknown';
     const entry = {
       at: now().toISOString(), branch, destination: record.url, repositoryRoot: found.top, commonDir: found.commonDir,
-      result: sent ? status : 'failed', porcelainFlag: seen.flag, porcelain: seen.line, to: seen.to,
-      oldRemoteId: seen.old, newRemoteId: sent ? (seen.new ?? tip) : null, localBranchId: tip, exitStatus: pushed.status,
+      result, porcelainFlag: seen.flag, porcelain: seen.line, to: seen.to,
+      // Only ids that the push itself reported. A new branch and an up-to-date branch carry none in git's summary, and the
+      // tip read before the push is not an id of what was sent: the branch can move between the read and the push.
+      oldRemoteId: seen.old, newRemoteId: accepted ? seen.new : null, localTipBeforePush: tip,
+      exitStatus: pushed.status, signal: pushed.signal ?? null, error: pushed.error?.message ?? null,
     };
     const log = appendLog(record, entry);
     const detail = { ...entry, ...log };
-    if (!sent) refuse('push-failed', `git did not push ${branch}: ${seen.line ? seen.line.replace(/\t/g, ' ') : `exit ${pushed.status}${pushed.error ? ` (${pushed.error.message})` : ''}`}. Nothing was changed on the destination unless git says so above.`, detail);
+    if (result === 'failed') refuse('push-failed', `git did not update ${branch} on the destination: ${seen.line.replace(/\t/g, ' ')}`, detail);
+    if (result === 'unknown') {
+      const how = pushed.error?.code === 'ETIMEDOUT' ? 'did not finish within 30 seconds' : pushed.signal ? `was stopped by ${pushed.signal}` : `ended with exit ${pushed.status}${seen.line ? ` and the line "${seen.line.replace(/\t/g, ' ')}"` : ' and no result line for the branch'}`;
+      refuse('push-outcome-unknown', `git ${how}, so this command does not know whether ${branch} was updated on the destination. It may have been. Read the destination before you retry (for example with git ls-remote on the recorded address), and report this code and message`, detail);
+    }
     if (seen.to !== null && seen.to !== record.url && seen.to !== anonymizeUrl(record.url)) refuse('unexpected-destination', `the push ran, but git reported ${seen.to} instead of the recorded ${record.url}; tell the owner`, detail);
     return { status: 0, json: { code: 'pushed', ...detail } };
   } catch (error) {

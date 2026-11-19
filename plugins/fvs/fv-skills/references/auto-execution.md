@@ -135,8 +135,11 @@ claim. The evidence named here is what the orchestrator keeps.
   not chain it to another command with `&&`, `;` or a pipe: a host that matches permission rules one
   command at a time may hold a chained line for approval, and the exit status of a chain is the status
   of its last command. The command leaves no `origin/<name>` ref and sets no upstream, so run
-  `git fetch` before you look for the branch on the remote. Quote its exit status and its `result` in
-  the report. When it refuses (for example `no-destination-recorded`), do not fall back to `git push`:
+  `git fetch` before you look for the branch on the remote. Its receipt names an object id only when
+  git reported one: `newRemoteId` is null for a new branch and for an up-to-date branch, and
+  `localTipBeforePush` is only what the command read before it pushed. Read the head that is on the
+  remote with `git fetch` and `git rev-parse origin/<name>`, and call it a later observation. Quote
+  its exit status and its `result` in the report. When it refuses (for example `no-destination-recorded`), do not fall back to `git push`:
   stop, and report its `code` and `message` to the orchestrator.
 - **Keep three commits apart.** A status line names the commit the build check accepted, the head
   published on the pull request and the head that `record-pr` recorded, each with its SHA. They can
