@@ -16,8 +16,12 @@
 //     of the same name exists;
 //   - no url.<base>.insteadOf or url.<base>.pushInsteadOf rule applies to the recorded URL, and no
 //     [remote "<url>"] section names it, and git itself does not rewrite it.
-// Every git call after the first one names the git directory and the work tree that were found and checked, so none of
-// them finds a repository again from a directory. The push uses an explicit full refspec without `+`,
+// Every git call that acts on the repository (the branch checks, the URL checks, the tip read and the push) names the git
+// directory and the work tree that were found and checked, so none of them finds a repository again from a directory.
+// Three calls do look for one: the first, which finds it; its round trip from the top of the work tree, which checks
+// it; and a read of the shared git directory of the recorded project root. A hook of the repository runs with
+// GIT_DIR and GIT_WORK_TREE set, because git exports both when it is told where the repository is.
+// The push uses an explicit full refspec without `+`,
 // --no-follow-tags and -c push.followTags=false, --recurse-submodules=no, -c push.pushOption= (no push option from any
 // configuration), --porcelain and -c core.abbrev=no (full object ids). The result is appended to
 // .formalising/auto-fv/pushes.jsonl of the recorded project root. It names only object ids that the push reported: a
@@ -82,9 +86,10 @@ export function destinationProblem(where, remote, repo, host) {
   return null;
 }
 
-// Where git runs once `locate` has captured the repository: the git directory and the work tree, named on every call so
-// that no call finds a repository by itself. Without them git discovers a repository from the working directory, and a
-// setting such as core.worktree can make the work tree of one repository a directory that belongs to another.
+// Where git runs once `locate` has captured the repository: the git directory and the work tree, named on each call
+// that is given them so that the call finds no repository by itself. Without them git discovers a repository from the
+// working directory, and a setting such as core.worktree can make the work tree of one repository a directory that
+// belongs to another. Git exports both to the hooks and helpers that it starts.
 const placed = (where) => (where ? ['--git-dir', where.gitDir, '--work-tree', where.top] : []);
 
 function git(args, { cwd, where, env, stdio } = {}) {
@@ -182,8 +187,8 @@ const MOVING = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_NAMESPACE'];
 //
 // The top of the work tree is whatever core.worktree says when it is set, and it can be a directory of another
 // repository. So the answer is accepted only if it makes a round trip: git started in the top must use the same git
-// directory and the same shared git directory. A repository whose git directory is kept apart from its work tree, a
-// linked worktree and a submodule pass; a repository pointed at another one's files does not.
+// directory and the same shared git directory. A repository whose git directory is kept apart from its work tree and
+// a linked worktree pass; a repository pointed at another one's files does not.
 export function locate(cwd, env) {
   for (const name of MOVING) if (env[name]) refuse('git-environment', `${name} is set in the environment, so git would not use the repository of the working directory; unset it`);
   const shown = git(['rev-parse', '--absolute-git-dir', '--git-common-dir', '--show-toplevel'], { cwd, env });
@@ -220,9 +225,9 @@ export function readRecord(commonDir) {
 
 // The repository the command runs in must be the one the destination was recorded for. The comparison is the shared git
 // directory, because a worker works in a linked worktree whose top directory is not the project root. The recorded
-// project root must also still be a checkout of this same repository. That second check is the one place that lets git
-// discover a repository from a directory: the recorded root is another directory, so there is no captured git directory
-// for it. Only its shared git directory is read and compared, and nothing is run or pushed there.
+// project root must also still be a checkout of this same repository. That second check lets git discover a repository
+// from a directory, as `locate` does: the recorded root is another directory, so there is no captured git directory for
+// it. Only its shared git directory is read and compared, and nothing is run or pushed there.
 export function repositoryProblem(record, found, env) {
   if (record.commonDir !== found.commonDir) return `this repository (${found.commonDir}) is not the one the destination was recorded for (${record.commonDir})`;
   const rootCommon = git(['rev-parse', '--git-common-dir'], { cwd: record.projectRoot, env });

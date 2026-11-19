@@ -383,23 +383,27 @@ describe('the repository must be the one the destination was recorded for', () =
     }
     const noRemoteUpdate = ({ a, b }) => { for (const w of [a, b]) { assert.deepEqual(w.refs(w.right), [], 'no destination was updated'); assert.deepEqual(w.refs(w.wrong), []); } };
 
+    const toplevel = (w, env) => spawnSync('git', ['-C', w.work, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', env }).stdout.trim();
+
     it('refuses when the setting is in the repository configuration', () => {
       const pair = twoRepositories();
       pair.a.git('config', 'core.worktree', pair.b.root);
+      // The precondition: run from A, git itself reports B's directory as the top of the work tree.
+      assert.equal(fs.realpathSync(toplevel(pair.a, pair.a.env)), pair.b.root);
       const out = refused(pair.a, ['--branch', 'fvs/x'], 'worktree-mismatch');
       assert.match(out.json.message, /work tree/);
       noRemoteUpdate(pair);
     });
 
-    // Observed on the installed git: it reads core.worktree from the repository's own configuration file only, so the
-    // same setting made through GIT_CONFIG_COUNT does not move the work tree, and the command stays in repository A. This
-    // row keeps that observation: if a git version honours the environment value, the round trip refuses it instead.
-    it('does not follow the same setting made through the environment', () => {
+    // Observed with the git installed here (Apple Git 2.54): the same setting made through GIT_CONFIG_COUNT does not move
+    // the top of the work tree, and git run from A still reports A. The row asserts that observation and then the exact
+    // refusal that follows: A has no branch fvs/x. A git version that honoured the environment value would instead fail
+    // the observation, and the round trip would refuse it as a mismatch.
+    it('is not moved by the same setting made through the environment', () => {
       const pair = twoRepositories();
       const env = { ...pair.a.env, GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.worktree', GIT_CONFIG_VALUE_0: pair.b.root };
-      const out = pair.a.go(['--branch', 'fvs/x'], { env });
-      assert.notEqual(out.status, 0, JSON.stringify(out.json));
-      assert.ok(['worktree-mismatch', 'branch-refused'].includes(out.json.code), `${out.json.code}: ${out.json.message}`);
+      assert.equal(fs.realpathSync(toplevel(pair.a, env)), pair.a.root, 'git run from A reports A as the top of the work tree');
+      refused(pair.a, ['--branch', 'fvs/x'], 'branch-refused', { env });
       noRemoteUpdate(pair);
     });
 
@@ -584,6 +588,21 @@ describe('what the push sends', () => {
     assert.deepEqual([w.git('status', '--porcelain'), w.git('for-each-ref', '--format=%(refname) %(objectname)')], before);
   });
 
+  it('runs the pre-push hook of the repository with GIT_DIR and GIT_WORK_TREE set to the checked repository', () => {
+    const w = world();
+    const seen = path.join(w.dir, 'hook-env.txt');
+    const hook = path.join(w.commonDir, 'hooks', 'pre-push');
+    fs.mkdirSync(path.dirname(hook), { recursive: true });
+    fs.writeFileSync(hook, `#!/bin/sh\n{ echo "GIT_DIR=$GIT_DIR"; echo "GIT_WORK_TREE=$GIT_WORK_TREE"; } > ${JSON.stringify(seen)}\n`, { mode: 0o755 });
+    const plain = spawnSync('git', ['-C', w.work, 'push', '--porcelain', URL_RECORDED, 'refs/heads/fvs/t:refs/heads/fvs/t'], { encoding: 'utf8', env: w.env });
+    assert.equal(plain.status, 0, plain.stderr);
+    assert.equal(fs.readFileSync(seen, 'utf8'), 'GIT_DIR=\nGIT_WORK_TREE=\n', 'a plain push gives the hook neither variable');
+    w.clear(w.right);
+    const out = w.go(['--branch', 'fvs/t']);
+    assert.equal(out.status, 0, JSON.stringify(out.json));
+    assert.equal(fs.readFileSync(seen, 'utf8'), `GIT_DIR=${w.commonDir}\nGIT_WORK_TREE=${w.root}\n`, 'the command names both, and git exports them to the hook');
+  });
+
   it('reports a failed record write without hiding a push that went through', () => {
     const w = world();
     fs.mkdirSync(path.join(w.root, '.formalising'));
@@ -711,6 +730,15 @@ describe('a push whose outcome git did not report', () => {
     assert.equal(out.json.newRemoteId, null);
     assert.notEqual(out.json.exitStatus, 0);
     assert.equal(out.json.recorded, true);
+  });
+
+  it('a push stopped by a signal is an unknown outcome, and the signal is kept', () => {
+    const w = world();
+    const env = gitStandIn(w, 'for a in "$@"; do\n  if [ "$a" = push ]; then kill -9 $$; fi\ndone');
+    const out = refused(w, ['--branch', 'fvs/t'], 'push-outcome-unknown', { env });
+    assert.equal(out.json.signal, 'SIGKILL');
+    assert.equal(out.json.result, 'unknown');
+    assert.match(out.json.message, /was stopped by SIGKILL/);
   });
 
   it('a rejection git reports for the ref stays a plain failure', () => {
