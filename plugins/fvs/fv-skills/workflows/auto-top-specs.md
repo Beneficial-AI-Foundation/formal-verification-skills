@@ -36,8 +36,10 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
    New worker worktrees start from the project's remote base branch, so a commit that exists only in
    your local checkout never reaches an author or a reviewer. Push the working branch to the project's
    own repository and make it the base new workers start from; with AO, set the project's default branch
-   to it once it exists on the remote. The spec and proof pull requests use it as their base unless the
-   agreement says otherwise.
+   to it once it exists on the remote. Push it with the FVS push command,
+   `node <FVS scripts folder>/fvs-auto-push.mjs --branch fvs/<name>`, and never with `git push`; the command pushes
+   only a branch under the namespace recorded at init, so name the working branch under it. The spec and proof
+   pull requests use it as their base unless the agreement says otherwise.
 
    The build must also reach the new files. A Lake library that keeps its default roots compiles no file
    under `formal/`, so a build can finish while no spec was compiled. Widen the library's module globs
