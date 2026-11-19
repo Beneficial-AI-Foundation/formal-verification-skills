@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [3.0.0-rc3] - 2026-11-21
+
+This is prerelease source metadata for the selected-target SWVF candidate. It is meant for the
+npm `next` tag only, and stable 2.3.x stays `latest`. Identify the release by the tag
+`v3.0.0-rc3` and its full commit SHA. This entry does not claim catalog publication, complete
+runtime qualification or a whole-library verification result.
+
 ## [3.0.0-rc2] - 2026-11-17
 
 This is prerelease source metadata for the selected-target SWVF candidate. It is meant for the

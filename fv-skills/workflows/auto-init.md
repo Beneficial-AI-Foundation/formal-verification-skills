@@ -283,7 +283,7 @@ Everything above works without this section, and the relaxed path never calls wh
 stored-context gate (`read-state` with its strict flag), the memory commands, owned work, the driver,
 the review bundle and the re-specification command. Use it only when the owner wants the strict graph
 lane and `probe-lean` works, or when the agreement records enabled Beads memory. The strict lane's
-human re-specification is not available in 3.0.0-rc2; on the relaxed path a spec refactor is a new
+human re-specification is not available in 3.0.0-rc3; on the relaxed path a spec refactor is a new
 draft pull request.
 
 ### Stored-context gate AND semantic applicability check

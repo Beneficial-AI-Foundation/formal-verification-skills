@@ -17,7 +17,7 @@ matrix mirrors it and a test keeps the two in step.
 
 ## Rc2 exact-source installation
 
-Use this checklist for the `3.0.0-rc2` selected-target SWVF preview. An approved immutable source pin
+Use this checklist for the `3.0.0-rc3` selected-target SWVF preview. An approved immutable source pin
 and its qualification report identify the candidate; a version string, a floating branch or a stable
 marketplace/npm installation does not. Record remaining runtime qualifications honestly. Whole-libcrux
 extraction and a full pilot are separate from preparing this installation.
@@ -40,8 +40,8 @@ extraction and a full pilot are separate from preparing this installation.
    test "$(git -C "$FVS_SOURCE" rev-parse HEAD)" = "$FVS_SHA" || exit 1
    FVS_SOURCE_STATUS=$(git -C "$FVS_SOURCE" status --porcelain=v1 --untracked-files=all) || exit 1
    test -z "$FVS_SOURCE_STATUS" || exit 1
-   test "$(node -p 'require(process.argv[1]).version' "$FVS_SOURCE/package.json")" = "3.0.0-rc2" || exit 1
-   test "$(cat "$FVS_SOURCE/fv-skills/VERSION")" = "3.0.0-rc2" || exit 1
+   test "$(node -p 'require(process.argv[1]).version' "$FVS_SOURCE/package.json")" = "3.0.0-rc3" || exit 1
+   test "$(cat "$FVS_SOURCE/fv-skills/VERSION")" = "3.0.0-rc3" || exit 1
    ```
 
 3. **Install only in the agreed scope.** Inspect existing FVS installations/local patches first and

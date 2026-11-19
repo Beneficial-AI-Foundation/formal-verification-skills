@@ -9,7 +9,7 @@ directly from papers. You choose the targets, review the statements and decide w
 
 ![FVS Install](assets/terminal.svg)
 
-## SWVF 3.0.0-rc2 source preview
+## SWVF 3.0.0-rc3 source preview
 
 Use a reviewed full commit SHA and the [rc2 setup checklist](fv-skills/references/auto-setup.md#rc2-exact-source-installation)
 for SWVF. The version label alone does not establish qualification or publication. The npm and
@@ -179,7 +179,7 @@ flowchart TD
 
 ### Auto track
 
-Human re-specification is unsupported in 3.0.0-rc2; keep feedback and whole-scope partial reasons.
+Human re-specification is unsupported in 3.0.0-rc3; keep feedback and whole-scope partial reasons.
 Initial cycles and safe resume keep their gates; feedback starts no revision work or providers.
 
 ```text
