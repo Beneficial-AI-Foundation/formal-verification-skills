@@ -41,7 +41,7 @@ function usage() {
   process.stdout.write([
     'Usage: node fvs-auto.mjs profile [--project-root DIR] [--format json|text]',
     '       node fvs-auto.mjs init-state --input CHOICES.json [--project-root DIR] [--confirm-overwrite]',
-    '       node fvs-auto.mjs read-state [--project-root DIR] [--require-agreement]',
+    '       node fvs-auto.mjs read-state [--project-root DIR] [--require-agreement | --brief]',
     '       node fvs-auto.mjs record-agreement --input AGREEMENT.json [--project-root DIR] [--confirm-overwrite]',
     '       node fvs-auto.mjs record-memory --input REGISTRATION.json [--project-root PRIMARY] [--confirm-overwrite]',
     '       node fvs-auto.mjs prime-memory --request REQUEST.json --out EXCLUSIVE_DIR [--project-root PRIMARY]',
@@ -1456,7 +1456,17 @@ function progress(root, state, specs = null) {
       + warnings.map((warning) => ` Warning: ${warning}.`).join('') };
 }
 
-export function readState({ projectRoot, requireAgreement = false }) {
+// What `read-state --brief` keeps: where the run is and what to do next, a few
+// lines instead of the recorded probe profile and every readiness row.
+const BRIEF_FIELDS = ['code', 'message', 'phase', 'nextAction', 'warnings', 'pendingDecisions', 'externals'];
+
+export function readState({ projectRoot, requireAgreement = false, brief = false }) {
+  if (brief && requireAgreement) refuse('usage', '--brief cannot be combined with --require-agreement: that check returns the whole agreement');
+  const full = readFullState({ projectRoot, requireAgreement });
+  return brief ? { brief: true, ...Object.fromEntries(BRIEF_FIELDS.filter((key) => Object.hasOwn(full, key)).map((key) => [key, full[key]])) } : full;
+}
+
+function readFullState({ projectRoot, requireAgreement }) {
   const root = projectDirectory(projectRoot);
   const state = loadState(root);
   if (!state) {
@@ -2049,8 +2059,8 @@ const STATE_COMMANDS = {
     return initState({ projectRoot: flags['project-root'], choices: readInput(flags.input), confirmOverwrite: flags['confirm-overwrite'] === true });
   },
   'read-state': (argv) => {
-    const flags = stateFlags(argv, [], ['require-agreement']);
-    return readState({ projectRoot: flags['project-root'], requireAgreement: flags['require-agreement'] === true });
+    const flags = stateFlags(argv, [], ['require-agreement', 'brief']);
+    return readState({ projectRoot: flags['project-root'], requireAgreement: flags['require-agreement'] === true, brief: flags.brief === true });
   },
   'record-agreement': (argv) => {
     const flags = stateFlags(argv, ['input'], ['confirm-overwrite']);
