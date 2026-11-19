@@ -431,11 +431,26 @@ describe('the repository must be the one the destination was recorded for', () =
     });
   });
 
-  it('refuses when GIT_DIR or another variable moves git away from the working directory', () => {
-    for (const name of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_NAMESPACE']) {
-      const w = world();
-      refused(w, ['--branch', 'fvs/t'], 'git-environment', { env: { ...w.env, [name]: w.commonDir } });
-      nothingLanded(w);
+  // The variables that would move git to another repository are removed from every git call, so the command keeps acting
+  // on the repository of its working directory. Each row first shows that the variable really moves a plain git call.
+  it('is not moved by GIT_DIR, GIT_WORK_TREE or GIT_COMMON_DIR pointing at another repository', () => {
+    const rows = [
+      ['GIT_DIR', (other) => other.commonDir, ['rev-parse', '--abbrev-ref', 'HEAD'], (shown) => shown === 'fvs/x'],
+      ['GIT_WORK_TREE', (other) => other.root, ['rev-parse', '--show-toplevel'], (shown, other) => fs.realpathSync(shown) === other.root],
+      ['GIT_COMMON_DIR', (other) => other.commonDir, ['rev-parse', '--git-common-dir'], (shown, other) => fs.realpathSync(shown) === other.commonDir],
+    ];
+    for (const [name, value, probe, moved] of rows) {
+      const a = world();
+      const other = world({ skipRecord: true });
+      other.git('checkout', '-q', '-b', 'fvs/x');
+      const env = { ...a.env, [name]: value(other) };
+      const shown = spawnSync('git', ['-C', a.work, ...probe], { encoding: 'utf8', env }).stdout.trim();
+      assert.ok(moved(shown, other), `${name} moves a plain git call to the other repository (it printed ${shown})`);
+      const out = a.go(['--branch', 'fvs/t'], { env });
+      assert.equal(out.status, 0, `${name}: ${JSON.stringify(out.json)}`);
+      assert.equal(out.json.repositoryRoot, a.root, `${name}: the command acted on its own repository`);
+      assert.deepEqual(a.refs(a.right), ['refs/heads/fvs/t']);
+      assert.deepEqual([other.refs(other.right), other.refs(other.wrong), a.refs(a.wrong)], [[], [], []]);
     }
   });
 
@@ -471,20 +486,27 @@ describe('the destination cannot be redirected', () => {
     nothingLanded(w);
   });
 
-  it('a rule for a shorter prefix, a rule with an empty value and a rule set by the environment are all refused', () => {
+  it('a rule for a shorter prefix and a rule with an empty value are refused', () => {
     for (const [key, value] of [['url.X.insteadOf', 'ssh://git@github.com/'], ['url.X.pushInsteadOf', 'ssh://'], ['url.X.insteadOf', ''], ['url.X.pushInsteadOf', URL_RECORDED]]) {
       const w = world();
       w.git('config', key.replace('X', w.wrong), value);
       refused(w, ['--branch', 'fvs/t'], 'destination-rewritten');
       nothingLanded(w);
     }
+  });
+
+  // GIT_CONFIG_COUNT and its key and value pairs are removed from every git call, so a rewrite rule that only the
+  // environment holds is neither checked nor used: the check and the push see the same configuration.
+  it('a rewrite rule held only by the environment is not used: the push reaches the recorded destination', () => {
     const w = world();
     const env = { ...w.env, GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: `url.${w.wrong}.insteadOf`, GIT_CONFIG_VALUE_0: URL_RECORDED };
     assert.equal(spawnSync('git', ['-C', w.work, 'push', '-q', URL_RECORDED, 'refs/heads/fvs/t:refs/heads/fvs/t'], { env, encoding: 'utf8' }).status, 0);
-    assert.deepEqual(w.refs(w.wrong), ['refs/heads/fvs/t'], 'the row bites');
+    assert.deepEqual(w.refs(w.wrong), ['refs/heads/fvs/t'], 'the row bites: a plain push follows the environment rule');
     w.clear(w.wrong);
-    refused(w, ['--branch', 'fvs/t'], 'destination-rewritten', { env });
-    nothingLanded(w);
+    const out = w.go(['--branch', 'fvs/t'], { env });
+    assert.equal(out.status, 0, JSON.stringify(out.json));
+    assert.deepEqual(w.refs(w.right), ['refs/heads/fvs/t']);
+    assert.deepEqual(w.refs(w.wrong), []);
   });
 
   it('a rule for some other address does not stop the push', () => {
@@ -588,21 +610,6 @@ describe('what the push sends', () => {
     assert.deepEqual([w.git('status', '--porcelain'), w.git('for-each-ref', '--format=%(refname) %(objectname)')], before);
   });
 
-  it('runs the pre-push hook of the repository with GIT_DIR and GIT_WORK_TREE set to the checked repository', () => {
-    const w = world();
-    const seen = path.join(w.dir, 'hook-env.txt');
-    const hook = path.join(w.commonDir, 'hooks', 'pre-push');
-    fs.mkdirSync(path.dirname(hook), { recursive: true });
-    fs.writeFileSync(hook, `#!/bin/sh\n{ echo "GIT_DIR=$GIT_DIR"; echo "GIT_WORK_TREE=$GIT_WORK_TREE"; } > ${JSON.stringify(seen)}\n`, { mode: 0o755 });
-    const plain = spawnSync('git', ['-C', w.work, 'push', '--porcelain', URL_RECORDED, 'refs/heads/fvs/t:refs/heads/fvs/t'], { encoding: 'utf8', env: w.env });
-    assert.equal(plain.status, 0, plain.stderr);
-    assert.equal(fs.readFileSync(seen, 'utf8'), 'GIT_DIR=\nGIT_WORK_TREE=\n', 'a plain push gives the hook neither variable');
-    w.clear(w.right);
-    const out = w.go(['--branch', 'fvs/t']);
-    assert.equal(out.status, 0, JSON.stringify(out.json));
-    assert.equal(fs.readFileSync(seen, 'utf8'), `GIT_DIR=${w.commonDir}\nGIT_WORK_TREE=${w.root}\n`, 'the command names both, and git exports them to the hook');
-  });
-
   it('reports a failed record write without hiding a push that went through', () => {
     const w = world();
     fs.mkdirSync(path.join(w.root, '.formalising'));
@@ -611,6 +618,86 @@ describe('what the push sends', () => {
     assert.equal(out.status, 0, JSON.stringify(out.json));
     assert.equal(out.json.recorded, false);
     assert.match(out.json.recordError, /./);
+    assert.deepEqual(w.refs(w.right), ['refs/heads/fvs/t']);
+  });
+});
+
+// Repository hooks do not run for this push: a hook that blocks a plain push does not block the command. The row for each
+// place a hook can live first shows that the hook runs and blocks a plain push.
+describe('repository hooks', () => {
+  const marker = (w) => path.join(w.dir, 'hook-ran.txt');
+  const writeHook = (w, dir) => {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'pre-push'), `#!/bin/sh\necho ran >> ${JSON.stringify(marker(w))}\nexit 1\n`, { mode: 0o755 });
+  };
+  const rows = [
+    ['in the default hooks folder of the repository', (w) => { writeHook(w, path.join(w.commonDir, 'hooks')); return w.env; }],
+    ['in the folder that core.hooksPath names in the repository configuration', (w) => { const dir = path.join(w.dir, 'hooks-local'); writeHook(w, dir); w.git('config', 'core.hooksPath', dir); return w.env; }],
+    ['in the folder that core.hooksPath names in the global configuration', (w) => {
+      const dir = path.join(w.dir, 'hooks-global');
+      writeHook(w, dir);
+      const file = path.join(w.dir, 'global.gitconfig');
+      fs.writeFileSync(file, `[core]\n\thooksPath = ${dir}\n`);
+      return { ...w.env, GIT_CONFIG_GLOBAL: file };
+    }],
+  ];
+  for (const [why, setup] of rows) {
+    it(`does not run a pre-push hook ${why}`, () => {
+      const w = world();
+      const env = setup(w);
+      const plain = spawnSync('git', ['-C', w.work, 'push', '--porcelain', URL_RECORDED, 'refs/heads/fvs/t:refs/heads/fvs/t'], { encoding: 'utf8', env });
+      assert.notEqual(plain.status, 0, 'the row bites: the hook blocks a plain push');
+      assert.ok(fs.existsSync(marker(w)), 'the hook ran for the plain push');
+      assert.deepEqual(w.refs(w.right), []);
+      fs.rmSync(marker(w));
+      const run = spawnSync(process.execPath, [SCRIPT, '--branch', 'fvs/t'], { cwd: w.work, env, encoding: 'utf8' });
+      assert.equal(run.status, 0, run.stdout + run.stderr);
+      assert.equal(fs.existsSync(marker(w)), false, 'the hook did not run for the command');
+      assert.equal(run.stderr, '', 'git printed no warning about the hooks folder it was given');
+      assert.deepEqual(w.refs(w.right), ['refs/heads/fvs/t']);
+    });
+  }
+});
+
+// The environment git runs in: the variables that move git or add configuration are removed from every git call. The
+// user's own ssh, credential and transport settings stay, because the push has to reach the remote the way the user's
+// own pushes do.
+describe('the environment git runs in', () => {
+  const DROPPED = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CONFIG', 'GIT_CONFIG_COUNT',
+    'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_KEY_1', 'GIT_CONFIG_VALUE_1', 'GIT_CONFIG_PARAMETERS', 'GIT_NAMESPACE', 'GIT_EXEC_PATH'];
+  const KEPT = ['GIT_SSH_COMMAND', 'GIT_ASKPASS', 'SSH_AUTH_SOCK', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_TERMINAL_PROMPT', 'HOME', 'PATH'];
+
+  it('cleanEnvironment removes the listed names and the key and value pairs by prefix, and leaves the rest as it was', () => {
+    const input = Object.fromEntries([...DROPPED, 'GIT_CONFIG_KEY_17', 'GIT_CONFIG_VALUE_17'].map((name) => [name, 'x']));
+    const kept = { GIT_SSH_COMMAND: 's', GIT_ASKPASS: 'a', SSH_AUTH_SOCK: 'k', GIT_CONFIG_GLOBAL: 'g', GIT_CONFIG_SYSTEM: 'y', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0', HOME: '/h', PATH: '/p', XDG_CONFIG_HOME: '/x', GIT_PAGER: 'cat' };
+    const all = { ...input, ...kept };
+    const before = JSON.stringify(all);
+    assert.deepEqual(lib.cleanEnvironment(all), kept);
+    assert.equal(JSON.stringify(all), before, 'the environment it was given is not changed');
+  });
+
+  it('removes every listed variable from every git call the command makes, and keeps the ssh, credential and transport settings', () => {
+    const w = world();
+    const other = world({ skipRecord: true });
+    const log = path.join(w.dir, 'env.log');
+    const objects = path.join(other.commonDir, 'objects');
+    const env = {
+      ...gitStandIn(w, 'env | sort >> "$FVS_TEST_ENVLOG"\necho --- >> "$FVS_TEST_ENVLOG"'), FVS_TEST_ENVLOG: log,
+      GIT_DIR: other.commonDir, GIT_WORK_TREE: other.root, GIT_COMMON_DIR: other.commonDir, GIT_INDEX_FILE: path.join(other.dir, 'no-index'),
+      GIT_OBJECT_DIRECTORY: objects, GIT_ALTERNATE_OBJECT_DIRECTORIES: objects, GIT_CONFIG: '/dev/null',
+      GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'user.name', GIT_CONFIG_VALUE_0: 'x', GIT_CONFIG_KEY_1: 'push.pushOption', GIT_CONFIG_VALUE_1: 'y',
+      GIT_CONFIG_PARAMETERS: "'user.name=x'", GIT_NAMESPACE: 'ns', GIT_EXEC_PATH: path.join(w.dir, 'no-exec-path'),
+      GIT_ASKPASS: '/bin/true', SSH_AUTH_SOCK: '/tmp/fvs-test-agent.sock',
+    };
+    const out = w.go(['--branch', 'fvs/t'], { env });
+    assert.equal(out.status, 0, JSON.stringify(out.json));
+    assert.equal(out.json.repositoryRoot, w.root);
+    const calls = fs.readFileSync(log, 'utf8').split('---\n').filter(Boolean).map((block) => block.split('\n').filter(Boolean).map((line) => line.slice(0, line.indexOf('='))));
+    assert.ok(calls.length >= 6, `every git call was seen (${calls.length})`);
+    for (const names of calls) {
+      for (const name of DROPPED) assert.ok(!names.includes(name), `${name} reached a git call`);
+      for (const name of KEPT) assert.ok(names.includes(name), `${name} was kept`);
+    }
     assert.deepEqual(w.refs(w.right), ['refs/heads/fvs/t']);
   });
 });
