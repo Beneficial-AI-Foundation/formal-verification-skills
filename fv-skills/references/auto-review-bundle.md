@@ -213,6 +213,20 @@ translation (Aeneas, Charon and the Lean backend) is trusted by every statement 
 A patch changes generated code and is not an axiom, so the records table shows no per-statement link
 for it. An open or blocked record is shown next to every spec file whose statements reach it.
 
+For the spec pull request, `rulings` prints the claims that need a ruling before any proof starts:
+
+```text
+node <installed-scripts>/fvs-auto-bundle.mjs rulings --project-root DIR [--notes FILE] [--format markdown|json]
+```
+
+It needs only `externals.json`. Each open record is listed with its layer, the behaviour it
+assumes, why it has no model, the claims the caller names for it and the owner's four choices (accept
+it as a named assumption, have it modelled, narrow the claim, block it). A record with no claim named
+reads `NOT STATED`. The list is as complete as the records are: a function that no record names is
+not in it, so the reviewers confirm that each external function a statement reaches has a record
+before the pull request opens. The list records no ruling. After the owner rules, the orchestrator
+records the decision with `record-externals`.
+
 The notes file holds what no run record does. The reviewers' briefs and the owner's questions live
 in the orchestrator's conversation, so the orchestrator states them:
 
@@ -234,5 +248,5 @@ An empty list is the caller's statement that there is none. A spec file with no 
 `NOT STATED` and its pass is shown as `PASS, qualifications NOT STATED`, never as a plain `PASS`.
 Every pass the brief changed, and every pass an open question qualifies, shows as
 `PASS, qualified`. A notes file that names a spec file with no recorded review, or a record that
-`externals.json` does not hold, is refused. The `claims` entries are used by the ruling list in the
-spec pull request, not by the trust section.
+`externals.json` does not hold, is refused. The `claims` entries are used by the ruling list, not by
+the trust section, and the `reviews` entries are used by the trust section, not by the ruling list.

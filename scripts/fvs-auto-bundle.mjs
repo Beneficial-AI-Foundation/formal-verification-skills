@@ -803,9 +803,10 @@ function symbolPatterns(symbol) {
 }
 // A receipt axiom name has no Lean project root segment, a model symbol does, so a pattern also
 // counts with its first segment removed.
-function covers(patterns, axiom) {
+function matcher(patterns) {
   const wanted = patterns.flatMap(p => [p, p.split('.').slice(1).join('.')]).filter(Boolean);
-  return wanted.some(p => new RegExp('^' + p.split('*').map(x => x.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$').test(axiom));
+  const expressions = wanted.map(p => new RegExp('^' + p.split('*').map(x => x.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$'));
+  return axiom => expressions.some(e => e.test(axiom));
 }
 
 function readRecord(file, what, problemOf) {
@@ -879,16 +880,18 @@ export function trustSection({ projectRoot, commit: sha, notes = null }) {
   const beyondLean = list => list.filter(a => !LEAN_STANDARD.includes(a));
   const records = loadExternals(autoDir);
   if (records === null && statements.some(s => s.built && beyondLean(s.axioms).length)) fail('trust-externals-missing', 'externals.json is absent but statements rest on axioms beyond Lean\'s three; run /fvs:auto-extract');
-  const registry = (records ?? []).map(r => ({ record: r, layer: layerOf(r), patterns: symbolPatterns(r.model.symbol) }));
+  const registry = (records ?? []).map(r => ({ record: r, layer: layerOf(r), covers: matcher(symbolPatterns(r.model.symbol)) }));
   const status = loadSpecStatus(root);
   const checked = readNotes(notes, status.specFiles.map(f => f.specFile), registry.map(x => x.record));
 
   // Join every statement's axiom list to the records. An axiom no record names stays visible.
   const byRecord = new Map(registry.map(x => [x.record.id, { statements: new Set(), axioms: new Set() }]));
+  const hitsOf = new Map();
+  const hitsFor = axiom => { if (!hitsOf.has(axiom)) hitsOf.set(axiom, registry.filter(x => x.covers(axiom))); return hitsOf.get(axiom); };
   const perStatement = statements.map(s => {
     const touched = new Map(), unnamed = [];
     for (const axiom of s.built ? beyondLean(s.axioms) : []) {
-      const hits = registry.filter(x => covers(x.patterns, axiom));
+      const hits = hitsFor(axiom);
       if (!hits.length) unnamed.push(axiom);
       for (const x of hits) {
         touched.set(x.record.id, x.record);
@@ -973,19 +976,57 @@ function renderTrust(m) {
   return out.join('\n').replace(/\n{3,}/g, '\n\n') + '\n';
 }
 
-// trust: markdown by default (paste it into the body), or the record as JSON.
-function textCli(args) {
-  const allowed = ['--project-root', '--commit', '--notes', '--format'], flags = {};
-  const usage = 'trust --project-root DIR --commit SHA [--notes FILE] [--format markdown|json]';
+// ---- Ruling list for the spec pull request -------------------------------------------------
+// Each open boundary record is an exact claim that needs a model or an accepted assumption. The
+// spec pull request lists them in plain words with the owner's choices, so the owner can rule at
+// the merge and the proofs do not wait for an answer.
+const CHOICES = [
+  'Accept it as a named assumption. The proofs rest on it, and the record says it is a limitation and not a proof.',
+  'Have it modelled (`/fvs:model-external`). The model is an assumption too, until it is proved to match the Rust code.',
+  'Narrow the claim. The statement becomes a conditional statement with the behaviour as a hypothesis, or the item leaves the scope.',
+  'Block it. The run stops on this claim until you decide.',
+];
+
+export function rulingList({ projectRoot, notes = null }) {
+  const root = projectRootOf(projectRoot), autoDir = path.join(root, AUTO_DIR);
+  const records = loadExternals(autoDir);
+  if (records === null) fail('trust-externals-missing', 'externals.json is absent; run /fvs:auto-extract before listing the claims that need a ruling');
+  const checked = readNotes(notes, loadSpecStatus(root).specFiles.map(f => f.specFile), records);
+  const open = records.filter(r => r.status === 'open').map(r => ({ id: r.id, layer: layerOf(r), source: r.source.symbol,
+    claimedBehaviour: r.claimedBehaviour ?? null, reason: r.reason ?? null, claims: checked.claims[r.id] ?? null }));
+  const decided = { accepted: records.filter(r => r.status === 'assumption-accepted').length, blocked: records.filter(r => r.status === 'blocked').length };
+  const unlisted = Object.keys(checked.claims).filter(id => !open.some(r => r.id === id));
+  const out = ['## Claims that need a model or an accepted assumption', '',
+    'These exact claims cannot be proved from the extraction alone: each rests on a function the extraction leaves without a model. Please rule on each one when you merge this pull request, so that the proofs do not wait for an answer. Nothing here is decided yet.', ''];
+  if (!open.length) out.push('No record in externals.json is open, so no recorded boundary needs a ruling.', '');
+  for (const r of open) {
+    out.push(`### \`${cell(r.id)}\`: ${cell(r.source)}`, '',
+      `- What it is: ${LAYERS[r.layer]}.`,
+      `- Claims that rest on it: ${r.claims ? cell(r.claims.join('; ')) : 'NOT STATED. Name the exact claims that need it, or say that none does.'}`,
+      `- What the claim assumes: ${cell(r.claimedBehaviour ?? 'not recorded')}`,
+      `- Why there is no model: ${cell(r.reason ?? 'not recorded')}`,
+      '- Your choices:', ...CHOICES.map((choice, i) => `  ${i + 1}. ${choice}`), '');
+  }
+  if (unlisted.length) out.push(`The notes name claims for records that already hold a decision, so they are not listed: ${unlisted.map(id => '`' + id + '`').join(', ')}.`, '');
+  out.push(`${decided.accepted} records already hold an accepted assumption and ${decided.blocked} are blocked; they are not asked again. This list is only as complete as the records: a function the extraction left without a model that no record names is not here, so the reviewers confirm before this pull request opens that each such function has a record.`);
+  return { schema: 'fvs/auto-pr-rulings', schemaVersion: 1, authority: 'text for a pull request body; no proof, acceptance or dispatch authority',
+    open, decided, unlistedClaims: unlisted, markdown: out.join('\n') + '\n' };
+}
+
+// trust and rulings: markdown by default (paste it into the body), or the record as JSON.
+function textCli(command, args) {
+  const allowed = command === 'trust' ? ['--project-root', '--commit', '--notes', '--format'] : ['--project-root', '--notes', '--format'], flags = {};
+  const usage = command + ' --project-root DIR' + (command === 'trust' ? ' --commit SHA' : '') + ' [--notes FILE] [--format markdown|json]';
   while (args.length) { const k = args.shift(), v = args.shift(); if (!allowed.includes(k) || !v || Object.hasOwn(flags, k)) fail('bundle-usage', usage); flags[k] = v; }
   if (!flags['--project-root'] || !['markdown', 'json', undefined].includes(flags['--format'])) fail('bundle-usage', usage);
-  const result = trustSection({ projectRoot: flags['--project-root'], commit: flags['--commit'], notes: flags['--notes'] && path.resolve(flags['--notes']) });
+  const options = { projectRoot: flags['--project-root'], notes: flags['--notes'] && path.resolve(flags['--notes']) };
+  const result = command === 'trust' ? trustSection({ ...options, commit: flags['--commit'] }) : rulingList(options);
   return flags['--format'] === 'json' ? result : result.markdown;
 }
 
 async function cli(args) {
   const command = args.shift(), flags = {};
-  if (command === 'trust') return textCli(args);
+  if (command === 'trust' || command === 'rulings') return textCli(command, args);
   while (args.length) { const k = args.shift(), v = args.shift(); if (!['--request', '--out'].includes(k) || !v || Object.hasOwn(flags, k)) fail('bundle-usage', 'build/verify --request FILE --out DIR'); flags[k] = v; }
   if (!['build', 'verify'].includes(command) || !flags['--request'] || !flags['--out']) fail('bundle-usage', 'build/verify --request FILE --out DIR');
   const input = path.resolve(flags['--request']);

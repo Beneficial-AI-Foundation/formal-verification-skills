@@ -190,6 +190,77 @@ describe('pull request trust section', () => {
     });
   });
 
+  describe('ruling list for the spec pull request', () => {
+    const OPEN = [
+      record('std-fmt', 'external', 'open', 'core::num::error::{impl Debug for TryFromIntError}::fmt', 'demo.core.num.error.TryFromIntError.Insts.CoreFmtDebug.fmt (axiom)',
+        { claimedBehaviour: 'Debug formatting only writes to the formatter', reason: 'no model at the pin' }),
+      record('dep-sha2', 'external', 'open', 'libcrux_sha2::hacl::h256', 'demo.libcrux_sha2.hacl.h256 (axiom)', { claimedBehaviour: 'h256 computes SHA-256', reason: 'published crate, not extracted' }),
+      record('std-div', 'external', 'assumption-accepted', 'core::num::{u32}::wrapping_div', 'demo.core.num.U32.wrapping_div (axiom)'),
+      record('sp-01', 'semantic-patch', 'blocked', 'demo::hmac::compute', 'demo.hacl.hmac.compute'),
+    ];
+
+    it('lists each open record with what it assumes, why it has no model and the owner\'s choices', () => {
+      const result = api.rulingList({ projectRoot: project({ externals: OPEN }) });
+      assert.deepEqual(result.open.map((r) => r.id), ['std-fmt', 'dep-sha2']);
+      assert.deepEqual(result.decided, { accepted: 1, blocked: 1 });
+      const md = result.markdown;
+      assert.match(md, /^## Claims that need a model or an accepted assumption\n/);
+      assert.match(md, /### `std-fmt`: core::num::error::\{impl Debug for TryFromIntError\}::fmt/);
+      assert.match(md, /What the claim assumes: Debug formatting only writes to the formatter/);
+      assert.match(md, /Why there is no model: no model at the pin/);
+      assert.match(md, /What it is: standard-library function without a model/);
+      assert.match(md, /What it is: dependency crate assumed correct/);
+      for (const choice of [/1\. Accept it as a named assumption/, /2\. Have it modelled/, /3\. Narrow the claim/, /4\. Block it/]) assert.match(md, choice);
+      assert.doesNotMatch(md, /### `std-div`/, 'a record that already has a decision is not asked again');
+      assert.match(md, /Nothing here is decided yet/);
+    });
+
+    it('shows the claims the caller names for a record and says NOT STATED for one with none', () => {
+      const root = project({ externals: OPEN });
+      const notes = writeNotes(root, { claims: { 'std-fmt': ['Error values print without side effects', 'Debug output of a failed conversion'] } });
+      const md = api.rulingList({ projectRoot: root, notes }).markdown;
+      const section = (id) => md.split('### ').find((part) => part.startsWith('`' + id + '`'));
+      assert.match(section('std-fmt'), /Claims that rest on it: Error values print without side effects; Debug output of a failed conversion/);
+      assert.match(section('dep-sha2'), /Claims that rest on it: NOT STATED/);
+    });
+
+    it('says when the notes hold claims for a record that already has a decision', () => {
+      const root = project({ externals: OPEN });
+      const notes = writeNotes(root, { claims: { 'std-div': ['wrapping division of a counter'] } });
+      const result = api.rulingList({ projectRoot: root, notes });
+      assert.deepEqual(result.unlistedClaims, ['std-div']);
+      assert.match(result.markdown, /claims for records that already hold a decision, so they are not listed: `std-div`/);
+    });
+
+    it('says that nothing is open without claiming the list is complete', () => {
+      const md = api.rulingList({ projectRoot: project() , notes: null }).markdown;
+      assert.match(md, /### `std-fmt`/);
+      const none = api.rulingList({ projectRoot: project({ externals: [EXTERNALS[2]] }) }).markdown;
+      assert.match(none, /No record in externals\.json is open/);
+      assert.match(none, /only as complete as the records/);
+    });
+
+    it('refuses an absent registry and notes that name a record it does not hold, and writes nothing', () => {
+      refuses(() => api.rulingList({ projectRoot: project({ externals: null }) }), 'trust-externals-missing');
+      const root = project({ externals: OPEN });
+      refuses(() => api.rulingList({ projectRoot: root, notes: writeNotes(root, { claims: { missing: ['a claim'] } }) }), 'trust-notes-invalid');
+      const before = snapshot(root);
+      api.rulingList({ projectRoot: root });
+      assert.deepEqual(snapshot(root), before);
+    });
+
+    it('is a command that takes no commit', () => {
+      const root = project({ externals: OPEN });
+      const run = (...args) => spawnSync(process.execPath, [SCRIPT, 'rulings', ...args], { encoding: 'utf8' });
+      const ok = run('--project-root', root);
+      assert.equal(ok.status, 0, ok.stderr);
+      assert.match(ok.stdout, /^## Claims that need a model or an accepted assumption\n/);
+      const extra = run('--project-root', root, '--commit', COMMIT);
+      assert.equal(extra.status, 7);
+      assert.equal(JSON.parse(extra.stdout).code, 'bundle-usage');
+    });
+  });
+
   describe('command line', () => {
     const run = (...args) => spawnSync(process.execPath, [SCRIPT, 'trust', ...args], { encoding: 'utf8' });
 

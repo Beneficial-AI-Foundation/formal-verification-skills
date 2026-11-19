@@ -86,6 +86,26 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
    Put in the body what each file covers, the items you left out, the axioms
    the statements rest on, the review rounds that were held, and which commit holds the generated
    translation and the Lake change. Then record the pull request (see "Recording the pull request").
+
+   **Put the rulings in the body.** The owner should be able to rule on every claim that needs a model
+   or an accepted assumption when the spec pull request is merged, before any proof starts. A claim
+   needs one when it is exact and rests on the behaviour of a function the extraction leaves without
+   a model: a standard-library function, a dependency function or a function left opaque. Before the
+   body is written:
+   1. For each statement, run `#print axioms` on the extracted functions it talks about. The proofs
+      are still `sorry`, so the statement's own list says nothing, but each extraction axiom in the
+      list of a function names an external function that the claim reaches.
+   2. Check that each such function has a record in `externals.json`. If one has none, the extraction
+      missed it: record it as open with `record-externals` (kind `external` or `opaque`) before you go on.
+   3. Save a notes file that names, for each open record, the exact claims that need it in plain words
+      (`auto-review-bundle.md`, "Pull request trust section", describes the file), and run
+      `node "$HOME/.claude/scripts/fvs-auto-bundle.mjs" rulings --project-root . --notes FILE`.
+      Paste its markdown into the body unchanged. It lists each open record with what it assumes, why
+      it has no model, the claims that rest on it and the owner's choices: accept it as a named
+      assumption, have it modelled, narrow the claim, or block it. A record with no claim named reads
+      `NOT STATED`, so say which claims need it, or that none does.
+   After the owner rules, record the decision with `record-externals` (the `decision` names the owner,
+   the date and where the ruling is). Only the owner decides; never record a ruling yourself.
 6. **Stop for the owner.** The owner reviews, prunes, marks the pull request ready and merges it.
    Once it is merged, record the merge (see "Recording the pull request"); `/fvs:auto-execute` starts
    the proofs after that.
