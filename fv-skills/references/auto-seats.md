@@ -65,7 +65,7 @@ The driver runs in the orchestrator's context, from the one fixed trusted engine
 |--------|------|-------|
 | `fvs-auto-agreement.mjs` | orchestrator drafts, owner records | Drafts the agreement fence and prints its digest. It never records. |
 | `fvs-contract-registry.mjs` (`register`, `revise`, `status`) | orchestrator | Appends contract records for closure-plan nodes. |
-| `fvs-auto-bundle.mjs` (`build`, `verify`) | orchestrator | Collects and checks the human review bundle. |
+| `fvs-auto-bundle.mjs` (`build`, `verify`, `trust`) | orchestrator | Collects and checks the human review bundle. `trust` reads the run records and prints the trust section of the proof pull request body; it writes nothing. |
 | `fvs-auto-actor-permissions.py` | orchestrator | Run once per actor for an explicitly granted Claude gate profile. |
 
 What the agreement helper's path checks cover. `--out` must name a new file. The helper resolves the destination and the protected places through every link and compares real paths, so it refuses a destination inside the project's `.formalising` directory, inside its `auto-fv` area (each protected where it really lives, also when it is a link) or among the engine scripts. The dry run keeps its scratch copy in a temporary directory outside the project. A new file elsewhere, even inside the project, is allowed.

@@ -4,7 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { readState } from './fvs-auto.mjs';
+import { readState, specStatus } from './fvs-auto.mjs';
 import { memoryDataSnapshot, memoryHash } from './fvs-project-memory.mjs';
 import { parseExecution, assertRunning, runControl, withProcessCancellation } from './fvs-execution.mjs';
 import { transitionJson } from './fvs-auto-transitions.mjs';
@@ -760,8 +760,232 @@ function verifyReviewBundleBody(raw,created=()=>{}) {
   save(path.join(options.out, 'result.json'), result); return result;
 }
 
+// ---- Pull request trust section ------------------------------------------------------------
+// Text for a pull request body, generated from the run records: the build check receipt of the
+// commit, externals.json and specs.json. It only reads. The text is neither a proof nor an
+// acceptance nor a dispatch permission, and it does not use the review bundle formats above.
+const AUTO_DIR = path.join('.formalising', 'auto-fv');
+const LEAN_STANDARD = ['propext', 'Classical.choice', 'Quot.sound'];
+const BOUNDARY_KINDS = ['opaque', 'external', 'handwritten-model', 'semantic-patch'];
+const BOUNDARY_STATES = { open: 'open', 'assumption-accepted': 'accepted assumption', blocked: 'blocked' };
+// Plain layer names. A project's agreement may label some of these (for example A1 and A2).
+const LAYERS = {
+  'translation-patch': 'accepted translation patch',
+  'dependency-crate': 'dependency crate assumed correct',
+  'standard-library-gap': 'standard-library function without a model',
+  'project-opaque': 'project function left opaque',
+  'handwritten-model': 'hand-written model',
+  external: 'external function',
+};
+const STANDARD_CRATES = new Set(['core', 'alloc', 'std']);
+const cell = v => String(v).replace(/\|/g, '\\|').replace(/\s*\n\s*/g, ' ');
+const plain = v => v !== null && typeof v === 'object' && !Array.isArray(v);
+const strings = v => Array.isArray(v) && v.every(text);
+
+// The layer comes from the record's kind and, for an external function, from the crate its
+// source symbol names. The record has no layer field and its id carries no meaning here.
+function layerOf(record) {
+  if (record.kind === 'semantic-patch') return 'translation-patch';
+  if (record.kind === 'handwritten-model') return 'handwritten-model';
+  if (record.kind === 'opaque') return 'project-opaque';
+  const crate = /^([A-Za-z_]\w*)::/.exec(record.source.symbol.trim())?.[1];
+  return crate === undefined ? 'external' : STANDARD_CRATES.has(crate) ? 'standard-library-gap' : 'dependency-crate';
+}
+
+// A record's model symbol is free text: it may hold several Lean names, a `*` glob, a brace
+// group such as `impl_hacl.{Sha256, Sha384}` and remarks in parentheses.
+function symbolPatterns(symbol) {
+  let rest = symbol.replace(/\([^)]*\)/g, ' ');
+  for (let group; (group = /([^\s{},]*)\{([^{}]*)\}([^\s,]*)/.exec(rest));) {
+    rest = rest.replace(group[0], group[2].split(',').map(item => group[1] + item.trim() + group[3]).join(' '));
+  }
+  return rest.split(/[\s,/]+/).filter(word => word !== 'and' && /^[\w'.*]+$/.test(word));
+}
+// A receipt axiom name has no Lean project root segment, a model symbol does, so a pattern also
+// counts with its first segment removed.
+function covers(patterns, axiom) {
+  const wanted = patterns.flatMap(p => [p, p.split('.').slice(1).join('.')]).filter(Boolean);
+  return wanted.some(p => new RegExp('^' + p.split('*').map(x => x.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$').test(axiom));
+}
+
+function readRecord(file, what, problemOf) {
+  let value;
+  try { value = JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch (e) { if (e.code === 'ENOENT') return null; fail('trust-record-invalid', what + ' is unreadable or not JSON: ' + file); }
+  const problem = problemOf(value);
+  if (problem) fail('trust-record-invalid', what + ' is malformed (' + problem + '): ' + file);
+  return value;
+}
+const receiptProblem = (r, commitSha) => {
+  if (!plain(r) || r.kind !== 'fvs-build-check' || r.commit !== commitSha) return 'not the build check receipt of this commit';
+  if (typeof r.accepted !== 'boolean' || !text(r.label) || !Array.isArray(r.specFiles)) return 'no verdict, label or spec file list';
+  const bad = r.specFiles.some(f => !plain(f) || !text(f.path) || !Array.isArray(f.statements)
+    || f.statements.some(s => !plain(s) || !text(s.name) || !text(s.status) || !(s.axioms === null || strings(s.axioms))));
+  return bad ? 'a spec file or statement row is malformed' : null;
+};
+const externalsProblem = v => {
+  if (!plain(v) || v.schema !== 'fvs/auto-externals' || v.schemaVersion !== 1 || !Array.isArray(v.records)) return 'schema must be fvs/auto-externals version 1';
+  const bad = v.records.some(r => !plain(r) || !text(r.id) || !BOUNDARY_KINDS.includes(r.kind) || !Object.hasOwn(BOUNDARY_STATES, r.status)
+    || !text(r.source?.symbol) || !text(r.model?.symbol));
+  if (bad) return 'a record lacks its id, kind, status, source symbol or model symbol, or has a status this tool does not know';
+  return new Set(v.records.map(r => r.id)).size === v.records.length ? null : 'a record id is duplicated';
+};
+
+// What the caller knows that no run record holds: the owner questions and the changes to a
+// reviewer's brief for each spec file, and the exact claims that rest on a recorded boundary.
+// An empty list is the caller's statement that there are none; a missing entry says nothing.
+function readNotes(file, specFiles, records) {
+  if (file === null || file === undefined) return { reviews: {}, claims: {} };
+  const notes = readRecord(file, 'notes file', v => {
+    if (!plain(v) || v.schema !== 'fvs/auto-pr-notes' || v.schemaVersion !== 1 || Object.keys(v).some(k => !['schema', 'schemaVersion', 'reviews', 'claims'].includes(k))) return 'schema must be fvs/auto-pr-notes version 1 with reviews and claims only';
+    if (v.reviews !== undefined && !(plain(v.reviews) && Object.values(v.reviews).every(r => plain(r) && Object.keys(r).length === 2 && strings(r.ownerQuestions) && strings(r.briefChanges)))) return 'each review entry needs ownerQuestions and briefChanges, both lists of text';
+    if (v.claims !== undefined && !(plain(v.claims) && Object.values(v.claims).every(c => strings(c) && c.length))) return 'each claim entry needs a non-empty list of text';
+    return null;
+  });
+  if (notes === null) fail('trust-notes-invalid', 'notes file not found: ' + file);
+  const reviews = notes.reviews ?? {}, claims = notes.claims ?? {};
+  for (const name of Object.keys(reviews)) if (!specFiles.includes(name)) fail('trust-notes-invalid', 'notes name a spec file with no recorded review: ' + name);
+  for (const id of Object.keys(claims)) if (!records.some(r => r.id === id)) fail('trust-notes-invalid', 'notes name a record that externals.json does not hold: ' + id);
+  return { reviews, claims };
+}
+
+function projectRootOf(raw) {
+  try {
+    const root = fs.realpathSync(path.resolve(raw));
+    if (fs.lstatSync(root).isDirectory()) return root;
+  } catch { /* falls through to the refusal */ }
+  return fail('trust-usage', 'the project root is not an existing directory: ' + raw);
+}
+function loadExternals(autoDir) {
+  return readRecord(path.join(autoDir, 'externals.json'), 'externals.json', externalsProblem)?.records ?? null;
+}
+function loadSpecStatus(root) {
+  try { return specStatus({ projectRoot: root }); }
+  catch (e) { return fail('trust-record-invalid', 'spec review records unreadable: ' + e.message); }
+}
+// The proof pull request heads the engine recorded, oldest first, and the merge commit of a merged one.
+function proofPrs(autoDir) {
+  const specs = readRecord(path.join(autoDir, 'specs.json'), 'specs.json', v => (plain(v) && Array.isArray(v.specs) ? null : 'no specs list'));
+  return (specs?.prs ?? []).filter(pr => pr?.kind === 'proof');
+}
+
+export function trustSection({ projectRoot, commit: sha, notes = null }) {
+  const root = projectRootOf(projectRoot), autoDir = path.join(root, AUTO_DIR);
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(sha ?? '')) fail('trust-usage', 'a full commit SHA is required');
+  const receipt = readRecord(path.join(autoDir, 'build-check', sha + '.json'), 'build check receipt', r => receiptProblem(r, sha));
+  if (receipt === null) fail('trust-receipt-missing', 'no build check receipt for commit ' + sha + '; run the build check on that commit first');
+  const statements = receipt.specFiles.flatMap(f => f.statements.map(s => ({ file: f.path, name: s.name, built: s.status === 'built' && s.axioms !== null,
+    axioms: s.axioms ?? [], flags: strings(s.flags) ? s.flags : [] })));
+  const beyondLean = list => list.filter(a => !LEAN_STANDARD.includes(a));
+  const records = loadExternals(autoDir);
+  if (records === null && statements.some(s => s.built && beyondLean(s.axioms).length)) fail('trust-externals-missing', 'externals.json is absent but statements rest on axioms beyond Lean\'s three; run /fvs:auto-extract');
+  const registry = (records ?? []).map(r => ({ record: r, layer: layerOf(r), patterns: symbolPatterns(r.model.symbol) }));
+  const status = loadSpecStatus(root);
+  const checked = readNotes(notes, status.specFiles.map(f => f.specFile), registry.map(x => x.record));
+
+  // Join every statement's axiom list to the records. An axiom no record names stays visible.
+  const byRecord = new Map(registry.map(x => [x.record.id, { statements: new Set(), axioms: new Set() }]));
+  const perStatement = statements.map(s => {
+    const touched = new Map(), unnamed = [];
+    for (const axiom of s.built ? beyondLean(s.axioms) : []) {
+      const hits = registry.filter(x => covers(x.patterns, axiom));
+      if (!hits.length) unnamed.push(axiom);
+      for (const x of hits) {
+        touched.set(x.record.id, x.record);
+        byRecord.get(x.record.id).statements.add(s.file + '\0' + s.name);
+        byRecord.get(x.record.id).axioms.add(axiom);
+      }
+    }
+    const ids = [...touched.keys()];
+    return { file: s.file, name: s.name, built: s.built, flags: s.flags, leanStandard: s.built ? s.axioms.filter(a => LEAN_STANDARD.includes(a)).length : null,
+      accepted: ids.filter(id => touched.get(id).status === 'assumption-accepted'), unresolved: ids.filter(id => touched.get(id).status !== 'assumption-accepted'),
+      unnamed };
+  });
+  const distinct = new Set(statements.filter(s => s.built).flatMap(s => s.axioms)), unnamedAxioms = new Set(perStatement.flatMap(s => s.unnamed));
+  const tally = state => registry.filter(x => x.record.status === state).length;
+  const recordRows = registry.map(x => ({ id: x.record.id, kind: x.record.kind, layer: x.layer, status: x.record.status,
+    decision: x.record.decision ? { by: x.record.decision.by, at: x.record.decision.at } : null,
+    statements: byRecord.get(x.record.id).statements.size, axioms: byRecord.get(x.record.id).axioms.size }));
+  const proofs = proofPrs(autoDir), recorded = proofs.at(-1) ?? null;
+
+  // Review rows. An open record that a file's statements rest on is an open owner question
+  // for that file, whatever the caller states.
+  const reviews = status.specFiles.map(f => {
+    const rows = perStatement.filter(s => s.file === f.specFile || s.file.endsWith('/' + f.specFile) || f.specFile.endsWith('/' + s.file));
+    const opened = [...new Set(rows.flatMap(s => s.unresolved))];
+    const stated = checked.reviews[f.specFile] ?? null;
+    return { specFile: f.specFile, round: f.round, verdict: f.verdict, label: f.label, stale: f.stale, statements: rows.length,
+      openRecords: opened, ownerQuestions: stated?.ownerQuestions ?? null, briefChanges: stated?.briefChanges ?? null };
+  });
+  const model = {
+    schema: 'fvs/auto-pr-trust', schemaVersion: 1, authority: 'text for a pull request body; no proof, acceptance or dispatch authority',
+    commit: sha, tree: receipt.tree ?? null, build: { accepted: receipt.accepted, label: receipt.label },
+    recordedProofPr: recorded === null ? null : recorded.merged ? { mergeCommit: recorded.mergeCommit ?? null, merged: true } : { head: recorded.head ?? null, url: recorded.url ?? null, merged: false },
+    checks: { records: { total: registry.length, accepted: tally('assumption-accepted'), open: tally('open'), blocked: tally('blocked') },
+      axioms: { distinct: distinct.size, leanStandard: LEAN_STANDARD.filter(a => distinct.has(a)).length, namedByRecords: distinct.size - LEAN_STANDARD.filter(a => distinct.has(a)).length - unnamedAxioms.size, namedByNoRecord: unnamedAxioms.size },
+      statements: { total: statements.length, built: statements.filter(s => s.built).length, notBuilt: statements.filter(s => !s.built).map(s => s.name) },
+      openRecordsInAxiomLists: recordRows.filter(r => r.status !== 'assumption-accepted' && r.statements > 0).map(r => r.id),
+      recordsInNoAxiomList: recordRows.filter(r => r.layer !== 'translation-patch' && r.statements === 0).map(r => r.id) },
+    records: recordRows, statements: perStatement, reviews, unnamedAxioms: [...unnamedAxioms].sort(),
+  };
+  return { ...model, markdown: renderTrust(model) };
+}
+
+function renderTrust(m) {
+  const c = m.checks, out = [];
+  const list = ids => (ids.length ? ids.map(id => '`' + id + '`').join(', ') : 'none');
+  out.push('## Trust base', '',
+    `Commit \`${m.commit}\`. Build check: ${m.build.label}.`,
+    m.recordedProofPr === null ? 'Recorded proof pull request: none.'
+      : m.recordedProofPr.merged ? `Recorded proof pull request: merged at \`${m.recordedProofPr.mergeCommit}\`${m.recordedProofPr.mergeCommit === m.commit ? '' : ' (not the commit above)'}.`
+        : `Recorded proof pull request head: \`${m.recordedProofPr.head}\`${m.recordedProofPr.head === m.commit ? '' : ' (not the commit above; this text describes the commit above)'}.`,
+    'Published head: not read. This text never calls GitHub; compare it with the pull request itself.', '',
+    `${c.statements.built} of ${c.statements.total} statements were built by the check.${c.statements.notBuilt.length ? ' Not built: ' + list(c.statements.notBuilt) + '.' : ''}`,
+    `externals.json holds ${c.records.total} records: ${c.records.accepted} accepted assumptions, ${c.records.open} open, ${c.records.blocked} blocked.`,
+    `The statements' axiom lists hold ${c.axioms.distinct} distinct axioms: ${c.axioms.leanStandard} from Lean's standard three, ${c.axioms.namedByRecords} named by an externals record and ${c.axioms.namedByNoRecord} named by no record.`,
+    'Every statement also rests on the Aeneas and Charon translation and the Lean backend, which are trusted and not checked here.', '');
+  out.push('### What a pass means', '',
+    'A pass means that a fresh reviewer found the statement faithful to the Rust code and strong enough to be useful. It is not a proof and it is not acceptance. Acceptance is the build check line above, for that commit only.', '',
+    '| Spec file | Round | Verdict | Statements | Open owner questions | Reviewer brief changes |', '|---|---|---|---|---|---|');
+  for (const r of m.reviews) {
+    const questions = [...r.openRecords.map(id => 'open record `' + id + '`'), ...(r.ownerQuestions ?? [])];
+    const unstated = r.ownerQuestions === null || r.briefChanges === null;
+    // A pass is plain only when the caller stated both lists and neither holds anything.
+    const pass = !questions.length && !r.briefChanges?.length && !unstated ? 'PASS' : questions.length || r.briefChanges?.length ? 'PASS, qualified' : 'PASS, qualifications NOT STATED';
+    const verdict = (r.verdict === 'pass' ? pass : r.label) + (r.stale ? ', STALE: the file changed after this review' : '');
+    out.push(`| ${cell(r.specFile)} | ${r.round} | ${cell(verdict)} | ${r.statements} | ${cell(r.ownerQuestions === null ? [...questions, 'NOT STATED'].join('; ') : questions.join('; ') || 'none')} | ${cell(r.briefChanges === null ? 'NOT STATED' : r.briefChanges.join('; ') || 'none')} |`);
+  }
+  if (!m.reviews.length) out.push('| (no review round is recorded) | | | | | |');
+  out.push('', '### Records the statements rest on', '', '| Record | What it is | Status | Decision | Statements | Axioms |', '|---|---|---|---|---|---|');
+  for (const r of [...m.records].sort((a, b) => (a.status === 'open') === (b.status === 'open') ? a.layer.localeCompare(b.layer) || a.id.localeCompare(b.id) : a.status === 'open' ? -1 : 1)) {
+    out.push(`| \`${cell(r.id)}\` | ${LAYERS[r.layer]} | ${BOUNDARY_STATES[r.status]} | ${r.decision ? cell(r.decision.by + ', ' + r.decision.at) : 'none yet'} | ${r.layer === 'translation-patch' ? 'no per-statement link' : r.statements} | ${r.layer === 'translation-patch' ? 'not an axiom' : r.axioms} |`);
+  }
+  if (!m.records.length) out.push('| (externals.json holds no record) | | | | | |');
+  out.push('', `Open or blocked records in a statement's axiom list: ${list(c.openRecordsInAxiomLists)}. Records in no statement's axiom list: ${list(c.recordsInNoAxiomList)}.`,
+    'An axiom list shows what a statement can reach through the extracted code. It does not show which of those axioms a proof uses.', '');
+  out.push('### Axioms no record names', '',
+    m.unnamedAxioms.length ? m.unnamedAxioms.map(a => '`' + a + '`').join(', ') + '.' : 'None.',
+    m.unnamedAxioms.length ? 'These come from the receipt. No record in externals.json names them. Hand-written axioms are not recorded one by one; the record that accepted their behaviour does not name them either.' : '', '');
+  out.push('### Per statement', '', '| Statement | Accepted records in its axiom list | Open or blocked records | Axioms no record names | Flags |', '|---|---|---|---|---|');
+  for (const s of m.statements) {
+    out.push(`| ${cell(s.name)} | ${s.built ? list(s.accepted) : 'not built'} | ${s.built ? list(s.unresolved) : 'not built'} | ${s.built ? s.unnamed.length : 'not built'} | ${s.flags.length ? cell(s.flags.join(', ')) : 'none'} |`);
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n') + '\n';
+}
+
+// trust: markdown by default (paste it into the body), or the record as JSON.
+function textCli(args) {
+  const allowed = ['--project-root', '--commit', '--notes', '--format'], flags = {};
+  const usage = 'trust --project-root DIR --commit SHA [--notes FILE] [--format markdown|json]';
+  while (args.length) { const k = args.shift(), v = args.shift(); if (!allowed.includes(k) || !v || Object.hasOwn(flags, k)) fail('bundle-usage', usage); flags[k] = v; }
+  if (!flags['--project-root'] || !['markdown', 'json', undefined].includes(flags['--format'])) fail('bundle-usage', usage);
+  const result = trustSection({ projectRoot: flags['--project-root'], commit: flags['--commit'], notes: flags['--notes'] && path.resolve(flags['--notes']) });
+  return flags['--format'] === 'json' ? result : result.markdown;
+}
+
 async function cli(args) {
   const command = args.shift(), flags = {};
+  if (command === 'trust') return textCli(args);
   while (args.length) { const k = args.shift(), v = args.shift(); if (!['--request', '--out'].includes(k) || !v || Object.hasOwn(flags, k)) fail('bundle-usage', 'build/verify --request FILE --out DIR'); flags[k] = v; }
   if (!['build', 'verify'].includes(command) || !flags['--request'] || !flags['--out']) fail('bundle-usage', 'build/verify --request FILE --out DIR');
   const input = path.resolve(flags['--request']);
@@ -771,6 +995,6 @@ async function cli(args) {
 }
 let direct = false; try { direct = fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch {}
 if (direct) {
-  try { console.log(JSON.stringify(await cli(process.argv.slice(2)), null, 2)); }
+  try { const result = await cli(process.argv.slice(2)); process.stdout.write(typeof result === 'string' ? result : JSON.stringify(result, null, 2) + '\n'); }
   catch (e) { console.log(JSON.stringify({ status: 'unverified', code: e.code ?? 'bundle-unverified', message: e.message }, null, 2)); process.exitCode = e.code==='cancelled'?130:7; }
 }

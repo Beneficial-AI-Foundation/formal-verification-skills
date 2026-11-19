@@ -150,3 +150,89 @@ data. Original paths/digests, raw inspect/request/publication/frame and current
 executable identities all remain separate required copies. Captured-only
 verification rederives this finite mapping from the retained inspect; a mapping
 or archive cannot be dropped or changed coherently to evade required traversal.
+
+## Pull request trust section
+
+The same script writes the trust section of a proof pull request body from the run records. It is
+text for people. It reads only, writes nothing, never calls GitHub and carries no proof, acceptance
+or dispatch authority. It does not use the bundle formats above.
+
+```text
+node <installed-scripts>/fvs-auto-bundle.mjs trust --project-root DIR --commit SHA [--notes FILE] [--format markdown|json]
+```
+
+Run it after the build check has written its receipt for `SHA`, and paste the markdown into the body
+unchanged. Do not write the trust text by hand: the counts and labels in a hand-written section have
+been wrong. An exit status other than 0 means no section was written; the refusal is JSON with a
+`code`. A refusal is not a warning to paste around.
+
+Inputs, all under `.formalising/auto-fv/`:
+
+| Record | What the section takes from it |
+|---|---|
+| `build-check/SHA.json` | The commit, the verdict label and each statement's `#print axioms` list. The receipt must be the one for exactly `SHA`. A statement that was not built adds nothing to the counts and is named. |
+| `externals.json` | Every boundary record with its kind, status and decision. A missing file is refused when a statement rests on an axiom beyond Lean's three. |
+| `specs.json` | The current review verdict per spec file, whether the file changed since the review, and the recorded proof pull request head. |
+
+The section holds:
+
+- the commit, the verdict label and the recorded proof pull request head. The section never reads
+  the published head: it says so, so compare the three (accepted, recorded, published) yourself;
+- counts that come from one pass over the records: statements built, records by status, and the
+  distinct axioms split into Lean's standard three, axioms an externals record names and axioms no
+  record names;
+- a reviews table with each spec file's verdict, and beside it the open owner questions and the
+  changes to the reviewer's brief. A statement of what a pass means sits above it: the statement
+  was reviewed and approved, which is not a proof and not acceptance;
+- a records table with each record's layer, status and decision and the number of statements whose
+  axiom list it is in;
+- the axioms no record names, listed in full, and a per-statement table.
+
+How the join works. A record's model symbol is matched against each axiom name. It may hold several
+Lean names, a `*` glob, a brace group such as `impl_hacl.{Sha256, Sha384}` and remarks in
+parentheses. A receipt axiom name has no Lean project root segment, so a symbol also matches with
+its first segment removed. An axiom that no record matches stays in the "no record names" list. That
+list is expected to hold hand-written axioms, because the registry records the boundary they
+describe, not each axiom. The section never says that a proof does not use an axiom: an axiom list
+shows what a statement can reach through the extracted code, not what its proof uses.
+
+Layers come from the record's kind and, for an external function, from the crate its source symbol
+names. They never come from the record's id:
+
+| Layer in the section | Record |
+|---|---|
+| accepted translation patch | kind `semantic-patch` |
+| hand-written model | kind `handwritten-model` |
+| project function left opaque | kind `opaque` |
+| standard-library function without a model | kind `external`, source crate `core`, `alloc` or `std` |
+| dependency crate assumed correct | kind `external`, any other source crate |
+
+A project's agreement may call some layers by its own labels (for example A1 for the translation
+and A2 for assumed-correct dependency crates). The section uses the plain names above. The
+translation (Aeneas, Charon and the Lean backend) is trusted by every statement and is stated once.
+A patch changes generated code and is not an axiom, so the records table shows no per-statement link
+for it. An open or blocked record is shown next to every spec file whose statements reach it.
+
+The notes file holds what no run record does. The reviewers' briefs and the owner's questions live
+in the orchestrator's conversation, so the orchestrator states them:
+
+```json
+{
+  "schema": "fvs/auto-pr-notes",
+  "schemaVersion": 1,
+  "reviews": {
+    "formal/specs/Specs/Hmac.lean": {
+      "ownerQuestions": ["Should a cumulative-limit overflow panic or return an error?"],
+      "briefChanges": ["Round 2: the reviewer was told not to fail the file for the open question above."]
+    }
+  },
+  "claims": { "record-id": ["the exact claim in plain words"] }
+}
+```
+
+An empty list is the caller's statement that there is none. A spec file with no entry reads
+`NOT STATED` and its pass is shown as `PASS, qualifications NOT STATED`, never as a plain `PASS`.
+Every pass the brief changed, and every pass an open question qualifies, shows as
+`PASS, qualified`. A notes file that names a spec file with no recorded review, or a record that
+`externals.json` does not hold, is refused. The `claims` entries are used by the ruling list in the
+spec pull request, not by the trust section.
