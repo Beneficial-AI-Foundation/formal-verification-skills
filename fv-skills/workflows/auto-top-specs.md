@@ -115,6 +115,39 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
    Once it is merged, record the merge (see "Recording the pull request"); `/fvs:auto-execute` starts
    the proofs after that.
 
+## A statement restated with `recall`
+
+One statement, in the two files that step 4 describes. The proof file declares it. The spec file
+restates it with `recall`, which fails the build when the restatement is not the declared statement.
+The guard after it names the axioms the statement rests on.
+
+```lean
+-- formal/proofs/Hmac.lean
+theorem hmac_len (n : Nat) : n + 0 = n := rfl
+```
+
+```lean
+-- formal/specs/Specs/Hmac.lean
+import Proofs.Hmac
+
+recall hmac_len (n : Nat) : n + 0 = n
+
+/-- info: 'hmac_len' does not depend on any axioms -/
+#guard_msgs in
+#print axioms hmac_len
+```
+
+Write the module name that your Lake library gives the proof file in the `import`. From Lean 4.35,
+`recall` is part of Lean and needs no import, so do not look for it in Mathlib. On Lean 4.34 and
+earlier, add `import Mathlib.Tactic.Recall` to the spec file. In the spec pull request the proof is
+`sorry` and the guard is left out until the proof lands.
+
+To list the Rust functions that Aeneas translated, with a scope you choose, run
+`node "$AUTO" list-items --project-root . --scope PATH[,PATH...]`. A scope is a source file, a
+directory or a Rust path such as `crate::module`. It reads `translation.json` from the recorded
+extraction, or from `--translation PATH`. The file records no visibility, so the list holds candidates:
+check each one in the Rust source before you call it public API.
+
 ## GitHub rule
 
 Agents may open draft pull requests and edit a pull request body. They never post comments or reviews
@@ -154,13 +187,22 @@ action. On `no-state`, use `message` and `nextAction`, and stop: run `/fvs:auto-
 or outdated agreement is a warning to carry into the report, not a stop: the owner records the
 agreement in their own terminal and the spec phase does not wait for it.
 
+The result holds `fvs`, the folder of the installed FVS and its version. Put both in every worker's
+brief, so a worker uses this install and does not search for an older one. When you only need to know
+where the run stands, add `--brief`: it prints the phase, the next action, the warnings, the pending
+decisions, the externals counts, `fvs` and any `overrides`, and leaves out the recorded profile.
+`overrides` are decisions made after the agreement, such as a changed pull request base. They take
+precedence over the agreement for this run and do not amend it. Record one with
+`node "$AUTO" record-override --project-root . --key KEY --value TEXT --reason WHY`, so that a resumed
+run keeps it.
+
 ## Recording the review rounds
 
 After every review round, in the project checkout and once the authors' files are on the working
 branch, record the round for each spec file:
 
 ```bash
-node "$AUTO" record-spec --project-root . --spec-file PATH --items ID[,ID...] --round N --verdict pass|changes|blocked --review FILE [--out-of-scope ID[,ID...]]
+node "$AUTO" record-spec --project-root . --spec-file PATH --items ID[,ID...] --round N --verdict pass|changes|blocked --review FILE [--out-of-scope ID[,ID...]] [--commit SHA]
 ```
 
 `PATH` is the spec file and `FILE` is the reviewer's report saved as a file; both are existing files
@@ -169,11 +211,20 @@ report into the project checkout yourself, under `.formalising/` for example: th
 committed, so the report stays out of the spec pull request. The IDs are the items' Rust paths without spaces, for
 example `crate::module::function`, and `--out-of-scope` names the items an agent left out. The command
 stores a hash of both files. A later row for the same spec file is the current one, and a round past the
-third is recorded with a warning. Then read where things stand:
+third is recorded with a warning.
+
+If the authors' files are only on a branch, add `--commit SHA`. The spec file is then read from that
+commit instead of the checkout, so the checkout can stay where it is: do not check the branch out just
+to record a round. The commit must be local, so fetch the branch first. `PATH` is then the file's path
+inside the project, `FILE` is still read from the checkout, and the row keeps the commit. Then read
+where things stand:
 
 ```bash
 node "$AUTO" spec-status --project-root .
 ```
+
+Add `--commit SHA` to read the spec files at a commit, such as the head of the authors' branch, when the
+checkout holds none of them.
 
 It lists each spec file with its items, round, verdict and label: `spec reviewed: pass`,
 `spec reviewed: changes requested (round N)`, `spec blocked after N rounds` or

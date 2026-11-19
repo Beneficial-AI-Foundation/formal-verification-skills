@@ -120,6 +120,15 @@ On `malformed-state` or `malformed-externals`, use `message` as the state and `n
 action. On `no-state`, use `message` and `nextAction`, and stop: run `/fvs:auto-init` first. A missing
 or outdated agreement is a warning to carry into the report, not a stop.
 
+The result holds `fvs`, the folder of the installed FVS and its version. Put both in every worker's
+brief, so a worker uses this install and does not search for an older one. When you only need to know
+where the run stands, add `--brief`: it prints the phase, the next action, the warnings, the pending
+decisions, the externals counts, `fvs` and any `overrides`, and leaves out the recorded profile.
+`overrides` are decisions made after the agreement, such as a changed pull request base. They take
+precedence over the agreement for this run and do not amend it. Record one with
+`node "$AUTO" record-override --project-root . --key KEY --value TEXT --reason WHY`, so that a resumed
+run keeps it.
+
 ## Recording the merge and the proof pull request
 
 If the state still says the spec phase, the merge is not recorded yet. When the owner has merged the

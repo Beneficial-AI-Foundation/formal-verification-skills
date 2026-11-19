@@ -258,7 +258,9 @@ async function cli(args) {
   if (!Object.hasOwn(operations, command)) fail('Unknown driver operation');
   return await operations[command](transitionBound({ file: fs.realpathSync(rest[1]), sha256: crypto.createHash('sha256').update(fs.readFileSync(rest[1])).digest('hex') }));
 }
-if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// A script read from stdin has the argument `-`, which is no file: it is not the main script.
+let direct = false; try { direct = fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch {}
+if (direct) {
   cli(process.argv.slice(2)).then(value => {
     process.stdout.write(JSON.stringify(value, null, 2) + '\n');
     if (['execution-unverified', 'facts-unverified', 'partial', 'review-blocked'].includes(value.status)) process.exitCode = 1;

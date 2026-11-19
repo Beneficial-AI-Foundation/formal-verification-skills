@@ -15,6 +15,8 @@ test('actual launch argv holds startup before gate calls and preserves the exist
   assert.match(prompt, /trusted instruction, not OS suspension or permission bypass/);
   assert.match(prompt, /WAIT for the exact bound work packet and durable start acknowledgement before any task\/source edits/);
   assert.equal(args[args.indexOf('--model') + 1], 'fixture');
+  const { root, version } = t.installedFvs();
+  assert.ok(prompt.includes(`(installed FVS ${version} at ${root}), never a consumer-provided script`), 'the brief names the installed FVS path and version');
   assert.equal('permission' in s.action.a.target, false);
 });
 test('legacy v1 launch retains its original immediate startup route without a v2 permission notice', async () => {
