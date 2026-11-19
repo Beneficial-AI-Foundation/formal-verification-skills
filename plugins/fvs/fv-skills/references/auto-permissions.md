@@ -141,9 +141,12 @@ The hook answers for every Bash command that contains a push:
     plain path has only letters, digits and `_ . / + @ % : = , -`; a path with a space, quote, `$`, `~` or other
     shell syntax asks.
   - A bare `git push`, only when HEAD is a branch `fvs/<name>`, its upstream and its push target are both
-    `origin/<same name>`, `push.default` is `simple`, `current` or `upstream` (not `matching`), and none of
-    `remote.origin.push`, `remote.origin.mirror`, `push.followTags`, `submodule.recurse` and
-    `push.recurseSubmodules` (set to `on-demand` or `only`) is set.
+    `origin/<same name>`, `push.default` is `simple`, `current` or `upstream` (not `matching`), and
+    `remote.origin.push` is not set.
+  - No form is allowed when a setting would make the push send more than the one branch: `remote.origin.mirror`,
+    `push.followTags` (common in a global git config), `push.recurseSubmodules` set to `on-demand` or `only`,
+    or `submodule.recurse`. Such a push asks, even in the exact forms above. Unset the setting for the
+    project, or approve those pushes by hand.
 - **Check the destination first.** Before it allows anything it reads every URL git would push to from the
   directory the push runs in (the working directory, or the `-C` path), after git's own URL rewriting, and
   requires each to name the host and repository you chose. Any mismatch, a URL it cannot read, or a git error

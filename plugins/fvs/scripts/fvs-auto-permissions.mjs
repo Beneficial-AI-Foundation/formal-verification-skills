@@ -88,7 +88,8 @@ function gateHook({ repo, host, remote, prefixes }) {
     command, script: GATE_SCRIPT, entry: { matcher: 'Bash', hooks: [{ type: 'command', command, timeout: 15 }] },
     allows: [
       `git push [-u] ${remote} ${where}, also after one \`git -C <plain path>\``,
-      `a bare \`git push\`, only when HEAD is ${where}, its upstream and push target are both ${remote}/<same name>, push.default is simple, current or upstream, and remote.${remote}.push, remote.${remote}.mirror, push.followTags and push.recurseSubmodules (on-demand) are not set`,
+      `a bare \`git push\`, only when HEAD is ${where}, its upstream and push target are both ${remote}/<same name>, push.default is simple, current or upstream, and remote.${remote}.push is not set`,
+      `no form is allowed when one of remote.${remote}.mirror, push.followTags, push.recurseSubmodules (on-demand or only) or submodule.recurse is set, because the push would then send more than the one branch`,
     ],
     destination: `${host}/${repo}: every URL git would push to must name it, or the push asks`,
     asks: 'every other command that contains a push: force flags, --delete, --tags, --mirror, --all, refspecs, other remotes or branches, several refspecs, chains, pipes, redirects, several lines, odd -C arguments',
@@ -431,7 +432,7 @@ function writeClaude(flags, root, catalog, picked, allow, hook) {
     runtime: 'claude', target, file: relative, ...resolveTarget(root, relative), gitStatus: gitStatusOf(root, relative),
     appliesTo: target === 'shared'
       ? 'Claude Code reads .claude/settings.json from each session\'s own directory, and its rules and hooks apply once the folder is trusted. A worker worktree sees it only if the file is committed or .claude is linked into the worktree.'
-      : 'Claude Code reads .claude/settings.local.json from the main checkout in every worktree and keeps it out of git; its rules apply without the trust step while the file stays untracked (a hook there is not observed to need it either way).',
+      : 'Claude Code reads .claude/settings.local.json from the main checkout in every worktree and keeps it out of git; its rules apply without the trust step while the file stays untracked (whether a hook there needs the trust step was not observed).',
     steps: picked.map((step) => step.id), add: added,
     alreadyPresent: { allow: allow.filter((r) => !added.allow.includes(r)), hook: Boolean(hook) && !added.hook },
     ...(hook ? {
