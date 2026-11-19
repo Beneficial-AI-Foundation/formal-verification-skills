@@ -15,11 +15,14 @@
 // Before any build, two guards run on the commit's files. The spec guard compares the commit with the
 // merged spec (the spec merge commit the run state records, or --spec-base; they must agree): every
 // recalled statement must be the same text, the lakefile, the manifest, Specs/Defs, Trusted and
-// Extraction must be unchanged apart from comments, docstrings and axiom guards, nothing may add
-// `sorry`, `admit`, `native_decide`, `bv_decide` or an axiom outside Trusted/, and a new Trusted file
-// is allowed only for axioms tied to an externals record the owner accepted. The glob guard refuses
-// a spec or proof file that no lean_lib glob of a default target reaches, because Lake would never
-// compile it. A commit that fails a guard gets a failed receipt and no build runs.
+// every extraction folder (any folder named Extraction..., and each publish folder or published file
+// the run state records for a multi-crate extraction) must be unchanged apart from comments,
+// docstrings and axiom guards, nothing may add `sorry`, `admit`, `native_decide`, `bv_decide` or an
+// axiom outside Trusted/, a lakefile may not appear below the project root, and a new Trusted file
+// is allowed only for axioms tied to an externals record the owner accepted. Strings are compared
+// exactly; only comments and the spacing between tokens are free. The glob guard refuses a spec,
+// proof or extraction file that no lean_lib glob of a default target reaches, because Lake would
+// never compile it. A commit that fails a guard gets a failed receipt and no build runs.
 //
 // The build is `lake build --wfail`: every warning, so every `sorry`, fails it. Each
 // spec file restates its statements with `recall` and pins what they rest on with
@@ -65,11 +68,18 @@ function git(cwd, args, extra = {}) {
 
 // ---- reading Lean source -------------------------------------------------------------------
 
+const IDENTIFIER_CHARACTER = /[\p{L}\p{N}_'.!?]/u;
+const RAW_STRING = /r(#*)"/y;
+const CHARACTER = /'(?:\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[^xu\n])|[^\\'\n])'/y;
+
 // Comments are blanked and docstrings are replaced by a numbered marker, so the text that
 // is left can be matched without a commented-out guard counting. Line numbers are kept. String
-// contents are blanked too, unless `keepStrings` is set: a comparison must see an edited string.
+// and character literals are blanked too. With `keepStrings` each literal is replaced by a
+// numbered placeholder instead and returned in `strings`, so a comparison sees an edited string
+// exactly while code inside it never looks like code.
 export function stripLean(text, { keepStrings = false } = {}) {
   const docstrings = [];
+  const strings = [];
   let code = '';
   let i = 0;
   const blockEnd = (from) => {
@@ -81,6 +91,30 @@ export function stripLean(text, { keepStrings = false } = {}) {
     return j;
   };
   const newlines = (slice) => slice.replace(/[^\n]/g, '');
+  // Where the literal that starts at `at` ends, or -1 when none starts there. An `r` or a quote that
+  // follows an identifier character belongs to that identifier (`h'`, `bar`), not to a literal.
+  const literalEnd = (at) => {
+    if (text[at] === '"') {
+      let j = at + 1;
+      while (j < text.length && text[j] !== '"') j += text[j] === '\\' ? 2 : 1;
+      return Math.min(j + 1, text.length);
+    }
+    if (at > 0 && IDENTIFIER_CHARACTER.test(text[at - 1])) return -1;
+    if (text[at] === 'r') {
+      RAW_STRING.lastIndex = at;
+      const open = RAW_STRING.exec(text);
+      if (!open) return -1;
+      const close = `"${open[1]}`;
+      const stop = text.indexOf(close, at + open[0].length);
+      return stop < 0 ? text.length : stop + close.length;
+    }
+    if (text[at] === "'") {
+      CHARACTER.lastIndex = at;
+      const literal = CHARACTER.exec(text);
+      return literal ? at + literal[0].length : -1;
+    }
+    return -1;
+  };
   while (i < text.length) {
     if (text.startsWith('/--', i)) {
       const end = blockEnd(i);
@@ -93,20 +127,22 @@ export function stripLean(text, { keepStrings = false } = {}) {
       i = end;
     } else if (text.startsWith('--', i)) {
       while (i < text.length && text[i] !== '\n') i += 1;
-    } else if (text.startsWith("'\"'", i)) {
-      code += keepStrings ? "'\"'" : "'?'";
-      i += 3;
-    } else if (text[i] === '"') {
-      let j = i + 1;
-      while (j < text.length && text[j] !== '"') j += text[j] === '\\' ? 2 : 1;
-      code += keepStrings ? text.slice(i, j + 1) : `""${newlines(text.slice(i, j + 1))}`;
-      i = j + 1;
     } else {
-      code += text[i];
-      i += 1;
+      const end = literalEnd(i);
+      if (end < 0) {
+        code += text[i];
+        i += 1;
+      } else {
+        const literal = text.slice(i, end);
+        if (keepStrings) {
+          strings.push(literal);
+          code += `\u0000${strings.length - 1}\u0000`;
+        } else code += literal[0] === "'" ? "'?'" : `""${newlines(literal)}`;
+        i = end;
+      }
     }
   }
-  return { code, docstrings };
+  return { code, docstrings, strings };
 }
 
 const lineOf = (code, index) => code.slice(0, index).split('\n').length;
@@ -349,11 +385,21 @@ const LAKE_FILES = /^(?:lakefile\.(?:toml|lean)|lake-manifest\.json)$/;
 const isTrusted = (rel) => lowerFolders(rel).includes('trusted');
 const isProofPath = (rel) => lowerFolders(rel).includes('proofs');
 
+// Extraction output: any folder whose name starts with "extraction" (Extraction, ExtractionCrates),
+// plus the folders and files the run state says an extraction published into. `layout` is that
+// second part: lowercase folders with a trailing slash, and lowercase file paths.
+export function isExtraction(rel, layout = {}) {
+  const lower = rel.toLowerCase();
+  return lowerFolders(rel).some((name) => name.startsWith('extraction'))
+    || (layout.folders ?? []).some((folder) => lower.startsWith(folder))
+    || (layout.files ?? []).includes(lower);
+}
+
 // Frozen once the spec is merged. Folder names match in any case: the default layout is
 // formal/trusted and a real project may say Formal/Trusted.
-export function isFrozen(rel) {
+export function isFrozen(rel, layout = {}) {
   const folders = lowerFolders(rel);
-  return LAKE_FILES.test(rel) || folders.includes('trusted') || folders.includes('extraction')
+  return LAKE_FILES.test(rel) || folders.includes('trusted') || isExtraction(rel, layout)
     || folders.some((name, i) => name === 'specs' && folders[i + 1] === 'defs');
 }
 
@@ -361,25 +407,27 @@ const DECLARATION = /(?:^|\s)(?:theorem|lemma|def|abbrev|axiom|instance|opaque|s
 // The declaration a position falls in, so a message can name it. Null before the first one.
 const declarationNear = (code, index) => [...code.slice(0, index + 1).matchAll(DECLARATION)].at(-1)?.[1] ?? null;
 
-// Comments gone, docstring markers gone, axiom guards gone, whitespace runs collapsed to one space.
-const flatten = (code) => code
+// Comments gone, docstring markers gone, axiom guards gone, whitespace runs collapsed to one space,
+// then each string put back exactly as written.
+const flatten = (code, strings) => code
   .replace(/\/--#\d+-\//g, ' ')
   .replace(/#guard_msgs\s*(?:\([^)]*\))?\s*in\s+#print\s+axioms\s+\S+/g, ' ')
   .replace(/#print\s+axioms\s+\S+/g, ' ')
-  .replace(/\s+/g, ' ').trim();
+  .replace(/\s+/g, ' ').trim()
+  .replace(/\u0000(\d+)\u0000/g, (_, n) => strings[Number(n)]);
 
-export const normalizeLean = (text) => flatten(stripLean(text, { keepStrings: true }).code);
+export const normalizeLean = (text) => { const { code, strings } = stripLean(text, { keepStrings: true }); return flatten(code, strings); };
 
 // Each `recall` statement of a spec file as its text, comments gone and whitespace collapsed. A
 // statement runs to the next line that starts in column 0.
 export function recalledStatements(text) {
-  const { code } = stripLean(text, { keepStrings: true });
+  const { code, strings } = stripLean(text, { keepStrings: true });
   const statements = new Map();
   for (const match of code.matchAll(/^[ \t]*recall\s+([^\s(\[{:]+)/gm)) {
     const ending = /\n(?=\S)/g;
     ending.lastIndex = match.index + match[0].length;
     const stop = ending.exec(code);
-    statements.set(match[1], flatten(code.slice(match.index, stop ? stop.index : code.length)));
+    statements.set(match[1], flatten(code.slice(match.index, stop ? stop.index : code.length), strings));
   }
   return statements;
 }
@@ -405,13 +453,13 @@ function gitBlob(top, blob) {
 const LAKEFILE_AT = /(?:^|\/)lakefile\.(?:toml|lean)$/;
 
 // Files below a folder with a lakefile of its own belong to another Lake project, not to this one.
-function withoutNested(tree) {
-  const folders = [...tree.keys()].filter((rel) => rel.includes('/') && LAKEFILE_AT.test(rel)).map((rel) => rel.slice(0, rel.lastIndexOf('/') + 1));
-  return new Map([...tree].filter(([rel]) => !folders.some((folder) => rel.startsWith(folder))));
-}
+// The folders are read from the merged spec's tree when there is one: a lakefile that appears
+// only afterwards must not take the files below it out of the comparison.
+const nestedFolders = (tree) => [...tree.keys()].filter((rel) => rel.includes('/') && LAKEFILE_AT.test(rel)).map((rel) => rel.slice(0, rel.lastIndexOf('/') + 1));
+const without = (tree, folders) => new Map([...tree].filter(([rel]) => !folders.some((folder) => rel.startsWith(folder))));
 
 // The Lean sources, lakefiles and frozen files of the project at `prefix` in one commit.
-export function gitTree(top, commit, prefix) {
+export function gitTree(top, commit, prefix, layout) {
   const listing = git(top, ['ls-tree', '-r', '-z', '--full-tree', commit, ...(prefix ? ['--', `${prefix}/`] : [])]);
   if (listing === null) refuse('commit-unreadable', `cannot list the files of ${commit}`);
   const tree = new Map();
@@ -420,7 +468,7 @@ export function gitTree(top, commit, prefix) {
     const [, type, blob] = line.slice(0, tab).split(' ');
     const name = line.slice(tab + 1);
     const rel = prefix ? name.slice(prefix.length + 1) : name;
-    if (type === 'blob' && (rel.endsWith('.lean') || isFrozen(rel) || LAKEFILE_AT.test(rel))) tree.set(rel, fileEntry(blob, () => gitBlob(top, blob)));
+    if (type === 'blob' && (rel.endsWith('.lean') || isFrozen(rel, layout) || LAKEFILE_AT.test(rel))) tree.set(rel, fileEntry(blob, () => gitBlob(top, blob)));
   }
   return tree;
 }
@@ -432,6 +480,14 @@ const hasStatements = (text) => readSpecSource(text).statements.length > 0;
 const FORBIDDEN = [['sorry', /\bsorry\b/g], ['admit', /\badmit\b/g], ['native_decide', /\bnative_decide\b/g], ['bv_decide', /\bbv_decide\b/g],
   ['decide +native', /\bdecide\s*\+\s*native\b/g], ['axiom', /\baxiom\b/g]];
 
+// An axiom that starts a line, read from the raw text with no lexer in between. If the comment and
+// string reader were ever thrown off by odd source, an axiom declared on its own line is still seen.
+// It must read like a declaration (a name, then a colon or a binder), so prose that starts a line with
+// "axiom" in a docstring is not one. A docstring line that does read like one, such as
+// "axiom foo (see above)", is seen too, and counts.
+const RAW_AXIOM = /^[ \t]*(?:@\[[^\]\n]*\][ \t]*)*(?:(?:private|protected|noncomputable|unsafe)[ \t]+)*axiom[ \t]+([\p{L}_«][\p{L}\p{N}_.'!?«»]*)(?=\s*[:({\[⦃])/gmu;
+const rawAxioms = (text) => [...text.matchAll(RAW_AXIOM)].map((match) => match[1]);
+
 function forbiddenAdded(rel, was, now, problems) {
   const before = was === null ? '' : stripLean(was).code;
   const after = stripLean(now).code;
@@ -442,6 +498,12 @@ function forbiddenAdded(rel, was, now, problems) {
     if (found.length > had) {
       const named = token === 'axiom' ? /^axiom\s+([^\s(\[{:]+)/.exec(after.slice(found[had].index))?.[1] ?? null : declarationNear(after, found[had].index);
       problems.push({ kind: 'forbidden-added', file: rel, statement: named, token, detail: `${token} was added (${had} before, ${found.length} now)${token === 'axiom' ? '; an axiom belongs in Trusted/ and needs an accepted externals record' : ''}` });
+    }
+  }
+  if (!isTrusted(rel) && !problems.some((problem) => problem.file === rel && problem.token === 'axiom')) {
+    const [had, found] = [rawAxioms(was ?? ''), rawAxioms(now)];
+    if (found.length > had.length) {
+      problems.push({ kind: 'forbidden-added', file: rel, statement: found[had.length], token: 'axiom', detail: `axiom was added (${had.length} before, ${found.length} now); an axiom belongs in Trusted/ and needs an accepted externals record` });
     }
   }
 }
@@ -456,6 +518,11 @@ function trustedAddition(rel, text, records, used, problems, ties) {
   const extra = EXTRA_COMMAND.exec(normalizeLean(text));
   if (extra) problems.push({ kind: 'trusted-file-extra-code', file: rel, statement: null, detail: `a new Trusted file may hold only imports, namespaces and axioms, not \`${extra[1]}\`` });
   const accepted = new Map((records ?? []).filter((record) => record?.status === 'assumption-accepted' && record.decision && typeof record.id === 'string').map((record) => [record.id, record]));
+  const seen = new Set([...code.matchAll(AXIOM)].map((match) => match[2]));
+  // An axiom that starts a line but that the comment-aware scan did not see has no docstring to tie it.
+  for (const name of rawAxioms(text)) {
+    if (!seen.has(name)) problems.push({ kind: 'trusted-axiom-untied', file: rel, statement: name, detail: `the new axiom ${name} is not tied to an accepted assumption: it could not be read together with its docstring; put it in its own declaration with the record id in backticks in its docstring` });
+  }
   for (const match of code.matchAll(AXIOM)) {
     const name = match[2];
     const doc = match[1] === undefined ? '' : docstrings[Number(match[1])];
@@ -565,7 +632,7 @@ const IMPORT = /^[ \t]*(?:(?:public|meta)[ \t]+)*import[ \t]+(?:all[ \t]+)?(\S+)
 // A spec or proof file whose module no lean_lib glob of a default target reaches is never built by a
 // bare `lake build`, though the build passes. Modules that a built module imports are built too.
 // A project with a lakefile.lean is not read here: the check for a missing .olean is the backstop.
-function globProblems(head, changed) {
+function globProblems(head, changed, layout) {
   const toml = head.get('lakefile.toml');
   if (!toml || head.has('lakefile.lean')) return [];
   const lake = readLakefileToml(toml.text());
@@ -593,7 +660,7 @@ function globProblems(head, changed) {
   }
   const problems = [];
   for (const rel of leanFilesHere.sort()) {
-    if (covered.has(rel) || !(changed.has(rel) || isProofPath(rel) || hasStatements(head.get(rel).text()))) continue;
+    if (covered.has(rel) || !(changed.has(rel) || isProofPath(rel) || isExtraction(rel, layout) || hasStatements(head.get(rel).text()))) continue;
     const module = sources.map((folder) => moduleOf(rel, folder)).find((name) => name !== null) ?? rel;
     const reach = direct.length === 0 ? 'no lean_lib is a default target (defaultTargets), so a bare lake build builds nothing'
       : `the globs of the default targets are ${direct.map((lib) => `${lib.name}: ${lib.globs.map((glob) => glob.source).join(', ')}`).join('; ')}`;
@@ -606,8 +673,9 @@ function globProblems(head, changed) {
 // built. `base` is null when there is no merged spec to compare with; the glob check still runs.
 // `externals` returns the records of the run state (or null), and is read only when a new Trusted
 // file needs them.
-export function checkIntegrity({ base: baseTree, head: headTree, externals = () => null }) {
-  const [base, head] = [baseTree && withoutNested(baseTree), withoutNested(headTree)];
+export function checkIntegrity({ base: baseTree, head: headTree, externals = () => null, layout = {} }) {
+  const nested = nestedFolders(baseTree ?? headTree);
+  const [base, head] = [baseTree && without(baseTree, nested), without(headTree, nested)];
   const problems = [];
   const ties = [];
   const used = new Map();
@@ -618,7 +686,11 @@ export function checkIntegrity({ base: baseTree, head: headTree, externals = () 
     for (const rel of [...new Set([...base.keys(), ...head.keys()])].sort()) {
       const [was, now] = [base.get(rel), head.get(rel)];
       if (was && now && was.blob === now.blob) continue;
-      const frozen = isFrozen(rel);
+      if (!was && rel.includes('/') && LAKEFILE_AT.test(rel)) {
+        problems.push({ kind: 'frozen-file-added', file: rel, statement: null, detail: 'a lakefile was added below the project root after the merged spec; it would make Lake treat this folder as another project' });
+        continue;
+      }
+      const frozen = isFrozen(rel, layout);
       const lean = rel.endsWith('.lean');
       if (!now) {
         if (frozen) problems.push({ kind: 'frozen-file-removed', file: rel, statement: null, detail: 'this frozen file was removed since the merged spec' });
@@ -638,7 +710,7 @@ export function checkIntegrity({ base: baseTree, head: headTree, externals = () 
       if (lean) forbiddenAdded(rel, was.text(), now.text(), problems);
     }
   }
-  problems.push(...globProblems(head, changed));
+  problems.push(...globProblems(head, changed, layout));
   return { problems, ties };
 }
 
@@ -650,6 +722,36 @@ function readRunRecord(root, name) {
   const file = path.join(root, '.formalising', 'auto-fv', name);
   if (!fs.existsSync(file)) return null;
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return refuse('run-state-unreadable', `${file} is not valid JSON; fix it or move it aside, then run the build check again`); }
+}
+
+// Where the recorded extraction published its Lean, as the folders and files of the Lean project: a
+// multi-crate run lists one publish folder and publication per crate, a single-crate run just the
+// publication. `top` is the repository root and `prefix` the Lean project's folder in it. Paths in the
+// run state are absolute or relative to the project root; one outside the Lean project is ignored, and
+// so is one that is the project itself, which would freeze everything.
+export function extractionLayout(state, { root, top, prefix }) {
+  const run = state?.extraction?.run;
+  // Symlinks resolved as far as the path exists (macOS keeps /tmp under /private/tmp), so it compares with `top`.
+  const settled = (target) => {
+    let [rest, here] = ['', target];
+    while (!fs.existsSync(here) && here !== path.dirname(here)) { rest = path.join(path.basename(here), rest); here = path.dirname(here); }
+    return path.join(fs.realpathSync(here), rest);
+  };
+  const inProject = (value) => {
+    if (typeof value !== 'string' || value === '') return null;
+    const rel = path.relative(top, settled(path.resolve(root, value))).split(path.sep).join('/');
+    if (prefix) return rel.startsWith(`${prefix}/`) ? rel.slice(prefix.length + 1) : null;
+    return rel === '' || rel === '..' || rel.startsWith('../') ? null : rel;
+  };
+  const layout = { folders: [], files: [] };
+  const publications = (entries) => { for (const entry of Array.isArray(entries) ? entries : []) { const file = inProject(entry?.projectPath); if (file) layout.files.push(file.toLowerCase()); } };
+  publications(run?.publication);
+  for (const unit of Array.isArray(run?.units) ? run.units : []) {
+    const folder = inProject(unit?.publishDir)?.replace(/\/+$/, '');
+    if (folder) layout.folders.push(`${folder.toLowerCase()}/`);
+    publications(unit?.publication);
+  }
+  return layout;
 }
 
 // The merge commit of the last merged spec pull request the run state records, or null.
@@ -709,9 +811,11 @@ export function buildCheck({ projectRoot, commit, specBase, packages, receiptDir
     // receipt for the same commit never stands in for it.
     // The project's folder in the repository, with `/` separators; empty when it is the repository root.
     const prefix = path.join(sub, below).split(path.sep).filter((part) => part && part !== '.').join('/');
+    const layout = extractionLayout(readRunRecord(root, 'state.json'), { root, top, prefix });
     const integrity = checkIntegrity({
-      base: specBaseFull === null ? null : gitTree(top, specBaseFull, prefix),
-      head: gitTree(top, full, prefix),
+      base: specBaseFull === null ? null : gitTree(top, specBaseFull, prefix, layout),
+      head: gitTree(top, full, prefix, layout),
+      layout,
       externals: () => { const records = readRunRecord(root, 'externals.json')?.records; return Array.isArray(records) ? records : null; },
     });
     const integrityRecord = { specBase: specBaseFull, compared: specBaseFull !== null, ok: integrity.problems.length === 0, problems: integrity.problems, ties: integrity.ties };

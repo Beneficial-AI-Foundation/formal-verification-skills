@@ -43,13 +43,14 @@ merge and the proof pull request").
    no build runs, when:
    - a recalled statement (its binders, hypotheses or conclusion) differs in more than spaces and
      comments, or is removed or added;
-   - the lakefile, the manifest, `formal/specs/Defs`, `formal/trusted` or the extraction changed in
-     more than comments, docstrings and axiom guards, or a file was added to them (a new Trusted file
-     is allowed only as step 2 says);
+   - the lakefile, the manifest, `formal/specs/Defs`, `formal/trusted` or an extraction folder (every
+     crate's folder in a multi-crate extraction) changed in more than comments, docstrings and axiom
+     guards, or a file was added to them (a new Trusted file is allowed only as step 2 says), or a
+     lakefile appeared below the project root;
    - a change added `sorry`, `admit`, `native_decide`, `bv_decide`, or an axiom outside
      `formal/trusted`;
-   - a spec file or proof file is not covered by a `lean_lib` glob of a default target, and no built
-     module imports it, so Lake would never compile it.
+   - a spec file, proof file or extraction file is not covered by a `lean_lib` glob of a default
+     target, and no built module imports it, so Lake would never compile it.
 
    Each refusal names the file, the statement and the kind of change. A statement that is wrong or too
    weak is not fixed in a proof: it becomes a refactor pull request (step 5), and once the owner

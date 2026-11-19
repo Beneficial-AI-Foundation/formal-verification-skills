@@ -520,8 +520,9 @@ const EXTERNALS = (...records) => ({ schema: 'fvs/auto-externals', schemaVersion
 
 // Commits BASE_FILES (the merged spec), then the head files on top, and writes the run state.
 // `merged` is the spec merge commit, `tip` the proof head.
-function layered({ head = HEAD_FILES, remove = [], lakefile = FORMAL_LAKEFILE, externals = EXTERNALS(record()), recorded = false } = {}) {
-  const fx = fixture({ spec: 'import Dep\n', files: { ...BASE_FILES, 'lakefile.toml': lakefile } });
+// `sub` puts the Lean project in a folder of the repository, and `base` replaces the merged spec's files.
+function layered({ head = HEAD_FILES, base = BASE_FILES, remove = [], lakefile = FORMAL_LAKEFILE, externals = EXTERNALS(record()), recorded = false, sub = '' } = {}) {
+  const fx = fixture({ spec: 'import Dep\n', sub, files: { ...base, 'lakefile.toml': lakefile } });
   const merged = fx.commit;
   for (const [name, text] of Object.entries(head)) write(path.join(fx.lean, name), text);
   for (const name of remove) fs.rmSync(path.join(fx.lean, name));
@@ -709,6 +710,139 @@ describe('the merged spec: changes that are refused', () => {
     assert.equal(checkTip(fx).json.accepted, false);
     assert.equal(JSON.parse(fs.readFileSync(receiptFile, 'utf8')).accepted, false);
   });
+
+  test('a lakefile added below the root does not hide the folder it sits in', () => {
+    const sorryLemma = 'import Dep\ntheorem t : True := by sorry\n';
+    const proofs = layered({ head: { ...HEAD_FILES, 'formal/proofs/lakefile.toml': 'name = "other"\n', 'formal/proofs/Lemmas/L.lean': sorryLemma } });
+    const found = checkTip(proofs).json.integrity.problems.map((p) => [p.kind, p.file]);
+    assert.deepEqual(found, [['forbidden-added', 'formal/proofs/Lemmas/L.lean'], ['frozen-file-added', 'formal/proofs/lakefile.toml']]);
+    const trusted = layered({ head: { ...HEAD_FILES, 'formal/trusted/x/lakefile.toml': 'name = "other"\n', 'formal/trusted/x/Evil.lean': 'import Dep\naxiom evil : False\n' } });
+    const result = checkTip(trusted);
+    assert.equal(result.json.accepted, false);
+    assert.ok(result.json.integrity.problems.some((p) => p.kind === 'frozen-file-added' && p.file === 'formal/trusted/x/lakefile.toml'));
+    assert.ok(result.json.integrity.problems.some((p) => p.kind === 'trusted-axiom-untied' && p.statement === 'evil'), 'the axiom below it is still judged');
+    noBuild(trusted);
+  });
+
+  test('a folder with a lakefile of its own in the merged spec stays out of the comparison', async () => {
+    const { checkIntegrity, memoryTree } = await library();
+    const lake = 'defaultTargets = ["Foo"]\n[[lean_lib]]\nname = "Foo"\nglobs = ["Foo.+"]\n';
+    const tree = (other) => memoryTree({ 'lakefile.toml': lake, 'vendor/other/lakefile.toml': 'name = "other"\n', 'vendor/other/X.lean': other });
+    assert.deepEqual(checkIntegrity({ base: tree('recall y : True\n'), head: tree('recall y : False\naxiom z : False\n') }).problems, [], 'another Lake project is not this project');
+  });
+
+  test('source that a naive reader would lose track of in does not hide a sorry', () => {
+    const hidden = 'theorem t : True := by sorry\ndef u := "x"\n';
+    for (const [name, prefix] of [['a raw string that ends in a backslash', 'def s := r"\\"\n'], ['an escaped quote as a character', "def c : Char := '\\\"'\n"], ['a raw string with hashes', 'def s := r#"a "quoted" b"#\n']]) {
+      const fx = layered({ head: { ...HEAD_FILES, 'formal/proofs/Lemmas/L.lean': `import Dep\n${prefix}${hidden}` } });
+      const problem = firstProblem(checkTip(fx));
+      assert.deepEqual([problem?.kind, problem?.token, problem?.statement], ['forbidden-added', 'sorry', 't'], name);
+    }
+  });
+
+  test('a prime inside an identifier does not start a character literal', async () => {
+    const { stripLean } = await library();
+    assert.match(stripLean("def a'b' := sorry\n").code, /sorry/);
+    assert.match(stripLean("theorem t (h' : P) (k' : Q) : True := sorry\n").code, /sorry/);
+    assert.doesNotMatch(stripLean("def c := 'a' ++ \"sorry\" ++ r\"sorry\"\n").code, /sorry/);
+  });
+
+  test('strings are compared exactly: spacing inside one counts, and text that looks like a guard is not removed', async () => {
+    const { checkIntegrity, memoryTree } = await library();
+    const file = 'formal/specs/Defs/K.lean';
+    const run = (was, now) => checkIntegrity({ base: memoryTree({ [file]: `def k : String := ${was}\n` }), head: memoryTree({ [file]: `def k : String := ${now}\n` }) }).problems.map((p) => p.kind);
+    assert.deepEqual(run('"a  b"', '"a b"'), ['frozen-file-changed']);
+    assert.deepEqual(run('"#print axioms x"', '""'), ['frozen-file-changed']);
+    assert.deepEqual(run('r"a  b"', 'r"a b"'), ['frozen-file-changed']);
+    assert.deepEqual(run('"a  b"', '"a  b"   -- same'), []);
+  });
+
+  test('an axiom that starts a line is counted even when the comment reader would skip it', async () => {
+    const { checkIntegrity, memoryTree } = await library();
+    const lake = 'defaultTargets = ["Foo"]\n[[lean_lib]]\nname = "Foo"\nglobs = ["Foo.+"]\n';
+    const tree = (files) => memoryTree({ 'lakefile.toml': lake, ...files });
+    const added = checkIntegrity({ base: tree({ 'Foo/P.lean': 'def p := 1\n' }), head: tree({ 'Foo/P.lean': 'def p := 1\n/- never closed\naxiom bad : False\n' }) });
+    assert.deepEqual(added.problems.map((p) => [p.kind, p.token, p.statement]), [['forbidden-added', 'axiom', 'bad']]);
+    const trusted = checkIntegrity({ base: tree({ 'Foo/P.lean': 'def p := 1\n' }), head: tree({ 'Foo/P.lean': 'def p := 1\n', 'Foo/Trusted/T.lean': '/- never closed\n/-- `gap-div` -/\naxiom sneaky : False\n' }), externals: () => [record()] });
+    assert.ok(trusted.problems.some((p) => p.kind === 'trusted-axiom-untied' && p.statement === 'sneaky'));
+    const prose = checkIntegrity({ base: tree({ 'Foo/D.lean': '/-- Gaps. -/\ndef d := 1\n' }), head: tree({ 'Foo/D.lean': '/-- Gaps: one\naxiom per `Prop` is asserted. -/\ndef d := 1\n' }) });
+    assert.deepEqual(prose.problems, [], 'docstring prose that starts a line with the word is not a declaration');
+  });
+
+  test('a project one folder below the repository root is compared by the same rules', () => {
+    const fx = layered({ sub: 'proj' });
+    const result = checkTip(fx);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(result.json.integrity.ties, [{ file: 'formal/trusted/Gaps.lean', axiom: 'div_spec', record: 'gap-div' }]);
+    const weak = layered({ sub: 'proj', head: { ...HEAD_FILES, 'formal/specs/Specs/A.lean': SPEC_HEAD.replace('(h : 0 < n)', '(h : 0 ≤ n)') } });
+    assert.equal(firstProblem(checkTip(weak)).kind, 'statement-changed');
+    const frozen = layered({ sub: 'proj', head: { ...HEAD_FILES, 'formal/extraction/Ext.lean': 'def x := 2\n' } });
+    assert.equal(firstProblem(checkTip(frozen)).kind, 'frozen-file-changed');
+    const outside = layered({ sub: 'proj', lakefile: 'name = "fixture"\ndefaultTargets = ["Formal"]\n\n[[lean_lib]]\nname = "Formal"\nglobs = ["formal.specs.+"]\n' });
+    assert.equal(firstProblem(checkTip(outside)).kind, 'not-covered-by-lean-lib');
+  });
+});
+
+describe('extraction folders in a multi-crate run', () => {
+  const LAYOUT = (...entries) => ({ folders: entries.filter((e) => e.endsWith('/')), files: entries.filter((e) => !e.endsWith('/')) });
+
+  test('every folder whose name starts with Extraction is frozen, whatever follows it', async () => {
+    const { isFrozen } = await library();
+    for (const rel of ['formal/extraction/A.lean', 'Proj/Extraction/A.lean', 'formal/ExtractionCrates/Traits/A.lean', 'formal/extraction_hmac/A.lean']) assert.equal(isFrozen(rel), true, rel);
+    for (const rel of ['formal/proofs/A.lean', 'formal/specs/Specs/A.lean', 'formal/extractions.lean']) assert.equal(isFrozen(rel), false, rel);
+  });
+
+  test('the publish folders and published files of the run state are frozen too', async () => {
+    const { isFrozen, extractionLayout } = await library();
+    const fx = layered({ sub: 'proj' });
+    const state = { extraction: { run: {
+      publication: [{ projectPath: path.join(fx.repo, 'proj', 'Out', 'Main.lean') }, { projectPath: 'proj/Out/translation.json' }],
+      units: [{ crate: 'a', publishDir: 'proj/Lean/Traits/', publication: [{ projectPath: path.join(fx.repo, 'proj', 'Lean', 'Traits', 'T.lean') }] }, { crate: 'b', publishDir: 'proj/Lean/Hmac' },
+        { crate: 'c', publishDir: 'elsewhere/Lean' }, { crate: 'd', publishDir: 'proj' }, { crate: 'e', publishDir: '../up' }, { crate: 'f' }],
+    } } };
+    const layout = extractionLayout(state, { root: fx.repo, top: fx.repo, prefix: 'proj' });
+    assert.deepEqual(layout.folders, ['lean/traits/', 'lean/hmac/'], 'a folder outside the project, the project itself and a missing one are left out');
+    assert.deepEqual(layout.files, ['out/main.lean', 'out/translation.json', 'lean/traits/t.lean']);
+    assert.equal(isFrozen('Lean/Hmac/Out.lean', layout), true);
+    assert.equal(isFrozen('Out/Main.lean', layout), true);
+    assert.equal(isFrozen('Out/Other.lean', layout), false);
+    assert.deepEqual(extractionLayout(null, { root: fx.repo, top: fx.repo, prefix: '' }), { folders: [], files: [] });
+    assert.deepEqual(extractionLayout({ extraction: { run: { units: 'x', publication: 7 } } }, { root: fx.repo, top: fx.repo, prefix: '' }), { folders: [], files: [] });
+  });
+
+  test('a change or an addition in a publish folder is refused, and an unbuilt output file is named', async () => {
+    const { checkIntegrity, memoryTree } = await library();
+    const lake = 'defaultTargets = ["Foo"]\n[[lean_lib]]\nname = "Foo"\nglobs = ["Foo.+"]\n';
+    const layout = LAYOUT('lean/traits/', 'lean/hmac/');
+    const tree = (files) => memoryTree({ 'lakefile.toml': lake, ...files });
+    const base = tree({ 'Lean/Traits/T.lean': 'def t := 1\n', 'Lean/Hmac/H.lean': 'def h := 1\n' });
+    const run = (files) => checkIntegrity({ base, head: tree({ 'Lean/Traits/T.lean': 'def t := 1\n', 'Lean/Hmac/H.lean': 'def h := 1\n', ...files }), layout }).problems.map((p) => [p.kind, p.file]);
+    assert.deepEqual(run({ 'Lean/Hmac/H.lean': 'def h := 2\n' }).filter(([kind]) => kind !== 'not-covered-by-lean-lib'), [['frozen-file-changed', 'Lean/Hmac/H.lean']]);
+    assert.deepEqual(run({ 'Lean/Traits/More.lean': 'def m := 1\n' }).filter(([kind]) => kind !== 'not-covered-by-lean-lib'), [['frozen-file-added', 'Lean/Traits/More.lean']]);
+    assert.deepEqual(run({ 'Lean/Hmac/H.lean': 'def  h := 1 -- note\n' }).filter(([kind]) => kind !== 'not-covered-by-lean-lib'), []);
+    assert.ok(run({}).some(([kind, file]) => kind === 'not-covered-by-lean-lib' && file === 'Lean/Hmac/H.lean'), 'no glob reaches the output, so Lake would not compile it');
+    assert.deepEqual(checkIntegrity({ base, head: base, layout: LAYOUT('lean/hmac/h.lean') }).problems.map((p) => p.file), ['Lean/Hmac/H.lean'], 'a published file is judged without its folder, and its sibling is not');
+  });
+
+  test('the build check reads the run state, so a changed unit output stops the check before any build', () => {
+    const base = { ...BASE_FILES, 'formal/hmac/Out.lean': 'def out := 1\n', 'formal/traits/Out.lean': 'def out := 1\n' };
+    const lakefile = 'name = "fixture"\ndefaultTargets = ["Formal"]\n\n[[lean_lib]]\nname = "Formal"\nglobs = ["formal.+"]\n';
+    const state = JSON.stringify({ extraction: { run: { units: [{ crate: 'hmac', publishDir: 'formal/hmac' }, { crate: 'traits', publishDir: 'formal/traits' }] } } });
+    const run = (head) => {
+      const fx = layered({ base, head: { ...HEAD_FILES, ...head }, lakefile });
+      write(path.join(fx.repo, '.formalising', 'auto-fv', 'state.json'), state);
+      return [fx, checkTip(fx)];
+    };
+    const [, same] = run({});
+    assert.equal(same.status, 0, same.stderr);
+    const [fx, changed] = run({ 'formal/traits/Out.lean': 'def out := 2\n' });
+    assert.equal(changed.status, 1);
+    assert.equal(firstProblem(changed).kind, 'frozen-file-changed');
+    assert.equal(firstProblem(changed).file, 'formal/traits/Out.lean');
+    noBuild(fx);
+    write(path.join(fx.repo, '.formalising', 'auto-fv', 'state.json'), '{ not json');
+    assert.equal(check(fx, { commit: fx.tip, args: ['--spec-base', fx.merged], oleans: OLEANS }).json.code, 'run-state-unreadable');
+  });
 });
 
 describe('the spec base itself', () => {
@@ -754,8 +888,8 @@ describe('files that no lean_lib glob reaches', () => {
       const problem = result.json.integrity.problems.find((p) => p.file === 'formal/specs/Specs/A.lean');
       assert.equal(problem.kind, 'not-covered-by-lean-lib');
       assert.match(problem.detail, /Proj: Proj\.\+/);
-      assert.match(result.json.label, /not covered by any lean_lib glob.*\(and 1 more\)$/, 'the label names the first file and counts the rest');
-      assert.deepEqual(result.json.integrity.problems.map((p) => p.file), ['formal/proofs/A.lean', 'formal/specs/Specs/A.lean']);
+      assert.match(result.json.label, /not covered by any lean_lib glob.*\(and 2 more\)$/, 'the label names the first file and counts the rest');
+      assert.deepEqual(result.json.integrity.problems.map((p) => p.file), ['formal/extraction/Ext.lean', 'formal/proofs/A.lean', 'formal/specs/Specs/A.lean'], 'an extraction file is judged like a proof file');
       assert.match(result.stderr, /not accepted: not-covered-by-lean-lib: formal\/specs\/Specs\/A\.lean: .*Proj: Proj\.\+/);
       noBuild(fx);
     }
@@ -812,39 +946,69 @@ describe('files that no lean_lib glob reaches', () => {
 // The real run: the spec merged in the libcrux-hmac rc2 run and the proof head that followed it. The
 // range adds guard blocks and docstring and prose edits in the spec files, edits prose in Defs/Gaps.lean,
 // and adds Trusted/CoreAllocGaps.lean under the owner's ruling. Both trees are read from git objects.
+// The checkout is named by FVS_RC2_LIBCRUX_VERIFY, and the test is skipped when that is not set:
+//   FVS_RC2_LIBCRUX_VERIFY=/path/to/libcrux-verify node --test tests/auto-build-check.test.cjs
+// Nothing in the checkout is written. Its run state (.formalising/auto-fv), when present, is only read.
 const REAL = {
-  repo: process.env.FVS_RC2_LIBCRUX_VERIFY ?? '/Users/ada/GitHub/BAIF_GH/libcrux-verify',
+  repo: process.env.FVS_RC2_LIBCRUX_VERIFY,
   base: '7a2cd67422e2fbe8b6923f69893d7dd7ecb8ae43',
   head: '09511814c181892b0c31da2084ace9a7874f356a',
 };
-const haveReal = fs.existsSync(REAL.repo) && [REAL.base, REAL.head].every((sha) => sh(REAL.repo, 'git', ['--no-optional-locks', 'cat-file', '-e', `${sha}^{commit}`]).status === 0);
-const REAL_RECORDS = ['gap-core-u32-wrapping-div', 'gap-core-u32-wrapping-rem', 'gap-alloc-vec-into-boxed-slice', 'gap-alloc-vec-truncate'].map((id) => record({ id }));
+const haveReal = Boolean(REAL.repo) && fs.existsSync(REAL.repo) && [REAL.base, REAL.head].every((sha) => sh(REAL.repo, 'git', ['--no-optional-locks', 'cat-file', '-e', `${sha}^{commit}`]).status === 0);
+const GAP_IDS = ['gap-core-u32-wrapping-div', 'gap-core-u32-wrapping-rem', 'gap-alloc-vec-into-boxed-slice', 'gap-alloc-vec-truncate'];
+const realRunState = (name) => {
+  const file = path.join(REAL.repo, '.formalising', 'auto-fv', name);
+  return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
+};
+// The run's own externals records when the checkout has them, else records of the same shape.
+const realRecords = () => realRunState('externals.json')?.records ?? GAP_IDS.map((id) => record({ id }));
 
-describe('the real libcrux-hmac rc2 range', { skip: haveReal ? false : 'the libcrux-verify checkout with the rc2 commits is not on this machine' }, () => {
+describe('the real libcrux-hmac rc2 range', { skip: haveReal ? false : 'FVS_RC2_LIBCRUX_VERIFY does not name a libcrux-verify checkout with the rc2 commits' }, () => {
   const load = async () => {
-    const { gitTree, checkIntegrity, memoryTree } = await library();
-    return { checkIntegrity, memoryTree, base: gitTree(REAL.repo, REAL.base, ''), head: gitTree(REAL.repo, REAL.head, '') };
+    const { gitTree, checkIntegrity, memoryTree, extractionLayout } = await library();
+    const layout = extractionLayout(realRunState('state.json'), { root: REAL.repo, top: REAL.repo, prefix: '' });
+    return { checkIntegrity, memoryTree, layout, base: gitTree(REAL.repo, REAL.base, '', layout), head: gitTree(REAL.repo, REAL.head, '', layout) };
   };
 
+  test('the run state records the spec merge that is the base of the range', async (t) => {
+    const specs = realRunState('specs.json');
+    if (!specs) return t.skip('the checkout has no recorded specs.json');
+    const { recordedSpecMerge } = await library();
+    assert.equal(recordedSpecMerge({ prs: specs.prs.filter((pr) => pr.kind === 'spec') }), REAL.base);
+  });
+
   test('is accepted: guard blocks, docstring and prose edits, and the Trusted file under the accepted ruling', async () => {
-    const { checkIntegrity, base, head } = await load();
-    const { problems, ties } = checkIntegrity({ base, head, externals: () => REAL_RECORDS });
+    const { checkIntegrity, base, head, layout } = await load();
+    const records = realRecords();
+    const { problems, ties } = checkIntegrity({ base, head, layout, externals: () => records });
     assert.deepEqual(problems, []);
-    assert.deepEqual(ties.map((tie) => tie.record).sort(), REAL_RECORDS.map((r) => r.id).sort());
+    assert.deepEqual(ties.map((tie) => tie.record).sort(), [...GAP_IDS].sort());
     assert.ok(ties.every((tie) => tie.file === 'LibcruxHmac/Formal/Trusted/CoreAllocGaps.lean'));
   });
 
   test('is refused once a statement is weakened, a Defs body changes, or the ruling is missing', async () => {
-    const { checkIntegrity, memoryTree, base, head } = await load();
+    const { checkIntegrity, memoryTree, base, head, layout } = await load();
+    const records = realRecords();
     const edit = (file, from, to) => { const copy = new Map(head); copy.set(file, memoryTree({ [file]: head.get(file).text().replace(from, to) }).get(file)); return copy; };
     const spec = 'LibcruxHmac/Formal/Specs/Specs/Hmac.lean';
-    const weak = checkIntegrity({ base, head: edit(spec, '(h : U32.max < key.length ∨ U32.max < data.length)', '(h : U32.max < key.length)'), externals: () => REAL_RECORDS });
+    const weak = checkIntegrity({ base, head: edit(spec, '(h : U32.max < key.length ∨ U32.max < data.length)', '(h : U32.max < key.length)'), layout, externals: () => records });
     assert.deepEqual(weak.problems.map((p) => [p.kind, p.file, p.statement]), [['statement-changed', spec, 'hmac_panic']]);
     const defs = 'LibcruxHmac/Formal/Specs/Defs/Gaps.lean';
-    const body = checkIntegrity({ base, head: edit(defs, 'b.val ≠ 0 → wrapping_div a b', 'b.val ≠ 1 → wrapping_div a b'), externals: () => REAL_RECORDS });
+    const body = checkIntegrity({ base, head: edit(defs, 'b.val ≠ 0 → wrapping_div a b', 'b.val ≠ 1 → wrapping_div a b'), layout, externals: () => records });
     assert.deepEqual(body.problems.map((p) => [p.kind, p.file, p.statement]), [['frozen-file-changed', defs, 'U32WrappingDiv']]);
-    const unruled = checkIntegrity({ base, head, externals: () => [] });
+    const unruled = checkIntegrity({ base, head, layout, externals: () => [] });
     assert.deepEqual([...new Set(unruled.problems.map((p) => p.kind))], ['trusted-axiom-untied']);
     assert.equal(unruled.problems.length, 4);
+  });
+
+  test('is refused when the new axioms cite a record the owner has not accepted', async (t) => {
+    const open = realRecords().find((record) => record.status !== 'assumption-accepted');
+    if (!open) return t.skip('the checkout has no externals record that is still open');
+    const { checkIntegrity, memoryTree, base, head, layout } = await load();
+    const file = 'LibcruxHmac/Formal/Trusted/CoreAllocGaps.lean';
+    const copy = new Map(head);
+    copy.set(file, memoryTree({ [file]: head.get(file).text().replaceAll('gap-core-u32-wrapping-div', open.id) }).get(file));
+    const { problems } = checkIntegrity({ base, head: copy, layout, externals: realRecords });
+    assert.deepEqual(problems.map((p) => [p.kind, p.file]), [['trusted-axiom-untied', file]]);
   });
 });
