@@ -1250,6 +1250,13 @@ export function crateProblems(run, agreedTargets = null) {
   ];
 }
 
+// What the project itself still has to do once the extraction stitched crates together: the
+// axioms its theorems rest on changed. FVS never rewrites those lists; this is not part of the
+// extraction. Empty when no crate is stitched.
+const stitchedWork = (run) => (unitsOf(run).some((unit) => [].concat(unit.stitch ?? []).length > 0)
+  ? ' After the stitching the project has work FVS does not do: regenerate the pinned axiom lists in its own Lean project as a reviewed change, record an externals entry for each axiom that newly appears, and replace the hand-written Trusted axioms about functions the stitching now translates.'
+  : '');
+
 function crateWarnings(context) {
   return [
     ...context.missing.map((crate) => `the agreement names ${crate} as a target, but the extraction does not hold it`),
@@ -1980,7 +1987,7 @@ function progress(root, state, specs = null) {
     const proofMerge = proofs.at(-1)?.merged ? proofs.at(-1) : null;
     if (!proofPr) {
       return { phase: 'proofs', warnings,
-        nextAction: `The spec PR merge is recorded at ${specMerge.mergeCommit}. Run /fvs:auto-execute from the AO orchestrator for the proof phase: stock AO workers prove the merged statements, and the orchestrator opens one draft proof PR on the project's own repository and records it with record-pr --kind proof. No execution grant, stage profile or permission install is needed.` + suffix };
+        nextAction: `The spec PR merge is recorded at ${specMerge.mergeCommit}. Run /fvs:auto-execute from the AO orchestrator for the proof phase: stock AO workers prove the merged statements, and the orchestrator opens one draft proof PR on the project's own repository and records it with record-pr --kind proof. No execution grant, stage profile or permission install is needed.` + stitchedWork(state.extraction.run) + suffix };
     }
     const receipt = buildCheckReceipt(root, proofPr.head);
     // An accepting receipt counts only when the statements were held to the recorded spec merge: a
@@ -2026,7 +2033,7 @@ function progress(root, state, specs = null) {
     nextAction: (specPr
       ? `The draft spec PR ${specPr.url} is recorded: the owner reviews and merges it. After the merge, read the merge commit with gh pr view and record it with record-pr --kind spec --merged --merge-commit SHA. A spec refactor is another review round recorded with record-spec, then another record-pr.`
       : 'Run /fvs:auto-top-specs from the AO orchestrator for the spec phase: the orchestrator lists the public API items in scope, spawns stock AO workers to write the statements and review them adversarially, and opens one draft spec PR on the project\'s own repository for the owner to merge. No execution grant, stage profile or permission install is needed.')
-      + warnings.map((warning) => ` Warning: ${warning}.`).join('') };
+      + stitchedWork(state.extraction.run) + warnings.map((warning) => ` Warning: ${warning}.`).join('') };
 }
 
 // What `read-state --brief` keeps: where the run is and what to do next, a few

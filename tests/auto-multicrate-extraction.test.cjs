@@ -219,6 +219,20 @@ describe('crateProblems', () => {
   });
 });
 
+describe('what the project does after stitching', () => {
+  const said = /After the stitching the project has work FVS does not do: regenerate the pinned axiom lists in its own Lean project as a reviewed change, record an externals entry for each axiom that newly appears, and replace the hand-written Trusted axioms/;
+  const stitchTo = (provider) => ({ stitch: [{ provider, modules: ['M'], replaced: [], assumed: [], copies: [], files: [] }] });
+
+  it('is in the next action once a crate is stitched, and not before', () => {
+    const stitched = extracted((directory) => [unit(directory, 'app', [], stitchTo('base')), unit(directory, 'base', [])]);
+    assert.match(cli('read-state', '--project-root', stitched, '--brief').json.nextAction, said);
+    const plain = extracted(hmacAndSha2);
+    assert.doesNotMatch(cli('read-state', '--project-root', plain, '--brief').json.nextAction, /After the stitching/);
+    const none = extracted((directory) => [unit(directory, 'app', [], { stitch: [] }), unit(directory, 'base', [])]);
+    assert.doesNotMatch(cli('read-state', '--project-root', none, '--brief').json.nextAction, /After the stitching/, 'an empty stitch list changes nothing');
+  });
+});
+
 describe('runOf', () => {
   it('is the main run without a crate, a crate\'s unit with one, and null for a crate the extraction does not hold', () => {
     const root = extracted(hmacAndSha2);
