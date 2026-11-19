@@ -2,8 +2,9 @@
 
 // The Cargo.lock of an extraction copy: read from the project and recorded, or absent and
 // refused before an attempt (cargo would write one into the copy during the build), or
-// generated once in the copy by prepare --lock generate and recorded by hash. Cargo is a
-// fake script; no real tool runs.
+// brought in line with the patched manifests once by prepare --lock update (generated when
+// there is none, updated when the project's lock needs changes) and recorded by hash.
+// Cargo is a fake script; no real tool runs.
 
 const { describe, it, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -46,14 +47,14 @@ describe('Cargo.lock of the extraction copy', () => {
     assert.equal(done.result.manifest.lock.sha256, null);
     const attempt = engine(ws, ['attempt', '--out', out, '--spec', specFile(ws, toySpec())]);
     assert.equal(attempt.status, 8, attempt.stdout);
-    assert.match(attempt.result.message, /the prepared copy has no Cargo\.lock, so cargo would write one into the copy .* prepare a new copy with --lock generate --release DIR/);
+    assert.match(attempt.result.message, /the prepared copy has no Cargo\.lock, so cargo would write one into the copy .* prepare a new copy with --lock update --release DIR/);
     assert.equal(fs.existsSync(path.join(out, 'attempt.json')), false);
   });
 
   it('generates the lock once in the copy, records it and runs the whole chain on it', () => {
     const ws = workspace();
     withoutLock(ws);
-    const { out, done } = prepare(ws, ['--lock', 'generate', '--release', RELEASE]);
+    const { out, done } = prepare(ws, ['--lock', 'update', '--release', RELEASE]);
     assert.equal(done.status, 0, done.stdout);
     const lock = done.result.manifest.lock;
     assert.equal(lock.origin, 'generated');
@@ -72,18 +73,34 @@ describe('Cargo.lock of the extraction copy', () => {
     assert.deepEqual(status.result.run.units.map((unit) => unit.lock.origin), ['generated', 'generated']);
   });
 
-  it('leaves a lock the project has as it is and refuses to generate over it', () => {
+  it('keeps every version a project lock pins and records the lock it started from', () => {
     const ws = workspace();
-    const { done } = prepare(ws, ['--lock', 'generate', '--release', RELEASE]);
-    assert.equal(done.status, 5, done.stdout);
-    assert.match(done.result.message, /--lock generate is for a project without a Cargo\.lock; this one has it, and it is kept as it is/);
+    const projectLock = path.join(ws.project, 'Cargo.lock');
+    const before = fs.readFileSync(projectLock, 'utf8');
+    const { out, done } = prepare(ws, ['--lock', 'update', '--release', RELEASE]);
+    assert.equal(done.status, 0, done.stdout);
+    const lock = done.result.manifest.lock;
+    assert.equal(lock.origin, 'updated');
+    assert.equal(lock.from, done.result.manifest.source.files['Cargo.lock'].sha256, 'the project\'s own lock is the starting point');
+    assert.notEqual(lock.sha256, lock.from);
+    assert.equal(fs.readFileSync(projectLock, 'utf8'), before, 'the checkout is not touched');
+    assert.match(fs.readFileSync(path.join(out, 'tree', 'Cargo.lock'), 'utf8'), /updated by the fake cargo/);
+  });
+
+  it('records a lock that needed no change as read', () => {
+    const ws = workspace();
+    fs.writeFileSync(path.join(ws.tools.cargoHome, 'bin', 'lock-current.txt'), '');
+    const { done } = prepare(ws, ['--lock', 'update', '--release', RELEASE]);
+    assert.equal(done.status, 0, done.stdout);
+    assert.equal(done.result.manifest.lock.origin, 'read');
+    assert.equal(done.result.manifest.lock.from, undefined);
   });
 
   it('reports a failed generation with cargo\'s first lines and records no prepared copy', () => {
     const ws = workspace();
     withoutLock(ws);
     fs.writeFileSync(path.join(ws.tools.cargoHome, 'bin', 'lock-failure.txt'), 'error: failed to get `x` as a dependency\nCaused by:\n  no matching package named `x` found\n');
-    const { out, done } = prepare(ws, ['--lock', 'generate', '--release', RELEASE]);
+    const { out, done } = prepare(ws, ['--lock', 'update', '--release', RELEASE]);
     assert.equal(done.status, 9, done.stdout);
     assert.match(done.result.message, /cargo generate-lockfile failed in the extraction copy: error: failed to get `x` as a dependency \| Caused by: \| no matching package named `x` found/);
     const manifest = JSON.parse(fs.readFileSync(path.join(out, 'manifest.json'), 'utf8'));
@@ -93,9 +110,9 @@ describe('Cargo.lock of the extraction copy', () => {
   it('checks the lock flags before anything is written', () => {
     const ws = workspace();
     for (const [extra, pattern] of [
-      [['--lock', 'refresh', '--release', RELEASE], /--lock accepts only "generate"/],
-      [['--lock', 'generate'], /--lock generate needs --release DIR/],
-      [['--release', RELEASE], /--release is for --lock generate/],
+      [['--lock', 'refresh', '--release', RELEASE], /--lock accepts only "update"/],
+      [['--lock', 'update'], /--lock update needs --release DIR/],
+      [['--release', RELEASE], /--release is for --lock update/],
     ]) {
       const { out, done } = prepare(ws, extra);
       assert.equal(done.status, 2, done.stdout);

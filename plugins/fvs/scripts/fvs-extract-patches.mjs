@@ -53,7 +53,7 @@ function refuse(code, message, details) {
 function usage() {
   process.stdout.write([
     'Usage: node fvs-extract-patches.mjs check --project-root DIR [--format json|text]',
-    '       node fvs-extract-patches.mjs prepare --project-root DIR --out DIR [--lock generate --release DIR] [--format json|text]',
+    '       node fvs-extract-patches.mjs prepare --project-root DIR --out DIR [--lock update --release DIR] [--format json|text]',
     '       node fvs-extract-patches.mjs verify-restore --out DIR [--format json|text]',
     '       node fvs-extract-patches.mjs verify-tree --out DIR [--format json|text]',
     '       node fvs-extract-patches.mjs status --out DIR [--format json|text]',
@@ -74,8 +74,10 @@ function usage() {
     'target/ directory, with the tree prepare recorded; status reads the manifest.',
     'The manifest records the Cargo.lock of the copy (origin read, or absent). A project',
     'without one is refused by attempt, because cargo would write one into the copy; prepare',
-    '--lock generate --release DIR writes it once in the copy with cargo generate-lockfile',
-    '(network access; origin generated, recorded by hash; the checkout is not touched).',
+    '--lock update --release DIR brings the lock of the copy in line with the patched',
+    'manifests once: generated when there is none, otherwise updated keeping every pinned',
+    'version (cargo update --workspace). It may need network access, records the origin and',
+    'hashes, and never touches the checkout.',
     'migrate turns an active legacy src-modifications ledger into translation patches',
     '(one per hunk, entries from src-modifications.json kept verbatim) and marks the',
     'ledger inactive in place with src-modifications.inactive.json; it never edits',
@@ -503,26 +505,31 @@ function cargoEnvironment(release) {
   return { HOME: homes.HOME, RUSTUP_HOME: homes.RUSTUP_HOME, CARGO_HOME: homes.CARGO_HOME, PATH: `${path.join(homes.CARGO_HOME, 'bin')}:/usr/bin:/bin`, RUSTUP_TOOLCHAIN: release.tools.rustToolchain.channel };
 }
 
-// A project without a Cargo.lock gets one written in the copy, once, before the copy is
-// recorded: cargo would otherwise write it during the build, and the copy would then
-// differ from the recorded tree. Resolution needs the registry index (network); the lock
-// is recorded by hash with origin "generated", and the original checkout is not touched.
-// A copy that already has a lock keeps it.
-function generateLock(context, tree, releaseFlag) {
-  if (lexists(path.join(tree, LOCK_FILE))) refuse('invalid-input', `--lock generate is for a project without a ${LOCK_FILE}; this one has it, and it is kept as it is`);
+// Brings the lock of the copy in line with its patched manifests, once, before the copy
+// is recorded: cargo would otherwise rewrite it during the build, and the copy would then
+// differ from the recorded tree. A project without a lock gets one generated; a lock the
+// project has keeps every version it pins (cargo update --workspace only adds and prunes
+// what the manifests changed). Resolution may need the registry index (network). The
+// result is recorded by hash with its origin (generated, updated, or read when nothing
+// had to change, with the hash it started from when it did) and the checkout is not touched.
+function updateLock(context, tree, releaseFlag) {
   const release = releaseTools(path.resolve(context.projectRoot, releaseFlag));
-  const run = spawnSync('cargo', ['generate-lockfile'], { env: cargoEnvironment(release), cwd: tree, encoding: 'utf8' });
-  if (run.status !== 0 || !lexists(path.join(tree, LOCK_FILE))) {
+  const before = fileState(path.join(tree, LOCK_FILE));
+  const command = before === null ? ['generate-lockfile'] : ['update', '--workspace'];
+  const run = spawnSync('cargo', command, { env: cargoEnvironment(release), cwd: tree, encoding: 'utf8' });
+  const after = fileState(path.join(tree, LOCK_FILE));
+  if (run.status !== 0 || after === null) {
     const lines = `${run.stderr ?? ''}`.split('\n').map((line) => line.trim()).filter((line) => line !== '').slice(0, 6);
-    refuse('tool-failed', `cargo generate-lockfile failed in the extraction copy${lines.length > 0 ? `: ${lines.join(' | ')}` : ''}`, { reasons: lines });
+    refuse('tool-failed', `cargo ${command.join(' ')} failed in the extraction copy${lines.length > 0 ? `: ${lines.join(' | ')}` : ''}`, { reasons: lines });
   }
-  return true;
+  if (before === null) return { origin: 'generated' };
+  return before.sha256 === after.sha256 ? { origin: 'read' } : { origin: 'updated', from: before.sha256 };
 }
 
 function prepare(flags) {
-  if (flags.lock !== undefined && flags.lock !== 'generate') refuse('usage', '--lock accepts only "generate"');
-  if (flags.release !== undefined && flags.lock === undefined) refuse('usage', '--release is for --lock generate');
-  if (flags.lock === 'generate' && flags.release === undefined) refuse('usage', '--lock generate needs --release DIR: the release\'s toolchain runs cargo');
+  if (flags.lock !== undefined && flags.lock !== 'update') refuse('usage', '--lock accepts only "update"');
+  if (flags.release !== undefined && flags.lock === undefined) refuse('usage', '--release is for --lock update');
+  if (flags.lock === 'update' && flags.release === undefined) refuse('usage', '--lock update needs --release DIR: the release\'s toolchain runs cargo');
   const context = load(flags['project-root']);
   const out = resolveOut(flags.out, context.projectRoot);
   const tree = path.join(out, 'tree');
@@ -547,14 +554,14 @@ function prepare(flags) {
       throw new Error('the rehearsal copy reached different states from the extraction copy');
     }
     refuseChangedOriginals(manifest);
-    const generated = flags.lock === 'generate' ? generateLock(context, tree, flags.release) : false;
+    const updated = flags.lock === 'update' ? updateLock(context, tree, flags.release) : null;
     // The exact tree handed to the next stage: the touched set's hash and every file in the
     // copy. A completed tree holding any link is refused before it is recorded.
     const files = copyState(tree);
     const link = Object.keys(files).find((file) => files[file].link !== undefined);
     if (link) refuseCopyLink(link);
     manifest.final = { touchedSha256: sha256(JSON.stringify(touchedState(tree, context.touched))), files };
-    manifest.lock = { path: LOCK_FILE, origin: generated ? 'generated' : files[LOCK_FILE] ? 'read' : 'absent', sha256: files[LOCK_FILE]?.sha256 ?? null };
+    manifest.lock = { path: LOCK_FILE, origin: updated?.origin ?? (files[LOCK_FILE] ? 'read' : 'absent'), sha256: files[LOCK_FILE]?.sha256 ?? null, ...(updated?.from ? { from: updated.from } : {}) };
     manifest.status = 'prepared';
   } catch (error) {
     manifest.failure = error instanceof Refusal
@@ -1185,7 +1192,7 @@ function attempt(flags) {
   const { manifest, manifestSha256 } = preparedManifest(out);
   if (lexists(path.join(out, ATTEMPT))) refuse('attempt-refused', 'this copy already has an attempt; prepare a new copy to retry');
   if (manifest.lock?.origin === 'absent') {
-    refuse('attempt-refused', `the prepared copy has no ${LOCK_FILE}, so cargo would write one into the copy during the build and the copy would no longer match the recorded tree; commit a ${LOCK_FILE} to the project, or prepare a new copy with --lock generate --release DIR (needs network access; the generated lock is recorded by hash)`);
+    refuse('attempt-refused', `the prepared copy has no ${LOCK_FILE}, so cargo would write one into the copy during the build and the copy would no longer match the recorded tree; commit a ${LOCK_FILE} to the project, or prepare a new copy with --lock update --release DIR (it may need network access; the lock is recorded by hash)`);
   }
   const spec = readJson(path.resolve(flags.spec));
   return isObject(spec) && spec.crates !== undefined ? attemptUnits(out, manifest, manifestSha256, spec) : recordAttempt(out, manifest, manifestSha256, spec);
