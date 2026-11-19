@@ -10,8 +10,11 @@
 // confirmation is the digest that the preview prints). No rule it writes names a GitHub comment, review or
 // merge, a push, or a wildcard program. A push gets no allow rule at all: a `*` in a rule also matches the rest
 // of the command, so a glob cannot say "this branch and nothing else". For Claude Code the `git-push` step
-// installs the push gate hook instead (scripts/fvs-auto-push-gate.mjs), which allows only the exact plain forms
-// of a push to the project fork and asks for every other push; Codex has no such hook, so a push asks there.
+// offers the push gate hook instead (scripts/fvs-auto-push-gate.mjs), which allows only the exact plain forms of
+// a push to the project fork and asks for the other pushes it recognises. A push it does not recognise, or a
+// session in which it does not run, gets no decision from it and stays with the user's other rules and permission
+// mode; Codex has no such hook. A push allow rule already in a project settings file would make that fallback
+// allow a push, so a Claude write refuses while one is there and lists it. It never deletes one.
 //
 // It reads no standard input and does not touch the engine's state or externals files; the answers live in
 // their own record, .formalising/auto-fv/permissions.json.
@@ -92,7 +95,8 @@ function gateHook({ repo, host, remote, prefixes }) {
       `no form is allowed when one of remote.${remote}.mirror, push.followTags, push.recurseSubmodules (on-demand or only) or submodule.recurse is set, because the push would then send more than the one branch`,
     ],
     destination: `${host}/${repo}: every URL git would push to must name it, or the push asks`,
-    asks: 'every other command that contains a push: force flags, --delete, --tags, --mirror, --all, refspecs, other remotes or branches, several refspecs, chains, pipes, redirects, several lines, odd -C arguments',
+    asks: 'every other command it recognises as a push: force flags, --delete, --tags, --mirror, --all, refspecs, other remotes or branches, several refspecs, chains, pipes, redirects, several lines, odd -C arguments',
+    noDecision: 'no decision: it neither allows nor asks, and your other rules and permission mode decide. That happens for a push it does not recognise as one (for example a spelling it cannot read), and for a missing Node, a missing or failing script, or a run that passes the 15-second timeout, which Claude Code documents as non-blocking.',
   };
 }
 
@@ -148,7 +152,7 @@ export function buildCatalog({ repo, remote = 'origin', prefixes = ['fvs'], host
       probes: pushPrefixes.map((p) => bash(`git push -u ${remote} ${p}/permission-check --dry-run`)),
       // No allow rule: a rule cannot exclude a second branch name, a force flag or a refspec. The gate hook decides pushes instead.
       claude: [], hook: gateHook({ repo, host, remote, prefixes: pushPrefixes }),
-      codex: [], codexNote: 'Codex has no push gate hook, and a Codex rule matches only the start of a command so it cannot exclude a force push: a push still asks on Codex.',
+      codex: [], codexNote: 'Codex has no push gate hook, and a Codex rule matches only the start of a command so it cannot exclude a force push: init writes no push rule for Codex, and a push there follows Codex\'s own rules and sandbox mode.',
     },
   ];
   return { repo, remote, host, prefixes: pushPrefixes, steps };
@@ -174,7 +178,8 @@ function selectedRules(catalog, stepIds) {
   return { picked, allow: picked.flatMap((step) => step.claude), hook: picked.find((step) => step.hook)?.hook ?? null };
 }
 
-const digestOf = (value) => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const sha256 = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
+const digestOf = (value) => sha256(JSON.stringify(value));
 
 // ---- files --------------------------------------------------------------------------------------------------
 
@@ -185,6 +190,38 @@ function writeAtomic(file, text) {
   fs.writeFileSync(temp, text, { mode });
   fs.renameSync(temp, target);
   return target;
+}
+
+// The real location of a path that may not exist yet: links are followed as far as the path exists, and the rest
+// is appended. A link in a folder that has not been created yet is therefore still seen at the folder that does exist.
+function realPathOf(file) {
+  const rest = [];
+  let probe = file;
+  for (;;) {
+    try { return path.join(fs.realpathSync.native(probe), ...[...rest].reverse()); } catch { /* not there yet */ }
+    const parent = path.dirname(probe);
+    if (parent === probe) return file;
+    rest.push(path.basename(probe));
+    probe = parent;
+  }
+}
+
+// What a confirmation is about: the real file and its exact bytes, read once, so the text that is parsed and merged is
+// the text that was hashed. `bytes` is null when the file does not exist.
+export function snapshotOf(root, relative) {
+  const file = path.join(root, relative);
+  const resolvedPath = realPathOf(file);
+  let bytes = null;
+  try { bytes = fs.readFileSync(resolvedPath); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  return { resolvedPath, viaLink: resolvedPath !== file, bytes, sha256: bytes === null ? null : sha256(bytes) };
+}
+
+// Checked again just before the write: the file or a link in front of it must still be what the user confirmed.
+export function checkUnchanged(root, relative, before) {
+  const now = snapshotOf(root, relative);
+  if (now.resolvedPath !== before.resolvedPath || now.sha256 !== before.sha256) {
+    refuse('changed-since-preview', `${relative} or the link in front of it changed while this command ran; nothing was written. Show the user a new preview: a new digest needs a new yes.`, { was: { resolvedPath: before.resolvedPath, sha256: before.sha256 }, now: { resolvedPath: now.resolvedPath, sha256: now.sha256 } });
+  }
 }
 const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
 const plain = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -224,7 +261,7 @@ function summaryLine(record, stepIds) {
     parts.push(prompted.length ? `waiting for your approval when the run reaches: ${prompted.join(', ')}` : 'no step prompted in the latest answers');
   }
   if (record.allowlist) parts.push(`allowlist written to ${record.allowlist.file} (${record.allowlist.allow.length} allow${record.allowlist.hooks?.length ? ', push gate hook' : ''})`);
-  if (record.runtime === 'codex' && record.allowlist?.writtenAt > (last?.at ?? '')) parts.push('Codex loads rules at startup: check again in a new session before treating any step as fixed or unfixed');
+  if (record.runtime === 'codex' && record.allowlist?.writtenAt > (last?.at ?? '')) parts.push('Codex loads rules at startup: run the recheck command in a new session before treating any step as fixed or unfixed');
   return parts.join('; ');
 }
 
@@ -250,21 +287,52 @@ export function lakeProbeBlocker(root) {
   return missing.length ? `Lake would download ${missing.join(', ')}, which is not in ${dir}` : null;
 }
 
+const probeEntry = (step, lakeBlocker) => (step.id === 'lake-build' && lakeBlocker
+  ? { id: step.id, why: step.why, probes: null, skipped: `not probed: ${lakeBlocker}; record it as unknown` }
+  : { id: step.id, why: step.why, probes: step.probes });
+
 function plan(flags) {
   const { root, catalog } = context(flags);
   const record = readRecord(root);
   const lakeBlocker = lakeProbeBlocker(root);
   const stepIds = catalog.steps.map((step) => step.id);
+  const legacy = legacyPushRules(root);
   return {
     code: 'ok',
     record: record
       ? { present: true, summary: summaryLine(record, stepIds), latest: latestObservations(record), notAsked: stepIds.filter((id) => !(id in latestObservations(record))), rounds: record.rounds }
       : { present: false, summary: summaryLine(null, stepIds) },
     repo: catalog.repo, remote: catalog.remote, branchPrefixes: catalog.prefixes,
-    steps: catalog.steps.map((step) => (step.id === 'lake-build' && lakeBlocker
-      ? { id: step.id, why: step.why, probes: null, skipped: `not probed: ${lakeBlocker}; record it as unknown` }
-      : { id: step.id, why: step.why, probes: step.probes })),
-    message: record ? 'A record exists: do not run the check again; show the summary.' : 'Run each probe as its own plain call, then ask the user which steps prompted. A skipped step is recorded as unknown.',
+    steps: catalog.steps.map((step) => probeEntry(step, lakeBlocker)),
+    message: record
+      ? 'A record exists: do not run the check again; show the summary. To check again on the owner\'s request (after rules were written, or in a new Codex session), run the recheck command.'
+      : 'Run each probe as its own plain call, then ask the user which steps prompted. A skipped step is recorded as unknown.',
+    ...(legacy.length ? { legacyPushRules: legacy, legacyPushRulesNote: 'a project settings file already allows a push by rule: a Claude write-allowlist refuses until the owner removes these entries, and the push probe may stay quiet because of them rather than because of the hook' } : {}),
+  };
+}
+
+// The explicit way to check again once a record exists: after rules were written, or in a new Codex session, because
+// Codex reads its rules only when a session starts. By default it repeats the steps whose latest answer was "prompted".
+// The push step is never repeated: no rule allows its dry-run form and the hook does not allow it either, so it would
+// prompt however well the hook works.
+function recheck(flags) {
+  const { root, catalog } = context(flags);
+  const record = readRecord(root);
+  if (!record) refuse('no-record', 'there is no earlier check to repeat: run plan and the check first');
+  const lakeBlocker = lakeProbeBlocker(root);
+  const latest = latestObservations(record);
+  const known = catalog.steps.map((step) => step.id);
+  const asked = flags.steps ? flags.steps.split(',').filter(Boolean) : null;
+  for (const id of asked ?? []) if (!known.includes(id)) refuse('unknown-step', `unknown step ${JSON.stringify(id)}; steps: ${known.join(', ')}`);
+  const chosen = asked ?? known.filter((id) => latest[id] === 'prompted');
+  const steps = catalog.steps.filter((step) => chosen.includes(step.id)).map((step) => (step.id === 'git-push'
+    ? { id: step.id, why: step.why, probes: null, skipped: 'not repeated: its dry-run form is not one the hook allows, so it asks even when the hook works; the first real worker push is the evidence for the hook. Keep its earlier answer.' }
+    : probeEntry(step, lakeBlocker)));
+  return {
+    code: 'ok', mode: 'recheck', summary: summaryLine(record, known), repo: catalog.repo, remote: catalog.remote, steps,
+    message: steps.length === 0
+      ? 'No step prompted in the latest answers, so there is nothing to repeat. Pass --steps ID,ID to choose steps yourself.'
+      : 'Run each probe as its own plain call, ask the owner which steps prompted, and record the answers with "kind":"recheck". On Codex, do this only in a new session, after the project .codex folder is trusted: rules are read when a session starts, so a prompt in a session that was already running proves nothing about them.',
   };
 }
 
@@ -295,13 +363,50 @@ function record(flags) {
   return { code: 'recorded', summary: summaryLine(next, catalog.steps.map((step) => step.id)), prompted: Object.entries(input.results).filter(([, v]) => v === 'prompted').map(([k]) => k) };
 }
 
-// Where the file really is, and whether a link leads there: shown before the user confirms, not only after the write.
-function resolveTarget(root, relative) {
-  const file = path.join(root, relative);
-  const dir = path.dirname(file);
-  const realDir = fs.existsSync(dir) ? fs.realpathSync(dir) : dir;
-  const resolvedPath = fs.existsSync(file) ? fs.realpathSync(file) : path.join(realDir, path.basename(file));
-  return { resolvedPath, viaLink: resolvedPath !== file };
+// Does a Bash allow rule name `git ... push`? "Names" is meant literally: `Bash(git push origin fvs/*)`, `Bash(git push:*)`,
+// `Bash(git -C * push *)` and `Bash(rtk git push *)` do, `Bash(git stash push *)`, `Bash(npm run push-docs *)` and a broad
+// rule such as `Bash(git *)` do not. Broad rules are not examined: how Claude Code matches them cannot be checked here.
+export function namesPush(rule) {
+  const body = /^Bash\((.*)\)$/s.exec(typeof rule === 'string' ? rule.trim() : '')?.[1];
+  if (body === undefined) return false;
+  const words = body.replace(/:\*$/, '').split(/\s+/);
+  const at = words.findIndex((word) => word === 'git' || word.endsWith('/git'));
+  if (at < 0) return false;
+  let i = at + 1;
+  // Global git options before the subcommand: `-C <path>`, `-c <name=value>`, and `--option[=value]`.
+  for (;;) {
+    if (words[i] === '-C' || words[i] === '-c') i += 2;
+    else if (/^--[\w-]+(?:=.*)?$/.test(words[i] ?? '')) i += 1;
+    else break;
+  }
+  return words[i] === 'push';
+}
+
+// The push allow rules already in the project's two settings files, by file. FVS deletes none of them: they are listed
+// so that the owner can. Only string entries of permissions.allow are read, and a file that is not valid JSON is left to
+// the later checks.
+export function legacyPushRules(root) {
+  const found = [];
+  for (const relative of ['.claude/settings.json', '.claude/settings.local.json']) {
+    const snapshot = snapshotOf(root, relative);
+    if (snapshot.bytes === null) continue;
+    let settings;
+    try { settings = JSON.parse(snapshot.bytes.toString('utf8')); } catch { continue; }
+    const list = plain(settings) && plain(settings.permissions) && Array.isArray(settings.permissions.allow) ? settings.permissions.allow : [];
+    const rules = list.filter(namesPush);
+    if (rules.length) found.push({ file: relative, resolvedPath: snapshot.resolvedPath, rules, keeps: list.length - rules.length });
+  }
+  return found;
+}
+
+function checkNoLegacyPushRules(root) {
+  const found = legacyPushRules(root);
+  if (found.length === 0) return;
+  refuse('legacy-push-rules', 'a project settings file already allows a push by rule. FVS writes no push rule and deletes none, and such a rule decides whenever the push gate hook gives no decision (a push it does not recognise, a missing Node, a timeout), so it can allow a push you did not mean to allow. Nothing was written. Remove the listed entries yourself, then run init again; every other entry stays.', {
+    legacyPushRules: found,
+    cleanup: found.map((one) => `In ${one.file} (${one.resolvedPath}) delete these ${one.rules.length} entr${one.rules.length === 1 ? 'y' : 'ies'} from permissions.allow and nothing else: ${one.rules.map((rule) => JSON.stringify(rule)).join(', ')}. The other ${one.keeps} allow entr${one.keeps === 1 ? 'y stays' : 'ies stay'}.`),
+    notExamined: 'broad rules such as Bash(git *), your user settings (${CLAUDE_PLUGIN_ROOT}/settings.json) and the permission mode are not examined',
+  });
 }
 
 function gitStatusOf(root, relative) {
@@ -400,8 +505,10 @@ function checkNothingElseChanged(existing, merged, added) {
 
 function confirmationNeeded(flags, digest, preview) {
   if (flags.confirm === digest) return;
-  refuse('confirmation-required', flags.confirm ? 'the confirmed digest does not match these rules; show the user this preview again' : 'nothing is written without the user\'s yes: show the user this preview, and only after their yes rerun with --confirm DIGEST',
-    { ...preview, digest });
+  refuse('confirmation-required', flags.confirm
+    ? 'the confirmed digest does not match this preview: the rules, the project root, the real path of the file or the content of the file differ from what the user confirmed. Nothing was written. Show the user this new preview; its new digest needs a new yes.'
+    : 'nothing is written without the user\'s yes: show the user this preview, and only after their yes rerun with --confirm DIGEST',
+  { ...preview, digest });
 }
 
 function writeAllowlist(flags) {
@@ -422,14 +529,15 @@ function writeClaude(flags, root, catalog, picked, allow, hook) {
   if (!['shared', 'local'].includes(target)) refuse('invalid-input', '--target must be shared or local');
   const relative = `.claude/${target === 'shared' ? 'settings.json' : 'settings.local.json'}`;
   if (target === 'local') checkMainCheckout(root);
-  const file = path.join(root, relative);
+  checkNoLegacyPushRules(root);
+  const before = snapshotOf(root, relative);
   let existing = {};
-  if (fs.existsSync(file)) {
-    try { existing = readJson(file); } catch { refuse('malformed-settings', `${relative} is not valid JSON; fix it yourself first, it is never overwritten`); }
+  if (before.bytes !== null) {
+    try { existing = JSON.parse(before.bytes.toString('utf8')); } catch { refuse('malformed-settings', `${relative} is not valid JSON; fix it yourself first, it is never overwritten`); }
   }
   const { merged, added } = mergeClaude(existing, allow, hook, relative);
   const preview = {
-    runtime: 'claude', target, file: relative, ...resolveTarget(root, relative), gitStatus: gitStatusOf(root, relative),
+    runtime: 'claude', target, file: relative, projectRoot: root, resolvedPath: before.resolvedPath, viaLink: before.viaLink, existingSha256: before.sha256, gitStatus: gitStatusOf(root, relative),
     appliesTo: target === 'shared'
       ? 'Claude Code reads .claude/settings.json from each session\'s own directory, and its rules and hooks apply once the folder is trusted. A worker worktree sees it only if the file is committed or .claude is linked into the worktree.'
       : 'Claude Code reads .claude/settings.local.json from the main checkout in every worktree and keeps it out of git; its rules apply without the trust step while the file stays untracked (whether a hook there needs the trust step was not observed).',
@@ -439,15 +547,18 @@ function writeClaude(flags, root, catalog, picked, allow, hook) {
       hook: {
         event: 'PreToolUse', matcher: 'Bash', command: hook.command, script: hook.script, entry: hook.entry,
         allows: hook.allows, destination: hook.destination, asks: hook.asks,
-        note: 'The command runs this machine\'s copy of the script. If the script is missing or the hook fails, a push asks as usual, so it fails safe. After an FVS update or reinstall that moves the script, remove this entry and run init again. A shared .claude/settings.json that is committed would name this machine\'s path: use --target local to keep the hook out of git.',
+        noDecision: hook.noDecision,
+        note: 'The command runs this machine\'s copy of the script. After an FVS update or reinstall that moves the script, remove this entry and run init again. A shared .claude/settings.json that is committed would name this machine\'s path: use --target local to keep the hook out of git.',
       },
     } : {}),
   };
   if (added.allow.length === 0 && !added.hook) return { code: 'unchanged', message: `${relative} already holds every rule${hook ? ' and the push gate hook' : ''}`, ...preview };
-  confirmationNeeded(flags, digestOf({ runtime: 'claude', file: relative, allow: added.allow, hook: added.hook }), preview);
+  // The confirmation is about this project, this real file and these exact bytes, as well as these rules.
+  confirmationNeeded(flags, digestOf({ runtime: 'claude', root, file: relative, resolvedPath: before.resolvedPath, existingSha256: before.sha256, allow: added.allow, hook: added.hook }), preview);
   checkNothingElseChanged(existing, merged, added);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const real = writeAtomic(file, JSON.stringify(merged, null, 2) + '\n');
+  fs.mkdirSync(path.dirname(before.resolvedPath), { recursive: true });
+  checkUnchanged(root, relative, before);
+  const real = writeAtomic(before.resolvedPath, JSON.stringify(merged, null, 2) + '\n');
   const reread = readJson(real);
   if (!added.allow.every((text) => (reread.permissions.allow ?? []).includes(text)) || (added.hook && !gateCommandsIn(reread.hooks?.PreToolUse ?? []).includes(added.hook))) {
     refuse('write-check-failed', `${real} does not hold the new rules after writing`);
@@ -459,7 +570,7 @@ function writeClaude(flags, root, catalog, picked, allow, hook) {
     notes: [
       'Claude Code reloads settings files while running; if a step still prompts, run the check again for that step (see the permissions page).',
       'Worker worktrees read their own .claude/settings.json: it reaches them only if committed or if .claude is linked into them. settings.local.json is read from the main checkout in every worktree.',
-      ...(added.hook ? ['The push gate hook allows only the exact plain pushes listed in the preview and asks for every other push. Branch protection on the project fork is still recommended as an independent safeguard.'] : []),
+      ...(added.hook ? ['The push gate hook allows only the exact plain pushes listed in the preview and asks for the other pushes it recognises. For a push it does not recognise, or when it does not run (Node or the script missing, a failure, a timeout), your other rules and permission mode decide. Branch protection on the project fork is still recommended as an independent safeguard.'] : []),
     ],
   };
 }
@@ -511,8 +622,9 @@ function writeCodex(flags, root, catalog, picked) {
     refuse('rules-file-conflict', `${relative} already exists and differs from what this selection would write. FVS does not replace or merge it, because that could drop rules you approved earlier or rules you added. To change it, save any rule of your own, delete the file yourself, and write every step you want in one command.`,
       { file: relative, existing: fs.readFileSync(file, 'utf8'), wouldWrite: text });
   }
+  const before = snapshotOf(root, relative);
   const preview = {
-    runtime: 'codex', file: relative, ...resolveTarget(root, relative), gitStatus: gitStatusOf(root, relative), steps: picked.map((s) => s.id), text,
+    runtime: 'codex', file: relative, projectRoot: root, resolvedPath: before.resolvedPath, viaLink: before.viaLink, existingSha256: before.sha256, gitStatus: gitStatusOf(root, relative), steps: picked.map((s) => s.id), text,
     notWritten: Object.fromEntries(picked.filter((s) => s.codex.length === 0).map((s) => [s.id, s.codexNote ?? ''])),
     appliesTo: 'Codex loads project rules only when the project .codex/ folder is trusted, and scans rules when a session starts: they take effect in a new session.',
   };
@@ -521,9 +633,10 @@ function writeCodex(flags, root, catalog, picked) {
   if (evaluation.problem === 'rejected') refuse('evaluator-rejected', 'the installed Codex rejected these rules; nothing was written', { ...preview, evaluation });
   if (evaluation.problem === 'mismatch') refuse('evaluator-mismatch', 'the installed Codex does not allow every command these rules exist for; nothing was written', { ...preview, evaluation });
   const shown = { ...preview, evaluation: { verified: evaluation.verified, evaluator: evaluation.evaluator } };
-  confirmationNeeded(flags, digestOf({ runtime: 'codex', file: relative, text }), shown);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  writeAtomic(file, text);
+  confirmationNeeded(flags, digestOf({ runtime: 'codex', root, file: relative, resolvedPath: before.resolvedPath, existingSha256: before.sha256, text }), shown);
+  fs.mkdirSync(path.dirname(before.resolvedPath), { recursive: true });
+  checkUnchanged(root, relative, before);
+  writeAtomic(before.resolvedPath, text);
   recordAllowlist(root, relative, { allow: rules.map((r) => r.pattern.join(' ')) }, true);
   return {
     code: 'written', ...shown, evaluation, verified: evaluation.verified,
@@ -536,7 +649,7 @@ function writeCodex(flags, root, catalog, picked) {
 
 // ---- command line -------------------------------------------------------------------------------------------
 
-const USAGE = `Usage: node fvs-auto-permissions.mjs <plan|record|write-allowlist> --repo OWNER/REPO [options]
+const USAGE = `Usage: node fvs-auto-permissions.mjs <plan|recheck|record|write-allowlist> --repo OWNER/REPO [options]
 
   --project-root DIR     project root (default: the current directory)
   --repo OWNER/REPO      the project's own repository (where draft pull requests go); every URL of the remote must name it
@@ -545,6 +658,8 @@ const USAGE = `Usage: node fvs-auto-permissions.mjs <plan|record|write-allowlist
   --branch-prefix P      branch namespace the run pushes under (repeatable; default fvs; never main, master, release...)
 
 plan                     list the probes: one instance of each run step, chosen to post and push nothing
+recheck [--steps ID,ID]  the entry point for checking again once a record exists: the probes of the steps that last
+                         prompted (never the push step), to run and record with kind "recheck"
 record --input FILE      keep the user's answer: {"runtime":"claude|codex","kind":"check|recheck","results":{"<step>":"prompted|quiet|unknown"}}
 write-allowlist          --runtime claude|codex --steps ID,ID [--target shared|local] [--confirm DIGEST]
                          without a matching --confirm it writes nothing and prints the preview and its digest
@@ -568,7 +683,7 @@ function parse(argv) {
 
 export function main(argv) {
   const [command, ...rest] = argv;
-  const commands = { plan, record, 'write-allowlist': writeAllowlist };
+  const commands = { plan, recheck, record, 'write-allowlist': writeAllowlist };
   try {
     if (!commands[command]) throw new Refuse('usage', `unknown command ${JSON.stringify(command)}`);
     process.stdout.write(JSON.stringify(commands[command](parse(rest)), null, 2) + '\n');
