@@ -3,10 +3,12 @@
 //
 //   node <fvs scripts dir>/fvs-auto-push.mjs --branch fvs/<name>
 //
-// It pushes `refs/heads/<branch>:refs/heads/<branch>` to the destination URL that /fvs:auto-init recorded, and
-// nothing else. It never uses a remote name, so remote.<name>.push, remote.<name>.pushurl, remote.<name>.mirror,
-// remote.pushDefault, branch.*.pushRemote and push.default cannot redirect or widen it. Before it pushes it refuses
-// unless all of these hold:
+// It pushes `refs/heads/<branch>:refs/heads/<branch>` to the destination URL that /fvs:auto-init recorded. It is a
+// cooperative guard with some hardening, not a security boundary: CONTRACT below says what it checks, what it hardens
+// and what it trusts, and the permissions page and every confirmation print the same list.
+//
+// It never uses a remote name, so remote.<name>.push, remote.<name>.pushurl, remote.<name>.mirror, remote.pushDefault,
+// branch.*.pushRemote and push.default do not apply to it. Before it pushes it refuses unless all of these hold:
 //   - exactly `--branch <name>` was given (any other argument is refused);
 //   - the shared git directory of the repository it runs in is the one recorded at init, and the recorded project
 //     root is a checkout of that same repository (the main checkout and its linked worktrees pass; a link, a copy
@@ -19,19 +21,14 @@
 // Every git call that acts on the repository (the branch checks, the URL checks, the tip read and the push) names the git
 // directory and the work tree that were found and checked, so none of them finds a repository again from a directory.
 // Three calls do look for one: the first, which finds it; its round trip from the top of the work tree, which checks
-// it; and a read of the shared git directory of the recorded project root. A hook of the repository runs with
-// GIT_DIR and GIT_WORK_TREE set, because git exports both when it is told where the repository is.
-// The push uses an explicit full refspec without `+`,
-// --no-follow-tags and -c push.followTags=false, --recurse-submodules=no, -c push.pushOption= (no push option from any
-// configuration), --porcelain and -c core.abbrev=no (full object ids). The result is appended to
-// .formalising/auto-fv/pushes.jsonl of the recorded project root. It names only object ids that the push reported: a
-// new or up-to-date branch has none in git's summary. When git does not report a result for the branch (a timeout, a lost
-// connection), the outcome is `unknown`, and the destination may have changed.
-//
-// What it does not do: git hooks in the repository still run, as for any push; credential helpers, ssh and proxy
-// settings come from the user's git configuration and environment; the recorded destination is a plain file that
-// any session of the same user can change; and a rewrite rule added after the check but before the connection is a
-// race it cannot close. It trusts the `git` found on PATH.
+// it; and a read of the shared git directory of the recorded project root.
+// The push uses an explicit full refspec without `+`, --no-follow-tags and -c push.followTags=false,
+// --recurse-submodules=no, -c push.pushOption= (no push option from any configuration), -c core.hooksPath=/dev/null (no
+// repository hook), --porcelain and -c core.abbrev=no (full object ids), and every git call runs without the GIT_*
+// variables listed in cleanEnvironment. The result is appended to .formalising/auto-fv/pushes.jsonl of the recorded
+// project root. It names only object ids that the push reported: a new or up-to-date branch has none in git's summary.
+// When git does not report a result for the branch (a timeout, a lost connection), the outcome is `unknown`, and the
+// destination may have changed.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -43,6 +40,34 @@ export const RECORD_SCHEMA = 'fvs/auto-push-destination';
 export const WORD = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 // Branch namespaces a run must never be allowed to push to without asking.
 export const RESERVED = new Set(['main', 'master', 'HEAD', 'head', 'release', 'releases', 'develop', 'dev', 'trunk']);
+
+// What the command is and what it is not, in the words that the permissions page and every confirmation print. It is
+// cooperative: it guards against mistakes and misuse through its own command line, and trusts the user's git setup the way
+// a push the user runs would. A test compares the page with these lists, so change both together.
+export const CONTRACT = {
+  kind: 'cooperative, with hardening, and not a security boundary',
+  checks: [
+    'It takes exactly --branch <name> and refuses anything else on its command line.',
+    'It runs only in the repository that the destination was recorded for, and refuses a work tree that points at another repository.',
+    'It pushes only a plain local branch under a recorded namespace, to the destination address recorded at init, and refuses an address that a URL rewrite rule applies to when it checks.',
+  ],
+  hardening: [
+    'Repository hooks are ignored for this push (core.hooksPath is set to /dev/null), so your own pre-push checks do not run for it.',
+    'git runs without GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR, GIT_INDEX_FILE, GIT_OBJECT_DIRECTORY, GIT_ALTERNATE_OBJECT_DIRECTORIES, GIT_CONFIG, GIT_CONFIG_COUNT, the GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n pairs, GIT_CONFIG_PARAMETERS, GIT_NAMESPACE and GIT_EXEC_PATH. Settings that reach git only through those variables are not used. Your normal ssh, credential and transport settings stay.',
+    'No push option is sent.',
+  ],
+  trusts: [
+    'Your git setup, as for any push you run yourself.',
+    'ssh and other transport wrappers (GIT_SSH_COMMAND, core.sshCommand, proxy and remote helpers): the command cannot tell where one of them sends the push.',
+    'Credential helpers.',
+    'URL rewrite rules: a rule that is added or changed after the command checks and before it connects is not caught.',
+    'The record file and FVS itself: anything that runs as your user can edit the record, the script and the permission rule, and so change where the command pushes or what it checks.',
+    'The git program found on PATH.',
+  ],
+};
+
+// The same contract as one plain paragraph, for messages and notes.
+export const contractText = () => `The push command is ${CONTRACT.kind}. ${CONTRACT.checks.join(' ')} ${CONTRACT.hardening.join(' ')} It trusts the following and does not protect against it. ${CONTRACT.trusts.join(' ')}`;
 
 // ---- the destination URL ------------------------------------------------------------------------------------
 
@@ -89,11 +114,23 @@ export function destinationProblem(where, remote, repo, host) {
 // Where git runs once `locate` has captured the repository: the git directory and the work tree, named on each call
 // that is given them so that the call finds no repository by itself. Without them git discovers a repository from the
 // working directory, and a setting such as core.worktree can make the work tree of one repository a directory that
-// belongs to another. Git exports both to the hooks and helpers that it starts.
+// belongs to another.
 const placed = (where) => (where ? ['--git-dir', where.gitDir, '--work-tree', where.top] : []);
 
+// The variables that move git to another repository, change where it finds objects, or add configuration that no file
+// shows. They are removed from every git call, so the checks and the push see the same configuration and none of them
+// can be redirected by what the calling session happened to export. The user's own ssh, credential and transport settings
+// are not on this list and stay: GIT_SSH_COMMAND, GIT_SSH, GIT_ASKPASS, SSH_AUTH_SOCK, GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM,
+// HOME, XDG_CONFIG_HOME, PATH and the rest. Settings that reach git only through a removed variable are not used.
+const DROPPED = new Set(['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  'GIT_CONFIG', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_PARAMETERS', 'GIT_NAMESPACE', 'GIT_EXEC_PATH']);
+const DROPPED_PREFIXES = ['GIT_CONFIG_KEY_', 'GIT_CONFIG_VALUE_'];
+export function cleanEnvironment(env) {
+  return Object.fromEntries(Object.entries(env).filter(([name]) => !DROPPED.has(name) && !DROPPED_PREFIXES.some((prefix) => name.startsWith(prefix))));
+}
+
 function git(args, { cwd, where, env, stdio } = {}) {
-  const run = spawnSync('git', [...placed(where), ...args], { cwd: where ? where.top : cwd, env, encoding: 'utf8', timeout: 30000, ...(stdio ? { stdio } : {}) });
+  const run = spawnSync('git', [...placed(where), ...args], { cwd: where ? where.top : cwd, env: cleanEnvironment(env ?? process.env), encoding: 'utf8', timeout: 30000, ...(stdio ? { stdio } : {}) });
   return { status: run.status, stdout: run.stdout ?? '', stderr: (run.stderr ?? '').trim(), error: run.error, signal: run.signal };
 }
 
@@ -177,9 +214,6 @@ export function initDestination(root, remote, repo, host, prefixes, env = proces
   return { record: destinationRecord({ projectRoot: root, commonDir: found.commonDir, url: urls[0], host: host.toLowerCase(), repo, prefixes }), commonDir: found.commonDir };
 }
 
-// Environment variables that move git to another repository or work tree than the working directory shows.
-const MOVING = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_NAMESPACE'];
-
 // Where the command runs, captured once: the git directory of this work tree (a linked worktree has its own), the shared
 // git directory, and the top of the work tree, all with links resolved. One git process answers all three, so the answers
 // describe one repository. Every later git call names the git directory and the work tree (see `placed`) instead of
@@ -190,7 +224,6 @@ const MOVING = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_NAMESPACE'];
 // directory and the same shared git directory. A repository whose git directory is kept apart from its work tree and
 // a linked worktree pass; a repository pointed at another one's files does not.
 export function locate(cwd, env) {
-  for (const name of MOVING) if (env[name]) refuse('git-environment', `${name} is set in the environment, so git would not use the repository of the working directory; unset it`);
   const shown = git(['rev-parse', '--absolute-git-dir', '--git-common-dir', '--show-toplevel'], { cwd, env });
   const lines = shown.stdout.split('\n');
   if (shown.status !== 0) refuse('not-a-repository', `${cwd} is not inside a git work tree`);
@@ -310,7 +343,9 @@ export function run(argv, { cwd = process.cwd(), env = process.env, now = () => 
     const refspec = `refs/heads/${branch}:refs/heads/${branch}`;
     // -c push.pushOption= empties the list of push options from every configuration file and the environment: options
     // go to the receiving side, which can act on them, and this command sends none.
-    const pushed = git(['-c', 'push.followTags=false', '-c', 'push.pushOption=', '-c', 'core.abbrev=no', 'push', '--porcelain', '--no-follow-tags', '--recurse-submodules=no', record.url, refspec],
+    // -c core.hooksPath=/dev/null: no repository hook runs for this push (git finds no hook below /dev/null), whether the
+    // hooks folder is the default one or named by core.hooksPath in any configuration file.
+    const pushed = git(['-c', 'push.followTags=false', '-c', 'push.pushOption=', '-c', 'core.hooksPath=/dev/null', '-c', 'core.abbrev=no', 'push', '--porcelain', '--no-follow-tags', '--recurse-submodules=no', record.url, refspec],
       { where: found, env, stdio: ['inherit', 'pipe', 'inherit'] });
     const seen = parsePorcelain(pushed.stdout, branch);
     const status = STATUS[seen.flag] ?? null;

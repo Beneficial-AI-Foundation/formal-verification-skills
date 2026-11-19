@@ -280,12 +280,11 @@ node "$PERM" plan --project-root . --repo "$DRAFT_REPO" --remote origin --branch
   runs against a remote that is not the project's own repository. Every URL of the remote (all fetch and push
   URLs) must name it, and no `insteadOf` or `pushInsteadOf` rule may rewrite the push address again. Report the
   refusal, skip the check and go to Step 6.
-- `not-a-repository`, `git-environment` or `worktree-mismatch`: the project root is not a git work tree, `GIT_DIR`
-  or a similar variable is set, or a `core.worktree` setting points the repository at the files of another one.
-  The push command would refuse in each case, so nothing is recorded. Report the refusal, skip the check and go
-  to Step 6; the owner has to fix the repository first.
+- `not-a-repository` or `worktree-mismatch`: the project root is not a git work tree, or a `core.worktree` setting
+  points the repository at the files of another one. The push command would refuse in each case, so nothing is
+  recorded. Report the refusal, skip the check and go to Step 6; the owner has to fix the repository first.
 
-**Where pushes go.** The push command (`fvs-auto-push.mjs`) pushes only to a destination that init records, so
+**Where pushes go.** The push command (`fvs-auto-push.mjs`) pushes to the destination that init records, so
 record it whatever the check finds: also when the owner skips the check, and also for a project whose check was
 recorded earlier (`pushDestination.status` is not `matches`). It is a separate yes. Run `write-destination` without
 `--confirm`:
@@ -341,11 +340,16 @@ If nothing prompted, say so and write nothing. If some steps prompted:
    and that an unanswered prompt aborts after about 30 minutes. A `git push` never gets an allow rule. If
    `git-push` prompted, explain the push rule: it names the FVS push command
    (`node <scripts folder>/fvs-auto-push.mjs --branch fvs/<name>`), which pushes one branch under the namespace
-   to the recorded destination and refuses anything else. A `*` in a rule matches the rest of the command text,
-   so the rule cannot check arguments and the command does. Say what it does not stop: git hooks of the
-   repository, credential helpers, a rewrite rule added after its check, and a worker that runs a plain
-   `git push`, which the owner's other rules and permission mode decide. Say that branch protection on the fork
-   is still recommended. Never promise that a push will be asked about.
+   to the recorded destination. A `*` in a rule matches the rest of the command text, so the rule cannot check
+   arguments and the command does. Say what the command is as the helper prints it (`pushContract` in the `plan`
+   output, `contract` in every preview), not in your own words: it is a cooperative guard with hardening and not a
+   security boundary. It checks its own command line, the repository and the destination. It ignores repository
+   hooks for the push, so the owner's own pre-push checks do not run for it, and it drops the listed git
+   environment variables. It trusts the owner's git setup, as any push the owner runs: ssh and transport
+   wrappers, credential helpers, URL rewrite rules, the record file and FVS itself, so anything that runs as the
+   owner's user. Also say that a worker that runs a plain `git push` is not covered, and that the owner's other
+   rules and permission mode decide it. Say that branch protection on the fork is still recommended. Never
+   promise that a push will be asked about.
    On a no, leave `git-push` out of `--steps`: that prompt stays unresolved and the owner approves pushes as
    they appear. Codex gets the same rule as a prefix rule for the program and `--branch`: say that it cannot
    tell `fvs/work` from `main`, and that the command refuses a name outside the namespace.

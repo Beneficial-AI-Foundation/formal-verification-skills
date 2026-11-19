@@ -12,9 +12,10 @@
 //
 // A push has one rule, and it names the FVS push command, not git:
 //   node <this scripts folder>/fvs-auto-push.mjs --branch fvs/*
-// A `*` in a rule also matches the rest of the command text, so the rule cannot say "this branch and nothing else".
-// The command checks its own arguments instead and refuses anything but `--branch fvs/<name>`. It pushes only to the
-// destination that `write-destination` records in the repository's git directory. A project settings file that already
+// A `*` in a rule also matches the rest of the command text, so the rule cannot say which branch is meant. The command
+// checks its own arguments instead and refuses anything but `--branch fvs/<name>`. It pushes to the destination that
+// `write-destination` records in the repository's git directory. It is a cooperative guard with some hardening, not a
+// security boundary (CONTRACT in fvs-auto-push.mjs says what it checks, hardens and trusts). A project settings file that already
 // allows `git push` by rule would let a worker skip the command, so a Claude write refuses while one is there and lists
 // it. It never deletes one.
 //
@@ -27,7 +28,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
-import { RECORD_NAME, WORD, checkPrefixShape, initDestination, parseRemoteUrl } from './fvs-auto-push.mjs';
+import { CONTRACT, RECORD_NAME, WORD, checkPrefixShape, contractText, initDestination, parseRemoteUrl } from './fvs-auto-push.mjs';
 
 export { parseRemoteUrl };
 export const RECORD_FILE = '.formalising/auto-fv/permissions.json';
@@ -274,18 +275,18 @@ function destinationState({ record, commonDir }) {
   return { file, status: isDeepStrictEqual(existing, record) ? 'matches' : 'differs', existing };
 }
 
-// The push rule names a command that pushes only to the recorded destination, so it is written only once that record
+// The push rule names a command that pushes to the recorded destination, so it is written only once that record
 // exists and is still what init would record now.
 function requireDestination(destination) {
   const state = destinationState(destination);
   if (state.status !== 'matches') {
-    refuse('destination-not-recorded', `the push command pushes only to the recorded destination, and ${state.file} ${state.status === 'missing' ? 'is missing' : 'does not hold what init would record now'}. Run write-destination first: it shows what it records and waits for the user's yes. Nothing was written.`, { destination: state });
+    refuse('destination-not-recorded', `the push command pushes to the recorded destination, and ${state.file} ${state.status === 'missing' ? 'is missing' : 'does not hold what init would record now'}. Run write-destination first: it shows what it records and waits for the user's yes. Nothing was written.`, { destination: state });
   }
   return destination.record;
 }
 
-// What a user confirms about a push rule: the command and the destination it pushes to.
-const pushPreview = (catalog, recorded) => ({ command: catalog.pushCommand.example, destination: { file: path.join(recorded.commonDir, RECORD_NAME), ...recorded } });
+// What a user confirms about a push rule: the command, the destination it pushes to, and what the command is and is not.
+const pushPreview = (catalog, recorded) => ({ command: catalog.pushCommand.example, contract: CONTRACT, destination: { file: path.join(recorded.commonDir, RECORD_NAME), ...recorded } });
 
 // `lake env lean` loads the whole workspace: Lake clones a dependency that is missing and writes a manifest that is
 // missing. The Lake probe therefore runs only when neither can happen.
@@ -321,6 +322,7 @@ function plan(flags) {
       : { present: false, summary: summaryLine(null, stepIds) },
     repo: catalog.repo, remote: catalog.remote, branchPrefixes: catalog.prefixes,
     pushCommand: catalog.pushCommand.example,
+    pushContract: CONTRACT,
     pushDestination: { file: state.file, status: state.status, wouldRecord: destination.record },
     steps: catalog.steps.map((step) => probeEntry(step, lakeBlocker)),
     message: record
@@ -510,7 +512,8 @@ function writeDestination(flags) {
   const state = destinationState(destination);
   const preview = {
     projectRoot: root, file: state.file, record: destination.record,
-    note: 'The push command pushes only to this destination, and only for a repository whose shared git directory is the one recorded here. The file sits in the git directory, so it is not part of any commit; any session of your user account can change it.',
+    note: 'The push command pushes to this destination and checks that it runs in the repository whose shared git directory is the one recorded here. The file sits in the git directory, so it is not part of any commit; any session of your user account can change it, and so change where the command pushes.',
+    contract: CONTRACT,
   };
   if (state.status === 'matches') return { code: 'unchanged', message: `${state.file} already records this destination`, ...preview };
   if (state.status !== 'missing') {
@@ -577,7 +580,7 @@ function writeClaude(flags, root, catalog, picked, allow, recorded) {
     notes: [
       'Claude Code reloads settings files while running; if a step still prompts, run recheck for that step (see the permissions page).',
       'Worker worktrees read their own .claude/settings.json: it reaches them only if committed or if .claude is linked into them. settings.local.json is read from the main checkout in every worktree.',
-      ...(recorded ? ['The push rule names the FVS push command. A rule is matched against the command text and "*" also matches the rest of that text, so the command checks its own arguments and refuses all but --branch <namespace>/<name>. A plain git push is not covered by this rule: your other rules and permission mode decide it, as before. Git hooks of the repository, credential helpers and a URL rewrite that changes after the command\'s check still apply. Branch protection on the project fork is still recommended as an independent safeguard.'] : []),
+      ...(recorded ? [`The push rule names the FVS push command. A rule is matched against the command text and "*" also matches the rest of that text, so the command checks its own arguments. A plain git push is not covered by this rule: your other rules and permission mode decide it, as before. ${contractText()} Branch protection on the project fork is still recommended as an independent safeguard.`] : []),
     ],
   };
 }

@@ -169,7 +169,8 @@ Controller permissions in auto mode:
   the FVS driver/CLI, `ao`, `git` and the pinned Lean tools. `/fvs:auto-init` checks which steps of the run
   prompt on this machine and, only after the owner's yes, writes a minimal project allowlist for those
   steps and, for a push, the one rule that names the FVS push command (`fvs-auto-push.mjs`, which pushes one
-  branch under the run's namespace to the destination recorded at init and refuses anything else); it writes no
+  branch under the run's namespace to the destination recorded at init; it is a cooperative guard with hardening and
+  not a security boundary); it writes no
   other permission setting, never writes a rule that allows a GitHub comment, review or merge, or a `git push`,
   and a `git push` allow rule already in the project settings stops the write (a plain `git push` is not covered
   by the push rule: the owner's other rules and permission mode decide it). `auto-permissions.md` has the rules,

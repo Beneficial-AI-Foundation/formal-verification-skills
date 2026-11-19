@@ -134,6 +134,41 @@ constrain arguments is fragile, and this rule does not try.
 Workers commit first, then run the command in a separate, standalone call, with the path that init printed. They
 do not chain it with another command.
 
+### What the command is
+
+The push command is cooperative, with hardening, and not a security boundary. It guards against mistakes and misuse
+through its own command line, and it trusts your git setup the way a push that you run yourself would. It is not a
+defence against a program that runs as your user.
+
+What it checks:
+
+- It takes exactly `--branch <name>` and refuses anything else on its command line.
+- It runs only in the repository that the destination was recorded for, and refuses a work tree that points at
+  another repository.
+- It pushes only a plain local branch under a recorded namespace, to the destination address recorded at init, and
+  refuses an address that a URL rewrite rule applies to when it checks.
+
+What it does for this push, to harden it:
+
+- Repository hooks are ignored for this push (`core.hooksPath` is set to `/dev/null`), so your own pre-push checks
+  do not run for it.
+- git runs without `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
+  `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_CONFIG`, `GIT_CONFIG_COUNT`, the `GIT_CONFIG_KEY_n` and
+  `GIT_CONFIG_VALUE_n` pairs, `GIT_CONFIG_PARAMETERS`, `GIT_NAMESPACE` and `GIT_EXEC_PATH`. Settings that reach git
+  only through those variables are not used. Your normal ssh, credential and transport settings stay.
+- No push option is sent.
+
+What it trusts, and so does not protect against:
+
+- Your git setup, as for any push you run yourself.
+- ssh and other transport wrappers (`GIT_SSH_COMMAND`, `core.sshCommand`, proxy and remote helpers): the command
+  cannot tell where one of them sends the push.
+- Credential helpers.
+- URL rewrite rules: a rule that is added or changed after the command checks and before it connects is not caught.
+- The record file and FVS itself: anything that runs as your user can edit the record, the script and the permission
+  rule, and so change where the command pushes or what it checks.
+- The git program found on `PATH`.
+
 ### What the command refuses
 
 It exits with a plain message and a non-zero status, and pushes nothing, unless all of these hold:
@@ -153,7 +188,6 @@ It exits with a plain message and a non-zero status, and pushes nothing, unless 
   branch, it is not a symbolic ref, and no tag has the same name.
 - no `url.<base>.insteadOf` or `pushInsteadOf` rule applies to the recorded address, no `[remote "<address>"]`
   section is named after it, and git reads the address as recorded.
-- `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR` and `GIT_NAMESPACE` are not set.
 
 A worker that gets a refusal stops and reports its `code` and `message`. It does not fall back to `git push`.
 
@@ -163,10 +197,12 @@ It pushes to the address recorded at init, never to a remote name. In the tests,
 where the push went or what it sent: `remote.<name>.push`, `remote.<name>.pushurl`, `remote.<name>.mirror`,
 `remote.pushDefault`, `branch.<name>.pushRemote`, `push.default`, `push.followTags`, `push.recurseSubmodules` and
 `submodule.recurse`. It uses the full refspec `refs/heads/<name>:refs/heads/<name>` without a `+`,
-`--no-follow-tags`, `-c push.followTags=false`, `--recurse-submodules=no`, `--porcelain`, `-c core.abbrev=no` and
-`-c push.pushOption=`, and no other option. The last one empties the list of push options from every git
-configuration and from the environment: push options go to the receiving side, which can act on them, and this
-command sends none.
+`--no-follow-tags`, `-c push.followTags=false`, `--recurse-submodules=no`, `--porcelain`, `-c core.abbrev=no`,
+`-c push.pushOption=` and `-c core.hooksPath=/dev/null`, and no other option. `push.pushOption=` empties the list of
+push options from every git configuration: push options go to the receiving side, which can act on them, and this
+command sends none. `core.hooksPath=/dev/null` makes git find no hook, wherever the hooks folder is set. Every git
+call the command makes also runs without the variables listed under "What it does for this push", so the checks and
+the push see the same configuration.
 
 The result is appended to `.formalising/auto-fv/pushes.jsonl` in the recorded project root: `created`,
 `fast-forward`, `up-to-date`, `failed` (git says it did not update the branch) or `unknown`. The record names only
@@ -182,19 +218,9 @@ destination before you retry, and report the code and message.
 
 ### What it does not stop
 
-- Git hooks of the repository still run, as for any push. They run with `GIT_DIR` and `GIT_WORK_TREE` set to the
-  checked repository, because the command names both and git exports them. A hook that runs git in another
-  directory has to unset them first.
-- Credential helpers, ssh and proxy settings come from your own git configuration and environment, as for any push.
-- The recorded address is checked just before the push. A rewrite rule that you add after that check and before
-  the connection is a race the command cannot close.
-- The command trusts the `git` it finds on `PATH`.
 - The rule and the worker briefs name an absolute path. An FVS update or reinstall that moves the script leaves both
   stale: run init again to append the rule for the new path, and delete the old rule yourself. FVS deletes none of
   your rules.
-- Any session of your user account can edit the script file at the allowed path, as it can edit the record.
-- The record of the destination is a plain file in the git directory. Any session of your user account can change
-  it, and so can change where the command pushes.
 - A worker that runs a plain `git push` is not covered by this rule: your other rules and permission mode decide
   that push, as before. That is why a Claude write refuses while a project settings file allows a `git push` by rule
   (next section).
