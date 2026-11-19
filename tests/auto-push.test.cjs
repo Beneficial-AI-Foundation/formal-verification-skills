@@ -101,7 +101,8 @@ describe('a push of one branch', () => {
     assert.equal(out.json.result, 'created');
     assert.equal(out.json.porcelainFlag, '*');
     assert.equal(out.json.oldRemoteId, null, 'a new branch has no old id');
-    assert.equal(out.json.newRemoteId, tip);
+    assert.equal(out.json.newRemoteId, null, 'git\'s summary of a new branch carries no id, so none is claimed');
+    assert.equal(out.json.localTipBeforePush, tip, 'the local read made before the push is kept under its own name');
     assert.equal(out.json.to, lib.anonymizeUrl(URL_RECORDED), 'git prints the destination without its user part');
     assert.match(out.json.porcelain, /^\*\trefs\/heads\/fvs\/t:refs\/heads\/fvs\/t\t\[new branch\]$/);
     assert.deepEqual(w.refs(w.right), ['refs/heads/fvs/t']);
@@ -110,7 +111,8 @@ describe('a push of one branch', () => {
     assert.equal(out.json.recorded, true);
     const log = fs.readFileSync(path.join(w.root, lib.LOG_FILE), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
     assert.equal(log.length, 1);
-    assert.deepEqual([log[0].branch, log[0].result, log[0].newRemoteId, log[0].destination], ['fvs/t', 'created', tip, URL_RECORDED]);
+    assert.deepEqual([log[0].branch, log[0].result, log[0].newRemoteId, log[0].destination], ['fvs/t', 'created', null, URL_RECORDED]);
+    assert.equal(log[0].localTipBeforePush, tip);
   });
 
   it('records full ids for a fast-forward, nothing new for an up-to-date push, and a failure for a rejected one', () => {
@@ -129,7 +131,8 @@ describe('a push of one branch', () => {
     assert.equal(same.status, 0);
     assert.equal(same.json.result, 'up-to-date');
     assert.equal(same.json.porcelainFlag, '=');
-    assert.equal(same.json.newRemoteId, second);
+    assert.equal(same.json.newRemoteId, null, 'an up-to-date summary carries no id either');
+    assert.equal(same.json.localTipBeforePush, second);
     w.git('reset', '-q', '--hard', 'HEAD~1');
     w.git('commit', '-q', '--allow-empty', '-m', 'three');
     const rejected = w.go(['--branch', 'fvs/t']);
@@ -206,7 +209,7 @@ describe('the record that init writes', () => {
     const json = JSON.parse(pushed.stdout);
     assert.equal(json.code, 'pushed');
     assert.equal(json.result, 'created');
-    assert.equal(json.newRemoteId, tip);
+    assert.equal(json.newRemoteId, null);
     assert.deepEqual(w.refs(w.right), ['refs/heads/fvs/t']);
     assert.equal(git(w.dir, w.env, '-C', w.right, 'rev-parse', 'refs/heads/fvs/t'), tip);
     assert.deepEqual(w.refs(w.wrong), [], 'nothing reached the wrong repository');
@@ -365,6 +368,63 @@ describe('the repository must be the one the destination was recorded for', () =
     assert.equal(out.status, 1);
     assert.equal(JSON.parse(out.stdout).code, 'no-destination-recorded', 'project b has no record, and project a\'s is not borrowed');
     assert.deepEqual([a.refs(a.right), b.refs(b.right)], [[], []]);
+  });
+
+  // `core.worktree` can name the work tree of another repository. Run from A, `git rev-parse --show-toplevel` then says B
+  // while the git directory is still A's, so a command that changed into the top directory and let git discover the
+  // repository again would act on B with A's recorded destination. Repository A has the record; B has the branch and no
+  // record, and the stand-in ssh would serve A's destination for the push.
+  describe('core.worktree names the work tree of another repository', () => {
+    function twoRepositories() {
+      const a = world();
+      const b = world({ skipRecord: true });
+      b.git('checkout', '-q', '-b', 'fvs/x');
+      return { a, b };
+    }
+    const noRemoteUpdate = ({ a, b }) => { for (const w of [a, b]) { assert.deepEqual(w.refs(w.right), [], 'no destination was updated'); assert.deepEqual(w.refs(w.wrong), []); } };
+
+    it('refuses when the setting is in the repository configuration', () => {
+      const pair = twoRepositories();
+      pair.a.git('config', 'core.worktree', pair.b.root);
+      const out = refused(pair.a, ['--branch', 'fvs/x'], 'worktree-mismatch');
+      assert.match(out.json.message, /work tree/);
+      noRemoteUpdate(pair);
+    });
+
+    // Observed on the installed git: it reads core.worktree from the repository's own configuration file only, so the
+    // same setting made through GIT_CONFIG_COUNT does not move the work tree, and the command stays in repository A. This
+    // row keeps that observation: if a git version honours the environment value, the round trip refuses it instead.
+    it('does not follow the same setting made through the environment', () => {
+      const pair = twoRepositories();
+      const env = { ...pair.a.env, GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.worktree', GIT_CONFIG_VALUE_0: pair.b.root };
+      const out = pair.a.go(['--branch', 'fvs/x'], { env });
+      assert.notEqual(out.status, 0, JSON.stringify(out.json));
+      assert.ok(['worktree-mismatch', 'branch-refused'].includes(out.json.code), `${out.json.code}: ${out.json.message}`);
+      noRemoteUpdate(pair);
+    });
+
+    it('stops the init command from recording a destination for it', () => {
+      const pair = twoRepositories();
+      fs.rmSync(path.join(pair.a.commonDir, lib.RECORD_NAME));
+      pair.a.git('config', 'core.worktree', pair.b.root);
+      const run = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'fvs-auto-permissions.mjs'), 'write-destination', '--project-root', pair.a.work, '--repo', 'Acme/proj'], { encoding: 'utf8', env: pair.a.env });
+      assert.notEqual(run.status, 0, run.stdout);
+      assert.equal(JSON.parse(run.stdout).code, 'worktree-mismatch');
+      assert.equal(fs.existsSync(path.join(pair.a.commonDir, lib.RECORD_NAME)), false, 'no record was written');
+    });
+
+    it('still works for a repository whose git directory is kept apart from its work tree', () => {
+      const w = world({ skipRecord: true });
+      const apart = path.join(w.dir, 'apart.git');
+      git(w.work, w.env, 'init', '-q', '--separate-git-dir', apart);
+      assert.match(fs.readFileSync(path.join(w.work, '.git'), 'utf8'), /^gitdir: /, 'the work tree now has a .git file');
+      const commonDir = fs.realpathSync(apart);
+      fs.writeFileSync(path.join(commonDir, lib.RECORD_NAME), JSON.stringify(lib.destinationRecord({ ...w.record, commonDir })));
+      const out = w.go(['--branch', 'fvs/t']);
+      assert.equal(out.status, 0, JSON.stringify(out.json));
+      assert.equal(out.json.commonDir, commonDir);
+      assert.deepEqual(w.refs(w.right), ['refs/heads/fvs/t']);
+    });
   });
 
   it('refuses when GIT_DIR or another variable moves git away from the working directory', () => {
@@ -533,6 +593,137 @@ describe('what the push sends', () => {
     assert.equal(out.json.recorded, false);
     assert.match(out.json.recordError, /./);
     assert.deepEqual(w.refs(w.right), ['refs/heads/fvs/t']);
+  });
+});
+
+// Push options travel to the receiving side, which can act on them (a server hook may skip checks or start a workflow).
+// The receiving side below advertises them and writes down every option it receives.
+function recordPushOptions(w) {
+  git(w.dir, w.env, '-C', w.right, 'config', 'receive.advertisePushOptions', 'true');
+  const hook = path.join(w.right, 'hooks', 'pre-receive');
+  fs.mkdirSync(path.dirname(hook), { recursive: true });
+  fs.writeFileSync(hook, '#!/bin/sh\nn=${GIT_PUSH_OPTION_COUNT:-0}\n{ echo "count=$n"; i=0; while [ "$i" -lt "$n" ]; do eval "echo option=\\$GIT_PUSH_OPTION_$i"; i=$((i+1)); done; } > "$GIT_DIR/received-options.txt"\n', { mode: 0o755 });
+  const file = path.join(w.right, 'received-options.txt');
+  return { read: () => (fs.existsSync(file) ? fs.readFileSync(file, 'utf8').trim().split('\n') : null), reset: () => fs.rmSync(file, { force: true }) };
+}
+
+describe('push options', () => {
+  const rows = [
+    ['two values in the repository configuration', (w) => { w.git('config', '--add', 'push.pushOption', 'ci.skip'); w.git('config', '--add', 'push.pushOption', 'deploy=now'); return w.env; }, ['ci.skip', 'deploy=now']],
+    ['two values in the global configuration', (w) => { const file = path.join(w.dir, 'global.gitconfig'); fs.writeFileSync(file, '[push]\n\tpushOption = ci.skip\n\tpushOption = deploy=now\n'); return { ...w.env, GIT_CONFIG_GLOBAL: file }; }, ['ci.skip', 'deploy=now']],
+    ['two values set through the environment', (w) => ({ ...w.env, GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'push.pushOption', GIT_CONFIG_VALUE_0: 'ci.skip', GIT_CONFIG_KEY_1: 'push.pushOption', GIT_CONFIG_VALUE_1: 'deploy=now' }), ['ci.skip', 'deploy=now']],
+    ['values in the global and the repository configuration at once', (w) => {
+      const file = path.join(w.dir, 'global.gitconfig');
+      fs.writeFileSync(file, '[push]\n\tpushOption = from-global\n');
+      w.git('config', '--add', 'push.pushOption', 'from-local');
+      return { ...w.env, GIT_CONFIG_GLOBAL: file };
+    }, ['from-global', 'from-local']],
+  ];
+  for (const [why, setup, options] of rows) {
+    it(`sends none of ${why}`, () => {
+      const w = world();
+      const seen = recordPushOptions(w);
+      const env = setup(w);
+      // The row bites: a plain push of the same state delivers the options to the receiving side.
+      const plain = spawnSync('git', ['-C', w.work, 'push', '--porcelain', URL_RECORDED, 'refs/heads/fvs/t:refs/heads/fvs/t'], { encoding: 'utf8', env });
+      assert.equal(plain.status, 0, plain.stderr);
+      assert.deepEqual(seen.read().slice(1).sort(), options.map((option) => `option=${option}`).sort(), 'a plain push carries the options');
+      w.clear(w.right);
+      seen.reset();
+      const out = w.go(['--branch', 'fvs/t'], { env });
+      assert.equal(out.status, 0, JSON.stringify(out.json));
+      assert.deepEqual(seen.read(), ['count=0'], 'the receiving side was sent no push option');
+      assert.deepEqual(w.refs(w.right), ['refs/heads/fvs/t']);
+    });
+  }
+});
+
+// A stand-in for `git` placed first on PATH, so a test can act between two of the command's git calls.
+const REAL_GIT = spawnSync('which', ['git'], { encoding: 'utf8' }).stdout.trim();
+function gitStandIn(w, body) {
+  const bin = path.join(w.dir, 'bin');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(bin, 'git'), `#!/bin/sh\nREAL=${JSON.stringify(REAL_GIT)}\n${body}\nexec "$REAL" "$@"\n`, { mode: 0o755 });
+  return { ...w.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` };
+}
+// Moves a branch just before `git push` starts, which is after the command has read the branch tip.
+const MOVE_BEFORE_PUSH = 'for a in "$@"; do\n  if [ "$a" = push ]; then "$REAL" --git-dir="$FVS_TEST_GITDIR" update-ref "$FVS_TEST_REF" "$FVS_TEST_ADVANCE"; break; fi\ndone';
+
+describe('what a receipt names', () => {
+  const moving = (w, advance) => ({ FVS_TEST_GITDIR: w.commonDir, FVS_TEST_REF: 'refs/heads/fvs/t', FVS_TEST_ADVANCE: advance });
+  const remoteTip = (w) => git(w.dir, w.env, '-C', w.right, 'rev-parse', 'refs/heads/fvs/t');
+
+  it('a new branch that moves after the read: the destination gets the later commit, and no id is claimed for it', () => {
+    const w = world();
+    const read = w.git('rev-parse', 'HEAD');
+    w.git('commit', '-q', '--allow-empty', '-m', 'raced');
+    const later = w.git('rev-parse', 'HEAD');
+    w.git('reset', '-q', '--hard', read);
+    const env = { ...gitStandIn(w, MOVE_BEFORE_PUSH), ...moving(w, later) };
+    const out = w.go(['--branch', 'fvs/t'], { env });
+    assert.equal(out.status, 0, JSON.stringify(out.json));
+    assert.equal(remoteTip(w), later, 'the push sent the later commit');
+    assert.equal(out.json.localTipBeforePush, read, 'what the command read before the push, named for what it is');
+    assert.equal(out.json.newRemoteId, null, 'git reported no id for a new branch');
+    const log = fs.readFileSync(path.join(w.root, lib.LOG_FILE), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    assert.deepEqual([log[0].newRemoteId, log[0].localTipBeforePush], [null, read]);
+  });
+
+  it('a fast-forward that moves after the read: the id is the one git reported, not the earlier read', () => {
+    const w = world();
+    const first = w.git('rev-parse', 'HEAD');
+    assert.equal(w.go(['--branch', 'fvs/t']).status, 0);
+    w.git('commit', '-q', '--allow-empty', '-m', 'read');
+    const read = w.git('rev-parse', 'HEAD');
+    w.git('commit', '-q', '--allow-empty', '-m', 'raced');
+    const later = w.git('rev-parse', 'HEAD');
+    w.git('reset', '-q', '--hard', read);
+    const env = { ...gitStandIn(w, MOVE_BEFORE_PUSH), ...moving(w, later) };
+    const out = w.go(['--branch', 'fvs/t'], { env });
+    assert.equal(out.status, 0, JSON.stringify(out.json));
+    assert.equal(out.json.result, 'fast-forward');
+    assert.deepEqual([out.json.oldRemoteId, out.json.newRemoteId, out.json.localTipBeforePush], [first, later, read]);
+    assert.equal(remoteTip(w), later);
+  });
+
+  it('refuses, and pushes nothing, when the branch tip cannot be read', () => {
+    const w = world();
+    const env = gitStandIn(w, 'case "$*" in *rev-parse*--verify*) echo "fatal: simulated failure" >&2; exit 128;; esac');
+    const out = refused(w, ['--branch', 'fvs/t'], 'branch-refused', { env });
+    assert.match(out.json.message, /tip/);
+    nothingLanded(w);
+  });
+});
+
+describe('a push whose outcome git did not report', () => {
+  it('a connection lost after the destination took the update is an unknown outcome, never "nothing changed"', () => {
+    const w = world();
+    const hook = path.join(w.right, 'hooks', 'reference-transaction');
+    fs.mkdirSync(path.dirname(hook), { recursive: true });
+    // The receiving process dies once the ref update is committed, before it can report the result.
+    fs.writeFileSync(hook, '#!/bin/sh\n[ "$1" = committed ] && kill -9 $PPID\nexit 0\n', { mode: 0o755 });
+    const out = refused(w, ['--branch', 'fvs/t'], 'push-outcome-unknown');
+    assert.deepEqual(w.refs(w.right), ['refs/heads/fvs/t'], 'the update did land');
+    assert.match(out.json.message, /not know/i);
+    assert.match(out.json.message, /read the destination before/i);
+    assert.doesNotMatch(out.json.message, /nothing was changed/i);
+    assert.equal(out.json.result, 'unknown');
+    assert.equal(out.json.newRemoteId, null);
+    assert.notEqual(out.json.exitStatus, 0);
+    assert.equal(out.json.recorded, true);
+  });
+
+  it('a rejection git reports for the ref stays a plain failure', () => {
+    const w = world();
+    assert.equal(w.go(['--branch', 'fvs/t']).status, 0);
+    const before = w.git('rev-parse', 'HEAD');
+    w.git('commit', '-q', '--allow-empty', '-m', 'two');
+    assert.equal(w.go(['--branch', 'fvs/t']).status, 0);
+    w.git('reset', '-q', '--hard', before);
+    w.git('commit', '-q', '--allow-empty', '-m', 'diverge');
+    const out = refused(w, ['--branch', 'fvs/t'], 'push-failed');
+    assert.equal(out.json.porcelainFlag, '!');
+    assert.equal(out.json.result, 'failed');
   });
 });
 
