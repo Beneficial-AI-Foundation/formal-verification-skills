@@ -1296,6 +1296,9 @@ function crateAcceptance(root, specs, context, receipt) {
     result.push({ crate, accepted: reason === null, ...(reason === null ? {} : { reason }) });
   }
   for (const crate of context.missing) result.push({ crate, accepted: false, reason: 'the extraction does not hold this crate' });
+  // A crate the extraction only assumes is a black box in every crate that calls it, and nobody but the
+  // owner decides that a crate is not verified: until the agreement records it, the run is not done.
+  for (const crate of context.undecided) result.push({ crate, accepted: false, reason: 'the extraction assumes this crate as a non-target, and the owner has not recorded that decision in the agreement' });
   return result;
 }
 
