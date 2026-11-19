@@ -52,6 +52,28 @@ merge and the proof pull request").
    Record its review rounds and the pull request as for the first, and record its merge once the owner
    merges it; until then the state warns that a spec pull request is still open.
 
+## Several crates
+
+With several target crates the build check still builds the whole project once and writes one receipt for a
+head. The state reports `done` only when that receipt also holds for every target crate. `read-state` shows
+`crates`: for each crate whether it is accepted and, when it is not, why. A crate is accepted when:
+
+- its recorded spec files built and hold at least one statement;
+- none of its statements rests on an axiom without an accepted entry in the externals record, whose model
+  symbol is the axiom's name as Lean prints it (once a repository has several crates or a crate decision,
+  every axiom beyond Lean's three standard ones needs one);
+- none of its statements rests on a hand-written assumption about a function of another target crate. The
+  one exception is an item the other crate has no definition for, because the extraction excluded it or made
+  it opaque there: the extraction lists it and the owner accepts the assumption. Otherwise prove the
+  function in its own crate and use that crate's theorem in the crate that calls it;
+- every target crate it depends on is accepted too.
+
+Dispatch workers providers first, in the order `crates.order` gives, and accept bottom-up, one crate at a
+time. A crate that depends on another may be proved early against the other crate's reviewed statement, but
+it counts as accepted only after the other crate is. An item of a crate the owner does not verify may be
+assumed, with the owner's accepted entry in the externals record. A project with one crate is not affected:
+the receipt alone decides.
+
 ## GitHub rule
 
 Agents may open draft pull requests and edit a pull request body. They never post comments or reviews
@@ -59,6 +81,9 @@ on GitHub, never mark a pull request ready and never merge: only the owner comme
 merges.
 
 ## Probes and the strict lane
+
+The strict lane handles one crate in 3.0.0-rc3. For a repository with several target crates, accept through
+the build check as above and do not start the strict lane for any of them.
 
 No probe is needed for this pipeline. Read the `auto-execute` stage line in the profile first
 (`auto-setup.md`, "Probes and stage lines", says what each line means); without `probe-lean`, proof
