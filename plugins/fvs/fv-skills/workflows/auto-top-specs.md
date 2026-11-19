@@ -96,7 +96,8 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
       are still `sorry`, so the statement's own list says nothing, but each extraction axiom in the
       list of a function names an external function that the claim reaches.
    2. Check that each such function has a record in `externals.json`. If one has none, the extraction
-      missed it: record it as open with `record-externals` (kind `external` or `opaque`) before you go on.
+      missed it: record it as open in the externals record (kind `external` or `opaque`) before you go
+      on, with the externals command that `auto-seats.md` lists.
    3. Save a notes file that names, for each open record, the exact claims that need it in plain words
       (`auto-review-bundle.md`, "Pull request trust section", describes the file), and run
       `node "${CLAUDE_PLUGIN_ROOT}/scripts/fvs-auto-bundle.mjs" rulings --project-root . --notes FILE`.
@@ -104,8 +105,9 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
       it has no model, the claims that rest on it and the owner's choices: accept it as a named
       assumption, have it modelled, narrow the claim, or block it. A record with no claim named reads
       `NOT STATED`, so say which claims need it, or that none does.
-   After the owner rules, record the decision with `record-externals` (the `decision` names the owner,
-   the date and where the ruling is). Only the owner decides; never record a ruling yourself.
+   After the owner rules, record the decision in the externals record with the same command (the
+   `decision` names the owner, the date and where the ruling is). Only the owner decides; never
+   record a ruling yourself.
 6. **Stop for the owner.** The owner reviews, prunes, marks the pull request ready and merges it.
    Once it is merged, record the merge (see "Recording the pull request"); `/fvs:auto-execute` starts
    the proofs after that.
