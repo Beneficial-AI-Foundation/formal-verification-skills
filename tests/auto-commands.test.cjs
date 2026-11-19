@@ -1674,7 +1674,7 @@ describe('spec phase: record-spec and spec-status', () => {
     const head = git(root, 'rev-parse', 'HEAD');
     let view = auto.readState({ projectRoot: root });
     assert.equal(view.phase, 'proofs');
-    assert.match(view.nextAction, new RegExp(`^The draft proof PR https://example\\.invalid/pr/3 is recorded at ${head}\\. Run the build check on that commit: node fvs-build-check\\.mjs --project-root .* --commit ${head}; read-state reports done when it accepts\\.`));
+    assert.match(view.nextAction, new RegExp(`^The draft proof PR https://example\\.invalid/pr/3 is recorded at ${head}\\. Run the build check on that commit: node fvs-build-check\\.mjs --project-root .* --commit ${head} --spec-base ${head}; read-state reports done when it accepts\\.`));
 
     const receipts = path.join(root, '.formalising/auto-fv/build-check');
     fs.mkdirSync(receipts, { recursive: true });
@@ -1684,14 +1684,25 @@ describe('spec phase: record-spec and spec-status', () => {
     assert.equal(view.phase, 'proofs');
     assert.match(view.nextAction, /^The build check failed for the draft proof PR .* build check failed: a new axiom\. Fix the proofs, push, record the new head with record-pr --kind proof/);
 
-    for (const forged of [{ accepted: true, label: 'x', commit: 'f'.repeat(40) }, { accepted: 'yes', label: 'x' }, { accepted: true, label: 'x', kind: 'other' }, { accepted: true, label: 7 }]) {
+    for (const forged of [{ accepted: true, label: 'x', specBase: head, commit: 'f'.repeat(40) }, { accepted: 'yes', label: 'x', specBase: head }, { accepted: true, label: 'x', specBase: head, kind: 'other' }, { accepted: true, label: 7, specBase: head }]) {
       receipt(forged);
       assert.equal(auto.readState({ projectRoot: root }).phase, 'proofs', JSON.stringify(forged));
     }
     fs.writeFileSync(path.join(receipts, `${head}.json`), '{not json');
     assert.equal(auto.readState({ projectRoot: root }).phase, 'proofs', 'an unreadable receipt is no receipt');
 
-    receipt({ accepted: true, label: 'accepted (build check)' });
+    // An accepting receipt that did not hold the statements to the recorded spec merge does not count.
+    const other = 'f'.repeat(40);
+    for (const [name, fields, said] of [['no spec base', {}, /without a spec base/], ['a null spec base', { specBase: null }, /without a spec base/],
+      ['another commit', { specBase: other }, new RegExp(`against the spec base ${other}`)], ['a shortened spec merge', { specBase: head.slice(0, 12) }, /against the spec base [0-9a-f]{12},/]]) {
+      receipt({ accepted: true, label: 'accepted (build check)', ...fields });
+      view = auto.readState({ projectRoot: root });
+      assert.equal(view.phase, 'proofs', name);
+      assert.match(view.nextAction, said, name);
+      assert.match(view.nextAction, new RegExp(`not against the recorded spec merge ${head}\\. Run the build check again: node fvs-build-check\\.mjs --project-root .* --commit ${head} --spec-base ${head}; read-state reports done when it accepts\\.`), name);
+    }
+
+    receipt({ accepted: true, label: 'accepted (build check)', specBase: head });
     view = auto.readState({ projectRoot: root });
     assert.equal(view.phase, 'done');
     assert.match(view.nextAction, new RegExp(`^The build check accepted the draft proof PR https://example\\.invalid/pr/3 at ${head}: accepted \\(build check\\)\\. The owner reviews and merges it;`));
