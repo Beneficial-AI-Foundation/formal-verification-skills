@@ -1624,7 +1624,7 @@ function progress(root, state, specs = null) {
     return { phase: 'proofs', warnings,
       nextAction: (receipt
         ? `The build check failed for the draft proof PR ${proofPr.url} at ${proofPr.head}: ${receipt.label}. Fix the proofs, push, record the new head with record-pr --kind proof, and rerun the build check on it.`
-        : `The draft proof PR ${proofPr.url} is recorded at ${proofPr.head}. Run the build check on that commit: node fvs-build-check.mjs --project-root ${root} --commit ${proofPr.head}; read-state reports done when it accepts.`) + suffix };
+        : `The draft proof PR ${proofPr.url} is recorded at ${proofPr.head}. Run the build check on that commit: node fvs-build-check.mjs --project-root ${root} --commit ${proofPr.head} --spec-base ${specMerge.mergeCommit}; read-state reports done when it accepts.`) + suffix };
   }
   return { phase: 'specs', warnings,
     nextAction: (specPr
