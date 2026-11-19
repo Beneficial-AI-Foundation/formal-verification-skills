@@ -47,10 +47,12 @@ merge and the proof pull request").
      comments, or is removed or added;
    - the lakefile, the manifest, `formal/specs/Defs`, `formal/trusted` or an extraction folder (every
      crate's folder in a multi-crate extraction) changed in more than comments, docstrings and axiom
-     guards, or a file was added to them (a new Trusted file is allowed only as step 2 says), or a
-     lakefile appeared below the project root;
-   - a change added `sorry`, `admit`, `native_decide`, `bv_decide`, or an axiom outside
-     `formal/trusted`;
+     guards (spacing and indentation count there, because Lean reads blocks from columns), or a file
+     was added to them (a new Trusted file is allowed only as step 2 says), or a lakefile appeared
+     below the project root;
+   - a change added `sorry`, `admit`, `native_decide`, `bv_decide` (to a declaration that had none),
+     or an axiom outside `formal/trusted` (an axiom is told by its name and type, so replacing one
+     axiom with another is an addition);
    - a spec file, proof file or extraction file is not covered by a `lean_lib` glob of a default
      target, and no built module imports it, so Lake would never compile it.
 

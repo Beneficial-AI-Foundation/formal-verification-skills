@@ -760,15 +760,78 @@ describe('the merged spec: changes that are refused', () => {
     }
   });
 
-  test('comments and whitespace are free in a frozen file, and strings are compared with their contents', async () => {
+  test('comments, docstrings and guards are free in a frozen file; spacing, indentation and strings are not', async () => {
     const { checkIntegrity, memoryTree } = await library();
     const file = 'formal/specs/Defs/K.lean';
     const run = (text) => checkIntegrity({ base: memoryTree({ [file]: 'def k : String := "ab"\n' }), head: memoryTree({ [file]: text }) }).problems;
     assert.equal(run('def k : String := "ab"\n').length, 0);
-    assert.equal(run('def  k : String :=\n  "ab"   -- note\n').length, 0);
-    assert.equal(run('/-- A docstring. -/\ndef k : String := "ab"\n#print axioms k\n').length, 0);
+    assert.equal(run('def k : String := "ab"   -- note\n').length, 0, 'a trailing comment');
+    assert.equal(run('/- header -/\n-- a line\ndef k : String := "ab"\n\n/- end -/\n').length, 0, 'comment lines and blank lines');
+    assert.equal(run('/-- A docstring. -/\ndef k : String := "ab"\n#print axioms k\n').length, 0, 'a docstring and a guard');
     assert.equal(run('def k : String := "ac"\n')[0].kind, 'frozen-file-changed');
     assert.equal(run('deffk : String := "ab"\n')[0].kind, 'frozen-file-changed');
+    assert.equal(run('def  k : String := "ab"\n')[0].kind, 'frozen-file-changed', 'spacing between tokens counts');
+    assert.equal(run('def k : String :=\n  "ab"\n')[0].kind, 'frozen-file-changed', 'a reflowed line counts');
+  });
+
+  test('a comment is a token boundary: P/- c -/Q is not the identifier PQ, in a frozen file or in a statement', async () => {
+    const { checkIntegrity, memoryTree } = await library();
+    const frozen = 'formal/specs/Defs/K.lean';
+    const inFrozen = (was, now) => checkIntegrity({ base: memoryTree({ [frozen]: was }), head: memoryTree({ [frozen]: now }) }).problems.map((p) => p.kind);
+    assert.deepEqual(inFrozen('def a := f x\n', 'def a := f/- sep -/x\n'), ['frozen-file-changed'], 'a comment inside a line counts by its width, as the spaces it replaces');
+    assert.deepEqual(inFrozen('def a := f x -- one\n', 'def a := f x -- another\n'), [], 'a comment at the end of a line is free');
+    assert.deepEqual(inFrozen('def a := f/- sep -/x\n', 'def a := fx\n'), ['frozen-file-changed'], 'deleting the comment joins two tokens into one identifier');
+    assert.deepEqual(inFrozen('def a := fx\n', 'def a := f/- sep -/x\n'), ['frozen-file-changed']);
+    const spec = 'formal/specs/Specs/S.lean';
+    const inSpec = (was, now) => checkIntegrity({ base: memoryTree({ [spec]: `recall Dep.foo : ${was}\n` }), head: memoryTree({ [spec]: `recall Dep.foo : ${now}\n` }) }).problems.map((p) => [p.kind, p.statement]);
+    assert.deepEqual(inSpec('P Q', 'P/- sep -/Q'), []);
+    assert.deepEqual(inSpec('P/- sep -/Q', 'PQ'), [['statement-changed', 'Dep.foo']]);
+    assert.deepEqual(inSpec('PQ', 'P/- sep -/Q'), [['statement-changed', 'Dep.foo']]);
+  });
+
+  test('indentation is part of a frozen file: an assignment moved into a do branch is a change', async () => {
+    const { checkIntegrity, memoryTree } = await library();
+    const file = 'formal/extraction/F.lean';
+    const program = (indent) => `def f (c : Bool) : Id Nat := do\n  let mut x := 0\n  if c then\n    x := 1\n${indent}x := 2\n  return x\n`;
+    const run = (now) => checkIntegrity({ base: memoryTree({ [file]: program('  ') }), head: memoryTree({ [file]: now }) }).problems.map((p) => [p.kind, p.file]);
+    assert.deepEqual(run(program('  ')), []);
+    assert.deepEqual(run(program('    ')), [['frozen-file-changed', file]], 'the same tokens, another program');
+    assert.deepEqual(run(`${program('  ')}\n-- a trailing note\n`), []);
+  });
+
+  test('a recalled statement may be reflowed; the code around it may not', async () => {
+    const { checkIntegrity, memoryTree } = await library();
+    const spec = 'formal/specs/Specs/S.lean';
+    const run = (was, now) => checkIntegrity({ base: memoryTree({ [spec]: was }), head: memoryTree({ [spec]: now }) }).problems.map((p) => p.kind);
+    const base = 'import Dep\n\nrecall Dep.foo (n : Nat) (h : 0 < n) :\n    n ≠ 0\n\ndef k := 1\n';
+    assert.deepEqual(run(base, 'import Dep\n\nrecall Dep.foo (n : Nat)\n  (h : 0 < n)\n  : n ≠ 0 -- reflowed\n\ndef k := 1\n'), []);
+    assert.deepEqual(run(base, base.replace('def k := 1', 'def k :=  1')), ['spec-code-changed'], 'spacing outside a statement counts');
+    assert.deepEqual(run(base, base.replace('n ≠ 0', 'n ≠ 1')), ['statement-changed']);
+  });
+
+  test('an axiom is identified by its name and its type, not counted: swapping one for another is an addition', async () => {
+    const { checkIntegrity, memoryTree } = await library();
+    const file = 'formal/proofs/P.lean';
+    const run = (was, now) => checkIntegrity({ base: memoryTree({ [file]: was }), head: memoryTree({ [file]: now }) }).problems.map((p) => [p.kind, p.token, p.statement]);
+    const harmless = 'import Dep\n\naxiom harmless : True\n';
+    assert.deepEqual(run(harmless, harmless.replace('import Dep\n', 'import Dep\n-- reflowed\n')), [], 'the same axiom stays');
+    assert.deepEqual(run(harmless, 'import Dep\n\naxiom escape : False\n'), [['forbidden-added', 'axiom', 'escape']], 'equal count, another axiom');
+    assert.deepEqual(run(harmless, 'import Dep\n\naxiom harmless : False\n'), [['forbidden-added', 'axiom', 'harmless']], 'the same name with a stronger type');
+    assert.deepEqual(run(harmless, `${harmless}axiom harmless : True\n`).length, 1, 'a second copy is an addition');
+    const aeneas = 'axiom\n  core.f\n  : Result Nat\n';
+    assert.deepEqual(run(aeneas, aeneas), [], 'an axiom with its name on the next line');
+    assert.deepEqual(run(aeneas, aeneas.replace('Result Nat', 'False')), [['forbidden-added', 'axiom', 'core.f']]);
+  });
+
+  test('a forbidden word is identified by its declaration: a native_decide moved to another declaration is an addition', async () => {
+    const { checkIntegrity, memoryTree } = await library();
+    const file = 'formal/proofs/P.lean';
+    const run = (was, now) => checkIntegrity({ base: memoryTree({ [file]: was }), head: memoryTree({ [file]: now }) }).problems.map((p) => [p.kind, p.token, p.statement]);
+    const was = 'import Dep\n\ntheorem a : True := by native_decide\ntheorem b : True := trivial\n';
+    assert.deepEqual(run(was, was), []);
+    assert.deepEqual(run(was, 'import Dep\n\ntheorem a : True := trivial\ntheorem b : True := by native_decide\n'), [['forbidden-added', 'native_decide', 'b']], 'the count is one before and one now');
+    assert.deepEqual(run(was, 'import Dep\n\ntheorem a : True := by sorry\ntheorem b : True := trivial\n'), [['forbidden-added', 'sorry', 'a']], 'one word swapped for another in place');
+    assert.deepEqual(run('import Dep\n\ntheorem a : True := by sorry\n', 'import Dep\n\ntheorem a : True := by sorry\n'), [], 'an old sorry stays an old sorry');
   });
 
   test('a new Trusted axiom with no accepted externals record', () => {
@@ -952,7 +1015,8 @@ describe('extraction folders in a multi-crate run', () => {
     const run = (files) => checkIntegrity({ base, head: tree({ 'Lean/Traits/T.lean': 'def t := 1\n', 'Lean/Hmac/H.lean': 'def h := 1\n', ...files }), layout }).problems.map((p) => [p.kind, p.file]);
     assert.deepEqual(run({ 'Lean/Hmac/H.lean': 'def h := 2\n' }).filter(([kind]) => kind !== 'not-covered-by-lean-lib'), [['frozen-file-changed', 'Lean/Hmac/H.lean']]);
     assert.deepEqual(run({ 'Lean/Traits/More.lean': 'def m := 1\n' }).filter(([kind]) => kind !== 'not-covered-by-lean-lib'), [['frozen-file-added', 'Lean/Traits/More.lean']]);
-    assert.deepEqual(run({ 'Lean/Hmac/H.lean': 'def  h := 1 -- note\n' }).filter(([kind]) => kind !== 'not-covered-by-lean-lib'), []);
+    assert.deepEqual(run({ 'Lean/Hmac/H.lean': 'def h := 1 -- note\n' }).filter(([kind]) => kind !== 'not-covered-by-lean-lib'), []);
+    assert.deepEqual(run({ 'Lean/Hmac/H.lean': 'def  h := 1\n' }).filter(([kind]) => kind !== 'not-covered-by-lean-lib'), [['frozen-file-changed', 'Lean/Hmac/H.lean']], 'spacing counts');
     assert.ok(run({}).some(([kind, file]) => kind === 'not-covered-by-lean-lib' && file === 'Lean/Hmac/H.lean'), 'no glob reaches the output, so Lake would not compile it');
     assert.deepEqual(checkIntegrity({ base, head: base, layout: LAYOUT('lean/hmac/h.lean') }).problems.map((p) => p.file), ['Lean/Hmac/H.lean'], 'a published file is judged without its folder, and its sibling is not');
   });

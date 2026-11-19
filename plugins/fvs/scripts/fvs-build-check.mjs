@@ -17,10 +17,11 @@
 // recalled statement must be the same text, the lakefile, the manifest, Specs/Defs, Trusted and
 // every extraction folder (any folder named Extraction..., and each publish folder or published file
 // the run state records for a multi-crate extraction) must be unchanged apart from comments,
-// docstrings and axiom guards, nothing may add `sorry`, `admit`, `native_decide`, `bv_decide` or an
-// axiom outside Trusted/, a lakefile may not appear below the project root, and a new Trusted file
-// is allowed only for axioms tied to an externals record the owner accepted. Strings are compared
-// exactly; only comments and the spacing between tokens are free. The glob guard refuses a spec,
+// docstrings and axiom guards, nothing may add `sorry`, `admit`, `native_decide`, `bv_decide` (judged
+// by the declaration each sits in) or an axiom outside Trusted/ (judged by its name and type, so
+// swapping one for another counts), a lakefile may not appear below the project root, and a new Trusted file
+// is allowed only for axioms tied to an externals record the owner accepted. Strings and layout are
+// compared exactly; only comments, docstrings, guards and the layout of a recalled statement are free. The glob guard refuses a spec,
 // proof or extraction file that no lean_lib glob of a default target reaches, because Lake would
 // never compile it. A commit that fails a guard gets a failed receipt and no build runs.
 //
@@ -88,7 +89,9 @@ const RAW_STRING = /r(#*)"/y;
 const CHARACTER = /'(?:\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[^xu\n])|[^\\'\n])'/y;
 
 // Comments are blanked and docstrings are replaced by a numbered marker, so the text that
-// is left can be matched without a commented-out guard counting. Line numbers are kept. String
+// is left can be matched without a commented-out guard counting. A block comment becomes blanks of
+// its own width (newlines kept), so it still separates the tokens around it and the columns of
+// what follows on its last line stay where they were; Lean reads layout from columns. String
 // and character literals are blanked too. With `keepStrings` each literal is replaced by a
 // numbered placeholder instead and returned in `strings`, so a comparison sees an edited string
 // exactly while code inside it never looks like code.
@@ -138,7 +141,7 @@ export function stripLean(text, { keepStrings = false } = {}) {
       i = end;
     } else if (text.startsWith('/-', i)) {
       const end = blockEnd(i);
-      code += newlines(text.slice(i, end));
+      code += text.slice(i, end).replace(/[^\n]/g, ' ');
       i = end;
     } else if (text.startsWith('--', i)) {
       while (i < text.length && text[i] !== '\n') i += 1;
@@ -434,7 +437,9 @@ function acquireLock() {
 // The proofs are written after the owner merged the spec, so "accepted" must also mean that the
 // statements and what they rest on are the merged ones. Both trees are read from git objects, never
 // from a working tree. A change is judged on Lean text with comments, docstrings and axiom guards
-// taken out and whitespace collapsed to one space, so those edits are free and nothing else is.
+// taken out. Layout is kept exactly (spacing, indentation, and a block comment by its width), because
+// Lean reads blocks from columns; only a recalled statement is compared with its whitespace collapsed,
+// a comment counting as a space, since the meaning of a statement is compared at the Lean level.
 
 const lowerFolders = (rel) => rel.toLowerCase().split('/').slice(0, -1);
 const LAKE_FILES = /^(?:lakefile\.(?:toml|lean)|lake-manifest\.json)$/;
@@ -473,6 +478,38 @@ const flatten = (code, strings) => code
   .replace(/\u0000(\d+)\u0000/g, (_, n) => strings[Number(n)]);
 
 export const normalizeLean = (text) => { const { code, strings } = stripLean(text, { keepStrings: true }); return flatten(code, strings); };
+
+// The same text with layout kept: comments are blanks of their width, docstring markers and axiom
+// guards are gone, a line's trailing blanks and the empty lines are dropped (Lean never reads them),
+// and everything else is exactly as written, indentation and the spaces between tokens included. A
+// `do` block or a tactic block reads its structure from columns, so a change of indentation can
+// change a program and is a change here. Each string is put back as written. With `statements`, the
+// text of each recalled statement is collapsed instead, because the elaborated statement is compared
+// at the Lean level and a reflowed statement is not a change of meaning.
+function exactText(code, strings, { statements = false } = {}) {
+  let text = code;
+  if (statements) {
+    let out = '';
+    let at = 0;
+    for (const match of text.matchAll(/^[ \t]*recall\s+([^\s(\[{:]+)/gm)) {
+      if (match.index < at) continue;
+      const ending = /\n(?=\S)/g;
+      ending.lastIndex = match.index + match[0].length;
+      const stop = ending.exec(text);
+      const end = stop ? stop.index : text.length;
+      out += `${text.slice(at, match.index)}recall ${match[1]} ${flatten(text.slice(match.index + match[0].length, end), strings)}`;
+      at = end;
+    }
+    text = out + text.slice(at);
+  }
+  return text
+    .replace(/\/--#\d+-\/[ \t]*/g, '')
+    .replace(/#guard_msgs\s*(?:\([^)]*\))?\s*in\s+#print\s+axioms\s+\S+/g, '')
+    .replace(/#print\s+axioms\s+\S+/g, '')
+    .split('\n').map((line) => line.replace(/\s+$/, '')).filter((line) => line !== '').join('\n')
+    .replace(/\u0000(\d+)\u0000/g, (_, n) => strings[Number(n)]);
+}
+export const exactLean = (text, options) => { const { code, strings } = stripLean(text, { keepStrings: true }); return exactText(code, strings, options); };
 
 // Each `recall` statement of a spec file as its text, comments gone and whitespace collapsed. A
 // statement runs to the next line that starts in column 0.
@@ -531,10 +568,13 @@ export function gitTree(top, commit, prefix, layout) {
 
 const hasStatements = (text) => readSpecSource(text).statements.length > 0;
 
-// What `sorry`, `admit`, a native check or an axiom outside Trusted/ would add. Counted on code
-// alone, so a mention in a comment or a string does not count.
+// What `sorry`, `admit`, a native check or an axiom outside Trusted/ would add. Read from code alone,
+// so a mention in a comment or a string does not count. A use is identified by the declaration it sits
+// in and the word, and an axiom by its name and its type, never by a count: a file whose total stays
+// the same can still have moved a `native_decide` to another declaration, or swapped one axiom for a
+// stronger one.
 const FORBIDDEN = [['sorry', /\bsorry\b/g], ['admit', /\badmit\b/g], ['native_decide', /\bnative_decide\b/g], ['bv_decide', /\bbv_decide\b/g],
-  ['decide +native', /\bdecide\s*\+\s*native\b/g], ['axiom', /\baxiom\b/g]];
+  ['decide +native', /\bdecide\s*\+\s*native\b/g]];
 
 // An axiom that starts a line, read from the raw text with no lexer in between. If the comment and
 // string reader were ever thrown off by odd source, an axiom declared on its own line is still seen.
@@ -544,22 +584,57 @@ const FORBIDDEN = [['sorry', /\bsorry\b/g], ['admit', /\badmit\b/g], ['native_de
 const RAW_AXIOM = /^[ \t]*(?:@\[[^\]\n]*\][ \t]*)*(?:(?:private|protected|noncomputable|unsafe)[ \t]+)*axiom[ \t]+([\p{L}_«][\p{L}\p{N}_.'!?«»]*)(?=\s*[:({\[⦃])/gmu;
 const rawAxioms = (text) => [...text.matchAll(RAW_AXIOM)].map((match) => match[1]);
 
+// A multiset as a Map from a key to how many times it occurs.
+const tally = (keys) => { const counts = new Map(); for (const key of keys) counts.set(key, (counts.get(key) ?? 0) + 1); return counts; };
+
+// Each axiom of a source text as "name : type", the type read to the next line that starts in column 0
+// and flattened, with the declared name.
+function axiomIdentities(text) {
+  const { code, strings } = stripLean(text, { keepStrings: true });
+  return [...code.matchAll(/\baxiom\s+([^\s(\[{:]+)/g)].map((match) => {
+    const ending = /\n(?=\S)/g;
+    ending.lastIndex = match.index + match[0].length;
+    const stop = ending.exec(code);
+    return { name: match[1], identity: flatten(code.slice(match.index, stop ? stop.index : code.length), strings) };
+  });
+}
+
 function forbiddenAdded(rel, was, now, problems) {
   const before = was === null ? '' : stripLean(was).code;
   const after = stripLean(now).code;
   for (const [token, pattern] of FORBIDDEN) {
-    if (token === 'axiom' && isTrusted(rel)) continue;
-    const had = [...before.matchAll(pattern)].length;
-    const found = [...after.matchAll(pattern)];
-    if (found.length > had) {
-      const named = token === 'axiom' ? /^axiom\s+([^\s(\[{:]+)/.exec(after.slice(found[had].index))?.[1] ?? null : declarationNear(after, found[had].index);
-      problems.push({ kind: 'forbidden-added', file: rel, statement: named, token, detail: `${token} was added (${had} before, ${found.length} now)${token === 'axiom' ? '; an axiom belongs in Trusted/ and needs an accepted externals record' : ''}` });
+    const uses = (code) => [...code.matchAll(pattern)].map((use) => ({ at: use.index, declaration: declarationNear(code, use.index) ?? '' }));
+    const had = tally(uses(before).map((use) => use.declaration));
+    const seenNow = new Map();
+    for (const use of uses(after)) {
+      const count = (seenNow.get(use.declaration) ?? 0) + 1;
+      seenNow.set(use.declaration, count);
+      if (count > (had.get(use.declaration) ?? 0)) {
+        problems.push({ kind: 'forbidden-added', file: rel, statement: use.declaration || null, token, detail: `${token} was added${use.declaration ? ` in ${use.declaration}` : ''} (${had.get(use.declaration) ?? 0} there before, ${count} now)` });
+      }
     }
   }
-  if (!isTrusted(rel) && !problems.some((problem) => problem.file === rel && problem.token === 'axiom')) {
-    const [had, found] = [rawAxioms(was ?? ''), rawAxioms(now)];
-    if (found.length > had.length) {
-      problems.push({ kind: 'forbidden-added', file: rel, statement: found[had.length], token: 'axiom', detail: `axiom was added (${had.length} before, ${found.length} now); an axiom belongs in Trusted/ and needs an accepted externals record` });
+  if (isTrusted(rel)) return;
+  const hadAxioms = tally(axiomIdentities(was ?? '').map((entry) => entry.identity));
+  const haveAxioms = new Map();
+  const reported = new Set();
+  for (const entry of axiomIdentities(now)) {
+    const count = (haveAxioms.get(entry.identity) ?? 0) + 1;
+    haveAxioms.set(entry.identity, count);
+    if (count > (hadAxioms.get(entry.identity) ?? 0)) {
+      reported.add(entry.name);
+      problems.push({ kind: 'forbidden-added', file: rel, statement: entry.name, token: 'axiom', detail: `the axiom ${entry.name} is not in the merged spec with this type; an axiom belongs in Trusted/ and needs an accepted externals record` });
+    }
+  }
+  // The same, from the raw lines, by name only.
+  const hadRaw = tally(rawAxioms(was ?? ''));
+  const haveRaw = new Map();
+  for (const name of rawAxioms(now)) {
+    const count = (haveRaw.get(name) ?? 0) + 1;
+    haveRaw.set(name, count);
+    if (count > (hadRaw.get(name) ?? 0) && !reported.has(name)) {
+      reported.add(name);
+      problems.push({ kind: 'forbidden-added', file: rel, statement: name, token: 'axiom', detail: `the axiom ${name} is not in the merged spec; an axiom belongs in Trusted/ and needs an accepted externals record` });
     }
   }
 }
@@ -610,10 +685,10 @@ function specChange(rel, was, now, problems) {
     if (!before.has(name)) problems.push({ kind: 'statement-added', file: rel, statement: name, detail: `the statement ${name} is not in the merged spec` });
   }
   if (problems.length === found) {
-    const [a, b] = [normalizeLean(was), normalizeLean(now)];
+    const [a, b] = [exactLean(was, { statements: true }), exactLean(now, { statements: true })];
     if (a !== b) {
       const diff = firstDifference(a, b);
-      problems.push({ kind: 'spec-code-changed', file: rel, statement: declarationNear(b, diff.index), detail: `code outside the comments and guards changed since the merged spec: was "…${diff.was}", now "…${diff.now}"` });
+      problems.push({ kind: 'spec-code-changed', file: rel, statement: declarationNear(b, diff.index), detail: `code outside the recalled statements, comments and guards changed since the merged spec (spacing and indentation count): was "…${diff.was}", now "…${diff.now}"`.replace(/\n/g, '⏎') });
     }
   }
 }
@@ -623,10 +698,10 @@ function frozenChange(rel, was, now, problems) {
     problems.push({ kind: 'frozen-file-changed', file: rel, statement: null, detail: 'this frozen file differs from the merged spec' });
     return;
   }
-  const [a, b] = [normalizeLean(was.text()), normalizeLean(now.text())];
+  const [a, b] = [exactLean(was.text()), exactLean(now.text())];
   if (a === b) return;
   const diff = firstDifference(a, b);
-  problems.push({ kind: 'frozen-file-changed', file: rel, statement: declarationNear(b, diff.index), detail: `this frozen file changed beyond comments and guards since the merged spec: was "…${diff.was}", now "…${diff.now}"` });
+  problems.push({ kind: 'frozen-file-changed', file: rel, statement: declarationNear(b, diff.index), detail: `this frozen file changed beyond comments, docstrings and guards since the merged spec (spacing and indentation count): was "…${diff.was}", now "…${diff.now}"`.replace(/\n/g, '⏎') });
 }
 
 // ---- Lake globs ----------------------------------------------------------------------------
