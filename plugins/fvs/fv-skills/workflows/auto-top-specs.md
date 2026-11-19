@@ -71,6 +71,13 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
    statement rests on, with Lean's three standard axioms always fine. Until the proofs land that list
    shows `sorryAx`, so this pull request may leave the guards out or mark them pending, and agents
    complete or update them in the proof pull request.
+
+   A gap or an assumption that a statement depends on is a `Prop` definition in `formal/specs/Defs`,
+   and its docstring cites the externals record id in backticks. That citation is how the proof phase
+   ties a record to the one proposition an accepted assumption may assert, so an assumption that the
+   owner accepts after this pull request merged needs a merged spec refactor pull request that adds its
+   `Prop` first. An explicit field on the record that names the proposition is the planned stronger
+   form, for runs after this release.
 5. **Open the SPEC PR as a draft** on the project's own repository: the destination recorded in the
    agreement at `/fvs:auto-init`, never an upstream. If none is recorded, ask the owner which repository
    before opening anything. Open it once the recorded status says the spec files are ready for a pull
