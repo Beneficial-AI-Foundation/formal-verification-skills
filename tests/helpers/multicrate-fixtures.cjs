@@ -1,0 +1,135 @@
+'use strict';
+
+// Fixtures for the auto track's multi-crate state tests: a committed Lean
+// project the stub profile accepts, and a hand-built record of a succeeded
+// extraction over several crates. No Charon, Aeneas or Lean runs.
+
+const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const ROOT = path.resolve(__dirname, '..', '..');
+const SCRIPT = path.join(ROOT, 'scripts', 'fvs-auto.mjs');
+const PROFILE_FIXTURES = path.join(__dirname, '..', 'fixtures', 'auto-profile');
+const CRATE = path.join(__dirname, '..', 'fixtures', 'extract-patches', 'crate');
+const TMP = fs.realpathSync(os.tmpdir());
+const ZEROS = '0'.repeat(64);
+const temporaryDirectories = [];
+let auto = null;
+
+// The engine module, imported by the test file's `before` hook.
+const use = (module) => { auto = module; };
+
+const cleanup = () => {
+  for (const directory of temporaryDirectories.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
+};
+
+function temporaryDirectory(prefix) {
+  const directory = fs.mkdtempSync(path.join(TMP, prefix));
+  temporaryDirectories.push(directory);
+  return directory;
+}
+
+const sha256 = (data) => crypto.createHash('sha256').update(data).digest('hex');
+
+function git(root, ...args) {
+  const result = spawnSync('git', ['-C', root, '-c', 'user.name=fvs', '-c', 'user.email=fvs@example.invalid',
+    '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.trim();
+}
+
+// A committed single-crate Lean project that the stub profile accepts.
+function project() {
+  const root = temporaryDirectory('fvs-multicrate-');
+  fs.cpSync(CRATE, root, { recursive: true });
+  fs.cpSync(path.join(PROFILE_FIXTURES, 'fresh'), root, { recursive: true });
+  git(root, 'init', '-q');
+  git(root, 'add', '-A');
+  git(root, 'commit', '-q', '-m', 'fixture');
+  return root;
+}
+
+// Setup state recorded with the profile tests' stub tools as the only tools.
+function init(root) {
+  const environment = {
+    HOME: path.join(PROFILE_FIXTURES, 'home'),
+    PATH: [path.join(PROFILE_FIXTURES, 'bin'), '/usr/bin', '/bin'].join(path.delimiter),
+    FVS_TOOLS_HOME: path.join(PROFILE_FIXTURES, 'no-fvs-tools'),
+  };
+  const saved = Object.fromEntries(Object.keys(environment).map((key) => [key, process.env[key]]));
+  Object.assign(process.env, environment);
+  try {
+    return auto.initState({ projectRoot: root, platform: 'aarch64-apple-darwin',
+      choices: { source: { revision: 'HEAD', configuration: 'default features' }, scope: 'every crate of the repository', limits: { wallClockHours: 40 } } });
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+function cli(...args) {
+  const result = spawnSync(process.execPath, [SCRIPT, ...args], { cwd: ROOT, encoding: 'utf8' });
+  let json = null;
+  try {
+    json = JSON.parse(result.stdout);
+  } catch {
+    // left null: the assertion on json shows the raw output
+  }
+  return { status: result.status, stdout: result.stdout, json };
+}
+
+const stateFile = (root) => path.join(root, '.formalising', 'auto-fv', 'state.json');
+const readState = (root) => JSON.parse(fs.readFileSync(stateFile(root), 'utf8'));
+const writeState = (root, state) => fs.writeFileSync(stateFile(root), JSON.stringify(state));
+
+const fn = (rust, file, line) => ({ def_id: line, lean_name: rust.replace(/::/g, '.'), lean_file: 'X.lean', rust_name: rust, is_local: true,
+  source: { file, begin_line: line, end_line: line + 2 }, is_opaque: false, can_fail: true });
+
+// One crate's whole single-crate run: its own folder and its own translation.json.
+function unit(root, crate, functions, extra = {}) {
+  const directory = path.join(root, crate);
+  fs.mkdirSync(directory, { recursive: true });
+  const published = path.join(directory, 'translation.json');
+  fs.writeFileSync(published, JSON.stringify({ aeneas_version: 'x', charon_version: 'y', crate, functions, types: [], globals: [], trait_decls: [], trait_impls: [] }));
+  const entry = { attemptPath: `/attempt/${crate}/translation.json`, projectPath: published, sha256: sha256(fs.readFileSync(published)) };
+  return {
+    attemptSha256: ZEROS, manifestSha256: ZEROS, configSha256: ZEROS, config: {}, supported: true, residuals: [], trust: 'local-host-and-reviewed-scripts',
+    stages: { charon: ZEROS, aeneas: ZEROS, publish: ZEROS }, llbc: { path: `${crate}.llbc`, sha256: ZEROS },
+    translation: entry, publication: [entry],
+    crate, package: crate.replace(/_/g, '-'), dir: `crates/${crate}`, status: 'complete',
+    hasErrors: { value: false, items: [], itemCount: 0 }, ...extra,
+  };
+}
+
+// A project whose recorded extraction succeeded over the crates `units(root)` builds;
+// the first is the main crate. `run` adds fields to the top-level run.
+function extracted(units, { run = {} } = {}) {
+  const root = project();
+  init(root);
+  const state = readState(root);
+  const rows = units(root);
+  state.extraction = {
+    status: 'succeeded', recordedAt: '2026-11-19T00:00:00.000Z', reasons: [], note: 'not a proof',
+    selected: { ...state.choices.source },
+    declared: { buildExitCode: 0, oracle: 'complete' },
+    checks: { status: { ok: true }, 'verify-tree': { ok: true }, 'verify-restore': { ok: true } },
+    inputs: { out: path.join(root, 'copy'), manifestSha256: ZEROS, crateRoot: root, mode: 'translation-patches', sourceCommit: 'a'.repeat(40), patches: [] },
+    run: { ...rows[0], units: rows, ...run },
+  };
+  writeState(root, state);
+  return root;
+}
+
+// libcrux_hmac calls into libcrux_sha2, which is the provider.
+const hmacAndSha2 = (root) => [
+  unit(root, 'libcrux_hmac', [fn('libcrux_hmac::hmac::hmac', 'src/hmac.rs', 10)], { imports: ['libcrux_sha2'] }),
+  unit(root, 'libcrux_sha2', [fn('libcrux_sha2::hacl::hash_256', 'src/hacl.rs', 5)]),
+];
+
+module.exports = { ROOT, ZEROS, use, cleanup, temporaryDirectory, sha256, git, project, init, cli, stateFile, readState, writeState, fn, unit, extracted, hmacAndSha2 };
