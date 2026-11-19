@@ -803,8 +803,11 @@ function symbolPatterns(symbol) {
 }
 // A receipt axiom name has no Lean project root segment, a model symbol does, so a pattern also
 // counts with its first segment removed.
+// The shortened form is kept only when it still starts with a literal character, so `Trusted.*` can
+// never become a bare `*` that names every axiom; a pattern with no literal character is dropped.
 function matcher(patterns) {
-  const wanted = patterns.flatMap(p => [p, p.split('.').slice(1).join('.')]).filter(Boolean);
+  const shortened = p => { const rest = p.split('.').slice(1).join('.'); return /^[\w']/.test(rest) ? rest : null; };
+  const wanted = patterns.flatMap(p => [p, shortened(p)]).filter(p => p !== null && /[\w']/.test(p));
   const expressions = wanted.map(p => new RegExp('^' + p.split('*').map(x => x.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$'));
   return axiom => expressions.some(e => e.test(axiom));
 }
@@ -864,10 +867,16 @@ function loadSpecStatus(root) {
   try { return specStatus({ projectRoot: root }); }
   catch (e) { return fail('trust-record-invalid', 'spec review records unreadable: ' + e.message); }
 }
-// The proof pull request heads the engine recorded, oldest first, and the merge commit of a merged one.
-function proofPrs(autoDir) {
-  const specs = readRecord(path.join(autoDir, 'specs.json'), 'specs.json', v => (plain(v) && Array.isArray(v.specs) ? null : 'no specs list'));
-  return (specs?.prs ?? []).filter(pr => pr?.kind === 'proof');
+function readSpecs(autoDir) {
+  return readRecord(path.join(autoDir, 'specs.json'), 'specs.json', v => (plain(v) && Array.isArray(v.specs) ? null : 'no specs list'));
+}
+// The bytes of a project-root-relative file at a commit, or null when the commit or the file is
+// not in this checkout.
+function bytesAtCommit(root, sha, relative) {
+  const env = { ...process.env };
+  for (const name of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY']) delete env[name];
+  const run = spawnSync('git', ['--no-optional-locks', '-C', root, 'show', `${sha}:./${relative}`], { env, maxBuffer: BUNDLE_LIMITS.fileBytes });
+  return run.status === 0 ? run.stdout : null;
 }
 
 export function trustSection({ projectRoot, commit: sha, notes = null }) {
@@ -909,7 +918,10 @@ export function trustSection({ projectRoot, commit: sha, notes = null }) {
   const recordRows = registry.map(x => ({ id: x.record.id, kind: x.record.kind, layer: x.layer, status: x.record.status,
     decision: x.record.decision ? { by: x.record.decision.by, at: x.record.decision.at } : null,
     statements: byRecord.get(x.record.id).statements.size, axioms: byRecord.get(x.record.id).axioms.size }));
-  const proofs = proofPrs(autoDir), recorded = proofs.at(-1) ?? null;
+  const specs = readSpecs(autoDir);
+  const proofs = (specs?.prs ?? []).filter(pr => pr?.kind === 'proof');
+  const lastRow = new Map((specs?.specs ?? []).map(row => [row.specFile, row]));
+  const recordedHead = proofs.filter(pr => !pr.merged).at(-1) ?? null, merged = proofs.filter(pr => pr.merged).at(-1) ?? null;
 
   // Review rows. An open record that a file's statements rest on is an open owner question
   // for that file, whatever the caller states.
@@ -917,13 +929,18 @@ export function trustSection({ projectRoot, commit: sha, notes = null }) {
     const rows = perStatement.filter(s => s.file === f.specFile || s.file.endsWith('/' + f.specFile) || f.specFile.endsWith('/' + s.file));
     const opened = [...new Set(rows.flatMap(s => s.unresolved))];
     const stated = checked.reviews[f.specFile] ?? null;
-    return { specFile: f.specFile, round: f.round, verdict: f.verdict, label: f.label, stale: f.stale, statements: rows.length,
-      openRecords: opened, ownerQuestions: stated?.ownerQuestions ?? null, briefChanges: stated?.briefChanges ?? null };
+    // Changed since the review, judged on the file as it is at the checked commit; null when this
+    // checkout does not hold that commit.
+    const atCommit = bytesAtCommit(root, sha, f.specFile);
+    const changed = atCommit === null ? null : hash(atCommit) !== lastRow.get(f.specFile)?.specSha256;
+    return { specFile: f.specFile, round: f.round, verdict: f.verdict, label: f.label, changedSinceReview: changed, ownerChange: f.ownerChange,
+      statements: rows.length, openRecords: opened, ownerQuestions: stated?.ownerQuestions ?? null, briefChanges: stated?.briefChanges ?? null };
   });
   const model = {
     schema: 'fvs/auto-pr-trust', schemaVersion: 1, authority: 'text for a pull request body; no proof, acceptance or dispatch authority',
     commit: sha, tree: receipt.tree ?? null, build: { accepted: receipt.accepted, label: receipt.label },
-    recordedProofPr: recorded === null ? null : recorded.merged ? { mergeCommit: recorded.mergeCommit ?? null, merged: true } : { head: recorded.head ?? null, url: recorded.url ?? null, merged: false },
+    recordedProofPr: recordedHead === null ? null : { head: recordedHead.head ?? null, url: recordedHead.url ?? null },
+    mergedProofPr: merged === null ? null : { mergeCommit: merged.mergeCommit ?? null },
     checks: { records: { total: registry.length, accepted: tally('assumption-accepted'), open: tally('open'), blocked: tally('blocked') },
       axioms: { distinct: distinct.size, leanStandard: LEAN_STANDARD.filter(a => distinct.has(a)).length, namedByRecords: distinct.size - LEAN_STANDARD.filter(a => distinct.has(a)).length - unnamedAxioms.size, namedByNoRecord: unnamedAxioms.size },
       statements: { total: statements.length, built: statements.filter(s => s.built).length, notBuilt: statements.filter(s => !s.built).map(s => s.name) },
@@ -939,9 +956,9 @@ function renderTrust(m) {
   const list = ids => (ids.length ? ids.map(id => '`' + id + '`').join(', ') : 'none');
   out.push('## Trust base', '',
     `Commit \`${m.commit}\`. Build check: ${m.build.label}.`,
-    m.recordedProofPr === null ? 'Recorded proof pull request: none.'
-      : m.recordedProofPr.merged ? `Recorded proof pull request: merged at \`${m.recordedProofPr.mergeCommit}\`${m.recordedProofPr.mergeCommit === m.commit ? '' : ' (not the commit above)'}.`
-        : `Recorded proof pull request head: \`${m.recordedProofPr.head}\`${m.recordedProofPr.head === m.commit ? '' : ' (not the commit above; this text describes the commit above)'}.`,
+    m.recordedProofPr === null ? 'Recorded proof pull request head: none.'
+      : `Recorded proof pull request head: \`${m.recordedProofPr.head}\`${m.recordedProofPr.head === m.commit ? '' : ' (not the commit above; this text describes the commit above)'}.`,
+    ...(m.mergedProofPr === null ? [] : [`Recorded merge of the proof pull request: \`${m.mergedProofPr.mergeCommit}\`. A merge commit is not the checked head and is never compared with it.`]),
     'Published head: not read. This text never calls GitHub; compare it with the pull request itself.', '',
     `${c.statements.built} of ${c.statements.total} statements were built by the check.${c.statements.notBuilt.length ? ' Not built: ' + list(c.statements.notBuilt) + '.' : ''}`,
     `externals.json holds ${c.records.total} records: ${c.records.accepted} accepted assumptions, ${c.records.open} open, ${c.records.blocked} blocked.`,
@@ -953,9 +970,13 @@ function renderTrust(m) {
   for (const r of m.reviews) {
     const questions = [...r.openRecords.map(id => 'open record `' + id + '`'), ...(r.ownerQuestions ?? [])];
     const unstated = r.ownerQuestions === null || r.briefChanges === null;
-    // A pass is plain only when the caller stated both lists and neither holds anything.
-    const pass = !questions.length && !r.briefChanges?.length && !unstated ? 'PASS' : questions.length || r.briefChanges?.length ? 'PASS, qualified' : 'PASS, qualifications NOT STATED';
-    const verdict = (r.verdict === 'pass' ? pass : r.label) + (r.stale ? ', STALE: the file changed after this review' : '');
+    // A pass is plain only when the caller stated both lists and nothing qualifies it.
+    const qualified = questions.length || r.briefChanges?.length || (r.verdict === 'pass' && r.ownerChange);
+    const pass = qualified ? 'PASS, qualified' : unstated ? 'PASS, qualifications NOT STATED' : 'PASS';
+    const notes = [r.verdict === 'pass' ? r.ownerChange : null,
+      r.changedSinceReview === true ? 'CHANGED SINCE REVIEW: the file at this commit differs from the reviewed file'
+        : r.changedSinceReview === null ? 'not checked against the commit: this checkout does not hold it' : null].filter(Boolean);
+    const verdict = (r.verdict === 'pass' ? pass : r.label) + notes.map(note => '; ' + note).join('');
     out.push(`| ${cell(r.specFile)} | ${r.round} | ${cell(verdict)} | ${r.statements} | ${cell(r.ownerQuestions === null ? [...questions, 'NOT STATED'].join('; ') : questions.join('; ') || 'none')} | ${cell(r.briefChanges === null ? 'NOT STATED' : r.briefChanges.join('; ') || 'none')} |`);
   }
   if (!m.reviews.length) out.push('| (no review round is recorded) | | | | | |');

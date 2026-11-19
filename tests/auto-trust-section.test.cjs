@@ -64,6 +64,25 @@ function makeProject({ files = FILES, externals = EXTERNALS, receipt = {}, specs
   if (specs) fs.writeFileSync(path.join(auto, 'specs.json'), JSON.stringify({ schema: 'fvs/auto-specs', schemaVersion: 1, specs: specRows.map(({ statements, ...row }) => row), prs }));
   return root;
 }
+// Makes the project a git repository with one commit and moves the receipt to that commit, the way a
+// real run has it: the receipt names the commit that was built and checked.
+function gitify(root, { change } = {}) {
+  const git = (...args) => {
+    const run = spawnSync('git', ['-C', root, '-c', 'user.name=t', '-c', 'user.email=t@example.test', ...args], { encoding: 'utf8' });
+    assert.equal(run.status, 0, run.stderr);
+    return run.stdout.trim();
+  };
+  git('init', '-q');
+  if (change) fs.appendFileSync(path.join(root, change), '-- changed after the review\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'project');
+  const sha = git('rev-parse', 'HEAD');
+  const dir = path.join(root, '.formalising', 'auto-fv', 'build-check');
+  const receipt = JSON.parse(fs.readFileSync(path.join(dir, `${COMMIT}.json`), 'utf8'));
+  fs.rmSync(path.join(dir, `${COMMIT}.json`));
+  fs.writeFileSync(path.join(dir, `${sha}.json`), JSON.stringify({ ...receipt, commit: sha }));
+  return sha;
+}
 const writeNotes = (root, notes) => {
   const file = path.join(root, 'notes.json');
   fs.writeFileSync(file, JSON.stringify({ schema: 'fvs/auto-pr-notes', schemaVersion: 1, ...notes }));
@@ -125,15 +144,16 @@ describe('pull request trust section', () => {
 
   it('never shows a pass as clean when the caller stated nothing, and shows a stated none as plain', () => {
     const root = project();
-    const unstated = api.trustSection({ projectRoot: root, commit: COMMIT }).markdown.split('\n').find((line) => line.startsWith('| Demo/Specs/Other.lean'));
+    const sha = gitify(root);
+    const unstated = api.trustSection({ projectRoot: root, commit: sha }).markdown.split('\n').find((line) => line.startsWith('| Demo/Specs/Other.lean'));
     assert.match(unstated, /PASS, qualifications NOT STATED/);
     const notes = writeNotes(root, { reviews: {
       'Demo/Specs/Other.lean': { ownerQuestions: [], briefChanges: [] },
       'Demo/Specs/Incremental.lean': { ownerQuestions: ['Should the cumulative limit overflow panic?'], briefChanges: ['Round 2 reviewer was told not to fail the file for the open question'] },
     } });
-    const lines = api.trustSection({ projectRoot: root, commit: COMMIT, notes }).markdown.split('\n');
+    const lines = api.trustSection({ projectRoot: root, commit: sha, notes }).markdown.split('\n');
     const plain = lines.find((line) => line.startsWith('| Demo/Specs/Other.lean'));
-    assert.match(plain, /\| PASS \|/);
+    assert.match(plain, /\| PASS \|/, 'a stated none, a spec file unchanged at the commit and no open record read as a plain PASS');
     assert.match(plain, /\| none \| none \|/);
     const qualified = lines.find((line) => line.startsWith('| Demo/Specs/Incremental.lean'));
     assert.match(qualified, /PASS, qualified/);
@@ -145,13 +165,51 @@ describe('pull request trust section', () => {
   it('flags a stale spec file, a recorded head that is not the checked commit and a statement that was not built', () => {
     const files = { ...FILES, 'Demo/Specs/Other.lean': [statement('other_spec', ['libcrux_sha2.impl_hacl.Sha384']), statement('failed_spec', ['core.num.U32.wrapping_div'], { status: 'failing', reason: 'sorry' })] };
     const root = project({ files, prs: [{ kind: 'proof', url: 'https://example.test/pr/3', branch: 'proofs', head: 'f'.repeat(40) }] });
-    fs.appendFileSync(path.join(root, 'Demo/Specs/Hmac.lean'), '-- changed after the review\n');
-    const result = api.trustSection({ projectRoot: root, commit: COMMIT });
+    const sha = gitify(root, { change: 'Demo/Specs/Hmac.lean' });
+    const result = api.trustSection({ projectRoot: root, commit: sha });
     assert.match(result.markdown, /Recorded proof pull request head: `f{40}` \(not the commit above/);
-    assert.match(result.markdown.split('\n').find((line) => line.startsWith('| Demo/Specs/Hmac.lean')), /STALE/);
+    assert.match(result.markdown.split('\n').find((line) => line.startsWith('| Demo/Specs/Hmac.lean')), /CHANGED SINCE REVIEW: the file at this commit differs from the reviewed file/);
+    assert.doesNotMatch(result.markdown.split('\n').find((line) => line.startsWith('| Demo/Specs/Incremental.lean')), /CHANGED SINCE REVIEW/);
     assert.deepEqual(result.checks.statements.notBuilt, ['failed_spec']);
     assert.match(result.markdown, /\| failed_spec \| not built \| not built \| not built \|/);
     assert.equal(result.checks.axioms.distinct, 10, 'a statement that was not built adds nothing to the counts');
+  });
+
+  it('judges a spec file at the checked commit, not in the checkout, and says when it cannot', () => {
+    const root = project();
+    const sha = gitify(root);
+    fs.appendFileSync(path.join(root, 'Demo/Specs/Hmac.lean'), '-- edited in the checkout after the commit\n');
+    const row = api.trustSection({ projectRoot: root, commit: sha }).markdown.split('\n').find((line) => line.startsWith('| Demo/Specs/Hmac.lean'));
+    assert.doesNotMatch(row, /CHANGED SINCE REVIEW/, 'a later edit in the checkout does not change what the commit holds');
+    const elsewhere = api.trustSection({ projectRoot: project(), commit: COMMIT }).markdown.split('\n').find((line) => line.startsWith('| Demo/Specs/Hmac.lean'));
+    assert.match(elsewhere, /not checked against the commit: this checkout does not hold it/);
+  });
+
+  it('keeps the recorded head and the merge apart, and flags only a head that differs', () => {
+    const prs = [{ kind: 'proof', url: 'https://example.test/pr/3', branch: 'proofs', head: COMMIT },
+      { kind: 'proof', merged: true, mergeCommit: '9'.repeat(40), url: 'https://example.test/pr/3', recordedAt: '2026-11-19T00:00:00.000Z' }];
+    const md = api.trustSection({ projectRoot: project({ prs }), commit: COMMIT }).markdown;
+    assert.match(md, new RegExp(`Recorded proof pull request head: \`${COMMIT}\`\\.\n`));
+    assert.match(md, /Recorded merge of the proof pull request: `9{40}`\. A merge commit is not the checked head/);
+  });
+
+  it('shows what the owner changed in review next to the pass', () => {
+    const prs = [{ kind: 'spec', url: 'https://example.test/pr/2', branch: 'specs', head: 'f'.repeat(40), recordedAt: '2026-11-17T01:00:00.000Z' },
+      { kind: 'spec', merged: true, mergeCommit: '9'.repeat(40), recordedAt: '2026-11-18T00:00:00.000Z', ownerChanges: [{ specFile: 'Demo/Specs/Other.lean', change: 'owner-changed' }] }];
+    const root = project({ prs });
+    const sha = gitify(root);
+    const notes = writeNotes(root, { reviews: { 'Demo/Specs/Other.lean': { ownerQuestions: [], briefChanges: [] } } });
+    const row = api.trustSection({ projectRoot: root, commit: sha, notes }).markdown.split('\n').find((line) => line.startsWith('| Demo/Specs/Other.lean'));
+    assert.match(row, /PASS, qualified; changed by owner in review/);
+  });
+
+  it('never lets a namespace glob name every axiom', () => {
+    const files = { 'Demo/Specs/Hmac.lean': [statement('s_spec', ['Trusted.div_spec', 'Other.helper', 'libcrux_sha2.hacl.h256'])] };
+    const externals = [record('models', 'handwritten-model', 'assumption-accepted', 'demo::models', 'Trusted.* and * (2 axioms)')];
+    const result = api.trustSection({ projectRoot: project({ files, externals }), commit: COMMIT });
+    assert.deepEqual(result.statements[0].accepted, ['models']);
+    assert.deepEqual(result.unnamedAxioms, ['Other.helper', 'libcrux_sha2.hacl.h256'], 'only Trusted. names are covered; the stray star and the shortened form claim nothing');
+    assert.equal(result.records[0].axioms, 1);
   });
 
   it('writes nothing', () => {
