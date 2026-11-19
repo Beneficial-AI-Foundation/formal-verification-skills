@@ -54,6 +54,7 @@ function usage() {
     '       node fvs-auto.mjs record-spec --spec-file PATH --items ID[,ID...] --round N --verdict pass|changes|blocked --review FILE [--out-of-scope ID[,ID...]] [--commit SHA] [--project-root DIR]',
     '       node fvs-auto.mjs spec-status [--commit SHA] [--project-root DIR]',
     '       node fvs-auto.mjs record-override --key KEY --value TEXT --reason TEXT [--project-root DIR]',
+    '       node fvs-auto.mjs list-items [--translation PATH] [--scope FILE|DIR|RUST_PATH[,...]] [--project-root DIR]',
     '       node fvs-auto.mjs record-pr --kind spec|proof --url URL --branch B --head SHA [--project-root DIR]',
     '       node fvs-auto.mjs record-pr --kind spec|proof --merged --merge-commit SHA [--project-root DIR]',
     '       node fvs-auto.mjs freeze|check|accept --request FILE --out EXCLUSIVE_DIR',
@@ -1984,6 +1985,53 @@ export function recordSpec({ projectRoot, specFile, items, round, verdict, revie
   return { code: 'recorded', message: `${SPEC_VERDICTS[verdict](round)}: ${row.specFile}`, row, warnings };
 }
 
+// The Rust functions Aeneas translated from this crate, read from translation.json
+// and narrowed by an explicit scope: a source file or directory (src/hmac.rs) or a
+// Rust path prefix (libcrux_hmac::hmac). translation.json records no visibility, so
+// the list holds candidates for the public API, never a claim about it.
+export function listItems({ projectRoot, translation, scope }) {
+  const root = projectDirectory(projectRoot);
+  // Without --translation, the one a succeeded extraction published; a failed one names none.
+  const extraction = translation === undefined ? loadState(root)?.extraction : null;
+  const file = translation === undefined ? (extraction?.status === 'succeeded' ? extraction.run?.translation?.projectPath : undefined) : path.resolve(root, translation);
+  if (!file) refuse('invalid-input', 'no translation.json is known: pass --translation PATH, or record an extraction that names it', { nextStep: 'Run /fvs:auto-extract, or pass --translation PATH.' });
+  let bytes;
+  let data;
+  try {
+    bytes = fs.readFileSync(file);
+    data = JSON.parse(bytes.toString('utf8'));
+  } catch (error) {
+    refuse('invalid-input', `cannot read ${file} as JSON: ${error.message}`);
+  }
+  // The top level is an object of lists next to plain text fields (versions, crate name), so a
+  // loop over its entries meets strings; only the lists are read, and a wrong shape is named.
+  if (!plainObject(data) || !Array.isArray(data.functions)) {
+    refuse('invalid-input', `${file} is not an Aeneas translation.json: expected an object with a "functions" list, found ${Array.isArray(data) ? 'a list' : typeof data}`);
+  }
+  const badAt = data.functions.findIndex((entry) => !plainObject(entry) || !isText(entry.rust_name) || !isText(entry.lean_name));
+  if (badAt >= 0) refuse('invalid-input', `${file}: functions[${badAt}] must be an object with a rust_name and a lean_name`);
+  const scopes = idList(scope, '--scope');
+  const inScope = (entry) => scopes.length === 0 || scopes.some((prefix) => {
+    const source = entry.source?.file;
+    return entry.rust_name === prefix || entry.rust_name.startsWith(`${prefix}::`)
+      || (typeof source === 'string' && (source === prefix || source.startsWith(`${prefix.replace(/\/$/, '')}/`)));
+  });
+  const local = data.functions.filter((entry) => entry.is_local === true);
+  const chosen = local.filter(inScope);
+  const items = chosen.map((entry) => ({
+    rustName: entry.rust_name, leanName: entry.lean_name, leanFile: entry.lean_file ?? null,
+    source: entry.source ? { file: entry.source.file, beginLine: entry.source.begin_line, endLine: entry.source.end_line } : null,
+    opaque: entry.is_opaque === true, canFail: entry.can_fail === true,
+  })).sort((a, b) => (a.source?.file ?? '').localeCompare(b.source?.file ?? '') || (a.source?.beginLine ?? 0) - (b.source?.beginLine ?? 0) || a.rustName.localeCompare(b.rustName));
+  return {
+    code: 'ok', message: `${items.length} translated local function(s) in scope, from ${file}`,
+    translation: file, translationSha256: sha256(bytes), crate: typeof data.crate === 'string' ? data.crate : null, scope: scopes,
+    excluded: { notLocal: data.functions.length - local.length, outOfScope: local.length - chosen.length },
+    visibility: 'not recorded: translation.json holds no visibility, so these are candidates; confirm each against the Rust source (pub, pub(crate) or private) before calling it public API',
+    items,
+  };
+}
+
 // Current verdict per spec file, recomputed against the bytes on disk, or at a
 // commit when one is given (the PR head, for a checkout that holds no spec
 // files). Ready for the PR: at least one pass, no file waiting for changes,
@@ -2174,6 +2222,10 @@ const STATE_COMMANDS = {
     if (!/^\d+$/.test(flags.round)) refuse('usage', '--round must be a positive integer');
     return recordSpec({ projectRoot: flags['project-root'], specFile: flags['spec-file'], items: flags.items, round: Number(flags.round),
       verdict: flags.verdict, review: flags.review, outOfScope: flags['out-of-scope'], commit: flags.commit });
+  },
+  'list-items': (argv) => {
+    const flags = stateFlags(argv, [], [], ['translation', 'scope']);
+    return listItems({ projectRoot: flags['project-root'], translation: flags.translation, scope: flags.scope });
   },
   'record-override': (argv) => {
     const flags = stateFlags(argv, ['key', 'value', 'reason']);
