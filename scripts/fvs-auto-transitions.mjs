@@ -1034,6 +1034,15 @@ export function verifyStartup(options, services) {
   if (!same(current, actor) || actor.worktree.dirty !== false) stop('transition-startup-uncertain', 'worker changed source/profile before release; instruction is not OS suspension');
   return { status: 'startup-acknowledged', actor, challenge: ack.challenge, memoryEvidence: ack.memoryEvidence, pauseAuthority: 'trusted instruction/ack only', executable: false };
 }
+// The installed FVS this script belongs to: the folder that holds scripts/ and fv-skills/, and the
+// version its VERSION file names. Workers search global paths and find older installs, so every brief
+// names this one. A missing or blank VERSION is reported as unknown, never guessed.
+export function installedFvs() {
+  const root = fs.realpathSync(path.resolve(fileURLToPath(new URL('..', import.meta.url))));
+  let version = 'unknown';
+  try { version = fs.readFileSync(path.join(root, 'fv-skills', 'VERSION'), 'utf8').trim() || 'unknown'; } catch { /* reported as unknown */ }
+  return { root, version };
+}
 export function launchArguments(a, actionRef, beforeEventSha256) {
   if (a.kind !== 'launch') stop('transition-invalid-input', 'launch action required');
   if (!isSha(beforeEventSha256) || !same(readTransitionAction(actionRef), a)) stop('transition-before-required', 'startup prompt must bind the actual action and committed before');
@@ -1043,7 +1052,7 @@ export function launchArguments(a, actionRef, beforeEventSha256) {
   const permissionHold = a.schemaVersion === 2 ? ' Before any gate call, WAIT for the controller permission-ready notice binding this launch, your actual AO session/worktree and verified permission installation receipt. Read those exact retained bytes; uncertainty keeps startup held. This is a trusted instruction, not OS suspension or permission bypass.' : '';
   return ['spawn', '--project', a.target.projectId, '--kind', 'worker', '--branch', a.target.branchRef.replace(/^refs\/heads\//, ''), '--name', a.stage + ' ' + a.transitionId,
     '--harness', selected.harness, '--model', selected.model, '--effort', selected.effort, '--prompt',
-    'Trusted FVS controller protocol: read ' + reference + '.' + permissionHold + ' Use installed gate ' + gate + ' sha256 ' + hash(transitionBytes(gate)) + ', never a consumer-provided script. Read closed action ' + actionRef.file + ' sha256 ' + actionRef.sha256 +
+    'Trusted FVS controller protocol: read ' + reference + '.' + permissionHold + ' Use installed gate ' + gate + ' sha256 ' + hash(transitionBytes(gate)) + ' (installed FVS ' + installedFvs().version + ' at ' + installedFvs().root + '), never a consumer-provided script. Read closed action ' + actionRef.file + ' sha256 ' + actionRef.sha256 +
     '; committed before ' + beforeEventSha256 + '; run ' + a.runId + '; primary canonical root ' + a.before.fixed.canonicalRoot + '; assignment ' + a.target.assignmentId + '; selected FVS role ' + a.target.selectionStage +
     guidance + '. Startup challenge ' + a.target.startup.challenge + (disabledMemory(a.before.fixed) ? '. Retain an explicit disabled-memory worker context request (no backend prime) using allocated attempt ' : '. Retain your own fresh worker-readonly memory request using allocated attempt ') + a.target.startup.attemptId + ', phase ' + a.target.startup.phase + ', resume ' + a.target.startup.resumeId +
     ', actual AO session id and Git worktree. Report the actor-bound startup acknowledgement/artifact; WAIT for the exact bound work packet and durable start acknowledgement before any task/source edits. This is a trusted instruction, not OS suspension. ' + (a.schemaVersion===2?'Assigned':'Local') + ' stage only: no publication/GH/main/release or nested provider children. Preserve all worktrees/uncommitted work.'];

@@ -1264,7 +1264,6 @@ function publicationPlan(inv, outputs) {
 
 function runPublish(chain) {
   const inv = chain.invocation;
-  const { out } = chain.attempt;
   const aeneas = chain.stages.aeneas.record;
   if (!exactlyFiles(entriesUnder(inv.aeneasDest), aeneas.outputs)) refuse('attempt-refused', 'the Aeneas outputs changed after the Aeneas stage recorded them');
   const plan = publicationPlan(inv, aeneas.outputs);
@@ -1282,7 +1281,9 @@ function runPublish(chain) {
       if (fileState(entry.projectPath)?.sha256 !== entry.sha256) reasons.push(`${entry.projectPath} differs from the attempt output after copying`);
     }
     if (reasons.length === 0) {
-      const ownership = { schema: 'fvs-extract-patches/publication', version: 1, attempt: out, files: Object.fromEntries(plan.map((entry) => [path.relative(inv.publishDir, entry.projectPath), entry.sha256])) };
+      // The record is meant to be committed with the files it lists: it names them relative to the
+      // destination and holds no path of this attempt, which lives in a temporary directory.
+      const ownership = { schema: 'fvs-extract-patches/publication', version: 1, files: Object.fromEntries(plan.map((entry) => [path.relative(inv.publishDir, entry.projectPath), entry.sha256])) };
       const target = path.join(inv.publishDir, OWNERSHIP);
       const temporary = `${target}.fvs-tmp-${process.pid}`;
       fs.writeFileSync(temporary, `${JSON.stringify(ownership, null, 2)}\n`, { flag: 'wx' });

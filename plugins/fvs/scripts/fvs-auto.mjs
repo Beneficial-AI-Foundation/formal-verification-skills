@@ -29,7 +29,7 @@ import {
 import { ResumeError, runResume, consumeResume, consumeTransition, observeAssignedActor, verifyReleasedPacketContext, readRuntime, parseResumeRequest } from './fvs-auto-resume.mjs';
 import { readChain } from './fvs-contract-registry.mjs';
 import { inspectAutoAcceptance } from './fvs-checker-auto.mjs';
-import { TransitionError, transitionValidators, transitionBytes, transitionJson, transitionSave, nextTransitionFacts, performTransition, verifyStartup, acknowledgeStart, readWorkPacket, readTransitionAction, transitionBound, readRuntimeObservation, recordTaskProgress, readTaskProgress, assessTaskProgress, workerMemoryEvidence, verifyTransitionAuthorization } from './fvs-auto-transitions.mjs';
+import { installedFvs, TransitionError, transitionValidators, transitionBytes, transitionJson, transitionSave, nextTransitionFacts, performTransition, verifyStartup, acknowledgeStart, readWorkPacket, readTransitionAction, transitionBound, readRuntimeObservation, recordTaskProgress, readTaskProgress, assessTaskProgress, workerMemoryEvidence, verifyTransitionAuthorization } from './fvs-auto-transitions.mjs';
 
 const GREEN = 'supported-and-tested';
 
@@ -41,7 +41,7 @@ function usage() {
   process.stdout.write([
     'Usage: node fvs-auto.mjs profile [--project-root DIR] [--format json|text]',
     '       node fvs-auto.mjs init-state --input CHOICES.json [--project-root DIR] [--confirm-overwrite]',
-    '       node fvs-auto.mjs read-state [--project-root DIR] [--require-agreement]',
+    '       node fvs-auto.mjs read-state [--project-root DIR] [--require-agreement | --brief]',
     '       node fvs-auto.mjs record-agreement --input AGREEMENT.json [--project-root DIR] [--confirm-overwrite]',
     '       node fvs-auto.mjs record-memory --input REGISTRATION.json [--project-root PRIMARY] [--confirm-overwrite]',
     '       node fvs-auto.mjs prime-memory --request REQUEST.json --out EXCLUSIVE_DIR [--project-root PRIMARY]',
@@ -51,8 +51,10 @@ function usage() {
     '       node fvs-auto.mjs record-roadmap --decision accepted|declined [--project-root DIR] [--confirm-overwrite]',
     '       node fvs-auto.mjs record-extraction --out OUT --build-exit-code N --oracle complete|refused|unknown [--oracle-reason TEXT] [--project-root DIR]',
     '       node fvs-auto.mjs record-externals --input RECORDS.json [--project-root DIR]',
-    '       node fvs-auto.mjs record-spec --spec-file PATH --items ID[,ID...] --round N --verdict pass|changes|blocked --review FILE [--out-of-scope ID[,ID...]] [--project-root DIR]',
-    '       node fvs-auto.mjs spec-status [--project-root DIR]',
+    '       node fvs-auto.mjs record-spec --spec-file PATH --items ID[,ID...] --round N --verdict pass|changes|blocked --review FILE [--out-of-scope ID[,ID...]] [--commit SHA] [--project-root DIR]',
+    '       node fvs-auto.mjs spec-status [--commit SHA] [--project-root DIR]',
+    '       node fvs-auto.mjs record-override --key KEY --value TEXT --reason TEXT [--project-root DIR]',
+    '       node fvs-auto.mjs list-items [--translation PATH] [--scope FILE|DIR|RUST_PATH[,...]] [--project-root DIR]',
     '       node fvs-auto.mjs record-pr --kind spec|proof --url URL --branch B --head SHA [--project-root DIR]',
     '       node fvs-auto.mjs record-pr --kind spec|proof --merged --merge-commit SHA [--project-root DIR]',
     '       node fvs-auto.mjs freeze|check|accept --request FILE --out EXCLUSIVE_DIR',
@@ -65,7 +67,8 @@ function usage() {
     'The state subcommands keep the milestone 1 auto-track state under',
     '.formalising/auto-fv/ in the project root: state.json (profile, owner choices,',
     'roadmap offer, extraction, optional M2 agreement), externals.json (one record per',
-    'boundary) and specs.json (one row per spec review round; PATH and FILE are',
+    'boundary), overrides.json (run decisions made after the agreement; append-only) and',
+    'specs.json (one row per spec review round; PATH and FILE are',
     'files inside the project root, relative to it). Every write is atomic; malformed files are reported, never',
     'overwritten. They print one JSON result. Exit codes: 0 ok; 1 refused',
     '(confirmation required, blocked profile, failed extraction, record loss,',
@@ -1193,6 +1196,40 @@ const loadState = (root) => loadRecord(statePath(root), 'malformed-state', state
 const loadExternals = (root) => loadRecord(externalsPath(root), 'malformed-externals', externalsFileErrors, '/fvs:auto-extract');
 const specsPath = (root) => path.join(root, STATE_DIR, 'specs.json');
 const loadSpecs = (root) => loadRecord(specsPath(root), 'malformed-specs', specsFileErrors, 'the spec-phase command');
+const overridesPath = (root) => path.join(root, STATE_DIR, 'overrides.json');
+const loadOverrides = (root) => loadRecord(overridesPath(root), 'malformed-overrides', overridesFileErrors, 'record-override');
+
+// Run overrides: decisions made after the agreement (a changed PR base, an
+// exception that no longer holds) that the agreement still names the old way.
+// The file is append-only; the last row for a key is the one in force.
+const OVERRIDE_KEY = /^[a-z0-9][a-z0-9-]*$/;
+const OVERRIDES_NOTE = 'Run overrides were recorded after the agreement and take precedence over it for this run. They do not amend the agreement, which still names the earlier values.';
+
+function overridesFileErrors(value) {
+  if (!plainObject(value) || value.schema !== 'fvs/auto-overrides' || value.schemaVersion !== 1 || !Array.isArray(value.overrides)) {
+    return ['schema must be fvs/auto-overrides version 1 with an overrides list'];
+  }
+  return value.overrides.flatMap((row, index) => (plainObject(row) && OVERRIDE_KEY.test(row.key) && isText(row.value) && isText(row.reason) && isText(row.recordedAt)
+    ? [] : [`overrides[${index}] must have a key (lowercase words joined by hyphens), a value, a reason and a time`]));
+}
+
+const currentOverrides = (overrides) => Object.fromEntries((overrides?.overrides ?? []).map(({ key, value, reason, recordedAt }) => [key, { value, reason, recordedAt }]));
+
+export function recordOverride({ projectRoot, key, value, reason }) {
+  if (!OVERRIDE_KEY.test(key ?? '')) refuse('usage', '--key must be lowercase words joined by hyphens, for example pr-base');
+  if (!isText(value)) refuse('usage', '--value must be text');
+  if (!isText(reason)) refuse('usage', '--reason must say why the run differs from the agreement');
+  const root = projectDirectory(projectRoot);
+  requireState(root);
+  const base = loadOverrides(root);
+  const row = { key, value: value.trim(), reason: reason.trim(), recordedAt: now() };
+  if (currentOverrides(base)[key]?.value === row.value) {
+    return { code: 'unchanged', message: `the override ${key} already holds this value; nothing was written`, overrides: currentOverrides(base) };
+  }
+  const next = { ...(base ?? { schema: 'fvs/auto-overrides', schemaVersion: 1 }), overrides: [...(base?.overrides ?? []), row] };
+  commitState(root, base, next, overridesPath(root));
+  return { code: 'recorded', message: `run override recorded: ${key} = ${row.value}. ${OVERRIDES_NOTE}`, row, overrides: currentOverrides(next) };
+}
 
 // One row per review round of a spec file; the last row for a file is its
 // current verdict, earlier rows are history. Labels come from the verdict.
@@ -1220,7 +1257,8 @@ function specsFileErrors(value) {
     const ids = (list) => Array.isArray(list) && list.every((id) => typeof id === 'string' && id.length > 0);
     const ok = plainObject(row) && typeof row.specFile === 'string' && typeof row.review === 'string'
       && ids(row.items) && row.items.length > 0 && ids(row.outOfScope) && Number.isInteger(row.round) && row.round >= 1
-      && Object.hasOwn(SPEC_VERDICTS, row.verdict) && HEX64.test(row.specSha256) && HEX64.test(row.reviewSha256);
+      && Object.hasOwn(SPEC_VERDICTS, row.verdict) && HEX64.test(row.specSha256) && HEX64.test(row.reviewSha256)
+      && (row.commit === undefined || /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(row.commit));
     return ok ? [] : [`specs[${index}] must name a spec file, items, a round, a verdict (${Object.keys(SPEC_VERDICTS).join(', ')}) and both hashes`];
   })];
 }
@@ -1439,15 +1477,21 @@ function progress(root, state, specs = null) {
         nextAction: `The spec PR merge is recorded at ${specMerge.mergeCommit}. Run /fvs:auto-execute from the AO orchestrator for the proof phase: stock AO workers prove the merged statements, and the orchestrator opens one draft proof PR on the project's own repository and records it with record-pr --kind proof. No execution grant, stage profile or permission install is needed.` + suffix };
     }
     const receipt = buildCheckReceipt(root, proofPr.head);
-    if (receipt?.accepted) {
+    // An accepting receipt counts only when the statements were held to the recorded spec merge: a
+    // receipt made with no spec base, or against another commit, proves nothing about them.
+    const heldToSpec = receipt?.specBase === specMerge.mergeCommit;
+    const check = `node fvs-build-check.mjs --project-root ${root} --commit ${proofPr.head} --spec-base ${specMerge.mergeCommit}`;
+    if (receipt?.accepted && heldToSpec) {
       return { phase: 'done', warnings,
         nextAction: `The build check accepted the draft proof PR ${proofPr.url} at ${proofPr.head}: ${receipt.label}. `
           + (proofMerge ? `The proof PR merge is recorded at ${proofMerge.mergeCommit}.` : 'The owner reviews and merges it; then record the merge with record-pr --kind proof --merged --merge-commit SHA.') + suffix };
     }
     return { phase: 'proofs', warnings,
-      nextAction: (receipt
-        ? `The build check failed for the draft proof PR ${proofPr.url} at ${proofPr.head}: ${receipt.label}. Fix the proofs, push, record the new head with record-pr --kind proof, and rerun the build check on it.`
-        : `The draft proof PR ${proofPr.url} is recorded at ${proofPr.head}. Run the build check on that commit: node fvs-build-check.mjs --project-root ${root} --commit ${proofPr.head}; read-state reports done when it accepts.`) + suffix };
+      nextAction: (receipt?.accepted
+        ? `The build check receipt for the draft proof PR ${proofPr.url} at ${proofPr.head} does not count: it was made ${typeof receipt.specBase === 'string' ? `against the spec base ${receipt.specBase}` : 'without a spec base'}, not against the recorded spec merge ${specMerge.mergeCommit}. Run the build check again: ${check}; read-state reports done when it accepts.`
+        : receipt
+          ? `The build check failed for the draft proof PR ${proofPr.url} at ${proofPr.head}: ${receipt.label}. Fix the proofs, push, record the new head with record-pr --kind proof, and rerun the build check on it.`
+          : `The draft proof PR ${proofPr.url} is recorded at ${proofPr.head}. Run the build check on that commit: ${check}; read-state reports done when it accepts.`) + suffix };
   }
   return { phase: 'specs', warnings,
     nextAction: (specPr
@@ -1456,7 +1500,18 @@ function progress(root, state, specs = null) {
       + warnings.map((warning) => ` Warning: ${warning}.`).join('') };
 }
 
-export function readState({ projectRoot, requireAgreement = false }) {
+// What `read-state --brief` keeps: where the run is and what to do next, a few
+// lines instead of the recorded probe profile and every readiness row.
+const BRIEF_FIELDS = ['code', 'message', 'phase', 'nextAction', 'warnings', 'pendingDecisions', 'externals', 'overrides', 'overridesNote', 'fvs'];
+
+export function readState({ projectRoot, requireAgreement = false, brief = false }) {
+  if (brief && requireAgreement) refuse('usage', '--brief cannot be combined with --require-agreement: that check returns the whole agreement');
+  // Workers search global paths and find older installs; the orchestrator puts this one in every brief.
+  const full = { ...readFullState({ projectRoot, requireAgreement }), fvs: installedFvs() };
+  return brief ? { brief: true, ...Object.fromEntries(BRIEF_FIELDS.filter((key) => Object.hasOwn(full, key)).map((key) => [key, full[key]])) } : full;
+}
+
+function readFullState({ projectRoot, requireAgreement }) {
   const root = projectDirectory(projectRoot);
   const state = loadState(root);
   if (!state) {
@@ -1466,12 +1521,14 @@ export function readState({ projectRoot, requireAgreement = false }) {
   const records = loadExternals(root)?.records ?? [];
   const externals = Object.fromEntries([['total', records.length],
     ...BOUNDARY_STATUSES.map((status) => [status, records.filter((record) => record.status === status).length])]);
+  const overrides = currentOverrides(loadOverrides(root));
   return {
     code: 'ok',
     message: `auto-track state in ${statePath(root)}`,
     state,
     roadmapPresent: state.roadmap?.path ? fs.existsSync(path.join(root, state.roadmap.path)) : false,
     externals,
+    ...(Object.keys(overrides).length > 0 ? { overrides, overridesNote: OVERRIDES_NOTE } : {}),
     pendingDecisions: requireAgreement || state.roadmap ? [] : ['roadmap'],
     readiness: readiness(state.profile),
     ...progress(root, state, loadSpecs(root)),
@@ -1894,17 +1951,39 @@ const idList = (text, flag) => {
   return [...new Set(ids)];
 };
 
-export function recordSpec({ projectRoot, specFile, items, round, verdict, review, outOfScope }) {
+// The spec file named by a path that only has to exist in a commit, not on disk.
+// The path is checked lexically, so it still has to stay inside the project root.
+function committedSpec(root, commit, file) {
+  const relative = path.relative(root, path.resolve(root, file));
+  if (relative === '' || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    refuse('invalid-input', `--spec-file must name a file inside the project root ${root}: ${file}`);
+  }
+  const specFile = relative.split(path.sep).join('/');
+  const bytes = bytesAt(root, commit, specFile);
+  if (bytes === null) refuse('invalid-input', `--spec-file ${file} is not a file in commit ${commit}`);
+  return { relative: specFile, bytes };
+}
+
+// With a commit, the spec file is hashed from that commit's git object, so the
+// checkout is never moved or touched to record a review. The review report is
+// a working file (it is never committed), so it is still read from disk.
+export function recordSpec({ projectRoot, specFile, items, round, verdict, review, outOfScope, commit }) {
   const root = projectDirectory(projectRoot);
   if (!Object.hasOwn(SPEC_VERDICTS, verdict)) refuse('usage', `--verdict must be ${Object.keys(SPEC_VERDICTS).join(', ')}`);
   if (!Number.isInteger(round) || round < 1) refuse('usage', '--round must be a positive integer');
   const ids = idList(items, '--items');
   if (ids.length === 0) refuse('usage', '--items must name at least one item');
-  const spec = projectFile(root, specFile, '--spec-file');
+  let resolved = null;
+  if (commit !== undefined) {
+    resolved = resolveRevision(root, commit);
+    if (resolved === null) refuse('invalid-input', `--commit ${commit} is not a local commit: fetch the branch first`);
+  }
+  const spec = resolved === null ? projectFile(root, specFile, '--spec-file') : committedSpec(root, resolved, specFile);
   const reviewFile = projectFile(root, review, '--review');
   const row = {
     specFile: spec.relative, items: ids, outOfScope: idList(outOfScope, '--out-of-scope'), round, verdict,
-    specSha256: sha256(fs.readFileSync(spec.real)), review: reviewFile.relative, reviewSha256: sha256(fs.readFileSync(reviewFile.real)),
+    specSha256: sha256(resolved === null ? fs.readFileSync(spec.real) : spec.bytes), review: reviewFile.relative, reviewSha256: sha256(fs.readFileSync(reviewFile.real)),
+    ...(resolved === null ? {} : { commit: resolved }),
     recordedAt: new Date().toISOString(),
   };
   const base = loadSpecs(root);
@@ -1913,21 +1992,77 @@ export function recordSpec({ projectRoot, specFile, items, round, verdict, revie
   return { code: 'recorded', message: `${SPEC_VERDICTS[verdict](round)}: ${row.specFile}`, row, warnings };
 }
 
-// Current verdict per spec file, recomputed against the bytes on disk. Ready
-// for the PR: at least one pass, no file waiting for changes, none stale.
-// Blocked files do not hold the PR; its body names them.
-export function specStatus({ projectRoot }) {
+// The Rust functions Aeneas translated from this crate, read from translation.json
+// and narrowed by an explicit scope: a source file or directory (src/hmac.rs) or a
+// Rust path prefix (libcrux_hmac::hmac). translation.json records no visibility, so
+// the list holds candidates for the public API, never a claim about it.
+export function listItems({ projectRoot, translation, scope }) {
   const root = projectDirectory(projectRoot);
+  // Without --translation, the one a succeeded extraction published; a failed one names none.
+  const extraction = translation === undefined ? loadState(root)?.extraction : null;
+  const file = translation === undefined ? (extraction?.status === 'succeeded' ? extraction.run?.translation?.projectPath : undefined) : path.resolve(root, translation);
+  if (!file) refuse('invalid-input', 'no translation.json is known: pass --translation PATH, or record an extraction that names it', { nextStep: 'Run /fvs:auto-extract, or pass --translation PATH.' });
+  let bytes;
+  let data;
+  try {
+    bytes = fs.readFileSync(file);
+    data = JSON.parse(bytes.toString('utf8'));
+  } catch (error) {
+    refuse('invalid-input', `cannot read ${file} as JSON: ${error.message}`);
+  }
+  // The top level is an object of lists next to plain text fields (versions, crate name), so a
+  // loop over its entries meets strings; only the lists are read, and a wrong shape is named.
+  if (!plainObject(data) || !Array.isArray(data.functions)) {
+    refuse('invalid-input', `${file} is not an Aeneas translation.json: expected an object with a "functions" list, found ${Array.isArray(data) ? 'a list' : typeof data}`);
+  }
+  const badAt = data.functions.findIndex((entry) => !plainObject(entry) || !isText(entry.rust_name) || !isText(entry.lean_name));
+  if (badAt >= 0) refuse('invalid-input', `${file}: functions[${badAt}] must be an object with a rust_name and a lean_name`);
+  const scopes = idList(scope, '--scope');
+  const inScope = (entry) => scopes.length === 0 || scopes.some((prefix) => {
+    const source = entry.source?.file;
+    return entry.rust_name === prefix || entry.rust_name.startsWith(`${prefix}::`)
+      || (typeof source === 'string' && (source === prefix || source.startsWith(`${prefix.replace(/\/$/, '')}/`)));
+  });
+  const local = data.functions.filter((entry) => entry.is_local === true);
+  const chosen = local.filter(inScope);
+  const items = chosen.map((entry) => ({
+    rustName: entry.rust_name, leanName: entry.lean_name, leanFile: entry.lean_file ?? null,
+    source: entry.source ? { file: entry.source.file, beginLine: entry.source.begin_line, endLine: entry.source.end_line } : null,
+    opaque: entry.is_opaque === true, canFail: entry.can_fail === true,
+  })).sort((a, b) => (a.source?.file ?? '').localeCompare(b.source?.file ?? '') || (a.source?.beginLine ?? 0) - (b.source?.beginLine ?? 0) || a.rustName.localeCompare(b.rustName));
+  return {
+    code: 'ok', message: `${items.length} translated local function(s) in scope, from ${file}`,
+    translation: file, translationSha256: sha256(bytes), crate: typeof data.crate === 'string' ? data.crate : null, scope: scopes,
+    excluded: { notLocal: data.functions.length - local.length, outOfScope: local.length - chosen.length },
+    visibility: 'not recorded: translation.json holds no visibility, so these are candidates; confirm each against the Rust source (pub, pub(crate) or private) before calling it public API',
+    items,
+  };
+}
+
+// Current verdict per spec file, recomputed against the bytes on disk, or at a
+// commit when one is given (the PR head, for a checkout that holds no spec
+// files). Ready for the PR: at least one pass, no file waiting for changes,
+// none stale. Blocked files do not hold the PR; its body names them.
+export function specStatus({ projectRoot, commit }) {
+  const root = projectDirectory(projectRoot);
+  let resolved = null;
+  if (commit !== undefined) {
+    resolved = resolveRevision(root, commit);
+    if (resolved === null) refuse('invalid-input', `--commit ${commit} is not a local commit: fetch the branch first`);
+  }
   const specs = loadSpecs(root);
   const current = new Map();
   for (const row of specs?.specs ?? []) current.set(row.specFile, { row, rounds: (current.get(row.specFile)?.rounds ?? 0) + 1 });
   const owner = ownerChangesOf(specs);
   const specFiles = [...current.values()].map(({ row, rounds }) => {
     let bytes = null;
-    try {
-      bytes = fs.readFileSync(path.join(root, row.specFile));
-    } catch {
-      // a missing spec file is stale
+    if (resolved !== null) bytes = bytesAt(root, resolved, row.specFile);
+    else {
+      try {
+        bytes = fs.readFileSync(path.join(root, row.specFile));
+      } catch {
+        // a missing spec file is stale
+      }
     }
     const ownerChange = OWNER_CHANGES[owner.get(row.specFile)] ?? null;
     return { specFile: row.specFile, items: row.items, outOfScope: row.outOfScope.map((id) => ({ id, label: 'out of scope (noted by agent)' })),
@@ -1938,13 +2073,14 @@ export function specStatus({ projectRoot }) {
   const live = specFiles.filter((file) => owner.get(file.specFile) !== 'pruned');
   const readyForPr = live.some((file) => file.verdict === 'pass') && !live.some((file) => file.verdict === 'changes' || file.stale);
   const blocked = specFiles.filter((file) => file.verdict === 'blocked').map((file) => file.specFile);
-  return { code: 'ok', message: `${specFiles.length} spec file(s) recorded in ${specsPath(root)}`, specFiles, readyForPr, blocked };
+  return { code: 'ok', message: `${specFiles.length} spec file(s) recorded in ${specsPath(root)}`, ...(resolved === null ? {} : { commit: resolved }), specFiles, readyForPr, blocked };
 }
 
-// The bytes of a project-root-relative file at a commit, or null when the
-// commit does not have it. The project root may be a subdirectory of the repository.
+// The raw bytes of a project-root-relative file at a commit (never converted by
+// a git filter), or null when the commit does not have it as a file. The
+// project root may be a subdirectory of the repository.
 function bytesAt(root, commit, relative) {
-  const run = spawnSync('git', ['--no-optional-locks', '-C', root, 'show', `${commit}:./${relative}`], { maxBuffer: 64 * 1024 * 1024 });
+  const run = spawnSync('git', ['--no-optional-locks', '-C', root, 'cat-file', 'blob', `${commit}:./${relative}`], { maxBuffer: 64 * 1024 * 1024 });
   return run.status === 0 ? run.stdout : null;
 }
 
@@ -1958,7 +2094,8 @@ export function recordPr({ projectRoot, kind, url, branch, head, merged = false,
   const warnings = [];
   const commit = resolveRevision(root, head);
   if (kind === 'spec') {
-    const status = specStatus({ projectRoot: root });
+    // Readiness is judged at the PR head when it is local: the checkout need not hold the spec files.
+    const status = specStatus({ projectRoot: root, ...(commit === null ? {} : { commit }) });
     if (!status.readyForPr) warnings.push(status.specFiles.length === 0 ? 'no reviewed spec file is recorded' : 'spec-status is not ready for the PR (a file is waiting for changes or changed after its review)');
     if (commit === null) {
       warnings.push(`the head ${head} is not a local commit, so the recorded spec files were not compared with it; fetch the PR branch to compare`);
@@ -2049,8 +2186,8 @@ const STATE_COMMANDS = {
     return initState({ projectRoot: flags['project-root'], choices: readInput(flags.input), confirmOverwrite: flags['confirm-overwrite'] === true });
   },
   'read-state': (argv) => {
-    const flags = stateFlags(argv, [], ['require-agreement']);
-    return readState({ projectRoot: flags['project-root'], requireAgreement: flags['require-agreement'] === true });
+    const flags = stateFlags(argv, [], ['require-agreement', 'brief']);
+    return readState({ projectRoot: flags['project-root'], requireAgreement: flags['require-agreement'] === true, brief: flags.brief === true });
   },
   'record-agreement': (argv) => {
     const flags = stateFlags(argv, ['input'], ['confirm-overwrite']);
@@ -2088,12 +2225,23 @@ const STATE_COMMANDS = {
     return recordExternals({ projectRoot: flags['project-root'], records: readInput(flags.input) });
   },
   'record-spec': (argv) => {
-    const flags = stateFlags(argv, ['spec-file', 'items', 'round', 'verdict', 'review'], [], ['out-of-scope']);
+    const flags = stateFlags(argv, ['spec-file', 'items', 'round', 'verdict', 'review'], [], ['out-of-scope', 'commit']);
     if (!/^\d+$/.test(flags.round)) refuse('usage', '--round must be a positive integer');
     return recordSpec({ projectRoot: flags['project-root'], specFile: flags['spec-file'], items: flags.items, round: Number(flags.round),
-      verdict: flags.verdict, review: flags.review, outOfScope: flags['out-of-scope'] });
+      verdict: flags.verdict, review: flags.review, outOfScope: flags['out-of-scope'], commit: flags.commit });
   },
-  'spec-status': (argv) => specStatus({ projectRoot: stateFlags(argv, [])['project-root'] }),
+  'list-items': (argv) => {
+    const flags = stateFlags(argv, [], [], ['translation', 'scope']);
+    return listItems({ projectRoot: flags['project-root'], translation: flags.translation, scope: flags.scope });
+  },
+  'record-override': (argv) => {
+    const flags = stateFlags(argv, ['key', 'value', 'reason']);
+    return recordOverride({ projectRoot: flags['project-root'], key: flags.key, value: flags.value, reason: flags.reason });
+  },
+  'spec-status': (argv) => {
+    const flags = stateFlags(argv, [], [], ['commit']);
+    return specStatus({ projectRoot: flags['project-root'], commit: flags.commit });
+  },
   'record-pr': (argv) => {
     const flags = stateFlags(argv, ['kind'], ['merged'], ['url', 'branch', 'head', 'merge-commit']);
     return recordPr({ projectRoot: flags['project-root'], kind: flags.kind, url: flags.url, branch: flags.branch, head: flags.head,
@@ -2124,7 +2272,7 @@ async function stateMain(command, argv) {
   }
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   if (!result.ok) process.stderr.write(`FVS >> ${result.code}: ${result.message}\n`);
-  const malformed = ['malformed-state', 'malformed-externals', 'malformed-specs'].includes(result.code);
+  const malformed = ['malformed-state', 'malformed-externals', 'malformed-specs', 'malformed-overrides'].includes(result.code);
   process.exitCode = result.code === 'cancelled' ? 130 : result.ok ? 0 : malformed ? 3 : ['usage', 'internal'].includes(result.code) ? 2 : 1;
 }
 

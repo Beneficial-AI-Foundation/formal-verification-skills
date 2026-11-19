@@ -114,6 +114,39 @@ remain unchanged. Stop-only snapshots leave proof heads/nodes unknown and cannot
 If actual supported AO observations cannot establish the known scope, report the precise missing
 capability and use cooperative checkpoint/cancel/handoff assistance; retain uncertainty and capacity.
 
+## Worker brief rules
+
+Put these rules in every worker brief and check them when a worker reports. A worker's report is a
+claim. The evidence named here is what the orchestrator keeps.
+
+- **Build, then commit.** Run the build first and commit after it. Never chain a build and a commit
+  with `;`, and never filter the build's output through a pipe in a way that hides its exit status.
+  Keep the build's exit status and its full log as evidence, and quote the status in the report. Use
+  a hash, never two equal file sizes, for a claim that a build is reproducible.
+- **Test vectors.** Take every vector from the project repository or from an official source, such
+  as a standard or a vendor's published test suite, and name the source next to the vector. Never
+  write a vector from memory. Add a negative control: one case with a changed input that must give a
+  different result or fail, so the check shows that it can fail.
+- **Push alone.** Run `git push` as one standalone call. Do not chain it to another command with
+  `&&`, `;` or a pipe. A host that matches permission rules one command at a time may hold a chained
+  line for approval when it would let a plain push through, and the exit status of a chain is the
+  status of its last command.
+- **Keep three commits apart.** A status line names the commit the build check accepted, the head
+  published on the pull request and the head that `record-pr` recorded, each with its SHA. They can
+  differ for hours. Never show a pull request as accepted because another local commit passed the
+  check. Accepted means the receipt of the published head.
+- **Keep an ownership map.** Keep one table of each item (a statement or a proof unit), the worker
+  that owns it and the files that worker may change. Put it in the brief of every continuation,
+  replacement and handoff. Confirm a reassignment against the table before a worker resumes, so that
+  two workers do not prove the same item or change the same file.
+- **Steer a busy worker.** A plain `ao send` to a worker in a turn waits behind that turn. To change
+  what it does now, use `ao send --session ID --steer --message TEXT`. Report notes (`ao report`)
+  have a short length limit, so keep them to the result and the evidence path.
+- **macOS.** There is no `timeout` command. To cap a command, use the tool's own timeout option, or
+  `perl -e 'alarm shift; exec @ARGV' SECONDS COMMAND ARGS`. BSD `sed` needs a suffix after `-i`:
+  write `sed -i.bak EXPRESSION FILE` and delete the `.bak` file, which also works with GNU `sed`.
+  It has no `\+`, `\|` or `\s` in basic expressions: use `sed -E` and `[[:space:]]`.
+
 ## Network and runner support
 
 Use stock AO on the user's local or cloud host. Research, lemma/docs search and dependency acquisition

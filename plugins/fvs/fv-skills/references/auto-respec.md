@@ -1,6 +1,6 @@
 # Internal human re-specification diagnostics
 
-Public human re-specification is **unsupported in 3.0.0-rc2**. The default `inspect` and `finish`
+Public human re-specification is **unsupported in 3.0.0-rc3**. The default `inspect` and `finish`
 CLI operations refuse before reading a request or causing effects. AUTO entry, execute and resume
 feedback routes stop before revision work or provider dispatch. Preserve all feedback and the
 complete selected scope, with precise partial reasons; do not report revision success/readiness.

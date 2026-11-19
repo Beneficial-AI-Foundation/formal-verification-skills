@@ -41,7 +41,7 @@ require('node:module').syncBuiltinESMExports();
         const body = JSON.parse(p.stdout);
         assert.deepEqual({ exit: p.status, status: body.status, code: body.code, read: fs.existsSync(read), dispatched: fs.existsSync(dispatched), output: fs.existsSync(out) },
           { exit: 7, status: 'unsupported', code: 'respec-unsupported', read: false, dispatched: false, output: false });
-        assert.match(body.message, /3\.0\.0-rc2/);
+        assert.match(body.message, /3\.0\.0-rc3/);
         assert.equal(fs.readFileSync(state, 'utf8'), '{"history":"keep","accepted":"historical only"}\n');
       }
       const missing = spawnSync(process.execPath, [path.join(ROOT, relative), operation, '--request', path.join(root, 'absent'), '--out', path.join(root, 'absent-out')], { encoding: 'utf8', timeout: 5000, env: { PATH: '/usr/bin:/bin', LEAN_NUM_THREADS: '2' } });
@@ -55,7 +55,7 @@ test('the strict resume route stops public AUTO feedback before continuation and
   for (const rel of ['commands/fvs/resume-work.md', 'fv-skills/references/auto-resume.md']) {
     const body = fs.readFileSync(path.join(ROOT, rel), 'utf8');
     assert.match(body, /Rc2 human-feedback boundary/, rel);
-    assert.match(body, /unsupported: human re-specification is not available in 3\.0\.0-rc2/, rel);
+    assert.match(body, /unsupported: human re-specification is not available in 3\.0\.0-rc3/, rel);
     assert.match(body, /stop before[\s\S]*revision effects or provider dispatch/, rel);
     assert.match(body, /Initial autonomous specify\/review\/revise\/prove and ordinary safe resume remain available/, rel);
   }

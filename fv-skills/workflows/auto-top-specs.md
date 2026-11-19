@@ -19,6 +19,12 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
    items of the in-scope Rust modules and cross-check the list against the generated Lean. There is no
    per-item confirmation. Nothing leaves the scope silently: note the items you think are out of scope
    and why, and leave the pruning to the owner in the pull request review.
+
+   Before the first review round, list every public API case of each item: the normal result, each
+   error and panic path, and each limit and overflow case, such as a running count that can pass its
+   limit across several calls. Give the list to the author and to the reviewer. A reviewer who finds a
+   case missing in round 3 has found it too late. A case without a statement is named in the pull
+   request body, with the reason.
 2. **Prepare the working branch before any author starts.** Work on a branch of the project's own
    repository; its pull request is the spec PR. Spawn each author from this branch's head: its worktree
    is made from the committed head, so it holds only what is committed. In a fresh project the extraction
@@ -37,7 +43,10 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
    under `formal/`, so a build can finish while no spec was compiled. Widen the library's module globs
    so they cover the spec and proof folders: in `lakefile.toml`, give the `[[lean_lib]]` entry
    `globs = ["<Library>.+"]`, and if the spec and proof folders are separate module roots, add each one
-   the same way. Confirm that the build really compiles a new spec file before you rely on it; the spec
+   the same way. The extraction folders need the same coverage, or a built module must import them:
+   the lakefile is frozen once this pull request is merged, and the build check refuses a spec, proof
+   or extraction file that Lake would not compile, so a gap found later takes a spec refactor to fix.
+   Confirm that the build really compiles a new spec file before you rely on it; the spec
    pull request carries this Lake change. A fresh worktree has no Lake
    packages. Give each worktree its own copy of the primary checkout's Lake packages folder (a
    copy-on-write clone is fast where the filesystem supports it), or fall back to `lake exe cache get`
@@ -51,6 +60,11 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
    file's items, and a fresh adversarial reviewer (the chosen pair) checks them against the Rust code
    and its documentation. Is each statement faithful, strong enough to be useful, and free of
    assumptions it should prove? At most three rounds; put anything still open in the pull request body.
+   Keep exact and conditional claims apart. An exact statement holds for every input. A statement
+   that needs a hypothesis (a bound on the inputs, a capacity, an assumption about an external
+   function) is conditional. Write them as separate statements with separate names, and label each
+   one in its docstring as `exact` or `conditional` with the hypotheses it needs. Never weaken an exact
+   statement into a conditional one without saying so in the pull request body.
    The reviewer is a different agent from the author, and a new reviewer reads each round. After every
    round the orchestrator records it for each spec file (see "Recording the review rounds"). A file that
    still needs changes after the third round is recorded as `blocked`, so it does not hold the pull
@@ -75,9 +89,64 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
    Put in the body what each file covers, the items you left out, the axioms
    the statements rest on, the review rounds that were held, and which commit holds the generated
    translation and the Lake change. Then record the pull request (see "Recording the pull request").
+
+   **Put the rulings in the body.** The owner should be able to rule on every claim that needs a model
+   or an accepted assumption when the spec pull request is merged, before any proof starts. A claim
+   needs one when it is exact and rests on the behaviour of a function the extraction leaves without
+   a model: a standard-library function, a dependency function or a function left opaque. Before the
+   body is written:
+   1. For each statement, run `#print axioms` on the extracted functions it talks about. The proofs
+      are still `sorry`, so the statement's own list says nothing, but each extraction axiom in the
+      list of a function names an external function that the claim reaches.
+   2. Check that each such function has a record in `externals.json`. If one has none, the extraction
+      missed it: record it as open in the externals record (kind `external` or `opaque`) before you go
+      on, with the externals command that `auto-seats.md` lists.
+   3. Save a notes file that names, for each open record, the exact claims that need it in plain words
+      (`auto-review-bundle.md`, "Pull request trust section", describes the file), and run
+      `node "$HOME/.claude/scripts/fvs-auto-bundle.mjs" rulings --project-root . --notes FILE`.
+      Paste its markdown into the body unchanged. It lists each open record with what it assumes, why
+      it has no model, the claims that rest on it and the owner's choices: accept it as a named
+      assumption, have it modelled, narrow the claim, or block it. A record with no claim named reads
+      `NOT STATED`, so say which claims need it, or that none does.
+   After the owner rules, record the decision in the externals record with the same command (the
+   `decision` names the owner, the date and where the ruling is). Only the owner decides; never
+   record a ruling yourself.
 6. **Stop for the owner.** The owner reviews, prunes, marks the pull request ready and merges it.
    Once it is merged, record the merge (see "Recording the pull request"); `/fvs:auto-execute` starts
    the proofs after that.
+
+## A statement restated with `recall`
+
+One statement, in the two files that step 4 describes. The proof file declares it. The spec file
+restates it with `recall`, which fails the build when the restatement is not the declared statement.
+The guard after it names the axioms the statement rests on.
+
+```lean
+-- formal/proofs/Hmac.lean
+theorem hmac_len (n : Nat) : n + 0 = n := rfl
+```
+
+```lean
+-- formal/specs/Specs/Hmac.lean
+import Proofs.Hmac
+
+recall hmac_len (n : Nat) : n + 0 = n
+
+/-- info: 'hmac_len' does not depend on any axioms -/
+#guard_msgs in
+#print axioms hmac_len
+```
+
+Write the module name that your Lake library gives the proof file in the `import`. From Lean 4.35,
+`recall` is part of Lean and needs no import, so do not look for it in Mathlib. On Lean 4.34 and
+earlier, add `import Mathlib.Tactic.Recall` to the spec file. In the spec pull request the proof is
+`sorry` and the guard is left out until the proof lands.
+
+To list the Rust functions that Aeneas translated, with a scope you choose, run
+`node "$AUTO" list-items --project-root . --scope PATH[,PATH...]`. A scope is a source file, a
+directory or a Rust path such as `crate::module`. It reads `translation.json` from the recorded
+extraction, or from `--translation PATH`. The file records no visibility, so the list holds candidates:
+check each one in the Rust source before you call it public API.
 
 ## GitHub rule
 
@@ -118,13 +187,22 @@ action. On `no-state`, use `message` and `nextAction`, and stop: run `/fvs:auto-
 or outdated agreement is a warning to carry into the report, not a stop: the owner records the
 agreement in their own terminal and the spec phase does not wait for it.
 
+The result holds `fvs`, the folder of the installed FVS and its version. Put both in every worker's
+brief, so a worker uses this install and does not search for an older one. When you only need to know
+where the run stands, add `--brief`: it prints the phase, the next action, the warnings, the pending
+decisions, the externals counts, `fvs` and any `overrides`, and leaves out the recorded profile.
+`overrides` are decisions made after the agreement, such as a changed pull request base. They take
+precedence over the agreement for this run and do not amend it. Record one with
+`node "$AUTO" record-override --project-root . --key KEY --value TEXT --reason WHY`, so that a resumed
+run keeps it.
+
 ## Recording the review rounds
 
 After every review round, in the project checkout and once the authors' files are on the working
 branch, record the round for each spec file:
 
 ```bash
-node "$AUTO" record-spec --project-root . --spec-file PATH --items ID[,ID...] --round N --verdict pass|changes|blocked --review FILE [--out-of-scope ID[,ID...]]
+node "$AUTO" record-spec --project-root . --spec-file PATH --items ID[,ID...] --round N --verdict pass|changes|blocked --review FILE [--out-of-scope ID[,ID...]] [--commit SHA]
 ```
 
 `PATH` is the spec file and `FILE` is the reviewer's report saved as a file; both are existing files
@@ -133,11 +211,20 @@ report into the project checkout yourself, under `.formalising/` for example: th
 committed, so the report stays out of the spec pull request. The IDs are the items' Rust paths without spaces, for
 example `crate::module::function`, and `--out-of-scope` names the items an agent left out. The command
 stores a hash of both files. A later row for the same spec file is the current one, and a round past the
-third is recorded with a warning. Then read where things stand:
+third is recorded with a warning.
+
+If the authors' files are only on a branch, add `--commit SHA`. The spec file is then read from that
+commit instead of the checkout, so the checkout can stay where it is: do not check the branch out just
+to record a round. The commit must be local, so fetch the branch first. `PATH` is then the file's path
+inside the project, `FILE` is still read from the checkout, and the row keeps the commit. Then read
+where things stand:
 
 ```bash
 node "$AUTO" spec-status --project-root .
 ```
+
+Add `--commit SHA` to read the spec files at a commit, such as the head of the authors' branch, when the
+checkout holds none of them.
 
 It lists each spec file with its items, round, verdict and label: `spec reviewed: pass`,
 `spec reviewed: changes requested (round N)`, `spec blocked after N rounds` or

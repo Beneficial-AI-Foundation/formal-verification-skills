@@ -84,9 +84,9 @@ describe('published FVS plugin package', () => {
     });
   });
 
-  it('keeps the 3.0.0-rc2 package, payload, and both plugin manifests on one version', () => {
+  it('keeps the 3.0.0-rc3 package, payload, and both plugin manifests on one version', () => {
     const version = readJson('package.json').version;
-    assert.equal(version, '3.0.0-rc2');
+    assert.equal(version, '3.0.0-rc3');
     assert.equal(fs.readFileSync(path.join(ROOT, 'fv-skills', 'VERSION'), 'utf8'), version);
     assert.equal(readJson('plugins/fvs/.claude-plugin/plugin.json').version, version);
     assert.equal(readJson('plugins/fvs/.codex-plugin/plugin.json').version, version);
@@ -133,7 +133,7 @@ describe('published FVS plugin package', () => {
       filesUnder(path.join(PLUGIN_ROOT, 'scripts')),
       [
         'fvs-execution.mjs', 'fvs-auto.mjs', 'fvs-auto-resume.mjs', 'fvs-auto-transitions.mjs', 'fvs-auto-bundle.mjs', 'fvs-auto-respec.mjs', 'fvs-auto-reduced.mjs',
-        'fvs-auto-driver.mjs', 'fvs-auto-agreement.mjs', 'fvs-auto-actor-permissions.py',
+        'fvs-auto-driver.mjs', 'fvs-auto-agreement.mjs', 'fvs-auto-actor-permissions.py', 'fvs-auto-permissions.mjs', 'fvs-auto-push-gate.mjs',
         'fvs-closure-plan.mjs',
         'fvs-contract-registry.mjs',
         'fvs-checker.mjs',

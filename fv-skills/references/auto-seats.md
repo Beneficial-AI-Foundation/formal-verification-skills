@@ -28,6 +28,8 @@ The engine does not authenticate who typed a command. It checks recorded evidenc
 | `record-spec` | orchestrator | Records one review round for one spec file, in the project checkout; authors and reviewers never run it. |
 | `spec-status` | any | Reads the recorded spec files and whether the pull request can open; changes nothing. |
 | `record-pr` | orchestrator | Records the draft spec or proof pull request after it is opened, and the owner's merge of the spec pull request after the owner merges it. It never calls GitHub. |
+| `list-items` | any | Lists the Rust functions Aeneas translated, narrowed by a scope you give; reads `translation.json` and changes nothing. It records no visibility, so the list holds candidates for the public API. |
+| `record-override` | orchestrator | Records a run decision made after the agreement, such as a changed pull request base, so a resumed run keeps it. It is append-only and does not amend the agreement. |
 | `record-memory` | orchestrator | Registers the project memory once. |
 | `refresh-memory` | orchestrator | The coordinator route; it is the only route that may write memory. |
 | `prime-memory` | worker | The read-only route a worker runs at start and on resume. The orchestrator runs it too before dispatch, with the coordinator request. |
@@ -65,12 +67,41 @@ The driver runs in the orchestrator's context, from the one fixed trusted engine
 |--------|------|-------|
 | `fvs-auto-agreement.mjs` | orchestrator drafts, owner records | Drafts the agreement fence and prints its digest. It never records. |
 | `fvs-contract-registry.mjs` (`register`, `revise`, `status`) | orchestrator | Appends contract records for closure-plan nodes. |
-| `fvs-auto-bundle.mjs` (`build`, `verify`) | orchestrator | Collects and checks the human review bundle. |
+| `fvs-auto-bundle.mjs` (`build`, `verify`, `trust`, `rulings`) | orchestrator | Collects and checks the human review bundle. `trust` and `rulings` read the run records and print the trust section of the proof pull request body and the ruling list of the spec pull request body; they write nothing. |
 | `fvs-auto-actor-permissions.py` | orchestrator | Run once per actor for an explicitly granted Claude gate profile. |
 
 What the agreement helper's path checks cover. `--out` must name a new file. The helper resolves the destination and the protected places through every link and compares real paths, so it refuses a destination inside the project's `.formalising` directory, inside its `auto-fv` area (each protected where it really lives, also when it is a link) or among the engine scripts. The dry run keeps its scratch copy in a temporary directory outside the project. A new file elsewhere, even inside the project, is allowed.
 
 These checks are static. A process of the same user that changes a directory or a link between a check and the write that follows is outside what the helper defends against, and outside the threat boundary of this release. The exclusive creation of the output file still stops it replacing an existing file, and the helper checks its scratch directory again after creating it, but it does not claim to be safe against such a race.
+
+## Orchestrator rules for workers and reviews
+
+These are rules for the orchestrator's own commands and messages. The worker rules (build before
+commit, test vectors, a standalone push, the ownership map) are in `auto-execution.md`, "Worker brief
+rules". Put them in each worker brief.
+
+- **Redirect a busy worker with `ao send --steer`.** A plain `ao send` to a worker that is in a turn
+  queues behind that turn. When the scope or the plan changes, for example when work is split
+  between two workers, steer at once: `ao send --session ID --steer --message TEXT`. A worker that
+  keeps going on the old scope can finish work that another worker already owns.
+- **Keep Agent Orchestrator's native reviewer off the pull requests.** Its review is posted on the
+  pull request as comments, and the auto track lets no agent post a GitHub comment or review: only
+  the owner does. The fresh review in the pipeline is the review of record. Switch the reviewer off
+  before workers start:
+  1. For the project, set `autoReview` to `false` in the project configuration. New workers copy
+     this default. `ao project set-config PROJECT --config-json JSON` replaces the whole saved
+     configuration, and it ignores a key it does not know, so a typo can leave it empty. Read the
+     saved one first with `ao project get PROJECT --json`, and send back every setting with only
+     `autoReview` changed. Check it again with `ao project get`.
+  2. A session that already exists has its own switch for native auto-review in the session
+     inspector. Turn it off there. The setting in step 1 does not change it.
+  3. Never run `ao review trigger` on a proof or spec pull request of the run.
+  A worker that only reviews someone else's pull request is claimed with
+  `ao session claim-pr PR --no-takeover --review`. That claim already turns native auto-review off
+  for that session.
+- **Keep the ownership map and the three commits.** The orchestrator holds the map of items, owners
+  and files, and the status line with the accepted, the published and the recorded commit
+  (`auto-execution.md`, "Worker brief rules"). A worker never carries them across a handoff on its own.
 
 ## When a seat cannot run its command
 

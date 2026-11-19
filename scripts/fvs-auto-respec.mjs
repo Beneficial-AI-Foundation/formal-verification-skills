@@ -1064,9 +1064,9 @@ function* verifyRespecSteps(options) {
 }
 async function cli(args) {
   const operation = args.shift(), flags = {};
-  if (['inspect', 'finish'].includes(operation)) fail('respec-unsupported', 'Human re-specification is unsupported in FVS 3.0.0-rc2. Preserve feedback, the complete scope and historical receipts; no revision work is started.');
-  while (args.length) { const key = args.shift(), value = args.shift(); if (!['--request', '--out'].includes(key) || !value || Object.hasOwn(flags, key)) fail('respec-usage', 'Human re-specification is unsupported in 3.0.0-rc2; diagnostic verify --request FILE --out DIR'); flags[key] = value; }
-  if (!['inspect', 'finish', 'verify'].includes(operation) || !flags['--request'] || !flags['--out']) fail('respec-usage', 'Human re-specification is unsupported in 3.0.0-rc2; diagnostic verify --request FILE --out DIR');
+  if (['inspect', 'finish'].includes(operation)) fail('respec-unsupported', 'Human re-specification is unsupported in FVS 3.0.0-rc3. Preserve feedback, the complete scope and historical receipts; no revision work is started.');
+  while (args.length) { const key = args.shift(), value = args.shift(); if (!['--request', '--out'].includes(key) || !value || Object.hasOwn(flags, key)) fail('respec-usage', 'Human re-specification is unsupported in 3.0.0-rc3; diagnostic verify --request FILE --out DIR'); flags[key] = value; }
+  if (!['inspect', 'finish', 'verify'].includes(operation) || !flags['--request'] || !flags['--out']) fail('respec-usage', 'Human re-specification is unsupported in 3.0.0-rc3; diagnostic verify --request FILE --out DIR');
   const q = transitionJson(bytes(path.resolve(flags['--request'])));
   if (operation !== 'verify' && q.operation !== operation) fail('respec-invalid-input', 'CLI/request operation differs');
   const call=services=>(operation==='verify'?verifyRespecResult:runRespec)({request:q,out:path.resolve(flags['--out'])},services);

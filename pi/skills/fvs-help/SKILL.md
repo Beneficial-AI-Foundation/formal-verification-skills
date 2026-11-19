@@ -110,7 +110,7 @@ Usage: `/skill:fvs-sync-aeneas-verif`
 
 ### Auto (`/skill:fvs-auto`)
 
-Human re-specification after end/partial results is unsupported in 3.0.0-rc2. Keep feedback and
+Human re-specification after end/partial results is unsupported in 3.0.0-rc3. Keep feedback and
 whole-scope partial reasons; AUTO does not start revision effects or providers for that request.
 Initial specification/review/revise/prove and ordinary safe resume retain their existing gates.
 

@@ -104,7 +104,7 @@ Restore verification context from `.formalising/fv-plans/.continue-here.md` and 
 ## Rc2 human-feedback boundary
 
 For AUTO owner feedback that revises previously reviewed contracts after end/partial results,
-report `unsupported: human re-specification is not available in 3.0.0-rc2` and stop before
+report `unsupported: human re-specification is not available in 3.0.0-rc3` and stop before
 state/agreement/registry changes, revision effects or provider dispatch. Apply this to direct
 requests and resumed handoff instructions. Keep the actual feedback, complete selected scope,
 original accounting and each root's failed/unsupported/partial reason. No ready/success claim follows.
