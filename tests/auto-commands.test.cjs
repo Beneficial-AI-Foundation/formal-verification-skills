@@ -1682,7 +1682,7 @@ describe('spec phase: record-spec and spec-status', () => {
     receipt({ accepted: false, label: 'build check failed: a new axiom' });
     view = auto.readState({ projectRoot: root });
     assert.equal(view.phase, 'proofs');
-    assert.match(view.nextAction, /^The build check failed for the draft proof PR .* build check failed: a new axiom\. Fix the proofs, push, record the new head with record-pr --kind proof/);
+    assert.match(view.nextAction, /^The build check failed for the draft proof PR .* build check failed: a new axiom\. Fix the proofs, push with the FVS push command \(`node <FVS scripts folder>\/fvs-auto-push\.mjs --branch fvs\/<name>`, never git push\), record the new head with record-pr --kind proof/);
 
     for (const forged of [{ accepted: true, label: 'x', specBase: head, commit: 'f'.repeat(40) }, { accepted: 'yes', label: 'x', specBase: head }, { accepted: true, label: 'x', specBase: head, kind: 'other' }, { accepted: true, label: 7, specBase: head }]) {
       receipt(forged);

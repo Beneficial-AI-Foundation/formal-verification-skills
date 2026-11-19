@@ -95,7 +95,7 @@ describe('the proof phase over several crates', () => {
     receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec')])]);
     const result = view(root);
     assert.equal(result.phase, 'proofs');
-    assert.match(result.nextAction, /^The build check accepted the draft proof PR https:\/\/example\.invalid\/pr\/2 at [0-9a-f]{40}, but not every verified crate is accepted: crate libcrux_sha2: formal\/specs\/Specs\/Sha2\.lean is not among the files the build check built; crate libcrux_hmac: it depends on libcrux_sha2, which is not accepted\. Fix what is named/);
+    assert.match(result.nextAction, /^The build check accepted the draft proof PR https:\/\/example\.invalid\/pr\/2 at [0-9a-f]{40}, but not every verified crate is accepted: crate libcrux_sha2: formal\/specs\/Specs\/Sha2\.lean is not among the files the build check built; crate libcrux_hmac: it depends on libcrux_sha2, which is not accepted\. Fix what is named, push with the FVS push command \(`node <FVS scripts folder>\/fvs-auto-push\.mjs --branch fvs\/<name>`, never git push\), record the new head/);
     assert.deepEqual(result.crates.units.map((entry) => [entry.crate, entry.accepted]), [['libcrux_hmac', false], ['libcrux_sha2', false]]);
   });
 
