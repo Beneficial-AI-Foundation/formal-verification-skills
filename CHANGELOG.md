@@ -13,6 +13,79 @@ npm `next` tag only, and stable 2.3.x stays `latest`. Identify the release by th
 `v3.0.0-rc3` and its full commit SHA. This entry does not claim catalog publication, complete
 runtime qualification or a whole-library verification result.
 
+<!-- rc3-fill: skeleton. Every comment starting "rc3-fill" must be gone, and every bullet checked
+against the merged lane commits, before the release. Must-have bullets come first under each
+heading. Nice-to-have bullets stay only when their change is on the release branch at the
+freeze. Write plain words: no ticket numbers, lesson IDs or planning names. Re-date the heading
+on release day. -->
+
+### Added
+
+<!-- rc3-fill: must-have, multi-crate extraction -->
+- Extraction accepts a target repository with several crates. Every crate inside the repository is
+  a verification target: it is extracted, and patched when needed, like the main crate, and one
+  Charon run per crate gives each its own LLBC. Only a crate that comes from outside the
+  repository (crates.io or another repository) stays external and opaque, recorded with its
+  pinned version.
+- When a crate inherits from its workspace, the repository root is the extraction root and the
+  member crates are inputs. `check` and `prepare` refuse such a crate when no input has a
+  `[workspace]` table, and show the cargo error. A hyphenated crate name where Charon's
+  underscored name is needed is reported before Charon runs. An LLBC from another tree is still
+  refused. <!-- rc3-fill: confirm each sentence against the extraction commits -->
+- `Cargo.lock` is a recorded generated input: it is generated or read, hashed into the extraction
+  record and checked on restore. It is never required to be committed in the target repository.
+  <!-- rc3-fill: confirm who generates the lock, and the --locked and untracked-lock rules -->
+
+<!-- rc3-fill: must-have, the two build-check integrity guards -->
+- `scripts/fvs-build-check.mjs --spec-base SHA` refuses the build when a recalled statement or a
+  frozen path changed since the merged spec, so a proof worker cannot weaken what the owner
+  approved. <!-- rc3-fill: confirm the flag name and what counts as frozen -->
+- The build check refuses a spec file that no `lean_lib` glob covers, because Lake would never
+  build it. <!-- rc3-fill: confirm the refusal message and the exit status -->
+
+<!-- rc3-fill: must-have, init permission check and permissions page -->
+- `/fvs:auto-init` checks permissions before the run. It sends a harmless worker message, makes
+  one author edit and build, and finds the other run steps that would prompt: draft pull request
+  create and edit, a push to the project's own repository, fetch and `ls-remote`. With your yes it
+  writes a minimal project allowlist. It never allows GitHub comments, reviews or a push to
+  upstream. Run status says when the run waits for your approval.
+- A permissions page, linked from the README and printed when the check fails, gives allowlists
+  for Claude Code and Codex, the reason for each rule and what still prompts. It names
+  `/fewer-permission-prompts` as tuning after a first run. <!-- rc3-fill: confirm the page name and path -->
+
+<!-- rc3-fill: nice-to-haves, delete each bullet whose change is not on the branch at the freeze -->
+- `read-state --brief` prints a short run summary. `record-spec --commit SHA` hashes a spec file
+  from git objects instead of the working tree.
+- The spec pull request lists the claims that need a model or an accepted assumption, so you can
+  rule on them before the proofs start. The pull request trust section is generated from the run
+  records (axioms and gaps for each statement) and checked against the registry. An open owner
+  question is shown next to a pass.
+- Run overrides are recorded in the run state.
+- The guides say: take test vectors from the repository or an official source and add a negative
+  control; build before you commit and keep the exit status; pass the installed FVS path and
+  version to every worker; list the public API items and test the `recall` example; redirect a busy
+  AO worker with `ao send --steer`; and keep AO's native reviewer off when you do not want it.
+
+### Changed
+
+<!-- rc3-fill: must-have, permission check -->
+- The setup guide no longer says that FVS changes no permission settings. FVS writes a permission
+  setting only after your yes.
+<!-- rc3-fill: keep the next bullet only if the files that make up the engine identity changed -->
+- The auto-track engine files changed since 3.0.0-rc2, so the engine identity differs from rc2.
+  Keep one engine identity for the whole run and do not update the installation in the middle of
+  one.
+<!-- rc3-fill: must-have, multi-crate extraction -->
+- The extraction guidance no longer says to keep `Cargo.lock` committed in the target repository.
+<!-- rc3-fill: nice-to-have -->
+- The build check writes JSON only on stdout, so its output can be parsed as it stands.
+
+### Fixed
+
+<!-- rc3-fill: nice-to-have, delete if the change is not on the branch at the freeze -->
+- The agreement hash snippet in `/fvs:auto-init` no longer makes four scripts crash at load when
+  they are fed on stdin.
+
 ## [3.0.0-rc2] - 2026-11-17
 
 This is prerelease source metadata for the selected-target SWVF candidate. It is meant for the
