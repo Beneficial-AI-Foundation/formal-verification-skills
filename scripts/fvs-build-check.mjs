@@ -76,6 +76,9 @@ export const LABEL_ACCEPTED = 'accepted (build check)';
 // approved ones, so it is not an acceptance and the exit status is not 0.
 export const LABEL_UNCHECKED = 'built, integrity not checked';
 export const labelFailed = (reason) => `build check failed: ${reason}`;
+// The version of the receipt. Version 2 is the first whose acceptance carries the Lean-level comparison of
+// the statements with the merged spec (integrity.semantic); the engine counts only an acceptance of this version.
+export const RECEIPT_SCHEMA = 2;
 const STANDARD_AXIOMS = ['propext', 'Classical.choice', 'Quot.sound'];
 // What native_decide and bv_decide add to #print axioms: a generated axiom named after the
 // theorem on Lean 4.35, Lean.ofReduceBool on older toolchains.
@@ -1340,7 +1343,7 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
   const release = acquireLock();
   let work = null;
   try {
-    writeReceipt(receipts, full, { schema: 1, kind: 'fvs-build-check', accepted: false, label: labelFailed('the check started and did not finish'), commit: full, tree, startedAt: new Date().toISOString() });
+    writeReceipt(receipts, full, { schema: RECEIPT_SCHEMA, kind: 'fvs-build-check', accepted: false, label: labelFailed('the check started and did not finish'), commit: full, tree, startedAt: new Date().toISOString() });
     if (specBase !== undefined && !SHA_ARGUMENT.test(specBase)) refuse('usage', '--spec-base must be a commit hash of 7 to 64 hexadecimal digits');
     const specBaseFull = resolveSpecBase({ top, root, full, specBase });
     if (allowAxioms === '') refuse('usage', '--allow-axioms needs the path of the allowed-axioms file');
@@ -1373,7 +1376,7 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
     if (!integrityRecord.ok) {
       const reason = `${describeProblem(integrity.problems[0])}${integrity.problems.length > 1 ? ` (and ${integrity.problems.length - 1} more)` : ''}`;
       return finish(receipts, full, {
-        schema: 1, kind: 'fvs-build-check', accepted: false, label: labelFailed(reason), commit: full, tree,
+        schema: RECEIPT_SCHEMA, kind: 'fvs-build-check', accepted: false, label: labelFailed(reason), commit: full, tree,
         leanRoot: path.join(sub, below) || '.', toolchain: toolchainOf(leanRoot), lake: null, packages: null, build: null,
         specFiles: [], flags: [], warnings: [], specBase: specBaseFull, allowAxioms: allowedRecord, externals: externalsRecord, integrity: integrityRecord, checkedAt: new Date().toISOString(),
       });
@@ -1471,7 +1474,7 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
     const accepted = reason === null && specBaseFull !== null;
     const label = reason !== null ? labelFailed(reason) : accepted ? LABEL_ACCEPTED : LABEL_UNCHECKED;
     const receipt = {
-      schema: 1, kind: 'fvs-build-check', accepted, label, commit: full, tree,
+      schema: RECEIPT_SCHEMA, kind: 'fvs-build-check', accepted, label, commit: full, tree,
       leanRoot: path.join(sub, below) || '.', toolchain: toolchainOf(leanRoot),
       lake: lakeVersion, packages: { source, copy, revisions },
       build: { argv: build.argv, exitCode: build.status, seconds, log: logFile, logSha256: sha256(logBytes) },
@@ -1550,7 +1553,7 @@ function leaveRefusal(receipts, full, tree, error) {
   const code = error instanceof Refusal ? error.code : 'internal-error';
   const message = error instanceof Error ? error.message : String(error);
   try {
-    const file = writeReceipt(receipts, full, { schema: 1, kind: 'fvs-build-check', accepted: false, label: `build check refused (${code}): ${message}`.slice(0, 400), commit: full, tree, refusal: { code, message }, checkedAt: new Date().toISOString() });
+    const file = writeReceipt(receipts, full, { schema: RECEIPT_SCHEMA, kind: 'fvs-build-check', accepted: false, label: `build check refused (${code}): ${message}`.slice(0, 400), commit: full, tree, refusal: { code, message }, checkedAt: new Date().toISOString() });
     if (error instanceof Refusal) error.receipt = file;
   } catch { /* the earlier receipt was already replaced or removed */ }
   return error;

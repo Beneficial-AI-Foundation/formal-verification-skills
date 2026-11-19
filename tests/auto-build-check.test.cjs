@@ -1450,6 +1450,8 @@ describe('the Lean program: what runs, and what an unusable run means', () => {
     assert.ok(seen(fx, 'base-build-cwd').startsWith(fx.work) && seen(fx, 'base-build-cwd') !== seen(fx, 'build-cwd'), 'in a copy of its own');
     assert.ok(seen(fx, 'dump-head-cwd').endsWith('tree') && seen(fx, 'dump-base-cwd').endsWith('base'));
     for (const name of ['threads', 'base-threads', 'dump-head-threads', 'dump-base-threads']) assert.equal(seen(fx, name), '2');
+    assert.equal(result.json.schema, 2, 'the receipt version whose acceptance carries this comparison');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(fx.receipts, `${fx.tip}.json`), 'utf8')).schema, 2);
     const { semantic } = result.json.integrity;
     assert.deepEqual(semantic.toolchain, { lean: TOOLCHAIN.toolchain, githash: TOOLCHAIN.githash });
     assert.deepEqual(semantic.bindings, [{ axiom: 'Gap.div_spec', record: 'gap-div', proposition: 'Div' }]);
