@@ -731,6 +731,18 @@ describe('the merged spec: changes that are refused', () => {
     assert.deepEqual(checkIntegrity({ base: tree('recall y : True\n'), head: tree('recall y : False\naxiom z : False\n') }).problems, [], 'another Lake project is not this project');
   });
 
+  test('a folder with a lakefile of its own that the build reaches is judged like any other', async () => {
+    const { checkIntegrity, memoryTree } = await library();
+    const lake = 'defaultTargets = ["Foo"]\n[[lean_lib]]\nname = "Foo"\nglobs = ["Foo.+"]\n';
+    const tree = (files, lakefile = true) => memoryTree({ 'lakefile.toml': lake, ...(lakefile ? { 'Foo/Sub/lakefile.toml': 'name = "sub"\n' } : {}), 'Foo/Sub/X.lean': 'def x := 1\n', ...files });
+    const base = tree({ 'Foo/P.lean': 'def p := 1\n' });
+    const added = checkIntegrity({ base, head: tree({ 'Foo/P.lean': 'import Foo.Sub.Evil\ndef p := 1\n', 'Foo/Sub/Evil.lean': 'axiom evil : False\n' }) });
+    assert.deepEqual(added.problems.map((p) => [p.kind, p.file, p.statement]), [['forbidden-added', 'Foo/Sub/Evil.lean', 'evil']], 'the glob reaches Foo/Sub, so the nested lakefile hides nothing');
+    const unlocked = checkIntegrity({ base, head: tree({ 'Foo/P.lean': 'def p := 1\n', 'Foo/Sub/X.lean': 'theorem t : True := by sorry\n' }, false) });
+    assert.deepEqual(unlocked.problems.map((p) => [p.kind, p.token, p.file]), [['forbidden-added', 'sorry', 'Foo/Sub/X.lean']], 'removing the nested lakefile does not hide the folder either');
+    assert.deepEqual(checkIntegrity({ base, head: tree({ 'Foo/P.lean': 'def p := 1\n' }) }).problems, [], 'unchanged, a reached nested folder adds nothing');
+  });
+
   test('source that a naive reader would lose track of in does not hide a sorry', () => {
     const hidden = 'theorem t : True := by sorry\ndef u := "x"\n';
     for (const [name, prefix] of [['a raw string that ends in a backslash', 'def s := r"\\"\n'], ['an escaped quote as a character', "def c : Char := '\\\"'\n"], ['a raw string with hashes', 'def s := r#"a "quoted" b"#\n']]) {
@@ -795,17 +807,22 @@ describe('extraction folders in a multi-crate run', () => {
   test('the publish folders and published files of the run state are frozen too', async () => {
     const { isFrozen, extractionLayout } = await library();
     const fx = layered({ sub: 'proj' });
+    const at = (...parts) => path.join(fx.repo, 'proj', ...parts);
+    // A crate's row carries a whole run (translation and publication, absolute paths) and may name publishDir.
     const state = { extraction: { run: {
-      publication: [{ projectPath: path.join(fx.repo, 'proj', 'Out', 'Main.lean') }, { projectPath: 'proj/Out/translation.json' }],
-      units: [{ crate: 'a', publishDir: 'proj/Lean/Traits/', publication: [{ projectPath: path.join(fx.repo, 'proj', 'Lean', 'Traits', 'T.lean') }] }, { crate: 'b', publishDir: 'proj/Lean/Hmac' },
-        { crate: 'c', publishDir: 'elsewhere/Lean' }, { crate: 'd', publishDir: 'proj' }, { crate: 'e', publishDir: '../up' }, { crate: 'f' }],
+      translation: { projectPath: at('Out', 'translation.json') },
+      publication: [{ projectPath: at('Out', 'Main.lean') }, { projectPath: 'proj/Out/translation.json' }],
+      units: [{ crate: 'a', translation: { projectPath: at('Lean', 'Traits', 'translation.json') }, publication: [{ projectPath: at('Lean', 'Traits', 'T.lean') }] },
+        { crate: 'b', publishDir: 'proj/Lean/Hmac/' }, { crate: 'c', publishDir: 'elsewhere/Lean' }, { crate: 'd', publishDir: 'proj' }, { crate: 'e', publishDir: '../up' }, { crate: 'f' },
+        { crate: 'g', translation: { projectPath: at('translation.json') } }],
     } } };
     const layout = extractionLayout(state, { root: fx.repo, top: fx.repo, prefix: 'proj' });
-    assert.deepEqual(layout.folders, ['lean/traits/', 'lean/hmac/'], 'a folder outside the project, the project itself and a missing one are left out');
+    assert.deepEqual(layout.folders, ['out/', 'lean/traits/', 'lean/hmac/'], 'a folder outside the project, the project itself and a missing one are left out');
     assert.deepEqual(layout.files, ['out/main.lean', 'out/translation.json', 'lean/traits/t.lean']);
     assert.equal(isFrozen('Lean/Hmac/Out.lean', layout), true);
     assert.equal(isFrozen('Out/Main.lean', layout), true);
-    assert.equal(isFrozen('Out/Other.lean', layout), false);
+    assert.equal(isFrozen('Out/Other.lean', layout), true, 'the folder of a published translation is frozen');
+    assert.equal(isFrozen('Other/X.lean', layout), false);
     assert.deepEqual(extractionLayout(null, { root: fx.repo, top: fx.repo, prefix: '' }), { folders: [], files: [] });
     assert.deepEqual(extractionLayout({ extraction: { run: { units: 'x', publication: 7 } } }, { root: fx.repo, top: fx.repo, prefix: '' }), { folders: [], files: [] });
   });
@@ -827,14 +844,23 @@ describe('extraction folders in a multi-crate run', () => {
   test('the build check reads the run state, so a changed unit output stops the check before any build', () => {
     const base = { ...BASE_FILES, 'formal/hmac/Out.lean': 'def out := 1\n', 'formal/traits/Out.lean': 'def out := 1\n' };
     const lakefile = 'name = "fixture"\ndefaultTargets = ["Formal"]\n\n[[lean_lib]]\nname = "Formal"\nglobs = ["formal.+"]\n';
-    const state = JSON.stringify({ extraction: { run: { units: [{ crate: 'hmac', publishDir: 'formal/hmac' }, { crate: 'traits', publishDir: 'formal/traits' }] } } });
     const run = (head) => {
       const fx = layered({ base, head: { ...HEAD_FILES, ...head }, lakefile });
-      write(path.join(fx.repo, '.formalising', 'auto-fv', 'state.json'), state);
+      // One crate as a whole run with absolute paths, the other as a row that names its publish folder.
+      const hmac = { crate: 'hmac', translation: { projectPath: path.join(fx.repo, 'formal', 'hmac', 'translation.json') }, publication: [{ projectPath: path.join(fx.repo, 'formal', 'hmac', 'Out.lean') }] };
+      write(path.join(fx.repo, '.formalising', 'auto-fv', 'state.json'), JSON.stringify({ extraction: { run: { units: [hmac, { crate: 'traits', publishDir: 'formal/traits' }] } } }));
       return [fx, checkTip(fx)];
     };
     const [, same] = run({});
     assert.equal(same.status, 0, same.stderr);
+    assert.match(same.stderr, /extraction output held fixed.*: formal\/hmac\/, formal\/traits\/, formal\/hmac\/out\.lean/);
+    assert.deepEqual(same.json.integrity.extraction, { folders: ['formal/hmac/', 'formal/traits/'], files: ['formal/hmac/out.lean'] });
+    const [, added] = run({ 'formal/hmac/More.lean': 'def more := 1\n' });
+    assert.equal(firstProblem(added).kind, 'frozen-file-added', 'a file added to a crate\'s publish folder');
+    const bare = layered({ base, lakefile });
+    const noState = check(bare, { commit: bare.tip, oleans: OLEANS });
+    assert.deepEqual(noState.json.integrity.extraction, { folders: [], files: [] });
+    assert.match(noState.stderr, /extraction output held fixed.*: none recorded in the run state/);
     const [fx, changed] = run({ 'formal/traits/Out.lean': 'def out := 2\n' });
     assert.equal(changed.status, 1);
     assert.equal(firstProblem(changed).kind, 'frozen-file-changed');

@@ -629,12 +629,13 @@ const globOf = (source) => {
 
 const IMPORT = /^[ \t]*(?:(?:public|meta)[ \t]+)*import[ \t]+(?:all[ \t]+)?(\S+)/gm;
 
-// A spec or proof file whose module no lean_lib glob of a default target reaches is never built by a
-// bare `lake build`, though the build passes. Modules that a built module imports are built too.
-// A project with a lakefile.lean is not read here: the check for a missing .olean is the backstop.
-function globProblems(head, changed, layout) {
+// The Lean files of `head` that a bare `lake build` compiles: those a lean_lib glob of a default target
+// matches, and the modules a built module imports. Null when the lakefile is not a readable
+// lakefile.toml: a project with a lakefile.lean is not read here, and the check for a missing .olean
+// is the backstop.
+function builtFiles(head) {
   const toml = head.get('lakefile.toml');
-  if (!toml || head.has('lakefile.lean')) return [];
+  if (!toml || head.has('lakefile.lean')) return null;
   const lake = readLakefileToml(toml.text());
   // The folder a library's modules live in, with a trailing slash; empty for the project root.
   const folderOf = (lib) => { const dir = path.posix.normalize(path.posix.join(lake.srcDir, lib.srcDir ?? '.')); return dir === '.' ? '' : `${dir}/`; };
@@ -658,6 +659,15 @@ function globProblems(head, changed, layout) {
       }
     }
   }
+  return { direct, sources, leanFilesHere, moduleOf, covered };
+}
+
+// A spec, proof or extraction file whose module no lean_lib glob of a default target reaches is never
+// built by a bare `lake build`, though the build passes. Modules that a built module imports are built too.
+function globProblems(head, changed, layout) {
+  const built = builtFiles(head);
+  if (built === null) return [];
+  const { direct, sources, leanFilesHere, moduleOf, covered } = built;
   const problems = [];
   for (const rel of leanFilesHere.sort()) {
     if (covered.has(rel) || !(changed.has(rel) || isProofPath(rel) || isExtraction(rel, layout) || hasStatements(head.get(rel).text()))) continue;
@@ -674,8 +684,13 @@ function globProblems(head, changed, layout) {
 // `externals` returns the records of the run state (or null), and is read only when a new Trusted
 // file needs them.
 export function checkIntegrity({ base: baseTree, head: headTree, externals = () => null, layout = {} }) {
-  const nested = nestedFolders(baseTree ?? headTree);
-  const [base, head] = [baseTree && without(baseTree, nested), without(headTree, nested)];
+  // A folder with a lakefile of its own is left out as another project, unless the build reaches into it:
+  // Lake does not skip a folder for holding a lakefile, so a file there that a glob or an import of this
+  // project reaches is compiled with it and is judged like any other. When the lakefile cannot be read
+  // here nothing is left out.
+  const built = builtFiles(headTree);
+  const left = nestedFolders(baseTree ?? headTree).filter((folder) => built !== null && ![...built.covered].some((rel) => rel.startsWith(folder)));
+  const [base, head] = [baseTree && without(baseTree, left), without(headTree, left)];
   const problems = [];
   const ties = [];
   const used = new Map();
@@ -744,14 +759,21 @@ export function extractionLayout(state, { root, top, prefix }) {
     return rel === '' || rel === '..' || rel.startsWith('../') ? null : rel;
   };
   const layout = { folders: [], files: [] };
-  const publications = (entries) => { for (const entry of Array.isArray(entries) ? entries : []) { const file = inProject(entry?.projectPath); if (file) layout.files.push(file.toLowerCase()); } };
-  publications(run?.publication);
-  for (const unit of Array.isArray(run?.units) ? run.units : []) {
-    const folder = inProject(unit?.publishDir)?.replace(/\/+$/, '');
+  // A run, or a crate's row of a multi-crate run (which carries a whole run): its publication lists
+  // the published files, and it publishes into the folder that holds its translation.json, or into
+  // `publishDir` when the row names one.
+  const published = (entry) => {
+    for (const file of Array.isArray(entry?.publication) ? entry.publication : []) {
+      const rel = inProject(file?.projectPath);
+      if (rel) layout.files.push(rel.toLowerCase());
+    }
+    const dir = typeof entry?.publishDir === 'string' ? entry.publishDir : typeof entry?.translation?.projectPath === 'string' ? path.dirname(entry.translation.projectPath) : null;
+    const folder = inProject(dir)?.replace(/\/+$/, '');
     if (folder) layout.folders.push(`${folder.toLowerCase()}/`);
-    publications(unit?.publication);
-  }
-  return layout;
+  };
+  published(run);
+  for (const unit of Array.isArray(run?.units) ? run.units : []) published(unit);
+  return { folders: [...new Set(layout.folders)], files: [...new Set(layout.files)] };
 }
 
 // The merge commit of the last merged spec pull request the run state records, or null.
@@ -818,7 +840,7 @@ export function buildCheck({ projectRoot, commit, specBase, packages, receiptDir
       layout,
       externals: () => { const records = readRunRecord(root, 'externals.json')?.records; return Array.isArray(records) ? records : null; },
     });
-    const integrityRecord = { specBase: specBaseFull, compared: specBaseFull !== null, ok: integrity.problems.length === 0, problems: integrity.problems, ties: integrity.ties };
+    const integrityRecord = { specBase: specBaseFull, compared: specBaseFull !== null, ok: integrity.problems.length === 0, problems: integrity.problems, ties: integrity.ties, extraction: layout };
     if (!integrityRecord.ok) {
       const reason = `${describeProblem(integrity.problems[0])}${integrity.problems.length > 1 ? ` (and ${integrity.problems.length - 1} more)` : ''}`;
       return finish(receipts, full, {
@@ -920,6 +942,8 @@ function reportLines(receipt) {
   const lines = [receipt.label, `commit ${receipt.commit}`, `tree ${receipt.tree}`, ...receipt.warnings.map((warning) => `warning: ${warning}`)];
   lines.push(integrity.compared ? `spec base ${integrity.specBase}: statements, frozen paths and added code compared with the merged spec`
     : 'spec base: none given or recorded, so the statements were not compared with a merged spec');
+  const { folders, files } = integrity.extraction ?? { folders: [], files: [] };
+  lines.push(`extraction output held fixed, besides the folders named Extraction...: ${folders.length + files.length === 0 ? 'none recorded in the run state' : [...folders, ...files].join(', ')}`);
   for (const problem of integrity.problems) lines.push(`not accepted: ${problem.kind}: ${describeProblem(problem)}`);
   for (const tie of integrity.ties) lines.push(`accepted assumption: axiom ${tie.axiom} (${tie.file}) is tied to externals record ${tie.record}`);
   for (const file of receipt.specFiles) {
