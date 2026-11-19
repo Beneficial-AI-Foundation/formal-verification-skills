@@ -1291,6 +1291,10 @@ describe('the permissions page', () => {
     assert.match(text, /Codex splits a command run through a shell wrapper such as `bash -lc`.*That was not observed here/);
     assert.match(text, /It leaves no `origin\/<name>` ref and sets no upstream: run `git fetch` to see the branch/);
     assert.match(text, /In the tests, none of these settings changed where the push went or what it sent: `remote\.<name>\.push`.*`submodule\.recurse`/);
+    assert.match(text, /A worker that gets a refusal stops and reports its `code` and `message`\. It does not fall back to `git push`/);
+    assert.match(text, /An FVS update or reinstall that moves the script leaves both stale: run init again to append the rule for the new path, and delete the old rule yourself/);
+    assert.match(text, /Any session of your user account can edit the script file at the allowed path, as it can edit the record/);
+    assert.match(text, /such as a command substitution \(`\$\(\.\.\.\)`\) or a redirect \(`> file`\) after the branch name, which its documentation does not say/);
     // The page names a git push allow rule only as something to delete, never inside a block that shows what FVS writes.
     const blocks = [...page().matchAll(/```[a-z]*\n([\s\S]*?)```/g)].map((match) => match[1]);
     assert.ok(blocks.length >= 4);

@@ -149,6 +149,8 @@ It exits with a plain message and a non-zero status, and pushes nothing, unless 
   section is named after it, and git reads the address as recorded.
 - `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR` and `GIT_NAMESPACE` are not set.
 
+A worker that gets a refusal stops and reports its `code` and `message`. It does not fall back to `git push`.
+
 ### What it sends
 
 It pushes to the address recorded at init, never to a remote name. In the tests, none of these settings changed
@@ -167,6 +169,10 @@ project root. It leaves no `origin/<name>` ref and sets no upstream: run `git fe
 - The recorded address is checked just before the push. A rewrite rule that you add after that check and before
   the connection is a race the command cannot close.
 - The command trusts the `git` it finds on `PATH`.
+- The rule and the worker briefs name an absolute path. An FVS update or reinstall that moves the script leaves both
+  stale: run init again to append the rule for the new path, and delete the old rule yourself. FVS deletes none of
+  your rules.
+- Any session of your user account can edit the script file at the allowed path, as it can edit the record.
 - The record of the destination is a plain file in the git directory. Any session of your user account can change
   it, and so can change where the command pushes.
 - A worker that runs a plain `git push` is not covered by this rule: your other rules and permission mode decide
@@ -345,8 +351,8 @@ covers the session that ran init. If your workers run in another mode, check tha
   session.
 - Not observed: a live Claude Code or Codex session showing that a written rule removes a prompt; the live `gh`,
   `git fetch` and Lake probes; a real push to GitHub through the push command; whether Claude Code screens text
-  inside a command substitution (`$(...)`) in an argument against an allow rule, which its documentation does not
-  say; that Codex splits a shell wrapper before it matches rules; that the push command finds the same `git`,
+  after the matched words against an allow rule, such as a command substitution (`$(...)`) or a redirect (`> file`)
+  after the branch name, which its documentation does not say; that Codex splits a shell wrapper before it matches rules; that the push command finds the same `git`,
   `PATH` and shell environment that a worker's shell uses. That is why init asks you to recheck, and why the
   first real push is the evidence for the push command.
 
