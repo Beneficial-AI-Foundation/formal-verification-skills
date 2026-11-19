@@ -31,7 +31,9 @@ merge and the proof pull request").
    crate does not pass, whatever its spec file lists. A proof that starts using a new axiom fails the check. The one way
    through is the owner's ruling: if the owner accepts the assumption, mark it `assumption-accepted` in
    the externals record, and put the axiom in a new file under `formal/trusted`, with the record id in
-   backticks in the axiom's docstring (one axiom for each record). `native_decide` and `bv_decide` are
+   backticks in the axiom's docstring (one axiom for each record). The axiom's type must be exactly one
+   proposition, a `Prop` definition in `formal/specs/Defs` of the merged spec whose docstring cites the same
+   record id in backticks; the spec pull request is where that definition is written. `native_decide` and `bv_decide` are
    fine in scratch work, but the check refuses a commit that adds one, so remove them before it runs.
 3. **FVS's build check decides accepted.** It runs in a fresh clean copy of the commit, never in a
    worker's checkout. Run it on the integration tree's head, and pass the spec merge commit you
@@ -45,7 +47,7 @@ merge and the proof pull request").
    no build runs, when:
    - a recalled statement (its binders, hypotheses or conclusion) differs in more than spaces and
      comments, or is removed or added;
-   - the lakefile, the manifest, `formal/specs/Defs`, `formal/trusted` or an extraction folder (every
+   - the lakefile, the manifest, `lean-toolchain`, `formal/specs/Defs`, `formal/trusted` or an extraction folder (every
      crate's folder in a multi-crate extraction) changed in more than comments, docstrings and axiom
      guards (spacing and indentation count there, because Lean reads blocks from columns), or a file
      was added to them (a new Trusted file is allowed only as step 2 says), or a lakefile appeared
@@ -68,7 +70,16 @@ merge and the proof pull request").
    recorded spec merge itself and refuses a `--spec-base` that differs from it.
 
    Then the whole project builds with warnings as errors, so any `sorry` fails, and each statement's
-   guarded `#print axioms` list must still match. The JSON result is on stdout and the report for
+   guarded `#print axioms` list must still match. Every spec, proof and extraction file must also have
+   produced a compiled module in that build, whether or not it holds a recall (a lakefile that does not
+   build a proof file is refused, in either lakefile format). Last, a Lean program compares what each
+   recalled statement rests on with the merged spec, which the check builds in a copy of its own: the
+   elaborated statement and every definition, instance or abbreviation it reaches must be the same, so
+   a helper, notation or instance in a proof file that changes what an unchanged statement means is
+   refused. The axioms a statement rests on are read from Lean, not from the guard text: Lean's three,
+   an axiom the merged spec already had, or a new axiom that is in `formal/trusted` and asserts exactly
+   its record's proposition (an axiom `: False` under an accepted record is refused). If the Lean
+   program cannot run, or the merged spec does not build, the commit is not accepted. The JSON result is on stdout and the report for
    people is on stderr. Read `label` from the JSON: it is `accepted (build check)`,
    `build check failed: REASON`, or `built, integrity not checked` when no spec base was given or
    recorded (a build alone is not an acceptance, and the exit status is not 0 then). The state reports

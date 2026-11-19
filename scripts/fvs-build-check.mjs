@@ -23,7 +23,23 @@
 // is allowed only for axioms tied to an externals record the owner accepted. Strings and layout are
 // compared exactly; only comments, docstrings, guards and the layout of a recalled statement are free. The glob guard refuses a spec,
 // proof or extraction file that no lean_lib glob of a default target reaches, because Lake would
-// never compile it. A commit that fails a guard gets a failed receipt and no build runs.
+// never compile it; the lakefile, the manifest and lean-toolchain are frozen. A commit that fails a
+// guard gets a failed receipt and no build runs.
+//
+// After the build, two more conditions must hold. Every spec, proof and extraction file must have
+// produced a .olean in this build (for a lakefile.lean, where globs are not read, a module named by its
+// path or by a suffix of it), whether or not the file holds a recall. And a small Lean program must find
+// that what each recalled statement rests on is what it rested on in the merged spec: it serialises the
+// elaborated type of the statement and of every project definition, instance and abbreviation it
+// reaches (values included, proofs not), on the head and on a fresh build of the merged spec, and the
+// two must agree constant by constant. Text alone cannot say that: a notation, a macro, an instance or a
+// helper in a file that is not frozen can change what unchanged text elaborates to. The axioms a
+// statement rests on come from Lean, not from the guard text: Lean's three standard axioms, a project
+// axiom of the merged spec that has not changed, and a new axiom only in a Trusted module that asserts
+// exactly the one frozen proposition of the merged spec whose docstring cites the axiom's accepted
+// externals record (a record is cited by one axiom only); sorry, native_decide and bv_decide axioms
+// are refused. If the program cannot run, or the merged spec does not build, the commit is not accepted.
+// The receipt keeps the comparison under integrity.semantic.
 //
 // With --allow-axioms FILE (a list the engine writes from its own records, JSON with schema
 // fvs/auto-allowed-axioms) a statement passes only if every axiom its guard lists is one of Lean's
