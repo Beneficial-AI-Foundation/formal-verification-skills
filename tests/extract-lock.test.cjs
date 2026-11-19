@@ -10,6 +10,7 @@ const { describe, it, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const { toySpec, cleanup, workspace, run: engine, specFile, step, completeUnit } = require('./helpers/fake-multicrate-tools.cjs');
 
@@ -119,5 +120,92 @@ describe('Cargo.lock of the extraction copy', () => {
       assert.match(done.result.message, pattern);
       assert.equal(step(ws, out, 'charon').status === 0, false);
     }
+  });
+});
+
+// The lock is not source: its own origin and hash are recorded, an uncommitted or ignored
+// one does not make the inputs dirty, and restore checks it on its own.
+describe('the lock apart from the source state', () => {
+  const git = (ws, ...args) => {
+    const done = spawnSync('git', ['-C', ws.project, '-c', 'user.name=fvs', '-c', 'user.email=fvs@example.invalid', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' });
+    assert.equal(done.status, 0, done.stderr);
+  };
+  // A committed project whose Cargo.lock git ignores, so the lock is an untracked file.
+  const ignoredLock = (ws) => {
+    fs.writeFileSync(path.join(ws.project, '.gitignore'), 'Cargo.lock\n.aeneas\n.formalising\n');
+    git(ws, 'init', '-q');
+    git(ws, 'add', '-A');
+    git(ws, 'commit', '-q', '-m', 'project');
+  };
+
+  it('does not count an ignored or uncommitted Cargo.lock as a dirty input, and still counts every other one', () => {
+    const ws = workspace();
+    ignoredLock(ws);
+    const clean = prepare(ws);
+    assert.equal(clean.done.status, 0, clean.done.stdout);
+    assert.deepEqual(clean.done.result.manifest.source.dirty, []);
+    assert.equal(clean.done.result.manifest.lock.origin, 'read');
+    fs.writeFileSync(path.join(ws.project, 'app', 'src', 'extra.rs'), 'pub fn extra() {}\n');
+    const dirty = prepare(ws);
+    assert.deepEqual(dirty.done.result.manifest.source.dirty, ['app/src/extra.rs']);
+    const checked = engine(ws, ['check', '--project-root', ws.project]);
+    assert.deepEqual(checked.result.source.dirty, ['app/src/extra.rs']);
+  });
+
+  it('does not count a committed Cargo.lock that was edited since', () => {
+    const ws = workspace();
+    git(ws, 'init', '-q');
+    git(ws, 'add', '-A');
+    git(ws, 'commit', '-q', '-m', 'project');
+    fs.appendFileSync(path.join(ws.project, 'Cargo.lock'), '# edited after the commit\n');
+    const { done } = prepare(ws);
+    assert.deepEqual(done.result.manifest.source.dirty, []);
+    assert.equal(done.result.manifest.lock.sha256, done.result.manifest.final.files['Cargo.lock'].sha256, 'the edited lock is the one recorded');
+  });
+
+  it('verify-restore accepts the project\'s lock as recorded, and refuses a read lock that changed since prepare', () => {
+    const ws = workspace();
+    const { out, done } = prepare(ws);
+    assert.equal(done.status, 0, done.stdout);
+    const ok = engine(ws, ['verify-restore', '--out', out]);
+    assert.equal(ok.status, 0, ok.stdout);
+    assert.match(ok.result.message, /and so does the project's Cargo\.lock/);
+    fs.appendFileSync(path.join(ws.project, 'Cargo.lock'), '# changed after prepare\n');
+    const refused = engine(ws, ['verify-restore', '--out', out]);
+    assert.equal(refused.status, 3, refused.stdout);
+    assert.equal(refused.result.code, 'dirty-original');
+    assert.match(refused.result.message, /the project's Cargo\.lock changed since prepare recorded its start .* the lock this extraction used \(read, [0-9a-f]{12}\) no longer comes from this project/);
+  });
+
+  it('verify-restore also checks the project\'s lock when the copy has an updated one', () => {
+    const ws = workspace();
+    const { out, done } = prepare(ws, ['--lock', 'update', '--release', RELEASE]);
+    assert.equal(done.result.manifest.lock.origin, 'updated');
+    assert.equal(engine(ws, ['verify-restore', '--out', out]).status, 0);
+    fs.appendFileSync(path.join(ws.project, 'Cargo.lock'), '# changed after prepare\n');
+    const refused = engine(ws, ['verify-restore', '--out', out]);
+    assert.equal(refused.status, 3, refused.stdout);
+    assert.match(refused.result.message, /the lock this extraction used \(updated, /);
+  });
+
+  it('verify-restore refuses a lock that appeared in a project that had none, for a generated lock', () => {
+    const ws = workspace();
+    withoutLock(ws);
+    const { out, done } = prepare(ws, ['--lock', 'update', '--release', RELEASE]);
+    assert.equal(done.result.manifest.lock.origin, 'generated');
+    assert.equal(engine(ws, ['verify-restore', '--out', out]).status, 0);
+    fs.writeFileSync(path.join(ws.project, 'Cargo.lock'), 'version = 3\n');
+    const refused = engine(ws, ['verify-restore', '--out', out]);
+    assert.equal(refused.status, 3, refused.stdout);
+    assert.match(refused.result.message, /the project's Cargo\.lock appeared since prepare recorded its start \(none\), so the lock this extraction used \(generated, /);
+  });
+
+  it('verify-tree names the lock when a tool rewrote it in the copy', () => {
+    const ws = workspace();
+    const { out } = prepare(ws, ['--lock', 'update', '--release', RELEASE]);
+    fs.appendFileSync(path.join(out, 'tree', 'Cargo.lock'), '# rewritten by cargo\n');
+    const refused = engine(ws, ['verify-tree', '--out', out]);
+    assert.equal(refused.status, 7, refused.stdout);
+    assert.match(refused.result.message, /Cargo\.lock \(Cargo\.lock is the lock recorded as updated, [0-9a-f]{12}: cargo or a tool rewrote it in the copy\)/);
   });
 });

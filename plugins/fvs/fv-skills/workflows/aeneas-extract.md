@@ -399,13 +399,16 @@ extraction output from an earlier layout, the owner removes it once; later runs 
 Send Charon's `.llbc` file and logs outside `"$OUT/tree"` (`--dest-file` as above; without it
 Charon writes into its working directory). Only cargo's `target/` directory may appear in the copy
 after `prepare`; any other new, edited or deleted file there fails `verify-tree`. The copy needs a
-`Cargo.lock` that matches its patched manifests, so that cargo has nothing to write in it. Commit
-one and keep it current, or let `prepare` bring it in line once: `--lock update --release
+`Cargo.lock` that matches its patched manifests, so that cargo has nothing to write in it. Keep one
+in the project and current (it need not be committed, or may be ignored by git: it is not counted
+as an uncommitted source, and its own hash is recorded), or let `prepare` bring it in line once: `--lock update --release
 "$RELEASE_DIR"` (the release directory the spec names) runs `cargo generate-lockfile` in the copy when the project has no lock, and
 `cargo update --workspace` when it has one (every version the lock pins is kept; only what the
 patched manifests added or dropped changes). Either may need network access. The manifest records
 the lock's hash and origin (`read`, `generated` or `updated`, and the hash it started from); the
-checkout is not touched. `attempt` refuses a copy that has no lock. A generated or updated lock pins
+checkout is not touched, and `verify-restore` refuses when the project's own `Cargo.lock` is no
+longer the one recorded at the start, and `verify-tree` names a lock that a tool rewrote in the
+copy. `attempt` refuses a copy that has no lock. A generated or updated lock pins
 whatever resolved at that moment, so keep a copy of `"$OUT/tree/Cargo.lock"` with the extraction
 record: a later `prepare` may resolve newer versions. When Charon fails, still run
 the second `verify-tree`, skip Aeneas, and go to CLASSIFY.

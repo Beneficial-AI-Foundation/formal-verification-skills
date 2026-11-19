@@ -72,7 +72,9 @@ function usage() {
     'outside the project); verify-restore compares the touched original sources with',
     'the recorded start; verify-tree compares every file under OUT/tree, except cargo\'s',
     'target/ directory, with the tree prepare recorded; status reads the manifest.',
-    'The manifest records the Cargo.lock of the copy (origin read, or absent). A project',
+    'The manifest records the Cargo.lock of the copy (origin read, or absent), apart from the',
+    'source state: an uncommitted or ignored root Cargo.lock is not a dirty input, and',
+    'verify-restore also checks that the project\'s own lock is the one recorded at the start. A project',
     'without one is refused by attempt, because cargo would write one into the copy; prepare',
     '--lock update --release DIR brings the lock of the copy in line with the patched',
     'manifests once: generated when there is none, otherwise updated keeping every pinned',
@@ -332,7 +334,10 @@ function sourceIdentity(projectRoot, inputs) {
   ];
   const failed = listed.find((result) => result.status !== 0);
   if (failed) throw new Error(`cannot read the git status of ${projectRoot}: ${failed.stderr.trim()}`);
-  const dirty = listed.flatMap((result) => result.stdout.split('\0')).filter(Boolean);
+  // The root Cargo.lock is not source: many projects ignore or never commit it. The manifest
+  // records it with its own origin and hash instead, and restore checks it on its own. Every
+  // other uncommitted input stays dirty.
+  const dirty = listed.flatMap((result) => result.stdout.split('\0')).filter((file) => file !== '' && file !== LOCK_FILE);
   return { commit: head.stdout.trim(), dirty: [...new Set(dirty)].sort() };
 }
 
@@ -600,10 +605,23 @@ function refuseChangedOriginals(manifest) {
   }
 }
 
+// The project's own Cargo.lock against the state recorded before prepare, whatever the
+// copy's lock turned out to be (read, generated or updated): a copy built against a lock
+// the project no longer has is not the extraction of this project.
+function refuseChangedLock(manifest) {
+  if (!manifest.lock || !manifest.source.files) return;
+  const start = manifest.source.files[LOCK_FILE] ?? null;
+  const now = fileState(path.join(manifest.projectRoot, LOCK_FILE));
+  if (!sameState(now, start)) {
+    refuse('dirty-original', `the project's ${LOCK_FILE} ${now === null ? 'is gone' : start === null ? 'appeared' : 'changed'} since prepare recorded its start (${start?.sha256?.slice(0, 12) ?? 'none'}), so the lock this extraction used (${manifest.lock.origin}, ${manifest.lock.sha256?.slice(0, 12) ?? 'none'}) no longer comes from this project`, { lock: { start: start?.sha256 ?? null, now: now?.sha256 ?? null, origin: manifest.lock.origin } });
+  }
+}
+
 function verifyRestore(flags) {
   const manifest = readManifest(flags.out);
   refuseChangedOriginals(manifest);
-  return { message: `${manifest.touched.length} touched source file(s) match the recorded start`, touched: manifest.touched };
+  refuseChangedLock(manifest);
+  return { message: `${manifest.touched.length} touched source file(s) match the recorded start${manifest.lock ? `, and so does the project's ${LOCK_FILE}` : ''}`, touched: manifest.touched };
 }
 
 function status(flags) {
@@ -648,7 +666,8 @@ function verifyTree(flags) {
   const changed = [...new Set([...Object.keys(actual), ...Object.keys(recorded)])].sort()
     .filter((relative) => !sameState(actual[relative] ?? null, recorded[relative] ?? null));
   if (changed.length > 0) {
-    refuse('changed-tree', `the extraction copy differs from the recorded tree: ${changed.join(', ')}`, { changed });
+    const lock = changed.includes(LOCK_FILE) ? ` (${LOCK_FILE} is the lock recorded as ${manifest.lock?.origin ?? 'unknown'}, ${manifest.lock?.sha256?.slice(0, 12) ?? 'none'}: cargo or a tool rewrote it in the copy)` : '';
+    refuse('changed-tree', `the extraction copy differs from the recorded tree: ${changed.join(', ')}${lock}`, { changed });
   }
   return { message: `the extraction copy matches the recorded tree (${Object.keys(recorded).length} file(s))`, touchedSha256: manifest.final.touchedSha256 };
 }
@@ -1213,7 +1232,7 @@ function attempt(flags) {
   const { manifest, manifestSha256 } = preparedManifest(out);
   if (lexists(path.join(out, ATTEMPT))) refuse('attempt-refused', 'this copy already has an attempt; prepare a new copy to retry');
   if (manifest.lock?.origin === 'absent') {
-    refuse('attempt-refused', `the prepared copy has no ${LOCK_FILE}, so cargo would write one into the copy during the build and the copy would no longer match the recorded tree; commit a ${LOCK_FILE} to the project, or prepare a new copy with --lock update --release DIR (it may need network access; the lock is recorded by hash)`);
+    refuse('attempt-refused', `the prepared copy has no ${LOCK_FILE}, so cargo would write one into the copy during the build and the copy would no longer match the recorded tree; put a ${LOCK_FILE} in the project (it need not be committed: its hash and origin are recorded), or prepare a new copy with --lock update --release DIR (it may need network access; the lock is recorded by hash)`);
   }
   const spec = readJson(path.resolve(flags.spec));
   return isObject(spec) && spec.crates !== undefined ? attemptUnits(out, manifest, manifestSha256, spec) : recordAttempt(out, manifest, manifestSha256, spec);
