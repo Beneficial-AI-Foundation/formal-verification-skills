@@ -9,6 +9,7 @@
 const { describe, it, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const crypto = require('node:crypto');
 const path = require('node:path');
 
 const { toySpec, cleanup, workspace, run: engine, prepared, specFile, attempted, step, completeUnit, complete } = require('./helpers/fake-multicrate-tools.cjs');
@@ -54,7 +55,7 @@ describe('multi-crate extraction: the toy workspace', () => {
     for (const unit of run.units) {
       for (const field of ['attemptSha256', 'stages', 'manifestSha256', 'config', 'configSha256', 'llbc', 'translation', 'publication', 'hasErrors']) assert.ok(unit[field] !== undefined, `${unit.crate} row lacks ${field}`);
       const one = engine(ws, ['attempt-status', '--out', out, '--crate', unit.crate]).result;
-      const { units: _, order: __, ...main } = run;
+      const { units: _, order: __, roster: ___, ...main } = run;
       assert.equal(one.run.crate, unit.crate);
       assert.equal(one.run.attemptSha256, unit.attemptSha256);
       assert.equal(one.run.translation.projectPath, path.join(ws.project, unit.publishDir, 'translation.json'));
@@ -142,6 +143,113 @@ describe('multi-crate extraction: the LLBC identity rule', () => {
     assert.deepEqual(row.hasErrors, { value: true, items: lib.items, itemCount: 2 });
     assert.equal(run.units.find((unit) => unit.crate === 'toy_app').hasErrors.value, false);
     assert.equal(run.hasErrors.value, false, 'the top-level run is the main crate\'s own');
+  });
+});
+
+describe('multi-crate extraction: the roster binds an attempt to its crates', () => {
+  const rosterHash = (roster) => crypto.createHash('sha256').update(JSON.stringify(roster)).digest('hex');
+  const edit = (out, change) => {
+    const file = path.join(out, 'attempt.json');
+    const record = JSON.parse(fs.readFileSync(file, 'utf8'));
+    change(record);
+    fs.writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`);
+  };
+  // toy_app fails at Charon and toy_lib, the main crate, completes: without the roster a status that
+  // has lost toy_app's row sees only a complete crate.
+  const withFailedApp = () => {
+    const ws = workspace({ toy_app: { charonExit: 1 } });
+    const { out, recorded } = attempted(ws, toySpec({ main: 'toy_lib' }));
+    assert.equal(recorded.status, 0, recorded.stdout);
+    assert.equal(step(ws, out, 'charon', 'toy_app').status, 9);
+    completeUnit(ws, out, 'toy_lib');
+    assert.equal(engine(ws, ['attempt-status', '--out', out]).status, 8, 'the failed crate keeps the attempt incomplete');
+    return { ws, out };
+  };
+  const refusedStatus = (ws, out, pattern) => {
+    const status = engine(ws, ['attempt-status', '--out', out]);
+    assert.equal(status.status, 8, status.stdout);
+    assert.match(status.result.message, pattern);
+  };
+
+  it('puts one canonical roster, and its hash, in the top-level record, in every unit record and in the status', () => {
+    const ws = workspace();
+    const out = complete(ws);
+    const attempt = JSON.parse(fs.readFileSync(path.join(out, 'attempt.json'), 'utf8'));
+    assert.deepEqual(attempt.roster, {
+      main: 'toy_app',
+      order: ['toy_lib', 'toy_app'],
+      units: [{ crate: 'toy_lib', package: 'toy-lib', dir: 'lib', stitch: [] }, { crate: 'toy_app', package: 'toy-app', dir: 'app', stitch: ['toy_lib'] }],
+      nonTargets: [],
+      dropped: [],
+    });
+    assert.equal(attempt.rosterSha256, rosterHash(attempt.roster));
+    for (const crate of ['toy_lib', 'toy_app']) {
+      const unit = JSON.parse(fs.readFileSync(path.join(out, 'units', crate, 'attempt.json'), 'utf8'));
+      assert.deepEqual(unit.roster, attempt.roster);
+      assert.equal(unit.rosterSha256, attempt.rosterSha256);
+    }
+    const { run } = engine(ws, ['attempt-status', '--out', out]).result;
+    assert.equal(run.rosterSha256, attempt.rosterSha256);
+    assert.deepEqual(run.roster, attempt.roster);
+    assert.deepEqual(run.units.map((unit) => unit.rosterSha256), [attempt.rosterSha256, attempt.rosterSha256]);
+  });
+
+  it('refuses a status whose top-level record lost the row of a failed crate, with nothing else changed', () => {
+    const { ws, out } = withFailedApp();
+    edit(out, (record) => { record.units = record.units.filter((unit) => unit.crate !== 'toy_app'); });
+    refusedStatus(ws, out, /the units \(toy_lib\) are not the crates of the roster \(toy_lib, toy_app\)/);
+  });
+
+  it('refuses it as well when the roster, its hash and the order were rewritten to match the shorter list', () => {
+    const { ws, out } = withFailedApp();
+    edit(out, (record) => {
+      record.units = record.units.filter((unit) => unit.crate !== 'toy_app');
+      record.order = ['toy_lib'];
+      record.roster = { ...record.roster, order: ['toy_lib'], units: record.roster.units.filter((unit) => unit.crate === 'toy_lib') };
+      record.rosterSha256 = rosterHash(record.roster);
+    });
+    refusedStatus(ws, out, /the attempt record of crate toy_lib does not carry this attempt's roster/);
+  });
+
+  it('refuses a changed main, a changed row, changed dropped crates and a stray unit directory', () => {
+    const { ws, out } = withFailedApp();
+    const original = fs.readFileSync(path.join(out, 'attempt.json'), 'utf8');
+    const restore = () => fs.writeFileSync(path.join(out, 'attempt.json'), original);
+    edit(out, (record) => { record.main = 'toy_app'; });
+    refusedStatus(ws, out, /main is toy_app, the roster says toy_lib/);
+    restore();
+    edit(out, (record) => { record.units.find((unit) => unit.crate === 'toy_lib').package = 'toy-app'; });
+    refusedStatus(ws, out, /the row of crate toy_lib \(package toy-app, directory lib, imports none\) is not what the roster says \(package toy-lib/);
+    restore();
+    edit(out, (record) => { record.dropped = [{ crate: 'ghost', reason: 'left out by hand' }]; });
+    refusedStatus(ws, out, /the dropped crates are not the roster's/);
+    restore();
+    fs.mkdirSync(path.join(out, 'units', 'ghost'));
+    refusedStatus(ws, out, /the directories under units \(ghost, toy_app, toy_lib\) are not the crates of the roster/);
+    fs.rmdirSync(path.join(out, 'units', 'ghost'));
+    refusedStatus(ws, out, /toy_app failed at charon/);
+  });
+
+  it('refuses to read one crate of a multi-crate attempt without the copy, where the roster is checked', () => {
+    const { ws, out } = withFailedApp();
+    const alone = engine(ws, ['attempt-status', '--out', path.join(out, 'units', 'toy_lib')]);
+    assert.equal(alone.status, 8, alone.stdout);
+    assert.match(alone.result.message, /is one crate of a multi-crate attempt; read it with attempt-status --out .* --crate toy_lib/);
+    const through = engine(ws, ['attempt-status', '--out', out, '--crate', 'toy_lib']);
+    assert.equal(through.status, 0, through.stdout);
+    assert.equal(through.result.unit.status, 'complete');
+  });
+
+  it('refuses every stage once a unit record carries another roster', () => {
+    const ws = workspace();
+    const { out } = attempted(ws);
+    const file = path.join(out, 'units', 'toy_lib', 'attempt.json');
+    const record = JSON.parse(fs.readFileSync(file, 'utf8'));
+    record.roster.units = record.roster.units.slice(1);
+    fs.writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`);
+    const refused = step(ws, out, 'charon', 'toy_app');
+    assert.equal(refused.status, 8, refused.stdout);
+    assert.match(refused.result.message, /the attempt record of crate toy_lib changed after it was recorded/);
   });
 });
 

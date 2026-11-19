@@ -288,6 +288,25 @@ describe('the provider is its final publication, and an item has one declaration
     assert.match(own.result.message, /this crate's Lean declares three more than once, so a declaration of it is not a unique target/);
   });
 
+  it('reads a declaration with explicit universe parameters as the item it is, so it is stitched and cannot be assumed', () => {
+    const universe = workspace(behaviour({ toy_lib: { lean: lib().replace('def one : Result Std.U32 := ok 1#u32', 'def one.{u} : Result Std.U32 := ok 1#u32') } }));
+    const out = throughAeneas(universe, stitched());
+    assert.equal(step(universe, out, 'publish', 'toy_lib').status, 0);
+    const done = step(universe, out, 'publish', 'toy_app');
+    assert.equal(done.status, 0, done.stdout);
+    const entry = engine(universe, ['attempt-status', '--out', out]).result.run.units.find((unit) => unit.crate === 'toy_app').stitch[0];
+    assert.ok(entry.replaced.some((item) => item.rustPath === 'toy_lib::one'), 'the item with a universe binder is replaced like any other');
+  });
+
+  it('refuses an assume over an item the provider defines under another name', () => {
+    const ws = workspace(consumer(['axiom toy_lib.grow\n', 'axiom toy_lib.grow_alt\n']));
+    const out = throughAeneas(ws, stitched({ stitch: [{ crate: 'toy_lib', assume: ['toy_lib::grow'] }] }));
+    assert.equal(step(ws, out, 'publish', 'toy_lib').status, 0);
+    const refused = step(ws, out, 'publish', 'toy_app');
+    assert.equal(refused.status, 9, refused.stdout);
+    assert.match(refused.result.message, /toy_lib::grow \(toy_lib\.grow_alt\) is named in the assume list, but toy_lib declares it \(def\)/);
+  });
+
   describe('a copy of an item of the provider', () => {
     const attemptWith = (variant, spec) => {
       const ws = workspace(variant);

@@ -1165,6 +1165,25 @@ function stitchOrder(units) {
   return order;
 }
 
+// The roster of a multi-crate attempt: who is in it and how they are tied together, in one
+// canonical form (fixed key order, units in the attempt's order, every list sorted). Every unit's
+// attempt record carries it and so does the top-level record, and the hash of this form is what
+// a reader binds to. One unit left out of the status therefore changes the roster it recomputes.
+function rosterOf({ main, order, units, nonTargets, dropped }) {
+  const byCrate = (a, b) => (a.crate < b.crate ? -1 : a.crate > b.crate ? 1 : 0);
+  return {
+    main,
+    order: [...order],
+    units: order.map((crate) => {
+      const unit = units.find((entry) => entry.crate === crate);
+      return { crate, package: unit.package, dir: unit.dir, stitch: [...unit.stitch].sort() };
+    }),
+    nonTargets: nonTargets.map(({ crate, dir }) => ({ crate, dir })).sort(byCrate),
+    dropped: dropped.map(({ crate, reason }) => ({ crate, reason })).sort(byCrate),
+  };
+}
+const rosterSha256 = (roster) => sha256(JSON.stringify(roster));
+
 function homesOf(env) {
   const home = env.HOME;
   return {
@@ -1556,9 +1575,10 @@ function attemptUnits(out, manifest, manifestSha256, spec) {
   const homes = homesOf(process.env);
   const unitOut = (unit) => path.join(out, UNITS_DIR, unit.crate);
   for (const unit of units) deriveInvocation(unitOut(unit), manifest, unit.flat, homes, targets, nonTargets);
+  const roster = rosterOf({ main, order, units: units.map((unit) => ({ crate: unit.crate, package: unit.package, dir: unit.dir, stitch: (unit.flat.stitch ?? []).map((entry) => entry.crate) })), nonTargets, dropped });
   const recorded = units.map((unit) => {
     fs.mkdirSync(unitOut(unit), { recursive: true });
-    return { unit, record: recordAttempt(unitOut(unit), manifest, manifestSha256, unit.flat, targets, nonTargets).attempt };
+    return { unit, record: recordAttempt(unitOut(unit), manifest, manifestSha256, unit.flat, targets, nonTargets, roster).attempt };
   });
   const record = {
     schema: MULTI_SCHEMA,
@@ -1567,6 +1587,8 @@ function attemptUnits(out, manifest, manifestSha256, spec) {
     manifestSha256,
     main,
     order,
+    roster,
+    rosterSha256: rosterSha256(roster),
     ...(dropped.length > 0 ? { dropped } : {}),
     units: recorded.map(({ unit, record: attempt }) => ({
       crate: unit.crate,
@@ -1608,10 +1630,57 @@ function readMulti(out) {
     if (!lexists(unitFile) || sha256(fs.readFileSync(unitFile)) !== unit.attemptSha256) bad(`the attempt record of crate ${unit.crate} changed after it was recorded`);
   }
   if (!record.units.some((unit) => unit.crate === record.main)) bad('main is not one of the units');
+  checkRoster(out, record, bad);
   return record;
 }
 
-function recordAttempt(out, manifest, manifestSha256, spec, targets = [], nonTargets = []) {
+// The roster is the attempt's own account of who belongs to it, and it is kept in every unit's
+// attempt record, not only in the top-level file. A row deleted from the top-level record, a
+// changed main, a different order or a unit directory that is not in the roster leaves the roster
+// the units remember different from the one rebuilt here, and the attempt is refused.
+function checkRoster(out, record, bad) {
+  const same = (first, second) => JSON.stringify(first) === JSON.stringify(second);
+  const { roster } = record;
+  if (!isObject(roster) || record.rosterSha256 !== rosterSha256(roster) || !Array.isArray(roster.units)) bad('it carries no roster, or the roster does not match its hash; record the attempt again');
+  if (!same(roster, rosterOf({ main: roster.main, order: roster.order, units: roster.units, nonTargets: roster.nonTargets, dropped: roster.dropped }))) bad('the roster is not in its canonical form');
+  const crates = record.units.map((unit) => unit.crate);
+  if (new Set(crates).size !== crates.length) bad('a crate has more than one unit');
+  const unitRecords = new Map(record.units.map((unit) => [unit.crate, JSON.parse(fs.readFileSync(path.join(unit.out, ATTEMPT), 'utf8'))]));
+  for (const [crate, unitRecord] of unitRecords) {
+    if (!same(unitRecord.roster, roster) || unitRecord.rosterSha256 !== record.rosterSha256) bad(`the attempt record of crate ${crate} does not carry this attempt's roster`);
+  }
+  if (!same([...crates].sort(), roster.units.map((unit) => unit.crate).sort())) bad(`the units (${crates.join(', ')}) are not the crates of the roster (${roster.units.map((unit) => unit.crate).join(', ')})`);
+  const directories = fs.readdirSync(path.join(out, UNITS_DIR)).sort();
+  if (!same(directories, [...crates].sort())) bad(`the directories under ${UNITS_DIR} (${directories.join(', ')}) are not the crates of the roster`);
+  const byCrate = (a, b) => (a.crate < b.crate ? -1 : a.crate > b.crate ? 1 : 0);
+  const derived = record.units.map((unit) => {
+    const spec = unitRecords.get(unit.crate).spec;
+    const at = Array.isArray(spec?.cargoArgs) ? spec.cargoArgs.indexOf('--package') : -1;
+    return { crate: unit.crate, rowPackage: unit.package, package: at >= 0 ? spec.cargoArgs[at + 1] : null, dir: unit.dir, stitch: (Array.isArray(spec?.stitch) ? spec.stitch : []).map((entry) => entry?.crate), imports: unit.imports };
+  });
+  for (const entry of derived) {
+    const expected = roster.units.find((candidate) => candidate.crate === entry.crate);
+    const unitRecord = unitRecords.get(entry.crate);
+    if (unitRecord.spec?.crate !== entry.crate || entry.package !== expected.package || entry.rowPackage !== expected.package || entry.dir !== expected.dir || !same([...entry.stitch].sort(), expected.stitch) || !same([...(entry.imports ?? [])].sort(), expected.stitch)) {
+      bad(`the row of crate ${entry.crate} (package ${entry.rowPackage}, directory ${entry.dir}, imports ${(entry.imports ?? []).join(', ') || 'none'}) is not what the roster says (package ${expected.package}, directory ${expected.dir}, stitched to ${expected.stitch.join(', ') || 'nothing'})`);
+    }
+    if (!same([...(unitRecord.targets ?? [])].sort(byCrate), roster.units.map(({ crate, dir }) => ({ crate, dir })).sort(byCrate)) || !same([...(unitRecord.nonTargets ?? [])].sort(byCrate), roster.nonTargets)) {
+      bad(`the declared crates in the attempt record of crate ${entry.crate} are not the roster's`);
+    }
+  }
+  if (record.main !== roster.main) bad(`main is ${record.main}, the roster says ${roster.main}`);
+  if (!same((record.dropped ?? []).map(({ crate, reason }) => ({ crate, reason })).sort(byCrate), roster.dropped)) bad('the dropped crates are not the roster\'s');
+  let order;
+  try {
+    order = stitchOrder(record.units.map((unit) => ({ crate: unit.crate, dir: unit.dir, flat: unitRecords.get(unit.crate).spec })));
+  } catch (error) {
+    if (!(error instanceof Refusal)) throw error;
+    bad(`the stitching order cannot be derived again: ${error.message}`);
+  }
+  if (!same(order, roster.order) || !same(record.order, roster.order)) bad(`the order ${(record.order ?? []).join(', ')} is not the order derived from the units' stitching (${order.join(', ')})`);
+}
+
+function recordAttempt(out, manifest, manifestSha256, spec, targets = [], nonTargets = [], roster = null) {
   const invocation = deriveInvocation(out, manifest, spec, homesOf(process.env), targets, nonTargets);
   const residuals = callerResiduals(process.env, invocation.env.RUSTUP_TOOLCHAIN);
   const cargoConfig = cargoConfigFiles(manifest.tree, invocation.env.CARGO_HOME);
@@ -1625,6 +1694,7 @@ function recordAttempt(out, manifest, manifestSha256, spec, targets = [], nonTar
     version: 2,
     out,
     manifestSha256,
+    ...(roster === null ? {} : { roster, rosterSha256: rosterSha256(roster) }),
     ...invocation,
     identity,
     cargoConfig,
@@ -1663,6 +1733,7 @@ function loadChain(out, through) {
   }
   const { manifest, manifestSha256 } = preparedManifest(out);
   if (record.manifestSha256 !== manifestSha256) refuse('attempt-refused', 'the manifest changed after the attempt was recorded');
+  if (record.roster !== undefined && (!isObject(record.roster) || rosterSha256(record.roster) !== record.rosterSha256)) refuse('attempt-refused', `${attemptFile}: its roster does not match its roster hash`);
   const invocation = deriveInvocation(out, manifest, record.spec, homesOf(record.env ?? {}), Array.isArray(record.targets) ? record.targets : [], Array.isArray(record.nonTargets) ? record.nonTargets : []);
   const differing = INVOCATION_FIELDS.filter((field) => !sameState(invocation[field], record[field]));
   if (differing.length > 0) refuse('attempt-refused', `the recorded ${differing.join(', ')} differ from what the attempt would execute (or a tool changed since it was recorded)`);
@@ -2228,7 +2299,8 @@ function compareSignatures(consumer, provider, lift) {
   return same ? 'equal' : 'differ';
 }
 
-const DECLARATION = /^(?:noncomputable\s+)?(def|axiom|structure|inductive|abbrev|opaque|class)\s+([^\s:({[⦃]+)([\s\S]*)$/m;
+// A declaration name stops at a delimiter; explicit universe parameters (`name.{u}`) are not part of it.
+const DECLARATION = /^(?:noncomputable\s+)?(def|axiom|structure|inductive|abbrev|opaque|class)\s+([^\s:({[⦃]+?)(?:\.\{[^}]*\})?(?=[\s:({[⦃]|$)([\s\S]*)$/m;
 const DOC_PATH = /^\/-- (?:Trait declaration: |Trait implementation: )?\[(.*)\]/;
 const RUST_ATTRIBUTE = /\b(rust_fun|rust_const|rust_type)\s+"([^"]+)"/;
 
@@ -2335,8 +2407,10 @@ function stitchText(text, { crate, provider, assume, consumerNames }) {
     const target = provider.declarations.get(name);
     if (covering.length > 0) {
       covering.forEach((prefix) => usedAssume.add(prefix));
-      if (target) {
-        problems.push(`${rustPath} (${name}) is named in the assume list, but ${provider.crate} declares it (${target.keyword}); it is stitched, and the assume list only names items the provider does not declare`);
+      // The provider declares the item under this name or under any other that carries its Rust path.
+      const declared = target ?? [...provider.declarations.values()].find((item) => item.rustPath === rustPath);
+      if (declared) {
+        problems.push(`${rustPath} (${name}) is named in the assume list, but ${provider.crate} declares it (${declared.keyword}); it is stitched, and the assume list only names items the provider does not declare`);
         continue;
       }
       assumed.push({ rustPath, name, qualifiedName: `${crate}.${name}`, reason: 'named in the stitch assume list' });
@@ -2613,7 +2687,14 @@ function unitRow(unit) {
 // top-level run is the main crate's; run.units has one row per crate.
 function attemptStatus(flags) {
   const multi = readMulti(path.resolve(flags.out));
-  if (!multi) return attemptStatusOf(attemptDirectory(flags, null));
+  if (!multi) {
+    const out = attemptDirectory(flags, null);
+    const chain = loadChain(out, ATTEMPT_STAGES.length);
+    // A unit of a multi-crate attempt is read through the copy, where the roster is checked; read
+    // alone, it would report complete while another crate of the attempt has failed.
+    if (chain.attempt.roster !== undefined) refuse('attempt-refused', `${out} is one crate of a multi-crate attempt; read it with attempt-status --out ${path.dirname(path.dirname(out))} --crate ${chain.attempt.spec?.crate ?? 'NAME'}`);
+    return attemptStatusOfChain(chain, out);
+  }
   const rows = multi.units.map(unitRow);
   // A complete crate's row carries its whole single-crate run, so a reader written for
   // one crate reads any crate of the attempt unchanged.
@@ -2633,7 +2714,7 @@ function attemptStatus(flags) {
   const main = rows.find((row) => row.crate === multi.main);
   const supported = rows.every((row) => row.run.supported);
   const residuals = [...new Map(rows.flatMap((row) => row.run.residuals).map((entry) => [JSON.stringify(entry), entry])).values()];
-  return { message: `attempt complete for ${rows.length} crate(s) (${supported ? 'supported configuration' : 'unsupported configuration'})`, run: { ...main.run, supported, residuals, order: multi.order ?? multi.units.map((unit) => unit.crate), units: rows.map(summary) } };
+  return { message: `attempt complete for ${rows.length} crate(s) (${supported ? 'supported configuration' : 'unsupported configuration'})`, run: { ...main.run, supported, residuals, order: multi.order, rosterSha256: multi.rosterSha256, roster: multi.roster, units: rows.map(summary) } };
 }
 
 function crossCrate(foreignCrates, recorded) {
@@ -2686,6 +2767,7 @@ function attemptStatusOfChain(chain, out) {
       attemptSha256: chain.attemptSha256,
       stages: Object.fromEntries(Object.entries(stages).map(([stage, { sha256: hash }]) => [stage, hash])),
       manifestSha256: chain.manifestSha256,
+      ...(record.rosterSha256 === undefined ? {} : { rosterSha256: record.rosterSha256 }),
       supported: record.supported,
       residuals: record.residuals,
       trust: record.trust,

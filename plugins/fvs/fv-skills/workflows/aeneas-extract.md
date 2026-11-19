@@ -372,7 +372,19 @@ The spec keeps the single-crate fields as a base (`release`, `cargoArgs`, `charo
 
 Every crate has its own Charon, Aeneas and publish chain, so a failing crate ends only its own
 chain. `attempt-status` refuses until every crate is complete and then lists each crate's status;
-`--crate NAME` reads one crate. Each unit row is a whole single-crate run plus its `imports`,
+`--crate NAME` reads one crate.
+
+The attempt also records its roster: `main`, the `order` (providers first), one row per crate with
+its `package`, `dir` and the crates it is `stitch`ed to, the `nonTargets` and the `dropped` crates,
+in that canonical form (fixed key order, every list sorted except the order). The roster and its
+hash `rosterSha256` are written into the top-level record and into every crate's own attempt record,
+and the status returns both (`run.roster`, `run.rosterSha256`; each crate's row carries the hash).
+Whoever reads the status can bind to that one hash. `attempt-status` and every stage rebuild the
+roster from the crates' records and refuse when it differs from the recorded one: a crate left out
+of the top-level record (a failed crate's row deleted), a changed `main`, `dropped`, package,
+directory or imports, an order that the stitching does not give, or a directory under `units/` that
+is not in the roster. A crate's own directory is not read alone: `attempt-status --out
+OUT/units/NAME` is refused and points to the copy, where the roster is checked. Each unit row is a whole single-crate run plus its `imports`,
 `stitch`, `hasErrors` (the items Aeneas could not translate; they are never roots),
 `foreignCrates` (each crate the LLBC reaches, as `target`, `non-target` or `external`) and the
 pinned sources of each non-target.
