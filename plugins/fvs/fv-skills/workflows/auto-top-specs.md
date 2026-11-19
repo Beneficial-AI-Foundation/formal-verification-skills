@@ -135,7 +135,10 @@ Carry the pending decisions into the report. Work crate by crate, providers firs
 - A crate that calls another target crate uses that crate's real translation, not an axiom (the
   extraction is not recorded as succeeded otherwise), and its statements use the other crate's
   statements as lemmas. No statement may rest on a hand-written axiom
-  that says what a function of another target crate does: prove it in its own crate and use the result. An
+  that stands in for a function of another target crate that the stitching translated, or on a stale copy
+  of it: prove the function in its own crate and use the result. An item a target crate could not
+  translate itself, or that the run declares opaque, is a disclosed assumption that the owner accepts in
+  the externals record, and statements may rest on it. An
   author may start such a statement early against the other crate's reviewed statement; the proof is
   accepted only after the other crate is accepted (`auto-execute.md`).
 - `spec-status` lists each crate with its spec files, providers first, and is ready for the pull request
