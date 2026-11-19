@@ -142,12 +142,14 @@ The hook answers for every Bash command that contains a push:
     shell syntax asks.
   - A bare `git push`, only when HEAD is a branch `fvs/<name>`, its upstream and its push target are both
     `origin/<same name>`, `push.default` is `simple`, `current` or `upstream` (not `matching`), and none of
-    `remote.origin.push`, `remote.origin.mirror`, `push.followTags` and `push.recurseSubmodules` (set to
-    `on-demand` or `only`) is set.
+    `remote.origin.push`, `remote.origin.mirror`, `push.followTags`, `submodule.recurse` and
+    `push.recurseSubmodules` (set to `on-demand` or `only`) is set.
 - **Check the destination first.** Before it allows anything it reads every URL git would push to from the
   directory the push runs in (the working directory, or the `-C` path), after git's own URL rewriting, and
   requires each to name the host and repository you chose. Any mismatch, a URL it cannot read, or a git error
-  means ask.
+  means ask. A URL is read the way git reads it, and a form that programs read differently is refused: a
+  backslash, a space or control character, a leading `-`, and an scp-like form such as
+  `host:user@github.com:Acme/proj`, which git sends to `host`.
 - **Ask** for every other command that contains a push: force flags, `--delete`, `--tags`, `--mirror`, `--all`,
   `--dry-run`, refspecs with `:` or `+`, other remotes, other branch names, several branch names, chains
   (`&&`, `;`), pipes, redirects (`2>&1`), several lines, quotes, `$(...)`, a `-C` path that is not plain, other
@@ -241,7 +243,8 @@ Before you confirm, init shows the file it would change, the real path when `.cl
 file is tracked, ignored or loose in git, and where it applies.
 
 Claude Code reads the project's `.claude/settings.json` from the session's own directory, and rules and hooks
-in a shared project file apply once you trust the folder.
+in a shared project file apply once you trust the folder. Whether a hook in `.claude/settings.local.json` needs
+the same trust step is not observed.
 
 - A worker works in its own worktree. It sees `.claude/settings.json` only if the file is committed, or if
   `.claude` is linked into the worktree (`auto-setup.md`, "Worktrees"). If neither is true, the allowlist and
@@ -267,9 +270,12 @@ covers the session that ran init. If your workers run in another mode, check tha
   CLI is installed.
 - One live probe: the message step (`ao send` to a session that does not exist) was run in a Claude Code
   session.
-- Not observed: a live Claude Code or Codex session showing that a written rule or the hook removes a prompt;
-  the live `gh`, `git fetch`, `git push --dry-run` and Lake probes; a real push through the hook. That is why
-  init asks you to recheck, and why the first real push is the evidence for the hook.
+- Not observed: a live Claude Code or Codex session showing that a written rule or the hook removes a prompt,
+  including that an "allow" answer from the hook skips the prompt; the live `gh`, `git fetch`,
+  `git push --dry-run` and Lake probes; a real push through the hook; that the working directory Claude Code
+  gives the hook is the directory the shell runs the push in (the `-C` path and the destination check rely on
+  it, and a mismatch makes the hook ask, not allow). That is why init asks you to recheck, and why the first
+  real push is the evidence for the hook.
 
 ## After a first run: `/fewer-permission-prompts`
 

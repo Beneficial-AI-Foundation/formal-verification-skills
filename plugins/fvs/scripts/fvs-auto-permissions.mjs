@@ -431,7 +431,7 @@ function writeClaude(flags, root, catalog, picked, allow, hook) {
     runtime: 'claude', target, file: relative, ...resolveTarget(root, relative), gitStatus: gitStatusOf(root, relative),
     appliesTo: target === 'shared'
       ? 'Claude Code reads .claude/settings.json from each session\'s own directory, and its rules and hooks apply once the folder is trusted. A worker worktree sees it only if the file is committed or .claude is linked into the worktree.'
-      : 'Claude Code reads .claude/settings.local.json from the main checkout in every worktree and keeps it out of git; its rules and hooks apply without the trust step while the file stays untracked.',
+      : 'Claude Code reads .claude/settings.local.json from the main checkout in every worktree and keeps it out of git; its rules apply without the trust step while the file stays untracked (a hook there is not observed to need it either way).',
     steps: picked.map((step) => step.id), add: added,
     alreadyPresent: { allow: allow.filter((r) => !added.allow.includes(r)), hook: Boolean(hook) && !added.hook },
     ...(hook ? {
