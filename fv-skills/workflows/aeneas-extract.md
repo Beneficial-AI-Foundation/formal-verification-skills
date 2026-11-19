@@ -380,9 +380,18 @@ pinned sources of each non-target.
 Stitching. When crate B calls target crate A, Aeneas writes B's copy of A's items as axioms that
 carry only a type. Publication replaces each such axiom by an alias of A's real definition with
 the type B was translated against, and adds `public import <A moduleRoot>.<file>` to B's Lean.
-Lean's own type check is the signature gate: an alias whose type is not the type A defines is
-rejected when the project builds, and the engine refuses an obvious mismatch before that. Functions
-and types become reducible aliases; a constant becomes a plain definition `Result.ok` of A's
+The signature of each alias is checked in two places. The engine compares the two signatures where
+it can read both and refuses a difference it can read (`textComparison` is `equal` or `undecided`;
+`differ` never reaches a record). The engine cannot run Lean, so the comparison that decides is
+generated into the published module: after the aliases it appends a `run_cmd` block that requires
+each alias to have the same number of universe parameters as A's constant and a declared type
+definitionally equal to A's type (inside `Result` for a constant). An alias alone elaborates by
+instantiating what A keeps general (an implicit type argument, an instance argument, a universe),
+and the block rejects exactly those. Every replaced item carries `check: pending-lean-build`, never
+a finished check: the comparison has run once the published modules build with exit 0, and the
+record lists each generated block (`leanChecks`: the file, its module, the hash of the block alone
+and the hash of the whole published file, which is the file's `publication` hash) so that
+`attempt-status` recomputes it. Functions and types become reducible aliases; a constant becomes a plain definition `Result.ok` of A's
 constant, so proof automation keeps seeing the constant. Every existing name stays valid. Nothing
 falls back to an axiom silently. A crate whose Charon output reaches a target crate A must have a
 `stitch` entry for A, or its publication fails (declare A a non-target if the owner decides to

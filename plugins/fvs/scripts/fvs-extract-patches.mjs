@@ -2363,7 +2363,7 @@ function stitchText(text, { crate, provider, assume, consumerNames }) {
     const marked = kind === 'const' ? head : /^@\[/m.test(head) ? head.replace(/^@\[/m, '@[reducible, ') : `${head}@[reducible]\n`;
     parts[index] = `${marked}def ${name}${declaration[2].trimEnd()}\n  := ${lift ? 'Result.ok ' : ''}_root_.${name}`;
     replaced.push({
-      rustPath, name, qualifiedName: `${crate}.${name}`, providerQualifiedName: name, kind, lift, providerKind: target.keyword, providerOpaque: target.keyword === 'axiom', check: verdict === 'equal' ? 'text-and-lean-build' : 'lean-build',
+      rustPath, name, qualifiedName: `${crate}.${name}`, providerQualifiedName: name, kind, lift, providerKind: target.keyword, providerOpaque: target.keyword === 'axiom', textComparison: verdict, check: 'pending-lean-build',
       signatureSha256: sha256(squash(declaration[2])), providerDeclSha256: target.blockSha256,
     });
   }
@@ -2377,6 +2377,32 @@ function stitchText(text, { crate, provider, assume, consumerNames }) {
     }
   }
   return { text: result, replaced, assumed, copies, problems, usedAssume: [...usedAssume] };
+}
+
+// The check that makes Lean itself compare each alias with the constant it stands for, appended to
+// the consumer's published module so that the normal build runs it. An alias that elaborates is not
+// enough: elaboration may insert implicit arguments, synthesise instances or instantiate universes,
+// so the declared type of the alias could differ from the provider's. The check compares the
+// universe parameters and the declared types themselves, with nothing inserted; a constant, which
+// carries Result here, is compared with Result of the provider's type.
+function leanCheckBlock(items) {
+  const pairs = items.map((item) => `      (\`${item.qualifiedName}, \`${item.providerQualifiedName}, ${item.lift})`).join(',\n');
+  return [
+    '',
+    "/-! The declared type of each alias above is the type of the constant it stands for: equal universe parameters and definitionally equal types, with no implicit argument inserted (a constant, which carries Result here, is compared with Result of the provider's type). This module does not build when one is not. -/",
+    'open Lean Meta Elab Command in',
+    'run_cmd liftTermElabM do',
+    '  for (consumer, provider, lift) in [',
+    `${pairs}] do`,
+    '    let a ← getConstInfo consumer',
+    '    let b ← getConstInfo provider',
+    '    unless a.levelParams.length == b.levelParams.length do',
+    '      throwError "{consumer}: {a.levelParams.length} universe parameter(s), but {provider} has {b.levelParams.length}"',
+    '    let expected ← if lift then mkAppM ``Aeneas.Std.Result #[b.type] else pure b.type',
+    '    unless (← isDefEq a.type expected) do',
+    '      throwError "{consumer}: its type {a.type} is not the type {expected} of {provider}"',
+    '',
+  ].join('\n');
 }
 
 // The substitutions and then the stitching of every generated Lean file, recomputed from
@@ -2402,23 +2428,31 @@ function computeTransform(chain, raw) {
   if (consumerInventory.duplicates.length > 0) reasons.push(`this crate's Lean declares ${consumerInventory.duplicates.slice(0, 6).join(', ')}${consumerInventory.duplicates.length > 6 ? ', ...' : ''} more than once, so a declaration of it is not a unique target`);
   const stitched = providers.map(({ loaded }) => ({ provider: loaded.crate, providerStage: 'publish', providerStageSha256: loaded.stageSha256, modules: loaded.modules, replaced: [], assumed: [], copies: [], files: [] }));
   const usedAssume = providers.map(() => new Set());
+  const leanChecks = [];
   for (const name of Object.keys(texts)) {
+    const replacedHere = [];
     providers.forEach(({ assume, loaded }, position) => {
       const result = stitchText(texts[name], { crate: spec.crate, provider: loaded, assume, consumerNames });
       result.usedAssume.forEach((prefix) => usedAssume[position].add(prefix));
       texts[name] = result.text;
       stitched[position].replaced.push(...result.replaced);
+      replacedHere.push(...result.replaced);
       stitched[position].assumed.push(...result.assumed);
       stitched[position].copies.push(...result.copies);
       if (result.replaced.length > 0) stitched[position].files.push(name);
       reasons.push(...result.problems.map((problem) => `${name}: ${problem}`));
     });
+    if (replacedHere.length > 0) {
+      const block = leanCheckBlock(replacedHere);
+      texts[name] = `${texts[name].endsWith('\n') ? texts[name] : `${texts[name]}\n`}${block}`;
+      leanChecks.push({ file: name, module: spec.moduleRoot === undefined ? null : `${spec.moduleRoot}.${name.replace(/\.lean$/, '').split('/').join('.')}`, items: replacedHere.length, blockSha256: sha256(block), fileSha256: sha256(texts[name]) });
+    }
     files[name] = { rawSha256: sha256(raw[name]), sha256: sha256(texts[name]) };
   }
   providers.forEach(({ assume, loaded }, position) => {
     for (const prefix of assume) if (!usedAssume[position].has(prefix)) reasons.push(`stitch to ${loaded.crate}: the assume entry ${prefix} matches no axiom of this crate, so it is stale`);
   });
-  return { record: { substitutions: applied, stitch: stitched, files }, texts, reasons };
+  return { record: { substitutions: applied, stitch: stitched, leanChecks, files }, texts, reasons };
 }
 
 // A crate whose LLBC reaches another target crate must import that crate's real
@@ -2668,7 +2702,7 @@ function attemptStatusOfChain(chain, out) {
       hasErrors: stages.charon.record.llbc ? { value: stages.charon.record.llbc.hasErrors, items: stages.charon.record.llbc.items, itemCount: stages.charon.record.llbc.itemCount } : null,
       // The declared edits of the generated Lean: substitutions, and the crates whose real
       // translation this crate's Lean imports in place of axioms.
-      ...(recorded === null ? {} : { imports: recorded.stitch.map((entry) => entry.provider), stitch: recorded.stitch, substitutions: recorded.substitutions }),
+      ...(recorded === null ? {} : { imports: recorded.stitch.map((entry) => entry.provider), stitch: recorded.stitch, substitutions: recorded.substitutions, leanChecks: recorded.leanChecks }),
       // Cross-crate edges, present with or without stitching: the declared target crates this
       // crate's LLBC reaches, the ones among them its Lean does not import (their items are
       // still axioms here), and the provider items the stitched aliases stand for, each of

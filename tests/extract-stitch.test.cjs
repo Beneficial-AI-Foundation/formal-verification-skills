@@ -143,7 +143,19 @@ describe('stitching: the consumer\'s axioms become checked aliases of the provid
     assert.deepEqual(entry.replaced.map(({ rustPath, kind, lift }) => [rustPath, kind, lift]), [
       ['toy_lib::one', 'fun', false], ['toy_lib::TWO', 'const', true], ['toy_lib::Thing', 'type', false], ['toy_lib::grow', 'fun', false],
     ]);
-    assert.deepEqual(entry.replaced.map((item) => item.check), ['text-and-lean-build', 'text-and-lean-build', 'lean-build', 'text-and-lean-build'], 'a signature the engine cannot read is left to the Lean build, and the record says so');
+    assert.deepEqual(entry.replaced.map((item) => item.check), Array(4).fill('pending-lean-build'), 'no check has run: Lean runs it when the published module builds');
+    assert.deepEqual(entry.replaced.map((item) => item.textComparison), ['equal', 'equal', 'undecided', 'equal'], 'what the engine could read of each signature');
+    // The check itself is part of the published module, so the normal build runs it.
+    assert.match(text, /\nopen Lean Meta Elab Command in\nrun_cmd liftTermElabM do\n {2}for \(consumer, provider, lift\) in \[\n {6}\(`toy_app\.toy_lib\.one, `toy_lib\.one, false\),\n {6}\(`toy_app\.toy_lib\.TWO, `toy_lib\.TWO, true\),\n {6}\(`toy_app\.toy_lib\.Thing, `toy_lib\.Thing, false\),\n {6}\(`toy_app\.toy_lib\.grow, `toy_lib\.grow, false\)\] do\n/);
+    assert.match(text, /unless a\.levelParams\.length == b\.levelParams\.length do/);
+    assert.match(text, /unless \(← isDefEq a\.type expected\) do/);
+    assert.doesNotMatch(text, /other_mod\.skipped, /, 'an assumed item stays an axiom and is not compared');
+    assert.deepEqual(app.leanChecks.map(({ file, module, items }) => [file, module, items]), [['ToyApp.lean', 'Toy.App.ToyApp', 4]]);
+    assert.match(app.leanChecks[0].blockSha256, /^[0-9a-f]{64}$/);
+    const publishedFile = app.publication.find((entry) => entry.relativePath.endsWith('Lean/App/ToyApp.lean'));
+    assert.equal(app.leanChecks[0].fileSha256, publishedFile.sha256, 'the file the block was appended to is the published file');
+    assert.notEqual(app.leanChecks[0].blockSha256, app.leanChecks[0].fileSha256);
+    assert.deepEqual(library.leanChecks ?? [], [], 'a crate that stitches nothing has no check');
     assert.ok(entry.replaced.every((item) => /^[0-9a-f]{64}$/.test(item.signatureSha256) && /^[0-9a-f]{64}$/.test(item.providerDeclSha256)));
     assert.deepEqual(entry.assumed, [{ rustPath: 'toy_lib::other_mod::skipped', name: 'toy_lib.other_mod.skipped', qualifiedName: 'toy_app.toy_lib.other_mod.skipped', reason: 'named in the stitch assume list' }]);
     // The generated file declares everything inside `namespace <crate>`: this is the name
@@ -203,6 +215,7 @@ describe('stitching: the consumer\'s axioms become checked aliases of the provid
   it('refuses the status when the published Lean no longer reproduces from the recorded inputs', () => {
     for (const tamper of [
       (ws, out) => fs.appendFileSync(path.join(ws.project, 'Lean/App/ToyApp.lean'), '-- edited\n'),
+      (ws, out) => fs.writeFileSync(path.join(ws.project, 'Lean/App/ToyApp.lean'), fs.readFileSync(path.join(ws.project, 'Lean/App/ToyApp.lean'), 'utf8').replace(/\n\/-! The declared type[\s\S]*$/, '\n')),
       (ws, out) => fs.appendFileSync(path.join(out, 'units', 'toy_app', 'publish-dest', 'ToyApp.lean'), '-- edited\n'),
       (ws, out) => fs.appendFileSync(path.join(out, 'units', 'toy_lib', 'aeneas-dest', 'ToyLib.lean'), '-- edited\n'),
     ]) {
