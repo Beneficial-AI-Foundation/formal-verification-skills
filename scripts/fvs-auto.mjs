@@ -1145,6 +1145,7 @@ function crateView(run, always = false) {
   const names = (list, pick) => (Array.isArray(list) ? list.map(pick) : []);
   const dependsOn = new Map(units.map((unit) => [unit.crate, [...new Set([
     ...names(unit.imports, (crate) => crate),
+    ...names(unit.dependsOn, (crate) => crate),
     ...names([].concat(unit.stitch ?? []), (entry) => entry?.provider),
     ...names(unit.foreignCrates?.filter((entry) => entry?.kind === 'target'), (entry) => entry.crate),
   ])].filter((crate) => crates.includes(crate) && crate !== unit.crate).sort()]));
@@ -1222,22 +1223,28 @@ function proofAcceptance(root, state, specs, context) {
 function unstitchedPairs(context) {
   return context.units.filter((unit) => context.targets.includes(unit.crate)).flatMap((unit) => {
     const linked = new Set([...(Array.isArray(unit.imports) ? unit.imports : []), ...[].concat(unit.stitch ?? []).map((entry) => entry?.provider)]);
-    return (Array.isArray(unit.foreignCrates) ? unit.foreignCrates : [])
-      .filter((entry) => entry?.kind === 'target' && entry.crate !== unit.crate && context.targets.includes(entry.crate) && !linked.has(entry.crate))
-      .map((entry) => ({ crate: unit.crate, provider: entry.crate }));
+    const reached = (Array.isArray(unit.foreignCrates) ? unit.foreignCrates : []).filter((entry) => entry?.kind === 'target').map((entry) => entry.crate)
+      .filter((crate) => !linked.has(crate));
+    // The extraction names the target crates it left unstitched itself; that is the same case.
+    const named = Array.isArray(unit.unstitched) ? unit.unstitched : [];
+    return [...new Set([...reached, ...named])].filter((crate) => isText(crate) && crate !== unit.crate && context.targets.includes(crate))
+      .map((provider) => ({ crate: unit.crate, provider }));
   });
 }
 
 const unstitchedReason = ({ crate, provider }, subject = `crate ${crate}`) => `${subject} uses items of ${provider}, which is verified, without being stitched to it: they would be axioms in ${crate}'s Lean, not ${provider}'s translation. Stitch ${crate} to ${provider} in the extraction spec, or have the owner record ${provider} as a non-target in the agreement`;
 
 // What stops a recorded run over several crates from being used, given the targets the owner's
-// agreement names (null without a crate decision): a dependency cycle, which no order of providers
-// before consumers fits, and a verified crate that uses another verified crate's items without
-// being stitched to it. Empty for a single crate.
+// agreement names (null without a crate decision): a crate whose extraction did not complete, a
+// dependency cycle, which no order of providers before consumers fits, and a verified crate that
+// uses another verified crate's items without being stitched to it. The extraction engine refuses
+// the first and the last itself; this is the second check of the same cases. Empty for a single crate.
 export function crateProblems(run, agreedTargets = null) {
   const context = run ? crateContextOf({ extraction: { status: 'succeeded', run }, agreements: agreedTargets === null ? [] : [{ payload: { targets: agreedTargets } }] }) : null;
   if (context === null) return [];
   return [
+    // A single crate's run has no status of its own: only the rows of a run over several crates do.
+    ...context.units.filter((unit) => isText(unit.status) && unit.status !== 'complete').map((unit) => `crate ${unit.crate} did not complete its extraction (${unit.status})`),
     ...(context.view.cycle ? [`the crates ${context.view.cycle.join(', ')} depend on each other, so no order puts providers before consumers`] : []),
     ...unstitchedPairs(context).map((pair) => unstitchedReason(pair)),
   ];

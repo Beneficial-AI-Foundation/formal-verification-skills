@@ -188,6 +188,31 @@ describe('crateProblems', () => {
     assert.deepEqual(auto.crateProblems(open, { crates: ['app', 'base'], nonTargets: [] }), [unstitched], 'the owner verifies both');
   });
 
+  it('refuses a crate the extraction itself names as left unstitched, even when the LLBC list does not show it', () => {
+    const run = runOf((directory) => [unit(directory, 'app', [], { unstitched: ['base'] }), unit(directory, 'base', [])]);
+    assert.deepEqual(auto.crateProblems(run), [unstitched]);
+    assert.deepEqual(auto.crateProblems(run, { crates: ['app'], nonTargets: [{ crate: 'base', decision: 'Not verified; its behaviour is assumed.' }] }), [], 'a provider the owner does not verify is only assumed');
+  });
+
+  it('reads the dependencies a unit names itself, so the order puts the provider first', () => {
+    const root = extracted((directory) => [unit(directory, 'app', [], { dependsOn: ['base'] }), unit(directory, 'base', [])]);
+    const { crates } = cli('read-state', '--project-root', root, '--brief').json;
+    assert.deepEqual(crates.units.find((entry) => entry.crate === 'app').dependsOn, ['base']);
+    assert.deepEqual(crates.order, ['base', 'app']);
+  });
+
+  it('refuses a crate whose extraction did not complete', () => {
+    const run = runOf((directory) => [unit(directory, 'app', []), unit(directory, 'base', [], { status: 'partial' })]);
+    assert.deepEqual(auto.crateProblems(run), ['crate base did not complete its extraction (partial)']);
+  });
+
+  it('does not refuse the one crate of an extraction that declares non-targets: its run has no status', () => {
+    const run = runOf((directory) => [unit(directory, 'app', [], { nonTargets: [{ crate: 'dep', dir: 'dep', sources: [] }] })]);
+    delete run.units;
+    delete run.status;
+    assert.deepEqual(auto.crateProblems(run), []);
+  });
+
   it('has nothing to say about a single crate or a run that was not recorded', () => {
     assert.deepEqual(auto.crateProblems(runOf((directory) => [unit(directory, 'app', [], reaches('base'))])), []);
     assert.deepEqual(auto.crateProblems(undefined), []);
