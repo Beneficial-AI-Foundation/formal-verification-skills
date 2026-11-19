@@ -15,11 +15,26 @@ const { pathToFileURL } = require('node:url');
 
 const ROOT = path.resolve(__dirname, '..');
 const SCRIPT = path.join(ROOT, 'scripts', 'fvs-auto-permissions.mjs');
+const PUSH_SCRIPT = path.join(ROOT, 'scripts', 'fvs-auto-push.mjs');
 const PAGE = path.join(ROOT, 'fv-skills', 'references', 'auto-permissions.md');
 const REPO = 'Acme/proj';
+const PROGRAM = `node ${PUSH_SCRIPT}`;
+const RULE = `Bash(${PROGRAM} --branch fvs/*)`;
+// A stand-in for the scripts folder, so the catalog and the permissions page can be compared on any machine.
+const PLACEHOLDER_DIR = '/PATH/TO/FVS/scripts';
+// A rule spells out the absolute path of the push command, so the tests that write one need a checkout path it can spell.
+const PLAIN_SCRIPTS = /^\/[A-Za-z0-9._/-]+$/.test(path.dirname(PUSH_SCRIPT));
+const pushSkip = PLAIN_SCRIPTS ? false : 'the checkout path has characters that a rule cannot spell';
 
 let lib;
-before(async () => { lib = await import(pathToFileURL(SCRIPT).href); });
+let pushLib;
+before(async () => {
+  // The checks read git's configuration, so the tests do not read the developer's own.
+  process.env.GIT_CONFIG_GLOBAL = os.devNull;
+  process.env.GIT_CONFIG_NOSYSTEM = '1';
+  lib = await import(pathToFileURL(SCRIPT).href);
+  pushLib = await import(pathToFileURL(PUSH_SCRIPT).href);
+});
 
 let project;
 beforeEach(() => {
@@ -49,7 +64,15 @@ const confirmed = (steps, ...extra) => {
   return allow(steps, ...extra, '--confirm', preview.json.digest);
 };
 
-const otherHookSteps = (catalog) => catalog.steps.filter((s) => s.hook && s.id !== 'git-push').map((s) => s.id);
+const destination = (...extra) => run('write-destination', base(...extra));
+const recordFile = () => path.join(fs.realpathSync(project), '.git', 'fvs-auto-push.json');
+const recordDestination = (...extra) => {
+  const preview = destination(...extra);
+  assert.equal(preview.json.code, 'confirmation-required');
+  const done = destination(...extra, '--confirm', preview.json.digest);
+  assert.equal(done.json.code, 'written');
+  return done.json;
+};
 
 // How Claude Code reads a Bash rule: "*" stands for any text, and a trailing " *" also matches the bare command.
 function bashMatches(rule, command) {
@@ -61,8 +84,8 @@ function bashMatches(rule, command) {
 }
 
 describe('the catalog', () => {
-  it('every probe is matched by a rule of its own step, except the push probe, which no rule matches', () => {
-    const catalog = lib.buildCatalog({ repo: REPO, prefixes: ['fvs', 'team/runs'] });
+  it('every probe is matched by a rule of its own step', () => {
+    const catalog = lib.buildCatalog({ repo: REPO, prefixes: ['fvs', 'team/runs'], scriptsDir: PLACEHOLDER_DIR });
     for (const step of catalog.steps.filter((s) => s.probes)) {
       for (const probe of step.probes) {
         if (probe.tool === 'Write') {
@@ -70,36 +93,63 @@ describe('the catalog', () => {
           assert.ok(probe.path.startsWith(`${lib.SCRATCH_DIR}/`), 'scratch file is inside the scratch folder');
           continue;
         }
-        if (step.id === 'git-push') continue;
         assert.ok(step.claude.some((rule) => bashMatches(rule, probe.command)), `${step.id}: ${probe.command}`);
       }
     }
-    const push = catalog.steps.find((s) => s.id === 'git-push');
-    assert.equal(push.probes.length, 2, 'one dry-run push per prefix');
-    assert.ok(push.probes.every((p) => p.command.endsWith(' --dry-run')));
-    assert.deepEqual(push.claude, [], 'no allow rule for a push');
-    assert.match(push.hook.command, /^node "[^"]+\/fvs-auto-push-gate\.mjs" --repo Acme\/proj --host github\.com --remote origin --prefix fvs --prefix team\/runs$/);
-    assert.equal(lib.hookProblem(push.hook.command), null);
-    assert.deepEqual(otherHookSteps(catalog), [], 'no other step installs a hook');
   });
 
-  it('no rule the catalog writes matches any push, whatever its spelling', () => {
-    const catalog = lib.buildCatalog({ repo: REPO, prefixes: ['fvs', 'ao'] });
+  it('the push step names the push command by its absolute path, once per namespace, and nothing else', () => {
+    const catalog = lib.buildCatalog({ repo: REPO, prefixes: ['fvs', 'team/runs'], scriptsDir: PLACEHOLDER_DIR });
+    const push = catalog.steps.find((s) => s.id === 'git-push');
+    const program = `node ${PLACEHOLDER_DIR}/fvs-auto-push.mjs`;
+    assert.deepEqual(push.claude, [`Bash(${program} --branch fvs/*)`, `Bash(${program} --branch team/runs/*)`]);
+    assert.deepEqual(push.codex.map((r) => r.pattern), [['node', `${PLACEHOLDER_DIR}/fvs-auto-push.mjs`, '--branch']]);
+    assert.equal(lib.pushProgram(PLACEHOLDER_DIR), program);
+    assert.equal(catalog.pushCommand.example, `${program} --branch fvs/<name>`);
+    assert.deepEqual(catalog.steps.filter((s) => s.hook).map((s) => s.id), [], 'no step installs a hook');
+  });
+
+  it('the push probe is a branch name that no branch can have, one per namespace, so the command refuses it first', () => {
+    const catalog = lib.buildCatalog({ repo: REPO, prefixes: ['fvs', 'team/runs'], scriptsDir: PLACEHOLDER_DIR });
+    const push = catalog.steps.find((s) => s.id === 'git-push');
+    assert.equal(push.probes.length, 2);
+    for (const probe of push.probes) {
+      const branch = probe.command.split(' --branch ')[1];
+      assert.match(branch, /^(fvs|team\/runs)\/\.permission-check$/);
+      assert.notEqual(spawnSync('git', ['check-ref-format', `refs/heads/${branch}`]).status, 0, `git refuses ${branch} as a branch name`);
+      assert.equal(pushLib.WORD.test(branch.split('/').at(-1)), false, 'the push command\'s own name rule refuses it too');
+    }
+  });
+
+  it('no rule the catalog writes matches a git push, whatever its spelling, and the push rule matches only the push command', () => {
+    const catalog = lib.buildCatalog({ repo: REPO, prefixes: ['fvs', 'ao'], scriptsDir: PLACEHOLDER_DIR });
     const rules = catalog.steps.flatMap((s) => s.claude).filter((rule) => rule.startsWith('Bash('));
     for (const command of [
       'git push origin fvs/x', 'git push -u origin fvs/x', 'git push origin fvs/x main', 'git push -u origin fvs/x -uf', 'git push --force origin fvs/x',
       'git push origin fvs/x --delete', 'git push origin fvs/x:main', 'git -C /a push origin fvs/x', 'git push', 'git push origin main',
       'git push -u origin fvs/permission-check --dry-run',
     ]) assert.ok(!rules.some((rule) => bashMatches(rule, command)), command);
+    const pushRules = rules.filter((rule) => rule.includes('fvs-auto-push.mjs'));
+    assert.equal(pushRules.length, 2);
+    const matches = (command) => pushRules.some((rule) => bashMatches(rule, command));
+    const program = `node ${PLACEHOLDER_DIR}/fvs-auto-push.mjs`;
+    assert.ok(matches(`${program} --branch fvs/work`));
+    assert.ok(matches(`${program} --branch ao/work`));
+    for (const command of [
+      `${program} --branch main`, `${program} --branch release/x`, `${program} --branch fvs`, program, `${program} --help`, `${program} --force --branch fvs/x`,
+      'node /elsewhere/fvs-auto-push.mjs --branch fvs/x', 'node fvs-auto-push.mjs --branch fvs/x', `node ${PLACEHOLDER_DIR}/fvs-auto.mjs --branch fvs/x`,
+    ]) assert.ok(!matches(command), command);
+    // Said plainly: a rule is a text match, so words after the branch name still match it. The command refuses them.
+    assert.ok(matches(`${program} --branch fvs/work --force`));
     assert.equal(lib.GUARDS, undefined, 'FVS writes no deny rules either');
   });
 
   it('every rule the catalog writes passes the rule check, and forbidden rules never do', () => {
-    const catalog = lib.buildCatalog({ repo: REPO });
+    const catalog = lib.buildCatalog({ repo: REPO, scriptsDir: PLACEHOLDER_DIR });
     for (const step of catalog.steps) for (const rule of step.claude) assert.equal(lib.ruleProblem('allow', rule), null, rule);
     for (const rule of [
       'Bash(gh pr comment *)', 'Bash(gh pr review *)', 'Bash(gh pr merge *)', 'Bash(gh pr ready *)', 'Bash(gh api *)', 'Bash(gh issue comment *)',
-      // A glob never allows a push, in any spelling: the push gate hook decides pushes, not a rule.
+      // A glob never allows a git push, in any spelling: the only push rule names the push command.
       'Bash(git push *)', 'Bash(git push --force origin fvs/*)', 'Bash(git push origin main)', 'Bash(git push origin main*)', 'Bash(git push upstream fvs/*)',
       'Bash(git push origin */*)', 'Bash(git push -u upstream fvs/*)', 'Bash(git push origin release/*)', 'Bash(git push origin fvs/*)', 'Bash(git push -u origin fvs/*)',
       'Bash(git -C * push origin fvs/*)', 'Bash(git * push *)', 'Bash(git *)', 'Bash(gh *)', 'Bash(*)', 'Bash(rm *)',
@@ -107,7 +157,16 @@ describe('the catalog', () => {
       // Not rules FVS writes: the spec and proof folders, and draft pull request create and edit, are left to the user.
       'Edit(/formal/**)', 'Bash(gh pr edit *)', `Bash(gh pr create --draft --repo ${REPO} *)`,
     ]) assert.ok(lib.ruleProblem('allow', rule), `should refuse ${rule}`);
-    for (const text of ['Bash(gh pr comment *)', 'Bash(git push *--force*)', 'Bash(git push *:*)']) assert.ok(lib.ruleProblem('deny', text), 'FVS writes no deny rule');
+    const program = `node ${PLACEHOLDER_DIR}/fvs-auto-push.mjs`;
+    for (const rule of [
+      `Bash(${program} --branch main/*)`, `Bash(${program} --branch release/*)`, `Bash(${program} --branch fvs/x)`, `Bash(${program} --branch *)`, `Bash(${program} *)`, `Bash(${program})`,
+      `Bash(${program} --branch fvs/* --force)`, `Bash(${program} --branch fvs/**)`, `Bash(${program} --branch fvs/* && git push)`, 'Bash(node * fvs-auto-push.mjs --branch fvs/*)',
+      'Bash(node /a b/fvs-auto-push.mjs --branch fvs/*)', 'Bash(node /a/../fvs-auto-push.mjs --branch fvs/*)', 'Bash(node fvs-auto-push.mjs --branch fvs/*)',
+      `Bash(sh ${PLACEHOLDER_DIR}/fvs-auto-push.mjs --branch fvs/*)`, 'Bash(node "/a/fvs-auto-push.mjs" --branch fvs/*)', `Bash(node ${PLACEHOLDER_DIR}/fvs-auto-push.mjs --branch fvs/.*)`,
+    ]) assert.ok(lib.ruleProblem('allow', rule), `should refuse ${rule}`);
+    assert.equal(lib.ruleProblem('allow', `Bash(${program} --branch fvs/*)`), null);
+    assert.equal(lib.ruleProblem('allow', `Bash(${program} --branch team/runs/*)`), null);
+    for (const text of ['Bash(gh pr comment *)', 'Bash(git push *--force*)', 'Bash(git push *:*)', `Bash(${program} --branch fvs/*)`]) assert.ok(lib.ruleProblem('deny', text), 'FVS writes no deny rule');
     assert.ok(lib.ruleProblem('ask', 'Bash(ao send *)'));
   });
 
@@ -118,6 +177,21 @@ describe('the catalog', () => {
     assert.throws(() => lib.buildCatalog({ repo: REPO, remote: 'upstream' }), (error) => error.code === 'upstream-refused');
     assert.throws(() => lib.buildCatalog({ repo: 'not-a-repo' }), (error) => error.code === 'invalid-input');
   });
+
+  it('names no rule when the scripts folder is not a plain path, and says why', () => {
+    for (const dir of ['/a b', '/a"b', '/a$b', '/a*b', '/a`b', '/a\\b', 'relative/dir', '/a/../b', "/a'b", '/a;b', '/é', '/a(b)', '']) {
+      const push = lib.buildCatalog({ repo: REPO, scriptsDir: dir }).steps.find((s) => s.id === 'git-push');
+      assert.deepEqual([push.claude, push.codex], [[], []], JSON.stringify(dir));
+      assert.match(push.blocked, /not a plain path.*the push command still works, and your other rules and permission mode decide whether it asks/, JSON.stringify(dir));
+      assert.equal(push.claudeNote, push.blocked);
+      const entry = lib.probeEntry(push, null);
+      assert.equal(entry.probes, null);
+      assert.match(entry.skipped, /^not probed: the FVS scripts folder .*not a plain path.*; record it as unknown$/);
+    }
+    const fine = lib.buildCatalog({ repo: REPO, scriptsDir: PLACEHOLDER_DIR }).steps.find((s) => s.id === 'git-push');
+    assert.equal(fine.blocked, undefined);
+    assert.equal(lib.probeEntry(fine, null).probes.length, 1);
+  });
 });
 
 describe('plan', () => {
@@ -126,6 +200,10 @@ describe('plan', () => {
     assert.equal(ok.status, 0);
     assert.deepEqual(ok.json.steps.map((s) => s.id), ['worker-message', 'author-edit', 'lake-build', 'gh-read', 'git-read', 'git-push']);
     assert.equal(ok.json.record.present, false);
+    assert.equal(ok.json.pushCommand, `${PROGRAM} --branch fvs/<name>`);
+    assert.equal(ok.json.pushDestination.status, 'missing');
+    assert.equal(ok.json.pushDestination.file, recordFile());
+    assert.equal(ok.json.pushDestination.wouldRecord.url, `git@github.com:${REPO}.git`);
     const wrong = run('plan', ['--project-root', project, '--repo', 'Other/repo']);
     assert.equal(wrong.status, 1);
     assert.equal(wrong.json.code, 'remote-mismatch');
@@ -239,6 +317,29 @@ describe('the remote check', () => {
     assert.match(refused.message, /Upstream\/proj/);
   });
 
+  it('records the push URL after git has rewritten it, and refuses a rule that would rewrite that URL again', () => {
+    config('remote.origin.url', `https://github.com/${REPO}.git`);
+    config('url.ssh://git@github.com/.pushInsteadOf', 'https://github.com/');
+    const planned = plan();
+    assert.equal(planned.code, 'ok');
+    assert.equal(planned.pushDestination.wouldRecord.url, `ssh://git@github.com/${REPO}.git`, 'the URL that git pushes to');
+    config('--unset', 'url.ssh://git@github.com/.pushInsteadOf');
+    // "gh:" stands for the project's SSH address; a second rule that names that address would rewrite it once more.
+    config('remote.origin.url', 'gh:proj');
+    config('url.git@github.com:Acme/.insteadOf', 'gh:');
+    assert.equal(plan().code, 'ok');
+    assert.equal(plan().pushDestination.wouldRecord.url, 'git@github.com:Acme/proj');
+    for (const key of ['insteadOf', 'pushInsteadOf']) {
+      config(`url.git@github.com:Other/.${key}`, 'git@github.com:Acme/');
+      const refused = plan();
+      assert.equal(refused.code, 'destination-rewritten', key);
+      assert.match(refused.message, /would rewrite the recorded destination git@github\.com:Acme\/proj/);
+      assert.equal(destination().json.code, 'destination-rewritten', 'the destination is not recorded either');
+      config('--unset', `url.git@github.com:Other/.${key}`);
+    }
+    assert.equal(fs.existsSync(recordFile()), false);
+  });
+
   it('reads host and repository from the URL forms git accepts', () => {
     const cases = {
       'git@github.com:Acme/proj.git': ['github.com', 'Acme/proj'], 'github.com:Acme/proj': ['github.com', 'Acme/proj'],
@@ -306,62 +407,166 @@ describe('write-allowlist for Claude Code', () => {
 
 });
 
-describe('the push gate hook install', () => {
-  const GATE = path.join(ROOT, 'scripts', 'fvs-auto-push-gate.mjs');
-  const command = `node "${GATE}" --repo ${REPO} --host github.com --remote origin --prefix fvs`;
-  const entry = { matcher: 'Bash', hooks: [{ type: 'command', command, timeout: 15 }] };
+describe('the recorded destination', () => {
+  it('shows what it records and writes nothing before the yes', () => {
+    const preview = destination();
+    assert.equal(preview.status, 1);
+    assert.equal(preview.json.code, 'confirmation-required');
+    const root = fs.realpathSync(project);
+    assert.equal(preview.json.file, recordFile());
+    assert.deepEqual(preview.json.record, {
+      schema: 'fvs/auto-push-destination', schemaVersion: 1, projectRoot: root, commonDir: path.join(root, '.git'),
+      url: `git@github.com:${REPO}.git`, host: 'github.com', repo: REPO, prefixes: ['fvs'],
+    });
+    assert.match(preview.json.note, /any session of your user account can change it/);
+    assert.equal(fs.existsSync(recordFile()), false);
+    assert.equal(destination('--confirm', 'anything').json.code, 'confirmation-required');
+    assert.equal(fs.existsSync(recordFile()), false);
+  });
 
-  it('shows the exact hook and what it allows and asks, and writes nothing before the yes', () => {
+  it('writes the record after the yes, and a second run changes nothing', () => {
+    const done = recordDestination();
+    assert.deepEqual(JSON.parse(fs.readFileSync(recordFile(), 'utf8')), done.record);
+    const before = fs.readFileSync(recordFile(), 'utf8');
+    const again = destination();
+    assert.equal(again.status, 0);
+    assert.equal(again.json.code, 'unchanged');
+    assert.equal(fs.readFileSync(recordFile(), 'utf8'), before);
+    assert.deepEqual(fs.readdirSync(path.join(project, '.git')).filter((name) => name.includes('.tmp-')), [], 'no temporary file is left');
+    assert.equal(pushLib.recordProblem(JSON.parse(before)), null, 'the push command accepts what was written');
+  });
+
+  it('records every namespace, the host and the URL that were given', () => {
+    spawnSync('git', ['-C', project, 'remote', 'set-url', 'origin', `https://git.example.com/${REPO}.git`]);
+    const done = recordDestination('--branch-prefix', 'fvs', '--branch-prefix', 'team/runs', '--host', 'git.example.com');
+    assert.equal(done.record.host, 'git.example.com');
+    assert.deepEqual(done.record.prefixes, ['fvs', 'team/runs']);
+    assert.equal(done.record.url, `https://git.example.com/${REPO}.git`);
+  });
+
+  it('never replaces a record that differs, and says how to resolve it', () => {
+    recordDestination();
+    spawnSync('git', ['-C', project, 'remote', 'set-url', 'origin', `https://github.com/${REPO}.git`]);
+    const before = fs.readFileSync(recordFile(), 'utf8');
+    for (const extra of [[], ['--confirm', 'anything']]) {
+      const refused = destination(...extra);
+      assert.equal(refused.status, 1);
+      assert.equal(refused.json.code, 'destination-conflict');
+      assert.match(refused.json.message, /never replaces it.*delete it yourself/);
+      assert.equal(refused.json.existing.url, `git@github.com:${REPO}.git`);
+      assert.equal(refused.json.record.url, `https://github.com/${REPO}.git`);
+    }
+    assert.equal(fs.readFileSync(recordFile(), 'utf8'), before);
+    fs.writeFileSync(recordFile(), '{ not json');
+    const unreadable = destination();
+    assert.equal(unreadable.json.code, 'destination-conflict');
+    assert.ok(unreadable.json.problem);
+    assert.equal(fs.readFileSync(recordFile(), 'utf8'), '{ not json');
+  });
+
+  it('is written from a linked worktree into the shared git directory the main checkout uses', () => {
+    const git = (...args) => assert.equal(spawnSync('git', ['-C', project, '-c', 'user.email=a@b', '-c', 'user.name=n', ...args], { encoding: 'utf8' }).status, 0, args.join(' '));
+    git('commit', '-q', '--allow-empty', '-m', 'init');
+    const linked = path.join(os.tmpdir(), `fvs-perm-dest-linked-${process.pid}-${Date.now()}`);
+    git('worktree', 'add', '-q', linked, '-b', 'linked');
+    const args = ['--project-root', linked, '--repo', REPO];
+    const preview = run('write-destination', args).json;
+    assert.equal(preview.file, recordFile());
+    assert.equal(preview.record.projectRoot, fs.realpathSync(linked));
+    assert.equal(run('write-destination', [...args, '--confirm', preview.digest]).json.code, 'written');
+    assert.equal(fs.existsSync(path.join(linked, '.git', 'fvs-auto-push.json')), false);
+    assert.equal(fs.existsSync(recordFile()), true);
+  });
+
+  it('a push selection in write-allowlist needs the record, for both runtimes, and an unchanged one', { skip: pushSkip }, () => {
+    for (const runtime of ['claude', 'codex']) {
+      const refused = run('write-allowlist', base('--runtime', runtime, '--steps', 'git-push'));
+      assert.equal(refused.status, 1);
+      assert.equal(refused.json.code, 'destination-not-recorded', runtime);
+      assert.match(refused.json.message, /Run write-destination first/);
+      assert.equal(refused.json.destination.status, 'missing');
+    }
+    assert.equal(fs.existsSync(path.join(project, '.claude')), false);
+    assert.equal(fs.existsSync(path.join(project, '.codex')), false);
+    assert.equal(allow('worker-message').json.code, 'confirmation-required', 'other steps do not need it');
+    recordDestination();
+    assert.equal(allow('git-push').json.code, 'confirmation-required');
+    spawnSync('git', ['-C', project, 'remote', 'set-url', 'origin', `https://github.com/${REPO}.git`]);
+    const stale = allow('git-push');
+    assert.equal(stale.json.code, 'destination-not-recorded');
+    assert.equal(stale.json.destination.status, 'differs');
+  });
+});
+
+describe('the push command rule for Claude Code', { skip: pushSkip }, () => {
+  beforeEach(() => { recordDestination(); });
+
+  it('shows the exact rule, the command and the destination, and writes nothing before the yes', () => {
     const preview = allow('git-push');
     assert.equal(preview.status, 1);
     assert.equal(preview.json.code, 'confirmation-required');
-    assert.deepEqual(preview.json.add, { allow: [], hook: command });
-    assert.deepEqual(preview.json.hook.entry, entry);
-    assert.equal(preview.json.hook.event, 'PreToolUse');
-    assert.equal(preview.json.hook.script, GATE);
-    assert.match(preview.json.hook.allows.join(' '), /git push \[-u\] origin fvs\/<name>.*bare `git push`/);
-    assert.match(preview.json.hook.destination, /github\.com\/Acme\/proj/);
-    assert.match(preview.json.hook.asks, /every other command it recognises as a push/);
-    assert.match(preview.json.hook.note, /--target local/);
-    // The hook gives no decision for a push it does not recognise and when it does not run: that is not an allow, and not an ask.
-    assert.match(preview.json.hook.noDecision, /no decision: it neither allows nor asks, and your other rules and permission mode decide/);
-    assert.match(preview.json.hook.noDecision, /does not recognise as one.*missing Node.*15-second timeout.*non-blocking/);
+    assert.deepEqual(preview.json.add, { allow: [RULE] });
+    assert.equal(preview.json.push.command, `${PROGRAM} --branch fvs/<name>`);
+    assert.equal(preview.json.push.destination.url, `git@github.com:${REPO}.git`);
+    assert.equal(preview.json.push.destination.file, recordFile());
+    assert.deepEqual(preview.json.push.destination.prefixes, ['fvs']);
+    assert.equal(preview.json.hook, undefined, 'there is no hook');
     assert.doesNotMatch(JSON.stringify(preview.json), /fails safe|asks as usual/);
     assert.equal(fs.existsSync(path.join(project, '.claude')), false);
     assert.equal(allow('git-push', '--confirm', 'anything').json.code, 'confirmation-required');
     assert.equal(fs.existsSync(path.join(project, '.claude')), false);
   });
 
-  it('the digest covers the hook, so a confirmation for other rules does not install it', () => {
-    const other = allow('git-read').json.digest;
-    assert.equal(allow('git-push', '--confirm', other).json.code, 'confirmation-required');
+  it('the digest covers the rule and the destination', () => {
+    const readDigest = allow('git-read').json.digest;
+    assert.equal(allow('git-push', '--confirm', readDigest).json.code, 'confirmation-required');
+    const pushDigest = allow('git-push').json.digest;
     const both = allow('git-read,git-push').json;
-    assert.notEqual(both.digest, other);
+    assert.notEqual(both.digest, pushDigest);
     assert.equal(allow('git-read', '--confirm', both.digest).json.code, 'confirmation-required');
+    // The same rule with another recorded destination is another confirmation.
+    fs.rmSync(recordFile());
+    spawnSync('git', ['-C', project, 'remote', 'set-url', 'origin', `https://github.com/${REPO}.git`]);
+    recordDestination();
+    assert.notEqual(allow('git-push').json.digest, pushDigest);
+    assert.equal(allow('git-push', '--confirm', pushDigest).json.code, 'confirmation-required');
   });
 
-  it('writes the hook after the yes, with no push rule and no deny rule', () => {
+  it('writes the rule after the yes, with no rule that names a git push and no deny rule', () => {
     const done = confirmed('git-push');
     assert.equal(done.json.code, 'written');
-    const written = readSettings();
-    assert.deepEqual(written, { hooks: { PreToolUse: [entry] } });
-    assert.match(done.json.notes.join(' '), /Branch protection on the project fork is still recommended/);
-    assert.match(done.json.verification, /whether Claude Code skips its prompt on an allow answer was not observed/);
+    assert.deepEqual(readSettings(), { permissions: { allow: [RULE] } });
+    const notes = done.json.notes.join(' ');
+    assert.match(notes, /Branch protection on the project fork is still recommended/);
+    assert.match(notes, /A plain git push is not covered by this rule: your other rules and permission mode decide it, as before/);
+    assert.match(notes, /Git hooks of the repository, credential helpers and a URL rewrite that changes after the command's check still apply/);
+    assert.match(done.json.verification, /Claude Code has no offline rule evaluator/);
     const before = fs.readFileSync(settingsFile(), 'utf8');
     assert.equal(allow('git-push').json.code, 'unchanged');
     assert.equal(fs.readFileSync(settingsFile(), 'utf8'), before, 'a second write changes nothing');
   });
 
-  it('next to other steps it adds those steps\' rules and the hook, and still no push rule', () => {
-    const done = confirmed('git-push,worker-message');
-    assert.equal(done.json.code, 'written');
-    const written = readSettings();
-    assert.deepEqual(written.permissions.allow, ['Bash(ao send *)']);
-    assert.deepEqual(written.hooks.PreToolUse, [entry]);
-    assert.ok(!JSON.stringify(written.permissions).includes('push'), 'no push rule of any kind');
+  it('is not itself a git push rule, so the legacy check neither lists nor refuses it', () => {
+    assert.equal(lib.namesPush(RULE), false);
+    assert.equal(confirmed('git-push').json.code, 'written');
+    assert.deepEqual(lib.legacyPushRules(fs.realpathSync(project)), []);
+    assert.equal(run('plan', base()).json.legacyPushRules, undefined);
+    assert.equal(allow('git-push').json.code, 'unchanged', 'a second write is not refused by the rule it wrote');
+    assert.equal(confirmed('worker-message').json.code, 'written');
   });
 
-  it('appends one entry and keeps every other key, rule, hook and the key order', () => {
+  it('is still refused while a git push allow rule is there', () => {
+    writeSettings({ permissions: { allow: ['Bash(git push origin fvs/*)'] } });
+    assert.equal(allow('git-push').json.code, 'legacy-push-rules');
+  });
+
+  it('next to other steps it adds those steps\' rules too', () => {
+    const done = confirmed('git-push,worker-message');
+    assert.equal(done.json.code, 'written');
+    assert.deepEqual(readSettings().permissions.allow, [RULE, 'Bash(ao send *)']);
+  });
+
+  it('appends the rule and keeps every other key, rule, hook and the key order', () => {
     const original = {
       $schema: 'https://json.schemastore.org/claude-code-settings.json',
       permissions: { allow: ['Bash(npm run lint)'], deny: ['Bash(git push *--force*)'], ask: ['Bash(gh pr edit *)'] },
@@ -375,10 +580,10 @@ describe('the push gate hook install', () => {
     assert.equal(confirmed('git-push').json.code, 'written');
     const after = readSettings();
     assert.deepEqual(Object.keys(after), Object.keys(original));
-    assert.deepEqual(Object.keys(after.hooks), ['PreToolUse', 'PostToolUse']);
-    assert.deepEqual(after.hooks.PreToolUse, [...original.hooks.PreToolUse, entry]);
-    assert.deepEqual(after.hooks.PostToolUse, original.hooks.PostToolUse);
-    assert.deepEqual(after.permissions, original.permissions, 'the owner\'s own deny rule is kept and no rule is added');
+    assert.deepEqual(after.hooks, original.hooks, 'no hook is added or changed');
+    assert.deepEqual(after.permissions.allow, ['Bash(npm run lint)', RULE]);
+    assert.deepEqual(after.permissions.deny, original.permissions.deny, 'the owner\'s own deny rule is kept');
+    assert.deepEqual(after.permissions.ask, original.permissions.ask);
     assert.deepEqual(after.env, original.env);
   });
 
@@ -386,88 +591,37 @@ describe('the push gate hook install', () => {
     const done = confirmed('git-push', '--target', 'local');
     assert.equal(done.json.code, 'written');
     assert.equal(done.json.file, '.claude/settings.local.json');
-    assert.deepEqual(readSettings('settings.local.json'), { hooks: { PreToolUse: [entry] } });
+    assert.deepEqual(readSettings('settings.local.json'), { permissions: { allow: [RULE] } });
     assert.equal(fs.existsSync(settingsFile()), false);
   });
 
-  it('refuses to replace or edit a push gate entry that differs, and says how to resolve it', () => {
-    const stale = { matcher: 'Bash', hooks: [{ type: 'command', command: 'node "/old/place/fvs-auto-push-gate.mjs" --repo Acme/proj --prefix fvs' }] };
-    writeSettings({ hooks: { PreToolUse: [stale] } });
-    const before = fs.readFileSync(settingsFile(), 'utf8');
-    const refused = allow('git-push');
-    assert.equal(refused.json.code, 'push-gate-conflict');
-    assert.match(refused.json.message, /does not replace or edit it.*Remove that entry yourself/);
-    assert.deepEqual(refused.json.existing, [stale.hooks[0].command]);
-    assert.equal(refused.json.wouldAdd, command);
-    assert.equal(allow('git-push', '--confirm', 'anything').json.code, 'push-gate-conflict');
-    assert.equal(fs.readFileSync(settingsFile(), 'utf8'), before);
+  it('names every namespace in its own rule', () => {
+    fs.rmSync(recordFile());
+    const prefixes = ['--branch-prefix', 'fvs', '--branch-prefix', 'team/runs'];
+    recordDestination(...prefixes);
+    const preview = allow('git-push', ...prefixes).json;
+    assert.deepEqual(preview.add.allow, [RULE, `Bash(${PROGRAM} --branch team/runs/*)`]);
+    assert.deepEqual(preview.push.destination.prefixes, ['fvs', 'team/runs']);
   });
 
-  it('treats the same entry as already installed, and adds beside an entry that is not the gate', () => {
-    writeSettings({ hooks: { PreToolUse: [entry] } });
-    assert.equal(allow('git-push').json.code, 'unchanged');
-    writeSettings({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'node other-hook.mjs' }] }, 'not an entry', null] } });
-    assert.equal(confirmed('git-push').json.code, 'written');
-    assert.equal(readSettings().hooks.PreToolUse.length, 4);
+  it('the probe runs as written and the command refuses it before it contacts anything', () => {
+    const [probe] = lib.buildCatalog({ repo: REPO }).steps.find((s) => s.id === 'git-push').probes;
+    assert.equal(probe.command, `${PROGRAM} --branch fvs/.permission-check`);
+    const out = spawnSync('sh', ['-c', probe.command], { cwd: project, encoding: 'utf8' });
+    assert.equal(out.status, 1);
+    const json = JSON.parse(out.stdout);
+    assert.equal(json.code, 'branch-refused');
+    assert.match(json.message, /is not a plain branch name/);
+    assert.equal(fs.existsSync(path.join(project, '.formalising', 'auto-fv', 'pushes.jsonl')), false, 'nothing was pushed or logged');
   });
 
-  it('refuses a hooks section of the wrong shape and leaves the file untouched', () => {
-    for (const text of ['{ "hooks": [] }', '{ "hooks": "x" }', '{ "hooks": { "PreToolUse": {} } }', '{ "hooks": { "PreToolUse": "x" } }']) {
-      writeSettings(text);
-      assert.equal(allow('git-push').json.code, 'malformed-settings', text);
-      assert.equal(fs.readFileSync(settingsFile(), 'utf8'), text);
-    }
-  });
-
-  it('names every namespace and the host in the command', () => {
-    spawnSync('git', ['-C', project, 'remote', 'set-url', 'origin', `https://git.example.com/${REPO}.git`]);
-    const preview = allow('git-push', '--branch-prefix', 'fvs', '--branch-prefix', 'team/runs', '--host', 'git.example.com').json;
-    assert.equal(preview.add.hook, `node "${GATE}" --repo ${REPO} --host git.example.com --remote origin --prefix fvs --prefix team/runs`);
-  });
-
-  it('only the exact command shape passes the second check', () => {
-    assert.equal(lib.hookProblem(command), null);
-    for (const bad of [
-      `${command}; rm -rf /`, `${command} && true`, `${command} | cat`, `${command}\nid`, `${command} $(id)`, `${command} --prefix main*`, `${command} --prefix "x"`,
-      `node "/x/other.mjs" --repo ${REPO}`, `sh "${GATE}" --repo ${REPO}`, `node ${GATE} --repo ${REPO}`, `node "${GATE}"`, `node "${GATE}" --bogus x`,
-      `node "/a\\"b/fvs-auto-push-gate.mjs" --repo ${REPO}`, 'node "/a$HOME/fvs-auto-push-gate.mjs" --repo A/b', 'node "/a`id`/fvs-auto-push-gate.mjs" --repo A/b', '',
-    ]) assert.ok(lib.hookProblem(bad), JSON.stringify(bad));
-  });
-
-  it('the installed command runs as written: it allows the exact push and asks for the rest', () => {
-    const installed = confirmed('git-push').json;
-    assert.equal(installed.code, 'written');
-    const written = readSettings().hooks.PreToolUse[0].hooks[0].command;
-    const hook = (cmd) => {
-      const run = spawnSync('sh', ['-c', written], {
-        cwd: project, encoding: 'utf8', input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: cmd }, cwd: project }),
-        env: { ...process.env, PATH: `${path.dirname(process.execPath)}:${process.env.PATH}` },
-      });
-      return { status: run.status, decision: run.stdout ? JSON.parse(run.stdout).hookSpecificOutput.permissionDecision : null };
-    };
-    assert.deepEqual(hook('git push -u origin fvs/work'), { status: 0, decision: 'allow' });
-    assert.deepEqual(hook('git push origin fvs/work main'), { status: 0, decision: 'ask' });
-    assert.deepEqual(hook('git push -u origin fvs/work -uf'), { status: 0, decision: 'ask' });
-    assert.deepEqual(hook('git push origin main'), { status: 0, decision: 'ask' });
-    assert.deepEqual(hook('git status'), { status: 0, decision: null });
-    spawnSync('git', ['-C', project, 'remote', 'set-url', '--push', 'origin', 'git@github.com:Upstream/proj.git']);
-    assert.deepEqual(hook('git push -u origin fvs/work'), { status: 0, decision: 'ask' }, 'a push URL that changed after init is caught at the push');
-  });
-
-  it('Codex gets no hook: a push selection there writes nothing and says why', () => {
-    const refused = run('write-allowlist', base('--runtime', 'codex', '--steps', 'git-push'));
-    assert.equal(refused.json.code, 'nothing-to-write');
-    assert.match(refused.json.reasons['git-push'], /no push gate hook/);
-    assert.equal(fs.existsSync(path.join(project, '.codex')), false);
-  });
-
-  it('the summary says the hook was installed', () => {
+  it('the summary counts the rule', () => {
     const file = path.join(project, 'answer.json');
     fs.writeFileSync(file, JSON.stringify({ runtime: 'claude', kind: 'check', results: { 'git-push': 'prompted' } }));
     assert.equal(run('record', base('--input', file)).json.code, 'recorded');
     assert.equal(confirmed('git-push').json.code, 'written');
     const summary = run('plan', base()).json.record.summary;
-    assert.match(summary, /allowlist written to \.claude\/settings\.json \(0 allow, push gate hook\)/);
+    assert.match(summary, /allowlist written to \.claude\/settings\.json \(1 allow\)/);
     assert.match(summary, /waiting for your approval when the run reaches: git-push/);
   });
 });
@@ -639,28 +793,30 @@ describe('write-allowlist for Codex', () => {
   };
   const codexOnPath = spawnSync('codex', ['--version']).status === 0;
 
-  it('refuses without confirmation, then writes only the rules Codex can express', () => {
-    const preview = codexAllow('worker-message,git-push,lake-build,gh-read,git-read');
+  it('refuses without confirmation, then writes only the rules Codex can express', { skip: pushSkip }, () => {
+    recordDestination();
+    const steps = 'worker-message,git-push,lake-build,gh-read,git-read';
+    const preview = codexAllow(steps);
     assert.equal(preview.json.code, 'confirmation-required');
     assert.equal(fs.existsSync(path.join(project, '.codex')), false);
-    assert.ok(Object.keys(preview.json.notWritten).includes('git-push'));
-    const done = codexConfirmed('worker-message,git-push,lake-build,gh-read,git-read');
+    assert.deepEqual(Object.keys(preview.json.notWritten), ['lake-build']);
+    assert.equal(preview.json.push.command, `${PROGRAM} --branch fvs/<name>`);
+    const done = codexConfirmed(steps);
     assert.equal(done.json.code, 'written');
     const text = fs.readFileSync(path.join(project, '.codex', 'rules', 'fvs-auto.rules'), 'utf8');
-    for (const pattern of ['["ao", "send"]', '["gh", "pr", "view"]', '["gh", "pr", "list"]', '["git", "fetch", "origin"]', '["git", "ls-remote"]']) assert.ok(text.includes(pattern), pattern);
-    assert.ok(!/"push"/.test(text.replace(/not_match = \[[^\]]*\]/g, '')), 'no push allow rule');
+    for (const pattern of ['["ao", "send"]', '["gh", "pr", "view"]', '["gh", "pr", "list"]', '["git", "fetch", "origin"]', '["git", "ls-remote"]', `["node", "${PUSH_SCRIPT}", "--branch"]`]) assert.ok(text.includes(pattern), pattern);
+    assert.ok(!text.includes('"git", "push"'), 'no rule names a git push');
     assert.equal(codexAllow('worker-message').json.code, 'rules-file-conflict', 'a different rule set is refused, not merged');
     assert.equal(fs.readFileSync(path.join(project, '.codex', 'rules', 'fvs-auto.rules'), 'utf8'), text, 'the written file is unchanged');
   });
 
   it('a step with no Codex rule writes nothing, says why, and leaves its prompt unresolved', () => {
-    for (const step of ['git-push', 'lake-build', 'author-edit']) {
+    for (const step of ['lake-build', 'author-edit']) {
       const refused = codexAllow(step);
       assert.equal(refused.json.code, 'nothing-to-write', step);
       assert.match(refused.json.message, /prompts stay unresolved/);
       assert.ok(refused.json.reasons[step].length > 10, step);
     }
-    assert.match(codexAllow('git-push').json.reasons['git-push'], /cannot exclude a force push/);
     assert.equal(fs.existsSync(path.join(project, '.codex')), false);
   });
 
@@ -704,7 +860,7 @@ describe('write-allowlist for Codex', () => {
     const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-perm-bin-'));
     fs.symlinkSync(realGit, path.join(bin, 'git'));
     if (script) fs.writeFileSync(path.join(bin, 'codex'), `#!/bin/sh\n${script}\n`, { mode: 0o755 });
-    return { PATH: bin, HOME: process.env.HOME };
+    return { PATH: bin, HOME: process.env.HOME, GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: '1' };
   }
   const args = (...extra) => base('--runtime', 'codex', '--steps', 'worker-message,gh-read', ...extra);
 
@@ -767,6 +923,21 @@ describe('write-allowlist for Codex', () => {
       assert.deepEqual(JSON.parse(out.stdout).matchedRules, [], command);
     }
   });
+
+  it('Codex itself accepts the push command rule, matches only that program with --branch, and says what it cannot exclude', { skip: (!codexOnPath && 'codex CLI not on PATH') || pushSkip }, () => {
+    recordDestination();
+    const done = codexConfirmed('git-push');
+    assert.equal(done.json.code, 'written');
+    assert.equal(done.json.verified, true);
+    assert.deepEqual(done.json.evaluation.checks.map((c) => [c.command, c.decision]), [[`${PROGRAM} --branch fvs/example`, 'allow']]);
+    const check = (command) => JSON.parse(spawnSync('codex', ['execpolicy', 'check', '--rules', rulesFile(), '--', ...command], { encoding: 'utf8' }).stdout).matchedRules;
+    assert.equal(check(['node', PUSH_SCRIPT, '--branch', 'fvs/work']).length, 1);
+    // The rule is a prefix match: it cannot tell fvs/work from main. The command refuses a name outside the recorded namespaces.
+    assert.equal(check(['node', PUSH_SCRIPT, '--branch', 'main']).length, 1);
+    for (const command of [['node', PUSH_SCRIPT, '--help'], ['node', PUSH_SCRIPT], ['git', 'push', 'origin', 'fvs/work'], ['node', '/elsewhere/fvs-auto-push.mjs', '--branch', 'fvs/work']]) {
+      assert.deepEqual(check(command), [], command.join(' '));
+    }
+  });
 });
 
 describe('push allow rules that are already in the settings', () => {
@@ -788,13 +959,13 @@ describe('push allow rules that are already in the settings', () => {
     const shared = { model: 'x', permissions: { allow: [LEGACY, 'Bash(ls *)', 'Bash(git push:*)', 'Bash(git status)'], deny: ['Bash(rm *)'] } };
     writeSettings(shared);
     const before = bytes();
-    for (const steps of ['worker-message', 'git-push', 'worker-message,git-push,gh-read']) {
+    for (const steps of ['worker-message', 'worker-message,gh-read']) {
       const out = allow(steps);
       assert.equal(out.status, 1, steps);
       assert.equal(out.json.code, 'legacy-push-rules', steps);
       assert.deepEqual(out.json.legacyPushRules, [{ file: '.claude/settings.json', resolvedPath: path.join(fs.realpathSync(project), '.claude', 'settings.json'), rules: [LEGACY, 'Bash(git push:*)'], keeps: 2 }]);
       assert.match(out.json.cleanup[0], /delete these 2 entries from permissions\.allow and nothing else.*"Bash\(git push origin fvs\/\*\)".*The other 2 allow entries stay/);
-      assert.match(out.json.message, /FVS writes no push rule and deletes none/);
+      assert.match(out.json.message, /skip the FVS push command.*FVS deletes none of your rules.*Nothing was written/);
       assert.match(out.json.notExamined, /broad rules such as Bash\(git \*\).*user settings.*permission mode/);
       assert.equal(out.json.digest, undefined, 'there is nothing to confirm yet');
       assert.equal(bytes(), before, 'the file is byte-identical');
@@ -839,6 +1010,46 @@ describe('push allow rules that are already in the settings', () => {
 
   it('does not stop a Codex write: Claude settings are not what Codex reads', () => {
     writeSettings({ permissions: { allow: [LEGACY] } });
+    assert.equal(run('write-allowlist', base('--runtime', 'codex', '--steps', 'worker-message')).json.code, 'confirmation-required');
+  });
+});
+
+describe('a push gate hook from an earlier build', () => {
+  const OLD = { matcher: 'Bash', hooks: [{ type: 'command', command: 'node "/old/place/fvs-auto-push-gate.mjs" --repo Acme/proj --host github.com --remote origin --prefix fvs', timeout: 15 }] };
+  const OTHER = { matcher: 'Bash', hooks: [{ type: 'command', command: 'node other-hook.mjs' }] };
+
+  it('is listed by plan and by every Claude write, with how to clean it up, and is kept as it was', () => {
+    const original = { hooks: { PreToolUse: [OTHER, OLD, 'not an entry', null] }, permissions: { allow: ['Bash(ls *)'] } };
+    writeSettings(original);
+    const found = [{ file: '.claude/settings.json', resolvedPath: path.join(fs.realpathSync(project), '.claude', 'settings.json'), commands: [OLD.hooks[0].command] }];
+    const planned = run('plan', base()).json;
+    assert.deepEqual(planned.legacyPushGateHooks, found);
+    assert.match(planned.legacyPushGateHooksNote, /Delete the listed entries from hooks\.PreToolUse yourself; every other hook stays/);
+    const preview = allow('worker-message').json;
+    assert.equal(preview.code, 'confirmation-required');
+    assert.deepEqual(preview.legacyPushGateHooks, found);
+    const done = confirmed('worker-message');
+    assert.equal(done.json.code, 'written');
+    assert.deepEqual(done.json.legacyPushGateHooks, found);
+    assert.deepEqual(readSettings().hooks, original.hooks, 'the entry is kept: FVS deletes nothing');
+    assert.deepEqual(readSettings().permissions.allow, ['Bash(ls *)', 'Bash(ao send *)']);
+  });
+
+  it('reads both project files, and lists nothing for a file without such an entry', () => {
+    writeSettings({ hooks: { PreToolUse: [OTHER] } });
+    writeSettings({ hooks: { PreToolUse: [OLD] } }, 'settings.local.json');
+    assert.deepEqual(run('plan', base()).json.legacyPushGateHooks.map((one) => one.file), ['.claude/settings.local.json']);
+    writeSettings({ hooks: { PreToolUse: [OTHER] } }, 'settings.local.json');
+    assert.equal(run('plan', base()).json.legacyPushGateHooks, undefined);
+    writeSettings({ hooks: 'x' });
+    writeSettings('{ not json', 'settings.local.json');
+    assert.equal(run('plan', base()).json.legacyPushGateHooks, undefined);
+    assert.deepEqual(lib.legacyPushGateHooks(fs.realpathSync(project)), []);
+  });
+
+  it('does not stop a write: it is listed, not refused', () => {
+    writeSettings({ hooks: { PreToolUse: [OLD] } });
+    assert.equal(allow('worker-message').json.code, 'confirmation-required');
     assert.equal(run('write-allowlist', base('--runtime', 'codex', '--steps', 'worker-message')).json.code, 'confirmation-required');
   });
 });
@@ -988,7 +1199,7 @@ describe('recheck', () => {
     assert.match(plan.message, /recheck command/);
   });
 
-  it('repeats the probes of the steps that last prompted, never the push step, and says how to record them', () => {
+  it('repeats the probes of the steps that last prompted, the push step included, and says how to record them', { skip: pushSkip }, () => {
     answer({ runtime: 'claude', kind: 'check', results: { 'worker-message': 'prompted', 'gh-read': 'prompted', 'git-read': 'quiet', 'git-push': 'prompted', 'author-edit': 'unknown' } });
     const out = recheck();
     assert.equal(out.status, 0);
@@ -997,8 +1208,8 @@ describe('recheck', () => {
     const byId = Object.fromEntries(out.json.steps.map((s) => [s.id, s]));
     assert.equal(byId['worker-message'].probes.length, 1);
     assert.equal(byId['gh-read'].probes.length, 2);
-    assert.equal(byId['git-push'].probes, null);
-    assert.match(byId['git-push'].skipped, /not repeated.*first real worker push.*Keep its earlier answer/);
+    assert.deepEqual(byId['git-push'].probes, [{ tool: 'Bash', command: `${PROGRAM} --branch fvs/.permission-check` }]);
+    assert.equal(byId['git-push'].skipped, undefined, 'the push probe is harmless, so it is repeated like the others');
     assert.match(out.json.message, /"kind":"recheck"/);
     assert.match(out.json.message, /Codex.*new session.*trusted.*read when a session starts/);
     assert.match(out.json.summary, /prompted: worker-message, gh-read, git-push/);
@@ -1038,69 +1249,81 @@ describe('the permissions page', () => {
     return match[1];
   };
 
+  const catalog = () => lib.buildCatalog({ repo: 'OWNER/REPO', scriptsDir: PLACEHOLDER_DIR });
+
   it('prints exactly the allowlist the script writes for the documented steps', () => {
-    const catalog = lib.buildCatalog({ repo: 'OWNER/REPO' });
-    const probed = catalog.steps.filter((s) => s.probes);
+    const probed = catalog().steps.filter((s) => s.probes);
     const documented = JSON.parse(block(page(), 'Claude Code allowlist', 'json'));
     assert.deepEqual(documented.permissions.allow, probed.flatMap((s) => s.claude));
     assert.equal(documented.permissions.deny, undefined, 'the page lists no deny rules, because FVS writes none');
-    assert.ok(!JSON.stringify(documented).includes('push'), 'the page lists no push rule');
+    assert.deepEqual(documented.permissions.allow.filter((rule) => /push/.test(rule)), [`Bash(node ${PLACEHOLDER_DIR}/fvs-auto-push.mjs --branch fvs/*)`], 'the one push rule names the push command');
+    assert.ok(!/git push/.test(JSON.stringify(documented)), 'the page lists no rule for git push');
     for (const dropped of ['draft-pr-create', 'draft-pr-edit', 'edit-folders', 'gh pr create', 'gh pr edit']) assert.ok(!page().includes(dropped), `${dropped} is no longer written, so the page does not offer it`);
   });
 
   it('prints exactly the Codex rules the script writes', () => {
-    const catalog = lib.buildCatalog({ repo: 'OWNER/REPO' });
     const text = block(page(), 'Codex rules', 'python');
-    const rules = catalog.steps.flatMap((s) => s.codex);
+    const rules = catalog().steps.flatMap((s) => s.codex);
     assert.equal((text.match(/prefix_rule\(/g) ?? []).length, rules.length);
     for (const rule of rules) assert.ok(text.includes(`pattern = [${rule.pattern.map((p) => JSON.stringify(p)).join(', ')}]`), rule.pattern.join(' '));
     assert.ok(!/decision = "(prompt|forbidden)"/.test(text));
+    assert.ok(!text.includes('"git", "push"'), 'no Codex rule names a git push');
   });
 
-  it('prints exactly the hook entry the script installs, with the scripts folder as a placeholder', () => {
-    const hook = lib.buildCatalog({ repo: 'OWNER/REPO' }).steps.find((s) => s.id === 'git-push').hook;
-    const expected = structuredClone(hook.entry);
-    expected.hooks[0].command = expected.hooks[0].command.replace(hook.script, '<FVS scripts folder>/fvs-auto-push-gate.mjs');
-    assert.deepEqual(JSON.parse(block(page(), 'Push gate hook', 'json')), { hooks: { PreToolUse: [expected] } });
+  it('prints the destination record with the fields the script writes', () => {
+    const shown = JSON.parse(block(page(), 'The push command', 'json'));
+    const written = pushLib.destinationRecord({ projectRoot: '/p', commonDir: '/p/.git', url: 'u', host: 'h', repo: 'o/r', prefixes: ['fvs'] });
+    assert.deepEqual(Object.keys(shown), Object.keys(written));
+    assert.equal(shown.schema, written.schema);
+    assert.equal(shown.schemaVersion, written.schemaVersion);
   });
 
-  it('keeps the push gate honest: branch protection stays recommended, and no push rule is offered', () => {
+  it('keeps the push command honest: the limits are stated and branch protection stays recommended', () => {
     const text = page().replace(/\s+/g, ' ');
     assert.match(text, /Branch protection on the project fork is still recommended/);
-    assert.match(text, /There is no hook for Codex, and a Codex rule cannot say "but not `--force`"\. Init writes no push rule for Codex, so a push there follows Codex's own rules and sandbox mode/);
-    assert.match(text, /A hook that answers "allow" skips the prompt, but it does not override your own `deny` or `ask` rules/);
-    // The page names a push allow rule only as something to delete, never inside a block that shows what FVS writes.
+    assert.match(text, /A rule is matched against the command text, and a `\*` in it also matches the rest of that text, so the rule cannot check the arguments\. The command checks them itself/);
+    assert.match(text, /Git hooks of the repository still run, as for any push/);
+    assert.match(text, /Credential helpers, ssh and proxy settings come from your own git configuration and environment/);
+    assert.match(text, /A rewrite rule that you add after that check and before the connection is a race the command cannot close/);
+    assert.match(text, /Any session of your user account can change it/);
+    assert.match(text, /A worker that runs a plain `git push` is not covered by this rule: your other rules and permission mode decide that push, as before/);
+    assert.match(text, /On Codex, a rule matches the start of a command: `node`, the path and `--branch`\. It cannot tell `fvs\/work` from `main`, and the command refuses a name outside the recorded namespaces/);
+    assert.match(text, /Codex splits a command run through a shell wrapper such as `bash -lc`.*That was not observed here/);
+    assert.match(text, /It leaves no `origin\/<name>` ref and sets no upstream: run `git fetch` to see the branch/);
+    assert.match(text, /In the tests, none of these settings changed where the push went or what it sent: `remote\.<name>\.push`.*`submodule\.recurse`/);
+    // The page names a git push allow rule only as something to delete, never inside a block that shows what FVS writes.
     const blocks = [...page().matchAll(/```[a-z]*\n([\s\S]*?)```/g)].map((match) => match[1]);
-    assert.ok(blocks.length >= 3);
-    for (const code of blocks) assert.ok(!/Bash\(git push/.test(code), 'no block of the page shows a push rule');
+    assert.ok(blocks.length >= 4);
+    for (const code of blocks) assert.ok(!/Bash\(git push/.test(code), 'no block of the page shows a git push rule');
   });
 
-  it('makes no unconditional promise that a push asks, and says that no decision is not an allow', () => {
-    const docs = [PAGE, 'fv-skills/workflows/auto-init.md', 'fv-skills/references/auto-setup.md', 'commands/fvs/auto-init.md', 'README.md', 'scripts/fvs-auto-permissions.mjs']
+  it('makes no unconditional promise that a push asks, and no longer describes a hook as part of init', () => {
+    const docs = [PAGE, 'fv-skills/workflows/auto-init.md', 'fv-skills/references/auto-setup.md', 'commands/fvs/auto-init.md', 'README.md', 'scripts/fvs-auto-permissions.mjs', 'scripts/fvs-auto-push.mjs']
       .map((file) => [file, fs.readFileSync(path.isAbsolute(file) ? file : path.join(ROOT, file), 'utf8').replace(/\s+/g, ' ')]);
     for (const [file, text] of docs) {
       assert.doesNotMatch(text, /fails? safe|asks as usual|asks for every other push|every other push (still )?asks|a push (still |keeps )asks|a push keeps asking|every push that is not an exact (plain )?form/i, file);
+      assert.doesNotMatch(text, /push gate hook (allows|asks|answers|gives|installed|is installed)|offers the push gate hook|the hook gives no decision|install(s|ed)? (a|the) push gate hook/i, file);
     }
     const text = page().replace(/\s+/g, ' ');
-    assert.match(text, /## Push gate hook[\s\S]*### When the hook gives no decision/);
-    assert.match(text, /It gives \*\*no decision\*\*, neither allow nor ask, in these cases:/);
-    assert.match(text, /not recognised as a push[\s\S]*Node is not installed[\s\S]*script fails[\s\S]*15-second timeout/);
-    assert.match(text, /"No decision" is not an allow\. It leaves your other `allow` and `ask` rules, your `deny` rules and your permission mode in charge/);
-    assert.match(text, /Claude Code documents a hook that cannot start, a timeout and a failing hook as non-blocking/);
+    assert.match(text, /## The push command[\s\S]*### What the command refuses[\s\S]*### What it sends[\s\S]*### What it does not stop[\s\S]*### Where the destination is recorded/);
+    assert.match(text, /Nothing in this page promises that a push asks/);
+    assert.doesNotMatch(text, /## Push gate hook|### When the hook gives no decision/);
   });
 
-  it('documents the push allow rule refusal, the confirmation binding and the recheck entry point', () => {
+  it('documents the git push rule refusal, the earlier hook, the confirmation binding and the recheck entry point', () => {
     const text = page().replace(/\s+/g, ' ');
     assert.match(text, /### Push allow rules already in your settings/);
     assert.match(text, /a Claude write stops with `legacy-push-rules`, before any preview and before anything is written\. Both files stay byte-identical/);
     assert.match(text, /does not see: broad rules such as `Bash\(git \*\)` or `Bash\(\*\)`, your user settings/);
-    assert.match(text, /The digest covers the exact rules and hook, the canonical project root, the real path of the file .* and the hash of the file's current content/);
+    assert.match(text, /### A push gate hook from an earlier build/);
+    assert.match(text, /Delete the listed entries from hooks\.PreToolUse yourself; every other hook stays/);
+    assert.match(text, /The digest covers the exact rules, the recorded destination when a push rule is written, the canonical project root, the real path of the file .* and the hash of the file's current content/);
     assert.match(text, /a new digest that needs a new yes/);
     assert.match(text, /an edit made in the instant between that last check and the replacement is not detected/);
     assert.match(text, /ask init to recheck permissions: it runs `recheck`/);
     assert.match(text, /To start over, delete the record file yourself/);
     assert.doesNotMatch(text, /To run the check again, delete that file/);
-    assert.doesNotMatch(text, /a mismatch makes the hook ask, not allow/);
+    assert.doesNotMatch(text, /never the push step/);
   });
 
   it('names the Codex source and the tested version, qualifies "harmless", and separates tested from not observed', () => {
@@ -1113,8 +1336,7 @@ describe('the permissions page', () => {
   });
 
   it('every probe command in the page is one the plan prints', () => {
-    const catalog = lib.buildCatalog({ repo: 'OWNER/REPO' });
-    const commands = catalog.steps.flatMap((s) => (s.probes ?? []).filter((p) => p.command).map((p) => p.command));
+    const commands = catalog().steps.flatMap((s) => (s.probes ?? []).filter((p) => p.command).map((p) => p.command));
     for (const command of commands) assert.ok(page().includes(command), command);
   });
 });

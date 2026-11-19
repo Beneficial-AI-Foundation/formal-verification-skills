@@ -253,8 +253,9 @@ grants publication, launches workers, resets budgets or reinterprets `nodeHours`
 An approval prompt that nobody answers is aborted after about 30 minutes and the session that asked
 stops; in one setup, waiting for approvals took most of the elapsed time. So, while the owner is
 present, check which steps of the run prompt on this machine, and offer a small allowlist for exactly
-those, and for a push a small hook. `auto-permissions.md` has the steps, the rules, the reason for each
-rule, the push gate hook, what FVS never allows, what was tested and the troubleshooting notes. Run
+those, and for a push the one rule that names the FVS push command. `auto-permissions.md` has the steps, the
+rules, the reason for each rule, the push command, what FVS never allows, what was tested and the
+troubleshooting notes. Run
 the check once: a project that already has a record is not checked again, unless the owner asks to check
 permissions again (Recheck on request, below).
 
@@ -268,15 +269,38 @@ PERM="$(dirname "$AUTO")/fvs-auto-permissions.mjs"
 node "$PERM" plan --project-root . --repo "$DRAFT_REPO" --remote origin --branch-prefix fvs
 ```
 
-- `record.present` true: print its `summary` for the report line, say nothing more, and go to Step 6. The one
-  exception is the owner's request to check permissions again: see "Recheck on request" below.
+- `record.present` true: print its `summary` for the report line, say nothing more, and go to Step 6 (after
+  "Where pushes go" below, when `pushDestination.status` is `missing`). The one exception is the owner's request to
+  check permissions again: see "Recheck on request" below.
 - `legacyPushRules` present (Claude Code): a project settings file already has a push allow rule. Show the
   owner the listed entries before you probe. FVS deletes none of them, and a Claude `write-allowlist` refuses
   until the owner has removed those entries; the push probe may also be quiet because of them, not because of
-  the hook. Go on with the check if the owner wants, and say that writing waits for the cleanup.
-- `remote-mismatch`, `remote-ambiguous`, `remote-missing` or `invalid-input`: no probe runs against a remote
-  that is not the project's own repository, and every URL of the remote (all fetch and push URLs) must name
-  it. Report the refusal, skip the check and go to Step 6.
+  the push command. Go on with the check if the owner wants, and say that writing waits for the cleanup.
+- `legacyPushGateHooks` present (Claude Code): a project settings file still has a push gate hook entry that an
+  earlier build installed. Show the listed entries. This build ships no hook, FVS keeps the entry and a write is
+  not refused because of it, and the owner deletes it themselves (`legacyPushGateHooksNote` says how).
+- `remote-mismatch`, `remote-ambiguous`, `remote-missing`, `destination-rewritten` or `invalid-input`: no probe
+  runs against a remote that is not the project's own repository. Every URL of the remote (all fetch and push
+  URLs) must name it, and no `insteadOf` or `pushInsteadOf` rule may rewrite the push address again. Report the
+  refusal, skip the check and go to Step 6.
+
+**Where pushes go.** The push command (`fvs-auto-push.mjs`) pushes only to a destination that init records, so
+record it whatever the check finds: also when the owner skips the check, and also for a project whose check was
+recorded earlier (`pushDestination.status` is `missing`). It is a separate yes. Run `write-destination` without
+`--confirm`:
+
+```bash
+node "$PERM" write-destination --project-root . --repo "$DRAFT_REPO" --remote origin --branch-prefix fvs
+```
+
+It writes nothing and refuses with `confirmation-required`, printing the `record` (the push address as git will use
+it after its own rewriting, the host, the repository, the branch namespaces, the project root and the git
+directory), the `file` (in the repository's shared git directory, so no commit contains it) and a digest. Show the
+owner exactly that and ask. Only on the yes, rerun the same command with `--confirm <digest>`. On a no, nothing is
+recorded: the push command then refuses to run, and the owner approves any other push as it appears. If
+`pushDestination.status` is already `matches` there is nothing to do (`unchanged`). With `destination-conflict`
+another record exists: show `existing` and `record`. FVS never replaces it; the owner checks the file, deletes it
+themselves and runs init again.
 
 Otherwise ask the owner whether to run the check or skip it. A skip is recorded with every step as
 `unknown` (below) so that a resume does not ask again.
@@ -285,8 +309,9 @@ Otherwise ask the owner whether to run the check or skip it. A skip is recorded 
 to approve them; please approve each one when it appears, that is what the check is for. None of them posts
 to GitHub or pushes anything. They send a message to a session that does not exist, write one scratch file
 under `.formalising/`, compile it (only when the project's dependencies are already downloaded), read pull
-requests, fetch, and do a dry-run push. Say also that "low-risk" is not "inert": Lake evaluates the
-project's own lakefile and can write build caches, and git runs any hook configured for a fetch or a push.
+requests, fetch, and run the push command with a branch name that cannot exist, which it refuses before it
+contacts anything. Say also that "low-risk" is not "inert": Lake evaluates the project's own lakefile and can write
+build caches, and git runs any hook configured for a fetch.
 
 Then run every probe of the `plan` output as its own plain call: one `Bash` call per command exactly as
 printed, with no `&&`, `;`, pipe, `cd` or wrapper, and the scratch file with the `Write` tool (its `path` and
@@ -310,26 +335,26 @@ with one entry for each probed step (`"runtime":"codex"` on Codex).
 If nothing prompted, say so and write nothing. If some steps prompted:
 
 1. Show the owner `auto-permissions.md` in plain words: the rules for those steps and why each exists; what
-   FVS never allows (GitHub comments, reviews, merges, and every push that is not an exact plain push of one
-   branch under the namespace to the project fork); and that an unanswered prompt aborts after about 30
-   minutes. A push never gets an allow rule. If `git-push` prompted on Claude Code, explain the push gate hook
-   and ask for it as its own yes. Say what it allows, that it asks for the other pushes it recognises, that it
-   checks every push URL of the remote at each push, and that it gives **no decision** for a push it does not
-   recognise and when it does not run (Node or the script missing, a failure, the 15-second timeout). Say that
-   no decision is not an allow: the owner's other rules and permission mode decide, so an allow rule for a
-   push, or a mode that approves commands unasked, applies again. Say that branch protection on the fork is
-   still recommended. Never promise that a push will be asked about.
+   FVS never allows (GitHub comments, reviews, merges, and every push that is not made with the push command);
+   and that an unanswered prompt aborts after about 30 minutes. A `git push` never gets an allow rule. If
+   `git-push` prompted, explain the push rule: it names the FVS push command
+   (`node <scripts folder>/fvs-auto-push.mjs --branch fvs/<name>`), which pushes one branch under the namespace
+   to the recorded destination and refuses anything else. A `*` in a rule matches the rest of the command text,
+   so the rule cannot check arguments and the command does. Say what it does not stop: git hooks of the
+   repository, credential helpers, a rewrite rule added after its check, and a worker that runs a plain
+   `git push`, which the owner's other rules and permission mode decide. Say that branch protection on the fork
+   is still recommended. Never promise that a push will be asked about.
    On a no, leave `git-push` out of `--steps`: that prompt stays unresolved and the owner approves pushes as
-   they appear. On Codex there is no hook and init writes no push rule: say that a push follows Codex's own
-   rules and sandbox mode.
+   they appear. Codex gets the same rule as a prefix rule for the program and `--branch`: say that it cannot
+   tell `fvs/work` from `main`, and that the command refuses a name outside the namespace.
 2. Run `write-allowlist` without `--confirm` for the steps the owner agreed to, for example
    `node "$PERM" write-allowlist --project-root . --repo "$DRAFT_REPO" --branch-prefix fvs --runtime claude --steps worker-message,git-push`
    (add `--host HOST` when the repository is not on `github.com`). It writes nothing and refuses with
    `confirmation-required`, printing the file, its real path (`resolvedPath`, `viaLink`), its `gitStatus` and
-   where it applies (`appliesTo`), the exact rules, for `git-push` the exact hook entry with what it allows
-   and asks, and a digest. Show the owner exactly that preview. Offer `--target local`
+   where it applies (`appliesTo`), the exact rules, for `git-push` the push command and the recorded destination
+   (`push`), and a digest. Show the owner exactly that preview. Offer `--target local`
    (`.claude/settings.local.json`, read from the main checkout by every worktree and kept out of git) beside
-   the default shared file; the hook command names this machine's copy of the script, so the local file is the
+   the default shared file; the push rule names this machine's copy of the script, so the local file is the
    better home for it. On Codex, use `--runtime codex`; it writes only the rules Codex can express. Other
    answers to this command, each reported plainly and never worked around:
    - `nothing-to-write` (Codex): none of the steps that prompted can be a Codex rule (push, Lake and edit
@@ -338,8 +363,10 @@ If nothing prompted, say so and write nothing. If some steps prompted:
    - `rules-file-conflict` (Codex): `.codex/rules/fvs-auto.rules` exists and differs. Show `existing` and
      `wouldWrite`. FVS neither replaces nor merges it; the owner saves any rule of their own, deletes the file
      and writes every step they want in one command.
-   - `push-gate-conflict` (Claude): the file already runs a different push gate entry. Show it. The owner
-     removes that entry and runs init again.
+   - `destination-not-recorded`: the push rule needs the recorded destination, and it is missing or no longer
+     what init would record. Do "Where pushes go" first, then run this command again.
+   - `legacyPushGateHooks` in the preview: a hook entry of an earlier build is in the file. Show it and say that
+     FVS keeps it; the owner deletes it themselves.
    - `legacy-push-rules` (Claude): `.claude/settings.json` or `.claude/settings.local.json` already allows a
      push by rule. Show `legacyPushRules` and `cleanup`: for each file the exact entries to delete and how many
      other entries stay. FVS deletes nothing and writes nothing, and you do not edit the file either: the
@@ -348,10 +375,10 @@ If nothing prompted, say so and write nothing. If some steps prompted:
      written. Run the command again without `--confirm`, show the new preview and ask again.
    - `evaluator-rejected` or `evaluator-mismatch` (Codex): the installed Codex rejects the rules or does not
      allow a probe command. Nothing was written. Show `evaluation`.
-   - `malformed-settings`: the settings file is not valid JSON, or its `permissions` or `hooks` section has an
+   - `malformed-settings`: the settings file is not valid JSON, or its `permissions` section has an
      unexpected shape. Leave it alone and tell the owner.
 3. Only on the owner's explicit yes, rerun the same command with `--confirm <digest>`. Never pass a digest
-   the owner has not seen, and never write without the yes. The digest covers the rules, the canonical project
+   the owner has not seen, and never write without the yes. The digest covers the rules, the recorded destination for a push rule, the canonical project
    root, the real path of the file and the hash of its content: if any of them changed since the preview
    (a `.claude` link now leads elsewhere, or the file was edited), the command refuses with
    `confirmation-required`, writes nothing and prints a new preview with a new digest. Show that new preview:
@@ -366,9 +393,9 @@ If nothing prompted, say so and write nothing. If some steps prompted:
    - Claude Code: run `recheck --steps ID,ID` now, naming the steps whose rules were just written (without
      `--steps` it lists every step that last prompted, including steps the owner declined), run the probes it
      lists, ask again which prompted, and record the answers with `"kind":"recheck"`. A step that still prompts: show the owner the "A step still prompts" section of
-     `auto-permissions.md` and leave it at that. `recheck` never lists the push probe: its dry-run form is not
-     one the hook allows, so it asks even when the hook works. Say that the first real worker push is the
-     evidence for the hook.
+     `auto-permissions.md` and leave it at that. `recheck` lists the push probe too: it is the push command with a
+     branch name that cannot exist, refused before it contacts the fork, so it shows only whether the permission
+     layer lets the command run unasked. Say that the first real worker push is the evidence for the rule.
    - Codex: rules load when a session starts, so a recheck in this session proves nothing about them. Do not
      run `recheck` now. Tell the owner to start a new session after the project's `.codex/` folder is trusted
      and ask init to recheck permissions there, and record that round as a recheck. Never say that a prompt
@@ -383,12 +410,11 @@ node "$PERM" recheck --project-root . --repo "$DRAFT_REPO" --remote origin --bra
 ```
 
 It needs a record (`no-record` otherwise: run the check first). It lists the probes of the steps whose latest
-answer is `prompted`, or of the steps named with `--steps ID,ID`, with the same skips as `plan` and never the
-push step. If `steps` is empty, say there is nothing to repeat. Otherwise tell the owner first, as in the check,
+answer is `prompted`, or of the steps named with `--steps ID,ID`, with the same skips as `plan`. If `steps` is empty, say there is nothing to repeat. Otherwise tell the owner first, as in the check,
 run each probe as its own plain call, ask which prompted, and record with `"kind":"recheck"`. A recheck writes
-no rule and no hook.
+no rule and no destination record.
 
-Never write any rule by hand, never allow a GitHub comment, review or merge, never write a push rule or a deny
+Never write any rule by hand, never allow a GitHub comment, review or merge, never write a rule for `git push` or a deny
 rule, and never edit a settings or rules file other than through the command above. Agreement storage and
 this check launch no workers.
 

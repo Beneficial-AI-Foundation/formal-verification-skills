@@ -33,13 +33,13 @@ stays human.
 Before the hand-off, init checks which steps of the run stop for an approval prompt, by running one
 low-risk instance of each while the owner is present (low-risk is not inert: Lake evaluates the project's
 lakefile and git can run configured hooks), and asks the owner which prompted. Only after the owner's yes
-does it write a minimal project allowlist for those steps through `scripts/fvs-auto-permissions.mjs`, and,
-for a push on Claude Code, an opt-in push gate hook that allows only exact plain pushes to the project fork
-and asks for the other pushes it recognises. A push it does not recognise, or a run in which the hook does not
-answer (missing Node, a timeout), gets no decision from it and stays with the owner's other rules and permission
-mode (`auto-permissions.md`). It never writes a rule that allows GitHub comments, reviews, merges or any push,
-and it stops while a project settings file already has a push allow rule. The owner can ask it to recheck
-permissions later, which repeats the probes of the steps that last prompted.
+does it write a minimal project allowlist for those steps through `scripts/fvs-auto-permissions.mjs`. It also
+records, after a separate yes, where pushes go. Workers push with one FVS command, `scripts/fvs-auto-push.mjs`,
+which pushes one branch under the run's namespace to that recorded destination and refuses anything else; the one
+push rule names that command (`auto-permissions.md` says what it does not stop). It never writes a rule that
+allows GitHub comments, reviews, merges or a `git push`, and it stops while a project settings file already has a
+`git push` allow rule. The owner can ask it to recheck permissions later, which repeats the probes of the steps
+that last prompted.
 </objective>
 
 <execution_context>
@@ -99,7 +99,7 @@ Applicable existing explicit responses are reused without another question; comp
 - [ ] No implicit grant or per-round human approval is introduced.
 - [ ] Agreement storage alone launches no workers; a recorded draft pull request destination is the project's own repository.
 - [ ] The permission check runs once, after telling the owner that some steps may prompt, and asks the owner which prompted; it never infers a prompt.
-- [ ] A rules or settings file is written only after the owner's explicit yes on the exact preview, keeps every other key, and never writes a rule that allows a GitHub comment, review or merge, or any push; the push gate hook is a separate yes, allows only exact plain pushes to the project fork, and asks for the other pushes it recognises (no decision is not an allow: the owner's other rules decide). A write stops while a push allow rule is in a project settings file, and a confirmation is bound to the project root, the real file path and the file's content.
-- [ ] Codex gets no hook; a Codex write never replaces or merges an existing rules file, and its recheck waits for a new session.
+- [ ] A rules or settings file is written only after the owner's explicit yes on the exact preview, keeps every other key, and never writes a rule that allows a GitHub comment, review or merge, or a `git push`; the one push rule names the FVS push command, which pushes one branch under the namespace to the recorded destination and refuses anything else, and the destination is recorded after a separate yes. A write stops while a `git push` allow rule is in a project settings file, and a confirmation is bound to the project root, the real file path and the file's content.
+- [ ] A Codex write never replaces or merges an existing rules file, and its recheck waits for a new session.
 - [ ] The report carries the State, Next action, Permissions and Pending decision lines.
 </success_criteria>

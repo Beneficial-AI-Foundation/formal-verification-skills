@@ -130,9 +130,10 @@ probe-aeneas inventory on the listed tuples and platforms has evidence behind it
 
 Approval prompts that nobody answers stall a run: one unanswered prompt is aborted after about 30 minutes.
 `/fvs:auto-init` checks which steps of the run prompt on your machine and, only after your yes, writes a
-minimal allowlist for them, and for pushes an opt-in hook that allows only exact plain pushes to your fork.
-The [permissions page](fv-skills/references/auto-permissions.md) lists the rules for Claude Code and Codex, the
-push hook, why each exists, what FVS never allows, and what to do when a step keeps asking.
+minimal allowlist for them, and for pushes one rule that names the FVS push command, which pushes one branch to the
+destination recorded at init. The [permissions page](fv-skills/references/auto-permissions.md) lists the rules for
+Claude Code and Codex, the push command, why each exists, what FVS never allows, and what to do when a step keeps
+asking.
 
 FVS asks for runtime, model and effort choices at each relevant stage. Requested settings,
 resolved settings and observed settings are recorded separately; unavailable observations are stated

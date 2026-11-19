@@ -139,6 +139,26 @@ class Refuse extends Error {
 }
 const refuse = (code, message, details) => { throw new Refuse(code, message, details); };
 
+// What init records for a project: the push URL of the project's remote once git has rewritten it, with the repository
+// it names, and where the project lives. Returns {record, commonDir} or {problem: {code, message}}; it never throws, so
+// the permission check can report a refusal in its own words. The URL must name the agreed host and repository
+// (every fetch and push URL of the remote is checked) and no rewrite rule may apply to it, because the push command
+// refuses a destination that a rule would rewrite.
+export function initDestination(root, remote, repo, host, prefixes, env = process.env) {
+  const problem = destinationProblem(root, remote, repo, host);
+  if (problem) return { problem };
+  let found;
+  try { found = locate(root, env); } catch (error) {
+    if (error instanceof Refuse) return { problem: { code: error.code, message: error.message } };
+    throw error;
+  }
+  const urls = git(['remote', 'get-url', '--push', '--all', remote], { cwd: root, env }).stdout.split('\n').map((line) => line.trim()).filter(Boolean);
+  if (urls.length === 0) return { problem: { code: 'remote-ambiguous', message: `git remote ${remote} has no push URL` } };
+  const rewritten = rewriteProblem(found.top, urls[0], env);
+  if (rewritten) return { problem: { code: 'destination-rewritten', message: rewritten } };
+  return { record: destinationRecord({ projectRoot: root, commonDir: found.commonDir, url: urls[0], host: host.toLowerCase(), repo, prefixes }), commonDir: found.commonDir };
+}
+
 // Environment variables that move git to another repository or work tree than the working directory shows.
 const MOVING = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_NAMESPACE'];
 
