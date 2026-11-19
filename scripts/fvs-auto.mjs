@@ -1464,9 +1464,11 @@ const allowedAxiomsBytes = (crates) => Buffer.from(`${JSON.stringify({ schema: A
 
 // The path of the project root inside its git working tree, posix style: what the build check puts
 // in front of a project file in its receipt. Empty when the root is the top or in no repository.
+// The working tree's top is a real path, so the root is compared by its real path too: a project
+// reached through a symbolic link (a temporary folder on macOS, say) has the same prefix.
 function repositoryPrefix(root) {
   const top = gitWorkingTree(root);
-  return top === null ? '' : path.relative(top, root).split(path.sep).join('/');
+  return top === null ? '' : path.relative(top, fs.realpathSync(root)).split(path.sep).join('/');
 }
 
 // The live spec files of each target crate, as the build check reports them. A spec file covers one
@@ -1513,8 +1515,10 @@ export function allowedAxiomList(root, state, context, commit, specs = null) {
   const trusted = new Set();
   const accepted = new Map((loadExternals(root)?.records ?? []).filter((record) => record.status === 'assumption-accepted').map((record) => [record.id, record]));
   const read = (file, expectedSha256) => {
-    const relative = path.relative(root, path.resolve(root, file));
-    if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
+    // A recorded path may name the project by its real path or by the link it was reached through.
+    const inside = (base) => path.relative(base, path.resolve(base, file));
+    const relative = [root, fs.realpathSync(root)].map(inside).find((candidate) => candidate !== '' && !candidate.startsWith('..') && !path.isAbsolute(candidate)) ?? '';
+    if (relative === '') {
       problems.push(`${file} is outside this project (${root}), so it cannot be read at ${commit}: the extraction was recorded from another checkout, so record it again from this one`);
       return null;
     }

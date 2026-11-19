@@ -141,6 +141,21 @@ describe('the proof phase over several crates', () => {
       assert.deepEqual(sectionsOf(proofPhase(hmacAndSha2, { prune: SHA2_SPEC })), [['libcrux_hmac', [HMAC_SPEC]], ['libcrux_sha2', []]], 'a file the owner pruned is not live');
     });
 
+    it('derives the same list for a project root reached through a symbolic link', () => {
+      const { root, head } = proofPhase(hmacAndSha2, { below: true });
+      const link = path.join(fixtures.temporaryDirectory('fvs-link-'), 'project');
+      fs.symlinkSync(root, link);
+      const state = fixtures.readState(root);
+      const specs = JSON.parse(fs.readFileSync(path.join(root, '.formalising', 'auto-fv', 'specs.json'), 'utf8'));
+      const units = state.extraction.run.units;
+      const context = { units, targets: units.map((row) => row.crate), view: { units: units.map((row) => ({ crate: row.crate, dependsOn: row.imports ?? [] })) } };
+      const real = auto.allowedAxiomList(root, state, context, head, specs);
+      const linked = auto.allowedAxiomList(link, state, context, head, specs);
+      assert.deepEqual(linked.problems, []);
+      assert.deepEqual(linked.crates.map((entry) => [entry.crate, entry.specFiles]), [['libcrux_hmac', [`lean/${HMAC_SPEC}`]], ['libcrux_sha2', [`lean/${SHA2_SPEC}`]]]);
+      assert.equal(linked.sha256, real.sha256);
+    });
+
     it('a recorded proof PR with no receipt yet is told to write the list before the check', () => {
       const { root } = proofPhase();
       assert.match(view(root).nextAction, /is recorded at [0-9a-f]{40}\. Write the allowed axioms: node fvs-auto\.mjs allowed-axioms .* then run the build check: node fvs-build-check\.mjs .* --allow-axioms /);
