@@ -132,6 +132,60 @@ describe('multi-crate extraction: the LLBC identity rule', () => {
     assert.match(charon.result.message, /the LLBC is for crate "toy_app", not "toy_lib"/);
   });
 
+  describe('every source file of the LLBC is a file of the copy, the toolchain or a locked package', () => {
+    const REGISTRY = '/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_core-0.10.1/src/lib.rs';
+    const refusedCharon = (behaviour, pattern, crate = 'toy_app') => {
+      const ws = workspace({ [crate]: behaviour });
+      const { out } = attempted(ws);
+      const charon = step(ws, out, 'charon', crate);
+      assert.equal(charon.status, 9, charon.stdout);
+      assert.match(charon.result.message, pattern);
+    };
+
+    it('reads an absolute path under the copy as the file of the copy it is, and checks its contents', () => {
+      const ws = workspace({ toy_app: { extraFiles: [{ treeFile: 'app/src/lib.rs', crate_name: 'toy_app', contents: 'pub fn three() -> u32 { 7 }\n' }] } });
+      const { out } = attempted(ws);
+      const charon = step(ws, out, 'charon', 'toy_app');
+      assert.equal(charon.status, 9, charon.stdout);
+      assert.match(charon.result.message, /the LLBC's app\/src\/lib\.rs is not the prepared source/, 'it used to be skipped, so these contents were never compared');
+    });
+
+    it('refuses a file of the copy that the prepared copy does not record', () => {
+      refusedCharon({ extraFiles: [{ name: { Local: 'app/src/ghost.rs' }, crate_name: 'toy_app' }] }, /the LLBC reads app\/src\/ghost\.rs \(crate "toy_app"\), which is not a file of the prepared copy/);
+    });
+
+    it('refuses a path in another tree, even when it names the right crate', () => {
+      refusedCharon({ extraFiles: [{ name: { Local: '/home/someone/checkout/lib/src/lib.rs' }, crate_name: 'toy_lib' }] }, /the LLBC reads \/home\/someone\/checkout\/lib\/src\/lib\.rs \(crate "toy_lib"\), which lies outside the extraction copy/);
+      refusedCharon({ extraFiles: [{ name: { Local: '../elsewhere/src/lib.rs' }, crate_name: 'toy_lib' }] }, /the LLBC reads \.\.\/elsewhere\/src\/lib\.rs/);
+    });
+
+    it('refuses a name form that has not been checked against real output', () => {
+      refusedCharon({ extraFiles: [{ name: { Virtual: 'lib/src/lib.rs' }, crate_name: 'toy_lib' }] }, /the LLBC names a source file as a Virtual name \(crate "toy_lib"\); this form has not been checked against real Charon output/);
+      refusedCharon({ extraFiles: [{ name: { NotReal: '<macro>' }, crate_name: 'toy_app' }] }, /as a NotReal name/);
+    });
+
+    it('refuses a toolchain source that is labelled with a crate of the toolchain only by pretence', () => {
+      refusedCharon({ extraFiles: [{ name: { Local: '/rustc/library/core/src/mem.rs' }, crate_name: 'toy_lib' }] }, /the LLBC reads a toolchain source file \/rustc\/library\/core\/src\/mem\.rs but labels it with crate "toy_lib"/);
+    });
+
+    it('refuses a crate the LLBC reaches that is not declared, the toolchain or a locked package', () => {
+      refusedCharon({ extraCrates: ['mystery'] }, /the LLBC reaches crate mystery, which is not a declared crate, the toolchain or a package of the Cargo\.lock in the copy/);
+    });
+
+    it('refuses a registry file whose package the lock does not list, and accepts one it does, recording the package', () => {
+      refusedCharon({ extraCrates: ['rand_core'], extraFiles: [{ name: { Local: REGISTRY }, crate_name: 'rand_core' }] }, /but rand_core-0\.10\.1 is not a registry package of the Cargo\.lock in the copy/);
+      const ws = workspace({ toy_app: { extraCrates: ['rand_core'], extraFiles: [{ name: { Local: REGISTRY }, crate_name: 'rand_core' }] } });
+      fs.appendFileSync(path.join(ws.project, 'Cargo.lock'), '\n[[package]]\nname = "rand_core"\nversion = "0.10.1"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n');
+      const out = complete(ws);
+      assert.deepEqual(charonRecord(out, 'toy_app').llbc.foreignCrates.find((entry) => entry.crate === 'rand_core'), { crate: 'rand_core', kind: 'external', origin: 'registry', package: 'rand_core', version: '0.10.1' });
+    });
+
+    it('accepts a toolchain library labelled core under another directory of the toolchain', () => {
+      const ws = workspace({ toy_app: { extraFiles: [{ name: { Local: '/rustc/library/stdarch/crates/core_arch/src/lib.rs' }, crate_name: 'core' }] } });
+      assert.doesNotThrow(() => complete(ws));
+    });
+  });
+
   it('records has_errors and the affected items even though Charon exited 0', () => {
     const ws = workspace({ toy_lib: { hasErrors: true, errorItems: ['hacl::sha256_update', 'hacl::sha512_update'] } });
     const out = complete(ws);
@@ -387,14 +441,14 @@ describe('multi-crate extraction: crates the owner chose not to verify', () => {
     for (const entry of charon.nonTargetSources) assert.equal(entry.sha256, manifest.final.files[entry.file].sha256);
     const { run } = engine(ws, ['attempt-status', '--out', out]).result;
     assert.deepEqual(run.nonTargets.map(({ crate, dir, sources }) => [crate, dir, sources.map((source) => source.file)]), [['toy_lib', 'lib', ['lib/src/lib.rs', 'lib/src/more.rs']]]);
-    assert.deepEqual(run.foreignCrates, [{ crate: 'core', kind: 'external' }, { crate: 'toy_lib', kind: 'non-target' }]);
+    assert.deepEqual(run.foreignCrates, [{ crate: 'core', kind: 'external', origin: 'toolchain' }, { crate: 'toy_lib', kind: 'non-target' }]);
   });
 
   it('reports a target crate the LLBC reaches as a target, and the standard library as external', () => {
     const ws = workspace();
     const out = complete(ws);
     const { run } = engine(ws, ['attempt-status', '--out', out]).result;
-    assert.deepEqual(run.units.find((unit) => unit.crate === 'toy_app').foreignCrates, [{ crate: 'core', kind: 'external' }, { crate: 'toy_lib', kind: 'target' }]);
+    assert.deepEqual(run.units.find((unit) => unit.crate === 'toy_app').foreignCrates, [{ crate: 'core', kind: 'external', origin: 'toolchain' }, { crate: 'toy_lib', kind: 'target' }]);
     assert.equal(run.nonTargets, undefined, 'no non-target was declared');
   });
 

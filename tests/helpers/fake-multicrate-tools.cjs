@@ -56,6 +56,8 @@ for (const dep of me.deps) {
   const owner = Object.keys(info).find((name) => info[name].dir === dep);
   sourcesOf(dep).forEach((file) => files.push({ id: files.length, name: { Local: rel(file) }, crate_name: mine.relabelForeign ?? crateOf(owner), contents: mine.alterForeign ? fs.readFileSync(file, 'utf8') + '// altered\\n' : null }));
 }
+files.push({ id: files.length, name: { Local: '/rustc/library/core/src/lib.rs' }, crate_name: 'core', contents: null });
+for (const extra of mine.extraFiles ?? []) files.push({ id: files.length, contents: null, ...extra, name: extra.treeFile ? { Local: path.join(cwd, extra.treeFile) } : extra.name });
 const decl = (name, errors) => ({ def_id: 0, item_meta: { name: [{ Ident: [crateOf(pkg), 0] }, { Ident: [name, 0] }], has_errors: errors } });
 const decls = [{ ...decl('one', false), def_id: 0 }];
 (mine.errorItems ?? []).forEach((name, index) => decls.push({ ...decl(name, true), def_id: index + 1 }));
@@ -64,6 +66,7 @@ for (const dep of me.deps) {
   decls.push({ def_id: decls.length, item_meta: { name: [{ Ident: [crateOf(owner), 0] }, { Ident: ['one', 0] }], has_errors: false } });
 }
 decls.push({ def_id: decls.length, item_meta: { name: [{ Ident: ['core', 0] }, { Ident: ['mem', 0] }], has_errors: false } });
+(mine.extraCrates ?? []).forEach((crate) => decls.push({ def_id: decls.length, item_meta: { name: [{ Ident: [crate, 0] }, { Ident: ['f', 0] }], has_errors: false } }));
 const llbc = { charon_version: '0.1.315', has_errors: mine.hasErrors === true,
   translated: { crate_name: mine.llbcCrate ?? crateOf(pkg), options: { dest_file: dest, args }, files, fun_decls: decls, type_decls: [], global_decls: [], trait_decls: [], trait_impls: [] } };
 if (mine.charonLog) process.stderr.write(mine.charonLog);

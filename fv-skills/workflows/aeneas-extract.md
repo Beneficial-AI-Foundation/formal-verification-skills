@@ -386,8 +386,23 @@ directory or imports, an order that the stitching does not give, or a directory 
 is not in the roster. A crate's own directory is not read alone: `attempt-status --out
 OUT/units/NAME` is refused and points to the copy, where the roster is checked. Each unit row is a whole single-crate run plus its `imports`,
 `stitch`, `hasErrors` (the items Aeneas could not translate; they are never roots),
-`foreignCrates` (each crate the LLBC reaches, as `target`, `non-target` or `external`) and the
+`foreignCrates` (each crate the LLBC reaches, as `target`, `non-target` or `external`; an external says where it comes from: `origin` `toolchain` or `registry`, with the locked `package` and `version` for a registry crate) and the
 pinned sources of each non-target.
+
+What the Charon stage accepts as a source. Every source file the LLBC names lands in exactly one
+class, or the stage fails. A path relative to the copy, or absolute and under it, is a file of the
+copy: it must be a file the prepared copy records, its label must be the crate that owns its
+directory, and the main crate's contents must be the recorded bytes. A `/rustc/library/...` path is
+the toolchain and must be labelled with a crate of the toolchain (`core`, `alloc`, `std`,
+`proc_macro`, `test`; the label need not match the directory, since `core` vendors `stdarch`). A path
+under `<cargo home>/registry/src/<index>/<name>-<version>/` is a registry package, and that
+directory must be a registry package of the `Cargo.lock` in the copy. A crate that is none of these
+and none of the declared crates is refused, not filed as external. Everything else is refused with
+the path or form named: a path outside the copy (another tree, an absolute path into the original
+checkout), a file the copy does not record (an input missing from `extraction.inputs`, or a file a
+build script made), a `Virtual` or `NotReal` name, and a git dependency's checkout. Those forms have
+not been seen in real Charon output yet, so the engine does not guess at them; a project that needs
+one has to bring the crate in as a declared crate or change the dependency.
 
 Stitching. When crate B calls target crate A, Aeneas writes B's copy of A's items as axioms that
 carry only a type. Publication replaces each such axiom by an alias of A's real definition with
