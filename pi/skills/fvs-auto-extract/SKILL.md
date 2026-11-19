@@ -19,6 +19,12 @@ from the build exit status and the patch engine's checks, write the externals re
 external, handwritten-model or semantic-patch boundary) with `record-externals`, and write the
 regeneration instructions.
 
+In a repository with several crates the same command extracts every target crate (all crates with a
+library unless the owner decided otherwise), each stitched to the target crates it calls, so a crate
+uses the other crate's real translation and not axioms of its own about it. It also says what the
+project must do afterwards: regenerate the pinned axiom lists in its own Lean project and add an
+externals record for every axiom that stitching made visible.
+
 A failed extraction is never recorded as success, and recorded boundaries are never dropped.
 Extraction success is not a proof: it says nothing about any specification.
 
@@ -59,6 +65,8 @@ owner or the scripts have not decided.
 - [ ] Extraction runs through `/fvs:aeneas-extract`, unchanged.
 - [ ] `record-extraction` runs after every extraction attempt, success or failure, with the copy, the build's real exit status and the shared extractor's final oracle verdict; a refused or unknown oracle is never recorded as success.
 - [ ] Every boundary has an externals record; recorded boundaries are resubmitted, never dropped.
+- [ ] A several-crate extraction lists the crates first, uses one spec with a stitch entry for each call between target crates, records the lock's origin and hash, and fails as a whole when one crate fails.
+- [ ] After stitching the report names the project's own work: regenerate the pinned axiom lists, add externals records for the axioms that became visible, and replace hand-written axioms about translated functions; this command never edits the project's Lean.
 - [ ] Regeneration instructions are written from the recorded state.
 - [ ] The report keeps extraction, restored source, evidence and remaining obligations apart and says extraction success is not a proof.
 - [ ] The report carries the State, Next action and Pending decision lines.
