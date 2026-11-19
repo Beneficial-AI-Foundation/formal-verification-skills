@@ -8,9 +8,8 @@
 // which steps prompted and `record` keeps the answer. `write-allowlist` writes rules only for the steps that
 // prompted, only from the closed catalog below, and only for the exact rule text the user confirmed (the
 // confirmation is the digest that the preview prints). No rule it writes names a GitHub comment, review or
-// merge, another remote, another branch namespace or a wildcard program. A wildcard in an allow rule still
-// matches the rest of the command text, so the push rules come with deny rules for the usual force, delete
-// and refspec spellings; those are not a boundary (see the permissions page), remote branch protection is.
+// merge, a push, or a wildcard program. A push gets no allow rule at all: a `*` in a rule also matches the rest
+// of the command, so a glob cannot say "this branch and nothing else".
 //
 // It reads no standard input and does not touch the engine's state or externals files; the answers live in
 // their own record, .formalising/auto-fv/permissions.json.
@@ -89,16 +88,6 @@ function checkRemoteIsRepo(root, remote, repo, host) {
 
 // ---- the closed catalog -------------------------------------------------------------------------------------
 
-const GUARD_LONG = ['--force', '--delete', '--mirror', '--all', '--tags', '--prune'];
-const GUARD_SHORT = ['-f', '-d'];
-// Start-anchored deny rules: a leading wildcard would also match message and pull request text.
-export const GUARDS = [
-  ...GUARD_LONG.map((flag) => `Bash(git push *${flag}*)`),
-  ...GUARD_SHORT.flatMap((flag) => [`Bash(git push ${flag}*)`, `Bash(git push * ${flag}*)`]),
-  'Bash(git push * +*)',
-  'Bash(git push *:*)',
-];
-
 const bash = (command) => ({ tool: 'Bash', command });
 const rule = (pattern, justification, match, notMatch) => ({ pattern, justification, match, notMatch });
 
@@ -146,27 +135,20 @@ export function buildCatalog({ repo, remote = 'origin', prefixes = ['fvs'] }) {
     {
       id: 'git-push', why: `A worker pushes its branch to the project fork (${remote}), only under ${pushPrefixes.map((p) => `${p}/`).join(' or ')}. The probe is a dry run: nothing is pushed.`,
       probes: pushPrefixes.map((p) => bash(`git push -u ${remote} ${p}/permission-check --dry-run`)),
-      claude: pushPrefixes.flatMap((p) => [`Bash(git push -u ${remote} ${p}/*)`, `Bash(git push ${remote} ${p}/*)`]),
+      claude: [], claudeNote: 'No allow rule is written for a push: a rule cannot exclude a second branch name, a force flag or a refspec, so a push keeps asking.',
       codex: [], codexNote: 'A Codex rule matches only the start of a command, so it cannot exclude a force push: push still asks on Codex.',
-      guards: GUARDS,
     },
   ];
-  return { repo, remote, prefixes: pushPrefixes, steps, guards: GUARDS };
+  return { repo, remote, prefixes: pushPrefixes, steps };
 }
 
 // Defence in depth: every rule the writer is about to emit passes this, whatever built it.
 export function ruleProblem(kind, text) {
-  if (kind === 'deny') return GUARDS.includes(text) ? null : 'only the push guard rules may be written as deny rules';
-  if (kind !== 'allow') return `unknown rule kind ${kind}`;
+  if (kind !== 'allow') return 'FVS writes allow rules only; it writes no deny, ask or other rule';
+  // No glob can allow a push safely, whatever its spelling, so any rule that names one is refused outright.
+  if (/\bpush\b/.test(text)) return 'no rule allows a push: a glob cannot exclude a second branch, a force flag or a refspec';
   // The only edit rule is for the check's own scratch folder; spec and proof folders follow the session's permission mode.
   if (text.startsWith('Edit(')) return text === `Edit(/${SCRATCH_DIR}/**)` ? null : 'the only edit rule FVS writes is for the permission check\'s scratch folder';
-  const push = /^Bash\(git push (?:-u )?(\S+) (\S+)\/\*\)$/.exec(text);
-  if (push) {
-    if (!WORD.test(push[1]) || push[1] === 'upstream') return 'a push rule must name the project remote, never upstream';
-    const parts = push[2].split('/');
-    if (!parts.every((part) => WORD.test(part)) || push[2].includes('..') || RESERVED.has(parts[0])) return 'a push rule must name a private branch namespace, never a shared branch';
-    return null;
-  }
   const fixed = [/^Bash\(ao send \*\)$/, /^Bash\(gh pr (?:view|list) \*\)$/, /^Bash\(git (?:fetch|ls-remote) \*\)$/, /^Bash\(lake (?:env lean|build) \*\)$/];
   return fixed.some((pattern) => pattern.test(text)) ? null : 'not a rule FVS writes (no GitHub comment, review or merge, no force push, no wildcard program)';
 }
@@ -177,7 +159,7 @@ function selectedRules(catalog, stepIds) {
   for (const id of wanted) if (!byId[id]) refuse('unknown-step', `unknown step ${JSON.stringify(id)}; steps: ${catalog.steps.map((s) => s.id).join(', ')}`);
   if (wanted.length === 0) refuse('invalid-input', '--steps needs at least one step id');
   const picked = wanted.map((id) => byId[id]);
-  return { picked, allow: picked.flatMap((step) => step.claude), deny: picked.flatMap((step) => step.guards ?? []) };
+  return { picked, allow: picked.flatMap((step) => step.claude) };
 }
 
 const digestOf = (value) => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -229,7 +211,7 @@ function summaryLine(record, stepIds) {
     parts.push(`latest answer per step, ${seen.join('; ')}`);
     parts.push(prompted.length ? `waiting for your approval when the run reaches: ${prompted.join(', ')}` : 'no step prompted in the latest answers');
   }
-  if (record.allowlist) parts.push(`allowlist written to ${record.allowlist.file} (${record.allowlist.allow.length} allow, ${record.allowlist.deny.length} deny)`);
+  if (record.allowlist) parts.push(`allowlist written to ${record.allowlist.file} (${record.allowlist.allow.length} allow)`);
   if (record.runtime === 'codex' && record.allowlist?.writtenAt > (last?.at ?? '')) parts.push('Codex loads rules at startup: check again in a new session before treating any step as fixed or unfixed');
   return parts.join('; ');
 }
@@ -330,27 +312,25 @@ function checkMainCheckout(root) {
 }
 
 // Keep what was written in the record (when there is one), so the summary and a resumed run can say so.
-function recordAllowlist(root, file, allow, deny, replace = false) {
+function recordAllowlist(root, file, allow, replace = false) {
   const previous = readRecord(root);
   if (!previous) return;
-  const kept = !replace && previous.allowlist?.file === file ? previous.allowlist : { file, allow: [], deny: [] };
-  writeAtomic(path.join(root, RECORD_FILE), JSON.stringify({ ...previous, allowlist: { file, allow: [...kept.allow, ...allow], deny: [...kept.deny, ...deny], writtenAt: new Date().toISOString() } }, null, 2) + '\n');
+  const kept = !replace && previous.allowlist?.file === file ? previous.allowlist : { file, allow: [] };
+  writeAtomic(path.join(root, RECORD_FILE), JSON.stringify({ ...previous, allowlist: { file, allow: [...kept.allow, ...allow], writtenAt: new Date().toISOString() } }, null, 2) + '\n');
 }
 
-function mergeClaude(existing, allow, deny) {
+function mergeClaude(existing, allow) {
   if (!plain(existing)) refuse('malformed-settings', 'the settings file is not a JSON object; it is never overwritten');
   const permissions = existing.permissions ?? {};
-  if (!plain(permissions) || [permissions.allow, permissions.deny].some((list) => list !== undefined && !Array.isArray(list))) {
-    refuse('malformed-settings', 'permissions, permissions.allow or permissions.deny has an unexpected shape; the file is never overwritten');
+  if (!plain(permissions) || (permissions.allow !== undefined && !Array.isArray(permissions.allow))) {
+    refuse('malformed-settings', 'permissions or permissions.allow has an unexpected shape; the file is never overwritten');
   }
   const merged = structuredClone(existing);
   merged.permissions = merged.permissions ?? {};
-  const added = { allow: [], deny: [] };
-  for (const [key, rules] of [['allow', allow], ['deny', deny]]) {
-    const list = merged.permissions[key] ?? [];
-    for (const text of rules) if (!list.includes(text)) { list.push(text); added[key].push(text); }
-    if (rules.length) merged.permissions[key] = list;
-  }
+  const list = merged.permissions.allow ?? [];
+  const added = { allow: [] };
+  for (const text of allow) if (!list.includes(text)) { list.push(text); added.allow.push(text); }
+  if (allow.length) merged.permissions.allow = list;
   return { merged, added };
 }
 
@@ -364,7 +344,7 @@ function checkNothingElseChanged(existing, merged, added) {
   for (const key of Object.keys(existing.permissions ?? {})) {
     const old = existing.permissions[key];
     const now = merged.permissions[key];
-    const same = key === 'allow' || key === 'deny' ? now.length === old.length + added[key].length && old.every((item, i) => now[i] === item) : JSON.stringify(now) === JSON.stringify(old);
+    const same = key === 'allow' ? now.length === old.length + added.allow.length && old.every((item, i) => now[i] === item) : JSON.stringify(now) === JSON.stringify(old);
     if (!same) problems.push(`permissions.${key}`);
   }
   if (problems.length) refuse('merge-check-failed', `internal check: the merge would change ${problems.join(', ')}; nothing was written`);
@@ -380,13 +360,15 @@ function writeAllowlist(flags) {
   const { root, catalog } = context(flags);
   const runtime = flags.runtime;
   if (!['claude', 'codex'].includes(runtime)) refuse('invalid-input', '--runtime must be claude or codex');
-  const { picked, allow, deny } = selectedRules(catalog, (flags.steps ?? '').split(',').filter(Boolean));
+  const { picked, allow } = selectedRules(catalog, (flags.steps ?? '').split(',').filter(Boolean));
   for (const text of allow) { const problem = ruleProblem('allow', text); if (problem) refuse('forbidden-rule', `${text}: ${problem}`); }
-  for (const text of deny) { const problem = ruleProblem('deny', text); if (problem) refuse('forbidden-rule', `${text}: ${problem}`); }
-  return runtime === 'claude' ? writeClaude(flags, root, catalog, picked, allow, deny) : writeCodex(flags, root, catalog, picked);
+  return runtime === 'claude' ? writeClaude(flags, root, catalog, picked, allow) : writeCodex(flags, root, catalog, picked);
 }
 
-function writeClaude(flags, root, catalog, picked, allow, deny) {
+function writeClaude(flags, root, catalog, picked, allow) {
+  if (allow.length === 0) {
+    refuse('nothing-to-write', 'none of these steps can be written as a Claude Code rule; their prompts stay unresolved, and the user approves them when they appear', { reasons: Object.fromEntries(picked.map((s) => [s.id, s.claudeNote ?? ''])) });
+  }
   const target = flags.target ?? 'shared';
   if (!['shared', 'local'].includes(target)) refuse('invalid-input', '--target must be shared or local');
   const relative = `.claude/${target === 'shared' ? 'settings.json' : 'settings.local.json'}`;
@@ -396,25 +378,25 @@ function writeClaude(flags, root, catalog, picked, allow, deny) {
   if (fs.existsSync(file)) {
     try { existing = readJson(file); } catch { refuse('malformed-settings', `${relative} is not valid JSON; fix it yourself first, it is never overwritten`); }
   }
-  const { merged, added } = mergeClaude(existing, allow, deny);
+  const { merged, added } = mergeClaude(existing, allow);
   const preview = {
     runtime: 'claude', target, file: relative, ...resolveTarget(root, relative), gitStatus: gitStatusOf(root, relative),
     appliesTo: target === 'shared'
       ? 'Claude Code reads .claude/settings.json from each session\'s own directory, and its allow rules apply once the folder is trusted. A worker worktree sees it only if the file is committed or .claude is linked into the worktree.'
       : 'Claude Code reads .claude/settings.local.json from the main checkout in every worktree and keeps it out of git; its allow rules apply without the trust step while the file stays untracked.',
     steps: picked.map((step) => step.id), add: added,
-    alreadyPresent: { allow: allow.filter((r) => !added.allow.includes(r)), deny: deny.filter((r) => !added.deny.includes(r)) },
+    alreadyPresent: { allow: allow.filter((r) => !added.allow.includes(r)) },
   };
-  if (added.allow.length + added.deny.length === 0) return { code: 'unchanged', message: `${relative} already holds every rule`, ...preview };
-  confirmationNeeded(flags, digestOf({ runtime: 'claude', file: relative, allow: added.allow, deny: added.deny }), preview);
+  if (added.allow.length === 0) return { code: 'unchanged', message: `${relative} already holds every rule`, ...preview };
+  confirmationNeeded(flags, digestOf({ runtime: 'claude', file: relative, allow: added.allow }), preview);
   checkNothingElseChanged(existing, merged, added);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const real = writeAtomic(file, JSON.stringify(merged, null, 2) + '\n');
   const reread = readJson(real);
-  if (![...added.allow, ...added.deny].every((text) => [...(reread.permissions.allow ?? []), ...(reread.permissions.deny ?? [])].includes(text))) {
+  if (!added.allow.every((text) => (reread.permissions.allow ?? []).includes(text))) {
     refuse('write-check-failed', `${real} does not hold the new rules after writing`);
   }
-  recordAllowlist(root, relative, added.allow, added.deny);
+  recordAllowlist(root, relative, added.allow);
   return {
     code: 'written', ...preview, realPath: real, gitStatus: gitStatusOf(root, relative),
     verified: false, verification: 'The file was re-read as JSON and holds the rules. Claude Code has no offline rule evaluator, so a live recheck is the only evidence that a step stopped prompting.',
@@ -485,7 +467,7 @@ function writeCodex(flags, root, catalog, picked) {
   confirmationNeeded(flags, digestOf({ runtime: 'codex', file: relative, text }), shown);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   writeAtomic(file, text);
-  recordAllowlist(root, relative, rules.map((r) => r.pattern.join(' ')), [], true);
+  recordAllowlist(root, relative, rules.map((r) => r.pattern.join(' ')), true);
   return {
     code: 'written', ...shown, evaluation, verified: evaluation.verified,
     message: evaluation.verified

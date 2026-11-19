@@ -59,7 +59,7 @@ function bashMatches(rule, command) {
 }
 
 describe('the catalog', () => {
-  it('every probe is matched by a rule of its own step and by no guard', () => {
+  it('every probe is matched by a rule of its own step, except the push probe, which no rule matches', () => {
     const catalog = lib.buildCatalog({ repo: REPO, prefixes: ['fvs', 'team/runs'] });
     for (const step of catalog.steps.filter((s) => s.probes)) {
       for (const probe of step.probes) {
@@ -68,52 +68,43 @@ describe('the catalog', () => {
           assert.ok(probe.path.startsWith(`${lib.SCRATCH_DIR}/`), 'scratch file is inside the scratch folder');
           continue;
         }
+        if (step.id === 'git-push') continue;
         assert.ok(step.claude.some((rule) => bashMatches(rule, probe.command)), `${step.id}: ${probe.command}`);
-        for (const guard of catalog.guards) assert.ok(!bashMatches(guard, probe.command), `${guard} would block the probe ${probe.command}`);
       }
     }
-    assert.equal(catalog.steps.find((s) => s.id === 'git-push').probes.length, 2, 'one dry-run push per prefix');
-    assert.ok(catalog.steps.find((s) => s.id === 'git-push').probes.every((p) => p.command.endsWith(' --dry-run')));
+    const push = catalog.steps.find((s) => s.id === 'git-push');
+    assert.equal(push.probes.length, 2, 'one dry-run push per prefix');
+    assert.ok(push.probes.every((p) => p.command.endsWith(' --dry-run')));
+    assert.deepEqual(push.claude, [], 'no allow rule for a push');
+    assert.match(push.claudeNote, /no allow rule is written for a push/i);
   });
 
-  it('the guards stop every push shape the run must never use and spare ordinary pushes', () => {
-    const blocked = [
-      'git push --force origin fvs/x', 'git push -u origin fvs/x --force', 'git push origin fvs/x --force-with-lease',
-      'git push -f origin fvs/x', 'git push -u origin fvs/x -f', 'git push origin fvs/x --delete', 'git push --delete origin fvs/x',
-      'git push -d origin fvs/x', 'git push origin fvs/x --mirror', 'git push origin --all', 'git push origin fvs/x --tags',
-      'git push origin +fvs/x', 'git push origin fvs/x:main', 'git push origin fvs/x --prune',
-    ];
-    for (const command of blocked) assert.ok(lib.GUARDS.some((guard) => bashMatches(guard, command)), command);
-    for (const command of ['git push -u origin fvs/fix-foo', 'git push origin fvs/delete-me', 'git push -u origin fvs/permission-check --dry-run']) {
-      assert.ok(!lib.GUARDS.some((guard) => bashMatches(guard, command)), command);
-    }
-  });
-
-  it('states the push shapes no glob can close: they match an allow rule and no guard', () => {
-    // A trailing "*" spans spaces and a glob cannot say "no second argument", so these stay allowed by text.
-    // The permissions page names them and points at remote branch protection; if a guard ever closes one,
-    // move it to the blocked list above and update the page.
-    const allowRules = lib.buildCatalog({ repo: REPO }).steps.find((s) => s.id === 'git-push').claude;
-    for (const command of ['git push origin fvs/x main', 'git push -u origin fvs/x -uf']) {
-      assert.ok(allowRules.some((rule) => bashMatches(rule, command)), command);
-      assert.ok(!lib.GUARDS.some((guard) => bashMatches(guard, command)), command);
-    }
-    assert.match(fs.readFileSync(PAGE, 'utf8').replace(/\s+/g, ' '), /second branch name.*combined short flags.*branch protection/);
+  it('no rule the catalog writes matches any push, whatever its spelling', () => {
+    const catalog = lib.buildCatalog({ repo: REPO, prefixes: ['fvs', 'ao'] });
+    const rules = catalog.steps.flatMap((s) => s.claude).filter((rule) => rule.startsWith('Bash('));
+    for (const command of [
+      'git push origin fvs/x', 'git push -u origin fvs/x', 'git push origin fvs/x main', 'git push -u origin fvs/x -uf', 'git push --force origin fvs/x',
+      'git push origin fvs/x --delete', 'git push origin fvs/x:main', 'git -C /a push origin fvs/x', 'git push', 'git push origin main',
+      'git push -u origin fvs/permission-check --dry-run',
+    ]) assert.ok(!rules.some((rule) => bashMatches(rule, command)), command);
+    assert.equal(lib.GUARDS, undefined, 'FVS writes no deny rules either');
   });
 
   it('every rule the catalog writes passes the rule check, and forbidden rules never do', () => {
     const catalog = lib.buildCatalog({ repo: REPO });
     for (const step of catalog.steps) for (const rule of step.claude) assert.equal(lib.ruleProblem('allow', rule), null, rule);
-    for (const guard of catalog.guards) assert.equal(lib.ruleProblem('deny', guard), null, guard);
     for (const rule of [
       'Bash(gh pr comment *)', 'Bash(gh pr review *)', 'Bash(gh pr merge *)', 'Bash(gh pr ready *)', 'Bash(gh api *)', 'Bash(gh issue comment *)',
+      // A glob never allows a push, in any spelling: the push gate hook decides pushes, not a rule.
       'Bash(git push *)', 'Bash(git push --force origin fvs/*)', 'Bash(git push origin main)', 'Bash(git push origin main*)', 'Bash(git push upstream fvs/*)',
-      'Bash(git push origin */*)', 'Bash(git push -u upstream fvs/*)', 'Bash(git push origin release/*)', 'Bash(git *)', 'Bash(gh *)', 'Bash(*)', 'Bash(rm *)',
+      'Bash(git push origin */*)', 'Bash(git push -u upstream fvs/*)', 'Bash(git push origin release/*)', 'Bash(git push origin fvs/*)', 'Bash(git push -u origin fvs/*)',
+      'Bash(git -C * push origin fvs/*)', 'Bash(git * push *)', 'Bash(git *)', 'Bash(gh *)', 'Bash(*)', 'Bash(rm *)',
       'Bash(ao stop *)', 'Bash(ao pr merge *)', 'Edit(/.claude/**)', 'Edit(/.git/**)', 'Edit(/../**)', 'Edit(/**)', 'Read(/**)', 'WebFetch',
       // Not rules FVS writes: the spec and proof folders, and draft pull request create and edit, are left to the user.
       'Edit(/formal/**)', 'Bash(gh pr edit *)', `Bash(gh pr create --draft --repo ${REPO} *)`,
     ]) assert.ok(lib.ruleProblem('allow', rule), `should refuse ${rule}`);
-    assert.ok(lib.ruleProblem('deny', 'Bash(gh pr comment *)'));
+    for (const text of ['Bash(gh pr comment *)', 'Bash(git push *--force*)', 'Bash(git push *:*)']) assert.ok(lib.ruleProblem('deny', text), 'FVS writes no deny rule');
+    assert.ok(lib.ruleProblem('ask', 'Bash(ao send *)'));
   });
 
   it('refuses inputs that could widen a push rule', () => {
@@ -257,19 +248,19 @@ describe('the remote check', () => {
 
 describe('write-allowlist for Claude Code', () => {
   it('refuses without confirmation and writes nothing', () => {
-    const none = allow('git-push');
+    const none = allow('gh-read');
     assert.equal(none.status, 1);
     assert.equal(none.json.code, 'confirmation-required');
-    assert.ok(none.json.add.allow.includes('Bash(git push -u origin fvs/*)'));
-    assert.ok(none.json.add.deny.length > 0);
+    assert.deepEqual(none.json.add.allow, ['Bash(gh pr view *)', 'Bash(gh pr list *)']);
+    assert.equal(none.json.add.deny, undefined, 'FVS writes no deny rules');
     assert.equal(fs.existsSync(settingsFile()), false);
-    const wrong = allow('git-push', '--confirm', 'yes');
+    const wrong = allow('gh-read', '--confirm', 'yes');
     assert.equal(wrong.json.code, 'confirmation-required');
     assert.equal(fs.existsSync(settingsFile()), false);
   });
 
   it('a digest confirmed for one rule set is refused for another', () => {
-    const preview = allow('git-push');
+    const preview = allow('gh-read');
     const other = allow('worker-message', '--confirm', preview.json.digest);
     assert.equal(other.json.code, 'confirmation-required');
     assert.equal(fs.existsSync(settingsFile()), false);
@@ -292,20 +283,39 @@ describe('write-allowlist for Claude Code', () => {
     assert.deepEqual(after.permissions.ask, original.permissions.ask);
     assert.equal(after.permissions.defaultMode, 'default');
     assert.deepEqual(after.permissions.allow, [...original.permissions.allow, 'Bash(ao send *)', 'Bash(gh pr view *)', 'Bash(gh pr list *)']);
-    assert.equal(after.permissions.deny, undefined, 'no guard rules without a push step');
+    assert.equal(after.permissions.deny, undefined, 'FVS writes no deny rules');
     assert.ok(fs.readFileSync(settingsFile(), 'utf8').endsWith('}\n'));
   });
 
-  it('creates the file, adds the guards with the push rules, and is a no-op the second time', () => {
-    const done = confirmed('git-push', '--branch-prefix', 'fvs', '--branch-prefix', 'ao');
+  it('keeps a deny rule the user already had, and is a no-op the second time', () => {
+    writeSettings({ permissions: { deny: ['Bash(git push *--force*)'] } });
+    const done = confirmed('git-read');
     assert.equal(done.json.code, 'written');
     const written = readSettings();
-    assert.deepEqual(written.permissions.allow, ['Bash(git push -u origin fvs/*)', 'Bash(git push origin fvs/*)', 'Bash(git push -u origin ao/*)', 'Bash(git push origin ao/*)']);
-    assert.deepEqual(written.permissions.deny, lib.GUARDS);
+    assert.deepEqual(written.permissions.allow, ['Bash(git fetch *)', 'Bash(git ls-remote *)']);
+    assert.deepEqual(written.permissions.deny, ['Bash(git push *--force*)']);
     const before = fs.readFileSync(settingsFile(), 'utf8');
-    const again = allow('git-push', '--branch-prefix', 'fvs', '--branch-prefix', 'ao');
+    const again = allow('git-read');
     assert.equal(again.json.code, 'unchanged');
     assert.equal(fs.readFileSync(settingsFile(), 'utf8'), before);
+  });
+
+  it('a push step alone writes nothing and says its prompt stays unresolved', () => {
+    const refused = allow('git-push', '--branch-prefix', 'fvs', '--branch-prefix', 'ao');
+    assert.equal(refused.json.code, 'nothing-to-write');
+    assert.match(refused.json.message, /prompts stay unresolved/);
+    assert.match(refused.json.reasons['git-push'], /no allow rule is written for a push/i);
+    assert.equal(fs.existsSync(settingsFile()), false);
+    assert.equal(allow('git-push', '--confirm', 'anything').json.code, 'nothing-to-write');
+    assert.equal(fs.existsSync(path.join(project, '.claude')), false);
+  });
+
+  it('a push step next to other steps adds only the other steps\' rules', () => {
+    const done = confirmed('git-push,worker-message');
+    assert.equal(done.json.code, 'written');
+    const written = readSettings();
+    assert.deepEqual(written.permissions.allow, ['Bash(ao send *)']);
+    assert.ok(!JSON.stringify(written).includes('push'), 'no push rule of any kind');
   });
 
   it('refuses a file that is not valid JSON, or has the wrong shape, and leaves it untouched', () => {
@@ -404,7 +414,7 @@ describe('record', () => {
     answer({ runtime: 'claude', kind: 'check', results: { 'worker-message': 'prompted' } });
     confirmed('worker-message');
     const second = answer({ runtime: 'claude', kind: 'recheck', results: { 'worker-message': 'quiet' } });
-    assert.match(second.json.summary, /^recheck .*no step prompted.*allowlist written to \.claude\/settings\.json \(1 allow, 0 deny\)/);
+    assert.match(second.json.summary, /^recheck .*no step prompted.*allowlist written to \.claude\/settings\.json \(1 allow\)/);
     const written = JSON.parse(fs.readFileSync(path.join(project, '.formalising', 'auto-fv', 'permissions.json'), 'utf8'));
     assert.deepEqual(written.rounds.map((r) => r.kind), ['check', 'recheck']);
     assert.deepEqual(written.allowlist.allow, ['Bash(ao send *)']);
@@ -438,7 +448,7 @@ describe('record', () => {
     const done = run('write-allowlist', base('--runtime', 'codex', '--steps', 'worker-message', '--confirm', preview.json.digest));
     assert.equal(done.json.code, 'written');
     const waiting = run('plan', base()).json.record.summary;
-    assert.match(waiting, /allowlist written to \.codex\/rules\/fvs-auto\.rules \(1 allow, 0 deny\)/);
+    assert.match(waiting, /allowlist written to \.codex\/rules\/fvs-auto\.rules \(1 allow\)/);
     assert.match(waiting, /Codex loads rules at startup: check again in a new session/);
     assert.match(waiting, /waiting for your approval when the run reaches: worker-message, git-push/);
     const after = answer({ runtime: 'codex', kind: 'recheck', results: { 'worker-message': 'quiet' } });
@@ -619,7 +629,8 @@ describe('the permissions page', () => {
     const probed = catalog.steps.filter((s) => s.probes);
     const documented = JSON.parse(block(page(), 'Claude Code allowlist', 'json'));
     assert.deepEqual(documented.permissions.allow, probed.flatMap((s) => s.claude));
-    assert.deepEqual(documented.permissions.deny, lib.GUARDS);
+    assert.equal(documented.permissions.deny, undefined, 'the page lists no deny rules, because FVS writes none');
+    assert.ok(!JSON.stringify(documented).includes('push'), 'the page lists no push rule');
     for (const dropped of ['draft-pr-create', 'draft-pr-edit', 'edit-folders', 'gh pr create', 'gh pr edit']) assert.ok(!page().includes(dropped), `${dropped} is no longer written, so the page does not offer it`);
   });
 

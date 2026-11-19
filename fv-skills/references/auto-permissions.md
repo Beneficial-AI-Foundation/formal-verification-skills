@@ -63,23 +63,7 @@ with `OWNER/REPO` and `fvs` standing for your own values:
       "Bash(gh pr view *)",
       "Bash(gh pr list *)",
       "Bash(git fetch *)",
-      "Bash(git ls-remote *)",
-      "Bash(git push -u origin fvs/*)",
-      "Bash(git push origin fvs/*)"
-    ],
-    "deny": [
-      "Bash(git push *--force*)",
-      "Bash(git push *--delete*)",
-      "Bash(git push *--mirror*)",
-      "Bash(git push *--all*)",
-      "Bash(git push *--tags*)",
-      "Bash(git push *--prune*)",
-      "Bash(git push -f*)",
-      "Bash(git push * -f*)",
-      "Bash(git push -d*)",
-      "Bash(git push * -d*)",
-      "Bash(git push * +*)",
-      "Bash(git push *:*)"
+      "Bash(git ls-remote *)"
     ]
   }
 }
@@ -94,14 +78,8 @@ Why each rule:
   dependency that is missing, so these rules allow what any build of the project does.
 - `gh pr view *` and `gh pr list *`: reading pull requests. Read only.
 - `git fetch *` and `git ls-remote *`: reading branches. Neither pushes.
-- `git push -u origin fvs/*` and `git push origin fvs/*`: a worker pushes its own branch to the project fork,
-  and only under your namespace.
-- The `deny` rules are not permissions. They exist because a `*` in an allow rule also matches the rest of the
-  command, so `git push origin fvs/x --delete` would match the push rule. Each deny rule starts with
-  `git push`, so it cannot match words inside a message or pull request text. They refuse the usual spellings
-  of force pushes, deletes, mirrors, tag pushes, pruning, `+branch` and `source:destination` pushes outright,
-  because an unanswered prompt would only stall the run. They are not a complete boundary: see "What the
-  rules cannot close".
+- There is no push rule and no deny rule. A `*` in an allow rule also matches the rest of the command, so no
+  glob can say "this branch and nothing else": see "Pushes".
 
 ## Codex rules
 
@@ -149,25 +127,20 @@ None of these is ever allowed by the files above, and the check refuses to write
 
 - a GitHub comment or review (`gh pr comment`, `gh pr review`), marking a pull request ready, and a merge;
   only you comment, mark ready and merge;
-- a push to any remote other than the project fork, and a push to a branch outside your namespace;
-- a force push, a delete, a mirror push, a tag push: no rule FVS writes names them, and the `deny` rules
-  refuse their usual spellings outright (see "What the rules cannot close");
+- every push: no rule FVS writes names one (see "Pushes");
 - `gh api`, `gh issue`, `gh repo`, `gh release` and any other command not in the table above;
 - any step you did not confirm, and any step that did not prompt in your check.
 
-## What the rules cannot close
+## Pushes
 
-A `*` in an allow rule matches the rest of the command, and a glob cannot say "nothing else after this".
-So the push rule also matches `git push origin fvs/x main` (a second branch name, which pushes to `main`) and
-a push with combined short flags such as `-uf`, and no deny rule above catches either. Command text is not a
-boundary: Claude Code matches the text Claude writes, and says so in its own documentation. Set branch
-protection on the project fork (protect `main` and the release branches, forbid force pushes). That works
-whatever the command looks like, and it is the real stop for a push to a shared branch.
+No rule allows a push. A `*` in an allow rule matches the rest of the command, and a glob cannot say "nothing
+else after this": `git push origin fvs/x main` pushes to `main`, and `git push -u origin fvs/x -uf` is a force
+push, and both match `git push origin fvs/*`. So a push asks, and you approve it. Set branch protection on the
+project fork (protect `main` and the release branches, forbid force pushes): it works whatever the command
+looks like.
 
-A push written another way, such as `git -C . push`, is not matched by the allow or the deny rules and keeps
-asking. Workers
-should push in one standalone, unchained call: `git push -u origin fvs/<name>`, with no `&&`, `;`, pipe or
-`cd` in front of it. A compound command is allowed only when every part of it is allowed.
+Workers should push in one standalone, unchained call: `git push -u origin fvs/<name>`, with no `&&`, `;`,
+pipe, redirect or `cd` in front of it.
 
 ## Where the file goes
 
