@@ -190,6 +190,36 @@ describe('the proof phase over several crates', () => {
     assert.deepEqual(result.crates.units.map((entry) => [entry.crate, entry.accepted]), [['libcrux_hmac', true], ['libcrux_sha2', undefined]]);
   });
 
+  describe('a verified crate that uses another verified crate without being stitched to it', () => {
+    // hmac's LLBC reaches sha2 items, but its Lean neither imports sha2 nor is stitched to it, so
+    // each of those items would be an axiom in hmac's own Lean.
+    const unstitched = (directory) => {
+      const [hmac, sha2] = hmacAndSha2(directory);
+      delete hmac.imports;
+      hmac.foreignCrates = [{ crate: 'libcrux_sha2', kind: 'target' }, { crate: 'core', kind: 'external' }];
+      return [hmac, sha2];
+    };
+
+    it('is not accepted, though every statement built, and the reason names the crate and the fix', () => {
+      const { root, head } = proofPhase(unstitched);
+      receipt(root, head, bothBuilt());
+      const result = view(root);
+      assert.equal(result.phase, 'proofs');
+      assert.match(result.nextAction, /crate libcrux_hmac: it uses items of libcrux_sha2, which is verified, without being stitched to it: they would be axioms in libcrux_hmac's Lean, not libcrux_sha2's translation\. Stitch libcrux_hmac to libcrux_sha2 in the extraction spec, or have the owner record libcrux_sha2 as a non-target in the agreement\./);
+      assert.deepEqual(result.crates.units.map((entry) => [entry.crate, entry.accepted]), [['libcrux_hmac', false], ['libcrux_sha2', true]], 'the provider is accepted on its own statements');
+      assert.ok(result.warnings.some((text) => /^crate libcrux_hmac uses items of libcrux_sha2, which is verified, without being stitched to it/.test(text)));
+    });
+
+    it('is accepted once the owner records the provider as a non-target, and the state is done on the consumer alone', () => {
+      const targets = { crates: ['libcrux_hmac'], nonTargets: [{ crate: 'libcrux_sha2', decision: 'Not verified; its behaviour is assumed.' }] };
+      const { root, head } = proofPhase(unstitched, { targets });
+      receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec')])]);
+      const result = view(root);
+      assert.equal(result.phase, 'done', result.nextAction);
+      assert.deepEqual(result.warnings.filter((text) => /without being stitched/.test(text)), []);
+    });
+  });
+
   it('the one crate left to verify still needs a built statement', () => {
     const { root, head } = proofPhase(hmacAndSha2, { targets: { crates: ['libcrux_hmac'], nonTargets: [{ crate: 'libcrux_sha2', decision: 'x' }] } });
     receipt(root, head, [specFile(HMAC_SPEC, [])]);

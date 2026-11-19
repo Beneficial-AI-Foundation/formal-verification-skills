@@ -57,7 +57,7 @@ describe('a succeeded extraction over several crates', () => {
     const reaches = (crate, kind = 'target') => ({ foreignCrates: [{ crate, kind }, { crate: 'core', kind: 'external' }] });
     const warnings = (root) => cli('read-state', '--project-root', root, '--brief').json.warnings.filter((text) => /without being stitched/.test(text));
     const open = extracted((directory) => [unit(directory, 'app', [], reaches('base')), unit(directory, 'base', [])]);
-    assert.deepEqual(warnings(open), ["crate app uses items of base, which is verified, without being stitched to it: they are axioms in app's Lean, not base's translation; stitch app to base in the extraction spec"]);
+    assert.deepEqual(warnings(open), ["crate app uses items of base, which is verified, without being stitched to it: they would be axioms in app's Lean, not base's translation. Stitch app to base in the extraction spec, or have the owner record base as a non-target in the agreement"]);
     const stitched = extracted((directory) => [unit(directory, 'app', [], { ...reaches('base'), stitch: [{ provider: 'base', modules: ['Base'], replaced: [], assumed: [], copies: [], files: [] }] }), unit(directory, 'base', [])]);
     assert.deepEqual(warnings(stitched), []);
     const imported = extracted((directory) => [unit(directory, 'app', [], { ...reaches('base'), imports: ['base'] }), unit(directory, 'base', [])]);
@@ -140,6 +140,57 @@ describe('a succeeded extraction over several crates', () => {
       assert.equal(result.json.code, 'malformed-state', label);
       assert.match(result.json.message, /extraction\.run must be the re-validated extraction attempt/, label);
     }
+  });
+});
+
+// What stops record-extraction from recording a run over several crates as succeeded. The
+// patch engine refuses a cyclic extraction itself, so a cycle only reaches the engine in a
+// hand-built run; the rows here are the same ones the state tests above use.
+describe('crateProblems', () => {
+  const runOf = (units) => readState(extracted(units)).extraction.run;
+  const reaches = (crate, kind = 'target') => ({ foreignCrates: [{ crate, kind }, { crate: 'core', kind: 'external' }] });
+  const stitchTo = (provider) => ({ stitch: [{ provider, modules: ['M'], replaced: [], assumed: [], copies: [], files: [] }] });
+  const unstitched = "crate app uses items of base, which is verified, without being stitched to it: they would be axioms in app's Lean, not base's translation. Stitch app to base in the extraction spec, or have the owner record base as a non-target in the agreement";
+
+  it('names the crates of a dependency cycle', () => {
+    const run = runOf((directory) => [unit(directory, 'a', [], { imports: ['b'] }), unit(directory, 'b', [], { imports: ['a'] }), unit(directory, 'c', [])]);
+    assert.deepEqual(auto.crateProblems(run), ['the crates a, b depend on each other, so no order puts providers before consumers']);
+  });
+
+  it('names a cycle made of crates the LLBC reaches as well as the crates left unstitched in it', () => {
+    const run = runOf((directory) => [unit(directory, 'a', [], reaches('b')), unit(directory, 'b', [], reaches('a'))]);
+    assert.deepEqual(auto.crateProblems(run), [
+      'the crates a, b depend on each other, so no order puts providers before consumers',
+      "crate a uses items of b, which is verified, without being stitched to it: they would be axioms in a's Lean, not b's translation. Stitch a to b in the extraction spec, or have the owner record b as a non-target in the agreement",
+      "crate b uses items of a, which is verified, without being stitched to it: they would be axioms in b's Lean, not a's translation. Stitch b to a in the extraction spec, or have the owner record a as a non-target in the agreement",
+    ]);
+  });
+
+  it('refuses a verified crate that uses another verified crate without being stitched to it, naming the fix', () => {
+    const run = runOf((directory) => [unit(directory, 'app', [], reaches('base')), unit(directory, 'base', [])]);
+    assert.deepEqual(auto.crateProblems(run), [unstitched]);
+  });
+
+  it('accepts a crate that is stitched or imports the provider, and a run with no cycle', () => {
+    const stitched = runOf((directory) => [unit(directory, 'app', [], { ...reaches('base'), ...stitchTo('base') }), unit(directory, 'base', [])]);
+    const imported = runOf((directory) => [unit(directory, 'app', [], { ...reaches('base'), imports: ['base'] }), unit(directory, 'base', [])]);
+    assert.deepEqual(auto.crateProblems(stitched), []);
+    assert.deepEqual(auto.crateProblems(imported), []);
+  });
+
+  it('does not refuse a provider the extraction declares a non-target, or one the owner drops, or a consumer the owner drops', () => {
+    const declared = runOf((directory) => [unit(directory, 'app', [], reaches('base', 'non-target')), unit(directory, 'base', [])]);
+    assert.deepEqual(auto.crateProblems(declared), []);
+    const open = runOf((directory) => [unit(directory, 'app', [], reaches('base')), unit(directory, 'base', [])]);
+    const decision = { decision: 'Not verified; its behaviour is assumed.' };
+    assert.deepEqual(auto.crateProblems(open, { crates: ['app'], nonTargets: [{ crate: 'base', ...decision }] }), [], 'the owner does not verify the provider');
+    assert.deepEqual(auto.crateProblems(open, { crates: ['base'], nonTargets: [{ crate: 'app', ...decision }] }), [], 'the owner does not verify the consumer');
+    assert.deepEqual(auto.crateProblems(open, { crates: ['app', 'base'], nonTargets: [] }), [unstitched], 'the owner verifies both');
+  });
+
+  it('has nothing to say about a single crate or a run that was not recorded', () => {
+    assert.deepEqual(auto.crateProblems(runOf((directory) => [unit(directory, 'app', [], reaches('base'))])), []);
+    assert.deepEqual(auto.crateProblems(undefined), []);
   });
 });
 
