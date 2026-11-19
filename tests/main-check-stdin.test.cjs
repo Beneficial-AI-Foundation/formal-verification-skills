@@ -19,8 +19,9 @@ function node(args, input) {
 }
 
 const FOUR = ['fvs-spec-review.mjs', 'fvs-model-review.mjs', 'fvs-model-external.mjs', 'fvs-auto-driver.mjs'];
+const BUILD_CHECK = 'fvs-build-check.mjs';
 
-for (const name of [...FOUR, 'fvs-auto.mjs']) {
+for (const name of [...FOUR, 'fvs-auto.mjs', BUILD_CHECK]) {
   describe(`${name} main check`, () => {
     it('runs nothing and prints nothing when its text is read from stdin', () => {
       const result = node(['--input-type=module', '-'], fs.readFileSync(path.join(SCRIPTS, name), 'utf8'));
@@ -41,6 +42,13 @@ for (const name of [...FOUR, 'fvs-auto.mjs']) {
         const result = node([name]);
         assert.match(result.stdout + result.stderr, /Usage: fvs-[a-z-]+\.mjs/);
         assert.notEqual(result.status, 0);
+      });
+    } else if (name === BUILD_CHECK) {
+      // The build check has no --help: a run with no subcommand refuses with the usage code and one JSON object.
+      it('still runs its command line when started as a file: a refusal with the usage code, one JSON object on stdout', () => {
+        const result = node([name]);
+        assert.equal(result.status, 2);
+        assert.equal(JSON.parse(result.stdout).code, 'usage');
       });
     } else {
       it('still runs its command line when started as a file', () => {
