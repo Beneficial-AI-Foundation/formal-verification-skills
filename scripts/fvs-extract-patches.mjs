@@ -1554,18 +1554,16 @@ function attemptStatus(flags) {
   const multi = readMulti(path.resolve(flags.out));
   if (!multi) return attemptStatusOf(attemptDirectory(flags, null));
   const rows = multi.units.map(unitRow);
+  // A complete crate's row carries its whole single-crate run, so a reader written for
+  // one crate reads any crate of the attempt unchanged.
   const summary = (row) => {
-    if (row.status !== 'complete') return { crate: row.crate, package: row.package, dir: row.dir, status: row.status };
-    const { run: unit } = row;
-    return {
-      crate: row.crate, package: row.package, dir: row.dir, status: row.status, publishDir: unit.publishDir,
-      llbc: unit.llbc, translation: unit.translation, publication: unit.publication, stages: unit.stages, hasErrors: unit.hasErrors,
-    };
+    const base = { crate: row.crate, package: row.package, dir: row.dir, status: row.status };
+    return row.status === 'complete' ? { ...base, ...row.run } : base;
   };
   if (flags.crate !== undefined) {
     const row = rows.find((entry) => entry.crate === flags.crate);
     if (!row) refuse('usage', `--crate must be one of ${rows.map((entry) => entry.crate).join(', ')}`);
-    return { message: `crate ${row.crate}: ${row.status}`, unit: summary(row) };
+    return { message: `crate ${row.crate}: ${row.status}`, unit: summary(row), ...(row.status === 'complete' ? { run: row.run } : {}) };
   }
   const incomplete = rows.filter((row) => row.status !== 'complete');
   if (incomplete.length > 0) {

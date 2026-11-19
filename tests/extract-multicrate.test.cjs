@@ -96,6 +96,22 @@ describe('multi-crate extraction: the toy workspace', () => {
     assert.equal(engine(ws, ['verify-tree', '--out', out]).status, 0);
   });
 
+  it('hands every crate out as a whole single-crate run, so a reader written for one crate reads any of them', () => {
+    const ws = workspace();
+    const out = complete(ws);
+    const { run } = engine(ws, ['attempt-status', '--out', out]).result;
+    for (const unit of run.units) {
+      for (const field of ['attemptSha256', 'stages', 'manifestSha256', 'config', 'configSha256', 'llbc', 'translation', 'publication', 'hasErrors']) assert.ok(unit[field] !== undefined, `${unit.crate} row lacks ${field}`);
+      const one = engine(ws, ['attempt-status', '--out', out, '--crate', unit.crate]).result;
+      const { units: _, ...main } = run;
+      assert.equal(one.run.crate, unit.crate);
+      assert.equal(one.run.attemptSha256, unit.attemptSha256);
+      assert.equal(one.run.translation.projectPath, path.join(ws.project, unit.publishDir, 'translation.json'));
+      if (unit.crate === run.crate) assert.deepEqual(one.run, main, 'the main crate\'s run is the top-level run');
+    }
+    assert.notEqual(run.units[0].attemptSha256, run.units[1].attemptSha256);
+  });
+
   it('treats the library as a target: its sources arrive under its own label and are pinned by the tree record', () => {
     const ws = workspace();
     const out = complete(ws);
