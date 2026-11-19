@@ -87,9 +87,13 @@ An axiom is in a section only when its origin shows it is the owner's to assume:
 - a Trusted file declares it by hand, and its docstring names, in backticks, the id of an accepted externals
   record whose source names a crate path and no target crate.
 
-Everything else stays off the list: a hand-written assumption about a function of another target crate, a
-Trusted axiom with no accepted record, an axiom the engine cannot place. Prove such a function in its own
-crate and use that crate's theorem in the crate that calls it, or stitch the calling crate to it.
+Everything else stays off the list: a hand-written axiom that stands in for a function the stitching
+translated, a stale copy of such a function (a crate's own copy of another target crate's function that
+the stitching replaced), a Trusted axiom with no accepted record, an axiom the engine cannot place. Prove
+such a function in its own crate and use that crate's theorem in the crate that calls it, or stitch the
+calling crate to it. A target crate's own item that Charon or Aeneas cannot translate, or that the run
+declares opaque, is different: it is a disclosed assumption, and the owner accepts it with an externals
+record (the third rule above).
 `read-state` shows `crates`: for each crate whether it is accepted and, when it is not, why. A crate is
 accepted when:
 
