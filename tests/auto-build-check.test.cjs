@@ -1202,6 +1202,18 @@ describe('the allowed axioms', () => {
     assert.deepEqual(result.json.integrity.problems.map((problem) => problem.kind), ['axiom-not-allowed']);
   });
 
+  test('a new Trusted axiom that asserts something and cites an open record is refused although the list names it', () => {
+    const head = leanDump({
+      recalls: { 'Dep.foo': { axioms: ['propext', 'Classical.choice', 'Quot.sound', GAP] } },
+      docs: [{ name: GAP, m: 'Trusted.Gaps', cites: ['gap-open'], axiom: true }],
+      constants: [constant('Dep.foo', { k: 'thm', t: 'a statement', v: undefined }), axiomConstant(GAP, AXIOMS[GAP])],
+    });
+    const { result } = run(fixture(), LIST(GAP), { base: resting([]).base, head });
+    assert.equal(result.status, 1, result.stderr);
+    assert.deepEqual(result.json.integrity.problems.map((problem) => problem.kind), ['trusted-axiom-unbound']);
+    assert.match(problemOf(result, 'trusted-axiom-unbound').detail, /must cite exactly one accepted externals record in its docstring \(it cites 0\)/);
+  });
+
   test('the digest is that of the raw bytes, and a statement with another fault keeps its own reason', () => {
     const fx = fixture();
     const text = `  ${LIST(EXTERNAL)}\n\n`;
