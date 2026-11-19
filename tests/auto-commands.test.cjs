@@ -1674,7 +1674,7 @@ describe('spec phase: record-spec and spec-status', () => {
     const head = git(root, 'rev-parse', 'HEAD');
     let view = auto.readState({ projectRoot: root });
     assert.equal(view.phase, 'proofs');
-    assert.match(view.nextAction, new RegExp(`^The draft proof PR https://example\\.invalid/pr/3 is recorded at ${head}\\. Run the build check on that commit: node fvs-build-check\\.mjs --project-root .* --commit ${head}; read-state reports done when it accepts\\.`));
+    assert.match(view.nextAction, new RegExp(`^The draft proof PR https://example\\.invalid/pr/3 is recorded at ${head}\\. Run the build check on that commit: node fvs-build-check\\.mjs --project-root .* --commit ${head} --spec-base ${head}; read-state reports done when it accepts\\.`));
 
     const receipts = path.join(root, '.formalising/auto-fv/build-check');
     fs.mkdirSync(receipts, { recursive: true });
