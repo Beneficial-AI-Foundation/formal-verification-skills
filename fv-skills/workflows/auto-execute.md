@@ -100,6 +100,10 @@ accepted when:
   non-target in the agreement;
 - every target crate it depends on is accepted too.
 
+A crate the extraction only assumes (a non-target) also keeps the run from being done until the owner records
+the decision about it in the agreement; `pendingDecisions` names it. Nobody but the owner decides that a
+crate is not verified.
+
 Dispatch workers providers first, in the order `crates.order` gives, and accept bottom-up, one crate at a
 time. A crate that depends on another may be proved early against the other crate's reviewed statement, but
 it counts as accepted only after the other crate is. An item of a crate the owner does not verify may be
