@@ -179,6 +179,84 @@ describe('plan', () => {
   });
 });
 
+describe('the remote check', () => {
+  const config = (...args) => assert.equal(spawnSync('git', ['-C', project, 'config', ...args], { encoding: 'utf8' }).status, 0, args.join(' '));
+  const mine = `git@github.com:${REPO}.git`;
+  const plan = (...extra) => run('plan', base(...extra)).json;
+
+  it('refuses when a later push URL names another repository, in every command', () => {
+    config('--add', 'remote.origin.pushurl', mine);
+    config('--add', 'remote.origin.pushurl', 'git@github.com:Upstream/proj.git');
+    const refused = plan();
+    assert.equal(refused.code, 'remote-mismatch');
+    assert.match(refused.message, /push URL git@github\.com:Upstream\/proj\.git/);
+    assert.equal(allow('worker-message').json.code, 'remote-mismatch');
+    const file = path.join(project, 'answer.json');
+    fs.writeFileSync(file, JSON.stringify({ runtime: 'claude', kind: 'check', results: { 'git-push': 'quiet' } }));
+    assert.equal(run('record', base('--input', file)).json.code, 'remote-mismatch');
+    assert.equal(fs.existsSync(path.join(project, '.formalising')), false, 'nothing is recorded');
+  });
+
+  it('refuses when a later fallback URL names another repository, and when the first one does', () => {
+    config('--add', 'remote.origin.url', 'https://github.com/Upstream/proj.git');
+    assert.match(plan().message, /fetch URL https:\/\/github\.com\/Upstream\/proj\.git/);
+    config('--unset-all', 'remote.origin.url');
+    config('--add', 'remote.origin.url', 'https://github.com/Upstream/proj.git');
+    config('--add', 'remote.origin.url', mine);
+    assert.equal(plan().code, 'remote-mismatch');
+  });
+
+  it('refuses several fallback URLs when only one of them is wrong, and accepts them when all name the repository', () => {
+    config('--unset-all', 'remote.origin.url');
+    for (const url of [mine, `https://github.com/${REPO}`, `ssh://git@github.com:22/${REPO}.git`]) config('--add', 'remote.origin.url', url);
+    config('--add', 'remote.origin.pushurl', mine);
+    config('--add', 'remote.origin.pushurl', `https://github.com/${REPO.toLowerCase()}.git`);
+    assert.equal(plan().code, 'ok');
+    config('--add', 'remote.origin.url', 'git@github.com:Elsewhere/proj.git');
+    assert.equal(plan().code, 'remote-mismatch');
+  });
+
+  it('refuses the same path on a different host, and takes another host only from --host', () => {
+    for (const url of ['git@gitlab.com:Acme/proj.git', 'https://github.example.com/Acme/proj', 'ssh://git@github.com.evil.test/Acme/proj.git']) {
+      config('remote.origin.url', url);
+      const refused = plan();
+      assert.equal(refused.code, 'remote-mismatch', url);
+      assert.match(refused.message, /not github\.com\/Acme\/proj/);
+    }
+    config('remote.origin.url', 'https://github.example.com/Acme/proj');
+    assert.equal(plan('--host', 'github.example.com').code, 'ok');
+    assert.equal(plan('--host', 'GitHub.Example.com').code, 'ok', 'host names compare without case');
+    assert.equal(plan('--host', 'not a host').code, 'invalid-input');
+  });
+
+  it('refuses a URL that does not name exactly one repository', () => {
+    for (const url of ['/srv/git/proj.git', 'file:///srv/git/Acme/proj', '../proj', 'git@github.com:Acme/sub/proj.git', 'git@github.com:proj.git', 'https://github.com/Acme/proj/extra', 'C:\\repos\\proj']) {
+      config('remote.origin.url', url);
+      assert.equal(plan().code, 'remote-ambiguous', url);
+    }
+    config('remote.origin.url', mine);
+    config('--add', 'remote.origin.pushurl', '/srv/git/proj.git');
+    assert.equal(plan().code, 'remote-ambiguous');
+  });
+
+  it('checks the URL git uses after its own rewriting', () => {
+    config('url.git@github.com:Upstream/.insteadOf', 'git@github.com:Acme/');
+    const refused = plan();
+    assert.equal(refused.code, 'remote-mismatch');
+    assert.match(refused.message, /Upstream\/proj/);
+  });
+
+  it('reads host and repository from the URL forms git accepts', () => {
+    const cases = {
+      'git@github.com:Acme/proj.git': ['github.com', 'Acme/proj'], 'github.com:Acme/proj': ['github.com', 'Acme/proj'],
+      'https://github.com/Acme/proj/': ['github.com', 'Acme/proj'], 'https://user:tok@GitHub.com:443/Acme/proj.git': ['github.com', 'Acme/proj'],
+      'ssh://git@github.com:22/Acme/proj.git': ['github.com', 'Acme/proj'], 'git://github.com/Acme/proj.git': ['github.com', 'Acme/proj'],
+    };
+    for (const [url, [host, repo]] of Object.entries(cases)) assert.deepEqual(lib.parseRemoteUrl(url), { host, repo }, url);
+    for (const url of ['', '/srv/proj.git', 'file:///a/b', 'git@github.com:a', 'https://github.com/a/b/c', 'https://github.com/']) assert.equal(lib.parseRemoteUrl(url), null, url);
+  });
+});
+
 describe('write-allowlist for Claude Code', () => {
   it('refuses without confirmation and writes nothing', () => {
     const none = allow('git-push');

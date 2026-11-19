@@ -60,18 +60,33 @@ function checkEditDir(dir) {
   return dir;
 }
 
-function repoFromUrl(url) {
-  const match = /^(?:[a-z+]+:\/\/(?:[^@/]+@)?[^/:]+(?::\d+)?\/|[^@/\s]+@[^:/\s]+:)([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/i.exec(url.trim());
-  return match ? match[1] : null;
+// Host and OWNER/REPO of a git URL, or null when the URL does not name exactly one repository on one host
+// (a local path, a file URL, a path with more or fewer than two segments).
+export function parseRemoteUrl(url) {
+  const text = String(url).trim();
+  const found = /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/]*@)?(\[[^\]]+\]|[^/:@]+)(?::\d*)?\/(.+)$/i.exec(text)
+    ?? /^(?:[^@/\s]+@)?([^:/\s]+):(?!\/\/)(.+)$/.exec(text);
+  if (!found) return null;
+  const segments = found[2].replace(/\/+$/, '').replace(/\.git$/, '').split('/');
+  if (segments.length !== 2 || segments.some((part) => !/^[A-Za-z0-9._-]+$/.test(part))) return null;
+  return { host: found[1].toLowerCase(), repo: segments.join('/') };
 }
-// The push target must be the project's own repository: both the fetch and the push URL of the remote must name it.
-function checkRemoteIsRepo(root, remote, repo) {
-  for (const args of [['get-url'], ['get-url', '--push']]) {
-    const run = spawnSync('git', ['-C', root, 'remote', ...args, remote], { encoding: 'utf8' });
+
+// The push target must be the project's own repository, and a remote can name several: git fetches from the first
+// URL but pushes to every push URL (or, with none, every URL). So all URLs git would use, after its own URL
+// rewriting, must name the agreed host and repository; any other URL, or one that cannot be read, refuses.
+function checkRemoteIsRepo(root, remote, repo, host) {
+  for (const [label, args] of [['fetch', []], ['push', ['--push']]]) {
+    const run = spawnSync('git', ['-C', root, 'remote', 'get-url', ...args, '--all', remote], { encoding: 'utf8' });
     if (run.status !== 0) refuse('remote-missing', `git remote ${remote} is not set in ${root}`);
-    const named = repoFromUrl(run.stdout);
-    if (!named || named.toLowerCase() !== repo.toLowerCase()) {
-      refuse('remote-mismatch', `remote ${remote} points at ${named ?? run.stdout.trim()}, not ${repo}; the check pushes only to the project's own repository`);
+    const urls = run.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
+    if (urls.length === 0) refuse('remote-ambiguous', `git remote ${remote} has no ${label} URL`);
+    for (const url of urls) {
+      const named = parseRemoteUrl(url);
+      if (!named) refuse('remote-ambiguous', `cannot tell which repository the ${label} URL ${url} of remote ${remote} names; every URL of the remote must be a plain host and OWNER/REPO URL`);
+      if (named.host !== host.toLowerCase() || named.repo.toLowerCase() !== repo.toLowerCase()) {
+        refuse('remote-mismatch', `the ${label} URL ${url} of remote ${remote} names ${named.host}/${named.repo}, not ${host}/${repo}; every URL of the remote must name the project's own repository`);
+      }
     }
   }
 }
@@ -234,7 +249,9 @@ function summaryLine(record) {
 function context(flags) {
   const root = fs.realpathSync.native(flags['project-root'] ?? process.cwd());
   const catalog = buildCatalog({ repo: flags.repo, remote: flags.remote, prefixes: flags['branch-prefix'], editDir: flags['edit-dir'] });
-  checkRemoteIsRepo(root, catalog.remote, catalog.repo);
+  const host = flags.host ?? 'github.com';
+  if (!/^[A-Za-z0-9.-]+$/.test(host)) refuse('invalid-input', `--host must be a plain host name, got ${JSON.stringify(host)}`);
+  checkRemoteIsRepo(root, catalog.remote, catalog.repo, host);
   return { root, catalog };
 }
 
@@ -428,7 +445,8 @@ function writeCodex(flags, root, catalog, picked) {
 const USAGE = `Usage: node fvs-auto-permissions.mjs <plan|record|write-allowlist> --repo OWNER/REPO [options]
 
   --project-root DIR     project root (default: the current directory)
-  --repo OWNER/REPO      the project's own repository (where draft pull requests go); the remote must point at it
+  --repo OWNER/REPO      the project's own repository (where draft pull requests go); every URL of the remote must name it
+  --host HOST            the host of that repository (default github.com); a URL on any other host is refused
   --remote NAME          git remote of the project fork (default origin; never upstream)
   --branch-prefix P      branch namespace the run pushes under (repeatable; default fvs; never main, master, release...)
   --edit-dir DIR         spec and proof folder for the optional edit-folders step (default formal)
@@ -443,7 +461,7 @@ Output is JSON. Exit 0 on success, 1 on a refusal, 2 on a usage error.
 
 function parse(argv) {
   const flags = { 'branch-prefix': [] };
-  const known = new Set(['project-root', 'repo', 'remote', 'branch-prefix', 'edit-dir', 'input', 'runtime', 'steps', 'target', 'confirm']);
+  const known = new Set(['project-root', 'repo', 'host', 'remote', 'branch-prefix', 'edit-dir', 'input', 'runtime', 'steps', 'target', 'confirm']);
   for (let i = 0; i < argv.length; i += 2) {
     const name = argv[i]?.startsWith('--') ? argv[i].slice(2) : null;
     if (!name || !known.has(name)) throw new Refuse('usage', `unknown argument ${JSON.stringify(argv[i])}`);
