@@ -75,7 +75,7 @@ function receipt(root, head, files, extra = {}) {
   const directory = path.join(root, '.formalising', 'auto-fv', 'build-check');
   fs.mkdirSync(directory, { recursive: true });
   fs.writeFileSync(path.join(directory, `${head}.json`), JSON.stringify({ schema: 1, kind: 'fvs-build-check', accepted: true,
-    label: 'accepted (build check)', commit: head, specBase: head, specFiles: files, allowAxioms: allowAxioms(root, head), ...extra }));
+    label: 'accepted (build check)', commit: head, specBase: head, specFiles: files, allowAxioms: allowAxioms(root, head), externals: { records: [] }, ...extra }));
 }
 
 const bothBuilt = () => [specFile(HMAC_SPEC, [statement('hmac_spec')]), specFile(SHA2_SPEC, [statement('hash_256_spec')])];
@@ -236,6 +236,34 @@ describe('the proof phase over several crates', () => {
       const result = view(root);
       assert.equal(result.phase, 'done', result.nextAction);
       assert.deepEqual(result.warnings.filter((text) => /without being stitched/.test(text)), []);
+    });
+  });
+
+  describe('a crate the extraction only assumes', () => {
+    // The extraction declares libcrux_traits a non-target: its items are axioms in the crates that call it.
+    const assumes = (directory) => {
+      const rows = hmacAndSha2(directory);
+      rows[0].nonTargets = [{ crate: 'libcrux_traits', source: 'the tree pinned by the extraction' }];
+      return rows;
+    };
+
+    it('keeps the run from being done until the owner records the decision in the agreement', () => {
+      const { root, head } = proofPhase(assumes);
+      receipt(root, head, bothBuilt());
+      const result = view(root);
+      assert.equal(result.phase, 'proofs');
+      assert.match(result.nextAction, /but not every verified crate is accepted: crate libcrux_traits: the extraction assumes this crate as a non-target, and the owner has not recorded that decision in the agreement\. Fix what is named/);
+      assert.ok(result.pendingDecisions.includes('non-target crate libcrux_traits: the owner has not recorded a decision in the agreement'));
+      assert.deepEqual(result.crates.units.map((entry) => [entry.crate, entry.accepted]), [['libcrux_hmac', true], ['libcrux_sha2', true]], 'the verified crates are accepted on their own statements');
+    });
+
+    it('is done once the agreement records it, as the owner\'s decision', () => {
+      const targets = { crates: ['libcrux_hmac'], nonTargets: [{ crate: 'libcrux_traits', decision: 'Not verified; its behaviour is assumed.' }, { crate: 'libcrux_sha2', decision: 'Not verified either.' }] };
+      const { root, head } = proofPhase(assumes, { targets });
+      receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec')])]);
+      const result = view(root);
+      assert.equal(result.phase, 'done', result.nextAction);
+      assert.deepEqual(result.pendingDecisions.filter((text) => /non-target/.test(text)), []);
     });
   });
 
