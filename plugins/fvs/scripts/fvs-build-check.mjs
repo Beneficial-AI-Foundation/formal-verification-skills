@@ -398,17 +398,19 @@ function dependencyTargets(targets, files, declared) {
   });
 }
 
-function runLake(args, { cwd, env, log, timeoutSeconds }) {
+// `stdoutFile`, when given, takes the standard output apart from the log.
+function runLake(args, { cwd, env, log, timeoutSeconds, stdoutFile }) {
   const wrapper = process.platform === 'darwin' && spawnSync('sh', ['-c', 'command -v caffeinate'], { stdio: 'ignore' }).status === 0 ? ['caffeinate', '-is'] : [];
   const argv = [...wrapper, 'nice', '-n', '19', 'lake', ...args];
   const out = fs.openSync(log, 'w');
+  const main = stdoutFile ? fs.openSync(stdoutFile, 'w') : out;
   try {
     // The child leads its own process group. A timeout kills only that child, so the whole group is
     // killed once the run returns: no Lean worker may outlive the check and overlap the next build.
-    const run = spawnSync(argv[0], argv.slice(1), { cwd, env, stdio: ['ignore', out, out], timeout: timeoutSeconds * 1000, detached: true });
+    const run = spawnSync(argv[0], argv.slice(1), { cwd, env, stdio: ['ignore', main, out], timeout: timeoutSeconds * 1000, detached: true });
     if (run.pid) { try { process.kill(-run.pid, 'SIGKILL'); } catch { /* the group is already gone */ } }
     return { argv, status: run.status ?? (run.error ? 124 : 1) };
-  } finally { fs.closeSync(out); }
+  } finally { fs.closeSync(out); if (main !== out) fs.closeSync(main); }
 }
 
 // One build at a time on this machine, whatever the project or the receipt folder.
@@ -442,7 +444,7 @@ function acquireLock() {
 // a comment counting as a space, since the meaning of a statement is compared at the Lean level.
 
 const lowerFolders = (rel) => rel.toLowerCase().split('/').slice(0, -1);
-const LAKE_FILES = /^(?:lakefile\.(?:toml|lean)|lake-manifest\.json)$/;
+const LAKE_FILES = /^(?:lakefile\.(?:toml|lean)|lake-manifest\.json|lean-toolchain)$/;
 const isTrusted = (rel) => lowerFolders(rel).includes('trusted');
 const isProofPath = (rel) => lowerFolders(rel).includes('proofs');
 
@@ -857,10 +859,285 @@ export function checkIntegrity({ base: baseTree, head: headTree, externals = () 
     }
   }
   problems.push(...globProblems(head, changed, layout));
-  return { problems, ties };
+  // Every spec, proof and extraction file is one Lake must have compiled, whatever the lakefile says and
+  // whether or not it holds a recall. The module a file has is its path below a library's source folder;
+  // for a lakefile.lean, which is not read here, its path or its path below any folder.
+  const sourceFolders = built ? built.sources : [''];
+  const moduleCandidates = (rel) => {
+    const modules = sourceFolders.map((folder) => (rel.startsWith(folder) ? rel.slice(folder.length, -'.lean'.length).replaceAll('/', '.') : null)).filter(Boolean);
+    if (!built) { const parts = rel.slice(0, -'.lean'.length).split('/'); for (let i = 1; i < parts.length; i += 1) modules.push(parts.slice(i).join('.')); }
+    return [...new Set(modules)];
+  };
+  const required = [...head.keys()].filter((rel) => rel.endsWith('.lean') && !LAKE_FILES.test(rel)
+    && (isProofPath(rel) || isExtraction(rel, layout) || hasStatements(head.get(rel).text()))).sort().map((rel) => ({ rel, modules: moduleCandidates(rel) }));
+  return { problems, ties, required, moduleCandidates };
 }
 
-const describeProblem = (problem) => `${problem.file}${problem.statement ? `: ${problem.statement}` : ''}: ${problem.detail}`;
+const describeProblem = (problem) => `${problem.file ?? 'Lean check'}${problem.statement ? `: ${problem.statement}` : ''}: ${problem.detail}`;
+
+// ---- the Lean-level check ------------------------------------------------------------------
+//
+// Text cannot say that the statements still mean what the merged spec's statements mean: a helper
+// definition in a proof file, a notation, a macro or an instance can change what unchanged text
+// elaborates to. So after the build a small Lean program loads the built project and, for each recalled
+// statement, serialises the elaborated type and everything it depends on: the types and values of the
+// project's definitions, instances and abbreviations, and the types (not the proofs) of its theorems,
+// axioms and constructors. Constants outside the project (Lean, Mathlib, the dependencies) are pinned
+// by lean-toolchain and the manifest, which are frozen. The same program runs on the merged spec, and
+// the two serialisations must agree, constant by constant, for everything a statement rests on.
+// The program also reports, for each statement, the axioms its proof rests on, and which project
+// axioms exist and what they assert, so that a new axiom can be held to its accepted record.
+
+const DUMP_SOURCE = String.raw`import Lean
+open Lean
+
+/-! Canonical dump of the project's constants reachable from a set of roots, one JSON object per line. -/
+
+structure Ser where
+  ids : Std.HashMap Expr Nat := {}
+  out : Array String := #[]
+
+abbrev SerM := StateM Ser
+
+def serLevel : Level → String
+  | .zero => "0"
+  | .succ l => "(s " ++ serLevel l ++ ")"
+  | .max a b => "(m " ++ serLevel a ++ " " ++ serLevel b ++ ")"
+  | .imax a b => "(i " ++ serLevel a ++ " " ++ serLevel b ++ ")"
+  | .param n => "(p " ++ toString n ++ ")"
+  | .mvar _ => "?"
+
+partial def serExpr (e : Expr) : SerM Nat := do
+  match e with
+  | .mdata _ b => serExpr b
+  | _ =>
+    if let some i := (← get).ids[e]? then return i
+    let line ← match e with
+      | .bvar i => pure s!"b {i}"
+      | .fvar _ => pure "f"
+      | .mvar _ => pure "?"
+      | .sort l => pure s!"S {serLevel l}"
+      | .const n ls => pure s!"C {n} {" ".intercalate (ls.map serLevel)}"
+      | .app f a => do let f ← serExpr f; let a ← serExpr a; pure s!"A {f} {a}"
+      | .lam _ t b _ => do let t ← serExpr t; let b ← serExpr b; pure s!"L {t} {b}"
+      | .forallE _ t b _ => do let t ← serExpr t; let b ← serExpr b; pure s!"P {t} {b}"
+      | .letE _ t v b nd => do let t ← serExpr t; let v ← serExpr v; let b ← serExpr b; pure s!"T {t} {v} {b} {nd}"
+      | .lit (.natVal n) => pure s!"N {n}"
+      | .lit (.strVal s) => pure s!"R {s.quote}"
+      | .proj s i b => do let b ← serExpr b; pure s!"J {s} {i} {b}"
+      | .mdata _ _ => pure "?"
+    let id := (← get).out.size
+    modify fun st => { st with out := st.out.push line, ids := st.ids.insert e id }
+    return id
+
+def serialize (e : Expr) : String :=
+  let (root, st) := (serExpr e).run {}
+  s!"{root}|" ++ ";".intercalate st.out.toList
+
+def kindOf : ConstantInfo → String
+  | .axiomInfo _ => "axiom"
+  | .defnInfo _ => "defn"
+  | .thmInfo _ => "thm"
+  | .opaqueInfo _ => "opaque"
+  | .quotInfo _ => "quot"
+  | .inductInfo _ => "induct"
+  | .ctorInfo _ => "ctor"
+  | .recInfo _ => "rec"
+
+def describe (env : Environment) (isProj : Name → Bool) (ci : ConstantInfo) : Json × Array Name :=
+  let valueOf : Option Expr := match ci with
+    | .defnInfo d => some d.value
+    | _ => none
+  let extra : Array Name := match ci with
+    | .inductInfo i => i.ctors.toArray ++ i.all.toArray
+    | .ctorInfo c => #[c.induct]
+    | _ => #[]
+  let uses := ci.type.getUsedConstants ++ (valueOf.map (·.getUsedConstants)).getD #[] ++ extra
+  let deps := (uses.filter isProj).toList.eraseDups.toArray
+  let modName := env.getModuleIdxFor? ci.name |>.map (fun i => env.header.moduleNames[i.toNat]!) |>.getD .anonymous
+  let shape : List (String × Json) := match ci with
+    | .inductInfo i => [("params", Json.num i.numParams), ("indices", Json.num i.numIndices), ("rec", Json.bool i.isRec), ("ctors", toJson (i.ctors.map toString))]
+    | .ctorInfo c => [("cidx", Json.num c.cidx), ("params", Json.num c.numParams), ("fields", Json.num c.numFields)]
+    | .defnInfo d => [("safety", Json.str (toString (repr d.safety)))]
+    | .axiomInfo _ => [("tc", match ci.type with | .const n [] => Json.str (toString n) | _ => Json.null)]
+    | _ => []
+  let base : List (String × Json) :=
+    [("n", Json.str (toString ci.name)), ("k", Json.str (kindOf ci)), ("m", Json.str (toString modName)),
+     ("lp", toJson (ci.levelParams.map toString)), ("t", Json.str (serialize ci.type)),
+     ("d", toJson (deps.map toString))] ++ shape
+  let withValue := match valueOf with
+    | some v => base ++ [("v", Json.str (serialize v))]
+    | none => base
+  (Json.mkObj withValue, deps)
+
+def main (args : List String) : IO UInt32 := do
+  let [argFile] := args | IO.eprintln "usage: Dump <args.json>"; return 2
+  let input ← IO.ofExcept (Json.parse (← IO.FS.readFile argFile))
+  let mods : Array String ← IO.ofExcept (input.getObjValAs? (Array String) "modules")
+  let recalls : Array String ← IO.ofExcept (input.getObjValAs? (Array String) "recalls")
+  let ids : Array String ← IO.ofExcept (input.getObjValAs? (Array String) "ids")
+  initSearchPath (← findSysroot)
+  let names := mods.map String.toName
+  let env ← importModules (names.map fun m => { module := m }) {} (trustLevel := 0)
+  let projMods : Std.HashSet Name := names.foldl (·.insert ·) {}
+  let isProj (c : Name) : Bool := match env.getModuleIdxFor? c with
+    | some i => projMods.contains env.header.moduleNames[i.toNat]!
+    | none => false
+  let ctx : Core.Context := { fileName := "<dump>", fileMap := default }
+  IO.println (Json.compress (Json.mkObj [("toolchain", Json.str versionString), ("githash", Json.str githash)]))
+  let mut roots : Array Name := #[]
+  let projNames : Array Name := env.constants.map₁.fold (fun acc n _ => if isProj n then acc.push n else acc) #[]
+  for id in recalls do
+    let found := projNames.filter fun n => let s := toString n; s == id || s.endsWith ("." ++ id)
+    let mut axioms : Array Json := #[]
+    for n in found do
+      roots := roots.push n
+      let (r, _) ← (Lean.collectAxioms n : CoreM (Array Name)).toIO ctx { env }
+      axioms := axioms.push (Json.mkObj [("n", Json.str (toString n)), ("axioms", toJson (r.map toString))])
+    IO.println (Json.compress (Json.mkObj [("recall", Json.str id), ("matches", toJson (found.map toString)), ("rests", Json.arr axioms)]))
+  let tick := String.singleton (Char.ofNat 96)
+  for n in projNames do
+    let some ci := env.find? n | continue
+    let isAxiom := ci matches .axiomInfo _
+    let isProp := match ci.type with | .sort .zero => true | _ => false
+    let doc? ← findDocString? env n
+    let cites := match doc? with
+      | some d => ids.filter fun i => (d.splitOn (tick ++ i ++ tick)).length > 1
+      | none => #[]
+    if isAxiom then roots := roots.push n
+    else if isProp && cites.size > 0 then roots := roots.push n
+    if cites.size > 0 && (isProp || isAxiom) then
+      let modName := env.getModuleIdxFor? n |>.map (fun i => env.header.moduleNames[i.toNat]!) |>.getD .anonymous
+      IO.println (Json.compress (Json.mkObj [("doc", Json.str (toString n)), ("m", Json.str (toString modName)), ("cites", toJson cites), ("prop", Json.bool isProp), ("axiom", Json.bool isAxiom)]))
+  let mut seen : Std.HashSet Name := {}
+  let mut work := roots.toList
+  while true do
+    match work with
+    | [] => break
+    | n :: rest =>
+      work := rest
+      if seen.contains n then continue
+      seen := seen.insert n
+      let some ci := env.find? n | continue
+      let (json, deps) := describe env isProj ci
+      IO.println (Json.compress json)
+      work := deps.toList ++ work
+  return 0
+`;
+
+const digestOf = (value) => sha256(typeof value === 'string' ? value : JSON.stringify(value));
+
+// What the Lean program printed: the toolchain, for each recalled name the project declarations that
+// end with it (with the axioms each rests on), the propositions and axioms that cite an externals record,
+// and every project constant reachable from a root, each with the digest of its own content.
+export function parseDump(text) {
+  const dump = { toolchain: null, recalls: new Map(), docs: [], constants: new Map() };
+  for (const line of text.split('\n')) {
+    if (!line.startsWith('{"')) continue;
+    let item;
+    try { item = JSON.parse(line); } catch { continue; }
+    if (item.toolchain !== undefined) dump.toolchain = { lean: item.toolchain, githash: item.githash };
+    else if (item.recall !== undefined) dump.recalls.set(item.recall, { matches: item.matches ?? [], rests: item.rests ?? [] });
+    else if (item.doc !== undefined) dump.docs.push({ name: item.doc, module: item.m, cites: item.cites ?? [], prop: item.prop === true, axiom: item.axiom === true });
+    else if (typeof item.n === 'string') {
+      dump.constants.set(item.n, {
+        name: item.n, kind: item.k, module: item.m, deps: item.d ?? [], typeConst: item.tc ?? null,
+        own: digestOf([item.k, item.lp, item.t, item.v ?? null, item.params ?? null, item.indices ?? null, item.rec ?? null, item.ctors ?? null, item.cidx ?? null, item.fields ?? null, item.safety ?? null]),
+      });
+    }
+  }
+  if (dump.toolchain === null) throw new Error('the Lean program printed no toolchain line');
+  return dump;
+}
+
+// The constants a root rests on (itself included), in the order they are met, with each one's digest.
+function closureOf(constants, root) {
+  const seen = new Map();
+  const queue = [root];
+  while (queue.length > 0) {
+    const name = queue.shift();
+    if (seen.has(name) || !constants.has(name)) continue;
+    seen.set(name, constants.get(name).own);
+    queue.push(...constants.get(name).deps);
+  }
+  return seen;
+}
+const closureDigest = (closure) => digestOf([...closure].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+
+// A module as the path of its file, so the folder rules that name files apply to it.
+const moduleRel = (module) => `${module.replaceAll('.', '/')}.lean`;
+const inTrustedModule = (module) => isTrusted(moduleRel(module));
+
+// What the merged spec's statements, axioms and propositions are compared with at the head. `base` and
+// `head` come from parseDump; `recalled` are the names the spec files recall; `acceptedIds` are the ids
+// of the externals records the owner accepted.
+export function semanticProblems({ base, head, recalled, acceptedIds = new Set() }) {
+  const problems = [];
+  const add = (kind, statement, detail) => problems.push({ kind, file: null, statement, detail });
+  if (base.toolchain.lean !== head.toolchain.lean || base.toolchain.githash !== head.toolchain.githash) {
+    add('toolchain-changed', null, `the Lean toolchain differs (${base.toolchain.lean} ${String(base.toolchain.githash).slice(0, 8)} at the merged spec, ${head.toolchain.lean} ${String(head.toolchain.githash).slice(0, 8)} now), so the two serialisations cannot be compared`);
+    return { problems, statements: [], bindings: [] };
+  }
+  const statements = [];
+  for (const id of recalled) {
+    const [was, now] = [base.recalls.get(id), head.recalls.get(id)];
+    if (!was || was.matches.length === 0) { add('statement-unresolved', id, `no declaration of the project at the merged spec has a name that ends with ${id}, so the statement cannot be compared`); continue; }
+    if (!now || [...was.matches].sort().join('\n') !== [...now.matches].sort().join('\n')) {
+      const [a, b] = [new Set(was.matches), new Set(now?.matches ?? [])];
+      const changed = [...b].filter((name) => !a.has(name)).map((name) => `${name} (added)`).concat([...a].filter((name) => !b.has(name)).map((name) => `${name} (gone)`));
+      add('statement-shadowed', id, `the declarations whose names end with ${id} are not the merged spec's: ${changed.join(', ')}; the recall could resolve to another declaration, so name new declarations differently`);
+      continue;
+    }
+    for (const name of was.matches) {
+      const [closedBase, closedHead] = [closureOf(base.constants, name), closureOf(head.constants, name)];
+      const first = [...closedBase].find(([constant, digest]) => closedHead.get(constant) !== digest);
+      if (first) {
+        add('statement-meaning-changed', id, `the statement ${id} (${name}) no longer means what it meant in the merged spec: ${first[0] === name ? 'its type changed' : `${first[0]}, which it rests on, ${closedHead.has(first[0]) ? 'changed' : 'is gone'}`}`);
+        continue;
+      }
+      statements.push({ name: id, declaration: name, constants: closedHead.size, sha256: closureDigest(closedHead) });
+    }
+  }
+
+  // Axioms: Lean's three standard ones, the project's own that the merged spec already had (unchanged),
+  // and new ones only in a Trusted module, each asserting exactly the proposition its accepted record is
+  // tied to in the merged spec.
+  const standard = new Set(STANDARD_AXIOMS);
+  const projectAxioms = (dump) => [...dump.constants.values()].filter((constant) => constant.kind === 'axiom');
+  const baseAxioms = new Set(projectAxioms(base).map((constant) => constant.name));
+  const newAxioms = projectAxioms(head).filter((constant) => !base.constants.has(constant.name));
+  for (const axiom of projectAxioms(head)) {
+    if (!baseAxioms.has(axiom.name)) continue;
+    if (closureDigest(closureOf(base.constants, axiom.name)) !== closureDigest(closureOf(head.constants, axiom.name))) add('axiom-changed', axiom.name, `the axiom ${axiom.name} of the merged spec asserts something else than it did`);
+  }
+  for (const [id, now] of head.recalls) {
+    for (const rest of now.rests) {
+      for (const name of rest.axioms) {
+        if (standard.has(name)) continue;
+        const constant = head.constants.get(name);
+        if (!constant || constant.kind !== 'axiom') add('axiom-not-allowed', id, `the statement ${id} (${rest.n}) rests on the axiom ${name}, which is not one of Lean's three standard axioms or an axiom of the project (sorry, native_decide and bv_decide add such axioms)`);
+      }
+    }
+  }
+  const bindings = [];
+  const cited = (dump, kind) => dump.docs.filter((doc) => doc[kind]);
+  for (const axiom of newAxioms) {
+    if (!inTrustedModule(axiom.module)) { add('axiom-not-allowed', axiom.name, `the axiom ${axiom.name} is new since the merged spec and is declared outside Trusted/ (in ${axiom.module})`); continue; }
+    const doc = cited(head, 'axiom').find((entry) => entry.name === axiom.name);
+    const ids = (doc?.cites ?? []).filter((id) => acceptedIds.has(id));
+    if (ids.length !== 1) { add('trusted-axiom-unbound', axiom.name, `the new axiom ${axiom.name} must cite exactly one accepted externals record in its docstring (it cites ${ids.length})`); continue; }
+    const record = ids[0];
+    const props = cited(base, 'prop').filter((entry) => entry.cites.includes(record) && !inTrustedModule(entry.module) && isFrozen(moduleRel(entry.module)));
+    if (props.length !== 1) { add('trusted-axiom-unbound', axiom.name, `the record ${record} is tied to ${props.length} propositions in the frozen spec of the merged spec; it must be tied to exactly one, so the axiom ${axiom.name} has nothing to assert`); continue; }
+    const proposition = props[0].name;
+    if (axiom.typeConst !== proposition) { add('trusted-axiom-unbound', axiom.name, `the axiom ${axiom.name} asserts ${axiom.typeConst ?? 'something that is not one proposition'}, but the record ${record} is tied to the proposition ${proposition} in the merged spec; an axiom must assert exactly that`); continue; }
+    if (closureDigest(closureOf(base.constants, proposition)) !== closureDigest(closureOf(head.constants, proposition))) { add('trusted-axiom-unbound', axiom.name, `the proposition ${proposition} that the record ${record} is tied to changed since the merged spec`); continue; }
+    const citing = cited(head, 'axiom').filter((entry) => inTrustedModule(entry.module) && entry.cites.includes(record));
+    if (citing.length !== 1) { add('trusted-axiom-unbound', axiom.name, `the record ${record} is cited by ${citing.length} axioms (${citing.map((entry) => entry.name).join(', ')}); it ties one`); continue; }
+    bindings.push({ axiom: axiom.name, record, proposition });
+  }
+  return { problems, statements, bindings };
+}
 
 // ---- the run state -------------------------------------------------------------------------
 
@@ -1031,6 +1308,8 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
     const env = { ...gitEnvironment(), LEAN_NUM_THREADS: '2' };
     const lakeVersion = (spawnSync('lake', ['--version'], { cwd: leanRoot, encoding: 'utf8', env }).stdout ?? '').split('\n')[0].trim();
     const files = leanFiles(leanRoot);
+    // A module's .olean, wherever the file's module name puts it; none exists before this check's build.
+    const builtModule = (at, rel) => integrity.moduleCandidates(rel).find((module) => fs.existsSync(oleanFile(at, module))) ?? null;
     // Dependencies must be up to date before the build; only the project's own modules may be missing.
     const preflightLog = path.join(work, 'preflight.log');
     runLake(['build', '--no-build', '--no-ansi'], { cwd: leanRoot, env, log: preflightLog, timeoutSeconds: 1800 });
@@ -1048,6 +1327,7 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
 
     const specFiles = [];
     const tampered = [];
+    const recalled = new Set();
     for (const rel of files.files) {
       const bytes = fs.readFileSync(path.join(leanRoot, rel));
       const text = bytes.toString('utf8');
@@ -1056,9 +1336,9 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
       if (!rel.endsWith('.lean')) continue;
       const spec = readSpecSource(text);
       if (spec.statements.length === 0) continue;
-      const olean = path.join(leanRoot, '.lake', 'build', 'lib', 'lean', `${rel.slice(0, -'.lean'.length)}.olean`);
+      for (const statement of spec.statements) recalled.add(statement.name);
       const own = log.messages.filter((m) => m.file === rel && m.severity !== 'info');
-      const built = fs.existsSync(olean);
+      const built = builtModule(leanRoot, rel) !== null;
       const statements = spec.statements.map((statement) => {
         const hit = own.find((m) => m.line === statement.recallLine || (statement.guardFrom !== null && m.line >= statement.guardFrom && m.line <= statement.guardTo));
         const unlisted = allowed && statement.axioms ? axiomsNotAllowed(statement.axioms, allowed.names) : [];
@@ -1081,6 +1361,28 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
       const failing = specFiles.find((file) => file.status === 'failing');
       if (failing) reason = `${failing.path}: ${failing.reason ?? failing.statements.find((s) => s.status === 'failing').reason}`;
     }
+    // Lake must have compiled every spec, proof and extraction file, whatever the lakefile says and
+    // whether or not the file holds a recall: each needs the .olean this build produced.
+    if (reason === null) {
+      const unbuilt = integrity.required.filter(({ rel }) => builtModule(leanRoot, rel) === null);
+      if (unbuilt.length > 0) reason = `no .olean was produced for ${unbuilt[0].rel}${unbuilt[0].modules[0] ? ` (module ${unbuilt[0].modules[0]})` : ''}, so Lake did not build it${unbuilt.length > 1 ? ` (and ${unbuilt.length - 1} more)` : ''}`;
+    }
+    // The Lean-level comparison with the merged spec. Without a merged spec there is nothing to compare.
+    if (reason === null && specBaseFull !== null) {
+      const accepted = (() => {
+        try { const file = externalsFile ?? readRunFile(root, 'externals.json'); return new Set((file?.data?.records ?? []).filter((r) => r?.status === 'assumption-accepted' && r.decision && typeof r.id === 'string').map((r) => r.id)); } catch (error) { if (error instanceof Refusal) return new Set(); throw error; }
+      })();
+      const lean = leanCheck({ top, sub, below, specBaseFull, work, leanRoot, source, hasPackages: manifest.length > 0, env, timeoutSeconds, integrity, recalled, acceptedIds: accepted, builtModule });
+      if (lean.error) reason = `the Lean check could not run: ${lean.error}`;
+      else {
+        integrityRecord.semantic = { toolchain: lean.toolchain, statements: lean.statements, bindings: lean.bindings, dumps: lean.dumps };
+        if (lean.problems.length > 0) {
+          integrityRecord.problems.push(...lean.problems);
+          integrityRecord.ok = false;
+          reason = `${describeProblem(lean.problems[0])}${lean.problems.length > 1 ? ` (and ${lean.problems.length - 1} more)` : ''}`;
+        }
+      }
+    }
     const flags = statements.filter((s) => s.flags.length > 0).map((s) => `${s.name} uses ${s.flags.join(', ')}`);
     const warnings = symlinks.soft.length === 0 ? [] : [`symbolic links lead out of the commit to files Lake does not read as Lean sources: ${symlinks.soft.slice(0, 3).join(', ')}${symlinks.soft.length > 3 ? ` and ${symlinks.soft.length - 3} more` : ''}`];
     // Accepted means the statements were compared with the merged spec; a build alone is not that.
@@ -1100,6 +1402,46 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
     release();
     if (work && !keep) fs.rmSync(work, { recursive: true, force: true });
   }
+}
+
+const oleanFile = (root, module) => path.join(root, '.lake', 'build', 'lib', 'lean', `${module.replaceAll('.', '/')}.olean`);
+
+// Runs the Lean program on the built head and on a fresh build of the merged spec in a copy of its own,
+// then compares them. An `error` means the comparison could not be made, which is not an acceptance.
+function leanCheck({ top, sub, below, specBaseFull, work, leanRoot, source, hasPackages, env, timeoutSeconds, integrity, recalled, acceptedIds, builtModule }) {
+  const dump = path.join(work, 'dump');
+  fs.mkdirSync(dump, { recursive: true });
+  fs.writeFileSync(path.join(dump, 'Dump.lean'), DUMP_SOURCE);
+  const tail = (file) => { try { return fs.readFileSync(file, 'utf8').trim().split('\n').slice(-3).join(' | ').slice(0, 300); } catch { return ''; } };
+  const dumpOf = (side, root) => {
+    const modules = [...new Set(leanFiles(root).files.filter((rel) => rel.endsWith('.lean') && !LAKE_FILES.test(rel)).map((rel) => builtModule(root, rel)).filter(Boolean))].sort();
+    const args = path.join(dump, `${side}-args.json`);
+    fs.writeFileSync(args, JSON.stringify({ modules, recalls: [...recalled].sort(), ids: [...acceptedIds].sort() }));
+    const [out, log] = [path.join(dump, `${side}.jsonl`), path.join(dump, `${side}.log`)];
+    const run = runLake(['env', 'lean', '--run', path.join(dump, 'Dump.lean'), args], { cwd: root, env, log, stdoutFile: out, timeoutSeconds });
+    if (run.status !== 0) return { error: `the Lean program failed on the ${side} (exit ${run.status}): ${tail(log)}` };
+    const text = fs.readFileSync(out, 'utf8');
+    try { return { dump: parseDump(text), sha256: sha256(text) }; } catch (error) { return { error: `the Lean program's output for the ${side} cannot be read (${error.message}): ${tail(log)}` }; }
+  };
+  const head = dumpOf('head', leanRoot);
+  if (head.error) return head;
+
+  const baseClean = path.join(work, 'base');
+  fs.mkdirSync(path.join(work, 'base-index'), { recursive: true });
+  extractCommit(top, specBaseFull, path.join(work, 'base-index'), baseClean);
+  const baseRoot = path.join(baseClean, sub, below);
+  if (!hasLakefile(baseRoot)) return { error: `the merged spec ${specBaseFull.slice(0, 12)} has no Lean project at ${path.join(sub, below) || '.'}` };
+  if (hasPackages) copyPackages(source, path.join(baseRoot, '.lake', 'packages'));
+  const baseLog = path.join(work, 'base-build.log');
+  const build = runLake(['build', '--no-ansi'], { cwd: baseRoot, env, log: baseLog, timeoutSeconds });
+  if (build.status !== 0) {
+    const problem = firstProblem(readLog(fs.readFileSync(baseLog, 'utf8')).messages);
+    return { error: `the merged spec ${specBaseFull.slice(0, 12)} does not build (${problem ? describe(problem) : `lake exited with status ${build.status}`})` };
+  }
+  const base = dumpOf('base', baseRoot);
+  if (base.error) return base;
+  const { problems, statements, bindings } = semanticProblems({ base: base.dump, head: head.dump, recalled: [...recalled].sort(), acceptedIds });
+  return { problems, statements, bindings, toolchain: head.dump.toolchain, dumps: { base: base.sha256, head: head.sha256 } };
 }
 
 const toolchainOf = (leanRoot) => (fs.existsSync(path.join(leanRoot, 'lean-toolchain')) ? fs.readFileSync(path.join(leanRoot, 'lean-toolchain'), 'utf8').trim() : null);
@@ -1148,6 +1490,10 @@ function reportLines(receipt) {
     : 'allowed axioms: no list given, so no statement is held to a list of axioms');
   const { folders, files } = integrity.extraction ?? { folders: [], files: [] };
   lines.push(`extraction output held fixed, besides the folders named Extraction...: ${folders.length + files.length === 0 ? 'none recorded in the run state' : [...folders, ...files].join(', ')}`);
+  if (integrity.semantic) {
+    const { statements, bindings, toolchain } = integrity.semantic;
+    lines.push(`Lean check (${toolchain.lean}): recalled declarations compared: ${statements.length} (${statements.reduce((sum, item) => sum + item.constants, 0)} project constants); new Trusted axioms bound to their records: ${bindings.length}`);
+  }
   for (const problem of integrity.problems) lines.push(`not accepted: ${problem.kind}: ${describeProblem(problem)}`);
   for (const tie of integrity.ties) lines.push(`accepted assumption: axiom ${tie.axiom} (${tie.file}) is tied to externals record ${tie.record}`);
   for (const file of receipt.specFiles) {
