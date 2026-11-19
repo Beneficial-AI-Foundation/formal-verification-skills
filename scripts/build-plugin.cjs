@@ -29,6 +29,7 @@ const SCRIPT_FILES = [
   'fvs-auto.mjs',
   'fvs-auto-driver.mjs',
   'fvs-auto-agreement.mjs',
+  'fvs-auto-permissions.mjs',
   'fvs-auto-actor-permissions.py',
   'fvs-execution.mjs',
   'fvs-auto-resume.mjs',
