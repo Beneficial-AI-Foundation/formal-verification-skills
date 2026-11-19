@@ -2,11 +2,11 @@
 
 // The proof phase over several crates in scripts/fvs-auto.mjs. The build check builds the
 // whole project once and writes one receipt for a head; the state reports done only when
-// that receipt also holds for every verified crate: each has a built statement, none rests
-// on an axiom without an accepted externals record or on an assumption about another
-// verified crate's function, and every crate it depends on is accepted too. A project with
-// one crate reaches done on an accepting receipt alone, as before. Every project is a
-// temporary git fixture and every receipt is written by hand; no build runs.
+// that receipt also holds for every verified crate (each has a built statement and every
+// crate it depends on is accepted too) and was made with the allowed axioms the engine
+// writes for that commit. A project with one crate reaches done on an accepting receipt
+// alone, as before. Every project is a temporary git fixture and every receipt is written
+// by hand; no build runs. What the allowed axioms hold is tested in auto-multicrate-axioms.
 
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -57,22 +57,22 @@ function proofPhase(units = hmacAndSha2, { targets = null, noSpecs = false } = {
   return { root, head };
 }
 
+// The allowed axioms the build check was given, as it records them in a receipt: the engine's
+// own list for the commit, or null for a project with one crate, which runs without one.
+function allowAxioms(root, head) {
+  const written = cli('allowed-axioms', '--project-root', root, '--commit', head);
+  return written.json?.sha256 ? { file: written.json.file, sha256: written.json.sha256, names: written.json.names } : null;
+}
+
 function receipt(root, head, files, extra = {}) {
   const directory = path.join(root, '.formalising', 'auto-fv', 'build-check');
   fs.mkdirSync(directory, { recursive: true });
   fs.writeFileSync(path.join(directory, `${head}.json`), JSON.stringify({ schema: 1, kind: 'fvs-build-check', accepted: true,
-    label: 'accepted (build check)', commit: head, specBase: head, specFiles: files, ...extra }));
+    label: 'accepted (build check)', commit: head, specBase: head, specFiles: files, allowAxioms: allowAxioms(root, head), ...extra }));
 }
 
 const bothBuilt = () => [specFile(HMAC_SPEC, [statement('hmac_spec')]), specFile(SHA2_SPEC, [statement('hash_256_spec')])];
 const view = (root) => cli('read-state', '--project-root', root).json;
-
-function boundary(symbol, model, overrides = {}) {
-  return { id: `ext-${model}`, kind: 'handwritten-model', source: { symbol, commit: 'a'.repeat(40) }, model: { symbol: model, sha256: 'b'.repeat(64) },
-    claimedBehaviour: 'the stated behaviour', reason: 'the owner accepts it', affectedRoots: [], evidence: ['note.md'], status: 'assumption-accepted',
-    decision: { by: 'the owner', at: '2026-11-19T00:00:00.000Z', evidence: 'reply' }, ...overrides };
-}
-const record = (root, ...records) => assert.equal(auto.recordExternals({ projectRoot: root, records }).code, 'recorded');
 
 describe('the proof phase over several crates', () => {
   it('is done when the receipt holds and every crate has a built statement', () => {
@@ -109,84 +109,68 @@ describe('the proof phase over several crates', () => {
     assert.equal(result.crates.units.find((entry) => entry.crate === 'libcrux_sha2').reason, 'the statement hash_256_spec did not build in the check');
   });
 
-  it('a statement of one crate resting on a hand-written assumption about another verified crate is refused', () => {
-    const { root, head } = proofPhase();
-    record(root, boundary(SHA2_ITEM, 'Trusted.hash_256_spec'));
-    receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec', { axioms: ['Trusted.hash_256_spec'], beyondStandard: ['Trusted.hash_256_spec'] })]), specFile(SHA2_SPEC, [statement('hash_256_spec')])]);
-    const result = view(root);
-    assert.equal(result.phase, 'proofs');
-    assert.match(result.nextAction, /crate libcrux_hmac: the statement hmac_spec rests on the axiom Trusted\.hash_256_spec, a hand-written assumption about libcrux_sha2::hacl::hash_256, an item of the verified crate libcrux_sha2: prove it there and use that crate's theorem/);
-    assert.deepEqual(result.crates.units.map((entry) => [entry.crate, entry.accepted]), [['libcrux_hmac', false], ['libcrux_sha2', true]], 'the provider itself is accepted');
-  });
-
-  it('an axiom without an accepted externals record is refused, also when its record is still open', () => {
-    const { root, head } = proofPhase();
-    const files = [specFile(HMAC_SPEC, [statement('hmac_spec', { beyondStandard: ['Trusted.hash_256_spec'] })]), specFile(SHA2_SPEC, [statement('hash_256_spec')])];
-    receipt(root, head, files);
-    assert.match(view(root).nextAction, /crate libcrux_hmac: the statement hmac_spec rests on the axiom Trusted\.hash_256_spec, which has no accepted externals record/);
-    record(root, boundary(SHA2_ITEM, 'Trusted.hash_256_spec', { status: 'open', decision: null }));
-    assert.match(view(root).nextAction, /which has no accepted externals record/);
-  });
-
-  it('an assumption about a crate the owner does not verify, about another library or about the crate itself is accepted', () => {
-    const declared = { nonTargets: [{ crate: 'libcrux_traits', dir: 'crates/traits', sources: [] }] };
-    const { root, head } = proofPhase((directory) => [
-      unit(directory, 'libcrux_hmac', [fn(HMAC_ITEM, 'src/hmac.rs', 10)], { imports: ['libcrux_sha2'], ...declared }),
-      unit(directory, 'libcrux_sha2', [fn(SHA2_ITEM, 'src/hacl.rs', 5)], declared),
-    ]);
-    record(root, boundary('libcrux_traits::Digest::hash', 'Trusted.digest_hash'), boundary('core::cmp::min', 'Trusted.min'), boundary('libcrux_hmac::hmac::wipe', 'Trusted.wipe'));
-    receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec', { beyondStandard: ['Trusted.digest_hash', 'Trusted.min', 'Trusted.wipe'] })]), specFile(SHA2_SPEC, [statement('hash_256_spec')])]);
-    const result = view(root);
-    assert.equal(result.phase, 'done', result.nextAction);
-  });
-
-  // The extraction names an assumed item as the constant declared in the consuming crate's
-  // namespace (`libcrux_sha2.hacl.sha256_update`), so Lean prints it with the crate in front.
-  for (const printed of ['libcrux_hmac.libcrux_sha2.hacl.sha256_update', 'libcrux_sha2.hacl.sha256_update']) {
-    it(`an assumption about an item the provider has no definition for is accepted when the extraction lists it and the owner accepted it (printed ${printed})`, () => {
-      const gap = 'libcrux_sha2::hacl::sha256_update';
-      const { root, head } = proofPhase((directory) => [
-        unit(directory, 'libcrux_hmac', [fn(HMAC_ITEM, 'src/hmac.rs', 10)], { imports: ['libcrux_sha2'],
-          stitch: [{ provider: 'libcrux_sha2', modules: ['Sha2'], replaced: [], assumed: [{ rustPath: gap, name: 'libcrux_sha2.hacl.sha256_update', reason: 'opaque in the provider' }] }] }),
-        unit(directory, 'libcrux_sha2', [fn(SHA2_ITEM, 'src/hacl.rs', 5)]),
-      ]);
-      const files = [specFile(HMAC_SPEC, [statement('hmac_spec', { beyondStandard: [printed] })]), specFile(SHA2_SPEC, [statement('hash_256_spec')])];
-      receipt(root, head, files);
-      assert.match(view(root).nextAction, /which has no accepted externals record/, 'the listed gap still needs the owner\'s record');
-      record(root, boundary(gap, printed));
+  describe('the allowed axioms of the checked commit', () => {
+    it('a receipt made without them, or with another list, does not count, and the next action gives both steps', () => {
+      const { root, head } = proofPhase();
+      receipt(root, head, bothBuilt(), { allowAxioms: null });
       const result = view(root);
-      assert.equal(result.phase, 'done', result.nextAction);
+      assert.equal(result.phase, 'proofs');
+      assert.match(result.nextAction, /does not count: it was not made with the allowed axioms of this commit \(it holds none\)\. Write the allowed axioms: node fvs-auto\.mjs allowed-axioms --project-root \S+ --commit [0-9a-f]{40}; then run the build check: node fvs-build-check\.mjs --project-root \S+ --commit [0-9a-f]{40} --spec-base [0-9a-f]{40} --allow-axioms \S+allowed-axioms\.json; read-state reports done when it accepts/);
+      receipt(root, head, bothBuilt(), { allowAxioms: { file: 'x', sha256: 'e'.repeat(64), names: 3 } });
+      assert.match(view(root).nextAction, /\(it holds another list\)/);
+      receipt(root, head, bothBuilt());
+      assert.equal(view(root).phase, 'done');
     });
-  }
 
-  it('an item named in the extraction\'s assumed list does not excuse another constant, nor another item under the same name', () => {
-    const gap = 'libcrux_sha2::hacl::sha256_update';
-    const { root, head } = proofPhase((directory) => [
-      unit(directory, 'libcrux_hmac', [fn(HMAC_ITEM, 'src/hmac.rs', 10)], { imports: ['libcrux_sha2'],
-        stitch: [{ provider: 'libcrux_sha2', modules: ['Sha2'], replaced: [], assumed: [{ rustPath: gap, name: 'libcrux_sha2.hacl.sha256_update', reason: 'opaque in the provider' }] }] }),
-      unit(directory, 'libcrux_sha2', [fn(SHA2_ITEM, 'src/hacl.rs', 5)]),
-    ]);
-    // A model of another function of the provider, and of the listed gap under a name the extraction did not give it.
-    record(root, boundary(SHA2_ITEM, 'Trusted.hash_256_spec'), boundary(gap, 'Elsewhere.libcrux_sha2.hacl.sha256_update'));
-    for (const axiom of ['Trusted.hash_256_spec', 'Elsewhere.libcrux_sha2.hacl.sha256_update']) {
-      receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec', { beyondStandard: [axiom] })]), specFile(SHA2_SPEC, [statement('hash_256_spec')])]);
-      assert.match(view(root).nextAction, new RegExp(`crate libcrux_hmac: the statement hmac_spec rests on the axiom ${axiom.replaceAll('.', '\\.')}, a hand-written assumption`), axiom);
-    }
-  });
+    it('a recorded proof PR with no receipt yet is told to write the list before the check', () => {
+      const { root } = proofPhase();
+      assert.match(view(root).nextAction, /is recorded at [0-9a-f]{40}\. Write the allowed axioms: node fvs-auto\.mjs allowed-axioms .* then run the build check: node fvs-build-check\.mjs .* --allow-axioms /);
+    });
 
-  it('an axiom the accepted provider\'s own statements rest on is not a new assumption in its consumer', () => {
-    // The provider's own item the extraction left opaque: its owner accepted the assumption for the provider,
-    // and a consumer that uses the provider's theorem rests on the same constant.
-    const opaque = 'libcrux_sha2::hacl::opaque_step';
-    const { root, head } = proofPhase();
-    record(root, boundary(opaque, 'libcrux_sha2.hacl.opaque_step'));
-    const shared = ['libcrux_sha2.hacl.opaque_step'];
-    receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec', { beyondStandard: shared })]), specFile(SHA2_SPEC, [statement('hash_256_spec', { beyondStandard: shared })])]);
-    const result = view(root);
-    assert.equal(result.phase, 'done', result.nextAction);
-    // Only the provider's statements vet it: used by the consumer alone, the same assumption is refused.
-    receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec', { beyondStandard: shared })]), specFile(SHA2_SPEC, [statement('hash_256_spec')])]);
-    assert.match(view(root).nextAction, /crate libcrux_hmac: the statement hmac_spec rests on the axiom libcrux_sha2\.hacl\.opaque_step, a hand-written assumption about libcrux_sha2::hacl::opaque_step/);
+    it('the list is the one derived from the commit: a receipt made with an older list stops counting when the records change', () => {
+      const { root, head } = proofPhase();
+      receipt(root, head, bothBuilt());
+      assert.equal(view(root).phase, 'done');
+      // The owner accepts an assumption about a core function, and a Trusted file cites its record.
+      assert.equal(auto.recordExternals({ projectRoot: root, records: [{ id: 'gap-core-div', kind: 'external', source: { symbol: 'core::num::{u32}::wrapping_div', commit: 'a'.repeat(40) },
+        model: { symbol: 'wrapping_div_spec', sha256: 'b'.repeat(64) }, claimedBehaviour: 'the stated behaviour', reason: 'the owner accepts it', affectedRoots: [], evidence: ['note.md'],
+        status: 'assumption-accepted', decision: { by: 'the owner', at: '2026-11-19T00:00:00.000Z', evidence: 'reply' } }] }).code, 'recorded');
+      fs.mkdirSync(path.join(root, 'formal/Trusted'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'formal/Trusted/Core.lean'), 'namespace libcrux_hmac.Trusted\n/-- Accepted assumption, `gap-core-div`. -/\naxiom wrapping_div_spec : True\nend libcrux_hmac.Trusted\n');
+      git(root, 'add', '-A');
+      git(root, 'commit', '-q', '-m', 'a Trusted axiom');
+      const next = git(root, 'rev-parse', 'HEAD');
+      assert.equal(cli('record-pr', '--project-root', root, '--kind', 'proof', '--url', 'https://example.invalid/pr/2', '--branch', 'proofs', '--head', next).status, 0);
+      const stale = allowAxioms(root, head);
+      // The spec merge stays the first commit; only the proof PR's head moved.
+      receipt(root, next, bothBuilt(), { specBase: head, allowAxioms: stale });
+      const old = view(root);
+      assert.equal(old.phase, 'proofs', 'a receipt for the new head made with the list of the old one');
+      assert.match(old.nextAction, /was not made with the allowed axioms of this commit \(it holds another list\)/);
+      receipt(root, next, bothBuilt(), { specBase: head });
+      assert.equal(view(root).phase, 'done');
+    });
+
+    it('an extraction file that no longer matches what the extraction published stops the phase, with the reason', () => {
+      const { root, head } = proofPhase((directory) => {
+        const rows = hmacAndSha2(directory);
+        const lean = path.join(directory, 'libcrux_hmac', 'Hmac.lean');
+        fs.writeFileSync(lean, 'namespace libcrux_hmac\nend libcrux_hmac\n');
+        rows[0].publication.push({ attemptPath: '/attempt/Hmac.lean', projectPath: lean, sha256: '1'.repeat(64) });
+        return rows;
+      });
+      receipt(root, head, bothBuilt(), { allowAxioms: { file: 'x', sha256: 'e'.repeat(64), names: 0 } });
+      const result = view(root);
+      assert.equal(result.phase, 'proofs');
+      assert.match(result.nextAction, /the allowed axioms cannot be derived at that commit: libcrux_hmac\/Hmac\.lean differs from the file the extraction published/);
+    });
+
+    it('a project with one crate is not asked for a list', () => {
+      const { root, head } = proofPhase((directory) => [unit(directory, 'libcrux_hmac', [fn(HMAC_ITEM, 'src/hmac.rs', 10)])]);
+      assert.doesNotMatch(view(root).nextAction, /allowed-axioms/);
+      receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec')])]);
+      assert.equal(view(root).phase, 'done');
+    });
   });
 
   it('a receipt that was not accepted, or made against another spec base, keeps its own message', () => {
