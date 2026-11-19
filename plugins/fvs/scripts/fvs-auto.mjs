@@ -1214,10 +1214,23 @@ function proofAcceptance(root, state, specs, context) {
   return receipt?.accepted && receipt.specBase === specMerge.mergeCommit ? crateAcceptance(root, specs, context, receipt) : null;
 }
 
+// A crate whose LLBC reaches items of another verified crate that it neither imports nor is
+// stitched to has an axiom for each of them in its own Lean: a black box where the other
+// crate's translation belongs. A crate the owner does not verify may be assumed.
+function unstitchedWarnings(context) {
+  return context.units.flatMap((unit) => {
+    const linked = new Set([...(Array.isArray(unit.imports) ? unit.imports : []), ...[].concat(unit.stitch ?? []).map((entry) => entry?.provider)]);
+    return (Array.isArray(unit.foreignCrates) ? unit.foreignCrates : [])
+      .filter((entry) => entry?.kind === 'target' && entry.crate !== unit.crate && context.targets.includes(entry.crate) && !linked.has(entry.crate))
+      .map((entry) => `crate ${unit.crate} uses items of ${entry.crate}, which is verified, without being stitched to it: they are axioms in ${unit.crate}'s Lean, not ${entry.crate}'s translation; stitch ${unit.crate} to ${entry.crate} in the extraction spec`);
+  });
+}
+
 function crateWarnings(context) {
   return [
     ...context.missing.map((crate) => `the agreement names ${crate} as a target, but the extraction does not hold it`),
     ...context.unlisted.map((crate) => `the extraction holds ${crate}, which the agreement names as neither a target nor a non-target: a successor agreement records the owner's decision`),
+    ...unstitchedWarnings(context),
   ];
 }
 
