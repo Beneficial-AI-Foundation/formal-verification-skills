@@ -117,7 +117,8 @@ check each one in the Rust source before you call it public API.
 A repository with several crates has one target per crate. At `/fvs:auto-init` the owner decides which
 crates to verify, and the agreement records the answer in `targets`: the crates to verify (by default every
 crate the extraction holds) and, for each crate the owner decided not to verify, that decision in their own
-words. `fvs-extract-patches.mjs crates --project-root .` lists the crates of the repository. A crate the
+words. `fvs-extract-patches.mjs crates --out OUT --release DIR` lists the crates of the patched repository, and the
+order that puts each crate after the crates it depends on. A crate the
 owner does not verify only has assumptions: nobody writes statements for its items, and an assumption about
 one of its items needs an entry in the externals record that the owner accepted.
 
