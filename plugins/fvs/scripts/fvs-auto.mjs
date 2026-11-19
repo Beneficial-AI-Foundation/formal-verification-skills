@@ -29,7 +29,7 @@ import {
 import { ResumeError, runResume, consumeResume, consumeTransition, observeAssignedActor, verifyReleasedPacketContext, readRuntime, parseResumeRequest } from './fvs-auto-resume.mjs';
 import { readChain } from './fvs-contract-registry.mjs';
 import { inspectAutoAcceptance } from './fvs-checker-auto.mjs';
-import { TransitionError, transitionValidators, transitionBytes, transitionJson, transitionSave, nextTransitionFacts, performTransition, verifyStartup, acknowledgeStart, readWorkPacket, readTransitionAction, transitionBound, readRuntimeObservation, recordTaskProgress, readTaskProgress, assessTaskProgress, workerMemoryEvidence, verifyTransitionAuthorization } from './fvs-auto-transitions.mjs';
+import { installedFvs, TransitionError, transitionValidators, transitionBytes, transitionJson, transitionSave, nextTransitionFacts, performTransition, verifyStartup, acknowledgeStart, readWorkPacket, readTransitionAction, transitionBound, readRuntimeObservation, recordTaskProgress, readTaskProgress, assessTaskProgress, workerMemoryEvidence, verifyTransitionAuthorization } from './fvs-auto-transitions.mjs';
 
 const GREEN = 'supported-and-tested';
 
@@ -1496,11 +1496,12 @@ function progress(root, state, specs = null) {
 
 // What `read-state --brief` keeps: where the run is and what to do next, a few
 // lines instead of the recorded probe profile and every readiness row.
-const BRIEF_FIELDS = ['code', 'message', 'phase', 'nextAction', 'warnings', 'pendingDecisions', 'externals', 'overrides', 'overridesNote'];
+const BRIEF_FIELDS = ['code', 'message', 'phase', 'nextAction', 'warnings', 'pendingDecisions', 'externals', 'overrides', 'overridesNote', 'fvs'];
 
 export function readState({ projectRoot, requireAgreement = false, brief = false }) {
   if (brief && requireAgreement) refuse('usage', '--brief cannot be combined with --require-agreement: that check returns the whole agreement');
-  const full = readFullState({ projectRoot, requireAgreement });
+  // Workers search global paths and find older installs; the orchestrator puts this one in every brief.
+  const full = { ...readFullState({ projectRoot, requireAgreement }), fvs: installedFvs() };
   return brief ? { brief: true, ...Object.fromEntries(BRIEF_FIELDS.filter((key) => Object.hasOwn(full, key)).map((key) => [key, full[key]])) } : full;
 }
 
