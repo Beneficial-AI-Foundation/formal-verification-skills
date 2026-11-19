@@ -79,6 +79,39 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
    Once it is merged, record the merge (see "Recording the pull request"); `/fvs:auto-execute` starts
    the proofs after that.
 
+## A statement restated with `recall`
+
+One statement, in the two files that step 4 describes. The proof file declares it. The spec file
+restates it with `recall`, which fails the build when the restatement is not the declared statement.
+The guard after it names the axioms the statement rests on.
+
+```lean
+-- formal/proofs/Hmac.lean
+theorem hmac_len (n : Nat) : n + 0 = n := rfl
+```
+
+```lean
+-- formal/specs/Specs/Hmac.lean
+import Proofs.Hmac
+
+recall hmac_len (n : Nat) : n + 0 = n
+
+/-- info: 'hmac_len' does not depend on any axioms -/
+#guard_msgs in
+#print axioms hmac_len
+```
+
+Write the module name that your Lake library gives the proof file in the `import`. From Lean 4.35,
+`recall` is part of Lean and needs no import, so do not look for it in Mathlib. On Lean 4.34 and
+earlier, add `import Mathlib.Tactic.Recall` to the spec file. In the spec pull request the proof is
+`sorry` and the guard is left out until the proof lands.
+
+To list the Rust functions that Aeneas translated, with a scope you choose, run
+`node "$AUTO" list-items --project-root . --scope PATH[,PATH...]`. A scope is a source file, a
+directory or a Rust path such as `crate::module`. It reads `translation.json` from the recorded
+extraction, or from `--translation PATH`. The file records no visibility, so the list holds candidates:
+check each one in the Rust source before you call it public API.
+
 ## GitHub rule
 
 Agents may open draft pull requests and edit a pull request body. They never post comments or reviews
