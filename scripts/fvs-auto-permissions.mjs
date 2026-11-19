@@ -19,7 +19,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { destinationProblem, parseRemoteUrl } from './fvs-auto-push-gate.mjs';
 
+export { parseRemoteUrl };
 export const RECORD_FILE = '.formalising/auto-fv/permissions.json';
 export const SCRATCH_DIR = '.formalising/auto-fv/permission-check';
 export const SCRATCH_FILE = `${SCRATCH_DIR}/PermissionCheck.lean`;
@@ -55,35 +57,12 @@ function checkPrefix(prefix) {
   if (RESERVED.has(parts[0])) refuse('invalid-input', `branch prefix ${JSON.stringify(prefix)} is a shared branch name; choose a namespace of your own, such as fvs`);
   return prefix;
 }
-// Host and OWNER/REPO of a git URL, or null when the URL does not name exactly one repository on one host
-// (a local path, a file URL, a path with more or fewer than two segments).
-export function parseRemoteUrl(url) {
-  const text = String(url).trim();
-  const found = /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/]*@)?(\[[^\]]+\]|[^/:@]+)(?::\d*)?\/(.+)$/i.exec(text)
-    ?? /^(?:[^@/\s]+@)?([^:/\s]+):(?!\/\/)(.+)$/.exec(text);
-  if (!found) return null;
-  const segments = found[2].replace(/\/+$/, '').replace(/\.git$/, '').split('/');
-  if (segments.length !== 2 || segments.some((part) => !/^[A-Za-z0-9._-]+$/.test(part))) return null;
-  return { host: found[1].toLowerCase(), repo: segments.join('/') };
-}
-
-// The push target must be the project's own repository, and a remote can name several: git fetches from the first
-// URL but pushes to every push URL (or, with none, every URL). So all URLs git would use, after its own URL
-// rewriting, must name the agreed host and repository; any other URL, or one that cannot be read, refuses.
+// The push target must be the project's own repository: every URL git would use for the remote, after its own URL
+// rewriting, must name the agreed host and repository, or the check refuses. The push gate hook applies the same
+// check at every push (scripts/fvs-auto-push-gate.mjs), because remote configuration can change after init.
 function checkRemoteIsRepo(root, remote, repo, host) {
-  for (const [label, args] of [['fetch', []], ['push', ['--push']]]) {
-    const run = spawnSync('git', ['-C', root, 'remote', 'get-url', ...args, '--all', remote], { encoding: 'utf8' });
-    if (run.status !== 0) refuse('remote-missing', `git remote ${remote} is not set in ${root}`);
-    const urls = run.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
-    if (urls.length === 0) refuse('remote-ambiguous', `git remote ${remote} has no ${label} URL`);
-    for (const url of urls) {
-      const named = parseRemoteUrl(url);
-      if (!named) refuse('remote-ambiguous', `cannot tell which repository the ${label} URL ${url} of remote ${remote} names; every URL of the remote must be a plain host and OWNER/REPO URL`);
-      if (named.host !== host.toLowerCase() || named.repo.toLowerCase() !== repo.toLowerCase()) {
-        refuse('remote-mismatch', `the ${label} URL ${url} of remote ${remote} names ${named.host}/${named.repo}, not ${host}/${repo}; every URL of the remote must name the project's own repository`);
-      }
-    }
-  }
+  const problem = destinationProblem(root, remote, repo, host);
+  if (problem) refuse(problem.code, problem.message);
 }
 
 // ---- the closed catalog -------------------------------------------------------------------------------------
