@@ -77,7 +77,7 @@ These checks are static. A process of the same user that changes a directory or 
 ## Orchestrator rules for workers and reviews
 
 These are rules for the orchestrator's own commands and messages. The worker rules (build before
-commit, test vectors, a standalone push, the ownership map) are in `auto-execution.md`, "Worker brief
+commit, test vectors, a standalone push with the FVS push command, the ownership map) are in `auto-execution.md`, "Worker brief
 rules". Put them in each worker brief.
 
 - **Redirect a busy worker with `ao send --steer`.** A plain `ao send` to a worker that is in a turn

@@ -5,10 +5,10 @@ nobody answers is aborted after about 30 minutes (the time depends on your versi
 asked stops. In one setup, about 70% of the wall-clock was waiting for approvals or stopped time after an
 aborted prompt.
 
-This page says how `/fvs:auto-init` finds the steps that prompt on your machine, which rules (and, for a push,
-which hook) it writes for them only after your yes, what still asks on purpose, and what to do when a step
-keeps asking. The commands that do this are in `scripts/fvs-auto-permissions.mjs` and
-`scripts/fvs-auto-push-gate.mjs`, run by the orchestrator seat (`auto-seats.md`).
+This page says how `/fvs:auto-init` finds the steps that prompt on your machine, which rules it writes for them
+only after your yes (for a push, the one rule that names the FVS push command), what FVS never allows, and what
+to do when a step keeps asking. The commands that do this are in `scripts/fvs-auto-permissions.mjs` and
+`scripts/fvs-auto-push.mjs`, run by the orchestrator seat (`auto-seats.md`).
 
 </overview>
 
@@ -23,7 +23,7 @@ Before it starts, init tells you that some of these may prompt and that you shou
 them posts to GitHub or pushes anything. The check itself writes one scratch file in the git-excluded
 `.formalising/` folder, and a fetch updates the remote-tracking branches. It cannot promise more than that
 about the tools it starts: Lake evaluates your project's own lakefile and can write build caches, and git runs
-any hook you configured for a fetch or a push. "Low-risk" means these are the commands the run itself uses, in
+any hook you configured for a fetch. "Low-risk" means these are the commands the run itself uses, in
 their mildest form. It does not mean they are inert, so the check never asks you for blanket approval of
 project code.
 
@@ -34,23 +34,29 @@ project code.
 | `lake-build` | `lake env lean .formalising/auto-fv/permission-check/PermissionCheck.lean` (an import-free file; skipped while the project's dependencies are not in `.lake/packages`, because Lake would download them and create a manifest) | Authors and the orchestrator compile Lean files. |
 | `gh-read` | `gh pr list --repo OWNER/REPO --limit 1` and `gh pr view 1 --repo OWNER/REPO` | The orchestrator reads pull requests. |
 | `git-read` | `git ls-remote --heads origin` and `git fetch origin` | The orchestrator checks and fetches branches. |
-| `git-push` | `git push -u origin fvs/permission-check --dry-run` (a dry run: nothing is pushed) | Workers push their branch to the project fork. |
+| `git-push` | `node /PATH/TO/FVS/scripts/fvs-auto-push.mjs --branch fvs/.permission-check` (a branch name that no branch can have, so the push command refuses it before it contacts the fork: nothing is pushed) | Workers push their branch to the project fork with the FVS push command. |
 
 `OWNER/REPO` is the repository the draft pull requests go to: your own repository, never an upstream. Before
 any probe runs, init reads every URL git would use for the remote (all fetch URLs and all push URLs, after
 git's own URL rewriting) and requires each one to name that host (`github.com`, unless you give another host)
 and that repository. A second push URL that names an upstream, the same path on another host, or a URL it
 cannot read stops the check. This is a check at setup time and remote settings can change later, which is why
-the push gate hook repeats it at every push. `fvs` is the branch namespace the run pushes under; you choose
-it, and it can never be `main`, `master`, `release` or a wildcard.
+the push command repeats it at every push. `fvs` is the branch namespace the run pushes under; you choose
+it, and it can never be `main`, `master`, `release` or a wildcard. Init records the push address as git would use it
+after its own rewriting, and it stops when a `url.<base>.insteadOf` or `pushInsteadOf` rule would rewrite that
+address again, because the push command refuses such a destination.
 
 Creating or editing a pull request is not part of the check, and init writes no rule for either. Approve
 them yourself, or add your own rule if you want them to run unasked.
 
 Then you answer which steps prompted. If none did, nothing is written. If some did, init shows you the exact
-rules for those steps (and, for a push, the hook), and writes them only after your yes. The record of your
-answers is `.formalising/auto-fv/permissions.json`; a resumed run reads it and does not ask again. To run the
-check again, delete that file yourself and run `/fvs:auto-init`.
+rules for those steps, and writes them only after your yes. It also records where pushes go, whichever steps
+prompted (see "The push command"). The record of your
+answers is `.formalising/auto-fv/permissions.json`; a resumed run reads it, shows its summary and does not ask
+again. To check again, ask init to recheck permissions: it runs `recheck`, which repeats the probes of the
+steps that last prompted and records the answers as a recheck. This is the entry point
+after rules were written, and in a new Codex session, because Codex reads its rules only when a session
+starts. To start over, delete the record file yourself and run `/fvs:auto-init`.
 
 The summary that init prints, and reports as the `Permissions:` line, shows the latest answer for each step
 across all rounds. A recheck of some steps never hides a step it did not ask about. Steps never asked, and
@@ -59,21 +65,21 @@ probes that ran. They do not predict every command the run may use later.
 
 After a write, what you can check depends on the tool:
 
-- Claude Code reloads settings files while it runs. Init repeats the probes of the steps whose rules it wrote
-  and asks again. A step that still prompts: see "A step still prompts".
+- Claude Code reloads settings files while it runs. Init runs `recheck` for the steps whose rules it wrote,
+  repeats their probes and asks again. A step that still prompts: see "A step still prompts".
 - Codex reads rules when a session starts. A recheck in the session that was already running proves nothing
-  about a new rules file, so init says so, records the write, and leaves the recheck for a new session once the
-  project's `.codex/` folder is trusted. It never calls a prompt unfixable because of a retry in the same
+  about a new rules file, so init says so, records the write, and leaves the recheck (`recheck` again, on your
+  request) for a new session once the project's `.codex/` folder is trusted. It never calls a prompt unfixable because of a retry in the same
   session.
-- The push step has no recheck. The init probe is a dry run, which is not one of the exact forms the hook
-  allows, so it asks even with the hook installed. The first real push by a worker is the evidence that the
-  hook works.
+- The push probe is the push command with a branch name that no branch can have. The command refuses that name
+  before it contacts the fork, so the probe can be repeated. It shows whether the permission layer lets the
+  command run unasked. It does not show a real push: the first real push by a worker is the evidence for that.
 
 ## Claude Code allowlist
 
 Written to the project's `.claude/settings.json` (or `.claude/settings.local.json`, see "Where the file
 goes"), keeping every other key. Only the rules of steps that prompted are written. FVS writes allow rules only:
-no deny rule, no ask rule, and no rule that names a push. This is the full set:
+no deny rule, no ask rule, and no rule for a `git push`. This is the full set:
 
 ```json
 {
@@ -86,7 +92,8 @@ no deny rule, no ask rule, and no rule that names a push. This is the full set:
       "Bash(gh pr view *)",
       "Bash(gh pr list *)",
       "Bash(git fetch *)",
-      "Bash(git ls-remote *)"
+      "Bash(git ls-remote *)",
+      "Bash(node /PATH/TO/FVS/scripts/fvs-auto-push.mjs --branch fvs/*)"
     ]
   }
 }
@@ -101,84 +108,132 @@ Why each rule:
   dependency that is missing, so these rules allow what any build of the project does.
 - `gh pr view *` and `gh pr list *`: reading pull requests. Read only.
 - `git fetch *` and `git ls-remote *`: reading branches. Neither pushes.
-- There is no push rule. A `*` in an allow rule also matches the rest of the command, so no glob can say "this
-  branch and nothing else". Pushes are handled by the hook below.
+- `node /PATH/TO/FVS/scripts/fvs-auto-push.mjs --branch fvs/*`: the push command, with the absolute path of this
+  machine's copy (replace `/PATH/TO/FVS/scripts` with your scripts folder; init prints the exact rule) and the branch
+  namespace you chose, one rule per namespace. It is written only for a push step that prompted, and only after the
+  destination is recorded. A `*` in an allow rule also matches the rest of the command text, so this rule cannot check
+  the arguments: the command does (see "The push command"). When the scripts folder path has a character that a
+  rule cannot spell (a space, a quote, `$` or a glob character), init writes no push rule and says why. The push
+  command still works, and your other rules and permission mode decide whether it asks.
 
-## Push gate hook
+## The push command
 
-A glob cannot allow a push safely. `git push origin fvs/x main` pushes to `main`, and
-`git push -u origin fvs/x -uf` is a force push, and both match `git push origin fvs/*`. So init writes no push
-rule. When the push step prompted on Claude Code, init offers a small hook instead,
-`scripts/fvs-auto-push-gate.mjs`, which reads each Bash command before it runs. It is opt-in: it is installed
-only after you have seen the exact entry and said yes, with the same preview and digest as the allowlist, and
-`--target local` works the same way. It is added to the `hooks.PreToolUse` list of the settings file, and
-every other key and hook in the file stays as it was:
+A glob cannot allow a `git push` safely. `git push origin fvs/x main` pushes to `main`, and
+`git push -u origin fvs/x -uf` is a force push, and both match `git push origin fvs/*`. So init writes no rule for
+`git push`. Workers and the orchestrator push with one FVS command instead, and the one push rule names that
+command:
+
+```
+node /PATH/TO/FVS/scripts/fvs-auto-push.mjs --branch fvs/<name>
+```
+
+A rule is matched against the command text, and a `*` in it also matches the rest of that text, so the rule cannot
+check the arguments. The command checks them itself. Claude Code's documentation warns that a rule which tries to
+constrain arguments is fragile, and this rule does not try.
+
+Workers commit first, then run the command in a separate, standalone call, with the path that init printed. They
+do not chain it with another command.
+
+### What the command refuses
+
+It exits with a plain message and a non-zero status, and pushes nothing, unless all of these hold:
+
+- exactly `--branch <name>` was given. Any other argument, a second `--branch`, `--force`, a refspec or a remote
+  name is refused.
+- the shared git directory of the repository it runs in is the one recorded at init, and the recorded project root
+  is a checkout of that same repository. The main checkout and its linked worktrees pass; a copy, a link or
+  another repository does not.
+- `<name>` is a plain branch name under a recorded namespace (`fvs/...`), `refs/heads/<name>` exists as a local
+  branch, it is not a symbolic ref, and no tag has the same name.
+- no `url.<base>.insteadOf` or `pushInsteadOf` rule applies to the recorded address, no `[remote "<address>"]`
+  section is named after it, and git reads the address as recorded.
+- `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR` and `GIT_NAMESPACE` are not set.
+
+A worker that gets a refusal stops and reports its `code` and `message`. It does not fall back to `git push`.
+
+### What it sends
+
+It pushes to the address recorded at init, never to a remote name. In the tests, none of these settings changed
+where the push went or what it sent: `remote.<name>.push`, `remote.<name>.pushurl`, `remote.<name>.mirror`,
+`remote.pushDefault`, `branch.<name>.pushRemote`, `push.default`, `push.followTags`, `push.recurseSubmodules` and
+`submodule.recurse`. It uses the full refspec `refs/heads/<name>:refs/heads/<name>` without a `+`,
+`--no-follow-tags`, `-c push.followTags=false`, `--recurse-submodules=no`, `--porcelain` and
+`-c core.abbrev=no`, and no other option. The result (created, fast-forward, up to date or failed, with the old
+and new object id that the destination reported) is appended to `.formalising/auto-fv/pushes.jsonl` in the recorded
+project root. It leaves no `origin/<name>` ref and sets no upstream: run `git fetch` to see the branch.
+
+### What it does not stop
+
+- Git hooks of the repository still run, as for any push.
+- Credential helpers, ssh and proxy settings come from your own git configuration and environment, as for any push.
+- The recorded address is checked just before the push. A rewrite rule that you add after that check and before
+  the connection is a race the command cannot close.
+- The command trusts the `git` it finds on `PATH`.
+- The rule and the worker briefs name an absolute path. An FVS update or reinstall that moves the script leaves both
+  stale: run init again to append the rule for the new path, and delete the old rule yourself. FVS deletes none of
+  your rules.
+- Any session of your user account can edit the script file at the allowed path, as it can edit the record.
+- The record of the destination is a plain file in the git directory. Any session of your user account can change
+  it, and so can change where the command pushes.
+- A worker that runs a plain `git push` is not covered by this rule: your other rules and permission mode decide
+  that push, as before. That is why a Claude write refuses while a project settings file allows a `git push` by rule
+  (next section).
+- On Codex, a rule matches the start of a command: `node`, the path and `--branch`. It cannot tell `fvs/work` from
+  `main`, and the command refuses a name outside the recorded namespaces. Codex splits a command run through a shell
+  wrapper such as `bash -lc` into its simple commands before it matches rules, as its documentation says. That was
+  not observed here.
+- **Branch protection on the project fork is still recommended.** Protect `main` and the release branches and
+  forbid force pushes. It is an independent safeguard that works whatever a command looks like.
+
+Nothing in this page promises that a push asks.
+
+### Where the destination is recorded
+
+Init records it with `write-destination`, after your yes, whichever steps prompted: the push command refuses to run
+without it. The file is `fvs-auto-push.json` in the shared git directory of the repository (the `.git` of the main
+checkout), so every worktree of the repository finds it and no commit contains it:
 
 ```json
 {
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"<FVS scripts folder>/fvs-auto-push-gate.mjs\" --repo OWNER/REPO --host github.com --remote origin --prefix fvs",
-            "timeout": 15
-          }
-        ]
-      }
-    ]
-  }
+  "schema": "fvs/auto-push-destination",
+  "schemaVersion": 1,
+  "projectRoot": "/work/proj",
+  "commonDir": "/work/proj/.git",
+  "url": "git@github.com:OWNER/REPO.git",
+  "host": "github.com",
+  "repo": "OWNER/REPO",
+  "prefixes": ["fvs"]
 }
 ```
 
-The command names the destination you chose, because a worker's worktree has no run folder to read it from.
-The hook answers for every Bash command that contains a push:
+Init records the address git would push to after its own rewriting. It never replaces a record that differs: it
+stops with `destination-conflict` and shows both. To record another destination, check the file, delete it yourself
+and run init again. The permission preview for a push rule shows this record, and the push rule is written only
+while the record still matches what init would record now.
 
-- **Allow** only the exact plain forms, each on one line with nothing around it:
-  - `git push origin fvs/<name>` and `git push -u origin fvs/<name>`, also after one `git -C <plain path>`. A
-    plain path has only letters, digits and `_ . / + @ % : = , -`; a path with a space, quote, `$`, `~` or other
-    shell syntax asks.
-  - A bare `git push`, only when HEAD is a branch `fvs/<name>`, its upstream and its push target are both
-    `origin/<same name>`, `push.default` is `simple`, `current` or `upstream` (not `matching`), and
-    `remote.origin.push` is not set.
-  - No form is allowed when a setting would make the push send more than the one branch: `remote.origin.mirror`,
-    `push.followTags` (common in a global git config), `push.recurseSubmodules` set to `on-demand` or `only`,
-    or `submodule.recurse`. Such a push asks, even in the exact forms above. Unset the setting for the
-    project, or approve those pushes by hand.
-- **Check the destination first.** Before it allows anything it reads every URL git would push to from the
-  directory the push runs in (the working directory, or the `-C` path), after git's own URL rewriting, and
-  requires each to name the host and repository you chose. Any mismatch, a URL it cannot read, or a git error
-  means ask. A URL is read the way git reads it, and a form that programs read differently is refused: a
-  backslash, a space or control character, a leading `-`, and an scp-like form such as
-  `host:user@github.com:Acme/proj`, which git sends to `host`.
-- **Ask** for every other command that contains a push: force flags, `--delete`, `--tags`, `--mirror`, `--all`,
-  `--dry-run`, refspecs with `:` or `+`, other remotes, other branch names, several branch names, chains
-  (`&&`, `;`), pipes, redirects (`2>&1`), several lines, quotes, `$(...)`, a `-C` path that is not plain, other
-  git options before `push`, and a prefix such as `rtk`, `env` or `sudo`.
-- **Say nothing** for a command that is not a push.
+### Push allow rules already in your settings
 
-What it does not do:
+FVS writes no rule for `git push`, and it does not delete yours. A worker could run a plain `git push` under such a
+rule and skip the push command. When either project settings file (`.claude/settings.json` or
+`.claude/settings.local.json`) already has an entry of `permissions.allow` that names `git push`, such as
+`Bash(git push origin fvs/*)`, `Bash(git push:*)`, `Bash(git -C * push *)` or `Bash(rtk git push *)`, a Claude write
+stops with `legacy-push-rules`, before any preview and before anything is written. Both files stay byte-identical.
+The refusal lists, for each file, the exact entries and how many other allow entries stay, so that you can delete
+exactly those lines and run init again. `plan` lists them too, because such a rule can also make the push probe
+quiet for a reason that has nothing to do with the push command. The rule that names the push command is not a
+`git push` rule and is never listed.
 
-- A hook that answers "allow" skips the prompt, but it does not override your own `deny` or `ask` rules. A hook
-  that answers "ask" makes the push prompt even where a rule of yours allows it.
-- It judges the text of a command. A push it does not recognise as a push (for example one that builds the word
-  `git` from a variable) is not judged. It goes through the session's normal permission flow, as it would
-  without the hook, and that flow asks because init writes no push rule. A commit message or `ao send` text that
-  contains `git push` is treated as a push and asks.
-- **Branch protection on the project fork is still recommended.** Protect `main` and the release branches and
-  forbid force pushes. It is an independent safeguard that works whatever the command looks like, including a
-  push this hook cannot see.
-- There is no hook for Codex. A push asks on Codex, and a Codex rule cannot say "but not `--force`".
+What this check does not see: broad rules such as `Bash(git *)` or `Bash(*)`, your user settings
+(`~/.claude/settings.json`), managed settings, and the permission mode. Check those yourself.
 
-Workers should push in one standalone, unchained call: `git push -u origin fvs/<name>`, with no `&&`, `;`,
-pipe, redirect, `cd` or quote in front of or after it. A commit and a push in one command asks.
+### A push gate hook from an earlier build
 
-The command names this machine's copy of the script. If the script is missing or the hook fails, a push asks
-as usual, so it fails safe. After an FVS update or reinstall that moves the script, remove the entry and run
-init again: init never replaces or edits a push gate entry it finds, and says so. Use `--target local` so that
-a machine path does not end up in a committed file. To undo the hook, delete the entry.
+An earlier build of FVS offered a hook, `fvs-auto-push-gate.mjs`, for pushes. This build ships no hook. When a
+project settings file still has an entry of `hooks.PreToolUse` whose command runs that script, `plan` and every
+Claude write list it (file, real path and command) and leave it in place: FVS deletes none of your settings, and the
+write is not refused because of it. Delete the listed entries from hooks.PreToolUse yourself; every other hook stays.
+A hook whose script is missing gives no decision, but an older copy of the script may still be installed on your
+machine, and it would still run.
 
 ## Codex rules
 
@@ -213,6 +268,11 @@ prefix_rule(
     decision = "allow",
     justification = "List remote branches",
 )
+prefix_rule(
+    pattern = ["node", "/PATH/TO/FVS/scripts/fvs-auto-push.mjs", "--branch"],
+    decision = "allow",
+    justification = "The FVS push command: one branch of the run, to the destination recorded at init",
+)
 ```
 
 - Before it writes, init evaluates the exact text from a temporary file outside the project with the installed
@@ -224,19 +284,24 @@ prefix_rule(
   init refuses and shows both texts, because a merge could drop a rule you approved earlier or one you added.
   To change it, save any rule of your own, delete the file yourself, and write every step you want in one
   command.
-- Codex rules match only the start of a command, so they cannot say "but not `--force`". No push rule is
-  written for Codex, and there is no hook: a push still asks. Codex edits and Lake builds follow the sandbox
-  mode, not a rule file, so no rule is written for them either. If only the push, Lake or edit step prompted,
-  there is nothing to write on Codex: init says so and those prompts stay unresolved until you approve them
-  when they appear.
+- Codex rules match only the start of a command, so they cannot say "but not `--force`". The push rule names the
+  push command and `--branch`; it cannot tell `fvs/work` from `main`, and the command refuses a name outside the
+  recorded namespaces (see "The push command"). A rule for `git push` is never written. Codex edits and Lake builds
+  follow the sandbox mode, not a rule file, so no rule is written for them. If only the Lake or edit step prompted,
+  there is nothing to write on Codex: init says so and those prompts stay unresolved until you approve them when
+  they appear.
+- Codex splits a command run through a shell wrapper such as `bash -lc` into its simple commands before it matches
+  rules, as its documentation says. That was not observed here, and `codex execpolicy check` takes the command words
+  directly.
 
-## What still prompts on purpose
+## What FVS never allows
 
-None of these is ever allowed by the files above, and the check refuses to write a rule for any of them:
+FVS writes no rule that allows any of these, and the check refuses to write a rule for any of them. Whether one
+prompts in a session still depends on your other rules and permission mode:
 
 - a GitHub comment or review (`gh pr comment`, `gh pr review`), marking a pull request ready, and a merge;
   only you comment, mark ready and merge;
-- every push that is not one of the exact forms of the push gate hook, and every push on Codex;
+- every push that is not made with the push command (no rule for a `git push` is written, on either tool);
 - `gh api`, `gh issue`, `gh repo`, `gh release` and any other command not in the table above;
 - any step you did not confirm, and any step that did not prompt in your check.
 
@@ -245,13 +310,20 @@ None of these is ever allowed by the files above, and the check refuses to write
 Before you confirm, init shows the file it would change, the real path when `.claude` is a link, whether the
 file is tracked, ignored or loose in git, and where it applies.
 
-Claude Code reads the project's `.claude/settings.json` from the session's own directory, and rules and hooks
-in a shared project file apply once you trust the folder. Whether a hook in `.claude/settings.local.json` needs
-the same trust step is not observed.
+Claude Code reads the project's `.claude/settings.json` from the session's own directory, and rules in a shared
+project file apply once you trust the folder.
+
+Your yes is bound to what the preview showed. The digest covers the exact rules, the recorded destination when a push rule is written, the canonical project
+root, the real path of the file (every link followed, also when the folder does not exist yet) and the hash of
+the file's current content. If any of them changes between the preview and your confirmation, for example a
+`.claude` link that now leads to another folder, or an edit to the file, the confirmation is refused, nothing is
+written, and init shows a new preview with a new digest that needs a new yes. The write checks again just before
+it replaces the file and writes to the path that was shown. This does not lock the file: an edit made in the
+instant between that last check and the replacement is not detected.
 
 - A worker works in its own worktree. It sees `.claude/settings.json` only if the file is committed, or if
-  `.claude` is linked into the worktree (`auto-setup.md`, "Worktrees"). If neither is true, the allowlist and
-  the hook help the orchestrator only.
+  `.claude` is linked into the worktree (`auto-setup.md`, "Worktrees"). If neither is true, the allowlist
+  helps the orchestrator only.
 - `.claude/settings.local.json` is read from the main checkout in every worktree of the repository, and Claude
   Code keeps it out of git. Pick it when you want workers to see the rules without committing anything. The
   check writes it only when the project root is the main checkout, and refuses in a linked worktree.
@@ -259,26 +331,30 @@ the same trust step is not observed.
   share it.
 - If `.claude` is a link, the check writes through it.
 - Delete the lines to undo the change. Nothing else is touched. If the settings file is not valid JSON, or its
-  `permissions` or `hooks` section has an unexpected shape, the check stops and leaves it alone.
+  `permissions` section has an unexpected shape, the check stops and leaves it alone.
 
 Workers started by Agent Orchestrator run in the permission mode Agent Orchestrator gives them. The check
 covers the session that ran init. If your workers run in another mode, check that mode too.
 
 ## What was tested
 
-- Unit tests (node, no network): the helper's confirmation, merge, refusals and Codex file handling, and the
-  hook's decision table against throwaway repositories with a fake remote. Nothing in them pushes.
+- Unit tests (node, no network): the helper's confirmation, merge, refusals and Codex file handling, the refusal
+  while a `git push` allow rule is present, the listing of a push gate hook of an earlier build, the confirmation
+  binding (a `.claude` or `.codex` link retargeted between the preview and the confirmation, a changed file,
+  another project root), the `recheck` entry point, and the push command: every refusal listed above, and real
+  pushes into a throwaway local bare repository that stands in for the fork, reached through a stand-in for `ssh`.
+  Nothing in them contacts GitHub.
 - The Codex rules were run through `codex execpolicy check` on codex-cli 0.166.0: the file parses, each probe
-  command is allowed, and push, merge and other commands are not matched. The tests repeat this when a Codex
+  command is allowed, and `git push`, merge and other commands are not matched. The tests repeat this when a Codex
   CLI is installed.
 - One live probe: the message step (`ao send` to a session that does not exist) was run in a Claude Code
   session.
-- Not observed: a live Claude Code or Codex session showing that a written rule or the hook removes a prompt,
-  including that an "allow" answer from the hook skips the prompt; the live `gh`, `git fetch`,
-  `git push --dry-run` and Lake probes; a real push through the hook; that the working directory Claude Code
-  gives the hook is the directory the shell runs the push in (the `-C` path and the destination check rely on
-  it, and a mismatch makes the hook ask, not allow). That is why init asks you to recheck, and why the first
-  real push is the evidence for the hook.
+- Not observed: a live Claude Code or Codex session showing that a written rule removes a prompt; the live `gh`,
+  `git fetch` and Lake probes; a real push to GitHub through the push command; whether Claude Code screens text
+  after the matched words against an allow rule, such as a command substitution (`$(...)`) or a redirect (`> file`)
+  after the branch name, which its documentation does not say; that Codex splits a shell wrapper before it matches rules; that the push command finds the same `git`,
+  `PATH` and shell environment that a worker's shell uses. That is why init asks you to recheck, and why the
+  first real push is the evidence for the push command.
 
 ## After a first run: `/fewer-permission-prompts`
 
@@ -293,20 +369,19 @@ Work through these in order. Each is specific to a setup, so skip any that is no
 
 1. **The session has not loaded the file.** Claude Code watches settings files and reloads them, but a
    session started before the file existed may need a restart. Codex scans rules only when a session starts:
-   open a new session.
+   open a new session, then ask init to recheck permissions (it runs `recheck`).
 2. **An ask rule matches.** An ask rule beats an allow rule. Wildcard ask rules, such as one for any command
    containing `git merge`, match words anywhere in a command, including the text of an
    `ao send` message or a pull request body, so a harmless message that mentions a merge can prompt. Say what
    should happen in plain words ("combine the branches"), or narrow the ask rule so that it starts with the
    command.
 3. **A hook asks.** A command hook before a tool call can ask even when a rule allows. A hook that guards
-   pushes may ask for every push whose branch name it does not know, and the push gate hook asks for every push
-   that is not an exact plain form (see "Push gate hook"). FVS cannot change your hook: change the hook, or
-   approve those pushes yourself.
+   pushes may ask for every push whose branch name it does not know. FVS cannot change your hook: change the
+   hook, or approve those pushes yourself.
 4. **A hook rewrites the command (for example `rtk`).** The permission layer then sees the rewritten command,
-   so an allow rule written for `git push ...` does not match `rtk git push ...`, and the push gate hook sees
-   `rtk git push ...`, which is not an exact form, so it asks for every push. Add a twin rule for the rewritten
-   form, or exempt the command from the rewriting hook. Such hooks have also cut JSON output short.
+   so an allow rule written for `git fetch ...` does not match `rtk git fetch ...`, and a hook that rewrites
+   `node` commands breaks the push rule the same way. Add a twin rule for the rewritten form, or exempt the
+   command from the rewriting hook. Such hooks have also cut JSON output short.
 5. **Managed settings** from an organisation can override a project file. `/status` in Claude Code names the
    sources.
 6. **The step runs in a different mode.** A worker may use a mode that asks even though your orchestrator

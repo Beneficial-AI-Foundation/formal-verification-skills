@@ -168,10 +168,12 @@ Controller permissions in auto mode:
 - Before the run, the owner approves the controller's commands in the controller's own session. These are
   the FVS driver/CLI, `ao`, `git` and the pinned Lean tools. `/fvs:auto-init` checks which steps of the run
   prompt on this machine and, only after the owner's yes, writes a minimal project allowlist for those
-  steps and, for a push on Claude Code, an opt-in push gate hook; it writes no other permission setting,
-  never writes a rule that allows a GitHub comment, review or merge, or any push, and the hook allows only
-  exact plain pushes to the project fork and asks for every other push. `auto-permissions.md` has the rules,
-  the hook, what still prompts and how to fix a step that keeps prompting. `auto-seats.md` says which seat (owner, orchestrator or worker) runs
+  steps and, for a push, the one rule that names the FVS push command (`fvs-auto-push.mjs`, which pushes one
+  branch under the run's namespace to the destination recorded at init and refuses anything else); it writes no
+  other permission setting, never writes a rule that allows a GitHub comment, review or merge, or a `git push`,
+  and a `git push` allow rule already in the project settings stops the write (a plain `git push` is not covered
+  by the push rule: the owner's other rules and permission mode decide it). `auto-permissions.md` has the rules,
+  the push command, what FVS never allows and how to fix a step that keeps prompting. `auto-seats.md` says which seat (owner, orchestrator or worker) runs
   each operation. "Permissions and command rules" below gives the general habits for every session.
 - Run one simple, auditable command per step: one driver or CLI operation with its `--input` file, one
   `ao` call or one `git` call. Compound commands (`&&`, `;`, pipes, `cd` plus a command, subshells) can
