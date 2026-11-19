@@ -35,8 +35,10 @@ const specFile = (file, statements, extra = {}) => ({ path: file, sha256: '0'.re
 
 // A project in the proof phase: both crates have a reviewed spec file, the spec PR is merged
 // and a draft proof PR is recorded at the head. `units` builds the extraction's crates.
-function proofPhase(units = hmacAndSha2, { targets = null, noSpecs = false } = {}) {
-  const root = extracted(units);
+// With `prune` the owner removes that spec file before merging, with `below` the Lean project is a
+// folder of the repository.
+function proofPhase(units = hmacAndSha2, { targets = null, noSpecs = false, prune = null, below = false } = {}) {
+  const root = extracted(units, { below });
   if (targets) fixtures.recordAgreement(root, fixtures.agreementFor(root, { targets }));
   fs.mkdirSync(path.join(root, 'formal/specs/Specs'), { recursive: true });
   fs.writeFileSync(path.join(root, HMAC_SPEC), 'recall hmac_spec\n');
@@ -49,6 +51,11 @@ function proofPhase(units = hmacAndSha2, { targets = null, noSpecs = false } = {
   if (!noSpecs) {
     recordSpec(HMAC_SPEC, HMAC_ITEM);
     if (!targets) recordSpec(SHA2_SPEC, SHA2_ITEM);
+  }
+  if (prune) {
+    fs.rmSync(path.join(root, prune));
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'the owner prunes a spec file');
   }
   const head = git(root, 'rev-parse', 'HEAD');
   assert.equal(cli('record-pr', '--project-root', root, '--kind', 'spec', '--url', 'https://example.invalid/pr/1', '--branch', 'specs', '--head', head).status, 0);
@@ -120,6 +127,18 @@ describe('the proof phase over several crates', () => {
       assert.match(view(root).nextAction, /\(it holds another list\)/);
       receipt(root, head, bothBuilt());
       assert.equal(view(root).phase, 'done');
+    });
+
+    it('names each crate\'s live spec files, in the form the build check reports them, so a statement is held to its own crate', () => {
+      const sectionsOf = (setup) => {
+        const written = cli('allowed-axioms', '--project-root', setup.root, '--commit', setup.head);
+        assert.equal(written.status, 0, written.stdout);
+        return JSON.parse(fs.readFileSync(written.json.file, 'utf8')).crates.map((entry) => [entry.crate, entry.specFiles]);
+      };
+      assert.deepEqual(sectionsOf(proofPhase()), [['libcrux_hmac', [HMAC_SPEC]], ['libcrux_sha2', [SHA2_SPEC]]]);
+      assert.deepEqual(sectionsOf(proofPhase(hmacAndSha2, { below: true })), [['libcrux_hmac', [`lean/${HMAC_SPEC}`]], ['libcrux_sha2', [`lean/${SHA2_SPEC}`]]],
+        'a project below the repository top: the path starts at the top, as the receipt\'s does');
+      assert.deepEqual(sectionsOf(proofPhase(hmacAndSha2, { prune: SHA2_SPEC })), [['libcrux_hmac', [HMAC_SPEC]], ['libcrux_sha2', []]], 'a file the owner pruned is not live');
     });
 
     it('a recorded proof PR with no receipt yet is told to write the list before the check', () => {

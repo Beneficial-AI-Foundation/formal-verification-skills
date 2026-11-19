@@ -1264,8 +1264,7 @@ const crateDecisions = (context) => context.undecided.map((crate) => `non-target
 // the current list (see allowedAxiomList).
 function crateAcceptance(root, specs, context, receipt) {
   if (context.targets.length === 0) return [{ crate: null, accepted: false, reason: 'the agreement drops every extracted crate, so nothing is verified' }];
-  const top = gitWorkingTree(root);
-  const prefix = top === null ? '' : path.relative(top, root).split(path.sep).join('/');
+  const prefix = repositoryPrefix(root);
   const pruned = ownerChangesOf(specs);
   const rows = currentSpecRows(specs).filter((row) => pruned.get(row.specFile) !== 'pruned');
   const files = new Map((Array.isArray(receipt.specFiles) ? receipt.specFiles : []).map((file) => [file?.path, file]));
@@ -1429,7 +1428,24 @@ export function leanAxioms(text) {
 const docRustPath = (doc) => /^(?:Trait (?:implementation|declaration): )?\[(.*)\]:?$/.exec(doc?.replace(/^\/--\s*/, '').split('\n')[0].trim() ?? '')?.[1] ?? null;
 const docRecordIds = (doc) => [...(doc ?? '').matchAll(/`([^`\s]+)`/g)].map((entry) => entry[1]);
 
-const allowedAxiomsBytes = (axioms) => Buffer.from(`${JSON.stringify({ schema: ALLOWED_AXIOMS_SCHEMA, schemaVersion: 1, axioms }, null, 2)}\n`);
+const allowedAxiomsBytes = (crates) => Buffer.from(`${JSON.stringify({ schema: ALLOWED_AXIOMS_SCHEMA, schemaVersion: 2, crates }, null, 2)}\n`);
+
+// The path of the project root inside its git working tree, posix style: what the build check puts
+// in front of a project file in its receipt. Empty when the root is the top or in no repository.
+function repositoryPrefix(root) {
+  const top = gitWorkingTree(root);
+  return top === null ? '' : path.relative(top, root).split(path.sep).join('/');
+}
+
+// The live spec files of each target crate, as the build check reports them. A spec file covers one
+// crate, so a statement belongs to the crate whose list holds its file.
+function crateSpecFiles(root, specs, context) {
+  const prefix = repositoryPrefix(root);
+  const pruned = ownerChangesOf(specs);
+  const rows = currentSpecRows(specs).filter((row) => pruned.get(row.specFile) !== 'pruned');
+  return new Map(context.targets.map((crate) => [crate, [...new Set(rows.filter((row) => row.items.some((id) => itemCrate(id) === crate))
+    .map((row) => path.posix.join(prefix, row.specFile)))].sort()]));
+}
 
 function trustedLeanFiles(root, commit) {
   const run = spawnSync('git', ['--no-optional-locks', '-C', root, 'ls-tree', '-r', '--name-only', commit], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
@@ -1451,12 +1467,18 @@ function recordSourceProblem(record, context) {
   return null;
 }
 
-// The axioms a run over several crates may rest on at `commit`, fully qualified and sorted,
-// with each axiom withheld and why, and the problems that stop the list from being derived.
-export function allowedAxiomList(root, state, context, commit) {
+// The axioms a run over several crates may rest on at `commit`: for each target crate, its live spec
+// files and the fully qualified, sorted axioms its statements may rest on (`crates`), the distinct
+// names over all of them (`axioms`), each axiom withheld and why, and the problems that stop the
+// list from being derived. A crate's axioms are the ones its own published Lean declares and the
+// owner may assume, those of every crate it depends on (stitched crates and the crates its LLBC
+// reaches, followed to the end), and the Trusted ones. A statement of one crate never rests on an
+// axiom that only another crate's section holds.
+export function allowedAxiomList(root, state, context, commit, specs = null) {
   const problems = [];
   const withheld = [];
-  const listed = new Set();
+  const own = new Map(context.units.map((unit) => [unit.crate, new Set()]));
+  const trusted = new Set();
   const accepted = new Map((loadExternals(root)?.records ?? []).filter((record) => record.status === 'assumption-accepted').map((record) => [record.id, record]));
   const read = (file, expectedSha256) => {
     const relative = path.relative(root, path.resolve(root, file));
@@ -1487,11 +1509,11 @@ export function allowedAxiomList(root, state, context, commit) {
         const withhold = (reason) => withheld.push({ name: axiom.full, file: file.posix, reason });
         if (!owner || !CRATE_NAME.test(owner)) withhold('its doc comment gives no Rust path, so its crate cannot be read');
         else if (owner !== unit.crate && !foreign.has(owner)) withhold(`its crate ${owner} is not one the extraction recorded for ${unit.crate}`);
-        else if (!context.targets.includes(owner)) listed.add(axiom.full);
+        else if (!context.targets.includes(owner)) own.get(unit.crate).add(axiom.full);
         else if (owner === unit.crate) {
-          if ([...accepted.values()].some((record) => record.source.symbol === rustPath || record.source.symbol.startsWith(`${rustPath} `))) listed.add(axiom.full);
+          if ([...accepted.values()].some((record) => record.source.symbol === rustPath || record.source.symbol.startsWith(`${rustPath} `))) own.get(unit.crate).add(axiom.full);
           else withhold(`it stands for ${rustPath}, an item of the verified crate ${owner} that has no definition there: the owner accepts it with an externals record whose source starts with that path`);
-        } else if (assumed.some((item) => item?.rustPath === rustPath)) listed.add(axiom.full);
+        } else if (assumed.some((item) => item?.rustPath === rustPath)) own.get(unit.crate).add(axiom.full);
         else withhold(`it stands for ${rustPath}, an item of the verified crate ${owner}: stitch ${unit.crate} to ${owner}, or prove the function there`);
       }
     }
@@ -1502,12 +1524,28 @@ export function allowedAxiomList(root, state, context, commit) {
       const records = docRecordIds(axiom.doc).filter((id) => accepted.has(id)).map((id) => accepted.get(id));
       const reason = records.length === 0 ? 'its docstring cites no accepted externals record (the record id in backticks)' : records.map((record) => recordSourceProblem(record, context)).find(Boolean);
       if (reason) withheld.push({ name: axiom.full, file: file.posix, reason });
-      else listed.add(axiom.full);
+      else trusted.add(axiom.full);
     }
   }
-  const axioms = [...listed].sort();
-  const bytes = allowedAxiomsBytes(axioms);
-  return { commit, axioms, withheld, problems, bytes, sha256: sha256(bytes) };
+  const dependsOn = new Map(context.view.units.map((unit) => [unit.crate, unit.dependsOn]));
+  const reach = (crate) => {
+    const seen = new Set();
+    const visit = (next) => {
+      if (seen.has(next)) return;
+      seen.add(next);
+      for (const provider of dependsOn.get(next) ?? []) visit(provider);
+    };
+    visit(crate);
+    return seen;
+  };
+  const files = crateSpecFiles(root, specs, context);
+  const crates = [...context.targets].sort().map((crate) => ({
+    crate,
+    specFiles: files.get(crate),
+    axioms: [...new Set([...reach(crate)].flatMap((name) => [...(own.get(name) ?? [])]).concat([...trusted]))].sort(),
+  }));
+  const bytes = allowedAxiomsBytes(crates);
+  return { commit, crates, axioms: [...new Set(crates.flatMap((entry) => entry.axioms))].sort(), withheld, problems, bytes, sha256: sha256(bytes) };
 }
 
 // Writes the allowed axioms for the commit the build check will check: the open proof PR's
@@ -1521,13 +1559,13 @@ export function allowedAxioms({ projectRoot, commit }) {
   const proofPr = (specs?.prs ?? []).filter((pr) => pr.kind === 'proof' && !pr.merged).at(-1);
   const head = resolveRevision(root, commit ?? proofPr?.head ?? 'HEAD');
   if (head === null) refuse('usage', `${commit ?? proofPr?.head ?? 'HEAD'} is not a commit in this checkout`);
-  const result = allowedAxiomList(root, state, context, head);
+  const result = allowedAxiomList(root, state, context, head, specs);
   if (result.problems.length > 0) refuse('allowed-axioms-unreadable', `the allowed axioms cannot be derived at ${head}: ${result.problems.join('; ')}`);
   const file = allowedAxiomsPath(root);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, result.bytes);
-  return { code: 'written', message: `${result.axioms.length} allowed axiom(s) written for ${head}${result.withheld.length > 0 ? `; ${result.withheld.length} withheld` : ''}`,
-    file, commit: head, sha256: result.sha256, names: result.axioms.length, withheld: result.withheld };
+  return { code: 'written', message: `${result.axioms.length} allowed axiom(s) for ${result.crates.length} crate(s) written for ${head}${result.withheld.length > 0 ? `; ${result.withheld.length} withheld` : ''}`,
+    file, commit: head, sha256: result.sha256, names: result.axioms.length, crates: result.crates.length, withheld: result.withheld };
 }
 
 function extractionErrors(extraction) {
@@ -1950,7 +1988,7 @@ function progress(root, state, specs = null) {
     // not accepted, and it counts only when it was made with the allowed axioms of this commit. A
     // single-crate project has no crate context.
     const context = receipt?.accepted && heldToSpec ? crateContextOf(state) : null;
-    const allowed = context ? allowedAxiomList(root, state, context, proofPr.head) : null;
+    const allowed = context ? allowedAxiomList(root, state, context, proofPr.head, specs) : null;
     if (allowed && (allowed.problems.length > 0 || receipt.allowAxioms?.sha256 !== allowed.sha256)) {
       return { phase: 'proofs', warnings,
         nextAction: allowed.problems.length > 0

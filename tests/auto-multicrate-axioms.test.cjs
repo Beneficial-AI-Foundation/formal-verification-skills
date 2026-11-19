@@ -5,7 +5,9 @@
 // assume: the extraction's own declarations for items of crates the owner does not verify, the
 // ones its stitch assumes or that the owner accepted for the crate's own opaque items, and the
 // hand-written Trusted axioms that cite an accepted record. Everything else is withheld and
-// named. Projects are temporary git fixtures; no build runs.
+// named. The list has one section for each verified crate: its spec files and the axioms its
+// statements may rest on, which include those of the crates it depends on. Projects are
+// temporary git fixtures; no build runs.
 
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -51,8 +53,9 @@ const open = (id, source) => record(id, source, { status: 'open', decision: null
 const FOREIGN = [{ crate: 'core', kind: 'external' }, { crate: 'libcrux_traits', kind: 'non-target' }, { crate: 'libcrux_sha2', kind: 'target' }];
 
 // hmac and sha2, both verified. `files` are the Lean files the extraction published for hmac,
-// `trusted` the hand-written files, `stitch` hmac's stitch to sha2; everything is committed.
-function scenario({ files = {}, trusted = {}, stitch = [], records = [], sha2Files = {}, commit = true, below = false } = {}) {
+// `trusted` the hand-written files, `stitch` hmac's stitch to sha2; everything is committed. With
+// `thirdFiles` the project holds a third crate, libcrux_c, that sha2 imports.
+function scenario({ files = {}, trusted = {}, stitch = [], records = [], sha2Files = {}, thirdFiles = null, commit = true, below = false } = {}) {
   const root = extracted((directory) => {
     const row = (crate, lean, extra) => {
       const made = unit(directory, crate, [fn(`${crate}::x::f`, 'src/x.rs', 1)], extra);
@@ -63,7 +66,9 @@ function scenario({ files = {}, trusted = {}, stitch = [], records = [], sha2Fil
       }
       return made;
     };
-    return [row('libcrux_hmac', files, { imports: ['libcrux_sha2'], stitch, foreignCrates: FOREIGN }), row('libcrux_sha2', sha2Files, {})];
+    const core = { foreignCrates: [{ crate: 'core', kind: 'external' }] };
+    return [row('libcrux_hmac', files, { imports: ['libcrux_sha2'], stitch, foreignCrates: FOREIGN }), row('libcrux_sha2', sha2Files, thirdFiles ? { ...core, imports: ['libcrux_c'] } : core),
+      ...(thirdFiles ? [row('libcrux_c', thirdFiles, core)] : [])];
   }, { below });
   for (const [name, text] of Object.entries(trusted)) {
     fs.mkdirSync(path.join(root, 'formal', 'Trusted'), { recursive: true });
@@ -78,7 +83,9 @@ function scenario({ files = {}, trusted = {}, stitch = [], records = [], sha2Fil
 }
 
 const write = (root, ...args) => cli('allowed-axioms', '--project-root', root, ...args);
-const listed = (root) => JSON.parse(fs.readFileSync(path.join(root, '.formalising', 'auto-fv', 'allowed-axioms.json'), 'utf8')).axioms;
+const sections = (root) => JSON.parse(fs.readFileSync(path.join(root, '.formalising', 'auto-fv', 'allowed-axioms.json'), 'utf8')).crates;
+// The distinct names over every crate's section.
+const listed = (root) => [...new Set(sections(root).flatMap((entry) => entry.axioms))].sort();
 
 describe('the Lean axiom reader', () => {
   it('reads the names Aeneas writes on the line after the keyword, in the enclosing namespaces', () => {
@@ -132,9 +139,75 @@ describe('the allowed axioms of a run over several crates', () => {
     const bytes = fs.readFileSync(file);
     assert.equal(result.json.sha256, crypto.createHash('sha256').update(bytes).digest('hex'));
     assert.equal(result.json.file, file);
-    assert.equal(bytes.toString('utf8'), `${JSON.stringify({ schema: 'fvs/auto-allowed-axioms', schemaVersion: 1,
-      axioms: ['libcrux_hmac.core.num.U32.wrapping_div', 'libcrux_hmac.libcrux_traits.digest.Foo'] }, null, 2)}\n`);
+    assert.equal(bytes.toString('utf8'), `${JSON.stringify({ schema: 'fvs/auto-allowed-axioms', schemaVersion: 2, crates: [
+      { crate: 'libcrux_hmac', specFiles: [], axioms: ['libcrux_hmac.core.num.U32.wrapping_div', 'libcrux_hmac.libcrux_traits.digest.Foo'] },
+      { crate: 'libcrux_sha2', specFiles: [], axioms: [] },
+    ] }, null, 2)}\n`);
     assert.equal(result.json.names, 2);
+    assert.equal(result.json.crates, 2);
+  });
+
+  describe('one section for each verified crate', () => {
+    const own = (crate, rust, name) => leanFile(crate, extractionAxiom(rust, name));
+
+    it('a crate rests on its own axioms and those of the crates it depends on, never on a consumer\'s', () => {
+      const root = scenario({ files: { 'Hmac.lean': own('libcrux_hmac', 'core::a', 'core.a') }, sha2Files: { 'Sha2.lean': own('libcrux_sha2', 'core::b', 'core.b') } });
+      assert.equal(write(root).status, 0);
+      assert.deepEqual(sections(root).map((entry) => [entry.crate, entry.axioms]), [
+        ['libcrux_hmac', ['libcrux_hmac.core.a', 'libcrux_sha2.core.b']],
+        ['libcrux_sha2', ['libcrux_sha2.core.b']],
+      ]);
+    });
+
+    it('a statement of the provider cannot rest on the consumer\'s stitch assumption', () => {
+      const stitch = [{ provider: 'libcrux_sha2', modules: ['Sha2'], replaced: [], assumed: [{ rustPath: 'libcrux_sha2::hacl::hash_256', name: 'libcrux_sha2.hacl.hash_256', reason: 'opaque in the provider' }] }];
+      const root = scenario({ files: { 'Hmac.lean': own('libcrux_hmac', 'libcrux_sha2::hacl::hash_256', 'libcrux_sha2.hacl.hash_256') }, stitch });
+      assert.equal(write(root).status, 0);
+      const [hmac, sha2] = sections(root);
+      assert.deepEqual(hmac.axioms, ['libcrux_hmac.libcrux_sha2.hacl.hash_256']);
+      assert.deepEqual(sha2.axioms, []);
+    });
+
+    it('a Trusted axiom tied to an accepted record is in every section', () => {
+      const root = scenario({ records: [record('gap-div', 'core::num::{u32}::wrapping_div')],
+        trusted: { 'Core.lean': trustedFile('/-- Accepted assumption, `gap-div`. -/\naxiom wrapping_div_spec : True\n') } });
+      assert.equal(write(root).status, 0);
+      assert.deepEqual(sections(root).map((entry) => [entry.crate, entry.axioms]), [
+        ['libcrux_hmac', ['libcrux_hmac.Trusted.wrapping_div_spec']],
+        ['libcrux_sha2', ['libcrux_hmac.Trusted.wrapping_div_spec']],
+      ]);
+    });
+
+    it('an axiom of a crate the owner dropped reaches a verified crate stitched to it, and no section of its own exists', () => {
+      const dropped = { crates: ['libcrux_hmac'], nonTargets: [{ crate: 'libcrux_sha2', decision: 'Not verified; its behaviour is assumed.' }] };
+      const root = scenario({ sha2Files: { 'Sha2.lean': own('libcrux_sha2', 'core::b', 'core.b') } });
+      fixtures.recordAgreement(root, fixtures.agreementFor(root, { targets: dropped }));
+      assert.equal(write(root).status, 0);
+      assert.deepEqual(sections(root).map((entry) => [entry.crate, entry.axioms]), [['libcrux_hmac', ['libcrux_sha2.core.b']]]);
+    });
+
+    it('a crate rests on the axioms of a crate its provider depends on, through the whole chain', () => {
+      const root = scenario({ files: { 'Hmac.lean': own('libcrux_hmac', 'core::a', 'core.a') }, sha2Files: { 'Sha2.lean': own('libcrux_sha2', 'core::b', 'core.b') },
+        thirdFiles: { 'C.lean': own('libcrux_c', 'core::c', 'core.c') } });
+      assert.equal(write(root).status, 0);
+      assert.deepEqual(sections(root).map((entry) => [entry.crate, entry.axioms]), [
+        ['libcrux_c', ['libcrux_c.core.c']],
+        ['libcrux_hmac', ['libcrux_c.core.c', 'libcrux_hmac.core.a', 'libcrux_sha2.core.b']],
+        ['libcrux_sha2', ['libcrux_c.core.c', 'libcrux_sha2.core.b']],
+      ]);
+    });
+
+    it('crates that depend on each other hold each other\'s axioms, and the list is still written', () => {
+      const root = scenario({ files: { 'Hmac.lean': own('libcrux_hmac', 'core::a', 'core.a') }, sha2Files: { 'Sha2.lean': own('libcrux_sha2', 'core::b', 'core.b') } });
+      const state = fixtures.readState(root);
+      state.extraction.run.units[1].imports = ['libcrux_hmac'];
+      fixtures.writeState(root, state);
+      assert.equal(write(root).status, 0);
+      assert.deepEqual(sections(root).map((entry) => [entry.crate, entry.axioms]), [
+        ['libcrux_hmac', ['libcrux_hmac.core.a', 'libcrux_sha2.core.b']],
+        ['libcrux_sha2', ['libcrux_hmac.core.a', 'libcrux_sha2.core.b']],
+      ]);
+    });
   });
 
   it('the file is the same bytes on every run, so its digest is the identity of the list', () => {
@@ -297,7 +370,8 @@ describe('the real libcrux-hmac extraction', { skip: REAL ? false : 'set FVS_RC2
     const hmac = { crate: 'libcrux_hmac', package: 'libcrux-hmac', stitch: [], publication: [{ attemptPath: 'x', projectPath: `${REAL}/LibcruxHmac/Extraction/LibcruxHmac.lean`, sha256: crypto.createHash('sha256').update(blob).digest('hex') }],
       foreignCrates: [...['core', 'alloc'].map((crate) => ({ crate, kind: 'external' })), ...['libcrux_sha2', 'libcrux_hacl_rs', 'libcrux_traits'].map((crate) => ({ crate, kind: 'non-target' }))] };
     const others = targets.filter((crate) => crate !== 'libcrux_hmac').map((crate) => ({ crate, package: crate.replace(/_/g, '-'), publication: [], stitch: [], foreignCrates: [] }));
-    return { units: [hmac, ...others], targets };
+    const units = [hmac, ...others];
+    return { units, targets, view: { units: units.map((entry) => ({ crate: entry.crate, dependsOn: [] })) } };
   };
 
   it('lists every axiom the guards of the rc2 head print, fully qualified, when hmac is the only crate verified', () => {
