@@ -1678,7 +1678,9 @@ describe('spec phase: record-spec and spec-status', () => {
 
     const receipts = path.join(root, '.formalising/auto-fv/build-check');
     fs.mkdirSync(receipts, { recursive: true });
-    const receipt = (fields) => fs.writeFileSync(path.join(receipts, `${head}.json`), JSON.stringify({ schema: 1, kind: 'fvs-build-check', commit: head, ...fields }));
+    // What a version 2 acceptance carries: the Lean-level comparison of the statements with the merged spec.
+    const lean = { toolchain: { lean: 'Lean (version 4.35.0)', githash: 'a'.repeat(40) }, statements: [{ name: 'f', declaration: 'f', constants: 2, sha256: 'a'.repeat(64) }], bindings: [], dumps: { base: 'b'.repeat(64), head: 'c'.repeat(64) } };
+    const receipt = (fields) => fs.writeFileSync(path.join(receipts, `${head}.json`), JSON.stringify({ schema: 2, kind: 'fvs-build-check', commit: head, integrity: { semantic: lean }, ...fields }));
     receipt({ accepted: false, label: 'build check failed: a new axiom' });
     view = auto.readState({ projectRoot: root });
     assert.equal(view.phase, 'proofs');
@@ -1701,6 +1703,26 @@ describe('spec phase: record-spec and spec-status', () => {
       assert.match(view.nextAction, said, name);
       assert.match(view.nextAction, new RegExp(`not against the recorded spec merge ${head}\\. Run the build check again: node fvs-build-check\\.mjs --project-root .* --commit ${head} --spec-base ${head}; read-state reports done when it accepts\\.`), name);
     }
+
+    // An acceptance from an older build check, or one with no Lean-level comparison, is read as older and does not count.
+    const older = (name, fields, said) => {
+      receipt({ accepted: true, label: 'accepted (build check)', specBase: head, externals: { records: [] }, ...fields });
+      view = auto.readState({ projectRoot: root });
+      assert.equal(view.phase, 'proofs', name);
+      assert.match(view.nextAction, said, name);
+      assert.match(view.nextAction, new RegExp(`Run the build check again: node fvs-build-check\\.mjs --project-root .* --commit ${head} --spec-base ${head}; read-state reports done when it accepts\\.`), name);
+    };
+    const version = (number) => new RegExp(`does not count: it is a version ${number} receipt, made before the build check compared the statements with the merged spec in Lean \\(this engine reads version 2\\)`);
+    older('a version 1 receipt', { schema: 1 }, version(1));
+    older('a receipt with no version', { schema: undefined }, version('unknown'));
+    older('a version this engine does not know', { schema: 3 }, version(3));
+    const missing = /does not count: it carries no Lean-level comparison of the statements with the merged spec \(integrity\.semantic\)/;
+    older('no integrity record', { integrity: undefined }, missing);
+    older('no comparison in it', { integrity: { compared: true } }, missing);
+    older('a comparison of no statement', { integrity: { semantic: { ...lean, statements: [] } } }, missing);
+    older('a comparison without the digest of a dump', { integrity: { semantic: { ...lean, dumps: { base: 'b'.repeat(64) } } } }, missing);
+    older('a comparison with a digest that is not one', { integrity: { semantic: { ...lean, dumps: { base: 'b'.repeat(64), head: 'xyz' } } } }, missing);
+    older('a comparison without its toolchain', { integrity: { semantic: { ...lean, toolchain: null } } }, missing);
 
     // An accepting receipt counts only while the externals records it relied on are as they were.
     const externals = path.join(root, '.formalising/auto-fv/externals.json');
