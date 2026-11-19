@@ -140,19 +140,53 @@ describe('the proof phase over several crates', () => {
     assert.equal(result.phase, 'done', result.nextAction);
   });
 
-  it('an assumption about an item the provider has no definition for is accepted when the extraction lists it and the owner accepted it', () => {
+  // The extraction names an assumed item as the constant declared in the consuming crate's
+  // namespace (`libcrux_sha2.hacl.sha256_update`), so Lean prints it with the crate in front.
+  for (const printed of ['libcrux_hmac.libcrux_sha2.hacl.sha256_update', 'libcrux_sha2.hacl.sha256_update']) {
+    it(`an assumption about an item the provider has no definition for is accepted when the extraction lists it and the owner accepted it (printed ${printed})`, () => {
+      const gap = 'libcrux_sha2::hacl::sha256_update';
+      const { root, head } = proofPhase((directory) => [
+        unit(directory, 'libcrux_hmac', [fn(HMAC_ITEM, 'src/hmac.rs', 10)], { imports: ['libcrux_sha2'],
+          stitch: [{ provider: 'libcrux_sha2', modules: ['Sha2'], replaced: [], assumed: [{ rustPath: gap, name: 'libcrux_sha2.hacl.sha256_update', reason: 'opaque in the provider' }] }] }),
+        unit(directory, 'libcrux_sha2', [fn(SHA2_ITEM, 'src/hacl.rs', 5)]),
+      ]);
+      const files = [specFile(HMAC_SPEC, [statement('hmac_spec', { beyondStandard: [printed] })]), specFile(SHA2_SPEC, [statement('hash_256_spec')])];
+      receipt(root, head, files);
+      assert.match(view(root).nextAction, /which has no accepted externals record/, 'the listed gap still needs the owner\'s record');
+      record(root, boundary(gap, printed));
+      const result = view(root);
+      assert.equal(result.phase, 'done', result.nextAction);
+    });
+  }
+
+  it('an item named in the extraction\'s assumed list does not excuse another constant, nor another item under the same name', () => {
     const gap = 'libcrux_sha2::hacl::sha256_update';
     const { root, head } = proofPhase((directory) => [
       unit(directory, 'libcrux_hmac', [fn(HMAC_ITEM, 'src/hmac.rs', 10)], { imports: ['libcrux_sha2'],
-        stitch: [{ provider: 'libcrux_sha2', modules: ['Sha2'], replaced: [], assumed: [{ rustPath: gap, name: 'libcrux_hmac.libcrux_sha2.hacl.sha256_update', reason: 'opaque in the provider' }] }] }),
+        stitch: [{ provider: 'libcrux_sha2', modules: ['Sha2'], replaced: [], assumed: [{ rustPath: gap, name: 'libcrux_sha2.hacl.sha256_update', reason: 'opaque in the provider' }] }] }),
       unit(directory, 'libcrux_sha2', [fn(SHA2_ITEM, 'src/hacl.rs', 5)]),
     ]);
-    const files = [specFile(HMAC_SPEC, [statement('hmac_spec', { beyondStandard: ['libcrux_hmac.libcrux_sha2.hacl.sha256_update'] })]), specFile(SHA2_SPEC, [statement('hash_256_spec')])];
-    receipt(root, head, files);
-    assert.match(view(root).nextAction, /which has no accepted externals record/, 'the listed gap still needs the owner\'s record');
-    record(root, boundary(gap, 'libcrux_hmac.libcrux_sha2.hacl.sha256_update'));
+    // A model of another function of the provider, and of the listed gap under a name the extraction did not give it.
+    record(root, boundary(SHA2_ITEM, 'Trusted.hash_256_spec'), boundary(gap, 'Elsewhere.libcrux_sha2.hacl.sha256_update'));
+    for (const axiom of ['Trusted.hash_256_spec', 'Elsewhere.libcrux_sha2.hacl.sha256_update']) {
+      receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec', { beyondStandard: [axiom] })]), specFile(SHA2_SPEC, [statement('hash_256_spec')])]);
+      assert.match(view(root).nextAction, new RegExp(`crate libcrux_hmac: the statement hmac_spec rests on the axiom ${axiom.replaceAll('.', '\\.')}, a hand-written assumption`), axiom);
+    }
+  });
+
+  it('an axiom the accepted provider\'s own statements rest on is not a new assumption in its consumer', () => {
+    // The provider's own item the extraction left opaque: its owner accepted the assumption for the provider,
+    // and a consumer that uses the provider's theorem rests on the same constant.
+    const opaque = 'libcrux_sha2::hacl::opaque_step';
+    const { root, head } = proofPhase();
+    record(root, boundary(opaque, 'libcrux_sha2.hacl.opaque_step'));
+    const shared = ['libcrux_sha2.hacl.opaque_step'];
+    receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec', { beyondStandard: shared })]), specFile(SHA2_SPEC, [statement('hash_256_spec', { beyondStandard: shared })])]);
     const result = view(root);
     assert.equal(result.phase, 'done', result.nextAction);
+    // Only the provider's statements vet it: used by the consumer alone, the same assumption is refused.
+    receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec', { beyondStandard: shared })]), specFile(SHA2_SPEC, [statement('hash_256_spec')])]);
+    assert.match(view(root).nextAction, /crate libcrux_hmac: the statement hmac_spec rests on the axiom libcrux_sha2\.hacl\.opaque_step, a hand-written assumption about libcrux_sha2::hacl::opaque_step/);
   });
 
   it('a receipt that was not accepted, or made against another spec base, keeps its own message', () => {
