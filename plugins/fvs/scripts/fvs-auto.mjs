@@ -1616,15 +1616,21 @@ function progress(root, state, specs = null) {
         nextAction: `The spec PR merge is recorded at ${specMerge.mergeCommit}. Run /fvs:auto-execute from the AO orchestrator for the proof phase: stock AO workers prove the merged statements, and the orchestrator opens one draft proof PR on the project's own repository and records it with record-pr --kind proof. No execution grant, stage profile or permission install is needed.` + suffix };
     }
     const receipt = buildCheckReceipt(root, proofPr.head);
-    if (receipt?.accepted) {
+    // An accepting receipt counts only when the statements were held to the recorded spec merge: a
+    // receipt made with no spec base, or against another commit, proves nothing about them.
+    const heldToSpec = receipt?.specBase === specMerge.mergeCommit;
+    const check = `node fvs-build-check.mjs --project-root ${root} --commit ${proofPr.head} --spec-base ${specMerge.mergeCommit}`;
+    if (receipt?.accepted && heldToSpec) {
       return { phase: 'done', warnings,
         nextAction: `The build check accepted the draft proof PR ${proofPr.url} at ${proofPr.head}: ${receipt.label}. `
           + (proofMerge ? `The proof PR merge is recorded at ${proofMerge.mergeCommit}.` : 'The owner reviews and merges it; then record the merge with record-pr --kind proof --merged --merge-commit SHA.') + suffix };
     }
     return { phase: 'proofs', warnings,
-      nextAction: (receipt
-        ? `The build check failed for the draft proof PR ${proofPr.url} at ${proofPr.head}: ${receipt.label}. Fix the proofs, push, record the new head with record-pr --kind proof, and rerun the build check on it.`
-        : `The draft proof PR ${proofPr.url} is recorded at ${proofPr.head}. Run the build check on that commit: node fvs-build-check.mjs --project-root ${root} --commit ${proofPr.head} --spec-base ${specMerge.mergeCommit}; read-state reports done when it accepts.`) + suffix };
+      nextAction: (receipt?.accepted
+        ? `The build check receipt for the draft proof PR ${proofPr.url} at ${proofPr.head} does not count: it was made ${typeof receipt.specBase === 'string' ? `against the spec base ${receipt.specBase}` : 'without a spec base'}, not against the recorded spec merge ${specMerge.mergeCommit}. Run the build check again: ${check}; read-state reports done when it accepts.`
+        : receipt
+          ? `The build check failed for the draft proof PR ${proofPr.url} at ${proofPr.head}: ${receipt.label}. Fix the proofs, push, record the new head with record-pr --kind proof, and rerun the build check on it.`
+          : `The draft proof PR ${proofPr.url} is recorded at ${proofPr.head}. Run the build check on that commit: ${check}; read-state reports done when it accepts.`) + suffix };
   }
   return { phase: 'specs', warnings,
     nextAction: (specPr
