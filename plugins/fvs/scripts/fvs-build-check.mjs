@@ -2,7 +2,7 @@
 // Build check: build one commit of a Lean project in a fresh clean copy and report
 // what the build proves.
 //
-//   node fvs-build-check.mjs --project-root R --commit SHA [--spec-base SHA]
+//   node fvs-build-check.mjs --project-root R --commit SHA [--spec-base SHA] [--allow-axioms FILE]
 //        [--packages DIR] [--receipt-dir DIR] [--workdir DIR] [--keep] [--timeout SECONDS]
 //
 // The copy holds exactly the tracked files of the commit, never the author's working
@@ -23,6 +23,12 @@
 // exactly; only comments and the spacing between tokens are free. The glob guard refuses a spec,
 // proof or extraction file that no lean_lib glob of a default target reaches, because Lake would
 // never compile it. A commit that fails a guard gets a failed receipt and no build runs.
+//
+// With --allow-axioms FILE (a list the engine writes from its own records, JSON with schema
+// fvs/auto-allowed-axioms) a statement passes only if every axiom its guard lists is one of Lean's
+// three standard axioms or is named in the list; a name in the list also covers that name with its
+// leading namespace dropped, because `#print axioms` shows names relative to the file's namespace.
+// The receipt records the file's sha256 as allowAxioms. Without the flag no statement is held to a list.
 //
 // The build is `lake build --wfail`: every warning, so every `sorry`, fails it. Each
 // spec file restates its statements with `recall` and pins what they rest on with
@@ -193,6 +199,47 @@ export function readSpecSource(text) {
     statement.beyondStandard = (statement.axioms ?? []).filter((name) => !STANDARD_AXIOMS.includes(name) && !NATIVE_AXIOM.test(name));
   }
   return { statements: [...statements.values()] };
+}
+
+// ---- the axioms a statement may rest on ----------------------------------------------------
+//
+// With `--allow-axioms FILE` a statement may rest on Lean's three standard axioms and on the names
+// the file lists, and on nothing else. The file is written by the engine from its own records (the
+// extraction's opaque or external declarations, recorded assumptions, accepted ruling), never by a
+// worker. Without the flag no statement is held to a list.
+
+const ALLOWED_AXIOMS_SCHEMA = 'fvs/auto-allowed-axioms';
+
+// The allowed names in a file's bytes. The caller hashes the same bytes, so the digest in the
+// receipt is the digest of what was read. Anything that is not a well-formed list is refused: a
+// mistyped file must never read as "no list".
+export function readAllowedAxioms(bytes, file = 'the allowed-axioms file') {
+  let data;
+  try { data = JSON.parse(Buffer.from(bytes).toString('utf8')); } catch { refuse('allow-axioms-invalid', `${file} is not valid JSON`); }
+  if (data?.schema !== ALLOWED_AXIOMS_SCHEMA || data.schemaVersion !== 1) refuse('allow-axioms-invalid', `${file} is not a ${ALLOWED_AXIOMS_SCHEMA} version 1 file`);
+  if (!Array.isArray(data.axioms) || !data.axioms.every((name) => typeof name === 'string' && name !== '' && name === name.trim())) {
+    refuse('allow-axioms-invalid', `${file}: "axioms" must be an array of axiom names, each a non-empty string without surrounding spaces`);
+  }
+  return new Set(data.axioms);
+}
+
+// `#print axioms` shows a name relative to the namespace of the file it runs in, so the guards of a spec
+// file inside `namespace A` list `B.f` for the axiom whose full name is `A.B.f`. A listed name
+// therefore covers itself and itself with leading components dropped.
+const nameTails = (names) => {
+  const tails = new Set();
+  for (const name of names) {
+    const parts = name.split('.');
+    for (let i = 0; i < parts.length; i += 1) tails.add(parts.slice(i).join('.'));
+  }
+  return tails;
+};
+
+// The axioms in `axioms` that are neither standard nor covered by the allowed names. Every axiom a
+// guard lists counts, including names that look like native_decide or bv_decide axioms.
+export function axiomsNotAllowed(axioms, allowed) {
+  const covered = nameTails(allowed);
+  return (axioms ?? []).filter((name) => !STANDARD_AXIOMS.includes(name) && !covered.has(name));
 }
 
 // ---- reading a Lake log --------------------------------------------------------------------
@@ -803,7 +850,15 @@ function resolveSpecBase({ top, root, full, specBase }) {
 
 // ---- the check -----------------------------------------------------------------------------
 
-export function buildCheck({ projectRoot, commit, specBase, packages, receiptDir, workdir, keep = false, timeoutSeconds = 7200 }) {
+// The list given with --allow-axioms: its names and the digest of the bytes they were read from.
+function loadAllowedAxioms(file) {
+  const resolved = path.resolve(file);
+  let bytes;
+  try { bytes = fs.readFileSync(resolved); } catch { refuse('allow-axioms-unreadable', `cannot read the allowed-axioms file ${resolved}`); }
+  return { file: resolved, sha256: sha256(bytes), names: readAllowedAxioms(bytes, resolved) };
+}
+
+export function buildCheck({ projectRoot, commit, specBase, allowAxioms, packages, receiptDir, workdir, keep = false, timeoutSeconds = 7200 }) {
   if (!projectRoot) refuse('usage', '--project-root is required');
   if (!SHA_ARGUMENT.test(commit ?? '')) refuse('usage', '--commit must be a commit hash of 7 to 64 hexadecimal digits');
   const root = fs.existsSync(projectRoot) ? fs.realpathSync(projectRoot) : refuse('usage', `no such project root: ${projectRoot}`);
@@ -815,6 +870,9 @@ export function buildCheck({ projectRoot, commit, specBase, packages, receiptDir
   if (full === null || tree === null) refuse('commit-not-found', `${commit} is not a commit of this repository`);
   if (specBase !== undefined && !SHA_ARGUMENT.test(specBase)) refuse('usage', '--spec-base must be a commit hash of 7 to 64 hexadecimal digits');
   const specBaseFull = resolveSpecBase({ top, root, full, specBase });
+  if (allowAxioms === '') refuse('usage', '--allow-axioms needs the path of the allowed-axioms file');
+  const allowed = allowAxioms === undefined ? null : loadAllowedAxioms(allowAxioms);
+  const allowedRecord = allowed && { file: allowed.file, sha256: allowed.sha256, names: allowed.names.size };
 
   const receipts = path.resolve(receiptDir ?? path.join(root, '.formalising', 'auto-fv', 'build-check'));
   const release = acquireLock();
@@ -846,7 +904,7 @@ export function buildCheck({ projectRoot, commit, specBase, packages, receiptDir
       return finish(receipts, full, {
         schema: 1, kind: 'fvs-build-check', accepted: false, label: labelFailed(reason), commit: full, tree,
         leanRoot: path.join(sub, below) || '.', toolchain: toolchainOf(leanRoot), lake: null, packages: null, build: null,
-        specFiles: [], flags: [], warnings: [], specBase: specBaseFull, integrity: integrityRecord, checkedAt: new Date().toISOString(),
+        specFiles: [], flags: [], warnings: [], specBase: specBaseFull, allowAxioms: allowedRecord, integrity: integrityRecord, checkedAt: new Date().toISOString(),
       });
     }
 
@@ -889,8 +947,10 @@ export function buildCheck({ projectRoot, commit, specBase, packages, receiptDir
       const built = fs.existsSync(olean);
       const statements = spec.statements.map((statement) => {
         const hit = own.find((m) => m.line === statement.recallLine || (statement.guardFrom !== null && m.line >= statement.guardFrom && m.line <= statement.guardTo));
+        const unlisted = allowed && statement.axioms ? axiomsNotAllowed(statement.axioms, allowed.names) : [];
         const reason = statement.problems[0] ?? (hit ? describe(hit) : null)
-          ?? (own.length > 0 ? `its spec file did not build (${describe(firstProblem(own))})` : built ? null : 'its spec file was not built');
+          ?? (own.length > 0 ? `its spec file did not build (${describe(firstProblem(own))})` : built ? null : 'its spec file was not built')
+          ?? (unlisted.length === 0 ? null : `the statement ${statement.name} rests on the ${unlisted.length === 1 ? 'axiom' : 'axioms'} ${unlisted.slice(0, 3).join(', ')}${unlisted.length > 3 ? ` and ${unlisted.length - 3} more` : ''}, which the allowed axioms do not name`);
         return { name: statement.name, line: statement.line, status: reason ? 'failing' : 'built', reason, axioms: statement.axioms, beyondStandard: statement.beyondStandard, flags: statement.flags };
       });
       const fileReason = own.length > 0 ? describe(firstProblem(own) ?? own[0]) : (built ? null : 'no .olean was produced, so the file is not part of the build');
@@ -916,7 +976,7 @@ export function buildCheck({ projectRoot, commit, specBase, packages, receiptDir
       leanRoot: path.join(sub, below) || '.', toolchain: toolchainOf(leanRoot),
       lake: lakeVersion, packages: { source, copy, revisions },
       build: { argv: build.argv, exitCode: build.status, seconds, log: logFile, logSha256: sha256(logBytes) },
-      specFiles, flags, warnings, specBase: specBaseFull, integrity: integrityRecord, checkedAt: new Date().toISOString(),
+      specFiles, flags, warnings, specBase: specBaseFull, allowAxioms: allowedRecord, integrity: integrityRecord, checkedAt: new Date().toISOString(),
     };
     return finish(receipts, full, receipt);
   } finally {
@@ -942,6 +1002,8 @@ function reportLines(receipt) {
   const lines = [receipt.label, `commit ${receipt.commit}`, `tree ${receipt.tree}`, ...receipt.warnings.map((warning) => `warning: ${warning}`)];
   lines.push(integrity.compared ? `spec base ${integrity.specBase}: statements, frozen paths and added code compared with the merged spec`
     : 'spec base: none given or recorded, so the statements were not compared with a merged spec');
+  lines.push(receipt.allowAxioms ? `allowed axioms: ${receipt.allowAxioms.names} names from ${receipt.allowAxioms.file} (sha256 ${receipt.allowAxioms.sha256}); a statement that rests on any other non-standard axiom does not pass`
+    : 'allowed axioms: no list given, so no statement is held to a list of axioms');
   const { folders, files } = integrity.extraction ?? { folders: [], files: [] };
   lines.push(`extraction output held fixed, besides the folders named Extraction...: ${folders.length + files.length === 0 ? 'none recorded in the run state' : [...folders, ...files].join(', ')}`);
   for (const problem of integrity.problems) lines.push(`not accepted: ${problem.kind}: ${describeProblem(problem)}`);
@@ -959,7 +1021,7 @@ function reportLines(receipt) {
 
 function parseArguments(argv) {
   const options = {};
-  const valued = { '--project-root': 'projectRoot', '--commit': 'commit', '--spec-base': 'specBase', '--packages': 'packages', '--receipt-dir': 'receiptDir', '--workdir': 'workdir', '--timeout': 'timeoutSeconds' };
+  const valued = { '--project-root': 'projectRoot', '--commit': 'commit', '--spec-base': 'specBase', '--allow-axioms': 'allowAxioms', '--packages': 'packages', '--receipt-dir': 'receiptDir', '--workdir': 'workdir', '--timeout': 'timeoutSeconds' };
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--keep') options.keep = true;
     else if (valued[argv[i]] && i + 1 < argv.length) { options[valued[argv[i]]] = argv[i + 1]; i += 1; } else refuse('usage', `unknown or incomplete argument ${argv[i]}`);
