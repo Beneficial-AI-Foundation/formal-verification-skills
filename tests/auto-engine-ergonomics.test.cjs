@@ -312,3 +312,116 @@ describe('run overrides', () => {
     assert.deepEqual(fs.readFileSync(overridesFile(root)), before);
   });
 });
+
+describe('list-items', () => {
+  const fn = (rust, file, line, extra = {}) => ({ def_id: line, lean_name: rust.replace(/::/g, '.'), lean_file: 'Demo.lean', rust_name: rust, is_local: true,
+    source: { file, begin_line: line, end_line: line + 3 }, is_opaque: false, can_fail: true, ...extra });
+  const TRANSLATION = {
+    aeneas_version: 'nightly-2026.09.30', charon_version: '0.1.274', crate: 'libcrux_hmac',
+    functions: [
+      fn('libcrux_hmac::hmac::hmac', 'src/hmac.rs', 40),
+      fn('libcrux_hmac::hkdf::expand', 'src/hkdf.rs', 5),
+      fn('libcrux_hmac::hmac::{impl libcrux_hmac::hmac::Mac}::new', 'src/hmac.rs', 10),
+      fn('core::cmp::min', null, 0, { is_local: false, source: undefined }),
+      fn('libcrux_hmac::util::wipe', 'src/util.rs', 3, { is_opaque: true }),
+    ],
+    types: [], globals: [], trait_decls: [], trait_impls: [],
+  };
+  function withTranslation(data) {
+    const root = project();
+    const file = path.join(root, 'translation.json');
+    fs.writeFileSync(file, typeof data === 'string' ? data : JSON.stringify(data));
+    return { root, file };
+  }
+  const list = (root, ...extra) => cli('list-items', '--project-root', root, '--translation', 'translation.json', ...extra);
+
+  it('lists the local translated functions in source order and counts what it left out', () => {
+    const { root, file } = withTranslation(TRANSLATION);
+    const result = list(root);
+    assert.equal(result.status, 0, result.stdout);
+    assert.deepEqual(result.json.items.map((item) => [item.source.file, item.source.beginLine, item.rustName]), [
+      ['src/hkdf.rs', 5, 'libcrux_hmac::hkdf::expand'],
+      ['src/hmac.rs', 10, 'libcrux_hmac::hmac::{impl libcrux_hmac::hmac::Mac}::new'],
+      ['src/hmac.rs', 40, 'libcrux_hmac::hmac::hmac'],
+      ['src/util.rs', 3, 'libcrux_hmac::util::wipe'],
+    ]);
+    assert.deepEqual(result.json.excluded, { notLocal: 1, outOfScope: 0 });
+    assert.equal(result.json.items[3].opaque, true);
+    assert.equal(result.json.crate, 'libcrux_hmac');
+    assert.equal(result.json.translationSha256, sha256(fs.readFileSync(file)));
+    assert.match(result.json.visibility, /^not recorded: translation\.json holds no visibility/);
+  });
+
+  it('narrows to an explicit scope: a source file, a directory or a whole Rust path segment', () => {
+    const { root } = withTranslation(TRANSLATION);
+    const names = (...scope) => list(root, '--scope', scope.join(',')).json.items.map((item) => item.rustName);
+    assert.deepEqual(names('src/hmac.rs'), ['libcrux_hmac::hmac::{impl libcrux_hmac::hmac::Mac}::new', 'libcrux_hmac::hmac::hmac']);
+    assert.equal(names('src').length, 4, 'a directory takes everything under it');
+    assert.deepEqual(names('libcrux_hmac::hkdf'), ['libcrux_hmac::hkdf::expand']);
+    assert.deepEqual(names('libcrux_hmac::hkdf::expand'), ['libcrux_hmac::hkdf::expand'], 'a full item path');
+    assert.deepEqual(names('libcrux_hmac::hm'), [], 'a prefix must end at a path segment');
+    assert.deepEqual(names('src/hm'), [], 'nor may a file prefix cut a name');
+    assert.deepEqual(names('src/hkdf.rs', 'src/util.rs').length, 2, 'several scopes add up');
+    assert.deepEqual(list(root, '--scope', 'src/hkdf.rs').json.excluded, { notLocal: 1, outOfScope: 3 });
+  });
+
+  it('names a wrong shape instead of failing inside a loop over its entries', () => {
+    for (const [label, data, pattern] of [
+      ['a top-level list', [], /found a list/],
+      ['a top-level string', '"text"', /found string/],
+      ['an object with no functions list', { crate: 'x' }, /"functions" list/],
+      ['functions as text', { functions: 'x' }, /"functions" list/],
+      ['an entry that is text', { functions: ['x'] }, /functions\[0\] must be an object/],
+      ['an entry without a rust_name', { functions: [{ lean_name: 'a', is_local: true }] }, /functions\[0\] must be an object/],
+      ['invalid JSON', '{', /cannot read .* as JSON/],
+    ]) {
+      const { root } = withTranslation(data);
+      const result = list(root);
+      assert.equal(result.status, 1, label);
+      assert.equal(result.json.code, 'invalid-input', label);
+      assert.match(result.json.message, pattern, label);
+    }
+    assert.equal(cli('list-items', '--project-root', project(), '--translation', 'missing.json').json.code, 'invalid-input');
+  });
+
+  it('without --translation it needs a succeeded extraction that names one', () => {
+    const root = project();
+    const none = cli('list-items', '--project-root', root);
+    assert.equal(none.json.code, 'invalid-input');
+    assert.match(none.json.message, /pass --translation PATH/);
+
+    init(root);
+    const published = path.join(root, 'Demo', 'translation.json');
+    fs.mkdirSync(path.dirname(published));
+    fs.writeFileSync(published, JSON.stringify(TRANSLATION));
+    const hash = sha256(fs.readFileSync(published));
+    const stateFile = path.join(root, '.formalising', 'auto-fv', 'state.json');
+    const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    const zeros = '0'.repeat(64);
+    // A structurally complete record of a succeeded extraction; nothing here runs a tool.
+    state.extraction = {
+      status: 'succeeded', recordedAt: '2026-11-19T00:00:00.000Z', reasons: [], note: 'not a proof',
+      selected: { ...state.choices.source },
+      declared: { buildExitCode: 0, oracle: 'complete' },
+      checks: { status: { ok: true }, 'verify-tree': { ok: true }, 'verify-restore': { ok: true } },
+      inputs: { out: path.join(root, 'copy'), manifestSha256: zeros, crateRoot: root, mode: 'translation-patches', sourceCommit: 'a'.repeat(40), patches: [] },
+      run: {
+        attemptSha256: zeros, manifestSha256: zeros, configSha256: zeros, config: {}, supported: true, residuals: [], trust: 'local-host-and-reviewed-scripts',
+        stages: { charon: zeros, aeneas: zeros, publish: zeros }, llbc: { path: 'demo.llbc', sha256: zeros },
+        translation: { attemptPath: '/attempt/translation.json', projectPath: published, sha256: hash },
+        publication: [{ attemptPath: '/attempt/translation.json', projectPath: published, sha256: hash }],
+      },
+    };
+    fs.writeFileSync(stateFile, JSON.stringify(state));
+    const result = cli('list-items', '--project-root', root, '--scope', 'src/hmac.rs');
+    assert.equal(result.status, 0, result.stdout);
+    assert.equal(result.json.translation, published);
+    assert.equal(result.json.items.length, 2);
+
+    state.extraction.status = 'failed';
+    state.extraction.reasons = ['the build exited 1'];
+    state.extraction.declared.buildExitCode = 1;
+    fs.writeFileSync(stateFile, JSON.stringify(state));
+    assert.equal(cli('list-items', '--project-root', root).json.code, 'invalid-input', 'a failed extraction names no translation');
+  });
+});
