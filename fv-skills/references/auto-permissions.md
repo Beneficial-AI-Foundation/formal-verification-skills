@@ -143,10 +143,10 @@ defence against a program that runs as your user.
 What it checks:
 
 - It takes exactly `--branch <name>` and refuses anything else on its command line.
-- It runs only in the repository that the destination was recorded for, and refuses a work tree that points at
-  another repository.
-- It pushes only a plain local branch under a recorded namespace, to the destination address recorded at init, and
-  refuses an address that a URL rewrite rule applies to when it checks.
+- It compares the shared git directory of the repository it runs in with the one recorded for the destination, and
+  refuses when they differ or when a work tree points at another repository.
+- It refuses a branch that is not a plain local branch under a recorded namespace. It pushes to the destination
+  address recorded at init, and refuses that address when a URL rewrite rule applies to it at the time of the check.
 
 What it does for this push, to harden it:
 

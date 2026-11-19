@@ -548,7 +548,7 @@ describe('the push command rule for Claude Code', { skip: pushSkip }, () => {
     assert.match(notes, /Repository hooks are ignored for this push/);
     assert.match(notes, /Credential helpers\./);
     assert.match(notes, /a rule that is added or changed after the command checks and before it connects is not caught/);
-    assert.doesNotMatch(notes, /still apply|pushes only to|refuses anything else(?! on its command line)/);
+    assert.doesNotMatch(notes, /still apply|pushes only|runs only in the repository|refuses anything else(?! on its command line)/);
     assert.match(done.json.verification, /Claude Code has no offline rule evaluator/);
     const before = fs.readFileSync(settingsFile(), 'utf8');
     assert.equal(allow('git-push').json.code, 'unchanged');
@@ -1345,7 +1345,7 @@ describe('the permissions page', () => {
   it('every surface that describes the push command says it is a guard with limits, and none promises more', () => {
     for (const file of CONTRACT_SURFACES) {
       const text = flat(file);
-      assert.doesNotMatch(text, /refuses anything else(?! on its command line)|refuses every other|other than the recorded|pushes only to|push only to|cannot redirect|cannot widen/i, file);
+      assert.doesNotMatch(text, /refuses anything else(?! on its command line)|refuses every other|other than the recorded|pushes only|push only|runs only in the repository|cannot redirect|cannot widen/i, file);
       assert.doesNotMatch(text, /Git hooks of the repository still run|hooks .{0,40}still run/i, file);
     }
     // The three places a person is told what the command is name the guard, its hardening and its limits.
