@@ -220,4 +220,36 @@ describe('trim-workspace', () => {
     assert.deepEqual(crates.result.compared.packagesNotInCopy.map((entry) => entry.package).sort(), ['toy-app', 'toy-extra']);
     assert.match(fs.readFileSync(path.join(copy, 'tree', 'Cargo.toml'), 'utf8'), /members = \[\s*"lib",?\s*\]/);
   });
+
+  it('reports a link listed for the whole workspace as stale once its crate is trimmed away, and prepare refuses it until the entry is removed', () => {
+    const listedForAll = [
+      { path: 'extra/headers/c_header_out', reason: 'generated C headers, never read by the build' },
+      { path: 'lib/headers/c_header_out', reason: 'generated C headers, never read by the build' },
+    ];
+    const ws = trimWorkspace({ mutate: (write, workspace) => {
+      for (const crate of ['extra', 'lib']) {
+        fs.mkdirSync(path.join(workspace.project, crate, 'headers'), { recursive: true });
+        fs.symlinkSync('../src', path.join(workspace.project, crate, 'headers', 'c_header_out'));
+      }
+      write('.formalising/fvs-config.json', JSON.stringify({ extraction: { unreadLinks: listedForAll } }));
+    } });
+    const { result: out } = trim(ws, 'toy_lib');
+    assert.deepEqual(out.staleUnreadLinks, ['extra/headers/c_header_out']);
+    assert.deepEqual(out.unreadLinks.map((entry) => entry.path), ['lib/headers/c_header_out']);
+    assert.deepEqual(out.proposedUnreadLinks, []);
+
+    fs.mkdirSync(path.join(ws.project, 'translation-patches'), { recursive: true });
+    for (const patch of out.patches) fs.writeFileSync(path.join(ws.project, 'translation-patches', patch.name), patch.text);
+    fs.writeFileSync(path.join(ws.project, 'translation-patches', 'series'), `${out.patches.map((patch) => patch.name).join('\n')}\n`);
+    const configure = (unreadLinks) => fs.writeFileSync(path.join(ws.project, '.formalising', 'fvs-config.json'), JSON.stringify({ extraction: { mode: 'translation-patches', inputs: out.inputs, unreadLinks } }));
+    configure(listedForAll);
+    const refused = engine(ws, ['prepare', '--project-root', ws.project, '--out', path.join(ws.root, 'copies', 'stale'), '--release', RELEASE]);
+    assert.equal(refused.status, 5, refused.stdout);
+    assert.match(refused.result.message, /extraction\.unreadLinks lists extra\/headers\/c_header_out/);
+
+    configure(listedForAll.filter((entry) => !out.staleUnreadLinks.includes(entry.path)));
+    const prepared = engine(ws, ['prepare', '--project-root', ws.project, '--out', path.join(ws.root, 'copies', 'fresh'), '--release', RELEASE]);
+    assert.equal(prepared.status, 0, prepared.stdout);
+    assert.deepEqual(prepared.result.manifest.source.links.map((link) => link.path), ['lib/headers/c_header_out']);
+  });
 });

@@ -399,7 +399,10 @@ as `crates` reports it: `unreadLinks` (already listed in `extraction.unreadLinks
 inputs only; the owner's yes adds the link entries.
 
 Show the owner the kept and dropped crates, the `devOnly` bytes and the patches, and wait for a
-yes. That yes covers installing the patches AND writing the printed `extraction.inputs` into the
+yes. That yes covers installing the patches, writing the printed `extraction.inputs` AND bringing
+`extraction.unreadLinks` in line with them (removing each `staleUnreadLinks` entry, a link of a crate
+the trim leaves out, which `prepare` would refuse, and adding the `proposedUnreadLinks` the owner
+adopts) into the
 project's configuration; the owner may instead keep a larger selection by running it again with other
 `--keep` names. On the yes, install each printed patch as in Step 6 (write it as
 `translation-patches/<name>.patch`, append the name to `series`, run `check`); the engine wrote them
