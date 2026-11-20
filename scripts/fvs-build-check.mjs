@@ -45,7 +45,8 @@
 // externals record (a record is cited by one axiom only); a sorry axiom is refused. A native_decide or
 // bv_decide axiom is refused when it is new since the merged spec or when a statement rests on one it did
 // not rest on there; one a statement already rested on at the merged spec stays, and the receipt flags it.
-// If the program cannot run, or the merged spec does not build, the commit is not accepted.
+// That rule is the same with an allowed-axioms list and without one: the list neither needs to name such an
+// axiom nor can excuse a new one. If the program cannot run, or the merged spec does not build, the commit is not accepted.
 // The receipt keeps the comparison under integrity.semantic.
 //
 // With --allow-axioms FILE (a list the engine writes from its own records, JSON with schema
@@ -299,7 +300,7 @@ export function readAllowedAxioms(bytes, file = 'the allowed-axioms file') {
 }
 
 // The axioms in `axioms` that are neither standard nor named exactly in `allowed`. Every axiom
-// counts, including names that look like native_decide or bv_decide axioms.
+// counts here, a native-decision one too: the caller leaves those to the native rule.
 export function axiomsNotAllowed(axioms, allowed) {
   return (axioms ?? []).filter((name) => !STANDARD_AXIOMS.includes(name) && !allowed.has(name));
 }
@@ -1289,9 +1290,12 @@ export function allowedProblems({ head, recalledFiles, allowed }) {
         [where, names] = [` of the crate ${crate[0]}`, crate[1].axioms];
       }
       for (const rest of now.rests) {
-        const outside = axiomsNotAllowed(rest.axioms, names);
+        // A native-decision axiom is the native rule's alone (refused when it is new since the merged spec, flagged
+        // when the statement already rested on it there), so the outcome is the same with a list and without one.
+        const resting = rest.axioms.filter((name) => !NATIVE_AXIOM.test(name));
+        const outside = axiomsNotAllowed(resting, names);
         if (outside.length > 0) problems.push({ kind: 'axiom-not-allowed', file, statement: id, detail: `the statement ${id} (${rest.n}) rests on the ${outside.length === 1 ? 'axiom' : 'axioms'} ${outside.slice(0, 3).join(', ')}${outside.length > 3 ? ` and ${outside.length - 3} more` : ''}, which the allowed axioms${where} do not name` });
-        for (const name of rest.axioms) {
+        for (const name of resting) {
           const constant = asserts(name);
           if (constant && !inTrustedModule(constant.module)) problems.push({ kind: 'prop-axiom-outside-trusted', file, statement: id, detail: `the statement ${id} (${rest.n}) rests on ${name}, an axiom whose type is a proposition, declared outside Trusted/ (in ${constant.module}); only a hand-written Trusted axiom bound to its accepted record may assert something` });
         }

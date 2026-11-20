@@ -90,7 +90,9 @@ merge and the proof pull request").
    be a hand-written axiom in `formal/trusted`, bound to its accepted record as step 2 says (or already
    in the merged spec); a proposition declared anywhere else, the extraction's included, is refused even
    when the list names it. The list names the axioms that have a legitimate record, never one about a
-   function of a targeted crate. The receipt records the file's sha256, its number of names and, for
+   function of a targeted crate. A native-decision axiom (step 2) is not the list's to allow or refuse:
+   the same rule holds with a list as without one, so the list need not name an axiom that the merged
+   spec already rested on, and naming a new one does not excuse it. The receipt records the file's sha256, its number of names and, for
    version 2, its number of crates, so the engine can tell which list a receipt was made with.
 
    Each refusal names the file, the statement and the kind of change. A statement that is wrong or too

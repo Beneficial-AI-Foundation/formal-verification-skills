@@ -1423,7 +1423,7 @@ describe('the allowed axioms', () => {
     assert.equal(run(fixture(), LIST(), resting([EXTERNAL])).result.json.accepted, false);
   });
 
-  test('a native_decide or bv_decide axiom that is new since the merged spec is refused with a list or without, listed or not; one the merged spec had is kept', () => {
+  test('a native_decide or bv_decide axiom that is new since the merged spec is refused with a list or without, listed or not; one the merged spec had is kept with a list as without', () => {
     const native = 'Dep.foo._native.native_decide.ax_1';
     const asNew = (names) => { const { head } = resting(names); return { base: resting([]).base, head }; };
     const without = check(fixture(), { dump: asNew([native]) });
@@ -1433,9 +1433,14 @@ describe('the allowed axioms', () => {
     const listed = run(fixture(), LIST(native), asNew([native])).result;
     assert.equal(listed.json.accepted, false, 'a list does not make a new native axiom acceptable');
     assert.match(problemOf(listed, 'native-added').detail, /native_decide or bv_decide/);
-    const kept = run(fixture(), LIST(native), resting([native])).result;
-    assert.equal(kept.status, 0, `the merged spec had it, so the list alone decides: ${kept.stderr}`);
-    assert.equal(run(fixture(), LIST(), resting([native])).result.json.accepted, false, 'an unlisted one is still not on the list');
+    // The generated axiom asserts something (its type is a proposition) and is declared outside Trusted, as a real one is.
+    const generated = { m: 'formal.proofs.A', asserts: true };
+    const had = () => resting([native], { [native]: generated });
+    const outcomes = [['no list', check(fixture(), { dump: had() })], ['a list that names it', run(fixture(), LIST(native), had()).result], ['a list that names nothing', run(fixture(), LIST(), had()).result]];
+    for (const [name, result] of outcomes) {
+      assert.equal(result.status, 0, `${name}: the merged spec had it, so it is kept: ${result.stderr}`);
+      assert.deepEqual(result.json.integrity.problems, [], name);
+    }
   });
 
   test('an axiom whose type is a proposition must be a hand-written Trusted axiom, even when it is listed', () => {
@@ -2229,6 +2234,29 @@ describe('real Lean: a statement that still reads the same but does not mean the
       const result = realCheck(realProject(files, { baseFiles }));
       assert.equal(result.status, 0, result.stderr);
       assert.deepEqual(result.json.flags, ['Fx.foo_spec uses native_decide']);
+    });
+
+    // The generated axiom asserts something and is declared outside Trusted, which an allowed-axioms list refuses
+    // for any other axiom; for this one the outcome has to be the one without a list.
+    test('is kept and flagged the same way with an allowed-axioms list as without one, and a list does not excuse a new one', () => {
+      const files = { 'Fx/Proofs/P.lean': proofs('by native_decide', 'rfl'), 'Fx/Specs/A.lean': spec(GUARD_ON('Fx.foo_spec', [NATIVE]), GUARD_NONE('Fx.bar_spec')) };
+      const listed = (names, fx) => {
+        const file = path.join(fx.base, 'allowed.json');
+        write(file, JSON.stringify({ schema: 'fvs/auto-allowed-axioms', schemaVersion: 1, axioms: names }));
+        return realCheck(fx, ['--allow-axioms', file]);
+      };
+      const without = realCheck(realProject(files, { baseFiles }));
+      assert.equal(without.status, 0, without.stderr);
+      for (const names of [[], [NATIVE]]) {
+        const result = listed(names, realProject(files, { baseFiles }));
+        assert.equal(result.status, 0, `${names.length} names: ${result.stderr}`);
+        assert.deepEqual(result.json.flags, without.json.flags);
+        assert.deepEqual(result.json.integrity.problems, without.json.integrity.problems);
+      }
+      const added = { 'Fx/Proofs/P.lean': proofs('by native_decide', 'Fx.foo_spec'), 'Fx/Specs/A.lean': spec(GUARD_ON('Fx.foo_spec', [NATIVE]), GUARD_ON('Fx.bar_spec', [NATIVE])) };
+      const refused = listed([NATIVE], realProject(added, { baseFiles }));
+      assert.equal(refused.status, 1, refused.stderr);
+      assert.deepEqual(kinds(refused), ['native-added']);
     });
 
     test('is not enough for a statement that did not rest on it: proving another one with the first is refused', () => {
