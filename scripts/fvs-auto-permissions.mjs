@@ -537,7 +537,7 @@ function writeDestination(flags) {
     projectRoot: root, file: state.file, record: state.status === 'matches' ? state.existing : destination.record,
     note: 'The push command pushes to this destination and checks that it runs in the repository whose shared git directory is the one recorded here. The file sits in the git directory, so it is not part of any commit; any session of your user account can change it, and so change where the command pushes.',
     gitConfigNote: shown.length
-      ? `These git configuration variables are set in this session: ${shown.join(', ')}. Your yes trusts these names. The push command keeps each of them with whatever value it has when it runs, in every git call, and removes every other git variable of its list. A trusted name that is not set then is skipped, and a value that changed since you confirmed is not refused: the receipt marks it as changed. You trust them the way you trust your own git configuration files. The record holds a hash of each value, not the value.`
+      ? `These git configuration variables are set in this session: ${shown.join(', ')}. Your yes trusts these names. GIT_CONFIG_COUNT and the GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n pairs that it addresses are one unit: trusting the count trusts its pairs. The push command keeps each trusted name with whatever value it has when it runs, in every git call, and removes every other git variable of its list. A trusted name that is not set then is skipped, and a value that changed since you confirmed is not refused: the receipt marks it as changed. You trust them the way you trust your own git configuration files. A variable that is not set when you confirm stays untrusted. A value can be a token, so this preview shows only the length of each value; the record holds a hash of each value, not the value.`
       : 'No git configuration variable is set in this session, so the push command runs without all of them (GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_CONFIG_NOSYSTEM, GIT_CONFIG_COUNT with its pairs, GIT_CONFIG_PARAMETERS).',
     contract: CONTRACT,
   };
@@ -546,13 +546,16 @@ function writeDestination(flags) {
   if (state.status !== 'missing') {
     refuse('destination-conflict', `${state.file} already exists and is not what init would record now.${changedNote(state)} FVS replaces a record only to change its trusted git variables, and only when it is valid and names this same destination; it never replaces it in any other case, because that would change where pushes go. To change the destination, check the file, delete it yourself, and run this command again.`, { ...preview, existing: state.existing ?? null, problem: state.problem ?? null, ...(state.changedVariables?.length ? { changedVariables: state.changedVariables } : {}) });
   }
-  // The values are printed here and nowhere else: the user confirms them in this preview. The record keeps a hash of each.
-  confirmationNeeded(flags, digestOf({ kind: 'destination', root, file: state.file, record: destination.record }), { ...preview, gitConfigVariables: destination.variables });
+  // A value is never printed: the user confirms the names, and the preview gives only the length of each value. The record keeps a hash of each.
+  confirmationNeeded(flags, digestOf({ kind: 'destination', root, file: state.file, record: destination.record }), { ...preview, gitConfigVariables: lengthsOf(destination.variables) });
   if (destinationState(destination).status !== 'missing') refuse('changed-since-preview', `${state.file} appeared while this command ran; nothing was written. Show the user a new preview: a new digest needs a new yes.`);
   writeAtomic(state.file, JSON.stringify(destination.record, null, 2) + '\n');
   checkRecordWritten(destination, state.file);
   return { code: 'written', ...preview, message: 'Recorded. The push command now pushes branches under the recorded namespaces to this destination.' };
 }
+
+// What the preview shows of the variables that are set: each name with the length of its value, never the value.
+const lengthsOf = (variables) => Object.fromEntries(Object.entries(variables).map(([name, value]) => [name, { length: value.length }]));
 
 // A value that rotated is no difference for `matches`, so a write is checked for the exact record.
 function checkRecordWritten(destination, file) {
@@ -571,7 +574,7 @@ function replaceDestination(flags, root, destination, state, preview) {
     ...preview, record: destination.record, replaces: state.existing, variableChanges,
     replaceNote: `${state.file} holds another set of trusted git variables than the one in this preview, and the destination stays the same: the address, host, repository and branch namespaces are not changed. If you confirm, the record is replaced by the one shown here: the push command then keeps the names it lists (added: ${variableChanges.added.join(', ') || 'none'}; no longer trusted: ${variableChanges.removed.join(', ') || 'none'}) with whatever value they have when it runs, and removes every other git variable of its list. The old record is not kept.`,
   };
-  confirmationNeeded(flags, digestOf({ kind: 'destination', root, file: state.file, record: destination.record, replaces: state.existing }), { ...replacing, gitConfigVariables: destination.variables });
+  confirmationNeeded(flags, digestOf({ kind: 'destination', root, file: state.file, record: destination.record, replaces: state.existing }), { ...replacing, gitConfigVariables: lengthsOf(destination.variables) });
   const again = destinationState(destination);
   if (again.status !== 'differs' || !again.replaceable || !isDeepStrictEqual(again.existing, state.existing)) refuse('changed-since-preview', `${state.file} changed while this command ran; nothing was written. Show the user a new preview: a new digest needs a new yes.`);
   writeAtomic(state.file, JSON.stringify(destination.record, null, 2) + '\n');

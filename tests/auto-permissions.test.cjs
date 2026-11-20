@@ -527,7 +527,7 @@ describe('the recorded destination', () => {
     assert.equal(fs.readFileSync(recordFile(), 'utf8'), '{ not json');
   });
 
-  // The git configuration variables that are set when the user confirms the destination are shown with their values, and
+  // The git configuration variables that are set when the user confirms the destination are shown by name with the length of their values, and
   // the names are what the user trusts: the record keeps each name with a hash of its value then, and no value. A value that
   // rotates later changes nothing. Another set of names is a replace of the record, which needs its own yes.
   describe('git configuration variables that are set', () => {
@@ -542,15 +542,20 @@ describe('the recorded destination', () => {
     };
     const onDisk = () => JSON.parse(fs.readFileSync(recordFile(), 'utf8'));
     const shows = (json, text) => JSON.stringify(json).includes(text);
+    // The preview names each variable and gives the length of its value, never the value: a value can be a token.
+    const LENGTHS = { GIT_CONFIG_COUNT: { length: 1 }, GIT_CONFIG_KEY_0: { length: 8 }, GIT_CONFIG_VALUE_0: { length: 12 } };
 
-    it('shows each name with its value, records a hash of it, and binds the names and hashes to the digest', () => {
+    it('shows each name with the length of its value and never the value, records a hash, and binds the names and hashes to the digest', () => {
       const preview = dest(NOTE);
       assert.equal(preview.json.code, 'confirmation-required');
-      assert.deepEqual(preview.json.gitConfigVariables, NOTE, 'the user sees every value that is about to be trusted');
+      assert.deepEqual(preview.json.gitConfigVariables, LENGTHS, 'the user sees every name that is about to be trusted, and how long its value is');
+      for (const value of ['note-value-1', 'fvs.note']) assert.ok(!shows(preview.json, value), `the preview does not hold the value ${value}`);
+      assert.match(preview.json.gitConfigNote, /only the length of each value/);
       assert.deepEqual(Object.keys(preview.json.record.trustedGitVariables), ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0']);
-      assert.ok(!shows(preview.json.record, 'note-value-1'), 'the record holds no value');
       assert.match(preview.json.gitConfigNote, /Your yes trusts these names/);
-      assert.match(preview.json.gitConfigNote, /keeps each of them with whatever value it has when it runs/);
+      assert.match(preview.json.gitConfigNote, /keeps each trusted name with whatever value it has when it runs/);
+      assert.match(preview.json.gitConfigNote, /GIT_CONFIG_COUNT and the GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n pairs that it addresses are one unit/);
+      assert.match(preview.json.gitConfigNote, /A variable that is not set when you confirm stays untrusted/);
       assert.match(preview.json.gitConfigNote, /the way you trust your own git configuration files/);
       assert.match(preview.json.gitConfigNote, /a hash of each value, not the value/);
       // A yes is for these names and these values: another value, or no variable, is another digest.
@@ -561,7 +566,7 @@ describe('the recorded destination', () => {
       assert.equal(fs.existsSync(recordFile()), false);
       const written = dest(NOTE, '--confirm', preview.json.digest);
       assert.equal(written.json.code, 'written');
-      assert.ok(!shows(written.json, 'note-value-1'), 'a value is printed only in the preview, not in the result of the write');
+      assert.ok(!shows(written.json, 'note-value-1'), 'no value is printed, not in the preview and not in the result of the write');
       const text = fs.readFileSync(recordFile(), 'utf8');
       assert.ok(!text.includes('note-value-1'), 'the file holds no value either');
       assert.deepEqual(onDisk().trustedGitVariables, preview.json.record.trustedGitVariables);
@@ -570,6 +575,20 @@ describe('the recorded destination', () => {
       assert.equal(again.json.code, 'unchanged');
       assert.ok(!shows(again.json, 'note-value-1'), 'nor in the answer for a record that is already there');
       assert.equal(again.json.gitConfigVariables, undefined);
+    });
+
+    it('the numbered pairs are the count\'s: a pair that the count does not address is not offered, and a count that grew is no difference', () => {
+      const stray = dest({ GIT_CONFIG_KEY_0: 'stray', GIT_CONFIG_VALUE_0: 'stray-value' });
+      assert.deepEqual(stray.json.gitConfigVariables, {}, 'a pair without its count is not offered');
+      assert.ok(!('trustedGitVariables' in stray.json.record));
+      const beyond = dest({ ...NOTE, GIT_CONFIG_KEY_1: 'beyond', GIT_CONFIG_VALUE_1: 'beyond-value' });
+      assert.deepEqual(Object.keys(beyond.json.gitConfigVariables), ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0'], 'a pair beyond the count is not offered');
+      record(NOTE);
+      const before = fs.readFileSync(recordFile(), 'utf8');
+      const grown = { GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'fvs.note', GIT_CONFIG_VALUE_0: 'note-value-1', GIT_CONFIG_KEY_1: 'fvs.more', GIT_CONFIG_VALUE_1: 'more-value' };
+      assert.equal(dest(grown).json.code, 'unchanged', 'the same unit: the count is trusted, its pairs follow it');
+      assert.equal(fs.readFileSync(recordFile(), 'utf8'), before);
+      assert.equal(run('plan', base(), { ...process.env, ...grown }).json.pushDestination.status, 'matches');
     });
 
     it('says that none is set when none is, and the record keeps its usual shape', () => {
@@ -602,7 +621,8 @@ describe('the recorded destination', () => {
       assert.deepEqual(preview.json.replaces, onDisk(), 'the record that would be replaced');
       assert.deepEqual(preview.json.record.trustedGitVariables && Object.keys(preview.json.record.trustedGitVariables), ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_VALUE_0'], 'the record it would write');
       assert.deepEqual(preview.json.variableChanges, { added: ['GIT_CONFIG_NOSYSTEM'], removed: [], kept: ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0'] });
-      assert.deepEqual(preview.json.gitConfigVariables, MORE, 'the values of the new set, for the user to see');
+      assert.deepEqual(preview.json.gitConfigVariables, { ...LENGTHS, GIT_CONFIG_NOSYSTEM: { length: 1 } }, 'the names of the new set, with the length of each value');
+      assert.ok(!shows(preview.json, 'note-value-1') && !shows(preview.json, 'fvs.note'), 'no value, in the old record, the new record or the notes');
       assert.match(preview.json.replaceNote, /holds another set of trusted git variables/);
       assert.match(preview.json.replaceNote, /the destination stays the same/);
       assert.equal(fs.readFileSync(recordFile(), 'utf8'), before, 'nothing is written before the yes');
@@ -1645,23 +1665,23 @@ describe('the permissions page', () => {
   it('tells the owner that the destination step trusts git configuration variables by name, with a confirmed replace, on the page and in the init workflow', () => {
     const page = flat(path.relative(ROOT, PAGE));
     assert.match(page, /git finds the repository with the git variables that you trusted at init and no others\. .* the command refuses with not-a-repository and names the variables that it left out, never their values\. To trust them, run the destination step of \/fvs:auto-init again: it replaces the record after your yes\. A trusted name that is not set, or that has another value than at init, is not a refusal/);
-    assert.match(page, /the preview prints each one with its value, and your yes trusts these names\. The record gains trustedGitVariables: each trusted name with a hash of its value at that moment, so the file never holds a value that may be a credential\. The values are printed only in that preview/);
-    assert.match(page, /The push command keeps each trusted name with whatever value it has when it runs and drops every other name\. A value that changes later, such as a token that a sandbox sets for each session, is not refused: the receipt marks it changed, and the hash is for that information only\. A trusted name that is not set is skipped\. You trust these names the way you trust ~\/\.gitconfig/);
+    assert.match(page, /the preview lists each one by name with the length of its value, never the value, because a value can be a token and the preview goes into the model's context and the transcript\. Your yes trusts these names\. The record gains trustedGitVariables: each trusted name with a hash of its value at that moment, so the file never holds a value either/);
+    assert.match(page, /The push command keeps each trusted name with whatever value it has when it runs and drops every other name\. A value that changes later, such as a token that a sandbox sets for each session, is not refused: the receipt marks it changed, and the hash is for that information only\. A trusted name that is not set is skipped\. You trust these names the way you trust ~\/\.gitconfig: whatever they hold is used\. A variable that is not set when you confirm stays untrusted, so unset one before init to keep it out/);
     assert.match(page, /Run the destination step where the workers run, so the names are the ones they have/);
-    assert.match(page, /Trust the whole group \(GIT_CONFIG_COUNT with its GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n pairs\): a count whose pairs were dropped makes git fail in every call/);
+    assert.match(page, /GIT_CONFIG_COUNT and the GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n pairs that it addresses are one unit\. Trusting the count trusts the pairs it addresses when the command runs, whatever the record names, so a sandbox that adds a setting is not refused and git never meets a count without its pairs\. A pair is never trusted alone: a pair that the count does not address, or that has no count, is not offered at init and is dropped by the command/);
     assert.match(page, /When the record is the same except for its trusted names, the preview shows the old record, the new record and the names that are added and removed, with its own digest\. After your yes the record is rewritten \(replaced\) and the old one is not kept\. The digest covers the old record/);
-    assert.match(page, /It replaces a record only to change the git variables that you trust \(below\), and only when the destination is the same\. A record for another destination, a record that is not valid and a file that is not JSON stop it with destination-conflict/);
+    assert.match(page, /It replaces a record only to change the git variables that you trust \(below\), and only when the destination is the same\. A record for another destination, a record that is not valid and a file that is not JSON stop it with destination-conflict, which shows both\. To change the destination itself, delete the record on purpose: check the file, delete it yourself and run init again/);
     assert.match(page, /The permissions helper runs its destination checks with the variables that are set in its session, because it asks you to confirm them\. Its look at the git status of a settings file runs without any\. In the tests, a push option set in a trusted variable was not sent/);
     assert.match(page, /runs with the same environment, so the checks see what the push sees/);
-    assert.match(page, /The receipt, in the output and in that file, also has gitVariables\. For each trusted name it says same .* changed .* or not-set, and it lists the names that were set and not trusted, which the push dropped\. It holds no value and no hash/);
+    assert.match(page, /The receipt, in the output and in that file, also has gitVariables\. For each trusted name it says same .* changed .* or not-set, and added for a numbered pair that the trusted count addresses now and the record does not name\. It lists the names that were set and not trusted, which the push dropped\. It holds no value and no hash/);
     assert.doesNotMatch(page, /git-config-changed|gitConfigEnvironmentSha256|made again with the ones that are set/);
     const init = flat('fv-skills/workflows/auto-init.md');
-    assert.match(init, /gitConfigVariables \(every git configuration variable that is set in this session, with its value\) with its gitConfigNote/);
-    assert.match(init, /The yes also trusts the names of those variables: the push command keeps each of them with whatever value it has when it runs, drops every other name, and does not refuse a value that changed \(the receipt marks it\)\. The owner trusts them as they trust their own ~\/\.gitconfig\. Say that a value can be a credential and is printed only here; the record keeps only a hash of it, for information/);
+    assert.match(init, /gitConfigVariables \(every git configuration variable that is set in this session and can be trusted, by name with the length of its value, never the value\) with its gitConfigNote/);
+    assert.match(init, /The yes also trusts the names of those variables: the push command keeps each of them with whatever value it has when it runs, drops every other name, and does not refuse a value that changed \(the receipt marks it\)\. GIT_CONFIG_COUNT and the pairs it addresses are one unit\. The owner trusts them as they trust their own ~\/\.gitconfig\. Say that a value can be a credential, so the preview never shows it and the record keeps only a hash, for information\. A variable that is not set when the owner confirms stays untrusted/);
     assert.match(init, /Run this step in the environment the workers will have/);
     assert.match(init, /a value that rotated since the record was written is no difference/);
     assert.match(init, /With confirmation-required and a replaces field, the record exists with the same destination and another set of trusted names: show replaces \(the old record\), record \(the new one\), variableChanges \(added, removed, kept\), replaceNote and gitConfigVariables, and ask for a separate yes; on it, rerun with --confirm <digest> and the record is rewritten \(replaced\)/);
-    assert.match(init, /name the variables in changedVariables when it is printed\. FVS replaces a record only to change its trusted names, never the destination/);
+    assert.match(init, /name the variables in changedVariables when it is printed\. FVS replaces a record only to change its trusted names, never the destination: to change the destination itself, the owner checks the file, deletes the record on purpose and runs init again/);
     assert.match(init, /except the git configuration variables whose names the owner trusted in the destination step: it keeps those with whatever value they have when it runs, and does not refuse a value that changed/);
     assert.doesNotMatch(init, /git-config-changed|refuses to push when one is missing or has changed/);
   });
