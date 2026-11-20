@@ -45,10 +45,24 @@ on release day. -->
 
 <!-- rc3-fill: must-have, the two build-check integrity guards -->
 - `scripts/fvs-build-check.mjs --spec-base SHA` refuses the build when a recalled statement or a
-  frozen path changed since the merged spec, so a proof worker cannot weaken what the owner
-  approved. <!-- rc3-fill: confirm the flag name and what counts as frozen -->
-- The build check refuses a spec file that no `lean_lib` glob covers, because Lake would never
-  build it. <!-- rc3-fill: confirm the refusal message and the exit status -->
+  frozen path (the lakefile, the manifest, `lean-toolchain`, the spec definitions, the trusted
+  folder, the extraction folders) changed since the merged spec, so a proof worker cannot weaken
+  what the owner approved. A Lean program also compares what each recalled statement rests on
+  with the merged spec: a helper, notation or instance in a proof file that changes what an
+  unchanged statement means is refused. A new axiom passes only when it is in `formal/trusted`
+  and asserts exactly the proposition of its accepted record. A build with no spec base is not an
+  acceptance: it prints `built, integrity not checked` and exits non-zero.
+  <!-- rc3-fill: confirm the flag name, the frozen list and the exit status against the guards -->
+- The build check refuses a spec, proof or extraction file that Lake does not build, such as a
+  file that no `lean_lib` glob covers, in either lakefile format.
+  <!-- rc3-fill: confirm the refusal message and the exit status -->
+- In a multi-crate run the engine writes a list of allowed axioms and the build check takes it
+  with `--allow-axioms FILE`: a statement passes only when every axiom it rests on, beyond Lean's
+  three, is named in the list by its full name as Lean reports it. A statement that rests on an
+  axiom about a function of another targeted crate does not pass.
+  <!-- rc3-fill: delete this bullet if the engine's allowed-axioms command is not on the branch at
+  the freeze -->
+
 
 <!-- rc3-fill: must-have, init permission check and permissions page -->
 - `/fvs:auto-init` checks permissions before the run. It sends a harmless worker message, makes
@@ -92,6 +106,11 @@ on release day. -->
   one.
 <!-- rc3-fill: must-have, multi-crate extraction -->
 - The extraction guidance no longer says to keep `Cargo.lock` committed in the target repository.
+<!-- rc3-fill: must-have, build-check guards -->
+- The build check writes receipt version 2. The run counts an acceptance only from a version 2
+  receipt that carries the Lean-level comparison, and stops counting it when an externals record
+  that the acceptance relied on changes. A run that finished under 3.0.0-rc2 shows `done` again
+  only after the build check runs again.
 <!-- rc3-fill: nice-to-have -->
 - The build check writes JSON only on stdout, so its output can be parsed as it stands.
 
