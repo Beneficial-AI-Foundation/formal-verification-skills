@@ -511,7 +511,7 @@ describe('auto-extract extraction record: recorded extraction attempt', () => {
     phase(/does not count: the recorded extraction holds Lean checks for stitched files, but the receipt carries no record of them/);
     receipt({ units: 1, files: 1, items: 2, builtChecked: true, entries: [entry()] });
     assert.equal(phase(), 'done', 'the same checks, built');
-    for (const [name, fields] of [['a changed file digest', { fileSha256: '1'.repeat(64) }], ['a changed block digest', { blockSha256: '2'.repeat(64) }], ['another file', { relativePath: 'formal/extraction/Other.lean' }]]) {
+    for (const [name, fields] of [['a changed file digest', { fileSha256: '1'.repeat(64) }], ['a changed block digest', { blockSha256: '2'.repeat(64) }], ['another file', { relativePath: 'formal/extraction/Other.lean' }], ['only the module', { module: 'formal.extraction.Other' }], ['no module', { module: null }], ['only the number of items', { items: 3 }]]) {
       receipt({ units: 1, files: 1, items: 2, builtChecked: true, entries: [entry(fields)] });
       phase(/does not count: the Lean checks that the recorded extraction holds for its stitched files are not the ones the build check was made with/, name);
     }
