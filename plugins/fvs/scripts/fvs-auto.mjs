@@ -1515,9 +1515,15 @@ export function allowedAxiomList(root, state, context, commit, specs = null) {
   const trusted = new Set();
   const accepted = new Map((loadExternals(root)?.records ?? []).filter((record) => record.status === 'assumption-accepted').map((record) => [record.id, record]));
   const read = (file, expectedSha256) => {
-    // A recorded path may name the project by its real path or by the link it was reached through.
-    const inside = (base) => path.relative(base, path.resolve(base, file));
-    const relative = [root, fs.realpathSync(root)].map(inside).find((candidate) => candidate !== '' && !candidate.startsWith('..') && !path.isAbsolute(candidate)) ?? '';
+    // The root or the recorded path may reach the project through a symbolic link the other does
+    // not (a temporary folder on macOS, say): the file is the project's when either the two paths
+    // as written or the two real paths put it inside the project.
+    const absolute = path.resolve(root, file);
+    const inside = (base, target) => {
+      const below = path.relative(base, target);
+      return below === '' || below.startsWith('..') || path.isAbsolute(below) ? null : below;
+    };
+    const relative = inside(root, absolute) ?? inside(fs.realpathSync(root), realPathOf(absolute)) ?? '';
     if (relative === '') {
       problems.push(`${file} is outside this project (${root}), so it cannot be read at ${commit}: the extraction was recorded from another checkout, so record it again from this one`);
       return null;
@@ -2385,6 +2391,23 @@ function gitWorkingTree(directory) {
   const run = spawnSync('git', ['--no-optional-locks', '-C', directory, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', env });
   const top = run.status === 0 ? run.stdout.trim() : '';
   return top ? fs.realpathSync(top) : null;
+}
+
+// The real path of a path that may not exist on disk: its deepest existing ancestor is resolved
+// and the rest is kept as written.
+function realPathOf(target) {
+  const missing = [];
+  let existing = path.resolve(target);
+  for (;;) {
+    try {
+      return path.join(fs.realpathSync(existing), ...missing);
+    } catch {
+      const parent = path.dirname(existing);
+      if (parent === existing) return path.resolve(target);
+      missing.unshift(path.basename(existing));
+      existing = parent;
+    }
+  }
 }
 
 function resolveRevision(directory, revision) {
