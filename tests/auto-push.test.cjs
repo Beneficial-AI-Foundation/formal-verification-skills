@@ -1200,6 +1200,8 @@ describe('git configuration variables that the user trusted at init', () => {
       assert.equal(lib.stripCredential(`HTTPS://u:p%40x@github.com/Acme/proj.git`), 'HTTPS://github.com/Acme/proj.git');
       for (const same of [PLAIN, URL_RECORDED, 'git@github.com:Acme/proj.git', 'ssh://git@github.com/Acme/proj.git']) assert.equal(lib.stripCredential(same), same, 'the user name of an ssh address is not a secret');
       assert.equal(lib.scrub(`url.https://user:${TOKEN}@github.com/.insteadOf`), 'url.https://***@github.com/.insteadOf');
+      // The record side reads the address the way the destination check does: everything up to the last "@" of the authority goes.
+      assert.equal(lib.stripCredential('http://127.0.0.1:2#@127.0.0.1:1/Acme/proj.git'), 'http://127.0.0.1:1/Acme/proj.git');
     });
 
     it('init records the address without user information, whether a rule adds it or the remote holds it', () => {
@@ -1218,6 +1220,15 @@ describe('git configuration variables that the user trusted at init', () => {
       assert.equal(held.record.url, PLAIN);
       nowhere(held.record, 'the record');
       assert.equal(lib.destinationProblem(w.work, 'origin', 'Acme/proj', 'github.com', w.env), null, 'the destination is host and OWNER/REPO');
+    });
+
+    it('a rule that rewrites an ssh remote to https with a token: init records the plain https address (the rule does not apply to it at the push)', () => {
+      const w = world({ skipRecord: true });
+      w.git('remote', 'set-url', 'origin', 'git@github.com:Acme/proj.git');
+      const out = init(w, { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: `url.https://x:${TOKEN}@github.com/.insteadOf`, GIT_CONFIG_VALUE_0: 'git@github.com:' });
+      assert.equal(out.problem, undefined, JSON.stringify(out.problem));
+      assert.equal(out.record.url, PLAIN);
+      nowhere(out.record, 'the record');
     });
 
     it('a real destination mismatch is still refused, and the message hides the token', () => {
@@ -1250,9 +1261,44 @@ describe('git configuration variables that the user trusted at init', () => {
       assert.equal(lib.destinationRecord({ ...w.record, url: `https://user:${TOKEN}@github.com/Acme/proj.git`, host: 'github.com' }).url, PLAIN, 'a record is made without it');
     });
 
+    // Only plain user information may be added. Git and curl end the host at "/", "?", "#" and a backslash, so a base such
+    // as http://host:1#@other:2/ looks like user information in front of other:2 and sends the request to host:1.
+    for (const [name, base] of [['a fragment', 'http://127.0.0.1:2#@127.0.0.1:1/'], ['a query', 'http://127.0.0.1:2?@127.0.0.1:1/'], ['a backslash', 'http://127.0.0.1:2\\@127.0.0.1:1/'], ['a path', 'http://127.0.0.1:2/x@127.0.0.1:1/']]) {
+      it(`a rule whose added part holds ${name} is not user information: refused`, () => {
+        const w = world({ record: { url: 'http://127.0.0.1:1/Acme/proj.git', host: '127.0.0.1' } });
+        const rule = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: `url.${base}.insteadOf`, GIT_CONFIG_VALUE_0: 'http://127.0.0.1:1/' };
+        trust(w, rule);
+        refused(w, ['--branch', 'fvs/t'], 'destination-rewritten', { env: { ...w.env, ...rule } });
+      });
+    }
+
     // The server answers 401 unless the token arrives, so a push that works proves the rule was applied at the transport.
     const SERVER = path.join(ROOT, 'tests', 'fixtures', 'authenticated-git-http-server.cjs');
     const haveBackend = fs.existsSync(path.join(spawnSync('git', ['--exec-path'], { encoding: 'utf8' }).stdout.trim(), 'git-http-backend'));
+    it('the fragment trick really reaches a server that a plain push of the recorded address would not, and the command refuses before connecting', { skip: !haveBackend && 'git http-backend is not installed' }, async () => {
+      const served = path.join(BASE, `http-${counter++}`);
+      fs.mkdirSync(path.join(served, 'Acme'), { recursive: true });
+      git(served, process.env, 'init', '-q', '--bare', path.join(served, 'Acme', 'proj.git'));
+      const authLog = path.join(served, 'auth.log');
+      fs.writeFileSync(authLog, '');
+      const child = require('node:child_process').spawn(process.execPath, [SERVER, served, TOKEN, authLog], { stdio: ['ignore', 'pipe', 'inherit'] });
+      try {
+        const port = await new Promise((resolve, reject) => { child.once('error', reject); child.stdout.once('data', (data) => resolve(Number.parseInt(String(data), 10))); });
+        const w = world({ record: { url: 'http://127.0.0.1:1/Acme/proj.git', host: '127.0.0.1' } });
+        fs.writeFileSync(path.join(w.home, '.gitconfig'), '[credential]\n\thelper =\n');
+        const rule = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: `url.http://127.0.0.1:${port}#@127.0.0.1:1/.insteadOf`, GIT_CONFIG_VALUE_0: 'http://127.0.0.1:1/' };
+        trust(w, rule);
+        const env = { ...w.env, NO_PROXY: '127.0.0.1', no_proxy: '127.0.0.1', ...rule };
+        spawnSync('git', ['-C', w.work, 'push', '-q', 'http://127.0.0.1:1/Acme/proj.git', 'refs/heads/fvs/t:refs/heads/fvs/t'], { encoding: 'utf8', env, timeout: 20000 });
+        assert.notEqual(fs.readFileSync(authLog, 'utf8'), '', 'the control: a plain push with the rule reaches the server at the port in front of the fragment');
+        fs.writeFileSync(authLog, '');
+        refused(w, ['--branch', 'fvs/t'], 'destination-rewritten', { env });
+        assert.equal(fs.readFileSync(authLog, 'utf8'), '', 'the command never connected');
+      } finally {
+        child.kill();
+      }
+    });
+
     for (const kind of ['insteadOf', 'pushInsteadOf']) {
       it(`${kind} with a token pushes: the token reaches the transport and appears in no record, message or receipt`, { skip: !haveBackend && 'git http-backend is not installed' }, async () => {
         const served = path.join(BASE, `http-${counter++}`);
@@ -1286,6 +1332,16 @@ describe('git configuration variables that the user trusted at init', () => {
           nowhere(fs.readFileSync(path.join(w.commonDir, lib.RECORD_NAME), 'utf8'), 'the record file');
           nowhere(fs.readFileSync(path.join(w.root, lib.LOG_FILE), 'utf8'), 'the receipt log');
           assert.equal(JSON.parse(fs.readFileSync(path.join(w.commonDir, lib.RECORD_NAME), 'utf8')).url, address);
+          // A wrong token fails the push, and the failure shows it nowhere either.
+          w.git('commit', '-q', '--allow-empty', '-m', 'two');
+          const WRONG = 'WRONGCANARY';
+          const wrong = addsToken(`127.0.0.1:${port}/`, kind);
+          wrong.GIT_CONFIG_KEY_0 = wrong.GIT_CONFIG_KEY_0.replace(TOKEN, WRONG);
+          const failed = w.go(['--branch', 'fvs/t'], { env: { ...w.env, ...noProxy, ...wrong } });
+          assert.notEqual(failed.status, 0, JSON.stringify(failed.json));
+          for (const [what, value] of [['the output', failed], ['the receipt log', fs.readFileSync(path.join(w.root, lib.LOG_FILE), 'utf8')], ['the record file', fs.readFileSync(path.join(w.commonDir, lib.RECORD_NAME), 'utf8')]]) {
+            assert.ok(!JSON.stringify(value).includes(WRONG) && !JSON.stringify(value).includes(TOKEN), `${what} holds no token after a failed push`);
+          }
         } finally {
           child.kill();
         }

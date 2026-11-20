@@ -82,6 +82,10 @@ export const contractText = () => `The push command is ${CONTRACT.kind}. ${CONTR
 // without that part too. The user name of an ssh address (git@host) is not a secret and stays.
 const embedsCredential = (url) => /^https?:\/\/[^/]*@/i.test(String(url).trim());
 export const stripCredential = (url) => String(url).trim().replace(/^(https?:\/\/)[^/]*@/i, '$1');
+// The same, for deciding whether a rule only adds user information: the user part must be plain. Git and curl end the host
+// at "/", "?", "#" and a backslash, so http://host:1#@other:2/ is the address host:1 and not user information for
+// other:2. Anything else than a plain user part is left in the address, which then differs from the recorded one.
+const withoutPlainUserInfo = (url) => String(url).trim().replace(/^(https?:\/\/)[^/?#\\@\s]+@/i, '$1');
 export const scrub = (text) => String(text).replace(/(https?:\/\/)[^/\s"']*@/gi, '$1***@');
 
 // Host and OWNER/REPO of a git URL, or null when the URL does not name exactly one repository on one host
@@ -216,14 +220,14 @@ export function rewriteProblem(where, url, env) {
     const rewrite = /^url\.(.+)\.(insteadof|pushinsteadof)$/.exec(key);
     if (rewrite && url.startsWith(value)) {
       // A rule that sends the address to the same address with user information added is how a token is injected.
-      if (stripCredential(rewrite[1] + url.slice(value.length)) === url) continue;
+      if (withoutPlainUserInfo(rewrite[1] + url.slice(value.length)) === url) continue;
       return scrub(`the git setting ${key} = ${JSON.stringify(value)} would rewrite the recorded destination ${url}`);
     }
     const remote = /^remote\.(.+)\.[^.]+$/.exec(key);
     if (remote && remote[1] === url) return scrub(`the git setting ${key} names the recorded destination as a remote`);
   }
   const shown = git(['ls-remote', '--get-url', url], { where, env });
-  if (shown.status !== 0 || stripCredential(shown.stdout) !== url) return scrub(`git reads the recorded destination ${url} as ${shown.stdout.trim() || '(unreadable)'}`);
+  if (shown.status !== 0 || withoutPlainUserInfo(shown.stdout) !== url) return scrub(`git reads the recorded destination ${url} as ${shown.stdout.trim() || '(unreadable)'}`);
   return null;
 }
 
@@ -320,8 +324,8 @@ const refuse = (code, message, details) => { throw new Refuse(code, message, det
 // What init records for a project: the push URL of the project's remote once git has rewritten it, with the repository
 // it names, and where the project lives. Returns {record, commonDir} or {problem: {code, message}}; it never throws, so
 // the permission check can report a refusal in its own words. The URL must name the agreed host and repository
-// (every fetch and push URL of the remote is checked) and no rewrite rule may apply to it, because the push command
-// refuses a destination that a rule would rewrite. The git configuration variables that are set in `env` are the ones
+// (every fetch and push URL of the remote is checked) and no rewrite rule may send it anywhere but to itself, because the
+// push command refuses a destination that a rule would redirect. User information in an http address is stripped first. The git configuration variables that are set in `env` are the ones
 // the record will ask the user to trust (`variables`: the set that init offers, with the values for the hashes; the preview
 // shows only names and lengths), so these checks run with them,
 // as the push will.
