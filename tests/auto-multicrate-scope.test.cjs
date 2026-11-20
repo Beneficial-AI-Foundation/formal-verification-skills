@@ -200,8 +200,8 @@ describe('a real workspace of two crates', { skip: multi === null ? 'the extract
   };
   // The workspace as a committed project with setup state, which is what record-extraction needs: the
   // Lean project files the stub profile accepts are laid next to the crates.
-  function toyProject() {
-    const ws = multi.workspace();
+  function toyProject(behaviour = {}) {
+    const ws = multi.workspace(behaviour);
     fs.cpSync(path.join(PROFILE_FIXTURES, 'fresh'), ws.project, { recursive: true });
     fixtures.git(ws.project, 'init', '-q');
     fixtures.git(ws.project, 'add', '-A');
@@ -258,6 +258,28 @@ describe('a real workspace of two crates', { skip: multi === null ? 'the extract
     const read = fixtures.cli('read-state', '--project-root', ws.project);
     assert.equal(read.json.code, 'ok', read.stdout);
     assert.deepEqual(read.json.crates.targets, ['toy_lib']);
+  });
+
+  // The app crate's Lean holds an axiom for the library's function; the stitch replaces it by a checked
+  // alias and the extraction records the Lean check that proves the alias, which a build-check receipt
+  // must later reproduce exactly.
+  const LEAN_HEADER = 'module\npublic import Aeneas\n@[expose] public section\nopen Aeneas Aeneas.Std Result\n';
+  const LIBRARY_LEAN = `${LEAN_HEADER}namespace toy_lib\n\n/-- [toy_lib::one]:\n    Source: 'lib/src/lib.rs', lines 1:0-1:24\n    Visibility: public -/\ndef one : Result Std.U32 := ok 1#u32\n\nend toy_lib\n`;
+  const APP_LEAN = `${LEAN_HEADER}namespace toy_app\n\n/-- [toy_lib::one]:\n    Source: 'lib/src/lib.rs', lines 1:0-1:24\n    Name pattern: [toy_lib::one]\n    Visibility: public -/\n@[rust_fun "toy_lib::one"]\naxiom toy_lib.one : Result Std.U32\n\n/-- [toy_app::three]:\n    Source: 'app/src/lib.rs', lines 1:0-1:50\n    Visibility: public -/\ndef three : Result Std.U32 := do\n  let x ← toy_lib.one\n  ok x\n\nend toy_app\n`;
+
+  it('records the Lean checks of a stitch that replaced an alias with every field a receipt must match', () => {
+    const ws = toyProject({ toy_lib: { lean: LIBRARY_LEAN }, toy_app: { lean: APP_LEAN } });
+    const out = multi.complete(ws, multi.toySpec());
+    assert.equal(record(ws.project, out).code, 'recorded');
+    const { run } = readState(ws.project).extraction;
+    const app = run.units.find((unit) => unit.crate === 'toy_app');
+    assert.equal(app.stitch.flatMap((entry) => entry.replaced).length, 1, 'the stitch replaced the axiom of the library function');
+    assert.equal(app.leanChecks.length, 1, 'a stitch that replaced an alias records the Lean check for it');
+    const [check] = app.leanChecks;
+    for (const key of ['file', 'relativePath', 'module', 'blockSha256', 'fileSha256']) assert.equal(typeof check[key], 'string', `leanChecks.${key}`);
+    assert.equal(check.items, 1);
+    assert.equal(check.relativePath, 'Lean/App/ToyApp.lean');
+    assert.equal(run.units.find((unit) => unit.crate === 'toy_lib').leanChecks, undefined, 'the provider replaced nothing and records none');
   });
 });
 
