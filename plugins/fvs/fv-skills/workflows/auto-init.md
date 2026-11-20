@@ -391,7 +391,7 @@ If nothing prompted, say so and write nothing. If some steps prompted:
    the new digest needs a new yes, and the old yes does not carry over. A decline writes nothing and the run
    goes on; the steps that prompted then wait for the owner's approval during the run.
 4. Report where the file landed (`realPath`) and its `gitStatus` (a loose or tracked file can end up in a
-   pull request). On Codex, report `verified`: `true` means the installed Codex (name its `evaluator.version`)
+   pull request; `unknown` means git cannot say, as for a file reached through a link). On Codex, report `verified`: `true` means the installed Codex (name its `evaluator.version`)
    allowed every probe command against the exact content before it was written, which checks the rules and not
    a live session; `false` means nothing verified the file, and `message` says why. Do not say the rules work.
 5. Recheck, which depends on the tool. The entry point is the `recheck` command (next section), never a

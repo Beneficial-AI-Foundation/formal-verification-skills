@@ -246,16 +246,8 @@ export function locate(cwd, env) {
   return found;
 }
 
-// For the permissions helper, which has to ask the same questions about a repository: where it is, found the way the push
-// command finds it, or why it cannot be identified. Never throws a refusal.
-export function identify(root, env = process.env) {
-  try { return { where: locate(root, env) }; } catch (error) {
-    if (error instanceof Refuse) return { problem: { code: error.code, message: error.message } };
-    throw error;
-  }
-}
-
-// A read-only git call placed in an identified repository, with the cleaned environment, for the same helper.
+// A read-only git call placed in an identified repository, with the cleaned environment, for the permissions helper,
+// which asks about the repository that `initDestination` identified.
 export const runGit = (where, args, env) => git(args, { where, env });
 
 export function readRecord(commonDir) {
