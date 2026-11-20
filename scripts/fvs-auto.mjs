@@ -1243,6 +1243,26 @@ const hasLeanComparison = (semantic) => semantic !== null && typeof semantic ===
   && semantic.toolchain !== null && typeof semantic.toolchain === 'object'
   && Array.isArray(semantic.statements) && semantic.statements.length > 0 && Array.isArray(semantic.bindings)
   && ['base', 'head'].every((side) => SHA256_HEX.test(semantic.dumps?.[side] ?? ''));
+// The Lean checks the recorded extraction holds for the files it stitched (extraction.run, one row per crate, or
+// the single crate's own row), each as the build check lists them in a receipt (fvs-build-check.mjs, stitchPlan).
+const recordedLeanChecks = (root) => {
+  const run = loadState(root)?.extraction?.run;
+  const rows = Array.isArray(run?.units) ? run.units : run !== null && typeof run === 'object' ? [run] : [];
+  return rows.flatMap((unit) => (Array.isArray(unit?.leanChecks) ? unit.leanChecks : []).map((check) => ({ ...check, unit: typeof unit.crate === 'string' ? unit.crate : '(unnamed)' })));
+};
+const leanCheckKeys = (checks) => checks.map((check) => [check.unit, check.relativePath, check.fileSha256, check.blockSha256].join('\0')).sort();
+// Why a receipt's record of the stitch checks is not the recorded extraction's, or null. The extraction records a
+// Lean check block and the digest of the file it ends, and an acceptance is the build check holding the commit to
+// exactly those; a receipt made before the stitch checks, or for other checks than the ones now recorded, is not one.
+function stitchStale(root, checked) {
+  const recorded = leanCheckKeys(recordedLeanChecks(root));
+  const entries = Array.isArray(checked?.entries) ? checked.entries : null;
+  if (recorded.length === 0 && (entries?.length ?? 0) === 0) return null;
+  if (entries === null) return 'the recorded extraction holds Lean checks for stitched files, but the receipt carries no record of them (an older build check wrote it)';
+  if (leanCheckKeys(entries).join('\n') !== recorded.join('\n')) return 'the Lean checks that the recorded extraction holds for its stitched files are not the ones the build check was made with';
+  if (entries.length > 0 && checked.builtChecked !== true) return 'its stitch checks did not include the check that Lake compiled each stitched file';
+  return null;
+}
 // Why an accepting receipt no longer holds, or null. A receipt of another version, or without the
 // Lean-level comparison, does not count. The receipt lists the externals records its
 // acceptance relied on, each with a digest; a record that changed, is gone, or cannot be read now means
@@ -1257,6 +1277,8 @@ function staleReason(root, receipt) {
   const listed = new Set(bound.records.map((entry) => entry?.id));
   const unlisted = receipt.integrity.semantic.bindings.find((binding) => !listed.has(binding?.record));
   if (unlisted) return `the Lean-level check bound the axiom ${unlisted.axiom} to the externals record ${unlisted.record}, but the receipt carries no digest of that record`;
+  const changed = stitchStale(root, receipt.integrity.stitchChecks);
+  if (changed !== null) return changed;
   if (bound.records.length === 0) return null;
   let records;
   try { records = JSON.parse(fs.readFileSync(path.join(root, '.formalising', 'auto-fv', 'externals.json'), 'utf8')).records; } catch { return 'the externals records it relied on cannot be read now'; }
@@ -1270,7 +1292,7 @@ function staleReason(root, receipt) {
 // The build check's receipt for a full commit SHA, or null when it is missing,
 // unreadable or for another commit. Only the receipt decides acceptance. An accepting receipt whose
 // externals records no longer hold comes back not accepting, with the reason in `stale`.
-function buildCheckReceipt(root, head) {
+export function buildCheckReceipt(root, head) {
   if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(head ?? '')) return null;
   try {
     const receipt = JSON.parse(fs.readFileSync(path.join(root, '.formalising', 'auto-fv', 'build-check', `${head}.json`), 'utf8'));

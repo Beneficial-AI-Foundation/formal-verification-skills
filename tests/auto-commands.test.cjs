@@ -475,6 +475,54 @@ describe('auto-extract extraction record: recorded extraction attempt', () => {
     fs.writeFileSync(file, saved);
     assert.equal(cli('read-state', '--project-root', root).json.code, 'ok');
   });
+
+  // The extraction records, for each file it stitched, the Lean check block it appended and the file's digest. The
+  // build check lists those checks in the receipt (integrity.stitchChecks); an acceptance counts only while the recorded
+  // extraction holds the same ones.
+  it('a receipt counts only while the Lean checks of the recorded extraction are the ones it was made with', () => {
+    const root = project();
+    init(root);
+    const out = attempted(root);
+    assert.equal(record(root, out, 0).code, 'recorded');
+    assert.equal(cli('record-pr', '--project-root', root, '--kind', 'spec', '--merged', '--merge-commit', 'HEAD').status, 0);
+    assert.equal(cli('record-pr', '--project-root', root, '--kind', 'proof', '--url', 'https://example.invalid/pr/3', '--branch', 'proofs', '--head', 'HEAD').status, 0);
+    const head = git(root, 'rev-parse', 'HEAD');
+    const receipts = path.join(root, '.formalising/auto-fv/build-check');
+    fs.mkdirSync(receipts, { recursive: true });
+    const lean = { toolchain: { lean: 'Lean (version 4.35.0)', githash: 'a'.repeat(40) }, statements: [{ name: 'f', declaration: 'f', constants: 2, sha256: 'a'.repeat(64) }], bindings: [], dumps: { base: 'b'.repeat(64), head: 'c'.repeat(64) } };
+    const check = (fields = {}) => ({ file: 'Ext.lean', relativePath: 'formal/extraction/Ext.lean', module: 'formal.extraction.Ext', items: 2, blockSha256: 'd'.repeat(64), blockBytes: 300, fileSha256: 'e'.repeat(64), ...fields });
+    const stateFile = path.join(root, '.formalising/auto-fv/state.json');
+    const crate = JSON.parse(fs.readFileSync(stateFile, 'utf8')).extraction.run.crate;
+    const recorded = (leanChecks) => {
+      const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+      if (leanChecks === undefined) delete state.extraction.run.leanChecks; else state.extraction.run.leanChecks = leanChecks;
+      fs.writeFileSync(stateFile, JSON.stringify(state));
+    };
+    const receipt = (stitchChecks) => fs.writeFileSync(path.join(receipts, `${head}.json`), JSON.stringify({ schema: 2, kind: 'fvs-build-check', commit: head, accepted: true, label: 'accepted (build check)', specBase: head, externals: { records: [] },
+      integrity: { semantic: lean, ...(stitchChecks === undefined ? {} : { stitchChecks }) } }));
+    const entry = (fields) => ({ unit: typeof crate === 'string' ? crate : '(unnamed)', ...check(fields) });
+    const again = /Run the build check again: node fvs-build-check\.mjs/;
+    const phase = (said) => { const view = auto.readState({ projectRoot: root }); return said === undefined ? view.phase : (assert.equal(view.phase, 'proofs'), assert.match(view.nextAction, said), assert.match(view.nextAction, again), view.phase); };
+
+    recorded();
+    receipt();
+    assert.equal(phase(), 'done', 'no stitched file in the extraction: nothing to hold');
+    recorded([check()]);
+    phase(/does not count: the recorded extraction holds Lean checks for stitched files, but the receipt carries no record of them/);
+    receipt({ units: 1, files: 1, items: 2, builtChecked: true, entries: [entry()] });
+    assert.equal(phase(), 'done', 'the same checks, built');
+    for (const [name, fields] of [['a changed file digest', { fileSha256: '1'.repeat(64) }], ['a changed block digest', { blockSha256: '2'.repeat(64) }], ['another file', { relativePath: 'formal/extraction/Other.lean' }]]) {
+      receipt({ units: 1, files: 1, items: 2, builtChecked: true, entries: [entry(fields)] });
+      phase(/does not count: the Lean checks that the recorded extraction holds for its stitched files are not the ones the build check was made with/, name);
+    }
+    receipt({ units: 1, files: 1, items: 2, builtChecked: false, entries: [entry()] });
+    phase(/does not count: its stitch checks did not include the check that Lake compiled each stitched file/);
+    receipt({ units: 1, files: 1, items: 2, builtChecked: true, entries: [entry()] });
+    recorded([check({ fileSha256: '3'.repeat(64) })]);
+    phase(/are not the ones the build check was made with/);
+    recorded([]);
+    phase(/are not the ones the build check was made with/);
+  });
 });
 
 describe('auto-extract extraction record', () => {
