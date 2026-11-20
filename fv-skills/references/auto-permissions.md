@@ -147,9 +147,11 @@ What it checks:
 - It compares the shared git directory of the repository it runs in with the one recorded for the destination, and
   refuses when they differ or when a work tree points at another repository.
 - It refuses a branch that is not a plain local branch under a recorded namespace. It pushes to the destination
-  address recorded at init, and refuses that address when a URL rewrite rule would send it anywhere but to that
-  address. A rule that only adds user information to an http or https address, as a sandbox does to inject a token,
-  is allowed: the record holds the address without user information, and no message, record or receipt shows it.
+  address recorded at init, and refuses that address when a URL rewrite rule would send it anywhere but to the same
+  host and OWNER/REPO, or over any scheme but https or ssh (ssh:// or git@host:OWNER/REPO), or to another port. A
+  rule that only adds user information to an http or https address, as a sandbox does to inject a token, is allowed,
+  and so is a rule that changes the address between https, ssh:// and git@host:OWNER/REPO on the same host and
+  OWNER/REPO: the record holds the address without user information, and no message, record or receipt shows it.
 
 What it does for this push, to harden it:
 
@@ -177,6 +179,12 @@ What it trusts, and so does not protect against:
 - Credential helpers.
 - The git configuration variables whose names you trusted at init, the way you trust your own git configuration
   files: whatever value they have when the command runs is used for the checks and for the push.
+- The address that a remote of the repository holds with user information (a token) for the recorded host and
+  OWNER/REPO, such as https://x-access-token:TOKEN@github.com/OWNER/REPO in origin: when there is exactly one, the
+  push goes to it, after the same host, repository and rewrite checks, so the token in your own git configuration
+  keeps working. The record, the messages and the receipt never show the token, and the command removes it from what
+  git prints. As with any git push, the address and its token are visible in the process arguments of the local
+  machine while git runs.
 - URL rewrite rules: a rule that is added or changed after the command checks and before it connects is not caught.
 - The record file and FVS itself: anything that runs as your user can edit the record, the script and the permission
   rule, and so change where the command pushes or what it checks.

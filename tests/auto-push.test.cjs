@@ -1347,6 +1347,292 @@ describe('git configuration variables that the user trusted at init', () => {
         }
       });
     }
+
+    // ---- a rule that changes the scheme --------------------------------------------------------------------------------
+    describe('a rule between https, ssh:// and git@host:OWNER/REPO', () => {
+      const BASE_URL = 'https://github.com/Acme/proj';
+      it('reads two spellings as one destination only for the same host and OWNER/REPO over https or ssh, in both directions', () => {
+        const same = [
+          [BASE_URL, 'git@github.com:Acme/proj'], [`${BASE_URL}.git`, 'ssh://git@github.com/Acme/proj'], ['ssh://git@github.com/Acme/proj', 'git@github.com:Acme/proj.git'],
+          [`https://user:${TOKEN}@github.com/Acme/proj`, BASE_URL], ['ssh://git@github.com:22/Acme/proj', 'git@github.com:Acme/proj'],
+          ['https://github.com:443/Acme/proj', BASE_URL], ['HTTPS://GitHub.com/Acme/proj/', BASE_URL], ['ssh://deploy@github.com/Acme/proj', 'git@github.com:Acme/proj'],
+          ['http://127.0.0.1:8080/Acme/proj', `http://u:${TOKEN}@127.0.0.1:8080/Acme/proj.git`],
+        ];
+        for (const [a, b] of same) {
+          assert.equal(lib.sameDestination(a, b), true, `${a} and ${b}`);
+          assert.equal(lib.sameDestination(b, a), true, `${b} and ${a}`);
+        }
+        const other = [
+          'http://github.com/Acme/proj', 'file:///srv/Acme/proj', 'file://github.com/Acme/proj', 'git://github.com/Acme/proj', 'ftp://github.com/Acme/proj', 'git+ssh://git@github.com/Acme/proj',
+          'ext::ssh github.com/Acme/proj', 'ext::sh -c x%s', 'fd::7/Acme/proj', 'foo::bar', '/srv/git/Acme/proj', './Acme/proj', '../Acme/proj', 'C:\\Acme\\proj',
+          'https://evil.test/Acme/proj', 'git@evil.test:Acme/proj', 'ssh://git@evil.test/Acme/proj', 'https://github.com/Other/proj', 'git@github.com:Acme/other.git', 'https://github.com/acme/proj',
+          'https://github.com/Acme/proj/extra', 'https://github.com/Acme/proj?x=1', 'https://github.com/Acme/proj#x', 'https://github.com:8443/Acme/proj', 'ssh://git@github.com:2222/Acme/proj',
+          'https://github.com#@evil.test/Acme/proj', 'https://evil.test\\@github.com/Acme/proj', 'https://a@b@github.com/Acme/proj', 'ssh://user:pw@github.com/Acme/proj', '-oProxyCommand=x:Acme/proj',
+          'https://github.com./Acme/proj', 'https://github.com.evil.test/Acme/proj',
+        ];
+        for (const b of other) {
+          assert.equal(lib.sameDestination(BASE_URL, b), false, b);
+          assert.equal(lib.sameDestination(b, BASE_URL), false, b);
+          assert.equal(lib.sameDestination('git@github.com:Acme/proj', b), false, b);
+        }
+        assert.equal(lib.sameDestination('http://127.0.0.1:8080/Acme/proj', 'https://127.0.0.1:8080/Acme/proj'), false, 'http does not become https, nor the reverse');
+        assert.equal(lib.sameDestination('git://github.com/Acme/proj', 'git://github.com/Acme/proj'), true, 'an address that no rule changed is no rewrite');
+      });
+
+      it('every direction of the allowed changes passes the rewrite check, and any other rule is refused', () => {
+        const w = world();
+        const found = lib.locate(w.work, w.env);
+        const rule = (base, value, kind = 'insteadOf') => { w.git('config', `url.${base}.${kind}`, value); };
+        const clear = (base, kind = 'insteadOf') => { w.git('config', '--unset-all', `url.${base}.${kind}`); };
+        for (const [base, value, record] of [
+          ['git@github.com:', 'https://github.com/', `${BASE_URL}.git`], ['https://github.com/', 'git@github.com:', 'git@github.com:Acme/proj.git'],
+          ['ssh://git@github.com/', 'https://github.com/', `${BASE_URL}.git`], ['https://github.com/', 'ssh://git@github.com/', 'ssh://git@github.com/Acme/proj.git'],
+          ['git@github.com:', 'ssh://git@github.com/', 'ssh://git@github.com/Acme/proj.git'], ['ssh://git@github.com/', 'git@github.com:', 'git@github.com:Acme/proj.git'],
+        ]) {
+          for (const kind of ['insteadOf', 'pushInsteadOf']) {
+            rule(base, value, kind);
+            assert.equal(lib.rewriteProblem(found, record, w.env), null, `${value} -> ${base} (${kind}) for ${record}`);
+            clear(base, kind);
+          }
+        }
+        for (const [base, value, record] of [
+          ['http://github.com/', 'https://github.com/', `${BASE_URL}.git`], ['file:///srv/', 'https://github.com/Acme/', `${BASE_URL}.git`], ['git://github.com/', 'https://github.com/', `${BASE_URL}.git`],
+          ['git@evil.test:', 'https://github.com/', `${BASE_URL}.git`], ['https://evil.test/', 'git@github.com:', 'git@github.com:Acme/proj.git'], ['git@github.com:Other/', 'https://github.com/Acme/', `${BASE_URL}.git`],
+          ['ssh://git@github.com:2222/', 'https://github.com/', `${BASE_URL}.git`], ['ext::sh -c x ', 'git@github.com:', 'git@github.com:Acme/proj.git'],
+        ]) {
+          for (const kind of ['insteadOf', 'pushInsteadOf']) {
+            rule(base, value, kind);
+            assert.match(lib.rewriteProblem(found, record, w.env) ?? '', /would rewrite the recorded destination|reads the recorded destination/, `${value} -> ${base} (${kind}) for ${record}`);
+            clear(base, kind);
+          }
+        }
+      });
+
+      const toSsh = (w, url) => spawnSync('git', ['-C', w.work, 'push', '--porcelain', url, 'refs/heads/fvs/t:refs/heads/fvs/t'], { encoding: 'utf8', env: w.env });
+      for (const [name, record, base, value] of [
+        ['an https record that a rule sends over ssh://', 'https://github.com/Acme/proj.git', 'ssh://git@github.com/', 'https://github.com/'],
+        ['an https record that a rule sends over scp-style ssh', 'https://github.com/Acme/proj.git', 'git@github.com:', 'https://github.com/'],
+        ['an ssh:// record that a rule sends over scp-style ssh', 'ssh://git@github.com/Acme/proj.git', 'git@github.com:', 'ssh://git@github.com/'],
+        ['a scp-style record that a rule sends over ssh://', 'git@github.com:Acme/proj.git', 'ssh://git@github.com/', 'git@github.com:'],
+      ]) {
+        for (const kind of ['insteadOf', 'pushInsteadOf']) {
+          it(`${name} (${kind}) pushes to the same destination`, () => {
+            const w = world({ record: { url: record } });
+            w.git('config', `url.${base}.${kind}`, value);
+            assert.equal(toSsh(w, record).status, 0, 'the control: a plain push of the recorded address follows the rule, to the same repository');
+            assert.deepEqual(w.refs(w.right), ['refs/heads/fvs/t']);
+            w.clear(w.right);
+            const out = w.go(['--branch', 'fvs/t']);
+            assert.equal(out.status, 0, JSON.stringify(out.json));
+            assert.equal(out.json.result, 'created');
+            assert.deepEqual(w.refs(w.right), ['refs/heads/fvs/t']);
+            assert.deepEqual(w.refs(w.wrong), []);
+          });
+        }
+      }
+
+      // The record is the address of a project, and each of these sends a plain push of it somewhere else or over a transport
+      // that is not a plain git transport: the command refuses all of them and neither runs a helper nor connects.
+      const marker = path.join(BASE, 'ext-ran');
+      for (const [name, base, bites] of [
+        ['a local path', (w) => w.wrong, true], ['a file:// address', (w) => `file://${w.wrong}`, true], ['an ext:: helper', () => `ext::sh -c "touch ${marker}" x`, false],
+        ['an fd:: address', () => 'fd::7', false], ['git://', () => 'git://github.com/Acme/proj.git', false], ['plain http, a downgrade from https', () => 'http://github.com/Acme/proj.git', false],
+        ['another host', () => 'ssh://git@evil.test/Acme/proj.git', false], ['another repository', () => 'ssh://git@github.com/Other/proj.git', false], ['another port', () => 'ssh://git@github.com:2222/Acme/proj.git', false],
+        ['an unknown transport', () => 'fvs-transport::github.com/Acme/proj.git', false],
+      ]) {
+        it(`${name} is refused, and nothing is pushed, run or connected to`, () => {
+          const w = world();
+          const target = base(w);
+          w.git('config', `url.${target}.insteadOf`, URL_RECORDED);
+          assert.equal(w.git('ls-remote', '--get-url', URL_RECORDED), target, 'the row bites: git does rewrite the recorded address');
+          if (bites) {
+            assert.equal(w.plain().status, 0);
+            assert.deepEqual(w.refs(w.wrong), ['refs/heads/fvs/t'], 'a plain push lands in the wrong place');
+            w.clear(w.wrong);
+          }
+          const out = refused(w, ['--branch', 'fvs/t'], 'destination-rewritten');
+          assert.match(out.json.message, /would rewrite the recorded destination/);
+          nothingLanded(w);
+          assert.equal(fs.existsSync(marker), false, 'no helper ran');
+        });
+      }
+    });
+
+    // ---- a token in the address of the remote --------------------------------------------------------------------------
+    describe('an address with user information that a remote holds', () => {
+      const WRONG = 'WRONGCANARY';
+      const noProxy = { NO_PROXY: '127.0.0.1', no_proxy: '127.0.0.1' };
+      const recordAddress = (port) => `http://127.0.0.1:${port}/Acme/proj.git`;
+      const tokenAddress = (port, token = TOKEN) => `http://user:${token}@127.0.0.1:${port}/Acme/proj.git`;
+      async function withServer(body) {
+        const served = path.join(BASE, `http-${counter++}`);
+        const bare = path.join(served, 'Acme', 'proj.git');
+        fs.mkdirSync(path.dirname(bare), { recursive: true });
+        git(served, process.env, 'init', '-q', '--bare', bare);
+        const authLog = path.join(served, 'auth.log');
+        fs.writeFileSync(authLog, '');
+        const child = require('node:child_process').spawn(process.execPath, [SERVER, served, TOKEN, authLog], { stdio: ['ignore', 'pipe', 'inherit'] });
+        try {
+          const port = await new Promise((resolve, reject) => { child.once('error', reject); child.stdout.once('data', (data) => resolve(Number.parseInt(String(data), 10))); });
+          await body({ port, authLog, refs: () => git(served, process.env, '-C', bare, 'for-each-ref', '--format=%(refname)').split('\n').filter(Boolean) });
+        } finally {
+          child.kill();
+        }
+      }
+      const project = (port) => {
+        const w = world({ record: { url: recordAddress(port), host: '127.0.0.1' } });
+        // The system configuration can name a credential helper that waits for a keychain; an empty value resets the list.
+        fs.writeFileSync(path.join(w.home, '.gitconfig'), '[credential]\n\thelper =\n');
+        w.env = { ...w.env, ...noProxy };
+        return w;
+      };
+      // The command as a program, to see its standard error too.
+      const asProgram = (w, env = w.env) => spawnSync(process.execPath, [SCRIPT, '--branch', 'fvs/t'], { cwd: w.work, env, encoding: 'utf8', timeout: 60000 });
+      const nowhereAfter = (w, ...outputs) => {
+        for (const [what, value] of [...outputs, ['the record file', fs.readFileSync(path.join(w.commonDir, lib.RECORD_NAME), 'utf8')], ['the receipt log', fs.existsSync(path.join(w.root, lib.LOG_FILE)) ? fs.readFileSync(path.join(w.root, lib.LOG_FILE), 'utf8') : '']]) {
+          for (const secret of [TOKEN, WRONG]) assert.ok(!JSON.stringify(value).includes(secret), `${what} holds no ${secret}`);
+        }
+      };
+
+      it('secretsOf and hide take the token, its parts and its base64 out of any string, and leave short or absent user information alone', () => {
+        const secrets = lib.secretsOf(`https://x-access-token:${TOKEN}@github.com/Acme/proj.git`);
+        const header = Buffer.from(`x-access-token:${TOKEN}`).toString('base64');
+        for (const part of [`x-access-token:${TOKEN}`, TOKEN, 'x-access-token', header]) assert.ok(secrets.includes(part), part);
+        const shown = lib.hide({ message: `could not read Password for 'https://${TOKEN}@github.com': ${TOKEN} / Authorization: Basic ${header}`, list: [`fatal: ${TOKEN}`], n: 3, none: null }, secrets);
+        assert.ok(!JSON.stringify(shown).includes(TOKEN) && !JSON.stringify(shown).includes(header), JSON.stringify(shown));
+        assert.equal(shown.n, 3);
+        assert.deepEqual(lib.secretsOf('https://github.com/Acme/proj.git'), []);
+        assert.deepEqual(lib.secretsOf('git@github.com:Acme/proj.git'), []);
+        assert.deepEqual(lib.secretsOf('https://ab@github.com/Acme/proj.git'), [], 'under four characters is no token');
+        assert.equal(lib.hide('a plain sentence', []), 'a plain sentence');
+      });
+
+      it('finds the address a remote holds for the recorded destination, and nothing else', () => {
+        const w = world();
+        const record = { url: 'https://github.com/Acme/proj.git', host: 'github.com', repo: 'Acme/proj' };
+        const found = lib.locate(w.work, w.env);
+        const held = (url) => { w.git('remote', 'set-url', 'origin', url); return lib.configuredAddress(found, record, w.env); };
+        assert.equal(held(`https://x-access-token:${TOKEN}@github.com/Acme/proj.git`), `https://x-access-token:${TOKEN}@github.com/Acme/proj.git`);
+        assert.equal(held(`https://${TOKEN}@github.com/Acme/proj`), `https://${TOKEN}@github.com/Acme/proj`, 'a token as the user name, with the same repository spelled without .git');
+        assert.equal(held('https://github.com/Acme/proj.git'), null, 'no user information, nothing to use');
+        assert.equal(held('git@github.com:Acme/proj.git'), null, 'the user name of an ssh address is not a token');
+        for (const other of [`https://u:${TOKEN}@evil.test/Acme/proj.git`, `https://u:${TOKEN}@github.com/Other/proj.git`, `http://u:${TOKEN}@github.com/Acme/proj.git`, `https://u:${TOKEN}@github.com:8443/Acme/proj.git`, `https://github.com#@evil.test/Acme/proj.git`, `https://u:${TOKEN}@github.com/Acme/proj/extra`, `file:///srv/Acme/proj`]) {
+          assert.equal(held(other), null, other);
+        }
+        w.git('remote', 'set-url', 'origin', `https://u:${TOKEN}@github.com/Acme/proj.git`);
+        w.git('config', 'remote.origin.pushurl', 'https://github.com/Acme/proj.git');
+        assert.equal(lib.configuredAddress(found, record, w.env), null, 'git pushes to the push URL of a remote, which holds none');
+        w.git('config', '--unset-all', 'remote.origin.pushurl');
+        w.git('remote', 'add', 'copy', `https://u:${TOKEN}@github.com/Acme/proj.git`);
+        assert.equal(lib.configuredAddress(found, record, w.env), `https://u:${TOKEN}@github.com/Acme/proj.git`, 'two remotes with the same address are one address');
+        w.git('remote', 'add', 'another', `https://u:${WRONG}@github.com/Acme/proj.git`);
+        assert.throws(() => lib.configuredAddress(found, record, w.env), (error) => error.code === 'remote-ambiguous' && !error.message.includes(TOKEN) && !error.message.includes(WRONG) && /another|copy|origin/.test(error.message));
+      });
+
+      it('a token in the address of the remote pushes, and appears in no record, message or receipt', { skip: !haveBackend && 'git http-backend is not installed' }, async () => {
+        await withServer(async ({ port, authLog, refs }) => {
+          const w = project(port);
+          w.git('remote', 'set-url', 'origin', tokenAddress(port));
+          const plain = spawnSync('git', ['-C', w.work, 'push', '-q', recordAddress(port), 'refs/heads/fvs/t:refs/heads/fvs/t'], { encoding: 'utf8', env: w.env });
+          assert.notEqual(plain.status, 0, 'the control: the recorded address has no token, and the server turns it away');
+          assert.deepEqual(refs(), []);
+          fs.writeFileSync(authLog, '');
+          const out = asProgram(w);
+          assert.equal(out.status, 0, `${out.stdout}${out.stderr}`);
+          const json = JSON.parse(out.stdout);
+          assert.equal(json.result, 'created', out.stdout);
+          assert.equal(json.usedConfiguredAddress, true);
+          assert.equal(json.destination, recordAddress(port), 'the receipt names the recorded address, without the token');
+          assert.deepEqual(refs(), ['refs/heads/fvs/t']);
+          assert.ok(fs.readFileSync(authLog, 'utf8').includes('allowed'), 'the token reached the server');
+          nowhereAfter(w, ['the output', out.stdout], ['the error output', out.stderr]);
+          assert.equal(JSON.parse(fs.readFileSync(path.join(w.commonDir, lib.RECORD_NAME), 'utf8')).url, recordAddress(port));
+          assert.equal(logEntries(w).at(-1).usedConfiguredAddress, true);
+        });
+      });
+
+      it('a push with no such address says so in its receipt', () => {
+        const w = world();
+        const out = w.go(['--branch', 'fvs/t']);
+        assert.equal(out.status, 0, JSON.stringify(out.json));
+        assert.equal(out.json.usedConfiguredAddress, false);
+      });
+
+      for (const [name, wrongAddress] of [['a wrong token with a user name', (port) => tokenAddress(port, WRONG)], ['a wrong token as the user name', (port) => `http://${WRONG}@127.0.0.1:${port}/Acme/proj.git`]]) {
+        it(`${name}: the push fails, and the token is in no output, record or receipt`, { skip: !haveBackend && 'git http-backend is not installed' }, async () => {
+          await withServer(async ({ port, authLog, refs }) => {
+            const w = project(port);
+            w.git('remote', 'set-url', 'origin', wrongAddress(port));
+            const plain = spawnSync('git', ['-C', w.work, 'push', '-q', wrongAddress(port), 'refs/heads/fvs/t:refs/heads/fvs/t'], { encoding: 'utf8', env: w.env });
+            assert.notEqual(plain.status, 0);
+            assert.deepEqual(refs(), []);
+            const out = asProgram(w);
+            assert.notEqual(out.status, 0, `${out.stdout}${out.stderr}`);
+            assert.ok(out.stderr.length > 0 && out.stdout.length > 0, 'the failure is reported');
+            assert.deepEqual(refs(), [], 'nothing landed');
+            assert.ok(fs.readFileSync(authLog, 'utf8').includes('denied'), 'the server saw the wrong token and turned it away');
+            nowhereAfter(w, ['the output', out.stdout], ['the error output', out.stderr]);
+          });
+        });
+      }
+
+      it('git itself shows a token that is the user name of the address when it asks for the password, and the command does not', { skip: !haveBackend && 'git http-backend is not installed' }, async () => {
+        await withServer(async ({ port }) => {
+          const w = project(port);
+          const address = `http://${WRONG}@127.0.0.1:${port}/Acme/proj.git`;
+          w.git('remote', 'set-url', 'origin', address);
+          const plain = spawnSync('git', ['-C', w.work, 'push', '-q', address, 'refs/heads/fvs/t:refs/heads/fvs/t'], { encoding: 'utf8', env: w.env });
+          assert.ok(plain.stderr.includes(WRONG), `the row bites: a plain push prints the user name of the address: ${plain.stderr}`);
+          const out = asProgram(w);
+          assert.notEqual(out.status, 0);
+          assert.ok(!out.stderr.includes(WRONG) && !out.stdout.includes(WRONG), 'the command prints neither');
+          assert.match(out.stderr, /\*\*\*@/, 'where git named the address, the user part is replaced');
+        });
+      });
+
+      it('an address for another repository or host is not used: the push goes to the recorded address, and the token is never sent', { skip: !haveBackend && 'git http-backend is not installed' }, async () => {
+        await withServer(async ({ port, authLog, refs }) => {
+          const w = project(port);
+          w.git('remote', 'set-url', 'origin', `http://user:${TOKEN}@127.0.0.1:${port}/Other/proj.git`);
+          w.git('remote', 'add', 'elsewhere', `http://user:${TOKEN}@localhost:${port}/Acme/proj.git`);
+          const out = asProgram(w);
+          assert.notEqual(out.status, 0, 'the recorded address has no token: the server turns it away');
+          assert.equal(JSON.parse(out.stdout).usedConfiguredAddress, false);
+          assert.deepEqual(refs(), []);
+          assert.ok(!fs.readFileSync(authLog, 'utf8').includes('allowed'), 'the token reached no server');
+          nowhereAfter(w, ['the output', out.stdout], ['the error output', out.stderr]);
+        });
+      });
+
+      it('two different addresses with user information are refused before anything connects', { skip: !haveBackend && 'git http-backend is not installed' }, async () => {
+        await withServer(async ({ port, authLog, refs }) => {
+          const w = project(port);
+          w.git('remote', 'set-url', 'origin', tokenAddress(port));
+          w.git('remote', 'add', 'second', tokenAddress(port, WRONG));
+          const out = asProgram(w);
+          assert.notEqual(out.status, 0);
+          const json = JSON.parse(out.stdout);
+          assert.equal(json.code, 'remote-ambiguous', out.stdout);
+          assert.equal(fs.readFileSync(authLog, 'utf8'), '', 'the command never connected');
+          assert.deepEqual(refs(), []);
+          nowhereAfter(w, ['the output', out.stdout], ['the error output', out.stderr]);
+        });
+      });
+
+      it('a rule that rewrites the address with the token elsewhere is refused, and the message hides the token', () => {
+        const w = world({ record: { url: 'http://127.0.0.1:1/Acme/proj.git', host: '127.0.0.1' } });
+        const address = `http://user:${TOKEN}@127.0.0.1:1/Acme/proj.git`;
+        w.git('remote', 'set-url', 'origin', address);
+        w.git('config', `url.${w.wrong}.insteadOf`, address);
+        assert.equal(spawnSync('git', ['-C', w.work, 'push', '-q', 'origin', 'refs/heads/fvs/t:refs/heads/fvs/t'], { env: w.env, encoding: 'utf8' }).status, 0);
+        assert.deepEqual(w.refs(w.wrong), ['refs/heads/fvs/t'], 'the row bites: a push to the remote lands in the wrong repository');
+        w.clear(w.wrong);
+        const out = refused(w, ['--branch', 'fvs/t'], 'destination-rewritten');
+        nowhere(out, 'the refusal');
+        assert.match(out.json.message, /http:\/\/\*\*\*@127\.0\.0\.1:1/);
+        nothingLanded(w);
+      });
+    });
   });
 
   it('a trusted name that now holds a push option sends none: the command\'s own settings come after the environment', () => {
