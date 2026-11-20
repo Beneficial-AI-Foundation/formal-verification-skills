@@ -508,6 +508,42 @@ describe('substitutions: a rename of a name Lean cannot read, with the match cou
     });
   });
 
+  // The rename is of identifier tokens only. The same spelling in a string, a character literal or a
+  // comment is data or commentary: renaming it would change a runtime value or a recorded sentence
+  // that Lean then accepts, so a match anywhere outside code refuses the whole substitution.
+  describe('never edits a string, a character literal or a comment', () => {
+    const body = (lines) => variantOf(['let x ← toy_lib.one\n  ok x', lines]);
+    const notIdentifier = (kind) => new RegExp(`a match of .* at line \\d+ lies in a ${kind}, and a substitution renames identifiers only, never the text of a string, a character literal or a comment`);
+
+    it('refuses a spelling that occurs in a string literal, alone or next to the real rename', () => {
+      publishRefused(body('let len· := 1#u32\n  let label := "len·"\n  ok len·'), edit({ find: 'len·', replace: 'len_x', count: 3 }), notIdentifier('string'));
+      publishRefused(body('let label := "len·"\n  ok 1#u32'), edit({ find: 'len·', replace: 'len_x', count: 1 }), notIdentifier('string'));
+    });
+
+    it('refuses a spelling in a line comment, a block comment, a character literal and a raw string', () => {
+      publishRefused(body('let x· ← toy_lib.one\n  -- x· is the shadowed one\n  ok x·'), edit({ count: 3 }), notIdentifier('comment'));
+      publishRefused(body('let x· ← toy_lib.one\n  /- keep x· /- nested -/ here -/\n  ok x·'), edit({ count: 3 }), notIdentifier('comment'));
+      publishRefused(body("let c := '·'\n  ok 1#u32"), edit({ find: "'·'", replace: 'chr_x', count: 1 }), notIdentifier('character literal'));
+      publishRefused(body('let s := r#"x· "quoted""#\n  ok 1#u32'), edit({ count: 1 }), notIdentifier('string'));
+    });
+
+    it('refuses to rename in text it cannot read to the end', () => {
+      const unreadable = /the Lean text cannot be read to tell code from strings and comments \(a string starting at line \d+ is not closed\), and a substitution never edits text that was not read/;
+      publishRefused(body('let x· ← toy_lib.one\n  ok x· "'), edit(), unreadable);
+      publishRefused(body('let x· ← toy_lib.one\n  ok x· /- never closed'), edit(), /a block comment starting at line \d+ is not closed/);
+      publishRefused(body("let x· ← toy_lib.one\n  ok x· '"), edit(), /a quote at line \d+ is neither part of a name nor a character literal/);
+      publishRefused(body('let x· ← toy_lib.one\n  let s := s!"a {x·}"\n  ok x·'), edit({ count: 3 }), /an interpolated string at line \d+ holds an expression/);
+    });
+
+    it('still renames the identifier when strings, comments and primes that hold the dangerous text come first', () => {
+      const ws = workspace(body('let y\' := "a -- \\" /- b"\n  -- x · is spelled apart here\n  let x· ← toy_lib.one\n  ok x·'));
+      complete(ws, stitched({ substitutions: [edit()] }));
+      const text = published(ws, 'Lean/App/ToyApp.lean');
+      assert.match(text, /let x_mid ← toy_lib\.one\n {2}ok x_mid/);
+      assert.ok(text.includes('let y\' := "a -- \\" /- b"'), 'the string is untouched');
+    });
+  });
+
   it('works for a single-crate attempt as well', () => {
     const ws = workspace({ toy_lib: { lean: lib().replace('def one : Result Std.U32 := ok 1#u32', 'def one : Result Std.U32 := do\n  let n· := 1#u32\n  ok n·') } });
     const out = path.join(ws.root, 'copies', 'single');

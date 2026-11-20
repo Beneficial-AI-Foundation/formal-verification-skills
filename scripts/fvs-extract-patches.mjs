@@ -2315,6 +2315,87 @@ function declarationProblems(before, after) {
   return [];
 }
 
+// The parts of a Lean source text that are data or commentary, not code: string literals (plain,
+// raw r"…" and r#"…"#, and interpolated s!"…" without an expression), character literals and
+// comments (line, block with nesting, doc). A name in «…» is an identifier whatever it contains.
+// It fails closed: a string or comment that is not closed, an interpolated string that holds an
+// expression, or a quote that is neither part of a name (x', after an identifier character) nor a
+// character literal is an error, never a guess, so a rename is not made in text that was not read.
+const NAME_CHARACTER = /[\p{L}\p{N}_!?'₀-ₜᵢ-ᵪⁿ]/u;
+const CHARACTER_LITERAL = /^'(?:[^\\'\n]|\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|.))'/su;
+
+function leanRegions(text) {
+  const regions = [];
+  const lineOf = (offset) => text.slice(0, offset).split('\n').length;
+  const unclosed = (what, from) => ({ error: `${what} starting at line ${lineOf(from)} is not closed` });
+  const afterName = (offset) => offset > 0 && NAME_CHARACTER.test(text[offset - 1]);
+  let at = 0;
+  while (at < text.length) {
+    const char = text[at];
+    const next = text[at + 1];
+    if (char === '-' && next === '-') {
+      const end = text.indexOf('\n', at);
+      regions.push({ start: at, end: end === -1 ? text.length : end, kind: 'comment' });
+      at = end === -1 ? text.length : end;
+    } else if (char === '/' && next === '-') {
+      let depth = 1;
+      let end = at + 2;
+      while (end < text.length && depth > 0) {
+        if (text[end] === '/' && text[end + 1] === '-') { depth += 1; end += 2; }
+        else if (text[end] === '-' && text[end + 1] === '/') { depth -= 1; end += 2; }
+        else end += 1;
+      }
+      if (depth > 0) return unclosed('a block comment', at);
+      regions.push({ start: at, end, kind: 'comment' });
+      at = end;
+    } else if (char === 'r' && (next === '"' || next === '#') && !afterName(at)) {
+      let hashes = 0;
+      let cursor = at + 1;
+      while (text[cursor] === '#') { hashes += 1; cursor += 1; }
+      if (text[cursor] !== '"') { at += 1; continue; }
+      const close = `"${'#'.repeat(hashes)}`;
+      const end = text.indexOf(close, cursor + 1);
+      if (end === -1) return unclosed('a raw string', at);
+      regions.push({ start: at, end: end + close.length, kind: 'string' });
+      at = end + close.length;
+    } else if (char === '"' || (/[sfm]/.test(char) && next === '!' && text[at + 2] === '"' && !afterName(at))) {
+      const start = at;
+      const interpolated = char !== '"';
+      at += interpolated ? 3 : 1;
+      let closed = false;
+      while (at < text.length) {
+        if (text[at] === '\\') at += 2;
+        else if (interpolated && text[at] === '{') return { error: `an interpolated string at line ${lineOf(start)} holds an expression` };
+        else if (text[at] === '"') { at += 1; closed = true; break; } else at += 1;
+      }
+      if (!closed) return unclosed('a string', start);
+      regions.push({ start, end: at, kind: 'string' });
+    } else if (char === "'") {
+      if (afterName(at)) { at += 1; continue; }
+      const literal = CHARACTER_LITERAL.exec(text.slice(at, at + 16));
+      if (!literal) return { error: `a quote at line ${lineOf(at)} is neither part of a name nor a character literal` };
+      regions.push({ start: at, end: at + literal[0].length, kind: 'character literal' });
+      at += literal[0].length;
+    } else if (char === '«') {
+      const end = text.indexOf('»', at);
+      if (end === -1) return unclosed('a quoted name', at);
+      at = end + 1;
+    } else at += 1;
+  }
+  return { regions };
+}
+
+// Why a rename of every FIND in TEXT is refused because a match is not code, or null.
+function renamedData(text, find) {
+  const lexed = leanRegions(text);
+  if (lexed.error) return `the Lean text cannot be read to tell code from strings and comments (${lexed.error}), and a substitution never edits text that was not read`;
+  for (let at = text.indexOf(find); at !== -1; at = text.indexOf(find, at + find.length)) {
+    const region = lexed.regions.find((candidate) => at < candidate.end && at + find.length > candidate.start);
+    if (region) return `a match of ${JSON.stringify(find)} at line ${text.slice(0, at).split('\n').length} lies in a ${region.kind}, and a substitution renames identifiers only, never the text of a string, a character literal or a comment`;
+  }
+  return null;
+}
+
 function applySubstitutions(file, text, substitutions, world = {}) {
   const applied = [];
   const reasons = [];
@@ -2339,6 +2420,11 @@ function applySubstitutions(file, text, substitutions, world = {}) {
     const problems = declarationProblems(current, next);
     if (problems.length > 0) {
       reasons.push(`substitution ${index} is refused in ${file}: ${problems[0]}`);
+      return;
+    }
+    const data = renamedData(current, entry.find);
+    if (data !== null) {
+      reasons.push(`substitution ${index} is refused in ${file}: ${data}`);
       return;
     }
     applied.push({ index, file, find: entry.find, replace: entry.replace, count: entry.count, reason: entry.reason, beforeSha256: sha256(current), afterSha256: sha256(next) });
