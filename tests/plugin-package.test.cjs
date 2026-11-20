@@ -171,7 +171,8 @@ describe('published FVS plugin package', () => {
   it('contains only plugin-root paths and no mutable npm-install updater', () => {
     for (const relative of filesUnder(PLUGIN_ROOT)) {
       if (relative.endsWith('.png')) continue;
-      const raw = fs.readFileSync(path.join(PLUGIN_ROOT, relative), 'utf8');
+      // A path to the user's own settings file is a file of the user, not installed FVS content, and stays as written.
+      const raw = fs.readFileSync(path.join(PLUGIN_ROOT, relative), 'utf8').replace(/~\/\.claude\/settings(\.local)?\.json/g, '');
       assert.ok(!raw.includes('~/.claude/'), `${relative} contains a home Claude path`);
       assert.ok(!raw.includes('$HOME/.claude/'), `${relative} contains a HOME Claude path`);
       assert.ok(!raw.includes('./.claude/'), `${relative} contains a project Claude path`);
@@ -189,6 +190,26 @@ describe('published FVS plugin package', () => {
       assert.ok(!fs.readFileSync(path.join(PLUGIN_ROOT, relative), 'utf8').includes('npx fv-skills-baif'),
         `${relative} points marketplace users at the npm installer`);
     }
+  });
+
+  it('keeps a path to the user\'s own Claude Code settings as written and translates only installed FVS paths', () => {
+    const { portablePluginPaths, portablePiPaths } = require('../scripts/build-plugin.cjs');
+    const text = 'see ~/.claude/settings.json, $HOME/.claude/settings.local.json, ~/.claude/fv-skills/a.md and $HOME/.claude/scripts/b.mjs';
+    assert.equal(portablePluginPaths(text), 'see ~/.claude/settings.json, $HOME/.claude/settings.local.json, ${CLAUDE_PLUGIN_ROOT}/fv-skills/a.md and ${CLAUDE_PLUGIN_ROOT}/scripts/b.mjs');
+    assert.equal(portablePiPaths(text), 'see ~/.claude/settings.json, $HOME/.claude/settings.local.json, ../../../fv-skills/a.md and ../../../scripts/b.mjs');
+    // The plugin copies that explain where the user's own settings live still say so.
+    const page = fs.readFileSync(path.join(PLUGIN_ROOT, 'fv-skills', 'references', 'auto-permissions.md'), 'utf8');
+    assert.match(page, /`~\/\.claude\/settings\.json`/, 'the permissions page names the user settings file');
+    // No generated copy, in the plugin or the Pi package, points a reader into the package folder for it.
+    for (const root of [PLUGIN_ROOT, path.join(ROOT, 'pi')]) {
+      for (const relative of filesUnder(root)) {
+        if (relative.endsWith('.png')) continue;
+        const raw = fs.readFileSync(path.join(root, relative), 'utf8');
+        assert.doesNotMatch(raw, /(?:CLAUDE_PLUGIN_ROOT\}|\.\.\/\.\.\/\.\.)\/settings(?:\.local)?\.json/, `${root}/${relative} sends a reader to the package folder for the user's settings`);
+      }
+    }
+    const helper = fs.readFileSync(path.join(PLUGIN_ROOT, 'scripts', 'fvs-auto-permissions.mjs'), 'utf8');
+    assert.match(helper, /your user settings \(~\/\.claude\/settings\.json\)/);
   });
 
   it('documents the BAIF catalog install and update contract for both runtimes', () => {

@@ -38,7 +38,7 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
    own repository and make it the base new workers start from; with AO, set the project's default branch
    to it once it exists on the remote. Push it with the FVS push command,
    `node <FVS scripts folder>/fvs-auto-push.mjs --branch fvs/<name>`, and never with `git push`; the command pushes
-   only a branch under the namespace recorded at init, so name the working branch under it. The spec and proof
+   a branch under the namespace recorded at init and refuses a name outside it, so name the working branch under it. The spec and proof
    pull requests use it as their base unless the agreement says otherwise.
 
    The build must also reach the new files. A Lake library that keeps its default roots compiles no file

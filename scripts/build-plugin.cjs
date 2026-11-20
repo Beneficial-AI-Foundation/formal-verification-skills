@@ -313,20 +313,25 @@ function copyTextFile(source, destination) {
   fs.chmodSync(destination, fs.statSync(source).mode);
 }
 
+// Only the paths of installed FVS content are translated. A path to the user's own Claude Code settings file names a
+// file of the user, not of FVS, so it stays as written: a translated copy would send a reader to the plugin folder.
+const NOT_USER_SETTINGS = '(?!settings(?:\\.local)?\\.json)';
+const claudePath = (prefix) => new RegExp(`${prefix}\\.claude\\/${NOT_USER_SETTINGS}`, 'g');
+
 function portablePluginPaths(content) {
   return content
-    .replace(/\$HOME\/\.claude\//g, '${CLAUDE_PLUGIN_ROOT}/')
-    .replace(/~\/\.claude\//g, '${CLAUDE_PLUGIN_ROOT}/')
+    .replace(claudePath('\\$HOME\\/'), '${CLAUDE_PLUGIN_ROOT}/')
+    .replace(claudePath('~\\/'), '${CLAUDE_PLUGIN_ROOT}/')
     .replace(/[ \t]+$/gm, '');
 }
 
 function portablePiPaths(content) {
   return content
-    .replace(/@\$HOME\/\.claude\//g, '@../../../')
-    .replace(/@~\/\.claude\//g, '@../../../')
-    .replace(/\$HOME\/\.claude\//g, '../../../')
-    .replace(/~\/\.claude\//g, '../../../')
-    .replace(/\.\/\.claude\//g, '../../../')
+    .replace(claudePath('@\\$HOME\\/'), '@../../../')
+    .replace(claudePath('@~\\/'), '@../../../')
+    .replace(claudePath('\\$HOME\\/'), '../../../')
+    .replace(claudePath('~\\/'), '../../../')
+    .replace(claudePath('\\.\\/'), '../../../')
     .replace(/[ \t]+$/gm, '');
 }
 

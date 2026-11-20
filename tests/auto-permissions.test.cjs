@@ -5,7 +5,7 @@
 // file keeps every key and rule it already had. Each probe must also be matched by the rule written for its
 // own step, or the check would prove nothing about the run.
 
-const { describe, it, before, beforeEach } = require('node:test');
+const { describe, it, before, beforeEach, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -26,27 +26,31 @@ const PLACEHOLDER_DIR = '/PATH/TO/FVS/scripts';
 const PLAIN_SCRIPTS = /^\/[A-Za-z0-9._/-]+$/.test(path.dirname(PUSH_SCRIPT));
 const pushSkip = PLAIN_SCRIPTS ? false : 'the checkout path has characters that a rule cannot spell';
 
+// The checks read git's configuration, so the tests do not read the developer's own. The helper drops GIT_CONFIG_GLOBAL,
+// GIT_CONFIG_SYSTEM and GIT_CONFIG_NOSYSTEM from every git call, so they cannot isolate it; git is pointed at an empty
+// home instead. The system configuration cannot be isolated this way, and no test depends on it.
+const GIT_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-perm-home-'));
+const withGitHome = (env = process.env) => ({ ...env, HOME: GIT_HOME, XDG_CONFIG_HOME: path.join(GIT_HOME, '.config') });
+
 let lib;
 let pushLib;
 before(async () => {
-  // The checks read git's configuration, so the tests do not read the developer's own.
-  process.env.GIT_CONFIG_GLOBAL = os.devNull;
-  process.env.GIT_CONFIG_NOSYSTEM = '1';
   lib = await import(pathToFileURL(SCRIPT).href);
   pushLib = await import(pathToFileURL(PUSH_SCRIPT).href);
 });
+after(() => { fs.rmSync(GIT_HOME, { recursive: true, force: true }); });
 
 let project;
 beforeEach(() => {
   project = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-perm-'));
-  const git = (...args) => assert.equal(spawnSync('git', ['-C', project, ...args], { encoding: 'utf8' }).status, 0, args.join(' '));
+  const git = (...args) => assert.equal(spawnSync('git', ['-C', project, ...args], { encoding: 'utf8', env: withGitHome() }).status, 0, args.join(' '));
   git('init', '-q');
   git('remote', 'add', 'origin', `git@github.com:${REPO}.git`);
 });
 
 const base = (...extra) => ['--project-root', project, '--repo', REPO, ...extra];
 function run(command, args, env) {
-  const result = spawnSync(process.execPath, [SCRIPT, command, ...args], { encoding: 'utf8', ...(env ? { env } : {}) });
+  const result = spawnSync(process.execPath, [SCRIPT, command, ...args], { encoding: 'utf8', env: withGitHome(env) });
   let json = null;
   try { json = JSON.parse(result.stdout); } catch { /* usage text */ }
   return { status: result.status, json, stderr: result.stderr };
@@ -407,6 +411,63 @@ describe('write-allowlist for Claude Code', () => {
 
 });
 
+// The helper's own git calls (where a settings file stands in git, and whether this is the main checkout) run with the
+// same cleaned environment and the repository identity that the push command uses. An inherited GIT_DIR must not decide them.
+describe('the helper\'s own git calls', () => {
+  const identity = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  const gitIn = (dir, ...args) => spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8', env: withGitHome({ ...process.env, ...identity }) });
+  const linked = () => {
+    assert.equal(gitIn(project, 'commit', '--allow-empty', '-q', '-m', 'one').status, 0);
+    const worktree = path.join(path.dirname(project), `${path.basename(project)}-linked`);
+    assert.equal(gitIn(project, 'worktree', 'add', '-q', '-b', 'linked', worktree).status, 0);
+    return fs.realpathSync(worktree);
+  };
+  const local = (root, env) => run('write-allowlist', ['--project-root', root, '--repo', REPO, '--runtime', 'claude', '--steps', 'worker-message', '--target', 'local'], env);
+  const otherRepository = () => {
+    const other = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-perm-other-'));
+    assert.equal(gitIn(other, 'init', '-q').status, 0);
+    return other;
+  };
+
+  it('refuses the local settings file in a linked worktree, with or without an inherited GIT_DIR', () => {
+    const worktree = linked();
+    assert.equal(local(worktree).json.code, 'local-needs-main-checkout');
+    const inherited = { ...process.env, GIT_DIR: path.join(fs.realpathSync(project), '.git') };
+    // The row bites: with GIT_DIR set, plain git gives the same answer to both questions in the worktree, which is what
+    // let the earlier check treat the worktree as the main checkout.
+    const asked = (flag) => spawnSync('git', ['-C', worktree, 'rev-parse', '--path-format=absolute', flag], { encoding: 'utf8', env: withGitHome(inherited) }).stdout.trim();
+    assert.equal(asked('--git-dir'), asked('--git-common-dir'), 'an inherited GIT_DIR makes the worktree look like the main checkout');
+    const out = local(worktree, inherited);
+    assert.equal(out.status, 1, JSON.stringify(out.json));
+    assert.equal(out.json.code, 'local-needs-main-checkout');
+    assert.equal(fs.existsSync(path.join(worktree, '.claude', 'settings.local.json')), false, 'nothing was written in the worktree');
+  });
+
+  it('still accepts the main checkout when an inherited GIT_DIR names another repository', () => {
+    const other = otherRepository();
+    const out = local(fs.realpathSync(project), { ...process.env, GIT_DIR: path.join(other, '.git') });
+    assert.equal(out.json.code, 'confirmation-required', JSON.stringify(out.json));
+    fs.rmSync(other, { recursive: true, force: true });
+  });
+
+  it('reports where the settings file stands in the project\'s own repository when GIT_DIR names another one', () => {
+    const other = otherRepository();
+    fs.appendFileSync(path.join(other, '.git', 'info', 'exclude'), '.claude/settings.json\n');
+    const inherited = { ...process.env, GIT_DIR: path.join(other, '.git') };
+    const plain = spawnSync('git', ['-C', project, 'check-ignore', '-q', '.claude/settings.json'], { env: withGitHome(inherited) });
+    assert.equal(plain.status, 0, 'the row bites: with GIT_DIR set, plain git reads the other repository\'s exclude file');
+    const preview = run('write-allowlist', base('--runtime', 'claude', '--steps', 'worker-message'), inherited);
+    assert.equal(preview.json.code, 'confirmation-required', JSON.stringify(preview.json));
+    assert.equal(preview.json.gitStatus, 'untracked-not-ignored');
+    fs.rmSync(other, { recursive: true, force: true });
+  });
+
+  it('answers "unknown" and never throws when the repository was not identified, and refuses the local file then', () => {
+    assert.equal(lib.gitStatusOf(null, project, '.claude/settings.json'), 'unknown');
+    assert.throws(() => lib.checkMainCheckout(project, null), (error) => error.code === 'local-needs-main-checkout' && /could not be identified/.test(error.message));
+  });
+});
+
 describe('the recorded destination', () => {
   it('shows what it records and writes nothing before the yes', () => {
     const preview = destination();
@@ -418,7 +479,9 @@ describe('the recorded destination', () => {
       schema: 'fvs/auto-push-destination', schemaVersion: 1, projectRoot: root, commonDir: path.join(root, '.git'),
       url: `git@github.com:${REPO}.git`, host: 'github.com', repo: REPO, prefixes: ['fvs'],
     });
-    assert.match(preview.json.note, /any session of your user account can change it/);
+    assert.match(preview.json.note, /any session of your user account can change it, and so change where the command pushes/);
+    assert.doesNotMatch(preview.json.note, /pushes only/);
+    assert.deepEqual(preview.json.contract, pushLib.CONTRACT);
     assert.equal(fs.existsSync(recordFile()), false);
     assert.equal(destination('--confirm', 'anything').json.code, 'confirmation-required');
     assert.equal(fs.existsSync(recordFile()), false);
@@ -444,7 +507,7 @@ describe('the recorded destination', () => {
     assert.equal(done.record.url, `https://git.example.com/${REPO}.git`);
   });
 
-  it('never replaces a record that differs, and says how to resolve it', () => {
+  it('does not replace a record for another destination, and says how to resolve it', () => {
     recordDestination();
     spawnSync('git', ['-C', project, 'remote', 'set-url', 'origin', `https://github.com/${REPO}.git`]);
     const before = fs.readFileSync(recordFile(), 'utf8');
@@ -462,6 +525,256 @@ describe('the recorded destination', () => {
     assert.equal(unreadable.json.code, 'destination-conflict');
     assert.ok(unreadable.json.problem);
     assert.equal(fs.readFileSync(recordFile(), 'utf8'), '{ not json');
+  });
+
+  // The record file can be edited by hand, or be an older one, and hold a token in its URL. The output of the helper shows the record
+  // when it refuses to replace it or to write a rule for it, and shows neither the token nor the user information.
+  it('a record on disk that holds a token is shown without it, when the helper refuses to replace it or to write a rule for it', { skip: pushSkip }, () => {
+    recordDestination();
+    const record = JSON.parse(fs.readFileSync(recordFile(), 'utf8'));
+    const secret = 'CANARYTOKEN';
+    fs.writeFileSync(recordFile(), JSON.stringify({ ...record, url: `https://acme-bot:${secret}@github.com/${REPO}.git?k=${secret}` }));
+    const conflict = destination();
+    assert.equal(conflict.json.code, 'destination-conflict');
+    assert.equal(conflict.json.existing.url, `https://***@github.com/${REPO}.git?k=***`);
+    const stale = allow('git-push');
+    assert.equal(stale.json.code, 'destination-not-recorded');
+    assert.equal(stale.json.destination.existing.url, `https://***@github.com/${REPO}.git?k=***`);
+    for (const out of [conflict, stale]) assert.ok(!JSON.stringify(out.json).includes(secret), 'the answer holds no token');
+  });
+
+  // The git configuration variables that are set when the user confirms the destination are shown by name with the length of their values, and
+  // the names are what the user trusts: the record keeps each name with a hash of its value then, and no value. A value that
+  // rotates later changes nothing. Another set of names is a replace of the record, which needs its own yes.
+  describe('git configuration variables that are set', () => {
+    const NOTE = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'fvs.note', GIT_CONFIG_VALUE_0: 'note-value-1' };
+    const ROTATED = { ...NOTE, GIT_CONFIG_VALUE_0: 'note-value-2' };
+    const MORE = { ...NOTE, GIT_CONFIG_NOSYSTEM: '1' };
+    const dest = (variables, ...extra) => run('write-destination', base(...extra), { ...process.env, ...variables });
+    const record = (variables) => {
+      const preview = dest(variables);
+      assert.equal(preview.json.code, 'confirmation-required');
+      assert.equal(dest(variables, '--confirm', preview.json.digest).json.code, 'written');
+    };
+    const onDisk = () => JSON.parse(fs.readFileSync(recordFile(), 'utf8'));
+    const shows = (json, text) => JSON.stringify(json).includes(text);
+    // The preview names each variable and gives the length of its value, never the value: a value can be a token.
+    const LENGTHS = { GIT_CONFIG_COUNT: { length: 1 }, GIT_CONFIG_KEY_0: { length: 8 }, GIT_CONFIG_VALUE_0: { length: 12 } };
+
+    it('shows each name with the length of its value and never the value, records a hash, and binds the names and hashes to the digest', () => {
+      const preview = dest(NOTE);
+      assert.equal(preview.json.code, 'confirmation-required');
+      assert.deepEqual(preview.json.gitConfigVariables, LENGTHS, 'the user sees every name that is about to be trusted, and how long its value is');
+      for (const value of ['note-value-1', 'fvs.note']) assert.ok(!shows(preview.json, value), `the preview does not hold the value ${value}`);
+      assert.match(preview.json.gitConfigNote, /only the length of each value/);
+      assert.deepEqual(Object.keys(preview.json.record.trustedGitVariables), ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0']);
+      assert.match(preview.json.gitConfigNote, /Your yes trusts these names/);
+      assert.match(preview.json.gitConfigNote, /keeps each trusted name with whatever value it has when it runs/);
+      assert.match(preview.json.gitConfigNote, /GIT_CONFIG_COUNT and the GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n pairs that it addresses are one unit/);
+      assert.match(preview.json.gitConfigNote, /A variable that is not set when you confirm stays untrusted/);
+      assert.match(preview.json.gitConfigNote, /the way you trust your own git configuration files/);
+      assert.match(preview.json.gitConfigNote, /a hash of each value, not the value/);
+      // A yes is for these names and this destination: another set of names is another digest, another value is not.
+      assert.equal(dest(ROTATED).json.digest, preview.json.digest, 'the digest binds the names, not the value hashes');
+      assert.notEqual(dest({}).json.digest, preview.json.digest);
+      assert.notEqual(dest(MORE).json.digest, preview.json.digest);
+      assert.equal(dest({}, '--confirm', preview.json.digest).json.code, 'confirmation-required');
+      assert.equal(dest(MORE, '--confirm', preview.json.digest).json.code, 'confirmation-required');
+      assert.equal(fs.existsSync(recordFile()), false);
+      const written = dest(NOTE, '--confirm', preview.json.digest);
+      assert.equal(written.json.code, 'written');
+      assert.ok(!shows(written.json, 'note-value-1'), 'no value is printed, not in the preview and not in the result of the write');
+      const text = fs.readFileSync(recordFile(), 'utf8');
+      assert.ok(!text.includes('note-value-1'), 'the file holds no value either');
+      assert.deepEqual(onDisk().trustedGitVariables, preview.json.record.trustedGitVariables);
+      assert.equal(pushLib.recordProblem(onDisk()), null, 'the push command accepts what was written');
+      const again = dest(NOTE);
+      assert.equal(again.json.code, 'unchanged');
+      assert.ok(!shows(again.json, 'note-value-1'), 'nor in the answer for a record that is already there');
+      assert.equal(again.json.gitConfigVariables, undefined);
+    });
+
+    it('the numbered pairs are the count\'s: a pair that the count does not address is not offered, and a count that grew is no difference', () => {
+      const stray = dest({ GIT_CONFIG_KEY_0: 'stray', GIT_CONFIG_VALUE_0: 'stray-value' });
+      assert.deepEqual(stray.json.gitConfigVariables, {}, 'a pair without its count is not offered');
+      assert.ok(!('trustedGitVariables' in stray.json.record));
+      const beyond = dest({ ...NOTE, GIT_CONFIG_KEY_1: 'beyond', GIT_CONFIG_VALUE_1: 'beyond-value' });
+      assert.deepEqual(Object.keys(beyond.json.gitConfigVariables), ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0'], 'a pair beyond the count is not offered');
+      record(NOTE);
+      const before = fs.readFileSync(recordFile(), 'utf8');
+      const grown = { GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'fvs.note', GIT_CONFIG_VALUE_0: 'note-value-1', GIT_CONFIG_KEY_1: 'fvs.more', GIT_CONFIG_VALUE_1: 'more-value' };
+      assert.equal(dest(grown).json.code, 'unchanged', 'the same unit: the count is trusted, its pairs follow it');
+      assert.equal(fs.readFileSync(recordFile(), 'utf8'), before);
+      assert.equal(run('plan', base(), { ...process.env, ...grown }).json.pushDestination.status, 'matches');
+    });
+
+    it('a token that a rule injects into the address is stripped: the preview and the record never hold it, and the digest is the same without it', () => {
+      spawnSync('git', ['-C', project, 'remote', 'set-url', 'origin', `https://github.com/${REPO}.git`]);
+      const rule = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'url.https://user:CANARYTOKEN@github.com/.insteadOf', GIT_CONFIG_VALUE_0: 'https://github.com/' };
+      const control = dest({});
+      assert.equal(control.json.code, 'confirmation-required', 'the control: the same project without the rule gets a preview');
+      const ruled = dest(rule);
+      assert.equal(ruled.json.code, 'confirmation-required', JSON.stringify(ruled.json));
+      assert.equal(ruled.json.record.url, `https://github.com/${REPO}.git`, 'the address is recorded without user information');
+      assert.deepEqual(Object.keys(ruled.json.gitConfigVariables), ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0']);
+      const written = dest(rule, '--confirm', ruled.json.digest);
+      assert.equal(written.json.code, 'written');
+      for (const [what, output] of [['the preview', ruled], ['the write result', written], ['the plan', run('plan', base(), { ...process.env, ...rule })], ['the unchanged answer', dest(rule)]]) {
+        assert.ok(!JSON.stringify(output).includes('CANARYTOKEN') && !output.stderr.includes('CANARYTOKEN'), `${what} does not hold the token`);
+      }
+      assert.ok(!fs.readFileSync(recordFile(), 'utf8').includes('CANARYTOKEN'), 'the record file does not hold it either');
+      assert.equal(onDisk().url, `https://github.com/${REPO}.git`);
+      // The same when the remote itself holds the user information: the destination is host and OWNER/REPO.
+      fs.rmSync(recordFile());
+      spawnSync('git', ['-C', project, 'remote', 'set-url', 'origin', `https://user:CANARYTOKEN@github.com/${REPO}.git`]);
+      const held = dest({});
+      assert.equal(held.json.code, 'confirmation-required', JSON.stringify(held.json));
+      assert.equal(held.json.record.url, `https://github.com/${REPO}.git`);
+      assert.ok(!JSON.stringify(held).includes('CANARYTOKEN') && !held.stderr.includes('CANARYTOKEN'));
+      // A real mismatch is still refused, with a message that does not hold the token either.
+      spawnSync('git', ['-C', project, 'remote', 'set-url', 'origin', 'https://user:CANARYTOKEN@evil.test/Other/proj.git']);
+      const wrong = dest({});
+      assert.equal(wrong.json.code, 'remote-mismatch');
+      assert.ok(!JSON.stringify(wrong).includes('CANARYTOKEN') && !wrong.stderr.includes('CANARYTOKEN'));
+    });
+
+    it('a value that rotated between the preview and the yes does not need a new preview: the record gets the hash of the value it has now', () => {
+      const preview = dest(NOTE);
+      const written = dest(ROTATED, '--confirm', preview.json.digest);
+      assert.equal(written.json.code, 'written', JSON.stringify(written.json));
+      assert.deepEqual(onDisk().trustedGitVariables, dest(ROTATED).json.record.trustedGitVariables);
+      assert.notDeepEqual(onDisk().trustedGitVariables, preview.json.record.trustedGitVariables);
+      assert.equal(dest(ROTATED).json.code, 'unchanged');
+    });
+
+    it('says that none is set when none is, and the record keeps its usual shape', () => {
+      const preview = dest({});
+      assert.deepEqual(preview.json.gitConfigVariables, {});
+      assert.match(preview.json.gitConfigNote, /No git configuration variable is set in this session/);
+      assert.match(preview.json.gitConfigNote, /runs without all of them/);
+      assert.ok(!('trustedGitVariables' in preview.json.record));
+    });
+
+    it('a value that rotated since init changes nothing: the record still matches, nothing is written, and the allowlist goes on', { skip: pushSkip }, () => {
+      record(NOTE);
+      const before = fs.readFileSync(recordFile(), 'utf8');
+      const again = dest(ROTATED);
+      assert.equal(again.json.code, 'unchanged');
+      assert.ok(!shows(again.json, 'note-value'), 'no value is printed');
+      assert.equal(fs.readFileSync(recordFile(), 'utf8'), before, 'nothing is written');
+      assert.equal(run('plan', base(), { ...process.env, ...ROTATED }).json.pushDestination.status, 'matches');
+      const preview = run('write-allowlist', base('--runtime', 'claude', '--steps', 'git-push'), { ...process.env, ...ROTATED });
+      assert.equal(preview.json.code, 'confirmation-required', 'the push rule is not held back by a rotated value');
+      assert.deepEqual(preview.json.push.destination.trustedGitVariables, onDisk().trustedGitVariables, 'it shows the record that is on disk');
+      assert.ok(!shows(preview.json, 'note-value'));
+      // The digest of a rule binds the names of the trusted variables and the destination, not the hashes of their values.
+      const names = JSON.parse(fs.readFileSync(recordFile(), 'utf8'));
+      fs.writeFileSync(recordFile(), JSON.stringify(pushLib.destinationRecord({ ...names, variables: ROTATED }), null, 2) + '\n');
+      assert.notDeepEqual(onDisk().trustedGitVariables, names.trustedGitVariables, 'the row bites: the hashes are not the same');
+      assert.equal(run('write-allowlist', base('--runtime', 'claude', '--steps', 'git-push'), { ...process.env, ...ROTATED }).json.digest, preview.json.digest);
+    });
+
+    it('other names are a replace: the preview shows the old and the new set, and only the yes rewrites the record', () => {
+      record(NOTE);
+      const before = fs.readFileSync(recordFile(), 'utf8');
+      const preview = dest(MORE);
+      assert.equal(preview.json.code, 'confirmation-required', 'not a conflict: the destination is the same');
+      assert.deepEqual(preview.json.replaces, onDisk(), 'the record that would be replaced');
+      assert.deepEqual(preview.json.record.trustedGitVariables && Object.keys(preview.json.record.trustedGitVariables), ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_VALUE_0'], 'the record it would write');
+      assert.deepEqual(preview.json.variableChanges, { added: ['GIT_CONFIG_NOSYSTEM'], removed: [], kept: ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0'] });
+      assert.deepEqual(preview.json.gitConfigVariables, { ...LENGTHS, GIT_CONFIG_NOSYSTEM: { length: 1 } }, 'the names of the new set, with the length of each value');
+      assert.ok(!shows(preview.json, 'note-value-1') && !shows(preview.json, 'fvs.note'), 'no value, in the old record, the new record or the notes');
+      assert.match(preview.json.replaceNote, /holds another set of trusted git variables/);
+      assert.match(preview.json.replaceNote, /the destination stays the same/);
+      assert.equal(fs.readFileSync(recordFile(), 'utf8'), before, 'nothing is written before the yes');
+      assert.equal(dest(MORE, '--confirm', 'anything').json.code, 'confirmation-required');
+      assert.equal(fs.readFileSync(recordFile(), 'utf8'), before);
+      const done = dest(MORE, '--confirm', preview.json.digest);
+      assert.equal(done.json.code, 'replaced');
+      assert.ok(!shows(done.json, 'note-value') && !shows(done.json, '"1"'), 'the result prints no value');
+      assert.deepEqual(onDisk().trustedGitVariables && Object.keys(onDisk().trustedGitVariables), ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_VALUE_0']);
+      assert.equal(pushLib.recordProblem(onDisk()), null);
+      assert.deepEqual(fs.readdirSync(path.join(project, '.git')).filter((name) => name.includes('.tmp-')), [], 'no temporary file is left');
+      assert.equal(dest(MORE).json.code, 'unchanged');
+    });
+
+    it('trusting fewer names is a replace too, down to none, which gives the record its usual shape', () => {
+      record(MORE);
+      const preview = dest(NOTE);
+      assert.deepEqual(preview.json.variableChanges, { added: [], removed: ['GIT_CONFIG_NOSYSTEM'], kept: ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0'] });
+      assert.equal(dest(NOTE, '--confirm', preview.json.digest).json.code, 'replaced');
+      const none = dest({});
+      assert.deepEqual(none.json.variableChanges, { added: [], removed: ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0'], kept: [] });
+      assert.equal(dest({}, '--confirm', none.json.digest).json.code, 'replaced');
+      assert.ok(!('trustedGitVariables' in onDisk()));
+      assert.equal(dest({}).json.code, 'unchanged');
+    });
+
+    it('the digest of a replace binds the record that is replaced: a record that changed after the preview needs a new yes', () => {
+      record(NOTE);
+      const preview = dest(MORE);
+      const other = { ...NOTE, GIT_CONFIG_PARAMETERS: "'fvs.other=1'" };
+      const rewritten = pushLib.destinationRecord({ ...onDisk(), variables: other });
+      fs.writeFileSync(recordFile(), JSON.stringify(rewritten, null, 2) + '\n');
+      const refused = dest(MORE, '--confirm', preview.json.digest);
+      assert.equal(refused.json.code, 'confirmation-required', 'the old digest no longer fits');
+      assert.deepEqual(onDisk(), rewritten, 'and nothing was written over it');
+      const fresh = dest(MORE);
+      assert.notEqual(fresh.json.digest, preview.json.digest);
+      assert.deepEqual(fresh.json.replaces, rewritten);
+      assert.equal(dest(MORE, '--confirm', fresh.json.digest).json.code, 'replaced');
+    });
+
+    it('another destination is still a conflict that is never replaced, whatever the variables are', () => {
+      record(NOTE);
+      spawnSync('git', ['-C', project, 'remote', 'set-url', 'origin', `https://github.com/${REPO}.git`]);
+      const before = fs.readFileSync(recordFile(), 'utf8');
+      for (const [variables, extra] of [[NOTE, []], [MORE, []], [MORE, ['--confirm', 'anything']]]) {
+        const refused = dest(variables, ...extra);
+        assert.equal(refused.json.code, 'destination-conflict');
+        assert.match(refused.json.message, /never replaces it.*delete it yourself/);
+        assert.equal(refused.json.replaces, undefined, 'no replace is offered');
+      }
+      assert.match(dest(MORE).json.message, /The git variables to trust differ \(GIT_CONFIG_NOSYSTEM\)/);
+      assert.equal(fs.readFileSync(recordFile(), 'utf8'), before);
+    });
+
+    it('a record that cannot be read or is not valid is a conflict, not a replace', () => {
+      record(NOTE);
+      const good = onDisk();
+      // JSON that is not an object (null, a list, a string) must be a conflict too, not a crash of the helper.
+      for (const text of ['{ not json', JSON.stringify({ schema: 'something-else' }), 'null', '[]', '"x"', '7']) {
+        fs.writeFileSync(recordFile(), text);
+        const refused = dest(MORE);
+        assert.equal(refused.json.code, 'destination-conflict', text);
+        assert.equal(fs.readFileSync(recordFile(), 'utf8'), text);
+        assert.ok(['differs', 'unreadable'].includes(run('plan', base(), { ...process.env, ...MORE }).json.pushDestination.status), text);
+        assert.equal(run('write-allowlist', base('--runtime', 'claude', '--steps', 'git-push'), { ...process.env, ...MORE }).json.code, 'destination-not-recorded', text);
+      }
+      // A record with the right destination and a broken variable map is not replaced either.
+      const broken = { ...good, trustedGitVariables: { GIT_CONFIG_COUNT: 'not-a-hash' } };
+      fs.writeFileSync(recordFile(), JSON.stringify(broken));
+      assert.equal(dest(MORE).json.code, 'destination-conflict');
+    });
+
+    it('a push selection in write-allowlist says which names differ from the record, and goes on when only a value differs', { skip: pushSkip }, () => {
+      record(NOTE);
+      const stale = run('write-allowlist', base('--runtime', 'claude', '--steps', 'git-push'), { ...process.env, ...MORE });
+      assert.equal(stale.json.code, 'destination-not-recorded');
+      assert.equal(stale.json.destination.status, 'differs');
+      assert.match(stale.json.message, /the git variables to trust differ: GIT_CONFIG_NOSYSTEM/);
+      assert.ok(!shows(stale.json, 'note-value'), 'no value');
+      assert.equal(run('write-allowlist', base('--runtime', 'claude', '--steps', 'git-push'), { ...process.env, ...ROTATED }).json.code, 'confirmation-required');
+    });
+
+    it('plan reports the names that differ from an existing record, and a rotated value is no difference', () => {
+      record(NOTE);
+      const planned = run('plan', base(), { ...process.env, ...MORE }).json;
+      assert.equal(planned.pushDestination.status, 'differs');
+      assert.deepEqual(planned.pushDestination.changedVariables, ['GIT_CONFIG_NOSYSTEM']);
+      assert.equal(run('plan', base(), { ...process.env, ...ROTATED }).json.pushDestination.status, 'matches');
+      assert.equal(run('plan', base(), { ...process.env, ...NOTE }).json.pushDestination.status, 'matches');
+    });
   });
 
   it('is written from a linked worktree into the shared git directory the main checkout uses', () => {
@@ -511,6 +824,7 @@ describe('the push command rule for Claude Code', { skip: pushSkip }, () => {
     assert.equal(preview.json.push.destination.file, recordFile());
     assert.deepEqual(preview.json.push.destination.prefixes, ['fvs']);
     assert.equal(preview.json.hook, undefined, 'there is no hook');
+    assert.deepEqual(preview.json.push.contract, pushLib.CONTRACT, 'the preview shows what the command is, checks, hardens and trusts');
     assert.doesNotMatch(JSON.stringify(preview.json), /fails safe|asks as usual/);
     assert.equal(fs.existsSync(path.join(project, '.claude')), false);
     assert.equal(allow('git-push', '--confirm', 'anything').json.code, 'confirmation-required');
@@ -539,7 +853,13 @@ describe('the push command rule for Claude Code', { skip: pushSkip }, () => {
     const notes = done.json.notes.join(' ');
     assert.match(notes, /Branch protection on the project fork is still recommended/);
     assert.match(notes, /A plain git push is not covered by this rule: your other rules and permission mode decide it, as before/);
-    assert.match(notes, /Git hooks of the repository, credential helpers and a URL rewrite that changes after the command's check still apply/);
+    // The note carries the same contract the page prints: what the command checks, what it hardens, and what it trusts.
+    assert.ok(notes.includes(pushLib.contractText()), 'the write note carries the contract text');
+    assert.match(notes, /not a security boundary/);
+    assert.match(notes, /The push is made with --no-verify, which skips the pre-push hook/);
+    assert.match(notes, /Credential helpers\./);
+    assert.match(notes, /a rule that is added or changed after the command checks and before it connects is not caught/);
+    assert.doesNotMatch(notes, /still apply|pushes only|runs only in the repository|refuses anything else(?! on its command line)/);
     assert.match(done.json.verification, /Claude Code has no offline rule evaluator/);
     const before = fs.readFileSync(settingsFile(), 'utf8');
     assert.equal(allow('git-push').json.code, 'unchanged');
@@ -669,8 +989,11 @@ describe('write-allowlist for Claude Code: files and targets', () => {
     const linkedPreview = allow('worker-message').json;
     assert.equal(linkedPreview.viaLink, true);
     assert.equal(linkedPreview.resolvedPath, path.join(fs.realpathSync(shared), 'settings.json'), 'the real path is shown before the write');
+    // Git refuses a path beyond a symbolic link ("pathspec is beyond a symbolic link"), so it cannot say where the file stands.
+    assert.equal(linkedPreview.gitStatus, 'unknown');
     const done = confirmed('worker-message');
     assert.equal(done.json.code, 'written');
+    assert.equal(done.json.gitStatus, 'unknown');
     assert.equal(done.json.realPath, path.join(fs.realpathSync(shared), 'settings.json'));
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(shared, 'settings.json'), 'utf8')).permissions.allow, ['Bash(ao send *)']);
   });
@@ -860,7 +1183,7 @@ describe('write-allowlist for Codex', () => {
     const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-perm-bin-'));
     fs.symlinkSync(realGit, path.join(bin, 'git'));
     if (script) fs.writeFileSync(path.join(bin, 'codex'), `#!/bin/sh\n${script}\n`, { mode: 0o755 });
-    return { PATH: bin, HOME: process.env.HOME, GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: '1' };
+    return { PATH: bin };
   }
   const args = (...extra) => base('--runtime', 'codex', '--steps', 'worker-message,gh-read', ...extra);
 
@@ -922,6 +1245,21 @@ describe('write-allowlist for Codex', () => {
       const out = spawnSync('codex', ['execpolicy', 'check', '--rules', file, ...command.split(' ')], { encoding: 'utf8' });
       assert.deepEqual(JSON.parse(out.stdout).matchedRules, [], command);
     }
+  });
+
+  it('the Codex preview shows the same push command contract as the Claude preview', { skip: pushSkip }, () => {
+    recordDestination();
+    const preview = codexAllow('git-push');
+    assert.equal(preview.json.code, 'confirmation-required');
+    assert.deepEqual(preview.json.push.contract, pushLib.CONTRACT);
+    assert.equal(preview.json.push.command, `${PROGRAM} --branch fvs/<name>`);
+    assert.deepEqual(preview.json.push.contract, allow('git-push').json.push.contract);
+  });
+
+  it('the plan carries the contract for the explanation before any write', { skip: pushSkip }, () => {
+    const out = run('plan', base()).json;
+    assert.deepEqual(out.pushContract, pushLib.CONTRACT);
+    assert.equal(out.pushContract.kind, 'cooperative, with hardening, and not a security boundary');
   });
 
   it('Codex itself accepts the push command rule, matches only that program with --branch, and says what it cannot exclude', { skip: (!codexOnPath && 'codex CLI not on PATH') || pushSkip }, () => {
@@ -1010,46 +1348,6 @@ describe('push allow rules that are already in the settings', () => {
 
   it('does not stop a Codex write: Claude settings are not what Codex reads', () => {
     writeSettings({ permissions: { allow: [LEGACY] } });
-    assert.equal(run('write-allowlist', base('--runtime', 'codex', '--steps', 'worker-message')).json.code, 'confirmation-required');
-  });
-});
-
-describe('a push gate hook from an earlier build', () => {
-  const OLD = { matcher: 'Bash', hooks: [{ type: 'command', command: 'node "/old/place/fvs-auto-push-gate.mjs" --repo Acme/proj --host github.com --remote origin --prefix fvs', timeout: 15 }] };
-  const OTHER = { matcher: 'Bash', hooks: [{ type: 'command', command: 'node other-hook.mjs' }] };
-
-  it('is listed by plan and by every Claude write, with how to clean it up, and is kept as it was', () => {
-    const original = { hooks: { PreToolUse: [OTHER, OLD, 'not an entry', null] }, permissions: { allow: ['Bash(ls *)'] } };
-    writeSettings(original);
-    const found = [{ file: '.claude/settings.json', resolvedPath: path.join(fs.realpathSync(project), '.claude', 'settings.json'), commands: [OLD.hooks[0].command] }];
-    const planned = run('plan', base()).json;
-    assert.deepEqual(planned.legacyPushGateHooks, found);
-    assert.match(planned.legacyPushGateHooksNote, /Delete the listed entries from hooks\.PreToolUse yourself; every other hook stays/);
-    const preview = allow('worker-message').json;
-    assert.equal(preview.code, 'confirmation-required');
-    assert.deepEqual(preview.legacyPushGateHooks, found);
-    const done = confirmed('worker-message');
-    assert.equal(done.json.code, 'written');
-    assert.deepEqual(done.json.legacyPushGateHooks, found);
-    assert.deepEqual(readSettings().hooks, original.hooks, 'the entry is kept: FVS deletes nothing');
-    assert.deepEqual(readSettings().permissions.allow, ['Bash(ls *)', 'Bash(ao send *)']);
-  });
-
-  it('reads both project files, and lists nothing for a file without such an entry', () => {
-    writeSettings({ hooks: { PreToolUse: [OTHER] } });
-    writeSettings({ hooks: { PreToolUse: [OLD] } }, 'settings.local.json');
-    assert.deepEqual(run('plan', base()).json.legacyPushGateHooks.map((one) => one.file), ['.claude/settings.local.json']);
-    writeSettings({ hooks: { PreToolUse: [OTHER] } }, 'settings.local.json');
-    assert.equal(run('plan', base()).json.legacyPushGateHooks, undefined);
-    writeSettings({ hooks: 'x' });
-    writeSettings('{ not json', 'settings.local.json');
-    assert.equal(run('plan', base()).json.legacyPushGateHooks, undefined);
-    assert.deepEqual(lib.legacyPushGateHooks(fs.realpathSync(project)), []);
-  });
-
-  it('does not stop a write: it is listed, not refused', () => {
-    writeSettings({ hooks: { PreToolUse: [OLD] } });
-    assert.equal(allow('worker-message').json.code, 'confirmation-required');
     assert.equal(run('write-allowlist', base('--runtime', 'codex', '--steps', 'worker-message')).json.code, 'confirmation-required');
   });
 });
@@ -1282,23 +1580,176 @@ describe('the permissions page', () => {
     const text = page().replace(/\s+/g, ' ');
     assert.match(text, /Branch protection on the project fork is still recommended/);
     assert.match(text, /A rule is matched against the command text, and a `\*` in it also matches the rest of that text, so the rule cannot check the arguments\. The command checks them itself/);
-    assert.match(text, /Git hooks of the repository still run, as for any push/);
-    assert.match(text, /Credential helpers, ssh and proxy settings come from your own git configuration and environment/);
-    assert.match(text, /A rewrite rule that you add after that check and before the connection is a race the command cannot close/);
-    assert.match(text, /Any session of your user account can change it/);
     assert.match(text, /A worker that runs a plain `git push` is not covered by this rule: your other rules and permission mode decide that push, as before/);
     assert.match(text, /On Codex, a rule matches the start of a command: `node`, the path and `--branch`\. It cannot tell `fvs\/work` from `main`, and the command refuses a name outside the recorded namespaces/);
     assert.match(text, /Codex splits a command run through a shell wrapper such as `bash -lc`.*That was not observed here/);
-    assert.match(text, /It leaves no `origin\/<name>` ref and sets no upstream: run `git fetch` to see the branch/);
+    assert.match(text, /leaves no `origin\/<name>` ref and sets no upstream: run `git fetch` to see the branch/);
     assert.match(text, /In the tests, none of these settings changed where the push went or what it sent: `remote\.<name>\.push`.*`submodule\.recurse`/);
     assert.match(text, /A worker that gets a refusal stops and reports its `code` and `message`\. It does not fall back to `git push`/);
     assert.match(text, /An FVS update or reinstall that moves the script leaves both stale: run init again to append the rule for the new path, and delete the old rule yourself/);
-    assert.match(text, /Any session of your user account can edit the script file at the allowed path, as it can edit the record/);
-    assert.match(text, /such as a command substitution \(`\$\(\.\.\.\)`\) or a redirect \(`> file`\) after the branch name, which its documentation does not say/);
+    assert.match(text, /whether Claude Code screens a command substitution \(`\$\(\.\.\.\)`\) after the branch name against an allow rule, which its documentation does not say, or applies its documented checks of redirect targets and of each part of a compound command to the push rule/);
+    // What the runtimes' documentation says, with the versions it was read for, and the limit that none of it was observed.
+    assert.match(text, /a compound command is split at `&&`, `\|\|`, `;`, `\|`, `\|&`, `&` and newlines and that every part must be allowed, and that a redirect target is checked against your file rules/);
+    assert.match(text, /Codex splits a command run through a shell wrapper such as `bash -lc` into its simple commands only when the script is a plain chain joined by `&&`, `\|\|`, `;` or `\|`\. A script with a redirect, a substitution, a variable assignment or a wildcard is not split/);
+    assert.match(text, /Claude Code 2\.1\.329 and codex-cli 0\.170\.0/);
+    assert.match(text, /Do not make the first real push the test of the rule/);
     // The page names a git push allow rule only as something to delete, never inside a block that shows what FVS writes.
     const blocks = [...page().matchAll(/```[a-z]*\n([\s\S]*?)```/g)].map((match) => match[1]);
     assert.ok(blocks.length >= 4);
     for (const code of blocks) assert.ok(!/Bash\(git push/.test(code), 'no block of the page shows a git push rule');
+  });
+
+  it('states what the push command checks, sends and records, with the repository, option and receipt rules', () => {
+    const text = page().replace(/\s+/g, ' ');
+    assert.match(text, /A `core\.worktree` setting that points a repository at the files of another one is refused with `worktree-mismatch`/);
+    assert.match(text, /a copy of the repository and another repository do not\. A link that leads into the same repository is that repository/);
+    assert.match(text, /`-c core\.abbrev=no`, `-c push\.pushOption=`, `-c core\.hooksPath=\/dev\/null` and `--no-verify`, and no other option/);
+    assert.match(text, /`push\.pushOption=` empties the list of push options from every git configuration/);
+    assert.match(text, /`--no-verify` skips the pre-push hook, including one that is set in git configuration with `hook\.<name>\.event`, which `core\.hooksPath` does not turn off\. `core\.hooksPath=\/dev\/null` makes git find no hook in any hooks folder/);
+    assert.doesNotMatch(text, /makes git find no hook, wherever the hooks folder is set/);
+    assert.match(text, /Every git call that the command makes \(the look for the repository, the checks, the address checks and the push\) runs with the same environment, so the checks see what the push sees\. It is without the variables listed under "What it does for this push"/);
+    assert.match(text, /The record names only object ids that the push itself reported/);
+    assert.match(text, /so `newRemoteId` is null for them\. `localTipBeforePush` is the tip that the command read just before the push/);
+    assert.match(text, /treat that as a later observation/);
+    assert.match(text, /The command then reports `push-outcome-unknown` and does not say that nothing changed\. Read the destination before you retry/);
+    // The two refusal codes that a worker may now see are named on the page.
+    for (const code of ['worktree-mismatch', 'push-outcome-unknown']) assert.ok(text.includes(`\`${code}\``), code);
+    // The claim is limited to the calls that act on the repository, and the hook environment is stated.
+    assert.match(text, /the branch checks, the address checks, the read of the branch tip and the push itself each name the git directory and the work tree that were found/);
+    assert.doesNotMatch(text, /every git call names the git directory/);
+    // A variable that init did not record is dropped, not refused. A recorded one is refused when it changed, with its own code.
+    assert.doesNotMatch(text, /are not set\./);
+    assert.doesNotMatch(text, /git-environment/);
+    const init = fs.readFileSync(path.join(ROOT, 'fv-skills', 'workflows', 'auto-init.md'), 'utf8').replace(/\s+/g, ' ');
+    assert.match(init, /`not-a-repository` or `worktree-mismatch`: the project root is not a git work tree, or a `core\.worktree` setting/);
+    assert.doesNotMatch(init, /git-environment/);
+  });
+
+  it('names no push gate hook anywhere in what ships: no release ever shipped one, so nothing is listed for cleanup', () => {
+    const old = ['fvs-auto-push', 'gate'].join('-');
+    const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) return ['node_modules', '.git'].includes(entry.name) ? [] : walk(full);
+      return /\.(md|mjs|cjs|js|json|toml)$/.test(entry.name) ? [full] : [];
+    });
+    const roots = ['fv-skills', 'commands', 'scripts', 'bin', 'agents', 'plugins', 'pi'].map((name) => path.join(ROOT, name)).filter((dir) => fs.existsSync(dir));
+    for (const file of [path.join(ROOT, 'README.md'), ...roots.flatMap(walk)]) {
+      assert.ok(!fs.readFileSync(file, 'utf8').includes(old), `${path.relative(ROOT, file)} names the old push gate script`);
+    }
+    assert.equal(fs.existsSync(path.join(ROOT, 'scripts', `${old}.mjs`)), false);
+    // Legacy push allow rules are still detected and listed.
+    assert.equal(typeof lib.legacyPushRules, 'function');
+    assert.equal(lib.legacyPushGateHooks, undefined);
+  });
+
+  // The surfaces that tell a person what the push command is. Each must say it plainly, with its limits.
+  const CONTRACT_SURFACES = ['fv-skills/references/auto-permissions.md', 'fv-skills/workflows/auto-init.md', 'commands/fvs/auto-init.md',
+    'fv-skills/references/auto-setup.md', 'README.md', 'fv-skills/references/auto-execution.md', 'fv-skills/workflows/auto-top-specs.md'];
+  const flat = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8').replace(/`/g, '').replace(/\s+/g, ' ');
+
+  it('prints the push command contract on the page exactly as the script defines it', () => {
+    const text = flat(path.relative(ROOT, PAGE));
+    assert.match(text, /### What the command is[\s\S]*### What the command refuses/);
+    assert.ok(text.includes(`The push command is ${pushLib.CONTRACT.kind}.`), 'the page states what kind of guard it is');
+    for (const list of ['checks', 'hardening', 'trusts']) {
+      assert.ok(pushLib.CONTRACT[list].length > 0, list);
+      for (const entry of pushLib.CONTRACT[list]) assert.ok(text.includes(entry), `${list}: ${entry}`);
+    }
+    assert.match(text, /It is not a defence against a program that runs as your user/);
+  });
+
+  it('has a short section on unattended runs in a sandbox, in plain words and without anyone\'s own tools', () => {
+    const raw = fs.readFileSync(PAGE, 'utf8');
+    const start = raw.indexOf('## Unattended runs in a sandbox');
+    assert.ok(start > raw.indexOf('## What FVS never allows'), 'it follows the list of what FVS never allows');
+    const end = raw.indexOf('\n## ', start + 1) + 1;
+    assert.equal(raw.indexOf('## Where the file goes'), end, 'it ends where "Where the file goes" starts');
+    const section = raw.slice(start, end).replace(/`/g, '').replace(/\s+/g, ' ');
+    assert.ok(section.split(' ').length < 400, 'it stays short');
+    assert.match(section, /skip-permissions/);
+    assert.match(section, /only inside an isolated sandbox or on a cloud machine/);
+    assert.match(section, /Never use it on a personal machine with broad access/);
+    assert.match(section, /nothing prompts, so the rules in "What FVS never allows" \(no GitHub comments or reviews, no merges, no pushes to an upstream\) are no longer enforced by a prompt/);
+    assert.match(section, /A token limited to the project's fork/);
+    assert.match(section, /A posting guard in the sandbox/);
+    assert.match(section, /gh wrapper ahead of the real gh on PATH that refuses the commands that comment on, review, mark ready or merge a pull request/);
+    assert.match(section, /The wrapper only catches mistakes: a program in the sandbox can call the API directly\. The token limits where a comment can land, not whether one is posted/);
+    assert.doesNotMatch(section, /the limit that holds is the scope of the token/i);
+    assert.match(section, /Branch protection on the fork/);
+    // The baseline protection, and the approving review only as an option that is not enforced on administrators.
+    assert.match(section, /require a pull request and forbid force pushes and branch deletion, and apply the rule to administrators too: GitHub exempts them by default, and an agent that works through the owner's own account acts as one\. A direct push is then stopped\. A merge through a pull request is not: the posting guard refuses it, and only the owner merges/);
+    assert.match(section, /A team with a second reviewer can also require an approving review, but the owner then needs that reviewer to merge their own pull requests/);
+    assert.doesNotMatch(section, /approving review from someone else|not enforced on administrators|so that a direct push to them is stopped|binds the push/i);
+    // The check and the allowlist can be skipped; the push command and init's destination step cannot.
+    assert.match(section, /In a skip-permissions sandbox only the permission check and the allowlist are optional; the push command and init's destination step are not\. Workers push with the push command and never with git push, because it pushes to the destination recorded at init and records the result\. With no destination recorded, a worker's first push is refused and the worker stops; init records it in a separate step, also when you skip the check/);
+    assert.doesNotMatch(section, /push command (is|are) optional/i);
+    assert.match(section, /cooperative guard and not a security boundary/);
+    assert.doesNotMatch(section, /orca|docker|\bAO\b|Orchestrator|\brtk\b/i, 'a stock user is the baseline: no one\'s own tools are named');
+    assert.doesNotMatch(section, /pushes only|asks as usual|fails safe/i);
+    assert.match(raw.split('</overview>')[0].replace(/\s+/g, ' '), /keeps the same safety rules and enforces them by other means: see "Unattended runs in a sandbox"/);
+  });
+
+  it('tells the owner what an unknown git status means', () => {
+    assert.match(flat('fv-skills/workflows/auto-init.md'), /its gitStatus \(a loose or tracked file can end up in a pull request; unknown means git cannot say, as for a file reached through a link\)/);
+  });
+
+  it('lists the limit that is left for later, the untested timeout report, and no longer lists the helper\'s own git calls as uncleaned', () => {
+    const text = flat(path.relative(ROOT, PAGE));
+    assert.match(text, /### What it does not stop[\s\S]*The report push-outcome-unknown after a timeout of the push has no test\. The cases of a missing result line and of a signal are tested\. Read the destination before you retry in every case[\s\S]*### Where the destination is recorded/);
+    assert.doesNotMatch(text, /Only the git calls of the push command run without the variables/);
+    assert.doesNotMatch(text, /permissions helper makes itself \(the status of a settings file, the check of the main checkout\) are not cleaned/);
+  });
+
+  it('every surface that describes the push command says it is a guard with limits, and none promises more', () => {
+    for (const file of CONTRACT_SURFACES) {
+      const text = flat(file);
+      assert.doesNotMatch(text, /refuses anything else(?! on its command line)|refuses every other|other than the recorded|pushes only|push only|runs only in the repository|cannot redirect|cannot widen/i, file);
+      assert.doesNotMatch(text, /Git hooks of the repository still run|hooks .{0,40}still run/i, file);
+    }
+    // The three places a person is told what the command is name the guard, its hardening and its limits.
+    for (const file of ['fv-skills/workflows/auto-init.md', 'commands/fvs/auto-init.md', 'fv-skills/references/auto-execution.md']) {
+      const text = flat(file);
+      assert.match(text, /cooperative guard/, file);
+      assert.match(text, /not a security boundary/, file);
+    }
+    const init = flat('fv-skills/workflows/auto-init.md');
+    for (const term of ['pushContract', 'does not run repository hooks', 'pre-push checks do not run', 'drops the listed git environment variables', 'ssh and transport wrappers', 'credential helpers', 'URL rewrite rules', 'the record file and FVS itself', 'anything that runs as the owner.s user']) {
+      assert.match(init, new RegExp(term), term);
+    }
+    const brief = flat('fv-skills/references/auto-execution.md');
+    for (const term of ['hooks', 'credential helpers', 'URL rewrite', 'ssh', 'record file', 'runs as your user']) assert.ok(brief.includes(term), `the worker brief names ${term}`);
+    // The brief and the page's list of dropped variables agree: the brief names the kinds, the page lists every name.
+    assert.match(brief, /does not run repository hooks for this push and drops the git variables that move a repository or select its configuration files, except the git configuration variables whose names the owner trusted at init: it keeps those with whatever value they have when it runs, and does not refuse a value that changed/);
+    for (const name of ['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM']) assert.ok(flat('fv-skills/references/auto-permissions.md').includes(name), `the page lists ${name}`);
+  });
+
+  it('tells the owner that the destination step trusts git configuration variables by name, with a confirmed replace, on the page and in the init workflow', () => {
+    const page = flat(path.relative(ROOT, PAGE));
+    assert.match(page, /git finds the repository with the git variables that you trusted at init and no others\. .* the command refuses with not-a-repository and names the variables that it left out, never their values\. To trust them, run the destination step of \/fvs:auto-init again: it replaces the record after your yes\. A trusted name that is not set, or that has another value than at init, is not a refusal/);
+    assert.match(page, /the preview lists each one by name with the length of its value, never the value, because a value can be a token and the preview goes into the model's context and the transcript\. Your yes trusts these names\. The record gains trustedGitVariables: each trusted name with a hash of its value at that moment, so the file never holds a value either/);
+    assert.match(page, /The push command keeps each trusted name with whatever value it has when it runs and drops every other name\. A value that changes later, such as a token that a sandbox sets for each session, is not refused: the receipt marks it changed, and the hash is for that information only\. The digest of your yes covers the names, not the hashes, so a value that rotates between the preview and the yes needs no new preview\. A trusted name that is not set is skipped\. You trust these names the way you trust ~\/\.gitconfig: whatever they hold is used\. A variable that is not set when you confirm stays untrusted, so unset one before init to keep it out/);
+    assert.match(page, /Run the destination step where the workers run, so the names are the ones they have/);
+    assert.match(page, /A sandbox often injects a token into an http or https address, through a url\.<base>\.insteadOf rule or in the address of the remote \(https:\/\/user:token@host\/\.\.\.\)\. Init does not refuse that\. It records the address without the user information, the destination is the host and OWNER\/REPO, and no message, record or receipt shows the user information of an address: a message shows an http address as https:\/\/\*\*\*@host\/\.\.\.\. A rule that only adds plain user information to the recorded address \(no \/, \?, #, \\ or @ in it, which git and curl read as the end of the host\) is allowed at every push, and the push uses it\. So is a rule that changes the recorded address between https, ssh:\/\/ and git@host:OWNER\/REPO on the same host and OWNER\/REPO and the default ports: a common insteadOf setup maps https:\/\/github\.com\/ to git@github\.com:\. Any other rule that applies to the address is refused: one that sends it over another scheme \(file:\/\/, git:\/\/, ext::, fd::, a local path, an unknown transport\) or plain http, or to another host, repository or port\. A record that holds user information is not used either\.[\s\S]*add a rule for https:\/\/github\.com\/ too, hold the token in the address of the remote, or use a credential helper/);
+    assert.match(page, /When exactly one remote of the repository holds an http or https address with user information for the recorded host and OWNER\/REPO \(an origin cloned as https:\/\/x-access-token:token@github\.com\/OWNER\/REPO, as a sandbox often clones\), the push goes to that address, after the same host, repository and rewrite checks, so that the token in your own git configuration keeps working\. A remote with push URLs counts through them only, as in git\. Two different addresses with user information for the destination are refused with remote-ambiguous before anything connects: keep one\./);
+    assert.match(page, /Before git prints anything, the command collects every secret that the push can carry: the user information of the recorded address, of the address that a remote holds, and of each address that a url\.<base>\.insteadOf or pushInsteadOf rule makes of them, whether the rule is allowed or not\. It takes the secret of each of them out of what git prints \(its error output and the result line\) and out of the text of its own refusals, whatever its length, and shows an http address with user information as https:\/\/\*\*\*@host\/\.\.\. everywhere else, so none of them is in any output, log or receipt, also after a failed push: git can print a token that is the user name of an address\. When an address has a user name and a password, the password and the base64 of the pair are the secret, and the user name, a label such as x-access-token or oauth2, stays readable in text\. With no password, or an empty one, the user part is the token and is replaced, and so is a user part next to x-oauth-basic, the fixed password of GitHub's older TOKEN:x-oauth-basic form\. A secret is replaced wherever it occurs in that text, so a short one can make a message look garbled\. The fields that the command fills in itself, such as the destination, stay as they are\. The destination step of init cleans its own messages in the same way, with the secrets of the remote's addresses and of their rewrites\. A refusal for a rewrite rule names the kind of rule, the scheme, host and port that it leads to and what differs from the recorded address \(the scheme, host, port or repository\), and never the rule or its text, because a rule can hold a credential\. As with any git push, the address with its token is visible in the process arguments of the local machine while git runs, and another user of the machine can read it there\. A token that a rule or a credential helper supplies does not appear in the arguments/);
+    assert.match(page, /usedConfiguredAddress says whether the push went to an address with user information that a remote holds; the receipt names the recorded address, without it/);
+    assert.match(page, /GIT_CONFIG_COUNT and the GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n pairs that it addresses are one unit\. Trusting the count trusts the pairs it addresses when the command runs, whatever the record names, so a sandbox that adds a setting is not refused and git never meets a count without its pairs\. A pair is never trusted alone: a pair that the count does not address, or that has no count, is not offered at init and is dropped by the command/);
+    assert.match(page, /When the record is the same except for its trusted names, the preview shows the old record, the new record and the names that are added and removed, with its own digest\. After your yes the record is rewritten \(replaced\) and the old one is not kept\. The digest covers the names and the destination of the old record/);
+    assert.match(page, /It replaces a record only to change the git variables that you trust \(below\), and only when the destination is the same\. A record for another destination, a record that is not valid and a file that is not JSON stop it with destination-conflict, which shows both\. To change the destination itself, delete the record on purpose: check the file, delete it yourself and run init again/);
+    assert.match(page, /The permissions helper runs its destination checks with the variables that are set in its session, because it asks you to confirm them\. Its look at the git status of a settings file runs without any\. In the tests, a push option set in a trusted variable was not sent/);
+    assert.match(page, /runs with the same environment, so the checks see what the push sees/);
+    assert.match(page, /The receipt, in the output and in that file, also has gitVariables\. For each trusted name it says same .* changed .* or not-set, and added for a numbered pair that the trusted count addresses now and the record does not name\. It lists the names that were set and not trusted, which the push dropped\. It holds no value and no hash/);
+    assert.doesNotMatch(page, /git-config-changed|gitConfigEnvironmentSha256|made again with the ones that are set/);
+    const init = flat('fv-skills/workflows/auto-init.md');
+    assert.match(init, /gitConfigVariables \(every git configuration variable that is set in this session and can be trusted, by name with the length of its value, never the value\) with its gitConfigNote/);
+    assert.match(init, /The yes also trusts the names of those variables: the push command keeps each of them with whatever value it has when it runs, drops every other name, and does not refuse a value that changed \(the receipt marks it\)\. GIT_CONFIG_COUNT and the pairs it addresses are one unit\. The owner trusts them as they trust their own ~\/\.gitconfig\. Say that a value can be a credential, so the preview never shows it and the record keeps only a hash, for information\. A variable that is not set when the owner confirms stays untrusted/);
+    assert.match(init, /user information in an http address is ignored, stripped from the record, and never shown\), and every insteadOf or pushInsteadOf rule that applies to the push address must send it to the same host and OWNER\/REPO over https, ssh:\/\/ or git@host:OWNER\/REPO\. A rule that only adds user information to an http address, as a sandbox does to inject a token, is allowed, and so is a rule that moves the address between those three forms, as a common insteadOf setup does\. A rule that sends it over any other scheme or anywhere else is refused/);
+    assert.match(init, /Run this step in the environment the workers will have/);
+    assert.match(init, /a value that rotated since the record was written is no difference/);
+    assert.match(init, /With confirmation-required and a replaces field, the record exists with the same destination and another set of trusted names: show replaces \(the old record\), record \(the new one\), variableChanges \(added, removed, kept\), replaceNote and gitConfigVariables, and ask for a separate yes; on it, rerun with --confirm <digest> and the record is rewritten \(replaced\)/);
+    assert.match(init, /name the variables in changedVariables when it is printed\. FVS replaces a record only to change its trusted names, never the destination: to change the destination itself, the owner checks the file, deletes the record on purpose and runs init again/);
+    assert.match(init, /except the git configuration variables whose names the owner trusted in the destination step: it keeps those with whatever value they have when it runs, and does not refuse a value that changed/);
+    assert.doesNotMatch(init, /git-config-changed|refuses to push when one is missing or has changed/);
   });
 
   it('makes no unconditional promise that a push asks, and no longer describes a hook as part of init', () => {
@@ -1319,9 +1770,7 @@ describe('the permissions page', () => {
     assert.match(text, /### Push allow rules already in your settings/);
     assert.match(text, /a Claude write stops with `legacy-push-rules`, before any preview and before anything is written\. Both files stay byte-identical/);
     assert.match(text, /does not see: broad rules such as `Bash\(git \*\)` or `Bash\(\*\)`, your user settings/);
-    assert.match(text, /### A push gate hook from an earlier build/);
-    assert.match(text, /Delete the listed entries from hooks\.PreToolUse yourself; every other hook stays/);
-    assert.match(text, /The digest covers the exact rules, the recorded destination when a push rule is written, the canonical project root, the real path of the file .* and the hash of the file's current content/);
+    assert.match(text, /The digest covers the exact rules, the recorded destination and the names of its trusted git variables \(not the values or their hashes\) when a push rule is written, the canonical project root, the real path of the file .* and the hash of the file's current content/);
     assert.match(text, /a new digest that needs a new yes/);
     assert.match(text, /an edit made in the instant between that last check and the replacement is not detected/);
     assert.match(text, /ask init to recheck permissions: it runs `recheck`/);

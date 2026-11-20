@@ -276,15 +276,19 @@ node "$PERM" plan --project-root . --repo "$DRAFT_REPO" --remote origin --branch
   owner the listed entries before you probe. FVS deletes none of them, and a Claude `write-allowlist` refuses
   until the owner has removed those entries; the push probe may also be quiet because of them, not because of
   the push command. Go on with the check if the owner wants, and say that writing waits for the cleanup.
-- `legacyPushGateHooks` present (Claude Code): a project settings file still has a push gate hook entry that an
-  earlier build installed. Show the listed entries. This build ships no hook, FVS keeps the entry and a write is
-  not refused because of it, and the owner deletes it themselves (`legacyPushGateHooksNote` says how).
 - `remote-mismatch`, `remote-ambiguous`, `remote-missing`, `destination-rewritten` or `invalid-input`: no probe
   runs against a remote that is not the project's own repository. Every URL of the remote (all fetch and push
-  URLs) must name it, and no `insteadOf` or `pushInsteadOf` rule may rewrite the push address again. Report the
-  refusal, skip the check and go to Step 6.
+  URLs) must name it (host and OWNER/REPO; user information in an http address is ignored, stripped from the
+  record, and never shown), and every `insteadOf` or `pushInsteadOf` rule that applies to the push address must send
+  it to the same host and OWNER/REPO over https, ssh:// or git@host:OWNER/REPO. A rule that only adds user
+  information to an http address, as a sandbox does to inject a token, is allowed, and so is a rule that moves the
+  address between those three forms, as a common insteadOf setup does. A rule that sends it over any other scheme or
+  anywhere else is refused. Report the refusal, skip the check and go to Step 6.
+- `not-a-repository` or `worktree-mismatch`: the project root is not a git work tree, or a `core.worktree` setting
+  points the repository at the files of another one. The push command would refuse in each case, so nothing is
+  recorded. Report the refusal, skip the check and go to Step 6; the owner has to fix the repository first.
 
-**Where pushes go.** The push command (`fvs-auto-push.mjs`) pushes only to a destination that init records, so
+**Where pushes go.** The push command (`fvs-auto-push.mjs`) pushes to the destination that init records, so
 record it whatever the check finds: also when the owner skips the check, and also for a project whose check was
 recorded earlier (`pushDestination.status` is not `matches`). It is a separate yes. Run `write-destination` without
 `--confirm`:
@@ -295,13 +299,27 @@ node "$PERM" write-destination --project-root . --repo "$DRAFT_REPO" --remote or
 
 It writes nothing and refuses with `confirmation-required`, printing the `record` (the push address as git will use
 it after its own rewriting, the host, the repository, the branch namespaces, the project root and the git
-directory), the `file` (in the repository's shared git directory, so no commit contains it) and a digest. Show the
-owner exactly that and ask. Only on the yes, rerun the same command with `--confirm <digest>`. On a no, nothing is
-recorded: the push command then refuses to run (`no-destination-recorded`), workers stop and report that
+directory), the `file` (in the repository's shared git directory, so no commit contains it), a `note`, the
+`gitConfigVariables` (every git configuration variable that is set in this session and can be trusted, by name with
+the length of its value, never the value) with its `gitConfigNote`, the `contract` (what the push command checks, hardens and trusts) and a digest. Show the owner
+exactly that, with the contract as printed, and ask. The yes also trusts the names of those variables: the push
+command keeps each of them with whatever value it has when it runs, drops every other name, and does not refuse a
+value that changed (the receipt marks it). `GIT_CONFIG_COUNT` and the pairs it addresses are one unit. The owner
+trusts them as they trust their own `~/.gitconfig`. Say that a value can be a credential, so the preview never shows
+it and the record keeps only a hash, for information. A variable that is not set when the owner confirms stays
+untrusted: if one holds a token the owner does not want trusted, the owner unsets it and runs this step again. Run
+this step in the environment the workers will have. Only on the yes, rerun the same command with `--confirm <digest>`. On a no,
+nothing is recorded: the push command then refuses to run (`no-destination-recorded`), workers stop and report that
 refusal instead of falling back to `git push`, and the owner pushes branches by hand. If
-`pushDestination.status` is already `matches` there is nothing to do (`unchanged`). With `destination-conflict`
-another record exists: show `existing` and `record`. FVS never replaces it; the owner checks the file, deletes it
-themselves and runs init again.
+`pushDestination.status` is already `matches` there is nothing to do (`unchanged`): a value that rotated since the
+record was written is no difference. With `confirmation-required` and a `replaces` field, the record exists with the
+same destination and another set of trusted names: show `replaces` (the old record), `record` (the new one),
+`variableChanges` (added, removed, kept), `replaceNote` and `gitConfigVariables`, and ask for a separate yes; on it,
+rerun with `--confirm <digest>` and the record is rewritten (`replaced`). With `destination-conflict` another
+destination, or a record that is not valid, exists: show `existing` and `record`, and name the variables in
+`changedVariables` when it is printed. FVS replaces a record only to change its trusted names, never the
+destination: to change the destination itself, the owner checks the file, deletes the record on purpose and runs
+init again.
 
 Otherwise ask the owner whether to run the check or skip it. A skip is recorded with every step as
 `unknown` (below) so that a resume does not ask again.
@@ -340,11 +358,18 @@ If nothing prompted, say so and write nothing. If some steps prompted:
    and that an unanswered prompt aborts after about 30 minutes. A `git push` never gets an allow rule. If
    `git-push` prompted, explain the push rule: it names the FVS push command
    (`node <scripts folder>/fvs-auto-push.mjs --branch fvs/<name>`), which pushes one branch under the namespace
-   to the recorded destination and refuses anything else. A `*` in a rule matches the rest of the command text,
-   so the rule cannot check arguments and the command does. Say what it does not stop: git hooks of the
-   repository, credential helpers, a rewrite rule added after its check, and a worker that runs a plain
-   `git push`, which the owner's other rules and permission mode decide. Say that branch protection on the fork
-   is still recommended. Never promise that a push will be asked about.
+   to the recorded destination. A `*` in a rule matches the rest of the command text, so the rule cannot check
+   arguments and the command does. Say what the command is as the helper prints it (`pushContract` in the `plan`
+   output, `contract` in every preview), not in your own words: it is a cooperative guard with hardening and not a
+   security boundary. It checks its own command line, the repository and the destination. It does not run
+   repository hooks for the push (it passes `--no-verify` and reads no hooks folder), so the owner's own pre-push
+   checks do not run for it, and it drops the listed git environment variables, except the git configuration
+   variables whose names the owner trusted in the destination step: it keeps those with whatever value they have
+   when it runs, and does not refuse a value that changed. It trusts the owner's git setup, as any push the owner runs: ssh and transport
+   wrappers, credential helpers, URL rewrite rules, the record file and FVS itself, so anything that runs as the
+   owner's user. Also say that a worker that runs a plain `git push` is not covered, and that the owner's other
+   rules and permission mode decide it. Say that branch protection on the fork is still recommended. Never
+   promise that a push will be asked about.
    On a no, leave `git-push` out of `--steps`: that prompt stays unresolved and the owner approves pushes as
    they appear. Codex gets the same rule as a prefix rule for the program and `--branch`: say that it cannot
    tell `fvs/work` from `main`, and that the command refuses a name outside the namespace.
@@ -366,8 +391,6 @@ If nothing prompted, say so and write nothing. If some steps prompted:
      and writes every step they want in one command.
    - `destination-not-recorded`: the push rule needs the recorded destination, and it is missing or no longer
      what init would record. Do "Where pushes go" first, then run this command again.
-   - `legacyPushGateHooks` in the preview: a hook entry of an earlier build is in the file. Show it and say that
-     FVS keeps it; the owner deletes it themselves.
    - `legacy-push-rules` (Claude): `.claude/settings.json` or `.claude/settings.local.json` already allows a
      push by rule. Show `legacyPushRules` and `cleanup`: for each file the exact entries to delete and how many
      other entries stay. FVS deletes nothing and writes nothing, and you do not edit the file either: the
@@ -379,14 +402,14 @@ If nothing prompted, say so and write nothing. If some steps prompted:
    - `malformed-settings`: the settings file is not valid JSON, or its `permissions` section has an
      unexpected shape. Leave it alone and tell the owner.
 3. Only on the owner's explicit yes, rerun the same command with `--confirm <digest>`. Never pass a digest
-   the owner has not seen, and never write without the yes. The digest covers the rules, the recorded destination for a push rule, the canonical project
+   the owner has not seen, and never write without the yes. The digest covers the rules, the recorded destination with the names of its trusted git variables (not their values) for a push rule, the canonical project
    root, the real path of the file and the hash of its content: if any of them changed since the preview
    (a `.claude` link now leads elsewhere, or the file was edited), the command refuses with
    `confirmation-required`, writes nothing and prints a new preview with a new digest. Show that new preview:
    the new digest needs a new yes, and the old yes does not carry over. A decline writes nothing and the run
    goes on; the steps that prompted then wait for the owner's approval during the run.
 4. Report where the file landed (`realPath`) and its `gitStatus` (a loose or tracked file can end up in a
-   pull request). On Codex, report `verified`: `true` means the installed Codex (name its `evaluator.version`)
+   pull request; `unknown` means git cannot say, as for a file reached through a link). On Codex, report `verified`: `true` means the installed Codex (name its `evaluator.version`)
    allowed every probe command against the exact content before it was written, which checks the rules and not
    a live session; `false` means nothing verified the file, and `message` says why. Do not say the rules work.
 5. Recheck, which depends on the tool. The entry point is the `recheck` command (next section), never a

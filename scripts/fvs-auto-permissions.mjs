@@ -12,11 +12,12 @@
 //
 // A push has one rule, and it names the FVS push command, not git:
 //   node <this scripts folder>/fvs-auto-push.mjs --branch fvs/*
-// A `*` in a rule also matches the rest of the command text, so the rule cannot say "this branch and nothing else".
-// The command checks its own arguments instead and refuses anything but `--branch fvs/<name>`. It pushes only to the
-// destination that `write-destination` records in the repository's git directory. A project settings file that already
+// A `*` in a rule also matches the rest of the command text, so the rule cannot say which branch is meant. The command
+// checks its own arguments instead and refuses anything but `--branch fvs/<name>`. It pushes to the destination that
+// `write-destination` records in the repository's git directory. It is a cooperative guard with some hardening, not a
+// security boundary (CONTRACT in fvs-auto-push.mjs says what it checks, hardens and trusts). A project settings file that already
 // allows `git push` by rule would let a worker skip the command, so a Claude write refuses while one is there and lists
-// it. It never deletes one. A push gate hook entry that an earlier build installed is listed for cleanup too.
+// it. It never deletes one.
 //
 // It reads no standard input and does not touch the engine's state or externals files; the answers live in
 // their own record, .formalising/auto-fv/permissions.json.
@@ -27,7 +28,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
-import { RECORD_NAME, WORD, checkPrefixShape, initDestination, parseRemoteUrl } from './fvs-auto-push.mjs';
+import { CONTRACT, RECORD_NAME, WORD, checkPrefixShape, contractText, differingVariables, hide, initDestination, parseRemoteUrl, recordProblem, runGit, secretsOf } from './fvs-auto-push.mjs';
 
 export { parseRemoteUrl };
 export const RECORD_FILE = '.formalising/auto-fv/permissions.json';
@@ -43,8 +44,6 @@ const PUSH_SCRIPT = 'fvs-auto-push.mjs';
 // A branch name that no branch can have (git forbids a name component that starts with a dot), so the push command
 // refuses it before it contacts the destination. The push probe uses it.
 const PROBE_BRANCH = '.permission-check';
-// The hook of earlier builds ran this script; an entry that names it is listed for cleanup.
-const OLD_GATE_NAME = 'fvs-auto-push-gate';
 
 class Refuse extends Error {
   constructor(code, message, details = {}) { super(message); this.code = code; this.details = details; }
@@ -258,7 +257,7 @@ function context(flags) {
   const root = fs.realpathSync.native(flags['project-root'] ?? process.cwd());
   const catalog = buildCatalog({ repo: flags.repo, remote: flags.remote, prefixes: flags['branch-prefix'], host: flags.host });
   // The push target must be the project's own repository: every URL git would use for the remote, after its own URL
-  // rewriting, must name the agreed host and repository, and no rewrite rule may apply to the push URL, or this refuses.
+  // rewriting, must name the agreed host and repository (user information in an http address is stripped), and every rewrite rule that applies to the push URL must send it to the same host and OWNER/REPO over https or ssh (a rule that only adds user information, or moves the address between https, ssh:// and git@host:OWNER/REPO, is allowed), or this refuses.
   // The push command applies the same checks at every push, because git settings can change after init.
   const destination = initDestination(root, catalog.remote, catalog.repo, catalog.host, catalog.prefixes);
   if (destination.problem) refuse(destination.problem.code, destination.problem.message);
@@ -266,28 +265,42 @@ function context(flags) {
 }
 
 // The destination record the push command reads, in the repository's shared git directory: missing, the same as what init
-// would record now, or something else (another destination, an older record, a file that is not JSON).
+// would record now, or something else (another destination, an older record, a file that is not JSON). The user trusts
+// git variables by name, so a value that rotated since init is no difference: the record then still `matches`, and
+// `existing` is what is on disk (with the hashes of the values at init). A record that differs only in its trusted names
+// is `replaceable`, with `changedVariables` naming them (never a value). Any other difference is for the owner to settle.
 function destinationState({ record, commonDir }) {
   const file = path.join(commonDir, RECORD_NAME);
   let existing;
   try { existing = readJson(file); } catch (error) {
     return error.code === 'ENOENT' ? { file, status: 'missing' } : { file, status: 'unreadable', problem: error.message };
   }
-  return { file, status: isDeepStrictEqual(existing, record) ? 'matches' : 'differs', existing };
+  if (isDeepStrictEqual(existing, record)) return { file, status: 'matches', existing };
+  // Only a record that is valid in every field is compared further: a file can hold any JSON, such as null or a list.
+  const changedVariables = differingVariables(existing, record);
+  const sameDestination = recordProblem(existing) === null && isDeepStrictEqual(withoutVariables(existing), withoutVariables(record));
+  if (sameDestination && changedVariables.length === 0) return { file, status: 'matches', existing };
+  return { file, status: 'differs', existing, changedVariables, replaceable: sameDestination && changedVariables.length > 0 };
 }
+const withoutVariables = ({ trustedGitVariables, ...rest }) => rest;
+// The file on disk can hold anything, a hand-edited or an old record with a token in its URL: whatever is shown of it has the
+// user information of an address and the secrets of that URL taken out.
+const shownState = (state) => hide(state, secretsOf(state.existing?.url));
+const changedNote = (state) => (state.changedVariables?.length ? ` The git variables to trust differ (${state.changedVariables.join(', ')}).` : '');
 
-// The push rule names a command that pushes only to the recorded destination, so it is written only once that record
+// The push rule names a command that pushes to the recorded destination, so it is written only once that record
 // exists and is still what init would record now.
 function requireDestination(destination) {
   const state = destinationState(destination);
   if (state.status !== 'matches') {
-    refuse('destination-not-recorded', `the push command pushes only to the recorded destination, and ${state.file} ${state.status === 'missing' ? 'is missing' : 'does not hold what init would record now'}. Run write-destination first: it shows what it records and waits for the user's yes. Nothing was written.`, { destination: state });
+    refuse('destination-not-recorded', `the push command pushes to the recorded destination, and ${state.file} ${state.status === 'missing' ? 'is missing' : `does not hold what init would record now${state.changedVariables?.length ? ` (the git variables to trust differ: ${state.changedVariables.join(', ')})` : ''}`}. Run write-destination first: it shows what it records${state.replaceable ? ' (here, a replace of the trusted git variables)' : ''} and waits for the user's yes. Nothing was written.`, { destination: shownState(state) });
   }
-  return destination.record;
+  // The record on disk is what the push command reads, so it is what the rule's preview and digest show.
+  return state.existing;
 }
 
-// What a user confirms about a push rule: the command and the destination it pushes to.
-const pushPreview = (catalog, recorded) => ({ command: catalog.pushCommand.example, destination: { file: path.join(recorded.commonDir, RECORD_NAME), ...recorded } });
+// What a user confirms about a push rule: the command, the destination it pushes to, and what the command is and is not.
+const pushPreview = (catalog, recorded) => ({ command: catalog.pushCommand.example, contract: CONTRACT, destination: { file: path.join(recorded.commonDir, RECORD_NAME), ...recorded } });
 
 // `lake env lean` loads the whole workspace: Lake clones a dependency that is missing and writes a manifest that is
 // missing. The Lake probe therefore runs only when neither can happen.
@@ -315,7 +328,6 @@ function plan(flags) {
   const lakeBlocker = lakeProbeBlocker(root);
   const stepIds = catalog.steps.map((step) => step.id);
   const legacy = legacyPushRules(root);
-  const oldHooks = legacyPushGateHooks(root);
   const state = destinationState(destination);
   return {
     code: 'ok',
@@ -324,13 +336,13 @@ function plan(flags) {
       : { present: false, summary: summaryLine(null, stepIds) },
     repo: catalog.repo, remote: catalog.remote, branchPrefixes: catalog.prefixes,
     pushCommand: catalog.pushCommand.example,
-    pushDestination: { file: state.file, status: state.status, wouldRecord: destination.record },
+    pushContract: CONTRACT,
+    pushDestination: { file: state.file, status: state.status, wouldRecord: destination.record, ...(state.changedVariables?.length ? { changedVariables: state.changedVariables, replaceable: state.replaceable } : {}) },
     steps: catalog.steps.map((step) => probeEntry(step, lakeBlocker)),
     message: record
       ? 'A record exists: do not run the check again; show the summary. To check again on the owner\'s request (after rules were written, or in a new Codex session), run the recheck command.'
       : 'Run each probe as its own plain call, then ask the user which steps prompted. A skipped step is recorded as unknown.',
     ...(legacy.length ? { legacyPushRules: legacy, legacyPushRulesNote: 'a project settings file already allows a git push by rule: a Claude write-allowlist refuses until the owner removes these entries, and the push probe may stay quiet because of them rather than because of the push command' } : {}),
-    ...(oldHooks.length ? { legacyPushGateHooks: oldHooks, legacyPushGateHooksNote: OLD_HOOK_NOTE } : {}),
   };
 }
 
@@ -427,22 +439,6 @@ export function legacyPushRules(root) {
   return found;
 }
 
-const OLD_HOOK_NOTE = 'an earlier FVS build offered a push gate hook, and an entry for it is still in this file. This build ships no such hook, and a hook whose script is missing gives no decision (an older copy of the script may still be installed, and it would still run). Delete the listed entries from hooks.PreToolUse yourself; every other hook stays. FVS deletes none of them.';
-
-// Hook entries of earlier builds that run the old push gate script, by file.
-export function legacyPushGateHooks(root) {
-  const found = [];
-  for (const { relative, snapshot, settings } of readSettings(root)) {
-    const list = plain(settings) && plain(settings.hooks) && Array.isArray(settings.hooks.PreToolUse) ? settings.hooks.PreToolUse : [];
-    const commands = list
-      .flatMap((entry) => (Array.isArray(entry?.hooks) ? entry.hooks : []))
-      .map((one) => one?.command)
-      .filter((command) => typeof command === 'string' && command.includes(OLD_GATE_NAME));
-    if (commands.length) found.push({ file: relative, resolvedPath: snapshot.resolvedPath, commands });
-  }
-  return found;
-}
-
 function checkNoLegacyPushRules(root) {
   const found = legacyPushRules(root);
   if (found.length === 0) return;
@@ -453,19 +449,29 @@ function checkNoLegacyPushRules(root) {
   });
 }
 
-function gitStatusOf(root, relative) {
-  const git = (...args) => spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' });
-  if (git('rev-parse', '--git-dir').status !== 0) return 'not-a-git-repository';
-  if (git('check-ignore', '-q', relative).status === 0) return 'ignored';
-  return git('ls-files', '--error-unmatch', relative).status === 0 ? 'tracked' : 'untracked-not-ignored';
+// Where a settings file stands in git. The question goes to the repository that the push command's own identification
+// found (`where`), with the same cleaned environment, so an inherited GIT_DIR cannot answer for another repository. The
+// answer is `unknown` when that repository was not identified, or when git gives an answer that is not a plain yes or no:
+// such an answer is never turned into a status.
+export function gitStatusOf(where, root, relative) {
+  if (!where) return 'unknown';
+  const target = path.relative(where.top, path.join(root, relative));
+  const ask = (...args) => runGit(where, args).status;
+  const ignored = ask('check-ignore', '-q', '--', target);
+  if (ignored === 0) return 'ignored';
+  if (ignored !== 1) return 'unknown';
+  const listed = ask('ls-files', '--error-unmatch', '--', target);
+  return listed === 0 ? 'tracked' : listed === 1 ? 'untracked-not-ignored' : 'unknown';
 }
 
-// Claude Code reads settings.local.json from the main checkout, so a copy in a linked worktree would be ignored.
-function checkMainCheckout(root) {
-  const git = (flag) => spawnSync('git', ['-C', root, 'rev-parse', '--path-format=absolute', flag], { encoding: 'utf8' });
-  const dir = git('--git-dir');
-  const common = git('--git-common-dir');
-  if (dir.status === 0 && common.status === 0 && dir.stdout.trim() !== common.stdout.trim()) {
+// Claude Code reads settings.local.json from the main checkout, so a copy in a linked worktree would be ignored. The main
+// checkout is the one whose git directory is the shared git directory. Both come from the identification that the push
+// command makes (`where`), with a cleaned environment; when there is none, nothing is written.
+export function checkMainCheckout(root, where) {
+  if (!where) {
+    refuse('local-needs-main-checkout', `${root} could not be identified as the main checkout of a git repository, so .claude/settings.local.json is not written; run init in the main checkout or use --target shared`);
+  }
+  if (where.gitDir !== where.commonDir) {
     refuse('local-needs-main-checkout', `${root} is a linked worktree; Claude Code reads .claude/settings.local.json from the main checkout, so run init there or use --target shared`);
   }
 }
@@ -524,24 +530,64 @@ function confirmationNeeded(flags, digest, preview) {
 }
 
 // Records where pushes go. The push command refuses to run without this record, so init writes it whether or not a push
-// rule is written. The record is never replaced: a different destination is for the owner to settle.
+// rule is written. A record that exists is replaced only to change which git variables the user trusts, with its own
+// preview and yes, and only when the destination is the same: a different destination is for the owner to settle.
 function writeDestination(flags) {
   const { root, destination } = context(flags);
   const state = destinationState(destination);
+  const shown = Object.keys(destination.variables);
   const preview = {
-    projectRoot: root, file: state.file, record: destination.record,
-    note: 'The push command pushes only to this destination, and only for a repository whose shared git directory is the one recorded here. The file sits in the git directory, so it is not part of any commit; any session of your user account can change it.',
+    projectRoot: root, file: state.file, record: state.status === 'matches' ? state.existing : destination.record,
+    note: 'The push command pushes to this destination and checks that it runs in the repository whose shared git directory is the one recorded here. The file sits in the git directory, so it is not part of any commit; any session of your user account can change it, and so change where the command pushes.',
+    gitConfigNote: shown.length
+      ? `These git configuration variables are set in this session: ${shown.join(', ')}. Your yes trusts these names. GIT_CONFIG_COUNT and the GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n pairs that it addresses are one unit: trusting the count trusts its pairs. The push command keeps each trusted name with whatever value it has when it runs, in every git call, and removes every other git variable of its list. A trusted name that is not set then is skipped, and a value that changed since you confirmed is not refused: the receipt marks it as changed. You trust them the way you trust your own git configuration files. A variable that is not set when you confirm stays untrusted. A value can be a token, so this preview shows only the length of each value; the record holds a hash of each value, not the value.`
+      : 'No git configuration variable is set in this session, so the push command runs without all of them (GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_CONFIG_NOSYSTEM, GIT_CONFIG_COUNT with its pairs, GIT_CONFIG_PARAMETERS).',
+    contract: CONTRACT,
   };
   if (state.status === 'matches') return { code: 'unchanged', message: `${state.file} already records this destination`, ...preview };
+  if (state.status === 'differs' && state.replaceable) return replaceDestination(flags, root, destination, state, preview);
   if (state.status !== 'missing') {
-    refuse('destination-conflict', `${state.file} already exists and is not what init would record now. FVS never replaces it, because that would change where pushes go. To change the destination, check the file, delete it yourself, and run this command again.`, { ...preview, existing: state.existing ?? null, problem: state.problem ?? null });
+    refuse('destination-conflict', `${state.file} already exists and is not what init would record now.${changedNote(state)} FVS replaces a record only to change its trusted git variables, and only when it is valid and names this same destination; it never replaces it in any other case, because that would change where pushes go. To change the destination, check the file, delete it yourself, and run this command again.`, { ...preview, ...shownState({ existing: state.existing ?? null, problem: state.problem ?? null }), ...(state.changedVariables?.length ? { changedVariables: state.changedVariables } : {}) });
   }
-  confirmationNeeded(flags, digestOf({ kind: 'destination', root, file: state.file, record: destination.record }), preview);
+  // A value is never printed: the user confirms the names, and the preview gives only the length of each value. The record keeps a hash of each.
+  confirmationNeeded(flags, digestOf({ kind: 'destination', root, file: state.file, record: bound(destination.record) }), { ...preview, gitConfigVariables: lengthsOf(destination.variables) });
   if (destinationState(destination).status !== 'missing') refuse('changed-since-preview', `${state.file} appeared while this command ran; nothing was written. Show the user a new preview: a new digest needs a new yes.`);
   writeAtomic(state.file, JSON.stringify(destination.record, null, 2) + '\n');
-  const reread = destinationState(destination);
-  if (reread.status !== 'matches') refuse('write-check-failed', `${state.file} does not hold the record after writing`);
+  checkRecordWritten(destination, state.file);
   return { code: 'written', ...preview, message: 'Recorded. The push command now pushes branches under the recorded namespaces to this destination.' };
+}
+
+// What a yes covers about a destination record: the destination, which carries no user information, and the names of the
+// trusted git variables. Not the hashes of their values: the trust is by name, and a value can rotate between the preview
+// and the yes without changing what the user agreed to.
+const bound = ({ trustedGitVariables, ...rest }) => ({ ...rest, trustedGitVariables: Object.keys(trustedGitVariables ?? {}).sort() });
+
+// What the preview shows of the variables that are set: each name with the length of its value, never the value.
+const lengthsOf = (variables) => Object.fromEntries(Object.entries(variables).map(([name, value]) => [name, { length: value.length }]));
+
+// A value that rotated is no difference for `matches`, so a write is checked for the exact record.
+function checkRecordWritten(destination, file) {
+  const reread = destinationState(destination);
+  if (reread.status !== 'matches' || !isDeepStrictEqual(reread.existing, destination.record)) refuse('write-check-failed', `${file} does not hold the record after writing`);
+}
+
+// The destination is the same and only the trusted git variables differ: the user sees the old record, the new record and
+// the names added and removed, and the digest binds the old record, so a record that changed after the preview needs a
+// new yes. The record is rewritten as a whole; nothing else about the destination changes.
+function replaceDestination(flags, root, destination, state, preview) {
+  const old = Object.keys(state.existing.trustedGitVariables ?? {});
+  const now = Object.keys(destination.record.trustedGitVariables ?? {});
+  const variableChanges = { added: now.filter((name) => !old.includes(name)), removed: old.filter((name) => !now.includes(name)), kept: now.filter((name) => old.includes(name)) };
+  const replacing = {
+    ...preview, record: destination.record, replaces: state.existing, variableChanges,
+    replaceNote: `${state.file} holds another set of trusted git variables than the one in this preview, and the destination stays the same: the address, host, repository and branch namespaces are not changed. If you confirm, the record is replaced by the one shown here: the push command then keeps the names it lists (added: ${variableChanges.added.join(', ') || 'none'}; no longer trusted: ${variableChanges.removed.join(', ') || 'none'}) with whatever value they have when it runs, and removes every other git variable of its list. The old record is not kept.`,
+  };
+  confirmationNeeded(flags, digestOf({ kind: 'destination', root, file: state.file, record: bound(destination.record), replaces: bound(state.existing) }), { ...replacing, gitConfigVariables: lengthsOf(destination.variables) });
+  const again = destinationState(destination);
+  if (again.status !== 'differs' || !again.replaceable || !isDeepStrictEqual(again.existing, state.existing)) refuse('changed-since-preview', `${state.file} changed while this command ran; nothing was written. Show the user a new preview: a new digest needs a new yes.`);
+  writeAtomic(state.file, JSON.stringify(destination.record, null, 2) + '\n');
+  checkRecordWritten(destination, state.file);
+  return { code: 'replaced', ...replacing, message: 'Replaced. The push command now trusts the git variables named in this record, and the destination is the same as before.' };
 }
 
 function writeAllowlist(flags) {
@@ -552,17 +598,17 @@ function writeAllowlist(flags) {
   for (const text of allow) { const problem = ruleProblem('allow', text); if (problem) refuse('forbidden-rule', `${text}: ${problem}`); }
   const pushRule = picked.some((step) => step.id === 'git-push' && step[runtime].length > 0);
   const recorded = pushRule ? requireDestination(destination) : null;
-  return runtime === 'claude' ? writeClaude(flags, root, catalog, picked, allow, recorded) : writeCodex(flags, root, catalog, picked, recorded);
+  return runtime === 'claude' ? writeClaude(flags, root, catalog, picked, allow, recorded, destination.where) : writeCodex(flags, root, catalog, picked, recorded, destination.where);
 }
 
-function writeClaude(flags, root, catalog, picked, allow, recorded) {
+function writeClaude(flags, root, catalog, picked, allow, recorded, where) {
   if (allow.length === 0) {
     refuse('nothing-to-write', 'none of these steps can be written as a Claude Code rule; their prompts stay unresolved, and the user approves them when they appear', { reasons: Object.fromEntries(picked.map((s) => [s.id, s.claudeNote ?? ''])) });
   }
   const target = flags.target ?? 'shared';
   if (!['shared', 'local'].includes(target)) refuse('invalid-input', '--target must be shared or local');
   const relative = `.claude/${target === 'shared' ? 'settings.json' : 'settings.local.json'}`;
-  if (target === 'local') checkMainCheckout(root);
+  if (target === 'local') checkMainCheckout(root, where);
   checkNoLegacyPushRules(root);
   const before = snapshotOf(root, relative);
   let existing = {};
@@ -570,20 +616,18 @@ function writeClaude(flags, root, catalog, picked, allow, recorded) {
     try { existing = JSON.parse(before.bytes.toString('utf8')); } catch { refuse('malformed-settings', `${relative} is not valid JSON; fix it yourself first, it is never overwritten`); }
   }
   const { merged, added } = mergeClaude(existing, allow);
-  const oldHooks = legacyPushGateHooks(root);
   const preview = {
-    runtime: 'claude', target, file: relative, projectRoot: root, resolvedPath: before.resolvedPath, viaLink: before.viaLink, existingSha256: before.sha256, gitStatus: gitStatusOf(root, relative),
+    runtime: 'claude', target, file: relative, projectRoot: root, resolvedPath: before.resolvedPath, viaLink: before.viaLink, existingSha256: before.sha256, gitStatus: gitStatusOf(where, root, relative),
     appliesTo: target === 'shared'
       ? 'Claude Code reads .claude/settings.json from each session\'s own directory, and its rules apply once the folder is trusted. A worker worktree sees it only if the file is committed or .claude is linked into the worktree.'
       : 'Claude Code reads .claude/settings.local.json from the main checkout in every worktree and keeps it out of git; its rules apply without the trust step while the file stays untracked.',
     steps: picked.map((step) => step.id), add: added,
     alreadyPresent: { allow: allow.filter((r) => !added.allow.includes(r)) },
     ...(recorded ? { push: pushPreview(catalog, recorded) } : {}),
-    ...(oldHooks.length ? { legacyPushGateHooks: oldHooks, legacyPushGateHooksNote: OLD_HOOK_NOTE } : {}),
   };
   if (added.allow.length === 0) return { code: 'unchanged', message: `${relative} already holds every rule`, ...preview };
   // The confirmation is about this project, this real file and these exact bytes, as well as these rules and the destination.
-  confirmationNeeded(flags, digestOf({ runtime: 'claude', root, file: relative, resolvedPath: before.resolvedPath, existingSha256: before.sha256, allow: added.allow, destination: recorded }), preview);
+  confirmationNeeded(flags, digestOf({ runtime: 'claude', root, file: relative, resolvedPath: before.resolvedPath, existingSha256: before.sha256, allow: added.allow, destination: recorded && bound(recorded) }), preview);
   checkNothingElseChanged(existing, merged, added);
   fs.mkdirSync(path.dirname(before.resolvedPath), { recursive: true });
   checkUnchanged(root, relative, before);
@@ -594,12 +638,12 @@ function writeClaude(flags, root, catalog, picked, allow, recorded) {
   }
   recordAllowlist(root, relative, { allow: added.allow });
   return {
-    code: 'written', ...preview, realPath: real, gitStatus: gitStatusOf(root, relative),
+    code: 'written', ...preview, realPath: real, gitStatus: gitStatusOf(where, root, relative),
     verified: false, verification: 'The file was re-read as JSON and holds the rules. Claude Code has no offline rule evaluator, so a live recheck is the only evidence that a step stopped prompting.',
     notes: [
       'Claude Code reloads settings files while running; if a step still prompts, run recheck for that step (see the permissions page).',
       'Worker worktrees read their own .claude/settings.json: it reaches them only if committed or if .claude is linked into them. settings.local.json is read from the main checkout in every worktree.',
-      ...(recorded ? ['The push rule names the FVS push command. A rule is matched against the command text and "*" also matches the rest of that text, so the command checks its own arguments and refuses all but --branch <namespace>/<name>. A plain git push is not covered by this rule: your other rules and permission mode decide it, as before. Git hooks of the repository, credential helpers and a URL rewrite that changes after the command\'s check still apply. Branch protection on the project fork is still recommended as an independent safeguard.'] : []),
+      ...(recorded ? [`The push rule names the FVS push command. A rule is matched against the command text and "*" also matches the rest of that text, so the command checks its own arguments. A plain git push is not covered by this rule: your other rules and permission mode decide it, as before. ${contractText()} Branch protection on the project fork is still recommended as an independent safeguard.`] : []),
     ],
   };
 }
@@ -640,7 +684,7 @@ function evaluateCodex(text, commands) {
   }
 }
 
-function writeCodex(flags, root, catalog, picked, recorded) {
+function writeCodex(flags, root, catalog, picked, recorded, where) {
   const rules = picked.flatMap((step) => step.codex);
   if (rules.length === 0) refuse('nothing-to-write', 'none of these steps can be written as a Codex rule; their prompts stay unresolved, and the user approves them when they appear', { reasons: Object.fromEntries(picked.map((s) => [s.id, s.codexNote ?? ''])) });
   const relative = '.codex/rules/fvs-auto.rules';
@@ -653,7 +697,7 @@ function writeCodex(flags, root, catalog, picked, recorded) {
   }
   const before = snapshotOf(root, relative);
   const preview = {
-    runtime: 'codex', file: relative, projectRoot: root, resolvedPath: before.resolvedPath, viaLink: before.viaLink, existingSha256: before.sha256, gitStatus: gitStatusOf(root, relative), steps: picked.map((s) => s.id), text,
+    runtime: 'codex', file: relative, projectRoot: root, resolvedPath: before.resolvedPath, viaLink: before.viaLink, existingSha256: before.sha256, gitStatus: gitStatusOf(where, root, relative), steps: picked.map((s) => s.id), text,
     notWritten: Object.fromEntries(picked.filter((s) => s.codex.length === 0).map((s) => [s.id, s.codexNote ?? ''])),
     ...(recorded ? { push: pushPreview(catalog, recorded) } : {}),
     appliesTo: 'Codex loads project rules only when the project .codex/ folder is trusted, and scans rules when a session starts: they take effect in a new session.',
@@ -663,7 +707,7 @@ function writeCodex(flags, root, catalog, picked, recorded) {
   if (evaluation.problem === 'rejected') refuse('evaluator-rejected', 'the installed Codex rejected these rules; nothing was written', { ...preview, evaluation });
   if (evaluation.problem === 'mismatch') refuse('evaluator-mismatch', 'the installed Codex does not allow every command these rules exist for; nothing was written', { ...preview, evaluation });
   const shown = { ...preview, evaluation: { verified: evaluation.verified, evaluator: evaluation.evaluator } };
-  confirmationNeeded(flags, digestOf({ runtime: 'codex', root, file: relative, resolvedPath: before.resolvedPath, existingSha256: before.sha256, text, destination: recorded }), shown);
+  confirmationNeeded(flags, digestOf({ runtime: 'codex', root, file: relative, resolvedPath: before.resolvedPath, existingSha256: before.sha256, text, destination: recorded && bound(recorded) }), shown);
   fs.mkdirSync(path.dirname(before.resolvedPath), { recursive: true });
   checkUnchanged(root, relative, before);
   writeAtomic(before.resolvedPath, text);

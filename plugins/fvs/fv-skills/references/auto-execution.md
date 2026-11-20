@@ -130,13 +130,21 @@ claim. The evidence named here is what the orchestrator keeps.
 - **Push alone, with the push command.** Push with the FVS push command, as one standalone call, and
   never with `git push`: `node <FVS scripts folder>/fvs-auto-push.mjs --branch fvs/<name>`, using the
   path that `/fvs:auto-init` printed. Commit in an earlier call. The command takes exactly
-  `--branch <name>`, pushes that one branch to the destination recorded at init and refuses every other
-  argument, a branch outside the recorded namespace and a repository other than the recorded one. Do
-  not chain it to another command with `&&`, `;` or a pipe: a host that matches permission rules one
+  `--branch <name>` and pushes that one branch to the destination recorded at init. It is a cooperative
+  guard with hardening and not a security boundary. It refuses any other argument, a branch outside the
+  recorded namespace and a work tree that points at another repository. It does not run repository hooks for
+  this push and drops the git variables that move a repository or select its configuration files, except the git
+  configuration variables whose names the owner trusted at init: it keeps those with whatever value they have when
+  it runs, and does not refuse a value that changed. It trusts your git
+  setup: ssh and transport wrappers, credential helpers, URL rewrite rules, the record file and FVS
+  itself, so anything that runs as your user. Do not chain it to another command with `&&`, `;` or a pipe: a host that matches permission rules one
   command at a time may hold a chained line for approval, and the exit status of a chain is the status
   of its last command. The command leaves no `origin/<name>` ref and sets no upstream, so run
-  `git fetch` before you look for the branch on the remote. Quote its exit status and its `result` in
-  the report. When it refuses (for example `no-destination-recorded`), do not fall back to `git push`:
+  `git fetch` before you look for the branch on the remote. Its receipt names an object id only when
+  git reported one: `newRemoteId` is null for a new branch and for an up-to-date branch, and
+  `localTipBeforePush` is only what the command read before it pushed. Read the head that is on the
+  remote with `git fetch` and `git rev-parse origin/<name>`, and call it a later observation. Quote
+  its exit status and its `result` in the report. When it refuses (for example `no-destination-recorded`), do not fall back to `git push`:
   stop, and report its `code` and `message` to the orchestrator.
 - **Keep three commits apart.** A status line names the commit the build check accepted, the head
   published on the pull request and the head that `record-pr` recorded, each with its SHA. They can

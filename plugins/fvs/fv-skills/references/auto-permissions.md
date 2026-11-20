@@ -8,7 +8,8 @@ aborted prompt.
 This page says how `/fvs:auto-init` finds the steps that prompt on your machine, which rules it writes for them
 only after your yes (for a push, the one rule that names the FVS push command), what FVS never allows, and what
 to do when a step keeps asking. The commands that do this are in `scripts/fvs-auto-permissions.mjs` and
-`scripts/fvs-auto-push.mjs`, run by the orchestrator seat (`auto-seats.md`).
+`scripts/fvs-auto-push.mjs`, run by the orchestrator seat (`auto-seats.md`). A run that skips permission prompts
+inside a sandbox keeps the same safety rules and enforces them by other means: see "Unattended runs in a sandbox".
 
 </overview>
 
@@ -43,8 +44,9 @@ and that repository. A second push URL that names an upstream, the same path on 
 cannot read stops the check. This is a check at setup time and remote settings can change later, which is why
 the push command repeats it at every push. `fvs` is the branch namespace the run pushes under; you choose
 it, and it can never be `main`, `master`, `release` or a wildcard. Init records the push address as git would use it
-after its own rewriting, and it stops when a `url.<base>.insteadOf` or `pushInsteadOf` rule would rewrite that
-address again, because the push command refuses such a destination.
+after its own rewriting, without any user information, and it stops when a `url.<base>.insteadOf` or `pushInsteadOf`
+rule would send that address to another host, repository or port, or over a scheme other than https or ssh, because
+the push command refuses such a destination.
 
 Creating or editing a pull request is not part of the check, and init writes no rule for either. Approve
 them yourself, or add your own rule if you want them to run unasked.
@@ -134,6 +136,67 @@ constrain arguments is fragile, and this rule does not try.
 Workers commit first, then run the command in a separate, standalone call, with the path that init printed. They
 do not chain it with another command.
 
+### What the command is
+
+The push command is cooperative, with hardening, and not a security boundary. It guards against mistakes and misuse
+through its own command line, and it trusts your git setup the way a push that you run yourself would. It is not a
+defence against a program that runs as your user.
+
+What it checks:
+
+- It takes exactly `--branch <name>` and refuses anything else on its command line.
+- It compares the shared git directory of the repository it runs in with the one recorded for the destination, and
+  refuses when they differ or when a work tree points at another repository.
+- It refuses a branch that is not a plain local branch under a recorded namespace. It pushes to the destination
+  address recorded at init, and refuses that address when a URL rewrite rule would send it anywhere but to the same
+  host and OWNER/REPO, or over any scheme but https or ssh (ssh:// or git@host:OWNER/REPO), or to another port. A
+  rule that only adds user information to an http or https address, as a sandbox does to inject a token, is allowed,
+  and so is a rule that changes the address between https, ssh:// and git@host:OWNER/REPO on the same host and
+  OWNER/REPO: the record holds the address without user information, and no message, record or receipt shows it.
+
+What it does for this push, to harden it:
+
+- The push is made with `--no-verify`, which skips the pre-push hook whether it is a file in a hooks folder or is
+  set in git configuration (`hook.<name>.event`), and `core.hooksPath` is set to `/dev/null` so that git finds no
+  hook in any hooks folder. Your own pre-push checks do not run for it.
+- git runs without `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
+  `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_CONFIG`, `GIT_NAMESPACE` and `GIT_EXEC_PATH`. It also runs without
+  `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`, `GIT_CONFIG_NOSYSTEM`, `GIT_CONFIG_COUNT`, the `GIT_CONFIG_KEY_n` and
+  `GIT_CONFIG_VALUE_n` pairs and `GIT_CONFIG_PARAMETERS`, except the ones whose names you trusted when you confirmed
+  the destination at init. Init lists those names and never prints a value, because a value can be a token: it shows
+  the length of each. `GIT_CONFIG_COUNT` and the `GIT_CONFIG_KEY_n` and `GIT_CONFIG_VALUE_n` pairs that it addresses
+  are one unit: trusting the count trusts the pairs it addresses when the command runs. The command keeps each
+  trusted name with whatever value it has when it runs, in every git call, and drops every other name. A trusted
+  name that is not set is skipped, and a value that changed since init is not refused: the receipt marks it as
+  changed. The configuration files that git reads by default stay, and so do your ssh, credential and transport
+  settings that are not set through those variables.
+- git also runs without `GIT_TRACE`, every `GIT_TRACE_`* variable, `GIT_CURL_VERBOSE` and
+  `GIT_TRANSPORT_HELPER_DEBUG`, and with `GIT_TRACE`2, `GIT_TRACE`2_EVENT and `GIT_TRACE`2_PERF set to 0, which also
+  switches off a Trace2 target that your git configuration files enable. Those settings make git write the address
+  of a push and the Authorization header of a request, token included, to a file or to its error output, and nothing
+  in this command can clean a file that git writes. If you want a trace of a push, run git yourself.
+- No push option is sent.
+
+What it trusts, and so does not protect against:
+
+- Your git setup, as for any push you run yourself.
+- ssh and other transport wrappers (`GIT_SSH_COMMAND`, `core.sshCommand`, proxy and remote helpers): the command
+  cannot tell where one of them sends the push.
+- Credential helpers.
+- The git configuration variables whose names you trusted at init, the way you trust your own git configuration
+  files: whatever value they have when the command runs is used for the checks and for the push.
+- The address that a remote of the repository holds with user information (a token) for the recorded host and
+  OWNER/REPO, such as https://x-access-token:TOKEN@github.com/OWNER/REPO in origin: when there is exactly one, the
+  push goes to it, after the same host, repository and rewrite checks, so the token in your own git configuration
+  keeps working. The record, the messages and the receipt never show the token, and the command removes the secret
+  of such an address (its password, or its user part when it has no password) and of every address that a rewrite
+  rule makes of it from what git prints and from its own messages, whatever its length. As with any git push, the
+  address and its token are visible in the process arguments of the local machine while git runs.
+- URL rewrite rules: a rule that is added or changed after the command checks and before it connects is not caught.
+- The record file and FVS itself: anything that runs as your user can edit the record, the script and the permission
+  rule, and so change where the command pushes or what it checks.
+- The git program found on `PATH`.
+
 ### What the command refuses
 
 It exits with a plain message and a non-zero status, and pushes nothing, unless all of these hold:
@@ -141,47 +204,92 @@ It exits with a plain message and a non-zero status, and pushes nothing, unless 
 - exactly `--branch <name>` was given. Any other argument, a second `--branch`, `--force`, a refspec or a remote
   name is refused.
 - the shared git directory of the repository it runs in is the one recorded at init, and the recorded project root
-  is a checkout of that same repository. The main checkout and its linked worktrees pass; a copy, a link or
-  another repository does not.
+  is a checkout of that same repository. The main checkout and its linked worktrees pass; a copy of the repository
+  and another repository do not. A link that leads into the same repository is that repository, because the
+  command goes by the real path that git uses and not by the name of the link; a link into another repository is
+  another repository.
+- git started in the top of this work tree uses the same repository. A `core.worktree` setting that points a
+  repository at the files of another one is refused with `worktree-mismatch`. After these checks, the branch
+  checks, the address checks, the read of the branch tip and the push itself each name the git directory and the
+  work tree that were found, so none of them finds a repository again from a directory.
 - `<name>` is a plain branch name under a recorded namespace (`fvs/...`), `refs/heads/<name>` exists as a local
   branch, it is not a symbolic ref, and no tag has the same name.
-- no `url.<base>.insteadOf` or `pushInsteadOf` rule applies to the recorded address, no `[remote "<address>"]`
-  section is named after it, and git reads the address as recorded.
-- `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR` and `GIT_NAMESPACE` are not set.
+- every `url.<base>.insteadOf` or `pushInsteadOf` rule that applies to the recorded address sends it to the same
+  host and OWNER/REPO, over https, `ssh://` or `git@host:OWNER/REPO` on the default ports, as a rule that only adds
+  user information to an http or https address does too. A rule that sends it over any other scheme (`file://`,
+  `git://`, `ext::`, `fd::`, a local path), to plain http, or to another host, repository or port is refused with
+  `destination-rewritten`. No `[remote "<address>"]` section is named after it, and git reads the address as
+  recorded, user information aside.
+- git finds the repository with the git variables that you trusted at init and no others. The command looks for the
+  record from the work directory first, then asks git for the shared git directory and compares the two. A variable
+  that is set and not trusted never reaches git. In a sandbox that needs one of them (git refuses a repository that
+  another user owns unless `safe.directory` is set, often through `GIT_CONFIG_COUNT`), the command refuses with
+  `not-a-repository` and names the variables that it left out, never their values. To trust them, run the
+  destination step of `/fvs:auto-init` again: it replaces the record after your yes. A trusted name that is not set,
+  or that has another value than at init, is not a refusal.
 
 A worker that gets a refusal stops and reports its `code` and `message`. It does not fall back to `git push`.
 
 ### What it sends
 
-It pushes to the address recorded at init, never to a remote name. In the tests, none of these settings changed
+It pushes to the address recorded at init, or to the address with user information that a remote holds for it (see
+"Where the destination is recorded"), and never to a remote name. In the tests, none of these settings changed
 where the push went or what it sent: `remote.<name>.push`, `remote.<name>.pushurl`, `remote.<name>.mirror`,
 `remote.pushDefault`, `branch.<name>.pushRemote`, `push.default`, `push.followTags`, `push.recurseSubmodules` and
 `submodule.recurse`. It uses the full refspec `refs/heads/<name>:refs/heads/<name>` without a `+`,
-`--no-follow-tags`, `-c push.followTags=false`, `--recurse-submodules=no`, `--porcelain` and
-`-c core.abbrev=no`, and no other option. The result (created, fast-forward, up to date or failed, with the old
-and new object id that the destination reported) is appended to `.formalising/auto-fv/pushes.jsonl` in the recorded
-project root. It leaves no `origin/<name>` ref and sets no upstream: run `git fetch` to see the branch.
+`--no-follow-tags`, `-c push.followTags=false`, `--recurse-submodules=no`, `--porcelain`, `-c core.abbrev=no`,
+`-c push.pushOption=`, `-c core.hooksPath=/dev/null` and `--no-verify`, and no other option. `push.pushOption=`
+empties the list of push options from every git configuration: push options go to the receiving side, which can act on
+them, and this command sends none. `--no-verify` skips the pre-push hook, including one that is set in git
+configuration with `hook.<name>.event`, which `core.hooksPath` does not turn off. `core.hooksPath=/dev/null` makes git
+find no hook in any hooks folder. Every git call that the command makes (the look for the repository, the checks,
+the address checks and the push) runs with the same environment, so the checks see what the push sees. It is without
+the variables listed under "What it does for this push", except the git configuration variables whose names you
+trusted at init, which every call keeps with the value they have when the command runs. The permissions helper runs
+its destination checks with the variables that are set in its session, because it asks you to confirm them. Its look
+at the git status of a settings file runs without any. In the tests, a push option set in a trusted variable was not
+sent, because git applies the command's own `-c push.pushOption=` after it.
+
+The result is appended to `.formalising/auto-fv/pushes.jsonl` in the recorded project root: `created`,
+`fast-forward`, `up-to-date`, `failed` (git says it did not update the branch) or `unknown`. The record names only
+object ids that the push itself reported. A fast-forward has both the old and the new id. A new branch and an
+up-to-date branch have none in git's summary, so `newRemoteId` is null for them. `localTipBeforePush` is the tip
+that the command read just before the push. It is not the id of what was sent, because the branch can move between
+that read and the push. To learn the head on the destination, run `git fetch` and read `origin/<name>`, and treat
+that as a later observation: another push may have come in since. The command leaves no `origin/<name>` ref and sets no upstream: run `git fetch` to see the branch.
+
+The receipt, in the output and in that file, also has `gitVariables`. For each trusted name it says `same` (the
+value is the one that was there at init), `changed` (another value, which the command used) or `not-set`, and
+`added` for a numbered pair that the trusted count addresses now and the record does not name. It lists the names
+that were set and not trusted, which the push dropped. It holds no value and no hash. `usedConfiguredAddress` says
+whether the push went to an address with user information that a remote holds; the receipt names the recorded
+address, without it.
+
+When git ends without a result for the branch (a lost connection, a timeout, a signal), the destination may have
+taken the update. The command then reports `push-outcome-unknown` and does not say that nothing changed. Read the
+destination before you retry, and report the code and message.
 
 ### What it does not stop
 
-- Git hooks of the repository still run, as for any push.
-- Credential helpers, ssh and proxy settings come from your own git configuration and environment, as for any push.
-- The recorded address is checked just before the push. A rewrite rule that you add after that check and before
-  the connection is a race the command cannot close.
-- The command trusts the `git` it finds on `PATH`.
 - The rule and the worker briefs name an absolute path. An FVS update or reinstall that moves the script leaves both
   stale: run init again to append the rule for the new path, and delete the old rule yourself. FVS deletes none of
   your rules.
-- Any session of your user account can edit the script file at the allowed path, as it can edit the record.
-- The record of the destination is a plain file in the git directory. Any session of your user account can change
-  it, and so can change where the command pushes.
 - A worker that runs a plain `git push` is not covered by this rule: your other rules and permission mode decide
   that push, as before. That is why a Claude write refuses while a project settings file allows a `git push` by rule
   (next section).
+- The report `push-outcome-unknown` after a timeout of the push has no test. The cases of a missing result line and
+  of a signal are tested. Read the destination before you retry in every case.
 - On Codex, a rule matches the start of a command: `node`, the path and `--branch`. It cannot tell `fvs/work` from
-  `main`, and the command refuses a name outside the recorded namespaces. Codex splits a command run through a shell
-  wrapper such as `bash -lc` into its simple commands before it matches rules, as its documentation says. That was
-  not observed here.
+  `main`, and the command refuses a name outside the recorded namespaces. As the Codex rules documentation describes
+  it, Codex splits a command run through a shell wrapper such as `bash -lc` into its simple commands only when the
+  script is a plain chain joined by `&&`, `||`, `;` or `|`. A script with a redirect, a substitution, a variable
+  assignment or a wildcard is not split, and the rules then apply to the whole invocation. That was not observed here.
+- On Claude Code, its documentation says that a compound command is split at `&&`, `||`, `;`, `|`, `|&`, `&` and
+  newlines and that every part must be allowed, and that a redirect target is checked against your file rules as if
+  Claude wrote that file: the rule allows the command, not the target. For a command substitution after the branch
+  name it says only that deny and ask rules see the nested command, and not what an allow rule does. None of this
+  was observed here. The documentation was read in November 2026; the versions installed where this was written
+  were Claude Code 2.1.329 and codex-cli 0.170.0.
 - **Branch protection on the project fork is still recommended.** Protect `main` and the release branches and
   forbid force pushes. It is an independent safeguard that works whatever a command looks like.
 
@@ -206,10 +314,78 @@ checkout), so every worktree of the repository finds it and no commit contains i
 }
 ```
 
-Init records the address git would push to after its own rewriting. It never replaces a record that differs: it
-stops with `destination-conflict` and shows both. To record another destination, check the file, delete it yourself
-and run init again. The permission preview for a push rule shows this record, and the push rule is written only
-while the record still matches what init would record now.
+Init records the address git would push to after its own rewriting. It replaces a record only to change the git
+variables that you trust (below), and only when the destination is the same. A record for another destination, a
+record that is not valid and a file that is not JSON stop it with `destination-conflict`, which shows both. To
+change the destination itself, delete the record on purpose: check the file, delete it yourself and run init again.
+The permission preview for a push rule shows the record that is on disk, and the push rule is written only while
+that record names what init would record now, whatever values the trusted variables have.
+
+A sandbox often injects a token into an http or https address, through a `url.<base>.insteadOf` rule or in the
+address of the remote (`https://user:token@host/...`). Init does not refuse that. It records the address without the
+user information, the destination is the host and OWNER/REPO, and no message, record or receipt shows the user
+information of an address: a message shows an http address as `https://***@host/...`. A rule that only adds plain
+user information
+to the recorded address (no `/`, `?`, `#`, `\` or `@` in it, which git and curl read as the end of the host) is
+allowed at every push, and the push uses it. So is a rule that changes the recorded address between https, `ssh://`
+and `git@host:OWNER/REPO` on the same host and OWNER/REPO and the default ports: a common `insteadOf` setup maps
+`https://github.com/` to `git@github.com:`. Any other rule that applies to the address is refused: one that sends it
+over another scheme (`file://`, `git://`, `ext::`, `fd::`, a local path, an unknown transport) or plain http, or to
+another host, repository or port. A record that holds user information is not used either.
+
+When exactly one remote of the repository holds an http or https address with user information for the recorded host
+and OWNER/REPO (an `origin` cloned as `https://x-access-token:token@github.com/OWNER/REPO`, as a sandbox often
+clones), the push goes to that address, after the same host, repository and rewrite checks, so that the token in
+your own git configuration keeps working. A remote with push URLs counts through them only, as in git. Two different
+addresses with user information for the destination are refused with `remote-ambiguous` before anything connects:
+keep one. The record and the receipt still hold the address without user information. Before git prints anything,
+the command collects every secret that the push can carry: the user information of the recorded address, of the
+address that a remote holds, and of each address that a `url.<base>.insteadOf` or `pushInsteadOf` rule makes of
+them, whether the rule is allowed or not. It takes the secret of each of them out of what git prints (its error
+output and the result line) and out of the text of its own refusals, whatever its length, and shows an http address
+with user information as `https://***@host/...` everywhere else, so none of them is in any output, log or receipt,
+also after a failed push: git can print a token that is the user name of an address. When an address has a user name
+and a password, the password and the base64 of the pair are the secret, and the user name, a label such as
+`x-access-token` or `oauth2`, stays readable in text. With no password, or an empty one, the user part is the token
+and is replaced, and so is a user part next to `x-oauth-basic`, the fixed password of GitHub's older
+`TOKEN:x-oauth-basic` form. A secret is replaced wherever it occurs in that text, so a short one can make a message
+look garbled. The fields that the command fills in itself, such as the destination, stay as they are. The
+destination step of init cleans its own messages in the same way, with the secrets of the remote's addresses and of
+their rewrites. A refusal for a rewrite rule names the kind of rule, the
+scheme, host and port that it leads to and what differs from the recorded address (the scheme, host, port or
+repository), and never the rule or its text, because a rule can hold a credential. As
+with any git push, the address with its token is visible in the process arguments of the local machine
+while git runs, and another user of the machine can read it there. A token that a rule or a credential helper
+supplies does not appear in the arguments. A rule that rewrites an ssh address to an https one with a token
+(`url.https://x:token@github.com/.insteadOf` for `git@github.com:`) is recorded as the plain https address, and it
+no longer applies to that address: add a rule for `https://github.com/` too, hold the token in the address of the
+remote, or use a credential helper.
+
+If git configuration variables are set when you confirm the destination (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`,
+`GIT_CONFIG_NOSYSTEM`, `GIT_CONFIG_COUNT` with its pairs, `GIT_CONFIG_PARAMETERS`), the preview lists each one by
+name with the length of its value, never the value, because a value can be a token and the preview goes into the
+model's context and the transcript. Your yes trusts these names. The record gains `trustedGitVariables`: each
+trusted name with a hash of its value at that moment, so the file never holds a value either. The push command keeps
+each trusted name with whatever value it has when it runs and drops every other name. A value that changes later,
+such as a token that a sandbox sets for each session, is not refused: the receipt marks it `changed`, and the hash
+is for that information only. The digest of your yes covers the names, not the hashes, so a value that rotates
+between the preview and the yes needs no new preview. A trusted name that is not set is skipped. You trust these
+names the way you trust `~/.gitconfig`: whatever they hold is used. A variable that is not set when you confirm
+stays untrusted, so unset one before init to keep it out. Do not trust a variable that carries a token when a
+credential helper can do the job. Run the destination step where the workers run, so the names are the ones they
+have. A sandbox that gives git `safe.directory` through `GIT_CONFIG_COUNT` needs this, because git does not answer
+in a repository that another user owns without it.
+
+`GIT_CONFIG_COUNT` and the `GIT_CONFIG_KEY_n` and `GIT_CONFIG_VALUE_n` pairs that it addresses are one unit.
+Trusting the count trusts the pairs it addresses when the command runs, whatever the record names, so a sandbox that
+adds a setting is not refused and git never meets a count without its pairs. A pair is never trusted alone: a pair
+that the count does not address, or that has no count, is not offered at init and is dropped by the command.
+
+To change which names you trust, run the destination step again where the workers run. When the record is the same
+except for its trusted names, the preview shows the old record, the new record and the names that are added and
+removed, with its own digest. After your yes the record is rewritten (`replaced`) and the old one is not kept. The
+digest covers the names and the destination of the old record, so a record that changed after the preview needs a
+new yes.
 
 ### Push allow rules already in your settings
 
@@ -224,22 +400,13 @@ quiet for a reason that has nothing to do with the push command. The rule that n
 `git push` rule and is never listed.
 
 What this check does not see: broad rules such as `Bash(git *)` or `Bash(*)`, your user settings
-(`${CLAUDE_PLUGIN_ROOT}/settings.json`), managed settings, and the permission mode. Check those yourself.
-
-### A push gate hook from an earlier build
-
-An earlier build of FVS offered a hook, `fvs-auto-push-gate.mjs`, for pushes. This build ships no hook. When a
-project settings file still has an entry of `hooks.PreToolUse` whose command runs that script, `plan` and every
-Claude write list it (file, real path and command) and leave it in place: FVS deletes none of your settings, and the
-write is not refused because of it. Delete the listed entries from hooks.PreToolUse yourself; every other hook stays.
-A hook whose script is missing gives no decision, but an older copy of the script may still be installed on your
-machine, and it would still run.
+(`~/.claude/settings.json`), managed settings, and the permission mode. Check those yourself.
 
 ## Codex rules
 
 Written to `.codex/rules/fvs-auto.rules` in the project, after your yes. The syntax is Codex's own
 `prefix_rule`, from the [Codex rules documentation](https://developers.openai.com/codex/rules), and it was
-checked with `codex execpolicy check` on codex-cli 0.166.0. The file lists examples that Codex checks when it
+checked with `codex execpolicy check` on codex-cli 0.166.0 and again on 0.170.0. The file lists examples that Codex checks when it
 loads the rules. Whether a live Codex session stops prompting after this file is not observed.
 
 ```python
@@ -291,8 +458,8 @@ prefix_rule(
   there is nothing to write on Codex: init says so and those prompts stay unresolved until you approve them when
   they appear.
 - Codex splits a command run through a shell wrapper such as `bash -lc` into its simple commands before it matches
-  rules, as its documentation says. That was not observed here, and `codex execpolicy check` takes the command words
-  directly.
+  rules only for a plain chain joined by `&&`, `||`, `;` or `|`; any other script is matched as one invocation, as its
+  documentation says. That was not observed here, and `codex execpolicy check` takes the command words directly.
 
 ## What FVS never allows
 
@@ -305,6 +472,36 @@ prompts in a session still depends on your other rules and permission mode:
 - `gh api`, `gh issue`, `gh repo`, `gh release` and any other command not in the table above;
 - any step you did not confirm, and any step that did not prompt in your check.
 
+## Unattended runs in a sandbox
+
+Some runs start with the permission prompts turned off (skip-permissions in Claude Code, or the same switch in
+another tool). Use that mode only inside an isolated sandbox or on a cloud machine. Never
+use it on a personal machine with broad access to your files, accounts and credentials.
+
+With skip-permissions nothing prompts, so the rules in "What FVS never allows" (no GitHub comments or reviews, no
+merges, no pushes to an upstream) are no longer enforced by a prompt. Enforce them by other means, outside the
+agent:
+
+- **A token limited to the project's fork.** Give the sandbox a GitHub token for that one repository, with
+  only the access the run needs.
+- **A posting guard in the sandbox.** A token that can open draft pull requests can usually also comment, review
+  and merge. Put a `gh` wrapper ahead of the real `gh` on `PATH` that refuses the commands that comment on, review,
+  mark ready or merge a pull request, and `gh api` calls to those endpoints. The wrapper only catches mistakes: a
+  program in the sandbox can call the API directly. The token limits where a comment can land, not whether one is
+  posted.
+- **Branch protection on the fork.** On its main branches, require a pull request and forbid force pushes and
+  branch deletion, and apply the rule to administrators too: GitHub exempts them by default, and an agent that works
+  through the owner's own account acts as one. A direct push is then stopped. A merge through a pull request is not:
+  the posting guard refuses it, and only the owner merges. A team with a second reviewer can also require an
+  approving review, but the owner then needs that reviewer to merge their own pull requests.
+
+In a skip-permissions sandbox only the permission check and the allowlist are optional; the push command and init's
+destination step are not. Workers push with the push command and never with `git push`, because it pushes to the
+destination recorded at init and records the result. With no destination recorded, a worker's first push is refused and
+the worker stops; init records it in a separate step, also when you skip the check. The command is a cooperative
+guard and not a security boundary (see "What the command is"), so the token and the branch protection are what limit
+a push.
+
 ## Where the file goes
 
 Before you confirm, init shows the file it would change, the real path when `.claude` is a link, whether the
@@ -313,7 +510,7 @@ file is tracked, ignored or loose in git, and where it applies.
 Claude Code reads the project's `.claude/settings.json` from the session's own directory, and rules in a shared
 project file apply once you trust the folder.
 
-Your yes is bound to what the preview showed. The digest covers the exact rules, the recorded destination when a push rule is written, the canonical project
+Your yes is bound to what the preview showed. The digest covers the exact rules, the recorded destination and the names of its trusted git variables (not the values or their hashes) when a push rule is written, the canonical project
 root, the real path of the file (every link followed, also when the folder does not exist yet) and the hash of
 the file's current content. If any of them changes between the preview and your confirmation, for example a
 `.claude` link that now leads to another folder, or an edit to the file, the confirmation is refused, nothing is
@@ -339,22 +536,25 @@ covers the session that ran init. If your workers run in another mode, check tha
 ## What was tested
 
 - Unit tests (node, no network): the helper's confirmation, merge, refusals and Codex file handling, the refusal
-  while a `git push` allow rule is present, the listing of a push gate hook of an earlier build, the confirmation
+  while a `git push` allow rule is present, the confirmation
   binding (a `.claude` or `.codex` link retargeted between the preview and the confirmation, a changed file,
   another project root), the `recheck` entry point, and the push command: every refusal listed above, and real
   pushes into a throwaway local bare repository that stands in for the fork, reached through a stand-in for `ssh`.
+  The token cases push over http to a git server on the local machine that turns a push away without the token.
   Nothing in them contacts GitHub.
-- The Codex rules were run through `codex execpolicy check` on codex-cli 0.166.0: the file parses, each probe
+- The Codex rules were run through `codex execpolicy check` on codex-cli 0.166.0 and again on 0.170.0: the file parses, each probe
   command is allowed, and `git push`, merge and other commands are not matched. The tests repeat this when a Codex
   CLI is installed.
 - One live probe: the message step (`ao send` to a session that does not exist) was run in a Claude Code
   session.
 - Not observed: a live Claude Code or Codex session showing that a written rule removes a prompt; the live `gh`,
-  `git fetch` and Lake probes; a real push to GitHub through the push command; whether Claude Code screens text
-  after the matched words against an allow rule, such as a command substitution (`$(...)`) or a redirect (`> file`)
-  after the branch name, which its documentation does not say; that Codex splits a shell wrapper before it matches rules; that the push command finds the same `git`,
-  `PATH` and shell environment that a worker's shell uses. That is why init asks you to recheck, and why the
-  first real push is the evidence for the push command.
+  `git fetch` and Lake probes; a real push to GitHub through the push command; whether Claude Code screens a
+  command substitution (`$(...)`) after the branch name against an allow rule, which its documentation does not say,
+  or applies its documented checks of redirect targets and of each part of a compound command to the push rule;
+  that Codex splits a shell wrapper before it matches rules; that the push command finds the same `git`,
+  `PATH` and shell environment that a worker's shell uses. That is why init asks you to recheck. The recheck pushes
+  nothing: its probe uses the branch name `fvs/.permission-check`, which git forbids and the push command refuses
+  before it contacts anything. Do not make the first real push the test of the rule.
 
 ## After a first run: `/fewer-permission-prompts`
 
