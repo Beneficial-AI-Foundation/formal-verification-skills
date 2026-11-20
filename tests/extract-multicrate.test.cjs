@@ -37,6 +37,8 @@ describe('multi-crate extraction: the toy workspace', () => {
     assert.equal(status.status, 0, status.stdout);
     const { run } = status.result;
     assert.equal(run.crate, 'toy_app', 'the top-level run is the main crate\'s');
+    assert.deepEqual(run.scope, { kind: 'multi-crate', basis: 'cargo', libraryCrates: ['toy_app', 'toy_lib'] }, 'the status states the scope the copy was prepared under');
+    assert.deepEqual(run.units.map((unit) => unit.scope), [run.scope, run.scope], 'every crate row carries the same scope');
     assert.equal(run.supported, true);
     assert.deepEqual(Object.keys(run.stages), ['charon', 'aeneas', 'publish']);
     assert.deepEqual(run.units.map((unit) => [unit.crate, unit.status, unit.publishDir]), [['toy_lib', 'complete', 'Lean/Lib'], ['toy_app', 'complete', 'Lean/App']]);

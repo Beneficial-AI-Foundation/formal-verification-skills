@@ -96,6 +96,11 @@ describe('extraction attempt: supported positive', () => {
     assert.equal(run.supported, true);
     assert.deepEqual(run.residuals, []);
     assert.equal(run.trust, 'local-host-and-reviewed-scripts');
+    // The scope comes from the manifest the attempt is bound to, and the attempt record carries it too.
+    const recordedScope = JSON.parse(fs.readFileSync(path.join(out, 'manifest.json'), 'utf8')).scope;
+    assert.equal(recordedScope.kind, 'single-crate');
+    assert.deepEqual(run.scope, recordedScope);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(out, 'attempt.json'), 'utf8')).scope, recordedScope);
     assert.equal(run.llbc.sha256, sha256(path.join(out, 'demo.llbc')));
     assert.equal(run.translation.projectPath, path.join(ws.project, 'Demo', 'translation.json'));
     assert.equal(run.translation.sha256, sha256(path.join(ws.project, 'Demo', 'translation.json')));

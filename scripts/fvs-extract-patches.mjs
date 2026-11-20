@@ -653,6 +653,9 @@ function prepare(flags) {
     const workspace = flags.release === undefined ? null : workspaceInventory(context.projectRoot, tree, flags.release);
     if (workspace !== null && !sameState(files, copyState(tree))) refuse('internal', 'reading the workspace changed the extraction copy');
     if (workspace !== null) manifest.workspace = workspace;
+    // The scope is always recorded: from cargo's inventory with the release, otherwise from a static
+    // scan that claims a single crate only when the manifests positively show one.
+    manifest.scope = workspace !== null ? cargoScope(workspace) : staticScope(context.projectRoot, tree, context.files, files);
     const link = Object.keys(files).find((file) => files[file].link !== undefined);
     if (link) refuseCopyLink(link);
     manifest.final = { touchedSha256: sha256(JSON.stringify(touchedState(tree, context.touched))), files };
@@ -1341,6 +1344,12 @@ function attempt(flags) {
   }
   const spec = readJson(path.resolve(flags.spec));
   if (isObject(spec) && spec.crates !== undefined) return attemptUnits(out, manifest, manifestSha256, spec);
+  // The single-crate form is the legacy path, so a single crate has to be established, not assumed:
+  // an unknown scope (a workspace prepared without --release, or a copy that records none) is refused.
+  const scope = recordedScope(manifest);
+  if (scope.kind === 'unknown') {
+    refuse('attempt-refused', `the scope of this extraction is not established (${scope.reason}), and an attempt never takes an unknown scope for a single crate; prepare a new copy with --release DIR, so that cargo reads every in-repo crate`, { scope });
+  }
   const unaccounted = coverageProblems(manifest, { targets: [], nonTargets: [], dropped: checkDropped(isObject(spec) ? spec.dropped : undefined), multi: false });
   if (unaccounted.length > 0) refuse('attempt-refused', `the workspace is not accounted for: ${unaccounted.join('; ')}`, { reasons: unaccounted });
   return recordAttempt(out, manifest, manifestSha256, spec);
@@ -1486,6 +1495,85 @@ function workspaceInventory(projectRoot, tree, releaseFlag) {
   };
 }
 
+// The in-repo library crates of the original checkout, by crate name: the one expression the
+// coverage gate and the scope record both use, so they cannot disagree about what the repository holds.
+function libraryCratesOf(inventory) {
+  return [...new Set(inventory.original.crates.filter((row) => row.library).map((row) => row.crate))].sort();
+}
+
+// What the copy is a copy of, recorded by prepare so that a single crate is always established and
+// never inferred from missing data. With --release cargo reads the checkout, and the scope is
+// multi-crate when it holds two or more library crates. Without it nothing reads cargo, so a single
+// crate is claimed only when the manifests positively show a lone package (staticScope); anything
+// else is unknown, and no attempt, record or acceptance treats unknown as single-crate.
+const SCOPE_KINDS = ['single-crate', 'multi-crate', 'unknown'];
+
+function cargoScope(inventory) {
+  const libraryCrates = libraryCratesOf(inventory);
+  return { kind: libraryCrates.length >= 2 ? 'multi-crate' : 'single-crate', basis: 'cargo', libraryCrates };
+}
+
+// The scope a prepared manifest records; a manifest without one (a copy prepared before the scope
+// was recorded, or an edited file) is unknown.
+function recordedScope(manifest) {
+  const scope = manifest.scope;
+  if (isObject(scope) && SCOPE_KINDS.includes(scope.kind)) return scope;
+  return { kind: 'unknown', basis: 'none', reason: 'the copy records no scope (it was prepared before the scope was recorded)' };
+}
+
+// Why a manifest is not plainly one package: any [workspace], [patch] or [replace] table, workspace
+// inheritance or a workspace key, a path dependency, a table the line reader cannot read, or no
+// [package] table. Null when none applies. A [lib] or [[bin]] path is a source file, not a crate.
+function loneManifestProblem(text, where) {
+  let layout;
+  try {
+    layout = tomlLayout(text, where);
+  } catch (error) {
+    if (error instanceof Refusal) return `${where} is a manifest the scan cannot read line by line`;
+    throw error;
+  }
+  if (!layout.tables.some((table) => table.header.length === 1 && table.header[0] === 'package')) return `${where} has no [package] table`;
+  for (const table of layout.tables) {
+    if (['workspace', 'patch', 'replace'].includes(table.header[0])) return `${where} has a [${table.header.join('.')}] table`;
+    const dependencies = table.header.some((part) => part.endsWith('dependencies'));
+    for (const entry of table.entries) {
+      const value = [layout.lines[entry.start].slice(entry.equals + 1), ...layout.lines.slice(entry.start + 1, entry.end + 1)].join('\n');
+      if (entry.key.includes('workspace') || /\bworkspace\s*=/.test(value)) return `${where} inherits from or names a workspace (${entry.key.join('.')})`;
+      if (dependencies && (entry.key.includes('path') || /\bpath\s*=/.test(value))) return `${where} has a path dependency (${[...table.header, ...entry.key].join('.')})`;
+    }
+  }
+  return null;
+}
+
+// Single crate without cargo: only when the project and the copy each hold one manifest, a plain
+// package, and no directory above the project or the copy holds a workspace manifest (cargo looks
+// upward for one). Anything cargo could read differently is unknown.
+function staticScope(projectRoot, tree, original, copy) {
+  const unknown = (reason) => ({ kind: 'unknown', basis: 'none', reason: `${reason}; prepare with --release DIR so that cargo reads the workspace` });
+  for (const [label, start] of [['the project', projectRoot], ['the extraction copy', tree]]) {
+    for (let dir = path.dirname(start); dir !== path.dirname(dir); dir = path.dirname(dir)) {
+      const above = path.join(dir, 'Cargo.toml');
+      if (!lexists(above)) continue;
+      let text = null;
+      try {
+        text = fs.readFileSync(above, 'utf8');
+      } catch {
+        return unknown(`${above}, above ${label}, cannot be read`);
+      }
+      if (/^\s*\[\s*workspace\b/m.test(text)) return unknown(`${above}, above ${label}, is a workspace manifest`);
+    }
+  }
+  for (const [label, files] of [['the inputs', original], ['the copy', copy]]) {
+    const found = Object.keys(files).filter((file) => path.basename(file) === 'Cargo.toml');
+    if (found.length !== 1 || found[0] !== 'Cargo.toml') return unknown(`${label} hold ${found.length === 0 ? 'no Cargo.toml' : `${found.length} Cargo.toml files (${found.slice(0, 4).join(', ')})`}, and a single crate is not established without cargo`);
+  }
+  for (const [label, file] of [['the project Cargo.toml', path.join(projectRoot, 'Cargo.toml')], ['the copy Cargo.toml', path.join(tree, 'Cargo.toml')]]) {
+    const problem = loneManifestProblem(fs.readFileSync(file, 'utf8'), label);
+    if (problem !== null) return unknown(problem);
+  }
+  return { kind: 'single-crate', basis: 'manifest', manifest: 'Cargo.toml' };
+}
+
 const DROPPED_FIELDS = ['crate', 'reason'];
 
 // In-repo crates the owner decided to leave out of the extraction copy, or that a patch
@@ -1516,7 +1604,7 @@ function coverageProblems(manifest, { targets, nonTargets, dropped, multi }) {
   }
   const accounted = new Set([...targets.map((entry) => entry.crate), ...nonTargets.map((entry) => entry.crate), ...dropped.map((entry) => entry.crate)]);
   const problems = [];
-  const inRepo = new Set(inventory.original.crates.filter((row) => row.library).map((row) => row.crate));
+  const inRepo = new Set(libraryCratesOf(inventory));
   const present = new Set(inventory.copy.crates.filter((row) => row.library).map((row) => row.crate));
   const removed = new Set(inventory.removedPathDependencies.map((row) => row.crate));
   if (multi) {
@@ -2084,6 +2172,7 @@ function attemptUnits(out, manifest, manifestSha256, spec) {
     version: 1,
     out,
     manifestSha256,
+    scope: recordedScope(manifest),
     main,
     order,
     roster,
@@ -2121,8 +2210,9 @@ function readMulti(out) {
   if (record?.schema !== MULTI_SCHEMA) return null;
   const bad = (message) => refuse('attempt-refused', `${file}: ${message}`);
   if (record.version !== 1 || record.out !== out || !Array.isArray(record.units) || record.units.length === 0) bad('not this copy\'s multi-crate attempt record');
-  const { manifestSha256 } = preparedManifest(out);
+  const { manifest, manifestSha256 } = preparedManifest(out);
   if (record.manifestSha256 !== manifestSha256) bad('the manifest changed after the attempt was recorded');
+  if (record.scope !== undefined && !sameState(record.scope, recordedScope(manifest))) bad('the scope recorded in the attempt differs from the scope in the manifest');
   for (const unit of record.units) {
     if (typeof unit?.crate !== 'string' || !CRATE_NAME.test(unit.crate) || unit.out !== path.join(out, UNITS_DIR, unit.crate)) bad('a unit record does not name a crate directory of this copy');
     const unitFile = path.join(unit.out, ATTEMPT);
@@ -2193,6 +2283,7 @@ function recordAttempt(out, manifest, manifestSha256, spec, targets = [], nonTar
     version: 2,
     out,
     manifestSha256,
+    scope: recordedScope(manifest),
     ...(roster === null ? {} : { roster, rosterSha256: rosterSha256(roster) }),
     ...invocation,
     identity,
@@ -3440,6 +3531,11 @@ function attemptStatusOfChain(chain, out) {
   // root, so another checkout of the project can find it without the recording machine's paths.
   const relativePath = (entry) => ({ ...entry, relativePath: path.relative(inv.projectRoot, entry.projectPath).split(path.sep).join('/') });
   const translation = relativePath(translationEntry);
+  // The scope comes from the manifest the attempt is bound to, like the lock; an attempt record
+  // that names a different one is refused.
+  const copyManifest = preparedManifest(copyRoot(out)).manifest;
+  const scope = recordedScope(copyManifest);
+  if (record.scope !== undefined && !sameState(record.scope, scope)) refuse('attempt-refused', 'the scope recorded in the attempt differs from the scope in the manifest');
   const recorded = stages.publish.record.transform ?? null;
   const again = transformOf(chain);
   const unaccounted = [...reachProblems(chain), ...axiomProblems(chain, finalTexts(chain, again), again?.record.stitch ?? [])];
@@ -3460,6 +3556,7 @@ function attemptStatusOfChain(chain, out) {
       attemptSha256: chain.attemptSha256,
       stages: Object.fromEntries(Object.entries(stages).map(([stage, { sha256: hash }]) => [stage, hash])),
       manifestSha256: chain.manifestSha256,
+      scope,
       ...(record.rosterSha256 === undefined ? {} : { rosterSha256: record.rosterSha256 }),
       supported: record.supported,
       residuals: record.residuals,

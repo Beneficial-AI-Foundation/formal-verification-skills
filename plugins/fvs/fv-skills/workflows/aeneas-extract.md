@@ -285,7 +285,7 @@ EVIDENCE_ROOT="${FVS_EVIDENCE_DIR:-$HOME/.fvs/extractions}"
 mkdir -p "$EVIDENCE_ROOT" || exit 1
 OUT="$(mktemp -d "$EVIDENCE_ROOT/$(basename "$CRATE_ROOT")-$(date -u +%Y%m%dT%H%M%SZ).XXXXXX")/copy"
 RELEASE_DIR=...   # the release directory the spec names as `release` (relative to the project root, or absolute)
-node "$PATCH_ENGINE" prepare --project-root "$CRATE_ROOT" --out "$OUT" --release "$RELEASE_DIR" || exit 1   # records the manifest and the workspace; refusal -> STOP
+node "$PATCH_ENGINE" prepare --project-root "$CRATE_ROOT" --out "$OUT" --release "$RELEASE_DIR" || exit 1   # records the manifest, the workspace and the scope; refusal -> STOP
 node "$PATCH_ENGINE" verify-tree --out "$OUT" || exit 1                  # before Charon: the copy is the recorded post-patch tree
 # One recorded attempt. $EXTRACT_SPEC (JSON: release, crate, publishDir, charonArgs, cargoArgs) states the
 # project's usual invocation in the supported form; the engine refuses anything else before recording.
@@ -333,6 +333,19 @@ the original workspace is accounted for: a target, a `nonTargets` entry (its sou
 or a `dropped` entry (they are not: the crate is outside the copy, or a patch replaced its path
 dependency by a registry release). A several-crate attempt on a copy prepared without `--release` is
 refused. A crate that reaches Charon's output undeclared is refused there as well.
+
+`prepare` always records the scope of the extraction in the manifest (`scope`), with or without the
+release, because a single crate is established, never inferred from missing data. With the release,
+cargo's inventory gives `{ kind: 'multi-crate' | 'single-crate', basis: 'cargo', libraryCrates }`
+(multi-crate when the checkout holds two or more library crates). Without it nothing reads cargo, so
+`kind: 'single-crate'` (`basis: 'manifest'`) is claimed only when the project and the copy each hold one
+manifest that is a plain package: no `[workspace]`, `[patch]` or `[replace]` table, no workspace
+inheritance, no path dependency, a second `Cargo.toml` nowhere among the inputs, and no workspace
+manifest in a directory above the project or the copy. Anything else is `kind: 'unknown'` with the
+reason, and a single-crate `attempt` on an unknown scope is refused (prepare a new copy with
+`--release`); so is a copy whose manifest records no scope (prepared before it was recorded). The
+attempt, each unit's record and `attempt-status` (`run.scope`) carry the scope; `status --out` shows it
+for a copy that has no attempt.
 
 ```bash
 RELEASE_DIR=...   # the release directory the spec names as `release` (relative to the project root, or absolute)
