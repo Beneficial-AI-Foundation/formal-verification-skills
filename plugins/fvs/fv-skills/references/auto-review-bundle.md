@@ -170,7 +170,7 @@ Inputs, all under `.formalising/auto-fv/`:
 
 | Record | What the section takes from it |
 |---|---|
-| `build-check/SHA.json` | The commit, the verdict label and each statement's `#print axioms` list. The receipt must be the one for exactly `SHA`. A statement that was not built adds nothing to the counts and is named. |
+| `build-check/SHA.json` | The commit, the verdict label and each statement's `#print axioms` list. The receipt must be the one for exactly `SHA`. A statement that was not built adds nothing to the counts and is named. The receipt counts as an acceptance only when the engine counts it (its version, the Lean-level comparison, the externals records it relied on and the Lean checks of stitched files, as `read-state` judges them): otherwise the axiom lists are still shown, but the section says `Build check: not accepted (REASON)` and never that the build check accepted the commit. |
 | `externals.json` | Every boundary record with its kind, status and decision. A missing file is refused when a statement rests on an axiom beyond Lean's three. |
 | `specs.json` | The current review verdict per spec file, what the owner changed in review, the recorded proof pull request head and the recorded merge. Whether a spec file changed since its review is judged on the file as git holds it at `SHA`, not on the checkout. When the checkout does not hold that commit, the section says that it did not check. A proof pull request may change the axiom guards in a spec file, so a `CHANGED SINCE REVIEW` line is a fact for the reader to weigh, not a refusal. |
 

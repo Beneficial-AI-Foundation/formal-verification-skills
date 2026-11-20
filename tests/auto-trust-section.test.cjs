@@ -32,6 +32,8 @@ const EXTERNALS = [
   record('opaque-slices', 'opaque', 'assumption-accepted', 'demo::incremental::hmac_slices', 'demo.incremental.hmac_slices (1 axiom)'),
   record('sp-01', 'semantic-patch', 'assumption-accepted', 'demo::hmac::compute', 'demo.hacl.hmac.compute'),
 ];
+// What a version 2 acceptance carries: the Lean-level comparison of the statements with the merged spec.
+const LEAN = { toolchain: { lean: 'Lean (version 4.35.0)', githash: 'a'.repeat(40) }, statements: [{ name: 'f', declaration: 'f', constants: 2, sha256: 'a'.repeat(64) }], bindings: [], dumps: { base: 'b'.repeat(64), head: 'c'.repeat(64) } };
 const statement = (name, axioms, extra = {}) => ({ name, line: 1, status: 'built', reason: null, axioms: [...STANDARD, ...axioms],
   beyondStandard: axioms, flags: [], ...extra });
 const FILES = {
@@ -58,8 +60,8 @@ function makeProject({ files = FILES, externals = EXTERNALS, receipt = {}, specs
       review: 'review.md', reviewSha256: sha256('review\n'), recordedAt: '2026-11-17T00:00:00.000Z', statements });
   }
   const fileRows = Object.entries(files).map(([file, statements]) => ({ path: file, sha256: 'e'.repeat(64), status: 'built', reason: null, statements }));
-  fs.writeFileSync(path.join(auto, 'build-check', `${COMMIT}.json`), JSON.stringify({ schema: 1, kind: 'fvs-build-check', accepted: true, label: 'accepted (build check)',
-    commit: COMMIT, tree: 'b'.repeat(40), specFiles: fileRows, flags: [], warnings: [], ...receipt }));
+  fs.writeFileSync(path.join(auto, 'build-check', `${COMMIT}.json`), JSON.stringify({ schema: 2, kind: 'fvs-build-check', accepted: true, label: 'accepted (build check)',
+    commit: COMMIT, tree: 'b'.repeat(40), specFiles: fileRows, flags: [], warnings: [], externals: { records: [] }, integrity: { semantic: LEAN }, ...receipt }));
   if (externals !== null) fs.writeFileSync(path.join(auto, 'externals.json'), JSON.stringify({ schema: 'fvs/auto-externals', schemaVersion: 1, records: externals }));
   if (specs) fs.writeFileSync(path.join(auto, 'specs.json'), JSON.stringify({ schema: 'fvs/auto-specs', schemaVersion: 1, specs: specRows.map(({ statements, ...row }) => row), prs }));
   return root;
@@ -102,6 +104,55 @@ describe('pull request trust section', () => {
   const refuses = (fn, code) => assert.throws(fn, (error) => { assert.equal(error.code, code, error.message); return true; });
   before(async () => { api = await import('../scripts/fvs-auto-bundle.mjs'); });
   after(() => { for (const root of roots) fs.rmSync(root, { recursive: true, force: true }); });
+
+  // The section reads the receipt the way the engine does: a receipt that the engine would not count as an
+  // acceptance still gives the axiom lists, but the section never says that the build check accepted it.
+  describe('a receipt the engine does not count', () => {
+    const build = (receipt, options = {}) => {
+      const root = project({ receipt, ...options });
+      return api.trustSection({ projectRoot: root, commit: COMMIT });
+    };
+    const notAccepted = (result, reason) => {
+      assert.equal(result.build.accepted, false);
+      assert.match(result.build.label, reason);
+      assert.match(result.markdown, new RegExp(`Build check: not accepted \\(${reason.source}`));
+      assert.doesNotMatch(result.markdown, /accepted \(build check\)/);
+      assert.equal(result.checks.statements.total, 4, 'the axiom lists are still there');
+    };
+
+    it('counts a current version 2 acceptance and says so', () => {
+      const result = build({});
+      assert.deepEqual(result.build, { accepted: true, label: 'accepted (build check)' });
+      assert.match(result.markdown, /Build check: accepted \(build check\)\./);
+    });
+
+    it('does not count an older receipt, or one with no Lean-level comparison', () => {
+      notAccepted(build({ schema: 1 }), /it is a version 1 receipt, made before the build check compared the statements with the merged spec in Lean/);
+      notAccepted(build({ integrity: undefined }), /it carries no Lean-level comparison of the statements with the merged spec/);
+      notAccepted(build({ externals: undefined }), /it does not list the externals records it relied on/);
+    });
+
+    it('does not count a receipt whose bound record has no digest, or whose recorded extraction holds other Lean checks', () => {
+      notAccepted(build({ integrity: { semantic: { ...LEAN, bindings: [{ axiom: 'Gap.x', record: 'std-div', proposition: 'P' }] } } }), /the Lean-level check bound the axiom Gap\.x to the externals record std-div, but the receipt carries no digest of that record/);
+      const root = project({ receipt: { integrity: { semantic: LEAN, stitchChecks: { units: 1, files: 1, items: 2, builtChecked: true, entries: [{ unit: 'demo', relativePath: 'Demo/Ext.lean', fileSha256: 'e'.repeat(64), blockSha256: 'd'.repeat(64) }] } } } });
+      notAccepted(api.trustSection({ projectRoot: root, commit: COMMIT }), /the Lean checks that the recorded extraction holds for its stitched files are not the ones the build check was made with/);
+    });
+
+    it('does not count a receipt whose externals record changed after the check', () => {
+      const relied = EXTERNALS[2];
+      const digest = (record) => sha256(JSON.stringify(record, (_k, v) => (v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, v[k]])) : v)));
+      const held = build({ externals: { records: [{ id: relied.id, sha256: digest(relied) }] } });
+      assert.equal(held.build.accepted, true, 'the record as it was');
+      const changed = EXTERNALS.map((entry) => (entry.id === relied.id ? { ...entry, status: 'open', decision: null } : entry));
+      notAccepted(build({ externals: { records: [{ id: relied.id, sha256: digest(relied) }] } }, { externals: changed }), /the externals record std-div it relied on changed after the check/);
+    });
+
+    it('keeps the label of a build check that did not accept the commit', () => {
+      const result = build({ accepted: false, label: 'build check failed: a new axiom' });
+      assert.deepEqual(result.build, { accepted: false, label: 'build check failed: a new axiom' });
+      assert.match(result.markdown, /Build check: build check failed: a new axiom\./);
+    });
+  });
 
   it('joins axiom lists to records by glob, brace group and exact name, and keeps the rest visible', () => {
     const root = project();
