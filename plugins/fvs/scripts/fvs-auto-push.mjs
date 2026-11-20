@@ -76,6 +76,13 @@ export const contractText = () => `The push command is ${CONTRACT.kind}. ${CONTR
 
 // ---- the destination URL ------------------------------------------------------------------------------------
 
+// User information in an http or https address (https://user:token@host/...) is a credential, and a token can reach git
+// through a rewrite rule that a sandbox injects. The address is written to the record and printed in previews and
+// refusals, so such an address is refused, and a message that has to name one shows it without the user part.
+// The user name of an ssh address (git@host) is not a secret and stays.
+const embedsCredential = (url) => /^https?:\/\/[^/]*@/i.test(String(url).trim());
+export const scrub = (text) => String(text).replace(/(https?:\/\/)[^/\s@"']+@/gi, '$1***@');
+
 // Host and OWNER/REPO of a git URL, or null when the URL does not name exactly one repository on one host
 // (a local path, a file URL, a path with more or fewer than two segments).
 export function parseRemoteUrl(url) {
@@ -106,6 +113,7 @@ export function destinationProblem(where, remote, repo, host, env) {
     const urls = run.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
     if (urls.length === 0) return { code: 'remote-ambiguous', message: `git remote ${remote} has no ${label} URL` };
     for (const url of urls) {
+      if (embedsCredential(url)) return { code: 'remote-credential', message: `the ${label} URL of remote ${remote} has user information in an http or https address (${scrub(url)}), which can be a token. FVS writes the address down and shows it, so use a credential helper or an ssh address, and check the git settings that rewrite it` };
       const named = parseRemoteUrl(url);
       if (!named) return { code: 'remote-ambiguous', message: `cannot tell which repository the ${label} URL ${url} of remote ${remote} names; every URL of the remote must be a plain host and OWNER/REPO URL` };
       if (named.host !== host.toLowerCase() || named.repo.toLowerCase() !== repo.toLowerCase()) {
@@ -206,12 +214,12 @@ export function rewriteProblem(where, url, env) {
     const key = at < 0 ? entry : entry.slice(0, at);
     const value = at < 0 ? '' : entry.slice(at + 1);
     const rewrite = /^url\.(.+)\.(insteadof|pushinsteadof)$/.exec(key);
-    if (rewrite && url.startsWith(value)) return `the git setting ${key} = ${JSON.stringify(value)} would rewrite the recorded destination ${url}`;
+    if (rewrite && url.startsWith(value)) return scrub(`the git setting ${key} = ${JSON.stringify(value)} would rewrite the recorded destination ${url}`);
     const remote = /^remote\.(.+)\.[^.]+$/.exec(key);
-    if (remote && remote[1] === url) return `the git setting ${key} names the recorded destination as a remote`;
+    if (remote && remote[1] === url) return scrub(`the git setting ${key} names the recorded destination as a remote`);
   }
   const shown = git(['ls-remote', '--get-url', url], { where, env });
-  if (shown.status !== 0 || shown.stdout.trim() !== url) return `git reads the recorded destination ${url} as ${shown.stdout.trim() || '(unreadable)'}`;
+  if (shown.status !== 0 || shown.stdout.trim() !== url) return scrub(`git reads the recorded destination ${url} as ${shown.stdout.trim() || '(unreadable)'}`);
   return null;
 }
 
@@ -277,6 +285,7 @@ export function recordProblem(record) {
   const text = (value) => typeof value === 'string' && value.length > 0 && !/[\s\x00-\x1f\x7f]/.test(value) && !value.startsWith('-');
   for (const field of ['projectRoot', 'commonDir', 'url']) if (!text(record[field])) return `has no usable ${field}`;
   if (!path.isAbsolute(record.projectRoot) || !path.isAbsolute(record.commonDir)) return 'names a project root or git directory that is not an absolute path';
+  if (embedsCredential(record.url)) return 'has a URL with user information in an http or https address, which can be a token';
   if (!/^[A-Za-z0-9.-]+$/.test(String(record.host))) return 'has no usable host';
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9._-]+$/.test(String(record.repo))) return 'has no usable OWNER/REPO';
   if (!Array.isArray(record.prefixes) || record.prefixes.length === 0) return 'names no branch namespace';
@@ -300,7 +309,7 @@ export function recordProblem(record) {
 // ---- checks before a push -----------------------------------------------------------------------------------
 
 class Refuse extends Error {
-  constructor(code, message, details = {}) { super(message); this.code = code; this.details = details; }
+  constructor(code, message, details = {}) { super(scrub(message)); this.code = code; this.details = details; }
 }
 const refuse = (code, message, details) => { throw new Refuse(code, message, details); };
 

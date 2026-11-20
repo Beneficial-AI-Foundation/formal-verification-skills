@@ -294,8 +294,11 @@ Init records the address git would push to after its own rewriting. It replaces 
 variables that you trust (below), and only when the destination is the same. A record for another destination, a
 record that is not valid and a file that is not JSON stop it with `destination-conflict`, which shows both. To
 change the destination itself, delete the record on purpose: check the file, delete it yourself and run init again.
-The permission preview for a push rule shows the record that is on disk, and the push rule is written only while
-that record names what init would record now, whatever values the trusted variables have.
+Init refuses (`remote-credential`) an address with user information in an http or https URL, such as
+`https://user:token@host/...`, whether the remote holds it or a git setting adds it, because the address is written
+to the record and shown. Use a credential helper or an ssh address. The permission preview for a push rule shows the
+record that is on disk, and the push rule is written only while that record names what init would record now,
+whatever values the trusted variables have.
 
 If git configuration variables are set when you confirm the destination (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`,
 `GIT_CONFIG_NOSYSTEM`, `GIT_CONFIG_COUNT` with its pairs, `GIT_CONFIG_PARAMETERS`), the preview lists each one by
