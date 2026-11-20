@@ -28,7 +28,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
-import { CONTRACT, RECORD_NAME, WORD, checkPrefixShape, contractText, differingVariables, initDestination, parseRemoteUrl, recordProblem, runGit } from './fvs-auto-push.mjs';
+import { CONTRACT, RECORD_NAME, WORD, checkPrefixShape, contractText, differingVariables, hide, initDestination, parseRemoteUrl, recordProblem, runGit, secretsOf } from './fvs-auto-push.mjs';
 
 export { parseRemoteUrl };
 export const RECORD_FILE = '.formalising/auto-fv/permissions.json';
@@ -283,6 +283,9 @@ function destinationState({ record, commonDir }) {
   return { file, status: 'differs', existing, changedVariables, replaceable: sameDestination && changedVariables.length > 0 };
 }
 const withoutVariables = ({ trustedGitVariables, ...rest }) => rest;
+// The file on disk can hold anything, a hand-edited or an old record with a token in its URL: whatever is shown of it has the
+// user information of an address and the secrets of that URL taken out.
+const shownState = (state) => hide(state, secretsOf(state.existing?.url));
 const changedNote = (state) => (state.changedVariables?.length ? ` The git variables to trust differ (${state.changedVariables.join(', ')}).` : '');
 
 // The push rule names a command that pushes to the recorded destination, so it is written only once that record
@@ -290,7 +293,7 @@ const changedNote = (state) => (state.changedVariables?.length ? ` The git varia
 function requireDestination(destination) {
   const state = destinationState(destination);
   if (state.status !== 'matches') {
-    refuse('destination-not-recorded', `the push command pushes to the recorded destination, and ${state.file} ${state.status === 'missing' ? 'is missing' : `does not hold what init would record now${state.changedVariables?.length ? ` (the git variables to trust differ: ${state.changedVariables.join(', ')})` : ''}`}. Run write-destination first: it shows what it records${state.replaceable ? ' (here, a replace of the trusted git variables)' : ''} and waits for the user's yes. Nothing was written.`, { destination: state });
+    refuse('destination-not-recorded', `the push command pushes to the recorded destination, and ${state.file} ${state.status === 'missing' ? 'is missing' : `does not hold what init would record now${state.changedVariables?.length ? ` (the git variables to trust differ: ${state.changedVariables.join(', ')})` : ''}`}. Run write-destination first: it shows what it records${state.replaceable ? ' (here, a replace of the trusted git variables)' : ''} and waits for the user's yes. Nothing was written.`, { destination: shownState(state) });
   }
   // The record on disk is what the push command reads, so it is what the rule's preview and digest show.
   return state.existing;
@@ -544,7 +547,7 @@ function writeDestination(flags) {
   if (state.status === 'matches') return { code: 'unchanged', message: `${state.file} already records this destination`, ...preview };
   if (state.status === 'differs' && state.replaceable) return replaceDestination(flags, root, destination, state, preview);
   if (state.status !== 'missing') {
-    refuse('destination-conflict', `${state.file} already exists and is not what init would record now.${changedNote(state)} FVS replaces a record only to change its trusted git variables, and only when it is valid and names this same destination; it never replaces it in any other case, because that would change where pushes go. To change the destination, check the file, delete it yourself, and run this command again.`, { ...preview, existing: state.existing ?? null, problem: state.problem ?? null, ...(state.changedVariables?.length ? { changedVariables: state.changedVariables } : {}) });
+    refuse('destination-conflict', `${state.file} already exists and is not what init would record now.${changedNote(state)} FVS replaces a record only to change its trusted git variables, and only when it is valid and names this same destination; it never replaces it in any other case, because that would change where pushes go. To change the destination, check the file, delete it yourself, and run this command again.`, { ...preview, ...shownState({ existing: state.existing ?? null, problem: state.problem ?? null }), ...(state.changedVariables?.length ? { changedVariables: state.changedVariables } : {}) });
   }
   // A value is never printed: the user confirms the names, and the preview gives only the length of each value. The record keeps a hash of each.
   confirmationNeeded(flags, digestOf({ kind: 'destination', root, file: state.file, record: bound(destination.record) }), { ...preview, gitConfigVariables: lengthsOf(destination.variables) });

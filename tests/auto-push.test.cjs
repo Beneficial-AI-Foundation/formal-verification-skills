@@ -1298,7 +1298,7 @@ describe('git configuration variables that the user trusted at init', () => {
       nowhere(out.record, 'the record');
     });
 
-    it('init cleans its messages of every secret it knows, wherever it sits, and keeps a user name that is a label', () => {
+    it('init cleans its messages of every secret it knows, wherever it sits', () => {
       const w = world({ skipRecord: true });
       // The password is repeated in the query, where the user information scrub does not look.
       w.git('remote', 'set-url', 'origin', `https://acme-bot:${TOKEN}@github.com/a/b/c.git?k=${TOKEN}`);

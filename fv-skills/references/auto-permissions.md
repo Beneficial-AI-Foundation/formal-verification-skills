@@ -324,7 +324,8 @@ that record names what init would record now, whatever values the trusted variab
 A sandbox often injects a token into an http or https address, through a `url.<base>.insteadOf` rule or in the
 address of the remote (`https://user:token@host/...`). Init does not refuse that. It records the address without the
 user information, the destination is the host and OWNER/REPO, and no message, record or receipt shows the user
-information: a message shows an http address as `https://***@host/...`. A rule that only adds plain user information
+information of an address: a message shows an http address as `https://***@host/...`. A rule that only adds plain
+user information
 to the recorded address (no `/`, `?`, `#`, `\` or `@` in it, which git and curl read as the end of the host) is
 allowed at every push, and the push uses it. So is a rule that changes the recorded address between https, `ssh://`
 and `git@host:OWNER/REPO` on the same host and OWNER/REPO and the default ports: a common `insteadOf` setup maps
