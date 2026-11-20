@@ -46,6 +46,7 @@ if [ "$1" = build ] && [ "$2" = --no-build ]; then
 fi
 side=head
 case "$(pwd)" in */fvs-build-check-*/base|*/fvs-build-check-*/base/*) side=base;; esac
+if [ "$1" = env ] && [ "$2" = printenv ]; then pwd; exit 0; fi
 if [ "$1" = env ]; then
   pwd > "$STUB/dump-$side-cwd"
   echo "$LEAN_NUM_THREADS" > "$STUB/dump-$side-threads"
@@ -1238,6 +1239,111 @@ describe('extraction folders in a multi-crate run', () => {
   });
 });
 
+// A crate whose Lean imports another crate's real translation has its axioms replaced by aliases, and the extraction
+// appends to each such file a block that makes Lean compare every alias with its constant. The run state records one
+// Lean check for each file; the build check ties each record to the file of the commit and to the build.
+describe('the Lean checks recorded for stitched crates', () => {
+  const BLOCK = '\n/-! The declared type of each alias above is the type of the constant it stands for. -/\nopen Lean Meta Elab Command in\nrun_cmd liftTermElabM do\n  pure ()\n';
+  const STITCHED = `def x := 1\n${BLOCK}`;
+  const FILE = 'formal/extraction/Ext.lean';
+  const check = (fields = {}) => ({ file: 'Ext.lean', relativePath: FILE, module: 'formal.extraction.Ext', items: 2, blockSha256: sha256(BLOCK), blockBytes: Buffer.byteLength(BLOCK), fileSha256: sha256(STITCHED), ...fields });
+  const unit = (fields = {}) => ({ crate: 'hmac', publication: [{ projectPath: FILE, sha256: sha256(STITCHED) }], stitch: [{ provider: 'sha2', replaced: [{ name: 'a' }, { name: 'b' }], files: ['Ext.lean'] }], leanChecks: [check()], ...fields });
+  const withRun = (run, { base = { ...BASE_FILES, [FILE]: STITCHED } } = {}) => {
+    const fx = layered({ base, head: HEAD_FILES });
+    write(path.join(fx.repo, '.formalising', 'auto-fv', 'state.json'), JSON.stringify({ extraction: { run } }));
+    return fx;
+  };
+  const kinds = (result) => result.json.integrity.problems.map((p) => p.kind);
+
+  test('a file and a block as recorded, built by Lake in the module the record names, are accepted, and the receipt says the checks ran', () => {
+    const fx = withRun(unit());
+    const result = checkTip(fx);
+    assert.equal(result.status, 0, result.stderr);
+    const { stitchChecks } = result.json.integrity;
+    assert.deepEqual([stitchChecks.units, stitchChecks.files, stitchChecks.items, stitchChecks.builtChecked], [1, 1, 2, true]);
+    assert.deepEqual(stitchChecks.entries.map((e) => [e.unit, e.file, e.module, e.items, e.blockSha256, e.fileSha256]), [['hmac', 'Ext.lean', 'formal.extraction.Ext', 2, sha256(BLOCK), sha256(STITCHED)]]);
+    assert.match(result.stderr, /stitch checks: 1 file of 1 crate \(2 aliases\): each file and its Lean check block as recorded, and each built by Lake/);
+  });
+
+  test('a publication row is matched by its project-relative path, so a project moved since the extraction still matches', () => {
+    const moved = unit({ publication: [{ projectPath: `/elsewhere/project/${FILE}`, relativePath: FILE, sha256: sha256(STITCHED) }] });
+    const result = checkTip(withRun(moved));
+    assert.equal(result.status, 0, result.stderr);
+    const other = unit({ publication: [{ projectPath: path.join('/elsewhere', FILE), relativePath: 'formal/extraction/Other.lean', sha256: sha256(STITCHED) }] });
+    const refused = checkTip(withRun(other));
+    assert.equal(refused.status, 1, refused.stderr);
+    assert.match(refused.json.integrity.problems.map((p) => p.detail).join('\n'), /is in no row of the recorded publication/);
+  });
+
+  test('a multi-crate run checks each unit that stitched and leaves the others alone', () => {
+    const fx = withRun({ units: [{ crate: 'sha2', publication: [], stitch: [], leanChecks: [] }, { crate: 'core', stitch: [{ provider: 'sha2', replaced: [], files: [] }] }, unit()] });
+    const result = checkTip(fx);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.json.integrity.stitchChecks.units, 1);
+    const none = checkTip(withRun({ units: [{ crate: 'sha2', stitch: [] }] }));
+    assert.equal(none.status, 0, none.stderr);
+    assert.deepEqual(none.json.integrity.stitchChecks, { units: 0, files: 0, items: 0, builtChecked: false, entries: [] });
+  });
+
+  test('a unit that replaced aliases but records no check, a record that does not add up and a record for a file the stitch did not touch are refused before any build', () => {
+    for (const [name, fields, expected] of [
+      ['no leanChecks', { leanChecks: undefined }, /the stitch replaced 2 aliases, but the recorded extraction carries no Lean check for them/],
+      ['an empty list', { leanChecks: [] }, /the stitch replaced 2 aliases, but the recorded extraction carries no Lean check for them/],
+      ['a list that is not a list', { leanChecks: {} }, /the recorded leanChecks is not a list/],
+      ['fewer aliases checked than replaced', { leanChecks: [check({ items: 1 })] }, /cover 1 alias, but the stitch replaced 2/],
+      ['a file the stitch put aliases into with no check', { stitch: [{ provider: 'sha2', replaced: [{}, {}], files: ['Ext.lean', 'More.lean'] }] }, /put aliases into More\.lean, but no Lean check is recorded for that file/],
+      ['a check for a file with no aliases', { stitch: [{ provider: 'sha2', replaced: [{}, {}], files: [] }] }, /which the stitch put no aliases into/],
+      ['a field of the wrong kind', { leanChecks: [check({ blockBytes: '12' })] }, /missing a field or has one of the wrong kind/],
+      ['a digest that is not one', { leanChecks: [check({ blockSha256: 'abc' })] }, /missing a field or has one of the wrong kind/],
+      ['a file the publication does not hold', { publication: [] }, /is in no row of the recorded publication/],
+      ['a publication that has another digest for the file', { publication: [{ projectPath: FILE, sha256: 'f'.repeat(64) }] }, /the recorded publication has ffffffffffff for formal\/extraction\/Ext\.lean/],
+    ]) {
+      const fx = withRun(unit(fields));
+      const result = checkTip(fx);
+      assert.equal(result.status, 1, `${name}: ${result.stderr}`);
+      assert.ok(kinds(result).includes('stitch-check-missing'), `${name}: ${kinds(result)}`);
+      assert.match(result.json.integrity.problems.map((p) => p.detail).join('\n'), expected, name);
+      noBuild(fx);
+    }
+  });
+
+  test('a file that is not the one the check was written for, or whose block is not the recorded one, is refused before any build', () => {
+    for (const [name, fields, kind, expected] of [
+      ['the whole file changed', { leanChecks: [check({ fileSha256: 'e'.repeat(64) })], publication: [{ projectPath: FILE, sha256: 'e'.repeat(64) }] }, 'stitch-file-changed', /is not the published file its Lean check was written for/],
+      ['the block is not the end of the file', { leanChecks: [check({ blockSha256: 'd'.repeat(64) })] }, 'stitch-block-changed', /are not the Lean check block that was recorded for it/],
+      ['the block is longer than the file', { leanChecks: [check({ blockBytes: 10000 })] }, 'stitch-block-changed', /are not the Lean check block that was recorded for it/],
+      ['the file is not in the commit', { leanChecks: [check({ relativePath: 'formal/extraction/Gone.lean' })], publication: [{ projectPath: 'formal/extraction/Gone.lean', sha256: sha256(STITCHED) }] }, 'stitch-file-missing', /is not in the commit/],
+      ['the file is outside the project', { leanChecks: [check({ relativePath: '../Ext.lean' })], publication: [{ projectPath: '../Ext.lean', sha256: sha256(STITCHED) }] }, 'stitch-file-outside', /outside the project/],
+    ]) {
+      const fx = withRun(unit(fields));
+      const result = checkTip(fx);
+      assert.equal(result.status, 1, `${name}: ${result.stderr}`);
+      assert.ok(kinds(result).includes(kind), `${name}: ${kinds(result)}`);
+      assert.match(result.json.integrity.problems.find((p) => p.kind === kind).detail, expected, name);
+      noBuild(fx);
+    }
+  });
+
+  test('the block removed from the committed file is refused: the file is not the recorded one', () => {
+    const fx = withRun(unit(), { base: { ...BASE_FILES, [FILE]: 'def x := 1\n' } });
+    assert.ok(kinds(checkTip(fx)).includes('stitch-file-changed'));
+    noBuild(fx);
+  });
+
+  test('a module the record names that Lake does not map the file to is refused after the build, and a file Lake did not build is too', async () => {
+    const wrong = checkTip(withRun(unit({ leanChecks: [check({ module: 'formal.other.Ext' })] })));
+    assert.equal(wrong.status, 1, wrong.stderr);
+    assert.deepEqual(kinds(wrong), ['stitch-module-mismatch']);
+    assert.match(wrong.json.integrity.problems[0].detail, /the recorded module formal\.other\.Ext is not one Lake maps formal\/extraction\/Ext\.lean to \(formal\.extraction\.Ext\)/);
+    const nameless = checkTip(withRun(unit({ leanChecks: [check({ module: null })] })));
+    assert.equal(nameless.status, 0, 'a record with no module name is not held to one');
+    const { stitchBuiltProblems, stitchPlan } = await library();
+    const plan = stitchPlan({ extraction: { run: unit() } }, { root: '/p' });
+    const found = stitchBuiltProblems({ plan, start: '/p', leanRoot: '/p', isBuilt: () => false, sourceDirs: ['/p'] });
+    assert.deepEqual(found.map((p) => p.kind), ['stitch-unbuilt']);
+  });
+});
+
 // A multi-crate run: crate A (hmac) and crate B (sha2) are both targets. The engine lists the axioms that
 // have a legitimate record. The list holds full names, and a statement's axioms are read from Lean's
 // environment, which gives full names too, so a name is covered only by itself.
@@ -2174,6 +2280,79 @@ describe('real Lean: a statement that still reads the same but does not mean the
     assert.deepEqual(generated.json.integrity.problems.map((p) => p.kind), ['prop-axiom-outside-trusted']);
     const handWritten = allowing(rests({ ...prop, folder: 'Trusted' }), 'Fx.ext_fact');
     assert.equal(handWritten.status, 0, handWritten.stderr);
+  });
+
+  // A stitched file ends with a block that makes Lean compare each alias with the constant it stands for, so the
+  // normal build runs the comparison. The extraction records the block and the file; the build check holds the
+  // commit to both and to Lake having compiled that file. The block here has the shape the extraction appends,
+  // without the Aeneas wrapper that a lifted constant needs.
+  describe('a stitched file and the Lean check block recorded for it', () => {
+    const block = (pair) => [
+      '',
+      '/-! The declared type of each alias above is the type of the constant it stands for. -/',
+      'open Lean Meta Elab Command in',
+      'run_cmd liftTermElabM do',
+      `  for (consumer, provider) in [${pair}] do`,
+      '    let a ← getConstInfo consumer',
+      '    let b ← getConstInfo provider',
+      '    unless a.levelParams.length == b.levelParams.length do',
+      '      throwError "{consumer}: it has {a.levelParams.length} universe parameter(s), but {provider} has {b.levelParams.length}"',
+      '    unless (← isDefEq a.type b.type) do',
+      '      throwError "{consumer}: its type {a.type} is not the type {b.type} of {provider}"',
+      '',
+    ].join('\n');
+    const CHECK = block('(`Fx.Ext.f, `Fx.Provider.f)');
+    const alias = (type) => `import Lean\nimport Fx.Provider\n\n@[reducible] def Fx.Ext.f (x : Nat) : ${type} := _root_.Fx.Provider.f x\n`;
+    const PROVIDER = 'def Fx.Provider.f (x : Nat) : Nat := x + 1\n';
+    const FILE = 'Fx/Ext.lean';
+    const stitched = (type = 'Nat') => `${alias(type)}${CHECK}`;
+    const record = (text, fields = {}) => ({ extraction: { run: {
+      crate: 'hmac',
+      publication: [{ projectPath: FILE, sha256: sha256(text) }],
+      stitch: [{ provider: 'sha2', replaced: [{ name: 'f' }], files: ['Ext.lean'] }],
+      leanChecks: [{ file: 'Ext.lean', relativePath: FILE, module: 'Fx.Ext', items: 1, blockSha256: sha256(CHECK), blockBytes: Buffer.byteLength(CHECK), fileSha256: sha256(text), ...fields }],
+    } } });
+    // The extraction is part of the merged spec, so the file is the same on both sides; only the proofs are the head's.
+    const project = (text, state, fields) => {
+      const fx = realProject(REAL_HEAD, { baseFiles: { 'Fx/Provider.lean': PROVIDER, [FILE]: text } });
+      write(path.join(fx.repo, '.formalising', 'auto-fv', 'state.json'), JSON.stringify(state ?? record(text, fields)));
+      return fx;
+    };
+
+    test('the file and block as recorded, compiled by Lake in the module the record names, are accepted and the receipt says so', () => {
+      const result = realCheck(project(stitched()));
+      assert.equal(result.status, 0, result.stderr);
+      const { stitchChecks } = result.json.integrity;
+      assert.deepEqual([stitchChecks.units, stitchChecks.files, stitchChecks.items, stitchChecks.builtChecked], [1, 1, 1, true]);
+      assert.deepEqual(stitchChecks.entries.map((e) => [e.relativePath, e.module]), [[FILE, 'Fx.Ext']]);
+    });
+
+    test('an alias whose type is not the constant’s fails the build through the block itself', () => {
+      const result = realCheck(project(stitched('Int')));
+      assert.equal(result.status, 1, result.stderr);
+      assert.match(result.json.label, /^build check failed: Fx\/Ext\.lean:\d+: Fx\.Ext\.f: its type .* is not the type .* of Fx\.Provider\.f/);
+      assert.equal(result.json.accepted, false);
+    });
+
+    test('the block taken out of the committed file, the record unchanged, is refused although the build is green', () => {
+      const text = alias('Int');
+      const result = realCheck(project(text, record(stitched('Int'))));
+      assert.equal(result.status, 1, result.stderr);
+      assert.ok(result.json.integrity.problems.some((p) => p.kind === 'stitch-file-changed' && p.file === FILE), JSON.stringify(result.json.integrity.problems));
+    });
+
+    test('a different block in the committed file than the one the record was made for is refused: the file is not the recorded one', () => {
+      const text = `${alias('Int')}${block('(`Fx.Provider.f, `Fx.Provider.f)')}`;
+      const result = realCheck(project(text, record(stitched('Int'))));
+      assert.equal(result.status, 1, result.stderr);
+      assert.ok(result.json.integrity.problems.some((p) => p.kind === 'stitch-file-changed'), JSON.stringify(result.json.integrity.problems));
+    });
+
+    test('a module name that Lake does not map the file to is refused after a green build', () => {
+      const result = realCheck(project(stitched(), undefined, { module: 'Other.Ext' }));
+      assert.equal(result.status, 1, result.stderr);
+      assert.deepEqual(result.json.integrity.problems.map((p) => p.kind), ['stitch-module-mismatch']);
+    });
   });
 });
 

@@ -1301,6 +1301,49 @@ export function allowedProblems({ head, recalledFiles, allowed }) {
   return problems;
 }
 
+// The recorded Lean checks against the files of the commit: each file must be there with the digest the check
+// was written for, and its last blockBytes bytes must be the block the check names. A file the commit changed,
+// or a block cut from it or edited in it, is refused before any build.
+export function stitchFileProblems({ plan, start, leanRoot }) {
+  const problems = [];
+  const bad = (entry, kind, detail) => problems.push({ kind, file: entry.relativePath, statement: null, detail: `crate ${entry.unit}: ${detail}` });
+  const root = fs.realpathSync(start);
+  for (const entry of plan.entries) {
+    const abs = path.resolve(start, entry.relativePath);
+    if (!abs.startsWith(`${root}${path.sep}`) && !abs.startsWith(`${start}${path.sep}`)) { bad(entry, 'stitch-file-outside', `${entry.relativePath} is outside the project, so the Lean check cannot be tied to a file of the commit`); continue; }
+    let bytes;
+    try { bytes = fs.readFileSync(abs); } catch { bad(entry, 'stitch-file-missing', `${entry.relativePath}, the file its Lean check was written for, is not in the commit`); continue; }
+    if (sha256(bytes) !== entry.fileSha256) { bad(entry, 'stitch-file-changed', `${entry.relativePath} is not the published file its Lean check was written for (${sha256(bytes).slice(0, 12)} in the commit, ${entry.fileSha256.slice(0, 12)} recorded)`); continue; }
+    if (bytes.length < entry.blockBytes || sha256(bytes.subarray(bytes.length - entry.blockBytes)) !== entry.blockSha256) { bad(entry, 'stitch-block-changed', `the last ${entry.blockBytes} bytes of ${entry.relativePath} are not the Lean check block that was recorded for it, so Lean does not compare the aliases with their constants`); continue; }
+    if (path.relative(leanRoot, abs).startsWith('..')) bad(entry, 'stitch-file-outside', `${entry.relativePath} is not below the Lean project`);
+  }
+  return problems;
+}
+
+// The same files once the build passed: each must be one Lake compiled from that very file (so its block ran),
+// and a module name the record gives must be one Lake maps the file to (a path below a folder Lake reads sources from).
+export function stitchBuiltProblems({ plan, start, leanRoot, isBuilt, sourceDirs }) {
+  const problems = [];
+  const real = (target) => { try { return fs.realpathSync(target); } catch { return target; } };
+  for (const entry of plan.entries) {
+    const abs = real(path.resolve(start, entry.relativePath));
+    const rel = path.relative(real(leanRoot), abs).split(path.sep).join('/');
+    const bad = (kind, detail) => problems.push({ kind, file: entry.relativePath, statement: null, detail: `crate ${entry.unit}: ${detail}` });
+    if (rel.startsWith('..') || !isBuilt(rel)) { bad('stitch-unbuilt', `Lake did not build ${entry.relativePath} from that file in this build, so its Lean check did not run`); continue; }
+    if (entry.module === null) continue;
+    const modules = (sourceDirs ?? []).map((dir) => path.relative(real(dir), abs)).filter((below) => !below.startsWith('..') && below.endsWith('.lean')).map((below) => below.slice(0, -'.lean'.length).split(path.sep).join('.'));
+    if (!modules.includes(entry.module)) bad('stitch-module-mismatch', `the recorded module ${entry.module} is not one Lake maps ${entry.relativePath} to (${modules.length === 0 ? 'no source folder of Lake holds the file' : modules.join(', ')})`);
+  }
+  return problems;
+}
+
+// The folders Lake reads Lean sources from, one for each library of the project and of its dependencies.
+function lakeSourceDirs({ leanRoot, env, work, timeoutSeconds }) {
+  const out = path.join(work, 'source-dirs.txt');
+  const run = runLake(['env', 'printenv', 'LEAN_SRC_PATH'], { cwd: leanRoot, env, log: path.join(work, 'source-dirs.log'), stdoutFile: out, timeoutSeconds });
+  return run.status === 0 ? fs.readFileSync(out, 'utf8').trim().split(path.delimiter).filter(Boolean) : null;
+}
+
 // ---- the run state -------------------------------------------------------------------------
 
 // A run-state file with the digest of the bytes it was read from, or null when there is none.
@@ -1367,6 +1410,56 @@ export function extractionLayout(state, { root, top, prefix }) {
   published(run);
   for (const unit of Array.isArray(run?.units) ? run.units : []) published(unit);
   return { folders: [...new Set(layout.folders)], files: [...new Set(layout.files)] };
+}
+
+// The Lean checks the recorded extraction asks of its stitched crates. When a crate's Lean imports another
+// crate's real translation, each axiom the extraction would have written becomes an alias of the provider's
+// constant, and the extraction appends one block to each file that holds aliases (a command that makes Lean
+// compare each alias's type with the constant's). The run state records, for each such file, `leanChecks`:
+// { file, relativePath, module, items, blockSha256, blockBytes, fileSha256 }, with relativePath relative to
+// the project root, blockSha256 the digest of the file's last blockBytes bytes, fileSha256 the digest of the
+// whole published file (the digest its publication row has), and items the number of aliases the block checks.
+// This reads those records for a single-crate run or for each unit of a multi-crate run, and refuses a unit
+// whose stitch replaced aliases but records no check for them, or whose records do not add up, or a record
+// whose digest the publication does not carry. A unit that stitched nothing has nothing to check.
+export function stitchPlan(state, { root }) {
+  const run = state?.extraction?.run;
+  const rows = Array.isArray(run?.units) ? run.units : run && typeof run === 'object' ? [run] : [];
+  const problems = [];
+  const entries = [];
+  let units = 0;
+  const fail = (crate, file, detail) => problems.push({ kind: 'stitch-check-missing', file: file ?? null, statement: null, detail: `crate ${crate}: ${detail}` });
+  const HEX = /^[0-9a-f]{64}$/;
+  for (const unit of rows) {
+    const crate = typeof unit?.crate === 'string' ? unit.crate : '(unnamed)';
+    const stitch = [].concat(unit?.stitch ?? []);
+    const replaced = stitch.reduce((sum, entry) => sum + (Array.isArray(entry?.replaced) ? entry.replaced.length : 0), 0);
+    const stitchedFiles = new Set(stitch.flatMap((entry) => (Array.isArray(entry?.files) ? entry.files : [])));
+    const checks = unit?.leanChecks === undefined ? [] : unit.leanChecks;
+    if (replaced === 0 && stitchedFiles.size === 0 && (!Array.isArray(checks) || checks.length === 0)) continue;
+    units += 1;
+    if (!Array.isArray(checks)) { fail(crate, null, 'the recorded leanChecks is not a list'); continue; }
+    if (replaced > 0 && checks.length === 0) { fail(crate, null, `the stitch replaced ${replaced} alias${replaced === 1 ? '' : 'es'}, but the recorded extraction carries no Lean check for them`); continue; }
+    const items = checks.reduce((sum, check) => sum + (Number.isInteger(check?.items) ? check.items : 0), 0);
+    if (items !== replaced) fail(crate, null, `the recorded Lean checks cover ${items} alias${items === 1 ? '' : 'es'}, but the stitch replaced ${replaced}`);
+    const named = new Set(checks.map((check) => check?.file));
+    for (const file of stitchedFiles) if (!named.has(file)) fail(crate, file, `the stitch put aliases into ${file}, but no Lean check is recorded for that file`);
+    for (const check of checks) {
+      const wellFormed = typeof check?.file === 'string' && typeof check.relativePath === 'string' && check.relativePath !== '' && Number.isInteger(check.items) && check.items > 0
+        && Number.isInteger(check.blockBytes) && check.blockBytes > 0 && HEX.test(check.blockSha256) && HEX.test(check.fileSha256) && (check.module === null || typeof check.module === 'string');
+      if (!wellFormed) { fail(crate, check?.file, 'a recorded Lean check is missing a field or has one of the wrong kind'); continue; }
+      if (!stitchedFiles.has(check.file)) fail(crate, check.file, `a Lean check is recorded for ${check.file}, which the stitch put no aliases into`);
+      // A row names its file by the path relative to the project root, and also by the absolute path the extraction
+      // wrote to (which differs when the project was moved or cloned), so the relative one decides when it is there.
+      const publication = (Array.isArray(unit.publication) ? unit.publication : []).find((row) => (typeof row?.relativePath === 'string'
+        ? path.posix.normalize(row.relativePath) === path.posix.normalize(check.relativePath)
+        : typeof row?.projectPath === 'string' && path.resolve(root, row.projectPath) === path.resolve(root, check.relativePath)));
+      if (!publication) fail(crate, check.relativePath, `${check.relativePath} is in no row of the recorded publication, so the file the check was written for is not one the extraction published`);
+      else if (publication.sha256 !== check.fileSha256) fail(crate, check.relativePath, `the recorded publication has ${String(publication.sha256).slice(0, 12)} for ${check.relativePath}, but the Lean check was written for ${check.fileSha256.slice(0, 12)}`);
+      entries.push({ unit: crate, file: check.file, relativePath: check.relativePath, module: check.module, items: check.items, blockSha256: check.blockSha256, blockBytes: check.blockBytes, fileSha256: check.fileSha256 });
+    }
+  }
+  return { entries, problems, units };
 }
 
 // The merge commit of the last merged spec pull request the run state records, or null.
@@ -1443,7 +1536,8 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
     // receipt for the same commit never stands in for it.
     // The project's folder in the repository, with `/` separators; empty when it is the repository root.
     const prefix = path.join(sub, below).split(path.sep).filter((part) => part && part !== '.').join('/');
-    const layout = extractionLayout(readRunRecord(root, 'state.json'), { root, top, prefix });
+    const runState = readRunRecord(root, 'state.json');
+    const layout = extractionLayout(runState, { root, top, prefix });
     // externals.json is read once, when the first rule needs it, and every later use (the records a new
     // Trusted axiom is tied to, the ids the Lean program may bind, the digests in the receipt) is of that
     // snapshot. A file that cannot be read refuses the check; it never reads as no records.
@@ -1456,6 +1550,10 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
       externals: () => { const records = externalsFile()?.data?.records; return Array.isArray(records) ? records : null; },
     });
     let externalsRecord = externalsBinding(integrity.ties.map((tie) => tie.record), externalsSnapshot ?? null);
+    // The Lean checks the extraction recorded for stitched crates: the files of the commit must still hold
+    // the blocks they were written with.
+    const stitch = stitchPlan(runState, { root });
+    integrity.problems.push(...stitch.problems, ...stitchFileProblems({ plan: stitch, start, leanRoot }));
     // A package inside the repository is compared whole: the folders with a lakefile that the comparison
     // above leaves out are exactly these.
     const pathPackages = { checked: [] };
@@ -1465,7 +1563,8 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
       integrity.problems.push(...found.problems);
       pathPackages.checked = found.checked;
     }
-    const integrityRecord = { specBase: specBaseFull, compared: specBaseFull !== null, ok: integrity.problems.length === 0, problems: integrity.problems, ties: integrity.ties, extraction: layout, pathPackages: pathPackages.checked };
+    const integrityRecord = { specBase: specBaseFull, compared: specBaseFull !== null, ok: integrity.problems.length === 0, problems: integrity.problems, ties: integrity.ties, extraction: layout, pathPackages: pathPackages.checked,
+      stitchChecks: { units: stitch.units, files: stitch.entries.length, items: stitch.entries.reduce((sum, entry) => sum + entry.items, 0), builtChecked: false, entries: stitch.entries.map(({ unit, file, relativePath, module, items, blockSha256, fileSha256 }) => ({ unit, file, relativePath, module, items, blockSha256, fileSha256 })) } };
     if (!integrityRecord.ok) {
       const reason = `${describeProblem(integrity.problems[0])}${integrity.problems.length > 1 ? ` (and ${integrity.problems.length - 1} more)` : ''}`;
       return finish(receipts, full, {
@@ -1552,6 +1651,17 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
       if (unbuilt.length > 0) reason = `Lake did not build ${unbuilt[0].rel} from that file in this build (lake build --no-build does not report it up to date)${unbuilt.length > 1 ? ` (and ${unbuilt.length - 1} more)` : ''}`;
     }
     integrityRecord.sourceCheck = { files: integrity.required.length, calls: sourceCheck.calls };
+    // The stitched files must be ones Lake built from that file, in the module the record names.
+    if (reason === null && stitch.entries.length > 0) {
+      const sourceDirs = stitch.entries.some((entry) => entry.module !== null) ? lakeSourceDirs({ leanRoot, env, work, timeoutSeconds }) : null;
+      const unbuilt = stitchBuiltProblems({ plan: stitch, start, leanRoot, isBuilt, sourceDirs });
+      integrityRecord.stitchChecks.builtChecked = unbuilt.length === 0;
+      if (unbuilt.length > 0) {
+        integrityRecord.problems.push(...unbuilt);
+        integrityRecord.ok = false;
+        reason = `${describeProblem(unbuilt[0])}${unbuilt.length > 1 ? ` (and ${unbuilt.length - 1} more)` : ''}`;
+      }
+    }
     // The manifest as Lake left it after the build: a path package that Lake resolved but the committed
     // manifest did not list is compared like the others.
     if (reason === null && specBaseFull !== null) {
@@ -1728,6 +1838,12 @@ function reportLines(receipt) {
     : 'allowed axioms: no list given, so no statement is held to a list of axioms');
   const { folders, files } = integrity.extraction ?? { folders: [], files: [] };
   lines.push(`extraction output held fixed, besides the folders named Extraction...: ${folders.length + files.length === 0 ? 'none recorded in the run state' : [...folders, ...files].join(', ')}`);
+  if (integrity.pathPackages?.length > 0) lines.push(`path packages inside the repository, each the merged spec's own: ${integrity.pathPackages.map((entry) => `${entry.name} (${entry.dir})`).join(', ')}`);
+  if (integrity.sourceCheck) lines.push(`Lake compiled from their own files: ${integrity.sourceCheck.files} spec, proof and extraction files (${integrity.sourceCheck.calls} Lake calls)`);
+  if (integrity.stitchChecks?.files > 0) {
+    const { units, files, items, builtChecked } = integrity.stitchChecks;
+    lines.push(`stitch checks: ${files} file${files === 1 ? '' : 's'} of ${units} crate${units === 1 ? '' : 's'} (${items} alias${items === 1 ? '' : 'es'}): each file and its Lean check block as recorded${builtChecked ? ', and each built by Lake' : ''}`);
+  }
   if (integrity.semantic) {
     const { statements, bindings, toolchain } = integrity.semantic;
     lines.push(`Lean check (${toolchain.lean}): recalled declarations compared: ${statements.length} (${statements.reduce((sum, item) => sum + item.constants, 0)} project constants); new Trusted axioms bound to their records: ${bindings.length}`);
