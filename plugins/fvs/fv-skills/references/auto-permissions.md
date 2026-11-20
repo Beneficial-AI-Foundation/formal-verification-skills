@@ -9,7 +9,7 @@ This page says how `/fvs:auto-init` finds the steps that prompt on your machine,
 only after your yes (for a push, the one rule that names the FVS push command), what FVS never allows, and what
 to do when a step keeps asking. The commands that do this are in `scripts/fvs-auto-permissions.mjs` and
 `scripts/fvs-auto-push.mjs`, run by the orchestrator seat (`auto-seats.md`). A run that skips permission prompts
-inside a sandbox follows different rules: see "Unattended runs in a sandbox".
+inside a sandbox keeps the same safety rules and enforces them by other means: see "Unattended runs in a sandbox".
 
 </overview>
 
@@ -362,17 +362,20 @@ agent:
 
 - **A token limited to the project's fork.** Give the sandbox a GitHub token for that one repository, with only
   the access the run needs. Do not give it access to the upstream or to your other repositories.
-- **A posting guard in the sandbox.** A token that can open draft pull requests can usually also comment and
-  review. Put a `gh` wrapper ahead of the real `gh` on `PATH` that refuses the commands that comment on or review
-  a pull request or issue, and `gh api` calls to those endpoints. The wrapper catches mistakes. A program in the
-  sandbox can still call the API directly, so the limit that holds is the scope of the token.
-- **Branch protection on the fork.** Protect its main branches (require a pull request, block force pushes and
-  deletion), so that a stray push cannot change them.
+- **A posting guard in the sandbox.** A token that can open draft pull requests can usually also comment, review
+  and merge. Put a `gh` wrapper ahead of the real `gh` on `PATH` that refuses the commands that comment on, review,
+  mark ready or merge a pull request, and `gh api` calls to those endpoints. The wrapper only catches mistakes: a
+  program in the sandbox can call the API directly. The token limits where a comment can land, not whether one is
+  posted.
+- **Branch protection on the fork.** Protect its main branches: require a pull request with an approving review
+  from someone else, block force pushes and deletion, and apply the rules to administrators too. Then a push or a
+  merge made with the token is stopped.
 
-The permission check, the allowlist it writes and the push command are for runs with prompts. In a skip-permissions
-sandbox they are optional: you can skip the check. The push command still works there, but it is a cooperative
-guard and not a security boundary (see "What the command is"), so the token and the branch protection are what
-limit a push.
+The permission check and the allowlist it writes are for runs with prompts; in a skip-permissions sandbox you can
+skip them. The push command is different: workers are briefed to push with it and never with `git push`, so its
+destination still has to be recorded (init does that in a separate step, also when you skip the check), or a
+worker's first push is refused and the worker stops. It is a cooperative guard and not a security boundary (see
+"What the command is"), so the token and the branch protection are what limit a push.
 
 ## Where the file goes
 
