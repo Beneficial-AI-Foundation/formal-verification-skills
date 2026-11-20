@@ -1575,6 +1575,36 @@ describe('git configuration variables that the user trusted at init', () => {
         });
       });
 
+      // The record is ssh and a remote holds an https address with a token for the same host and OWNER/REPO (https and ssh are
+      // one destination), so the push is given the https address. No server speaks https here, so an insteadOf rule sends that
+      // address on over the ssh stand-in and nothing leaves the machine. The row pins what the command hands to git, and that the
+      // receipt still names the recorded ssh address.
+      it('an ssh record with a remote that holds a token address over https: git is given the https address, and the receipt names the ssh one', () => {
+        const w = world();
+        const held = `https://x-access-token:${TOKEN}@github.com/Acme/proj.git`;
+        w.git('remote', 'add', 'sandbox', held);
+        w.git('config', 'url.ssh://git@github.com/.insteadOf', `https://x-access-token:${TOKEN}@github.com/`);
+        assert.equal(lib.configuredAddress(lib.locate(w.work, w.env), lib.destinationRecord(w.record), w.env), held, 'the https address is the one found for the ssh record');
+        const control = spawnSync('git', ['-C', w.work, 'push', '-q', held, 'refs/heads/fvs/t:refs/heads/fvs/t'], { encoding: 'utf8', env: w.env });
+        assert.equal(control.status, 0, `the control: the rule carries a push of the https address to the same repository: ${control.stderr}`);
+        assert.deepEqual(w.refs(w.right), ['refs/heads/fvs/t']);
+        w.clear(w.right);
+        const log = path.join(w.dir, 'push-argv.log');
+        const body = 'for a in "$@"; do\n  if [ "$a" = push ]; then printf \'%s\\n\' "$@" > "$FVS_TEST_ARGLOG"; break; fi\ndone';
+        const out = asProgram(w, { ...gitStandIn(w, body), FVS_TEST_ARGLOG: log });
+        assert.equal(out.status, 0, `${out.stdout}${out.stderr}`);
+        const json = JSON.parse(out.stdout);
+        assert.equal(json.result, 'created');
+        assert.equal(json.usedConfiguredAddress, true);
+        assert.equal(json.destination, URL_RECORDED, 'the receipt names the recorded ssh address');
+        assert.ok(lib.sameDestination(json.to, URL_RECORDED), `git reported ${json.to}`);
+        assert.deepEqual(fs.readFileSync(log, 'utf8').split('\n').filter(Boolean).slice(-2), [held, 'refs/heads/fvs/t:refs/heads/fvs/t'], 'git was given the https address with the token');
+        assert.deepEqual(w.refs(w.right), ['refs/heads/fvs/t']);
+        assert.deepEqual(w.refs(w.wrong), []);
+        nowhereAfter(w, ['the output', out.stdout], ['the error output', out.stderr]);
+        assert.equal(JSON.parse(fs.readFileSync(path.join(w.commonDir, lib.RECORD_NAME), 'utf8')).url, URL_RECORDED);
+      });
+
       it('a push with no such address says so in its receipt', () => {
         const w = world();
         const out = w.go(['--branch', 'fvs/t']);
