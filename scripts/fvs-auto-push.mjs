@@ -60,6 +60,7 @@ export const CONTRACT = {
   hardening: [
     'The push is made with --no-verify, which skips the pre-push hook whether it is a file in a hooks folder or is set in git configuration (hook.<name>.event), and core.hooksPath is set to /dev/null so that git finds no hook in any hooks folder. Your own pre-push checks do not run for it.',
     'git runs without GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR, GIT_INDEX_FILE, GIT_OBJECT_DIRECTORY, GIT_ALTERNATE_OBJECT_DIRECTORIES, GIT_CONFIG, GIT_NAMESPACE and GIT_EXEC_PATH. It also runs without GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_CONFIG_NOSYSTEM, GIT_CONFIG_COUNT, the GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n pairs and GIT_CONFIG_PARAMETERS, except the ones whose names you trusted when you confirmed the destination at init. Init lists those names and never prints a value, because a value can be a token: it shows the length of each. GIT_CONFIG_COUNT and the GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n pairs that it addresses are one unit: trusting the count trusts the pairs it addresses when the command runs. The command keeps each trusted name with whatever value it has when it runs, in every git call, and drops every other name. A trusted name that is not set is skipped, and a value that changed since init is not refused: the receipt marks it as changed. The configuration files that git reads by default stay, and so do your ssh, credential and transport settings that are not set through those variables.',
+    'git also runs without GIT_TRACE, every GIT_TRACE_* variable, GIT_CURL_VERBOSE and GIT_TRANSPORT_HELPER_DEBUG, and with GIT_TRACE2, GIT_TRACE2_EVENT and GIT_TRACE2_PERF set to 0, which also switches off a Trace2 target that your git configuration files enable. Those settings make git write the address of a push and the Authorization header of a request, token included, to a file or to its error output, and nothing in this command can clean a file that git writes. If you want a trace of a push, run git yourself.',
     'No push option is sent.',
   ],
   trusts: [
@@ -239,15 +240,27 @@ export function keptVariables(record, env) {
 const TRUSTED = Symbol('trusted git variables');
 export const withTrusted = (env, names) => ({ ...env, [TRUSTED]: names.filter((name) => trustable(name) && Object.hasOwn(env, name)) });
 
+// Git can write what it does, with the address it pushes to and the Authorization header of a request, to a file or to
+// its error output when one of these variables asks it to: GIT_TRACE and every GIT_TRACE_* (GIT_TRACE_CURL,
+// GIT_TRACE_PACKET, GIT_TRACE_SETUP, GIT_TRACE_REDACT=0 and the rest), GIT_TRACE2 and GIT_TRACE2_*, GIT_CURL_VERBOSE and
+// GIT_TRANSPORT_HELPER_DEBUG. Nothing in this command can clean a file that git writes, so these are removed from every git
+// call, and a trusted configuration variable cannot bring them back. A Trace2 target can also come from the global or
+// the system configuration file. Git reads Trace2 settings from those two files only and nothing on its command line
+// (-c) or in any other configuration overrides them, but the environment does: GIT_TRACE2, GIT_TRACE2_EVENT and
+// GIT_TRACE2_PERF set to 0 switch every target off, and git passes them on to the programs it starts.
+const TRACE_NAMES = ['GIT_TRACE', 'GIT_CURL_VERBOSE', 'GIT_TRANSPORT_HELPER_DEBUG'];
+const TRACE_OFF = { GIT_TRACE2: '0', GIT_TRACE2_EVENT: '0', GIT_TRACE2_PERF: '0' };
+
 export function cleanEnvironment(env) {
   const trusted = new Set(env[TRUSTED] ?? []);
-  return Object.fromEntries(Object.entries(env).filter(([name]) => trusted.has(name) || (!DROPPED.has(name) && !DROPPED_PREFIXES.some((prefix) => name.startsWith(prefix)))));
+  return Object.fromEntries(Object.entries(env).filter(([name]) => !TRACE_NAMES.some((prefix) => name.startsWith(prefix))
+    && (trusted.has(name) || (!DROPPED.has(name) && !DROPPED_PREFIXES.some((prefix) => name.startsWith(prefix))))));
 }
 
 const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex');
 
 function git(args, { cwd, where, env, stdio } = {}) {
-  const run = spawnSync('git', [...placed(where), ...args], { cwd: where ? where.top : cwd, env: cleanEnvironment(env ?? process.env), encoding: 'utf8', timeout: 30000, ...(stdio ? { stdio } : {}) });
+  const run = spawnSync('git', [...placed(where), ...args], { cwd: where ? where.top : cwd, env: { ...cleanEnvironment(env ?? process.env), ...TRACE_OFF }, encoding: 'utf8', timeout: 30000, ...(stdio ? { stdio } : {}) });
   return { status: run.status, stdout: run.stdout ?? '', stderr: (run.stderr ?? '').trim(), error: run.error, signal: run.signal };
 }
 

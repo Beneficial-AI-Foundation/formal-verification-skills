@@ -758,6 +758,20 @@ describe('configured hooks', () => {
   });
 });
 
+// The files that a user's own tracing would write, and a global configuration file that switches Trace2 on.
+function traceSinks(w) {
+  const dir = path.join(w.dir, 'traces');
+  fs.mkdirSync(dir, { recursive: true });
+  const files = Object.fromEntries(['GIT_TRACE', 'GIT_TRACE_CURL', 'GIT_TRACE_PACKET', 'GIT_TRACE_PERFORMANCE', 'GIT_TRACE_SETUP', 'GIT_TRACE_SHALLOW', 'GIT_TRACE2', 'GIT_TRACE2_EVENT', 'GIT_TRACE2_PERF'].map((name) => [name, path.join(dir, name)]));
+  fs.writeFileSync(path.join(w.home, '.gitconfig'), `[credential]\n\thelper =\n[trace2]\n\teventTarget = ${dir}/config-event\n\tnormalTarget = ${dir}/config-normal\n\tperfTarget = ${dir}/config-perf\n`);
+  return {
+    dir, files, env: { ...files, GIT_TRACE_REDACT: '0', GIT_CURL_VERBOSE: '1', GIT_TRANSPORT_HELPER_DEBUG: '1' },
+    written: () => fs.readdirSync(dir).sort(),
+    read: () => fs.readdirSync(dir).map((name) => fs.readFileSync(path.join(dir, name), 'utf8')).join('\n'),
+    empty: () => { for (const name of fs.readdirSync(dir)) fs.rmSync(path.join(dir, name)); },
+  };
+}
+
 // The environment git runs in: the variables that move git, select its configuration files or add configuration are
 // removed from every git call. The configuration files that git reads by default stay, and so do the user's own ssh,
 // credential and transport settings that do not reach git through those variables.
@@ -816,6 +830,59 @@ describe('the environment git runs in', () => {
       for (const name of KEPT) assert.ok(names.includes(name), `${name} was kept`);
     }
     assert.deepEqual(w.refs(w.right), ['refs/heads/fvs/t']);
+  });
+
+  // ---- trace sinks ----------------------------------------------------------------------------------------------------
+  // Git writes the address it pushes to, and with GIT_TRACE_REDACT=0 the Authorization header, to the files that these variables
+  // name, and Trace2 targets can also be switched on in the global configuration file. Nothing here can clean a file that git writes.
+  const TRACE_VARIABLES = ['GIT_TRACE', 'GIT_TRACE_CURL', 'GIT_TRACE_PACKET', 'GIT_TRACE_PERFORMANCE', 'GIT_TRACE_SETUP', 'GIT_TRACE_SHALLOW', 'GIT_TRACE_REDACT', 'GIT_TRACE2', 'GIT_TRACE2_EVENT', 'GIT_TRACE2_PERF', 'GIT_TRACE2_CONFIG_PARAMS', 'GIT_CURL_VERBOSE', 'GIT_TRANSPORT_HELPER_DEBUG'];
+
+  it('cleanEnvironment removes GIT_TRACE, every GIT_TRACE_* and GIT_TRACE2*, GIT_CURL_VERBOSE and GIT_TRANSPORT_HELPER_DEBUG, also when they are named as trusted', () => {
+    const input = Object.fromEntries(TRACE_VARIABLES.map((name) => [name, '1']));
+    assert.deepEqual(lib.cleanEnvironment({ ...input, HOME: '/h' }), { HOME: '/h' });
+    assert.deepEqual(lib.cleanEnvironment(lib.withTrusted({ ...input, HOME: '/h' }, TRACE_VARIABLES)), { HOME: '/h' }, 'a name that cannot be trusted stays removed');
+    assert.deepEqual(lib.cleanEnvironment({ GIT_TRACEFOO: '1', GIT_TRACE2_NEW_KNOB: '1' }), {}, 'a name of the family that git adds later goes as well');
+  });
+
+  it('no git call of the command or of init writes a trace file, whatever the environment and the global configuration ask for', () => {
+    const w = world();
+    const sinks = traceSinks(w);
+    const plainPush = (env) => spawnSync('git', ['-C', w.work, 'push', '-q', URL_RECORDED, 'refs/heads/fvs/t:refs/heads/fvs/t'], { encoding: 'utf8', env });
+    // Two ways to ask: variables in the environment (which win over configuration), and Trace2 targets in the global file alone.
+    for (const [how, env, controls] of [
+      ['inherited variables', { ...w.env, ...sinks.env }, ['GIT_TRACE', 'GIT_TRACE2_EVENT', 'GIT_TRACE2_PERF', 'GIT_TRACE_SETUP']],
+      ['config-enabled Trace2 targets', w.env, ['config-event', 'config-normal', 'config-perf']],
+    ]) {
+      const control = plainPush(env);
+      assert.equal(control.status, 0, control.stderr);
+      for (const name of controls) assert.ok(sinks.written().includes(name), `the control (${how}): a plain push writes ${name} (${sinks.written()})`);
+      // The clean-up calls of the test are git calls too, so they come before the files are emptied and not between the checks.
+      w.clear(w.right);
+      sinks.empty();
+      const out = w.go(['--branch', 'fvs/t'], { env });
+      assert.equal(out.status, 0, JSON.stringify(out.json));
+      assert.deepEqual(sinks.written(), [], `${how}: the command wrote no trace file`);
+      const init = lib.initDestination(w.root, 'origin', 'Acme/proj', 'github.com', ['fvs'], env);
+      assert.equal(init.problem, undefined, JSON.stringify(init.problem));
+      assert.deepEqual(sinks.written(), [], `${how}: init wrote none either`);
+      w.clear(w.right);
+      sinks.empty();
+    }
+  });
+
+  it('every git call of the command and of init sees no trace variable but GIT_TRACE2, GIT_TRACE2_EVENT and GIT_TRACE2_PERF set to 0', () => {
+    const w = world();
+    const log = path.join(w.dir, 'trace-env.log');
+    const env = { ...gitStandIn(w, 'env | sort >> "$FVS_TEST_ENVLOG"\necho --- >> "$FVS_TEST_ENVLOG"'), FVS_TEST_ENVLOG: log, ...Object.fromEntries(TRACE_VARIABLES.map((name) => [name, '1'])) };
+    assert.equal(w.go(['--branch', 'fvs/t'], { env }).status, 0);
+    assert.equal(lib.initDestination(w.root, 'origin', 'Acme/proj', 'github.com', ['fvs'], env).problem, undefined);
+    const calls = fs.readFileSync(log, 'utf8').split('---\n').filter(Boolean).map((block) => Object.fromEntries(block.split('\n').filter(Boolean).map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)])));
+    assert.ok(calls.length >= 10, `every git call was seen (${calls.length})`);
+    for (const seen of calls) {
+      const names = Object.keys(seen).filter((name) => /^GIT_(TRACE|CURL_VERBOSE|TRANSPORT_HELPER_DEBUG)/.test(name)).sort();
+      assert.deepEqual(names, ['GIT_TRACE2', 'GIT_TRACE2_EVENT', 'GIT_TRACE2_PERF']);
+      for (const name of names) assert.equal(seen[name], '0', name);
+    }
   });
 });
 
@@ -1474,7 +1541,7 @@ describe('git configuration variables that the user trusted at init', () => {
         const child = require('node:child_process').spawn(process.execPath, [SERVER, served, TOKEN, authLog], { stdio: ['ignore', 'pipe', 'inherit'] });
         try {
           const port = await new Promise((resolve, reject) => { child.once('error', reject); child.stdout.once('data', (data) => resolve(Number.parseInt(String(data), 10))); });
-          await body({ port, authLog, refs: () => git(served, process.env, '-C', bare, 'for-each-ref', '--format=%(refname)').split('\n').filter(Boolean) });
+          await body({ port, authLog, refs: () => git(served, process.env, '-C', bare, 'for-each-ref', '--format=%(refname)').split('\n').filter(Boolean), clear: () => git(served, process.env, '-C', bare, 'update-ref', '-d', 'refs/heads/fvs/t') });
         } finally {
           child.kill();
         }
@@ -1548,6 +1615,39 @@ describe('git configuration variables that the user trusted at init', () => {
           nowhereAfter(w, ['the output', out.stdout], ['the error output', out.stderr]);
           assert.equal(JSON.parse(fs.readFileSync(path.join(w.commonDir, lib.RECORD_NAME), 'utf8')).url, recordAddress(port));
           assert.equal(logEntries(w).at(-1).usedConfiguredAddress, true);
+        });
+      });
+
+      // A trace file is written by git itself, so no cleaning of the command's own output can reach it: git must not be asked to write one.
+      it('inherited trace variables and a configuration that enables Trace2 make the command write no trace, where a plain push does', { skip: !haveBackend && 'git http-backend is not installed' }, async () => {
+        await withServer(async ({ port, refs, clear }) => {
+          const w = project(port);
+          w.git('remote', 'set-url', 'origin', tokenAddress(port));
+          const sinks = traceSinks(w);
+          const pair = Buffer.from(`user:${TOKEN}`).toString('base64');
+          // Trace2 of git 2.54 redacts the password of a URL in its own events, so its control only needs the file to exist; older gits do not redact.
+          // With GIT_CURL_VERBOSE set git sends the curl trace to its error output instead of the GIT_TRACE_CURL file, so it is a case of its own.
+          const { GIT_CURL_VERBOSE, ...files } = sinks.env;
+          for (const [how, env, fileLeaks, errorLeak] of [
+            ['inherited variables with redaction off', { ...w.env, ...files }, [['GIT_TRACE_CURL', `Basic ${pair}`], ['GIT_TRACE', TOKEN]], null],
+            ['GIT_CURL_VERBOSE with redaction off', { ...w.env, GIT_CURL_VERBOSE, GIT_TRACE_REDACT: '0' }, [], `Basic ${pair}`],
+            ['a configuration that enables Trace2', w.env, [['config-event', '']], null],
+          ]) {
+            const control = spawnSync('git', ['-C', w.work, 'push', '-q', tokenAddress(port), 'refs/heads/fvs/t:refs/heads/fvs/t'], { encoding: 'utf8', env });
+            assert.equal(control.status, 0, control.stderr);
+            for (const [name, text] of fileLeaks) assert.ok(fs.readFileSync(path.join(sinks.dir, name), 'utf8').includes(text), `the control (${how}): a plain push writes ${name}${text ? ' with the token' : ''}`);
+            if (errorLeak) assert.ok(control.stderr.includes(errorLeak), `the control (${how}): a plain push prints the token`);
+            clear();
+            sinks.empty();
+            const out = spawnSync(process.execPath, [SCRIPT, '--branch', 'fvs/t'], { cwd: w.work, env, encoding: 'utf8', timeout: 60000 });
+            assert.equal(out.status, 0, `${out.stdout}${out.stderr}`);
+            assert.deepEqual(refs(), ['refs/heads/fvs/t']);
+            assert.deepEqual(sinks.written(), [], `${how}: the command wrote no trace file`);
+            for (const secret of [TOKEN, pair]) {
+              assert.ok(!`${out.stdout}${out.stderr}${sinks.read()}`.includes(secret), `${how}: neither the output nor a trace holds the token`);
+            }
+            clear();
+          }
         });
       });
 

@@ -170,6 +170,11 @@ What it does for this push, to harden it:
   name that is not set is skipped, and a value that changed since init is not refused: the receipt marks it as
   changed. The configuration files that git reads by default stay, and so do your ssh, credential and transport
   settings that are not set through those variables.
+- git also runs without `GIT_TRACE`, every `GIT_TRACE_`* variable, `GIT_CURL_VERBOSE` and
+  `GIT_TRANSPORT_HELPER_DEBUG`, and with `GIT_TRACE`2, `GIT_TRACE`2_EVENT and `GIT_TRACE`2_PERF set to 0, which also
+  switches off a Trace2 target that your git configuration files enable. Those settings make git write the address
+  of a push and the Authorization header of a request, token included, to a file or to its error output, and nothing
+  in this command can clean a file that git writes. If you want a trace of a push, run git yourself.
 - No push option is sent.
 
 What it trusts, and so does not protect against:
