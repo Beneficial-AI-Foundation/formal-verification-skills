@@ -53,7 +53,7 @@ export const CONTRACT = {
   checks: [
     'It takes exactly --branch <name> and refuses anything else on its command line.',
     'It compares the shared git directory of the repository it runs in with the one recorded for the destination, and refuses when they differ or when a work tree points at another repository.',
-    'It refuses a branch that is not a plain local branch under a recorded namespace. It pushes to the destination address recorded at init, and refuses that address when a URL rewrite rule applies to it at the time of the check.',
+    'It refuses a branch that is not a plain local branch under a recorded namespace. It pushes to the destination address recorded at init, and refuses that address when a URL rewrite rule would send it anywhere but to that address. A rule that only adds user information to an http or https address, as a sandbox does to inject a token, is allowed: the record holds the address without user information, and no message, record or receipt shows it.',
   ],
   hardening: [
     'The push is made with --no-verify, which skips the pre-push hook whether it is a file in a hooks folder or is set in git configuration (hook.<name>.event), and core.hooksPath is set to /dev/null so that git finds no hook in any hooks folder. Your own pre-push checks do not run for it.',
@@ -76,12 +76,13 @@ export const contractText = () => `The push command is ${CONTRACT.kind}. ${CONTR
 
 // ---- the destination URL ------------------------------------------------------------------------------------
 
-// User information in an http or https address (https://user:token@host/...) is a credential, and a token can reach git
-// through a rewrite rule that a sandbox injects. The address is written to the record and printed in previews and
-// refusals, so such an address is refused, and a message that has to name one shows it without the user part.
-// The user name of an ssh address (git@host) is not a secret and stays.
+// User information in an http or https address (https://user:token@host/...) is a credential: a token can sit in the
+// address of the remote, or reach git through a rewrite rule that a sandbox injects. The destination is the host and
+// OWNER/REPO, so the address is recorded without the user part, and a message that has to name an address shows it
+// without that part too. The user name of an ssh address (git@host) is not a secret and stays.
 const embedsCredential = (url) => /^https?:\/\/[^/]*@/i.test(String(url).trim());
-export const scrub = (text) => String(text).replace(/(https?:\/\/)[^/\s@"']+@/gi, '$1***@');
+export const stripCredential = (url) => String(url).trim().replace(/^(https?:\/\/)[^/]*@/i, '$1');
+export const scrub = (text) => String(text).replace(/(https?:\/\/)[^/\s"']*@/gi, '$1***@');
 
 // Host and OWNER/REPO of a git URL, or null when the URL does not name exactly one repository on one host
 // (a local path, a file URL, a path with more or fewer than two segments).
@@ -113,11 +114,10 @@ export function destinationProblem(where, remote, repo, host, env) {
     const urls = run.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
     if (urls.length === 0) return { code: 'remote-ambiguous', message: `git remote ${remote} has no ${label} URL` };
     for (const url of urls) {
-      if (embedsCredential(url)) return { code: 'remote-credential', message: `the ${label} URL of remote ${remote} has user information in an http or https address (${scrub(url)}), which can be a token. FVS writes the address down and shows it, so use a credential helper or an ssh address, and check the git settings that rewrite it` };
       const named = parseRemoteUrl(url);
-      if (!named) return { code: 'remote-ambiguous', message: `cannot tell which repository the ${label} URL ${url} of remote ${remote} names; every URL of the remote must be a plain host and OWNER/REPO URL` };
+      if (!named) return { code: 'remote-ambiguous', message: `cannot tell which repository the ${label} URL ${scrub(url)} of remote ${remote} names; every URL of the remote must be a plain host and OWNER/REPO URL` };
       if (named.host !== host.toLowerCase() || named.repo.toLowerCase() !== repo.toLowerCase()) {
-        return { code: 'remote-mismatch', message: `the ${label} URL ${url} of remote ${remote} names ${named.host}/${named.repo}, not ${host}/${repo}; every URL of the remote must name the project's own repository` };
+        return { code: 'remote-mismatch', message: `the ${label} URL ${scrub(url)} of remote ${remote} names ${named.host}/${named.repo}, not ${host}/${repo}; every URL of the remote must name the project's own repository` };
       }
     }
   }
@@ -214,12 +214,16 @@ export function rewriteProblem(where, url, env) {
     const key = at < 0 ? entry : entry.slice(0, at);
     const value = at < 0 ? '' : entry.slice(at + 1);
     const rewrite = /^url\.(.+)\.(insteadof|pushinsteadof)$/.exec(key);
-    if (rewrite && url.startsWith(value)) return scrub(`the git setting ${key} = ${JSON.stringify(value)} would rewrite the recorded destination ${url}`);
+    if (rewrite && url.startsWith(value)) {
+      // A rule that sends the address to the same address with user information added is how a token is injected.
+      if (stripCredential(rewrite[1] + url.slice(value.length)) === url) continue;
+      return scrub(`the git setting ${key} = ${JSON.stringify(value)} would rewrite the recorded destination ${url}`);
+    }
     const remote = /^remote\.(.+)\.[^.]+$/.exec(key);
     if (remote && remote[1] === url) return scrub(`the git setting ${key} names the recorded destination as a remote`);
   }
   const shown = git(['ls-remote', '--get-url', url], { where, env });
-  if (shown.status !== 0 || shown.stdout.trim() !== url) return scrub(`git reads the recorded destination ${url} as ${shown.stdout.trim() || '(unreadable)'}`);
+  if (shown.status !== 0 || stripCredential(shown.stdout) !== url) return scrub(`git reads the recorded destination ${url} as ${shown.stdout.trim() || '(unreadable)'}`);
   return null;
 }
 
@@ -238,7 +242,7 @@ export function destinationRecord({ projectRoot, commonDir, url, host, repo, pre
   const group = new Set(groupNames(variables));
   for (const name of names) if (isPair(name) && !group.has(name)) throw new Error(`${name} cannot be trusted alone: only the pairs that a GIT_CONFIG_COUNT in the same set addresses are trusted, with the count`);
   return {
-    schema: RECORD_SCHEMA, schemaVersion: 1, projectRoot, commonDir, url, host, repo, prefixes: [...prefixes],
+    schema: RECORD_SCHEMA, schemaVersion: 1, projectRoot, commonDir, url: stripCredential(url), host, repo, prefixes: [...prefixes],
     ...(names.length ? { trustedGitVariables: Object.fromEntries(names.map((name) => [name, sha256(variables[name])])) } : {}),
   };
 }
@@ -333,9 +337,10 @@ export function initDestination(root, remote, repo, host, prefixes, env = proces
   if (problem) return { problem };
   const urls = git(['remote', 'get-url', '--push', '--all', remote], { where: found, env: gitEnv }).stdout.split('\n').map((line) => line.trim()).filter(Boolean);
   if (urls.length === 0) return { problem: { code: 'remote-ambiguous', message: `git remote ${remote} has no push URL` } };
-  const rewritten = rewriteProblem(found, urls[0], gitEnv);
+  const address = stripCredential(urls[0]);
+  const rewritten = rewriteProblem(found, address, gitEnv);
   if (rewritten) return { problem: { code: 'destination-rewritten', message: rewritten } };
-  return { record: destinationRecord({ projectRoot: root, commonDir: found.commonDir, url: urls[0], host: host.toLowerCase(), repo, prefixes, variables }), commonDir: found.commonDir, where: found, variables };
+  return { record: destinationRecord({ projectRoot: root, commonDir: found.commonDir, url: address, host: host.toLowerCase(), repo, prefixes, variables }), commonDir: found.commonDir, where: found, variables };
 }
 
 // Where the command runs, captured once: the git directory of this work tree (a linked worktree has its own), the shared
