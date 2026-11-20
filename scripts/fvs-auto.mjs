@@ -1211,8 +1211,8 @@ function crateEdges(unit) {
 
 // The crates of an extraction that has more than one (or any, with `always`), with the
 // other extracted crates each one depends on and an order that puts providers before
-// consumers. A crate depends on another when its Lean imports it, when it is stitched to it
-// or when its LLBC reaches an item of it; null for a single-crate run, so nothing about
+// consumers. A crate depends on another by any edge `crateEdges` names (its stitch, its
+// imports, the target crates its LLBC reaches); null for a single-crate run, so nothing about
 // that changes.
 function crateView(run, always = false) {
   const units = unitsOf(run);
@@ -1332,10 +1332,11 @@ function crateReceiptProblem(root, state, specs, context, receipt, head) {
   return null;
 }
 
-// The pairs of verified crates where the consumer's LLBC reaches items of the provider but the
-// consumer neither imports it nor is stitched to it. Each such item is an axiom in the consumer's
-// own Lean: a black box where the provider's translation belongs, which a verified provider must
-// never be. A crate the owner does not verify may be assumed, so it makes no pair.
+// The pairs of verified crates where the consumer depends on the provider (its LLBC reaches items
+// of it, or the record names it) but is not stitched to it. Each such item is an axiom in the
+// consumer's own Lean: a black box where the provider's translation belongs, which a verified
+// provider must never be. An import label alone is not a stitch. A crate the owner does not verify
+// may be assumed, so it makes no pair.
 function unstitchedPairs(context) {
   return context.units.filter((unit) => context.targets.includes(unit.crate)).flatMap((unit) => {
     // Linked means a stitch with its evidence: an import label alone, or a stitch entry that names
@@ -1730,7 +1731,11 @@ export function allowedAxioms({ projectRoot, commit }) {
 function extractionErrors(extraction) {
   const errors = [];
   if (!fields(errors, extraction, 'extraction', [...EXTRACTION_FIELDS, 'run'])) return errors;
-  if ('run' in extraction && !recordedRunValid(extraction.run)) errors.push('extraction.run must be the re-validated extraction attempt');
+  if ('run' in extraction && !recordedRunValid(extraction.run)) {
+    // A run that reads as a run but disagrees with its roster or stitch says where.
+    const why = runValid(extraction.run) ? unitsProblem(extraction.run) : null;
+    errors.push(`extraction.run must be the re-validated extraction attempt${why ? ` (${why})` : ''}`);
+  }
   const missing = EXTRACTION_FIELDS.filter((key) => !(key in extraction));
   if (missing.length > 0) return [`extraction lacks ${missing.join(', ')}`];
   const { status, reasons, selected, declared, checks, inputs } = extraction;

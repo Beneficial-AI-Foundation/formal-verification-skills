@@ -333,7 +333,7 @@ describe('the proof phase over several crates', () => {
   });
 
   describe('a verified crate that uses another verified crate without being stitched to it', () => {
-    // hmac's LLBC reaches sha2 items, but its Lean neither imports sha2 nor is stitched to it, so
+    // hmac's LLBC reaches sha2 items, but it is not stitched to sha2 (no stitch, no import), so
     // each of those items would be an axiom in hmac's own Lean.
     const unstitched = (directory) => {
       const [hmac, sha2] = hmacAndSha2(directory);

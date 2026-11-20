@@ -53,15 +53,13 @@ describe('a succeeded extraction over several crates', () => {
     assert.deepEqual(crates.order, ['base', 'loose', 'mid', 'app'], 'derived order: ties by name, every provider first');
   });
 
-  it('warns when a crate uses a verified crate it is neither stitched to nor imports, and not for a crate the owner does not verify', () => {
+  it('warns when a crate uses a verified crate it is not stitched to, and not for a crate the owner does not verify', () => {
     const reaches = (crate, kind = 'target') => ({ foreignCrates: [{ crate, kind }, { crate: 'core', kind: 'external' }] });
     const warnings = (root) => cli('read-state', '--project-root', root, '--brief').json.warnings.filter((text) => /without being stitched/.test(text));
     const open = extracted((directory) => [unit(directory, 'app', [], reaches('base')), unit(directory, 'base', [])]);
     assert.deepEqual(warnings(open), ["crate app uses items of base, which is verified, without being stitched to it: they would be axioms in app's Lean, not base's translation. Stitch app to base in the extraction spec, or have the owner record base as a non-target in the agreement"]);
     const stitched = extracted((directory) => [unit(directory, 'app', [], { ...reaches('base'), stitch: [{ provider: 'base', modules: ['Base'], replaced: [], assumed: [], copies: [], files: [] }] }), unit(directory, 'base', [])]);
     assert.deepEqual(warnings(stitched), []);
-    const imported = extracted((directory) => [unit(directory, 'app', [], { ...reaches('base'), imports: ['base'] }), unit(directory, 'base', [])]);
-    assert.deepEqual(warnings(imported), []);
     // A crate the extraction itself marks a non-target, and one the owner drops afterwards, may be assumed.
     const nonTarget = extracted((directory) => [unit(directory, 'app', [], reaches('base', 'non-target')), unit(directory, 'base', [])]);
     assert.deepEqual(warnings(nonTarget), []);
@@ -199,6 +197,16 @@ describe('what binds the crates of a run to its roster and stitch', () => {
       /^the stitch of libcrux_hmac was made from another publication of libcrux_sha2 than the run holds/);
   });
 
+  it('says in the malformed-state message why a recorded run no longer reads', () => {
+    const root = extracted(hmacAndSha2);
+    const state = readState(root);
+    state.extraction.run.units[0].stitch[0].providerStageSha256 = '1'.repeat(64);
+    writeState(root, state);
+    const result = cli('read-state', '--project-root', root);
+    assert.equal(result.status, 3, result.stdout);
+    assert.match(result.json.message, /extraction\.run must be the re-validated extraction attempt \(the stitch of libcrux_hmac was made from another publication of libcrux_sha2 than the run holds\)/);
+  });
+
   it('refuses a stitch to a crate that is not another crate of the run, and one to the crate itself', () => {
     assert.match(auto.unitsProblem(runOf((directory) => [unit(directory, 'app', [], { stitch: ['elsewhere'] }), unit(directory, 'base', [])])),
       /^crate app is stitched to elsewhere, which is not another crate of the run/);
@@ -252,11 +260,9 @@ describe('crateProblems', () => {
     assert.deepEqual(auto.crateProblems(run), [unstitched]);
   });
 
-  it('accepts a crate that is stitched or imports the provider, and a run with no cycle', () => {
+  it('accepts a crate that is stitched to the provider, and a run with no cycle', () => {
     const stitched = runOf((directory) => [unit(directory, 'app', [], { ...reaches('base'), ...stitchTo('base') }), unit(directory, 'base', [])]);
-    const imported = runOf((directory) => [unit(directory, 'app', [], { ...reaches('base'), imports: ['base'] }), unit(directory, 'base', [])]);
     assert.deepEqual(auto.crateProblems(stitched), []);
-    assert.deepEqual(auto.crateProblems(imported), []);
   });
 
   it('does not refuse a provider the extraction declares a non-target, or one the owner drops, or a consumer the owner drops', () => {
