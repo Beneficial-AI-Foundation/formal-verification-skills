@@ -57,7 +57,7 @@ export const CONTRACT = {
   ],
   hardening: [
     'The push is made with --no-verify, which skips the pre-push hook whether it is a file in a hooks folder or is set in git configuration (hook.<name>.event), and core.hooksPath is set to /dev/null so that git finds no hook in any hooks folder. Your own pre-push checks do not run for it.',
-    'git runs without GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR, GIT_INDEX_FILE, GIT_OBJECT_DIRECTORY, GIT_ALTERNATE_OBJECT_DIRECTORIES, GIT_CONFIG, GIT_NAMESPACE and GIT_EXEC_PATH. It also runs without GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_CONFIG_NOSYSTEM, GIT_CONFIG_COUNT, the GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n pairs and GIT_CONFIG_PARAMETERS, except the ones whose names you trusted when you confirmed the destination at init. Init shows those names with their values. The command keeps each trusted name with whatever value it has when it runs, in every git call, and drops every other name. A trusted name that is not set is skipped, and a value that changed since init is not refused: the receipt marks it as changed. The configuration files that git reads by default stay, and so do your ssh, credential and transport settings that are not set through those variables.',
+    'git runs without GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR, GIT_INDEX_FILE, GIT_OBJECT_DIRECTORY, GIT_ALTERNATE_OBJECT_DIRECTORIES, GIT_CONFIG, GIT_NAMESPACE and GIT_EXEC_PATH. It also runs without GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_CONFIG_NOSYSTEM, GIT_CONFIG_COUNT, the GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n pairs and GIT_CONFIG_PARAMETERS, except the ones whose names you trusted when you confirmed the destination at init. Init lists those names and never prints a value, because a value can be a token: it shows the length of each. GIT_CONFIG_COUNT and the GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n pairs that it addresses are one unit: trusting the count trusts the pairs it addresses when the command runs. The command keeps each trusted name with whatever value it has when it runs, in every git call, and drops every other name. A trusted name that is not set is skipped, and a value that changed since init is not refused: the receipt marks it as changed. The configuration files that git reads by default stay, and so do your ssh, credential and transport settings that are not set through those variables.',
     'No push option is sent.',
   ],
   trusts: [
@@ -144,6 +144,38 @@ export function trustableVariables(env) {
   return Object.fromEntries(Object.entries(env).filter(([name]) => trustable(name)));
 }
 
+const isPair = (name) => /^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(name);
+
+// GIT_CONFIG_COUNT and the KEY_n/VALUE_n pairs it addresses are one unit: git reads the pairs with an index below the
+// count and nothing else, and it fails on every call when a pair the count promises is missing. So the user trusts the
+// unit, never one pair. These are the pairs that the count in `variables` addresses and that are set: none when the count
+// is not set or is not a plain number, and none for a name such as GIT_CONFIG_KEY_00, which git never reads.
+export function groupNames(variables) {
+  if (!Object.hasOwn(variables, 'GIT_CONFIG_COUNT') || !/^\d{1,9}$/.test(variables.GIT_CONFIG_COUNT)) return [];
+  const count = Number(variables.GIT_CONFIG_COUNT);
+  return Object.keys(variables).filter((name) => {
+    const match = /^GIT_CONFIG_(?:KEY|VALUE)_(0|[1-9]\d*)$/.exec(name);
+    return match !== null && Number(match[1]) < count;
+  }).sort();
+}
+
+// What init asks the user to trust: the trustable variables that are set, except the numbered pairs that the count does
+// not address (or that have no count): git ignores those, so they carry nothing to trust.
+export function variablesToTrust(env) {
+  const group = new Set(groupNames(env));
+  return Object.fromEntries(Object.entries(trustableVariables(env)).filter(([name]) => !isPair(name) || group.has(name)));
+}
+
+// The names the command keeps from `env`, for a record: every recorded name that is set, and, when the count is recorded,
+// the pairs it addresses now, whether or not the record names them. A recorded pair that the count does not address
+// is not kept, and neither is a pair when the count is not trusted.
+export function keptVariables(record, env) {
+  const recorded = Object.keys(hashesOf(record));
+  const single = recorded.filter((name) => !isPair(name) && Object.hasOwn(env, name));
+  const pairs = recorded.includes('GIT_CONFIG_COUNT') ? groupNames(env) : [];
+  return [...new Set([...single, ...pairs])].sort();
+}
+
 // An environment that carries the names of the variables the user trusts, so that cleanEnvironment keeps those and
 // every git call made with it sees them. The names travel under a symbol, which no process environment can hold, so an
 // environment that merely comes from outside cannot claim a variable as trusted, and nothing of it reaches git.
@@ -195,6 +227,8 @@ export function rewriteProblem(where, url, env) {
 export function destinationRecord({ projectRoot, commonDir, url, host, repo, prefixes, variables = {} }) {
   const names = Object.keys(variables).sort();
   for (const name of names) if (!trustable(name)) throw new Error(`${name} cannot be trusted`);
+  const group = new Set(groupNames(variables));
+  for (const name of names) if (isPair(name) && !group.has(name)) throw new Error(`${name} cannot be trusted alone: only the pairs that a GIT_CONFIG_COUNT in the same set addresses are trusted, with the count`);
   return {
     schema: RECORD_SCHEMA, schemaVersion: 1, projectRoot, commonDir, url, host, repo, prefixes: [...prefixes],
     ...(names.length ? { trustedGitVariables: Object.fromEntries(names.map((name) => [name, sha256(variables[name])])) } : {}),
@@ -206,19 +240,26 @@ const hashesOf = (record) => {
   return found !== null && typeof found === 'object' && !Array.isArray(found) ? found : {};
 };
 
-// The names of the trusted git variables that one record has and the other does not. A value that changed is not a difference.
+// The names of the trusted git variables that one record has and the other does not. A value that changed is not a
+// difference, and neither are the numbered pairs: they belong to the count, which is what the user trusts.
 export function differingVariables(a, b) {
   const left = hashesOf(a);
   const right = hashesOf(b);
-  return [...new Set([...Object.keys(left), ...Object.keys(right)])].filter((name) => Object.hasOwn(left, name) !== Object.hasOwn(right, name)).sort();
+  return [...new Set([...Object.keys(left), ...Object.keys(right)])].filter((name) => !isPair(name) && Object.hasOwn(left, name) !== Object.hasOwn(right, name)).sort();
 }
 
 // What a push reports about the git variables, without any value or hash: for each trusted name whether its value is the
-// one that was confirmed (`same`), another value (`changed`) or not set; and the names that are set and not trusted,
-// which the push dropped.
+// one that was confirmed (`same`), another value (`changed`), not set, or kept only because the trusted count addresses
+// it now (`added`); and the names that are set and not kept, which the push dropped.
 export function variableReport(record, env) {
-  const trusted = Object.fromEntries(Object.entries(hashesOf(record)).map(([name, hash]) => [name, !Object.hasOwn(env, name) ? 'not-set' : sha256(env[name]) === hash ? 'same' : 'changed']));
-  const dropped = Object.keys(trustableVariables(env)).filter((name) => !Object.hasOwn(trusted, name)).sort();
+  const hashes = hashesOf(record);
+  const kept = keptVariables(record, env);
+  const trusted = {};
+  for (const name of [...new Set([...Object.keys(hashes), ...kept])].sort()) {
+    if (!Object.hasOwn(env, name)) trusted[name] = 'not-set';
+    else if (kept.includes(name)) trusted[name] = !Object.hasOwn(hashes, name) ? 'added' : sha256(env[name]) === hashes[name] ? 'same' : 'changed';
+  }
+  const dropped = Object.keys(trustableVariables(env)).filter((name) => !kept.includes(name)).sort();
   return { trusted, dropped };
 }
 
@@ -246,6 +287,8 @@ export function recordProblem(record) {
       if (!trustable(name)) return `has a trustedGitVariables entry for ${JSON.stringify(name)}, a variable that cannot be trusted`;
       if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash)) return `has no SHA-256 hash for ${name} in trustedGitVariables`;
     }
+    const pair = Object.keys(hashes).find(isPair);
+    if (pair && !Object.hasOwn(hashes, 'GIT_CONFIG_COUNT')) return `has ${pair} in trustedGitVariables without GIT_CONFIG_COUNT, which addresses the numbered pairs`;
   }
   for (const prefix of record.prefixes) { const bad = checkPrefixShape(prefix); if (bad) return `has the branch namespace ${JSON.stringify(prefix)}, which ${bad}`; }
   // The URL must still be the repository the record names, spelled as git reads it.
@@ -266,10 +309,11 @@ const refuse = (code, message, details) => { throw new Refuse(code, message, det
 // the permission check can report a refusal in its own words. The URL must name the agreed host and repository
 // (every fetch and push URL of the remote is checked) and no rewrite rule may apply to it, because the push command
 // refuses a destination that a rule would rewrite. The git configuration variables that are set in `env` are the ones
-// the record will ask the user to trust (`variables`, with their values, for the preview), so these checks run with them,
+// the record will ask the user to trust (`variables`: the set that init offers, with the values for the hashes; the preview
+// shows only names and lengths), so these checks run with them,
 // as the push will.
 export function initDestination(root, remote, repo, host, prefixes, env = process.env) {
-  const variables = trustableVariables(env);
+  const variables = variablesToTrust(env);
   const gitEnv = withTrusted(env, Object.keys(variables));
   let found;
   try { found = locate(root, gitEnv); } catch (error) {
@@ -442,7 +486,7 @@ export function run(argv, { cwd = process.cwd(), env = process.env, now = () => 
     const hinted = recordHint(cwd);
     const record = readRecord(hinted);
     const report = variableReport(record, env);
-    const gitEnv = withTrusted(env, Object.keys(report.trusted));
+    const gitEnv = withTrusted(env, keptVariables(record, env));
     let found;
     try { found = locate(cwd, gitEnv); } catch (error) {
       if (error instanceof Refuse && error.code === 'not-a-repository' && report.dropped.length) {

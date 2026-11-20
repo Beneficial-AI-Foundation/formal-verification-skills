@@ -908,8 +908,34 @@ describe('git configuration variables that the user trusted at init', () => {
     assert.deepEqual(lib.differingVariables(was, rotated), []);
     assert.deepEqual(lib.differingVariables(was, more), ['GIT_CONFIG_NOSYSTEM']);
     assert.deepEqual(lib.differingVariables(more, was), ['GIT_CONFIG_NOSYSTEM']);
-    assert.deepEqual(lib.differingVariables(lib.destinationRecord(w.record), was), ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0'], 'a record with none against one with three');
+    assert.deepEqual(lib.differingVariables(lib.destinationRecord(w.record), was), ['GIT_CONFIG_COUNT'], 'a record with none against one with a count: its pairs belong to the count, they are not compared');
+    const grown = lib.destinationRecord({ ...w.record, variables: { GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'a', GIT_CONFIG_VALUE_0: 'b', GIT_CONFIG_KEY_1: 'c', GIT_CONFIG_VALUE_1: 'd' } });
+    assert.deepEqual(lib.differingVariables(was, grown), [], 'a count that grew is the same unit');
     assert.deepEqual(lib.differingVariables(null, 'not a record'), []);
+  });
+
+  it('groupNames, variablesToTrust and keptVariables treat GIT_CONFIG_COUNT and the pairs it addresses as one unit', () => {
+    const w = world();
+    const two = { GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'a', GIT_CONFIG_VALUE_0: 'b', GIT_CONFIG_KEY_1: 'c', GIT_CONFIG_VALUE_1: 'd' };
+    assert.deepEqual(lib.groupNames(two), ['GIT_CONFIG_KEY_0', 'GIT_CONFIG_KEY_1', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_VALUE_1']);
+    assert.deepEqual(lib.groupNames({ ...two, GIT_CONFIG_COUNT: '1' }), ['GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0'], 'only the pairs below the count');
+    assert.deepEqual(lib.groupNames({ GIT_CONFIG_KEY_0: 'a', GIT_CONFIG_VALUE_0: 'b' }), [], 'no count, no group');
+    for (const count of ['', 'x', '-1', '1.5', '01x', '9999999999']) assert.deepEqual(lib.groupNames({ ...two, GIT_CONFIG_COUNT: count }), [], `a count of ${JSON.stringify(count)} addresses nothing`);
+    assert.deepEqual(lib.groupNames({ GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_00: 'a', GIT_CONFIG_KEY_01: 'b' }), [], 'git reads KEY_0 and KEY_1, not KEY_00');
+    // What init asks the user to trust: the pairs that the count does not address carry nothing and are left out.
+    assert.deepEqual(Object.keys(lib.variablesToTrust({ ...two, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_KEY_2: 'e', GIT_CONFIG_VALUE_7: 'f' })).sort(), ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_KEY_1', 'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_VALUE_1']);
+    assert.deepEqual(lib.variablesToTrust({ GIT_CONFIG_KEY_0: 'a', GIT_CONFIG_VALUE_0: 'b' }), {}, 'a pair without its count is not offered');
+    // What the command keeps: a trusted count brings the pairs it addresses now, whatever the record names.
+    const countOnly = lib.destinationRecord({ ...w.record, variables: { GIT_CONFIG_COUNT: '0' } });
+    assert.deepEqual(lib.keptVariables(countOnly, two), ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_KEY_1', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_VALUE_1']);
+    assert.deepEqual(lib.keptVariables(countOnly, { GIT_CONFIG_COUNT: '1' }), ['GIT_CONFIG_COUNT'], 'a count without its pair: nothing to bring');
+    assert.deepEqual(lib.keptVariables(countOnly, {}), [], 'a trusted count that is not set is fine');
+    const noCount = lib.destinationRecord({ ...w.record, variables: { GIT_CONFIG_NOSYSTEM: '1' } });
+    assert.deepEqual(lib.keptVariables(noCount, { ...two, GIT_CONFIG_NOSYSTEM: '1' }), ['GIT_CONFIG_NOSYSTEM'], 'pairs without a trusted count are dropped');
+    // A pair is never trusted alone: the record cannot be made that way, and one that is made by hand is not used.
+    assert.throws(() => lib.destinationRecord({ ...w.record, variables: { GIT_CONFIG_KEY_0: 'a' } }), /GIT_CONFIG_COUNT/);
+    assert.throws(() => lib.destinationRecord({ ...w.record, variables: { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'a', GIT_CONFIG_VALUE_0: 'b', GIT_CONFIG_KEY_1: 'c' } }), /GIT_CONFIG_COUNT/);
+    assert.match(String(lib.recordProblem({ ...lib.destinationRecord(w.record), trustedGitVariables: { GIT_CONFIG_KEY_0: sha('x') } })), /trustedGitVariables.*GIT_CONFIG_COUNT/);
   });
 
   it('variableReport says for each trusted name whether its value is the confirmed one, another one or not set, and lists what it drops', () => {
@@ -922,6 +948,12 @@ describe('git configuration variables that the user trusted at init', () => {
     assert.deepEqual(lib.variableReport(lib.destinationRecord(w.record), { ...NOTE }), { trusted: {}, dropped: ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0'] });
     const shown = JSON.stringify(lib.variableReport(rec, { ...NOTE, GIT_CONFIG_VALUE_0: 'note-value-2' }));
     assert.ok(!shown.includes('note-value') && !shown.includes(sha('note-value-1')) && !shown.includes(sha('note-value-2')), 'neither a value nor a hash is reported');
+    // A count that grew brings the new pairs: they are kept, not trusted by name at init, and reported as added.
+    const grown = { ...NOTE, GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_1: 'fvs.second', GIT_CONFIG_VALUE_1: 'v', GIT_CONFIG_KEY_2: 'fvs.third' };
+    assert.deepEqual(lib.variableReport(rec, grown), {
+      trusted: { GIT_CONFIG_COUNT: 'changed', GIT_CONFIG_KEY_0: 'same', GIT_CONFIG_KEY_1: 'added', GIT_CONFIG_VALUE_0: 'same', GIT_CONFIG_VALUE_1: 'added' },
+      dropped: ['GIT_CONFIG_KEY_2'],
+    });
   });
 
   describe('finding the record before git runs', () => {
@@ -1058,13 +1090,47 @@ describe('git configuration variables that the user trusted at init', () => {
     assert.deepEqual(states, ['same', 'changed', 'not-set']);
   });
 
-  it('a trusted count with pairs that are not trusted leaves git without keys, and it fails on every call: it is refused, naming what was dropped', () => {
+  it('a trusted count brings the pairs it addresses now, whether or not the record names them: one unit', () => {
     const w = world();
-    trust(w, { GIT_CONFIG_COUNT: '1' });
+    trust(w, { GIT_CONFIG_COUNT: '0' });
     assert.equal(plainGit(w, { ...w.env, GIT_CONFIG_COUNT: '1' }, 'rev-parse', '--git-dir').status, 128, 'the control: a count without its pair is an error for git itself');
-    const out = refused(w, ['--branch', 'fvs/t'], 'not-a-repository', { env: { ...w.env, ...NOTE } });
-    assert.match(out.json.message, /These git variables are set and are not trusted, so this check ran without them: GIT_CONFIG_KEY_0, GIT_CONFIG_VALUE_0/);
-    nothingLanded(w);
+    const { log, env } = logged(w, NOTE);
+    const out = w.go(['--branch', 'fvs/t'], { env });
+    assert.equal(out.status, 0, JSON.stringify(out.json));
+    for (const [index, lines] of callsOf(log).entries()) assert.deepEqual(config(lines), line(NOTE), `git call ${index} sees the count and its pair`);
+    assert.deepEqual(out.json.gitVariables, { trusted: { GIT_CONFIG_COUNT: 'changed', GIT_CONFIG_KEY_0: 'added', GIT_CONFIG_VALUE_0: 'added' }, dropped: [] });
+    assert.deepEqual(w.refs(w.right), ['refs/heads/fvs/t']);
+  });
+
+  it('a count that grew since init keeps its new pairs: a sandbox that adds a setting is not refused', () => {
+    const w = world();
+    trust(w, NOTE);
+    const grown = { ...NOTE, GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_1: 'fvs.second', GIT_CONFIG_VALUE_1: 'second-value' };
+    const { log, env } = logged(w, grown);
+    const out = w.go(['--branch', 'fvs/t'], { env });
+    assert.equal(out.status, 0, JSON.stringify(out.json));
+    for (const [index, lines] of callsOf(log).entries()) assert.deepEqual(config(lines), line(grown), `git call ${index}`);
+    assert.deepEqual(out.json.gitVariables, { trusted: { GIT_CONFIG_COUNT: 'changed', GIT_CONFIG_KEY_0: 'same', GIT_CONFIG_KEY_1: 'added', GIT_CONFIG_VALUE_0: 'same', GIT_CONFIG_VALUE_1: 'added' }, dropped: [] });
+    assert.ok(!JSON.stringify(out.json).includes('second-value'));
+  });
+
+  it('pairs that the count does not address, and pairs without a trusted count, are dropped', () => {
+    const w = world();
+    trust(w, NOTE);
+    const beyond = { ...NOTE, GIT_CONFIG_KEY_1: 'fvs.beyond', GIT_CONFIG_VALUE_1: 'beyond-value' };
+    const first = logged(w, beyond);
+    const out = w.go(['--branch', 'fvs/t'], { env: first.env });
+    assert.equal(out.status, 0, JSON.stringify(out.json));
+    for (const [index, lines] of callsOf(first.log).entries()) assert.deepEqual(config(lines), line(NOTE), `git call ${index} does not see the pair beyond the count`);
+    assert.deepEqual(out.json.gitVariables, { trusted: SAME, dropped: ['GIT_CONFIG_KEY_1', 'GIT_CONFIG_VALUE_1'] });
+    w.clear(w.right);
+    fs.rmSync(first.log);
+    trust(w, { GIT_CONFIG_NOSYSTEM: '1' });
+    const second = logged(w, { ...NOTE, GIT_CONFIG_NOSYSTEM: '1' });
+    const again = w.go(['--branch', 'fvs/t'], { env: second.env });
+    assert.equal(again.status, 0, JSON.stringify(again.json));
+    for (const [index, lines] of callsOf(second.log).entries()) assert.deepEqual(config(lines), ['GIT_CONFIG_NOSYSTEM=1'], `git call ${index}: the count is not trusted, so neither is its pair`);
+    assert.deepEqual(again.json.gitVariables.dropped, ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0']);
   });
 
   describe('a sandbox that sets safe.directory through the environment', () => {
@@ -1143,6 +1209,15 @@ describe('git configuration variables that the user trusted at init', () => {
       assert.deepEqual(out.variables, SAFE);
       assert.deepEqual(out.record.trustedGitVariables, { GIT_CONFIG_COUNT: sha('1'), GIT_CONFIG_KEY_0: sha('safe.directory'), GIT_CONFIG_VALUE_0: sha('*') });
       assert.deepEqual(out.record, lib.destinationRecord({ ...w.record, variables: SAFE }));
+    });
+
+    it('the count with the pairs it addresses, and nothing else of the numbered names', () => {
+      const w = world({ skipRecord: true });
+      const out = init(w, { ...SAFE, GIT_CONFIG_KEY_1: 'beyond', GIT_CONFIG_VALUE_1: 'beyond-value' });
+      assert.deepEqual(out.variables, SAFE, 'a pair beyond the count carries nothing: it is not offered');
+      const stray = init(w, { GIT_CONFIG_KEY_0: 'stray', GIT_CONFIG_VALUE_0: 'stray-value' });
+      assert.deepEqual(stray.variables, {}, 'a pair without its count is not offered either');
+      assert.ok(!('trustedGitVariables' in stray.record));
     });
 
     it('nothing, when none is set, and the record then has its usual shape', () => {
