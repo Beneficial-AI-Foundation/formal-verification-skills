@@ -765,8 +765,6 @@ describe('the environment git runs in', () => {
   const DROPPED = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CONFIG', 'GIT_CONFIG_GLOBAL',
     'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_KEY_1', 'GIT_CONFIG_VALUE_1', 'GIT_CONFIG_PARAMETERS', 'GIT_NAMESPACE', 'GIT_EXEC_PATH'];
   const KEPT = ['GIT_SSH_COMMAND', 'GIT_ASKPASS', 'SSH_AUTH_SOCK', 'GIT_TERMINAL_PROMPT', 'HOME', 'XDG_CONFIG_HOME', 'PATH'];
-  // The part of the list that a user can choose to trust at init (see the next block).
-  const TRUSTABLE = ['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_KEY_1', 'GIT_CONFIG_VALUE_1', 'GIT_CONFIG_PARAMETERS'];
 
   it('cleanEnvironment removes the listed names and the key and value pairs by prefix, and leaves the rest as it was', () => {
     const input = Object.fromEntries([...DROPPED, 'GIT_CONFIG_KEY_17', 'GIT_CONFIG_VALUE_17'].map((name) => [name, 'x']));
@@ -813,17 +811,10 @@ describe('the environment git runs in', () => {
     assert.equal(out.json.repositoryRoot, w.root);
     const calls = fs.readFileSync(log, 'utf8').split('---\n').filter(Boolean).map((block) => block.split('\n').filter(Boolean).map((line) => line.slice(0, line.indexOf('='))));
     assert.ok(calls.length >= 6, `every git call was seen (${calls.length})`);
-    // The two calls that find the repository, and so its record, keep the git configuration variables that a user can trust,
-    // because a sandbox may need one of them (safe.directory) before git will answer at all. Nothing else ever reaches git.
-    const FINDING = 2;
-    for (const [index, names] of calls.entries()) {
-      for (const name of DROPPED) {
-        if (index < FINDING && TRUSTABLE.includes(name)) continue;
-        assert.ok(!names.includes(name), `${name} reached git call ${index}`);
-      }
+    for (const names of calls) {
+      for (const name of DROPPED) assert.ok(!names.includes(name), `${name} reached a git call`);
       for (const name of KEPT) assert.ok(names.includes(name), `${name} was kept`);
     }
-    for (const name of TRUSTABLE.filter((one) => DROPPED.includes(one))) assert.ok(calls[0].includes(name), `${name} is still there when git is asked where the repository is`);
     assert.deepEqual(w.refs(w.right), ['refs/heads/fvs/t']);
   });
 });
@@ -907,16 +898,15 @@ describe('git configuration variables that the user confirmed at init', () => {
     assert.deepEqual(lib.differingVariables(lib.destinationRecord(w.record), was), ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0'], 'a record with none against one with three');
   });
 
-  it('none recorded: every variable that init did not record is removed once the record is read, as before', () => {
+  it('none recorded: every variable is removed from every git call, as before', () => {
     const w = world();
     const log = path.join(w.dir, 'env.log');
     const env = { ...gitStandIn(w, 'env | sort >> "$FVS_TEST_ENVLOG"\necho --- >> "$FVS_TEST_ENVLOG"'), FVS_TEST_ENVLOG: log, ...NOTE, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_PARAMETERS: "'fvs.extra=1'" };
     const out = w.go(['--branch', 'fvs/t'], { env });
     assert.equal(out.status, 0, JSON.stringify(out.json));
     const calls = callsOf(log);
-    // The first two calls ask git where the repository is, so that the record can be found: they see what is set.
-    assert.ok(calls[0].includes('GIT_CONFIG_NOSYSTEM=1'), 'the call that finds the repository sees the variables that are set');
-    for (const [index, lines] of [...calls.entries()].filter(([index]) => index >= 2)) {
+    assert.ok(calls.length >= 6, `every git call was seen (${calls.length})`);
+    for (const [index, lines] of calls.entries()) {
       assert.deepEqual(lines.filter((line) => /^GIT_CONFIG/.test(line)), [], `git call ${index} runs without them`);
     }
   });
@@ -934,9 +924,30 @@ describe('git configuration variables that the user confirmed at init', () => {
     const recorded = Object.entries(NOTE).map(([name, value]) => `${name}=${value}`).sort();
     const everything = [...recorded, ...Object.entries(extras).map(([name, value]) => `${name}=${value}`)].sort();
     assert.ok(calls.length >= 6, `every git call was seen (${calls.length})`);
-    assert.deepEqual(config(calls[0]), everything, 'the call that finds the repository sees what is set');
-    for (const [index, lines] of [...calls.entries()].filter(([index]) => index >= 2)) {
-      assert.deepEqual(config(lines), recorded, `git call ${index} sees exactly the recorded variables, with the recorded values`);
+    // Git answers without any variable here, so the first look at the repository uses none; the second look and every
+    // later call see exactly the recorded variables, with the recorded values.
+    for (const [index, lines] of calls.entries()) {
+      assert.deepEqual(config(lines), index < 2 ? [] : recorded, `git call ${index}`);
+    }
+    assert.ok(!everything.every((line) => recorded.includes(line)), 'the row has variables that were not recorded');
+    assert.deepEqual(w.refs(w.right), ['refs/heads/fvs/t']);
+  });
+
+  it('git is asked with the variables that are set only when it cannot answer without them', () => {
+    const w = world();
+    trust(w, SAFE);
+    const log = path.join(w.dir, 'env.log');
+    const extras = { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_PARAMETERS: "'fvs.extra=1'" };
+    const env = { ...gitStandIn(w, 'env | sort >> "$FVS_TEST_ENVLOG"\necho --- >> "$FVS_TEST_ENVLOG"'), FVS_TEST_ENVLOG: log, ...OTHER_OWNER, ...SAFE, ...extras };
+    const out = w.go(['--branch', 'fvs/t'], { env });
+    assert.equal(out.status, 0, JSON.stringify(out.json));
+    const calls = callsOf(log);
+    const config = (lines) => lines.filter((line) => /^GIT_CONFIG/.test(line)).sort();
+    const line = (variables) => Object.entries(variables).map(([name, value]) => `${name}=${value}`).sort();
+    assert.deepEqual(config(calls[0]), [], 'git is asked without them first, and cannot answer');
+    assert.deepEqual(config(calls[1]), line({ ...SAFE, ...extras }), 'only then is it asked with everything that is set');
+    for (const [index, lines] of [...calls.entries()].filter(([index]) => index >= 3)) {
+      assert.deepEqual(config(lines), line(SAFE), `git call ${index} sees only the recorded variables`);
     }
     assert.deepEqual(w.refs(w.right), ['refs/heads/fvs/t']);
   });

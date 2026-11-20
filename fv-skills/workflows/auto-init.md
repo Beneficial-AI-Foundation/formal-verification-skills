@@ -300,7 +300,7 @@ directory), the `file` (in the repository's shared git directory, so no commit c
 `gitConfigNote`, the `contract` (what the push command checks, hardens and trusts) and a digest. Show the owner
 exactly that, with the contract as printed, and ask. The owner confirms those variables too: the push command keeps
 exactly them, with those values, and refuses to push when one is missing or has changed. Say that a value can be a
-credential and is printed here once; the record keeps only a hash of it. If one holds a token, the owner can unset it
+credential and is printed only here; the record keeps only a hash of it. If one holds a token, the owner can unset it
 and run this step again. Run this step in the environment the workers will have. Only on the yes, rerun the same
 command with `--confirm <digest>`. On a no, nothing is
 recorded: the push command then refuses to run (`no-destination-recorded`), workers stop and report that

@@ -551,11 +551,15 @@ describe('the recorded destination', () => {
       assert.equal(fs.existsSync(recordFile()), false);
       const written = dest(NOTE, '--confirm', preview.json.digest);
       assert.equal(written.json.code, 'written');
+      assert.ok(!JSON.stringify(written.json).includes('note-value-1'), 'a value is printed only in the preview, not in the result of the write');
       const text = fs.readFileSync(recordFile(), 'utf8');
       assert.ok(!text.includes('note-value-1'), 'the file holds no value either');
       assert.deepEqual(JSON.parse(text).gitConfigEnvironmentSha256, preview.json.record.gitConfigEnvironmentSha256);
       assert.equal(pushLib.recordProblem(JSON.parse(text)), null, 'the push command accepts what was written');
-      assert.equal(dest(NOTE).json.code, 'unchanged');
+      const again = dest(NOTE);
+      assert.equal(again.json.code, 'unchanged');
+      assert.ok(!JSON.stringify(again.json).includes('note-value-1'), 'nor in the answer for a record that is already there');
+      assert.deepEqual(again.json.gitConfigVariables, undefined);
     });
 
     it('says that none is set when none is, and the record keeps its usual shape', () => {
@@ -577,7 +581,7 @@ describe('the recorded destination', () => {
           assert.deepEqual(refused.json.changedVariables, named);
           assert.match(refused.json.message, /never replaces it.*delete it yourself/);
           for (const name of named) assert.ok(refused.json.message.includes(name), `the message names ${name}`);
-          assert.ok(!refused.json.message.includes('note-value'), 'and no value');
+          assert.ok(!JSON.stringify(refused.json).includes('note-value'), 'and no value anywhere in what it prints');
         }
       }
       assert.equal(fs.readFileSync(recordFile(), 'utf8'), before);
@@ -1551,13 +1555,14 @@ describe('the permissions page', () => {
   it('tells the owner about the git configuration variables that the destination step records, on the page and in the init workflow', () => {
     const page = flat(path.relative(ROOT, PAGE));
     assert.match(page, /every git configuration variable that init recorded is still set to the value you confirmed\. If one is missing or has another value, it refuses with git-config-changed and names the variable, never its value\. It does not replace the record: to accept the change, delete the record file and run the destination step of \/fvs:auto-init again\. A variable that was not recorded is removed, and the command goes on without it/);
-    assert.match(page, /the record gains gitConfigEnvironmentSha256: a hash of each value, so the file never holds a value that may be a credential\. The values are printed once, in that preview\. Do not confirm a variable that holds a token/);
+    assert.match(page, /the record gains gitConfigEnvironmentSha256: a hash of each value, so the file never holds a value that may be a credential\. The values are printed only in that preview\. Do not confirm a variable that holds a token/);
     assert.match(page, /Run the destination step where the workers run, so the recorded variables are the ones they have/);
     assert.match(page, /A variable that changes from one session to the next, such as a GIT_CONFIG_GLOBAL that names a new path each time, makes the push command refuse each time with git-config-changed\. Give the sandbox a fixed value, or put that configuration in a file under the home folder, which git still reads/);
-    assert.match(page, /The helper's own calls keep none of them\. In the tests, a push option set in a confirmed variable was not sent/);
+    assert.match(page, /The permissions helper runs its destination checks with the variables that are set in its session, because it asks you to confirm them\. Its look at the git status of a settings file runs without any\. In the tests, a push option set in a confirmed variable was not sent/);
+    assert.match(page, /The one exception is the first look at where the repository is, which finds the record: when git cannot answer without those variables \(a sandbox that sets safe\.directory\), that read-only call is made again with the ones that are set\. Every other git call is made with only the confirmed ones/);
     const init = flat('fv-skills/workflows/auto-init.md');
     assert.match(init, /gitConfigVariables \(every git configuration variable that is set in this session, with its value\) with its gitConfigNote/);
-    assert.match(init, /the push command keeps exactly them, with those values, and refuses to push when one is missing or has changed\. Say that a value can be a credential and is printed here once; the record keeps only a hash of it/);
+    assert.match(init, /the push command keeps exactly them, with those values, and refuses to push when one is missing or has changed\. Say that a value can be a credential and is printed only here; the record keeps only a hash of it/);
     assert.match(init, /Run this step in the environment the workers will have/);
     assert.match(init, /name the variables in changedVariables when it is printed/);
     assert.match(init, /except the git configuration variables that the owner confirmed in the destination step: it keeps those with the confirmed values and refuses to push when one is missing or has changed/);
