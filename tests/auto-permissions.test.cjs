@@ -1342,6 +1342,29 @@ describe('the permissions page', () => {
     assert.match(text, /It is not a defence against a program that runs as your user/);
   });
 
+  it('has a short section on unattended runs in a sandbox, in plain words and without anyone\'s own tools', () => {
+    const raw = fs.readFileSync(PAGE, 'utf8');
+    const start = raw.indexOf('## Unattended runs in a sandbox');
+    assert.ok(start > raw.indexOf('## What FVS never allows'), 'it follows the list of what FVS never allows');
+    const end = raw.indexOf('\n## ', start + 1) + 1;
+    assert.equal(raw.indexOf('## Where the file goes'), end, 'it ends where "Where the file goes" starts');
+    const section = raw.slice(start, end).replace(/`/g, '').replace(/\s+/g, ' ');
+    assert.ok(section.split(' ').length < 350, 'it stays short');
+    assert.match(section, /skip-permissions/);
+    assert.match(section, /only inside an isolated sandbox or on a cloud machine/);
+    assert.match(section, /Never use it on a personal machine with broad access/);
+    assert.match(section, /nothing prompts, so the rules in "What FVS never allows" \(no GitHub comments or reviews, no merges, no pushes to an upstream\) are no longer enforced by a prompt/);
+    assert.match(section, /A token limited to the project's fork/);
+    assert.match(section, /A posting guard in the sandbox/);
+    assert.match(section, /gh wrapper ahead of the real gh on PATH that refuses the commands that comment on or review/);
+    assert.match(section, /Branch protection on the fork/);
+    assert.match(section, /are for runs with prompts\. In a skip-permissions sandbox they are optional/);
+    assert.match(section, /cooperative guard and not a security boundary/);
+    assert.doesNotMatch(section, /orca|docker|\bAO\b|Orchestrator|\brtk\b/i, 'a stock user is the baseline: no one\'s own tools are named');
+    assert.doesNotMatch(section, /pushes only|asks as usual|fails safe/i);
+    assert.match(raw.split('</overview>')[0].replace(/\s+/g, ' '), /see "Unattended runs in a sandbox"/);
+  });
+
   it('every surface that describes the push command says it is a guard with limits, and none promises more', () => {
     for (const file of CONTRACT_SURFACES) {
       const text = flat(file);

@@ -8,7 +8,8 @@ aborted prompt.
 This page says how `/fvs:auto-init` finds the steps that prompt on your machine, which rules it writes for them
 only after your yes (for a push, the one rule that names the FVS push command), what FVS never allows, and what
 to do when a step keeps asking. The commands that do this are in `scripts/fvs-auto-permissions.mjs` and
-`scripts/fvs-auto-push.mjs`, run by the orchestrator seat (`auto-seats.md`).
+`scripts/fvs-auto-push.mjs`, run by the orchestrator seat (`auto-seats.md`). A run that skips permission prompts
+inside a sandbox follows different rules: see "Unattended runs in a sandbox".
 
 </overview>
 
@@ -348,6 +349,30 @@ prompts in a session still depends on your other rules and permission mode:
 - every push that is not made with the push command (no rule for a `git push` is written, on either tool);
 - `gh api`, `gh issue`, `gh repo`, `gh release` and any other command not in the table above;
 - any step you did not confirm, and any step that did not prompt in your check.
+
+## Unattended runs in a sandbox
+
+Some runs start with the permission prompts turned off (skip-permissions in Claude Code, or the same switch in
+another tool). Use that mode only inside an isolated sandbox or on a cloud machine that bounds the damage. Never
+use it on a personal machine with broad access to your files, accounts and credentials.
+
+With skip-permissions nothing prompts, so the rules in "What FVS never allows" (no GitHub comments or reviews, no
+merges, no pushes to an upstream) are no longer enforced by a prompt. Enforce them by other means, outside the
+agent:
+
+- **A token limited to the project's fork.** Give the sandbox a GitHub token for that one repository, with only
+  the access the run needs. Do not give it access to the upstream or to your other repositories.
+- **A posting guard in the sandbox.** A token that can open draft pull requests can usually also comment and
+  review. Put a `gh` wrapper ahead of the real `gh` on `PATH` that refuses the commands that comment on or review
+  a pull request or issue, and `gh api` calls to those endpoints. The wrapper catches mistakes. A program in the
+  sandbox can still call the API directly, so the limit that holds is the scope of the token.
+- **Branch protection on the fork.** Protect its main branches (require a pull request, block force pushes and
+  deletion), so that a stray push cannot change them.
+
+The permission check, the allowlist it writes and the push command are for runs with prompts. In a skip-permissions
+sandbox they are optional: you can skip the check. The push command still works there, but it is a cooperative
+guard and not a security boundary (see "What the command is"), so the token and the branch protection are what
+limit a push.
 
 ## Where the file goes
 
