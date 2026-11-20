@@ -276,12 +276,12 @@ node "$PERM" plan --project-root . --repo "$DRAFT_REPO" --remote origin --branch
   owner the listed entries before you probe. FVS deletes none of them, and a Claude `write-allowlist` refuses
   until the owner has removed those entries; the push probe may also be quiet because of them, not because of
   the push command. Go on with the check if the owner wants, and say that writing waits for the cleanup.
-- `remote-mismatch`, `remote-ambiguous`, `remote-missing`, `remote-credential`, `destination-rewritten` or
-  `invalid-input`: no probe runs against a remote that is not the project's own repository. Every URL of the remote
-  (all fetch and push URLs) must name it, and no `insteadOf` or `pushInsteadOf` rule may rewrite the push address
-  again. `remote-credential` means an http or https address has user information (`https://user:token@host/...`),
-  whether the remote holds it or a git setting adds it: the address is written down and shown, so the owner uses a
-  credential helper or an ssh address. Report the refusal, skip the check and go to Step 6.
+- `remote-mismatch`, `remote-ambiguous`, `remote-missing`, `destination-rewritten` or `invalid-input`: no probe
+  runs against a remote that is not the project's own repository. Every URL of the remote (all fetch and push
+  URLs) must name it (host and OWNER/REPO; user information in an http address is ignored, stripped from the
+  record, and never shown), and no `insteadOf` or `pushInsteadOf` rule may send the push address anywhere but to
+  itself. A rule that only adds user information to an http address, as a sandbox does to inject a token, is
+  allowed. Report the refusal, skip the check and go to Step 6.
 - `not-a-repository` or `worktree-mismatch`: the project root is not a git work tree, or a `core.worktree` setting
   points the repository at the files of another one. The push command would refuse in each case, so nothing is
   recorded. Report the refusal, skip the check and go to Step 6; the owner has to fix the repository first.
@@ -400,7 +400,7 @@ If nothing prompted, say so and write nothing. If some steps prompted:
    - `malformed-settings`: the settings file is not valid JSON, or its `permissions` section has an
      unexpected shape. Leave it alone and tell the owner.
 3. Only on the owner's explicit yes, rerun the same command with `--confirm <digest>`. Never pass a digest
-   the owner has not seen, and never write without the yes. The digest covers the rules, the recorded destination for a push rule, the canonical project
+   the owner has not seen, and never write without the yes. The digest covers the rules, the recorded destination with the names of its trusted git variables (not their values) for a push rule, the canonical project
    root, the real path of the file and the hash of its content: if any of them changed since the preview
    (a `.claude` link now leads elsewhere, or the file was edited), the command refuses with
    `confirmation-required`, writes nothing and prints a new preview with a new digest. Show that new preview:

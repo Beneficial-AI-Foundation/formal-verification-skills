@@ -44,8 +44,8 @@ and that repository. A second push URL that names an upstream, the same path on 
 cannot read stops the check. This is a check at setup time and remote settings can change later, which is why
 the push command repeats it at every push. `fvs` is the branch namespace the run pushes under; you choose
 it, and it can never be `main`, `master`, `release` or a wildcard. Init records the push address as git would use it
-after its own rewriting, and it stops when a `url.<base>.insteadOf` or `pushInsteadOf` rule would rewrite that
-address again, because the push command refuses such a destination.
+after its own rewriting, without any user information, and it stops when a `url.<base>.insteadOf` or `pushInsteadOf`
+rule would send that address anywhere but to itself, because the push command refuses such a destination.
 
 Creating or editing a pull request is not part of the check, and init writes no rule for either. Approve
 them yourself, or add your own rule if you want them to run unasked.
@@ -147,7 +147,9 @@ What it checks:
 - It compares the shared git directory of the repository it runs in with the one recorded for the destination, and
   refuses when they differ or when a work tree points at another repository.
 - It refuses a branch that is not a plain local branch under a recorded namespace. It pushes to the destination
-  address recorded at init, and refuses that address when a URL rewrite rule applies to it at the time of the check.
+  address recorded at init, and refuses that address when a URL rewrite rule would send it anywhere but to that
+  address. A rule that only adds user information to an http or https address, as a sandbox does to inject a token,
+  is allowed: the record holds the address without user information, and no message, record or receipt shows it.
 
 What it does for this push, to harden it:
 
@@ -197,8 +199,9 @@ It exits with a plain message and a non-zero status, and pushes nothing, unless 
   work tree that were found, so none of them finds a repository again from a directory.
 - `<name>` is a plain branch name under a recorded namespace (`fvs/...`), `refs/heads/<name>` exists as a local
   branch, it is not a symbolic ref, and no tag has the same name.
-- no `url.<base>.insteadOf` or `pushInsteadOf` rule applies to the recorded address, no `[remote "<address>"]`
-  section is named after it, and git reads the address as recorded.
+- no `url.<base>.insteadOf` or `pushInsteadOf` rule sends the recorded address anywhere but to itself (a rule that
+  only adds user information to an http or https address is allowed), no `[remote "<address>"]` section is named
+  after it, and git reads the address as recorded, user information aside.
 - git finds the repository with the git variables that you trusted at init and no others. The command looks for the
   record from the work directory first, then asks git for the shared git directory and compares the two. A variable
   that is set and not trusted never reaches git. In a sandbox that needs one of them (git refuses a repository that
@@ -294,11 +297,17 @@ Init records the address git would push to after its own rewriting. It replaces 
 variables that you trust (below), and only when the destination is the same. A record for another destination, a
 record that is not valid and a file that is not JSON stop it with `destination-conflict`, which shows both. To
 change the destination itself, delete the record on purpose: check the file, delete it yourself and run init again.
-Init refuses (`remote-credential`) an address with user information in an http or https URL, such as
-`https://user:token@host/...`, whether the remote holds it or a git setting adds it, because the address is written
-to the record and shown. Use a credential helper or an ssh address. The permission preview for a push rule shows the
-record that is on disk, and the push rule is written only while that record names what init would record now,
-whatever values the trusted variables have.
+The permission preview for a push rule shows the record that is on disk, and the push rule is written only while
+that record names what init would record now, whatever values the trusted variables have.
+
+A sandbox often injects a token into an http or https address, through a `url.<base>.insteadOf` rule or in the
+address of the remote (`https://user:token@host/...`). Init does not refuse that. It records the address without the
+user information, the destination is the host and OWNER/REPO, and no message, record or receipt shows the user
+information: a message shows an http address as `https://***@host/...`. A rule that only adds user information to
+the recorded address is allowed at every push, and the push uses it. Any other rule that applies to the address is
+refused, and so is a record that holds user information. The push goes to the address without the user information,
+so a token that only the remote's address held reaches it from a credential helper, or from a rule like this one, in
+git configuration or in a trusted variable.
 
 If git configuration variables are set when you confirm the destination (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`,
 `GIT_CONFIG_NOSYSTEM`, `GIT_CONFIG_COUNT` with its pairs, `GIT_CONFIG_PARAMETERS`), the preview lists each one by
@@ -307,12 +316,13 @@ model's context and the transcript. Your yes trusts these names. The record gain
 trusted name with a hash of its value at that moment, so the file never holds a value either. The push command keeps
 each trusted name with whatever value it has when it runs and drops every other name. A value that changes later,
 such as a token that a sandbox sets for each session, is not refused: the receipt marks it `changed`, and the hash
-is for that information only. A trusted name that is not set is skipped. You trust these names the way you trust
-`~/.gitconfig`: whatever they hold is used. A variable that is not set when you confirm stays untrusted, so unset
-one before init to keep it out. Do not trust a variable that carries a token when a credential helper can do the
-job. Run the destination step where the workers run, so the names are the ones they have. A sandbox that gives git
-`safe.directory` through `GIT_CONFIG_COUNT` needs this, because git does not answer in a repository that another
-user owns without it.
+is for that information only. The digest of your yes covers the names, not the hashes, so a value that rotates
+between the preview and the yes needs no new preview. A trusted name that is not set is skipped. You trust these
+names the way you trust `~/.gitconfig`: whatever they hold is used. A variable that is not set when you confirm
+stays untrusted, so unset one before init to keep it out. Do not trust a variable that carries a token when a
+credential helper can do the job. Run the destination step where the workers run, so the names are the ones they
+have. A sandbox that gives git `safe.directory` through `GIT_CONFIG_COUNT` needs this, because git does not answer
+in a repository that another user owns without it.
 
 `GIT_CONFIG_COUNT` and the `GIT_CONFIG_KEY_n` and `GIT_CONFIG_VALUE_n` pairs that it addresses are one unit.
 Trusting the count trusts the pairs it addresses when the command runs, whatever the record names, so a sandbox that
@@ -322,7 +332,8 @@ that the count does not address, or that has no count, is not offered at init an
 To change which names you trust, run the destination step again where the workers run. When the record is the same
 except for its trusted names, the preview shows the old record, the new record and the names that are added and
 removed, with its own digest. After your yes the record is rewritten (`replaced`) and the old one is not kept. The
-digest covers the old record, so a record that changed after the preview needs a new yes.
+digest covers the names and the destination of the old record, so a record that changed after the preview needs a
+new yes.
 
 ### Push allow rules already in your settings
 
@@ -447,7 +458,7 @@ file is tracked, ignored or loose in git, and where it applies.
 Claude Code reads the project's `.claude/settings.json` from the session's own directory, and rules in a shared
 project file apply once you trust the folder.
 
-Your yes is bound to what the preview showed. The digest covers the exact rules, the recorded destination when a push rule is written, the canonical project
+Your yes is bound to what the preview showed. The digest covers the exact rules, the recorded destination and the names of its trusted git variables (not the values or their hashes) when a push rule is written, the canonical project
 root, the real path of the file (every link followed, also when the folder does not exist yet) and the hash of
 the file's current content. If any of them changes between the preview and your confirmation, for example a
 `.claude` link that now leads to another folder, or an edit to the file, the confirmation is refused, nothing is

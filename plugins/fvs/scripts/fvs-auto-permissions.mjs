@@ -547,12 +547,17 @@ function writeDestination(flags) {
     refuse('destination-conflict', `${state.file} already exists and is not what init would record now.${changedNote(state)} FVS replaces a record only to change its trusted git variables, and only when it is valid and names this same destination; it never replaces it in any other case, because that would change where pushes go. To change the destination, check the file, delete it yourself, and run this command again.`, { ...preview, existing: state.existing ?? null, problem: state.problem ?? null, ...(state.changedVariables?.length ? { changedVariables: state.changedVariables } : {}) });
   }
   // A value is never printed: the user confirms the names, and the preview gives only the length of each value. The record keeps a hash of each.
-  confirmationNeeded(flags, digestOf({ kind: 'destination', root, file: state.file, record: destination.record }), { ...preview, gitConfigVariables: lengthsOf(destination.variables) });
+  confirmationNeeded(flags, digestOf({ kind: 'destination', root, file: state.file, record: bound(destination.record) }), { ...preview, gitConfigVariables: lengthsOf(destination.variables) });
   if (destinationState(destination).status !== 'missing') refuse('changed-since-preview', `${state.file} appeared while this command ran; nothing was written. Show the user a new preview: a new digest needs a new yes.`);
   writeAtomic(state.file, JSON.stringify(destination.record, null, 2) + '\n');
   checkRecordWritten(destination, state.file);
   return { code: 'written', ...preview, message: 'Recorded. The push command now pushes branches under the recorded namespaces to this destination.' };
 }
+
+// What a yes covers about a destination record: the destination, which carries no user information, and the names of the
+// trusted git variables. Not the hashes of their values: the trust is by name, and a value can rotate between the preview
+// and the yes without changing what the user agreed to.
+const bound = ({ trustedGitVariables, ...rest }) => ({ ...rest, trustedGitVariables: Object.keys(trustedGitVariables ?? {}).sort() });
 
 // What the preview shows of the variables that are set: each name with the length of its value, never the value.
 const lengthsOf = (variables) => Object.fromEntries(Object.entries(variables).map(([name, value]) => [name, { length: value.length }]));
@@ -574,7 +579,7 @@ function replaceDestination(flags, root, destination, state, preview) {
     ...preview, record: destination.record, replaces: state.existing, variableChanges,
     replaceNote: `${state.file} holds another set of trusted git variables than the one in this preview, and the destination stays the same: the address, host, repository and branch namespaces are not changed. If you confirm, the record is replaced by the one shown here: the push command then keeps the names it lists (added: ${variableChanges.added.join(', ') || 'none'}; no longer trusted: ${variableChanges.removed.join(', ') || 'none'}) with whatever value they have when it runs, and removes every other git variable of its list. The old record is not kept.`,
   };
-  confirmationNeeded(flags, digestOf({ kind: 'destination', root, file: state.file, record: destination.record, replaces: state.existing }), { ...replacing, gitConfigVariables: lengthsOf(destination.variables) });
+  confirmationNeeded(flags, digestOf({ kind: 'destination', root, file: state.file, record: bound(destination.record), replaces: bound(state.existing) }), { ...replacing, gitConfigVariables: lengthsOf(destination.variables) });
   const again = destinationState(destination);
   if (again.status !== 'differs' || !again.replaceable || !isDeepStrictEqual(again.existing, state.existing)) refuse('changed-since-preview', `${state.file} changed while this command ran; nothing was written. Show the user a new preview: a new digest needs a new yes.`);
   writeAtomic(state.file, JSON.stringify(destination.record, null, 2) + '\n');
@@ -619,7 +624,7 @@ function writeClaude(flags, root, catalog, picked, allow, recorded, where) {
   };
   if (added.allow.length === 0) return { code: 'unchanged', message: `${relative} already holds every rule`, ...preview };
   // The confirmation is about this project, this real file and these exact bytes, as well as these rules and the destination.
-  confirmationNeeded(flags, digestOf({ runtime: 'claude', root, file: relative, resolvedPath: before.resolvedPath, existingSha256: before.sha256, allow: added.allow, destination: recorded }), preview);
+  confirmationNeeded(flags, digestOf({ runtime: 'claude', root, file: relative, resolvedPath: before.resolvedPath, existingSha256: before.sha256, allow: added.allow, destination: recorded && bound(recorded) }), preview);
   checkNothingElseChanged(existing, merged, added);
   fs.mkdirSync(path.dirname(before.resolvedPath), { recursive: true });
   checkUnchanged(root, relative, before);
@@ -699,7 +704,7 @@ function writeCodex(flags, root, catalog, picked, recorded, where) {
   if (evaluation.problem === 'rejected') refuse('evaluator-rejected', 'the installed Codex rejected these rules; nothing was written', { ...preview, evaluation });
   if (evaluation.problem === 'mismatch') refuse('evaluator-mismatch', 'the installed Codex does not allow every command these rules exist for; nothing was written', { ...preview, evaluation });
   const shown = { ...preview, evaluation: { verified: evaluation.verified, evaluator: evaluation.evaluator } };
-  confirmationNeeded(flags, digestOf({ runtime: 'codex', root, file: relative, resolvedPath: before.resolvedPath, existingSha256: before.sha256, text, destination: recorded }), shown);
+  confirmationNeeded(flags, digestOf({ runtime: 'codex', root, file: relative, resolvedPath: before.resolvedPath, existingSha256: before.sha256, text, destination: recorded && bound(recorded) }), shown);
   fs.mkdirSync(path.dirname(before.resolvedPath), { recursive: true });
   checkUnchanged(root, relative, before);
   writeAtomic(before.resolvedPath, text);
