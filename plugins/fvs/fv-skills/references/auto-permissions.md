@@ -225,6 +225,11 @@ destination before you retry, and report the code and message.
 - A worker that runs a plain `git push` is not covered by this rule: your other rules and permission mode decide
   that push, as before. That is why a Claude write refuses while a project settings file allows a `git push` by rule
   (next section).
+- Only the git calls of the push command run without the variables listed under "What it does for this push". The
+  git calls that the permissions helper makes itself (the status of a settings file, the check of the main checkout)
+  are not cleaned. None of them pushes.
+- The report `push-outcome-unknown` after a timeout of the push has no test. The cases of a missing result line and
+  of a signal are tested. Read the destination before you retry in every case.
 - On Codex, a rule matches the start of a command: `node`, the path and `--branch`. It cannot tell `fvs/work` from
   `main`, and the command refuses a name outside the recorded namespaces. As the Codex rules documentation describes
   it, Codex splits a command run through a shell wrapper such as `bash -lc` into its simple commands only when the
@@ -360,22 +365,25 @@ With skip-permissions nothing prompts, so the rules in "What FVS never allows" (
 merges, no pushes to an upstream) are no longer enforced by a prompt. Enforce them by other means, outside the
 agent:
 
-- **A token limited to the project's fork.** Give the sandbox a GitHub token for that one repository, with only
-  the access the run needs. Do not give it access to the upstream or to your other repositories.
+- **A token limited to the project's fork.** Give the sandbox a GitHub token for that one repository and no
+  other, with only the access the run needs.
 - **A posting guard in the sandbox.** A token that can open draft pull requests can usually also comment, review
   and merge. Put a `gh` wrapper ahead of the real `gh` on `PATH` that refuses the commands that comment on, review,
   mark ready or merge a pull request, and `gh api` calls to those endpoints. The wrapper only catches mistakes: a
   program in the sandbox can call the API directly. The token limits where a comment can land, not whether one is
   posted.
-- **Branch protection on the fork.** Protect its main branches: require a pull request with an approving review
-  from someone else, block force pushes and deletion, and apply the rules to administrators too. Then a push or a
-  merge made with the token is stopped.
+- **Branch protection on the fork.** On its main branches, require a pull request and forbid force pushes and
+  branch deletion, so that a direct push to them is stopped. It does not stop a merge made through a pull request:
+  the posting guard refuses that, and only the owner merges. A team with a second reviewer can also require an
+  approving review, not enforced on administrators: agents usually act through the owner's own account, and the owner
+  could not then merge their own pull requests.
 
-The permission check and the allowlist it writes are for runs with prompts; in a skip-permissions sandbox you can
-skip them. The push command is different: workers are briefed to push with it and never with `git push`, so its
-destination still has to be recorded (init does that in a separate step, also when you skip the check), or a
-worker's first push is refused and the worker stops. It is a cooperative guard and not a security boundary (see
-"What the command is"), so the token and the branch protection are what limit a push.
+In a skip-permissions sandbox only the permission check and the allowlist are optional; the push command and init's
+destination step are not. Workers push with the push command and never with `git push`, because it binds the push to
+the recorded destination and records the result. With no destination recorded, a worker's first push is refused and
+the worker stops; init records it in a separate step, also when you skip the check. The command is a cooperative
+guard and not a security boundary (see "What the command is"), so the token and the branch protection are what limit
+a push.
 
 ## Where the file goes
 
