@@ -1199,9 +1199,15 @@ function crateContextOf(state) {
   const omitted = new Map((Array.isArray(run?.roster?.dropped) ? run.roster.dropped : []).filter((entry) => isText(entry?.crate)).map((entry) => [entry.crate, isText(entry.reason) ? entry.reason : null]));
   const declared = [...new Set([...[run, ...units].flatMap((row) => (Array.isArray(row?.nonTargets) ? row.nonTargets.map((entry) => entry?.crate) : [])).filter(isText), ...omitted.keys()])].sort();
   if (units.length < 2 && declared.length === 0 && agreed === null) return null;
-  const view = crateView(run, true);
-  if (view === null) return null;
   const dropped = new Set((agreed?.nonTargets ?? []).map((entry) => entry.crate));
+  const view = crateView(run, true);
+  if (view === null) {
+    // An extraction that holds no crate at all (it carries no attempt) says nothing against an
+    // agreement that names several: none of those crates is held, so none can be accepted, and the
+    // obligation to verify each of them stays.
+    if (units.length > 0 || declaredCrates({ targets: agreed }).length < 2) return null;
+    return { view: { order: [], units: [] }, units, extracted: [], targets: [], missing: agreed.crates, nonTargets: new Set([...declared, ...dropped]), omitted, undecided: [], unlisted: [] };
+  }
   // Providers first; the crates of a dependency cycle have no place in the order and follow it.
   const extracted = [...view.order, ...(view.cycle ?? [])];
   const targets = extracted.filter((crate) => !dropped.has(crate));
@@ -1219,6 +1225,17 @@ function crateContextOf(state) {
 }
 
 const crateContext = (root) => crateContextOf(loadState(root));
+
+// The crates a recorded extraction has to account for: the ones the owner's agreement names (targets and
+// non-targets) and the in-repo library crates of the workspace the copy was prepared from (its
+// inventory, which a copy prepared with a release folder records). More than one means the scope is
+// several crates, and only an attempt over all of them can stand for it.
+export function declaredCrates({ manifest = null, targets = null } = {}) {
+  const named = [...(Array.isArray(targets?.crates) ? targets.crates : []), ...(Array.isArray(targets?.nonTargets) ? targets.nonTargets.map((entry) => entry?.crate) : [])];
+  const original = manifest?.workspace?.original?.crates;
+  const inRepo = (Array.isArray(original) ? original : []).filter((row) => row?.library).map((row) => row.crate);
+  return [...new Set([...named, ...inRepo].filter(isText))].sort();
+}
 
 function crateReport(context, acceptance = null) {
   const status = new Map((acceptance ?? []).map((entry) => [entry.crate, entry]));
@@ -2524,9 +2541,10 @@ export function recordExtraction({ projectRoot, out, buildExitCode, oracle, orac
     if (!check.ok) reasons.push(`the patch engine ${name} check refused (${check.code}): ${check.message}`);
   }
   let inputs = null;
+  let manifest = null;
   if (checks.status.ok) {
     const bytes = fs.readFileSync(path.join(copy, 'manifest.json'));
-    const manifest = JSON.parse(bytes);
+    manifest = JSON.parse(bytes);
     const { revision } = state.choices.source;
     const crate = manifest.projectRoot;
     if (manifest.mode !== 'translation-patches') reasons.push(`the copy was prepared in ${manifest.mode} mode; the auto track extracts through translation patches only`);
@@ -2557,7 +2575,8 @@ export function recordExtraction({ projectRoot, out, buildExitCode, oracle, orac
   // An attempt recorded by the patch engine is attached only after the engine
   // re-validates its whole chain against the current files.
   let run;
-  if (fs.existsSync(path.join(copy, 'attempt.json'))) {
+  const attempted = fs.existsSync(path.join(copy, 'attempt.json'));
+  if (attempted) {
     const status = engineResult('attempt-status', copy);
     if (!status.ok) reasons.push(`the recorded extraction attempt does not check out (${status.code}): ${status.message}`);
     else if (!runValid(status.run) || status.run.manifestSha256 !== inputs?.manifestSha256) reasons.push('the recorded extraction attempt is not bound to this manifest');
@@ -2566,7 +2585,15 @@ export function recordExtraction({ projectRoot, out, buildExitCode, oracle, orac
   }
   // Providers must come before consumers, and a verified crate must be stitched to the verified
   // crates it uses, with the targets the owner's latest agreement names.
-  reasons.push(...crateProblems(run, state.agreements?.at(-1)?.payload?.targets ?? null));
+  const agreedTargets = state.agreements?.at(-1)?.payload?.targets ?? null;
+  reasons.push(...crateProblems(run, agreedTargets));
+  // When the scope is several crates (the agreement names them, or the workspace holds them), only a
+  // completed attempt over all of them can be recorded: a missing attempt, or the attempt of one crate,
+  // is never read as "nothing else to verify". An attempt that was refused has its own reason above.
+  const inScope = declaredCrates({ manifest, targets: agreedTargets });
+  if (inScope.length > 1 && (attempted ? run !== undefined && run.roster === undefined : true)) {
+    reasons.push(`the crates ${inScope.join(', ')} are in scope (the agreement names them, or the workspace holds them), but the copy holds ${attempted ? 'the attempt of one crate only' : 'no extraction attempt'}: record a completed attempt over all of them, with an extraction spec that makes each crate a target, a non-target or dropped`);
+  }
   const extraction = {
     status: reasons.length === 0 ? 'succeeded' : 'failed',
     recordedAt: now(),

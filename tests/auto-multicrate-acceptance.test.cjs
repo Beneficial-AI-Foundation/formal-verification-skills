@@ -398,6 +398,21 @@ describe('the proof phase over several crates', () => {
     });
   });
 
+  it('an extraction that holds no attempt leaves every crate the agreement names to be accepted', () => {
+    // A state recorded before the agreement named the crates, or by hand, has no run to read the crates from.
+    const targets = { crates: ['libcrux_hmac', 'libcrux_sha2'], nonTargets: [] };
+    const { root, head } = proofPhase(hmacAndSha2, { targets });
+    const state = fixtures.readState(root);
+    delete state.extraction.run;
+    fixtures.writeState(root, state);
+    receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec')])]);
+    const result = view(root);
+    assert.equal(result.phase, 'proofs', result.nextAction);
+    assert.match(result.nextAction, /but not every verified crate is accepted: crate libcrux_hmac: the extraction does not hold this crate; crate libcrux_sha2: the extraction does not hold this crate\. Fix what is named/);
+    assert.deepEqual(result.crates.missing, ['libcrux_hmac', 'libcrux_sha2']);
+    assert.deepEqual(result.crates.units, []);
+  });
+
   it('the one crate left to verify still needs a built statement', () => {
     const { root, head } = proofPhase(hmacAndSha2, { targets: { crates: ['libcrux_hmac'], nonTargets: [{ crate: 'libcrux_sha2', decision: 'x' }] } });
     receipt(root, head, [specFile(HMAC_SPEC, [])]);
