@@ -1609,6 +1609,13 @@ function recordSourceProblem(record, context) {
   return null;
 }
 
+// What native_decide and bv_decide add to a statement's axioms, as the build check names them. The
+// build check judges such an axiom against the merged spec by its exact name: one the statement already
+// rested on there is kept and flagged, a new one is refused. The list never holds one, so a name that
+// looks native is not a way around that rule, and an unchanged baseline dependency needs no entry.
+const NATIVE_AXIOM = /\._native\.(native_decide|bv_decide)\.ax_|^Lean\.(ofReduceBool|trustCompiler)$/;
+const NATIVE_REASON = 'it is an axiom that native_decide or bv_decide adds: the build check judges it against the merged spec (an unchanged one is flagged, a new one refused), so it is never listed';
+
 // The axioms a run over several crates may rest on at `commit`: for each target crate, its live spec
 // files and the fully qualified, sorted axioms its statements may rest on (`crates`), the distinct
 // names over all of them (`axioms`), each axiom withheld and why, and the problems that stop the
@@ -1657,7 +1664,8 @@ export function allowedAxiomList(root, state, context, commit, specs = null) {
         const rustPath = docRustPath(axiom.doc);
         const owner = rustPath?.split('::')[0];
         const withhold = (reason) => withheld.push({ name: axiom.full, file: file.posix, reason });
-        if (!owner || !CRATE_NAME.test(owner)) withhold('its doc comment gives no Rust path, so its crate cannot be read');
+        if (NATIVE_AXIOM.test(axiom.full)) withhold(NATIVE_REASON);
+        else if (!owner || !CRATE_NAME.test(owner)) withhold('its doc comment gives no Rust path, so its crate cannot be read');
         else if (owner !== unit.crate && !foreign.has(owner)) withhold(`its crate ${owner} is not one the extraction recorded for ${unit.crate}`);
         else if (!context.targets.includes(owner)) own.get(unit.crate).add(axiom.full);
         else if (owner === unit.crate) {
@@ -1672,7 +1680,8 @@ export function allowedAxiomList(root, state, context, commit, specs = null) {
     const file = read(relative);
     for (const axiom of file?.axioms ?? []) {
       const records = docRecordIds(axiom.doc).filter((id) => accepted.has(id)).map((id) => accepted.get(id));
-      const reason = records.length === 0 ? 'its docstring cites no accepted externals record (the record id in backticks)' : records.map((record) => recordSourceProblem(record, context)).find(Boolean);
+      const reason = NATIVE_AXIOM.test(axiom.full) ? NATIVE_REASON
+        : records.length === 0 ? 'its docstring cites no accepted externals record (the record id in backticks)' : records.map((record) => recordSourceProblem(record, context)).find(Boolean);
       if (reason) withheld.push({ name: axiom.full, file: file.posix, reason });
       else trusted.add(axiom.full);
     }
@@ -2192,9 +2201,15 @@ function progress(root, state, specs = null) {
     }
     const rejected = context ? crateAcceptance(root, specs, context, receipt).filter((entry) => !entry.accepted) : [];
     if (receipt?.accepted && heldToSpec && rejected.length === 0) {
-      return { phase: 'done', warnings,
+      // With several crates the build check refuses a native-decision axiom the merged spec did not rest
+      // on, so a flag on its accepting receipt is a dependency the spec base already had. The owner's
+      // review decides it: the flag is reported, not hidden in the receipt.
+      const flagged = context && Array.isArray(receipt.flags) ? receipt.flags.filter(isText) : [];
+      const flagWarning = flagged.length > 0 ? [`the build check flags ${flagged.join('; ')}: a native-decision axiom the merged spec already rested on, which the owner's review decides`] : [];
+      return { phase: 'done', warnings: [...warnings, ...flagWarning],
         nextAction: `The build check accepted the draft proof PR ${proofPr.url} at ${proofPr.head}: ${receipt.label}. `
-          + (proofMerge ? `The proof PR merge is recorded at ${proofMerge.mergeCommit}.` : 'The owner reviews and merges it; then record the merge with record-pr --kind proof --merged --merge-commit SHA.') + suffix };
+          + (proofMerge ? `The proof PR merge is recorded at ${proofMerge.mergeCommit}.` : 'The owner reviews and merges it; then record the merge with record-pr --kind proof --merged --merge-commit SHA.') + suffix
+          + flagWarning.map((warning) => ` Warning: ${warning}.`).join('') };
     }
     if (rejected.length > 0) {
       return { phase: 'proofs', warnings,

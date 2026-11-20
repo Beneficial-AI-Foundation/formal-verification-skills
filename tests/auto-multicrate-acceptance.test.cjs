@@ -104,6 +104,41 @@ describe('the proof phase over several crates', () => {
     assert.deepEqual(result.crates.units.map((entry) => [entry.crate, entry.accepted]), [['libcrux_hmac', true], ['libcrux_sha2', true]]);
   });
 
+  describe('a native-decision axiom the merged spec already rested on', () => {
+    // The build check keeps such a statement and flags it, and refuses a native axiom that is new since
+    // the merged spec; what it flags is reported to the owner, whose review decides.
+    const flagged = [specFile(HMAC_SPEC, [statement('hmac_spec', { flags: ['native_decide'] })]), specFile(SHA2_SPEC, [statement('hash_256_spec')])];
+    const flag = 'hmac_spec uses native_decide';
+    const flagWarnings = (result) => result.warnings.filter((text) => /^the build check flags /.test(text));
+
+    it('is done with the flag reported in the warnings and the next action', () => {
+      const { root, head } = proofPhase();
+      receipt(root, head, flagged, { flags: [flag] });
+      const result = view(root);
+      assert.equal(result.phase, 'done', result.nextAction);
+      const warning = `the build check flags ${flag}: a native-decision axiom the merged spec already rested on, which the owner's review decides`;
+      assert.deepEqual(flagWarnings(result), [warning]);
+      assert.ok(result.nextAction.endsWith(` Warning: ${warning}.`), result.nextAction);
+    });
+
+    it('reports nothing when the receipt flags nothing', () => {
+      const { root, head } = proofPhase();
+      receipt(root, head, bothBuilt(), { flags: [] });
+      const result = view(root);
+      assert.equal(result.phase, 'done', result.nextAction);
+      assert.deepEqual(flagWarnings(result), []);
+    });
+
+    it('is not reported for a project with one crate, whose output is as before', () => {
+      const { root, head } = proofPhase((directory) => [unit(directory, 'libcrux_hmac', [fn(HMAC_ITEM, 'src/hmac.rs', 10)])]);
+      receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec', { flags: ['native_decide'] })])], { flags: [flag] });
+      const result = view(root);
+      assert.equal(result.phase, 'done', result.nextAction);
+      assert.deepEqual(flagWarnings(result), []);
+      assert.doesNotMatch(result.nextAction, /the build check flags/);
+    });
+  });
+
   it('is not done while a crate has no spec file in the receipt, and says which', () => {
     const { root, head } = proofPhase();
     receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec')])]);

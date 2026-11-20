@@ -257,6 +257,31 @@ describe('the allowed axioms of a run over several crates', () => {
     assert.deepEqual(listed(root), ['libcrux_hmac.incremental.hmac_slices']);
   });
 
+  it('never lists an axiom that native_decide or bv_decide adds, so a native-looking name is no way into the list', () => {
+    const generated = 'libcrux_hmac::x::f';
+    const files = { 'Hmac.lean': leanFile('libcrux_hmac',
+      extractionAxiom(generated, 'x._native.native_decide.ax_1_1'),
+      extractionAxiom(generated, 'x._native.bv_decide.ax_2_1'),
+      extractionAxiom(generated, '_root_.Lean.ofReduceBool'),
+      extractionAxiom(generated, '_root_.Lean.trustCompiler'),
+      extractionAxiom('core::a', 'core.a')) };
+    const root = scenario({ files });
+    const { withheld } = write(root).json;
+    assert.deepEqual(withheld.map((entry) => entry.name), ['libcrux_hmac.x._native.native_decide.ax_1_1', 'libcrux_hmac.x._native.bv_decide.ax_2_1', 'Lean.ofReduceBool', 'Lean.trustCompiler']);
+    for (const entry of withheld) assert.match(entry.reason, /^it is an axiom that native_decide or bv_decide adds: the build check judges it against the merged spec \(an unchanged one is flagged, a new one refused\), so it is never listed$/);
+    assert.deepEqual(listed(root), ['libcrux_hmac.core.a'], 'the other axiom of the file is listed as before');
+  });
+
+  it('never lists a hand-written Trusted axiom with a native name, even when its record is accepted', () => {
+    const cite = (id, name) => `/-- Accepted assumption, \`${id}\`. -/\naxiom ${name} : True\n`;
+    const root = scenario({ trusted: { 'Gaps.lean': trustedFile(cite('gap-div', 'x._native.native_decide.ax_9_1'), cite('gap-div', 'div_spec')) },
+      records: [record('gap-div', 'core::num::{u32}::wrapping_div')] });
+    const result = write(root);
+    assert.deepEqual(result.json.withheld.map((entry) => entry.name), ['libcrux_hmac.Trusted.x._native.native_decide.ax_9_1']);
+    assert.match(result.json.withheld[0].reason, /it is never listed$/);
+    assert.deepEqual(listed(root), ['libcrux_hmac.Trusted.div_spec']);
+  });
+
   it('withholds an extraction axiom whose crate the extraction did not record, and one with no Rust path', () => {
     const root = scenario({ files: { 'Hmac.lean': leanFile('libcrux_hmac', extractionAxiom('mystery::f', 'mystery.f'), '/-- A fact someone stated. -/\naxiom my_fact : 1 = 1\n') } });
     const { withheld } = write(root).json;
