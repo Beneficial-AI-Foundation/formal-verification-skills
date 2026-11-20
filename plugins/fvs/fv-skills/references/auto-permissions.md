@@ -331,10 +331,11 @@ and OWNER/REPO (an `origin` cloned as `https://x-access-token:token@github.com/O
 clones), the push goes to that address, after the same host, repository and rewrite checks, so that the token in
 your own git configuration keeps working. A remote with push URLs counts through them only, as in git. Two different
 addresses with user information for the destination are refused with `remote-ambiguous` before anything connects:
-keep one. The record and the receipt still hold the address without user information, and the command takes the
-token, its user and password parts and the base64 of the pair out of everything that it prints, logs or passes on
-from git's error output, also after a failed push, because git can print a token that is the user name of an
-address. As with any git push, the address with its token is visible in the process arguments of the local machine
+keep one. The record and the receipt still hold the address without user information. The command takes the token,
+its user and password parts and the base64 of the pair out of what git prints (its error output and the result
+line), and shows an http address with user information as `https://***@host/...` everywhere else, so the token is in
+no output, log or receipt, also after a failed push: git can print a token that is the user name of an address. As
+with any git push, the address with its token is visible in the process arguments of the local machine
 while git runs, and another user of the machine can read it there. A token that a rule or a credential helper
 supplies does not appear in the arguments. A rule that rewrites an ssh address to an https one with a token
 (`url.https://x:token@github.com/.insteadOf` for `git@github.com:`) is recorded as the plain https address, and it

@@ -257,7 +257,7 @@ function context(flags) {
   const root = fs.realpathSync.native(flags['project-root'] ?? process.cwd());
   const catalog = buildCatalog({ repo: flags.repo, remote: flags.remote, prefixes: flags['branch-prefix'], host: flags.host });
   // The push target must be the project's own repository: every URL git would use for the remote, after its own URL
-  // rewriting, must name the agreed host and repository (user information in an http address is stripped), and no rewrite rule may send the push URL anywhere but to itself (a rule that only adds user information is allowed), or this refuses.
+  // rewriting, must name the agreed host and repository (user information in an http address is stripped), and every rewrite rule that applies to the push URL must send it to the same host and OWNER/REPO over https or ssh (a rule that only adds user information, or moves the address between https, ssh:// and git@host:OWNER/REPO, is allowed), or this refuses.
   // The push command applies the same checks at every push, because git settings can change after init.
   const destination = initDestination(root, catalog.remote, catalog.repo, catalog.host, catalog.prefixes);
   if (destination.problem) refuse(destination.problem.code, destination.problem.message);
