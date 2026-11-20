@@ -1738,6 +1738,9 @@ describe('spec phase: record-spec and spec-status', () => {
       assert.match(view.nextAction, new RegExp(`Run the build check again: node fvs-build-check\\.mjs --project-root .* --commit ${head} --spec-base ${head}; read-state reports done when it accepts\\.`), name);
     };
     stale('a receipt that lists no externals records', {}, /does not count: it does not list the externals records it relied on/);
+    const bindings = (...records) => ({ integrity: { semantic: { ...lean, bindings: records.map((record) => ({ axiom: `Gap.${record}`, record, proposition: 'P' })) } } });
+    stale('a binding to a record the receipt carries no digest of', { ...bindings('gap-one'), externals: { sha256: null, records: [] } }, /does not count: the Lean-level check bound the axiom Gap\.gap-one to the externals record gap-one, but the receipt carries no digest of that record/);
+    stale('a binding to a record other than the one listed', { ...bindings('gap-two'), externals: { sha256: null, records: [{ id: 'gap-one', sha256: digest(accepted) }] } }, /bound the axiom Gap\.gap-two to the externals record gap-two/);
     const relied = { externals: { sha256: null, records: [{ id: 'gap-one', sha256: digest(accepted) }] } };
     stale('records that cannot be read', relied, /does not count: the externals records it relied on cannot be read now/);
     write([{ ...accepted, status: 'open', decision: null }]);
@@ -1745,8 +1748,11 @@ describe('spec phase: record-spec and spec-status', () => {
     write([]);
     stale('a record that is gone', relied, /does not count: the externals record gap-one it relied on is no longer recorded/);
     write([Object.fromEntries(Object.entries(accepted).reverse())]);
-    receipt({ accepted: true, label: 'accepted (build check)', specBase: head, ...relied });
-    assert.equal(auto.readState({ projectRoot: root }).phase, 'done', 'the same record in another key order still holds');
+    receipt({ accepted: true, label: 'accepted (build check)', specBase: head, ...relied, ...bindings('gap-one') });
+    assert.equal(auto.readState({ projectRoot: root }).phase, 'done', 'the same record in another key order still holds, and a binding to it has its digest');
+    write([{ ...accepted, status: 'open', decision: null }]);
+    stale('a bound record revoked after the check', { ...relied, ...bindings('gap-one') }, /does not count: the externals record gap-one it relied on changed after the check/);
+    write([Object.fromEntries(Object.entries(accepted).reverse())]);
     fs.rmSync(externals);
 
     receipt({ accepted: true, label: 'accepted (build check)', specBase: head, externals: { records: [] } });

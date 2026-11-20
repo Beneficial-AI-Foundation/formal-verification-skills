@@ -1828,6 +1828,11 @@ function staleReason(root, receipt) {
   if (!hasLeanComparison(receipt.integrity?.semantic)) return 'it carries no Lean-level comparison of the statements with the merged spec (integrity.semantic)';
   const bound = receipt.externals;
   if (!bound || !Array.isArray(bound.records)) return 'it does not list the externals records it relied on (an older build check wrote it)';
+  // Every axiom the Lean-level check bound to a record needs that record's digest in the list, so a record
+  // revoked after the check is seen; a binding with no digest rests on an authority nothing can re-check.
+  const listed = new Set(bound.records.map((entry) => entry?.id));
+  const unlisted = receipt.integrity.semantic.bindings.find((binding) => !listed.has(binding?.record));
+  if (unlisted) return `the Lean-level check bound the axiom ${unlisted.axiom} to the externals record ${unlisted.record}, but the receipt carries no digest of that record`;
   if (bound.records.length === 0) return null;
   let records;
   try { records = JSON.parse(fs.readFileSync(path.join(root, '.formalising', 'auto-fv', 'externals.json'), 'utf8')).records; } catch { return 'the externals records it relied on cannot be read now'; }
