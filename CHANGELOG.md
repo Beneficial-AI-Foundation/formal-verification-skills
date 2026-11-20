@@ -72,11 +72,15 @@ on release day. -->
   upstream. Run status says when the run waits for your approval.
 - Workers and the orchestrator push with one command, `scripts/fvs-auto-push.mjs --branch
   fvs/<name>`. It pushes that one branch to the destination that `/fvs:auto-init` recorded and
-  refuses a branch outside the recorded namespace, a changed destination, and a push rewrite
-  rule. The allowlist names this command and writes no rule for a plain `git push`, because a glob
-  cannot allow a push safely. Init tells you when a rule of your own already allows a plain
-  `git push`. <!-- rc3-fill: confirm the refusal list and the init notice against the push command;
-  the opt-in push hook never shipped in a release, so it gets no line of its own -->
+  refuses a branch outside the recorded namespace, a changed destination, and a git setting that
+  would rewrite the destination. It skips repository hooks, drops git environment variables that
+  could redirect a push (you can confirm a few by name at init), and keeps tokens out of every
+  message and receipt, including user information in a remote address. The allowlist names this
+  command and writes no rule for a plain `git push`, because a glob cannot allow a push safely.
+  Init tells you when a rule of your own already allows a plain `git push`.
+  <!-- rc3-fill: confirm the refusal list, the init notice and the token limits against the push
+  command and its page; the opt-in push hook never shipped in a release, so it gets no line of its
+  own -->
 
 - A permissions page, linked from the README and printed when the check fails, gives allowlists
   for Claude Code and Codex, the reason for each rule and what still prompts. It names
