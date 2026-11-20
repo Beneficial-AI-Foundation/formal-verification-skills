@@ -10,6 +10,7 @@
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -27,7 +28,9 @@ let counter = 0;
 before(async () => {
   lib = await import(pathToFileURL(SCRIPT).href);
   // Stands in for ssh: ignores the host and serves the receiving side from the bare repository named in FVS_TEST_BARE.
-  fs.writeFileSync(FAKE_SSH, '#!/bin/sh\nfor last; do :; done\ncase "$last" in\n  git-receive-pack*) exec git receive-pack "$FVS_TEST_BARE" ;;\n  *) echo "fake ssh: unexpected command: $last" >&2; exit 1 ;;\nesac\n', { mode: 0o755 });
+  // The receiving side is not the repository under test, so a test that makes git take the local repository for another
+  // user's (GIT_TEST_ASSUME_DIFFERENT_OWNER) does not apply that to it.
+  fs.writeFileSync(FAKE_SSH, '#!/bin/sh\nfor last; do :; done\ncase "$last" in\n  git-receive-pack*) exec env -u GIT_TEST_ASSUME_DIFFERENT_OWNER git receive-pack "$FVS_TEST_BARE" ;;\n  *) echo "fake ssh: unexpected command: $last" >&2; exit 1 ;;\nesac\n', { mode: 0o755 });
 });
 after(() => { fs.rmSync(BASE, { recursive: true, force: true }); });
 
@@ -762,6 +765,8 @@ describe('the environment git runs in', () => {
   const DROPPED = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CONFIG', 'GIT_CONFIG_GLOBAL',
     'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_KEY_1', 'GIT_CONFIG_VALUE_1', 'GIT_CONFIG_PARAMETERS', 'GIT_NAMESPACE', 'GIT_EXEC_PATH'];
   const KEPT = ['GIT_SSH_COMMAND', 'GIT_ASKPASS', 'SSH_AUTH_SOCK', 'GIT_TERMINAL_PROMPT', 'HOME', 'XDG_CONFIG_HOME', 'PATH'];
+  // The part of the list that a user can choose to trust at init (see the next block).
+  const TRUSTABLE = ['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_KEY_1', 'GIT_CONFIG_VALUE_1', 'GIT_CONFIG_PARAMETERS'];
 
   it('cleanEnvironment removes the listed names and the key and value pairs by prefix, and leaves the rest as it was', () => {
     const input = Object.fromEntries([...DROPPED, 'GIT_CONFIG_KEY_17', 'GIT_CONFIG_VALUE_17'].map((name) => [name, 'x']));
@@ -808,11 +813,256 @@ describe('the environment git runs in', () => {
     assert.equal(out.json.repositoryRoot, w.root);
     const calls = fs.readFileSync(log, 'utf8').split('---\n').filter(Boolean).map((block) => block.split('\n').filter(Boolean).map((line) => line.slice(0, line.indexOf('='))));
     assert.ok(calls.length >= 6, `every git call was seen (${calls.length})`);
-    for (const names of calls) {
-      for (const name of DROPPED) assert.ok(!names.includes(name), `${name} reached a git call`);
+    // The two calls that find the repository, and so its record, keep the git configuration variables that a user can trust,
+    // because a sandbox may need one of them (safe.directory) before git will answer at all. Nothing else ever reaches git.
+    const FINDING = 2;
+    for (const [index, names] of calls.entries()) {
+      for (const name of DROPPED) {
+        if (index < FINDING && TRUSTABLE.includes(name)) continue;
+        assert.ok(!names.includes(name), `${name} reached git call ${index}`);
+      }
       for (const name of KEPT) assert.ok(names.includes(name), `${name} was kept`);
     }
+    for (const name of TRUSTABLE.filter((one) => DROPPED.includes(one))) assert.ok(calls[0].includes(name), `${name} is still there when git is asked where the repository is`);
     assert.deepEqual(w.refs(w.right), ['refs/heads/fvs/t']);
+  });
+});
+
+// A user can trust some of the variables that are otherwise removed. When the user confirms the destination, init records
+// which of GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_CONFIG_NOSYSTEM, GIT_CONFIG_COUNT with its KEY and VALUE pairs and
+// GIT_CONFIG_PARAMETERS are set, as a hash of each value. The push command keeps exactly those, with the values that were
+// confirmed, and refuses when one of them is missing or has another value. A sandbox that sets safe.directory through
+// GIT_CONFIG_COUNT needs this, because git does not answer in a repository that another user owns without it.
+describe('git configuration variables that the user confirmed at init', () => {
+  const sha = (value) => crypto.createHash('sha256').update(value).digest('hex');
+  // Git then takes the repository for one that another user owns, as in a sandbox that runs git under another account.
+  const OTHER_OWNER = { GIT_TEST_ASSUME_DIFFERENT_OWNER: '1' };
+  const SAFE = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'safe.directory', GIT_CONFIG_VALUE_0: '*' };
+  // A setting that changes nothing, for the rows about what is kept, changed or missing.
+  const NOTE = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'fvs.note', GIT_CONFIG_VALUE_0: 'note-value-1' };
+  const trust = (w, variables) => {
+    w.record = { ...w.record, variables };
+    fs.writeFileSync(path.join(w.commonDir, lib.RECORD_NAME), JSON.stringify(lib.destinationRecord(w.record)));
+  };
+  const plainGit = (w, env, ...args) => spawnSync('git', ['-C', w.work, ...args], { encoding: 'utf8', env });
+  const callsOf = (log) => fs.readFileSync(log, 'utf8').split('---\n').filter(Boolean).map((block) => block.split('\n').filter(Boolean));
+
+  it('trustableVariables takes the five names and the numbered pairs from an environment, and nothing else', () => {
+    const env = {
+      GIT_CONFIG_GLOBAL: '/g', GIT_CONFIG_SYSTEM: '/s', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_COUNT: '1', GIT_CONFIG_PARAMETERS: "'a=b'",
+      GIT_CONFIG_KEY_0: 'k', GIT_CONFIG_VALUE_0: 'v', GIT_CONFIG_KEY_12: 'k', GIT_CONFIG_VALUE_12: 'v',
+      GIT_CONFIG: '/c', GIT_DIR: '/d', GIT_EXEC_PATH: '/e', GIT_CONFIG_KEY_x: 'k', GIT_CONFIG_VALUE_: 'v', GIT_SSH_COMMAND: 'ssh', HOME: '/h',
+    };
+    assert.deepEqual(Object.keys(lib.trustableVariables(env)).sort(), ['GIT_CONFIG_COUNT', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_KEY_12', 'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_VALUE_12']);
+    assert.equal(lib.trustableVariables(env).GIT_CONFIG_VALUE_0, 'v', 'the values are carried as they are');
+    assert.deepEqual(lib.trustableVariables({ GIT_CONFIG_NOSYSTEM: '' }), { GIT_CONFIG_NOSYSTEM: '' }, 'a variable that is set to the empty string is set');
+  });
+
+  it('withTrusted lets cleanEnvironment keep the named variables that are set, and no other name', () => {
+    const env = { ...NOTE, GIT_CONFIG_PARAMETERS: "'a=b'", GIT_DIR: '/d', GIT_EXEC_PATH: '/e', GIT_CONFIG: '/c', HOME: '/h' };
+    const kept = lib.cleanEnvironment(lib.withTrusted(env, ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0']));
+    assert.deepEqual(kept, { ...NOTE, HOME: '/h' }, 'the named variables stay, the rest of the list goes');
+    assert.equal(Object.getOwnPropertySymbols(kept).length, 0, 'what git is given carries no trace of the mechanism');
+    const asked = lib.cleanEnvironment(lib.withTrusted(env, ['GIT_DIR', 'GIT_EXEC_PATH', 'GIT_CONFIG', 'GIT_CONFIG_KEY_x']));
+    assert.deepEqual(asked, { HOME: '/h' }, 'a name that cannot be trusted stays removed even when it is asked for');
+    assert.deepEqual(lib.cleanEnvironment(lib.withTrusted({ HOME: '/h' }, ['GIT_CONFIG_COUNT'])), { HOME: '/h' }, 'a name that is not set is not invented');
+    assert.deepEqual(lib.cleanEnvironment(env), { HOME: '/h' }, 'without it every one is removed, as before');
+    assert.equal(env.GIT_DIR, '/d', 'the environment it was given is not changed');
+  });
+
+  it('the record holds a hash of each value, in name order, and nothing when no variable is set', () => {
+    const w = world();
+    const made = { ...w.record };
+    const none = lib.destinationRecord(made);
+    assert.ok(!('gitConfigEnvironmentSha256' in none), 'a record without variables has the shape it always had');
+    assert.deepEqual(lib.destinationRecord({ ...made, variables: {} }), none);
+    const rec = lib.destinationRecord({ ...made, variables: { GIT_CONFIG_VALUE_0: '*', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'safe.directory' } });
+    assert.deepEqual(rec.gitConfigEnvironmentSha256, { GIT_CONFIG_COUNT: sha('1'), GIT_CONFIG_KEY_0: sha('safe.directory'), GIT_CONFIG_VALUE_0: sha('*') });
+    assert.deepEqual(Object.keys(rec.gitConfigEnvironmentSha256), ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0']);
+    assert.ok(!JSON.stringify(rec).includes('safe.directory'), 'no value is written to the record: it can hold a credential');
+    assert.equal(lib.recordProblem(rec), null);
+    assert.deepEqual(lib.destinationRecord({ ...made, variables: { GIT_CONFIG_NOSYSTEM: '' } }).gitConfigEnvironmentSha256, { GIT_CONFIG_NOSYSTEM: sha('') });
+    assert.throws(() => lib.destinationRecord({ ...made, variables: { GIT_DIR: '/elsewhere' } }), /cannot be trusted/);
+  });
+
+  it('a record that names a variable outside the list, or something that is not a hash, is not used', () => {
+    const w = world();
+    const rec = lib.destinationRecord({ ...w.record, variables: NOTE });
+    for (const bad of [{ GIT_DIR: sha('x') }, { GIT_EXEC_PATH: sha('x') }, { GIT_CONFIG: sha('x') }, { GIT_CONFIG_KEY_x: sha('x') }, { GIT_CONFIG_COUNT: 'not-a-hash' }, { GIT_CONFIG_COUNT: 1 }, ['GIT_CONFIG_COUNT'], 'GIT_CONFIG_COUNT', null]) {
+      const problem = lib.recordProblem({ ...rec, gitConfigEnvironmentSha256: bad });
+      assert.match(String(problem), /gitConfigEnvironmentSha256/, JSON.stringify(bad));
+    }
+    fs.writeFileSync(path.join(w.commonDir, lib.RECORD_NAME), JSON.stringify({ ...rec, gitConfigEnvironmentSha256: { GIT_DIR: sha('x') } }));
+    refused(w, ['--branch', 'fvs/t'], 'destination-record-invalid');
+    nothingLanded(w);
+  });
+
+  it('differingVariables names what was added, removed or changed since the record, in name order', () => {
+    const w = world();
+    const was = lib.destinationRecord({ ...w.record, variables: { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'a', GIT_CONFIG_VALUE_0: 'b' } });
+    const now = lib.destinationRecord({ ...w.record, variables: { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'a', GIT_CONFIG_VALUE_0: 'c', GIT_CONFIG_NOSYSTEM: '1' } });
+    assert.deepEqual(lib.differingVariables(was, now), ['GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_VALUE_0']);
+    assert.deepEqual(lib.differingVariables(now, was), ['GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_VALUE_0']);
+    assert.deepEqual(lib.differingVariables(was, was), []);
+    assert.deepEqual(lib.differingVariables(lib.destinationRecord(w.record), was), ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0'], 'a record with none against one with three');
+  });
+
+  it('none recorded: every variable that init did not record is removed once the record is read, as before', () => {
+    const w = world();
+    const log = path.join(w.dir, 'env.log');
+    const env = { ...gitStandIn(w, 'env | sort >> "$FVS_TEST_ENVLOG"\necho --- >> "$FVS_TEST_ENVLOG"'), FVS_TEST_ENVLOG: log, ...NOTE, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_PARAMETERS: "'fvs.extra=1'" };
+    const out = w.go(['--branch', 'fvs/t'], { env });
+    assert.equal(out.status, 0, JSON.stringify(out.json));
+    const calls = callsOf(log);
+    // The first two calls ask git where the repository is, so that the record can be found: they see what is set.
+    assert.ok(calls[0].includes('GIT_CONFIG_NOSYSTEM=1'), 'the call that finds the repository sees the variables that are set');
+    for (const [index, lines] of [...calls.entries()].filter(([index]) => index >= 2)) {
+      assert.deepEqual(lines.filter((line) => /^GIT_CONFIG/.test(line)), [], `git call ${index} runs without them`);
+    }
+  });
+
+  it('recorded and set to the same values: kept for every git call, and the variables that were not recorded are removed', () => {
+    const w = world();
+    trust(w, NOTE);
+    const log = path.join(w.dir, 'env.log');
+    const extras = { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_PARAMETERS: "'fvs.extra=1'", GIT_CONFIG_GLOBAL: '/dev/null' };
+    const env = { ...gitStandIn(w, 'env | sort >> "$FVS_TEST_ENVLOG"\necho --- >> "$FVS_TEST_ENVLOG"'), FVS_TEST_ENVLOG: log, ...NOTE, ...extras };
+    const out = w.go(['--branch', 'fvs/t'], { env });
+    assert.equal(out.status, 0, JSON.stringify(out.json));
+    const calls = callsOf(log);
+    const config = (lines) => lines.filter((line) => /^GIT_CONFIG/.test(line)).sort();
+    const recorded = Object.entries(NOTE).map(([name, value]) => `${name}=${value}`).sort();
+    const everything = [...recorded, ...Object.entries(extras).map(([name, value]) => `${name}=${value}`)].sort();
+    assert.ok(calls.length >= 6, `every git call was seen (${calls.length})`);
+    assert.deepEqual(config(calls[0]), everything, 'the call that finds the repository sees what is set');
+    for (const [index, lines] of [...calls.entries()].filter(([index]) => index >= 2)) {
+      assert.deepEqual(config(lines), recorded, `git call ${index} sees exactly the recorded variables, with the recorded values`);
+    }
+    assert.deepEqual(w.refs(w.right), ['refs/heads/fvs/t']);
+  });
+
+  it('recorded and now set to another value: refused before anything is pushed, naming the variable and not its value', () => {
+    const w = world();
+    trust(w, NOTE);
+    const out = refused(w, ['--branch', 'fvs/t'], 'git-config-changed', { env: { ...w.env, ...NOTE, GIT_CONFIG_VALUE_0: 'note-value-2' } });
+    assert.match(out.json.message, /GIT_CONFIG_VALUE_0 has a different value/);
+    assert.ok(!out.json.message.includes('note-value-1') && !out.json.message.includes('note-value-2'), 'no value is printed');
+    assert.ok(out.json.message.includes(path.join(w.commonDir, lib.RECORD_NAME)), 'the message names the record file');
+    assert.match(out.json.message, /delete .* and run the destination step of \/fvs:auto-init again/);
+    nothingLanded(w);
+  });
+
+  it('recorded and now not set: refused, naming each variable', () => {
+    const w = world();
+    trust(w, NOTE);
+    const out = refused(w, ['--branch', 'fvs/t'], 'git-config-changed');
+    for (const name of Object.keys(NOTE)) assert.match(out.json.message, new RegExp(`${name} is not set now`));
+    nothingLanded(w);
+  });
+
+  it('a variable that is set but empty counts as set: recorded empty, it is kept; set to something, it is refused', () => {
+    const w = world();
+    trust(w, { GIT_CONFIG_NOSYSTEM: '' });
+    const out = w.go(['--branch', 'fvs/t'], { env: { ...w.env, GIT_CONFIG_NOSYSTEM: '' } });
+    assert.equal(out.status, 0, JSON.stringify(out.json));
+    w.clear(w.right);
+    refused(w, ['--branch', 'fvs/t'], 'git-config-changed', { env: { ...w.env, GIT_CONFIG_NOSYSTEM: '1' } });
+    refused(w, ['--branch', 'fvs/t'], 'git-config-changed');
+    nothingLanded(w);
+  });
+
+  describe('a sandbox that sets safe.directory through the environment', () => {
+    it('the control: git does not answer for the repository without it, and does with it', () => {
+      const w = world();
+      const env = { ...w.env, ...OTHER_OWNER };
+      assert.equal(plainGit(w, env, 'rev-parse', '--git-dir').status, 128, 'a repository that another user owns is refused');
+      assert.equal(plainGit(w, { ...env, ...SAFE }, 'rev-parse', '--git-dir').status, 0, 'and answered once safe.directory is set through the environment');
+    });
+
+    it('recorded: the push works', () => {
+      const w = world();
+      trust(w, SAFE);
+      const out = w.go(['--branch', 'fvs/t'], { env: { ...w.env, ...OTHER_OWNER, ...SAFE } });
+      assert.equal(out.status, 0, JSON.stringify(out.json));
+      assert.deepEqual(w.refs(w.right), ['refs/heads/fvs/t']);
+    });
+
+    it('not recorded: refused, because the variable is not used once the record has been read', () => {
+      const w = world();
+      const out = refused(w, ['--branch', 'fvs/t'], 'not-a-repository', { env: { ...w.env, ...OTHER_OWNER, ...SAFE } });
+      assert.match(out.json.message, /without the git variables that init did not record \(GIT_CONFIG_COUNT, GIT_CONFIG_KEY_0, GIT_CONFIG_VALUE_0\)/);
+      nothingLanded(w);
+    });
+
+    it('recorded and then changed: refused', () => {
+      const w = world();
+      trust(w, SAFE);
+      refused(w, ['--branch', 'fvs/t'], 'not-a-repository', { env: { ...w.env, ...OTHER_OWNER, ...SAFE, GIT_CONFIG_VALUE_0: '/somewhere/else' } });
+      nothingLanded(w);
+    });
+  });
+
+  it('a rewrite rule in a variable that was recorded is still refused: the check sees what the push sees', () => {
+    const w = world();
+    const rule = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: `url.${w.wrong}.insteadOf`, GIT_CONFIG_VALUE_0: URL_RECORDED };
+    trust(w, rule);
+    const env = { ...w.env, ...rule };
+    assert.equal(spawnSync('git', ['-C', w.work, 'push', '-q', URL_RECORDED, 'refs/heads/fvs/t:refs/heads/fvs/t'], { env, encoding: 'utf8' }).status, 0);
+    assert.deepEqual(w.refs(w.wrong), ['refs/heads/fvs/t'], 'the row bites: a plain push follows the rule');
+    w.clear(w.wrong);
+    refused(w, ['--branch', 'fvs/t'], 'destination-rewritten', { env });
+    nothingLanded(w);
+  });
+
+  it('a push option in a variable that was recorded is not sent: the command\'s own settings come after the environment', () => {
+    const w = world();
+    const option = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'push.pushOption', GIT_CONFIG_VALUE_0: 'ci.skip' };
+    trust(w, option);
+    const seen = recordPushOptions(w);
+    const env = { ...w.env, ...option };
+    assert.equal(plainGit(w, env, 'push', '--porcelain', URL_RECORDED, 'refs/heads/fvs/t:refs/heads/fvs/t').status, 0);
+    assert.deepEqual(seen.read(), ['count=1', 'option=ci.skip'], 'the row bites: a plain push sends the option');
+    w.clear(w.right);
+    seen.reset();
+    const out = w.go(['--branch', 'fvs/t'], { env });
+    assert.equal(out.status, 0, JSON.stringify(out.json));
+    assert.deepEqual(seen.read(), ['count=0'], 'the receiving side was sent no push option');
+  });
+
+  describe('what init records', () => {
+    const init = (w, extra = {}) => lib.initDestination(w.root, 'origin', 'Acme/proj', 'github.com', ['fvs'], { ...w.env, ...extra });
+
+    it('the variables that are set, as hashes in the record and as values for the preview', () => {
+      const w = world({ skipRecord: true });
+      const out = init(w, { ...SAFE, ...OTHER_OWNER });
+      assert.equal(out.problem, undefined, JSON.stringify(out.problem));
+      assert.deepEqual(out.variables, SAFE);
+      assert.deepEqual(out.record.gitConfigEnvironmentSha256, { GIT_CONFIG_COUNT: sha('1'), GIT_CONFIG_KEY_0: sha('safe.directory'), GIT_CONFIG_VALUE_0: sha('*') });
+      assert.deepEqual(out.record, lib.destinationRecord({ ...w.record, variables: SAFE }));
+    });
+
+    it('nothing, when none is set, and the record then has its usual shape', () => {
+      const w = world({ skipRecord: true });
+      const out = init(w);
+      assert.deepEqual(out.variables, {});
+      assert.ok(!('gitConfigEnvironmentSha256' in out.record));
+    });
+
+    it('git has to answer with them, so init finds the repository only with the variables kept', () => {
+      const w = world({ skipRecord: true });
+      assert.equal(init(w, OTHER_OWNER).problem?.code, 'not-a-repository', 'the control: without safe.directory git does not answer');
+      assert.equal(init(w, { ...OTHER_OWNER, ...SAFE }).problem, undefined);
+    });
+
+    it('checks the destination with the variables that it is about to record, as the push will: a rewrite rule in one is refused', () => {
+      const w = world({ skipRecord: true });
+      const rule = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: `url.${w.wrong}.insteadOf`, GIT_CONFIG_VALUE_0: URL_RECORDED };
+      assert.equal(init(w).problem, undefined, 'the control: the same project without the rule has a destination');
+      // Git rewrites the address of the remote itself, so the address no longer names the project and init refuses it.
+      const out = init(w, rule);
+      assert.match(out.problem?.code ?? '', /^(remote-ambiguous|destination-rewritten)$/, JSON.stringify(out));
+      assert.equal(out.record, undefined);
+    });
   });
 });
 
