@@ -31,11 +31,15 @@ before(async () => {
 });
 after(() => { fs.rmSync(BASE, { recursive: true, force: true }); });
 
-const cleanEnv = () => {
+// The command drops GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM and GIT_CONFIG_NOSYSTEM, so a test that used one of them to keep
+// git away from the developer's own configuration would not isolate the command. Git reads its configuration from HOME and
+// XDG_CONFIG_HOME instead, so each project gets empty ones, and a test that needs a global setting writes it to
+// $HOME/.gitconfig. The system configuration cannot be isolated this way; no test depends on it.
+const cleanEnv = (home) => {
   const env = { ...process.env };
-  for (const name of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_NAMESPACE', 'GIT_INDEX_FILE']) delete env[name];
+  for (const name of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_NAMESPACE', 'GIT_INDEX_FILE', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM']) delete env[name];
   return {
-    ...env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null', GIT_TERMINAL_PROMPT: '0',
+    ...env, HOME: home, XDG_CONFIG_HOME: path.join(home, '.config'), GIT_TERMINAL_PROMPT: '0',
     GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t',
   };
 };
@@ -51,7 +55,9 @@ function git(dir, env, ...args) {
 function world({ record = {}, skipRecord = false } = {}) {
   const dir = path.join(BASE, `w${counter += 1}`);
   fs.mkdirSync(dir);
-  const env = { ...cleanEnv(), GIT_SSH_COMMAND: FAKE_SSH };
+  const home = path.join(dir, 'home');
+  fs.mkdirSync(path.join(home, '.config'), { recursive: true });
+  const env = { ...cleanEnv(home), GIT_SSH_COMMAND: FAKE_SSH };
   const right = path.join(dir, 'right.git');
   const wrong = path.join(dir, 'wrong.git');
   for (const bare of [right, wrong]) git(dir, env, 'init', '-q', '--bare', bare);
@@ -68,7 +74,7 @@ function world({ record = {}, skipRecord = false } = {}) {
   const commonDir = fs.realpathSync(path.join(work, '.git'));
   const made = { projectRoot: root, commonDir, url: URL_RECORDED, host: 'github.com', repo: 'Acme/proj', prefixes: ['fvs'], ...record };
   if (!skipRecord) fs.writeFileSync(path.join(commonDir, lib.RECORD_NAME), JSON.stringify(lib.destinationRecord(made)));
-  const w = { dir, env, right, wrong, work, root, commonDir, record: made };
+  const w = { dir, env, home, right, wrong, work, root, commonDir, record: made };
   w.git = (...args) => git(work, env, ...args);
   w.refs = (bare) => git(dir, env, '-C', bare, 'for-each-ref', '--format=%(refname)').split('\n').filter(Boolean);
   w.go = (args, extra = {}) => lib.run(args, { cwd: extra.cwd ?? work, env: extra.env ?? env });
@@ -509,6 +515,24 @@ describe('the destination cannot be redirected', () => {
     assert.deepEqual(w.refs(w.wrong), []);
   });
 
+  // GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM name a configuration file that git then reads in place of its default one.
+  // They are removed from every git call, so a rewrite rule that only such a file holds is neither checked nor used.
+  for (const name of ['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM']) {
+    it(`a rewrite rule in a file that only ${name} names is not used: the push reaches the recorded destination`, () => {
+      const w = world();
+      const file = path.join(w.dir, 'selected.gitconfig');
+      fs.writeFileSync(file, `[url "${w.wrong}"]\n\tinsteadOf = ${URL_RECORDED}\n`);
+      const env = { ...w.env, [name]: file };
+      assert.equal(spawnSync('git', ['-C', w.work, 'push', '-q', URL_RECORDED, 'refs/heads/fvs/t:refs/heads/fvs/t'], { env, encoding: 'utf8' }).status, 0);
+      assert.deepEqual(w.refs(w.wrong), ['refs/heads/fvs/t'], 'the row bites: a plain push follows the selected file');
+      w.clear(w.wrong);
+      const out = w.go(['--branch', 'fvs/t'], { env });
+      assert.equal(out.status, 0, JSON.stringify(out.json));
+      assert.deepEqual(w.refs(w.right), ['refs/heads/fvs/t']);
+      assert.deepEqual(w.refs(w.wrong), []);
+    });
+  }
+
   it('a rule for some other address does not stop the push', () => {
     const w = world();
     w.git('config', `url.${w.wrong}.insteadOf`, 'https://example.org/');
@@ -623,7 +647,9 @@ describe('what the push sends', () => {
 });
 
 // Repository hooks do not run for this push: a hook that blocks a plain push does not block the command. The row for each
-// place a hook can live first shows that the hook runs and blocks a plain push.
+// place a hook can live first shows that the hook runs and blocks a plain push. The push carries --no-verify as well as
+// core.hooksPath=/dev/null, so these rows would pass with either one alone: the rows for configured hooks and for the
+// exact argument list below pin each of them.
 describe('repository hooks', () => {
   const marker = (w) => path.join(w.dir, 'hook-ran.txt');
   const writeHook = (w, dir) => {
@@ -636,9 +662,8 @@ describe('repository hooks', () => {
     ['in the folder that core.hooksPath names in the global configuration', (w) => {
       const dir = path.join(w.dir, 'hooks-global');
       writeHook(w, dir);
-      const file = path.join(w.dir, 'global.gitconfig');
-      fs.writeFileSync(file, `[core]\n\thooksPath = ${dir}\n`);
-      return { ...w.env, GIT_CONFIG_GLOBAL: file };
+      fs.writeFileSync(path.join(w.home, '.gitconfig'), `[core]\n\thooksPath = ${dir}\n`);
+      return w.env;
     }],
   ];
   for (const [why, setup] of rows) {
@@ -659,17 +684,88 @@ describe('repository hooks', () => {
   }
 });
 
-// The environment git runs in: the variables that move git or add configuration are removed from every git call. The
-// user's own ssh, credential and transport settings stay, because the push has to reach the remote the way the user's
-// own pushes do.
+// A hook can also be configured with hook.<name>.event and hook.<name>.command (Git 2.54 and later). core.hooksPath does
+// not turn those off; --no-verify does. Each row probes the installed git first: a plain push that has only
+// core.hooksPath=/dev/null set must run the configured hook, or the row says so and is skipped.
+describe('configured hooks', () => {
+  const marker = (w) => path.join(w.dir, 'configured-hook-ran.txt');
+  const script = (w) => {
+    const file = path.join(w.dir, 'audit.sh');
+    fs.writeFileSync(file, `#!/bin/sh\necho ran >> ${JSON.stringify(marker(w))}\nexit 1\n`, { mode: 0o755 });
+    return file;
+  };
+  const rows = [
+    ['in the repository configuration', (w) => { w.git('config', 'hook.audit.event', 'pre-push'); w.git('config', 'hook.audit.command', script(w)); }],
+    ['in the global configuration', (w) => { fs.writeFileSync(path.join(w.home, '.gitconfig'), `[hook "audit"]\n\tevent = pre-push\n\tcommand = ${script(w)}\n`); }],
+  ];
+  for (const [why, setup] of rows) {
+    it(`does not run a pre-push hook that is configured ${why}`, (t) => {
+      const w = world();
+      setup(w);
+      const plain = spawnSync('git', ['-C', w.work, '-c', 'core.hooksPath=/dev/null', 'push', '--porcelain', URL_RECORDED, 'refs/heads/fvs/t:refs/heads/fvs/t'], { encoding: 'utf8', env: w.env });
+      if (!fs.existsSync(marker(w))) { t.skip(`${REAL_GIT_VERSION} does not run configured hooks, so there is nothing to suppress here`); return; }
+      assert.notEqual(plain.status, 0, 'the row bites: the configured hook blocks a push that only has core.hooksPath=/dev/null');
+      assert.deepEqual(w.refs(w.right), []);
+      fs.rmSync(marker(w));
+      const run = spawnSync(process.execPath, [SCRIPT, '--branch', 'fvs/t'], { cwd: w.work, env: w.env, encoding: 'utf8' });
+      assert.equal(run.status, 0, run.stdout + run.stderr);
+      assert.equal(fs.existsSync(marker(w)), false, 'the configured hook did not run for the command');
+      assert.deepEqual(w.refs(w.right), ['refs/heads/fvs/t']);
+    });
+  }
+
+  // An observation, not a control: a plain push shows no difference either. A push to an address updates no local ref and no
+  // index, so a configured hook for those events has nothing to run for. The row records that for the installed git.
+  it('is not reached by a configured hook for another event that a push might trigger', () => {
+    const w = world();
+    const log = path.join(w.dir, 'other-events.txt');
+    const file = path.join(w.dir, 'other-event.sh');
+    fs.writeFileSync(file, `#!/bin/sh\necho "$0" >> ${JSON.stringify(log)}\nexit 0\n`, { mode: 0o755 });
+    for (const event of ['reference-transaction', 'post-index-change']) {
+      w.git('config', `hook.other-${event}.event`, event);
+      w.git('config', `hook.other-${event}.command`, file);
+    }
+    const out = w.go(['--branch', 'fvs/t']);
+    assert.equal(out.status, 0, JSON.stringify(out.json));
+    assert.equal(fs.existsSync(log), false, 'no hook for another event ran');
+    assert.deepEqual(w.refs(w.right), ['refs/heads/fvs/t']);
+  });
+
+  it('makes the push with --no-verify and -c core.hooksPath=/dev/null and with no other option', () => {
+    const w = world();
+    const log = path.join(w.dir, 'push-argv.log');
+    const body = 'for a in "$@"; do\n  if [ "$a" = push ]; then printf \'%s\\n\' "$@" > "$FVS_TEST_ARGLOG"; break; fi\ndone';
+    const env = { ...gitStandIn(w, body), FVS_TEST_ARGLOG: log };
+    const out = w.go(['--branch', 'fvs/t'], { env });
+    assert.equal(out.status, 0, JSON.stringify(out.json));
+    const argv = fs.readFileSync(log, 'utf8').split('\n').filter(Boolean);
+    const url = argv.indexOf(URL_RECORDED);
+    assert.deepEqual(argv.slice(argv.indexOf('-c'), url), ['-c', 'push.followTags=false', '-c', 'push.pushOption=', '-c', 'core.hooksPath=/dev/null', '-c', 'core.abbrev=no',
+      'push', '--porcelain', '--no-follow-tags', '--recurse-submodules=no', '--no-verify']);
+    assert.deepEqual(argv.slice(url), [URL_RECORDED, 'refs/heads/fvs/t:refs/heads/fvs/t']);
+  });
+
+  it('is described as skipping the pre-push hook, not as hooksPath turning every hook off', () => {
+    const text = lib.CONTRACT.hardening[0];
+    assert.match(text, /--no-verify/);
+    assert.match(text, /hook\.<name>\.event/);
+    assert.match(text, /core\.hooksPath is set to \/dev\/null/);
+    assert.doesNotMatch(text, /Repository hooks are ignored/);
+    assert.doesNotMatch(lib.CONTRACT.hardening.join(' '), /hooksPath[^.]*(turns|switches) off every hook/i);
+  });
+});
+
+// The environment git runs in: the variables that move git, select its configuration files or add configuration are
+// removed from every git call. The configuration files that git reads by default stay, and so do the user's own ssh,
+// credential and transport settings that do not reach git through those variables.
 describe('the environment git runs in', () => {
-  const DROPPED = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CONFIG', 'GIT_CONFIG_COUNT',
-    'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_KEY_1', 'GIT_CONFIG_VALUE_1', 'GIT_CONFIG_PARAMETERS', 'GIT_NAMESPACE', 'GIT_EXEC_PATH'];
-  const KEPT = ['GIT_SSH_COMMAND', 'GIT_ASKPASS', 'SSH_AUTH_SOCK', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_TERMINAL_PROMPT', 'HOME', 'PATH'];
+  const DROPPED = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CONFIG', 'GIT_CONFIG_GLOBAL',
+    'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_KEY_1', 'GIT_CONFIG_VALUE_1', 'GIT_CONFIG_PARAMETERS', 'GIT_NAMESPACE', 'GIT_EXEC_PATH'];
+  const KEPT = ['GIT_SSH_COMMAND', 'GIT_ASKPASS', 'SSH_AUTH_SOCK', 'GIT_TERMINAL_PROMPT', 'HOME', 'XDG_CONFIG_HOME', 'PATH'];
 
   it('cleanEnvironment removes the listed names and the key and value pairs by prefix, and leaves the rest as it was', () => {
     const input = Object.fromEntries([...DROPPED, 'GIT_CONFIG_KEY_17', 'GIT_CONFIG_VALUE_17'].map((name) => [name, 'x']));
-    const kept = { GIT_SSH_COMMAND: 's', GIT_ASKPASS: 'a', SSH_AUTH_SOCK: 'k', GIT_CONFIG_GLOBAL: 'g', GIT_CONFIG_SYSTEM: 'y', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0', HOME: '/h', PATH: '/p', XDG_CONFIG_HOME: '/x', GIT_PAGER: 'cat' };
+    const kept = { GIT_SSH_COMMAND: 's', GIT_SSH: 'ssh', GIT_ASKPASS: 'a', SSH_AUTH_SOCK: 'k', GIT_TERMINAL_PROMPT: '0', HOME: '/h', PATH: '/p', XDG_CONFIG_HOME: '/x', GIT_PAGER: 'cat' };
     const all = { ...input, ...kept };
     const before = JSON.stringify(all);
     assert.deepEqual(lib.cleanEnvironment(all), kept);
@@ -704,6 +800,7 @@ describe('the environment git runs in', () => {
       GIT_OBJECT_DIRECTORY: objects, GIT_ALTERNATE_OBJECT_DIRECTORIES: objects, GIT_CONFIG: '/dev/null',
       GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'user.name', GIT_CONFIG_VALUE_0: 'x', GIT_CONFIG_KEY_1: 'push.pushOption', GIT_CONFIG_VALUE_1: 'y',
       GIT_CONFIG_PARAMETERS: "'user.name=x'", GIT_NAMESPACE: 'ns', GIT_EXEC_PATH: path.join(w.dir, 'no-exec-path'),
+      GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
       GIT_ASKPASS: '/bin/true', SSH_AUTH_SOCK: '/tmp/fvs-test-agent.sock',
     };
     const out = w.go(['--branch', 'fvs/t'], { env });
@@ -733,13 +830,12 @@ function recordPushOptions(w) {
 describe('push options', () => {
   const rows = [
     ['two values in the repository configuration', (w) => { w.git('config', '--add', 'push.pushOption', 'ci.skip'); w.git('config', '--add', 'push.pushOption', 'deploy=now'); return w.env; }, ['ci.skip', 'deploy=now']],
-    ['two values in the global configuration', (w) => { const file = path.join(w.dir, 'global.gitconfig'); fs.writeFileSync(file, '[push]\n\tpushOption = ci.skip\n\tpushOption = deploy=now\n'); return { ...w.env, GIT_CONFIG_GLOBAL: file }; }, ['ci.skip', 'deploy=now']],
+    ['two values in the global configuration', (w) => { fs.writeFileSync(path.join(w.home, '.gitconfig'), '[push]\n\tpushOption = ci.skip\n\tpushOption = deploy=now\n'); return w.env; }, ['ci.skip', 'deploy=now']],
     ['two values set through the environment', (w) => ({ ...w.env, GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'push.pushOption', GIT_CONFIG_VALUE_0: 'ci.skip', GIT_CONFIG_KEY_1: 'push.pushOption', GIT_CONFIG_VALUE_1: 'deploy=now' }), ['ci.skip', 'deploy=now']],
     ['values in the global and the repository configuration at once', (w) => {
-      const file = path.join(w.dir, 'global.gitconfig');
-      fs.writeFileSync(file, '[push]\n\tpushOption = from-global\n');
+      fs.writeFileSync(path.join(w.home, '.gitconfig'), '[push]\n\tpushOption = from-global\n');
       w.git('config', '--add', 'push.pushOption', 'from-local');
-      return { ...w.env, GIT_CONFIG_GLOBAL: file };
+      return w.env;
     }, ['from-global', 'from-local']],
   ];
   for (const [why, setup, options] of rows) {
@@ -763,6 +859,7 @@ describe('push options', () => {
 
 // A stand-in for `git` placed first on PATH, so a test can act between two of the command's git calls.
 const REAL_GIT = spawnSync('which', ['git'], { encoding: 'utf8' }).stdout.trim();
+const REAL_GIT_VERSION = spawnSync(REAL_GIT, ['--version'], { encoding: 'utf8' }).stdout.trim();
 function gitStandIn(w, body) {
   const bin = path.join(w.dir, 'bin');
   fs.mkdirSync(bin, { recursive: true });

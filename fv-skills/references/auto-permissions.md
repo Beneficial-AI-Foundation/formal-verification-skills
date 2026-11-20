@@ -151,12 +151,15 @@ What it checks:
 
 What it does for this push, to harden it:
 
-- Repository hooks are ignored for this push (`core.hooksPath` is set to `/dev/null`), so your own pre-push checks
-  do not run for it.
+- The push is made with `--no-verify`, which skips the pre-push hook whether it is a file in a hooks folder or is
+  set in git configuration (`hook.<name>.event`), and `core.hooksPath` is set to `/dev/null` so that git finds no
+  hook in any hooks folder. Your own pre-push checks do not run for it.
 - git runs without `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
-  `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_CONFIG`, `GIT_CONFIG_COUNT`, the `GIT_CONFIG_KEY_n` and
-  `GIT_CONFIG_VALUE_n` pairs, `GIT_CONFIG_PARAMETERS`, `GIT_NAMESPACE` and `GIT_EXEC_PATH`. Settings that reach git
-  only through those variables are not used. Your normal ssh, credential and transport settings stay.
+  `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_CONFIG`, `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`, `GIT_CONFIG_NOSYSTEM`,
+  `GIT_CONFIG_COUNT`, the `GIT_CONFIG_KEY_n` and `GIT_CONFIG_VALUE_n` pairs, `GIT_CONFIG_PARAMETERS`,
+  `GIT_NAMESPACE` and `GIT_EXEC_PATH`. Settings that reach git only through those variables are not used. The
+  configuration files that git reads by default stay, and so do your ssh, credential and transport settings that are
+  not set through those variables.
 - No push option is sent.
 
 What it trusts, and so does not protect against:
@@ -199,11 +202,13 @@ where the push went or what it sent: `remote.<name>.push`, `remote.<name>.pushur
 `remote.pushDefault`, `branch.<name>.pushRemote`, `push.default`, `push.followTags`, `push.recurseSubmodules` and
 `submodule.recurse`. It uses the full refspec `refs/heads/<name>:refs/heads/<name>` without a `+`,
 `--no-follow-tags`, `-c push.followTags=false`, `--recurse-submodules=no`, `--porcelain`, `-c core.abbrev=no`,
-`-c push.pushOption=` and `-c core.hooksPath=/dev/null`, and no other option. `push.pushOption=` empties the list of
-push options from every git configuration: push options go to the receiving side, which can act on them, and this
-command sends none. `core.hooksPath=/dev/null` makes git find no hook, wherever the hooks folder is set. Every git
-call the command makes also runs without the variables listed under "What it does for this push", so the checks and
-the push see the same configuration.
+`-c push.pushOption=`, `-c core.hooksPath=/dev/null` and `--no-verify`, and no other option. `push.pushOption=`
+empties the list of push options from every git configuration: push options go to the receiving side, which can act on
+them, and this command sends none. `--no-verify` skips the pre-push hook, including one that is set in git
+configuration with `hook.<name>.event`, which `core.hooksPath` does not turn off. `core.hooksPath=/dev/null` makes git
+find no hook in any hooks folder. Every git call that the command makes, and every git call that the permissions
+helper makes itself, also runs without the variables listed under "What it does for this push", so the checks and the
+push see the same configuration.
 
 The result is appended to `.formalising/auto-fv/pushes.jsonl` in the recorded project root: `created`,
 `fast-forward`, `up-to-date`, `failed` (git says it did not update the branch) or `unknown`. The record names only
@@ -225,9 +230,6 @@ destination before you retry, and report the code and message.
 - A worker that runs a plain `git push` is not covered by this rule: your other rules and permission mode decide
   that push, as before. That is why a Claude write refuses while a project settings file allows a `git push` by rule
   (next section).
-- Only the git calls of the push command run without the variables listed under "What it does for this push". The
-  git calls that the permissions helper makes itself (the status of a settings file, the check of the main checkout)
-  are not cleaned. None of them pushes.
 - The report `push-outcome-unknown` after a timeout of the push has no test. The cases of a missing result line and
   of a signal are tested. Read the destination before you retry in every case.
 - On Codex, a rule matches the start of a command: `node`, the path and `--branch`. It cannot tell `fvs/work` from

@@ -5,7 +5,7 @@
 // file keeps every key and rule it already had. Each probe must also be matched by the rule written for its
 // own step, or the check would prove nothing about the run.
 
-const { describe, it, before, beforeEach } = require('node:test');
+const { describe, it, before, beforeEach, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -26,27 +26,31 @@ const PLACEHOLDER_DIR = '/PATH/TO/FVS/scripts';
 const PLAIN_SCRIPTS = /^\/[A-Za-z0-9._/-]+$/.test(path.dirname(PUSH_SCRIPT));
 const pushSkip = PLAIN_SCRIPTS ? false : 'the checkout path has characters that a rule cannot spell';
 
+// The checks read git's configuration, so the tests do not read the developer's own. The helper drops GIT_CONFIG_GLOBAL,
+// GIT_CONFIG_SYSTEM and GIT_CONFIG_NOSYSTEM from every git call, so they cannot isolate it; git is pointed at an empty
+// home instead. The system configuration cannot be isolated this way, and no test depends on it.
+const GIT_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-perm-home-'));
+const withGitHome = (env = process.env) => ({ ...env, HOME: GIT_HOME, XDG_CONFIG_HOME: path.join(GIT_HOME, '.config') });
+
 let lib;
 let pushLib;
 before(async () => {
-  // The checks read git's configuration, so the tests do not read the developer's own.
-  process.env.GIT_CONFIG_GLOBAL = os.devNull;
-  process.env.GIT_CONFIG_NOSYSTEM = '1';
   lib = await import(pathToFileURL(SCRIPT).href);
   pushLib = await import(pathToFileURL(PUSH_SCRIPT).href);
 });
+after(() => { fs.rmSync(GIT_HOME, { recursive: true, force: true }); });
 
 let project;
 beforeEach(() => {
   project = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-perm-'));
-  const git = (...args) => assert.equal(spawnSync('git', ['-C', project, ...args], { encoding: 'utf8' }).status, 0, args.join(' '));
+  const git = (...args) => assert.equal(spawnSync('git', ['-C', project, ...args], { encoding: 'utf8', env: withGitHome() }).status, 0, args.join(' '));
   git('init', '-q');
   git('remote', 'add', 'origin', `git@github.com:${REPO}.git`);
 });
 
 const base = (...extra) => ['--project-root', project, '--repo', REPO, ...extra];
 function run(command, args, env) {
-  const result = spawnSync(process.execPath, [SCRIPT, command, ...args], { encoding: 'utf8', ...(env ? { env } : {}) });
+  const result = spawnSync(process.execPath, [SCRIPT, command, ...args], { encoding: 'utf8', env: withGitHome(env) });
   let json = null;
   try { json = JSON.parse(result.stdout); } catch { /* usage text */ }
   return { status: result.status, json, stderr: result.stderr };
@@ -407,6 +411,63 @@ describe('write-allowlist for Claude Code', () => {
 
 });
 
+// The helper's own git calls (where a settings file stands in git, and whether this is the main checkout) run with the
+// same cleaned environment and the repository identity that the push command uses. An inherited GIT_DIR must not decide them.
+describe('the helper\'s own git calls', () => {
+  const identity = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  const gitIn = (dir, ...args) => spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8', env: withGitHome({ ...process.env, ...identity }) });
+  const linked = () => {
+    assert.equal(gitIn(project, 'commit', '--allow-empty', '-q', '-m', 'one').status, 0);
+    const worktree = path.join(path.dirname(project), `${path.basename(project)}-linked`);
+    assert.equal(gitIn(project, 'worktree', 'add', '-q', '-b', 'linked', worktree).status, 0);
+    return fs.realpathSync(worktree);
+  };
+  const local = (root, env) => run('write-allowlist', ['--project-root', root, '--repo', REPO, '--runtime', 'claude', '--steps', 'worker-message', '--target', 'local'], env);
+  const otherRepository = () => {
+    const other = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-perm-other-'));
+    assert.equal(gitIn(other, 'init', '-q').status, 0);
+    return other;
+  };
+
+  it('refuses the local settings file in a linked worktree, with or without an inherited GIT_DIR', () => {
+    const worktree = linked();
+    assert.equal(local(worktree).json.code, 'local-needs-main-checkout');
+    const inherited = { ...process.env, GIT_DIR: path.join(fs.realpathSync(project), '.git') };
+    // The row bites: with GIT_DIR set, plain git gives the same answer to both questions in the worktree, which is what
+    // let the earlier check treat the worktree as the main checkout.
+    const asked = (flag) => spawnSync('git', ['-C', worktree, 'rev-parse', '--path-format=absolute', flag], { encoding: 'utf8', env: withGitHome(inherited) }).stdout.trim();
+    assert.equal(asked('--git-dir'), asked('--git-common-dir'), 'an inherited GIT_DIR makes the worktree look like the main checkout');
+    const out = local(worktree, inherited);
+    assert.equal(out.status, 1, JSON.stringify(out.json));
+    assert.equal(out.json.code, 'local-needs-main-checkout');
+    assert.equal(fs.existsSync(path.join(worktree, '.claude', 'settings.local.json')), false, 'nothing was written in the worktree');
+  });
+
+  it('still accepts the main checkout when an inherited GIT_DIR names another repository', () => {
+    const other = otherRepository();
+    const out = local(fs.realpathSync(project), { ...process.env, GIT_DIR: path.join(other, '.git') });
+    assert.equal(out.json.code, 'confirmation-required', JSON.stringify(out.json));
+    fs.rmSync(other, { recursive: true, force: true });
+  });
+
+  it('reports where the settings file stands in the project\'s own repository when GIT_DIR names another one', () => {
+    const other = otherRepository();
+    fs.appendFileSync(path.join(other, '.git', 'info', 'exclude'), '.claude/settings.json\n');
+    const inherited = { ...process.env, GIT_DIR: path.join(other, '.git') };
+    const plain = spawnSync('git', ['-C', project, 'check-ignore', '-q', '.claude/settings.json'], { env: withGitHome(inherited) });
+    assert.equal(plain.status, 0, 'the row bites: with GIT_DIR set, plain git reads the other repository\'s exclude file');
+    const preview = run('write-allowlist', base('--runtime', 'claude', '--steps', 'worker-message'), inherited);
+    assert.equal(preview.json.code, 'confirmation-required', JSON.stringify(preview.json));
+    assert.equal(preview.json.gitStatus, 'untracked-not-ignored');
+    fs.rmSync(other, { recursive: true, force: true });
+  });
+
+  it('answers "unknown" and never throws when the repository was not identified, and refuses the local file then', () => {
+    assert.equal(lib.gitStatusOf(null, project, '.claude/settings.json'), 'unknown');
+    assert.throws(() => lib.checkMainCheckout(project, null), (error) => error.code === 'local-needs-main-checkout' && /could not be identified/.test(error.message));
+  });
+});
+
 describe('the recorded destination', () => {
   it('shows what it records and writes nothing before the yes', () => {
     const preview = destination();
@@ -545,7 +606,7 @@ describe('the push command rule for Claude Code', { skip: pushSkip }, () => {
     // The note carries the same contract the page prints: what the command checks, what it hardens, and what it trusts.
     assert.ok(notes.includes(pushLib.contractText()), 'the write note carries the contract text');
     assert.match(notes, /not a security boundary/);
-    assert.match(notes, /Repository hooks are ignored for this push/);
+    assert.match(notes, /The push is made with --no-verify, which skips the pre-push hook/);
     assert.match(notes, /Credential helpers\./);
     assert.match(notes, /a rule that is added or changed after the command checks and before it connects is not caught/);
     assert.doesNotMatch(notes, /still apply|pushes only|runs only in the repository|refuses anything else(?! on its command line)/);
@@ -869,7 +930,7 @@ describe('write-allowlist for Codex', () => {
     const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-perm-bin-'));
     fs.symlinkSync(realGit, path.join(bin, 'git'));
     if (script) fs.writeFileSync(path.join(bin, 'codex'), `#!/bin/sh\n${script}\n`, { mode: 0o755 });
-    return { PATH: bin, HOME: process.env.HOME, GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: '1' };
+    return { PATH: bin };
   }
   const args = (...extra) => base('--runtime', 'codex', '--steps', 'worker-message,gh-read', ...extra);
 
@@ -1289,9 +1350,11 @@ describe('the permissions page', () => {
     const text = page().replace(/\s+/g, ' ');
     assert.match(text, /A `core\.worktree` setting that points a repository at the files of another one is refused with `worktree-mismatch`/);
     assert.match(text, /a copy of the repository and another repository do not\. A link that leads into the same repository is that repository/);
-    assert.match(text, /`-c core\.abbrev=no`, `-c push\.pushOption=` and `-c core\.hooksPath=\/dev\/null`, and no other option/);
+    assert.match(text, /`-c core\.abbrev=no`, `-c push\.pushOption=`, `-c core\.hooksPath=\/dev\/null` and `--no-verify`, and no other option/);
     assert.match(text, /`push\.pushOption=` empties the list of push options from every git configuration/);
-    assert.match(text, /`core\.hooksPath=\/dev\/null` makes git find no hook, wherever the hooks folder is set/);
+    assert.match(text, /`--no-verify` skips the pre-push hook, including one that is set in git configuration with `hook\.<name>\.event`, which `core\.hooksPath` does not turn off\. `core\.hooksPath=\/dev\/null` makes git find no hook in any hooks folder/);
+    assert.doesNotMatch(text, /makes git find no hook, wherever the hooks folder is set/);
+    assert.match(text, /every git call that the permissions helper makes itself, also runs without the variables listed under "What it does for this push"/);
     assert.match(text, /The record names only object ids that the push itself reported/);
     assert.match(text, /so `newRemoteId` is null for them\. `localTipBeforePush` is the tip that the command read just before the push/);
     assert.match(text, /treat that as a later observation/);
@@ -1373,10 +1436,11 @@ describe('the permissions page', () => {
     assert.match(raw.split('</overview>')[0].replace(/\s+/g, ' '), /keeps the same safety rules and enforces them by other means: see "Unattended runs in a sandbox"/);
   });
 
-  it('lists the limits that are left for later: the helper\'s own git calls and the untested timeout report', () => {
+  it('lists the limit that is left for later, the untested timeout report, and no longer lists the helper\'s own git calls as uncleaned', () => {
     const text = flat(path.relative(ROOT, PAGE));
-    assert.match(text, /### What it does not stop[\s\S]*Only the git calls of the push command run without the variables listed under "What it does for this push"\. The git calls that the permissions helper makes itself \(the status of a settings file, the check of the main checkout\) are not cleaned\. None of them pushes[\s\S]*### Where the destination is recorded/);
     assert.match(text, /### What it does not stop[\s\S]*The report push-outcome-unknown after a timeout of the push has no test\. The cases of a missing result line and of a signal are tested\. Read the destination before you retry in every case[\s\S]*### Where the destination is recorded/);
+    assert.doesNotMatch(text, /Only the git calls of the push command run without the variables/);
+    assert.doesNotMatch(text, /permissions helper makes itself \(the status of a settings file, the check of the main checkout\) are not cleaned/);
   });
 
   it('every surface that describes the push command says it is a guard with limits, and none promises more', () => {
@@ -1392,11 +1456,14 @@ describe('the permissions page', () => {
       assert.match(text, /not a security boundary/, file);
     }
     const init = flat('fv-skills/workflows/auto-init.md');
-    for (const term of ['pushContract', 'ignores repository hooks', 'pre-push checks do not run', 'drops the listed git environment variables', 'ssh and transport wrappers', 'credential helpers', 'URL rewrite rules', 'the record file and FVS itself', 'anything that runs as the owner.s user']) {
+    for (const term of ['pushContract', 'does not run repository hooks', 'pre-push checks do not run', 'drops the listed git environment variables', 'ssh and transport wrappers', 'credential helpers', 'URL rewrite rules', 'the record file and FVS itself', 'anything that runs as the owner.s user']) {
       assert.match(init, new RegExp(term), term);
     }
     const brief = flat('fv-skills/references/auto-execution.md');
     for (const term of ['hooks', 'credential helpers', 'URL rewrite', 'ssh', 'record file', 'runs as your user']) assert.ok(brief.includes(term), `the worker brief names ${term}`);
+    // The brief and the page's list of dropped variables agree: the brief names the kinds, the page lists every name.
+    assert.match(brief, /does not run repository hooks for this push and drops the git variables that move a repository or select its configuration files/);
+    for (const name of ['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM']) assert.ok(flat('fv-skills/references/auto-permissions.md').includes(name), `the page lists ${name}`);
   });
 
   it('makes no unconditional promise that a push asks, and no longer describes a hook as part of init', () => {
