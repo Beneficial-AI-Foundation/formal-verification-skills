@@ -76,11 +76,18 @@ function allowAxioms(root, head) {
 const LEAN_COMPARISON = { toolchain: { lean: 'Lean (version 4.35.0)', githash: 'a'.repeat(40) }, statements: [{ name: 'f', declaration: 'f', constants: 2, sha256: 'a'.repeat(64) }],
   bindings: [], dumps: { base: 'b'.repeat(64), head: 'c'.repeat(64) } };
 
+// The digest of the externals file as the build check records it in a receipt: null when there is none.
+function externalsDigest(root) {
+  const file = path.join(root, '.formalising', 'auto-fv', 'externals.json');
+  return fs.existsSync(file) ? fixtures.sha256(fs.readFileSync(file)) : null;
+}
+
 function receipt(root, head, files, extra = {}) {
   const directory = path.join(root, '.formalising', 'auto-fv', 'build-check');
   fs.mkdirSync(directory, { recursive: true });
   fs.writeFileSync(path.join(directory, `${head}.json`), JSON.stringify({ schema: 2, kind: 'fvs-build-check', accepted: true,
-    label: 'accepted (build check)', commit: head, specBase: head, specFiles: files, allowAxioms: allowAxioms(root, head), externals: { records: [] },
+    label: 'accepted (build check)', commit: head, specBase: head, specFiles: files, allowAxioms: allowAxioms(root, head),
+    externals: { file: path.join(root, '.formalising', 'auto-fv', 'externals.json'), sha256: externalsDigest(root), records: [] },
     integrity: { semantic: LEAN_COMPARISON }, ...extra }));
 }
 
@@ -129,8 +136,13 @@ describe('the proof phase over several crates', () => {
       const result = view(root);
       assert.equal(result.phase, 'proofs');
       assert.match(result.nextAction, /does not count: it was not made with the allowed axioms of this commit \(it holds none\)\. Write the allowed axioms: node fvs-auto\.mjs allowed-axioms --project-root \S+ --commit [0-9a-f]{40}; then run the build check: node fvs-build-check\.mjs --project-root \S+ --commit [0-9a-f]{40} --spec-base [0-9a-f]{40} --allow-axioms \S+allowed-axioms\.json; read-state reports done when it accepts/);
+      // The per-crate report reads the same verdict: no crate is accepted through a receipt the phase refuses.
+      assert.deepEqual(result.crates.units.map((entry) => [entry.crate, entry.accepted]), [['libcrux_hmac', false], ['libcrux_sha2', false]]);
+      assert.match(result.crates.units[0].reason, /^the build check receipt does not count: it was not made with the allowed axioms of this commit \(it holds none\)$/);
       receipt(root, head, bothBuilt(), { allowAxioms: { file: 'x', sha256: 'e'.repeat(64), names: 3 } });
-      assert.match(view(root).nextAction, /\(it holds another list\)/);
+      const other = view(root);
+      assert.match(other.nextAction, /\(it holds another list\)/);
+      assert.deepEqual(other.crates.units.map((entry) => entry.accepted), [false, false]);
       receipt(root, head, bothBuilt());
       assert.equal(view(root).phase, 'done');
     });
@@ -203,6 +215,8 @@ describe('the proof phase over several crates', () => {
       const result = view(root);
       assert.equal(result.phase, 'proofs');
       assert.match(result.nextAction, /the allowed axioms cannot be derived at that commit: libcrux_hmac\/Hmac\.lean differs from the file the extraction published/);
+      assert.deepEqual(result.crates.units.map((entry) => entry.accepted), [false, false], 'a list that cannot be derived accepts no crate');
+      assert.match(result.crates.units[1].reason, /^the build check receipt does not count: the allowed axioms cannot be derived at that commit: libcrux_hmac\/Hmac\.lean differs/);
     });
 
     it('a project with one crate is not asked for a list', () => {
@@ -219,6 +233,58 @@ describe('the proof phase over several crates', () => {
     assert.match(view(root).nextAction, /^The build check failed for the draft proof PR .*: build check failed: a proof has sorry\. Fix the proofs/);
     receipt(root, head, bothBuilt(), { specBase: 'f'.repeat(40) });
     assert.match(view(root).nextAction, /does not count: it was made against the spec base f{40}/);
+  });
+
+  describe('a receipt that does not count', () => {
+    it('accepts no crate when it is of an older version or carries no Lean-level comparison', () => {
+      const { root, head } = proofPhase();
+      for (const [name, extra, said] of [
+        ['a version 1 receipt', { schema: 1 }, /it is a version 1 receipt/],
+        ['a receipt with no version', { schema: undefined }, /it is a version unknown receipt/],
+        ['a receipt without the comparison', { integrity: undefined }, /it carries no Lean-level comparison/],
+        ['a comparison of no statement', { integrity: { semantic: { ...LEAN_COMPARISON, statements: [] } } }, /it carries no Lean-level comparison/],
+      ]) {
+        receipt(root, head, bothBuilt(), extra);
+        const result = view(root);
+        assert.equal(result.phase, 'proofs', name);
+        assert.match(result.nextAction, said, name);
+        assert.match(result.nextAction, /Write the allowed axioms: node fvs-auto\.mjs allowed-axioms/, `${name}: the next steps are those of a run over several crates`);
+        assert.equal(result.crates.units.some((entry) => entry.accepted === true), false, name);
+      }
+      receipt(root, head, bothBuilt());
+      assert.equal(view(root).phase, 'done');
+    });
+
+    it('stops counting when an accepted record changed after the check, though the list names the same axioms', () => {
+      const { root, head } = proofPhase();
+      assert.equal(auto.recordExternals({ projectRoot: root, records: [{ id: 'gap-core-div', kind: 'external', source: { symbol: 'core::num::{u32}::wrapping_div', commit: 'a'.repeat(40) },
+        model: { symbol: 'wrapping_div_spec', sha256: 'b'.repeat(64) }, claimedBehaviour: 'the stated behaviour', reason: 'the owner accepts it', affectedRoots: [], evidence: ['note.md'],
+        status: 'assumption-accepted', decision: { by: 'the owner', at: '2026-11-19T00:00:00.000Z', evidence: 'reply' } }] }).code, 'recorded');
+      fs.mkdirSync(path.join(root, 'formal/Trusted'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'formal/Trusted/Core.lean'), 'namespace libcrux_hmac.Trusted\n/-- Accepted assumption, `gap-core-div`. -/\naxiom wrapping_div_spec : True\nend libcrux_hmac.Trusted\n');
+      git(root, 'add', '-A');
+      git(root, 'commit', '-q', '-m', 'a Trusted axiom');
+      const next = git(root, 'rev-parse', 'HEAD');
+      assert.equal(cli('record-pr', '--project-root', root, '--kind', 'proof', '--url', 'https://example.invalid/pr/2', '--branch', 'proofs', '--head', next).status, 0);
+      receipt(root, next, bothBuilt(), { specBase: head });
+      assert.equal(view(root).phase, 'done');
+      const listBefore = allowAxioms(root, next).sha256;
+      // The owner changes what the record assumes; its id, status and source crate stay.
+      const file = path.join(root, '.formalising', 'auto-fv', 'externals.json');
+      const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+      data.records[0].model.sha256 = 'c'.repeat(64);
+      fs.writeFileSync(file, JSON.stringify(data));
+      assert.equal(allowAxioms(root, next).sha256, listBefore, 'the list names the same axioms, so its digest is the same');
+      const result = view(root);
+      assert.equal(result.phase, 'proofs');
+      assert.match(result.nextAction, /does not count: the externals records are not the ones the check read/);
+      assert.match(result.nextAction, /Write the allowed axioms: node fvs-auto\.mjs allowed-axioms/);
+      assert.deepEqual(result.crates.units.map((entry) => entry.accepted), [false, false]);
+      assert.match(result.crates.units[0].reason, /^the build check receipt does not count: the externals records are not the ones the check read/);
+      // A check made after the change reads the new file.
+      receipt(root, next, bothBuilt(), { specBase: head });
+      assert.equal(view(root).phase, 'done');
+    });
   });
 
   it('a project the owner narrowed to one crate is judged on that crate alone', () => {

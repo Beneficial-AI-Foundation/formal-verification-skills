@@ -1228,7 +1228,30 @@ function proofAcceptance(root, state, specs, context) {
   if (!context || !specMerge) return null;
   const proofPr = specs.prs.slice(specs.prs.lastIndexOf(specMerge) + 1).filter((pr) => pr.kind === 'proof' && !pr.merged).at(-1);
   const receipt = proofPr ? buildCheckReceipt(root, proofPr.head) : null;
-  return receipt?.accepted && receipt.specBase === specMerge.mergeCommit ? crateAcceptance(root, specs, context, receipt) : null;
+  if (!(receipt?.accepted && receipt.specBase === specMerge.mergeCommit)) return null;
+  // The phase and the per-crate report read one verdict on the receipt: a receipt that does not count
+  // for the phase accepts no crate either.
+  return crateAcceptance(root, specs, context, receipt, crateReceiptProblem(root, state, specs, context, receipt, proofPr.head));
+}
+
+// Why an accepting receipt of the proof head does not count for a run over several crates, or null:
+// the allowed axioms cannot be derived at the head (`underivable`), the receipt was made with
+// another list or none (`list`), or the externals records are not the ones the check read
+// (`externals`). The list names only the axioms an accepted record puts on it, so a record whose
+// content changed while its status and source stayed leaves the list as it was: the receipt names the
+// digest of the whole externals file the check read, and the file now has to be that one.
+function crateReceiptProblem(root, state, specs, context, receipt, head) {
+  const allowed = allowedAxiomList(root, state, context, head, specs);
+  if (allowed.problems.length > 0) return { kind: 'underivable', text: `the allowed axioms cannot be derived at that commit: ${allowed.problems.join('; ')}` };
+  if (receipt.allowAxioms?.sha256 !== allowed.sha256) {
+    return { kind: 'list', text: `it was not made with the allowed axioms of this commit (${receipt.allowAxioms ? 'it holds another list' : 'it holds none'})` };
+  }
+  let current = null;
+  try { current = sha256(fs.readFileSync(externalsPath(root))); } catch { /* no externals file: the check read none either */ }
+  if ((receipt.externals?.sha256 ?? null) !== current) {
+    return { kind: 'externals', text: 'the externals records are not the ones the check read (the file changed after the check, or the receipt does not name the file it read)' };
+  }
+  return null;
 }
 
 // The pairs of verified crates where the consumer's LLBC reaches items of the provider but the
@@ -1291,8 +1314,11 @@ const crateDecisions = (context) => context.undecided.map((crate) => `non-target
 // unstitchedPairs). What the statements may rest on beyond Lean's standard axioms is not judged
 // here: the build check enforces the allowed axioms, and the state requires a receipt made with
 // the current list (see allowedAxiomList).
-function crateAcceptance(root, specs, context, receipt) {
-  if (context.targets.length === 0) return [{ crate: null, accepted: false, reason: 'the agreement drops every extracted crate, so nothing is verified' }];
+function crateAcceptance(root, specs, context, receipt, blocked = null) {
+  // The crates the agreement names but the extraction lacks follow either way: an extraction that holds
+  // none of them (no attempt, or one for other crates) leaves every one of them to be accepted.
+  const result = context.targets.length === 0 && context.extracted.length > 0
+    ? [{ crate: null, accepted: false, reason: 'the agreement drops every extracted crate, so nothing is verified' }] : [];
   const prefix = repositoryPrefix(root);
   const pruned = ownerChangesOf(specs);
   const rows = currentSpecRows(specs).filter((row) => pruned.get(row.specFile) !== 'pruned');
@@ -1317,10 +1343,10 @@ function crateAcceptance(root, specs, context, receipt) {
     return statements === 0 ? 'the build check built no statement of this crate' : null;
   };
   const accepted = new Set();
-  const result = [];
   // Providers come first, so a crate is judged after the crates it depends on.
   for (const crate of context.targets) {
-    const reason = reasonOf(crate) ?? dependsOn.get(crate).filter((other) => !accepted.has(other)).map((other) => `it depends on ${other}, which is not accepted`).at(0) ?? null;
+    const reason = (blocked === null ? null : `the build check receipt does not count: ${blocked.text}`) ?? reasonOf(crate)
+      ?? dependsOn.get(crate).filter((other) => !accepted.has(other)).map((other) => `it depends on ${other}, which is not accepted`).at(0) ?? null;
     if (reason === null) accepted.add(crate);
     result.push({ crate, accepted: reason === null, ...(reason === null ? {} : { reason }) });
   }
@@ -2075,12 +2101,12 @@ function progress(root, state, specs = null) {
     // not accepted, and it counts only when it was made with the allowed axioms of this commit. A
     // single-crate project has no crate context.
     const context = receipt?.accepted && heldToSpec ? crateContextOf(state) : null;
-    const allowed = context ? allowedAxiomList(root, state, context, proofPr.head, specs) : null;
-    if (allowed && (allowed.problems.length > 0 || receipt.allowAxioms?.sha256 !== allowed.sha256)) {
+    const gate = context ? crateReceiptProblem(root, state, specs, context, receipt, proofPr.head) : null;
+    if (gate) {
       return { phase: 'proofs', warnings,
-        nextAction: allowed.problems.length > 0
-          ? `The build check accepted the draft proof PR ${proofPr.url} at ${proofPr.head}, but the allowed axioms cannot be derived at that commit: ${allowed.problems.join('; ')}. Fix what is named, ${PUSH_STEP}, record the new head with record-pr --kind proof, and rerun the build check on it.` + suffix
-          : `The build check receipt for the draft proof PR ${proofPr.url} at ${proofPr.head} does not count: it was not made with the allowed axioms of this commit (${receipt.allowAxioms ? 'it holds another list' : 'it holds none'}). ${checkSteps}; read-state reports done when it accepts.` + suffix };
+        nextAction: gate.kind === 'underivable'
+          ? `The build check accepted the draft proof PR ${proofPr.url} at ${proofPr.head}, but ${gate.text}. Fix what is named, ${PUSH_STEP}, record the new head with record-pr --kind proof, and rerun the build check on it.` + suffix
+          : `The build check receipt for the draft proof PR ${proofPr.url} at ${proofPr.head} does not count: ${gate.text}. ${checkSteps}; read-state reports done when it accepts.` + suffix };
     }
     const rejected = context ? crateAcceptance(root, specs, context, receipt).filter((entry) => !entry.accepted) : [];
     if (receipt?.accepted && heldToSpec && rejected.length === 0) {
