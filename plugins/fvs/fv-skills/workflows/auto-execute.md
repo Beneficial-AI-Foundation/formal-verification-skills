@@ -117,13 +117,13 @@ the decision about it in the agreement; `pendingDecisions` names it. Nobody but 
 crate is not verified. The same holds for a library crate of the workspace that is missing from the
 extraction, and for one a patch removed from the copy.
 
-`record-extraction` records the extraction as succeeded only for the scope the owner agreed. When the
-agreement names several crates, or the workspace holds several library crates, it refuses a copy with no
-extraction attempt and one with the attempt of a single crate: extract every crate, then record again. It
-also refuses a run whose crates do not agree with its roster (each crate's package, folder and stitch
-providers, the order, the non-targets and the crates a patch removed), and a stitch that does not name the
-Lean modules it imports and the digest of the provider's publication it was made from. A label such as
-an import does not count as a stitch. In each case the reason says what to do.
+The extraction is recorded as succeeded only for the scope the owner agreed. When the agreement names
+several crates, or the workspace holds several library crates, a copy with no extraction attempt and one
+with the attempt of a single crate are refused: extract every crate, then record again. A run whose crates
+do not agree with its roster (each crate's package, folder and stitch providers, the order, the non-targets
+and the crates a patch removed) is refused too, and so is a stitch that does not name the Lean modules it
+imports and the digest of the provider's publication it was made from. A label such as an import does not
+count as a stitch. In each case the reason says what to do.
 
 Dispatch workers providers first, in the order `crates.order` gives, and accept bottom-up, one crate at a
 time. A crate that depends on another may be proved early against the other crate's reviewed statement, but
