@@ -26,7 +26,22 @@ const LAKEFILE = (extra = '') => `name = "fixture"\ndefaultTargets = ["Specs"]\n
 const STUB_LAKE = `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "Lake version 5.0.0-stub"; exit 0; fi
 if [ "$1" = build ] && [ "$2" = --no-build ]; then
-  if [ -f "$STUB/preflight" ]; then cat "$STUB/preflight"; exit 3; fi
+  files=""
+  for a in "$@"; do case "$a" in *.lean) files="$files $a";; esac; done
+  if [ -z "$files" ]; then
+    if [ -f "$STUB/preflight" ]; then cat "$STUB/preflight"; exit 3; fi
+    exit 0
+  fi
+  # A source check: up to date when the file has a .olean under its path or under a suffix of its path.
+  echo "$files" >> "$STUB/source-checks"
+  for f in $files; do
+    p="\${f%.lean}"; found=1
+    while :; do
+      if [ -f ".lake/build/lib/lean/$p.olean" ]; then found=0; break; fi
+      case "$p" in */*) p="\${p#*/}";; *) break;; esac
+    done
+    if [ $found -ne 0 ]; then echo "error: not up to date: $f"; exit 3; fi
+  done
   exit 0
 fi
 side=head
@@ -1754,20 +1769,39 @@ describe('every spec, proof and extraction file must have been built', () => {
     const result = checkTip(fx, { oleans: ['formal/specs/Specs/A', 'formal/proofs/Lemmas/L', 'formal/extraction/Ext'] });
     assert.equal(result.status, 1, result.stderr);
     assert.equal(result.json.accepted, false);
-    assert.match(result.json.label, /^build check failed: no \.olean was produced for formal\/proofs\/A\.lean \(module formal\.proofs\.A\), so Lake did not build it$/);
+    assert.match(result.json.label, /^build check failed: Lake did not build formal\/proofs\/A\.lean from that file in this build \(lake build --no-build does not report it up to date\)$/);
     assert.equal(fs.existsSync(path.join(fx.stub, 'dump-head-args.json')), false, 'no Lean program runs on a build that is incomplete');
   });
 
   test('an extraction file and a new lemma file are held to it too, and the label counts the rest', () => {
     const fx = layered();
     const result = checkTip(fx, { oleans: ['formal/specs/Specs/A'] });
-    assert.match(result.json.label, /no \.olean was produced for formal\/extraction\/Ext\.lean .* \(and 2 more\)$/);
+    assert.match(result.json.label, /Lake did not build formal\/extraction\/Ext\.lean from that file in this build .* \(and 2 more\)$/);
+  });
+
+  test('Lake is asked about the files that could be one module one at a time, the others together, and a failing group file by file', () => {
+    const calls = (fx) => fs.readFileSync(path.join(fx.stub, 'source-checks'), 'utf8').trim().split('\n').map((line) => line.trim().split(' '));
+    // In a lakefile.lean project formal/specs/Specs/A.lean and formal/proofs/A.lean could both be the module A.
+    const fx = layered({ dsl: true });
+    const accepted = checkTip(fx);
+    assert.equal(accepted.status, 0, accepted.stderr);
+    assert.deepEqual(calls(fx), [['formal/extraction/Ext.lean', 'formal/proofs/Lemmas/L.lean'], ['formal/proofs/A.lean'], ['formal/specs/Specs/A.lean']]);
+    assert.deepEqual(accepted.json.integrity.sourceCheck, { files: 4, calls: 3 });
+    const failing = layered({ dsl: true });
+    const refused = checkTip(failing, { oleans: ['formal/specs/Specs/A', 'formal/proofs/A', 'formal/proofs/Lemmas/L'] });
+    assert.equal(refused.status, 1);
+    assert.deepEqual(calls(failing), [['formal/extraction/Ext.lean', 'formal/proofs/Lemmas/L.lean'], ['formal/proofs/A.lean'], ['formal/specs/Specs/A.lean'], ['formal/extraction/Ext.lean'], ['formal/proofs/Lemmas/L.lean']]);
+    assert.deepEqual(refused.json.integrity.sourceCheck, { files: 4, calls: 5 });
+    const plain = layered();
+    checkTip(plain);
+    assert.equal(calls(plain).length, 1, 'with no name two files could share, one call asks about all of them');
+    assert.equal(calls(plain)[0].length, 4);
   });
 
   test('in a lakefile.lean project, where no globs are read, the same holds, and a module named below a source folder counts', () => {
     const dsl = layered({ dsl: true });
     const missing = checkTip(dsl, { oleans: ['formal/specs/Specs/A', 'formal/proofs/A', 'formal/proofs/Lemmas/L'] });
-    assert.match(missing.json.label, /no \.olean was produced for formal\/extraction\/Ext\.lean/);
+    assert.match(missing.json.label, /Lake did not build formal\/extraction\/Ext\.lean from that file in this build/);
     const shifted = layered({ dsl: true });
     const accepted = checkTip(shifted, { oleans: ['formal/specs/Specs/A', 'proofs/A', 'proofs/Lemmas/L', 'extraction/Ext'] });
     assert.equal(accepted.status, 0, accepted.stderr);
@@ -1826,7 +1860,7 @@ function realProject(head, { externals = EXTERNALS(record({ id: 'gap-add' })), r
   fs.mkdirSync(path.join(base, 'work'));
   git(base, 'init', '-q', '-b', 'main', repo);
   write(path.join(repo, '.gitignore'), '.lake/\n');
-  for (const [name, text] of Object.entries({ ...REAL_BASE, ...baseFiles })) write(path.join(repo, name), text);
+  for (const [name, text] of Object.entries({ ...REAL_BASE, ...baseFiles })) if (text !== null) write(path.join(repo, name), text);
   git(repo, 'add', '-A');
   git(repo, 'commit', '-q', '-m', 'merged spec');
   const merged = git(repo, 'rev-parse', 'HEAD');
@@ -1928,6 +1962,38 @@ describe('real Lean: a statement that still reads the same but does not mean the
     assert.deepEqual(result.json.integrity.ties, [], 'the text of the Trusted file has no axiom');
     assert.deepEqual(result.json.integrity.semantic.bindings, [{ axiom: 'Fx.gap_add_spec', record: 'gap-add', proposition: 'Gap' }]);
     assert.deepEqual(result.json.externals.records, [{ id: 'gap-add', sha256: recordDigest(record({ id: 'gap-add' })) }]);
+  });
+
+  // Which file Lake compiled is Lake's to say. A file that no library maps, or one whose module name another
+  // file already holds in this build, is not compiled just because that module's .olean exists.
+  describe('a required file that Lake did not compile from that very file', () => {
+    const BROKEN = 'theorem broken : 1 = 2 := by decide\n';
+    const dslLakefile = 'import Lake\nopen Lake DSL\n\npackage fx\n\n@[default_target]\nlean_lib Fx where\n  globs := #[.submodules `Fx]\n';
+
+    test('a proof file that no library maps is refused although a module with the end of its name was built', () => {
+      const baseFiles = { 'lakefile.toml': null, 'lakefile.lean': dslLakefile };
+      const clean = realCheck(realProject(REAL_HEAD, { baseFiles }));
+      assert.equal(clean.status, 0, clean.stderr);
+      assert.deepEqual(clean.json.integrity.sourceCheck.files > 0, true);
+      const hidden = realCheck(realProject({ ...REAL_HEAD, 'formal/Fx/Proofs/P.lean': BROKEN }, { baseFiles }));
+      assert.equal(hidden.status, 1, hidden.stderr);
+      assert.match(hidden.json.label, /^build check failed: Lake did not build formal\/Fx\/Proofs\/P\.lean from that file in this build/);
+    });
+
+    // Both libraries are default targets and the globs cover both files, so only Lake can say that one of the
+    // two files was never compiled: it builds one job for the module name Same.
+    for (const [first, second] of [['a', 'b'], ['b', 'a']]) {
+      test(`two default libraries with the same module name from different source folders: the file built first (${first}) does not stand in for the other (${second})`, () => {
+        const libs = [first, second].map((name) => `[[lean_lib]]\nname = "${name.toUpperCase()}"\nsrcDir = "${name}/proofs"\nroots = ["Same"]\n`).join('\n');
+        const lakefile = `name = "fx"\ndefaultTargets = ["Fx", "${first.toUpperCase()}", "${second.toUpperCase()}"]\n\n[[lean_lib]]\nname = "Fx"\nglobs = ["Fx.+"]\n\n${libs}`;
+        const baseFiles = { 'lakefile.toml': lakefile, [`${first}/proofs/Same.lean`]: 'def Same.ok : Nat := 1\n' };
+        const clean = realCheck(realProject(REAL_HEAD, { baseFiles }));
+        assert.equal(clean.status, 0, clean.stderr);
+        const result = realCheck(realProject({ ...REAL_HEAD, [`${second}/proofs/Same.lean`]: BROKEN }, { baseFiles }));
+        assert.equal(result.status, 1, result.stderr);
+        assert.match(result.json.label, new RegExp(`^build check failed: Lake did not build ${second}/proofs/Same\\.lean from that file in this build`));
+      });
+    }
   });
 
   // native_decide adds a generated axiom named after the theorem. The merged spec here proves foo_spec with it,

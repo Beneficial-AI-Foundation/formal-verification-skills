@@ -27,9 +27,11 @@
 // never compile it; the lakefile, the manifest and lean-toolchain are frozen. A commit that fails a
 // guard gets a failed receipt and no build runs.
 //
-// After the build, two more conditions must hold. Every spec, proof and extraction file must have
-// produced a .olean in this build (for a lakefile.lean, where globs are not read, a module named by its
-// path or by a suffix of it), whether or not the file holds a recall. And a small Lean program must find
+// After the build, two more conditions must hold. Every spec, proof and extraction file must be one Lake
+// compiled from that very file in this build, whether or not the file holds a recall: Lake itself is asked
+// (`lake build --no-build FILE` exits 0 only when the module Lake maps FILE to is up to date from that source),
+// so a file no library maps, or one whose module name another file holds, is not counted by a .olean of
+// the same name. And a small Lean program must find
 // that what each recalled statement rests on is what it rested on in the merged spec: it serialises the
 // elaborated type of the statement and of every project definition, instance and abbreviation it
 // reaches (values included, proofs not), on the head and on a fresh build of the merged spec, and the
@@ -929,17 +931,28 @@ export function checkIntegrity({ base: baseTree, head: headTree, externals = () 
     }
   }
   problems.push(...globProblems(head, changed, layout), ...uncheckedDeclarations(head));
-  // Every spec, proof and extraction file is one Lake must have compiled, whatever the lakefile says and
-  // whether or not it holds a recall. The module a file has is its path below a library's source folder;
-  // for a lakefile.lean, which is not read here, its path or its path below any folder.
+  // Every spec, proof and extraction file is one Lake must have compiled from that very file, whatever the
+  // lakefile says and whether or not it holds a recall. Which module a file has is Lake's to say (the
+  // build asks it); the names listed here are only the ones the file could have, its path below a library's
+  // source folder or, for a lakefile.lean that is not read here, its path or its path below any folder. A
+  // file is `shared` when one of those names is also a name another Lean file could have: Lake then cannot be
+  // asked about it together with other files.
   const sourceFolders = built ? built.sources : [''];
   const moduleCandidates = (rel) => {
     const modules = sourceFolders.map((folder) => (rel.startsWith(folder) ? rel.slice(folder.length, -'.lean'.length).replaceAll('/', '.') : null)).filter(Boolean);
     if (!built) { const parts = rel.slice(0, -'.lean'.length).split('/'); for (let i = 1; i < parts.length; i += 1) modules.push(parts.slice(i).join('.')); }
     return [...new Set(modules)];
   };
+  const claimed = new Map();
+  for (const rel of head.keys()) {
+    if (!rel.endsWith('.lean') || LAKE_FILES.test(rel) || rel.startsWith('.lake/')) continue;
+    for (const name of moduleCandidates(rel)) claimed.set(name, (claimed.get(name) ?? 0) + 1);
+  }
   const required = [...head.keys()].filter((rel) => rel.endsWith('.lean') && !LAKE_FILES.test(rel)
-    && (isProofPath(rel) || isExtraction(rel, layout) || hasStatements(head.get(rel).text()))).sort().map((rel) => ({ rel, modules: moduleCandidates(rel) }));
+    && (isProofPath(rel) || isExtraction(rel, layout) || hasStatements(head.get(rel).text()))).sort().map((rel) => {
+    const modules = moduleCandidates(rel);
+    return { rel, modules, shared: modules.some((name) => claimed.get(name) > 1) };
+  });
   return { problems, ties, required, moduleCandidates };
 }
 
@@ -1431,8 +1444,6 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
     const env = { ...gitEnvironment(), LEAN_NUM_THREADS: '2' };
     const lakeVersion = (spawnSync('lake', ['--version'], { cwd: leanRoot, encoding: 'utf8', env }).stdout ?? '').split('\n')[0].trim();
     const files = leanFiles(leanRoot);
-    // A module's .olean, wherever the file's module name puts it; none exists before this check's build.
-    const builtModule = (at, rel) => integrity.moduleCandidates(rel).find((module) => fs.existsSync(oleanFile(at, module))) ?? null;
     // Dependencies must be up to date before the build; only the project's own modules may be missing.
     const preflightLog = path.join(work, 'preflight.log');
     runLake(['build', '--no-build', '--no-ansi'], { cwd: leanRoot, env, log: preflightLog, timeoutSeconds: 1800 });
@@ -1448,6 +1459,13 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
     const log = readLog(logBytes.toString('utf8'));
     const problem = firstProblem(log.messages);
 
+    // Which spec, proof and extraction files Lake compiled from that very file. A build that passed is asked
+    // about all of them at once; after a failed build a file is asked about only when its report needs it.
+    const sourceCheck = build.status === 0 ? lakeBuilt({ leanRoot, env, work, files: integrity.required, timeoutSeconds }) : { built: new Map(), calls: 0 };
+    const isBuilt = (rel) => {
+      if (!sourceCheck.built.has(rel)) { const asked = lakeBuilt({ leanRoot, env, work, files: [{ rel, shared: true }], timeoutSeconds }); sourceCheck.built.set(rel, asked.built.get(rel)); sourceCheck.calls += asked.calls; }
+      return sourceCheck.built.get(rel) === true;
+    };
     const specFiles = [];
     const tampered = [];
     const recalled = new Set();
@@ -1465,14 +1483,13 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
         recalledFiles.set(statement.name, [...(recalledFiles.get(statement.name) ?? []), path.join(sub, below, rel).split(path.sep).join('/')]);
       }
       const own = log.messages.filter((m) => m.file === rel && m.severity !== 'info');
-      const built = builtModule(leanRoot, rel) !== null;
       const statements = spec.statements.map((statement) => {
         const hit = own.find((m) => m.line === statement.recallLine || (statement.guardFrom !== null && m.line >= statement.guardFrom && m.line <= statement.guardTo));
         const reason = statement.problems[0] ?? (hit ? describe(hit) : null)
-          ?? (own.length > 0 ? `its spec file did not build (${describe(firstProblem(own))})` : built ? null : 'its spec file was not built');
+          ?? (own.length > 0 ? `its spec file did not build (${describe(firstProblem(own))})` : isBuilt(rel) ? null : 'its spec file was not built');
         return { name: statement.name, line: statement.line, status: reason ? 'failing' : 'built', reason, axioms: statement.axioms, beyondStandard: statement.beyondStandard, flags: statement.flags };
       });
-      const fileReason = own.length > 0 ? describe(firstProblem(own) ?? own[0]) : (built ? null : 'no .olean was produced, so the file is not part of the build');
+      const fileReason = own.length > 0 ? describe(firstProblem(own) ?? own[0]) : (isBuilt(rel) ? null : 'Lake did not build this file in this build, so it is not part of the build');
       specFiles.push({ path: path.join(sub, below, rel), sha256: sha256(bytes), status: fileReason || statements.some((s) => s.status === 'failing') ? 'failing' : 'built', reason: fileReason, statements });
     }
     const statements = specFiles.flatMap((file) => file.statements);
@@ -1489,13 +1506,14 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
     // Lake must have compiled every spec, proof and extraction file, whatever the lakefile says and
     // whether or not the file holds a recall: each needs the .olean this build produced.
     if (reason === null) {
-      const unbuilt = integrity.required.filter(({ rel }) => builtModule(leanRoot, rel) === null);
-      if (unbuilt.length > 0) reason = `no .olean was produced for ${unbuilt[0].rel}${unbuilt[0].modules[0] ? ` (module ${unbuilt[0].modules[0]})` : ''}, so Lake did not build it${unbuilt.length > 1 ? ` (and ${unbuilt.length - 1} more)` : ''}`;
+      const unbuilt = integrity.required.filter(({ rel }) => !isBuilt(rel));
+      if (unbuilt.length > 0) reason = `Lake did not build ${unbuilt[0].rel} from that file in this build (lake build --no-build does not report it up to date)${unbuilt.length > 1 ? ` (and ${unbuilt.length - 1} more)` : ''}`;
     }
+    integrityRecord.sourceCheck = { files: integrity.required.length, calls: sourceCheck.calls };
     // The Lean-level comparison with the merged spec. Without a merged spec there is nothing to compare.
     if (reason === null && specBaseFull !== null) {
       const accepted = new Set((externalsFile()?.data?.records ?? []).filter((r) => r?.status === 'assumption-accepted' && r.decision && typeof r.id === 'string').map((r) => r.id));
-      const lean = leanCheck({ top, sub, below, specBaseFull, work, leanRoot, source, hasPackages: manifest.length > 0, env, timeoutSeconds, integrity, recalled, recalledFiles, allowed, acceptedIds: accepted, builtModule });
+      const lean = leanCheck({ top, sub, below, specBaseFull, work, leanRoot, source, hasPackages: manifest.length > 0, env, timeoutSeconds, integrity, recalled, recalledFiles, allowed, acceptedIds: accepted });
       if (lean.error) reason = `the Lean check could not run: ${lean.error}`;
       else {
         integrityRecord.semantic = { toolchain: lean.toolchain, statements: lean.statements, bindings: lean.bindings, dumps: lean.dumps };
@@ -1535,17 +1553,51 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
   }
 }
 
-const oleanFile = (root, module) => path.join(root, '.lake', 'build', 'lib', 'lean', `${module.replaceAll('.', '/')}.olean`);
+// Whether Lake compiled each file from that very file, asked of Lake itself: `lake build --no-build FILE`
+// exits 0 only when the module Lake maps FILE to is up to date from this source, and not for a file no
+// library maps (unknown module source path) or one whose module's artifact came from another source.
+// One call can take many files, except that a call is not sound for files that could be the same module
+// (Lake runs one job for a module name, so the second file would pass on the first one's job): those are
+// asked one at a time, and so is every file of a batch that fails, to say which one it was.
+function lakeBuilt({ leanRoot, env, work, files, timeoutSeconds }) {
+  const built = new Map();
+  let calls = 0;
+  const ask = (rels) => { calls += 1; return runLake(['build', '--no-build', '--no-ansi', ...rels], { cwd: leanRoot, env, log: path.join(work, `source-check-${calls}.log`), timeoutSeconds }).status === 0; };
+  const alone = files.filter((file) => file.shared).map((file) => file.rel);
+  const batch = files.filter((file) => !file.shared).map((file) => file.rel);
+  for (let at = 0; at < batch.length; at += 40) {
+    const group = batch.slice(at, at + 40);
+    if (ask(group)) for (const rel of group) built.set(rel, true);
+    else alone.push(...group);
+  }
+  for (const rel of alone) built.set(rel, ask([rel]));
+  return { built, calls };
+}
+
+// The modules this build compiled for the project itself: the .olean files in its own build folder (a
+// dependency builds into its own package folder), each named by its path.
+function projectModules(root) {
+  const base = path.join(root, '.lake', 'build', 'lib', 'lean');
+  const found = [];
+  const walk = (dir) => {
+    for (const entry of fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }) : []) {
+      if (entry.isDirectory()) walk(path.join(dir, entry.name));
+      else if (entry.name.endsWith('.olean')) found.push(path.relative(base, path.join(dir, entry.name)).slice(0, -'.olean'.length).split(path.sep).join('.'));
+    }
+  };
+  walk(base);
+  return found.sort();
+}
 
 // Runs the Lean program on the built head and on a fresh build of the merged spec in a copy of its own,
 // then compares them. An `error` means the comparison could not be made, which is not an acceptance.
-function leanCheck({ top, sub, below, specBaseFull, work, leanRoot, source, hasPackages, env, timeoutSeconds, integrity, recalled, recalledFiles, allowed, acceptedIds, builtModule }) {
+function leanCheck({ top, sub, below, specBaseFull, work, leanRoot, source, hasPackages, env, timeoutSeconds, integrity, recalled, recalledFiles, allowed, acceptedIds }) {
   const dump = path.join(work, 'dump');
   fs.mkdirSync(dump, { recursive: true });
   fs.writeFileSync(path.join(dump, 'Dump.lean'), DUMP_SOURCE);
   const tail = (file) => { try { return fs.readFileSync(file, 'utf8').trim().split('\n').slice(-3).join(' | ').slice(0, 300); } catch { return ''; } };
   const dumpOf = (side, root) => {
-    const modules = [...new Set(leanFiles(root).files.filter((rel) => rel.endsWith('.lean') && !LAKE_FILES.test(rel)).map((rel) => builtModule(root, rel)).filter(Boolean))].sort();
+    const modules = projectModules(root);
     const args = path.join(dump, `${side}-args.json`);
     fs.writeFileSync(args, JSON.stringify({ modules, recalls: [...recalled].sort(), ids: [...acceptedIds].sort() }));
     const [out, log] = [path.join(dump, `${side}.jsonl`), path.join(dump, `${side}.log`)];
