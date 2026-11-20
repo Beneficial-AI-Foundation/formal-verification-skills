@@ -131,6 +131,27 @@ describe('the scope prepare records', () => {
     assert.equal(scopeOf(prepare(plain, false)).kind, 'single-crate');
   });
 
+  it('refuses a single-crate attempt on a recorded multi-crate scope, and takes the same crate as a crates list of one', () => {
+    const ws = workspace();
+    const prepared = prepare(ws, true);
+    assert.equal(scopeOf(prepared).kind, 'multi-crate');
+    const lone = { release: RELEASE, cargoArgs: ['--locked'], crate: 'toy_lib', publishDir: 'Lean/Lib', moduleRoot: 'Toy.Lib' };
+    // Nothing in the single form accounts for the other library crate, so no single-form spec is taken:
+    // not the bare one, and not one that lists the other crate as dropped.
+    for (const spec of [lone, { ...lone, dropped: [{ crate: 'toy_app', reason: 'the owner chose to verify toy_lib only' }] }]) {
+      const refused = run(ws, ['attempt', '--out', prepared.out, '--spec', specFile(ws, spec)]);
+      assert.equal(refused.status, 8, refused.stdout);
+      assert.match(refused.result.message, /the scope of this extraction is several crates \(toy_app, toy_lib\), and a single-crate attempt would record one of them with the others unaccounted for; attempt with a spec that has a crates list/);
+      assert.equal(refused.result.scope?.kind, 'multi-crate');
+      assert.equal(fs.existsSync(path.join(prepared.out, 'attempt.json')), false, 'a refused attempt records nothing');
+    }
+    // The same crate as a crates list of one, with the other crate declared a non-target, is recorded.
+    const recorded = run(ws, ['attempt', '--out', prepared.out, '--spec', specFile(ws, toySpec({ main: 'toy_lib', crates: [toySpec().crates[0]], nonTargets: [{ crate: 'toy_app', dir: 'app' }] }))]);
+    assert.equal(recorded.status, 0, recorded.stdout);
+    assert.deepEqual(recorded.result.attempt.units.map((unit) => unit.crate), ['toy_lib']);
+    assert.equal(recorded.result.attempt.scope.kind, 'multi-crate');
+  });
+
   it('treats a manifest without a scope as unknown, so an older copy is never a single crate by default', () => {
     const ws = solo();
     const prepared = prepare(ws, false);

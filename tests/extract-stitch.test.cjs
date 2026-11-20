@@ -544,18 +544,6 @@ describe('substitutions: a rename of a name Lean cannot read, with the match cou
     });
   });
 
-  it('works for a single-crate attempt as well', () => {
-    const ws = workspace({ toy_lib: { lean: lib().replace('def one : Result Std.U32 := ok 1#u32', 'def one : Result Std.U32 := do\n  let n· := 1#u32\n  ok n·') } });
-    const out = path.join(ws.root, 'copies', 'single');
-    assert.equal(engine(ws, ['prepare', '--project-root', ws.project, '--out', out, '--release', toySpec().release]).status, 0);
-    const spec = { release: toySpec().release, crate: 'toy_lib', publishDir: 'Lean/Lib', cargoArgs: ['--locked', '--package', 'toy-lib'], substitutions: [{ file: 'ToyLib.lean', find: 'n·', replace: 'n_one', count: 2, reason: 'a local named with a middle dot' }] };
-    assert.equal(engine(ws, ['attempt', '--out', out, '--spec', specFile(ws, spec)]).status, 0);
-    for (const name of ['charon', 'aeneas', 'publish']) assert.equal(engine(ws, ['run', '--out', out, '--step', name]).status, 0);
-    assert.match(published(ws, 'Lean/Lib/ToyLib.lean'), /let n_one := 1#u32\n {2}ok n_one/);
-    const status = engine(ws, ['attempt-status', '--out', out]);
-    assert.equal(status.status, 0, status.stdout);
-    assert.equal(status.result.run.substitutions.length, 1);
-  });
 });
 
 describe('stitching and substitutions: the spec is checked before anything is written', () => {
@@ -594,13 +582,4 @@ describe('stitching and substitutions: the spec is checked before anything is wr
     refused(stitched({ substitutions: [{ ...base, regex: true }] }), /substitutions\[0\] has unsupported fields: regex/);
   });
 
-  it('refuses stitching in a single-crate spec', () => {
-    const ws = workspace(behaviour());
-    const out = path.join(ws.root, 'copies', 'single');
-    assert.equal(engine(ws, ['prepare', '--project-root', ws.project, '--out', out, '--release', toySpec().release]).status, 0);
-    const spec = { release: toySpec().release, crate: 'toy_app', publishDir: 'Lean/App', stitch: [{ crate: 'toy_lib' }] };
-    const recorded = engine(ws, ['attempt', '--out', out, '--spec', specFile(ws, spec)]);
-    assert.equal(recorded.status, 5, recorded.stdout);
-    assert.match(recorded.result.message, /stitch needs a multi-crate spec/);
-  });
 });

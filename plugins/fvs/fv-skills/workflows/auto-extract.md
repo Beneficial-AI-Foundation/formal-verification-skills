@@ -97,7 +97,9 @@ oracle refusal after a clean build (an unratified Category-B patch, a failed dif
 ### Extracting several crates
 
 For several crates, give the extractor one spec with a `crates` list (`aeneas-extract.md`, "Several
-crates"): one entry for each target crate with its own `publishDir` and `moduleRoot`, `nonTargets` for the
+crates"). A workspace of several library crates always takes this form, even for one target (a `crates` list
+of one, the rest `nonTargets` or `dropped`): the extractor refuses the single-crate spec on such a
+workspace. One entry for each target crate with its own `publishDir` and `moduleRoot`, `nonTargets` for the
 crates the agreement excludes (`dropped` for those left out of the copy; the attempt refuses a crate of
 the workspace that is none of target, `nonTargets` or `dropped`), and, for each target that calls another target, a `stitch` entry naming
 that target. Stitching makes the caller's Lean use the other crate's real translation; without it the

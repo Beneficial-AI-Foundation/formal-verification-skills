@@ -343,7 +343,11 @@ manifest that is a plain package: no `[workspace]`, `[patch]` or `[replace]` tab
 inheritance, no path dependency, a second `Cargo.toml` nowhere among the inputs, and no workspace
 manifest in a directory above the project or the copy. Anything else is `kind: 'unknown'` with the
 reason, and a single-crate `attempt` on an unknown scope is refused (prepare a new copy with
-`--release`); so is a copy whose manifest records no scope (prepared before it was recorded). The
+`--release`); so is a copy whose manifest records no scope (prepared before it was recorded). A
+single-crate `attempt` on a `multi-crate` scope is refused as well: the single form accounts for no
+other crate of the workspace, so a spec with a `crates` list is the form for every extraction in a
+workspace of several library crates, one entry per target and every other library crate in `nonTargets`
+or `dropped` by the owner's decision (a `crates` list of one is a legitimate list). The
 attempt, each unit's record and `attempt-status` (`run.scope`) carry the scope; `status --out` shows it
 for a copy that has no attempt. `crates` answers with the same `scope` object: for a checkout, the scope that
 `prepare --release` would record (cargo reads it the same way), so a checkout at a recorded source commit is
@@ -440,7 +444,7 @@ The spec keeps the single-crate fields as a base (`release`, `cargoArgs`, `charo
 | `crates[].stitch` | `[{ crate, assume }]`: this crate calls target `crate`; its Lean imports that crate's published module (see below) |
 | `crates[].substitutions` | `[{ file, find, replace, count, reason }]`: a rename of a name Lean cannot read, with the exact number of matches. `find` holds U+00B7 (Aeneas writes a shadowed local as `len·`), `replace` is a plain identifier that occurs nowhere in the crate's generated Lean, no match follows a `.`, and the rename is made inside a definition body only. Every match has to be an identifier in code: a match inside a string literal, a character literal or a comment (or in text the engine cannot read to the end, such as an unclosed string) refuses the whole substitution when the file is published, so literal data is never renamed. Any other edit is refused: it belongs in a patch of the Rust source. Recorded with before and after hashes and recomputed by `attempt-status` |
 | `nonTargets` | `[{ crate, dir }]`: in-repo crates the owner decided not to verify, with their sources in the copy |
-| `dropped` | `[{ crate, reason }]`: in-repo crates left out of the copy by the owner's decision, or whose path dependency a patch replaced by a registry release (the single-crate spec has this field too); the reason says who decided and why, and a crate still in the copy cannot be dropped |
+| `dropped` | `[{ crate, reason }]`: in-repo crates left out of the copy by the owner's decision, or whose path dependency a patch replaced by a registry release (the single-crate spec has this field too, for a project whose scope is a single crate); the reason says who decided and why, and a crate still in the copy cannot be dropped |
 
 Every crate has its own Charon, Aeneas and publish chain, so a failing crate ends only its own
 chain. `attempt-status` refuses until every crate is complete and then lists each crate's status;

@@ -1351,6 +1351,14 @@ function attempt(flags) {
   if (scope.kind === 'unknown') {
     refuse('attempt-refused', `the scope of this extraction is not established (${scope.reason}), and an attempt never takes an unknown scope for a single crate; prepare a new copy with --release DIR, so that cargo reads every in-repo crate`, { scope });
   }
+  // The single-crate form accounts for no other crate of the workspace, so on a checkout that holds
+  // several library crates it would record one of them and leave the rest unmentioned. The aggregate
+  // form (a crates list) does the accounting: every library crate is a target, a non-target or
+  // dropped, each by the owner's decision, and one target is a legitimate crates list.
+  if (scope.kind === 'multi-crate') {
+    const crates = scope.libraryCrates ?? [];
+    refuse('attempt-refused', `the scope of this extraction is several crates (${crates.slice(0, 12).join(', ')}${crates.length > 12 ? ', ...' : ''}), and a single-crate attempt would record one of them with the others unaccounted for; attempt with a spec that has a crates list (one entry per target, and every other library crate in nonTargets or dropped by the owner's decision)`, { scope });
+  }
   const unaccounted = coverageProblems(manifest, { targets: [], nonTargets: [], dropped: checkDropped(isObject(spec) ? spec.dropped : undefined), multi: false });
   if (unaccounted.length > 0) refuse('attempt-refused', `the workspace is not accounted for: ${unaccounted.join('; ')}`, { reasons: unaccounted });
   return recordAttempt(out, manifest, manifestSha256, spec);

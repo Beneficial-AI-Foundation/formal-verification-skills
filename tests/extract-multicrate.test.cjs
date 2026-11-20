@@ -537,20 +537,13 @@ describe('multi-crate extraction: a failed or missing crate is never a complete 
     assert.match(status.result.message, /toy_app not run: charon is next/);
   });
 
-  it('needs --crate for a multi-crate attempt and refuses it for a single crate', () => {
+  it('needs --crate for a multi-crate attempt', () => {
     const ws = workspace();
     const { out } = attempted(ws);
     const missing = step(ws, out, 'charon');
     assert.equal(missing.status, 2, missing.stdout);
     assert.match(missing.result.message, /--crate is required and must be one of toy_lib, toy_app/);
     assert.equal(step(ws, out, 'charon', 'nope').status, 2);
-    const single = workspace();
-    const spec = specFile(single, { release: toySpec().release, crate: 'toy_lib', publishDir: 'Lean/Lib', cargoArgs: ['--locked', '--package', 'toy-lib'] });
-    const copy = prepared(single);
-    assert.equal(engine(single, ['attempt', '--out', copy, '--spec', spec]).status, 0);
-    const extra = step(single, copy, 'charon', 'toy_lib');
-    assert.equal(extra.status, 2, extra.stdout);
-    assert.match(extra.result.message, /--crate is only for a multi-crate attempt/);
   });
 
   it('refuses a crate\'s stage once its attempt record was changed after recording', () => {
@@ -583,14 +576,6 @@ describe('multi-crate extraction: the spec is checked before anything is written
     refused(spec, /crates\[0\]\.crate "toy-lib" has a hyphen; Charon labels a crate with its underscored name, so use "toy_lib"/);
   });
 
-  it('refuses a hyphenated crate name in a single-crate spec as well', () => {
-    const ws = workspace();
-    const out = prepared(ws);
-    const recorded = engine(ws, ['attempt', '--out', out, '--spec', specFile(ws, { release: toySpec().release, crate: 'toy-lib', publishDir: 'Lean/Lib' })]);
-    assert.equal(recorded.status, 5, recorded.stdout);
-    assert.match(recorded.result.message, /spec\.crate "toy-lib" has a hyphen/);
-    assert.equal(fs.existsSync(path.join(out, 'attempt.json')), false);
-  });
 
   it('refuses nested or equal output directories, a missing main, a crate directory outside the copy and --package in cargoArgs', () => {
     const nested = toySpec();
@@ -683,11 +668,6 @@ describe('multi-crate extraction: crates the owner chose not to verify', () => {
     refused(appOnly([{ crate: 'toy_lib', dir: 'app' }]), /nonTargets\[0\]\.dir app is the directory of target crate toy_app/);
     refused(appOnly([{ crate: 'toy-lib', dir: 'lib' }]), /nonTargets\[0\]\.crate "toy-lib" has a hyphen/);
     refused(appOnly([{ crate: 'toy_lib', dir: 'lib', reason: 'x' }]), /nonTargets\[0\] has unsupported fields: reason/);
-    const ws = workspace();
-    const out = prepared(ws);
-    const single = engine(ws, ['attempt', '--out', out, '--spec', specFile(ws, { release: toySpec().release, crate: 'toy_app', publishDir: 'Lean/App', nonTargets: [{ crate: 'toy_lib', dir: 'lib' }] })]);
-    assert.equal(single.status, 5, single.stdout);
-    assert.match(single.result.message, /nonTargets belongs to a multi-crate spec: list this crate under crates/);
   });
 });
 
@@ -928,16 +908,16 @@ describe('multi-crate extraction: the workspace is accounted for', () => {
     assert.match(stillThere.result.message, /dropped names crate toy_lib, which is still in the extraction copy; a crate is either in the copy or dropped/);
   });
 
-  it('applies to a single-crate attempt too', () => {
+  it('applies to a crates list of one too, the form a single crate takes in a workspace of several', () => {
     const ws = workspace();
     registryPatch(ws);
     fs.writeFileSync(path.join(ws.project, '.formalising', 'fvs-config.json'), JSON.stringify({ extraction: { inputs: ['Cargo.toml', 'Cargo.lock', 'app'] } }));
     const { out } = prepareWith(ws);
-    const single = { release: RELEASE, crate: 'toy_app', publishDir: 'Lean/App', cargoArgs: ['--locked', '--package', 'toy-app'] };
-    const refused = attempt(ws, out, single);
+    const lone = { release: RELEASE, cargoArgs: ['--locked'], main: 'toy_app', crates: [{ crate: 'toy_app', package: 'toy-app', dir: 'app', publishDir: 'Lean/App', moduleRoot: 'Toy.App' }] };
+    const refused = attempt(ws, out, lone);
     assert.equal(refused.status, 8, refused.stdout);
     assert.match(refused.result.message, /a patch removed the path dependency on toy_lib \(from toy-app\)/);
-    const accepted = attempt(ws, out, { ...single, dropped: dropped('toy_lib') });
+    const accepted = attempt(ws, out, { ...lone, dropped: dropped('toy_lib') });
     assert.equal(accepted.status, 0, accepted.stdout);
   });
 
