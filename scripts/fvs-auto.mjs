@@ -1959,7 +1959,8 @@ const recordedLeanChecks = (root) => {
   const rows = Array.isArray(run?.units) ? run.units : run !== null && typeof run === 'object' ? [run] : [];
   return rows.flatMap((unit) => (Array.isArray(unit?.leanChecks) ? unit.leanChecks : []).map((check) => ({ ...check, unit: typeof unit.crate === 'string' ? unit.crate : '(unnamed)' })));
 };
-const leanCheckKeys = (checks) => checks.map((check) => [check.unit, check.relativePath, check.fileSha256, check.blockSha256].join('\0')).sort();
+// A check is the same one when the unit, the file, the module Lake maps it to, the number of items and both digests agree.
+const leanCheckKeys = (checks) => checks.map((check) => JSON.stringify([check.unit, check.relativePath, check.module ?? null, check.items ?? null, check.fileSha256, check.blockSha256])).sort();
 // Why a receipt's record of the stitch checks is not the recorded extraction's, or null. The extraction records a
 // Lean check block and the digest of the file it ends, and an acceptance is the build check holding the commit to
 // exactly those; a receipt made before the stitch checks, or for other checks than the ones now recorded, is not one.

@@ -344,6 +344,85 @@ describe('the proof phase over several crates', () => {
     });
   });
 
+  // A crate stitched to another records, for each file it stitched, the Lean check block it appended and
+  // the digest of the file (the shape the extraction engine writes). The receipt counts only while the
+  // build check lists exactly those checks, as the build check writes them (without the block's length).
+  describe('the stitch checks of a stitched crate', () => {
+    const CHECK = { file: 'Funs.lean', relativePath: 'formal/extraction/libcrux_hmac/Funs.lean', module: 'Formal.Extraction.libcrux_hmac.Funs', items: 1,
+      blockSha256: 'd'.repeat(64), blockBytes: 120, fileSha256: 'e'.repeat(64) };
+    const stitched = (directory) => [
+      unit(directory, 'libcrux_hmac', [fn(HMAC_ITEM, 'src/hmac.rs', 10)], { stitch: [{ provider: 'libcrux_sha2', replaced: [SHA2_ITEM], files: ['Funs.lean'] }], leanChecks: [CHECK] }),
+      unit(directory, 'libcrux_sha2', [fn(SHA2_ITEM, 'src/hacl.rs', 5)]),
+    ];
+    const entry = (fields = {}) => { const { blockBytes, ...listed } = CHECK; return { unit: 'libcrux_hmac', ...listed, ...fields }; };
+    const withChecks = (entries, fields = {}) => ({ integrity: { semantic: LEAN_COMPARISON, stitchChecks: { units: 1, files: entries.length, items: entries.length, builtChecked: true, entries, ...fields } } });
+    const counts = (root) => { const result = view(root); return { result, accepted: result.crates.units.some((row) => row.accepted === true) }; };
+
+    it('is done when the receipt lists the recorded checks, and each crate is accepted', () => {
+      const { root, head } = proofPhase(stitched);
+      receipt(root, head, bothBuilt(), withChecks([entry()]));
+      const { result, accepted } = counts(root);
+      assert.equal(result.phase, 'done', result.nextAction);
+      assert.equal(accepted, true);
+      assert.deepEqual(result.crates.units.map((row) => row.accepted), [true, true]);
+    });
+
+    it('does not count a receipt that lists none, though it is accepted and every statement built', () => {
+      const { root, head } = proofPhase(stitched);
+      receipt(root, head, bothBuilt());
+      const { result, accepted } = counts(root);
+      assert.equal(result.phase, 'proofs');
+      assert.match(result.nextAction, /does not count: the recorded extraction holds Lean checks for stitched files, but the receipt carries no record of them/);
+      assert.equal(accepted, false, 'no crate is accepted');
+    });
+
+    it('does not count a receipt whose checks differ from the recorded ones in any field of the key', () => {
+      const { root, head } = proofPhase(stitched);
+      for (const [name, entries, extra] of [
+        ['another crate', [entry({ unit: 'libcrux_sha2' })]],
+        ['another file', [entry({ relativePath: 'formal/extraction/libcrux_hmac/Other.lean' })]],
+        ['another module', [entry({ module: 'Formal.Extraction.libcrux_hmac.Other' })]],
+        ['no module where one is recorded', [entry({ module: null })]],
+        ['another count of aliases', [entry({ items: 2 })]],
+        ['another file digest', [entry({ fileSha256: '1'.repeat(64) })]],
+        ['another block digest', [entry({ blockSha256: '2'.repeat(64) })]],
+        ['one more check than the extraction recorded', [entry(), entry({ unit: 'libcrux_sha2' })]],
+        ['no check at all', []],
+        ['the checks listed but Lake did not compile each stitched file', [entry()], { builtChecked: false }],
+      ]) {
+        receipt(root, head, bothBuilt(), withChecks(entries, extra));
+        const { result, accepted } = counts(root);
+        assert.equal(result.phase, 'proofs', name);
+        assert.match(result.nextAction, /does not count: (the Lean checks that the recorded extraction holds|its stitch checks did not include)/, name);
+        assert.equal(accepted, false, name);
+      }
+      receipt(root, head, bothBuilt(), withChecks([entry()]));
+      assert.equal(view(root).phase, 'done');
+    });
+
+    it('does not count a receipt that lists checks when the extraction records none, and one made for other checks than now recorded', () => {
+      const plain = proofPhase();
+      receipt(plain.root, plain.head, bothBuilt(), withChecks([entry()]));
+      assert.equal(counts(plain.root).result.phase, 'proofs');
+      const { root, head } = proofPhase(stitched);
+      receipt(root, head, bothBuilt(), withChecks([entry()]));
+      assert.equal(view(root).phase, 'done');
+      const state = fixtures.readState(root);
+      state.extraction.run.units[0].leanChecks = [{ ...CHECK, fileSha256: '3'.repeat(64) }];
+      fixtures.writeState(root, state);
+      assert.equal(counts(root).result.phase, 'proofs', 'the extraction was recorded again with another file');
+    });
+
+    it('holds a project narrowed to the stitched crate to the same rule', () => {
+      const targets = { crates: ['libcrux_hmac'], nonTargets: [{ crate: 'libcrux_sha2', decision: 'Not verified; its behaviour is assumed.' }] };
+      const { root, head } = proofPhase(stitched, { targets });
+      receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec')])]);
+      assert.equal(counts(root).result.phase, 'proofs');
+      receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec')])], withChecks([entry()]));
+      assert.equal(view(root).phase, 'done');
+    });
+  });
+
   it('a project the owner narrowed to one crate is judged on that crate alone', () => {
     const targets = { crates: ['libcrux_hmac'], nonTargets: [{ crate: 'libcrux_sha2', decision: 'Not verified; its behaviour is assumed.' }] };
     const { root, head } = proofPhase(hmacAndSha2, { targets });
