@@ -1349,20 +1349,25 @@ describe('the permissions page', () => {
     const end = raw.indexOf('\n## ', start + 1) + 1;
     assert.equal(raw.indexOf('## Where the file goes'), end, 'it ends where "Where the file goes" starts');
     const section = raw.slice(start, end).replace(/`/g, '').replace(/\s+/g, ' ');
-    assert.ok(section.split(' ').length < 350, 'it stays short');
+    assert.ok(section.split(' ').length < 380, 'it stays short');
     assert.match(section, /skip-permissions/);
     assert.match(section, /only inside an isolated sandbox or on a cloud machine/);
     assert.match(section, /Never use it on a personal machine with broad access/);
     assert.match(section, /nothing prompts, so the rules in "What FVS never allows" \(no GitHub comments or reviews, no merges, no pushes to an upstream\) are no longer enforced by a prompt/);
     assert.match(section, /A token limited to the project's fork/);
     assert.match(section, /A posting guard in the sandbox/);
-    assert.match(section, /gh wrapper ahead of the real gh on PATH that refuses the commands that comment on or review/);
+    assert.match(section, /gh wrapper ahead of the real gh on PATH that refuses the commands that comment on, review, mark ready or merge a pull request/);
+    assert.match(section, /The wrapper only catches mistakes: a program in the sandbox can call the API directly\. The token limits where a comment can land, not whether one is posted/);
+    assert.doesNotMatch(section, /the limit that holds is the scope of the token/i);
     assert.match(section, /Branch protection on the fork/);
-    assert.match(section, /are for runs with prompts\. In a skip-permissions sandbox they are optional/);
+    assert.match(section, /require a pull request with an approving review from someone else, block force pushes and deletion, and apply the rules to administrators too/);
+    // The check and the allowlist can be skipped; the push command cannot, because workers are briefed to use it.
+    assert.match(section, /are for runs with prompts; in a skip-permissions sandbox you can skip them\. The push command is different: workers are briefed to push with it and never with git push, so its destination still has to be recorded/);
+    assert.doesNotMatch(section, /push command[^.]*optional|optional[^.]*push command/i);
     assert.match(section, /cooperative guard and not a security boundary/);
     assert.doesNotMatch(section, /orca|docker|\bAO\b|Orchestrator|\brtk\b/i, 'a stock user is the baseline: no one\'s own tools are named');
     assert.doesNotMatch(section, /pushes only|asks as usual|fails safe/i);
-    assert.match(raw.split('</overview>')[0].replace(/\s+/g, ' '), /see "Unattended runs in a sandbox"/);
+    assert.match(raw.split('</overview>')[0].replace(/\s+/g, ' '), /keeps the same safety rules and enforces them by other means: see "Unattended runs in a sandbox"/);
   });
 
   it('every surface that describes the push command says it is a guard with limits, and none promises more', () => {
