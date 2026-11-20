@@ -181,3 +181,29 @@ describe('the scope an attempt carries', () => {
     assert.equal(recorded.result.attempt.scope.kind, 'single-crate');
   });
 });
+
+describe('the scope the crates command shows', () => {
+  it('shows a checkout the scope prepare would record, without preparing a copy, and a copy the scope it recorded', () => {
+    const ws = workspace();
+    const before = fs.readdirSync(ws.root).sort();
+    const checkout = run(ws, ['crates', '--project-root', ws.project, '--release', RELEASE]);
+    assert.equal(checkout.status, 0, checkout.stdout);
+    assert.deepEqual(checkout.result.scope, { kind: 'multi-crate', basis: 'cargo', libraryCrates: ['toy_app', 'toy_lib'] });
+    assert.deepEqual(fs.readdirSync(ws.root).sort(), before, 'no copy is made');
+    const prepared = prepare(ws, true);
+    assert.deepEqual(scopeOf(prepared), checkout.result.scope, 'the checkout form and prepare agree');
+    assert.deepEqual(run(ws, ['crates', '--out', prepared.out, '--release', RELEASE]).result.scope, checkout.result.scope);
+
+    // A copy prepared without the release records no inventory, and crates says unknown, not single-crate.
+    const unknown = prepare(ws, false);
+    assert.equal(scopeOf(unknown).kind, 'unknown');
+    assert.equal(run(ws, ['crates', '--out', unknown.out, '--release', RELEASE]).result.scope.kind, 'unknown');
+  });
+
+  it('shows a lone crate as single-crate, with its one library crate', () => {
+    const ws = solo();
+    const checkout = run(ws, ['crates', '--project-root', ws.project, '--release', RELEASE]);
+    assert.equal(checkout.status, 0, checkout.stdout);
+    assert.deepEqual(checkout.result.scope, { kind: 'single-crate', basis: 'cargo', libraryCrates: ['toy_solo'] });
+  });
+});

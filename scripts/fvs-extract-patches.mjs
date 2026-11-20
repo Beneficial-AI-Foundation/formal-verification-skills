@@ -1693,6 +1693,10 @@ function listCrates(flags) {
     workspaceRoot: relativeTo(tree, metadata.workspace_root),
     crates: roster.crates,
     order: roster.order,
+    // The scope prepare records for this checkout, so a recorded source commit can be classified
+    // without preparing a copy: a checkout is read by cargo here exactly as prepare reads it with
+    // the release, and a copy shows the scope its manifest recorded.
+    scope: prepared ? recordedScope(prepared) : cargoScope({ original: { crates: view.crates } }),
     unlisted: view.unlisted,
     ...(view.outside.length > 0 ? { outside: view.outside.map(({ package: name, manifest }) => ({ package: name, manifest })) } : {}),
   };

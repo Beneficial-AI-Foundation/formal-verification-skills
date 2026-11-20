@@ -345,11 +345,13 @@ manifest in a directory above the project or the copy. Anything else is `kind: '
 reason, and a single-crate `attempt` on an unknown scope is refused (prepare a new copy with
 `--release`); so is a copy whose manifest records no scope (prepared before it was recorded). The
 attempt, each unit's record and `attempt-status` (`run.scope`) carry the scope; `status --out` shows it
-for a copy that has no attempt.
+for a copy that has no attempt. `crates` answers with the same `scope` object: for a checkout, the scope that
+`prepare --release` would record (cargo reads it the same way), so a checkout at a recorded source commit is
+classified without preparing a copy; for a copy, the scope its manifest recorded.
 
 ```bash
 RELEASE_DIR=...   # the release directory the spec names as `release` (relative to the project root, or absolute)
-node "$PATCH_ENGINE" crates --project-root "$CRATE_ROOT" --release "$RELEASE_DIR"   # a fresh checkout: every in-repo crate, and the extraction.inputs a copy needs
+node "$PATCH_ENGINE" crates --project-root "$CRATE_ROOT" --release "$RELEASE_DIR"   # a fresh checkout: every in-repo crate, the `scope` prepare would record, and the extraction.inputs a copy needs
 node "$PATCH_ENGINE" crates --out "$OUT" --release "$RELEASE_DIR"   # advisory: in-repo crates, their in-repo dependencies, an order (providers first)
 node "$PATCH_ENGINE" attempt --out "$OUT" --spec "$EXTRACT_SPEC"     # a spec with a crates list records one attempt chain per crate
 # then, for each crate in the attempt's `order` (providers before the crates that import them):
