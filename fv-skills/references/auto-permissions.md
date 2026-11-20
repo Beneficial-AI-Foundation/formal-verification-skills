@@ -358,29 +358,29 @@ prompts in a session still depends on your other rules and permission mode:
 ## Unattended runs in a sandbox
 
 Some runs start with the permission prompts turned off (skip-permissions in Claude Code, or the same switch in
-another tool). Use that mode only inside an isolated sandbox or on a cloud machine that bounds the damage. Never
+another tool). Use that mode only inside an isolated sandbox or on a cloud machine. Never
 use it on a personal machine with broad access to your files, accounts and credentials.
 
 With skip-permissions nothing prompts, so the rules in "What FVS never allows" (no GitHub comments or reviews, no
 merges, no pushes to an upstream) are no longer enforced by a prompt. Enforce them by other means, outside the
 agent:
 
-- **A token limited to the project's fork.** Give the sandbox a GitHub token for that one repository and no
-  other, with only the access the run needs.
+- **A token limited to the project's fork.** Give the sandbox a GitHub token for that one repository, with
+  only the access the run needs.
 - **A posting guard in the sandbox.** A token that can open draft pull requests can usually also comment, review
   and merge. Put a `gh` wrapper ahead of the real `gh` on `PATH` that refuses the commands that comment on, review,
   mark ready or merge a pull request, and `gh api` calls to those endpoints. The wrapper only catches mistakes: a
   program in the sandbox can call the API directly. The token limits where a comment can land, not whether one is
   posted.
 - **Branch protection on the fork.** On its main branches, require a pull request and forbid force pushes and
-  branch deletion, so that a direct push to them is stopped. It does not stop a merge made through a pull request:
-  the posting guard refuses that, and only the owner merges. A team with a second reviewer can also require an
-  approving review, not enforced on administrators: agents usually act through the owner's own account, and the owner
-  could not then merge their own pull requests.
+  branch deletion, and apply the rule to administrators too: GitHub exempts them by default, and an agent that works
+  through the owner's own account acts as one. A direct push is then stopped. A merge through a pull request is not:
+  the posting guard refuses it, and only the owner merges. A team with a second reviewer can also require an
+  approving review, but the owner then needs that reviewer to merge their own pull requests.
 
 In a skip-permissions sandbox only the permission check and the allowlist are optional; the push command and init's
-destination step are not. Workers push with the push command and never with `git push`, because it binds the push to
-the recorded destination and records the result. With no destination recorded, a worker's first push is refused and
+destination step are not. Workers push with the push command and never with `git push`, because it pushes to the
+destination recorded at init and records the result. With no destination recorded, a worker's first push is refused and
 the worker stops; init records it in a separate step, also when you skip the check. The command is a cooperative
 guard and not a security boundary (see "What the command is"), so the token and the branch protection are what limit
 a push.

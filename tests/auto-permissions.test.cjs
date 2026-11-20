@@ -1361,11 +1361,11 @@ describe('the permissions page', () => {
     assert.doesNotMatch(section, /the limit that holds is the scope of the token/i);
     assert.match(section, /Branch protection on the fork/);
     // The baseline protection, and the approving review only as an option that is not enforced on administrators.
-    assert.match(section, /require a pull request and forbid force pushes and branch deletion, so that a direct push to them is stopped\. It does not stop a merge made through a pull request: the posting guard refuses that, and only the owner merges/);
-    assert.match(section, /A team with a second reviewer can also require an approving review, not enforced on administrators: agents usually act through the owner's own account, and the owner could not then merge their own pull requests/);
-    assert.doesNotMatch(section, /approving review from someone else|apply the rules to administrators too|a push or a merge made with the token is stopped/i);
+    assert.match(section, /require a pull request and forbid force pushes and branch deletion, and apply the rule to administrators too: GitHub exempts them by default, and an agent that works through the owner's own account acts as one\. A direct push is then stopped\. A merge through a pull request is not: the posting guard refuses it, and only the owner merges/);
+    assert.match(section, /A team with a second reviewer can also require an approving review, but the owner then needs that reviewer to merge their own pull requests/);
+    assert.doesNotMatch(section, /approving review from someone else|not enforced on administrators|so that a direct push to them is stopped|binds the push/i);
     // The check and the allowlist can be skipped; the push command and init's destination step cannot.
-    assert.match(section, /In a skip-permissions sandbox only the permission check and the allowlist are optional; the push command and init's destination step are not\. Workers push with the push command and never with git push, because it binds the push to the recorded destination and records the result\. With no destination recorded, a worker's first push is refused and the worker stops; init records it in a separate step, also when you skip the check/);
+    assert.match(section, /In a skip-permissions sandbox only the permission check and the allowlist are optional; the push command and init's destination step are not\. Workers push with the push command and never with git push, because it pushes to the destination recorded at init and records the result\. With no destination recorded, a worker's first push is refused and the worker stops; init records it in a separate step, also when you skip the check/);
     assert.doesNotMatch(section, /push command (is|are) optional/i);
     assert.match(section, /cooperative guard and not a security boundary/);
     assert.doesNotMatch(section, /orca|docker|\bAO\b|Orchestrator|\brtk\b/i, 'a stock user is the baseline: no one\'s own tools are named');
