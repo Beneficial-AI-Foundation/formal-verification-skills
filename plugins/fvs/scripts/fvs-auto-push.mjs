@@ -23,9 +23,9 @@
 // Three calls do look for one: the first, which finds it; its round trip from the top of the work tree, which checks
 // it; and a read of the shared git directory of the recorded project root.
 // The push uses an explicit full refspec without `+`, --no-follow-tags and -c push.followTags=false,
-// --recurse-submodules=no, -c push.pushOption= (no push option from any configuration), -c core.hooksPath=/dev/null (no
-// repository hook), --porcelain and -c core.abbrev=no (full object ids), and every git call runs without the GIT_*
-// variables listed in cleanEnvironment. The result is appended to .formalising/auto-fv/pushes.jsonl of the recorded
+// --recurse-submodules=no, -c push.pushOption= (no push option from any configuration), --no-verify (no pre-push hook,
+// also one set with hook.<name>.event) and -c core.hooksPath=/dev/null (no hook in any hooks folder), --porcelain and
+// -c core.abbrev=no (full object ids), and every git call runs without the GIT_* variables listed in cleanEnvironment. The result is appended to .formalising/auto-fv/pushes.jsonl of the recorded
 // project root. It names only object ids that the push reported: a new or up-to-date branch has none in git's summary.
 // When git does not report a result for the branch (a timeout, a lost connection), the outcome is `unknown`, and the
 // destination may have changed.
@@ -52,8 +52,8 @@ export const CONTRACT = {
     'It refuses a branch that is not a plain local branch under a recorded namespace. It pushes to the destination address recorded at init, and refuses that address when a URL rewrite rule applies to it at the time of the check.',
   ],
   hardening: [
-    'Repository hooks are ignored for this push (core.hooksPath is set to /dev/null), so your own pre-push checks do not run for it.',
-    'git runs without GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR, GIT_INDEX_FILE, GIT_OBJECT_DIRECTORY, GIT_ALTERNATE_OBJECT_DIRECTORIES, GIT_CONFIG, GIT_CONFIG_COUNT, the GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n pairs, GIT_CONFIG_PARAMETERS, GIT_NAMESPACE and GIT_EXEC_PATH. Settings that reach git only through those variables are not used. Your normal ssh, credential and transport settings stay.',
+    'The push is made with --no-verify, which skips the pre-push hook whether it is a file in a hooks folder or is set in git configuration (hook.<name>.event), and core.hooksPath is set to /dev/null so that git finds no hook in any hooks folder. Your own pre-push checks do not run for it.',
+    'git runs without GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR, GIT_INDEX_FILE, GIT_OBJECT_DIRECTORY, GIT_ALTERNATE_OBJECT_DIRECTORIES, GIT_CONFIG, GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_CONFIG_NOSYSTEM, GIT_CONFIG_COUNT, the GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n pairs, GIT_CONFIG_PARAMETERS, GIT_NAMESPACE and GIT_EXEC_PATH. Settings that reach git only through those variables are not used. The configuration files that git reads by default stay, and so do your ssh, credential and transport settings that are not set through those variables.',
     'No push option is sent.',
   ],
   trusts: [
@@ -117,13 +117,16 @@ export function destinationProblem(where, remote, repo, host) {
 // belongs to another.
 const placed = (where) => (where ? ['--git-dir', where.gitDir, '--work-tree', where.top] : []);
 
-// The variables that move git to another repository, change where it finds objects, or add configuration that no file
-// shows. They are removed from every git call, so the checks and the push see the same configuration and none of them
-// can be redirected by what the calling session happened to export. The user's own ssh, credential and transport settings
-// are not on this list and stay: GIT_SSH_COMMAND, GIT_SSH, GIT_ASKPASS, SSH_AUTH_SOCK, GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM,
-// HOME, XDG_CONFIG_HOME, PATH and the rest. Settings that reach git only through a removed variable are not used.
+// The variables that move git to another repository, change where it finds objects, name the configuration files it
+// reads in place of the default ones, or add configuration that no file shows. They are removed from every git call, so
+// the checks and the push see the same configuration and none of them can be redirected by what the calling session
+// happened to export. The configuration files that git reads by default stay (the files under HOME and XDG_CONFIG_HOME,
+// and the system file), and so do the user's own ssh, credential and transport settings that are not on this list:
+// GIT_SSH_COMMAND, GIT_SSH, GIT_ASKPASS, SSH_AUTH_SOCK, HOME, XDG_CONFIG_HOME, PATH and the rest. Settings that reach git
+// only through a removed variable are not used: a user whose only global configuration is a file named by
+// GIT_CONFIG_GLOBAL has that file ignored for these calls.
 const DROPPED = new Set(['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES',
-  'GIT_CONFIG', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_PARAMETERS', 'GIT_NAMESPACE', 'GIT_EXEC_PATH']);
+  'GIT_CONFIG', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_PARAMETERS', 'GIT_NAMESPACE', 'GIT_EXEC_PATH']);
 const DROPPED_PREFIXES = ['GIT_CONFIG_KEY_', 'GIT_CONFIG_VALUE_'];
 export function cleanEnvironment(env) {
   return Object.fromEntries(Object.entries(env).filter(([name]) => !DROPPED.has(name) && !DROPPED_PREFIXES.some((prefix) => name.startsWith(prefix))));
@@ -211,7 +214,7 @@ export function initDestination(root, remote, repo, host, prefixes, env = proces
   if (urls.length === 0) return { problem: { code: 'remote-ambiguous', message: `git remote ${remote} has no push URL` } };
   const rewritten = rewriteProblem(found, urls[0], env);
   if (rewritten) return { problem: { code: 'destination-rewritten', message: rewritten } };
-  return { record: destinationRecord({ projectRoot: root, commonDir: found.commonDir, url: urls[0], host: host.toLowerCase(), repo, prefixes }), commonDir: found.commonDir };
+  return { record: destinationRecord({ projectRoot: root, commonDir: found.commonDir, url: urls[0], host: host.toLowerCase(), repo, prefixes }), commonDir: found.commonDir, where: found };
 }
 
 // Where the command runs, captured once: the git directory of this work tree (a linked worktree has its own), the shared
@@ -242,6 +245,18 @@ export function locate(cwd, env) {
   }
   return found;
 }
+
+// For the permissions helper, which has to ask the same questions about a repository: where it is, found the way the push
+// command finds it, or why it cannot be identified. Never throws a refusal.
+export function identify(root, env = process.env) {
+  try { return { where: locate(root, env) }; } catch (error) {
+    if (error instanceof Refuse) return { problem: { code: error.code, message: error.message } };
+    throw error;
+  }
+}
+
+// A read-only git call placed in an identified repository, with the cleaned environment, for the same helper.
+export const runGit = (where, args, env) => git(args, { where, env });
 
 export function readRecord(commonDir) {
   const file = path.join(commonDir, RECORD_NAME);
@@ -343,9 +358,10 @@ export function run(argv, { cwd = process.cwd(), env = process.env, now = () => 
     const refspec = `refs/heads/${branch}:refs/heads/${branch}`;
     // -c push.pushOption= empties the list of push options from every configuration file and the environment: options
     // go to the receiving side, which can act on them, and this command sends none.
-    // -c core.hooksPath=/dev/null: no repository hook runs for this push (git finds no hook below /dev/null), whether the
-    // hooks folder is the default one or named by core.hooksPath in any configuration file.
-    const pushed = git(['-c', 'push.followTags=false', '-c', 'push.pushOption=', '-c', 'core.hooksPath=/dev/null', '-c', 'core.abbrev=no', 'push', '--porcelain', '--no-follow-tags', '--recurse-submodules=no', record.url, refspec],
+    // --no-verify skips the pre-push hook, including one that is set in git configuration with hook.<name>.event, which
+    // core.hooksPath does not turn off. -c core.hooksPath=/dev/null makes git find no hook in any hooks folder, whether it
+    // is the default one or named by core.hooksPath in any configuration file. Each is kept for what the other does not do.
+    const pushed = git(['-c', 'push.followTags=false', '-c', 'push.pushOption=', '-c', 'core.hooksPath=/dev/null', '-c', 'core.abbrev=no', 'push', '--porcelain', '--no-follow-tags', '--recurse-submodules=no', '--no-verify', record.url, refspec],
       { where: found, env, stdio: ['inherit', 'pipe', 'inherit'] });
     const seen = parsePorcelain(pushed.stdout, branch);
     const status = STATUS[seen.flag] ?? null;

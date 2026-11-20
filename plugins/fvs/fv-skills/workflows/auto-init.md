@@ -344,9 +344,10 @@ If nothing prompted, say so and write nothing. If some steps prompted:
    to the recorded destination. A `*` in a rule matches the rest of the command text, so the rule cannot check
    arguments and the command does. Say what the command is as the helper prints it (`pushContract` in the `plan`
    output, `contract` in every preview), not in your own words: it is a cooperative guard with hardening and not a
-   security boundary. It checks its own command line, the repository and the destination. It ignores repository
-   hooks for the push, so the owner's own pre-push checks do not run for it, and it drops the listed git
-   environment variables. It trusts the owner's git setup, as any push the owner runs: ssh and transport
+   security boundary. It checks its own command line, the repository and the destination. It does not run
+   repository hooks for the push (it passes `--no-verify` and reads no hooks folder), so the owner's own pre-push
+   checks do not run for it, and it drops the listed git environment variables, among them the ones that name
+   configuration files. It trusts the owner's git setup, as any push the owner runs: ssh and transport
    wrappers, credential helpers, URL rewrite rules, the record file and FVS itself, so anything that runs as the
    owner's user. Also say that a worker that runs a plain `git push` is not covered, and that the owner's other
    rules and permission mode decide it. Say that branch protection on the fork is still recommended. Never

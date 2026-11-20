@@ -28,7 +28,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
-import { CONTRACT, RECORD_NAME, WORD, checkPrefixShape, contractText, initDestination, parseRemoteUrl } from './fvs-auto-push.mjs';
+import { CONTRACT, RECORD_NAME, WORD, checkPrefixShape, contractText, initDestination, parseRemoteUrl, runGit } from './fvs-auto-push.mjs';
 
 export { parseRemoteUrl };
 export const RECORD_FILE = '.formalising/auto-fv/permissions.json';
@@ -435,19 +435,29 @@ function checkNoLegacyPushRules(root) {
   });
 }
 
-function gitStatusOf(root, relative) {
-  const git = (...args) => spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' });
-  if (git('rev-parse', '--git-dir').status !== 0) return 'not-a-git-repository';
-  if (git('check-ignore', '-q', relative).status === 0) return 'ignored';
-  return git('ls-files', '--error-unmatch', relative).status === 0 ? 'tracked' : 'untracked-not-ignored';
+// Where a settings file stands in git. The question goes to the repository that the push command's own identification
+// found (`where`), with the same cleaned environment, so an inherited GIT_DIR cannot answer for another repository. The
+// answer is `unknown` when that repository was not identified, or when git gives an answer that is not a plain yes or no:
+// such an answer is never turned into a status.
+export function gitStatusOf(where, root, relative) {
+  if (!where) return 'unknown';
+  const target = path.relative(where.top, path.join(root, relative));
+  const ask = (...args) => runGit(where, args).status;
+  const ignored = ask('check-ignore', '-q', '--', target);
+  if (ignored === 0) return 'ignored';
+  if (ignored !== 1) return 'unknown';
+  const listed = ask('ls-files', '--error-unmatch', '--', target);
+  return listed === 0 ? 'tracked' : listed === 1 ? 'untracked-not-ignored' : 'unknown';
 }
 
-// Claude Code reads settings.local.json from the main checkout, so a copy in a linked worktree would be ignored.
-function checkMainCheckout(root) {
-  const git = (flag) => spawnSync('git', ['-C', root, 'rev-parse', '--path-format=absolute', flag], { encoding: 'utf8' });
-  const dir = git('--git-dir');
-  const common = git('--git-common-dir');
-  if (dir.status === 0 && common.status === 0 && dir.stdout.trim() !== common.stdout.trim()) {
+// Claude Code reads settings.local.json from the main checkout, so a copy in a linked worktree would be ignored. The main
+// checkout is the one whose git directory is the shared git directory. Both come from the identification that the push
+// command makes (`where`), with a cleaned environment; when there is none, nothing is written.
+export function checkMainCheckout(root, where) {
+  if (!where) {
+    refuse('local-needs-main-checkout', `${root} could not be identified as the main checkout of a git repository, so .claude/settings.local.json is not written; run init in the main checkout or use --target shared`);
+  }
+  if (where.gitDir !== where.commonDir) {
     refuse('local-needs-main-checkout', `${root} is a linked worktree; Claude Code reads .claude/settings.local.json from the main checkout, so run init there or use --target shared`);
   }
 }
@@ -535,17 +545,17 @@ function writeAllowlist(flags) {
   for (const text of allow) { const problem = ruleProblem('allow', text); if (problem) refuse('forbidden-rule', `${text}: ${problem}`); }
   const pushRule = picked.some((step) => step.id === 'git-push' && step[runtime].length > 0);
   const recorded = pushRule ? requireDestination(destination) : null;
-  return runtime === 'claude' ? writeClaude(flags, root, catalog, picked, allow, recorded) : writeCodex(flags, root, catalog, picked, recorded);
+  return runtime === 'claude' ? writeClaude(flags, root, catalog, picked, allow, recorded, destination.where) : writeCodex(flags, root, catalog, picked, recorded, destination.where);
 }
 
-function writeClaude(flags, root, catalog, picked, allow, recorded) {
+function writeClaude(flags, root, catalog, picked, allow, recorded, where) {
   if (allow.length === 0) {
     refuse('nothing-to-write', 'none of these steps can be written as a Claude Code rule; their prompts stay unresolved, and the user approves them when they appear', { reasons: Object.fromEntries(picked.map((s) => [s.id, s.claudeNote ?? ''])) });
   }
   const target = flags.target ?? 'shared';
   if (!['shared', 'local'].includes(target)) refuse('invalid-input', '--target must be shared or local');
   const relative = `.claude/${target === 'shared' ? 'settings.json' : 'settings.local.json'}`;
-  if (target === 'local') checkMainCheckout(root);
+  if (target === 'local') checkMainCheckout(root, where);
   checkNoLegacyPushRules(root);
   const before = snapshotOf(root, relative);
   let existing = {};
@@ -554,7 +564,7 @@ function writeClaude(flags, root, catalog, picked, allow, recorded) {
   }
   const { merged, added } = mergeClaude(existing, allow);
   const preview = {
-    runtime: 'claude', target, file: relative, projectRoot: root, resolvedPath: before.resolvedPath, viaLink: before.viaLink, existingSha256: before.sha256, gitStatus: gitStatusOf(root, relative),
+    runtime: 'claude', target, file: relative, projectRoot: root, resolvedPath: before.resolvedPath, viaLink: before.viaLink, existingSha256: before.sha256, gitStatus: gitStatusOf(where, root, relative),
     appliesTo: target === 'shared'
       ? 'Claude Code reads .claude/settings.json from each session\'s own directory, and its rules apply once the folder is trusted. A worker worktree sees it only if the file is committed or .claude is linked into the worktree.'
       : 'Claude Code reads .claude/settings.local.json from the main checkout in every worktree and keeps it out of git; its rules apply without the trust step while the file stays untracked.',
@@ -575,7 +585,7 @@ function writeClaude(flags, root, catalog, picked, allow, recorded) {
   }
   recordAllowlist(root, relative, { allow: added.allow });
   return {
-    code: 'written', ...preview, realPath: real, gitStatus: gitStatusOf(root, relative),
+    code: 'written', ...preview, realPath: real, gitStatus: gitStatusOf(where, root, relative),
     verified: false, verification: 'The file was re-read as JSON and holds the rules. Claude Code has no offline rule evaluator, so a live recheck is the only evidence that a step stopped prompting.',
     notes: [
       'Claude Code reloads settings files while running; if a step still prompts, run recheck for that step (see the permissions page).',
@@ -621,7 +631,7 @@ function evaluateCodex(text, commands) {
   }
 }
 
-function writeCodex(flags, root, catalog, picked, recorded) {
+function writeCodex(flags, root, catalog, picked, recorded, where) {
   const rules = picked.flatMap((step) => step.codex);
   if (rules.length === 0) refuse('nothing-to-write', 'none of these steps can be written as a Codex rule; their prompts stay unresolved, and the user approves them when they appear', { reasons: Object.fromEntries(picked.map((s) => [s.id, s.codexNote ?? ''])) });
   const relative = '.codex/rules/fvs-auto.rules';
@@ -634,7 +644,7 @@ function writeCodex(flags, root, catalog, picked, recorded) {
   }
   const before = snapshotOf(root, relative);
   const preview = {
-    runtime: 'codex', file: relative, projectRoot: root, resolvedPath: before.resolvedPath, viaLink: before.viaLink, existingSha256: before.sha256, gitStatus: gitStatusOf(root, relative), steps: picked.map((s) => s.id), text,
+    runtime: 'codex', file: relative, projectRoot: root, resolvedPath: before.resolvedPath, viaLink: before.viaLink, existingSha256: before.sha256, gitStatus: gitStatusOf(where, root, relative), steps: picked.map((s) => s.id), text,
     notWritten: Object.fromEntries(picked.filter((s) => s.codex.length === 0).map((s) => [s.id, s.codexNote ?? ''])),
     ...(recorded ? { push: pushPreview(catalog, recorded) } : {}),
     appliesTo: 'Codex loads project rules only when the project .codex/ folder is trusted, and scans rules when a session starts: they take effect in a new session.',
