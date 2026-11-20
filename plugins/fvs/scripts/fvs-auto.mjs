@@ -1464,9 +1464,11 @@ const allowedAxiomsBytes = (crates) => Buffer.from(`${JSON.stringify({ schema: A
 
 // The path of the project root inside its git working tree, posix style: what the build check puts
 // in front of a project file in its receipt. Empty when the root is the top or in no repository.
+// The working tree's top is a real path, so the root is compared by its real path too: a project
+// reached through a symbolic link (a temporary folder on macOS, say) has the same prefix.
 function repositoryPrefix(root) {
   const top = gitWorkingTree(root);
-  return top === null ? '' : path.relative(top, root).split(path.sep).join('/');
+  return top === null ? '' : path.relative(top, fs.realpathSync(root)).split(path.sep).join('/');
 }
 
 // The live spec files of each target crate, as the build check reports them. A spec file covers one
@@ -1513,8 +1515,10 @@ export function allowedAxiomList(root, state, context, commit, specs = null) {
   const trusted = new Set();
   const accepted = new Map((loadExternals(root)?.records ?? []).filter((record) => record.status === 'assumption-accepted').map((record) => [record.id, record]));
   const read = (file, expectedSha256) => {
-    const relative = path.relative(root, path.resolve(root, file));
-    if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
+    // A recorded path may name the project by its real path or by the link it was reached through.
+    const inside = (base) => path.relative(base, path.resolve(base, file));
+    const relative = [root, fs.realpathSync(root)].map(inside).find((candidate) => candidate !== '' && !candidate.startsWith('..') && !path.isAbsolute(candidate)) ?? '';
+    if (relative === '') {
       problems.push(`${file} is outside this project (${root}), so it cannot be read at ${commit}: the extraction was recorded from another checkout, so record it again from this one`);
       return null;
     }
@@ -1960,6 +1964,10 @@ export function initState({ projectRoot, choices, confirmOverwrite = false, plat
   return { ...readState({ projectRoot: root }), code: recorded ? 'updated' : 'created', message: `setup state written to ${statePath(root)}${warning}` };
 }
 
+// How a worker pushes a proof branch: with the FVS push command, which pushes one branch to the
+// destination recorded at init, never with git push.
+const PUSH_STEP = 'push with the FVS push command (`node <FVS scripts folder>/fvs-auto-push.mjs --branch fvs/<name>`, never git push)';
+
 // The phase, the next action and its warnings, derived together so they never
 // disagree. After a successful extraction the next step is the spec phase: the
 // orchestrator spawns stock AO workers and runs the engine steps itself, so no
@@ -2024,7 +2032,7 @@ function progress(root, state, specs = null) {
     if (allowed && (allowed.problems.length > 0 || receipt.allowAxioms?.sha256 !== allowed.sha256)) {
       return { phase: 'proofs', warnings,
         nextAction: allowed.problems.length > 0
-          ? `The build check accepted the draft proof PR ${proofPr.url} at ${proofPr.head}, but the allowed axioms cannot be derived at that commit: ${allowed.problems.join('; ')}. Fix what is named, push, record the new head with record-pr --kind proof, and rerun the build check on it.` + suffix
+          ? `The build check accepted the draft proof PR ${proofPr.url} at ${proofPr.head}, but the allowed axioms cannot be derived at that commit: ${allowed.problems.join('; ')}. Fix what is named, ${PUSH_STEP}, record the new head with record-pr --kind proof, and rerun the build check on it.` + suffix
           : `The build check receipt for the draft proof PR ${proofPr.url} at ${proofPr.head} does not count: it was not made with the allowed axioms of this commit (${receipt.allowAxioms ? 'it holds another list' : 'it holds none'}). ${checkSteps}; read-state reports done when it accepts.` + suffix };
     }
     const rejected = context ? crateAcceptance(root, specs, context, receipt).filter((entry) => !entry.accepted) : [];
@@ -2035,13 +2043,13 @@ function progress(root, state, specs = null) {
     }
     if (rejected.length > 0) {
       return { phase: 'proofs', warnings,
-        nextAction: `The build check accepted the draft proof PR ${proofPr.url} at ${proofPr.head}, but not every verified crate is accepted: ${rejected.map((entry) => `crate ${entry.crate ?? '(none)'}: ${entry.reason}`).join('; ')}. Fix what is named, push, record the new head with record-pr --kind proof, and rerun the build check on it.` + suffix };
+        nextAction: `The build check accepted the draft proof PR ${proofPr.url} at ${proofPr.head}, but not every verified crate is accepted: ${rejected.map((entry) => `crate ${entry.crate ?? '(none)'}: ${entry.reason}`).join('; ')}. Fix what is named, ${PUSH_STEP}, record the new head with record-pr --kind proof, and rerun the build check on it.` + suffix };
     }
     return { phase: 'proofs', warnings,
       nextAction: (receipt?.accepted
         ? `The build check receipt for the draft proof PR ${proofPr.url} at ${proofPr.head} does not count: it was made ${typeof receipt.specBase === 'string' ? `against the spec base ${receipt.specBase}` : 'without a spec base'}, not against the recorded spec merge ${specMerge.mergeCommit}. ${several ? checkSteps : `Run the build check again: ${check}`}; read-state reports done when it accepts.`
         : receipt
-          ? `The build check failed for the draft proof PR ${proofPr.url} at ${proofPr.head}: ${receipt.label}. Fix the proofs, push, record the new head with record-pr --kind proof, and rerun the build check on it.`
+          ? `The build check failed for the draft proof PR ${proofPr.url} at ${proofPr.head}: ${receipt.label}. Fix the proofs, ${PUSH_STEP}, record the new head with record-pr --kind proof, and rerun the build check on it.`
           : `The draft proof PR ${proofPr.url} is recorded at ${proofPr.head}. ${checkSteps}; read-state reports done when it accepts.`) + suffix };
   }
   return { phase: 'specs', warnings,
