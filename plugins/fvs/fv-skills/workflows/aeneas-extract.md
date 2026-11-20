@@ -401,7 +401,7 @@ directory or imports, an order that the stitching does not give, or a directory 
 is not in the roster. A crate's own directory is not read alone: `attempt-status --out
 OUT/units/NAME` is refused and points to the copy, where the roster is checked. Each unit row is a whole single-crate run plus its `imports`,
 `stitch`, `hasErrors` (the items Aeneas could not translate; they are never roots),
-`foreignCrates` (each crate the LLBC reaches, as `target`, `non-target` or `external`; an external says where it comes from: `origin` `toolchain` or `registry`, with the locked `package` and `version` for a registry crate) and the
+`foreignCrates` (each crate the LLBC reaches, as `target`, `non-target` or `external`; an external says where it comes from: `origin` `toolchain` or `registry`, with the locked `package`, `version` and `checksum` for a registry crate) and the
 pinned sources of each non-target.
 
 What the Charon stage accepts as a source. Every source file the LLBC names lands in exactly one
@@ -410,9 +410,14 @@ copy: it must be a file the prepared copy records, its label must be the crate t
 directory, and the main crate's contents must be the recorded bytes. A `/rustc/library/...` path is
 the toolchain and must be labelled with a crate of the toolchain (`core`, `alloc`, `std`,
 `proc_macro`, `test`; the label need not match the directory, since `core` vendors `stdarch`). A path
-under `<cargo home>/registry/src/<index>/<name>-<version>/` is a registry package, and that
-directory must be a registry package of the `Cargo.lock` in the copy. A crate that is none of these
-and none of the declared crates is refused, not filed as external. Everything else is refused with
+under `<cargo home>/registry/src/<index>/<name>-<version>/`, where the cargo home is the `CARGO_HOME`
+the tools ran with (a path that merely ends like one is not a registry path), is a registry package
+only when all of these hold: its label is neither a declared crate nor a crate of the toolchain, the
+`Cargo.lock` in the copy lists `<name>-<version>` with a `registry+` source and a checksum, and the
+archive that cargo kept at `<cargo home>/registry/cache/<index>/<name>-<version>.crate` has exactly that
+checksum. One crate label cannot stand behind two different identities. A crate that is none of these
+and none of the declared crates, including one that is only a name in the `Cargo.lock` (a path, git
+or registry package with no source file in the LLBC), is refused, not filed as external. Everything else is refused with
 the path or form named: a path outside the copy (another tree, an absolute path into the original
 checkout), a file the copy does not record (an input missing from `extraction.inputs`, or a file a
 build script made), a `Virtual` or `NotReal` name, and a git dependency's checkout. Those forms have

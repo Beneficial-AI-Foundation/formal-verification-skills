@@ -169,15 +169,84 @@ describe('multi-crate extraction: the LLBC identity rule', () => {
     });
 
     it('refuses a crate the LLBC reaches that is not declared, the toolchain or a locked package', () => {
-      refusedCharon({ extraCrates: ['mystery'] }, /the LLBC reaches crate mystery, which is not a declared crate, the toolchain or a package of the Cargo\.lock in the copy/);
+      refusedCharon({ extraCrates: ['mystery'] }, /the LLBC reaches crate mystery, which is not a declared crate or the toolchain and has no source file of a registry package of the Cargo\.lock in the copy; nothing establishes where it comes from/);
     });
 
-    it('refuses a registry file whose package the lock does not list, and accepts one it does, recording the package', () => {
-      refusedCharon({ extraCrates: ['rand_core'], extraFiles: [{ name: { Local: REGISTRY }, crate_name: 'rand_core' }] }, /but rand_core-0\.10\.1 is not a registry package of the Cargo\.lock in the copy/);
-      const ws = workspace({ toy_app: { extraCrates: ['rand_core'], extraFiles: [{ name: { Local: REGISTRY }, crate_name: 'rand_core' }] } });
-      fs.appendFileSync(path.join(ws.project, 'Cargo.lock'), '\n[[package]]\nname = "rand_core"\nversion = "0.10.1"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n');
-      const out = complete(ws);
-      assert.deepEqual(charonRecord(out, 'toy_app').llbc.foreignCrates.find((entry) => entry.crate === 'rand_core'), { crate: 'rand_core', kind: 'external', origin: 'registry', package: 'rand_core', version: '0.10.1' });
+    // A registry package is bound by the Cargo.lock: the lock lists it with a registry source and the
+    // checksum of its archive, and the archive that cargo kept under this run's CARGO_HOME has exactly
+    // that checksum. The source the LLBC reads lies under the same CARGO_HOME. The real hmac and sha2
+    // LLBCs reach no registry crate, so these cases are fixtures, not real data.
+    const INDEX = 'index.crates.io-1949cf8c6b5b557f';
+    const ARCHIVE = 'the bytes of the rand_core 0.10.1 archive';
+    const hash = (text) => crypto.createHash('sha256').update(text).digest('hex');
+    const lockEntry = ({ name = 'rand_core', version = '0.10.1', source = 'registry+https://github.com/rust-lang/crates.io-index', checksum = hash(ARCHIVE) } = {}) => `\n[[package]]\nname = "${name}"\nversion = "${version}"\n${source === null ? '' : `source = "${source}"\n`}${checksum === null ? '' : `checksum = "${checksum}"\n`}`;
+    // A workspace whose toy_app reads one registry source file (or none, with files: false).
+    const registryWorkspace = ({ lock = lockEntry(), archive = ARCHIVE, label = 'rand_core', reached = ['rand_core'], files = true, where } = {}) => {
+      const ws = workspace();
+      const home = ws.tools.cargoHome;
+      const source = where ?? `${home}/registry/src/${INDEX}/rand_core-0.10.1/src/lib.rs`;
+      ws.behaviour({ toy_app: { extraCrates: reached, extraFiles: files ? [{ name: { Local: source }, crate_name: label }] : [] } });
+      if (lock !== null) fs.appendFileSync(path.join(ws.project, 'Cargo.lock'), lock);
+      if (archive !== null) {
+        fs.mkdirSync(path.join(home, 'registry', 'cache', INDEX), { recursive: true });
+        fs.writeFileSync(path.join(home, 'registry', 'cache', INDEX, 'rand_core-0.10.1.crate'), archive);
+      }
+      return ws;
+    };
+    const refusedRegistry = (options, pattern) => {
+      const ws = registryWorkspace(options);
+      const { out } = attempted(ws);
+      const charon = step(ws, out, 'charon', 'toy_app');
+      assert.equal(charon.status, 9, charon.stdout);
+      assert.match(charon.result.message, pattern);
+    };
+
+    it('binds a registry package by the lock checksum and the archive cargo kept, and records package, version and checksum', () => {
+      const out = complete(registryWorkspace());
+      assert.deepEqual(charonRecord(out, 'toy_app').llbc.foreignCrates.find((entry) => entry.crate === 'rand_core'), { crate: 'rand_core', kind: 'external', origin: 'registry', package: 'rand_core', version: '0.10.1', checksum: hash(ARCHIVE) });
+    });
+
+    it('refuses a registry package the lock does not list, lists without a registry source or checksum, or whose archive is missing or different', () => {
+      refusedRegistry({ lock: null }, /but rand_core-0\.10\.1 is not a registry package of the Cargo\.lock in the copy/);
+      refusedRegistry({ lock: lockEntry({ source: 'git+https://github.com/rust-random/rand#abcdef' }) }, /but rand_core-0\.10\.1 is not a registry package of the Cargo\.lock/);
+      refusedRegistry({ lock: lockEntry({ source: null }) }, /but rand_core-0\.10\.1 is not a registry package of the Cargo\.lock/);
+      refusedRegistry({ lock: lockEntry({ checksum: null }) }, /records no checksum for rand_core-0\.10\.1, so the source the LLBC reads/);
+      refusedRegistry({ archive: null }, /the cargo cache holds no archive .*rand_core-0\.10\.1\.crate, so the checksum of rand_core-0\.10\.1 in the Cargo\.lock cannot be checked/);
+      refusedRegistry({ archive: 'different bytes' }, /the archive rand_core-0\.10\.1\.crate in the cargo cache hashes to [0-9a-f]{64}, not the [0-9a-f]{64} that the Cargo\.lock records for it/);
+    });
+
+    it('refuses a path that only looks like a registry path', () => {
+      const looks = /which lies outside the extraction copy and is neither the toolchain nor a registry package/;
+      refusedRegistry({ where: `/other-tree/registry/src/${INDEX}/rand_core-0.10.1/src/lib.rs` }, looks);
+      refusedRegistry({ where: `/cargo/registry/src/${INDEX}/rand_core-0.10.1/src/lib.rs` }, looks);
+      const ws = registryWorkspace({ files: false });
+      ws.behaviour({ toy_app: { extraCrates: ['rand_core'], extraFiles: [{ name: { Local: `${ws.tools.cargoHome}-other/registry/src/${INDEX}/rand_core-0.10.1/src/lib.rs` }, crate_name: 'rand_core' }] } });
+      const { out } = attempted(ws);
+      assert.match(step(ws, out, 'charon', 'toy_app').result.message, looks, 'a directory whose name only starts with the cargo home is another directory');
+    });
+
+    it('refuses a registry source that is labelled with a declared crate or a crate of the toolchain', () => {
+      for (const label of ['toy_app', 'toy_lib', 'core']) {
+        refusedRegistry({ label }, new RegExp(`labels the registry source .* with crate "${label}", which is a declared crate or a crate of the toolchain; a registry package cannot be either`));
+      }
+    });
+
+    it('does not take a name in the lock for an identity: a reached crate with no source file is refused', () => {
+      const none = /the LLBC reaches crate (rand_core|local_dep|vendored), which is not a declared crate or the toolchain and has no source file of a registry package/;
+      refusedRegistry({ files: false }, none);
+      refusedRegistry({ files: false, reached: ['local_dep'], lock: lockEntry({ name: 'local_dep', version: '0.1.0', source: null, checksum: null }) }, none);
+      refusedRegistry({ files: false, reached: ['vendored'], lock: lockEntry({ name: 'vendored', version: '1.0.0', source: 'git+https://example.org/vendored#abc', checksum: null }) }, none);
+    });
+
+    it('refuses one crate label that two different packages stand behind', () => {
+      const ws = registryWorkspace({ files: false, lock: lockEntry() + lockEntry({ version: '0.9.0', checksum: hash('the 0.9.0 archive') }) });
+      fs.writeFileSync(path.join(ws.tools.cargoHome, 'registry', 'cache', INDEX, 'rand_core-0.9.0.crate'), 'the 0.9.0 archive');
+      const home = ws.tools.cargoHome;
+      ws.behaviour({ toy_app: { extraCrates: ['rand_core'], extraFiles: ['0.10.1', '0.9.0'].map((version) => ({ name: { Local: `${home}/registry/src/${INDEX}/rand_core-${version}/src/lib.rs` }, crate_name: 'rand_core' })) } });
+      const { out } = attempted(ws);
+      const charon = step(ws, out, 'charon', 'toy_app');
+      assert.equal(charon.status, 9, charon.stdout);
+      assert.match(charon.result.message, /the LLBC gives crate "rand_core" two identities/);
     });
 
     it('accepts a toolchain library labelled core under another directory of the toolchain', () => {

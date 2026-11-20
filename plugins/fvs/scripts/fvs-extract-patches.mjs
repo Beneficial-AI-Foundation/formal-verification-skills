@@ -1902,17 +1902,19 @@ function lockPackages(text) {
     const name = /^name = "([^"]+)"/m.exec(block)?.[1];
     const version = /^version = "([^"]+)"/m.exec(block)?.[1];
     const source = /^source = "([^"]+)"/m.exec(block)?.[1] ?? null;
-    if (name && version) byDirectory.set(`${name}-${version}`, { name, version, source });
+    const checksum = /^checksum = "([0-9a-f]{64})"/m.exec(block)?.[1] ?? null;
+    if (name && version) byDirectory.set(`${name}-${version}`, { name, version, source, checksum });
   }
   return byDirectory;
 }
 
 // What one file of the LLBC is, from the path Charon wrote (the forms of real Charon 0.1.315 output):
 // a path relative to the copy (or absolute, under it) is a file of the copy; /rustc/library/... is
-// the toolchain; <cargo home>/registry/src/<index>/<name>-<version>/... is a registry package. Any
-// other form (a Virtual or NotReal name, a path elsewhere, a git checkout, a build-script output)
-// has not been checked against real output and is named in a refusal.
-function llbcPathClass(name, treeRoots) {
+// the toolchain; <cargo home>/registry/src/<index>/<name>-<version>/... is a registry package, but
+// only under the cargo home the tools were run with (CARGO_HOME of the invocation), never a path
+// that merely ends like one. Any other form (a Virtual or NotReal name, a path elsewhere, a git
+// checkout, a build-script output) has not been checked against real output and is named in a refusal.
+function llbcPathClass(name, treeRoots, cargoHomes = []) {
   const keys = isObject(name) ? Object.keys(name) : [];
   if (keys.length !== 1 || keys[0] !== 'Local' || typeof name.Local !== 'string' || name.Local === '') {
     return { form: 'unsurveyed', shown: keys.length === 1 ? `a ${keys[0]} name` : JSON.stringify(name) };
@@ -1923,8 +1925,10 @@ function llbcPathClass(name, treeRoots) {
   }
   for (const root of treeRoots) if (normal.startsWith(`${root}/`)) return { form: 'tree', relative: normal.slice(root.length + 1) };
   if (/^\/rustc\/(?:[0-9a-f]{40}\/)?library\//.test(normal)) return { form: 'toolchain' };
-  const registry = /\/registry\/src\/[^/]+\/([^/]+)\/.+$/.exec(normal);
-  if (registry) return { form: 'registry', directory: registry[1] };
+  for (const home of cargoHomes) {
+    const registry = normal.startsWith(`${home}/registry/src/`) ? /^([^/]+)\/([^/]+)\/.+$/.exec(normal.slice(`${home}/registry/src/`.length)) : null;
+    if (registry) return { form: 'registry', home, index: registry[1], directory: registry[2] };
+  }
   return { form: 'outside', shown: name.Local };
 }
 
@@ -1984,20 +1988,46 @@ function inspectLlbc(file, invocation, sources) {
   const treeRoots = [...new Set([invocation.tree, realOrSelf(invocation.tree)].filter((root) => typeof root === 'string'))];
   const lock = lockPackages(fs.existsSync(path.join(invocation.tree, LOCK_FILE)) ? fs.readFileSync(path.join(invocation.tree, LOCK_FILE), 'utf8') : '');
   const externals = new Map();
+  const cargoHomes = [...new Set([invocation.env?.CARGO_HOME, realOrSelf(invocation.env?.CARGO_HOME ?? '')].filter((home) => typeof home === 'string' && home !== '' && path.isAbsolute(home)))];
+  const archiveHashes = new Map();
+  // A crate label has exactly one identity: the toolchain, or one package of the Cargo.lock with its
+  // checksum. A second, different one is refused.
+  const bind = (crate, identity, where) => {
+    const known = externals.get(crate);
+    if (known === undefined) externals.set(crate, identity);
+    else if (JSON.stringify(known) !== JSON.stringify(identity)) problems.push(`the LLBC gives crate ${JSON.stringify(crate)} two identities (${JSON.stringify(known)} and ${JSON.stringify(identity)}; the second at ${where})`);
+  };
+  const declaredLabels = new Set([invocation.crate, ...declared.map((entry) => entry.crate)]);
   // Every file of the LLBC lands in exactly one class or the stage fails: a file of the prepared copy,
   // the toolchain, or a package of the Cargo.lock. Nothing is skipped for lying outside the copy.
   for (const entry of files) {
     const label = JSON.stringify(entry?.crate_name);
-    const kind = llbcPathClass(entry?.name, treeRoots);
+    const kind = llbcPathClass(entry?.name, treeRoots, cargoHomes);
     if (kind.form === 'toolchain') {
       if (!TOOLCHAIN_CRATES.has(entry.crate_name)) problems.push(`the LLBC reads a toolchain source file ${entry.name.Local} but labels it with crate ${label}, which is not a crate of the toolchain`);
-      else externals.set(entry.crate_name, { origin: 'toolchain' });
+      else bind(entry.crate_name, { origin: 'toolchain' }, entry.name.Local);
       continue;
     }
     if (kind.form === 'registry') {
+      // A registry package is bound by the Cargo.lock: it lists the package with a registry source and
+      // the checksum of its archive, and the archive that cargo kept in this run's cache has exactly
+      // that checksum. The label may be neither a declared crate (whose sources are files of the copy)
+      // nor a crate of the toolchain, whatever the path looks like.
       const locked = lock.get(kind.directory);
-      if (!locked || typeof locked.source !== 'string' || !locked.source.startsWith('registry+')) problems.push(`the LLBC reads ${entry.name.Local} (crate ${label}), but ${kind.directory} is not a registry package of the ${LOCK_FILE} in the copy`);
-      else if (typeof entry.crate_name === 'string') externals.set(entry.crate_name, { origin: 'registry', package: locked.name, version: locked.version });
+      const archive = path.join(kind.home, 'registry', 'cache', kind.index, `${kind.directory}.crate`);
+      if (typeof entry.crate_name !== 'string' || declaredLabels.has(entry.crate_name) || TOOLCHAIN_CRATES.has(entry.crate_name)) {
+        problems.push(`the LLBC labels the registry source ${entry.name.Local} with crate ${label}, which is a declared crate or a crate of the toolchain; a registry package cannot be either`);
+      } else if (!locked || typeof locked.source !== 'string' || !locked.source.startsWith('registry+')) {
+        problems.push(`the LLBC reads ${entry.name.Local} (crate ${label}), but ${kind.directory} is not a registry package of the ${LOCK_FILE} in the copy`);
+      } else if (locked.checksum === null) {
+        problems.push(`the ${LOCK_FILE} in the copy records no checksum for ${kind.directory}, so the source the LLBC reads (${entry.name.Local}, crate ${label}) cannot be bound to the package`);
+      } else if (!fs.existsSync(archive)) {
+        problems.push(`the cargo cache holds no archive ${archive}, so the checksum of ${kind.directory} in the ${LOCK_FILE} cannot be checked against the package the LLBC reads (${entry.name.Local}, crate ${label}); fetch it with the same CARGO_HOME`);
+      } else {
+        if (!archiveHashes.has(archive)) archiveHashes.set(archive, sha256(fs.readFileSync(archive)));
+        if (archiveHashes.get(archive) !== locked.checksum) problems.push(`the archive ${kind.directory}.crate in the cargo cache hashes to ${archiveHashes.get(archive)}, not the ${locked.checksum} that the ${LOCK_FILE} records for it`);
+        else bind(entry.crate_name, { origin: 'registry', package: locked.name, version: locked.version, checksum: locked.checksum }, entry.name.Local);
+      }
       continue;
     }
     if (kind.form === 'outside') {
@@ -2032,16 +2062,16 @@ function inspectLlbc(file, invocation, sources) {
   }
   const byFile = (a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0);
   // A crate that is not declared is external only when the toolchain or a package of the Cargo.lock
-  // stands behind it; a crate the LLBC reaches that none of them explains is refused, never filed
-  // as external. The library name Charon writes can differ from the package name by more than hyphens,
-  // so a registry crate is tied to the lock through its source path when it has one.
-  const lockedNames = new Set([...lock.values()].map((locked) => locked.name.replace(/-/g, '_')));
+  // stands behind it through a source file the LLBC reads: a crate the LLBC reaches that has none
+  // is refused, never filed as external. A name in the Cargo.lock is not enough: the library name
+  // Charon writes can differ from the package name by more than hyphens, a lock entry may be a path
+  // or git package, and a name alone does not say that a registry package is the one that was built.
   const foreignCrates = [...reachedCrates(translated)].filter((crate) => crate !== invocation.crate).sort().map((crate) => {
     if (targets.some((entry) => entry.crate === crate)) return { crate, kind: 'target' };
     if (nonTargets.some((entry) => entry.crate === crate)) return { crate, kind: 'non-target' };
-    const known = externals.get(crate) ?? (TOOLCHAIN_CRATES.has(crate) ? { origin: 'toolchain' } : lockedNames.has(crate) ? { origin: 'registry' } : null);
+    const known = externals.get(crate) ?? (TOOLCHAIN_CRATES.has(crate) ? { origin: 'toolchain' } : null);
     if (known === null) {
-      problems.push(`the LLBC reaches crate ${crate}, which is not a declared crate, the toolchain or a package of the ${LOCK_FILE} in the copy`);
+      problems.push(`the LLBC reaches crate ${crate}, which is not a declared crate or the toolchain and has no source file of a registry package of the ${LOCK_FILE} in the copy; nothing establishes where it comes from`);
       return { crate, kind: 'external', origin: 'unknown' };
     }
     return { crate, kind: 'external', ...known };
