@@ -3559,7 +3559,7 @@ function runPublish(chain) {
   const outputs = { ...aeneas.outputs };
   const sources = {};
   if (transform !== null) {
-    const dest = path.join(out, PUBLISH_DEST);
+    const dest = path.join(chain.attempt.out, PUBLISH_DEST);
     fs.rmSync(dest, { recursive: true, force: true });
     fs.mkdirSync(dest);
     for (const [file, text] of Object.entries(transform.texts)) {
