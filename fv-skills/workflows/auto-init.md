@@ -279,9 +279,11 @@ node "$PERM" plan --project-root . --repo "$DRAFT_REPO" --remote origin --branch
 - `remote-mismatch`, `remote-ambiguous`, `remote-missing`, `destination-rewritten` or `invalid-input`: no probe
   runs against a remote that is not the project's own repository. Every URL of the remote (all fetch and push
   URLs) must name it (host and OWNER/REPO; user information in an http address is ignored, stripped from the
-  record, and never shown), and no `insteadOf` or `pushInsteadOf` rule may send the push address anywhere but to
-  itself. A rule that only adds user information to an http address, as a sandbox does to inject a token, is
-  allowed. Report the refusal, skip the check and go to Step 6.
+  record, and never shown), and every `insteadOf` or `pushInsteadOf` rule that applies to the push address must send
+  it to the same host and OWNER/REPO over https, ssh:// or git@host:OWNER/REPO. A rule that only adds user
+  information to an http address, as a sandbox does to inject a token, is allowed, and so is a rule that moves the
+  address between those three forms, as a common insteadOf setup does. A rule that sends it over any other scheme or
+  anywhere else is refused. Report the refusal, skip the check and go to Step 6.
 - `not-a-repository` or `worktree-mismatch`: the project root is not a git work tree, or a `core.worktree` setting
   points the repository at the files of another one. The push command would refuse in each case, so nothing is
   recorded. Report the refusal, skip the check and go to Step 6; the owner has to fix the repository first.
