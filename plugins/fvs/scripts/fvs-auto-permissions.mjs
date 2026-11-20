@@ -28,7 +28,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
-import { CONTRACT, RECORD_NAME, WORD, checkPrefixShape, contractText, differingVariables, initDestination, parseRemoteUrl, runGit } from './fvs-auto-push.mjs';
+import { CONTRACT, RECORD_NAME, WORD, checkPrefixShape, contractText, differingVariables, initDestination, parseRemoteUrl, recordProblem, runGit } from './fvs-auto-push.mjs';
 
 export { parseRemoteUrl };
 export const RECORD_FILE = '.formalising/auto-fv/permissions.json';
@@ -265,8 +265,10 @@ function context(flags) {
 }
 
 // The destination record the push command reads, in the repository's shared git directory: missing, the same as what init
-// would record now, or something else (another destination, an older record, a file that is not JSON). When it differs,
-// `changedVariables` names the confirmed git variables that are not the same as in this session, never their values.
+// would record now, or something else (another destination, an older record, a file that is not JSON). The user trusts
+// git variables by name, so a value that rotated since init is no difference: the record then still `matches`, and
+// `existing` is what is on disk (with the hashes of the values at init). A record that differs only in its trusted names
+// is `replaceable`, with `changedVariables` naming them (never a value). Any other difference is for the owner to settle.
 function destinationState({ record, commonDir }) {
   const file = path.join(commonDir, RECORD_NAME);
   let existing;
@@ -274,18 +276,23 @@ function destinationState({ record, commonDir }) {
     return error.code === 'ENOENT' ? { file, status: 'missing' } : { file, status: 'unreadable', problem: error.message };
   }
   if (isDeepStrictEqual(existing, record)) return { file, status: 'matches', existing };
-  return { file, status: 'differs', existing, changedVariables: differingVariables(existing, record) };
+  const changedVariables = differingVariables(existing, record);
+  const sameDestination = isDeepStrictEqual(withoutVariables(existing), withoutVariables(record));
+  if (sameDestination && changedVariables.length === 0 && recordProblem(existing) === null) return { file, status: 'matches', existing };
+  return { file, status: 'differs', existing, changedVariables, replaceable: sameDestination && recordProblem(existing) === null && changedVariables.length > 0 };
 }
-const changedNote = (state) => (state.changedVariables?.length ? ` The git variables ${state.changedVariables.join(', ')} differ from the recorded ones.` : '');
+const withoutVariables = ({ trustedGitVariables, ...rest }) => rest;
+const changedNote = (state) => (state.changedVariables?.length ? ` The git variables to trust differ (${state.changedVariables.join(', ')}).` : '');
 
 // The push rule names a command that pushes to the recorded destination, so it is written only once that record
 // exists and is still what init would record now.
 function requireDestination(destination) {
   const state = destinationState(destination);
   if (state.status !== 'matches') {
-    refuse('destination-not-recorded', `the push command pushes to the recorded destination, and ${state.file} ${state.status === 'missing' ? 'is missing' : `does not hold what init would record now${state.changedVariables?.length ? ` (the git variables ${state.changedVariables.join(', ')} differ)` : ''}`}. Run write-destination first: it shows what it records and waits for the user's yes. Nothing was written.`, { destination: state });
+    refuse('destination-not-recorded', `the push command pushes to the recorded destination, and ${state.file} ${state.status === 'missing' ? 'is missing' : `does not hold what init would record now${state.changedVariables?.length ? ` (the git variables to trust differ: ${state.changedVariables.join(', ')})` : ''}`}. Run write-destination first: it shows what it records${state.replaceable ? ' (here, a replace of the trusted git variables)' : ''} and waits for the user's yes. Nothing was written.`, { destination: state });
   }
-  return destination.record;
+  // The record on disk is what the push command reads, so it is what the rule's preview and digest show.
+  return state.existing;
 }
 
 // What a user confirms about a push rule: the command, the destination it pushes to, and what the command is and is not.
@@ -326,7 +333,7 @@ function plan(flags) {
     repo: catalog.repo, remote: catalog.remote, branchPrefixes: catalog.prefixes,
     pushCommand: catalog.pushCommand.example,
     pushContract: CONTRACT,
-    pushDestination: { file: state.file, status: state.status, wouldRecord: destination.record, ...(state.changedVariables?.length ? { changedVariables: state.changedVariables } : {}) },
+    pushDestination: { file: state.file, status: state.status, wouldRecord: destination.record, ...(state.changedVariables?.length ? { changedVariables: state.changedVariables, replaceable: state.replaceable } : {}) },
     steps: catalog.steps.map((step) => probeEntry(step, lakeBlocker)),
     message: record
       ? 'A record exists: do not run the check again; show the summary. To check again on the owner\'s request (after rules were written, or in a new Codex session), run the recheck command.'
@@ -519,30 +526,56 @@ function confirmationNeeded(flags, digest, preview) {
 }
 
 // Records where pushes go. The push command refuses to run without this record, so init writes it whether or not a push
-// rule is written. The record is never replaced: a different destination is for the owner to settle.
+// rule is written. A record that exists is replaced only to change which git variables the user trusts, with its own
+// preview and yes, and only when the destination is the same: a different destination is for the owner to settle.
 function writeDestination(flags) {
   const { root, destination } = context(flags);
   const state = destinationState(destination);
   const shown = Object.keys(destination.variables);
   const preview = {
-    projectRoot: root, file: state.file, record: destination.record,
+    projectRoot: root, file: state.file, record: state.status === 'matches' ? state.existing : destination.record,
     note: 'The push command pushes to this destination and checks that it runs in the repository whose shared git directory is the one recorded here. The file sits in the git directory, so it is not part of any commit; any session of your user account can change it, and so change where the command pushes.',
     gitConfigNote: shown.length
-      ? `These git configuration variables are set in this session: ${shown.join(', ')}. If you confirm, the push command keeps exactly these, with these values, and refuses to push when one is missing or has another value; it removes every other git variable of its list. You trust them the way you trust your own git configuration files. The record holds a hash of each value, not the value.`
+      ? `These git configuration variables are set in this session: ${shown.join(', ')}. Your yes trusts these names. The push command keeps each of them with whatever value it has when it runs, in every git call, and removes every other git variable of its list. A trusted name that is not set then is skipped, and a value that changed since you confirmed is not refused: the receipt marks it as changed. You trust them the way you trust your own git configuration files. The record holds a hash of each value, not the value.`
       : 'No git configuration variable is set in this session, so the push command runs without all of them (GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_CONFIG_NOSYSTEM, GIT_CONFIG_COUNT with its pairs, GIT_CONFIG_PARAMETERS).',
     contract: CONTRACT,
   };
   if (state.status === 'matches') return { code: 'unchanged', message: `${state.file} already records this destination`, ...preview };
+  if (state.status === 'differs' && state.replaceable) return replaceDestination(flags, root, destination, state, preview);
   if (state.status !== 'missing') {
-    refuse('destination-conflict', `${state.file} already exists and is not what init would record now.${changedNote(state)} FVS never replaces it, because that would change where pushes go. To change the destination, check the file, delete it yourself, and run this command again.`, { ...preview, existing: state.existing ?? null, problem: state.problem ?? null, ...(state.changedVariables?.length ? { changedVariables: state.changedVariables } : {}) });
+    refuse('destination-conflict', `${state.file} already exists and is not what init would record now.${changedNote(state)} FVS replaces a record only to change its trusted git variables, and only when it is valid and names this same destination; it never replaces it in any other case, because that would change where pushes go. To change the destination, check the file, delete it yourself, and run this command again.`, { ...preview, existing: state.existing ?? null, problem: state.problem ?? null, ...(state.changedVariables?.length ? { changedVariables: state.changedVariables } : {}) });
   }
   // The values are printed here and nowhere else: the user confirms them in this preview. The record keeps a hash of each.
   confirmationNeeded(flags, digestOf({ kind: 'destination', root, file: state.file, record: destination.record }), { ...preview, gitConfigVariables: destination.variables });
   if (destinationState(destination).status !== 'missing') refuse('changed-since-preview', `${state.file} appeared while this command ran; nothing was written. Show the user a new preview: a new digest needs a new yes.`);
   writeAtomic(state.file, JSON.stringify(destination.record, null, 2) + '\n');
-  const reread = destinationState(destination);
-  if (reread.status !== 'matches') refuse('write-check-failed', `${state.file} does not hold the record after writing`);
+  checkRecordWritten(destination, state.file);
   return { code: 'written', ...preview, message: 'Recorded. The push command now pushes branches under the recorded namespaces to this destination.' };
+}
+
+// A value that rotated is no difference for `matches`, so a write is checked for the exact record.
+function checkRecordWritten(destination, file) {
+  const reread = destinationState(destination);
+  if (reread.status !== 'matches' || !isDeepStrictEqual(reread.existing, destination.record)) refuse('write-check-failed', `${file} does not hold the record after writing`);
+}
+
+// The destination is the same and only the trusted git variables differ: the user sees the old record, the new record and
+// the names added and removed, and the digest binds the old record, so a record that changed after the preview needs a
+// new yes. The record is rewritten as a whole; nothing else about the destination changes.
+function replaceDestination(flags, root, destination, state, preview) {
+  const old = Object.keys(state.existing.trustedGitVariables ?? {});
+  const now = Object.keys(destination.record.trustedGitVariables ?? {});
+  const variableChanges = { added: now.filter((name) => !old.includes(name)), removed: old.filter((name) => !now.includes(name)), kept: now.filter((name) => old.includes(name)) };
+  const replacing = {
+    ...preview, record: destination.record, replaces: state.existing, variableChanges,
+    replaceNote: `${state.file} holds another set of trusted git variables than the one in this preview, and the destination stays the same: the address, host, repository and branch namespaces are not changed. If you confirm, the record is replaced by the one shown here: the push command then keeps the names it lists (added: ${variableChanges.added.join(', ') || 'none'}; no longer trusted: ${variableChanges.removed.join(', ') || 'none'}) with whatever value they have when it runs, and removes every other git variable of its list. The old record is not kept.`,
+  };
+  confirmationNeeded(flags, digestOf({ kind: 'destination', root, file: state.file, record: destination.record, replaces: state.existing }), { ...replacing, gitConfigVariables: destination.variables });
+  const again = destinationState(destination);
+  if (again.status !== 'differs' || !again.replaceable || !isDeepStrictEqual(again.existing, state.existing)) refuse('changed-since-preview', `${state.file} changed while this command ran; nothing was written. Show the user a new preview: a new digest needs a new yes.`);
+  writeAtomic(state.file, JSON.stringify(destination.record, null, 2) + '\n');
+  checkRecordWritten(destination, state.file);
+  return { code: 'replaced', ...replacing, message: 'Replaced. The push command now trusts the git variables named in this record, and the destination is the same as before.' };
 }
 
 function writeAllowlist(flags) {

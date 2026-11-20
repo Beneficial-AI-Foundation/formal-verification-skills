@@ -134,8 +134,8 @@ claim. The evidence named here is what the orchestrator keeps.
   guard with hardening and not a security boundary. It refuses any other argument, a branch outside the
   recorded namespace and a work tree that points at another repository. It does not run repository hooks for
   this push and drops the git variables that move a repository or select its configuration files, except the git
-  configuration variables that the owner confirmed at init: it refuses (`git-config-changed`) when one of those is
-  missing or has another value. It trusts your git
+  configuration variables whose names the owner trusted at init: it keeps those with whatever value they have when
+  it runs, and does not refuse a value that changed. It trusts your git
   setup: ssh and transport wrappers, credential helpers, URL rewrite rules, the record file and FVS
   itself, so anything that runs as your user. Do not chain it to another command with `&&`, `;` or a pipe: a host that matches permission rules one
   command at a time may hold a chained line for approval, and the exit status of a chain is the status
