@@ -558,11 +558,12 @@ describe('the recorded destination', () => {
       assert.match(preview.json.gitConfigNote, /A variable that is not set when you confirm stays untrusted/);
       assert.match(preview.json.gitConfigNote, /the way you trust your own git configuration files/);
       assert.match(preview.json.gitConfigNote, /a hash of each value, not the value/);
-      // A yes is for these names and these values: another value, or no variable, is another digest.
-      assert.notEqual(dest(ROTATED).json.digest, preview.json.digest);
+      // A yes is for these names and this destination: another set of names is another digest, another value is not.
+      assert.equal(dest(ROTATED).json.digest, preview.json.digest, 'the digest binds the names, not the value hashes');
       assert.notEqual(dest({}).json.digest, preview.json.digest);
-      assert.equal(dest(ROTATED, '--confirm', preview.json.digest).json.code, 'confirmation-required');
+      assert.notEqual(dest(MORE).json.digest, preview.json.digest);
       assert.equal(dest({}, '--confirm', preview.json.digest).json.code, 'confirmation-required');
+      assert.equal(dest(MORE, '--confirm', preview.json.digest).json.code, 'confirmation-required');
       assert.equal(fs.existsSync(recordFile()), false);
       const written = dest(NOTE, '--confirm', preview.json.digest);
       assert.equal(written.json.code, 'written');
@@ -591,17 +592,43 @@ describe('the recorded destination', () => {
       assert.equal(run('plan', base(), { ...process.env, ...grown }).json.pushDestination.status, 'matches');
     });
 
-    it('a token that a rule injects into the address is refused before anything is shown or written', () => {
+    it('a token that a rule injects into the address is stripped: the preview and the record never hold it, and the digest is the same without it', () => {
       spawnSync('git', ['-C', project, 'remote', 'set-url', 'origin', `https://github.com/${REPO}.git`]);
       const rule = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'url.https://user:CANARYTOKEN@github.com/.insteadOf', GIT_CONFIG_VALUE_0: 'https://github.com/' };
       const control = dest({});
       assert.equal(control.json.code, 'confirmation-required', 'the control: the same project without the rule gets a preview');
-      for (const [command, args] of [['write-destination', []], ['write-destination', ['--confirm', 'anything']], ['plan', []]]) {
-        const out = run(command, base(...args), { ...process.env, ...rule });
-        assert.equal(out.json.code, 'remote-credential', command);
-        assert.ok(!JSON.stringify(out).includes('CANARYTOKEN'), `${command} neither prints nor writes the token`);
+      const ruled = dest(rule);
+      assert.equal(ruled.json.code, 'confirmation-required', JSON.stringify(ruled.json));
+      assert.equal(ruled.json.record.url, `https://github.com/${REPO}.git`, 'the address is recorded without user information');
+      assert.deepEqual(Object.keys(ruled.json.gitConfigVariables), ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0']);
+      const written = dest(rule, '--confirm', ruled.json.digest);
+      assert.equal(written.json.code, 'written');
+      for (const [what, output] of [['the preview', ruled], ['the write result', written], ['the plan', run('plan', base(), { ...process.env, ...rule })], ['the unchanged answer', dest(rule)]]) {
+        assert.ok(!JSON.stringify(output).includes('CANARYTOKEN') && !output.stderr.includes('CANARYTOKEN'), `${what} does not hold the token`);
       }
-      assert.equal(fs.existsSync(recordFile()), false);
+      assert.ok(!fs.readFileSync(recordFile(), 'utf8').includes('CANARYTOKEN'), 'the record file does not hold it either');
+      assert.equal(onDisk().url, `https://github.com/${REPO}.git`);
+      // The same when the remote itself holds the user information: the destination is host and OWNER/REPO.
+      fs.rmSync(recordFile());
+      spawnSync('git', ['-C', project, 'remote', 'set-url', 'origin', `https://user:CANARYTOKEN@github.com/${REPO}.git`]);
+      const held = dest({});
+      assert.equal(held.json.code, 'confirmation-required', JSON.stringify(held.json));
+      assert.equal(held.json.record.url, `https://github.com/${REPO}.git`);
+      assert.ok(!JSON.stringify(held).includes('CANARYTOKEN') && !held.stderr.includes('CANARYTOKEN'));
+      // A real mismatch is still refused, with a message that does not hold the token either.
+      spawnSync('git', ['-C', project, 'remote', 'set-url', 'origin', 'https://user:CANARYTOKEN@evil.test/Other/proj.git']);
+      const wrong = dest({});
+      assert.equal(wrong.json.code, 'remote-mismatch');
+      assert.ok(!JSON.stringify(wrong).includes('CANARYTOKEN') && !wrong.stderr.includes('CANARYTOKEN'));
+    });
+
+    it('a value that rotated between the preview and the yes does not need a new preview: the record gets the hash of the value it has now', () => {
+      const preview = dest(NOTE);
+      const written = dest(ROTATED, '--confirm', preview.json.digest);
+      assert.equal(written.json.code, 'written', JSON.stringify(written.json));
+      assert.deepEqual(onDisk().trustedGitVariables, dest(ROTATED).json.record.trustedGitVariables);
+      assert.notDeepEqual(onDisk().trustedGitVariables, preview.json.record.trustedGitVariables);
+      assert.equal(dest(ROTATED).json.code, 'unchanged');
     });
 
     it('says that none is set when none is, and the record keeps its usual shape', () => {
@@ -624,6 +651,11 @@ describe('the recorded destination', () => {
       assert.equal(preview.json.code, 'confirmation-required', 'the push rule is not held back by a rotated value');
       assert.deepEqual(preview.json.push.destination.trustedGitVariables, onDisk().trustedGitVariables, 'it shows the record that is on disk');
       assert.ok(!shows(preview.json, 'note-value'));
+      // The digest of a rule binds the names of the trusted variables and the destination, not the hashes of their values.
+      const names = JSON.parse(fs.readFileSync(recordFile(), 'utf8'));
+      fs.writeFileSync(recordFile(), JSON.stringify(pushLib.destinationRecord({ ...names, variables: ROTATED }), null, 2) + '\n');
+      assert.notDeepEqual(onDisk().trustedGitVariables, names.trustedGitVariables, 'the row bites: the hashes are not the same');
+      assert.equal(run('write-allowlist', base('--runtime', 'claude', '--steps', 'git-push'), { ...process.env, ...ROTATED }).json.digest, preview.json.digest);
     });
 
     it('other names are a replace: the preview shows the old and the new set, and only the yes rewrites the record', () => {
@@ -1679,11 +1711,11 @@ describe('the permissions page', () => {
     const page = flat(path.relative(ROOT, PAGE));
     assert.match(page, /git finds the repository with the git variables that you trusted at init and no others\. .* the command refuses with not-a-repository and names the variables that it left out, never their values\. To trust them, run the destination step of \/fvs:auto-init again: it replaces the record after your yes\. A trusted name that is not set, or that has another value than at init, is not a refusal/);
     assert.match(page, /the preview lists each one by name with the length of its value, never the value, because a value can be a token and the preview goes into the model's context and the transcript\. Your yes trusts these names\. The record gains trustedGitVariables: each trusted name with a hash of its value at that moment, so the file never holds a value either/);
-    assert.match(page, /The push command keeps each trusted name with whatever value it has when it runs and drops every other name\. A value that changes later, such as a token that a sandbox sets for each session, is not refused: the receipt marks it changed, and the hash is for that information only\. A trusted name that is not set is skipped\. You trust these names the way you trust ~\/\.gitconfig: whatever they hold is used\. A variable that is not set when you confirm stays untrusted, so unset one before init to keep it out/);
+    assert.match(page, /The push command keeps each trusted name with whatever value it has when it runs and drops every other name\. A value that changes later, such as a token that a sandbox sets for each session, is not refused: the receipt marks it changed, and the hash is for that information only\. The digest of your yes covers the names, not the hashes, so a value that rotates between the preview and the yes needs no new preview\. A trusted name that is not set is skipped\. You trust these names the way you trust ~\/\.gitconfig: whatever they hold is used\. A variable that is not set when you confirm stays untrusted, so unset one before init to keep it out/);
     assert.match(page, /Run the destination step where the workers run, so the names are the ones they have/);
-    assert.match(page, /Init refuses \(remote-credential\) an address with user information in an http or https URL, such as https:\/\/user:token@host\/\.\.\., whether the remote holds it or a git setting adds it, because the address is written to the record and shown\. Use a credential helper or an ssh address/);
+    assert.match(page, /A sandbox often injects a token into an http or https address, through a url\.<base>\.insteadOf rule or in the address of the remote \(https:\/\/user:token@host\/\.\.\.\)\. Init does not refuse that\. It records the address without the user information, the destination is the host and OWNER\/REPO, and no message, record or receipt shows the user information: a message shows an http address as https:\/\/\*\*\*@host\/\.\.\.\. A rule that only adds user information to the recorded address is allowed at every push, and the push uses it\. Any other rule that applies to the address is refused, and so is a record that holds user information/);
     assert.match(page, /GIT_CONFIG_COUNT and the GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n pairs that it addresses are one unit\. Trusting the count trusts the pairs it addresses when the command runs, whatever the record names, so a sandbox that adds a setting is not refused and git never meets a count without its pairs\. A pair is never trusted alone: a pair that the count does not address, or that has no count, is not offered at init and is dropped by the command/);
-    assert.match(page, /When the record is the same except for its trusted names, the preview shows the old record, the new record and the names that are added and removed, with its own digest\. After your yes the record is rewritten \(replaced\) and the old one is not kept\. The digest covers the old record/);
+    assert.match(page, /When the record is the same except for its trusted names, the preview shows the old record, the new record and the names that are added and removed, with its own digest\. After your yes the record is rewritten \(replaced\) and the old one is not kept\. The digest covers the names and the destination of the old record/);
     assert.match(page, /It replaces a record only to change the git variables that you trust \(below\), and only when the destination is the same\. A record for another destination, a record that is not valid and a file that is not JSON stop it with destination-conflict, which shows both\. To change the destination itself, delete the record on purpose: check the file, delete it yourself and run init again/);
     assert.match(page, /The permissions helper runs its destination checks with the variables that are set in its session, because it asks you to confirm them\. Its look at the git status of a settings file runs without any\. In the tests, a push option set in a trusted variable was not sent/);
     assert.match(page, /runs with the same environment, so the checks see what the push sees/);
@@ -1692,7 +1724,7 @@ describe('the permissions page', () => {
     const init = flat('fv-skills/workflows/auto-init.md');
     assert.match(init, /gitConfigVariables \(every git configuration variable that is set in this session and can be trusted, by name with the length of its value, never the value\) with its gitConfigNote/);
     assert.match(init, /The yes also trusts the names of those variables: the push command keeps each of them with whatever value it has when it runs, drops every other name, and does not refuse a value that changed \(the receipt marks it\)\. GIT_CONFIG_COUNT and the pairs it addresses are one unit\. The owner trusts them as they trust their own ~\/\.gitconfig\. Say that a value can be a credential, so the preview never shows it and the record keeps only a hash, for information\. A variable that is not set when the owner confirms stays untrusted/);
-    assert.match(init, /remote-credential means an http or https address has user information \(https:\/\/user:token@host\/\.\.\.\), whether the remote holds it or a git setting adds it: the address is written down and shown, so the owner uses a credential helper or an ssh address/);
+    assert.match(init, /user information in an http address is ignored, stripped from the record, and never shown\), and no insteadOf or pushInsteadOf rule may send the push address anywhere but to itself\. A rule that only adds user information to an http address, as a sandbox does to inject a token, is allowed/);
     assert.match(init, /Run this step in the environment the workers will have/);
     assert.match(init, /a value that rotated since the record was written is no difference/);
     assert.match(init, /With confirmation-required and a replaces field, the record exists with the same destination and another set of trusted names: show replaces \(the old record\), record \(the new one\), variableChanges \(added, removed, kept\), replaceNote and gitConfigVariables, and ask for a separate yes; on it, rerun with --confirm <digest> and the record is rewritten \(replaced\)/);
@@ -1719,7 +1751,7 @@ describe('the permissions page', () => {
     assert.match(text, /### Push allow rules already in your settings/);
     assert.match(text, /a Claude write stops with `legacy-push-rules`, before any preview and before anything is written\. Both files stay byte-identical/);
     assert.match(text, /does not see: broad rules such as `Bash\(git \*\)` or `Bash\(\*\)`, your user settings/);
-    assert.match(text, /The digest covers the exact rules, the recorded destination when a push rule is written, the canonical project root, the real path of the file .* and the hash of the file's current content/);
+    assert.match(text, /The digest covers the exact rules, the recorded destination and the names of its trusted git variables \(not the values or their hashes\) when a push rule is written, the canonical project root, the real path of the file .* and the hash of the file's current content/);
     assert.match(text, /a new digest that needs a new yes/);
     assert.match(text, /an edit made in the instant between that last check and the replacement is not detected/);
     assert.match(text, /ask init to recheck permissions: it runs `recheck`/);
