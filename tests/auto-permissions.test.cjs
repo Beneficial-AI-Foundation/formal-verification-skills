@@ -1349,7 +1349,7 @@ describe('the permissions page', () => {
     const end = raw.indexOf('\n## ', start + 1) + 1;
     assert.equal(raw.indexOf('## Where the file goes'), end, 'it ends where "Where the file goes" starts');
     const section = raw.slice(start, end).replace(/`/g, '').replace(/\s+/g, ' ');
-    assert.ok(section.split(' ').length < 380, 'it stays short');
+    assert.ok(section.split(' ').length < 400, 'it stays short');
     assert.match(section, /skip-permissions/);
     assert.match(section, /only inside an isolated sandbox or on a cloud machine/);
     assert.match(section, /Never use it on a personal machine with broad access/);
@@ -1360,14 +1360,23 @@ describe('the permissions page', () => {
     assert.match(section, /The wrapper only catches mistakes: a program in the sandbox can call the API directly\. The token limits where a comment can land, not whether one is posted/);
     assert.doesNotMatch(section, /the limit that holds is the scope of the token/i);
     assert.match(section, /Branch protection on the fork/);
-    assert.match(section, /require a pull request with an approving review from someone else, block force pushes and deletion, and apply the rules to administrators too/);
-    // The check and the allowlist can be skipped; the push command cannot, because workers are briefed to use it.
-    assert.match(section, /are for runs with prompts; in a skip-permissions sandbox you can skip them\. The push command is different: workers are briefed to push with it and never with git push, so its destination still has to be recorded/);
-    assert.doesNotMatch(section, /push command[^.]*optional|optional[^.]*push command/i);
+    // The baseline protection, and the approving review only as an option that is not enforced on administrators.
+    assert.match(section, /require a pull request and forbid force pushes and branch deletion, so that a direct push to them is stopped\. It does not stop a merge made through a pull request: the posting guard refuses that, and only the owner merges/);
+    assert.match(section, /A team with a second reviewer can also require an approving review, not enforced on administrators: agents usually act through the owner's own account, and the owner could not then merge their own pull requests/);
+    assert.doesNotMatch(section, /approving review from someone else|apply the rules to administrators too|a push or a merge made with the token is stopped/i);
+    // The check and the allowlist can be skipped; the push command and init's destination step cannot.
+    assert.match(section, /In a skip-permissions sandbox only the permission check and the allowlist are optional; the push command and init's destination step are not\. Workers push with the push command and never with git push, because it binds the push to the recorded destination and records the result\. With no destination recorded, a worker's first push is refused and the worker stops; init records it in a separate step, also when you skip the check/);
+    assert.doesNotMatch(section, /push command (is|are) optional/i);
     assert.match(section, /cooperative guard and not a security boundary/);
     assert.doesNotMatch(section, /orca|docker|\bAO\b|Orchestrator|\brtk\b/i, 'a stock user is the baseline: no one\'s own tools are named');
     assert.doesNotMatch(section, /pushes only|asks as usual|fails safe/i);
     assert.match(raw.split('</overview>')[0].replace(/\s+/g, ' '), /keeps the same safety rules and enforces them by other means: see "Unattended runs in a sandbox"/);
+  });
+
+  it('lists the limits that are left for later: the helper\'s own git calls and the untested timeout report', () => {
+    const text = flat(path.relative(ROOT, PAGE));
+    assert.match(text, /### What it does not stop[\s\S]*Only the git calls of the push command run without the variables listed under "What it does for this push"\. The git calls that the permissions helper makes itself \(the status of a settings file, the check of the main checkout\) are not cleaned\. None of them pushes[\s\S]*### Where the destination is recorded/);
+    assert.match(text, /### What it does not stop[\s\S]*The report push-outcome-unknown after a timeout of the push has no test\. The cases of a missing result line and of a signal are tested\. Read the destination before you retry in every case[\s\S]*### Where the destination is recorded/);
   });
 
   it('every surface that describes the push command says it is a guard with limits, and none promises more', () => {
