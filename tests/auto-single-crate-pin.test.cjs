@@ -51,6 +51,8 @@ function project() {
   const root = temporaryDirectory('fvs-single-crate-');
   fs.cpSync(CRATE, root, { recursive: true });
   fs.cpSync(path.join(PROFILE_FIXTURES, 'fresh'), root, { recursive: true });
+  // An extraction attempt needs the lock the build would otherwise write into the copy.
+  fs.writeFileSync(path.join(root, 'Cargo.lock'), 'version = 3\n');
   git(root, 'init', '-q');
   git(root, 'add', '-A');
   git(root, 'commit', '-q', '-m', 'fixture');
@@ -160,7 +162,8 @@ describe('a single-crate run records and reads what it always did', () => {
     for (const key of RUN_REQUIRED_KEYS) assert.ok(key in extraction.run, `extraction.run.${key}`);
     assert.equal(extraction.run.supported, true);
     assert.equal(extraction.run.manifestSha256, extraction.inputs.manifestSha256);
-    assert.deepEqual(keys(extraction.run.translation), ['attemptPath', 'projectPath', 'sha256']);
+    // The extraction may also record the translation's path relative to the project; that field is optional.
+    assert.deepEqual(keys(extraction.run.translation).filter((key) => key !== 'relativePath'), ['attemptPath', 'projectPath', 'sha256']);
     assert.deepEqual(keys(extraction.run.llbc), ['path', 'sha256']);
     assert.equal(extraction.run.translation.projectPath, path.join(root, 'Demo', 'translation.json'));
     assert.equal('targets' in extraction, false, 'no target list without a declared set of targets');

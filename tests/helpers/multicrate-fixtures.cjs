@@ -50,6 +50,8 @@ function project(below = false) {
   fs.mkdirSync(root, { recursive: true });
   fs.cpSync(CRATE, root, { recursive: true });
   fs.cpSync(path.join(PROFILE_FIXTURES, 'fresh'), root, { recursive: true });
+  // An extraction attempt needs the lock the build would otherwise write into the copy.
+  fs.writeFileSync(path.join(root, 'Cargo.lock'), 'version = 3\n');
   git(top, 'init', '-q');
   git(top, 'add', '-A');
   git(top, 'commit', '-q', '-m', 'fixture');
