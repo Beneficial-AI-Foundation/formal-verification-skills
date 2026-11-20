@@ -1571,9 +1571,11 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
     const prefix = path.join(sub, below).split(path.sep).filter((part) => part && part !== '.').join('/');
     const runState = readRunRecord(root, 'state.json');
     const layout = extractionLayout(runState, { root, top, prefix });
-    // externals.json is read once, when the first rule needs it, and every later use (the records a new
-    // Trusted axiom is tied to, the ids the Lean program may bind, the digests in the receipt) is of that
-    // snapshot. A file that cannot be read refuses the check; it never reads as no records.
+    // externals.json is read once, when the first rule needs it or, if none does, before the receipt is made,
+    // and every use (the records a new Trusted axiom is tied to, the ids the Lean program may bind, the digests
+    // in the receipt) is of that snapshot. A file that cannot be read refuses the check; it never reads as no
+    // records. The receipt's externals.sha256 is therefore always the digest of the file the check read, and
+    // null only when the project has no externals.json.
     let externalsSnapshot;
     const externalsFile = () => (externalsSnapshot === undefined ? (externalsSnapshot = readRunFile(root, 'externals.json')) : externalsSnapshot);
     const integrity = checkIntegrity({
@@ -1582,7 +1584,7 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
       layout,
       externals: () => { const records = externalsFile()?.data?.records; return Array.isArray(records) ? records : null; },
     });
-    let externalsRecord = externalsBinding(integrity.ties.map((tie) => tie.record), externalsSnapshot ?? null);
+    let externalsRecord = externalsBinding(integrity.ties.map((tie) => tie.record), externalsFile());
     // The Lean checks the extraction recorded for stitched crates: the files of the commit must still hold
     // the blocks they were written with.
     const stitch = stitchPlan(runState, { root });

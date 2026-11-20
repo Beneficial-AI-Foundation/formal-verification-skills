@@ -1825,6 +1825,27 @@ describe('the Lean program: what runs, and what an unusable run means', () => {
     assert.equal(JSON.parse(fs.readFileSync(result.json.receipt, 'utf8')).accepted, false);
   });
 
+  test('the receipt carries the digest of externals.json even when no rule needed a record, and null only when there is no file', () => {
+    const { 'formal/trusted/Gaps.lean': _made, ...withoutTrusted } = HEAD_FILES;
+    const unchanged = () => { const { base } = DUMPS(); return { base, head: DUMPS({ docs: BASE_DOCS, constants: [FOO, DIV()] }).head }; };
+    for (const externals of [EXTERNALS(), EXTERNALS(record({ id: 'unrelated' }))]) {
+      const fx = layered({ head: withoutTrusted, externals });
+      const file = path.join(fx.repo, '.formalising', 'auto-fv', 'externals.json');
+      const result = checkTip(fx, { dump: unchanged() });
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(result.json.externals, { file, sha256: sha256(fs.readFileSync(file)), records: [] });
+    }
+    // A check that stops at the integrity rules, before any later rule reads the file, records it as well.
+    const stopped = layered({ head: { ...withoutTrusted, 'formal/specs/Specs/A.lean': SPEC_HEAD.replace('0 < n', '0 ≤ n') }, externals: EXTERNALS() });
+    const stoppedFile = path.join(stopped.repo, '.formalising', 'auto-fv', 'externals.json');
+    const early = checkTip(stopped);
+    assert.equal(early.json.accepted, false);
+    assert.deepEqual(early.json.externals, { file: stoppedFile, sha256: sha256(fs.readFileSync(stoppedFile)), records: [] });
+    const missing = checkTip(layered({ head: withoutTrusted, externals: null }), { dump: unchanged() });
+    assert.equal(missing.status, 0, missing.stderr);
+    assert.deepEqual(missing.json.externals, { file: null, sha256: null, records: [] });
+  });
+
   test('without a merged spec nothing is compared and no Lean program runs', () => {
     const fx = layered();
     const result = check(fx, { commit: fx.tip, oleans: OLEANS, noBase: true });
