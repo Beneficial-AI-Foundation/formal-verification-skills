@@ -125,11 +125,19 @@ and the crates a patch removed) is refused too, and so is a stitch that does not
 imports and the digest of the provider's publication it was made from. A label such as an import does not
 count as a stitch. In each case the reason says what to do.
 
+That the work is a single crate is a fact the extraction records when it prepares the copy; it is never what
+is left when nothing says otherwise. A copy that does not say whether it is one crate or several, such as a
+workspace prepared without a release folder, is refused, and so is a recorded extraction that lacks this fact:
+run the extraction again. A run of several crates that loses a crate's row or the crate list is not read as
+a smaller run; the crates stay owed until they are extracted again. A build-check receipt counts for a crate
+with stitches only while the Lean checks it verified are exactly the ones the extraction recorded; after any
+other change the build check runs again.
+
 Dispatch workers providers first, in the order `crates.order` gives, and accept bottom-up, one crate at a
 time. A crate that depends on another may be proved early against the other crate's reviewed statement, but
 it counts as accepted only after the other crate is. An item of a crate the owner does not verify may be
-assumed, with the owner's accepted entry in the externals record. A project with one crate is not affected:
-the receipt alone decides, and the build check runs without the list.
+assumed, with the owner's accepted entry in the externals record. A project whose extraction says it is one
+crate is not affected: the receipt alone decides, and the build check runs without the list.
 
 ## GitHub rule
 
