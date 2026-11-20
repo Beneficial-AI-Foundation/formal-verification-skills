@@ -184,6 +184,83 @@ describe('record-extraction when the scope is not established', () => {
   });
 });
 
+// The same, against a real workspace of two crates and the extraction engine's own record of its scope: the
+// extraction lane's toy workspace (an app crate and a library crate it depends on). These need that lane's
+// fake tools, so they run where its test helper is present and are skipped where it is not.
+const MULTI_TOOLS = path.join(__dirname, 'helpers', 'fake-multicrate-tools.cjs');
+const multi = fs.existsSync(MULTI_TOOLS) ? require(MULTI_TOOLS) : null;
+
+describe('a real workspace of two crates', { skip: multi === null ? 'the extraction lane\'s multi-crate test tools are not in this tree' : false }, () => {
+  const scopeOf = (out) => JSON.parse(fs.readFileSync(path.join(out, 'manifest.json'), 'utf8')).scope;
+  const prepareIn = (ws, name, extra = []) => {
+    const out = path.join(ws.root, 'copies', name);
+    const prepared = multi.run(ws, ['prepare', '--project-root', ws.project, '--out', out, ...extra]);
+    assert.equal(prepared.status, 0, prepared.stdout);
+    return out;
+  };
+  // The workspace as a committed project with setup state, which is what record-extraction needs: the
+  // Lean project files the stub profile accepts are laid next to the crates.
+  function toyProject() {
+    const ws = multi.workspace();
+    fs.cpSync(path.join(PROFILE_FIXTURES, 'fresh'), ws.project, { recursive: true });
+    fixtures.git(ws.project, 'init', '-q');
+    fixtures.git(ws.project, 'add', '-A');
+    fixtures.git(ws.project, 'commit', '-q', '-m', 'workspace');
+    init(ws.project);
+    return ws;
+  }
+
+  it('prepared without a release folder has an unknown scope, no attempt is taken, and nothing records as a success', () => {
+    const ws = toyProject();
+    const out = prepareIn(ws, 'plain');
+    assert.equal(scopeOf(out).kind, 'unknown', 'no inventory and no targets field: nothing establishes a single crate');
+    for (const spec of [multi.toySpec(), { release: multi.RELEASE, cargoArgs: ['--locked'], crate: 'toy_lib', publishDir: 'Lean/Lib', moduleRoot: 'Toy.Lib' }]) {
+      const attempt = multi.run(ws, ['attempt', '--out', out, '--spec', multi.specFile(ws, spec)]);
+      assert.notEqual(attempt.status, 0, attempt.stdout);
+      assert.match(attempt.stdout, /records no workspace inventory|never takes an unknown scope for a single crate/);
+    }
+    assert.throws(() => record(ws.project, out), refusedWith(/the scope of this extraction is not established \(.*Cargo\.toml files.*\), and an unknown scope is never read as a single crate/));
+    const { extraction } = readState(ws.project);
+    assert.equal(extraction.status, 'failed');
+    assert.equal(extraction.scope.kind, 'unknown');
+  });
+
+  it('prepared with a release folder is several crates: no attempt, or one of one crate, is not recorded, and the attempt over both is', () => {
+    const ws = toyProject();
+    const out = prepareIn(ws, 'release', ['--release', multi.RELEASE]);
+    assert.deepEqual(scopeOf(out), { kind: 'multi-crate', basis: 'cargo', libraryCrates: ['toy_app', 'toy_lib'] });
+    assert.throws(() => record(ws.project, out), refusedWith(/the crates toy_app, toy_lib are in scope \(the copy's scope, .*\), but the copy holds no extraction attempt/));
+    const single = multi.run(ws, ['attempt', '--out', out, '--spec', multi.specFile(ws, { release: multi.RELEASE, cargoArgs: ['--locked'], crate: 'toy_lib', publishDir: 'Lean/Lib', moduleRoot: 'Toy.Lib' })]);
+    assert.notEqual(single.status, 0, 'the extraction engine takes no single-crate attempt on this scope');
+    assert.equal(readState(ws.project).extraction.status, 'failed');
+
+    const whole = multi.complete(ws, multi.toySpec());
+    assert.equal(record(ws.project, whole).code, 'recorded');
+    const { extraction } = readState(ws.project);
+    assert.equal(extraction.status, 'succeeded');
+    assert.equal(extraction.scope.kind, 'multi-crate');
+    assert.deepEqual(extraction.run.units.map((unit) => unit.crate).sort(), ['toy_app', 'toy_lib']);
+    assert.deepEqual(extraction.run.scope, extraction.scope, 'the attempt repeats the scope of the copy');
+    assert.equal(fixtures.cli('read-state', '--project-root', ws.project).json.code, 'ok');
+  });
+
+  it('records a crates list of one with the other crate a non-target, and the state reads', () => {
+    const ws = toyProject();
+    const spec = multi.toySpec({ main: 'toy_lib', crates: [multi.toySpec().crates[0]], nonTargets: [{ crate: 'toy_app', dir: 'app' }] });
+    const { out, recorded } = multi.attempted(ws, spec);
+    assert.equal(recorded.status, 0, recorded.stdout);
+    multi.completeUnit(ws, out, 'toy_lib');
+    assert.equal(record(ws.project, out).code, 'recorded');
+    const { extraction } = readState(ws.project);
+    assert.equal(extraction.scope.kind, 'multi-crate');
+    assert.deepEqual(extraction.run.units.map((unit) => unit.crate), ['toy_lib']);
+    assert.deepEqual(extraction.run.roster.nonTargets.map((entry) => entry.crate), ['toy_app']);
+    const read = fixtures.cli('read-state', '--project-root', ws.project);
+    assert.equal(read.json.code, 'ok', read.stdout);
+    assert.deepEqual(read.json.crates.targets, ['toy_lib']);
+  });
+});
+
 describe('an extraction record that no longer reads', () => {
   it('is replaced by extracting again, and nothing else in the state is touched', () => {
     const root = project();
