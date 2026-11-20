@@ -1158,13 +1158,25 @@ function rosterProblem(run) {
 // and the same roster. A stitch is more than a label: it names the provider's publish stage that it was
 // made from, which must be the one the provider's row holds, and the crate's imports are its providers.
 // Returns the first problem in words, or null.
+// A stitch that replaced aliases leaves a Lean check for each file it changed (`leanChecks`). A row that replaced
+// some and records none cannot have its checks held against a receipt: an empty record on both sides would pass.
+function leanChecksProblem(rows) {
+  for (const row of rows) {
+    const replaced = stitchEntries(row).reduce((sum, entry) => sum + (Array.isArray(entry.replaced) ? entry.replaced.length : 0), 0);
+    if (replaced > 0 && !(Array.isArray(row.leanChecks) && row.leanChecks.length > 0)) {
+      return `${isText(row.crate) ? `crate ${row.crate}` : 'the run'} stitched ${replaced} alias${replaced === 1 ? '' : 'es'} but records no Lean check for ${replaced === 1 ? 'it' : 'them'}`;
+    }
+  }
+  return null;
+}
+
 export function unitsProblem(run) {
   const { units } = run;
   if (units === undefined) {
     // The fields of an aggregate come together: a single crate's own run has none of them, so a run that
     // still carries the roster, its hash or the order has lost its crate rows and is not a single crate.
     const left = ['roster', 'rosterSha256', 'order'].filter((key) => key in run);
-    return left.length === 0 ? null : `the run carries its ${left.join(', ')} but lists none of its crates`;
+    return left.length === 0 ? leanChecksProblem([run]) : `the run carries its ${left.join(', ')} but lists none of its crates`;
   }
   if (!Array.isArray(units) || units.length === 0) return 'the run lists no crate';
   if (!units.every((unit) => runValid(unit) && isText(unit.crate) && isText(unit.status) && unit.manifestSha256 === run.manifestSha256)) return 'a crate row is not a valid run of this copy';
@@ -1180,7 +1192,7 @@ export function unitsProblem(run) {
     const named = new Set(stitchEntries(unit).map((entry) => entry.provider));
     if (Array.isArray(unit.imports) && (unit.imports.length !== named.size || !unit.imports.every((crate) => named.has(crate)))) return `crate ${unit.crate} imports crates its stitch does not name`;
   }
-  return null;
+  return leanChecksProblem(units);
 }
 
 const unitsValid = (run) => unitsProblem(run) === null;
@@ -1294,7 +1306,16 @@ function recordedCrateContext(state) {
   };
 }
 
-const crateContext = (root) => crateContextOf(loadState(root));
+// The crate context of a recorded state, for a reader that takes a null context for a project of one crate (the
+// one-crate-per-spec-file rule, the allowed axioms): it refuses when the extraction the state holds has no settled
+// scope, because one crate is never what is left when nothing says how many there are.
+function settledCrateContext(state) {
+  const unsettled = state?.extraction?.status === 'succeeded' ? scopeUnsettled(state.extraction) : null;
+  if (unsettled !== null) refuse('scope-unsettled', unsettled, { nextStep: 'Rerun /fvs:auto-extract so that the extraction is recorded with its scope.' });
+  return crateContextOf(state);
+}
+
+const crateContext = (root) => settledCrateContext(loadState(root));
 
 // The crates a recorded extraction has to account for: the ones the owner's agreement names (targets and
 // non-targets) and the in-repo library crates of the workspace the copy was prepared from (its
@@ -1761,7 +1782,7 @@ export function allowedAxiomList(root, state, context, commit, specs = null) {
 export function allowedAxioms({ projectRoot, commit }) {
   const root = projectDirectory(projectRoot);
   const state = requireState(root);
-  const context = crateContextOf(state);
+  const context = settledCrateContext(state);
   if (context === null) refuse('not-multi-crate', 'this project has one crate: the build check runs without an allowed-axioms file');
   const specs = loadSpecs(root);
   const proofPr = (specs?.prs ?? []).filter((pr) => pr.kind === 'proof' && !pr.merged).at(-1);
@@ -1878,7 +1899,7 @@ const externalsPath = (root) => path.join(root, STATE_DIR, 'externals.json');
 
 // Null when the file is absent; a refusal naming the file and the next step
 // when it is unreadable or does not validate. It is never repaired here.
-function loadRecord(file, code, validate, rerun, recovery = () => '') {
+function loadRecord(file, code, validate, rerun, recovery = () => null) {
   let text;
   try {
     text = fs.readFileSync(file, 'utf8');
@@ -1895,7 +1916,7 @@ function loadRecord(file, code, validate, rerun, recovery = () => '') {
     refuse(code, `${file} is not valid JSON: ${error.message}`, { file, nextStep });
   }
   const errors = validate(value);
-  if (errors.length > 0) refuse(code, `${file} is malformed: ${errors.join('; ')}`, { file, errors, nextStep: `${nextStep}${recovery(errors)}` });
+  if (errors.length > 0) refuse(code, `${file} is malformed: ${errors.join('; ')}`, { file, errors, nextStep: recovery(errors, file) ?? nextStep });
   RECORD_TEXT.set(value, text);
   return value;
 }
@@ -1903,8 +1924,8 @@ function loadRecord(file, code, validate, rerun, recovery = () => '') {
 // A state whose only fault is its extraction record can be put right by extracting again, which replaces
 // that record and nothing else: the owner is not left with a state that only a hand edit can open.
 const extractionOnly = (errors) => errors.every((text) => text.startsWith('extraction'));
-const extractionRecovery = (errors) => (extractionOnly(errors)
-  ? ' The extraction record is the only fault, so you can also rerun /fvs:auto-extract: it records the extraction again in its place and touches nothing else in the state.' : '');
+const extractionRecovery = (errors, file) => (extractionOnly(errors)
+  ? `To record the extraction again in place of the one that cannot be read, rerun /fvs:auto-extract; nothing else in ${file} is touched. Otherwise fix ${file} by hand or move it aside, then rerun /fvs:auto-init.` : null);
 
 // The exact text each loaded record was parsed from, so a writer can tell
 // whether the file changed after it read it.

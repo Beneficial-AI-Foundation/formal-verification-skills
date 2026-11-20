@@ -218,6 +218,26 @@ describe('the scope of a recorded extraction', () => {
     unreadable((state) => { state.extraction.run.scope = { kind: 'single-crate', basis: 'manifest' }; }, /extraction\.scope: the scope the attempt recorded is not the scope of the copy/);
   });
 
+  it('refuses the readers that would take a null crate context for one crate, when the scope is not settled', () => {
+    const unsettled = [(state) => { delete state.extraction.scope; }, (state) => { state.extraction.scope = { kind: 'unknown', basis: 'none', reason: 'no inventory' }; }];
+    for (const change of unsettled) {
+      const root = extracted(hmacAndSha2);
+      const state = readState(root);
+      change(state);
+      writeState(root, state);
+      for (const args of [
+        ['record-spec', '--project-root', root, '--spec-file', 'S.lean', '--items', 'libcrux_hmac::hmac::hmac', '--round', '1', '--verdict', 'pass', '--review', 'r.md'],
+        ['spec-status', '--project-root', root],
+        ['record-pr', '--project-root', root, '--kind', 'spec', '--url', 'https://example.invalid/pr/1', '--branch', 'b', '--head', 'a'.repeat(40)],
+        ['allowed-axioms', '--project-root', root],
+      ]) {
+        const result = cli(...args);
+        assert.equal(result.json.code, 'scope-unsettled', `${args[0]}: ${result.stdout}`);
+        assert.match(result.json.nextStep, /rerun \/fvs:auto-extract/i, args[0]);
+      }
+    }
+  });
+
   it('reads a scope that is one crate, with the run of that crate, a one-row list, or no run', () => {
     const lone = (directory) => [unit(directory, 'libcrux_hmac', [])];
     for (const change of [(state) => fixtures.asSingleCrate(state.extraction.run), () => {}, (state) => { delete state.extraction.run; }]) {
@@ -297,6 +317,19 @@ describe('what binds the crates of a run to its roster and stitch', () => {
     assert.match(problem((run) => { delete run.units; delete run.roster; delete run.rosterSha256; }), /^the run carries its order but lists none of its crates/);
     assert.equal(problem((run) => { delete run.units; delete run.roster; delete run.rosterSha256; delete run.order; }), null,
       'a run with none of the aggregate fields is a single crate\'s run, which says nothing about scope');
+  });
+
+  it('refuses a stitch that replaced aliases but records no Lean check for them, in a crate of a run and in a single crate\'s own run', () => {
+    const replaced = (run) => { run.units[0].stitch[0].replaced = ['libcrux_sha2::hacl::hash_256']; };
+    assert.match(problem(replaced), /^crate libcrux_hmac stitched 1 alias but records no Lean check for it/);
+    assert.equal(problem((run) => { replaced(run); run.units[0].leanChecks = []; }) === null, false, 'an empty list is no record');
+    assert.equal(problem((run) => { replaced(run); run.units[0].leanChecks = [{ file: 'Funs.lean' }]; }), null);
+    const lone = runOf(hmacAndSha2);
+    fixtures.asSingleCrate(lone);
+    lone.stitch = stitchOf({ provider: 'libcrux_sha2', replaced: ['a', 'b'] });
+    assert.match(auto.unitsProblem(lone), /^crate libcrux_hmac stitched 2 aliases but records no Lean check for them/);
+    lone.leanChecks = [{ file: 'Funs.lean' }];
+    assert.equal(auto.unitsProblem(lone), null);
   });
 
   it('refuses a stitch to a crate that is not another crate of the run, and one to the crate itself', () => {

@@ -411,6 +411,18 @@ describe('the proof phase over several crates', () => {
       assert.deepEqual(result.crates.units.map((row) => row.accepted), [true, true]);
     });
 
+    it('does not read a record that stitched aliases and kept no Lean check, so an older receipt with none cannot pass for it', () => {
+      const { root, head } = proofPhase(stitched);
+      receipt(root, head, bothBuilt());
+      const state = fixtures.readState(root);
+      state.extraction.run.units[0].stitch[0].replaced = [SHA2_ITEM];
+      delete state.extraction.run.units[0].leanChecks;
+      fixtures.writeState(root, state);
+      const result = cli('read-state', '--project-root', root);
+      assert.equal(result.status, 3, result.stdout);
+      assert.match(result.json.message, /crate libcrux_hmac stitched 1 alias but records no Lean check for it/);
+    });
+
     it('does not count a receipt that lists none, though it is accepted and every statement built', () => {
       const { root, head } = proofPhase(stitched);
       receipt(root, head, bothBuilt());
