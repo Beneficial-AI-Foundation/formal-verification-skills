@@ -739,8 +739,11 @@ describe('write-allowlist for Claude Code: files and targets', () => {
     const linkedPreview = allow('worker-message').json;
     assert.equal(linkedPreview.viaLink, true);
     assert.equal(linkedPreview.resolvedPath, path.join(fs.realpathSync(shared), 'settings.json'), 'the real path is shown before the write');
+    // Git refuses a path beyond a symbolic link ("pathspec is beyond a symbolic link"), so it cannot say where the file stands.
+    assert.equal(linkedPreview.gitStatus, 'unknown');
     const done = confirmed('worker-message');
     assert.equal(done.json.code, 'written');
+    assert.equal(done.json.gitStatus, 'unknown');
     assert.equal(done.json.realPath, path.join(fs.realpathSync(shared), 'settings.json'));
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(shared, 'settings.json'), 'utf8')).permissions.allow, ['Bash(ao send *)']);
   });
@@ -1434,6 +1437,10 @@ describe('the permissions page', () => {
     assert.doesNotMatch(section, /orca|docker|\bAO\b|Orchestrator|\brtk\b/i, 'a stock user is the baseline: no one\'s own tools are named');
     assert.doesNotMatch(section, /pushes only|asks as usual|fails safe/i);
     assert.match(raw.split('</overview>')[0].replace(/\s+/g, ' '), /keeps the same safety rules and enforces them by other means: see "Unattended runs in a sandbox"/);
+  });
+
+  it('tells the owner what an unknown git status means', () => {
+    assert.match(flat('fv-skills/workflows/auto-init.md'), /its gitStatus \(a loose or tracked file can end up in a pull request; unknown means git cannot say, as for a file reached through a link\)/);
   });
 
   it('lists the limit that is left for later, the untested timeout report, and no longer lists the helper\'s own git calls as uncleaned', () => {
