@@ -4,7 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { readState, specStatus } from './fvs-auto.mjs';
+import { readState, specStatus, buildCheckReceipt } from './fvs-auto.mjs';
 import { memoryDataSnapshot, memoryHash } from './fvs-project-memory.mjs';
 import { parseExecution, assertRunning, runControl, withProcessCancellation } from './fvs-execution.mjs';
 import { transitionJson } from './fvs-auto-transitions.mjs';
@@ -884,6 +884,13 @@ export function trustSection({ projectRoot, commit: sha, notes = null }) {
   if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(sha ?? '')) fail('trust-usage', 'a full commit SHA is required');
   const receipt = readRecord(path.join(autoDir, 'build-check', sha + '.json'), 'build check receipt', r => receiptProblem(r, sha));
   if (receipt === null) fail('trust-receipt-missing', 'no build check receipt for commit ' + sha + '; run the build check on that commit first');
+  // The receipt counts as an acceptance here exactly when the engine counts it (its version, the Lean-level comparison,
+  // the externals records it relied on, the Lean checks of stitched files): a receipt the engine would not accept still
+  // supplies the axiom lists below, but the section says that the build check did not accept it, and why.
+  const verdict = buildCheckReceipt(root, sha);
+  const build = !receipt.accepted ? { accepted: false, label: receipt.label }
+    : verdict !== null && verdict.accepted ? { accepted: true, label: receipt.label }
+      : { accepted: false, label: `not accepted (${verdict?.stale ?? 'the engine does not read this receipt'})` };
   const statements = receipt.specFiles.flatMap(f => f.statements.map(s => ({ file: f.path, name: s.name, built: s.status === 'built' && s.axioms !== null,
     axioms: s.axioms ?? [], flags: strings(s.flags) ? s.flags : [] })));
   const beyondLean = list => list.filter(a => !LEAN_STANDARD.includes(a));
@@ -938,7 +945,7 @@ export function trustSection({ projectRoot, commit: sha, notes = null }) {
   });
   const model = {
     schema: 'fvs/auto-pr-trust', schemaVersion: 1, authority: 'text for a pull request body; no proof, acceptance or dispatch authority',
-    commit: sha, tree: receipt.tree ?? null, build: { accepted: receipt.accepted, label: receipt.label },
+    commit: sha, tree: receipt.tree ?? null, build,
     recordedProofPr: recordedHead === null ? null : { head: recordedHead.head ?? null, url: recordedHead.url ?? null },
     mergedProofPr: merged === null ? null : { mergeCommit: merged.mergeCommit ?? null },
     checks: { records: { total: registry.length, accepted: tally('assumption-accepted'), open: tally('open'), blocked: tally('blocked') },
