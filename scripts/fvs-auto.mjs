@@ -1105,34 +1105,80 @@ function runValid(run) {
     && publicationValid(run.publication, run.translation);
 }
 
+// What ties a crate's stitch to a provider: the provider, the digest of the provider's own publish
+// stage that the stitch was made from, and the Lean modules it imports. An entry without them is only
+// a label, and a label does not make the crate use the provider's translation.
+const stitchEntries = (unit) => [].concat(unit?.stitch ?? []).filter((entry) => entry !== null && typeof entry === 'object');
+const stitchEvidence = (entry) => isText(entry.provider) && SHA256.test(entry.providerStageSha256 ?? '')
+  && Array.isArray(entry.modules) && entry.modules.length > 0 && entry.modules.every(isText);
+
 // The roster of a run over several crates, which the extraction engine hashes (the main crate, the
-// crates in order, each with its stitch providers, the non-targets and the crates a patch removed).
-// Every unit row and the run carry the same hash, and the roster must name exactly the rows the run
-// holds: a row dropped from the aggregate, or one added, cannot pass for the extraction that was made.
-function rosterValid(run) {
+// crates in order, each with its package, folder and stitch providers, the non-targets and the crates a
+// patch removed). The roster is rebuilt from the rows the run holds and must agree with them field for
+// field, besides carrying the hash every row and the run carry: a row dropped from the aggregate, one
+// added, or one whose package, folder, stitch or non-targets changed cannot pass for the extraction that
+// was made. Returns the first disagreement in words, or null.
+function rosterProblem(run) {
   const { roster, rosterSha256, units } = run;
-  if (!SHA256.test(rosterSha256 ?? '') || !plainObject(roster) || sha256(JSON.stringify(roster)) !== rosterSha256) return false;
-  if (!units.every((unit) => unit.rosterSha256 === rosterSha256)) return false;
+  if (!SHA256.test(rosterSha256 ?? '') || !plainObject(roster) || sha256(JSON.stringify(roster)) !== rosterSha256) return 'the roster does not match its hash';
+  if (!units.every((unit) => unit.rosterSha256 === rosterSha256)) return 'a crate carries another roster than the run';
   const crates = units.map((unit) => unit.crate);
-  const same = (list) => Array.isArray(list) && list.length === crates.length && new Set(list).size === list.length && list.every((crate) => crates.includes(crate));
-  return same(roster.order) && same(Array.isArray(roster.units) ? roster.units.map((entry) => entry?.crate) : null)
-    && (!isText(run.crate) || roster.main === run.crate);
+  const spelt = (crate) => typeof crate === 'string' && CRATE_NAME.test(crate);
+  const bad = crates.find((crate) => !spelt(crate));
+  if (bad !== undefined) return `${JSON.stringify(bad)} is not a crate name`;
+  const same = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((item, at) => item === b[at]);
+  if (new Set(crates).size !== crates.length || !Array.isArray(roster.order) || roster.order.length !== crates.length || !roster.order.every((crate) => crates.includes(crate))) {
+    return 'a crate is missing from the run, or was added to it';
+  }
+  if (!same(roster.order, run.order)) return 'the order of the crates is not the roster\'s';
+  if (!Array.isArray(roster.units) || roster.units.length !== roster.order.length) return 'the roster lists other crates than its order';
+  if (isText(run.crate) && roster.main !== run.crate) return 'the main crate is not the roster\'s';
+  for (const [at, crate] of roster.order.entries()) {
+    const row = units.find((unit) => unit.crate === crate);
+    const listed = roster.units[at];
+    const providers = [...new Set(stitchEntries(row).map((entry) => entry.provider))].sort();
+    if (listed?.crate !== crate || listed.package !== row.package || listed.dir !== row.dir || !same(Array.isArray(listed.stitch) ? [...new Set(listed.stitch)].sort() : null, providers)) {
+      return `crate ${crate} does not match its roster entry (package, folder or stitch providers)`;
+    }
+  }
+  const keyOf = (entry) => `${entry?.crate}\u0000${entry?.dir ?? ''}`;
+  if (!Array.isArray(roster.nonTargets)) return 'the roster lists its non-targets in another form';
+  const nonTargets = roster.nonTargets.map(keyOf).sort();
+  for (const row of units) {
+    if (!same((Array.isArray(row.nonTargets) ? row.nonTargets : []).map(keyOf).sort(), nonTargets)) return `crate ${row.crate} names other non-target crates than the roster`;
+  }
+  if (!Array.isArray(roster.dropped) || !roster.dropped.every((entry) => spelt(entry?.crate) && isText(entry.reason))) return 'the roster lists its dropped crates in another form';
+  if (roster.dropped.some((entry) => crates.includes(entry.crate) || roster.nonTargets.some((other) => other?.crate === entry.crate))) return 'a dropped crate is also in the run or a non-target';
+  return null;
 }
 
 // A run over several crates lists each crate's whole single-crate run in `units`, so
 // a reader written for one crate reads any crate's row unchanged. Every unit comes
 // from the same prepared copy as the main run, so it carries the same manifest hash,
-// and the same roster.
-function unitsValid(run) {
-  const { units, order } = run;
-  if (units === undefined) return true;
-  if (!Array.isArray(units) || units.length === 0) return false;
-  if (!units.every((unit) => runValid(unit) && isText(unit.crate) && isText(unit.status) && unit.manifestSha256 === run.manifestSha256)) return false;
-  const crates = units.map((unit) => unit.crate);
-  return new Set(crates).size === crates.length && rosterValid(run)
-    && (order === undefined || (Array.isArray(order) && order.length === crates.length && new Set(order).size === order.length && order.every((crate) => crates.includes(crate))));
+// and the same roster. A stitch is more than a label: it names the provider's publish stage that it was
+// made from, which must be the one the provider's row holds, and the crate's imports are its providers.
+// Returns the first problem in words, or null.
+export function unitsProblem(run) {
+  const { units } = run;
+  if (units === undefined) return null;
+  if (!Array.isArray(units) || units.length === 0) return 'the run lists no crate';
+  if (!units.every((unit) => runValid(unit) && isText(unit.crate) && isText(unit.status) && unit.manifestSha256 === run.manifestSha256)) return 'a crate row is not a valid run of this copy';
+  const roster = rosterProblem(run);
+  if (roster !== null) return roster;
+  for (const unit of units) {
+    for (const entry of stitchEntries(unit)) {
+      if (!stitchEvidence(entry)) return `the stitch of ${unit.crate} to ${isText(entry.provider) ? entry.provider : '(no provider)'} carries no evidence (the digest of the provider's publish stage and the Lean modules it imports)`;
+      const provider = units.find((row) => row.crate === entry.provider);
+      if (provider === undefined || provider === unit) return `crate ${unit.crate} is stitched to ${entry.provider}, which is not another crate of the run`;
+      if (provider.stages?.publish !== entry.providerStageSha256) return `the stitch of ${unit.crate} was made from another publication of ${entry.provider} than the run holds`;
+    }
+    const named = new Set(stitchEntries(unit).map((entry) => entry.provider));
+    if (Array.isArray(unit.imports) && (unit.imports.length !== named.size || !unit.imports.every((crate) => named.has(crate)))) return `crate ${unit.crate} imports crates its stitch does not name`;
+  }
+  return null;
 }
 
+const unitsValid = (run) => unitsProblem(run) === null;
 const recordedRunValid = (run) => runValid(run) && unitsValid(run);
 
 // The recorded run of one crate. Without a crate it is the main run, which is all a
@@ -1148,6 +1194,21 @@ export function runOf(state, crate) {
 // The unit rows of a run: its units, or the run itself when it names its crate.
 const unitsOf = (run) => run?.units ?? (isText(run?.crate) ? [run] : []);
 
+// The crates a unit depends on, by every way the record names one: its Lean imports, the target
+// crates its LLBC reaches (`dependsOn` and the foreign target crates), the ones the extraction left
+// unstitched, and its stitch providers. The order of the crates and the stitch obligation read this
+// one set, so an edge named in one place and not another cannot be ordered yet go unchecked.
+function crateEdges(unit) {
+  const names = (list) => (Array.isArray(list) ? list : []);
+  return new Set([
+    ...names(unit.imports),
+    ...names(unit.dependsOn),
+    ...names(unit.unstitched),
+    ...stitchEntries(unit).map((entry) => entry.provider),
+    ...names(unit.foreignCrates).filter((entry) => entry?.kind === 'target').map((entry) => entry.crate),
+  ].filter(isText));
+}
+
 // The crates of an extraction that has more than one (or any, with `always`), with the
 // other extracted crates each one depends on and an order that puts providers before
 // consumers. A crate depends on another when its Lean imports it, when it is stitched to it
@@ -1157,13 +1218,7 @@ function crateView(run, always = false) {
   const units = unitsOf(run);
   if (units.length < (always ? 1 : 2)) return null;
   const crates = units.map((unit) => unit.crate);
-  const names = (list, pick) => (Array.isArray(list) ? list.map(pick) : []);
-  const dependsOn = new Map(units.map((unit) => [unit.crate, [...new Set([
-    ...names(unit.imports, (crate) => crate),
-    ...names(unit.dependsOn, (crate) => crate),
-    ...names([].concat(unit.stitch ?? []), (entry) => entry?.provider),
-    ...names(unit.foreignCrates?.filter((entry) => entry?.kind === 'target'), (entry) => entry.crate),
-  ])].filter((crate) => crates.includes(crate) && crate !== unit.crate).sort()]));
+  const dependsOn = new Map(units.map((unit) => [unit.crate, [...crateEdges(unit)].filter((crate) => crates.includes(crate) && crate !== unit.crate).sort()]));
   const derived = [];
   const rest = [...crates].sort();
   const ready = () => rest.find((crate) => dependsOn.get(crate).every((other) => derived.includes(other)));
@@ -1283,12 +1338,10 @@ function crateReceiptProblem(root, state, specs, context, receipt, head) {
 // never be. A crate the owner does not verify may be assumed, so it makes no pair.
 function unstitchedPairs(context) {
   return context.units.filter((unit) => context.targets.includes(unit.crate)).flatMap((unit) => {
-    const linked = new Set([...(Array.isArray(unit.imports) ? unit.imports : []), ...[].concat(unit.stitch ?? []).map((entry) => entry?.provider)]);
-    const reached = (Array.isArray(unit.foreignCrates) ? unit.foreignCrates : []).filter((entry) => entry?.kind === 'target').map((entry) => entry.crate)
-      .filter((crate) => !linked.has(crate));
-    // The extraction names the target crates it left unstitched itself; that is the same case.
-    const named = Array.isArray(unit.unstitched) ? unit.unstitched : [];
-    return [...new Set([...reached, ...named])].filter((crate) => isText(crate) && crate !== unit.crate && context.targets.includes(crate))
+    // Linked means a stitch with its evidence: an import label alone, or a stitch entry that names
+    // no provider publication and no module, does not make the crate use the provider's translation.
+    const linked = new Set(stitchEntries(unit).filter(stitchEvidence).map((entry) => entry.provider));
+    return [...crateEdges(unit)].filter((crate) => crate !== unit.crate && context.targets.includes(crate) && !linked.has(crate)).sort()
       .map((provider) => ({ crate: unit.crate, provider }));
   });
 }
@@ -2580,7 +2633,7 @@ export function recordExtraction({ projectRoot, out, buildExitCode, oracle, orac
     const status = engineResult('attempt-status', copy);
     if (!status.ok) reasons.push(`the recorded extraction attempt does not check out (${status.code}): ${status.message}`);
     else if (!runValid(status.run) || status.run.manifestSha256 !== inputs?.manifestSha256) reasons.push('the recorded extraction attempt is not bound to this manifest');
-    else if (!unitsValid(status.run)) reasons.push('the crates of the recorded extraction attempt do not agree with its roster (a crate is missing, added or changed): extract again');
+    else if (unitsProblem(status.run) !== null) reasons.push(`the crates of the recorded extraction attempt do not agree with its roster (${unitsProblem(status.run)}): extract again`);
     else run = status.run;
   }
   // Providers must come before consumers, and a verified crate must be stitched to the verified

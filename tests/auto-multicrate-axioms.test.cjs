@@ -55,7 +55,7 @@ const FOREIGN = [{ crate: 'core', kind: 'external' }, { crate: 'libcrux_traits',
 // hmac and sha2, both verified. `files` are the Lean files the extraction published for hmac,
 // `trusted` the hand-written files, `stitch` hmac's stitch to sha2; everything is committed. With
 // `thirdFiles` the project holds a third crate, libcrux_c, that sha2 imports.
-function scenario({ files = {}, trusted = {}, stitch = [], records = [], sha2Files = {}, thirdFiles = null, commit = true, below = false } = {}) {
+function scenario({ files = {}, trusted = {}, stitch = null, records = [], sha2Files = {}, sha2Stitch = null, thirdFiles = null, commit = true, below = false } = {}) {
   const root = extracted((directory) => {
     const row = (crate, lean, extra) => {
       const made = unit(directory, crate, [fn(`${crate}::x::f`, 'src/x.rs', 1)], extra);
@@ -67,7 +67,7 @@ function scenario({ files = {}, trusted = {}, stitch = [], records = [], sha2Fil
       return made;
     };
     const core = { foreignCrates: [{ crate: 'core', kind: 'external' }] };
-    return [row('libcrux_hmac', files, { imports: ['libcrux_sha2'], stitch, foreignCrates: FOREIGN }), row('libcrux_sha2', sha2Files, thirdFiles ? { ...core, imports: ['libcrux_c'] } : core),
+    return [row('libcrux_hmac', files, { stitch: stitch ?? ['libcrux_sha2'], foreignCrates: FOREIGN }), row('libcrux_sha2', sha2Files, { ...core, ...(thirdFiles ? { imports: ['libcrux_c'] } : {}), ...(sha2Stitch ? { stitch: sha2Stitch } : {}) }),
       ...(thirdFiles ? [row('libcrux_c', thirdFiles, core)] : [])];
   }, { below });
   for (const [name, text] of Object.entries(trusted)) {
@@ -211,10 +211,7 @@ describe('the allowed axioms of a run over several crates', () => {
     });
 
     it('crates that depend on each other hold each other\'s axioms, and the list is still written', () => {
-      const root = scenario({ files: { 'Hmac.lean': own('libcrux_hmac', 'core::a', 'core.a') }, sha2Files: { 'Sha2.lean': own('libcrux_sha2', 'core::b', 'core.b') } });
-      const state = fixtures.readState(root);
-      state.extraction.run.units[1].imports = ['libcrux_hmac'];
-      fixtures.writeState(root, state);
+      const root = scenario({ files: { 'Hmac.lean': own('libcrux_hmac', 'core::a', 'core.a') }, sha2Files: { 'Sha2.lean': own('libcrux_sha2', 'core::b', 'core.b') }, sha2Stitch: ['libcrux_hmac'] });
       assert.equal(write(root).status, 0);
       assert.deepEqual(sections(root).map((entry) => [entry.crate, entry.axioms]), [
         ['libcrux_hmac', ['libcrux_hmac.core.a', 'libcrux_sha2.core.b']],

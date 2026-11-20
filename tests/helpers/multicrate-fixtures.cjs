@@ -118,8 +118,19 @@ const writeState = (root, state) => fs.writeFileSync(stateFile(root), JSON.strin
 const fn = (rust, file, line) => ({ def_id: line, lean_name: rust.replace(/::/g, '.'), lean_file: 'X.lean', rust_name: rust, is_local: true,
   source: { file, begin_line: line, end_line: line + 2 }, is_opaque: false, can_fail: true });
 
-// One crate's whole single-crate run: its own folder and its own translation.json.
+// A stitch as the extraction engine records it: the provider, the digest of the provider's publish
+// stage it was made from (the fixture rows all publish ZEROS), and the Lean modules it imports. An entry
+// given as a crate name, or with fields missing, is filled in.
+const stitchOf = (list) => [].concat(list ?? []).map((entry) => {
+  const given = typeof entry === 'string' ? { provider: entry } : entry;
+  return { providerStage: 'publish', providerStageSha256: ZEROS, modules: [given.provider], replaced: [], assumed: [], copies: 0, files: [], ...given };
+});
+
+// One crate's whole single-crate run: its own folder and its own translation.json. A crate's Lean
+// imports are its stitch providers: `imports` alone stitches to those crates, `stitch` alone imports them.
 function unit(root, crate, functions, extra = {}) {
+  const stitch = stitchOf(extra.stitch ?? extra.imports);
+  const imports = extra.imports ?? [...new Set(stitch.map((entry) => entry.provider))];
   const directory = path.join(root, crate);
   fs.mkdirSync(directory, { recursive: true });
   const published = path.join(directory, 'translation.json');
@@ -130,7 +141,7 @@ function unit(root, crate, functions, extra = {}) {
     stages: { charon: ZEROS, aeneas: ZEROS, publish: ZEROS }, llbc: { path: `${crate}.llbc`, sha256: ZEROS },
     translation: entry, publication: [entry],
     crate, package: crate.replace(/_/g, '-'), dir: `crates/${crate}`, status: 'complete',
-    hasErrors: { value: false, items: [], itemCount: 0 }, ...extra,
+    hasErrors: { value: false, items: [], itemCount: 0 }, ...extra, stitch, imports,
   };
 }
 
@@ -145,20 +156,25 @@ function extracted(units, { run = {}, below = false, dropped = [] } = {}) {
   // The roster the extraction engine hashes: the main crate, the crates in order with their stitch
   // providers, the non-targets and the crates a patch removed. Every row carries the same hash.
   const order = run.order ?? rows.map((row) => row.crate);
+  // The extraction names every non-target on each crate's row and in the roster.
+  const nonTargets = [...new Map(rows.flatMap((row) => row.nonTargets ?? []).map((entry) => [`${entry.crate}\u0000${entry.dir}`, entry])).values()];
   const roster = { main: rows[0].crate, order,
     units: order.map((crate) => {
       const row = rows.find((entry) => entry.crate === crate);
       return { crate, package: row?.package, dir: row?.dir, stitch: [...new Set([].concat(row?.stitch ?? []).map((entry) => entry.provider))].sort() };
-    }), nonTargets: [], dropped };
+    }), nonTargets: nonTargets.map(({ crate, dir }) => ({ crate, dir })), dropped };
   const rosterSha256 = sha256(JSON.stringify(roster));
-  for (const row of rows) row.rosterSha256 = rosterSha256;
+  for (const row of rows) {
+    row.rosterSha256 = rosterSha256;
+    if (nonTargets.length > 0) row.nonTargets = nonTargets;
+  }
   state.extraction = {
     status: 'succeeded', recordedAt: '2026-11-19T00:00:00.000Z', reasons: [], note: 'not a proof',
     selected: { ...state.choices.source },
     declared: { buildExitCode: 0, oracle: 'complete' },
     checks: { status: { ok: true }, 'verify-tree': { ok: true }, 'verify-restore': { ok: true } },
     inputs: { out: path.join(root, 'copy'), manifestSha256: ZEROS, crateRoot: root, mode: 'translation-patches', sourceCommit: 'a'.repeat(40), patches: [] },
-    run: { ...rows[0], units: rows, roster, rosterSha256, ...run },
+    run: { ...rows[0], units: rows, order, roster, rosterSha256, ...run },
   };
   writeState(root, state);
   return root;
@@ -170,4 +186,4 @@ const hmacAndSha2 = (root) => [
   unit(root, 'libcrux_sha2', [fn('libcrux_sha2::hacl::hash_256', 'src/hacl.rs', 5)]),
 ];
 
-module.exports = { canonical, agreementFor, recordAgreement, ROOT, ZEROS, use, cleanup, temporaryDirectory, sha256, git, project, init, cli, stateFile, readState, writeState, fn, unit, extracted, hmacAndSha2 };
+module.exports = { canonical, agreementFor, recordAgreement, ROOT, ZEROS, use, cleanup, temporaryDirectory, sha256, git, project, init, cli, stateFile, readState, writeState, fn, stitchOf, unit, extracted, hmacAndSha2 };

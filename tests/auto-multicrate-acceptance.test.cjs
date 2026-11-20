@@ -302,6 +302,7 @@ describe('the proof phase over several crates', () => {
     // each of those items would be an axiom in hmac's own Lean.
     const unstitched = (directory) => {
       const [hmac, sha2] = hmacAndSha2(directory);
+      hmac.stitch = [];
       delete hmac.imports;
       hmac.foreignCrates = [{ crate: 'libcrux_sha2', kind: 'target' }, { crate: 'core', kind: 'external' }];
       return [hmac, sha2];

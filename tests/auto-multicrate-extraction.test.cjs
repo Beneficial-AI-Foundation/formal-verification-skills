@@ -12,7 +12,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const fixtures = require('./helpers/multicrate-fixtures.cjs');
 
-const { ROOT, ZEROS, cli, readState, writeState, fn, unit, extracted, hmacAndSha2 } = fixtures;
+const { ROOT, ZEROS, cli, readState, writeState, fn, stitchOf, unit, extracted, hmacAndSha2 } = fixtures;
 let auto = null;
 
 before(async () => {
@@ -42,14 +42,14 @@ describe('a succeeded extraction over several crates', () => {
 
   it('takes a dependency from imports, a stitch provider or a target the LLBC reaches, and ignores other crates', () => {
     const root = extracted((directory) => [
-      unit(directory, 'app', [], { stitch: [{ provider: 'mid', modules: ['Mid'], replaced: [], assumed: [], copies: [], files: [] }, { provider: 'elsewhere' }] }),
+      unit(directory, 'app', [], { stitch: [{ provider: 'mid', modules: ['Mid'], replaced: [], assumed: [], copies: [], files: [] }] }),
       unit(directory, 'mid', [], { foreignCrates: [{ crate: 'base', kind: 'target' }, { crate: 'core', kind: 'external' }, { crate: 'loose', kind: 'non-target' }] }),
       unit(directory, 'base', []),
       unit(directory, 'loose', []),
     ]);
     const { crates } = cli('read-state', '--project-root', root, '--brief').json;
     assert.deepEqual(Object.fromEntries(crates.units.map((entry) => [entry.crate, entry.dependsOn])),
-      { app: ['mid'], mid: ['base'], base: [], loose: [] }, 'elsewhere is no extracted crate, and loose is only a non-target the LLBC reaches');
+      { app: ['mid'], mid: ['base'], base: [], loose: [] }, 'loose is only a non-target the LLBC reaches');
     assert.deepEqual(crates.order, ['base', 'loose', 'mid', 'app'], 'derived order: ties by name, every provider first');
   });
 
@@ -72,7 +72,7 @@ describe('a succeeded extraction over several crates', () => {
 
   it('reads a stitch given as one entry as well as a list', () => {
     const root = extracted((directory) => [
-      unit(directory, 'app', [], { stitch: { provider: 'base', modules: [], replaced: [], assumed: [] } }),
+      unit(directory, 'app', [], { stitch: { provider: 'base', modules: ['Base'], replaced: [], assumed: [] } }),
       unit(directory, 'base', []),
     ]);
     assert.deepEqual(cli('read-state', '--project-root', root, '--brief').json.crates.order, ['base', 'app']);
@@ -134,6 +134,15 @@ describe('a succeeded extraction over several crates', () => {
       'a unit row of another roster': (state) => { state.extraction.run.units[1].rosterSha256 = '1'.repeat(64); },
       'a unit row with no roster hash': (state) => { delete state.extraction.run.units[1].rosterSha256; },
       'a crate removed from the aggregate while the roster still names it': (state) => { state.extraction.run.units.pop(); state.extraction.run.order = ['libcrux_hmac']; },
+      'an order that is not the roster\'s': (state) => { state.extraction.run.order = ['libcrux_sha2', 'libcrux_hmac']; },
+      'a crate whose package is not the roster\'s': (state) => { state.extraction.run.units[1].package = 'another-package'; },
+      'a crate whose folder is not the roster\'s': (state) => { state.extraction.run.units[1].dir = 'crates/elsewhere'; },
+      'a stitch added to a crate after the roster was made': (state) => { state.extraction.run.units[1].stitch = stitchOf('libcrux_hmac'); },
+      'a stitch removed from a crate after the roster was made': (state) => { state.extraction.run.units[0].stitch = []; state.extraction.run.units[0].imports = []; },
+      'a non-target on one crate only': (state) => { state.extraction.run.units[1].nonTargets = [{ crate: 'libcrux_traits', dir: 'crates/traits', sources: [] }]; },
+      'a stitch with no digest of the provider\'s publication': (state) => { delete state.extraction.run.units[0].stitch[0].providerStageSha256; },
+      'a stitch made from another publication of the provider': (state) => { state.extraction.run.units[0].stitch[0].providerStageSha256 = '1'.repeat(64); },
+      'a stitch that imports no module': (state) => { state.extraction.run.units[0].stitch[0].modules = []; },
     };
     for (const [label, change] of Object.entries(cases)) {
       const root = extracted(hmacAndSha2);
@@ -145,6 +154,73 @@ describe('a succeeded extraction over several crates', () => {
       assert.equal(result.json.code, 'malformed-state', label);
       assert.match(result.json.message, /extraction\.run must be the re-validated extraction attempt/, label);
     }
+  });
+});
+
+// The rows of the aggregate are bound to the roster the extraction engine hashed, and a stitch counts
+// only with the digest of the provider's publication it was made from.
+describe('what binds the crates of a run to its roster and stitch', () => {
+  const runOf = (units, options) => readState(extracted(units, options)).extraction.run;
+  const problem = (change, units = hmacAndSha2) => {
+    const run = runOf(units);
+    change(run);
+    return auto.unitsProblem(run);
+  };
+  const hmac = (run) => run.units[0];
+
+  it('agrees with a run built as the extraction builds it', () => {
+    assert.equal(auto.unitsProblem(runOf(hmacAndSha2)), null);
+    assert.equal(auto.unitsProblem(runOf((directory) => [unit(directory, 'app', [], { nonTargets: [{ crate: 'dep', dir: 'dep', sources: [] }] }), unit(directory, 'base', [])])), null,
+      'a non-target is on every row and in the roster');
+  });
+
+  it('names the disagreement of a row with the roster', () => {
+    assert.match(problem((run) => { run.units[1].package = 'another-package'; }), /^crate libcrux_sha2 does not match its roster entry/);
+    assert.match(problem((run) => { run.units[1].dir = 'crates/elsewhere'; }), /^crate libcrux_sha2 does not match its roster entry/);
+    assert.match(problem((run) => { hmac(run).stitch = []; hmac(run).imports = []; }), /^crate libcrux_hmac does not match its roster entry/);
+    assert.match(problem((run) => { run.order = ['libcrux_sha2', 'libcrux_hmac']; }), /^the order of the crates is not the roster's/);
+    assert.match(problem((run) => { run.units[1].nonTargets = [{ crate: 'x', dir: 'x', sources: [] }]; }), /^crate libcrux_sha2 names other non-target crates than the roster/);
+    assert.match(problem((run) => { run.units.pop(); }), /^a crate is missing from the run, or was added to it/);
+    assert.match(problem((run) => { run.roster.main = 'libcrux_sha2'; }), /^the roster does not match its hash/);
+  });
+
+  it('refuses a crate the roster says a patch removed from the copy when the run still holds it', () => {
+    const run = runOf(hmacAndSha2, { dropped: [{ crate: 'libcrux_sha2', reason: 'a patch removed it' }] });
+    assert.match(auto.unitsProblem(run), /^a dropped crate is also in the run or a non-target/);
+  });
+
+  it('refuses a stitch that is only a label', () => {
+    assert.match(problem((run) => { delete hmac(run).stitch[0].providerStageSha256; }), /^the stitch of libcrux_hmac to libcrux_sha2 carries no evidence/);
+    assert.match(problem((run) => { hmac(run).stitch[0].modules = []; }), /^the stitch of libcrux_hmac to libcrux_sha2 carries no evidence/);
+  });
+
+  it('refuses a stitch made from another publication of the provider than the run holds', () => {
+    assert.match(problem((run) => { hmac(run).stitch[0].providerStageSha256 = '1'.repeat(64); }),
+      /^the stitch of libcrux_hmac was made from another publication of libcrux_sha2 than the run holds/);
+  });
+
+  it('refuses a stitch to a crate that is not another crate of the run, and one to the crate itself', () => {
+    assert.match(auto.unitsProblem(runOf((directory) => [unit(directory, 'app', [], { stitch: ['elsewhere'] }), unit(directory, 'base', [])])),
+      /^crate app is stitched to elsewhere, which is not another crate of the run/);
+    assert.match(auto.unitsProblem(runOf((directory) => [unit(directory, 'app', [], { stitch: ['app'] }), unit(directory, 'base', [])])),
+      /^crate app is stitched to app, which is not another crate of the run/);
+  });
+
+  it('refuses imports its stitch does not name, so a label alone does not link the crates', () => {
+    const run = runOf((directory) => [unit(directory, 'app', [], { imports: ['base'], stitch: [] }), unit(directory, 'base', [])]);
+    assert.match(auto.unitsProblem(run), /^crate app imports crates its stitch does not name/);
+  });
+
+  it('counts an edge named only by dependsOn as one that still needs its stitch', () => {
+    const run = runOf((directory) => [unit(directory, 'app', [], { dependsOn: ['base'] }), unit(directory, 'base', [])]);
+    assert.equal(auto.unitsProblem(run), null);
+    assert.match(auto.crateProblems(run)[0], /^crate app uses items of base, which is verified, without being stitched to it/);
+  });
+
+  it('counts a stitch entry without its evidence as no link when the crates are read directly', () => {
+    const stitchless = runOf((directory) => [unit(directory, 'app', [], { dependsOn: ['base'] }), unit(directory, 'base', [])]);
+    stitchless.units[0].stitch = [{ provider: 'base' }];
+    assert.match(auto.crateProblems(stitchless)[0], /^crate app uses items of base, which is verified, without being stitched to it/);
   });
 });
 
@@ -231,7 +307,7 @@ describe('what the project does after stitching', () => {
   it('is in the next action once a crate is stitched, and not before', () => {
     const stitched = extracted((directory) => [unit(directory, 'app', [], stitchTo('base')), unit(directory, 'base', [])]);
     assert.match(cli('read-state', '--project-root', stitched, '--brief').json.nextAction, said);
-    const plain = extracted(hmacAndSha2);
+    const plain = extracted((directory) => [unit(directory, 'app', []), unit(directory, 'base', [])]);
     assert.doesNotMatch(cli('read-state', '--project-root', plain, '--brief').json.nextAction, /After the stitching/);
     const none = extracted((directory) => [unit(directory, 'app', [], { stitch: [] }), unit(directory, 'base', [])]);
     assert.doesNotMatch(cli('read-state', '--project-root', none, '--brief').json.nextAction, /After the stitching/, 'an empty stitch list changes nothing');
