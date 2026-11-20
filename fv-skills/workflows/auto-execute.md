@@ -38,7 +38,10 @@ merge and the proof pull request").
    record that names the proposition is the planned stronger form, for runs after this release. The
    check holds every hand-written axiom whose type is a proposition that a statement rests on to this,
    the merged spec's own included, whether or not a list of allowed axioms is given: it must be in
-   `formal/trusted`, cite one accepted record, and state exactly that record's proposition.
+   `formal/trusted`, cite one accepted record, and state exactly that record's proposition. An
+   assumption axiom of the merged spec whose record is tied to no frozen proposition (one record may
+   cover several contract axioms) is approved by the spec merge: it stays if it is in `formal/trusted`,
+   cites one accepted record and is unchanged, and a new axiom citing that record is refused.
    `native_decide` and `bv_decide` are fine in scratch work, but the check refuses a statement that
    now rests on an axiom they add (their generated axioms, or Lean's `ofReduceBool` and `trustCompiler`)
    and did not rest on it at the merged spec, so remove them before it runs. A statement that already

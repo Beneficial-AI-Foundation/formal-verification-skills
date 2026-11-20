@@ -1259,13 +1259,21 @@ export function semanticProblems({ base, head, recalled, acceptedIds = new Set()
   // proposition that record is tied to in the merged spec. `statement` is what a refusal is reported on, `subject` how
   // a refusal names the axiom where it says what the axiom must do, and `lead` what it says first about why the
   // axiom is held to this.
-  const bind = (axiom, statement, subject, lead) => {
+  const bind = (axiom, statement, subject, lead, merged = false) => {
     const refuse = (detail) => add('trusted-axiom-unbound', statement, `${lead}${detail}`);
     const doc = cited(head, 'axiom').find((entry) => entry.name === axiom.name);
     const ids = (doc?.cites ?? []).filter((id) => acceptedIds.has(id));
     if (ids.length !== 1) return refuse(`${subject} must cite exactly one accepted externals record in its docstring (it cites ${ids.length})`);
     const record = ids[0];
     const props = cited(base, 'prop').filter((entry) => entry.cites.includes(record) && !inTrustedModule(entry.module) && isFrozen(moduleRel(entry.module)));
+    // An axiom of the merged spec whose record is tied to no frozen proposition (an assumption record that covers
+    // several contract axioms) has nothing to be compared with: the spec merge approved it, so it is kept when it is
+    // in Trusted, cites one accepted record and asserts what it did (a changed one is refused as axiom-changed). Its
+    // record goes into the bindings with no proposition, so a revoked record stales the receipt.
+    if (merged && props.length === 0) {
+      if (closureDigest(closureOf(base.constants, axiom.name)) === closureDigest(closureOf(head.constants, axiom.name))) bindings.push({ axiom: axiom.name, record, proposition: null });
+      return undefined;
+    }
     if (props.length !== 1) return refuse(`the record ${record} is tied to ${props.length} propositions in the frozen spec of the merged spec; it must be tied to exactly one, so the axiom ${axiom.name} has nothing to assert`);
     const proposition = props[0].name;
     if (axiom.typeConst !== proposition) return refuse(`the axiom ${axiom.name} asserts ${axiom.typeConst ?? 'something that is not one proposition'}, but the record ${record} is tied to the proposition ${proposition} in the merged spec; an axiom must assert exactly that`);
@@ -1292,7 +1300,7 @@ export function semanticProblems({ base, head, recalled, acceptedIds = new Set()
         if (!inTrustedModule(axiom.module)) { add('prop-axiom-outside-trusted', id, propOutsideTrusted(id, rest.n, name, axiom.module)); continue; }
         if (bound.has(name)) continue;
         bound.add(name);
-        bind(axiom, id, 'it', `the statement ${id} (${rest.n}) rests on ${name}, an axiom whose type is a proposition, and `);
+        bind(axiom, id, 'it', `the statement ${id} (${rest.n}) rests on ${name}, an axiom whose type is a proposition, and `, true);
       }
     }
   }
@@ -1886,7 +1894,7 @@ function reportLines(receipt) {
   }
   if (integrity.semantic) {
     const { statements, bindings, toolchain } = integrity.semantic;
-    lines.push(`Lean check (${toolchain.lean}): recalled declarations compared: ${statements.length} (${statements.reduce((sum, item) => sum + item.constants, 0)} project constants); new Trusted axioms bound to their records: ${bindings.length}`);
+    lines.push(`Lean check (${toolchain.lean}): recalled declarations compared: ${statements.length} (${statements.reduce((sum, item) => sum + item.constants, 0)} project constants); Trusted axioms bound to their records: ${bindings.length}`);
   }
   for (const problem of integrity.problems) lines.push(`not accepted: ${problem.kind}: ${describeProblem(problem)}`);
   for (const tie of integrity.ties) lines.push(`accepted assumption: axiom ${tie.axiom} (${tie.file}) is tied to externals record ${tie.record}`);
