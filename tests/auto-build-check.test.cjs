@@ -26,11 +26,27 @@ const LAKEFILE = (extra = '') => `name = "fixture"\ndefaultTargets = ["Specs"]\n
 const STUB_LAKE = `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "Lake version 5.0.0-stub"; exit 0; fi
 if [ "$1" = build ] && [ "$2" = --no-build ]; then
-  if [ -f "$STUB/preflight" ]; then cat "$STUB/preflight"; exit 3; fi
+  files=""
+  for a in "$@"; do case "$a" in *.lean) files="$files $a";; esac; done
+  if [ -z "$files" ]; then
+    if [ -f "$STUB/preflight" ]; then cat "$STUB/preflight"; exit 3; fi
+    exit 0
+  fi
+  # A source check: up to date when the file has a .olean under its path or under a suffix of its path.
+  echo "$files" >> "$STUB/source-checks"
+  for f in $files; do
+    p="\${f%.lean}"; found=1
+    while :; do
+      if [ -f ".lake/build/lib/lean/$p.olean" ]; then found=0; break; fi
+      case "$p" in */*) p="\${p#*/}";; *) break;; esac
+    done
+    if [ $found -ne 0 ]; then echo "error: not up to date: $f"; exit 3; fi
+  done
   exit 0
 fi
 side=head
 case "$(pwd)" in */fvs-build-check-*/base|*/fvs-build-check-*/base/*) side=base;; esac
+if [ "$1" = env ] && [ "$2" = printenv ]; then pwd; exit 0; fi
 if [ "$1" = env ]; then
   pwd > "$STUB/dump-$side-cwd"
   echo "$LEAN_NUM_THREADS" > "$STUB/dump-$side-threads"
@@ -50,6 +66,7 @@ if [ "$1" = build ]; then
     wait
   fi
   ls .lake/build > "$STUB/\${tag}prebuild-listing" 2>&1
+  if [ -f "$STUB/manifest-after" ] && [ -z "$tag" ]; then cp "$STUB/manifest-after" lake-manifest.json; fi
   cat Specs/A.lean > "$STUB/\${tag}seen-A.lean" 2>/dev/null
   if [ -f "$STUB/\${tag}oleans" ] || [ -f "$STUB/oleans" ]; then
     list="$STUB/oleans"; if [ -f "$STUB/\${tag}oleans" ]; then list="$STUB/\${tag}oleans"; fi
@@ -83,6 +100,28 @@ console.log(JSON.stringify({ toolchain: 'Lean (stub)', githash: 'stub' }));
 for (const id of args.recalls) {
   console.log(JSON.stringify({ recall: id, matches: [id], rests: [{ n: id, axioms: [] }] }));
   console.log(JSON.stringify({ n: id, k: 'thm', m: 'Stub', lp: [], t: 'stub statement', d: [] }));
+}
+// Like the real program for an accepted assumption: every accepted record has a frozen proposition in the
+// merged spec, and a Trusted file of the project whose docstring cites the record has an axiom asserting it.
+for (const id of args.ids) {
+  console.log(JSON.stringify({ n: 'Prop.' + id, k: 'defn', m: 'formal.specs.Defs.Gaps', lp: [], t: 'Prop', v: id, d: [] }));
+  console.log(JSON.stringify({ doc: 'Prop.' + id, m: 'formal.specs.Defs.Gaps', cites: [id], prop: true, axiom: false }));
+}
+const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.name.startsWith('.') ? [] : e.isDirectory() ? walk(dir + '/' + e.name) : [dir + '/' + e.name]));
+if (side === 'head') {
+  const tick = String.fromCharCode(96);
+  for (const file of walk(process.cwd()).filter((f) => f.toLowerCase().includes('/trusted/') && f.endsWith('.lean'))) {
+    const module = file.slice(process.cwd().length + 1, -5).split('/').join('.');
+    let cited = null;
+    for (const line of fs.readFileSync(file, 'utf8').split('\\n')) {
+      cited = args.ids.find((id) => line.includes(tick + id + tick)) ?? cited;
+      if (!line.startsWith('axiom ') || cited === null) continue;
+      const name = line.split(' ')[1];
+      console.log(JSON.stringify({ n: 'Gap.' + name, k: 'axiom', m: module, lp: [], t: 'Prop', d: ['Prop.' + cited], tc: 'Prop.' + cited, pr: true }));
+      console.log(JSON.stringify({ doc: 'Gap.' + name, m: module, cites: [cited], prop: false, axiom: true }));
+      cited = null;
+    }
+  }
 }
 `;
 
@@ -671,8 +710,8 @@ const EXTERNALS = (...records) => ({ schema: 'fvs/auto-externals', schemaVersion
 // Commits BASE_FILES (the merged spec), then the head files on top, and writes the run state.
 // `merged` is the spec merge commit, `tip` the proof head.
 // `sub` puts the Lean project in a folder of the repository, and `base` replaces the merged spec's files.
-function layered({ head = HEAD_FILES, base = BASE_FILES, remove = [], lakefile = FORMAL_LAKEFILE, externals = EXTERNALS(record()), recorded = false, sub = '', dsl = false } = {}) {
-  const fx = fixture({ spec: 'import Dep\n', sub, dsl, files: { ...base, ...(dsl ? { 'lakefile.lean': 'import Lake\nopen Lake DSL\n\npackage fixture\n' } : { 'lakefile.toml': lakefile }) } });
+function layered({ head = HEAD_FILES, base = BASE_FILES, remove = [], lakefile = FORMAL_LAKEFILE, externals = EXTERNALS(record()), recorded = false, sub = '', dsl = false, manifestExtra = [] } = {}) {
+  const fx = fixture({ spec: 'import Dep\n', sub, dsl, manifestExtra, files: { ...base, ...(dsl ? { 'lakefile.lean': 'import Lake\nopen Lake DSL\n\npackage fixture\n' } : { 'lakefile.toml': lakefile }) } });
   const merged = fx.commit;
   for (const [name, text] of Object.entries(head)) write(path.join(fx.lean, name), text);
   for (const name of remove) fs.rmSync(path.join(fx.lean, name));
@@ -1004,6 +1043,111 @@ describe('the merged spec: changes that are refused', () => {
     assert.deepEqual(prose.problems, [], 'docstring prose that starts a line with the word is not a declaration');
   });
 
+  test('a Lean file or lakefile that names debug.skipKernelTC or addDeclWithoutChecking is refused before any build', async () => {
+    const proofs = (text) => ({ ...HEAD_FILES, 'formal/proofs/Lemmas/L.lean': `import Dep\n${text}` });
+    for (const [name, text, token] of [
+      ['the option in front of a theorem', 'set_option debug.skipKernelTC true in\ntheorem helper : 1 = 2 := by decide\n', 'debug.skipKernelTC'],
+      ['the option with other spacing', 'set_option   debug.skipKernelTC   true\ntheorem helper : True := trivial\n', 'debug.skipKernelTC'],
+      ['the option in a comment', '/- set_option debug.skipKernelTC true -/\ntheorem helper : True := trivial\n', 'debug.skipKernelTC'],
+      ['the option as a string', 'def o : String := "debug.skipKernelTC"\ntheorem helper : True := trivial\n', 'debug.skipKernelTC'],
+      ['the function in a command', 'open Lean Elab Command in\nelab "evil" : command => modifyEnv fun e => e.addDeclWithoutChecking default\ntheorem helper : True := trivial\n', 'addDeclWithoutChecking'],
+    ]) {
+      const fx = layered({ head: proofs(text) });
+      const result = checkTip(fx);
+      assert.equal(result.status, 1, name);
+      assert.deepEqual(result.json.integrity.problems.map((p) => [p.kind, p.token, p.file]), [['unchecked-declaration', token, 'formal/proofs/Lemmas/L.lean']], name);
+      assert.match(result.json.label, /^build check failed: .*lets Lean accept a declaration without running its kernel/, name);
+      noBuild(fx);
+    }
+    const { checkIntegrity, memoryTree } = await library();
+    const lake = (extra) => `defaultTargets = ["Foo"]\n[[lean_lib]]\nname = "Foo"\nglobs = ["Foo.+"]\n${extra}`;
+    const kinds = (files, base = null) => checkIntegrity({ base: base && memoryTree(base), head: memoryTree(files) }).problems.map((p) => [p.kind, p.file]);
+    const same = { 'lakefile.toml': lake('moreLeanArgs = ["-Ddebug.skipKernelTC=true"]\n'), 'Foo/P.lean': 'def p := 1\n' };
+    assert.deepEqual(kinds(same, same), [['unchecked-declaration', 'lakefile.toml']], 'a lakefile that sets it, unchanged since the merged spec');
+    assert.deepEqual(kinds({ 'lakefile.lean': 'import Lake\nopen Lake DSL\n\npackage p where\n  moreLeanArgs := #["-Ddebug.skipKernelTC=true"]\n', 'Foo/P.lean': 'def p := 1\n' }),
+      [['unchecked-declaration', 'lakefile.lean']], 'a lakefile.lean, with no merged spec to compare with');
+    const old = { 'lakefile.toml': lake(''), 'Foo/P.lean': 'set_option debug.skipKernelTC true\ndef p := 1\n' };
+    assert.deepEqual(kinds(old, old), [['unchecked-declaration', 'Foo/P.lean']], 'the same text in the merged spec itself is refused too');
+    assert.deepEqual(kinds({ 'lakefile.toml': lake(''), 'Foo/P.lean': 'def p := 1\n', '.lake/packages/dep/Dep.lean': 'set_option debug.skipKernelTC true\n', 'README.md': 'debug.skipKernelTC\n' }), [], 'a prebuilt package and a file that is not Lean are not read');
+  });
+
+  // A package inside the repository is built from the commit's own files, and the Lean-level comparison does
+  // not read its constants, so the whole package has to be the merged spec's own.
+  describe('a path package inside the repository', () => {
+    const LOCAL = { type: 'path', name: 'local', dir: 'vendor/local', inherited: false, configFile: 'lakefile.toml' };
+    const INNER = { 'vendor/local/lakefile.toml': 'name = "local"\n', 'vendor/local/Local.lean': 'def Local.good : Prop := False\n', 'vendor/local/data/table.txt': 'one\n' };
+    const withPackage = (head = {}, options = {}) => layered({ manifestExtra: [LOCAL], base: { ...BASE_FILES, ...INNER }, head: { ...HEAD_FILES, ...head }, ...options });
+
+    test('one that is the merged spec’s own, file for file, is accepted, and the receipt names its tree', () => {
+      const fx = withPackage();
+      const result = checkTip(fx);
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(result.json.integrity.pathPackages, [{ name: 'local', dir: 'vendor/local', tree: git(fx.repo, 'rev-parse', `${fx.tip}:vendor/local`) }]);
+    });
+
+    test('a changed Lean file, a changed file that is not Lean, an added and a removed file are each refused before any build', () => {
+      for (const [name, head, remove] of [
+        ['a Lean file', { 'vendor/local/Local.lean': 'def Local.good : Prop := True\n' }, []],
+        ['a file that is not Lean', { 'vendor/local/data/table.txt': 'two\n' }, []],
+        ['an added file', { 'vendor/local/Extra.lean': 'def Local.extra := 1\n' }, []],
+        ['a removed file', {}, ['vendor/local/data/table.txt']],
+      ]) {
+        const fx = withPackage(head, { remove });
+        const result = checkTip(fx);
+        assert.equal(result.status, 1, `${name}: ${result.stderr}`);
+        assert.deepEqual(result.json.integrity.problems.map((p) => [p.kind, p.file]), [['path-package-changed', 'vendor/local/']], name);
+        assert.match(result.json.label, /the dependency local is a package inside the commit \(vendor\/local\/\) and differs from the merged spec; .*the whole package must be the merged spec's own/, name);
+        noBuild(fx);
+      }
+    });
+
+    test('one that the merged spec lacks, or whose folder is gone, is refused too', () => {
+      const added = withPackage({}, { base: BASE_FILES, head: { ...HEAD_FILES, ...INNER } });
+      const problems = (result) => result.json.integrity.problems.filter((p) => p.kind === 'path-package-changed');
+      assert.match(problems(checkTip(added))[0]?.detail ?? '', /is not in the merged spec/, 'the lakefile it adds is refused as well, first');
+      const gone = layered({ manifestExtra: [LOCAL], base: { ...BASE_FILES, ...INNER }, head: HEAD_FILES, remove: Object.keys(INNER) });
+      assert.match(problems(checkTip(gone))[0]?.detail ?? '', /is gone since the merged spec/);
+    });
+
+    test('a package that another package requires is compared as well, by its path below the project', () => {
+      const SUB = { type: 'path', name: 'sub', dir: 'vendor/local/../sub', inherited: true, configFile: 'lakefile.toml' };
+      const files = { ...INNER, 'vendor/sub/lakefile.toml': 'name = "sub"\n', 'vendor/sub/Sub.lean': 'def Sub.x := 1\n' };
+      const make = (head) => layered({ manifestExtra: [LOCAL, SUB], base: { ...BASE_FILES, ...files }, head: { ...HEAD_FILES, ...head } });
+      const same = checkTip(make({}));
+      assert.equal(same.status, 0, same.stderr);
+      assert.deepEqual(same.json.integrity.pathPackages.map((p) => [p.name, p.dir]), [['local', 'vendor/local'], ['sub', 'vendor/sub']]);
+      const changed = checkTip(make({ 'vendor/sub/Sub.lean': 'def Sub.x := 2\n' }));
+      assert.deepEqual(changed.json.integrity.problems.map((p) => [p.kind, p.file]), [['path-package-changed', 'vendor/sub/']]);
+    });
+
+    test('a path package that is not a folder below the Lean project cannot be compared and is refused', () => {
+      const up = { type: 'path', name: 'up', dir: '../vendor/up', inherited: false, configFile: 'lakefile.toml' };
+      const result = checkTip(layered({ sub: 'proj', manifestExtra: [up] }));
+      assert.equal(result.status, 1, result.stderr);
+      assert.deepEqual(result.json.integrity.problems.map((p) => p.kind), ['path-package-outside-project']);
+    });
+
+    test('one that Lake resolved but the committed manifest did not list is compared after the build', () => {
+      const fx = withPackage({ 'vendor/local/Local.lean': 'def Local.good : Prop := True\n' }, { manifestExtra: [] });
+      write(path.join(fx.stub, 'manifest-after'), JSON.stringify({ version: '1.1.0', packages: [LOCAL] }));
+      const result = checkTip(fx);
+      assert.equal(result.status, 1, result.stderr);
+      assert.deepEqual(result.json.integrity.problems.map((p) => [p.kind, p.file]), [['path-package-changed', 'vendor/local/']]);
+      const same = withPackage({}, { manifestExtra: [] });
+      write(path.join(same.stub, 'manifest-after'), JSON.stringify({ version: '1.1.0', packages: [LOCAL] }));
+      const accepted = checkTip(same);
+      assert.equal(accepted.status, 0, accepted.stderr);
+      assert.deepEqual(accepted.json.integrity.pathPackages.map((p) => p.name), ['local']);
+    });
+
+    test('with no merged spec nothing is compared with, and the build is not an acceptance', () => {
+      const fx = withPackage({ 'vendor/local/Local.lean': 'def Local.good : Prop := True\n' });
+      const result = check(fx, { commit: fx.tip, oleans: OLEANS, noBase: true });
+      assert.equal(result.json.label, 'built, integrity not checked');
+      assert.deepEqual(result.json.integrity.pathPackages, []);
+    });
+  });
+
   test('a project one folder below the repository root is compared by the same rules', () => {
     const fx = layered({ sub: 'proj' });
     const result = checkTip(fx);
@@ -1095,6 +1239,111 @@ describe('extraction folders in a multi-crate run', () => {
   });
 });
 
+// A crate whose Lean imports another crate's real translation has its axioms replaced by aliases, and the extraction
+// appends to each such file a block that makes Lean compare every alias with its constant. The run state records one
+// Lean check for each file; the build check ties each record to the file of the commit and to the build.
+describe('the Lean checks recorded for stitched crates', () => {
+  const BLOCK = '\n/-! The declared type of each alias above is the type of the constant it stands for. -/\nopen Lean Meta Elab Command in\nrun_cmd liftTermElabM do\n  pure ()\n';
+  const STITCHED = `def x := 1\n${BLOCK}`;
+  const FILE = 'formal/extraction/Ext.lean';
+  const check = (fields = {}) => ({ file: 'Ext.lean', relativePath: FILE, module: 'formal.extraction.Ext', items: 2, blockSha256: sha256(BLOCK), blockBytes: Buffer.byteLength(BLOCK), fileSha256: sha256(STITCHED), ...fields });
+  const unit = (fields = {}) => ({ crate: 'hmac', publication: [{ projectPath: FILE, sha256: sha256(STITCHED) }], stitch: [{ provider: 'sha2', replaced: [{ name: 'a' }, { name: 'b' }], files: ['Ext.lean'] }], leanChecks: [check()], ...fields });
+  const withRun = (run, { base = { ...BASE_FILES, [FILE]: STITCHED } } = {}) => {
+    const fx = layered({ base, head: HEAD_FILES });
+    write(path.join(fx.repo, '.formalising', 'auto-fv', 'state.json'), JSON.stringify({ extraction: { run } }));
+    return fx;
+  };
+  const kinds = (result) => result.json.integrity.problems.map((p) => p.kind);
+
+  test('a file and a block as recorded, built by Lake in the module the record names, are accepted, and the receipt says the checks ran', () => {
+    const fx = withRun(unit());
+    const result = checkTip(fx);
+    assert.equal(result.status, 0, result.stderr);
+    const { stitchChecks } = result.json.integrity;
+    assert.deepEqual([stitchChecks.units, stitchChecks.files, stitchChecks.items, stitchChecks.builtChecked], [1, 1, 2, true]);
+    assert.deepEqual(stitchChecks.entries.map((e) => [e.unit, e.file, e.module, e.items, e.blockSha256, e.fileSha256]), [['hmac', 'Ext.lean', 'formal.extraction.Ext', 2, sha256(BLOCK), sha256(STITCHED)]]);
+    assert.match(result.stderr, /stitch checks: 1 file of 1 crate \(2 aliases\): each file and its Lean check block as recorded, and each built by Lake/);
+  });
+
+  test('a publication row is matched by its project-relative path, so a project moved since the extraction still matches', () => {
+    const moved = unit({ publication: [{ projectPath: `/elsewhere/project/${FILE}`, relativePath: FILE, sha256: sha256(STITCHED) }] });
+    const result = checkTip(withRun(moved));
+    assert.equal(result.status, 0, result.stderr);
+    const other = unit({ publication: [{ projectPath: path.join('/elsewhere', FILE), relativePath: 'formal/extraction/Other.lean', sha256: sha256(STITCHED) }] });
+    const refused = checkTip(withRun(other));
+    assert.equal(refused.status, 1, refused.stderr);
+    assert.match(refused.json.integrity.problems.map((p) => p.detail).join('\n'), /is in no row of the recorded publication/);
+  });
+
+  test('a multi-crate run checks each unit that stitched and leaves the others alone', () => {
+    const fx = withRun({ units: [{ crate: 'sha2', publication: [], stitch: [], leanChecks: [] }, { crate: 'core', stitch: [{ provider: 'sha2', replaced: [], files: [] }] }, unit()] });
+    const result = checkTip(fx);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.json.integrity.stitchChecks.units, 1);
+    const none = checkTip(withRun({ units: [{ crate: 'sha2', stitch: [] }] }));
+    assert.equal(none.status, 0, none.stderr);
+    assert.deepEqual(none.json.integrity.stitchChecks, { units: 0, files: 0, items: 0, builtChecked: false, entries: [] });
+  });
+
+  test('a unit that replaced aliases but records no check, a record that does not add up and a record for a file the stitch did not touch are refused before any build', () => {
+    for (const [name, fields, expected] of [
+      ['no leanChecks', { leanChecks: undefined }, /the stitch replaced 2 aliases, but the recorded extraction carries no Lean check for them/],
+      ['an empty list', { leanChecks: [] }, /the stitch replaced 2 aliases, but the recorded extraction carries no Lean check for them/],
+      ['a list that is not a list', { leanChecks: {} }, /the recorded leanChecks is not a list/],
+      ['fewer aliases checked than replaced', { leanChecks: [check({ items: 1 })] }, /cover 1 alias, but the stitch replaced 2/],
+      ['a file the stitch put aliases into with no check', { stitch: [{ provider: 'sha2', replaced: [{}, {}], files: ['Ext.lean', 'More.lean'] }] }, /put aliases into More\.lean, but no Lean check is recorded for that file/],
+      ['a check for a file with no aliases', { stitch: [{ provider: 'sha2', replaced: [{}, {}], files: [] }] }, /which the stitch put no aliases into/],
+      ['a field of the wrong kind', { leanChecks: [check({ blockBytes: '12' })] }, /missing a field or has one of the wrong kind/],
+      ['a digest that is not one', { leanChecks: [check({ blockSha256: 'abc' })] }, /missing a field or has one of the wrong kind/],
+      ['a file the publication does not hold', { publication: [] }, /is in no row of the recorded publication/],
+      ['a publication that has another digest for the file', { publication: [{ projectPath: FILE, sha256: 'f'.repeat(64) }] }, /the recorded publication has ffffffffffff for formal\/extraction\/Ext\.lean/],
+    ]) {
+      const fx = withRun(unit(fields));
+      const result = checkTip(fx);
+      assert.equal(result.status, 1, `${name}: ${result.stderr}`);
+      assert.ok(kinds(result).includes('stitch-check-missing'), `${name}: ${kinds(result)}`);
+      assert.match(result.json.integrity.problems.map((p) => p.detail).join('\n'), expected, name);
+      noBuild(fx);
+    }
+  });
+
+  test('a file that is not the one the check was written for, or whose block is not the recorded one, is refused before any build', () => {
+    for (const [name, fields, kind, expected] of [
+      ['the whole file changed', { leanChecks: [check({ fileSha256: 'e'.repeat(64) })], publication: [{ projectPath: FILE, sha256: 'e'.repeat(64) }] }, 'stitch-file-changed', /is not the published file its Lean check was written for/],
+      ['the block is not the end of the file', { leanChecks: [check({ blockSha256: 'd'.repeat(64) })] }, 'stitch-block-changed', /are not the Lean check block that was recorded for it/],
+      ['the block is longer than the file', { leanChecks: [check({ blockBytes: 10000 })] }, 'stitch-block-changed', /are not the Lean check block that was recorded for it/],
+      ['the file is not in the commit', { leanChecks: [check({ relativePath: 'formal/extraction/Gone.lean' })], publication: [{ projectPath: 'formal/extraction/Gone.lean', sha256: sha256(STITCHED) }] }, 'stitch-file-missing', /is not in the commit/],
+      ['the file is outside the project', { leanChecks: [check({ relativePath: '../Ext.lean' })], publication: [{ projectPath: '../Ext.lean', sha256: sha256(STITCHED) }] }, 'stitch-file-outside', /outside the project/],
+    ]) {
+      const fx = withRun(unit(fields));
+      const result = checkTip(fx);
+      assert.equal(result.status, 1, `${name}: ${result.stderr}`);
+      assert.ok(kinds(result).includes(kind), `${name}: ${kinds(result)}`);
+      assert.match(result.json.integrity.problems.find((p) => p.kind === kind).detail, expected, name);
+      noBuild(fx);
+    }
+  });
+
+  test('the block removed from the committed file is refused: the file is not the recorded one', () => {
+    const fx = withRun(unit(), { base: { ...BASE_FILES, [FILE]: 'def x := 1\n' } });
+    assert.ok(kinds(checkTip(fx)).includes('stitch-file-changed'));
+    noBuild(fx);
+  });
+
+  test('a module the record names that Lake does not map the file to is refused after the build, and a file Lake did not build is too', async () => {
+    const wrong = checkTip(withRun(unit({ leanChecks: [check({ module: 'formal.other.Ext' })] })));
+    assert.equal(wrong.status, 1, wrong.stderr);
+    assert.deepEqual(kinds(wrong), ['stitch-module-mismatch']);
+    assert.match(wrong.json.integrity.problems[0].detail, /the recorded module formal\.other\.Ext is not one Lake maps formal\/extraction\/Ext\.lean to \(formal\.extraction\.Ext\)/);
+    const nameless = checkTip(withRun(unit({ leanChecks: [check({ module: null })] })));
+    assert.equal(nameless.status, 0, 'a record with no module name is not held to one');
+    const { stitchBuiltProblems, stitchPlan } = await library();
+    const plan = stitchPlan({ extraction: { run: unit() } }, { root: '/p' });
+    const found = stitchBuiltProblems({ plan, start: '/p', leanRoot: '/p', isBuilt: () => false, sourceDirs: ['/p'] });
+    assert.deepEqual(found.map((p) => p.kind), ['stitch-unbuilt']);
+  });
+});
+
 // A multi-crate run: crate A (hmac) and crate B (sha2) are both targets. The engine lists the axioms that
 // have a legitimate record. The list holds full names, and a statement's axioms are read from Lean's
 // environment, which gives full names too, so a name is covered only by itself.
@@ -1109,19 +1358,30 @@ describe('the allowed axioms', () => {
     [GAP]: { m: 'Trusted.Gaps', asserts: true },
     [ABOUT_TARGET]: { m: 'Trusted.Gaps', asserts: true },
   };
-  const axiomConstant = (name, { m, asserts }) => constant(name, { k: 'axiom', m, t: asserts ? 'a proposition' : 'a type', v: undefined, pr: asserts });
+  const axiomConstant = (name, { m, asserts, tc }) => constant(name, { k: 'axiom', m, t: asserts ? 'a proposition' : 'a type', v: undefined, pr: asserts, ...(tc ? { tc } : {}) });
+  // The hand-written axioms each cite their own accepted record, tied in the merged spec to a proposition of its own.
+  const RECORD = { [GAP]: 'gap-u32', [ABOUT_TARGET]: 'gap-sha2' };
+  const PROP = (name) => `Gap.${name.split('.').pop()}_prop`;
+  const accepting = (fx) => {
+    write(path.join(fx.repo, '.formalising', 'auto-fv', 'externals.json'), JSON.stringify(EXTERNALS(...Object.values(RECORD).map((id) => record({ id })))));
+    return fx;
+  };
   // The merged spec and the head both hold these axioms, so only the list is in question.
   const resting = (names, extra = {}) => {
+    const kind = (name) => extra[name] ?? AXIOMS[name] ?? { m: 'Extraction.Out', asserts: false };
+    const tied = names.filter((name) => RECORD[name] !== undefined && kind(name).asserts && kind(name).m.startsWith('Trusted.'));
     const dump = leanDump({
       recalls: { 'Dep.foo': { axioms: ['propext', 'Classical.choice', 'Quot.sound', ...names] } },
-      constants: [constant('Dep.foo', { k: 'thm', t: 'a statement', v: undefined }), ...names.map((name) => axiomConstant(name, extra[name] ?? AXIOMS[name] ?? { m: 'Extraction.Out', asserts: false }))],
+      docs: tied.flatMap((name) => [{ name: PROP(name), cites: [RECORD[name]], prop: true }, { name, m: kind(name).m, cites: [RECORD[name]], axiom: true }]),
+      constants: [constant('Dep.foo', { k: 'thm', t: 'a statement', v: undefined }), ...tied.map((name) => constant(PROP(name), { m: 'formal.specs.Defs.Gaps', t: 'Prop', v: 'a proposition' })),
+        ...names.map((name) => axiomConstant(name, tied.includes(name) ? { ...kind(name), tc: PROP(name) } : kind(name)))],
     });
     return { base: dump, head: dump };
   };
   const run = (fx, listText, dump, extra = []) => {
     const file = path.join(fx.base, 'allowed.json');
     write(file, listText);
-    return { file, result: check(fx, { args: ['--allow-axioms', file, ...extra], dump }) };
+    return { file, result: check(accepting(fx), { args: ['--allow-axioms', file, ...extra], dump }) };
   };
   const problemOf = (result, kind) => result.json.integrity.problems.find((problem) => problem.kind === kind);
 
@@ -1160,11 +1420,65 @@ describe('the allowed axioms', () => {
   });
 
   test('with no list given nothing changes, and the receipt says so', () => {
-    const fx = fixture();
+    const fx = accepting(fixture());
     const result = check(fx, { dump: resting([EXTERNAL, ABOUT_TARGET]) });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.json.allowAxioms, null);
     assert.match(result.stderr, /allowed axioms: no list given/);
+  });
+
+  // An axiom whose type is a proposition asserts something. One a statement rests on has to cite one accepted
+  // record and assert exactly that record's proposition, with a list or without one.
+  describe('a proposition-valued axiom that a statement rests on', () => {
+    const gap = ({ cites = RECORD[GAP], tc = PROP(GAP), m = 'Trusted.Gaps', rests = true, alsoCites = [] } = {}) => {
+      const dump = leanDump({
+        recalls: { 'Dep.foo': { axioms: ['propext', 'Classical.choice', 'Quot.sound', ...(rests ? [GAP] : [])] } },
+        docs: [{ name: PROP(GAP), cites: [RECORD[GAP]], prop: true }, { name: GAP, m, cites: [...(cites === null ? [] : [cites]), ...alsoCites], axiom: true }],
+        constants: [constant('Dep.foo', { k: 'thm', t: 'a statement', v: undefined }), constant(PROP(GAP), { m: 'formal.specs.Defs.Gaps', t: 'Prop', v: 'a proposition' }), axiomConstant(GAP, { m, asserts: true, tc })],
+      });
+      return { base: dump, head: dump };
+    };
+    const without = (dump) => check(accepting(fixture()), { dump });
+    const refused = (result, kind = 'trusted-axiom-unbound') => {
+      assert.equal(result.status, 1, result.stderr);
+      assert.deepEqual([...new Set(result.json.integrity.problems.map((problem) => problem.kind))], [kind]);
+      assert.equal(problemOf(result, kind).statement, 'Dep.foo');
+      return problemOf(result, kind).detail;
+    };
+
+    test('one that cites its accepted record and asserts that record’s proposition is accepted, bound in the receipt, and its record is one the receipt depends on', () => {
+      const result = without(gap());
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(result.json.integrity.semantic.bindings, [{ axiom: GAP, record: RECORD[GAP], proposition: PROP(GAP) }]);
+      assert.deepEqual(result.json.externals.records.map((entry) => entry.id), [RECORD[GAP]]);
+    });
+
+    test('one that cites no accepted record is refused without a list, naming the statement and the axiom', () => {
+      for (const cites of [null, 'gap-open']) {
+        assert.match(refused(without(gap({ cites }))), new RegExp(`^the statement Dep\\.foo \\(Dep\\.foo\\) rests on ${GAP.replaceAll('.', '\\.')}, an axiom whose type is a proposition, and it must cite exactly one accepted externals record in its docstring \\(it cites 0\\)$`), String(cites));
+      }
+      assert.match(refused(without(gap({ alsoCites: ['gap-sha2'] }))), /it cites 2\)$/, 'two accepted records are not one');
+    });
+
+    test('one that asserts another proposition than its record is tied to is refused', () => {
+      assert.match(refused(without(gap({ tc: 'Gap.other_prop' }))), new RegExp(`the axiom ${GAP.replaceAll('.', '\\.')} asserts Gap\\.other_prop, but the record gap-u32 is tied to the proposition ${PROP(GAP).replaceAll('.', '\\.')}`));
+    });
+
+    test('one declared outside Trusted is refused with a list and without, and reported once', () => {
+      const dump = gap({ m: 'Extraction.Out' });
+      assert.match(refused(without(dump), 'prop-axiom-outside-trusted'), /declared outside Trusted\/ \(in Extraction\.Out\)/);
+      const listed = run(fixture(), LIST(GAP), dump).result;
+      refused(listed, 'prop-axiom-outside-trusted');
+      assert.equal(listed.json.integrity.problems.length, 1);
+      assert.equal(listed.json.integrity.problems[0].file !== null, true, 'the spec file the list knows');
+    });
+
+    test('one that no statement rests on is not asked for a citation, and a data axiom outside Trusted is not asked for one at all', () => {
+      const idle = without(gap({ cites: null, rests: false }));
+      assert.equal(idle.status, 0, idle.stderr);
+      assert.deepEqual(idle.json.integrity.semantic.bindings, []);
+      assert.equal(without(resting([EXTERNAL])).status, 0);
+    });
   });
 
   test('an empty list allows only the three standard axioms', () => {
@@ -1174,15 +1488,24 @@ describe('the allowed axioms', () => {
     assert.equal(run(fixture(), LIST(), resting([EXTERNAL])).result.json.accepted, false);
   });
 
-  test('an axiom that sorry, native_decide or bv_decide would add is refused with a list or without, listed or not', () => {
+  test('a native_decide or bv_decide axiom that is new since the merged spec is refused with a list or without, listed or not; one the merged spec had is kept with a list as without', () => {
     const native = 'Dep.foo._native.native_decide.ax_1';
     const asNew = (names) => { const { head } = resting(names); return { base: resting([]).base, head }; };
     const without = check(fixture(), { dump: asNew([native]) });
     assert.equal(without.json.accepted, false);
-    assert.equal(problemOf(without, 'axiom-not-allowed').statement, native);
+    assert.deepEqual([...new Set(without.json.integrity.problems.map((p) => p.kind))], ['native-added']);
+    assert.equal(problemOf(without, 'native-added').statement, 'Dep.foo');
     const listed = run(fixture(), LIST(native), asNew([native])).result;
-    assert.equal(listed.json.accepted, false, 'a list does not make a new axiom outside Trusted acceptable');
-    assert.match(problemOf(listed, 'axiom-not-allowed').detail, /declared outside Trusted/);
+    assert.equal(listed.json.accepted, false, 'a list does not make a new native axiom acceptable');
+    assert.match(problemOf(listed, 'native-added').detail, /native_decide or bv_decide/);
+    // The generated axiom asserts something (its type is a proposition) and is declared outside Trusted, as a real one is.
+    const generated = { m: 'formal.proofs.A', asserts: true };
+    const had = () => resting([native], { [native]: generated });
+    const outcomes = [['no list', check(fixture(), { dump: had() })], ['a list that names it', run(fixture(), LIST(native), had()).result], ['a list that names nothing', run(fixture(), LIST(), had()).result]];
+    for (const [name, result] of outcomes) {
+      assert.equal(result.status, 0, `${name}: the merged spec had it, so it is kept: ${result.stderr}`);
+      assert.deepEqual(result.json.integrity.problems, [], name);
+    }
   });
 
   test('an axiom whose type is a proposition must be a hand-written Trusted axiom, even when it is listed', () => {
@@ -1473,6 +1796,56 @@ describe('the Lean program: what runs, and what an unusable run means', () => {
     assert.deepEqual(result.json.externals.records.map((r) => r.id), ['gap-div']);
   });
 
+  test('the receipt names the records the Lean program bound, even when the text of the files shows no tie', async () => {
+    const { recordDigest } = await library();
+    const { 'formal/trusted/Gaps.lean': _made, ...withoutTrusted } = HEAD_FILES;
+    const fx = layered({ head: withoutTrusted });
+    const result = checkTip(fx, { dump: DUMPS() });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(result.json.integrity.ties, [], 'no file of the commit has an axiom declaration to tie');
+    assert.deepEqual(result.json.integrity.semantic.bindings, [{ axiom: 'Gap.div_spec', record: 'gap-div', proposition: 'Div' }]);
+    assert.deepEqual(result.json.externals.records, [{ id: 'gap-div', sha256: recordDigest(record()) }]);
+  });
+
+  test('a tie the text finds that the Lean program did not bind is a disagreement, and is refused', () => {
+    const fx = layered();
+    const result = checkTip(fx, { dump: DUMPS({ constants: [FOO, DIV()], docs: BASE_DOCS }) });
+    assert.equal(result.status, 1, result.stderr);
+    assert.deepEqual(result.json.integrity.problems.map((p) => [p.kind, p.file, p.statement]), [['tie-not-bound', 'formal/trusted/Gaps.lean', 'div_spec']]);
+    assert.match(result.json.label, /ties the axiom div_spec to the record gap-div, but the Lean program bound no axiom to that record/);
+  });
+
+  test('the externals file is read once: one that cannot be read is a refusal, also when only the Lean pass needs it', () => {
+    const { 'formal/trusted/Gaps.lean': _made, ...withoutTrusted } = HEAD_FILES;
+    const fx = layered({ head: withoutTrusted });
+    write(path.join(fx.repo, '.formalising', 'auto-fv', 'externals.json'), '{not json');
+    const result = checkTip(fx, { dump: DUMPS() });
+    assert.equal(result.status, 2, result.stderr);
+    assert.equal(result.json.code, 'run-state-unreadable');
+    assert.equal(JSON.parse(fs.readFileSync(result.json.receipt, 'utf8')).accepted, false);
+  });
+
+  test('the receipt carries the digest of externals.json even when no rule needed a record, and null only when there is no file', () => {
+    const { 'formal/trusted/Gaps.lean': _made, ...withoutTrusted } = HEAD_FILES;
+    const unchanged = () => { const { base } = DUMPS(); return { base, head: DUMPS({ docs: BASE_DOCS, constants: [FOO, DIV()] }).head }; };
+    for (const externals of [EXTERNALS(), EXTERNALS(record({ id: 'unrelated' }))]) {
+      const fx = layered({ head: withoutTrusted, externals });
+      const file = path.join(fx.repo, '.formalising', 'auto-fv', 'externals.json');
+      const result = checkTip(fx, { dump: unchanged() });
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(result.json.externals, { file, sha256: sha256(fs.readFileSync(file)), records: [] });
+    }
+    // A check that stops at the integrity rules, before any later rule reads the file, records it as well.
+    const stopped = layered({ head: { ...withoutTrusted, 'formal/specs/Specs/A.lean': SPEC_HEAD.replace('0 < n', '0 ≤ n') }, externals: EXTERNALS() });
+    const stoppedFile = path.join(stopped.repo, '.formalising', 'auto-fv', 'externals.json');
+    const early = checkTip(stopped);
+    assert.equal(early.json.accepted, false);
+    assert.deepEqual(early.json.externals, { file: stoppedFile, sha256: sha256(fs.readFileSync(stoppedFile)), records: [] });
+    const missing = checkTip(layered({ head: withoutTrusted, externals: null }), { dump: unchanged() });
+    assert.equal(missing.status, 0, missing.stderr);
+    assert.deepEqual(missing.json.externals, { file: null, sha256: null, records: [] });
+  });
+
   test('without a merged spec nothing is compared and no Lean program runs', () => {
     const fx = layered();
     const result = check(fx, { commit: fx.tip, oleans: OLEANS, noBase: true });
@@ -1562,12 +1935,34 @@ describe('the Lean program: the axioms a statement may rest on', () => {
     assert.deepEqual(kinds(changed), ['axiom-changed']);
   });
 
-  test('sorry, native_decide and bv_decide add axioms that are not the project’s, so a statement resting on one is refused', async () => {
-    for (const axiom of ['sorryAx', 'Lean.ofReduceBool', 'Dep.foo._native.bv_decide.ax_1']) {
-      const result = await compare({ ...DUMPS({ recalls: { 'Dep.foo': { axioms: ['propext', axiom] } } }) });
-      assert.ok(kinds(result).includes('axiom-not-allowed'), axiom);
-      assert.match(result.problems.find((p) => p.kind === 'axiom-not-allowed').detail, new RegExp(`rests on the axiom ${axiom.replaceAll('.', '\\.')}`));
+  test('sorry adds an axiom that is not the project’s, so a statement resting on it is refused', async () => {
+    const result = await compare({ ...DUMPS({ recalls: { 'Dep.foo': { axioms: ['propext', 'sorryAx'] } } }) });
+    assert.ok(kinds(result).includes('axiom-not-allowed'));
+    assert.match(result.problems.find((p) => p.kind === 'axiom-not-allowed').detail, /rests on the axiom sorryAx/);
+  });
+
+  test('a statement may keep a native_decide or bv_decide axiom it rested on at the merged spec, and may not gain one', async () => {
+    const [oldName, ours, theirs] = ['Lean.ofReduceBool', 'Dep.foo._native.native_decide.ax_1', 'Dep.foo._native.bv_decide.ax_1'];
+    const resting = (axioms) => ({ recalls: { 'Dep.foo': { axioms: ['propext', ...axioms] } } });
+    const same = (axioms) => DUMPS({ ...resting(axioms), constants: [FOO, DIV()], docs: BASE_DOCS }, resting(axioms));
+    for (const axiom of [oldName, ours]) {
+      assert.deepEqual(kinds(await compare(same([axiom]))), [], `${axiom}: the merged spec rested on it already`);
+      const added = await compare({ ...DUMPS({ ...resting([axiom]), constants: [FOO, DIV()], docs: BASE_DOCS }) });
+      assert.deepEqual(kinds(added), ['native-added'], `${axiom}: the merged spec did not`);
+      assert.match(added.problems[0].detail, new RegExp(`rests on ${axiom.replaceAll('.', '\\.')}, an axiom that native_decide or bv_decide adds, and it did not rest on it at the merged spec`));
     }
+    const swapped = await compare({ ...DUMPS({ ...resting([theirs]), constants: [FOO, DIV()], docs: BASE_DOCS }, resting([ours])) });
+    assert.deepEqual(kinds(swapped), ['native-added'], 'another native axiom than the one it had');
+    const made = constant(ours, { k: 'axiom', m: 'formal.proofs.A', t: 'reduceBool b = true', v: undefined, tc: null });
+    const base = { ...resting([ours]), constants: [FOO, DIV(), made], docs: BASE_DOCS };
+    const unchanged = await compare({ base: leanDump(base), head: leanDump(base) });
+    assert.deepEqual(kinds(unchanged), []);
+    const changed = await compare({ base: leanDump(base), head: leanDump({ ...base, constants: [FOO, DIV(), { ...made, t: 'reduceBool c = true' }] }) });
+    assert.deepEqual(kinds(changed), ['axiom-changed'], 'the generated name with another proposition is not the merged spec’s axiom');
+    const fresh = constant('Dep.helper._native.native_decide.ax_1', { k: 'axiom', m: 'formal.proofs.A', t: 'reduceBool d = true', v: undefined, tc: null });
+    const plain = { ...resting([]), constants: [FOO, DIV()], docs: BASE_DOCS };
+    const unreached = await compare({ base: leanDump(plain), head: leanDump({ ...plain, constants: [FOO, DIV(), fresh] }) });
+    assert.deepEqual(kinds(unreached), ['native-added'], 'a new native axiom that no statement rests on is refused too');
   });
 
   test('a new axiom outside Trusted is refused even when its docstring cites an accepted record', async () => {
@@ -1649,20 +2044,39 @@ describe('every spec, proof and extraction file must have been built', () => {
     const result = checkTip(fx, { oleans: ['formal/specs/Specs/A', 'formal/proofs/Lemmas/L', 'formal/extraction/Ext'] });
     assert.equal(result.status, 1, result.stderr);
     assert.equal(result.json.accepted, false);
-    assert.match(result.json.label, /^build check failed: no \.olean was produced for formal\/proofs\/A\.lean \(module formal\.proofs\.A\), so Lake did not build it$/);
+    assert.match(result.json.label, /^build check failed: Lake did not build formal\/proofs\/A\.lean from that file in this build \(lake build --no-build does not report it up to date\)$/);
     assert.equal(fs.existsSync(path.join(fx.stub, 'dump-head-args.json')), false, 'no Lean program runs on a build that is incomplete');
   });
 
   test('an extraction file and a new lemma file are held to it too, and the label counts the rest', () => {
     const fx = layered();
     const result = checkTip(fx, { oleans: ['formal/specs/Specs/A'] });
-    assert.match(result.json.label, /no \.olean was produced for formal\/extraction\/Ext\.lean .* \(and 2 more\)$/);
+    assert.match(result.json.label, /Lake did not build formal\/extraction\/Ext\.lean from that file in this build .* \(and 2 more\)$/);
+  });
+
+  test('Lake is asked about the files that could be one module one at a time, the others together, and a failing group file by file', () => {
+    const calls = (fx) => fs.readFileSync(path.join(fx.stub, 'source-checks'), 'utf8').trim().split('\n').map((line) => line.trim().split(' '));
+    // In a lakefile.lean project formal/specs/Specs/A.lean and formal/proofs/A.lean could both be the module A.
+    const fx = layered({ dsl: true });
+    const accepted = checkTip(fx);
+    assert.equal(accepted.status, 0, accepted.stderr);
+    assert.deepEqual(calls(fx), [['formal/extraction/Ext.lean', 'formal/proofs/Lemmas/L.lean'], ['formal/proofs/A.lean'], ['formal/specs/Specs/A.lean']]);
+    assert.deepEqual(accepted.json.integrity.sourceCheck, { files: 4, calls: 3 });
+    const failing = layered({ dsl: true });
+    const refused = checkTip(failing, { oleans: ['formal/specs/Specs/A', 'formal/proofs/A', 'formal/proofs/Lemmas/L'] });
+    assert.equal(refused.status, 1);
+    assert.deepEqual(calls(failing), [['formal/extraction/Ext.lean', 'formal/proofs/Lemmas/L.lean'], ['formal/proofs/A.lean'], ['formal/specs/Specs/A.lean'], ['formal/extraction/Ext.lean'], ['formal/proofs/Lemmas/L.lean']]);
+    assert.deepEqual(refused.json.integrity.sourceCheck, { files: 4, calls: 5 });
+    const plain = layered();
+    checkTip(plain);
+    assert.equal(calls(plain).length, 1, 'with no name two files could share, one call asks about all of them');
+    assert.equal(calls(plain)[0].length, 4);
   });
 
   test('in a lakefile.lean project, where no globs are read, the same holds, and a module named below a source folder counts', () => {
     const dsl = layered({ dsl: true });
     const missing = checkTip(dsl, { oleans: ['formal/specs/Specs/A', 'formal/proofs/A', 'formal/proofs/Lemmas/L'] });
-    assert.match(missing.json.label, /no \.olean was produced for formal\/extraction\/Ext\.lean/);
+    assert.match(missing.json.label, /Lake did not build formal\/extraction\/Ext\.lean from that file in this build/);
     const shifted = layered({ dsl: true });
     const accepted = checkTip(shifted, { oleans: ['formal/specs/Specs/A', 'proofs/A', 'proofs/Lemmas/L', 'extraction/Ext'] });
     assert.equal(accepted.status, 0, accepted.stderr);
@@ -1721,7 +2135,7 @@ function realProject(head, { externals = EXTERNALS(record({ id: 'gap-add' })), r
   fs.mkdirSync(path.join(base, 'work'));
   git(base, 'init', '-q', '-b', 'main', repo);
   write(path.join(repo, '.gitignore'), '.lake/\n');
-  for (const [name, text] of Object.entries({ ...REAL_BASE, ...baseFiles })) write(path.join(repo, name), text);
+  for (const [name, text] of Object.entries({ ...REAL_BASE, ...baseFiles })) if (text !== null) write(path.join(repo, name), text);
   git(repo, 'add', '-A');
   git(repo, 'commit', '-q', '-m', 'merged spec');
   const merged = git(repo, 'rev-parse', 'HEAD');
@@ -1812,14 +2226,182 @@ describe('real Lean: a statement that still reads the same but does not mean the
     assert.ok(strengthened.json.integrity.problems.some((p) => p.kind === 'trusted-axiom-unbound' && /asserts False/.test(p.detail)), strengthened.stderr);
   });
 
+  // A command that already exists can generate an axiom and its docstring, so the new Trusted file shows no axiom
+  // for the text rules to tie (the command is in the merged spec already, so the axiom text in it is not an addition). Lean still binds it to its accepted record, and the receipt must say so.
+  test('an axiom generated by a command is bound by Lean, and the receipt names its record with a digest', async () => {
+    const { recordDigest } = await library();
+    const generator = 'import Lean\nimport Fx.Specs.Defs.Gaps\nopen Lean Elab Command\n\nelab "gen_gap" : command => do\n  let name := mkIdent `Fx.gap_add_spec\n  elabCommand (← `(command| /-- Accepted assumption, `gap-add`. -/ axiom $name : Gap))\n';
+    const files = { ...REAL_HEAD, 'Fx/Trusted/Gaps.lean': 'import Fx.Proofs.Gen\n\ngen_gap\n' };
+    const result = realCheck(realProject(files, { baseFiles: { 'Fx/Proofs/Gen.lean': generator } }));
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(result.json.integrity.ties, [], 'the text of the Trusted file has no axiom');
+    assert.deepEqual(result.json.integrity.semantic.bindings, [{ axiom: 'Fx.gap_add_spec', record: 'gap-add', proposition: 'Gap' }]);
+    assert.deepEqual(result.json.externals.records, [{ id: 'gap-add', sha256: recordDigest(record({ id: 'gap-add' })) }]);
+  });
+
+  // A package inside the repository is built from the commit's own files and its constants are not read by the
+  // Lean-level comparison, so a change in it, under an unchanged manifest, could turn a false statement true.
+  describe('a Lake path package inside the repository', () => {
+    const MANIFEST = JSON.stringify({ version: '1.3.0', packagesDir: '.lake/packages', packages: [{ type: 'path', scope: '', name: 'dep', manifestFile: 'lake-manifest.json', inherited: false, dir: 'vendor/dep', copy: false, configFile: 'lakefile.toml' }], name: 'fx', lakeDir: '.lake', fixedToolchain: false });
+    const baseFiles = (good) => ({
+      'lakefile.toml': `${REAL_LAKEFILE}\n[[require]]\nname = "dep"\npath = "vendor/dep"\n`,
+      'lake-manifest.json': MANIFEST,
+      'vendor/dep/lakefile.toml': 'name = "dep"\n\n[[lean_lib]]\nname = "Dep"\n',
+      'vendor/dep/Dep.lean': `def Dep.Good : Prop := ${good}\n`,
+      'Fx/Proofs/P.lean': 'import Dep\n\ntheorem Fx.target : Dep.Good := by\n  sorry\n',
+      'Fx/Specs/A.lean': 'import Fx.Proofs.P\n\nrecall Fx.target : Dep.Good\n\n#print axioms Fx.target\n',
+    });
+    const head = (dep) => ({
+      ...(dep === undefined ? {} : { 'vendor/dep/Dep.lean': `def Dep.Good : Prop := ${dep}\n` }),
+      'Fx/Proofs/P.lean': 'import Dep\n\ntheorem Fx.target : Dep.Good := trivial\n',
+      'Fx/Specs/A.lean': `import Fx.Proofs.P\n\nrecall Fx.target : Dep.Good\n\n${GUARD_NONE('Fx.target')}`,
+    });
+    const run = (fx) => realCheck(fx, ['--packages', fs.mkdtempSync(path.join(fx.base, 'packages-'))]);
+
+    test('one that is unchanged is accepted, and the receipt names its tree', () => {
+      const fx = realProject(head(), { baseFiles: baseFiles('True') });
+      const result = run(fx);
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(result.json.integrity.pathPackages, [{ name: 'dep', dir: 'vendor/dep', tree: git(fx.repo, 'rev-parse', `${fx.tip}:vendor/dep`) }]);
+    });
+
+    test('Dep.Good changed from False to True under an unchanged manifest and an unchanged recall is refused, with no build', () => {
+      const result = run(realProject(head('True'), { baseFiles: baseFiles('False') }));
+      assert.equal(result.status, 1, result.stderr);
+      assert.deepEqual(result.json.integrity.problems.map((p) => [p.kind, p.file]), [['path-package-changed', 'vendor/dep/']]);
+      assert.equal(result.json.build, null, 'refused before the build');
+    });
+  });
+
+  // Which file Lake compiled is Lake's to say. A file that no library maps, or one whose module name another
+  // file already holds in this build, is not compiled just because that module's .olean exists.
+  describe('a required file that Lake did not compile from that very file', () => {
+    const BROKEN = 'theorem broken : 1 = 2 := by decide\n';
+    const dslLakefile = 'import Lake\nopen Lake DSL\n\npackage fx\n\n@[default_target]\nlean_lib Fx where\n  globs := #[.submodules `Fx]\n';
+
+    test('a proof file that no library maps is refused although a module with the end of its name was built', () => {
+      const baseFiles = { 'lakefile.toml': null, 'lakefile.lean': dslLakefile };
+      const clean = realCheck(realProject(REAL_HEAD, { baseFiles }));
+      assert.equal(clean.status, 0, clean.stderr);
+      assert.deepEqual(clean.json.integrity.sourceCheck.files > 0, true);
+      const hidden = realCheck(realProject({ ...REAL_HEAD, 'formal/Fx/Proofs/P.lean': BROKEN }, { baseFiles }));
+      assert.equal(hidden.status, 1, hidden.stderr);
+      assert.match(hidden.json.label, /^build check failed: Lake did not build formal\/Fx\/Proofs\/P\.lean from that file in this build/);
+    });
+
+    // Both libraries are default targets and the globs cover both files, so only Lake can say that one of the
+    // two files was never compiled: it builds one job for the module name Same.
+    for (const [first, second] of [['a', 'b'], ['b', 'a']]) {
+      test(`two default libraries with the same module name from different source folders: the file built first (${first}) does not stand in for the other (${second})`, () => {
+        const libs = [first, second].map((name) => `[[lean_lib]]\nname = "${name.toUpperCase()}"\nsrcDir = "${name}/proofs"\nroots = ["Same"]\n`).join('\n');
+        const lakefile = `name = "fx"\ndefaultTargets = ["Fx", "${first.toUpperCase()}", "${second.toUpperCase()}"]\n\n[[lean_lib]]\nname = "Fx"\nglobs = ["Fx.+"]\n\n${libs}`;
+        const baseFiles = { 'lakefile.toml': lakefile, [`${first}/proofs/Same.lean`]: 'def Same.ok : Nat := 1\n' };
+        const clean = realCheck(realProject(REAL_HEAD, { baseFiles }));
+        assert.equal(clean.status, 0, clean.stderr);
+        const result = realCheck(realProject({ ...REAL_HEAD, [`${second}/proofs/Same.lean`]: BROKEN }, { baseFiles }));
+        assert.equal(result.status, 1, result.stderr);
+        assert.match(result.json.label, new RegExp(`^build check failed: Lake did not build ${second}/proofs/Same\\.lean from that file in this build`));
+      });
+    }
+  });
+
+  // native_decide adds a generated axiom named after the theorem. The merged spec here proves foo_spec with it,
+  // so the axiom exists on both sides; what counts is whether a statement rests on one it did not rest on there.
+  describe('a native_decide axiom that the merged spec already had', () => {
+    const NATIVE = 'Fx.foo_spec._native.native_decide.ax_1_1';
+    const GUARD_ON = (name, axioms) => `/-- '${name}' depends on axioms: [${axioms.join(', ')}] -/\n#guard_msgs (whitespace := lax, substring := true) in\n#print axioms ${name}\n`;
+    const spec = (foo, bar) => `import Fx.Proofs.P\n\nrecall Fx.foo_spec : Fx.limit = 10\n\n${foo}\nrecall Fx.bar_spec : Fx.limit = 10\n\n${bar}`;
+    const proofs = (foo, bar) => `import Fx.Proofs.Helper\n\ntheorem Fx.foo_spec : Fx.limit = 10 := ${foo}\n\ntheorem Fx.bar_spec : Fx.limit = 10 := ${bar}\n`;
+    const baseFiles = { 'Fx/Proofs/P.lean': proofs('by native_decide', 'by\n  sorry'), 'Fx/Specs/A.lean': spec('#print axioms Fx.foo_spec\n', '#print axioms Fx.bar_spec\n') };
+    const kinds = (result) => result.json.integrity.problems.map((p) => p.kind);
+
+    test('is kept, and flagged in the receipt, when the statement already rested on it', () => {
+      const files = { 'Fx/Proofs/P.lean': proofs('by native_decide', 'rfl'), 'Fx/Specs/A.lean': spec(GUARD_ON('Fx.foo_spec', [NATIVE]), GUARD_NONE('Fx.bar_spec')) };
+      const result = realCheck(realProject(files, { baseFiles }));
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(result.json.flags, ['Fx.foo_spec uses native_decide']);
+    });
+
+    // The generated axiom asserts something and is declared outside Trusted, which an allowed-axioms list refuses
+    // for any other axiom; for this one the outcome has to be the one without a list.
+    test('is kept and flagged the same way with an allowed-axioms list as without one, and a list does not excuse a new one', () => {
+      const files = { 'Fx/Proofs/P.lean': proofs('by native_decide', 'rfl'), 'Fx/Specs/A.lean': spec(GUARD_ON('Fx.foo_spec', [NATIVE]), GUARD_NONE('Fx.bar_spec')) };
+      const listed = (names, fx) => {
+        const file = path.join(fx.base, 'allowed.json');
+        write(file, JSON.stringify({ schema: 'fvs/auto-allowed-axioms', schemaVersion: 1, axioms: names }));
+        return realCheck(fx, ['--allow-axioms', file]);
+      };
+      const without = realCheck(realProject(files, { baseFiles }));
+      assert.equal(without.status, 0, without.stderr);
+      for (const names of [[], [NATIVE]]) {
+        const result = listed(names, realProject(files, { baseFiles }));
+        assert.equal(result.status, 0, `${names.length} names: ${result.stderr}`);
+        assert.deepEqual(result.json.flags, without.json.flags);
+        assert.deepEqual(result.json.integrity.problems, without.json.integrity.problems);
+      }
+      const added = { 'Fx/Proofs/P.lean': proofs('by native_decide', 'Fx.foo_spec'), 'Fx/Specs/A.lean': spec(GUARD_ON('Fx.foo_spec', [NATIVE]), GUARD_ON('Fx.bar_spec', [NATIVE])) };
+      const refused = listed([NATIVE], realProject(added, { baseFiles }));
+      assert.equal(refused.status, 1, refused.stderr);
+      assert.deepEqual(kinds(refused), ['native-added']);
+    });
+
+    test('is not enough for a statement that did not rest on it: proving another one with the first is refused', () => {
+      const files = { 'Fx/Proofs/P.lean': proofs('by native_decide', 'Fx.foo_spec'), 'Fx/Specs/A.lean': spec(GUARD_ON('Fx.foo_spec', [NATIVE]), GUARD_ON('Fx.bar_spec', [NATIVE])) };
+      const result = realCheck(realProject(files, { baseFiles }));
+      assert.equal(result.status, 1, result.stderr);
+      assert.deepEqual(kinds(result), ['native-added']);
+      assert.equal(result.json.integrity.problems[0].statement, 'Fx.bar_spec');
+      assert.match(result.json.integrity.problems[0].detail, /rests on Fx\.foo_spec\._native\.native_decide\.ax_1_1, an axiom that native_decide or bv_decide adds, and it did not rest on it at the merged spec/);
+    });
+
+    test('the same generated name asserting something else is not the merged spec’s axiom, and is refused', () => {
+      const files = { 'Fx/Proofs/P.lean': proofs('by\n  have _h : (2 : Nat) + 2 = 4 := by native_decide\n  rfl', 'rfl'), 'Fx/Specs/A.lean': spec(GUARD_ON('Fx.foo_spec', [NATIVE]), GUARD_NONE('Fx.bar_spec')) };
+      const result = realCheck(realProject(files, { baseFiles }));
+      assert.equal(result.status, 1, result.stderr);
+      assert.deepEqual(kinds(result), ['axiom-changed']);
+      assert.equal(result.json.integrity.problems[0].statement, NATIVE);
+    });
+  });
+
+  // A hand-written axiom that the merged spec already has asserts something, and a statement may rest on it
+  // only if it cites the accepted record whose proposition it states. This holds with no allowed-axioms list.
+  describe('a hand-written axiom of the merged spec that a statement rests on', () => {
+    const GUARD = (axiom) => `/-- 'Fx.foo_spec' depends on axioms: [${axiom}] -/\n#guard_msgs (whitespace := lax, substring := true) in\n#print axioms Fx.foo_spec\n`;
+    const trusted = (doc, type = 'Gap') => `import Fx.Specs.Defs.Gaps\n\n/-- ${doc} -/\naxiom Fx.gap_add_spec : ${type}\n`;
+    const proofs = (body) => `import Fx.Proofs.Helper\nimport Fx.Trusted.Gaps\n\ntheorem Fx.foo_spec : Gap := ${body}\n`;
+    const spec = (guard) => `import Fx.Proofs.P\n\nrecall Fx.foo_spec : Gap\n\n${guard}`;
+    const project = (doc, type) => realProject(
+      { 'Fx/Proofs/P.lean': proofs('Fx.gap_add_spec'), 'Fx/Specs/A.lean': spec(GUARD('Fx.gap_add_spec')) },
+      { baseFiles: { 'Fx/Trusted/Gaps.lean': trusted(doc, type), 'Fx/Proofs/P.lean': proofs('by\n  sorry'), 'Fx/Specs/A.lean': spec('#print axioms Fx.foo_spec\n') } },
+    );
+
+    test('one that cites its accepted record and states that record’s proposition is accepted, and the receipt binds it', () => {
+      const result = realCheck(project('Accepted assumption, `gap-add`.'));
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(result.json.integrity.semantic.bindings, [{ axiom: 'Fx.gap_add_spec', record: 'gap-add', proposition: 'Gap' }]);
+      assert.deepEqual(result.json.externals.records.map((entry) => entry.id), ['gap-add']);
+    });
+
+    test('one that cites no record, or states something else than its record’s proposition, is refused', () => {
+      const none = realCheck(project('An assumption about addition.'));
+      assert.equal(none.status, 1, none.stderr);
+      assert.deepEqual(none.json.integrity.problems.map((problem) => problem.kind), ['trusted-axiom-unbound']);
+      assert.match(none.json.integrity.problems[0].detail, /rests on Fx\.gap_add_spec, an axiom whose type is a proposition, and it must cite exactly one accepted externals record in its docstring \(it cites 0\)/);
+      // The same sentence as the record's proposition, but written out: it is not that proposition's constant.
+      const other = realCheck(project('Accepted assumption, `gap-add`.', '∀ n : Nat, n + 0 = n'));
+      assert.equal(other.status, 1, other.stderr);
+      assert.ok(other.json.integrity.problems.some((problem) => problem.kind === 'trusted-axiom-unbound' && /asserts something that is not one proposition, but the record gap-add is tied to the proposition Gap/.test(problem.detail)), other.stderr);
+    });
+  });
+
   // The names a statement rests on come from Lean's environment, in full, and whether an axiom's type is a
   // proposition comes from Lean too. The axiom is declared in the merged spec, so only the list is in question.
   test('the allowed axioms are matched by full name; a proposition outside Trusted is refused even when listed', () => {
-    const rests = ({ folder, axiom, type, statement, proof }) => realProject({
+    const rests = ({ folder, axiom, type, statement, proof, doc = null }) => realProject({
       'Fx/Proofs/P.lean': `import Fx.${folder}.Out\n\ntheorem Fx.foo_spec : ${statement} := ${proof}\n`,
       'Fx/Specs/A.lean': `import Fx.Proofs.P\n\nrecall Fx.foo_spec : ${statement}\n\n/-- 'Fx.foo_spec' depends on axioms: [${axiom}] -/\n#guard_msgs (whitespace := lax, substring := true) in\n#print axioms Fx.foo_spec\n`,
     }, { baseFiles: {
-      [`Fx/${folder}/Out.lean`]: `axiom ${axiom} : ${type}\n`,
+      [`Fx/${folder}/Out.lean`]: `${doc === null ? '' : `import Fx.Specs.Defs.Gaps\n\n/-- ${doc} -/\n`}axiom ${axiom} : ${type}\n`,
       'Fx/Proofs/P.lean': `import Fx.${folder}.Out\n\ntheorem Fx.foo_spec : ${statement} := by\n  sorry\n`,
       'Fx/Specs/A.lean': `import Fx.Proofs.P\n\nrecall Fx.foo_spec : ${statement}\n\n#print axioms Fx.foo_spec\n`,
     } });
@@ -1841,8 +2423,85 @@ describe('real Lean: a statement that still reads the same but does not mean the
     const generated = allowing(rests(prop), 'Fx.ext_fact');
     assert.equal(generated.status, 1, generated.stderr);
     assert.deepEqual(generated.json.integrity.problems.map((p) => p.kind), ['prop-axiom-outside-trusted']);
-    const handWritten = allowing(rests({ ...prop, folder: 'Trusted' }), 'Fx.ext_fact');
+    // A hand-written Trusted axiom passes when it cites its accepted record and states exactly that record's proposition.
+    const handWritten = allowing(rests({ ...prop, folder: 'Trusted', type: 'Gap', statement: 'Gap', doc: 'Accepted assumption, `gap-add`.' }), 'Fx.ext_fact');
     assert.equal(handWritten.status, 0, handWritten.stderr);
+    const uncited = allowing(rests({ ...prop, folder: 'Trusted', type: 'Gap', statement: 'Gap', doc: 'An assumption about addition.' }), 'Fx.ext_fact');
+    assert.equal(uncited.status, 1, 'a hand-written Prop axiom that cites no record is refused although listed');
+    assert.deepEqual(uncited.json.integrity.problems.map((p) => p.kind), ['trusted-axiom-unbound']);
+  });
+
+  // A stitched file ends with a block that makes Lean compare each alias with the constant it stands for, so the
+  // normal build runs the comparison. The extraction records the block and the file; the build check holds the
+  // commit to both and to Lake having compiled that file. The block here has the shape the extraction appends,
+  // without the Aeneas wrapper that a lifted constant needs.
+  describe('a stitched file and the Lean check block recorded for it', () => {
+    const block = (pair) => [
+      '',
+      '/-! The declared type of each alias above is the type of the constant it stands for. -/',
+      'open Lean Meta Elab Command in',
+      'run_cmd liftTermElabM do',
+      `  for (consumer, provider) in [${pair}] do`,
+      '    let a ← getConstInfo consumer',
+      '    let b ← getConstInfo provider',
+      '    unless a.levelParams.length == b.levelParams.length do',
+      '      throwError "{consumer}: it has {a.levelParams.length} universe parameter(s), but {provider} has {b.levelParams.length}"',
+      '    unless (← isDefEq a.type b.type) do',
+      '      throwError "{consumer}: its type {a.type} is not the type {b.type} of {provider}"',
+      '',
+    ].join('\n');
+    const CHECK = block('(`Fx.Ext.f, `Fx.Provider.f)');
+    const alias = (type) => `import Lean\nimport Fx.Provider\n\n@[reducible] def Fx.Ext.f (x : Nat) : ${type} := _root_.Fx.Provider.f x\n`;
+    const PROVIDER = 'def Fx.Provider.f (x : Nat) : Nat := x + 1\n';
+    const FILE = 'Fx/Ext.lean';
+    const stitched = (type = 'Nat') => `${alias(type)}${CHECK}`;
+    const record = (text, fields = {}) => ({ extraction: { run: {
+      crate: 'hmac',
+      publication: [{ projectPath: FILE, sha256: sha256(text) }],
+      stitch: [{ provider: 'sha2', replaced: [{ name: 'f' }], files: ['Ext.lean'] }],
+      leanChecks: [{ file: 'Ext.lean', relativePath: FILE, module: 'Fx.Ext', items: 1, blockSha256: sha256(CHECK), blockBytes: Buffer.byteLength(CHECK), fileSha256: sha256(text), ...fields }],
+    } } });
+    // The extraction is part of the merged spec, so the file is the same on both sides; only the proofs are the head's.
+    const project = (text, state, fields) => {
+      const fx = realProject(REAL_HEAD, { baseFiles: { 'Fx/Provider.lean': PROVIDER, [FILE]: text } });
+      write(path.join(fx.repo, '.formalising', 'auto-fv', 'state.json'), JSON.stringify(state ?? record(text, fields)));
+      return fx;
+    };
+
+    test('the file and block as recorded, compiled by Lake in the module the record names, are accepted and the receipt says so', () => {
+      const result = realCheck(project(stitched()));
+      assert.equal(result.status, 0, result.stderr);
+      const { stitchChecks } = result.json.integrity;
+      assert.deepEqual([stitchChecks.units, stitchChecks.files, stitchChecks.items, stitchChecks.builtChecked], [1, 1, 1, true]);
+      assert.deepEqual(stitchChecks.entries.map((e) => [e.relativePath, e.module]), [[FILE, 'Fx.Ext']]);
+    });
+
+    test('an alias whose type is not the constant’s fails the build through the block itself', () => {
+      const result = realCheck(project(stitched('Int')));
+      assert.equal(result.status, 1, result.stderr);
+      assert.match(result.json.label, /^build check failed: Fx\/Ext\.lean:\d+: Fx\.Ext\.f: its type .* is not the type .* of Fx\.Provider\.f/);
+      assert.equal(result.json.accepted, false);
+    });
+
+    test('the block taken out of the committed file, the record unchanged, is refused although the build is green', () => {
+      const text = alias('Int');
+      const result = realCheck(project(text, record(stitched('Int'))));
+      assert.equal(result.status, 1, result.stderr);
+      assert.ok(result.json.integrity.problems.some((p) => p.kind === 'stitch-file-changed' && p.file === FILE), JSON.stringify(result.json.integrity.problems));
+    });
+
+    test('a different block in the committed file than the one the record was made for is refused: the file is not the recorded one', () => {
+      const text = `${alias('Int')}${block('(`Fx.Provider.f, `Fx.Provider.f)')}`;
+      const result = realCheck(project(text, record(stitched('Int'))));
+      assert.equal(result.status, 1, result.stderr);
+      assert.ok(result.json.integrity.problems.some((p) => p.kind === 'stitch-file-changed'), JSON.stringify(result.json.integrity.problems));
+    });
+
+    test('a module name that Lake does not map the file to is refused after a green build', () => {
+      const result = realCheck(project(stitched(), undefined, { module: 'Other.Ext' }));
+      assert.equal(result.status, 1, result.stderr);
+      assert.deepEqual(result.json.integrity.problems.map((p) => p.kind), ['stitch-module-mismatch']);
+    });
   });
 });
 

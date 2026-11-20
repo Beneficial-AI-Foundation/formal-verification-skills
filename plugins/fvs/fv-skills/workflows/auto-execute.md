@@ -35,8 +35,15 @@ merge and the proof pull request").
    proposition, a `Prop` definition in `formal/specs/Defs` of the merged spec whose docstring cites the same
    record id in backticks; the spec pull request is where that definition is written. The docstring
    citation is how the record and its proposition are tied in this release; an explicit field on the
-   record that names the proposition is the planned stronger form, for runs after this release. `native_decide` and `bv_decide` are
-   fine in scratch work, but the check refuses a commit that adds one, so remove them before it runs.
+   record that names the proposition is the planned stronger form, for runs after this release. The
+   check holds every hand-written axiom whose type is a proposition that a statement rests on to this,
+   the merged spec's own included, whether or not a list of allowed axioms is given: it must be in
+   `formal/trusted`, cite one accepted record, and state exactly that record's proposition.
+   `native_decide` and `bv_decide` are fine in scratch work, but the check refuses a statement that
+   now rests on an axiom they add (their generated axioms, or Lean's `ofReduceBool` and `trustCompiler`)
+   and did not rest on it at the merged spec, so remove them before it runs. A statement that already
+   rested on one at the merged spec keeps it, and the receipt flags it (`flags`) instead of refusing:
+   the owner accepted that spec as it was.
 3. **FVS's build check decides accepted.** It runs in a fresh clean copy of the commit, never in a
    worker's checkout. Run it on the integration tree's head, and pass the spec merge commit you
    recorded as the spec base:
@@ -57,8 +64,23 @@ merge and the proof pull request").
    - a change added `sorry`, `admit`, `native_decide`, `bv_decide` (to a declaration that had none),
      or an axiom outside `formal/trusted` (an axiom is told by its name and type, so replacing one
      axiom with another is an addition);
+   - a change turned the kernel check off (`debug.skipKernelTC`) or added a declaration without checking
+     it (`addDeclWithoutChecking`), anywhere in the commit's Lean files;
    - a spec file, proof file or extraction file is not covered by a `lean_lib` glob of a default
-     target, and no built module imports it, so Lake would never compile it.
+     target, and no built module imports it, so Lake would never compile it;
+   - a Lake path package inside the repository (a `path` entry of the manifest) differs from the merged
+     spec in any file, was added, is gone, or is not a folder below the Lean project: such a package is
+     read by neither the text comparison nor the Lean-level one, so it is held to the merged spec file for
+     file, once from the committed manifest and once from the manifest Lake resolved;
+   - a stitched extraction file (see below) is not the file the extraction recorded.
+
+   An extraction that replaced axioms of one crate with aliases of another crate's real translation
+   appends to each such file a Lean block that compares every alias with its constant, and records the
+   file's digest, the block's digest and the module name. The build check holds the commit to that record
+   before it builds: the file must have the recorded digest and end with the recorded block, and every
+   stitched file must have a record. After the build, the module must be one Lake maps the file to and
+   Lake must have compiled that file. The receipt carries the entries (`integrity.stitchChecks`), so the
+   engine can see that these checks ran and not only that the build was green.
 
    When the engine has written a list of allowed axioms (`fvs-auto.mjs allowed-axioms`, a multi-crate
    run), add `--allow-axioms <FILE>`. A statement then passes only if every axiom it rests on, beyond
@@ -71,7 +93,9 @@ merge and the proof pull request").
    be a hand-written axiom in `formal/trusted`, bound to its accepted record as step 2 says (or already
    in the merged spec); a proposition declared anywhere else, the extraction's included, is refused even
    when the list names it. The list names the axioms that have a legitimate record, never one about a
-   function of a targeted crate. The receipt records the file's sha256, its number of names and, for
+   function of a targeted crate. A native-decision axiom (step 2) is not the list's to allow or refuse:
+   the same rule holds with a list as without one, so the list need not name an axiom that the merged
+   spec already rested on, and naming a new one does not excuse it. The receipt records the file's sha256, its number of names and, for
    version 2, its number of crates, so the engine can tell which list a receipt was made with.
 
    Each refusal names the file, the statement and the kind of change. A statement that is wrong or too
@@ -81,14 +105,17 @@ merge and the proof pull request").
 
    Then the whole project builds with warnings as errors, so any `sorry` fails, and each statement's
    guarded `#print axioms` list must still match. Every spec, proof and extraction file must also have
-   produced a compiled module in that build, whether or not it holds a recall (a lakefile that does not
-   build a proof file is refused, in either lakefile format). Last, a Lean program compares what each
+   been compiled by Lake from that very file in that build, whether or not it holds a recall (a lakefile
+   that does not build a proof file is refused, in either lakefile format). Which file Lake compiled is
+   Lake's to say: the check asks Lake file by file and does not guess from the name of an `.olean`, because
+   another file with the same module name, in another source folder, would stand in for it. Last, a Lean program compares what each
    recalled statement rests on with the merged spec, which the check builds in a copy of its own: the
    elaborated statement and every definition, instance or abbreviation it reaches must be the same, so
    a helper, notation or instance in a proof file that changes what an unchanged statement means is
    refused. The axioms a statement rests on are read from Lean, not from the guard text: Lean's three,
-   an axiom the merged spec already had, or a new axiom that is in `formal/trusted` and asserts exactly
-   its record's proposition (an axiom `: False` under an accepted record is refused). If the Lean
+   an axiom the merged spec already had (a proposition-valued one only when it is bound to its record,
+   as step 2 says), or a new axiom that is in `formal/trusted` and asserts exactly its record's
+   proposition (an axiom `: False` under an accepted record is refused). If the Lean
    program cannot run, or the merged spec does not build, the commit is not accepted. The JSON result is on stdout and the report for
    people is on stderr. Read `label` from the JSON: it is `accepted (build check)`,
    `build check failed: REASON`, or `built, integrity not checked` when no spec base was given or
@@ -102,6 +129,21 @@ merge and the proof pull request").
    not an acceptance, so an earlier acceptance of the same commit does not stand. Do not redirect
    the receipt: the state reads it only from the build check's default location. A worker's report,
    or a green build in its own checkout, is not acceptance.
+
+   An acceptance is the result of these checks and no more. What it does not establish:
+   - Lean's kernel checked every declaration that the text rules could see. Other metaprogramming (a
+     command, macro or tactic in a proof file that builds a declaration name from pieces, or that adds a
+     declaration by another route) can still add one the kernel did not check. The planned follow-up after
+     this release is to replay the compiled environment with an independent checker such as `lean4checker`.
+   - A hand-written axiom is bound to its accepted record by the docstring that cites the record id. An
+     explicit field on the record that names the proposition is the planned stronger form, after this
+     release. An axiom whose type is a proposition and that the merged spec already had is taken as the
+     spec's own, and an axiom whose type is data is held only by the allowed list.
+   - The build and the Lean program run code that comes from the commit (elaborators, `run_cmd`, build
+     scripts) with the permissions of the user, in a clean copy but not in a sandbox. The prebuilt
+     dependencies and the installed toolchain are trusted as they are.
+   - Lean proves that a statement holds of the extraction's logical model. For an item that is `opaque`,
+     `partial` or `extern`, that model need not say what the compiled Rust does at run time.
 4. **Open the PROOF PR as a draft** on the project's own repository: the destination recorded in the
    agreement at `/fvs:auto-init`, never an upstream. Put in the body which statements are accepted,
    which are not and why, and what each unproved one is missing. Nothing leaves the scope silently.

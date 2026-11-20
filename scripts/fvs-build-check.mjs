@@ -21,14 +21,19 @@
 // by the declaration each sits in) or an axiom outside Trusted/ (judged by its name and type, so
 // swapping one for another counts), a lakefile may not appear below the project root, and a new Trusted file
 // is allowed only for axioms tied to an externals record the owner accepted. Strings and layout are
-// compared exactly; only comments, docstrings, guards and the layout of a recalled statement are free. The glob guard refuses a spec,
+// compared exactly; only comments, docstrings, guards and the layout of a recalled statement are free. No Lean file or
+// lakefile of the commit may name debug.skipKernelTC or addDeclWithoutChecking, whatever the merged spec had. A path
+// package inside the repository (a Lake dependency that is a folder of the commit) must be the merged spec's own, file for
+// file (the same git tree id), because the Lean-level comparison reads only the project's own modules. The glob guard refuses a spec,
 // proof or extraction file that no lean_lib glob of a default target reaches, because Lake would
 // never compile it; the lakefile, the manifest and lean-toolchain are frozen. A commit that fails a
 // guard gets a failed receipt and no build runs.
 //
-// After the build, two more conditions must hold. Every spec, proof and extraction file must have
-// produced a .olean in this build (for a lakefile.lean, where globs are not read, a module named by its
-// path or by a suffix of it), whether or not the file holds a recall. And a small Lean program must find
+// After the build, two more conditions must hold. Every spec, proof and extraction file must be one Lake
+// compiled from that very file in this build, whether or not the file holds a recall: Lake itself is asked
+// (`lake build --no-build FILE` exits 0 only when the module Lake maps FILE to is up to date from that source),
+// so a file no library maps, or one whose module name another file holds, is not counted by a .olean of
+// the same name. And a small Lean program must find
 // that what each recalled statement rests on is what it rested on in the merged spec: it serialises the
 // elaborated type of the statement and of every project definition, instance and abbreviation it
 // reaches (values included, proofs not), on the head and on a fresh build of the merged spec, and the
@@ -37,8 +42,11 @@
 // statement rests on come from Lean, not from the guard text: Lean's three standard axioms, a project
 // axiom of the merged spec that has not changed, and a new axiom only in a Trusted module that asserts
 // exactly the one frozen proposition of the merged spec whose docstring cites the axiom's accepted
-// externals record (a record is cited by one axiom only); sorry, native_decide and bv_decide axioms
-// are refused. If the program cannot run, or the merged spec does not build, the commit is not accepted.
+// externals record (a record is cited by one axiom only); a sorry axiom is refused. A native_decide or
+// bv_decide axiom is refused when it is new since the merged spec or when a statement rests on one it did
+// not rest on there; one a statement already rested on at the merged spec stays, and the receipt flags it.
+// That rule is the same with an allowed-axioms list and without one: the list neither needs to name such an
+// axiom nor can excuse a new one. If the program cannot run, or the merged spec does not build, the commit is not accepted.
 // The receipt keeps the comparison under integrity.semantic.
 //
 // With --allow-axioms FILE (a list the engine writes from its own records, JSON with schema
@@ -292,7 +300,7 @@ export function readAllowedAxioms(bytes, file = 'the allowed-axioms file') {
 }
 
 // The axioms in `axioms` that are neither standard nor named exactly in `allowed`. Every axiom
-// counts, including names that look like native_decide or bv_decide axioms.
+// counts here, a native-decision one too: the caller leaves those to the native rule.
 export function axiomsNotAllowed(axioms, allowed) {
   return (axioms ?? []).filter((name) => !STANDARD_AXIOMS.includes(name) && !allowed.has(name));
 }
@@ -404,6 +412,35 @@ function copyPackages(source, destination) {
     if (spawnSync('cp', args, { stdio: 'ignore' }).status === 0) return mode;
   }
   return refuse('packages-not-copied', `the prebuilt packages in ${source} could not be copied`);
+}
+
+// A path package that lives in the repository is built from the commit's own files, and the Lean-level
+// comparison does not read its constants (only the project's own modules are dumped), so a change inside it
+// could change what a statement means with no trace. It must therefore be the merged spec's own package, file
+// for file: the same folder, with the same git tree id, at the head and at the merged spec. `packages` are the
+// manifest's entries (those of type path); `prefix` is the Lean project's folder in the repository. A path
+// package that is not a folder below the Lean project cannot be compared this way and is refused.
+export function pathPackageProblems({ top, base, head, prefix, packages }) {
+  const problems = [];
+  const checked = [];
+  const refusal = (kind, file, detail) => problems.push({ kind, file, statement: null, detail });
+  for (const item of packages.filter((entry) => entry?.type === 'path')) {
+    const dir = path.posix.normalize(path.posix.join('.', String(item.dir ?? '.')));
+    // One that leaves the repository altogether is refused later, before any build, by the package check.
+    const inRepository = path.posix.normalize(path.posix.join(prefix || '.', dir));
+    if (path.posix.isAbsolute(dir) || inRepository === '..' || inRepository.startsWith('../')) continue;
+    if (dir === '.' || dir === '..' || dir.startsWith('../')) {
+      refusal('path-package-outside-project', 'lake-manifest.json', `the dependency ${item.name} is a path package at ${item.dir}, which is not a folder below the Lean project, so it cannot be compared with the merged spec; a path package must be a folder of the project that is the merged spec's own`);
+      continue;
+    }
+    const at = (commit) => git(top, ['rev-parse', '--verify', '--quiet', `${commit}:${prefix ? `${prefix}/` : ''}${dir}`]);
+    const [was, now] = [at(base), at(head)];
+    checked.push({ name: item.name, dir, tree: now });
+    if (was === null || now === null || was !== now) {
+      refusal('path-package-changed', `${dir}/`, `the dependency ${item.name} is a package inside the commit (${dir}/) and ${was === null ? 'is not in the merged spec' : now === null ? 'is gone since the merged spec' : 'differs from the merged spec'}; the Lean-level comparison does not read a path package's constants, so the whole package must be the merged spec's own, file for file`);
+    }
+  }
+  return { problems, checked };
 }
 
 function extractCommit(top, commit, workdir, cleanRoot) {
@@ -855,6 +892,30 @@ function globProblems(head, changed, layout) {
   return problems;
 }
 
+// Two ways to make Lean accept a declaration without running the kernel on it: the option
+// debug.skipKernelTC (in a file, in a lakefile's leanOptions, or as a -D argument) and
+// Environment.addDeclWithoutChecking from a command or an initializer. Either one lets a false theorem
+// into the environment, and nothing the Lean-level program reads afterwards can tell. So the bare
+// identifier is refused in any Lean file or lakefile of the commit, whatever the merged spec had,
+// read from the raw text (a comment, a docstring or a string holding it counts too, because a string
+// can be turned into an option name or a command). Building the name from pieces is beyond a text rule.
+const UNCHECKED_DECLARATION = [['debug.skipKernelTC', /skipKernelTC/], ['addDeclWithoutChecking', /addDeclWithoutChecking/]];
+
+function uncheckedDeclarations(head) {
+  const problems = [];
+  for (const rel of [...head.keys()].sort()) {
+    if (rel.startsWith('.lake/') || !/\.lean$|(?:^|\/)lakefile\.[a-z]+$/.test(rel)) continue;
+    const text = head.get(rel).text();
+    for (const [token, pattern] of UNCHECKED_DECLARATION) {
+      const found = pattern.exec(text);
+      if (!found) continue;
+      const line = text.slice(0, found.index).split('\n').length;
+      problems.push({ kind: 'unchecked-declaration', file: rel, statement: null, token, detail: `${token} is named at line ${line}: it lets Lean accept a declaration without running its kernel on it, so nothing a build proves holds, and no project file or lakefile may name it` });
+    }
+  }
+  return problems;
+}
+
 // What the head tree may differ in from the merged spec tree, and whether every spec and proof file is
 // built. `base` is null when there is no merged spec to compare with; the glob check still runs.
 // `externals` returns the records of the run state (or null), and is read only when a new Trusted
@@ -901,18 +962,29 @@ export function checkIntegrity({ base: baseTree, head: headTree, externals = () 
       if (lean) forbiddenAdded(rel, was.text(), now.text(), problems);
     }
   }
-  problems.push(...globProblems(head, changed, layout));
-  // Every spec, proof and extraction file is one Lake must have compiled, whatever the lakefile says and
-  // whether or not it holds a recall. The module a file has is its path below a library's source folder;
-  // for a lakefile.lean, which is not read here, its path or its path below any folder.
+  problems.push(...globProblems(head, changed, layout), ...uncheckedDeclarations(head));
+  // Every spec, proof and extraction file is one Lake must have compiled from that very file, whatever the
+  // lakefile says and whether or not it holds a recall. Which module a file has is Lake's to say (the
+  // build asks it); the names listed here are only the ones the file could have, its path below a library's
+  // source folder or, for a lakefile.lean that is not read here, its path or its path below any folder. A
+  // file is `shared` when one of those names is also a name another Lean file could have: Lake then cannot be
+  // asked about it together with other files.
   const sourceFolders = built ? built.sources : [''];
   const moduleCandidates = (rel) => {
     const modules = sourceFolders.map((folder) => (rel.startsWith(folder) ? rel.slice(folder.length, -'.lean'.length).replaceAll('/', '.') : null)).filter(Boolean);
     if (!built) { const parts = rel.slice(0, -'.lean'.length).split('/'); for (let i = 1; i < parts.length; i += 1) modules.push(parts.slice(i).join('.')); }
     return [...new Set(modules)];
   };
+  const claimed = new Map();
+  for (const rel of head.keys()) {
+    if (!rel.endsWith('.lean') || LAKE_FILES.test(rel) || rel.startsWith('.lake/')) continue;
+    for (const name of moduleCandidates(rel)) claimed.set(name, (claimed.get(name) ?? 0) + 1);
+  }
   const required = [...head.keys()].filter((rel) => rel.endsWith('.lean') && !LAKE_FILES.test(rel)
-    && (isProofPath(rel) || isExtraction(rel, layout) || hasStatements(head.get(rel).text()))).sort().map((rel) => ({ rel, modules: moduleCandidates(rel) }));
+    && (isProofPath(rel) || isExtraction(rel, layout) || hasStatements(head.get(rel).text()))).sort().map((rel) => {
+    const modules = moduleCandidates(rel);
+    return { rel, modules, shared: modules.some((name) => claimed.get(name) > 1) };
+  });
   return { problems, ties, required, moduleCandidates };
 }
 
@@ -1117,6 +1189,10 @@ const closureDigest = (closure) => digestOf([...closure].sort(([a], [b]) => (a <
 const moduleRel = (module) => `${module.replaceAll('.', '/')}.lean`;
 const inTrustedModule = (module) => isTrusted(moduleRel(module));
 
+// The refusal of an axiom that asserts something and is declared outside Trusted/, in one wording for both rules
+// that make it (the semantic comparison and the allowed-axioms list), so a run that applies both reports it once.
+const propOutsideTrusted = (id, n, name, module) => `the statement ${id} (${n}) rests on ${name}, an axiom whose type is a proposition, declared outside Trusted/ (in ${module}); only a hand-written Trusted axiom bound to its accepted record may assert something`;
+
 // What the merged spec's statements, axioms and propositions are compared with at the head. `base` and
 // `head` come from parseDump; `recalled` are the names the spec files recall; `acceptedIds` are the ids
 // of the externals records the owner accepted.
@@ -1161,31 +1237,64 @@ export function semanticProblems({ base, head, recalled, acceptedIds = new Set()
     if (!baseAxioms.has(axiom.name)) continue;
     if (closureDigest(closureOf(base.constants, axiom.name)) !== closureDigest(closureOf(head.constants, axiom.name))) add('axiom-changed', axiom.name, `the axiom ${axiom.name} of the merged spec asserts something else than it did`);
   }
+  // native_decide and bv_decide: a statement may keep resting on a native-decision axiom that it already
+  // rested on at the merged spec (the receipt flags it); resting on one it did not rest on there is refused.
   for (const [id, now] of head.recalls) {
     for (const rest of now.rests) {
+      const had = new Set((base.recalls.get(id)?.rests.find((entry) => entry.n === rest.n)?.axioms ?? []).filter((name) => NATIVE_AXIOM.test(name)));
       for (const name of rest.axioms) {
         if (standard.has(name)) continue;
+        if (NATIVE_AXIOM.test(name)) {
+          if (!had.has(name)) add('native-added', id, `the statement ${id} (${rest.n}) rests on ${name}, an axiom that native_decide or bv_decide adds, and it did not rest on it at the merged spec`);
+          continue;
+        }
         const constant = head.constants.get(name);
-        if (!constant || constant.kind !== 'axiom') add('axiom-not-allowed', id, `the statement ${id} (${rest.n}) rests on the axiom ${name}, which is not one of Lean's three standard axioms or an axiom of the project (sorry, native_decide and bv_decide add such axioms)`);
+        if (!constant || constant.kind !== 'axiom') add('axiom-not-allowed', id, `the statement ${id} (${rest.n}) rests on the axiom ${name}, which is not one of Lean's three standard axioms or an axiom of the project (sorry adds such an axiom)`);
       }
     }
   }
   const bindings = [];
   const cited = (dump, kind) => dump.docs.filter((doc) => doc[kind]);
-  for (const axiom of newAxioms) {
-    if (!inTrustedModule(axiom.module)) { add('axiom-not-allowed', axiom.name, `the axiom ${axiom.name} is new since the merged spec and is declared outside Trusted/ (in ${axiom.module})`); continue; }
+  // An axiom whose type is a proposition asserts something, so it is held to its accepted record and to exactly the
+  // proposition that record is tied to in the merged spec. `statement` is what a refusal is reported on, `subject` how
+  // a refusal names the axiom where it says what the axiom must do, and `lead` what it says first about why the
+  // axiom is held to this.
+  const bind = (axiom, statement, subject, lead) => {
+    const refuse = (detail) => add('trusted-axiom-unbound', statement, `${lead}${detail}`);
     const doc = cited(head, 'axiom').find((entry) => entry.name === axiom.name);
     const ids = (doc?.cites ?? []).filter((id) => acceptedIds.has(id));
-    if (ids.length !== 1) { add('trusted-axiom-unbound', axiom.name, `the new axiom ${axiom.name} must cite exactly one accepted externals record in its docstring (it cites ${ids.length})`); continue; }
+    if (ids.length !== 1) return refuse(`${subject} must cite exactly one accepted externals record in its docstring (it cites ${ids.length})`);
     const record = ids[0];
     const props = cited(base, 'prop').filter((entry) => entry.cites.includes(record) && !inTrustedModule(entry.module) && isFrozen(moduleRel(entry.module)));
-    if (props.length !== 1) { add('trusted-axiom-unbound', axiom.name, `the record ${record} is tied to ${props.length} propositions in the frozen spec of the merged spec; it must be tied to exactly one, so the axiom ${axiom.name} has nothing to assert`); continue; }
+    if (props.length !== 1) return refuse(`the record ${record} is tied to ${props.length} propositions in the frozen spec of the merged spec; it must be tied to exactly one, so the axiom ${axiom.name} has nothing to assert`);
     const proposition = props[0].name;
-    if (axiom.typeConst !== proposition) { add('trusted-axiom-unbound', axiom.name, `the axiom ${axiom.name} asserts ${axiom.typeConst ?? 'something that is not one proposition'}, but the record ${record} is tied to the proposition ${proposition} in the merged spec; an axiom must assert exactly that`); continue; }
-    if (closureDigest(closureOf(base.constants, proposition)) !== closureDigest(closureOf(head.constants, proposition))) { add('trusted-axiom-unbound', axiom.name, `the proposition ${proposition} that the record ${record} is tied to changed since the merged spec`); continue; }
+    if (axiom.typeConst !== proposition) return refuse(`the axiom ${axiom.name} asserts ${axiom.typeConst ?? 'something that is not one proposition'}, but the record ${record} is tied to the proposition ${proposition} in the merged spec; an axiom must assert exactly that`);
+    if (closureDigest(closureOf(base.constants, proposition)) !== closureDigest(closureOf(head.constants, proposition))) return refuse(`the proposition ${proposition} that the record ${record} is tied to changed since the merged spec`);
     const citing = cited(head, 'axiom').filter((entry) => inTrustedModule(entry.module) && entry.cites.includes(record));
-    if (citing.length !== 1) { add('trusted-axiom-unbound', axiom.name, `the record ${record} is cited by ${citing.length} axioms (${citing.map((entry) => entry.name).join(', ')}); it ties one`); continue; }
+    if (citing.length !== 1) return refuse(`the record ${record} is cited by ${citing.length} axioms (${citing.map((entry) => entry.name).join(', ')}); it ties one`);
     bindings.push({ axiom: axiom.name, record, proposition });
+    return undefined;
+  };
+  for (const axiom of newAxioms) {
+    if (NATIVE_AXIOM.test(axiom.name)) { add('native-added', axiom.name, `${axiom.name} is an axiom that native_decide or bv_decide added since the merged spec (in ${axiom.module}); the merged spec did not have it`); continue; }
+    if (!inTrustedModule(axiom.module)) { add('axiom-not-allowed', axiom.name, `the axiom ${axiom.name} is new since the merged spec and is declared outside Trusted/ (in ${axiom.module})`); continue; }
+    bind(axiom, axiom.name, `the new axiom ${axiom.name}`, '');
+  }
+  // Every proposition-valued axiom of the merged spec that a statement rests on is held to the same: a hand-written
+  // Trusted axiom citing one accepted record and asserting exactly that record's proposition, whether or not an
+  // allowed-axioms list is given (the list says where a name came from, this says what the axiom asserts).
+  const bound = new Set();
+  for (const [id, now] of head.recalls) {
+    for (const rest of now.rests) {
+      for (const name of rest.axioms) {
+        const axiom = head.constants.get(name);
+        if (!axiom || axiom.kind !== 'axiom' || !axiom.asserts || standard.has(name) || NATIVE_AXIOM.test(name) || !baseAxioms.has(name)) continue;
+        if (!inTrustedModule(axiom.module)) { add('prop-axiom-outside-trusted', id, propOutsideTrusted(id, rest.n, name, axiom.module)); continue; }
+        if (bound.has(name)) continue;
+        bound.add(name);
+        bind(axiom, id, 'it', `the statement ${id} (${rest.n}) rests on ${name}, an axiom whose type is a proposition, and `);
+      }
+    }
   }
   return { problems, statements, bindings };
 }
@@ -1210,16 +1319,62 @@ export function allowedProblems({ head, recalledFiles, allowed }) {
         [where, names] = [` of the crate ${crate[0]}`, crate[1].axioms];
       }
       for (const rest of now.rests) {
-        const outside = axiomsNotAllowed(rest.axioms, names);
+        // A native-decision axiom is the native rule's alone (refused when it is new since the merged spec, flagged
+        // when the statement already rested on it there), so the outcome is the same with a list and without one.
+        const resting = rest.axioms.filter((name) => !NATIVE_AXIOM.test(name));
+        const outside = axiomsNotAllowed(resting, names);
         if (outside.length > 0) problems.push({ kind: 'axiom-not-allowed', file, statement: id, detail: `the statement ${id} (${rest.n}) rests on the ${outside.length === 1 ? 'axiom' : 'axioms'} ${outside.slice(0, 3).join(', ')}${outside.length > 3 ? ` and ${outside.length - 3} more` : ''}, which the allowed axioms${where} do not name` });
-        for (const name of rest.axioms) {
+        for (const name of resting) {
           const constant = asserts(name);
-          if (constant && !inTrustedModule(constant.module)) problems.push({ kind: 'prop-axiom-outside-trusted', file, statement: id, detail: `the statement ${id} (${rest.n}) rests on ${name}, an axiom whose type is a proposition, declared outside Trusted/ (in ${constant.module}); only a hand-written Trusted axiom bound to its accepted record may assert something` });
+          if (constant && !inTrustedModule(constant.module)) problems.push({ kind: 'prop-axiom-outside-trusted', file, statement: id, detail: propOutsideTrusted(id, rest.n, name, constant.module) });
         }
       }
     }
   }
   return problems;
+}
+
+// The recorded Lean checks against the files of the commit: each file must be there with the digest the check
+// was written for, and its last blockBytes bytes must be the block the check names. A file the commit changed,
+// or a block cut from it or edited in it, is refused before any build.
+export function stitchFileProblems({ plan, start, leanRoot }) {
+  const problems = [];
+  const bad = (entry, kind, detail) => problems.push({ kind, file: entry.relativePath, statement: null, detail: `crate ${entry.unit}: ${detail}` });
+  const root = fs.realpathSync(start);
+  for (const entry of plan.entries) {
+    const abs = path.resolve(start, entry.relativePath);
+    if (!abs.startsWith(`${root}${path.sep}`) && !abs.startsWith(`${start}${path.sep}`)) { bad(entry, 'stitch-file-outside', `${entry.relativePath} is outside the project, so the Lean check cannot be tied to a file of the commit`); continue; }
+    let bytes;
+    try { bytes = fs.readFileSync(abs); } catch { bad(entry, 'stitch-file-missing', `${entry.relativePath}, the file its Lean check was written for, is not in the commit`); continue; }
+    if (sha256(bytes) !== entry.fileSha256) { bad(entry, 'stitch-file-changed', `${entry.relativePath} is not the published file its Lean check was written for (${sha256(bytes).slice(0, 12)} in the commit, ${entry.fileSha256.slice(0, 12)} recorded)`); continue; }
+    if (bytes.length < entry.blockBytes || sha256(bytes.subarray(bytes.length - entry.blockBytes)) !== entry.blockSha256) { bad(entry, 'stitch-block-changed', `the last ${entry.blockBytes} bytes of ${entry.relativePath} are not the Lean check block that was recorded for it, so Lean does not compare the aliases with their constants`); continue; }
+    if (path.relative(leanRoot, abs).startsWith('..')) bad(entry, 'stitch-file-outside', `${entry.relativePath} is not below the Lean project`);
+  }
+  return problems;
+}
+
+// The same files once the build passed: each must be one Lake compiled from that very file (so its block ran),
+// and a module name the record gives must be one Lake maps the file to (a path below a folder Lake reads sources from).
+export function stitchBuiltProblems({ plan, start, leanRoot, isBuilt, sourceDirs }) {
+  const problems = [];
+  const real = (target) => { try { return fs.realpathSync(target); } catch { return target; } };
+  for (const entry of plan.entries) {
+    const abs = real(path.resolve(start, entry.relativePath));
+    const rel = path.relative(real(leanRoot), abs).split(path.sep).join('/');
+    const bad = (kind, detail) => problems.push({ kind, file: entry.relativePath, statement: null, detail: `crate ${entry.unit}: ${detail}` });
+    if (rel.startsWith('..') || !isBuilt(rel)) { bad('stitch-unbuilt', `Lake did not build ${entry.relativePath} from that file in this build, so its Lean check did not run`); continue; }
+    if (entry.module === null) continue;
+    const modules = (sourceDirs ?? []).map((dir) => path.relative(real(dir), abs)).filter((below) => !below.startsWith('..') && below.endsWith('.lean')).map((below) => below.slice(0, -'.lean'.length).split(path.sep).join('.'));
+    if (!modules.includes(entry.module)) bad('stitch-module-mismatch', `the recorded module ${entry.module} is not one Lake maps ${entry.relativePath} to (${modules.length === 0 ? 'no source folder of Lake holds the file' : modules.join(', ')})`);
+  }
+  return problems;
+}
+
+// The folders Lake reads Lean sources from, one for each library of the project and of its dependencies.
+function lakeSourceDirs({ leanRoot, env, work, timeoutSeconds }) {
+  const out = path.join(work, 'source-dirs.txt');
+  const run = runLake(['env', 'printenv', 'LEAN_SRC_PATH'], { cwd: leanRoot, env, log: path.join(work, 'source-dirs.log'), stdoutFile: out, timeoutSeconds });
+  return run.status === 0 ? fs.readFileSync(out, 'utf8').trim().split(path.delimiter).filter(Boolean) : null;
 }
 
 // ---- the run state -------------------------------------------------------------------------
@@ -1240,15 +1395,16 @@ const canonicalJson = (value) => JSON.stringify(value, (_key, item) => (item !==
   ? Object.fromEntries(Object.keys(item).sort().map((key) => [key, item[key]])) : item));
 export const recordDigest = (record) => sha256(canonicalJson(record ?? null));
 
-// The externals records a check relied on (the ones its accepted Trusted axioms are tied to), each with
-// a digest of the record as it stood. A consumer that finds a record changed or gone knows the receipt
-// was made on an authority that no longer holds.
-function externalsBinding(ties, externalsFile) {
+// The externals records a check relied on (the ones its new Trusted axioms are tied to, by the text of the
+// files and by what the Lean program bound), each with a digest of the record as it stood in the one
+// snapshot of externals.json the check read. A consumer that finds a record changed or gone knows the
+// receipt was made on an authority that no longer holds.
+function externalsBinding(ids, externalsFile) {
   const records = new Map((externalsFile?.data?.records ?? []).map((record) => [record?.id, record]));
   return {
     file: externalsFile?.file ?? null,
     sha256: externalsFile?.sha256 ?? null,
-    records: [...new Set(ties.map((tie) => tie.record))].sort().map((id) => ({ id, sha256: recordDigest(records.get(id)) })),
+    records: [...new Set(ids)].sort().map((id) => ({ id, sha256: recordDigest(records.get(id)) })),
   };
 }
 
@@ -1287,6 +1443,56 @@ export function extractionLayout(state, { root, top, prefix }) {
   published(run);
   for (const unit of Array.isArray(run?.units) ? run.units : []) published(unit);
   return { folders: [...new Set(layout.folders)], files: [...new Set(layout.files)] };
+}
+
+// The Lean checks the recorded extraction asks of its stitched crates. When a crate's Lean imports another
+// crate's real translation, each axiom the extraction would have written becomes an alias of the provider's
+// constant, and the extraction appends one block to each file that holds aliases (a command that makes Lean
+// compare each alias's type with the constant's). The run state records, for each such file, `leanChecks`:
+// { file, relativePath, module, items, blockSha256, blockBytes, fileSha256 }, with relativePath relative to
+// the project root, blockSha256 the digest of the file's last blockBytes bytes, fileSha256 the digest of the
+// whole published file (the digest its publication row has), and items the number of aliases the block checks.
+// This reads those records for a single-crate run or for each unit of a multi-crate run, and refuses a unit
+// whose stitch replaced aliases but records no check for them, or whose records do not add up, or a record
+// whose digest the publication does not carry. A unit that stitched nothing has nothing to check.
+export function stitchPlan(state, { root }) {
+  const run = state?.extraction?.run;
+  const rows = Array.isArray(run?.units) ? run.units : run && typeof run === 'object' ? [run] : [];
+  const problems = [];
+  const entries = [];
+  let units = 0;
+  const fail = (crate, file, detail) => problems.push({ kind: 'stitch-check-missing', file: file ?? null, statement: null, detail: `crate ${crate}: ${detail}` });
+  const HEX = /^[0-9a-f]{64}$/;
+  for (const unit of rows) {
+    const crate = typeof unit?.crate === 'string' ? unit.crate : '(unnamed)';
+    const stitch = [].concat(unit?.stitch ?? []);
+    const replaced = stitch.reduce((sum, entry) => sum + (Array.isArray(entry?.replaced) ? entry.replaced.length : 0), 0);
+    const stitchedFiles = new Set(stitch.flatMap((entry) => (Array.isArray(entry?.files) ? entry.files : [])));
+    const checks = unit?.leanChecks === undefined ? [] : unit.leanChecks;
+    if (replaced === 0 && stitchedFiles.size === 0 && (!Array.isArray(checks) || checks.length === 0)) continue;
+    units += 1;
+    if (!Array.isArray(checks)) { fail(crate, null, 'the recorded leanChecks is not a list'); continue; }
+    if (replaced > 0 && checks.length === 0) { fail(crate, null, `the stitch replaced ${replaced} alias${replaced === 1 ? '' : 'es'}, but the recorded extraction carries no Lean check for them`); continue; }
+    const items = checks.reduce((sum, check) => sum + (Number.isInteger(check?.items) ? check.items : 0), 0);
+    if (items !== replaced) fail(crate, null, `the recorded Lean checks cover ${items} alias${items === 1 ? '' : 'es'}, but the stitch replaced ${replaced}`);
+    const named = new Set(checks.map((check) => check?.file));
+    for (const file of stitchedFiles) if (!named.has(file)) fail(crate, file, `the stitch put aliases into ${file}, but no Lean check is recorded for that file`);
+    for (const check of checks) {
+      const wellFormed = typeof check?.file === 'string' && typeof check.relativePath === 'string' && check.relativePath !== '' && Number.isInteger(check.items) && check.items > 0
+        && Number.isInteger(check.blockBytes) && check.blockBytes > 0 && HEX.test(check.blockSha256) && HEX.test(check.fileSha256) && (check.module === null || typeof check.module === 'string');
+      if (!wellFormed) { fail(crate, check?.file, 'a recorded Lean check is missing a field or has one of the wrong kind'); continue; }
+      if (!stitchedFiles.has(check.file)) fail(crate, check.file, `a Lean check is recorded for ${check.file}, which the stitch put no aliases into`);
+      // A row names its file by the path relative to the project root, and also by the absolute path the extraction
+      // wrote to (which differs when the project was moved or cloned), so the relative one decides when it is there.
+      const publication = (Array.isArray(unit.publication) ? unit.publication : []).find((row) => (typeof row?.relativePath === 'string'
+        ? path.posix.normalize(row.relativePath) === path.posix.normalize(check.relativePath)
+        : typeof row?.projectPath === 'string' && path.resolve(root, row.projectPath) === path.resolve(root, check.relativePath)));
+      if (!publication) fail(crate, check.relativePath, `${check.relativePath} is in no row of the recorded publication, so the file the check was written for is not one the extraction published`);
+      else if (publication.sha256 !== check.fileSha256) fail(crate, check.relativePath, `the recorded publication has ${String(publication.sha256).slice(0, 12)} for ${check.relativePath}, but the Lean check was written for ${check.fileSha256.slice(0, 12)}`);
+      entries.push({ unit: crate, file: check.file, relativePath: check.relativePath, module: check.module, items: check.items, blockSha256: check.blockSha256, blockBytes: check.blockBytes, fileSha256: check.fileSha256 });
+    }
+  }
+  return { entries, problems, units };
 }
 
 // The merge commit of the last merged spec pull request the run state records, or null.
@@ -1363,16 +1569,37 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
     // receipt for the same commit never stands in for it.
     // The project's folder in the repository, with `/` separators; empty when it is the repository root.
     const prefix = path.join(sub, below).split(path.sep).filter((part) => part && part !== '.').join('/');
-    const layout = extractionLayout(readRunRecord(root, 'state.json'), { root, top, prefix });
-    let externalsFile = null;
+    const runState = readRunRecord(root, 'state.json');
+    const layout = extractionLayout(runState, { root, top, prefix });
+    // externals.json is read once, when the first rule needs it or, if none does, before the receipt is made,
+    // and every use (the records a new Trusted axiom is tied to, the ids the Lean program may bind, the digests
+    // in the receipt) is of that snapshot. A file that cannot be read refuses the check; it never reads as no
+    // records. The receipt's externals.sha256 is therefore always the digest of the file the check read, and
+    // null only when the project has no externals.json.
+    let externalsSnapshot;
+    const externalsFile = () => (externalsSnapshot === undefined ? (externalsSnapshot = readRunFile(root, 'externals.json')) : externalsSnapshot);
     const integrity = checkIntegrity({
       base: specBaseFull === null ? null : gitTree(top, specBaseFull, prefix, layout),
       head: gitTree(top, full, prefix, layout),
       layout,
-      externals: () => { externalsFile = readRunFile(root, 'externals.json'); const records = externalsFile?.data?.records; return Array.isArray(records) ? records : null; },
+      externals: () => { const records = externalsFile()?.data?.records; return Array.isArray(records) ? records : null; },
     });
-    const externalsRecord = externalsBinding(integrity.ties, externalsFile);
-    const integrityRecord = { specBase: specBaseFull, compared: specBaseFull !== null, ok: integrity.problems.length === 0, problems: integrity.problems, ties: integrity.ties, extraction: layout };
+    let externalsRecord = externalsBinding(integrity.ties.map((tie) => tie.record), externalsFile());
+    // The Lean checks the extraction recorded for stitched crates: the files of the commit must still hold
+    // the blocks they were written with.
+    const stitch = stitchPlan(runState, { root });
+    integrity.problems.push(...stitch.problems, ...stitchFileProblems({ plan: stitch, start, leanRoot }));
+    // A package inside the repository is compared whole: the folders with a lakefile that the comparison
+    // above leaves out are exactly these.
+    const pathPackages = { checked: [] };
+    const manifestEntries = (root) => { try { return JSON.parse(fs.readFileSync(path.join(root, 'lake-manifest.json'), 'utf8')).packages ?? []; } catch { return []; } };
+    if (specBaseFull !== null) {
+      const found = pathPackageProblems({ top, base: specBaseFull, head: full, prefix, packages: manifestEntries(leanRoot) });
+      integrity.problems.push(...found.problems);
+      pathPackages.checked = found.checked;
+    }
+    const integrityRecord = { specBase: specBaseFull, compared: specBaseFull !== null, ok: integrity.problems.length === 0, problems: integrity.problems, ties: integrity.ties, extraction: layout, pathPackages: pathPackages.checked,
+      stitchChecks: { units: stitch.units, files: stitch.entries.length, items: stitch.entries.reduce((sum, entry) => sum + entry.items, 0), builtChecked: false, entries: stitch.entries.map(({ unit, file, relativePath, module, items, blockSha256, fileSha256 }) => ({ unit, file, relativePath, module, items, blockSha256, fileSha256 })) } };
     if (!integrityRecord.ok) {
       const reason = `${describeProblem(integrity.problems[0])}${integrity.problems.length > 1 ? ` (and ${integrity.problems.length - 1} more)` : ''}`;
       return finish(receipts, full, {
@@ -1386,13 +1613,13 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
     const source = packages ? path.resolve(packages) : path.join(root, below, '.lake', 'packages');
     const revisions = manifest.length === 0 ? {} : checkPackages({ packages: manifest, source, cleanRoot, leanRoot });
     const destination = path.join(leanRoot, '.lake', 'packages');
-    const copy = manifest.length === 0 ? 'none' : copyPackages(source, destination);
+    // Only a package fetched into the packages folder is copied; a path package is built from the commit itself.
+    const fetched = manifest.some((item) => item.type !== 'path');
+    const copy = fetched ? copyPackages(source, destination) : 'none';
 
     const env = { ...gitEnvironment(), LEAN_NUM_THREADS: '2' };
     const lakeVersion = (spawnSync('lake', ['--version'], { cwd: leanRoot, encoding: 'utf8', env }).stdout ?? '').split('\n')[0].trim();
     const files = leanFiles(leanRoot);
-    // A module's .olean, wherever the file's module name puts it; none exists before this check's build.
-    const builtModule = (at, rel) => integrity.moduleCandidates(rel).find((module) => fs.existsSync(oleanFile(at, module))) ?? null;
     // Dependencies must be up to date before the build; only the project's own modules may be missing.
     const preflightLog = path.join(work, 'preflight.log');
     runLake(['build', '--no-build', '--no-ansi'], { cwd: leanRoot, env, log: preflightLog, timeoutSeconds: 1800 });
@@ -1408,6 +1635,13 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
     const log = readLog(logBytes.toString('utf8'));
     const problem = firstProblem(log.messages);
 
+    // Which spec, proof and extraction files Lake compiled from that very file. A build that passed is asked
+    // about all of them at once; after a failed build a file is asked about only when its report needs it.
+    const sourceCheck = build.status === 0 ? lakeBuilt({ leanRoot, env, work, files: integrity.required, timeoutSeconds }) : { built: new Map(), calls: 0 };
+    const isBuilt = (rel) => {
+      if (!sourceCheck.built.has(rel)) { const asked = lakeBuilt({ leanRoot, env, work, files: [{ rel, shared: true }], timeoutSeconds }); sourceCheck.built.set(rel, asked.built.get(rel)); sourceCheck.calls += asked.calls; }
+      return sourceCheck.built.get(rel) === true;
+    };
     const specFiles = [];
     const tampered = [];
     const recalled = new Set();
@@ -1425,14 +1659,13 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
         recalledFiles.set(statement.name, [...(recalledFiles.get(statement.name) ?? []), path.join(sub, below, rel).split(path.sep).join('/')]);
       }
       const own = log.messages.filter((m) => m.file === rel && m.severity !== 'info');
-      const built = builtModule(leanRoot, rel) !== null;
       const statements = spec.statements.map((statement) => {
         const hit = own.find((m) => m.line === statement.recallLine || (statement.guardFrom !== null && m.line >= statement.guardFrom && m.line <= statement.guardTo));
         const reason = statement.problems[0] ?? (hit ? describe(hit) : null)
-          ?? (own.length > 0 ? `its spec file did not build (${describe(firstProblem(own))})` : built ? null : 'its spec file was not built');
+          ?? (own.length > 0 ? `its spec file did not build (${describe(firstProblem(own))})` : isBuilt(rel) ? null : 'its spec file was not built');
         return { name: statement.name, line: statement.line, status: reason ? 'failing' : 'built', reason, axioms: statement.axioms, beyondStandard: statement.beyondStandard, flags: statement.flags };
       });
-      const fileReason = own.length > 0 ? describe(firstProblem(own) ?? own[0]) : (built ? null : 'no .olean was produced, so the file is not part of the build');
+      const fileReason = own.length > 0 ? describe(firstProblem(own) ?? own[0]) : (isBuilt(rel) ? null : 'Lake did not build this file in this build, so it is not part of the build');
       specFiles.push({ path: path.join(sub, below, rel), sha256: sha256(bytes), status: fileReason || statements.some((s) => s.status === 'failing') ? 'failing' : 'built', reason: fileReason, statements });
     }
     const statements = specFiles.flatMap((file) => file.statements);
@@ -1449,18 +1682,48 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
     // Lake must have compiled every spec, proof and extraction file, whatever the lakefile says and
     // whether or not the file holds a recall: each needs the .olean this build produced.
     if (reason === null) {
-      const unbuilt = integrity.required.filter(({ rel }) => builtModule(leanRoot, rel) === null);
-      if (unbuilt.length > 0) reason = `no .olean was produced for ${unbuilt[0].rel}${unbuilt[0].modules[0] ? ` (module ${unbuilt[0].modules[0]})` : ''}, so Lake did not build it${unbuilt.length > 1 ? ` (and ${unbuilt.length - 1} more)` : ''}`;
+      const unbuilt = integrity.required.filter(({ rel }) => !isBuilt(rel));
+      if (unbuilt.length > 0) reason = `Lake did not build ${unbuilt[0].rel} from that file in this build (lake build --no-build does not report it up to date)${unbuilt.length > 1 ? ` (and ${unbuilt.length - 1} more)` : ''}`;
+    }
+    integrityRecord.sourceCheck = { files: integrity.required.length, calls: sourceCheck.calls };
+    // The stitched files must be ones Lake built from that file, in the module the record names.
+    if (reason === null && stitch.entries.length > 0) {
+      const sourceDirs = stitch.entries.some((entry) => entry.module !== null) ? lakeSourceDirs({ leanRoot, env, work, timeoutSeconds }) : null;
+      const unbuilt = stitchBuiltProblems({ plan: stitch, start, leanRoot, isBuilt, sourceDirs });
+      integrityRecord.stitchChecks.builtChecked = unbuilt.length === 0;
+      if (unbuilt.length > 0) {
+        integrityRecord.problems.push(...unbuilt);
+        integrityRecord.ok = false;
+        reason = `${describeProblem(unbuilt[0])}${unbuilt.length > 1 ? ` (and ${unbuilt.length - 1} more)` : ''}`;
+      }
+    }
+    // The manifest as Lake left it after the build: a path package that Lake resolved but the committed
+    // manifest did not list is compared like the others.
+    if (reason === null && specBaseFull !== null) {
+      const listed = new Set(pathPackages.checked.map((entry) => entry.name));
+      const late = pathPackageProblems({ top, base: specBaseFull, head: full, prefix, packages: manifestEntries(leanRoot).filter((entry) => !listed.has(entry?.name)) });
+      integrityRecord.pathPackages.push(...late.checked);
+      if (late.problems.length > 0) {
+        integrityRecord.problems.push(...late.problems);
+        integrityRecord.ok = false;
+        reason = `${describeProblem(late.problems[0])}${late.problems.length > 1 ? ` (and ${late.problems.length - 1} more)` : ''}`;
+      }
     }
     // The Lean-level comparison with the merged spec. Without a merged spec there is nothing to compare.
     if (reason === null && specBaseFull !== null) {
-      const accepted = (() => {
-        try { const file = externalsFile ?? readRunFile(root, 'externals.json'); return new Set((file?.data?.records ?? []).filter((r) => r?.status === 'assumption-accepted' && r.decision && typeof r.id === 'string').map((r) => r.id)); } catch (error) { if (error instanceof Refusal) return new Set(); throw error; }
-      })();
-      const lean = leanCheck({ top, sub, below, specBaseFull, work, leanRoot, source, hasPackages: manifest.length > 0, env, timeoutSeconds, integrity, recalled, recalledFiles, allowed, acceptedIds: accepted, builtModule });
+      const accepted = new Set((externalsFile()?.data?.records ?? []).filter((r) => r?.status === 'assumption-accepted' && r.decision && typeof r.id === 'string').map((r) => r.id));
+      const lean = leanCheck({ top, sub, below, specBaseFull, work, leanRoot, source, hasPackages: fetched, env, timeoutSeconds, integrity, recalled, recalledFiles, allowed, acceptedIds: accepted });
       if (lean.error) reason = `the Lean check could not run: ${lean.error}`;
       else {
         integrityRecord.semantic = { toolchain: lean.toolchain, statements: lean.statements, bindings: lean.bindings, dumps: lean.dumps };
+        // The receipt names every record the acceptance rests on: those the text of the new Trusted files ties
+        // axioms to and those the Lean program bound (a command can make an axiom the text never shows). A tie
+        // in the text that Lean did not bind to the same record is a disagreement, and is refused.
+        const bound = new Set(lean.bindings.map((binding) => binding.record));
+        for (const tie of lean.problems.length > 0 ? [] : integrity.ties) {
+          if (!bound.has(tie.record)) lean.problems.push({ kind: 'tie-not-bound', file: tie.file, statement: tie.axiom, detail: `the text of ${tie.file} ties the axiom ${tie.axiom} to the record ${tie.record}, but the Lean program bound no axiom to that record` });
+        }
+        externalsRecord = externalsBinding([...integrity.ties.map((tie) => tie.record), ...lean.bindings.map((binding) => binding.record)], externalsSnapshot ?? null);
         if (lean.problems.length > 0) {
           integrityRecord.problems.push(...lean.problems);
           integrityRecord.ok = false;
@@ -1489,17 +1752,51 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
   }
 }
 
-const oleanFile = (root, module) => path.join(root, '.lake', 'build', 'lib', 'lean', `${module.replaceAll('.', '/')}.olean`);
+// Whether Lake compiled each file from that very file, asked of Lake itself: `lake build --no-build FILE`
+// exits 0 only when the module Lake maps FILE to is up to date from this source, and not for a file no
+// library maps (unknown module source path) or one whose module's artifact came from another source.
+// One call can take many files, except that a call is not sound for files that could be the same module
+// (Lake runs one job for a module name, so the second file would pass on the first one's job): those are
+// asked one at a time, and so is every file of a batch that fails, to say which one it was.
+function lakeBuilt({ leanRoot, env, work, files, timeoutSeconds }) {
+  const built = new Map();
+  let calls = 0;
+  const ask = (rels) => { calls += 1; return runLake(['build', '--no-build', '--no-ansi', ...rels], { cwd: leanRoot, env, log: path.join(work, `source-check-${calls}.log`), timeoutSeconds }).status === 0; };
+  const alone = files.filter((file) => file.shared).map((file) => file.rel);
+  const batch = files.filter((file) => !file.shared).map((file) => file.rel);
+  for (let at = 0; at < batch.length; at += 40) {
+    const group = batch.slice(at, at + 40);
+    if (ask(group)) for (const rel of group) built.set(rel, true);
+    else alone.push(...group);
+  }
+  for (const rel of alone) built.set(rel, ask([rel]));
+  return { built, calls };
+}
+
+// The modules this build compiled for the project itself: the .olean files in its own build folder (a
+// dependency builds into its own package folder), each named by its path.
+function projectModules(root) {
+  const base = path.join(root, '.lake', 'build', 'lib', 'lean');
+  const found = [];
+  const walk = (dir) => {
+    for (const entry of fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }) : []) {
+      if (entry.isDirectory()) walk(path.join(dir, entry.name));
+      else if (entry.name.endsWith('.olean')) found.push(path.relative(base, path.join(dir, entry.name)).slice(0, -'.olean'.length).split(path.sep).join('.'));
+    }
+  };
+  walk(base);
+  return found.sort();
+}
 
 // Runs the Lean program on the built head and on a fresh build of the merged spec in a copy of its own,
 // then compares them. An `error` means the comparison could not be made, which is not an acceptance.
-function leanCheck({ top, sub, below, specBaseFull, work, leanRoot, source, hasPackages, env, timeoutSeconds, integrity, recalled, recalledFiles, allowed, acceptedIds, builtModule }) {
+function leanCheck({ top, sub, below, specBaseFull, work, leanRoot, source, hasPackages, env, timeoutSeconds, integrity, recalled, recalledFiles, allowed, acceptedIds }) {
   const dump = path.join(work, 'dump');
   fs.mkdirSync(dump, { recursive: true });
   fs.writeFileSync(path.join(dump, 'Dump.lean'), DUMP_SOURCE);
   const tail = (file) => { try { return fs.readFileSync(file, 'utf8').trim().split('\n').slice(-3).join(' | ').slice(0, 300); } catch { return ''; } };
   const dumpOf = (side, root) => {
-    const modules = [...new Set(leanFiles(root).files.filter((rel) => rel.endsWith('.lean') && !LAKE_FILES.test(rel)).map((rel) => builtModule(root, rel)).filter(Boolean))].sort();
+    const modules = projectModules(root);
     const args = path.join(dump, `${side}-args.json`);
     fs.writeFileSync(args, JSON.stringify({ modules, recalls: [...recalled].sort(), ids: [...acceptedIds].sort() }));
     const [out, log] = [path.join(dump, `${side}.jsonl`), path.join(dump, `${side}.log`)];
@@ -1526,7 +1823,12 @@ function leanCheck({ top, sub, below, specBaseFull, work, leanRoot, source, hasP
   const base = dumpOf('base', baseRoot);
   if (base.error) return base;
   const { problems, statements, bindings } = semanticProblems({ base: base.dump, head: head.dump, recalled: [...recalled].sort(), acceptedIds });
-  if (allowed) problems.push(...allowedProblems({ head: head.dump, recalledFiles, allowed }));
+  if (allowed) {
+    // A refusal that both the comparison and the list make is reported once, with the spec file the list knows.
+    const listed = allowedProblems({ head: head.dump, recalledFiles, allowed });
+    const same = (a, b) => a.kind === b.kind && a.statement === b.statement && a.detail === b.detail;
+    problems.splice(0, problems.length, ...problems.filter((problem) => !listed.some((other) => same(problem, other))), ...listed);
+  }
   return { problems, statements, bindings, toolchain: head.dump.toolchain, dumps: { base: base.sha256, head: head.sha256 } };
 }
 
@@ -1576,6 +1878,12 @@ function reportLines(receipt) {
     : 'allowed axioms: no list given, so no statement is held to a list of axioms');
   const { folders, files } = integrity.extraction ?? { folders: [], files: [] };
   lines.push(`extraction output held fixed, besides the folders named Extraction...: ${folders.length + files.length === 0 ? 'none recorded in the run state' : [...folders, ...files].join(', ')}`);
+  if (integrity.pathPackages?.length > 0) lines.push(`path packages inside the repository, each the merged spec's own: ${integrity.pathPackages.map((entry) => `${entry.name} (${entry.dir})`).join(', ')}`);
+  if (integrity.sourceCheck) lines.push(`Lake compiled from their own files: ${integrity.sourceCheck.files} spec, proof and extraction files (${integrity.sourceCheck.calls} Lake calls)`);
+  if (integrity.stitchChecks?.files > 0) {
+    const { units, files, items, builtChecked } = integrity.stitchChecks;
+    lines.push(`stitch checks: ${files} file${files === 1 ? '' : 's'} of ${units} crate${units === 1 ? '' : 's'} (${items} alias${items === 1 ? '' : 'es'}): each file and its Lean check block as recorded${builtChecked ? ', and each built by Lake' : ''}`);
+  }
   if (integrity.semantic) {
     const { statements, bindings, toolchain } = integrity.semantic;
     lines.push(`Lean check (${toolchain.lean}): recalled declarations compared: ${statements.length} (${statements.reduce((sum, item) => sum + item.constants, 0)} project constants); new Trusted axioms bound to their records: ${bindings.length}`);
