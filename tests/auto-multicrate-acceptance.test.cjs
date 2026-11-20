@@ -104,25 +104,69 @@ describe('the proof phase over several crates', () => {
     assert.deepEqual(result.crates.units.map((entry) => [entry.crate, entry.accepted]), [['libcrux_hmac', true], ['libcrux_sha2', true]]);
   });
 
-  it('is not done, and accepts no crate, when the saved run lost the rows of its crates', () => {
-    // The roster, its hash and the order are still there, so the run is an aggregate that lost its crate
-    // rows, not a single crate: the state refuses to read, and the owner is told that extracting again
-    // replaces the record.
-    const { root, head } = proofPhase();
-    receipt(root, head, bothBuilt());
-    assert.equal(view(root).phase, 'done');
-    const state = fixtures.readState(root);
-    delete state.extraction.run.units;
-    fixtures.writeState(root, state);
-    for (const args of [[], ['--brief']]) {
-      const result = cli('read-state', '--project-root', root, ...args);
-      assert.equal(result.status, 3, result.stdout);
-      assert.equal(result.json.code, 'malformed-state');
-      assert.match(result.json.message, /extraction\.run must be the re-validated extraction attempt \(the run carries its roster, rosterSha256, order but lists none of its crates\)/);
-      assert.match(result.json.nextStep, /rerun \/fvs:auto-extract/);
-      assert.equal('phase' in result.json, false);
-      assert.equal('crates' in result.json, false);
+  // The saved extraction record is damaged after an accepting receipt exists for the proof PR's head: whatever
+  // is lost, the state does not read, so it is not done and no crate is accepted, and the owner is told that
+  // extracting again replaces the record. The scope the record keeps apart from the run is what tells the
+  // loss of a run over several crates from a project of one crate.
+  describe('a saved extraction that lost what holds its crates together', () => {
+    const lost = {
+      'the rows of its crates, with the roster, its hash and the order still there': [(state) => { delete state.extraction.run.units; },
+        /extraction\.run must be the re-validated extraction attempt \(the run carries its roster, rosterSha256, order but lists none of its crates\)/],
+      'every field of the aggregate (rows, order, roster and its hash), so the run reads as one crate\'s': [(state) => { fixtures.asSingleCrate(state.extraction.run); }, /extraction\.scope: the scope is several crates \(libcrux_hmac, libcrux_sha2\), but the record holds no run over them/],
+      'the whole run': [(state) => { delete state.extraction.run; }, /extraction\.scope: the scope is several crates .* but the record holds no run over them/],
+    };
+    // A record that keeps no scope, or an unknown one, still reads; the phase stays at the extraction.
+    const unsettled = {
+      'the scope the copy recorded': (state) => { delete state.extraction.scope; },
+      'the scope, as an extraction that never established one': (state) => { state.extraction.scope = { kind: 'unknown', basis: 'none', reason: 'no inventory' }; },
+    };
+
+    for (const [name, [change, said]] of Object.entries(lost)) {
+      it(`is not done, and accepts no crate, without ${name}`, () => {
+        for (const narrowed of [false, true]) {
+          const targets = narrowed ? { crates: ['libcrux_hmac'], nonTargets: [{ crate: 'libcrux_sha2', decision: 'Not verified; assumed.' }] } : null;
+          const { root, head } = proofPhase(hmacAndSha2, { targets });
+          receipt(root, head, narrowed ? [specFile(HMAC_SPEC, [statement('hmac_spec')])] : bothBuilt());
+          assert.equal(view(root).phase, 'done', 'before the loss');
+          const state = fixtures.readState(root);
+          change(state);
+          fixtures.writeState(root, state);
+          for (const args of [[], ['--brief']]) {
+            const result = cli('read-state', '--project-root', root, ...args);
+            assert.equal(result.status, 3, `${narrowed ? 'narrowed to one crate: ' : ''}${result.stdout}`);
+            assert.equal(result.json.code, 'malformed-state');
+            assert.match(result.json.message, said);
+            assert.match(result.json.nextStep, /rerun \/fvs:auto-extract/);
+            assert.equal('phase' in result.json, false);
+            assert.equal('crates' in result.json, false);
+          }
+        }
+      });
     }
+
+    for (const [name, change] of Object.entries(unsettled)) {
+      it(`is not done, and accepts no crate, without ${name}`, () => {
+        const { root, head } = proofPhase();
+        receipt(root, head, bothBuilt());
+        assert.equal(view(root).phase, 'done', 'before the loss');
+        const state = fixtures.readState(root);
+        change(state);
+        fixtures.writeState(root, state);
+        const result = view(root);
+        assert.equal(result.phase, 'extract');
+        assert.match(result.nextAction, /^Rerun \/fvs:auto-extract: the recorded extraction does not say whether it is of a single crate or of several/);
+        assert.equal('crates' in result, false);
+      });
+    }
+
+    it('a project of one crate, whose scope is positively that, does not lose its state with its run', () => {
+      const { root, head } = proofPhase((directory) => [unit(directory, 'libcrux_hmac', [fn(HMAC_ITEM, 'src/hmac.rs', 10)])]);
+      const state = fixtures.readState(root);
+      fixtures.asSingleCrate(state.extraction.run);
+      fixtures.writeState(root, state);
+      receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec')])]);
+      assert.equal(view(root).phase, 'done');
+    });
   });
 
   describe('a native-decision axiom the merged spec already rested on', () => {
@@ -540,6 +584,8 @@ describe('the proof phase over several crates', () => {
     const { root, head } = proofPhase(hmacAndSha2, { targets });
     const state = fixtures.readState(root);
     delete state.extraction.run;
+    // The copy was positively one crate (the agreement is what names several), so the record has no run to lose.
+    state.extraction.scope = { kind: 'single-crate', basis: 'cargo', libraryCrates: ['libcrux_hmac'] };
     fixtures.writeState(root, state);
     receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec')])]);
     const result = view(root);

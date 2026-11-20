@@ -1250,7 +1250,13 @@ function crateView(run, always = false) {
 // copy (`omitted`: its sources are left out, or its path dependency became a registry release)
 // is such a crate too, and the extraction's own reason for removing it is no substitute for the
 // owner's decision: it waits for that decision like a declared non-target.
-function crateContextOf(state) {
+export function crateContextOf(state) {
+  // No crate is accepted on an extraction whose scope is not settled.
+  return scopeUnsettled(state?.extraction) === null ? recordedCrateContext(state) : null;
+}
+
+// The same, for a run that is read as it is (the run being recorded has no scope of its own to settle yet).
+function recordedCrateContext(state) {
   const extraction = state?.extraction?.status === 'succeeded' ? state.extraction : null;
   if (!extraction) return null;
   const { run } = extraction;
@@ -1258,15 +1264,19 @@ function crateContextOf(state) {
   const agreed = state.agreements?.at(-1)?.payload?.targets ?? null;
   const omitted = new Map((Array.isArray(run?.roster?.dropped) ? run.roster.dropped : []).filter((entry) => isText(entry?.crate)).map((entry) => [entry.crate, isText(entry.reason) ? entry.reason : null]));
   const declared = [...new Set([...[run, ...units].flatMap((row) => (Array.isArray(row?.nonTargets) ? row.nonTargets.map((entry) => entry?.crate) : [])).filter(isText), ...omitted.keys()])].sort();
-  if (units.length < 2 && declared.length === 0 && agreed === null) return null;
+  // The crates the extraction's own scope names, kept apart from the run: a run that is gone says nothing
+  // against them.
+  const scoped = extraction.scope?.kind === 'multi-crate' && Array.isArray(extraction.scope.libraryCrates) ? extraction.scope.libraryCrates.filter(isText) : [];
+  if (units.length < 2 && declared.length === 0 && agreed === null && scoped.length < 2) return null;
   const dropped = new Set((agreed?.nonTargets ?? []).map((entry) => entry.crate));
   const view = crateView(run, true);
   if (view === null) {
     // An extraction that holds no crate at all (it carries no attempt) says nothing against an
-    // agreement that names several: none of those crates is held, so none can be accepted, and the
-    // obligation to verify each of them stays.
-    if (units.length > 0 || declaredCrates({ targets: agreed }).length < 2) return null;
-    return { view: { order: [], units: [] }, units, extracted: [], targets: [], missing: agreed.crates, nonTargets: new Set([...declared, ...dropped]), omitted, undecided: [], unlisted: [] };
+    // agreement or a scope that names several: none of those crates is held, so none can be accepted, and
+    // the obligation to verify each of them stays.
+    const named = [...new Set([...declaredCrates({ targets: agreed }), ...scoped])].sort();
+    if (units.length > 0 || named.length < 2) return null;
+    return { view: { order: [], units: [] }, units, extracted: [], targets: [], missing: [...new Set([...(agreed?.crates ?? []), ...scoped])].sort(), nonTargets: new Set([...declared, ...dropped]), omitted, undecided: [], unlisted: [] };
   }
   // Providers first; the crates of a dependency cycle have no place in the order and follow it.
   const extracted = [...view.order, ...(view.cycle ?? [])];
@@ -1296,6 +1306,39 @@ export function declaredCrates({ manifest = null, targets = null } = {}) {
   const inRepo = (Array.isArray(original) ? original : []).filter((row) => row?.library).map((row) => row.crate);
   return [...new Set([...named, ...inRepo].filter(isText))].sort();
 }
+
+// What the copy is a copy of, as the extraction engine records it in the manifest when it prepares the copy
+// (`scope.kind`: single-crate, multi-crate, or unknown; for several crates `libraryCrates` names the in-repo
+// library crates of the workspace). A single crate is a fact the extraction established, never what is left
+// when nothing says otherwise: a copy that records no scope, or one the engine could not classify, has an
+// unknown scope, and an unknown scope is never read as a single crate.
+const ESTABLISHED_SCOPES = ['single-crate', 'multi-crate'];
+const scopeOf = (manifest) => (plainObject(manifest?.scope) && [...ESTABLISHED_SCOPES, 'unknown'].includes(manifest.scope.kind) ? manifest.scope
+  : { kind: 'unknown', basis: 'none', reason: 'the copy records no scope (it was prepared before the extraction engine recorded one)' });
+
+// Why a scope and the run recorded with it cannot be of the same extraction, or null. A scope of several
+// crates needs the aggregate run over them: its crate rows and roster, with every library crate of the
+// workspace a row, a non-target or a dropped crate. The scope is kept in the extraction record apart from
+// the run, so a run that lost its rows (or is gone) cannot pass for the extraction of a single crate.
+function scopeProblem(scope, run) {
+  if (!plainObject(scope) || !ESTABLISHED_SCOPES.includes(scope.kind)) return 'the record does not say whether the extraction is of a single crate or of several, and an unknown scope is never read as a single crate';
+  if (run?.scope !== undefined && canonicalJson(run.scope) !== canonicalJson(scope)) return 'the scope the attempt recorded is not the scope of the copy';
+  if (scope.kind === 'single-crate') return null;
+  const named = scope.libraryCrates;
+  if (!Array.isArray(named) || named.length < 2 || !named.every((crate) => typeof crate === 'string' && CRATE_NAME.test(crate))) return 'the scope is several crates but does not name them';
+  if (!plainObject(run) || !Array.isArray(run.units) || !plainObject(run.roster)) {
+    return `the scope is several crates (${named.join(', ')}), but the record holds no run over them: it needs the attempt of every crate, each one a target, a non-target or dropped`;
+  }
+  const held = new Set([...run.units.map((unit) => unit?.crate), ...['nonTargets', 'dropped'].flatMap((key) => (Array.isArray(run.roster[key]) ? run.roster[key] : []).map((entry) => entry?.crate))]);
+  const loose = named.filter((crate) => !held.has(crate));
+  return loose.length === 0 ? null : `the scope names ${loose.join(', ')}, which the run neither extracts nor lists as a non-target or as dropped`;
+}
+
+// Why a succeeded extraction does not count yet, or null: its record keeps no scope (it was made before the extraction
+// kept one) or an unknown one. A single crate is never what is left when nothing says otherwise, so the phase machine
+// does not move past the extraction until it is recorded again with its scope established.
+const scopeUnsettled = (extraction) => (plainObject(extraction?.scope) && ESTABLISHED_SCOPES.includes(extraction.scope.kind) ? null
+  : 'the recorded extraction does not say whether it is of a single crate or of several, and an unknown scope is never read as a single crate');
 
 function crateReport(context, acceptance = null) {
   const status = new Map((acceptance ?? []).map((entry) => [entry.crate, entry]));
@@ -1360,7 +1403,7 @@ const unstitchedReason = ({ crate, provider }, subject = `crate ${crate}`) => `$
 // uses another verified crate's items without being stitched to it. The extraction engine refuses
 // the first and the last itself; this is the second check of the same cases. Empty for a single crate.
 export function crateProblems(run, agreedTargets = null) {
-  const context = run ? crateContextOf({ extraction: { status: 'succeeded', run }, agreements: agreedTargets === null ? [] : [{ payload: { targets: agreedTargets } }] }) : null;
+  const context = run ? recordedCrateContext({ extraction: { status: 'succeeded', run }, agreements: agreedTargets === null ? [] : [{ payload: { targets: agreedTargets } }] }) : null;
   if (context === null) return [];
   return [
     // A single crate's run has no status of its own: only the rows of a run over several crates do.
@@ -1735,7 +1778,7 @@ export function allowedAxioms({ projectRoot, commit }) {
 
 function extractionErrors(extraction) {
   const errors = [];
-  if (!fields(errors, extraction, 'extraction', [...EXTRACTION_FIELDS, 'run'])) return errors;
+  if (!fields(errors, extraction, 'extraction', [...EXTRACTION_FIELDS, 'run', 'scope'])) return errors;
   if ('run' in extraction && !recordedRunValid(extraction.run)) {
     // A run that reads as a run but disagrees with its roster or stitch says where.
     const why = runValid(extraction.run) ? unitsProblem(extraction.run) : null;
@@ -1771,6 +1814,10 @@ function extractionErrors(extraction) {
       inputs !== null && inputs.sourceCommit === null && 'it has no source commit',
     ].filter(Boolean);
     if (contradictions.length > 0) errors.push(`extraction is recorded as succeeded although ${contradictions.join(', ')}`);
+    // A record with no scope, or an unknown one, is a valid record that the phase machine does not move past; a scope
+    // that is there must agree with the run.
+    const unsettled = scopeUnsettled(extraction) === null ? scopeProblem(extraction.scope, extraction.run) : null;
+    if (unsettled !== null) errors.push(`extraction.scope: ${unsettled}`);
   }
   return errors;
 }
@@ -1831,7 +1878,7 @@ const externalsPath = (root) => path.join(root, STATE_DIR, 'externals.json');
 
 // Null when the file is absent; a refusal naming the file and the next step
 // when it is unreadable or does not validate. It is never repaired here.
-function loadRecord(file, code, validate, rerun, recovery = () => null) {
+function loadRecord(file, code, validate, rerun, recovery = () => '') {
   let text;
   try {
     text = fs.readFileSync(file, 'utf8');
@@ -1848,7 +1895,7 @@ function loadRecord(file, code, validate, rerun, recovery = () => null) {
     refuse(code, `${file} is not valid JSON: ${error.message}`, { file, nextStep });
   }
   const errors = validate(value);
-  if (errors.length > 0) refuse(code, `${file} is malformed: ${errors.join('; ')}`, { file, errors, nextStep: recovery(errors) ?? nextStep });
+  if (errors.length > 0) refuse(code, `${file} is malformed: ${errors.join('; ')}`, { file, errors, nextStep: `${nextStep}${recovery(errors)}` });
   RECORD_TEXT.set(value, text);
   return value;
 }
@@ -1857,7 +1904,7 @@ function loadRecord(file, code, validate, rerun, recovery = () => null) {
 // that record and nothing else: the owner is not left with a state that only a hand edit can open.
 const extractionOnly = (errors) => errors.every((text) => text.startsWith('extraction'));
 const extractionRecovery = (errors) => (extractionOnly(errors)
-  ? 'The extraction record is the only fault: rerun /fvs:auto-extract, which records the extraction again in its place; nothing else in the state is touched.' : null);
+  ? ' The extraction record is the only fault, so you can also rerun /fvs:auto-extract: it records the extraction again in its place and touches nothing else in the state.' : '');
 
 // The exact text each loaded record was parsed from, so a writer can tell
 // whether the file changed after it read it.
@@ -2204,6 +2251,8 @@ function progress(root, state, specs = null) {
   if (state.extraction?.status !== 'succeeded') {
     return { phase: 'extract', warnings: [], nextAction: state.extraction ? 'Rerun /fvs:auto-extract after fixing the recorded failure reasons.' : 'Run /fvs:auto-extract to extract the selected revision.' };
   }
+  const unsettled = scopeUnsettled(state.extraction);
+  if (unsettled !== null) return { phase: 'extract', warnings: [], nextAction: `Rerun /fvs:auto-extract: ${unsettled}.` };
   // A recorded spec PR merge starts the proof phase.
   const specMerge = (specs?.prs ?? []).filter((pr) => pr.kind === 'spec' && pr.merged).at(-1);
   const stageName = specMerge ? 'auto-execute' : 'auto-top-specs';
@@ -2710,12 +2759,22 @@ export function recordExtraction({ projectRoot, out, buildExitCode, oracle, orac
   // crates it uses, with the targets the owner's latest agreement names.
   const agreedTargets = state.agreements?.at(-1)?.payload?.targets ?? null;
   reasons.push(...crateProblems(run, agreedTargets));
-  // When the scope is several crates (the agreement names them, or the workspace holds them), only a
+  // The scope is what the copy recorded when it was prepared, and a single crate is never what is left when
+  // it records none: an unknown scope is a reason of its own, which the owner settles by preparing the copy
+  // again (a release folder lets cargo read the workspace).
+  const scope = scopeOf(manifest);
+  if (manifest !== null && scope.kind === 'unknown') {
+    reasons.push(`the scope of this extraction is not established (${isText(scope.reason) ? scope.reason : 'the extraction engine could not tell a single crate from several'}), and an unknown scope is never read as a single crate: prepare the copy again so that it records its scope`);
+  }
+  // When the scope is several crates (the copy's scope, the agreement, or the workspace holds them), only a
   // completed attempt over all of them can be recorded: a missing attempt, or the attempt of one crate,
   // is never read as "nothing else to verify". An attempt that was refused has its own reason above.
-  const inScope = declaredCrates({ manifest, targets: agreedTargets });
-  if (inScope.length > 1 && (attempted ? run !== undefined && run.roster === undefined : true)) {
-    reasons.push(`the crates ${inScope.join(', ')} are in scope (the agreement names them, or the workspace holds them), but the copy holds ${attempted ? 'the attempt of one crate only' : 'no extraction attempt'}: record a completed attempt over all of them, with an extraction spec that makes each crate a target, a non-target or dropped`);
+  const inScope = [...new Set([...declaredCrates({ manifest, targets: agreedTargets }), ...(scope.kind === 'multi-crate' && Array.isArray(scope.libraryCrates) ? scope.libraryCrates.filter(isText) : [])])].sort();
+  if ((inScope.length > 1 || scope.kind === 'multi-crate') && (attempted ? run !== undefined && run.roster === undefined : true)) {
+    reasons.push(`the crates ${inScope.join(', ')} are in scope (the copy's scope, the agreement, or the workspace names them), but the copy holds ${attempted ? 'the attempt of one crate only' : 'no extraction attempt'}: record a completed attempt over all of them, with an extraction spec that makes each crate a target, a non-target or dropped`);
+  } else if (manifest !== null && scope.kind !== 'unknown' && (!attempted || run !== undefined)) {
+    const unsettled = scopeProblem(scope, run);
+    if (unsettled !== null) reasons.push(unsettled);
   }
   const extraction = {
     status: reasons.length === 0 ? 'succeeded' : 'failed',
@@ -2726,6 +2785,7 @@ export function recordExtraction({ projectRoot, out, buildExitCode, oracle, orac
     declared: { buildExitCode, oracle, ...(reason ? { oracleReason: reason } : {}) },
     checks,
     inputs,
+    ...(manifest !== null ? { scope } : {}),
     ...(run ? { run } : {}),
     note: NOT_A_PROOF,
   };

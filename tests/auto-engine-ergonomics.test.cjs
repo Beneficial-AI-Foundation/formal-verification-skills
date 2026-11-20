@@ -405,6 +405,7 @@ describe('list-items', () => {
       declared: { buildExitCode: 0, oracle: 'complete' },
       checks: { status: { ok: true }, 'verify-tree': { ok: true }, 'verify-restore': { ok: true } },
       inputs: { out: path.join(root, 'copy'), manifestSha256: zeros, crateRoot: root, mode: 'translation-patches', sourceCommit: 'a'.repeat(40), patches: [] },
+      scope: { kind: 'single-crate', basis: 'manifest', manifest: 'Cargo.toml' },
       run: {
         attemptSha256: zeros, manifestSha256: zeros, configSha256: zeros, config: {}, supported: true, residuals: [], trust: 'local-host-and-reviewed-scripts',
         stages: { charon: zeros, aeneas: zeros, publish: zeros }, llbc: { path: 'demo.llbc', sha256: zeros },

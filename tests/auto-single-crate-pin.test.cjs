@@ -14,7 +14,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { fakeTools, engine, writeSpec } = require('./helpers/fake-extraction-tools.cjs');
+const { fakeTools, engine, writeSpec, recordScope } = require('./helpers/fake-extraction-tools.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 const SCRIPT = path.join(ROOT, 'scripts', 'fvs-auto.mjs');
@@ -87,6 +87,7 @@ function attempted(root) {
   const out = path.join(temporaryDirectory('fvs-single-crate-out-'), 'copy');
   const prepare = spawnSync(process.execPath, [ENGINE, 'prepare', '--project-root', root, '--out', out], { encoding: 'utf8' });
   assert.equal(prepare.status, 0, prepare.stdout);
+  recordScope(out);
   const started = engine(tools, ['attempt', '--out', out, '--spec', writeSpec(path.join(tools.scratch, 'spec.json'))]);
   assert.equal(started.status, 0, started.stdout);
   for (const step of ['charon', 'aeneas', 'publish']) assert.equal(engine(tools, ['run', '--out', out, '--step', step]).status, 0, step);
@@ -113,7 +114,9 @@ const READ_STATE_KEYS = ['code', 'command', 'externals', 'fvs', 'message', 'next
 const BRIEF_KEYS = ['brief', 'code', 'command', 'externals', 'fvs', 'message', 'nextAction', 'ok', 'pendingDecisions',
   'phase', 'warnings'];
 const STATE_KEYS = ['choices', 'extraction', 'profile', 'profiledAt', 'roadmap', 'schema', 'schemaVersion'];
-const EXTRACTION_KEYS = ['checks', 'declared', 'inputs', 'note', 'reasons', 'recordedAt', 'run', 'selected', 'status'];
+// `scope` is the one field the record of a single crate gained: the scope the copy recorded when it was prepared, so that
+// a single crate is established and never inferred from what is missing.
+const EXTRACTION_KEYS = ['checks', 'declared', 'inputs', 'note', 'reasons', 'recordedAt', 'run', 'scope', 'selected', 'status'];
 const INPUTS_KEYS = ['crateRoot', 'manifestSha256', 'mode', 'out', 'patches', 'sourceCommit'];
 // What the engine reads from the extraction engine's run record.
 const RUN_REQUIRED_KEYS = ['attemptSha256', 'config', 'configSha256', 'llbc', 'manifestSha256', 'publication', 'residuals',
@@ -151,6 +154,7 @@ describe('a single-crate run records and reads what it always did', () => {
     const { extraction } = JSON.parse(fs.readFileSync(stateFile(root), 'utf8'));
     assert.deepEqual(keys(extraction), EXTRACTION_KEYS);
     assert.equal(extraction.status, 'succeeded');
+    assert.equal(extraction.scope.kind, 'single-crate');
     assert.deepEqual(extraction.reasons, []);
     assert.deepEqual(keys(extraction.inputs), INPUTS_KEYS);
     for (const key of RUN_REQUIRED_KEYS) assert.ok(key in extraction.run, `extraction.run.${key}`);

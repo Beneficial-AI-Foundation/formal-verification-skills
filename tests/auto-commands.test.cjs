@@ -13,6 +13,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { recordScope } = require('./helpers/fake-extraction-tools.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 const SCRIPT = path.join(ROOT, 'scripts', 'fvs-auto.mjs');
@@ -377,6 +378,8 @@ function prepared(root, patches = ['lib-double']) {
   }
   const out = path.join(temporaryDirectory('fvs-auto-out-'), 'copy');
   const result = spawnSync(process.execPath, [ENGINE, 'prepare', '--project-root', root, '--out', out], { encoding: 'utf8' });
+  // The scope of a copy is recorded when it is prepared; an extraction record needs it.
+  if (result.status === 0) recordScope(out);
   return { out, status: result.status };
 }
 

@@ -75,4 +75,16 @@ function writeSpec(file, fields = {}) {
   return file;
 }
 
-module.exports = { ENGINE, RELEASE, fakeTools, engine, writeSpec };
+// The scope a prepared copy records in its manifest. The engine's prepare writes it; for a copy prepared
+// by an engine that does not, the fixture project (one crate, `demo`) is given the scope the engine would
+// record for it, so that an extraction attempt over the copy has one. A scope the engine recorded is kept.
+// Call this before the attempt: the attempt is bound to the manifest's bytes.
+const LONE_CRATE = { kind: 'single-crate', basis: 'manifest', manifest: 'Cargo.toml' };
+function recordScope(out, scope = LONE_CRATE) {
+  const file = path.join(out, 'manifest.json');
+  const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (manifest.scope === undefined) fs.writeFileSync(file, `${JSON.stringify({ ...manifest, scope }, null, 2)}\n`);
+  return manifest.scope ?? scope;
+}
+
+module.exports = { ENGINE, RELEASE, LONE_CRATE, fakeTools, engine, writeSpec, recordScope };

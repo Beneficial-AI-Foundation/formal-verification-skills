@@ -158,6 +158,90 @@ describe('a succeeded extraction over several crates', () => {
 
 // The rows of the aggregate are bound to the roster the extraction engine hashed, and a stitch counts
 // only with the digest of the provider's publication it was made from.
+// The extraction record keeps the scope the copy recorded, apart from the run. A single crate is a fact the
+// extraction established, never what is left when nothing says otherwise, and a scope of several crates
+// needs the run over all of them, so a run that lost its rows or is gone cannot pass for one crate.
+describe('the scope of a recorded extraction', () => {
+  const unreadable = (change, said, units = hmacAndSha2, options = {}) => {
+    const root = extracted(units, options);
+    const state = readState(root);
+    change(state);
+    writeState(root, state);
+    const result = cli('read-state', '--project-root', root);
+    assert.equal(result.status, 3, result.stdout);
+    assert.equal(result.json.code, 'malformed-state');
+    assert.match(result.json.message, said);
+    assert.match(result.json.nextStep, /rerun \/fvs:auto-extract/, 'the owner is told that extracting again replaces the record');
+  };
+  // The scope of the record and the one the attempt repeats change together: they are the copy's one scope.
+  const rescope = (state, scope) => { state.extraction.scope = scope; if (state.extraction.run) state.extraction.run.scope = scope; };
+  const UNSETTLED = /^Rerun \/fvs:auto-extract: the recorded extraction does not say whether it is of a single crate or of several, and an unknown scope is never read as a single crate\.$/;
+  // A record with no scope, or an unknown one, reads, but the phase does not move past the extraction.
+  const holds = (change, units = hmacAndSha2) => {
+    const root = extracted(units);
+    const state = readState(root);
+    change(state);
+    writeState(root, state);
+    for (const args of [[], ['--brief']]) {
+      const result = cli('read-state', '--project-root', root, ...args);
+      assert.equal(result.status, 0, result.stdout);
+      assert.equal(result.json.phase, 'extract');
+      assert.match(result.json.nextAction, UNSETTLED);
+      assert.equal('crates' in result.json, false, 'no crate is counted on an extraction whose scope is not settled');
+    }
+  };
+  const NO_RUN = /extraction\.scope: the scope is several crates \(libcrux_hmac, libcrux_sha2\), but the record holds no run over them/;
+
+  it('holds the phase at the extraction when the record has no scope, or an unknown one, whatever the run holds', () => {
+    holds((state) => { delete state.extraction.scope; });
+    holds((state) => { state.extraction.scope = { kind: 'unknown', basis: 'none', reason: 'no inventory' }; });
+    holds((state) => { state.extraction.scope = { kind: 'one' }; });
+    holds((state) => { state.extraction.scope = null; });
+    holds((state) => { delete state.extraction.scope; }, (directory) => [unit(directory, 'libcrux_hmac', [])]);
+    holds((state) => { delete state.extraction.scope; fixtures.asSingleCrate(state.extraction.run); }, (directory) => [unit(directory, 'libcrux_hmac', [])]);
+  });
+
+  it('does not read when the scope is several crates and the record holds no run over them', () => {
+    unreadable((state) => { delete state.extraction.run; }, NO_RUN);
+    unreadable((state) => { fixtures.asSingleCrate(state.extraction.run); }, NO_RUN);
+    unreadable((state) => { delete state.extraction.run.units; }, /extraction\.run must be the re-validated extraction attempt/);
+    unreadable((state) => { state.extraction.run.units = []; }, /extraction\.run must be the re-validated extraction attempt/);
+  });
+
+  it('does not read when the scope names crates the run neither extracts nor lists as a non-target or dropped', () => {
+    unreadable((state) => rescope(state, { ...state.extraction.scope, libraryCrates: [...state.extraction.scope.libraryCrates, 'libcrux_traits'] }), /extraction\.scope: the scope names libcrux_traits, which the run neither extracts nor lists/);
+    unreadable((state) => rescope(state, { kind: 'multi-crate', basis: 'cargo' }), /extraction\.scope: the scope is several crates but does not name them/);
+    unreadable((state) => rescope(state, { ...state.extraction.scope, libraryCrates: ['libcrux_hmac'] }), /extraction\.scope: the scope is several crates but does not name them/);
+  });
+
+  it('does not read when the attempt recorded another scope than the copy\'s', () => {
+    unreadable((state) => { state.extraction.run.scope = { kind: 'single-crate', basis: 'manifest' }; }, /extraction\.scope: the scope the attempt recorded is not the scope of the copy/);
+  });
+
+  it('reads a scope that is one crate, with the run of that crate, a one-row list, or no run', () => {
+    const lone = (directory) => [unit(directory, 'libcrux_hmac', [])];
+    for (const change of [(state) => fixtures.asSingleCrate(state.extraction.run), () => {}, (state) => { delete state.extraction.run; }]) {
+      const root = extracted(lone);
+      const state = readState(root);
+      change(state);
+      writeState(root, state);
+      const result = cli('read-state', '--project-root', root);
+      assert.equal(result.status, 0, result.stdout);
+      assert.equal(result.json.state.extraction.scope.kind, 'single-crate');
+      assert.equal('crates' in result.json, false);
+    }
+  });
+
+  it('counts the crates a scope of several names as owed, even when the run is gone', () => {
+    // A state is not read without its run, so this holds the obligation where a reader is given one anyway.
+    const state = readState(extracted(hmacAndSha2));
+    delete state.extraction.run;
+    const context = auto.crateContextOf(state);
+    assert.deepEqual(context.missing, ['libcrux_hmac', 'libcrux_sha2']);
+    assert.deepEqual(context.extracted, []);
+  });
+});
+
 describe('what binds the crates of a run to its roster and stitch', () => {
   const runOf = (units, options) => readState(extracted(units, options)).extraction.run;
   const problem = (change, units = hmacAndSha2) => {

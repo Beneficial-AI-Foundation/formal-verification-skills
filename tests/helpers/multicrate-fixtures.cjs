@@ -148,7 +148,7 @@ function unit(root, crate, functions, extra = {}) {
 // A project whose recorded extraction succeeded over the crates `units(root)` builds;
 // the first is the main crate. `run` adds fields to the top-level run. `dropped` lists the
 // crates a patch removed from the copy, each `{ crate, reason }`.
-function extracted(units, { run = {}, below = false, dropped = [] } = {}) {
+function extracted(units, { run = {}, below = false, dropped = [], scope = null } = {}) {
   const root = project(below);
   init(root);
   const state = readState(root);
@@ -164,8 +164,13 @@ function extracted(units, { run = {}, below = false, dropped = [] } = {}) {
       return { crate, package: row?.package, dir: row?.dir, stitch: [...new Set([].concat(row?.stitch ?? []).map((entry) => entry.provider))].sort() };
     }), nonTargets: nonTargets.map(({ crate, dir }) => ({ crate, dir })), dropped };
   const rosterSha256 = sha256(JSON.stringify(roster));
+  // The scope the copy recorded when it was prepared, which the attempt repeats on every row: several
+  // crates when the workspace holds more than the one extracted (a non-target or a dropped crate counts).
+  const libraryCrates = [...new Set([...rows.map((row) => row.crate), ...nonTargets.map((entry) => entry.crate), ...dropped.map((entry) => entry.crate)])].sort();
+  const recordedScope = scope ?? { kind: libraryCrates.length >= 2 ? 'multi-crate' : 'single-crate', basis: 'cargo', libraryCrates };
   for (const row of rows) {
     row.rosterSha256 = rosterSha256;
+    row.scope = recordedScope;
     if (nonTargets.length > 0) row.nonTargets = nonTargets;
   }
   state.extraction = {
@@ -174,6 +179,7 @@ function extracted(units, { run = {}, below = false, dropped = [] } = {}) {
     declared: { buildExitCode: 0, oracle: 'complete' },
     checks: { status: { ok: true }, 'verify-tree': { ok: true }, 'verify-restore': { ok: true } },
     inputs: { out: path.join(root, 'copy'), manifestSha256: ZEROS, crateRoot: root, mode: 'translation-patches', sourceCommit: 'a'.repeat(40), patches: [] },
+    scope: recordedScope,
     run: { ...rows[0], units: rows, order, roster, rosterSha256, ...run },
   };
   writeState(root, state);
