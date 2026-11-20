@@ -344,10 +344,11 @@ them, whether the rule is allowed or not. It takes each of them, the user and pa
 pair, whatever their length, out of what git prints (its error output and the result line) and out of the text of
 its own refusals, and shows an http address with user information as `https://***@host/...` everywhere else, so none
 of them is in any output, log or receipt, also after a failed push: git can print a token that is the user name of
-an address. A very short user name or password is replaced wherever it occurs in that text, so the text can look
-garbled, and the fields that the command fills in itself, such as the destination, stay as they are. A refusal for a
-rewrite rule names the kind of rule and the scheme, host and port that it leads to, and never the rule or its text,
-because a rule can hold a credential. As
+an address. A user name or password is replaced wherever it occurs in that text, so a short one, or one that is also
+a common word such as `git` or the name of the owner, can make a message look garbled. The fields that the command
+fills in itself, such as the destination, stay as they are. A refusal for a rewrite rule names the kind of rule, the
+scheme, host and port that it leads to and what differs from the recorded address (the scheme, host, port or
+repository), and never the rule or its text, because a rule can hold a credential. As
 with any git push, the address with its token is visible in the process arguments of the local machine
 while git runs, and another user of the machine can read it there. A token that a rule or a credential helper
 supplies does not appear in the arguments. A rule that rewrites an ssh address to an https one with a token

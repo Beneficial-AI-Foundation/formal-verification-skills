@@ -1316,7 +1316,7 @@ describe('git configuration variables that the user trusted at init', () => {
       const elsewhere = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: `url.https://user:${TOKEN}@github.com/Other/.insteadOf`, GIT_CONFIG_VALUE_0: 'ssh://git@github.com/Acme/' };
       const out = refused(w, ['--branch', 'fvs/t'], 'destination-rewritten', { env: { ...w.env, ...elsewhere } });
       nowhere(out, 'the refusal');
-      assert.match(out.json.message, /url\.<replacement>\.insteadof would rewrite the recorded destination ssh:\/\/git@github\.com\/Acme\/proj\.git to https:\/\/github\.com;/);
+      assert.match(out.json.message, /url\.<replacement>\.insteadof would rewrite the recorded destination ssh:\/\/git@github\.com\/Acme\/proj\.git to https:\/\/github\.com \(another repository\);/);
       assert.ok(!/Other|user:/.test(out.json.message), 'neither the rule nor what it turns the address into is repeated');
       nothingLanded(w);
     });
@@ -1857,8 +1857,40 @@ describe('git configuration variables that the user trusted at init', () => {
         w.git('config', `url.http://127.0.0.1:1/Acme/${TOKEN}.insteadOf`, address);
         const out = refused(w, ['--branch', 'fvs/t'], 'destination-rewritten');
         nowhere(out, 'the refusal');
-        assert.match(out.json.message, /would rewrite the recorded destination http:\/\/\*\*\*@127\.0\.0\.1:1\/Acme\/proj\.git to http:\/\/127\.0\.0\.1:1;/);
+        assert.match(out.json.message, /would rewrite the recorded destination http:\/\/\*\*\*@127\.0\.0\.1:1\/Acme\/proj\.git to http:\/\/127\.0\.0\.1:1 \(another repository\);/);
         nothingLanded(w);
+      });
+
+      it('a refused rule says what differs from the recorded address, and nothing of the rule', () => {
+        const w = world();
+        const found = lib.locate(w.work, w.env);
+        for (const [base, shown] of [['http://github.com/Acme/', 'http://github.com (another scheme)'], ['ssh://git@evil.test/Acme/', 'ssh://evil.test (another host)'],
+          ['ssh://git@github.com:2222/Acme/', 'ssh://github.com:2222 (another port)'], ['ssh://git@github.com/Other/', 'ssh://github.com (another repository)'],
+          ['https://github.com:8443/Other/', 'https://github.com:8443 (another port and repository)'], ['ext::sh -c x /', 'an address that is not a plain http, https or ssh address of a host']]) {
+          w.git('config', `url.${base}.insteadOf`, 'ssh://git@github.com/Acme/');
+          const message = lib.rewriteProblem(found, URL_RECORDED, w.env);
+          assert.ok(message.endsWith(`to ${shown}; the setting is not shown here because it can hold a credential`), message);
+          assert.ok(!message.includes(base) && !message.includes('Other'), 'the rule is not repeated');
+          w.git('config', '--unset-all', `url.${base}.insteadOf`);
+        }
+      });
+
+      // A user name that is also the owner is a secret like any other, so it goes from git's words and from the messages. The
+      // fields that the command fills in itself are not text of git's: the destination keeps its owner.
+      it('a user name that is also the owner is cleaned from the messages of a failed push, and the receipt keeps its identity fields', () => {
+        const w = dead();
+        w.git('remote', 'set-url', 'origin', `http://Acme:${OLD}@127.0.0.1:1/Acme/proj.git`);
+        const out = failedPush(w, `Acme ${OLD}`);
+        const json = JSON.parse(out.stdout);
+        const entry = JSON.parse(fs.readFileSync(path.join(w.root, lib.LOG_FILE), 'utf8').trim().split('\n').at(-1));
+        for (const [what, value] of [['the output', json], ['the receipt log', entry]]) {
+          assert.equal(value.destination, 'http://127.0.0.1:1/Acme/proj.git', `${what}: the destination keeps its owner`);
+          assert.equal(value.to, 'http://127.0.0.1:1/Acme/proj.git', `${what}: so does the destination that git reported`);
+          assert.equal(value.branch, 'fvs/t', `${what}: the branch`);
+        }
+        assert.ok(!json.message.includes('Acme') && !json.porcelain.includes('Acme') && !out.stderr.includes('Acme'), 'the messages and git\'s words hold no user name');
+        assert.match(json.message, /denied for \*\*\* \*\*\*\)/);
+        holdsNone(w, out, [OLD]);
       });
 
       // Short credentials are secrets too. The strings are taken out wherever they occur in git's words and in the messages of

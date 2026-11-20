@@ -270,11 +270,17 @@ const entriesOf = (text) => text.split('\0').filter(Boolean).map((entry) => {
   return at < 0 ? [entry, ''] : [entry.slice(0, at), entry.slice(at + 1)];
 });
 
-// Where an address leads, for a message: the scheme, host and port, and nothing after them. The text of a rewrite rule
-// can hold a user name, a password or a token in any part of it, so a message never repeats the rule or its result.
-function leadsTo(address) {
+// Where an address leads, for a message: the scheme, host and port, and which of scheme, host, port and repository differ
+// from the address it replaces, and nothing after them. The text of a rewrite rule can hold a user name, a password or a
+// token in any part of it, so a message never repeats the rule or its result. A change between https and ssh is not a
+// difference (see `sameDestination`); a change from or to plain http is.
+function leadsTo(address, from) {
   const named = addressOf(address);
-  return named ? `${named.scheme}://${named.host}${named.port ? `:${named.port}` : ''}` : 'an address that is not a plain http, https or ssh address of a host';
+  if (!named) return 'an address that is not a plain http, https or ssh address of a host';
+  const was = addressOf(from);
+  const differs = !was ? [] : [named.host !== was.host && 'host', named.port !== was.port && 'port', named.repo !== was.repo && 'repository',
+    named.scheme !== was.scheme && [named.scheme, was.scheme].includes('http') && 'scheme'].filter(Boolean);
+  return `${named.scheme}://${named.host}${named.port ? `:${named.port}` : ''}${differs.length ? ` (another ${differs.join(' and ')})` : ''}`;
 }
 
 // Git rewrites a URL given to push by the longest matching url.<base>.insteadOf or url.<base>.pushInsteadOf prefix,
@@ -291,13 +297,13 @@ export function rewriteProblem(where, url, env) {
     if (rewrite && url.startsWith(value)) {
       const target = rewrite[1] + url.slice(value.length);
       if (sameDestination(target, url)) continue;
-      return scrub(`the git setting url.<replacement>.${rewrite[2]} would rewrite the recorded destination ${url} to ${leadsTo(target)}; the setting is not shown here because it can hold a credential`);
+      return scrub(`the git setting url.<replacement>.${rewrite[2]} would rewrite the recorded destination ${url} to ${leadsTo(target, url)}; the setting is not shown here because it can hold a credential`);
     }
     const remote = /^remote\.(.+)\.[^.]+$/.exec(key);
     if (remote && remote[1] === url) return scrub(`a [remote] section of the git configuration is named like the recorded destination ${url}`);
   }
   const shown = git(['ls-remote', '--get-url', url], { where, env });
-  if (shown.status !== 0 || !sameDestination(shown.stdout, url)) return scrub(`git reads the recorded destination ${url} as ${shown.status === 0 && shown.stdout.trim() ? leadsTo(shown.stdout.trim()) : '(unreadable)'}`);
+  if (shown.status !== 0 || !sameDestination(shown.stdout, url)) return scrub(`git reads the recorded destination ${url} as ${shown.status === 0 && shown.stdout.trim() ? leadsTo(shown.stdout.trim(), url) : '(unreadable)'}`);
   return null;
 }
 
