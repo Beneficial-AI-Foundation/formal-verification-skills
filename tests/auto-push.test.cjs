@@ -1298,6 +1298,23 @@ describe('git configuration variables that the user trusted at init', () => {
       nowhere(out.record, 'the record');
     });
 
+    it('init cleans its messages of every secret it knows, wherever it sits, and keeps a user name that is a label', () => {
+      const w = world({ skipRecord: true });
+      // The password is repeated in the query, where the user information scrub does not look.
+      w.git('remote', 'set-url', 'origin', `https://acme-bot:${TOKEN}@github.com/a/b/c.git?k=${TOKEN}`);
+      const out = init(w);
+      assert.equal(out.problem?.code, 'remote-ambiguous', JSON.stringify(out));
+      nowhere(out, 'the answer of init');
+      assert.match(out.problem.message, /https:\/\/\*\*\*@github\.com\/a\/b\/c\.git\?k=\*\*\*/);
+      // A rule that makes an address with another password of the remote's own: its secrets are known too.
+      w.git('remote', 'set-url', 'origin', 'https://github.com/a/b/c.git?k=NEWCANARY');
+      w.git('config', 'url.https://acme-bot:NEWCANARY@github.com/.insteadOf', 'https://github.com/');
+      const ruled = init(w);
+      assert.equal(ruled.problem?.code, 'remote-ambiguous', JSON.stringify(ruled));
+      assert.ok(!JSON.stringify(ruled).includes('NEWCANARY'), 'a secret that only a rule supplies is cleaned too');
+      assert.match(ruled.problem.message, /\?k=\*\*\*/);
+    });
+
     it('a real destination mismatch is still refused, and the message hides the token', () => {
       const w = world({ skipRecord: true });
       for (const [url, code] of [[`https://user:${TOKEN}@evil.test/Acme/proj.git`, 'remote-mismatch'], [`https://user:${TOKEN}@github.com/Other/proj.git`, 'remote-mismatch'], [`https://user:${TOKEN}@github.com/a/b/c.git`, 'remote-ambiguous']]) {
@@ -1562,19 +1579,28 @@ describe('git configuration variables that the user trusted at init', () => {
         }
       };
 
-      it('secretsOf and hide take every part of user information out of any string, whatever its length', () => {
+      it('secretsOf and hide take the password and the base64 of the pair, or the user part when there is no password, out of any string, whatever its length', () => {
         const secrets = lib.secretsOf(`https://x-access-token:${TOKEN}@github.com/Acme/proj.git`);
         const header = Buffer.from(`x-access-token:${TOKEN}`).toString('base64');
-        for (const part of [`x-access-token:${TOKEN}`, TOKEN, 'x-access-token', header]) assert.ok(secrets.includes(part), part);
-        const shown = lib.hide({ message: `could not read Password for 'https://${TOKEN}@github.com': ${TOKEN} / Authorization: Basic ${header}`, list: [`fatal: ${TOKEN}`], n: 3, none: null }, secrets);
+        for (const part of [TOKEN, header]) assert.ok(secrets.includes(part), part);
+        for (const label of [`x-access-token:${TOKEN}`, 'x-access-token']) assert.ok(!secrets.includes(label), `${label} is a label next to a password, not a secret`);
+        const shown = lib.hide({ message: `could not read Password for 'https://${TOKEN}@github.com': ${TOKEN} / Authorization: Basic ${header} for x-access-token`, list: [`fatal: ${TOKEN}`], n: 3, none: null }, secrets);
         assert.ok(!JSON.stringify(shown).includes(TOKEN) && !JSON.stringify(shown).includes(header), JSON.stringify(shown));
+        assert.match(shown.message, / for x-access-token$/, 'the label stays readable');
         assert.equal(shown.n, 3);
         assert.deepEqual(lib.secretsOf('https://github.com/Acme/proj.git'), []);
         assert.deepEqual(lib.secretsOf('git@github.com:Acme/proj.git'), []);
-        assert.ok(lib.secretsOf('https://ab@github.com/Acme/proj.git').includes('ab'), 'a user name of two characters is a secret');
+        const base64 = (text) => Buffer.from(text).toString('base64');
+        const user = lib.secretsOf(`https://${TOKEN}@github.com/Acme/proj.git`);
+        assert.ok(user.includes(TOKEN) && user.includes(base64(`${TOKEN}:`)), 'with no password the user part is the token, and a header carries it with an empty password');
+        const empty = lib.secretsOf(`https://${TOKEN}:@github.com/Acme/proj.git`);
+        assert.ok(empty.includes(TOKEN), 'an empty password is no password');
+        const fixed = lib.secretsOf(`https://${TOKEN}:x-oauth-basic@github.com/Acme/proj.git`);
+        assert.ok(fixed.includes(TOKEN) && fixed.includes('x-oauth-basic'), 'GitHub\'s older form has the token as the user name and a fixed label as the password');
+        assert.ok(lib.secretsOf('https://ab@github.com/Acme/proj.git').includes('ab'), 'a user name of two characters is a secret when it is the token');
         const noUser = lib.secretsOf('https://:pw@github.com/Acme/proj.git');
         assert.ok(noUser.includes('pw') && !noUser.includes(''), 'a password of two characters is one, and an empty user name is not');
-        assert.deepEqual(lib.secretsOf('https://u:p@github.com/Acme/proj.git').filter((text) => text.length === 1).sort(), ['p', 'u'], 'one character each');
+        assert.deepEqual(lib.secretsOf('https://u:p@github.com/Acme/proj.git').filter((text) => text.length === 1), ['p'], 'one character is a secret too, and only the password');
         assert.equal(lib.hide('table pw ab', ['pw', 'ab']), 't***le *** ***', 'a string is replaced wherever it occurs');
         assert.equal(lib.hide('a plain sentence', []), 'a plain sentence');
         assert.equal(lib.hide('a plain sentence', ['']), 'a plain sentence', 'an empty string is never replaced');
@@ -1875,9 +1901,9 @@ describe('git configuration variables that the user trusted at init', () => {
         }
       });
 
-      // A user name that is also the owner is a secret like any other, so it goes from git's words and from the messages. The
-      // fields that the command fills in itself are not text of git's: the destination keeps its owner.
-      it('a user name that is also the owner is cleaned from the messages of a failed push, and the receipt keeps its identity fields', () => {
+      // A user name next to a password is a label, so it stays readable in git's words and in the messages, also when it is the owner of
+      // the repository or a word such as git. The password goes, and the fields that the command fills in itself keep their owner.
+      it('a user name next to a password stays readable in the messages of a failed push, and the password is cleaned', () => {
         const w = dead();
         w.git('remote', 'set-url', 'origin', `http://Acme:${OLD}@127.0.0.1:1/Acme/proj.git`);
         const out = failedPush(w, `Acme ${OLD}`);
@@ -1888,23 +1914,54 @@ describe('git configuration variables that the user trusted at init', () => {
           assert.equal(value.to, 'http://127.0.0.1:1/Acme/proj.git', `${what}: so does the destination that git reported`);
           assert.equal(value.branch, 'fvs/t', `${what}: the branch`);
         }
-        assert.ok(!json.message.includes('Acme') && !json.porcelain.includes('Acme') && !out.stderr.includes('Acme'), 'the messages and git\'s words hold no user name');
-        assert.match(json.message, /denied for \*\*\* \*\*\*\)/);
+        assert.match(json.message, /denied for Acme \*\*\*\)/);
+        assert.ok(out.stderr.includes('denied for Acme ***'), out.stderr);
         holdsNone(w, out, [OLD]);
       });
 
-      // Short credentials are secrets too. The strings are taken out wherever they occur in git's words and in the messages of
-      // the command, and the command's own fields (the destination, the paths, the branch) stay readable.
+      it('the user name git stays readable next to a password that is replaced, in git\'s words, in a refusal and in the receipt', () => {
+        const w = dead();
+        w.git('remote', 'set-url', 'origin', `http://git:${OLD}@127.0.0.1:1/Acme/proj.git`);
+        const out = failedPush(w, `git ${OLD} git:${OLD} ${base64Of(`git:${OLD}`)}`);
+        assert.match(JSON.parse(out.stdout).message, /denied for git \*\*\* git:\*\*\* \*\*\*\)/);
+        assert.ok(out.stderr.includes('denied for git *** git:*** ***'), out.stderr);
+        holdsNone(w, out, [OLD, base64Of(`git:${OLD}`)]);
+        const tip = asProgram(w, gitStandIn(w, `case "$*" in *rev-parse*--verify*) echo "fatal: git said ${OLD} to git" >&2; exit 128;; esac`));
+        assert.match(JSON.parse(tip.stdout).message, /\(fatal: git said \*\*\* to git\)/);
+        for (const text of [tip.stdout, tip.stderr]) assert.ok(!text.includes(OLD), 'the refusal holds no password');
+      });
+
+      // With no password the user part is the token, so it is replaced like a password: alone, with an empty password, or next to the
+      // fixed password of GitHub's older form.
       for (const [name, address, secrets] of [
-        ['a short user name', 'http://u!@127.0.0.1:1/Acme/proj.git', ['u!']],
-        ['a short password with no user name', 'http://:~p@127.0.0.1:1/Acme/proj.git', ['~p']],
-        ['a short user name and password', 'http://u!:~p@127.0.0.1:1/Acme/proj.git', ['u!', '~p', 'u!:~p', base64Of('u!:~p')]],
+        ['a token as the user name with no password', `http://${NEW}@127.0.0.1:1/Acme/proj.git`, [NEW, base64Of(`${NEW}:`)]],
+        ['a token as the user name with an empty password', `http://${NEW}:@127.0.0.1:1/Acme/proj.git`, [NEW, base64Of(`${NEW}:`)]],
+        ['a token as the user name next to x-oauth-basic', `http://${NEW}:x-oauth-basic@127.0.0.1:1/Acme/proj.git`, [NEW, base64Of(`${NEW}:x-oauth-basic`)]],
       ]) {
-        it(`${name} is cleaned from a failed push, from a refusal and from the receipt`, () => {
+        it(`${name} is cleaned from a failed push and from a refusal`, () => {
           const w = dead();
           w.git('remote', 'set-url', 'origin', address);
           const out = failedPush(w, secrets.join(' '));
           holdsNone(w, out, secrets);
+          const tip = asProgram(w, gitStandIn(w, `case "$*" in *rev-parse*--verify*) echo "fatal: simulated failure ${secrets.join(' ')}" >&2; exit 128;; esac`));
+          assert.equal(JSON.parse(tip.stdout).code, 'branch-refused');
+          for (const text of [tip.stdout, tip.stderr]) for (const secret of secrets) assert.ok(!text.includes(secret), `the refusal holds ${secret}`);
+        });
+      }
+
+      // Short credentials are secrets too. The strings are taken out wherever they occur in git's words and in the messages of
+      // the command, and the command's own fields (the destination, the paths, the branch) stay readable.
+      for (const [name, address, secrets, kept] of [
+        ['a short user name that is the token', 'http://u!@127.0.0.1:1/Acme/proj.git', ['u!'], []],
+        ['a short password with no user name', 'http://:~p@127.0.0.1:1/Acme/proj.git', ['~p'], []],
+        ['a short password next to a user name, which stays readable', 'http://u!:~p@127.0.0.1:1/Acme/proj.git', ['~p', base64Of('u!:~p')], ['u!']],
+      ]) {
+        it(`${name} is cleaned from a failed push, from a refusal and from the receipt`, () => {
+          const w = dead();
+          w.git('remote', 'set-url', 'origin', address);
+          const out = failedPush(w, [...secrets, ...kept].join(' '));
+          holdsNone(w, out, secrets);
+          for (const text of kept) assert.ok(out.stderr.includes(text), `${text} stays readable`);
           const json = JSON.parse(out.stdout);
           assert.equal(json.destination, 'http://127.0.0.1:1/Acme/proj.git', 'the destination stays as recorded');
           assert.equal(json.branch, 'fvs/t');

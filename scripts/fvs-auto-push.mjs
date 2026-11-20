@@ -333,9 +333,13 @@ export function configuredAddress(where, record, env) {
   return [...held.keys()][0] ?? null;
 }
 
-// What must not appear in an output of the command when a push used an address with user information: that part of the
-// address, its user name and password and their percent-decoded forms, and the base64 of the pair that an
-// Authorization header carries. Every part is a secret whatever its length, and only an empty part is left out.
+// What must not appear in an output of the command when a push used an address with user information. With a password,
+// the password (also percent-decoded) and the base64 of the pair that an Authorization header carries: the user name is a
+// label such as x-access-token or oauth2, and stays readable in text. Without a password the user part is the token, so
+// it is secret, with the base64 of "user:" that a header carries. GitHub's older form TOKEN:x-oauth-basic puts the token in
+// the user name next to a fixed label, so that password counts as none. Every secret is replaced whatever its length, and
+// only an empty one is left out. An address itself always shows as https://***@host/... (see `scrub`).
+const FIXED_PASSWORD = /^x-oauth-basic$/i;
 export function secretsOf(url) {
   const info = /^https?:\/\/([^/?#@]+)@/i.exec(String(url))?.[1];
   if (!info) return [];
@@ -343,22 +347,31 @@ export function secretsOf(url) {
   const [user, ...rest] = info.split(':');
   const password = rest.join(':');
   const base64 = (text) => Buffer.from(text).toString('base64');
-  const found = new Set([info, decode(info), base64(decode(info)), base64(`${decode(user)}:${decode(password)}`), user, decode(user), password, decode(password)]);
+  const labelled = password !== '' && !FIXED_PASSWORD.test(password);
+  const found = new Set([base64(decode(info)), base64(`${decode(user)}:${decode(password)}`), password, decode(password), ...(labelled ? [] : [user, decode(user)])]);
   return [...found].filter(Boolean).sort((a, b) => b.length - a.length);
 }
 
-// Every secret that a push of the recorded destination can carry, known before git has said anything: the user
-// information of the recorded address, of each address with user information that a remote holds for the same destination
-// (the push uses one of them), and of each address that a url.<base>.insteadOf or pushInsteadOf rule makes of any of those,
-// whether the rule is allowed or not. `ls-remote --get-url` shows the insteadOf rewrite only, so the rules are read. A
-// superset costs nothing, since a string that is not in an output is not replaced, and this never refuses.
-export function knownSecrets(where, record, env) {
+// The secrets of each address and of each address that a url.<base>.insteadOf or pushInsteadOf rule makes of it, whether
+// the rule is allowed or not. `ls-remote --get-url` shows the insteadOf rewrite only, so the rules are read.
+const configEntries = (where, env) => {
   const list = git(['config', '--list', '-z'], { where, env });
-  const entries = list.status === 0 ? entriesOf(list.stdout) : [];
-  const held = entries.filter(([key, value]) => /^remote\..+\.(url|pushurl)$/.test(key) && /^https?:\/\/[^/]*@/i.test(value) && sameDestination(value, record.url)).map(([, value]) => value);
+  return list.status === 0 ? entriesOf(list.stdout) : [];
+};
+function secretsFrom(entries, urls) {
   const rules = entries.flatMap(([key, value]) => { const rule = /^url\.(.+)\.(insteadof|pushinsteadof)$/.exec(key); return rule ? [[rule[1], value]] : []; });
-  const addresses = [record.url, ...held].flatMap((url) => [url, ...rules.filter(([, value]) => url.startsWith(value)).map(([base, value]) => base + url.slice(value.length))]);
+  const addresses = urls.flatMap((url) => [url, ...rules.filter(([, value]) => url.startsWith(value)).map(([base, value]) => base + url.slice(value.length))]);
   return [...new Set(addresses.flatMap(secretsOf))].sort((a, b) => b.length - a.length);
+}
+
+// Every secret that a push of the recorded destination can carry, known before git has said anything: those of the
+// recorded address and of each address with user information that a remote holds for the same destination (the push uses
+// one of them), with those of the rewrites of each. A superset costs nothing, since a string that is not in an output is
+// not replaced, and this never refuses.
+export function knownSecrets(where, record, env) {
+  const entries = configEntries(where, env);
+  const held = entries.filter(([key, value]) => /^remote\..+\.(url|pushurl)$/.test(key) && /^https?:\/\/[^/]*@/i.test(value) && sameDestination(value, record.url)).map(([, value]) => value);
+  return secretsFrom(entries, [record.url, ...held]);
 }
 
 // A value of the answer, with the secrets and any user information in an http or https address taken out of every string.
@@ -475,13 +488,19 @@ export function initDestination(root, remote, repo, host, prefixes, env = proces
     if (error instanceof Refuse) return { problem: { code: error.code, message: error.message } };
     throw error;
   }
+  // What every message of this step is cleaned of, as at a push: the secrets of each address of the remote and of what a
+  // rule makes of it, with the address as it is recorded (see `knownSecrets`).
+  const entries = configEntries(found, gitEnv);
+  const own = entries.filter(([key]) => key === `remote.${remote}.url` || key === `remote.${remote}.pushurl`).map(([, value]) => value);
+  const secrets = secretsFrom(entries, own.flatMap((url) => [url, stripCredential(url)]));
+  const failed = (code, message) => ({ problem: { code, message: hide(message, secrets) } });
   const problem = destinationProblem(found, remote, repo, host, gitEnv);
-  if (problem) return { problem };
+  if (problem) return failed(problem.code, problem.message);
   const urls = git(['remote', 'get-url', '--push', '--all', remote], { where: found, env: gitEnv }).stdout.split('\n').map((line) => line.trim()).filter(Boolean);
-  if (urls.length === 0) return { problem: { code: 'remote-ambiguous', message: `git remote ${remote} has no push URL` } };
+  if (urls.length === 0) return failed('remote-ambiguous', `git remote ${remote} has no push URL`);
   const address = stripCredential(urls[0]);
   const rewritten = rewriteProblem(found, address, gitEnv);
-  if (rewritten) return { problem: { code: 'destination-rewritten', message: rewritten } };
+  if (rewritten) return failed('destination-rewritten', rewritten);
   return { record: destinationRecord({ projectRoot: root, commonDir: found.commonDir, url: address, host: host.toLowerCase(), repo, prefixes, variables }), commonDir: found.commonDir, where: found, variables };
 }
 
