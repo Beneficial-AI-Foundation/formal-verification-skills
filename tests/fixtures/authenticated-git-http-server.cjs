@@ -10,10 +10,16 @@ const http = require('node:http');
 const { spawn } = require('node:child_process');
 
 const [root, token, authLog] = process.argv.slice(2);
-const wanted = `Basic ${Buffer.from(`user:${token}`).toString('base64')}`;
+// Any user name is accepted: what counts is the password.
+const carriesToken = (header) => {
+  const [scheme, encoded = ''] = String(header ?? '').split(' ');
+  if (scheme !== 'Basic') return false;
+  const pair = Buffer.from(encoded, 'base64').toString();
+  return pair.slice(pair.indexOf(':') + 1) === token && pair.includes(':');
+};
 
 const server = http.createServer((req, res) => {
-  if (req.headers.authorization !== wanted) {
+  if (!carriesToken(req.headers.authorization)) {
     fs.appendFileSync(authLog, 'denied\n');
     res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="test"' });
     res.end();

@@ -1551,6 +1551,30 @@ describe('git configuration variables that the user trusted at init', () => {
         });
       });
 
+      // The user name of an address is often the owner of the repository (https://acme:PAT@github.com/acme/proj). Taking it out of
+      // every string would turn the destination of the receipt into https://github.com/***/proj, so the command's own fields stay as they are.
+      it('a user name that is also the owner leaves the receipt and the output as they are, and the token is still gone', { skip: !haveBackend && 'git http-backend is not installed' }, async () => {
+        await withServer(async ({ port, refs }) => {
+          const w = project(port);
+          w.git('remote', 'set-url', 'origin', `http://Acme:${TOKEN}@127.0.0.1:${port}/Acme/proj.git`);
+          const out = asProgram(w);
+          assert.equal(out.status, 0, `${out.stdout}${out.stderr}`);
+          const json = JSON.parse(out.stdout);
+          assert.equal(json.usedConfiguredAddress, true);
+          assert.deepEqual(refs(), ['refs/heads/fvs/t']);
+          const entry = logEntries(w).at(-1);
+          for (const [what, value] of [['the output', json], ['the receipt log', entry]]) {
+            assert.equal(value.destination, recordAddress(port), `${what}: the destination is the recorded address`);
+            assert.equal(value.repositoryRoot, w.root, `${what}: the work tree`);
+            assert.equal(value.commonDir, w.commonDir, `${what}: the git directory`);
+            assert.equal(value.branch, 'fvs/t', `${what}: the branch`);
+            assert.equal(value.to, recordAddress(port), `${what}: the destination git reported`);
+          }
+          assert.equal(json.file, path.join(w.root, lib.LOG_FILE));
+          nowhereAfter(w, ['the output', out.stdout], ['the error output', out.stderr]);
+        });
+      });
+
       it('a push with no such address says so in its receipt', () => {
         const w = world();
         const out = w.go(['--branch', 'fvs/t']);

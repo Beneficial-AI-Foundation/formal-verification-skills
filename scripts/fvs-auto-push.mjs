@@ -417,8 +417,8 @@ const refuse = (code, message, details) => { throw new Refuse(code, message, det
 // What init records for a project: the push URL of the project's remote once git has rewritten it, with the repository
 // it names, and where the project lives. Returns {record, commonDir} or {problem: {code, message}}; it never throws, so
 // the permission check can report a refusal in its own words. The URL must name the agreed host and repository
-// (every fetch and push URL of the remote is checked) and no rewrite rule may send it anywhere but to itself, because the
-// push command refuses a destination that a rule would redirect. User information in an http address is stripped first. The git configuration variables that are set in `env` are the ones
+// (every fetch and push URL of the remote is checked) and every rewrite rule that applies to it must send it to the same
+// destination (see `sameDestination`), because the push command refuses a destination that a rule would redirect. User information in an http address is stripped first. The git configuration variables that are set in `env` are the ones
 // the record will ask the user to trust (`variables`: the set that init offers, with the values for the hashes; the preview
 // shows only names and lengths), so these checks run with them,
 // as the push will.
@@ -635,8 +635,13 @@ export function run(argv, { cwd = process.cwd(), env = process.env, now = () => 
     // is the default one or named by core.hooksPath in any configuration file. Each is kept for what the other does not do.
     const pushed = git(['-c', 'push.followTags=false', '-c', 'push.pushOption=', '-c', 'core.hooksPath=/dev/null', '-c', 'core.abbrev=no', 'push', '--porcelain', '--no-follow-tags', '--recurse-submodules=no', '--no-verify', address, refspec],
       { where: found, env: gitEnv, stdio: ['inherit', 'pipe', 'pipe'] });
-    // What git says on its error output is passed on, cleaned: a rejected token can come back in it.
-    if (pushed.stderr) process.stderr.write(`${hide(pushed.stderr, secrets)}\n`);
+    // What git says is passed on cleaned of the secrets: a rejected token can come back in it. Only free text from git is
+    // cleaned this way (its error output, the result line of the ref, an error of the spawn). The command's own fields
+    // (destination, paths, branch) come from the record and the file system, and the destination line that git prints has the
+    // user part removed by git itself, so none of them can hold the token, and a user name that is also the owner of the
+    // repository must not be taken out of them. They still lose any user information in an http address (`scrub`).
+    const fromGit = (text) => (typeof text === 'string' ? hide(text, secrets) : text);
+    if (pushed.stderr) process.stderr.write(`${fromGit(pushed.stderr)}\n`);
     const seen = parsePorcelain(pushed.stdout, branch);
     const status = STATUS[seen.flag] ?? null;
     const accepted = pushed.status === 0 && (status === 'created' || status === 'fast-forward' || status === 'up-to-date');
@@ -645,17 +650,17 @@ export function run(argv, { cwd = process.cwd(), env = process.env, now = () => 
     const result = accepted ? status : seen.flag === '!' ? 'failed' : 'unknown';
     const entry = {
       at: now().toISOString(), branch, destination: record.url, usedConfiguredAddress: held !== null, repositoryRoot: found.top, commonDir: found.commonDir, gitVariables: report,
-      result, porcelainFlag: seen.flag, porcelain: seen.line, to: seen.to,
+      result, porcelainFlag: seen.flag, porcelain: fromGit(seen.line), to: seen.to,
       // Only ids that the push itself reported. A new branch and an up-to-date branch carry none in git's summary, and the
       // tip read before the push is not an id of what was sent: the branch can move between the read and the push.
       oldRemoteId: seen.old, newRemoteId: accepted ? seen.new : null, localTipBeforePush: tip,
-      exitStatus: pushed.status, signal: pushed.signal ?? null, error: pushed.error?.message ?? null,
+      exitStatus: pushed.status, signal: pushed.signal ?? null, error: fromGit(pushed.error?.message ?? null),
     };
-    const log = appendLog(record, hide(entry, secrets));
-    const detail = { ...hide(entry, secrets), ...log };
-    if (result === 'failed') refuse('push-failed', `git did not update ${branch} on the destination: ${seen.line.replace(/\t/g, ' ')}`, detail);
+    const log = appendLog(record, hide(entry, []));
+    const detail = { ...hide(entry, []), ...log };
+    if (result === 'failed') refuse('push-failed', `git did not update ${branch} on the destination: ${fromGit(seen.line).replace(/\t/g, ' ')}`, detail);
     if (result === 'unknown') {
-      const how = pushed.error?.code === 'ETIMEDOUT' ? 'did not finish within 30 seconds' : pushed.signal ? `was stopped by ${pushed.signal}` : `ended with exit ${pushed.status}${seen.line ? ` and the line "${seen.line.replace(/\t/g, ' ')}"` : ' and no result line for the branch'}`;
+      const how = pushed.error?.code === 'ETIMEDOUT' ? 'did not finish within 30 seconds' : pushed.signal ? `was stopped by ${pushed.signal}` : `ended with exit ${pushed.status}${seen.line ? ` and the line "${fromGit(seen.line).replace(/\t/g, ' ')}"` : ' and no result line for the branch'}`;
       refuse('push-outcome-unknown', `git ${how}, so this command does not know whether ${branch} was updated on the destination. It may have been. Read the destination before you retry (for example with git ls-remote on the recorded address), and report this code and message`, detail);
     }
     // git prints the address it pushed to as it reads it after any rewrite rule, and without user information.
@@ -663,7 +668,7 @@ export function run(argv, { cwd = process.cwd(), env = process.env, now = () => 
     return { status: 0, json: { code: 'pushed', ...detail } };
   } catch (error) {
     if (!(error instanceof Refuse)) throw error;
-    return { status: error.code === 'usage' ? 2 : 1, json: hide({ code: error.code, message: error.message, ...error.details }, secrets) };
+    return { status: error.code === 'usage' ? 2 : 1, json: hide({ code: error.code, message: error.message, ...error.details }, []) };
   }
 }
 
