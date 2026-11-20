@@ -1184,6 +1184,54 @@ describe('git configuration variables that the user trusted at init', () => {
     nothingLanded(w);
   });
 
+  // A token can reach git through a rewrite rule that a sandbox injects. It must not be written to the record or shown.
+  describe('a credential in an address is never written down or shown', () => {
+    const TOKEN = 'CANARYTOKEN';
+    const tokenRule = (w) => ({ GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: `url.https://user:${TOKEN}@github.com/Acme/.insteadOf`, GIT_CONFIG_VALUE_0: 'ssh://git@github.com/Acme/' });
+    const nowhere = (value, what) => assert.ok(!JSON.stringify(value).includes(TOKEN), `${what} does not hold the token`);
+
+    it('init refuses an address that a rule gives user information, and nothing it returns holds the token', () => {
+      const w = world({ skipRecord: true });
+      const control = lib.initDestination(w.root, 'origin', 'Acme/proj', 'github.com', ['fvs'], { ...w.env });
+      assert.equal(control.problem, undefined, 'the control: the project without the rule has a destination');
+      const out = lib.initDestination(w.root, 'origin', 'Acme/proj', 'github.com', ['fvs'], { ...w.env, ...tokenRule(w) });
+      assert.equal(out.problem?.code, 'remote-credential', JSON.stringify(out));
+      assert.equal(out.record, undefined);
+      nowhere(out, 'the answer');
+    });
+
+    it('an address of the remote with user information in an http address is refused, and the message hides it', () => {
+      const w = world({ skipRecord: true });
+      w.git('remote', 'set-url', 'origin', `https://user:${TOKEN}@github.com/Acme/proj.git`);
+      for (const other of [`https://user:${TOKEN}@github.com/Acme/proj.git`, `https://user:${TOKEN}@evil.test/Acme/proj.git`]) {
+        w.git('remote', 'set-url', 'origin', other);
+        const problem = lib.destinationProblem(w.work, 'origin', 'Acme/proj', 'github.com', w.env);
+        assert.equal(problem.code, 'remote-credential', other);
+        nowhere(problem, 'the message');
+        assert.match(problem.message, /user information/);
+      }
+      // ssh addresses have a user name and no secret: it stays usable.
+      w.git('remote', 'set-url', 'origin', URL_RECORDED);
+      assert.equal(lib.destinationProblem(w.work, 'origin', 'Acme/proj', 'github.com', w.env), null);
+    });
+
+    it('a rule in a trusted variable that rewrites the destination is refused with a message that hides the token', () => {
+      const w = world();
+      trust(w, NOTE);
+      const out = refused(w, ['--branch', 'fvs/t'], 'destination-rewritten', { env: { ...w.env, ...tokenRule(w) } });
+      nowhere(out, 'the refusal');
+      assert.match(out.json.message, /\*\*\*@github\.com/);
+      nothingLanded(w);
+    });
+
+    it('a record whose address has user information in an http address is not used, and the problem does not repeat it', () => {
+      const w = world();
+      const problem = lib.recordProblem({ ...lib.destinationRecord(w.record), url: `https://user:${TOKEN}@github.com/Acme/proj.git` });
+      assert.match(String(problem), /user information/);
+      nowhere(problem, 'the problem');
+    });
+  });
+
   it('a trusted name that now holds a push option sends none: the command\'s own settings come after the environment', () => {
     const w = world();
     trust(w, NOTE);

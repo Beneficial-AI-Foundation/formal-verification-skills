@@ -276,10 +276,12 @@ node "$PERM" plan --project-root . --repo "$DRAFT_REPO" --remote origin --branch
   owner the listed entries before you probe. FVS deletes none of them, and a Claude `write-allowlist` refuses
   until the owner has removed those entries; the push probe may also be quiet because of them, not because of
   the push command. Go on with the check if the owner wants, and say that writing waits for the cleanup.
-- `remote-mismatch`, `remote-ambiguous`, `remote-missing`, `destination-rewritten` or `invalid-input`: no probe
-  runs against a remote that is not the project's own repository. Every URL of the remote (all fetch and push
-  URLs) must name it, and no `insteadOf` or `pushInsteadOf` rule may rewrite the push address again. Report the
-  refusal, skip the check and go to Step 6.
+- `remote-mismatch`, `remote-ambiguous`, `remote-missing`, `remote-credential`, `destination-rewritten` or
+  `invalid-input`: no probe runs against a remote that is not the project's own repository. Every URL of the remote
+  (all fetch and push URLs) must name it, and no `insteadOf` or `pushInsteadOf` rule may rewrite the push address
+  again. `remote-credential` means an http or https address has user information (`https://user:token@host/...`),
+  whether the remote holds it or a git setting adds it: the address is written down and shown, so the owner uses a
+  credential helper or an ssh address. Report the refusal, skip the check and go to Step 6.
 - `not-a-repository` or `worktree-mismatch`: the project root is not a git work tree, or a `core.worktree` setting
   points the repository at the files of another one. The push command would refuse in each case, so nothing is
   recorded. Report the refusal, skip the check and go to Step 6; the owner has to fix the repository first.

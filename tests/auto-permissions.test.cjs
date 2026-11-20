@@ -591,6 +591,19 @@ describe('the recorded destination', () => {
       assert.equal(run('plan', base(), { ...process.env, ...grown }).json.pushDestination.status, 'matches');
     });
 
+    it('a token that a rule injects into the address is refused before anything is shown or written', () => {
+      spawnSync('git', ['-C', project, 'remote', 'set-url', 'origin', `https://github.com/${REPO}.git`]);
+      const rule = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'url.https://user:CANARYTOKEN@github.com/.insteadOf', GIT_CONFIG_VALUE_0: 'https://github.com/' };
+      const control = dest({});
+      assert.equal(control.json.code, 'confirmation-required', 'the control: the same project without the rule gets a preview');
+      for (const [command, args] of [['write-destination', []], ['write-destination', ['--confirm', 'anything']], ['plan', []]]) {
+        const out = run(command, base(...args), { ...process.env, ...rule });
+        assert.equal(out.json.code, 'remote-credential', command);
+        assert.ok(!JSON.stringify(out).includes('CANARYTOKEN'), `${command} neither prints nor writes the token`);
+      }
+      assert.equal(fs.existsSync(recordFile()), false);
+    });
+
     it('says that none is set when none is, and the record keeps its usual shape', () => {
       const preview = dest({});
       assert.deepEqual(preview.json.gitConfigVariables, {});
@@ -1668,6 +1681,7 @@ describe('the permissions page', () => {
     assert.match(page, /the preview lists each one by name with the length of its value, never the value, because a value can be a token and the preview goes into the model's context and the transcript\. Your yes trusts these names\. The record gains trustedGitVariables: each trusted name with a hash of its value at that moment, so the file never holds a value either/);
     assert.match(page, /The push command keeps each trusted name with whatever value it has when it runs and drops every other name\. A value that changes later, such as a token that a sandbox sets for each session, is not refused: the receipt marks it changed, and the hash is for that information only\. A trusted name that is not set is skipped\. You trust these names the way you trust ~\/\.gitconfig: whatever they hold is used\. A variable that is not set when you confirm stays untrusted, so unset one before init to keep it out/);
     assert.match(page, /Run the destination step where the workers run, so the names are the ones they have/);
+    assert.match(page, /Init refuses \(remote-credential\) an address with user information in an http or https URL, such as https:\/\/user:token@host\/\.\.\., whether the remote holds it or a git setting adds it, because the address is written to the record and shown\. Use a credential helper or an ssh address/);
     assert.match(page, /GIT_CONFIG_COUNT and the GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n pairs that it addresses are one unit\. Trusting the count trusts the pairs it addresses when the command runs, whatever the record names, so a sandbox that adds a setting is not refused and git never meets a count without its pairs\. A pair is never trusted alone: a pair that the count does not address, or that has no count, is not offered at init and is dropped by the command/);
     assert.match(page, /When the record is the same except for its trusted names, the preview shows the old record, the new record and the names that are added and removed, with its own digest\. After your yes the record is rewritten \(replaced\) and the old one is not kept\. The digest covers the old record/);
     assert.match(page, /It replaces a record only to change the git variables that you trust \(below\), and only when the destination is the same\. A record for another destination, a record that is not valid and a file that is not JSON stop it with destination-conflict, which shows both\. To change the destination itself, delete the record on purpose: check the file, delete it yourself and run init again/);
@@ -1678,6 +1692,7 @@ describe('the permissions page', () => {
     const init = flat('fv-skills/workflows/auto-init.md');
     assert.match(init, /gitConfigVariables \(every git configuration variable that is set in this session and can be trusted, by name with the length of its value, never the value\) with its gitConfigNote/);
     assert.match(init, /The yes also trusts the names of those variables: the push command keeps each of them with whatever value it has when it runs, drops every other name, and does not refuse a value that changed \(the receipt marks it\)\. GIT_CONFIG_COUNT and the pairs it addresses are one unit\. The owner trusts them as they trust their own ~\/\.gitconfig\. Say that a value can be a credential, so the preview never shows it and the record keeps only a hash, for information\. A variable that is not set when the owner confirms stays untrusted/);
+    assert.match(init, /remote-credential means an http or https address has user information \(https:\/\/user:token@host\/\.\.\.\), whether the remote holds it or a git setting adds it: the address is written down and shown, so the owner uses a credential helper or an ssh address/);
     assert.match(init, /Run this step in the environment the workers will have/);
     assert.match(init, /a value that rotated since the record was written is no difference/);
     assert.match(init, /With confirmation-required and a replaces field, the record exists with the same destination and another set of trusted names: show replaces \(the old record\), record \(the new one\), variableChanges \(added, removed, kept\), replaceNote and gitConfigVariables, and ask for a separate yes; on it, rerun with --confirm <digest> and the record is rewritten \(replaced\)/);
