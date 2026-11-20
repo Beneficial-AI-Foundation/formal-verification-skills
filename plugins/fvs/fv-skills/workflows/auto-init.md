@@ -296,14 +296,15 @@ node "$PERM" write-destination --project-root . --repo "$DRAFT_REPO" --remote or
 It writes nothing and refuses with `confirmation-required`, printing the `record` (the push address as git will use
 it after its own rewriting, the host, the repository, the branch namespaces, the project root and the git
 directory), the `file` (in the repository's shared git directory, so no commit contains it), a `note`, the
-`gitConfigVariables` (every git configuration variable that is set in this session, with its value) with its
-`gitConfigNote`, the `contract` (what the push command checks, hardens and trusts) and a digest. Show the owner
+`gitConfigVariables` (every git configuration variable that is set in this session and can be trusted, by name with
+the length of its value, never the value) with its `gitConfigNote`, the `contract` (what the push command checks, hardens and trusts) and a digest. Show the owner
 exactly that, with the contract as printed, and ask. The yes also trusts the names of those variables: the push
 command keeps each of them with whatever value it has when it runs, drops every other name, and does not refuse a
-value that changed (the receipt marks it). The owner trusts them as they trust their own `~/.gitconfig`. Say that a
-value can be a credential and is printed only here; the record keeps only a hash of it, for information. If one holds
-a token the owner does not want trusted, the owner can unset it and run this step again. Run this step in the
-environment the workers will have. Only on the yes, rerun the same command with `--confirm <digest>`. On a no,
+value that changed (the receipt marks it). `GIT_CONFIG_COUNT` and the pairs it addresses are one unit. The owner
+trusts them as they trust their own `~/.gitconfig`. Say that a value can be a credential, so the preview never shows
+it and the record keeps only a hash, for information. A variable that is not set when the owner confirms stays
+untrusted: if one holds a token the owner does not want trusted, the owner unsets it and runs this step again. Run
+this step in the environment the workers will have. Only on the yes, rerun the same command with `--confirm <digest>`. On a no,
 nothing is recorded: the push command then refuses to run (`no-destination-recorded`), workers stop and report that
 refusal instead of falling back to `git push`, and the owner pushes branches by hand. If
 `pushDestination.status` is already `matches` there is nothing to do (`unchanged`): a value that rotated since the
@@ -313,7 +314,8 @@ same destination and another set of trusted names: show `replaces` (the old reco
 rerun with `--confirm <digest>` and the record is rewritten (`replaced`). With `destination-conflict` another
 destination, or a record that is not valid, exists: show `existing` and `record`, and name the variables in
 `changedVariables` when it is printed. FVS replaces a record only to change its trusted names, never the
-destination: the owner checks the file, deletes it themselves and runs init again.
+destination: to change the destination itself, the owner checks the file, deletes the record on purpose and runs
+init again.
 
 Otherwise ask the owner whether to run the check or skip it. A skip is recorded with every step as
 `unknown` (below) so that a resume does not ask again.
