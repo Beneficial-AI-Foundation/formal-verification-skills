@@ -175,18 +175,21 @@ describe('the scope of a recorded extraction', () => {
   };
   // The scope of the record and the one the attempt repeats change together: they are the copy's one scope.
   const rescope = (state, scope) => { state.extraction.scope = scope; if (state.extraction.run) state.extraction.run.scope = scope; };
-  const UNSETTLED = /^Rerun \/fvs:auto-extract: the recorded extraction does not say whether it is of a single crate or of several, and an unknown scope is never read as a single crate\.$/;
+  const UNSETTLED = /^Rerun \/fvs:auto-extract: the recorded extraction does not say whether it is of a single crate or of several, and an unknown scope is never read as a single crate\./;
   // A record with no scope, or an unknown one, reads, but the phase does not move past the extraction.
   const holds = (change, units = hmacAndSha2) => {
     const root = extracted(units);
     const state = readState(root);
     change(state);
     writeState(root, state);
+    // Only a record with no scope at all can be settled without extracting again.
+    const settleable = !('scope' in state.extraction);
     for (const args of [[], ['--brief']]) {
       const result = cli('read-state', '--project-root', root, ...args);
       assert.equal(result.status, 0, result.stdout);
       assert.equal(result.json.phase, 'extract');
       assert.match(result.json.nextAction, UNSETTLED);
+      assert.equal(/run record-scope --release DIR/.test(result.json.nextAction), settleable, result.json.nextAction);
       assert.equal('crates' in result.json, false, 'no crate is counted on an extraction whose scope is not settled');
     }
   };
