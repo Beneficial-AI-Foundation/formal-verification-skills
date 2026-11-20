@@ -1316,7 +1316,8 @@ describe('git configuration variables that the user trusted at init', () => {
       const elsewhere = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: `url.https://user:${TOKEN}@github.com/Other/.insteadOf`, GIT_CONFIG_VALUE_0: 'ssh://git@github.com/Acme/' };
       const out = refused(w, ['--branch', 'fvs/t'], 'destination-rewritten', { env: { ...w.env, ...elsewhere } });
       nowhere(out, 'the refusal');
-      assert.match(out.json.message, /\*\*\*@github\.com/);
+      assert.match(out.json.message, /url\.<replacement>\.insteadof would rewrite the recorded destination ssh:\/\/git@github\.com\/Acme\/proj\.git to https:\/\/github\.com;/);
+      assert.ok(!/Other|user:/.test(out.json.message), 'neither the rule nor what it turns the address into is repeated');
       nothingLanded(w);
     });
 
@@ -1561,7 +1562,7 @@ describe('git configuration variables that the user trusted at init', () => {
         }
       };
 
-      it('secretsOf and hide take the token, its parts and its base64 out of any string, and leave short or absent user information alone', () => {
+      it('secretsOf and hide take every part of user information out of any string, whatever its length', () => {
         const secrets = lib.secretsOf(`https://x-access-token:${TOKEN}@github.com/Acme/proj.git`);
         const header = Buffer.from(`x-access-token:${TOKEN}`).toString('base64');
         for (const part of [`x-access-token:${TOKEN}`, TOKEN, 'x-access-token', header]) assert.ok(secrets.includes(part), part);
@@ -1570,8 +1571,13 @@ describe('git configuration variables that the user trusted at init', () => {
         assert.equal(shown.n, 3);
         assert.deepEqual(lib.secretsOf('https://github.com/Acme/proj.git'), []);
         assert.deepEqual(lib.secretsOf('git@github.com:Acme/proj.git'), []);
-        assert.deepEqual(lib.secretsOf('https://ab@github.com/Acme/proj.git'), [], 'under four characters is no token');
+        assert.ok(lib.secretsOf('https://ab@github.com/Acme/proj.git').includes('ab'), 'a user name of two characters is a secret');
+        const noUser = lib.secretsOf('https://:pw@github.com/Acme/proj.git');
+        assert.ok(noUser.includes('pw') && !noUser.includes(''), 'a password of two characters is one, and an empty user name is not');
+        assert.deepEqual(lib.secretsOf('https://u:p@github.com/Acme/proj.git').filter((text) => text.length === 1).sort(), ['p', 'u'], 'one character each');
+        assert.equal(lib.hide('table pw ab', ['pw', 'ab']), 't***le *** ***', 'a string is replaced wherever it occurs');
         assert.equal(lib.hide('a plain sentence', []), 'a plain sentence');
+        assert.equal(lib.hide('a plain sentence', ['']), 'a plain sentence', 'an empty string is never replaced');
       });
 
       it('finds the address a remote holds for the recorded destination, and nothing else', () => {
@@ -1784,8 +1790,97 @@ describe('git configuration variables that the user trusted at init', () => {
         const out = refused(w, ['--branch', 'fvs/t'], 'destination-rewritten');
         nowhere(out, 'the refusal');
         assert.match(out.json.message, /http:\/\/\*\*\*@127\.0\.0\.1:1/);
+        assert.ok(!out.json.message.includes(w.wrong) && !out.json.message.includes('user:'), 'the rule is not repeated');
         nothingLanded(w);
       });
+
+      // ---- what a push can carry that is not in the address of the remote or of the record ----------------------------------
+      // A `git` that fails the push and says the given text on both outputs, as a server, a credential helper or a transport can.
+      const PUSH_SAYS = 'for a in "$@"; do\n  if [ "$a" = push ]; then\n    printf \'%s\' "$FVS_TEST_SAYS" > "$FVS_TEST_SAID"\n    echo "fatal: unable to access: denied for $FVS_TEST_SAYS" >&2\n    printf \'To http://127.0.0.1:1/Acme/proj.git\\n!\\trefs/heads/fvs/t:refs/heads/fvs/t\\t[remote rejected] (denied for %s)\\n\' "$FVS_TEST_SAYS"\n    exit 1\n  fi\ndone';
+      const dead = () => world({ record: { url: 'http://127.0.0.1:1/Acme/proj.git', host: '127.0.0.1' } });
+      const OLD = 'OLDCANARY';
+      const NEW = 'NEWCANARY';
+      const base64Of = (text) => Buffer.from(text).toString('base64');
+      const failedPush = (w, says) => {
+        const said = path.join(w.dir, 'said.txt');
+        const out = asProgram(w, { ...gitStandIn(w, PUSH_SAYS), FVS_TEST_SAYS: says, FVS_TEST_SAID: said });
+        assert.equal(fs.readFileSync(said, 'utf8'), says, 'the control: git said it');
+        assert.notEqual(out.status, 0);
+        assert.equal(JSON.parse(out.stdout).code, 'push-failed', out.stdout);
+        return out;
+      };
+      const holdsNone = (w, out, secrets) => {
+        for (const [what, text] of [['the output', out.stdout], ['the error output', out.stderr], ['the record file', fs.readFileSync(path.join(w.commonDir, lib.RECORD_NAME), 'utf8')], ['the receipt log', fs.readFileSync(path.join(w.root, lib.LOG_FILE), 'utf8')]]) {
+          assert.ok(text.length > 0 || what === 'the error output', `${what} is not empty`);
+          for (const secret of secrets) assert.ok(!text.includes(secret), `${what} holds ${secret}`);
+        }
+      };
+
+      for (const kind of ['insteadOf', 'pushInsteadOf']) {
+        it(`a ${kind} rule that adds user information is allowed, and what it adds is cleaned from a failed push`, () => {
+          const w = dead();
+          w.git('config', `url.http://user:${NEW}@127.0.0.1:1/.${kind}`, 'http://127.0.0.1:1/');
+          const out = failedPush(w, `user:${NEW} ${NEW} ${base64Of(`user:${NEW}`)}`);
+          holdsNone(w, out, [NEW, base64Of(`user:${NEW}`)]);
+          const json = JSON.parse(out.stdout);
+          assert.equal(json.usedConfiguredAddress, false, 'no remote held the address: the rule alone supplied it');
+          assert.equal(json.destination, 'http://127.0.0.1:1/Acme/proj.git', 'the receipt names the recorded address');
+        });
+      }
+
+      it('a rule that turns the address of the remote into another one with user information: both are cleaned from a failed push', () => {
+        const w = dead();
+        w.git('remote', 'set-url', 'origin', `http://user:${OLD}@127.0.0.1:1/Acme/proj.git`);
+        w.git('config', `url.http://user:${NEW}@127.0.0.1:1/.insteadOf`, `http://user:${OLD}@127.0.0.1:1/`);
+        const out = failedPush(w, `${OLD} ${NEW} user:${OLD} user:${NEW} ${base64Of(`user:${OLD}`)} ${base64Of(`user:${NEW}`)}`);
+        assert.equal(JSON.parse(out.stdout).usedConfiguredAddress, true, 'the remote holds the old address');
+        holdsNone(w, out, [OLD, NEW, base64Of(`user:${OLD}`), base64Of(`user:${NEW}`)]);
+      });
+
+      // The message of a refusal is cleaned of every known secret, wherever it sits and whoever wrote it: git's own words in
+      // the read of the branch tip, and the rule that would rewrite the address.
+      it('a refusal that carries git\'s own words is cleaned of a secret outside the user information', () => {
+        const w = dead();
+        w.git('remote', 'set-url', 'origin', tokenAddress(1));
+        const out = asProgram(w, gitStandIn(w, `case "$*" in *rev-parse*--verify*) echo "fatal: simulated failure ${TOKEN} after ${WRONG}" >&2; exit 128;; esac`));
+        assert.notEqual(out.status, 0);
+        const json = JSON.parse(out.stdout);
+        assert.equal(json.code, 'branch-refused', out.stdout);
+        assert.match(json.message, /fatal: simulated failure \*\*\* after WRONGCANARY/, 'the secret of the address is replaced, and nothing else is');
+        for (const text of [out.stdout, out.stderr]) assert.ok(!text.includes(TOKEN), 'no output holds the token');
+      });
+
+      it('a rule whose replacement holds the secret outside the user information is refused without repeating it', () => {
+        const w = dead();
+        const address = tokenAddress(1);
+        w.git('remote', 'set-url', 'origin', address);
+        w.git('config', `url.http://127.0.0.1:1/Acme/${TOKEN}.insteadOf`, address);
+        const out = refused(w, ['--branch', 'fvs/t'], 'destination-rewritten');
+        nowhere(out, 'the refusal');
+        assert.match(out.json.message, /would rewrite the recorded destination http:\/\/\*\*\*@127\.0\.0\.1:1\/Acme\/proj\.git to http:\/\/127\.0\.0\.1:1;/);
+        nothingLanded(w);
+      });
+
+      // Short credentials are secrets too. The strings are taken out wherever they occur in git's words and in the messages of
+      // the command, and the command's own fields (the destination, the paths, the branch) stay readable.
+      for (const [name, address, secrets] of [
+        ['a short user name', 'http://u!@127.0.0.1:1/Acme/proj.git', ['u!']],
+        ['a short password with no user name', 'http://:~p@127.0.0.1:1/Acme/proj.git', ['~p']],
+        ['a short user name and password', 'http://u!:~p@127.0.0.1:1/Acme/proj.git', ['u!', '~p', 'u!:~p', base64Of('u!:~p')]],
+      ]) {
+        it(`${name} is cleaned from a failed push, from a refusal and from the receipt`, () => {
+          const w = dead();
+          w.git('remote', 'set-url', 'origin', address);
+          const out = failedPush(w, secrets.join(' '));
+          holdsNone(w, out, secrets);
+          const json = JSON.parse(out.stdout);
+          assert.equal(json.destination, 'http://127.0.0.1:1/Acme/proj.git', 'the destination stays as recorded');
+          assert.equal(json.branch, 'fvs/t');
+          const tip = asProgram(w, gitStandIn(w, `case "$*" in *rev-parse*--verify*) echo "fatal: simulated failure ${secrets.join(' ')}" >&2; exit 128;; esac`));
+          assert.equal(JSON.parse(tip.stdout).code, 'branch-refused');
+          for (const text of [tip.stdout, tip.stderr]) for (const secret of secrets) assert.ok(!text.includes(secret), `the refusal holds ${secret}`);
+        });
+      }
     });
   });
 

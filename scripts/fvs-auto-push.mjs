@@ -264,29 +264,40 @@ function git(args, { cwd, where, env, stdio } = {}) {
   return { status: run.status, stdout: run.stdout ?? '', stderr: (run.stderr ?? '').trim(), error: run.error, signal: run.signal };
 }
 
+// The entries of `git config --list -z` as [key, value] pairs (git lowercases the section and variable names of a key).
+const entriesOf = (text) => text.split('\0').filter(Boolean).map((entry) => {
+  const at = entry.indexOf('\n');
+  return at < 0 ? [entry, ''] : [entry.slice(0, at), entry.slice(at + 1)];
+});
+
+// Where an address leads, for a message: the scheme, host and port, and nothing after them. The text of a rewrite rule
+// can hold a user name, a password or a token in any part of it, so a message never repeats the rule or its result.
+function leadsTo(address) {
+  const named = addressOf(address);
+  return named ? `${named.scheme}://${named.host}${named.port ? `:${named.port}` : ''}` : 'an address that is not a plain http, https or ssh address of a host';
+}
+
 // Git rewrites a URL given to push by the longest matching url.<base>.insteadOf or url.<base>.pushInsteadOf prefix,
 // and the push then goes to the rewritten address. Instead of predicting which rule wins, every rule that applies to the
 // address must send it to the same destination (see `sameDestination`: a rule that only adds user information, or
 // moves it between https and ssh, is allowed), and any other rule is a refusal. A [remote "<url>"] section is refused
 // too: git does not read one for a URL with a slash, but a refusal costs nothing and keeps the check independent of that
-// detail. Returns null or a plain message.
+// detail. Returns null or a plain message. The message names the kind of rule and where it leads, never its text.
 export function rewriteProblem(where, url, env) {
   const list = git(['config', '--list', '-z'], { where, env });
   if (list.status !== 0) return `git config could not be read (${list.stderr || list.error?.message || `exit ${list.status}`})`;
-  for (const entry of list.stdout.split('\0').filter(Boolean)) {
-    const at = entry.indexOf('\n');
-    const key = at < 0 ? entry : entry.slice(0, at);
-    const value = at < 0 ? '' : entry.slice(at + 1);
+  for (const [key, value] of entriesOf(list.stdout)) {
     const rewrite = /^url\.(.+)\.(insteadof|pushinsteadof)$/.exec(key);
     if (rewrite && url.startsWith(value)) {
-      if (sameDestination(rewrite[1] + url.slice(value.length), url)) continue;
-      return scrub(`the git setting ${key} = ${JSON.stringify(value)} would rewrite the recorded destination ${url}`);
+      const target = rewrite[1] + url.slice(value.length);
+      if (sameDestination(target, url)) continue;
+      return scrub(`the git setting url.<replacement>.${rewrite[2]} would rewrite the recorded destination ${url} to ${leadsTo(target)}; the setting is not shown here because it can hold a credential`);
     }
     const remote = /^remote\.(.+)\.[^.]+$/.exec(key);
-    if (remote && remote[1] === url) return scrub(`the git setting ${key} names the recorded destination as a remote`);
+    if (remote && remote[1] === url) return scrub(`a [remote] section of the git configuration is named like the recorded destination ${url}`);
   }
   const shown = git(['ls-remote', '--get-url', url], { where, env });
-  if (shown.status !== 0 || !sameDestination(shown.stdout, url)) return scrub(`git reads the recorded destination ${url} as ${shown.stdout.trim() || '(unreadable)'}`);
+  if (shown.status !== 0 || !sameDestination(shown.stdout, url)) return scrub(`git reads the recorded destination ${url} as ${shown.status === 0 && shown.stdout.trim() ? leadsTo(shown.stdout.trim()) : '(unreadable)'}`);
   return null;
 }
 
@@ -299,12 +310,11 @@ export function configuredAddress(where, record, env) {
   const list = git(['config', '--list', '-z'], { where, env });
   if (list.status !== 0) refuse('destination-rewritten', `git config could not be read (${list.stderr || list.error?.message || `exit ${list.status}`})`);
   const remotes = new Map();
-  for (const entry of list.stdout.split('\0').filter(Boolean)) {
-    const at = entry.indexOf('\n');
-    const named = /^remote\.(.+)\.(url|pushurl)$/.exec(at < 0 ? entry : entry.slice(0, at));
+  for (const [key, value] of entriesOf(list.stdout)) {
+    const named = /^remote\.(.+)\.(url|pushurl)$/.exec(key);
     if (!named) continue;
     const slot = remotes.get(named[1]) ?? { url: [], pushurl: [] };
-    slot[named[2]].push(at < 0 ? '' : entry.slice(at + 1));
+    slot[named[2]].push(value);
     remotes.set(named[1], slot);
   }
   const held = new Map();
@@ -319,19 +329,35 @@ export function configuredAddress(where, record, env) {
 
 // What must not appear in an output of the command when a push used an address with user information: that part of the
 // address, its user name and password and their percent-decoded forms, and the base64 of the pair that an
-// Authorization header carries. Shorter than four characters is no token, and replacing it would only garble the text.
+// Authorization header carries. Every part is a secret whatever its length, and only an empty part is left out.
 export function secretsOf(url) {
   const info = /^https?:\/\/([^/?#@]+)@/i.exec(String(url))?.[1];
+  if (!info) return [];
   const decode = (text) => { try { return decodeURIComponent(text); } catch { return text; } };
-  if (!info || decode(info).length < 4) return [];
   const [user, ...rest] = info.split(':');
-  const found = new Set([info, decode(info), Buffer.from(decode(info)).toString('base64'), user, decode(user), rest.join(':'), decode(rest.join(':'))]);
-  return [...found].filter((text) => text.length >= 4).sort((a, b) => b.length - a.length);
+  const password = rest.join(':');
+  const base64 = (text) => Buffer.from(text).toString('base64');
+  const found = new Set([info, decode(info), base64(decode(info)), base64(`${decode(user)}:${decode(password)}`), user, decode(user), password, decode(password)]);
+  return [...found].filter(Boolean).sort((a, b) => b.length - a.length);
+}
+
+// Every secret that a push of the recorded destination can carry, known before git has said anything: the user
+// information of the recorded address, of each address with user information that a remote holds for the same destination
+// (the push uses one of them), and of each address that a url.<base>.insteadOf or pushInsteadOf rule makes of any of those,
+// whether the rule is allowed or not. `ls-remote --get-url` shows the insteadOf rewrite only, so the rules are read. A
+// superset costs nothing, since a string that is not in an output is not replaced, and this never refuses.
+export function knownSecrets(where, record, env) {
+  const list = git(['config', '--list', '-z'], { where, env });
+  const entries = list.status === 0 ? entriesOf(list.stdout) : [];
+  const held = entries.filter(([key, value]) => /^remote\..+\.(url|pushurl)$/.test(key) && /^https?:\/\/[^/]*@/i.test(value) && sameDestination(value, record.url)).map(([, value]) => value);
+  const rules = entries.flatMap(([key, value]) => { const rule = /^url\.(.+)\.(insteadof|pushinsteadof)$/.exec(key); return rule ? [[rule[1], value]] : []; });
+  const addresses = [record.url, ...held].flatMap((url) => [url, ...rules.filter(([, value]) => url.startsWith(value)).map(([base, value]) => base + url.slice(value.length))]);
+  return [...new Set(addresses.flatMap(secretsOf))].sort((a, b) => b.length - a.length);
 }
 
 // A value of the answer, with the secrets and any user information in an http or https address taken out of every string.
 export function hide(value, secrets) {
-  if (typeof value === 'string') return secrets.reduce((text, secret) => text.split(secret).join('***'), scrub(value));
+  if (typeof value === 'string') return secrets.reduce((text, secret) => (secret ? text.split(secret).join('***') : text), scrub(value));
   if (Array.isArray(value)) return value.map((item) => hide(item, secrets));
   if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, hide(item, secrets)]));
   return value;
@@ -601,7 +627,8 @@ const USAGE = 'the only accepted form is: node <fvs scripts dir>/fvs-auto-push.m
 
 // Runs the whole command and returns {status, json}; main() only prints it.
 export function run(argv, { cwd = process.cwd(), env = process.env, now = () => new Date() } = {}) {
-  // What a push that used an address with a token must keep out of every string it answers, logs or writes to stderr.
+  // What a push that used an address with a token must keep out of every unstructured string it answers, logs or writes to
+  // stderr (see `knownSecrets`). The command's own fields stay as they are.
   let secrets = [];
   try {
     if (argv.length !== 2 || argv[0] !== '--branch' || !argv[1] || argv[1].startsWith('-')) refuse('usage', `${USAGE}; no other argument is accepted`);
@@ -620,6 +647,9 @@ export function run(argv, { cwd = process.cwd(), env = process.env, now = () => 
       }
       throw error;
     }
+    // From here on every message and every piece of git's text is cleaned of what a push could carry, whichever address
+    // the push ends up using.
+    secrets = knownSecrets(found, record, gitEnv);
     if (found.commonDir !== hinted) refuse('wrong-repository', `the record was read from ${hinted}, but git finds the shared git directory ${found.commonDir}; nothing was pushed`);
     const wrongPlace = repositoryProblem(record, found, gitEnv);
     if (wrongPlace) refuse('wrong-repository', wrongPlace);
@@ -628,12 +658,10 @@ export function run(argv, { cwd = process.cwd(), env = process.env, now = () => 
     const rewritten = rewriteProblem(found, record.url, gitEnv);
     if (rewritten) refuse('destination-rewritten', `${rewritten}; the push was not made`);
     // The address the push is given: the recorded one, or the address with user information that a remote of this
-    // repository holds for the same destination. That one is checked for rewriting as well, and from here on every
-    // string that leaves the command is cleaned of what it holds.
+    // repository holds for the same destination. That one is checked for rewriting as well.
     const held = configuredAddress(found, record, gitEnv);
     const address = held ?? record.url;
     if (held) {
-      secrets = secretsOf(held);
       const heldRewritten = rewriteProblem(found, held, gitEnv);
       if (heldRewritten) refuse('destination-rewritten', `${heldRewritten}; the push was not made`);
     }
@@ -681,7 +709,7 @@ export function run(argv, { cwd = process.cwd(), env = process.env, now = () => 
     return { status: 0, json: { code: 'pushed', ...detail } };
   } catch (error) {
     if (!(error instanceof Refuse)) throw error;
-    return { status: error.code === 'usage' ? 2 : 1, json: hide({ code: error.code, message: error.message, ...error.details }, []) };
+    return { status: error.code === 'usage' ? 2 : 1, json: hide({ code: error.code, message: hide(error.message, secrets), ...error.details }, []) };
   }
 }
 
